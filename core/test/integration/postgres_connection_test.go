@@ -178,6 +178,7 @@ func openIntegrationPostgreSQLConnection(
 	passwordFile config.SecretFile,
 	caFile config.TrustFile,
 	connectTimeout time.Duration,
+	configure ...func(*pgx.ConnConfig),
 ) *pgx.Conn {
 	t.Helper()
 
@@ -225,6 +226,9 @@ func openIntegrationPostgreSQLConnection(
 	// the qualification measures is what a Core connection would use.
 	connectionConfig.RuntimeParams["join_collapse_limit"] = "4"
 	connectionConfig.RuntimeParams["from_collapse_limit"] = "4"
+	for _, apply := range configure {
+		apply(connectionConfig)
+	}
 	connection, err := pgx.ConnectConfig(ctx, connectionConfig)
 	if err != nil {
 		t.Fatalf("connect integration PostgreSQL role %q: %v", user, err)

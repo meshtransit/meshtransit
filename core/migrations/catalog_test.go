@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 151 {
-		t.Fatalf("len(Catalog()) = %d, want 151", len(catalog))
+	if len(catalog) != 152 {
+		t.Fatalf("len(Catalog()) = %d, want 152", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 151 {
-		t.Fatalf("LatestVersion() = %d, want 151", LatestVersion())
+	if LatestVersion() != 152 {
+		t.Fatalf("LatestVersion() = %d, want 152", LatestVersion())
 	}
 }
 
@@ -3754,6 +3754,36 @@ func TestDeviceSharedOnce(t *testing.T) {
 	for _, want := range []string{") OWNER TO mesh_share_writer;", "BIGINT, BIGINT, BIGINT, BIGINT, BIGINT, TIMESTAMPTZ\n) TO mesh_runtime;"} {
 		if !strings.Contains(operator, want) {
 			t.Errorf("operator step 151 must contain %q", want)
+		}
+	}
+}
+
+func TestMapReaderIndexLookups(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[151]
+	if migration.Version != 152 {
+		t.Fatalf("migration 152 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE INDEX device_machine_key_epoch_device_active_key_idx",
+		"CREATE INDEX device_node_key_epoch_device_active_key_idx",
+		"CREATE INDEX node_address_lease_device_primary_address_idx",
+		"CREATE OR REPLACE FUNCTION mesh_ops.load_map_network_devices_v1(\n    p_limit INTEGER\n)",
+		"CREATE OR REPLACE FUNCTION mesh_ops.load_map_peer_candidates(\n    p_machine_key_fingerprint BYTEA,",
+		"FROM mesh.device_node_key_epoch AS current_node_key\n    CROSS JOIN LATERAL (",
+		"AND pg_catalog.cardinality(lease.addresses) > 0",
+		"AND candidate.id <> authenticated_device_id",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 152 must contain %q", want)
+		}
+	}
+	if got := strings.Count(migration.SQL, "SECURITY DEFINER\nSET search_path = pg_catalog, mesh, mesh_ops"); got != 2 {
+		t.Errorf("schema 152 keeps both readers' definer and search_path: %d", got)
+	}
+	for _, forbidden := range []string{"GRANT", "REVOKE", "OWNER", "DROP ", "BYPASSRLS", "INSERT", "UPDATE", "DELETE"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 152 must not contain %q", forbidden)
 		}
 	}
 }

@@ -211,6 +211,56 @@ func seedShareScaleDevices(ctx context.Context, t *testing.T, admin *pgx.Conn, c
 	providers []shareScaleDevice, consumer shareScaleDevice, dualStack bool,
 ) {
 	t.Helper()
+	seed := newShareScaleSeed(ctx, t, admin, count)
+	for _, side := range seed.sides {
+		var revision int64
+		if err := admin.QueryRow(ctx, `SELECT network_revision + 1 FROM mesh_ops.network_revision WHERE workspace_id = $1 AND network_id = $2`,
+			shareScaleWorkspace, side.network).Scan(&revision); err != nil {
+			t.Fatal(err)
+		}
+		commitAuditedAuthorityFixture(ctx, t, admin, authorityEvidenceFixture{
+			changePublicID: shareScaleUUID(t), eventPublicID: shareScaleUUID(t), outboxPublicID: shareScaleUUID(t),
+			streamID: side.network, aggregateKind: "device", networkRevision: revision,
+			aggregatePublicID: side.devices[0].publicID, aggregateVersion: 1,
+			action: "device.registered", permission: "system.bootstrap", outboxEventClass: "network.inventory.changed",
+		}, func(tx pgx.Tx) { side.insert(ctx, t, tx) })
+	}
+	return seed.providers, seed.consumer, seed.dualStack
+}
+
+type shareScalePrefix struct {
+	realm, pool, prefixID int64
+	prefix                netip.Prefix
+	profile               int64
+}
+
+// shareScaleSide is one Network's part of a seed: its Devices and, for the
+// provider, the /18 they are addressed from.
+type shareScaleSide struct {
+	network  int64
+	row      shareScalePrefix
+	prefixID int64
+	row6     shareScalePrefix
+	devices  []shareScaleDevice
+	prefix   string
+}
+
+type shareScaleSeed struct {
+	providers []shareScaleDevice
+	consumer  shareScaleDevice
+	dualStack bool
+	sides     []shareScaleSide
+}
+
+// newShareScaleSeed chooses the Devices, keys and addresses of a seed
+// without writing them.
+func newShareScaleSeed(ctx context.Context, t *testing.T, admin *pgx.Conn, count int) shareScaleSeed {
+	t.Helper()
+	var (
+		providers []shareScaleDevice
+		consumer  shareScaleDevice
+		dualStack bool
+	)
 	newDevice := func(id int64, address, address6 netip.Addr) shareScaleDevice {
 		var machineRaw, keyRaw [32]byte
 		if _, err := rand.Read(machineRaw[:]); err != nil {
@@ -230,13 +280,8 @@ func seedShareScaleDevices(ctx context.Context, t *testing.T, admin *pgx.Conn, c
 		return shareScaleDevice{id: id, publicID: integrationPublicID("01890f5c-0000-7000-8000-", id),
 			machine: machine, key: key, address: address, address6: address6}
 	}
-	type prefixRow struct {
-		realm, pool, prefixID int64
-		prefix                netip.Prefix
-		profile               int64
-	}
-	readPrefix := func(networkID int64, family int) (prefixRow, bool) {
-		var row prefixRow
+	readPrefix := func(networkID int64, family int) (shareScalePrefix, bool) {
+		var row shareScalePrefix
 		var prefix string
 		if err := admin.QueryRow(ctx, `SELECT prefix.address_realm_id, prefix.address_pool_id, prefix.id, prefix.prefix::TEXT,
                 (SELECT profile.id FROM mesh.enrollment_profile AS profile WHERE profile.workspace_id = prefix.workspace_id
@@ -246,7 +291,7 @@ func seedShareScaleDevices(ctx context.Context, t *testing.T, admin *pgx.Conn, c
             ORDER BY prefix.id LIMIT 1`, shareScaleWorkspace, networkID, family).Scan(
 			&row.realm, &row.pool, &row.prefixID, &prefix, &row.profile); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return prefixRow{}, false
+				return shareScalePrefix{}, false
 			}
 			t.Fatalf("read Network %d prefix: %v", networkID, err)
 		}
@@ -318,93 +363,76 @@ func seedShareScaleDevices(ctx context.Context, t *testing.T, admin *pgx.Conn, c
 	}
 	consumer = newDevice(shareScaleDeviceBase+int64(count), consumerAddress, consumer6Address)
 
-	insert := func(tx pgx.Tx, networkID int64, row prefixRow, prefixID int64, row6 prefixRow, devices []shareScaleDevice) {
-		batch := &pgx.Batch{}
-		for _, device := range devices {
-			machine, key := device.machine.Bytes(), device.key.Bytes()
-			fingerprint, keyFingerprint := device.machine.Fingerprint(), device.key.Fingerprint()
-			batch.Queue(`INSERT INTO mesh.device (id, public_id, workspace_id, network_id, enrollment_profile_id,
+	return shareScaleSeed{providers: providers, consumer: consumer, dualStack: dualStack, sides: []shareScaleSide{
+		{shareScaleProvider, provider, scalePrefixID, provider6, providers, scalePrefix},
+		{shareScaleConsumer, consumerPrefix, consumerPrefix.prefixID, consumer6, []shareScaleDevice{consumer}, ""},
+	}}
+}
+
+// insert writes the side in transaction tx: the Network revision, the /18
+// and the Devices with their keys and leases. The caller records evidence.
+func (side shareScaleSide) insert(ctx context.Context, t *testing.T, tx pgx.Tx) {
+	t.Helper()
+	if _, err := tx.Exec(ctx, `UPDATE mesh_ops.network_revision SET network_revision = network_revision + 1,
+        inventory_revision = inventory_revision + 1, updated_at = clock_timestamp()
+        WHERE workspace_id = $1 AND network_id = $2`, shareScaleWorkspace, side.network); err != nil {
+		t.Fatal(err)
+	}
+	if side.prefix != "" {
+		if _, err := tx.Exec(ctx, `INSERT INTO mesh.network_prefix (id, public_id, workspace_id, network_id,
+            address_realm_id, address_pool_id, prefix, family, state)
+            OVERRIDING SYSTEM VALUE VALUES ($1, $2::UUID, $3, $4, $5, $6, $7::CIDR, 4, 'active')`,
+			side.prefixID, shareScaleUUID(t), shareScaleWorkspace, side.network, side.row.realm, side.row.pool, side.prefix); err != nil {
+			t.Fatalf("add the share scale prefix: %v", err)
+		}
+	}
+	networkID, row, prefixID, row6 := side.network, side.row, side.prefixID, side.row6
+	batch := &pgx.Batch{}
+	for _, device := range side.devices {
+		machine, key := device.machine.Bytes(), device.key.Bytes()
+		fingerprint, keyFingerprint := device.machine.Fingerprint(), device.key.Fingerprint()
+		batch.Queue(`INSERT INTO mesh.device (id, public_id, workspace_id, network_id, enrollment_profile_id,
                 owner_principal_id, custodian_principal_id, registered_by_kind, registered_by_principal_id,
                 hostname, hostname_key, is_ephemeral, expires_at, state)
                 OVERRIDING SYSTEM VALUE VALUES ($1, $2::UUID, $3, $4, $5, 11, 11, 'principal', 11, $6, $6, FALSE,
                 clock_timestamp() + interval '4 hours', 'active')`,
-				device.id, device.publicID, shareScaleWorkspace, networkID, row.profile, fmt.Sprintf("scale-%d.example", device.id))
-			// Explicit IDs past the fixtures', which insert theirs explicitly
-			// and so leave the identity sequences behind.
-			offset := device.id - shareScaleDeviceBase
-			batch.Queue(`INSERT INTO mesh.device_machine_key_epoch (id, public_id, workspace_id, network_id, device_id, epoch,
+			device.id, device.publicID, shareScaleWorkspace, networkID, row.profile, fmt.Sprintf("scale-%d.example", device.id))
+		// Explicit IDs past the fixtures', which insert theirs explicitly
+		// and so leave the identity sequences behind.
+		offset := device.id - shareScaleDeviceBase
+		batch.Queue(`INSERT INTO mesh.device_machine_key_epoch (id, public_id, workspace_id, network_id, device_id, epoch,
                 public_key, fingerprint, valid_from, state) OVERRIDING SYSTEM VALUE
                 VALUES ($7, $1::UUID, $2, $3, $4, 1, $5, $6, clock_timestamp(), 'active')`,
-				shareScaleUUID(t), shareScaleWorkspace, networkID, device.id, machine[:], fingerprint[:], 6*shareScaleDeviceBase+offset)
-			batch.Queue(`INSERT INTO mesh.device_node_key_epoch (id, public_id, workspace_id, network_id, device_id, epoch,
+			shareScaleUUID(t), shareScaleWorkspace, networkID, device.id, machine[:], fingerprint[:], 6*shareScaleDeviceBase+offset)
+		batch.Queue(`INSERT INTO mesh.device_node_key_epoch (id, public_id, workspace_id, network_id, device_id, epoch,
                 public_key, fingerprint, valid_from, state) OVERRIDING SYSTEM VALUE
                 VALUES ($7, $1::UUID, $2, $3, $4, 1, $5, $6, clock_timestamp(), 'active')`,
-				shareScaleUUID(t), shareScaleWorkspace, networkID, device.id, key[:], keyFingerprint[:], 7*shareScaleDeviceBase+offset)
-			batch.Queue(`INSERT INTO mesh.node_address_lease (id, public_id, workspace_id, network_id, address_realm_id,
+			shareScaleUUID(t), shareScaleWorkspace, networkID, device.id, key[:], keyFingerprint[:], 7*shareScaleDeviceBase+offset)
+		batch.Queue(`INSERT INTO mesh.node_address_lease (id, public_id, workspace_id, network_id, address_realm_id,
                 address_pool_id, network_prefix_id, device_id, address, family, generation, lease_role, state, created_at)
                 OVERRIDING SYSTEM VALUE
                 VALUES ($9, $1::UUID, $2, $3, $4, $5, $6, $7, $8::INET, 4, 1, 'primary', 'active', transaction_timestamp() - interval '1 second')`,
-				shareScaleUUID(t), shareScaleWorkspace, networkID, row.realm, row.pool, prefixID, device.id, device.address.String(),
-				8*shareScaleDeviceBase+2*offset)
-			if device.address6.IsValid() {
-				batch.Queue(`INSERT INTO mesh.node_address_lease (id, public_id, workspace_id, network_id, address_realm_id,
+			shareScaleUUID(t), shareScaleWorkspace, networkID, row.realm, row.pool, prefixID, device.id, device.address.String(),
+			8*shareScaleDeviceBase+2*offset)
+		if device.address6.IsValid() {
+			batch.Queue(`INSERT INTO mesh.node_address_lease (id, public_id, workspace_id, network_id, address_realm_id,
                     address_pool_id, network_prefix_id, device_id, address, family, generation, lease_role, state, created_at)
                     OVERRIDING SYSTEM VALUE
                     VALUES ($9, $1::UUID, $2, $3, $4, $5, $6, $7, $8::INET, 6, 1, 'primary', 'active', transaction_timestamp() - interval '1 second')`,
-					shareScaleUUID(t), shareScaleWorkspace, networkID, row6.realm, row6.pool, row6.prefixID, device.id, device.address6.String(),
-					8*shareScaleDeviceBase+2*offset+1)
-			}
-		}
-		results := tx.SendBatch(ctx, batch)
-		for range batch.Len() {
-			if _, err := results.Exec(); err != nil {
-				_ = results.Close()
-				t.Fatalf("seed share scale Devices in Network %d: %v", networkID, err)
-			}
-		}
-		if err := results.Close(); err != nil {
-			t.Fatal(err)
+				shareScaleUUID(t), shareScaleWorkspace, networkID, row6.realm, row6.pool, row6.prefixID, device.id, device.address6.String(),
+				8*shareScaleDeviceBase+2*offset+1)
 		}
 	}
-	for _, side := range []struct {
-		network  int64
-		row      prefixRow
-		prefixID int64
-		row6     prefixRow
-		devices  []shareScaleDevice
-		prefix   string
-	}{
-		{shareScaleProvider, provider, scalePrefixID, provider6, providers, scalePrefix},
-		{shareScaleConsumer, consumerPrefix, consumerPrefix.prefixID, consumer6, []shareScaleDevice{consumer}, ""},
-	} {
-		var revision int64
-		if err := admin.QueryRow(ctx, `SELECT network_revision + 1 FROM mesh_ops.network_revision WHERE workspace_id = $1 AND network_id = $2`,
-			shareScaleWorkspace, side.network).Scan(&revision); err != nil {
-			t.Fatal(err)
+	results := tx.SendBatch(ctx, batch)
+	for range batch.Len() {
+		if _, err := results.Exec(); err != nil {
+			_ = results.Close()
+			t.Fatalf("seed share scale Devices in Network %d: %v", networkID, err)
 		}
-		commitAuditedAuthorityFixture(ctx, t, admin, authorityEvidenceFixture{
-			changePublicID: shareScaleUUID(t), eventPublicID: shareScaleUUID(t), outboxPublicID: shareScaleUUID(t),
-			streamID: side.network, aggregateKind: "device", networkRevision: revision,
-			aggregatePublicID: side.devices[0].publicID, aggregateVersion: 1,
-			action: "device.registered", permission: "system.bootstrap", outboxEventClass: "network.inventory.changed",
-		}, func(tx pgx.Tx) {
-			if _, err := tx.Exec(ctx, `UPDATE mesh_ops.network_revision SET network_revision = network_revision + 1,
-                inventory_revision = inventory_revision + 1, updated_at = clock_timestamp()
-                WHERE workspace_id = $1 AND network_id = $2`, shareScaleWorkspace, side.network); err != nil {
-				t.Fatal(err)
-			}
-			if side.prefix != "" {
-				if _, err := tx.Exec(ctx, `INSERT INTO mesh.network_prefix (id, public_id, workspace_id, network_id,
-                    address_realm_id, address_pool_id, prefix, family, state)
-                    OVERRIDING SYSTEM VALUE VALUES ($1, $2::UUID, $3, $4, $5, $6, $7::CIDR, 4, 'active')`,
-					side.prefixID, shareScaleUUID(t), shareScaleWorkspace, side.network, side.row.realm, side.row.pool, side.prefix); err != nil {
-					t.Fatalf("add the share scale prefix: %v", err)
-				}
-			}
-			insert(tx, side.network, side.row, side.prefixID, side.row6, side.devices)
-		})
 	}
-	return providers, consumer, dualStack
+	if err := results.Close(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // seedShareScaleAliasPools adds alias pools large enough for every share.
