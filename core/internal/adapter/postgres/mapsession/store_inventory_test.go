@@ -99,19 +99,37 @@ func TestStoreSharesOneInventoryReadPerRevision(t *testing.T) {
 	}
 }
 
-func TestStoreReadsCandidatesWhenTheInventoryIsOfAnotherRevision(t *testing.T) {
-	store, transaction, identity := sharedStoreFixture(t, 8, true) // the Network moved on
+// TestStoreUsesALaterInventory: the Network moved on between the Device
+// read (revision 7) and the inventory read (8); the later inventory, which
+// lists the Device unchanged under the same policy, answers without a
+// direct candidate read.
+func TestStoreUsesALaterInventory(t *testing.T) {
+	store, transaction, identity := sharedStoreFixture(t, 8, true)
+	snapshot, err := store.Load(t.Context(), identity)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	stats := store.InventoryStats()
+	if countQueries(transaction.queries, loadPeerCandidatesSQL) != 0 || len(snapshot.AuthorizedPeers()) != 1 ||
+		stats.Shared != 1 || stats.Direct != 0 {
+		t.Fatalf("queries = %v, stats %+v, want the later inventory", transaction.queries, stats)
+	}
+}
+
+// TestStoreReadsCandidatesWhenTheInventoryIsOlder: an inventory older than
+// the Device read never answers it; the Device reads its candidates.
+func TestStoreReadsCandidatesWhenTheInventoryIsOlder(t *testing.T) {
+	store, transaction, identity := sharedStoreFixture(t, 6, true)
 	// the direct re-read: a fresh Device transaction with its candidate read
 	transaction.rows = append(transaction.rows,
 		scopeRow{workspaceID: testWorkspaceID, networkID: testNetworkID, recoveryEpoch: 2},
 		internalScopeRow{workspaceID: 101, networkID: 201},
 		snapshotRow{record: validSnapshotRecord(t, identity)},
 	)
-	snapshot, err := store.Load(t.Context(), identity)
-	if err != nil {
+	if _, err := store.Load(t.Context(), identity); err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if countQueries(transaction.queries, loadPeerCandidatesSQL) != 1 || len(snapshot.AuthorizedPeers()) != 1 {
+	if countQueries(transaction.queries, loadPeerCandidatesSQL) != 1 {
 		t.Fatalf("queries = %v, want the direct candidate read", transaction.queries)
 	}
 }
@@ -154,7 +172,8 @@ func TestInventoryUsableOnlyForItsRevisionAndWindow(t *testing.T) {
 		want     bool
 	}{
 		"same revision":         {7, inventoryReadAt.Add(time.Second), true},
-		"other revision":        {8, inventoryReadAt.Add(time.Second), false},
+		"older revision asked":  {6, inventoryReadAt.Add(time.Second), true},
+		"newer revision asked":  {8, inventoryReadAt.Add(time.Second), false},
 		"older than the window": {7, inventoryReadAt.Add(31 * time.Second), false},
 		"read just after now":   {7, inventoryReadAt.Add(-time.Second), true},
 		"read long after now":   {7, inventoryReadAt.Add(-31 * time.Second), false},

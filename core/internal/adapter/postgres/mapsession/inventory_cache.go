@@ -37,14 +37,15 @@ func (cached cachedInventory) sharingBinds(numericNodeID int64) bool {
 }
 
 // usableAt reports whether the inventory answers for revision at the
-// PostgreSQL time now: same revision, no listed Device expired by now, and
+// PostgreSQL time now: that revision or a later one, no listed Device
+// expired by now, and
 // read within maxAge of now (state changes that do not advance the
 // revision, such as an owner suspension, are then picked up as before by
 // the reconcile interval). An inventory read after now is usable: it can
 // only omit Devices that expired in between, never add one.
 func (cached cachedInventory) usableAt(revision int64, now time.Time, maxAge time.Duration) bool {
 	age := now.Sub(cached.readAt)
-	return cached.inventory.IsValid() && cached.revision == revision &&
+	return cached.inventory.IsValid() && cached.revision >= revision &&
 		age <= maxAge && age >= -maxAge &&
 		(cached.expiresAt.IsZero() || now.Before(cached.expiresAt))
 }
@@ -52,7 +53,8 @@ func (cached cachedInventory) usableAt(revision int64, now time.Time, maxAge tim
 // inventoryCache keeps each Network's latest inventory and lets one caller
 // read it while concurrent callers for the same Network wait (singleflight).
 // It holds no authority of its own: every entry is a PostgreSQL read bound
-// to a revision, and a caller uses it only for that exact revision.
+// to a revision, and a caller uses it for that revision or a later one (the
+// caller checks the inventory lists it unchanged and its policy matches).
 type inventoryCache struct {
 	mu       sync.Mutex
 	entries  map[network.Scope]*inventorySlot
@@ -74,10 +76,13 @@ func newInventoryCache(maxAge time.Duration) *inventoryCache {
 // inventoryReader reads one Network's inventory in its own transaction.
 type inventoryReader func(context.Context) (cachedInventory, error)
 
-// get returns the inventory of scope for revision at PostgreSQL time now,
-// reading it at most once across concurrent callers. found is false when no
-// usable inventory exists for that exact revision (for example the Network
-// already moved on), and the caller then reads its candidates itself.
+// get returns an inventory of scope at revision or later, usable at
+// PostgreSQL time now, reading it at most once across concurrent callers.
+// While Devices join, the Network's revision moves on between a Device's read
+// and the inventory read, so an exact revision rarely meets: the later
+// inventory answers instead of every Device reading the whole Network itself
+// (O(N) each, O(N^2) while a Network fills). found is false when none is
+// usable, and the caller then reads its candidates itself.
 func (cache *inventoryCache) get(
 	ctx context.Context,
 	scope network.Scope,
@@ -85,18 +90,35 @@ func (cache *inventoryCache) get(
 	now time.Time,
 	read inventoryReader,
 ) (cachedInventory, bool, error) {
-	for attempt := 0; attempt < 2; attempt++ {
+	return cache.fetch(ctx, scope, func(cached cachedInventory) bool {
+		return cached.usableAt(revision, now, cache.maxAge)
+	}, read)
+}
+
+// inventoryFetchRounds bounds how often fetch re-checks the cache. A caller
+// that waited on a read begun before its own revision existed (round 1)
+// joins or starts the next read (round 2), which began after the first one
+// ended and so after the caller's revision; round 3 finds it.
+const inventoryFetchRounds = 3
+
+// fetch returns scope's cached inventory when usable accepts it, else reads
+// one, joining the in-flight read of a concurrent caller instead of reading
+// alongside it. Revisions only grow, so a caller that misses a read waits for
+// the next shared one rather than reading its Network on its own.
+func (cache *inventoryCache) fetch(
+	ctx context.Context,
+	scope network.Scope,
+	usable func(cachedInventory) bool,
+	read inventoryReader,
+) (cachedInventory, bool, error) {
+	for range inventoryFetchRounds {
 		cache.mu.Lock()
 		slot := cache.slotLocked(scope)
-		if slot.current.usableAt(revision, now, cache.maxAge) {
+		if usable(slot.current) {
 			slot.lastUsed = time.Now()
 			current := slot.current
 			cache.mu.Unlock()
 			return current, true, nil
-		}
-		if slot.current.revision > revision {
-			cache.mu.Unlock()
-			return cachedInventory{}, false, nil // the caller read an older revision
 		}
 		if wait := slot.loading; wait != nil {
 			cache.mu.Unlock()
@@ -125,10 +147,7 @@ func (cache *inventoryCache) get(
 		if err != nil {
 			return cachedInventory{}, false, err
 		}
-		if loaded.usableAt(revision, now, cache.maxAge) {
-			return loaded, true, nil
-		}
-		return cachedInventory{}, false, nil
+		return loaded, usable(loaded), nil
 	}
 	return cachedInventory{}, false, nil
 }
@@ -194,46 +213,7 @@ func (cache *inventoryCache) latest(
 	now time.Time,
 	read inventoryReader,
 ) (cachedInventory, bool, error) {
-	for attempt := 0; attempt < 2; attempt++ {
-		cache.mu.Lock()
-		slot := cache.slotLocked(scope)
-		if slot.current.revision >= minRevision && slot.current.freshAt(now, cache.maxAge) {
-			slot.lastUsed = time.Now()
-			current := slot.current
-			cache.mu.Unlock()
-			return current, true, nil
-		}
-		if wait := slot.loading; wait != nil {
-			cache.mu.Unlock()
-			select {
-			case <-wait:
-				continue
-			case <-ctx.Done():
-				return cachedInventory{}, false, ctx.Err()
-			}
-		}
-		done := make(chan struct{})
-		slot.loading = done
-		cache.mu.Unlock()
-
-		loaded, err := read(ctx)
-
-		cache.mu.Lock()
-		if err == nil && loaded.revision >= slot.current.revision {
-			loaded = keepIdentical(slot.current, loaded)
-			slot.current = loaded
-			slot.lastUsed = time.Now()
-		}
-		slot.loading = nil
-		close(done)
-		cache.mu.Unlock()
-		if err != nil {
-			return cachedInventory{}, false, err
-		}
-		if loaded.revision >= minRevision && loaded.freshAt(now, cache.maxAge) {
-			return loaded, true, nil
-		}
-		return cachedInventory{}, false, nil
-	}
-	return cachedInventory{}, false, nil
+	return cache.fetch(ctx, scope, func(cached cachedInventory) bool {
+		return cached.revision >= minRevision && cached.freshAt(now, cache.maxAge)
+	}, read)
 }

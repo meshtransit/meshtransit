@@ -171,8 +171,9 @@ func (store *Store) Load(
 			}
 			return shared, err
 		}
-		// No inventory answers for this exact read (the Network moved on, or
-		// the read raced a change): read the candidates directly, afresh.
+		// No inventory answers for this read (none usable, it does not list
+		// this Device unchanged, or the policy moved on): read the
+		// candidates directly, afresh.
 	}
 	read, err := store.loadSnapshot(ctx, identity, false)
 	if err == nil {
@@ -194,7 +195,10 @@ type snapshotRead struct {
 }
 
 // withSharedInventory completes a shared-inventory read with the Network's
-// inventory of exactly that revision, which must list self exactly as self.
+// inventory of that revision or a later one, which must list self exactly as
+// self and carry the same policy revision; the peers are then those of the
+// later revision, which only removes revoked ones and adds Devices the same
+// policy admits.
 func (store *Store) withSharedInventory(ctx context.Context, read snapshotRead) (appmapsession.Snapshot, bool, error) {
 	scope := read.snapshot.Scope()
 	cached, found, err := store.inventories.get(ctx, scope, read.revision, read.readAt,
