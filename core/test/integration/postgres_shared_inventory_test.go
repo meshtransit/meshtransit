@@ -6,11 +6,13 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	postgresmapsession "meshtransit.net/core/internal/adapter/postgres/mapsession"
 	"meshtransit.net/core/internal/control"
 	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/node"
@@ -66,6 +68,7 @@ func assertSharedInventoryMatchesDirectRead(
 		if !reflect.DeepEqual(got.AuthorizedPeers(), want.AuthorizedPeers()) {
 			t.Fatalf("identity %d: shared peers %+v differ from direct %+v", index, got.AuthorizedPeers(), want.AuthorizedPeers())
 		}
+		assertSecondSharedLoadMatches(ctx, t, shared, identity, index, want)
 		declinesBefore := shared.InventoryStats().SharingDeclines
 		if derived, found, err := shared.Derive(ctx, got, 0); err != nil {
 			t.Fatalf("identity %d: Derive() error = %v", index, err)
@@ -114,8 +117,54 @@ func assertSharedInventoryMatchesDirectRead(
 		t.Fatalf("unchanged counter %d, %d of %d derived snapshots unchanged", stats.Unchanged, unchangedCount,
 			derivedCount)
 	}
-	if loaded > 0 && (stats.Shared != uint64(loaded) || stats.Reads == 0) {
+	if loaded > 0 && (stats.Shared != uint64(2*loaded) || stats.Reads == 0) {
 		t.Fatalf("shared inventory never used: %+v", stats)
+	}
+	// Each read that expanded the Network policy (or read it for a shadow
+	// check) is one that skipped the share readers; its policy was compared
+	// with the direct read above.
+	if stats.PoliciesExpanded+stats.PolicyShadowChecks > stats.SharesSkipped {
+		t.Fatalf("policies expanded for a Device whose shares were read: %+v", stats)
+	}
+}
+
+// sharedPoliciesExpanded counts, across the migration test, the second
+// shared loads that expanded the Network policy and matched the direct read.
+var sharedPoliciesExpanded atomic.Uint64
+
+// assertSecondSharedLoadMatches loads identity through the shared store
+// again, now that its Network's inventory is cached: a Device in no share
+// then skips the share readers and expands the Network policy instead of
+// reading its own (or reads it for a shadow check), and the snapshot must
+// still equal the direct read.
+func assertSecondSharedLoadMatches(
+	ctx context.Context,
+	t *testing.T,
+	shared *postgresmapsession.Store,
+	identity control.AuthenticatedNode,
+	index int,
+	want mapsession.Snapshot,
+) {
+	t.Helper()
+	before := shared.InventoryStats()
+	got, err := shared.Load(ctx, identity)
+	if err != nil {
+		t.Fatalf("identity %d: second shared Load() error = %v", index, err)
+	}
+	after := shared.InventoryStats()
+	if !got.PacketPolicy().Equal(want.PacketPolicy()) ||
+		!reflect.DeepEqual(got.PeerCandidates(), want.PeerCandidates()) ||
+		!reflect.DeepEqual(got.AuthorizedPeers(), want.AuthorizedPeers()) ||
+		!reflect.DeepEqual(got.InboundPacketRules(), want.InboundPacketRules()) {
+		t.Fatalf("identity %d: second shared snapshot (policy expanded %t) differs from direct read",
+			index, after.PoliciesExpanded > before.PoliciesExpanded)
+	}
+	sharedPoliciesExpanded.Add(after.PoliciesExpanded - before.PoliciesExpanded)
+	skipped := after.SharesSkipped - before.SharesSkipped
+	policies := (after.PoliciesExpanded - before.PoliciesExpanded) + (after.PolicyShadowChecks - before.PolicyShadowChecks)
+	if skipped != policies {
+		t.Fatalf("identity %d: %d reads skipped the share readers but %d expanded or shadow-checked the policy",
+			index, skipped, policies)
 	}
 }
 

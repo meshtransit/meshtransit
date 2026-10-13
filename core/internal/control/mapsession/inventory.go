@@ -7,6 +7,7 @@ import (
 
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/policy"
 )
 
 // MaximumNetworkDevices bounds one Network inventory: the live Devices one
@@ -359,6 +360,24 @@ func (snapshot Snapshot) WithInventory(inventory NetworkInventory) (Snapshot, er
 	}
 	params := snapshot.params()
 	params.PeerCandidates, params.Inventory = nil, inventory
+	next, err := NewSnapshot(params)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	next.relayGrant = snapshot.relayGrant
+	return next, nil
+}
+
+// WithInventoryPolicy is WithInventory that also replaces the packet policy
+// with one of the same revision: the policy the Network's policy, read with
+// the inventory, expands to for this Device.
+func (snapshot Snapshot) WithInventoryPolicy(inventory NetworkInventory, packetPolicy policy.Snapshot) (Snapshot, error) {
+	if !snapshot.valid || !inventory.IsValid() || !packetPolicy.IsValid() ||
+		packetPolicy.Revision() != snapshot.packetPolicy.Revision() {
+		return Snapshot{}, ErrInvalidSnapshot
+	}
+	params := snapshot.params()
+	params.PeerCandidates, params.Inventory, params.PacketPolicy = nil, inventory, packetPolicy
 	next, err := NewSnapshot(params)
 	if err != nil {
 		return Snapshot{}, err

@@ -134,6 +134,7 @@ type mapInventoryCollector struct {
 	snapshots  *prometheus.Desc
 	reads      *prometheus.Desc
 	mismatches *prometheus.Desc
+	policies   *prometheus.Desc
 }
 
 func newMapInventoryCollector(stats func() postgresmapsession.InventoryStats) *mapInventoryCollector {
@@ -146,6 +147,8 @@ func newMapInventoryCollector(stats func() postgresmapsession.InventoryStats) *m
 		// Alert on: increase(meshtransit_map_inventory_policy_mismatches_total[15m]) > 0
 		mismatches: prometheus.NewDesc("meshtransit_map_inventory_policy_mismatches_total",
 			"Devices whose policy expanded from the Network policy differed from their own read.", nil, nil),
+		policies: prometheus.NewDesc("meshtransit_map_snapshot_policies_total",
+			"Packet policies of shared map reads by source: expanded from the Network policy, or read for a shadow check against that expansion.", []string{"source"}, nil),
 	}
 }
 
@@ -153,6 +156,7 @@ func (collector *mapInventoryCollector) Describe(descriptions chan<- *prometheus
 	descriptions <- collector.snapshots
 	descriptions <- collector.reads
 	descriptions <- collector.mismatches
+	descriptions <- collector.policies
 }
 
 func (collector *mapInventoryCollector) Collect(metrics chan<- prometheus.Metric) {
@@ -163,6 +167,8 @@ func (collector *mapInventoryCollector) Collect(metrics chan<- prometheus.Metric
 	metrics <- prometheus.MustNewConstMetric(collector.snapshots, prometheus.CounterValue, float64(stats.Unchanged), "unchanged")
 	metrics <- prometheus.MustNewConstMetric(collector.reads, prometheus.CounterValue, float64(stats.Reads))
 	metrics <- prometheus.MustNewConstMetric(collector.mismatches, prometheus.CounterValue, float64(stats.PolicyMismatches))
+	metrics <- prometheus.MustNewConstMetric(collector.policies, prometheus.CounterValue, float64(stats.PoliciesExpanded), "expanded")
+	metrics <- prometheus.MustNewConstMetric(collector.policies, prometheus.CounterValue, float64(stats.PolicyShadowChecks), "shadow")
 }
 
 func loadRelayDirectory(

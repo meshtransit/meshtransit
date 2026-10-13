@@ -446,6 +446,11 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertMapReaderPlansScale(ctx, t)
 	assertMapInventoryChanges(ctx, t)
 	assertMapNetworkDirectEndpoints(ctx, t, adminConnection)
+	// The policy publication, group and tag fixtures above compared maps
+	// whose packet policy was expanded from the Network policy.
+	if sharedPoliciesExpanded.Load() == 0 {
+		t.Fatal("no shared map load expanded the Network policy")
+	}
 	// Last, so every evidence writer exercised above is covered.
 	assertAuditSealV2(ctx, t, adminConnection)
 }

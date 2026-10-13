@@ -101,11 +101,22 @@ type InventoryStats struct {
 	// completed with showed one.
 	SharesSkipped uint64
 	ShareRechecks uint64
+	// PoliciesExpanded reads did not read the Device's packet policy: it was
+	// expanded from the Network policy of the inventory the read was
+	// completed with. PolicyShadowChecks of the reads that could have done so
+	// read it anyway and compared (PolicyMismatches counts differences).
+	PoliciesExpanded   uint64
+	PolicyShadowChecks uint64
 }
+
+// policyShadowInterval: one in this many reads that could expand the
+// Device's packet policy reads it as well and compares, so a divergence of
+// the two still shows in PolicyMismatches.
+const policyShadowInterval = 64
 
 type inventoryStats struct {
 	shared, reads, direct, policyMismatch, derived, unchanged, sharingDeclines, changeReads, changeFallbacks,
-	sharesSkipped, shareRechecks atomic.Uint64
+	sharesSkipped, shareRechecks, policiesExpanded, policyShadowChecks, policyCandidates atomic.Uint64
 }
 
 // InventoryStats returns the counters since the store was built.
@@ -115,12 +126,14 @@ func (store *Store) InventoryStats() InventoryStats {
 		Derived: store.stats.derived.Load(), Unchanged: store.stats.unchanged.Load(),
 		SharingDeclines: store.stats.sharingDeclines.Load(), ChangeReads: store.stats.changeReads.Load(),
 		ChangeFallbacks: store.stats.changeFallbacks.Load(), SharesSkipped: store.stats.sharesSkipped.Load(),
-		ShareRechecks: store.stats.shareRechecks.Load()}
+		ShareRechecks: store.stats.shareRechecks.Load(), PoliciesExpanded: store.stats.policiesExpanded.Load(),
+		PolicyShadowChecks: store.stats.policyShadowChecks.Load()}
 }
 
-// policyMatches checks, for a Device without direct projections, that the
-// Network policy expanded for it equals its own policy read (scale-out S2
-// shadow phase). A Device with direct projections keeps its own read.
+// policyMatches checks, for a read that read the Device's own packet policy,
+// that the Network policy expanded for it equals that read: a Device a share
+// binds (unless it has direct projections, whose own read is kept), or a
+// shadow check of the expansion other reads use instead (withExpandedPolicy).
 func (store *Store) policyMatches(cached cachedInventory, read snapshotRead) bool {
 	snapshot := read.snapshot
 	if !cached.policy.IsValid() || cached.policy.Revision() != snapshot.PacketPolicy().Revision() {
@@ -212,6 +225,10 @@ type snapshotRead struct {
 	// endpoint reader did not run (the Network held no such endpoint).
 	sharesSkipped bool
 	directSkipped bool
+	// policyDeferred: the Device's packet policy was not read; the snapshot
+	// holds an empty one (which admits nothing) of the Device's policy
+	// revision until withSharedInventory expands the Network policy.
+	policyDeferred bool
 }
 
 // withSharedInventory completes a shared-inventory read with the Network's
@@ -232,7 +249,7 @@ func (store *Store) withSharedInventory(ctx context.Context, read snapshotRead) 
 	if !found {
 		return appmapsession.Snapshot{}, false, nil
 	}
-	if !store.policyMatches(cached, read) {
+	if !read.policyDeferred && !store.policyMatches(cached, read) {
 		return appmapsession.Snapshot{}, false, nil
 	}
 	if (read.sharesSkipped && !cached.sharesAbsent(read.snapshot.NumericNodeID())) ||
@@ -248,11 +265,40 @@ func (store *Store) withSharedInventory(ctx context.Context, read snapshotRead) 
 		self.MachineKey() != read.snapshot.MachineKey() || self.NodeKey() != read.snapshot.NodeKey() {
 		return appmapsession.Snapshot{}, false, nil
 	}
+	if read.policyDeferred {
+		return store.withExpandedPolicy(cached, read)
+	}
 	snapshot, err := read.snapshot.WithInventory(inventory)
 	if err != nil {
 		return appmapsession.Snapshot{}, false, errors.Join(ErrSnapshotEvidence, err)
 	}
 	return snapshot, true, nil
+}
+
+// withExpandedPolicy completes a read that deferred its packet policy: the
+// policy is the Network policy of the completing inventory (of the read's
+// revision or later, listing self as read) expanded for the Device at the
+// read's time, as the peers come from that inventory. The policy revisions
+// must match; a Device beyond the rule limit is read on its own, which
+// reports the limit.
+func (store *Store) withExpandedPolicy(cached cachedInventory, read snapshotRead) (appmapsession.Snapshot, bool, error) {
+	snapshot := read.snapshot
+	if !cached.policy.IsValid() || cached.policy.Revision() != snapshot.PacketPolicy().Revision() {
+		return appmapsession.Snapshot{}, false, nil
+	}
+	expanded, err := cached.policy.For(snapshot.NodeID(), read.readAt, store.options.PolicyRuleLimit)
+	if errors.Is(err, appmapsession.ErrPacketPolicyLimit) {
+		return appmapsession.Snapshot{}, false, nil
+	}
+	if err != nil {
+		return appmapsession.Snapshot{}, false, errors.Join(ErrSnapshotEvidence, err)
+	}
+	completed, err := snapshot.WithInventoryPolicy(cached.inventory, expanded)
+	if err != nil {
+		return appmapsession.Snapshot{}, false, errors.Join(ErrSnapshotEvidence, err)
+	}
+	store.stats.policiesExpanded.Add(1)
+	return completed, true, nil
 }
 
 // loadSnapshot reads one Device's snapshot in one repeatable-read
@@ -364,13 +410,21 @@ func (store *Store) loadSnapshot(
 			return snapshotRead{}, err
 		}
 	}
-	packetPolicy, err := store.loadPacketPolicy(
-		ctx,
-		transaction,
-		scope,
-		record.numericNodeID,
-		record.policyRevision,
-	)
+	// The share readers authenticate the Device again and scan for its
+	// shares; a shared read skips them when the Network's latest inventory
+	// shows the Device takes part in no share, and withSharedInventory
+	// checks that against the inventory it completes the read with.
+	// The legacy direct endpoint reader is skipped alone when the Network
+	// holds no such endpoint, whatever shares the Device takes part in.
+	skipShares, skipDirect, deferPolicy := false, false, false
+	if shared {
+		if cached, found := store.inventories.peek(scope); found {
+			skipShares = cached.sharesAbsent(record.numericNodeID)
+			skipDirect = !cached.directEndpoints
+			deferPolicy = skipShares && store.deferPolicy(cached, record.policyRevision)
+		}
+	}
+	packetPolicy, err := store.readOrDeferPacketPolicy(ctx, transaction, scope, record, deferPolicy)
 	if err != nil {
 		return snapshotRead{}, err
 	}
@@ -384,19 +438,6 @@ func (store *Store) loadSnapshot(
 	)
 	if err != nil {
 		return snapshotRead{}, err
-	}
-	// The share readers authenticate the Device again and scan for its
-	// shares; a shared read skips them when the Network's latest inventory
-	// shows the Device takes part in no share, and withSharedInventory
-	// checks that against the inventory it completes the read with.
-	// The legacy direct endpoint reader is skipped alone when the Network
-	// holds no such endpoint, whatever shares the Device takes part in.
-	skipShares, skipDirect := false, false
-	if shared {
-		if cached, found := store.inventories.peek(scope); found {
-			skipShares = cached.sharesAbsent(record.numericNodeID)
-			skipDirect = !cached.directEndpoints
-		}
 	}
 	if skipShares {
 		store.stats.sharesSkipped.Add(1)
@@ -413,8 +454,45 @@ func (store *Store) loadSnapshot(
 	return snapshotRead{
 		snapshot: snapshot, complete: !shared, revision: record.networkRevision, readAt: record.readAt,
 		workspaceValue: workspaceValue, networkValue: networkValue, sharesSkipped: skipShares,
-		directSkipped: skipShares || skipDirect,
+		directSkipped: skipShares || skipDirect, policyDeferred: deferPolicy,
 	}, nil
+}
+
+// deferPolicy reports whether a shared read of a Device in no share may skip
+// its packet policy read, to expand the Network policy instead: the latest
+// inventory carries a policy of the Device's policy revision, and this is
+// not one of the reads kept as shadow checks.
+func (store *Store) deferPolicy(cached cachedInventory, policyRevision int64) bool {
+	if !cached.policy.IsValid() || cached.policy.Revision() != policyRevision {
+		return false
+	}
+	if store.stats.policyCandidates.Add(1)%policyShadowInterval == 0 {
+		store.stats.policyShadowChecks.Add(1)
+		return false
+	}
+	return true
+}
+
+// readOrDeferPacketPolicy reads the Device's packet policy, or, when
+// deferred, returns an empty policy of the Device's policy revision that
+// admits nothing until withSharedInventory replaces it.
+func (store *Store) readOrDeferPacketPolicy(
+	ctx context.Context,
+	transaction databaseTransaction,
+	scope network.Scope,
+	record snapshotRecord,
+	deferred bool,
+) (policy.Snapshot, error) {
+	if !deferred {
+		return store.loadPacketPolicy(ctx, transaction, scope, record.numericNodeID, record.policyRevision)
+	}
+	placeholder, err := policy.NewSnapshot(policy.SnapshotParams{
+		Scope: scope, Revision: record.policyRevision, Rules: []policy.Rule{},
+	})
+	if err != nil {
+		return policy.Snapshot{}, errors.Join(ErrSnapshotEvidence, err)
+	}
+	return placeholder, nil
 }
 
 func (store *Store) loadPacketPolicy(
