@@ -250,6 +250,31 @@ FROM mesh_ops.decide_resource_share_offer_v5(
     $21::BIGINT, $22::BIGINT, $23::TIMESTAMPTZ
 )`
 
+// decideSingleResourceShareOfferSQL is v5 refusing a second live share of
+// one Device into one Network (schema 151, MT013). Used once runtime may run it.
+const decideSingleResourceShareOfferSQL = `SELECT
+    provider_network_revision,
+    provider_sharing_revision,
+    consumer_network_revision,
+    consumer_sharing_revision,
+    offer_version,
+    contract_version,
+    imported_resource_version,
+    contract_state,
+    access_name_version
+FROM mesh_ops.decide_resource_share_offer_v6(
+    $1::BIGINT, $2::BIGINT, $3::BIGINT, $4::BIGINT,
+    $5::UUID, $6::UUID, $7::UUID, $8::UUID, $9::UUID,
+    $10::BIGINT, $11::BYTEA, $12::TEXT, $13::UUID, $14::UUID,
+    $15::TEXT, $16::UUID, $17::TEXT,
+    $18::BIGINT, $19::BIGINT, $20::BIGINT,
+    $21::BIGINT, $22::BIGINT, $23::TIMESTAMPTZ
+)`
+
+const singleShareDecisionGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
+    pg_catalog.to_regprocedure('mesh_ops.decide_resource_share_offer_v6(bigint,bigint,bigint,bigint,uuid,uuid,uuid,uuid,uuid,bigint,bytea,text,uuid,uuid,text,uuid,text,bigint,bigint,bigint,bigint,bigint,timestamp with time zone)'),
+    'EXECUTE'), FALSE)`
+
 const limitedShareDecisionGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
     pg_catalog.to_regprocedure('mesh_ops.decide_resource_share_offer_v5(bigint,bigint,bigint,bigint,uuid,uuid,uuid,uuid,uuid,bigint,bytea,text,uuid,uuid,text,uuid,text,bigint,bigint,bigint,bigint,bigint,timestamp with time zone)'),
     'EXECUTE'), FALSE)`

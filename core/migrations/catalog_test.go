@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 149 {
-		t.Fatalf("len(Catalog()) = %d, want 149", len(catalog))
+	if len(catalog) != 151 {
+		t.Fatalf("len(Catalog()) = %d, want 151", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 149 {
-		t.Fatalf("LatestVersion() = %d, want 149", LatestVersion())
+	if LatestVersion() != 151 {
+		t.Fatalf("LatestVersion() = %d, want 151", LatestVersion())
 	}
 }
 
@@ -3701,6 +3701,59 @@ func TestShareMapReaderSelection(t *testing.T) {
 	} {
 		if !strings.Contains(operator, want) {
 			t.Errorf("operator step 149 must contain %q", want)
+		}
+	}
+}
+
+func TestPolicyAttachJoinOrder(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[149]
+	if migration.Version != 150 {
+		t.Fatalf("migration 150 = %+v", migration)
+	}
+	for _, version := range []string{"v1", "v2"} {
+		want := "ALTER FUNCTION mesh_ops.attach_policy_imported_resource_destinations_internal_" + version +
+			"(\n    UUID, TIMESTAMPTZ, JSONB, JSONB\n) SET join_collapse_limit = 1 SET from_collapse_limit = 1;"
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 150 must fix the join order of attach %s", version)
+		}
+	}
+	for _, forbidden := range []string{"CREATE", "DROP ", "GRANT", "REVOKE", "OWNER", "SECURITY", "search_path", "INSERT", "UPDATE"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 150 must not contain %q", forbidden)
+		}
+	}
+}
+
+func TestDeviceSharedOnce(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[150]
+	if migration.Version != 151 {
+		t.Fatalf("migration 151 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.device_already_shared_v1(",
+		"LANGUAGE sql VOLATILE PARALLEL UNSAFE SECURITY DEFINER",
+		"AND contract.public_id IS DISTINCT FROM p_except_contract_public_id",
+		"AND contract.state IN ('activating', 'active')",
+		"TO mesh_share_writer;",
+		"CREATE FUNCTION mesh_ops.decide_resource_share_offer_v6(",
+		"RETURN QUERY SELECT * FROM mesh_ops.decide_resource_share_offer_v5(",
+		"RAISE EXCEPTION USING ERRCODE = 'MT013'",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 151 must contain %q", want)
+		}
+	}
+	for _, forbidden := range []string{"CREATE OR REPLACE", "BYPASSRLS", "DROP ", "decide_resource_share_offer_v4("} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 151 must not contain %q", forbidden)
+		}
+	}
+	operator := DeviceSharedOnceOwnershipSQL()
+	for _, want := range []string{") OWNER TO mesh_share_writer;", "BIGINT, BIGINT, BIGINT, BIGINT, BIGINT, TIMESTAMPTZ\n) TO mesh_runtime;"} {
+		if !strings.Contains(operator, want) {
+			t.Errorf("operator step 151 must contain %q", want)
 		}
 	}
 }

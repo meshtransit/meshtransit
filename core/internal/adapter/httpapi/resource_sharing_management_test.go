@@ -409,6 +409,10 @@ func TestSharingErrorsDoNotLeakAuthorityDetails(t *testing.T) {
 			err:    errors.Join(sharing.ErrShareLimitReached, sharing.ErrConflict),
 			status: http.StatusConflict, code: "share_limit_reached",
 		},
+		{
+			err:    errors.Join(sharing.ErrAlreadyShared, sharing.ErrConflict),
+			status: http.StatusConflict, code: "device_already_shared",
+		},
 		{err: sharing.ErrUnavailable, status: http.StatusServiceUnavailable, code: "operation_unavailable"},
 		{err: errors.New("sensitive database detail"), status: http.StatusInternalServerError, code: "internal_failure"},
 	} {

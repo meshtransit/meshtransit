@@ -197,3 +197,11 @@ var shareMapReaderSelectionOwnershipSQL string
 // map reader and exposes them to runtime; v5 and v3 stay executable for
 // rollback.
 func ShareMapReaderSelectionOwnershipSQL() string { return shareMapReaderSelectionOwnershipSQL }
+
+//go:embed operator/000151_device_shared_once_ownership.sql
+var deviceSharedOnceOwnershipSQL string
+
+// DeviceSharedOnceOwnershipSQL hands decide v6, which refuses a second live
+// share of one Device into one Network (schema 151), to the share writer and
+// exposes it to runtime; decide v5 stays executable for rollback.
+func DeviceSharedOnceOwnershipSQL() string { return deviceSharedOnceOwnershipSQL }

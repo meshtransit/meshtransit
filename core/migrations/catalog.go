@@ -516,6 +516,8 @@ func Catalog() []Migration {
 		newMigration(147, "Share map reader scale", shareMapReaderScaleSQL),
 		newMigration(148, "Policy Imported Resource scale", policyImportedResourceScaleSQL),
 		newMigration(149, "Share map reader selection", shareMapReaderSelectionSQL),
+		newMigration(150, "Policy attach join order", policyAttachJoinOrderSQL),
+		newMigration(151, "Device shared once per Network", deviceSharedOnceSQL),
 	}
 }
 
@@ -742,3 +744,9 @@ var policyImportedResourceScaleSQL string
 
 //go:embed 000149_share_map_reader_selection.up.sql
 var shareMapReaderSelectionSQL string
+
+//go:embed 000150_policy_attach_join_order.up.sql
+var policyAttachJoinOrderSQL string
+
+//go:embed 000151_device_shared_once.up.sql
+var deviceSharedOnceSQL string

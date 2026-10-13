@@ -49,6 +49,9 @@ var (
 	// receiving Network or the shared Device already has the most live shares
 	// one map carries.
 	ErrShareLimitReached = errors.New("sharing: share limit reached")
+	// ErrAlreadyShared reports, together with ErrConflict, that the Device is
+	// already shared into the receiving Network by another live share.
+	ErrAlreadyShared = errors.New("sharing: Device already shared into the Network")
 	// ErrUnavailable reports an unavailable authoritative dependency.
 	ErrUnavailable = errors.New("sharing: unavailable")
 )

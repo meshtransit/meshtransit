@@ -82,3 +82,27 @@ func assertPolicyImportedResourceScalePrivileges(ctx context.Context, t *testing
 		}
 	}
 }
+
+// assertDeviceSharedOncePrivileges checks the schema 151 guard after its
+// operator step: runtime accepts through decide v6 and cannot ask whether a
+// Device is shared; the share writer can.
+func assertDeviceSharedOncePrivileges(ctx context.Context, t *testing.T, admin *pgx.Conn) {
+	t.Helper()
+	const decide = "mesh_ops.decide_resource_share_offer_v6(bigint,bigint,bigint,bigint,uuid,uuid,uuid,uuid,uuid,bigint,bytea,text,uuid,uuid,text,uuid,text,bigint,bigint,bigint,bigint,bigint,timestamp with time zone)"
+	const shared = "mesh_ops.device_already_shared_v1(bigint,bigint,bigint,bigint,bigint,uuid)"
+	for _, check := range []struct {
+		role, function string
+		want           bool
+	}{
+		{"mesh_runtime", decide, true}, {"mesh_worker", decide, false},
+		{"mesh_runtime", shared, false}, {"mesh_worker", shared, false}, {"mesh_share_writer", shared, true},
+	} {
+		var allowed bool
+		if err := admin.QueryRow(ctx, `SELECT has_function_privilege($1, $2, 'EXECUTE')`, check.role, check.function).Scan(&allowed); err != nil {
+			t.Fatalf("%s on %s: %v", check.role, check.function, err)
+		}
+		if allowed != check.want {
+			t.Fatalf("%s EXECUTE on %s = %t, want %t", check.role, check.function, allowed, check.want)
+		}
+	}
+}

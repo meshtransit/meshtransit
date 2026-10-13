@@ -21,9 +21,13 @@ import (
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	"meshtransit.net/core/internal/control"
 	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/accessgraph/simulation"
 	"meshtransit.net/core/internal/domain/deployment"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/policy"
+	"meshtransit.net/core/internal/domain/policy/compilation"
+	publication "meshtransit.net/core/internal/domain/policy/publication"
 	"meshtransit.net/core/internal/domain/resource"
 	"meshtransit.net/core/internal/domain/resource/authority"
 	"meshtransit.net/core/internal/domain/sharing"
@@ -121,7 +125,15 @@ func TestPostgreSQLShareScale(t *testing.T) {
 	step("create resources", func() { resources = createShareScaleResources(ctx, t, admin, runtimePool, session, providers) })
 	var contracts []sharing.Contract
 	step("create shares", func() { contracts = createShareScaleShares(ctx, t, runtimePool, session, resources) })
-	step("publish rules", func() { seedShareScaleRelease(ctx, t, admin, consumer) })
+	if os.Getenv("MESHTRANSIT_SHARE_SCALE_PUBLISH") != "" {
+		// Publish the rules through Core's publication path instead of SQL.
+		step("publish rules", func() {
+			seedShareScaleRelease(ctx, t, admin, consumer, false)
+			publishShareScaleRules(ctx, t, runtimePool, session, consumer, contracts)
+		})
+	} else {
+		step("publish rules", func() { seedShareScaleRelease(ctx, t, admin, consumer, true) })
+	}
 	// Bulk-loaded tables have no statistics until autovacuum analyzes them;
 	// measure the steady state (MESHTRANSIT_SHARE_SCALE_COLD=1 skips this).
 	if os.Getenv("MESHTRANSIT_SHARE_SCALE_COLD") == "" {
@@ -560,7 +572,7 @@ func createShareScaleShares(ctx context.Context, t *testing.T, pool *postgresada
 // compiled destinations give the consumer Device a rule to every share, and
 // records both sides as alias clients. It writes the rows the publication
 // writer would, in one statement each.
-func seedShareScaleRelease(ctx context.Context, t *testing.T, admin *pgx.Conn, consumer shareScaleDevice) {
+func seedShareScaleRelease(ctx context.Context, t *testing.T, admin *pgx.Conn, consumer shareScaleDevice, release bool) {
 	t.Helper()
 	tx, err := admin.Begin(ctx)
 	if err != nil {
@@ -624,6 +636,9 @@ func seedShareScaleRelease(ctx context.Context, t *testing.T, admin *pgx.Conn, c
 			[]any{consumer.id, releaseID, shareScaleWorkspace, shareScaleConsumer, shareScaleDeviceBase}},
 		{"origin", `SET LOCAL session_replication_role = origin`, nil},
 	} {
+		if !release && statement.name != "replica" && statement.name != "client versions" && statement.name != "origin" {
+			continue
+		}
 		if _, err := tx.Exec(ctx, statement.query, statement.args...); err != nil {
 			t.Fatalf("share scale release %s: %v", statement.name, err)
 		}
@@ -631,6 +646,81 @@ func seedShareScaleRelease(ctx context.Context, t *testing.T, admin *pgx.Conn, c
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("commit share scale release: %v", err)
 	}
+}
+
+// publishShareScaleRules gives the consumer Device a rule to every share
+// through policy simulation and management publication, as the Console does.
+func publishShareScaleRules(ctx context.Context, t *testing.T, pool *postgresadapter.Pool, session accountsession.Session,
+	consumer shareScaleDevice, contracts []sharing.Contract,
+) {
+	t.Helper()
+	scope := resourceAuthorityScope(t, int(shareScaleWorkspace), int(shareScaleConsumer))
+	baselines, err := postgresadapter.NewPolicySimulationStore(pool, postgresadapter.PolicySimulationOptions{
+		StatementTimeout: time.Minute, LockTimeout: 10 * time.Second, IdleTimeout: time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline, err := baselines.ReadSimulationBaseline(ctx, session, scope, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("read consumer policy baseline: %v", err)
+	}
+	source, err := node.ParseID(consumer.publicID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := policy.NewPortRange(443, 443)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intents := make([]compilation.RuleIntent, 0, len(contracts))
+	for index, contract := range contracts {
+		id, err := policy.ParseRuleID(fmt.Sprintf("01890f99-0000-7000-8000-%012x", index+1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		intent, err := compilation.NewRuleIntent(compilation.RuleIntentParams{
+			ID: id, Scope: scope, SourceNodeID: source, DestinationImportedResourceID: contract.ImportedResourceID(),
+			Protocol: policy.ProtocolTCP, DestinationPortRanges: []policy.PortRange{port},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		intents = append(intents, intent)
+	}
+	request, err := compilation.NewRequest(compilation.RequestParams{
+		Scope: scope, Revision: baseline.RevisionVector().PolicyRevision() + 1, Rules: intents,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler := newIntegrationPolicyCompiler(t, pool, newIntegrationResourceSharingStore(t, pool))
+	simulator, err := simulation.NewService(simulation.Dependencies{Baselines: baselines, Compiler: compiler, Clock: simulation.SystemClock{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	added, err := simulator.Simulate(ctx, session, request)
+	if err != nil {
+		t.Fatalf("simulate %d shared rules: %v", len(intents), err)
+	}
+	t.Logf("simulate %d shared rules: %v", len(intents), time.Since(started).Round(time.Millisecond))
+	reason, err := publication.NewAuditReason("share scale load test rules")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, err := publication.NewManagementCommand(publication.ManagementCommandParams{
+		Candidate: added.ProposedCandidate(), BasePolicyRevision: baseline.RevisionVector().PolicyRevision(),
+		AccountSession: session, AuditReason: reason,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started = time.Now()
+	if _, err := newIntegrationManagementPolicyPublicationService(t, pool).Publish(ctx, command); err != nil {
+		t.Fatalf("publish %d shared rules: %v", len(intents), err)
+	}
+	t.Logf("publish %d shared rules: %v", len(intents), time.Since(started).Round(time.Millisecond))
 }
 
 // readyShareScaleAliases runs the alias worker's reserve and ready for every

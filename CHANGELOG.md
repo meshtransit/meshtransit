@@ -5,6 +5,14 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core schema 150: publishing a policy with shared Devices no longer takes
+  ~210 MB of PostgreSQL planner memory per backend (it took a POC database
+  at its memory limit down); the attach statement keeps its written join
+  order. Publishing 3,000 shared rules takes under a second and ~30 MB.
+- Core schema 151: a Device is shared into a Network at most once. A second
+  live share gave the Device a second alias there and made the maps of both
+  Devices invalid once rules used it; accepting one now fails with MT013
+  (409 `device_already_shared`).
 - MTRP MTT2 tickets (share scale step 5): a relay ticket commits to up to
   16,384 zones by digest and carries the first 32 inline; the node sends the
   rest in ZONES frames, and the relay puts the ticket in force once the list

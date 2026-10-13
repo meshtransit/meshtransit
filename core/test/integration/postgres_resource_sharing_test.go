@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"meshtransit.net/core/migrations"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -321,6 +323,15 @@ func assertPostgreSQLResourceSharing(
 	assertNetworkAliasRanges(ctx, t, admin, runtimePool, session, providerScope, consumerScope)
 	assertAuditPartitionsAndStreams(ctx, t, admin, workerPool)
 	assertAuditHistory(ctx, t, admin, runtimePool, session, providerScope, consumerScope, foreignScope)
+	// The fixtures above share this Device repeatedly into the same Network,
+	// which schema 151 refuses once its operator step runs; sameWorkspaceShare
+	// is still live here.
+	if _, err := admin.Exec(ctx, migrations.DeviceSharedOnceOwnershipSQL()); err != nil {
+		t.Fatalf("harden single-share decisions: %v", err)
+	}
+	assertDeviceSharedOncePrivileges(ctx, t, admin)
+	assertDuplicateDeviceShareRollsBack(ctx, t, admin, service, session, providerScope, consumerScope, resourceID,
+		maximumTraffic, reason)
 }
 
 func assertExpiredUnprovisionedContractCleanup(
@@ -957,6 +968,66 @@ WHERE offer.public_id = $1::UUID`, offer.Offer().ID().String()).Scan(
 			version,
 			contractCount,
 		)
+	}
+}
+
+// assertDuplicateDeviceShareRollsBack proves schema 151: while one share of
+// the Device into the consumer Network is live, accepting a second offer of
+// it fails with ErrAlreadyShared and leaves the offer open and no contract.
+func assertDuplicateDeviceShareRollsBack(
+	ctx context.Context,
+	t *testing.T,
+	admin *pgx.Conn,
+	service *sharing.Service,
+	session accountsession.Session,
+	providerScope, consumerScope network.Scope,
+	resourceID resource.ID,
+	maximumTraffic sharing.TrafficSet,
+	reason sharing.AuditReason,
+) {
+	t.Helper()
+	created, err := service.CreateOffer(ctx, mustCreateSharingOffer(
+		t, providerScope, consumerScope, resourceID, maximumTraffic, session, reason, 251, "duplicate-share",
+	))
+	if err != nil {
+		t.Fatalf("create duplicate Device offer: %v", err)
+	}
+	offer, hasOffer := created.Offer()
+	token, hasToken := created.Token()
+	if !hasOffer || !hasToken {
+		t.Fatalf("duplicate Device offer result = %+v", created)
+	}
+	importedName, err := resource.ParseDisplayName("Duplicate share of the production Resource")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, err := sharing.NewDecideOffer(sharing.DecideOfferParams{
+		ProviderScope: providerScope, ConsumerScope: consumerScope,
+		OfferID: offer.Offer().ID(), ExpectedOfferVersion: offer.Offer().Version(),
+		Token: token, Action: sharing.DecisionActionAccept,
+		ImportedDisplayName: importedName, AccessName: offer.AccessName(), AccountSession: session,
+		Reason: reason, Idempotency: resourceAuthorityProof(t, 252),
+	})
+	if err != nil {
+		t.Fatalf("construct duplicate Device decision: %v", err)
+	}
+	if _, err := service.DecideOffer(ctx, command); !errors.Is(err, sharing.ErrAlreadyShared) ||
+		!errors.Is(err, sharing.ErrConflict) {
+		t.Fatalf("accept a second share of one Device into one Network: error = %v, want already shared", err)
+	}
+	var state string
+	var version int64
+	var contractCount int
+	if err := admin.QueryRow(ctx, `SELECT offer.state, offer.version,
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh.trust_contract AS contract WHERE contract.share_offer_id = offer.id)
+FROM mesh.share_offer AS offer WHERE offer.public_id = $1::UUID`, offer.Offer().ID().String()).Scan(
+		&state, &version, &contractCount,
+	); err != nil {
+		t.Fatalf("query rolled-back duplicate Device share: %v", err)
+	}
+	if state != "offered" || version != 1 || contractCount != 0 {
+		t.Fatalf("duplicate Device share state/version/contracts = %s/%d/%d, want offered/1/0",
+			state, version, contractCount)
 	}
 }
 

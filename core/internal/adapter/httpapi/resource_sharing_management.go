@@ -1102,6 +1102,11 @@ func classifySharingError(err error) managementError {
 			Status: http.StatusConflict, Code: "share_limit_reached",
 			Message: "this Network or the shared Device already has the most shares one map carries",
 		}
+	case errors.Is(err, sharing.ErrAlreadyShared):
+		return managementError{
+			Status: http.StatusConflict, Code: "device_already_shared",
+			Message: "this Device is already shared into this Network; revoke that share first",
+		}
 	case errors.Is(err, sharing.ErrConflict):
 		return managementError{
 			Status: http.StatusConflict, Code: "conflict",

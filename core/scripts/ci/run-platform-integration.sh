@@ -108,6 +108,7 @@ run_go() {
 		--env MESHTRANSIT_SHARE_SCALE_REPORT \
 		--env MESHTRANSIT_SHARE_SCALE_EXPLAIN \
 		--env MESHTRANSIT_SHARE_SCALE_COLD \
+		--env MESHTRANSIT_SHARE_SCALE_PUBLISH \
 		--env MESHTRANSIT_MIGRATION_POSTGRES_ADDRESS \
 		--env MESHTRANSIT_MIGRATION_POSTGRES_DATABASE \
 		--env MESHTRANSIT_MIGRATION_POSTGRES_USER \
@@ -439,17 +440,18 @@ run_go test \
 	./core/test/integration
 
 if [[ "${share_scale}" != 0 ]]; then
+	share_scale_status=0
 	MESHTRANSIT_SHARE_SCALE="${share_scale}" run_go test \
 		-tags=integration \
 		-count=1 \
 		-v \
 		-run '^TestPostgreSQLShareScale$' \
 		-timeout="${PLATFORM_SCALE_TIMEOUT:-4h}" \
-		./core/test/integration
+		./core/test/integration || share_scale_status=$?
 	if [[ -n "${SHARE_SCALE_POSTGRES_LOG:-}" ]]; then
 		docker logs "${postgres_container}" > "${SHARE_SCALE_POSTGRES_LOG}" 2>&1 || true
 	fi
-	exit 0
+	exit "${share_scale_status}"
 fi
 
 export MESHTRANSIT_IDENTITY_SUBJECT_TRANSITION_INTEGRATION=1

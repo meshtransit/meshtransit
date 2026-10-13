@@ -44,3 +44,12 @@ func TestResourceSharingDatabaseErrorNamesTheShareLimit(t *testing.T) {
 		t.Fatalf("MT001 = %v, reported as the share limit", other)
 	}
 }
+
+func TestResourceSharingDatabaseErrorNamesADuplicateShare(t *testing.T) {
+	t.Parallel()
+	err := resourceSharingDatabaseError(context.Background(),
+		&pgconn.PgError{Code: "MT013", Message: "the Device is already shared into the receiving Network"})
+	if !errors.Is(err, sharing.ErrAlreadyShared) || !errors.Is(err, sharing.ErrConflict) || errors.Is(err, sharing.ErrShareLimitReached) {
+		t.Fatalf("MT013 = %v, want an existing share and a conflict", err)
+	}
+}
