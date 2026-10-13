@@ -57,6 +57,11 @@ func TestBuildPoolConfigAppliesSecurityAndPoolBounds(t *testing.T) {
 	if poolConfig.ConnConfig.ConnectTimeout != 2*time.Second || poolConfig.PingTimeout != 2*time.Second {
 		t.Fatal("connect and ping timeouts were not bounded")
 	}
+	for _, name := range []string{"join_collapse_limit", "from_collapse_limit"} {
+		if got := poolConfig.ConnConfig.RuntimeParams[name]; got != "4" {
+			t.Fatalf("%s = %q, want 4 (bounded planner memory)", name, got)
+		}
+	}
 	if got := poolConfig.ConnConfig.RuntimeParams["application_name"]; got != "meshcore-runtime" {
 		t.Fatalf("application_name = %q, want meshcore-runtime", got)
 	}

@@ -25,6 +25,15 @@ const (
 	maxConnectionLifetimeJitter = 5 * time.Minute
 	maxConnectionIdleTime       = 5 * time.Minute
 	healthCheckPeriod           = 30 * time.Second
+	// plannerJoinLimit bounds join_collapse_limit and from_collapse_limit on
+	// Core's connections (default 8). The authority functions join a dozen to
+	// fifty relations with many equality conditions; searching their join
+	// orders cost 40-210 MB of planner memory on a backend's first call, which
+	// the backend then keeps until it closes, and took a small database down.
+	// At 4 those peaks vanish and no measured statement plans worse (the
+	// statements are written in the order they run); functions that need a
+	// fixed order set 1 themselves.
+	plannerJoinLimit = "4"
 )
 
 var (
@@ -281,6 +290,8 @@ func buildPoolConfig(options Options, password string, caPEM []byte) (*pgxpool.C
 	poolConfig.ConnConfig.Fallbacks = nil
 	poolConfig.ConnConfig.RequireAuth = "scram-sha-256"
 	poolConfig.ConnConfig.RuntimeParams["application_name"] = options.Role.applicationName()
+	poolConfig.ConnConfig.RuntimeParams["join_collapse_limit"] = plannerJoinLimit
+	poolConfig.ConnConfig.RuntimeParams["from_collapse_limit"] = plannerJoinLimit
 	poolConfig.MaxConns = options.MaxConnections
 	poolConfig.MinConns = 0
 	poolConfig.MinIdleConns = 0

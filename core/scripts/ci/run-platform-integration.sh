@@ -19,7 +19,14 @@ scale_mode="${PLATFORM_SCALE:-0}"
 # database and measures map reads (TestPostgreSQLShareScale), then stops.
 share_scale="${PLATFORM_SHARE_SCALE:-0}"
 postgres_shm_size="${POSTGRES_SHM_SIZE:-64m}"
+# PLATFORM_PG_MEMORY_GATE_MB: fail when one statement of the migration
+# qualification grows a PostgreSQL backend by more than this many MB (a
+# backend keeps that memory until it closes); 0 disables the gate.
+memory_gate_mb="${PLATFORM_PG_MEMORY_GATE_MB:-64}"
 postgres_command=(postgres)
+if [[ "${memory_gate_mb}" != 0 ]]; then
+	postgres_command+=(-c log_statement_stats=on)
+fi
 if [[ -n "${POSTGRES_SERVER_ARGS:-}" ]]; then
 	read -r -a postgres_server_args <<<"${POSTGRES_SERVER_ARGS}"
 	postgres_command+=("${postgres_server_args[@]}")
@@ -438,6 +445,11 @@ run_go test \
 	-run '^TestPostgreSQLMigrations$' \
 	-timeout=5m \
 	./core/test/integration
+
+if [[ "${memory_gate_mb}" != 0 ]]; then
+	docker logs "${postgres_container}" > "${fixture_dir}/postgres-statements.log" 2>&1
+	run_go run ./core/tools/pgmemgate -max-mb "${memory_gate_mb}" "${fixture_dir}/postgres-statements.log"
+fi
 
 if [[ "${share_scale}" != 0 ]]; then
 	share_scale_status=0

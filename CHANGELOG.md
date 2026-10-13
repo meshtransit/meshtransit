@@ -5,6 +5,13 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core opens its PostgreSQL connections with join_collapse_limit and
+  from_collapse_limit 4 (default 8). Searching the join orders of the
+  authority functions cost 40-210 MB of planner memory on a backend's first
+  call, kept until the connection closed; the largest growth one statement
+  now causes is ~24 MB, and no measured statement plans worse. The platform
+  integration run fails when one statement grows a backend by more than
+  `PLATFORM_PG_MEMORY_GATE_MB` (64; core/tools/pgmemgate).
 - Core schema 150: publishing a policy with shared Devices no longer takes
   ~210 MB of PostgreSQL planner memory per backend (it took a POC database
   at its memory limit down); the attach statement keeps its written join

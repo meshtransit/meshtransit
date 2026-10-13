@@ -221,6 +221,10 @@ func openIntegrationPostgreSQLConnection(
 	connectionConfig.Fallbacks = nil
 	connectionConfig.RequireAuth = "scram-sha-256"
 	connectionConfig.RuntimeParams["application_name"] = "meshcore-integration"
+	// As Core's pools do (postgres.plannerJoinLimit), so the planner memory
+	// the qualification measures is what a Core connection would use.
+	connectionConfig.RuntimeParams["join_collapse_limit"] = "4"
+	connectionConfig.RuntimeParams["from_collapse_limit"] = "4"
 	connection, err := pgx.ConnectConfig(ctx, connectionConfig)
 	if err != nil {
 		t.Fatalf("connect integration PostgreSQL role %q: %v", user, err)
