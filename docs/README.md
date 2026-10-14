@@ -28,6 +28,19 @@ How the product behaves, as implemented:
 | [Paths and relays](concepts/paths-and-relays.md) | A node's addresses, what peers learn, finding a direct path, relays, Private Interchange |
 | [Audit and evidence](concepts/audit.md) | What is recorded, reading the history, connection history, policy distribution and enforcement |
 
+## Operations
+
+For people who run a deployment:
+
+| Document | Covers |
+|---|---|
+| [Configuration](operations/configuration.md) | Every Core variable, `meshrelay`, `meshd` and `meshnetd` flags, common errors |
+| [Deployment](operations/deployment.md) | Processes, images, PostgreSQL and Redis setup, TLS, ingress, first data, relays |
+| [Upgrades](operations/upgrades.md) | Migrations, rolling out, rolling back, feature gates |
+| [Key rotation](operations/key-rotation.md) | Control key, relay keys, digest keys, certificates |
+| [Monitoring](operations/monitoring.md) | Health, metrics, alerts, logs |
+| [Limits](operations/limits.md) | Every bound and what happens when it is reached |
+
 ## Protocols
 
 Language-independent specifications, with test vectors: see

@@ -123,7 +123,11 @@ administrator's revoke and needs only the node's current keys.
 - **Handover.** The Device stays suspended until the new member signs in on
   it through the browser; that person then owns it and its expiry restarts.
 - **Node key rotation.** A node can replace its node key at most 4 times an
-  hour; the Device stays the same.
+  hour; the Device, its name and addresses stay the same. Only the session's
+  proven machine key may rotate, the request names the exact old and new keys
+  with a proof bound to the session, no earlier node key can ever come back,
+  and the change commits with its audit event and a new session generation,
+  so existing map streams are fenced.
 - **Ephemeral Devices** are marked as such; they are not yet removed
   automatically.
 
