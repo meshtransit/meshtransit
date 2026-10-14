@@ -1,7 +1,7 @@
-// Package exportformat writes audit exports (R1-64). The formats are part of
-// the evidence contract in docs/audit-record-v2.md: a third party verifies an
-// export with any implementation of seal v2, such as tools/auditverify,
-// without access to MeshCore.
+// Package exportformat writes audit exports. The formats are part of the
+// evidence contract in docs/protocol/audit-record-v2.md: a third party
+// verifies an export with any implementation of seal v2, such as
+// tools/auditverify, without access to MeshCore.
 package exportformat
 
 import (

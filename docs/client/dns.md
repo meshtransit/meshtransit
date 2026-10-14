@@ -64,8 +64,3 @@ and transactional rollback. The Linux qualification harness adds installed-host
 evidence for UDP/TCP service, `systemd-resolved` search and route integration,
 preservation of non-mesh DNS, removal on graceful daemon stop, and bounded
 recovery after restart.
-
-The first two-node installed-host evidence is recorded in
-[linux-dns-qualification-2026-09-11.md](linux-dns-qualification-2026-09-11.md).
-That run also staged and rolled back control-plane split and explicit-default
-resolver configurations, proving live upstream forwarding on both Linux nodes.

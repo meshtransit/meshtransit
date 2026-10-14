@@ -232,11 +232,6 @@ route pools. Packet translation remains in the unprivileged client.
    revoke, expiry, key replacement, reconnect and alias quarantine.
 6. Qualify imported DNS names and lifecycle. Router and SSH remain deferred.
 
-Implementation evidence and the exact reference revisions are recorded in
-[the alias assessment](../research/custom-control-device-alias-assessment-2026-10-02.md).
-The existing runtime checkpoint is documented in
-[Same-Workspace direct Device sharing](same-workspace-direct-device-sharing.md).
-
 ## Bounded alias allocation proposal
 
 Core implements `ipam.NextDeviceAliases` as a pure allocation
@@ -373,7 +368,7 @@ Grant-only revision changes replace the peer in the same atomic policy delta.
 The six synthetic owned protocol fixtures and tests cover TCP, UDP and ICMP
 for both families. This model/codec checkpoint does not connect a runtime
 reader or worker and does not admit an unqualified client or enable POC sharing.
-See the owned [wire contract](../../api/protocol/device-alias-v1.md).
+See the owned [wire contract](../../protocol/device-alias-v1.md).
 
 ## Compatibility observation checkpoint — schema82
 

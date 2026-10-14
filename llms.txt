@@ -1,7 +1,7 @@
 # MeshTransit
 
 > Zero Trust access to private infrastructure: control plane (core/), relay
-> (relay/, in development), node daemon and CLI (client/).
+> (relay/), node daemon and CLI (client/).
 
 ## Read first
 
@@ -10,4 +10,5 @@
 - core/AGENTS.md, core/README.md: control plane
 - client/AGENTS.md, client/README.md: meshd, meshnetd, meshcred, meshctl
 - docs/client/architecture.md, docs/client/security-model.md: client design
-- docs/core/: Core design, qualification and research notes
+- docs/protocol/: protocol specifications (MTCP, MTRP, disco, audit records)
+- docs/core/: Core design notes

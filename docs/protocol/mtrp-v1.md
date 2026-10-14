@@ -1,7 +1,7 @@
 # MTRP v1: MeshTransit Relay Protocol (Interchange)
 
 Draft 1, 2026-10-09. Implementation: `shared/mtrp` (codecs, tickets),
-`relay/` (server, P2), `client/` (P3).
+`relay/` (server), `client/` (node).
 
 MTRP lets a node reach a peer through an Interchange relay when no direct path
 exists yet or ever. Relays forward opaque payloads (WireGuard packets and disco
@@ -361,8 +361,8 @@ The **relay map** payload:
 ```json
 {"version": 1, "map_version": 3, "expires_at_ms": 1760600000000,
  "regions": [{"id": 1, "code": "sgp", "name": "Singapore",
-   "nodes": [{"name": "sgp1", "host_name": "relay-sgp1.meshtransit.net",
-     "ipv4": "18.142.253.199", "key": "mtrelay:…",
+   "nodes": [{"name": "sgp1", "host_name": "relay-sgp1.example.com",
+     "ipv4": "192.0.2.10", "key": "mtrelay:…",
      "udp_port": 3479, "tls_port": 443, "stun_port": 3478,
      "stun_alt_port": 3480, "weight": 100}]}]}
 ```

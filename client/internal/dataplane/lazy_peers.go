@@ -17,7 +17,6 @@ import (
 // only the peers that carry traffic. An outbound packet to a peer that is not
 // installed, or a handshake initiation from one, installs it before
 // wireguard-go handles the packet; peers idle for lazyIdleTimeout are removed.
-// See docs/lazy-peers.md in the product docs.
 const (
 	lazyPeerThreshold = 1_000
 	// lazyActivationWait bounds how long the packets to one peer wait for its

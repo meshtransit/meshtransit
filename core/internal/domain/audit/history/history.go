@@ -1,4 +1,4 @@
-// Package history reads a Workspace's audit history (R1-64). PostgreSQL
+// Package history reads a Workspace's audit history. PostgreSQL
 // decides who may read which streams; this package validates queries,
 // applies the default window, and rechecks every sealed record it returns,
 // so a tampered row is reported rather than shown as sealed.

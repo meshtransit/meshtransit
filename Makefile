@@ -90,6 +90,7 @@ package-deb-meshctl:
 
 check-boundaries:
 	bash hack/check-import-boundaries.sh
+	bash hack/check-doc-links.sh
 
 scan-secrets:
 	bash hack/security/scan-secrets.sh

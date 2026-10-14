@@ -71,10 +71,7 @@ make build
 ```
 
 Linux amd64/arm64 Debian package build and installation are documented in
-[docs/linux-packaging.md](docs/linux-packaging.md).
-Native amd64/arm64 qualification of the additive runtime-recovery status is
-recorded in
-[docs/linux-runtime-recovery-status-qualification-2026-09-13.md](docs/linux-runtime-recovery-status-qualification-2026-09-13.md).
+[Linux packaging](../../../docs/client/linux-packaging.md).
 
 Global flags must appear before the command. `MESHCTL_SOCKET` and `MESHCTL_TIMEOUT` provide environment defaults; explicit flags take precedence.
 
@@ -149,7 +146,7 @@ After registration, `meshd` automatically maintains the active profile's control
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](../../../CONTRIBUTING.md).
 
 ## Contributors
 
@@ -157,5 +154,5 @@ MeshTransit contributors.
 
 ## License
 
-`meshctl` is licensed under the [Apache License 2.0](LICENSE). See
-[NOTICE](NOTICE) for attribution.
+`meshctl` is licensed under the [Apache License 2.0](../../../LICENSES/Apache-2.0.txt). See
+[NOTICE](../../../NOTICE) for attribution.

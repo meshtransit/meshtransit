@@ -2875,7 +2875,7 @@
     "get": {
       "operationId": "exportWorkspaceAuditEvents",
       "summary": "Export a Workspace's audit evidence",
-      "description": "Requires audit.export on the Workspace (every stream in it) or on the Network named by network_id (that Network's stream only). Returns every record in the window oldest first, as stored, with no content filters, so a verifier sees whole runs of each stream and can check sequences and seal links offline with any implementation of seal v2 (see docs/audit-record-v2.md). At most 10000 records; a larger window answers audit_export_too_large. Without since/until the last 90 days are exported. A window longer than 93 days is rejected as invalid_request; read older evidence window by window.",
+      "description": "Requires audit.export on the Workspace (every stream in it) or on the Network named by network_id (that Network's stream only). Returns every record in the window oldest first, as stored, with no content filters, so a verifier sees whole runs of each stream and can check sequences and seal links offline with any implementation of seal v2 (see docs/protocol/audit-record-v2.md). At most 10000 records; a larger window answers audit_export_too_large. Without since/until the last 90 days are exported. A window longer than 93 days is rejected as invalid_request; read older evidence window by window.",
       "security": [
         {
           "accountSessionCookie": []

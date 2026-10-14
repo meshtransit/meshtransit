@@ -4,8 +4,8 @@
 // stream in the export is a contiguous run of sequence numbers, and that
 // every sealed record links to the seal of the record before it. It uses
 // only the Go standard library and implements the seal from the
-// specification in docs/audit-record-v2.md, not from MeshCore code, so it
-// can be reviewed and rebuilt by the party that holds the export.
+// specification in docs/protocol/audit-record-v2.md, not from MeshCore code,
+// so it can be reviewed and rebuilt by the party that holds the export.
 //
 // Usage:
 //

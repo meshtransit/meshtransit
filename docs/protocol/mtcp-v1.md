@@ -3,7 +3,7 @@
 Draft 1, 2026-10-09. Schema: [`api/mtcp/v1/mtcp.proto`](../../api/mtcp/v1/mtcp.proto).
 Implementation: `shared/mtcp` (records, handshake, session, messages,
 proofs), generated types in `api/mtcp/v1` (`make proto`); Core `control` role
-and meshd (phase P4).
+and meshd.
 
 MTCP connects a node (meshd) to Core. Over one long-lived, mutually
 authenticated session it registers the node, delivers its network map,
@@ -403,9 +403,10 @@ may reach it, packet filter, DNS, relay map and settings.
   snapshot with a newer epoch, in which case it ignores the resync.
 - Every map message also lists `network_revisions`: the revisions of the
   Networks the node itself belongs to. Networks of other Workspaces that
-  contribute shared peers are never listed. Core records which revisions were delivered (policy
-  distribution, R1-65) and the time machine (R1-68) can relate a node's view
-  to a historic revision. Nodes treat them as opaque diagnostics.
+  contribute shared peers are never listed. Core records which revisions were
+  delivered, so the Console can show how far a policy has been distributed
+  and relate a node's view to a historic revision. Nodes treat them as opaque
+  diagnostics.
 - A delta is atomic: the node applies all of it or none.
 
 ### 7.2 Flow control

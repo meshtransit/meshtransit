@@ -153,24 +153,13 @@ Non-Linux development currently lacks a verified peer-credential implementation 
 - Opt-in native flow telemetry with redacted control-issued credentials, bounded non-blocking queues, TCP handshake state, explicit per-direction counters, HTTPS-only uploads, redirect refusal, and no packet payload retention.
 - No copied compatibility-reference source.
 
-See [docs/architecture.md](../docs/client/architecture.md),
-[docs/platform-contracts.md](../docs/client/platform-contracts.md),
-[docs/release-v0.1.md](../docs/client/release-v0.1.md),
-[docs/linux-packaging.md](../docs/client/linux-packaging.md),
-[docs/linux-qualification.md](../docs/client/linux-qualification.md),
-[docs/linux-restart-qualification-2026-09-11.md](../docs/client/linux-restart-qualification-2026-09-11.md),
-[docs/linux-reboot-qualification-2026-09-11.md](../docs/client/linux-reboot-qualification-2026-09-11.md),
-[docs/linux-network-change-qualification-2026-09-11.md](../docs/client/linux-network-change-qualification-2026-09-11.md),
-[docs/linux-helper-recovery-change-qualification-2026-09-12.md](../docs/client/linux-helper-recovery-change-qualification-2026-09-12.md),
-[docs/linux-runtime-recovery-qualification-2026-09-13.md](../docs/client/linux-runtime-recovery-qualification-2026-09-13.md),
-[docs/linux-runtime-recovery-repeat-qualification-2026-09-13.md](../docs/client/linux-runtime-recovery-repeat-qualification-2026-09-13.md),
-[docs/linux-secret-storage-qualification-2026-09-12.md](../docs/client/linux-secret-storage-qualification-2026-09-12.md),
-[docs/linux-identity-key-rotation-qualification-2026-09-12.md](../docs/client/linux-identity-key-rotation-qualification-2026-09-12.md),
-[docs/linux-relay-fallback-qualification-2026-09-11.md](../docs/client/linux-relay-fallback-qualification-2026-09-11.md),
-[docs/linux-dns-qualification-2026-09-11.md](../docs/client/linux-dns-qualification-2026-09-11.md),
-[docs/relay.md](../docs/client/relay.md), [docs/dns.md](../docs/client/dns.md),
-[docs/policy.md](../docs/client/policy.md), and
-[docs/security-model.md](../docs/client/security-model.md).
+See [architecture](../docs/client/architecture.md),
+[platform contracts](../docs/client/platform-contracts.md),
+[security model](../docs/client/security-model.md),
+[direct paths](../docs/client/direct-path.md), [DNS](../docs/client/dns.md),
+[policy](../docs/client/policy.md),
+[Linux packaging](../docs/client/linux-packaging.md) and
+[Linux qualification](../docs/client/linux-qualification.md).
 
 ## Current scope
 
@@ -187,7 +176,7 @@ gates.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Contributors
 
@@ -197,5 +186,5 @@ MeshTransit contributors.
 
 Except for third-party components identified in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), `meshd` is licensed under the
-[Apache License 2.0](LICENSE). The required attributions are recorded in
-[NOTICE](NOTICE).
+[Apache License 2.0](../LICENSES/Apache-2.0.txt). The required attributions are recorded in
+[NOTICE](../NOTICE).

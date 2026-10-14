@@ -23,21 +23,13 @@ Command examples in this file omit environment-specific wrappers.
 Use sources in this order:
 
 1. Approved product requirements, protocol specifications, and ADRs.
-2. The topic-oriented architecture documents in `docs/architecture/`.
+2. The documents in `docs/`: protocol specifications in `docs/protocol/`,
+   then the architecture and design documents.
 3. Versioned conformance fixtures and externally observable contract tests.
 4. These repository instructions.
 5. Implementation code and ordinary unit tests.
 
-During repository bootstrap, the canonical architecture documents may still be
-in the sibling directory `../core-docs`. Resolve architecture documentation in
-this order:
-
-1. `docs/architecture/README.md`, when present.
-2. `../core-docs/README.md` in the development workspace.
-
-Read the architecture README's routing table, then only the documents required
-for the task. Before the first public release, move the canonical documents
-into this repository so a standalone checkout is complete and reproducible.
+Read only the documents the task needs.
 
 When two authoritative sources conflict, do not guess and do not silently make
 one pass. Stop the affected implementation, record the conflict, add a failing

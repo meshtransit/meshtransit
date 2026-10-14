@@ -11,12 +11,6 @@ restart.
 Package upgrade, real multi-uplink migration, and soak scenarios remain
 separate gates.
 
-The first exact-commit release-facing runtime-surface, native upgrade,
-rollback, and controlled-restart results are recorded in
-[linux-production-surface-qualification-2026-09-12.md](linux-production-surface-qualification-2026-09-12.md).
-Those dedicated hosts were not registered, so this evidence does not replace
-the two-node packet, DNS, policy, relay, or soak matrices.
-
 The service-manager readiness gate is intentionally independent of
 registration. On an installed candidate, run:
 
@@ -34,15 +28,6 @@ automatic failure restart, checks both Unix sockets, and issues exactly one
 immediate `/v1/health` request after `systemctl restart` returns. There is no
 readiness polling between the restart and that request. The report excludes
 process IDs, socket paths, hostnames, profile state, and control data.
-The first passing exact-candidate sample is recorded in
-[linux-service-readiness-qualification-2026-09-12.md](linux-service-readiness-qualification-2026-09-12.md).
-
-The bounded Linux secret-storage, staged migration, package lifecycle, and boot
-recovery results are recorded in
-[linux-secret-storage-qualification-2026-09-12.md](linux-secret-storage-qualification-2026-09-12.md).
-The staged key-rotation, active-only finalization, recovery, and pending-build
-rollback results are recorded in
-[linux-identity-key-rotation-qualification-2026-09-12.md](linux-identity-key-rotation-qualification-2026-09-12.md).
 
 ## Service-action safety boundary
 
@@ -144,14 +129,19 @@ and stable dual-stack traffic gates as a controlled restart.
 A passing single run proves only that scenario. It does not establish p95
 latency or the 72-hour reliability target. Aggregate candidate reports must also
 record sample count, topology/load definition, artifact digest, and percentile
-calculations as required by [release-v0.1.md](release-v0.1.md).
+calculations, so the release decision rests on aggregates rather than single
+runs.
 
 ## Run repeated crash qualification
 
 The repeat runner invokes only the bounded single-run harness and stops at the
 first failed sample or resource invariant. Runs are serial; it never terminates
 both nodes or both local services concurrently. The default is three samples,
-with a maximum of 20 per invocation.
+with a maximum of 20 per invocation. A release candidate runs five samples for
+both services on each architecture. The runner latches transient `NRestarts`
+peaks but takes the installed restart policy, the durable systemd
+`InvocationID` transition and the process-generation transition as the
+automatic-recovery boundary.
 
 ```bash
 sudo tools/qualification/linux-crash-repeat.sh \
@@ -183,22 +173,6 @@ single-run measurements, per-sample resource checks, nearest-rank p95 full
 readiness and stable-traffic timings, and the count of error-level service log
 entries. The outer trap starts both services after interruption or failure and
 deletes all temporary reports.
-
-The first complete two-node alpha15 restart matrix is recorded in
-[linux-restart-qualification-2026-09-11.md](linux-restart-qualification-2026-09-11.md),
-with its redacted machine-readable reports retained under `docs/evidence`. The
-same document records the first alpha16 abrupt-termination matrix; those reports
-are retained under
-[`docs/evidence/linux-crash-recovery-alpha16-s1`](evidence/linux-crash-recovery-alpha16-s1).
-The first three-sample matrix for every node/service combination is retained
-under
-[`docs/evidence/linux-crash-repeat-alpha16-s1`](evidence/linux-crash-repeat-alpha16-s1).
-The release-candidate matrix expands this to five samples for both services on
-Ubuntu 26.04 ARM64 and AMD64. Its runner latches transient `NRestarts` peaks but
-uses the installed restart policy, durable systemd `InvocationID` transition,
-and process-generation transition as the automatic-recovery boundary. All 20
-samples passed; the reports are retained under
-[`docs/evidence/linux-crash-repeat-rc3-s1`](evidence/linux-crash-repeat-rc3-s1/README.md).
 
 ## Chain helper recovery and network change
 
@@ -233,10 +207,6 @@ healthy lead before the dummy-interface action to one second each. It retains
 the 20-second readiness and endpoint-refresh deadlines and the full five-second
 network-change stability tail. Failure or interruption starts both services;
 the child network-change trap owns removal of its dedicated interface.
-
-The first passing two-node alpha16 chain is recorded in
-[linux-helper-recovery-change-qualification-2026-09-12.md](linux-helper-recovery-change-qualification-2026-09-12.md),
-with its redacted reports retained under `docs/evidence`.
 
 ## Run local runtime-recovery qualification
 
@@ -305,10 +275,6 @@ only that aggregate count plus the explicit route count. A topology change is
 classified as `peer_count_changed` instead of being mistaken for a recovery
 regression; no peer identity or route value is emitted.
 
-The first native rc5 5/5 result on Ubuntu 26.04 amd64 and arm64 is recorded in
-[linux-runtime-recovery-repeat-qualification-2026-09-13.md](linux-runtime-recovery-repeat-qualification-2026-09-13.md),
-with the two redacted aggregate reports retained under `docs/evidence`.
-
 For the final traffic-bearing gate, run the aggregate wrapper on each node in a
 fixed two-peer topology. It continuously probes IPv4, IPv6, and uncached
 MeshTransit DNS while each nested sample executes the complete runtime and resource
@@ -334,10 +300,6 @@ deadline, and finish with at least three consecutive successful attempts. DNS
 queries bypass the host cache and must contain the exact peer A and AAAA
 answers. The retained report contains only labels, artifact/platform identity,
 aggregate probe counters, timings, and the redacted nested runtime summary.
-
-The first native RC5 3/3 result in both directions on Ubuntu 26.04 AMD64 and
-ARM64 is recorded in
-[linux-runtime-recovery-traffic-qualification-2026-09-13.md](linux-runtime-recovery-traffic-qualification-2026-09-13.md).
 
 ## Run a fixed-topology soak
 
@@ -386,8 +348,7 @@ the harness but are marked `scenario.release_candidate_eligible: false`.
 
 The current schema is `meshtransit.linux-soak-qualification/v2`. It records
 only whether the observer was systemd-bound and restart-protected; it does not
-emit the unit name or invocation identifier. Historical alpha17 smoke evidence
-uses schema v1. Reports retain only
+emit the unit name or invocation identifier. Reports retain only
 operator labels, artifact/platform metadata, booleans, aggregate status,
 resource counters, and traffic success. They omit raw PIDs, state digests,
 addresses, DNS names and answers, profile/network identity, control
@@ -395,12 +356,6 @@ fingerprints, endpoint data, and packet contents. The static data-plane queue
 caps prevent unbounded allocation; runtime goroutine, heap/object, system
 memory, RSS, thread, and descriptor trends detect retained work without
 exposing a profiling endpoint.
-
-The first accepted native two-node alpha17 smoke is recorded in
-[linux-soak-qualification-2026-09-12.md](linux-soak-qualification-2026-09-12.md),
-with both redacted seven-sample reports retained under `docs/evidence`. The
-90-second smokes validate the instrumentation and harness but are not
-release-candidate evidence; the 72-hour gate remains.
 
 ## Run a reboot scenario
 
@@ -452,13 +407,6 @@ The reboot schema identifier is
 boot ID, all readiness and persistence gates, parseable IPv4 and IPv6 traffic,
 and a final stable traffic run that begins within the recovery deadline.
 
-The first complete two-node alpha15 reboot matrix is recorded in
-[linux-reboot-qualification-2026-09-11.md](linux-reboot-qualification-2026-09-11.md),
-with its redacted machine-readable reports retained under `docs/evidence`.
-The release-candidate matrix adds native Ubuntu 26.04 ARM64 and AMD64 coverage;
-both controlled reboot scenarios passed and their reports are retained under
-[`docs/evidence/linux-reboot-rc3-s1`](evidence/linux-reboot-rc3-s1/README.md).
-
 ## Run a network-change scenario
 
 The network-change harness runs on the node under test. It requires an exact
@@ -491,13 +439,6 @@ This controlled scenario qualifies notification, coalescing, daemon handoff,
 endpoint refresh, and no-regression behavior without risking SSH access. It is
 not evidence for migration between two real underlays. That stronger test needs
 a multi-homed lab with an independent management path and scheduled rollback.
-
-The initial repeatability matrix and the later two-node alpha15 validation are
-recorded in
-[linux-network-change-qualification-2026-09-11.md](linux-network-change-qualification-2026-09-11.md),
-with redacted alpha15 reports retained under `docs/evidence`. They are Linux
-alpha POC evidence and do not replace the larger real multi-uplink sample set
-required for release-candidate p95 qualification.
 
 ## Run a relay-fallback scenario
 
@@ -541,12 +482,7 @@ counters, and timings. Raw endpoint and overlay addresses are never emitted;
 temporary probe logs are deleted with the mode-`0700` directory.
 
 Reverse node and peer inputs and repeat the scenario on the second host. Never
-run it concurrently on both ends of the same peer relationship. The initial
-repeatability matrix and the later two-node alpha15 validation are recorded in
-[linux-relay-fallback-qualification-2026-09-11.md](linux-relay-fallback-qualification-2026-09-11.md),
-with redacted alpha15 reports retained under `docs/evidence`. They are Linux
-alpha evidence and do not qualify an IPv6-only underlay or the release-candidate
-p95 target.
+run it concurrently on both ends of the same peer relationship.
 
 ## Run a DNS lifecycle scenario
 
@@ -581,25 +517,7 @@ responses, control fingerprints, or raw daemon status. A pass requires cleanup
 and restoration within 20 seconds, continued non-mesh DNS during the stop, and
 all authoritative and host-integration checks after recovery.
 
-Reverse the node and peer arguments and repeat on the second host. The initial
-matrix and the later two-node alpha15 lifecycle validation are recorded in
-[linux-dns-qualification-2026-09-11.md](linux-dns-qualification-2026-09-11.md),
-with redacted alpha15 reports retained under `docs/evidence`. The initial run
-also staged control-configured upstream split and explicit-default resolvers,
-verified both nodes, and restored the original split-only configuration. That
-mutation is deliberately operator-driven rather than part of the host-local
-lifecycle harness. The same three-phase update and rollback matrix has now been
-repeated on alpha15 without restarting either daemon, with redacted aggregate
-evidence retained under `docs/evidence`.
-
-Alpha16 additionally has one bounded two-node upstream-failure matrix. An
-ordered non-responsive/responsive resolver pair failed over after one bounded
-attempt on every query; the non-responsive-only phase returned `SERVFAIL` and
-packet capture found no query to an unexpected DNS destination. The temporary
-split route was then removed and both clients returned to their exact
-MeshTransit DNS-only baseline without restart. Redacted aggregate evidence is retained
-under
-[`docs/evidence/linux-dns-alpha16-upstream-failure-s1`](evidence/linux-dns-alpha16-upstream-failure-s1).
+Reverse the node and peer arguments and repeat on the second host.
 
 For release-candidate repetition, use a dedicated Network that does not contain
 soak or production nodes. Commit the ordered split route through the authenticated
@@ -635,6 +553,8 @@ fallback immediately, while cached health or a circuit breaker can produce an
 immediate fail-closed result. Resolver counters prove that the injected fault
 was exercised. MeshTransit DNS, dual-stack peer traffic, daemon generation, and
 restart count must remain stable. A trap removes the exact qualification table.
+A release candidate runs every phase with five UDP and five TCP samples on
+each architecture.
 
 For `fail-closed`, publish only the first resolver, omit
 `--fallback-resolver`, and require bounded `SERVFAIL` through both direct and
@@ -651,13 +571,6 @@ new control revision and split-route state before collecting a retained sample.
 Do not weaken the destination gate to accommodate traffic left in flight from a
 prior revision; discard that transition sample and repeat only after the old
 resolver work has drained.
-
-The RC4 candidate passed the three-phase matrix with five UDP and five TCP
-samples per phase on Ubuntu 26.04 AMD64 and ARM64. Every retained report had
-zero unexpected resolver packets, preserved daemon generations and restart
-counters, and passed MeshTransit DNS and dual-stack peer continuity. DNS and policy
-were restored to the exact MeshTransit DNS-only/default-deny baseline afterward. See
-[`docs/evidence/linux-dns-rc4-upstream-failure-s1`](evidence/linux-dns-rc4-upstream-failure-s1/README.md).
 
 ## Run a host-policy phase
 
@@ -717,13 +630,6 @@ The report schema is `meshtransit.linux-policy-qualification/v1`. Reports omit
 SSH destinations, overlay addresses, policy contents, raw status, and payloads.
 See [policy.md](policy.md) for the complete enforcement and staged rollback
 contract.
-
-The bounded two-node matrix history is recorded in
-[linux-policy-qualification-2026-09-11.md](linux-policy-qualification-2026-09-11.md).
-It includes the first complete alpha15 sample and its redacted machine-readable
-reports plus an independent second sample. The two samples complete the bounded
-policy-matrix repeatability gate for the current Linux alpha topology; they do
-not replace the remaining release-candidate qualification.
 
 ## Local validation
 

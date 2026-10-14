@@ -195,5 +195,5 @@ cleanup after reboot where applicable.
 
 Cross-compilation proves build separation only. A platform becomes supported
 after the same signed artifact passes its native functional, security,
-reliability, install, upgrade, rollback, and uninstall gates defined in
-[release-v0.1.md](release-v0.1.md).
+reliability, install, upgrade, rollback, and uninstall tests; for Linux these
+are the gates in [Linux qualification](linux-qualification.md).

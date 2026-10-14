@@ -1,173 +1,14 @@
 # MeshTransit Core
 
-Product direction: MeshTransit targets **Zero Trust Access Assurance for private
-infrastructure**. Secure Private Resource Fabric remains architecture foundation;
-Access Graph becomes authorization, explanation, simulation, and verification
-model. Current Phase 1 scope is unchanged. See
-[product-direction.md](../docs/product-direction.md).
+MeshTransit Core is the control plane: it holds Workspaces, Networks, Devices,
+policy and sharing in PostgreSQL, serves the management API and the Console's
+backend, and speaks [MTCP v1](../docs/protocol/mtcp-v1.md) to clients. One
+binary, `meshcore`, runs one role per process (`api`, `control`, `identity`,
+`worker` or `relay`), or every role with `all`.
+The protocol specifications are listed in
+[docs/protocol](../docs/protocol/README.md).
 
-Current POC status (2026-09-28): Phase 1 POC engineering is closed. The embedded
-Dex identity broker, Google OIDC
-connector, Core-owned browser session, cookie-authenticated policy publication,
-and two-replica API, Control, Identity, and Console roles are qualified on
-Kubernetes. Policy publication was verified through allow, deny-all, and
-restore transitions while a Control replica was replaced. The deployable Core
-image is built from a manifest-verified Dex workspace; provider-specific
-deployment artifacts are not part of this repository.
-Provider-neutral identity migration and broker upgrade, backup, restore, and
-rollback are qualified on disposable PostgreSQL. External legal/release
-approval, production data-service failover, multi-node fault domains, and
-production SLOs remain separate gates. The exact non-production evidence and
-remaining gaps are recorded in the
-[POC HA, SSO, and policy qualification matrix](../docs/core/qualification/poc-ha-sso-policy-2026-09-27.md).
-
-Phase 2 M1 includes the first PostgreSQL-authoritative Device Resource and
-immutable Resource Group slice. Phase 2 M2 adds Bearer management create/get/list
-contracts. M3a adds retained lifecycle actions, M3b1 adds deterministic impact
-preview plus atomic Device target rebinding, and M3b2 appends and activates
-immutable Resource Group definitions through the same preview boundary. M3c
-adds protected owner transfer and custodian delegation with two distinct
-Principals, fresh single-use step-up Sessions, fixed quorum-one confirmation,
-and ten-minute pending requests. M4a adds bounded, revision-bound explanation
-of exact `network.connect` decisions from active compiled policy and its Device,
-Resource, or Resource Group provenance. These slices use fresh
-exact-scope authorization, strong revision preconditions, durable idempotency,
-and safe errors. M4b adds a read-only, compiler-identical simulation domain
-and management operation with a PostgreSQL-authoritative active baseline,
-complete revision-vector stability checks, exact before/after packet and
-explanation diffs, bounded disclosure, and a full-evidence impact hash. M4c1
-adds the pure two-person policy approval workflow contract: fresh simulation,
-candidate and impact acknowledgement, complete-vector binding, ten-minute
-expiry, stable retry evidence, and distinct proposer/approver Principal and
-Account Session requirements. M4c2a adds PostgreSQL-authoritative retained
-request and immutable decision evidence, exact-scope `policy.validate` and
-`policy.approve` transaction adapters, durable idempotency, audit/outbox,
-commit replay, forced RLS, least-privilege functions, and bounded metrics. No
-Resource Console UI, graph database, or second policy evaluator is introduced
-by M4c2a. M4c2b makes approved Evidence mandatory for
-production management publication, freshly revalidates `policy.approve` and
-the complete eight-field authority vector, consumes Evidence atomically with
-the Policy Release, and exposes the Evidence ID in the existing publish wire
-contract. M4c2c adds proposal, bounded list/get, and independent-decision
-management contracts, safe workflow projections, private-browser mutation
-support, both production compositions, and runtime-only migration 49 read
-functions. M4c2d exposes the same bounded approval catalog reads through the
-private Console cookie boundary. M4c2e adds the server-authoritative mapping
-from the current Session to its UUIDv7 login Workspace and active Networks with
-fresh `policy.approve`, using runtime-only migration 50 and bounded keyset
-pagination. These projections remain navigation-only, Account Session
-identifiers remain concealed, every approval operation reauthorizes exact
-scope, and no graph database is introduced.
-The Resource Sharing slice adds exact Device-backed Resource offers, bounded
-protocol/port constraints, bilateral Trust Contracts, Imported Resource
-provenance, and explicit `within_workspace` or `cross_workspace` relationship
-classification. Same-Workspace management remains exact-Network RBAC;
-cross-Workspace acceptance requires fresh authority on both sides and records
-both consent steps in both audit streams. Workspace address realms reject CIDR
-overlap internally while allowing isolated Workspaces to reuse CIDRs. No direct
-cross-Workspace packet edge is created. Activation now allocates a monotonic
-address from the Deployment Federation Alias pool and persists a generation-
-bound Private Endpoint in `provisioning`. Migrations 55 and 56 plus the
-opt-in Private Endpoint worker now read exact PostgreSQL authority, stage an
-immutable route intent, apply or withdraw the route through an exact-origin
-mTLS route-agent client, and atomically publish or withdraw endpoint readiness,
-alias state, consumer DNS, revisions, audit, and outbox evidence. Applications
-use a stable,
-consumer-local DNS name that resolves to that endpoint alias; raw provider IPs
-are neither the user contract nor an authorization identity. Acceptance now
-validates and atomically reserves that consumer-local access name in its exact
-Network namespace. Reservation and endpoint provisioning are not DNS
-publication: the name remains non-resolving until a trusted worker confirms
-the alias path. This repository defines and qualifies that control-plane
-transaction and the production reconciliation client; the privileged packet
-gateway behind the route-agent API remains a deployment responsibility.
-Design, security boundaries, acceptance evidence, and explicit non-claims are
-recorded in the
-[Phase 2 M1 Resource authority design](../docs/core/design/phase2-m1-resource-authority.md)
-and
-[acceptance matrix](../docs/core/qualification/phase2-m1-resource-authority-2026-09-28.md),
-plus the
-[Phase 2 M2 Resource management API design](../docs/core/design/phase2-m2-resource-management-api.md)
-and
-[M2 acceptance matrix](../docs/core/qualification/phase2-m2-resource-management-api-2026-09-28.md),
-the
-[M3a Resource lifecycle design](../docs/core/design/phase2-m3a-resource-lifecycle-api.md)
-and
-[M3a acceptance matrix](../docs/core/qualification/phase2-m3a-resource-lifecycle-api-2026-09-28.md),
-plus the
-[M3b Resource target rebinding design](../docs/core/design/phase2-m3b-resource-target-rebinding.md)
-and
-[M3b acceptance matrix](../docs/core/qualification/phase2-m3b-resource-target-rebinding-2026-09-28.md),
-plus the
-[M3b2 Resource Group replacement design](../docs/core/design/phase2-m3b2-resource-group-definition-replacement.md)
-and
-[M3b2 acceptance matrix](../docs/core/qualification/phase2-m3b2-resource-group-definition-replacement-2026-09-28.md),
-plus the
-[M3c protected Resource authority change design](../docs/core/design/phase2-m3c-resource-authority-change.md)
-and
-[M3c acceptance matrix](../docs/core/qualification/phase2-m3c-resource-authority-change-2026-09-28.md).
-The original-roadmap M2 packet-policy work now has a separately named M2a slice
-covering deterministic Device-to-Device TCP/UDP publication, atomic deny-all and
-restore, Node-reduced client projection, and fail-closed client enforcement.
-M2b1 adds active Device Resource destinations with exact Resource version,
-target-generation, inventory-revision, and semantic-hash provenance plus atomic
-publication-time revalidation. M2b2 adds active Resource Group destinations,
-deterministic member expansion, compiler format 3, and atomic revalidation of
-the complete immutable group definition and every member Resource. See the
-[M2a TCP/UDP policy design](../docs/core/design/phase2-m2a-tcp-udp-policy-publication.md)
-and
-[M2a acceptance matrix](../docs/core/qualification/phase2-m2a-tcp-udp-policy-publication-2026-09-29.md),
-plus the
-[M2b1 Resource policy destination design](../docs/core/design/phase2-m2b1-resource-policy-destination.md)
-and
-[M2b1 acceptance matrix](../docs/core/qualification/phase2-m2b1-resource-policy-destination-2026-09-29.md),
-plus the
-[M2b2 Resource Group policy destination design](../docs/core/design/phase2-m2b2-resource-group-policy-destination.md)
-and
-[M2b2 acceptance matrix](../docs/core/qualification/phase2-m2b2-resource-group-policy-destination-2026-09-29.md),
-plus the
-[M4a Access Graph policy explanation design](../docs/core/design/phase2-m4a-access-graph-policy-explanation.md)
-and
-[M4a acceptance matrix](../docs/core/qualification/phase2-m4a-access-graph-policy-explanation-2026-09-29.md),
-plus the
-[M4b1 policy simulation domain design](../docs/core/design/phase2-m4b1-policy-simulation-domain.md)
-and
-[M4b1 acceptance matrix](../docs/core/qualification/phase2-m4b1-policy-simulation-domain-2026-09-29.md),
-plus the
-[M4b2 policy simulation API design](../docs/core/design/phase2-m4b2-policy-simulation-api.md)
-and
-[M4b2 acceptance matrix](../docs/core/qualification/phase2-m4b2-policy-simulation-api-2026-09-29.md),
-plus the
-[M4c1 policy approval domain design](../docs/core/design/phase2-m4c1-policy-approval-domain.md)
-and
-[M4c1 acceptance matrix](../docs/core/qualification/phase2-m4c1-policy-approval-domain-2026-09-29.md),
-plus the
-[M4c2a policy approval persistence design](../docs/core/design/phase2-m4c2a-policy-approval-persistence.md)
-and
-[M4c2a acceptance matrix](../docs/core/qualification/phase2-m4c2a-policy-approval-persistence-2026-09-29.md),
-plus the
-[M4c2b approval publication gate design](../docs/core/design/phase2-m4c2b-policy-approval-publication-gate.md)
-and
-[M4c2b acceptance matrix](../docs/core/qualification/phase2-m4c2b-policy-approval-publication-gate-2026-09-29.md),
-plus the
-[M4c2c policy approval management API design](../docs/core/design/phase2-m4c2c-policy-approval-management-api.md)
-and
-[M4c2c acceptance matrix](../docs/core/qualification/phase2-m4c2c-policy-approval-management-api-2026-09-29.md),
-plus the
-[M4c2d private Console approval catalog design](../docs/core/design/phase2-m4c2d-private-console-policy-approval-catalog.md)
-and
-[M4c2d acceptance matrix](../docs/core/qualification/phase2-m4c2d-private-console-policy-approval-catalog-2026-09-29.md),
-plus the
-[M4c2e Console management-scope projection design](../docs/core/design/phase2-m4c2e-console-management-scope-projection.md)
-and
-[M4c2e acceptance matrix](../docs/core/qualification/phase2-m4c2e-console-management-scope-projection-2026-09-29.md).
-Resource Sharing boundaries and evidence are recorded in the
-[Phase 2 Resource Sharing authority design](../docs/core/design/phase2-resource-sharing-authority.md)
-and
-[Resource Sharing qualification matrix](../docs/core/qualification/phase2-resource-sharing-authority-2026-09-29.md).
-
-MeshTransit Core is the product-owned MeshTransit control plane. This checkout
-currently contains the Phase 1 platform spine: validated process configuration,
+Its platform layer provides validated process configuration,
 runtime role selection, bounded lifecycle management, safe JSON logging,
 health/readiness endpoints, TLS-only PostgreSQL and Redis dependency adapters,
 and a bounded TLS plus MTCP v1 client-control ingress. It also
@@ -302,22 +143,6 @@ fingerprint setting before `config validate` or `serve`. Both connector and Core
 client secrets must contain at least 32 bytes of high-entropy single-line
 material.
 
-The schema-20 Linux/arm64 EC2 POC used binary digest
-`490c53dd3e4d723f965c2dcf69916f84a2bca07ef595ccf5511582007fab2f9c`,
-validated fingerprint
-`sha256-v2:1332d4b1a9d1a801a2af4f03252512b2bf40b794d7c6bc3f62a3475d937a5bf7`.
-`config validate` reported schema 20 and the private listener served discovery
-over TLS 1.2+/HTTP/1 with the fixed security headers. The authorization request
-redirected through the configured connector to the real
-`accounts.google.com` authorization endpoint with
-`code_challenge_method=S256` and the exact broker callback. Userinfo returned
-404, plaintext did not reach the handler, and both readiness components were
-ready. Bounded shutdown left zero runtime connections, while PostgreSQL still
-contained zero connector and zero client rows. Non-production client metadata
-was used, so this qualifies the private transport and outbound redirect, not a
-completed Google login, token exchange, Core session, public ingress, or HA
-Kubernetes deployment.
-
 | Environment variable | Default | Contract |
 | --- | --- | --- |
 | `MESHTRANSIT_IDENTITY_ISSUER` | none | Exact HTTPS broker issuer. Userinfo, query, fragment, root path, and trailing slash are rejected. |
@@ -331,7 +156,7 @@ Kubernetes deployment.
 | `MESHTRANSIT_IDENTITY_OIDC_CONNECTOR_ID` | none | Immutable lowercase connector security ID. Changing it creates a new identity namespace. |
 | `MESHTRANSIT_IDENTITY_OIDC_CONNECTOR_DISPLAY_NAME` | none | Bounded display label; it is not an identity key. |
 | `MESHTRANSIT_IDENTITY_OIDC_CONNECTOR_GENERATION` | none | Positive decimal trust-configuration generation. |
-| `MESHTRANSIT_IDENTITY_OIDC_CONNECTOR_ISSUER` | none | Phase 1 requires exactly `https://accounts.google.com`; arbitrary upstream issuers remain disabled. |
+| `MESHTRANSIT_IDENTITY_OIDC_CONNECTOR_ISSUER` | none | Must be exactly `https://accounts.google.com`; other upstream issuers are not supported. |
 | `MESHTRANSIT_IDENTITY_OIDC_CONNECTOR_CLIENT_ID` | none | Exact Google OAuth client ID. |
 | `MESHTRANSIT_IDENTITY_OIDC_CONNECTOR_CLIENT_SECRET_FILE` | none | Absolute path to the bounded single-line Google client secret; never persisted to broker storage. |
 | `MESHTRANSIT_IDENTITY_CORE_CLIENT_ID` | none | Immutable lowercase ID for the confidential Core BFF client. |
@@ -822,12 +647,6 @@ Startup never runs broker migrations. Upgrades prepare and qualify a new Dex
 workspace and image before rollout; Core code imports the broker only through
 the adapter composition boundary.
 
-The Kubernetes POC verified real Google login, Core session issuance,
-authenticated policy publication, two Identity replicas, and a Control-replica
-replacement during a deny-all publication. The active policy was restored to
-revision 20 with two directional ICMP rules, and both clients converged without
-sticky-session assumptions.
-
 ## Account Session authentication
 
 The `internal/identity/accountsession` package now owns the first human-session
@@ -1205,5 +1024,5 @@ MeshTransit Core is licensed under the
 
 The same MeshTransit-owned code may also be licensed under a separate written
 commercial agreement. See
-[COMMERCIAL-LICENSING.md](COMMERCIAL-LICENSING.md) for the licensing boundary;
+[COMMERCIAL-LICENSING.md](../COMMERCIAL-LICENSING.md) for the licensing boundary;
 that document does not itself grant a commercial license.

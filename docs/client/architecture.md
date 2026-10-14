@@ -35,10 +35,7 @@ The current code implements the profile service, persistent per-profile identity
 
 The cross-platform boundary is defined in
 [platform-contracts.md](platform-contracts.md). Linux is the reference
-implementation, followed by Windows and then macOS. The v0.1 capability scope,
-native support matrix, and measurable release gates are defined in
-[release-v0.1.md](release-v0.1.md); cross-compilation alone is not treated as
-platform support.
+implementation. Cross-compilation alone is not treated as platform support.
 
 ## Privileged TUN boundary
 
