@@ -703,15 +703,12 @@ func (s *Store) persistLocked(ctx context.Context, record Record, replace bool) 
 			return fmt.Errorf("replacing identity record: %w", err)
 		}
 	} else {
-		if err := s.root.Link(temporaryName, finalName); err != nil {
+		if err := installNew(s.root, temporaryName, finalName); err != nil {
 			if errors.Is(err, os.ErrExist) {
 				return ErrExists
 			}
 
 			return fmt.Errorf("installing new identity record: %w", err)
-		}
-		if err := s.root.Remove(temporaryName); err != nil {
-			return fmt.Errorf("removing linked temporary identity record: %w", err)
 		}
 	}
 	if err := privatefile.SyncDir(s.root); err != nil {
