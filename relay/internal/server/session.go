@@ -100,22 +100,22 @@ func (s *session) index() uint32 { return s.crypto.LocalIndex() }
 
 func (s *session) touch(now time.Time) { s.lastRecv.Store(now.UnixNano()) }
 
-// forward returns the route for a route number, charging the sender's rate
-// limits for one DATA frame of n bytes.
-func (s *session) forward(routeNumber uint32, n int, now time.Time) (route, dropReason) {
+// forward returns the route for a route number and the sender's Network,
+// charging the sender's rate limits for one DATA frame of n bytes.
+func (s *session) forward(routeNumber uint32, n int, now time.Time) (route, [16]byte, dropReason) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return route{}, dropNoSession
+		return route{}, [16]byte{}, dropNoSession
 	}
 	r, ok := s.routes[routeNumber]
 	if !ok {
-		return route{}, dropNoRoute
+		return route{}, [16]byte{}, dropNoRoute
 	}
 	if !s.packets.Allow(now, 1) || !s.data.Allow(now, float64(n)) {
-		return route{}, dropRateLimited
+		return route{}, [16]byte{}, dropRateLimited
 	}
-	return r, dropNone
+	return r, networkZone(s.ticket), dropNone
 }
 
 // allowTowards charges traffic sent to this session's client while its
@@ -194,6 +194,7 @@ const (
 	dropBinding
 	dropMalformed
 	dropUnverified
+	dropNetworkLimited
 )
 
 func (d dropReason) String() string {
@@ -210,6 +211,8 @@ func (d dropReason) String() string {
 		return "malformed"
 	case dropUnverified:
 		return "unverified_peer"
+	case dropNetworkLimited:
+		return "network_rate_limited"
 	default:
 		return "forwarded"
 	}

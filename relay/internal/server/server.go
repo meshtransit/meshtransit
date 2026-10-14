@@ -33,9 +33,12 @@ const (
 	DefaultSourceHandshakeRate = 10   // per second per source address (IPv6: per /64)
 	DefaultPacketRate          = 50_000
 	DefaultBytesPerSecond      = 125_000_000 // 1 Gbit/s ceiling per session
-	DefaultUnverifiedRate      = 16 << 10    // bytes/s towards an unverified binding
-	DefaultControlRate         = 50          // authenticated CONTROL frames per second
-	DefaultRouteOpenRate       = 20          // per second per session
+	// DefaultNetworkBytesPerSecond bounds what all sessions of one Network
+	// forward through one relay node: 500 Mbit/s.
+	DefaultNetworkBytesPerSecond = 62_500_000
+	DefaultUnverifiedRate        = 16 << 10 // bytes/s towards an unverified binding
+	DefaultControlRate           = 50       // authenticated CONTROL frames per second
+	DefaultRouteOpenRate         = 20       // per second per session
 	// DefaultMaxSessionZones admits an MTT2 ticket for 10,000 Trust
 	// Contracts and the Network (Core's share limit).
 	DefaultMaxSessionZones = 10_001
@@ -73,12 +76,14 @@ type Config struct {
 	SourceHandshakeRate float64 // per source address
 	PacketRate          float64 // per session
 	BytesPerSecond      float64 // per session ceiling; tickets may lower it
-	UnverifiedRate      float64 // bytes/s towards a binding without return-routability
-	ControlRate         float64 // per session
-	RouteOpenRate       float64 // per session
-	MaxSessionZones     int     // zones of one MTT2 ticket the relay assembles
-	ZoneBudget          int     // zones held across all sessions
-	ZoneFrameRate       float64 // ZONES frames per second per session
+	// NetworkBytesPerSecond bounds all sessions of one Network together.
+	NetworkBytesPerSecond float64
+	UnverifiedRate        float64 // bytes/s towards a binding without return-routability
+	ControlRate           float64 // per session
+	RouteOpenRate         float64 // per session
+	MaxSessionZones       int     // zones of one MTT2 ticket the relay assembles
+	ZoneBudget            int     // zones held across all sessions
+	ZoneFrameRate         float64 // ZONES frames per second per session
 
 	Now     func() time.Time
 	Random  io.Reader
@@ -94,6 +99,7 @@ type Server struct {
 	cookies   *mtrp.CookieJar
 	hsLimit   *ratelimit.Shared
 	sources   *ratelimit.SourceLimiter
+	networks  *networkBudgets
 	startedMS int64 // INITs older than the start cannot be told from replays
 
 	mu         sync.RWMutex // guards the maps below
@@ -162,6 +168,7 @@ func New(cfg Config) (*Server, error) {
 		cookies:    cookies,
 		hsLimit:    ratelimit.NewShared(cfg.HandshakeRate, cfg.HandshakeRate),
 		sources:    ratelimit.NewSourceLimiter(cfg.SourceHandshakeRate, 2*cfg.SourceHandshakeRate, maxSources, cfg.Now),
+		networks:   newNetworkBudgets(cfg.NetworkBytesPerSecond),
 		startedMS:  cfg.Now().UnixMilli(),
 		byIndex:    make(map[uint32]*session),
 		byNode:     make(map[key.NodePublic]*session),
@@ -180,6 +187,7 @@ func defaults(cfg *Config) {
 	setDefault(&cfg.SourceHandshakeRate, DefaultSourceHandshakeRate)
 	setDefault(&cfg.PacketRate, DefaultPacketRate)
 	setDefault(&cfg.BytesPerSecond, DefaultBytesPerSecond)
+	setDefault(&cfg.NetworkBytesPerSecond, DefaultNetworkBytesPerSecond)
 	setDefault(&cfg.UnverifiedRate, DefaultUnverifiedRate)
 	setDefault(&cfg.ControlRate, DefaultControlRate)
 	setDefault(&cfg.RouteOpenRate, DefaultRouteOpenRate)
@@ -267,7 +275,10 @@ func (s *Server) handleData(frame []byte, from binding) {
 		return
 	}
 	now := s.cfg.Now()
-	r, reason := src.forward(d.Route, len(d.Payload), now)
+	r, network, reason := src.forward(d.Route, len(d.Payload), now)
+	if reason == dropNone && !s.networks.allow(network, len(d.Payload), now) {
+		reason = dropNetworkLimited
+	}
 	if reason != dropNone {
 		s.cfg.Metrics.Data(reason.String(), 0)
 		return
@@ -356,6 +367,7 @@ func (s *Server) Run(ctx context.Context) error {
 // the scan.
 func (s *Server) sweep() {
 	now := s.cfg.Now()
+	s.networks.prune(now)
 	s.mu.RLock()
 	sessions := make([]*session, 0, len(s.byIndex))
 	for _, sess := range s.byIndex {

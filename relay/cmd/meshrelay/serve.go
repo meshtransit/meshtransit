@@ -61,8 +61,10 @@ func serve(ctx context.Context, cfg serveConfig, logOut io.Writer) error {
 		Keys:        keys,
 		Revocations: revs,
 		UDP:         udpListener,
-		Logger:      logger,
-		Metrics:     m,
+		// Mbit/s to bytes/s.
+		NetworkBytesPerSecond: float64(cfg.networkMbit) * 125_000,
+		Logger:                logger,
+		Metrics:               m,
 	})
 	if err != nil {
 		return err

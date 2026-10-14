@@ -316,6 +316,13 @@ signature    bytes[64]
 - Forwarding decisions use only in-memory state; no I/O on the packet path.
 - Per-session token buckets for packets/s and bytes/s (from the ticket, capped
   by relay policy); excess DATA is dropped and counted.
+- A per-Network token bucket for bytes/s on each relay node (relay policy,
+  500 Mbit/s by default), charged to the sender's Network: the Network zone
+  of its ticket, also when a Trust Contract authorised the route. One
+  Network cannot take a shared relay's capacity from the others; excess
+  DATA is dropped and counted. Relay nodes share no state, so the budget
+  holds per node. A ticket without a Network zone shares one budget with
+  every other such ticket.
 - Global admission: maximum sessions and handshakes/s; above them, cookie mode.
 - Metrics carry no keys, addresses, zones or route numbers as labels.
 - Logs contain no keys, tickets, endpoints or zones; only aggregate counters and

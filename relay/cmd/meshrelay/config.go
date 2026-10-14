@@ -39,6 +39,7 @@ type serveConfig struct {
 	acmeEmail     string
 	tlsMaxConns   int
 	tlsMaxPerIP   int
+	networkMbit   int
 	coreURL       string
 	private       bool
 }
@@ -71,6 +72,8 @@ func parseServeConfig(args []string, env func(string) (string, bool), stderr io.
 	fs.StringVar(&cfg.acmeEmail, "acme-email", "", "contact address for the ACME account (optional)")
 	fs.IntVar(&cfg.tlsMaxConns, "tls-max-conns", 10_000, "maximum TLS/WebSocket connections")
 	fs.IntVar(&cfg.tlsMaxPerIP, "tls-max-conns-per-ip", 64, "maximum TLS/WebSocket connections per source address (IPv6: per /64)")
+	fs.IntVar(&cfg.networkMbit, "network-bandwidth-mbit", 500,
+		"Mbit/s that all sessions of one Network may forward through this relay together")
 	if err := applyEnv(fs, env); err != nil {
 		return serveConfig{}, err
 	}
@@ -115,6 +118,9 @@ func parseServeConfig(args []string, env func(string) (string, bool), stderr io.
 	}
 	if cfg.tlsMaxConns < 1 || cfg.tlsMaxPerIP < 1 {
 		return serveConfig{}, errors.New("--tls-max-conns and --tls-max-conns-per-ip must be positive")
+	}
+	if cfg.networkMbit < 1 || cfg.networkMbit > 100_000 {
+		return serveConfig{}, errors.New("--network-bandwidth-mbit must be between 1 and 100000")
 	}
 	if cfg.udpReaders < 1 || cfg.udpReaders > 64 {
 		return serveConfig{}, errors.New("--udp-readers must be between 1 and 64")
