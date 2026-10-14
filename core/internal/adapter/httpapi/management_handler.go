@@ -246,6 +246,8 @@ type ManagementHandlerOptions struct {
 	NetworkCreations   NetworkCreator
 	// AliasRanges reads and sets receiving-Network alias ranges; nil answers 503.
 	AliasRanges NetworkAliasRanges
+	// AddressUsage reads how full a Network's address ranges are; nil answers 503.
+	AddressUsage NetworkAddressUsage
 	// AuditHistory lists Workspace audit history; nil answers 503.
 	AuditHistory AuditHistoryReader
 	// AuditExports assembles audit exports; nil answers 503.
@@ -307,6 +309,7 @@ type ManagementHandler struct {
 	shareTargets              ShareTargetResolver
 	networkCreations          NetworkCreator
 	aliasRanges               NetworkAliasRanges
+	addressUsage              NetworkAddressUsage
 	auditHistory              AuditHistoryReader
 	auditExports              AuditExporter
 	guardrails                GuardrailManager
@@ -379,6 +382,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		shareTargets:              options.ShareTargets,
 		networkCreations:          options.NetworkCreations,
 		aliasRanges:               options.AliasRanges,
+		addressUsage:              options.AddressUsage,
 		auditHistory:              options.AuditHistory,
 		auditExports:              options.AuditExports,
 		guardrails:                options.Guardrails,
@@ -492,6 +496,7 @@ func (handler *ManagementHandler) serveHTTP(
 	sessionWorkspaceMethod, sessionWorkspaceMatched := sessionWorkspaceRoute(request)
 	shareTargetPath, shareTargetMatched := parseShareTargetPath(request)
 	aliasRangePath, aliasRangeMatched := parseNetworkAliasRangePath(request)
+	addressUsageScope, addressUsageMatched := parseNetworkAddressUsagePath(request)
 	auditEventPath, auditEventMatched := parseAuditEventListPath(request)
 	auditExportPath, auditExportMatched := parseAuditEventExportPath(request)
 	guardrailPathValue, guardrailMatched := parseGuardrailPath(request)
@@ -504,7 +509,7 @@ func (handler *ManagementHandler) serveHTTP(
 	if !deviceMatched && !policyMatched && !policySimulationMatched && !policyApprovalMatched &&
 		!accessGraphMatched && !accessGraphListMatched && !resourceMatched && !sharingMatched && !policyReadMatched && !workspaceRenameMatched &&
 		!workspaceRoleMatched && !workspaceCollectionMatched && !networkCollectionMatched && !sessionWorkspaceMatched &&
-		!shareTargetMatched && !aliasRangeMatched && !auditEventMatched &&
+		!shareTargetMatched && !aliasRangeMatched && !addressUsageMatched && !auditEventMatched &&
 		!auditExportMatched && !guardrailMatched && !interchangeMatched && !deviceGroupMatched && !identityCatalogMatched &&
 		!deviceLifecycleMatched && !memberLifecycleMatched && !invitationMatched {
 		resultCode = "not_found"
@@ -530,6 +535,8 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = shareTargetResolveOperation
 	} else if aliasRangeMatched {
 		operation = aliasRangePath.operation()
+	} else if addressUsageMatched {
+		operation = networkAddressUsageReadOperation
 	} else if auditEventMatched {
 		operation = auditEventListOperation
 	} else if auditExportMatched {
@@ -584,6 +591,8 @@ func (handler *ManagementHandler) serveHTTP(
 		allowedMethod = http.MethodGet
 	} else if aliasRangeMatched {
 		allowedMethod = aliasRangePath.allowedMethod()
+	} else if addressUsageMatched {
+		allowedMethod = http.MethodGet
 	} else if guardrailMatched {
 		allowedMethod = guardrailPathValue.allowedMethod(request.Method)
 	} else if interchangeMatched {
@@ -685,6 +694,10 @@ func (handler *ManagementHandler) serveHTTP(
 	}
 	if aliasRangeMatched {
 		resultCode = handler.handleNetworkAliasRanges(ctx, response, request, correlationID, aliasRangePath, session)
+		return
+	}
+	if addressUsageMatched {
+		resultCode = handler.readNetworkAddressUsage(ctx, response, correlationID, addressUsageScope, session)
 		return
 	}
 	if auditEventMatched {

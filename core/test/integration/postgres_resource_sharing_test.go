@@ -321,6 +321,7 @@ func assertPostgreSQLResourceSharing(
 		resourceID, maximumTraffic, reason,
 	)
 	assertNetworkAliasRanges(ctx, t, admin, runtimePool, session, providerScope, consumerScope)
+	assertNetworkAddressUsage(ctx, t, admin, runtimePool, session, consumerScope)
 	assertAuditPartitionsAndStreams(ctx, t, admin, workerPool)
 	assertAuditHistory(ctx, t, admin, runtimePool, session, providerScope, consumerScope, foreignScope)
 	// The fixtures above share this Device repeatedly into the same Network,

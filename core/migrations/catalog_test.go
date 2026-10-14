@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 158 {
-		t.Fatalf("len(Catalog()) = %d, want 158", len(catalog))
+	if len(catalog) != 159 {
+		t.Fatalf("len(Catalog()) = %d, want 159", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 158 {
-		t.Fatalf("LatestVersion() = %d, want 158", LatestVersion())
+	if LatestVersion() != 159 {
+		t.Fatalf("LatestVersion() = %d, want 159", LatestVersion())
 	}
 }
 
@@ -4021,6 +4021,32 @@ func TestRegistrationRecentDevices(t *testing.T) {
 	for _, forbidden := range []string{"FUNCTION", "GRANT", "UPDATE ", "DELETE ", "DROP ", "ALTER "} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 158 must not contain %q", forbidden)
+		}
+	}
+}
+
+func TestNetworkAddressUsage(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[158]
+	if migration.Version != 159 {
+		t.Fatalf("migration 159 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.read_network_address_usage_v1(",
+		"SECURITY DEFINER\nSET search_path = pg_catalog",
+		"p_workspace_public_id, p_network_public_id, 'network.read', p_evaluated_at",
+		"WHERE prefix.workspace_id = v_workspace AND prefix.network_id = v_network",
+		") TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 159 must contain %q", want)
+		}
+	}
+	// A read: nothing written, locked or granted beyond the runtime.
+	for _, forbidden := range []string{"INSERT ", "UPDATE ", "DELETE ", "FOR UPDATE", "DROP ", "ALTER ",
+		"TO mesh_worker", "OWNER TO"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 159 must not contain %q", forbidden)
 		}
 	}
 }

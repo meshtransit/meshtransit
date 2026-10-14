@@ -525,6 +525,7 @@ func Catalog() []Migration {
 		newMigration(156, "Dependency reader Network once", dependencyReaderNetworkOnceSQL),
 		newMigration(157, "Registration address floor", registrationAddressFloorSQL),
 		newMigration(158, "Registration recent Devices", registrationRecentDevicesSQL),
+		newMigration(159, "Network address usage", networkAddressUsageSQL),
 	}
 }
 
@@ -778,3 +779,6 @@ var registrationAddressFloorSQL string
 
 //go:embed 000158_registration_recent_devices.up.sql
 var registrationRecentDevicesSQL string
+
+//go:embed 000159_network_address_usage.up.sql
+var networkAddressUsageSQL string
