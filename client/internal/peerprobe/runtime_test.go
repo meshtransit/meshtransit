@@ -347,6 +347,23 @@ func TestRuntimeRepeatsProbeRounds(t *testing.T) {
 		t.Fatalf("Activate() error = %v", err)
 	}
 	first := waitForRuntimeSend(t, transport)
+	// A candidate that answered is a working path and is probed every
+	// round; one that did not waits for its backoff (budget.go).
+	message, err := testPeerChannel(t, remote, local).Open(first.packet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ping, ok := message.(disco.Ping)
+	if !ok {
+		t.Fatalf("first probe = %#v", message)
+	}
+	pong, err := testPeerChannel(t, remote, local).Seal(disco.Pong{
+		TxID: ping.TxID, Observed: netip.MustParseAddrPort("198.51.100.20:41641"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.HandleDatagram(pong, first.destination, generation.Socket)
 	second := waitForRuntimeSend(t, transport)
 	if first.destination != second.destination || bytes.Equal(first.packet, second.packet) {
 		t.Fatalf("repeated probes = %#v then %#v", first, second)

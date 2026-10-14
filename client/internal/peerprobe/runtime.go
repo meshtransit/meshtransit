@@ -40,11 +40,13 @@ const (
 	callMeMaybeSlow       = 15 * time.Second
 	callMeMaybeFastPeriod = time.Minute
 	directTrust           = 6500 * time.Millisecond
-	// maxAnsweredPeers bounds the answer-probe bookkeeping; it restarts
-	// when full.
-	maxAnsweredPeers  = 4096
-	maxBurstQueue     = 16
-	maxLocalReflexive = 8
+	// A peer's CALL_ME_MAYBE is answered at most once per
+	// callMeMaybeAnswerSpacing, with at most maxScheduledPerPeer probes:
+	// a peer (or a Device lying about its endpoints) cannot make this node
+	// send more than a scheduled round's worth of probes at its candidates.
+	callMeMaybeAnswerSpacing = 2 * time.Second
+	maxBurstQueue            = 16
+	maxLocalReflexive        = 8
 )
 
 // PathObserver receives authenticated direct-path observations. It must return
@@ -96,9 +98,6 @@ type Runtime struct {
 	active      pathdiscovery.ProbeGeneration
 	windowMu    sync.Mutex
 	window      pingWindow
-	// answered is when each peer was last probed in answer to its ping;
-	// guarded by windowMu.
-	answered map[uint64]time.Time
 	// scheduleLimit bounds the targets of one probe round and
 	// callMeMaybeBudget the CALL_ME_MAYBE of one tick; probeCursor and
 	// callCursor (guarded by localMu) rotate where the next round or tick
@@ -294,7 +293,7 @@ func (r *Runtime) Probe(
 	}
 	generation := r.activeGeneration()
 
-	return r.probe(ctx, generation, peerID, endpoint)
+	return r.probe(ctx, generation, peerID, endpoint, false)
 }
 
 func (r *Runtime) probe(
@@ -302,6 +301,7 @@ func (r *Runtime) probe(
 	generation pathdiscovery.ProbeGeneration,
 	peerID uint64,
 	endpoint netip.AddrPort,
+	scheduled bool,
 ) (pathdiscovery.ProbeTransaction, error) {
 	r.lifecycleMu.RLock()
 	defer r.lifecycleMu.RUnlock()
@@ -320,14 +320,23 @@ func (r *Runtime) probe(
 		return pathdiscovery.ProbeTransaction{}, ErrInactive
 	}
 	r.telemetry.RecordProbeAttempt()
+	claim, allowed := r.registry.ClaimProbe(peerID, endpoint, scheduled, r.clock())
+	if !allowed {
+		r.telemetry.RecordProbeThrottled()
+		return pathdiscovery.ProbeTransaction{}, ErrProbeThrottled
+	}
+	// A probe that never leaves costs nothing: an outage or a socket change
+	// must not spend the budget and push every candidate's backoff out.
 	transaction, err := r.manager.Start(r.clock(), peerID, endpoint)
 	if err != nil {
+		r.registry.ReleaseProbe(peerID, claim)
 		r.telemetry.RecordProbeStartFailure()
 		return pathdiscovery.ProbeTransaction{}, err
 	}
 	r.telemetry.RecordProbeStarted()
 	if transaction.Generation != generation {
 		r.manager.Cancel(transaction)
+		r.registry.ReleaseProbe(peerID, claim)
 		r.telemetry.RecordProbeSendFailure()
 
 		return pathdiscovery.ProbeTransaction{}, ErrInvalidGeneration
@@ -335,6 +344,7 @@ func (r *Runtime) probe(
 	packet, err := r.registry.SealPing(transaction, 0)
 	if err != nil {
 		r.manager.Cancel(transaction)
+		r.registry.ReleaseProbe(peerID, claim)
 		r.telemetry.RecordProbeSendFailure()
 
 		return pathdiscovery.ProbeTransaction{}, err
@@ -342,6 +352,7 @@ func (r *Runtime) probe(
 	usedSocket, err := r.transport.SendDatagram(packet, endpoint)
 	if err != nil {
 		r.manager.Cancel(transaction)
+		r.registry.ReleaseProbe(peerID, claim)
 		r.telemetry.RecordProbeSendFailure()
 
 		return pathdiscovery.ProbeTransaction{}, fmt.Errorf(
@@ -486,6 +497,12 @@ func (r *Runtime) processDatagram(datagram receivedDatagram) {
 		r.answerCallMeMaybe(generation, message)
 	case IncomingPing:
 		r.telemetry.RecordAuthenticatedPing()
+		// The limit comes first: a peer pinging from many (spoofed) sources
+		// learns and probes no more than it gets answered.
+		if !r.allowIncomingPing(now, message) {
+			r.telemetry.RecordPingRateLimited()
+			return
+		}
 		learned := r.registry.LearnPeerReflexive(message.PeerID(), message.Source(), now)
 		if learned {
 			// A ping from an address we did not know is the hole its NAT
@@ -495,12 +512,8 @@ func (r *Runtime) processDatagram(datagram receivedDatagram) {
 				peerID: message.PeerID(), endpoint: message.Source(),
 			}}})
 		}
-		if !r.allowIncomingPing(now, message) {
-			r.telemetry.RecordPingRateLimited()
-			return
-		}
 		if !learned && !r.registry.RecentPong(message.PeerID(), now, directTrust) &&
-			r.allowAnswerProbe(message.PeerID(), now) {
+			r.registry.AllowAnswer(message.PeerID(), answerPing, directTrust, now) {
 			// A known address pinging us while we have no proven path: its
 			// NAT or firewall is open towards us now, though our earlier
 			// probes may have been dropped. Probe it now rather than at the
@@ -529,6 +542,7 @@ func (r *Runtime) processDatagram(datagram receivedDatagram) {
 			return
 		}
 		r.registry.MarkPong(reply.PeerID, now)
+		r.registry.ConfirmProbe(reply.PeerID, reply.Source, now)
 		r.noteReflexive(reply.ObservedLocalEndpoint, now)
 		r.telemetry.RecordProbeCompletion()
 		if r.observer == nil {
@@ -583,6 +597,7 @@ func (r *Runtime) runScheduler(ctx context.Context) {
 					current.generation,
 					target.peerID,
 					target.endpoint,
+					true,
 				)
 				index++
 			}
@@ -678,22 +693,6 @@ func (r *Runtime) allowIncomingPing(now time.Time, ping IncomingPing) bool {
 	}
 	r.window.total++
 	r.window.perPeer[ping.PeerID()]++
-
-	return true
-}
-
-// allowAnswerProbe permits one probe in answer to a peer's ping per
-// directTrust, so a peer pinging repeatedly cannot multiply our traffic.
-func (r *Runtime) allowAnswerProbe(peerID uint64, now time.Time) bool {
-	r.windowMu.Lock()
-	defer r.windowMu.Unlock()
-	if last, ok := r.answered[peerID]; ok && now.Sub(last) < directTrust && !now.Before(last) {
-		return false
-	}
-	if r.answered == nil || len(r.answered) >= maxAnsweredPeers {
-		r.answered = make(map[uint64]time.Time)
-	}
-	r.answered[peerID] = now
 
 	return true
 }
@@ -863,14 +862,31 @@ func callMeMaybeFlags(endpoints []disco.Endpoint) disco.Flags {
 	return flags
 }
 
-// answerCallMeMaybe pings every candidate of the peer at once, so both NATs
-// open towards each other at the same time.
+// answerCallMeMaybe pings the peer's candidates at once, so both NATs open
+// towards each other at the same time: the endpoints the call names first,
+// as they are the freshest, then the others, up to maxScheduledPerPeer.
 func (r *Runtime) answerCallMeMaybe(generation pathdiscovery.ProbeGeneration, call IncomingCallMeMaybe) {
 	r.telemetry.RecordCallMeMaybeAccepted()
-	candidates := r.registry.PeerCandidates(call.PeerID(), r.clock())
-	targets := make([]probeTarget, 0, len(candidates))
+	now := r.clock()
+	if !r.registry.AllowAnswer(call.PeerID(), answerCall, callMeMaybeAnswerSpacing, now) {
+		return
+	}
+	candidates := r.registry.PeerCandidates(call.PeerID(), now)
+	targets := make([]probeTarget, 0, min(len(candidates), maxScheduledPerPeer))
+	add := func(endpoint netip.AddrPort) {
+		if len(targets) < maxScheduledPerPeer && !slices.ContainsFunc(targets, func(target probeTarget) bool {
+			return target.endpoint == endpoint
+		}) {
+			targets = append(targets, probeTarget{peerID: call.PeerID(), endpoint: endpoint})
+		}
+	}
+	for _, endpoint := range call.Endpoints() {
+		if slices.Contains(candidates, endpoint) { // learned, so usable and not an overlay address
+			add(endpoint)
+		}
+	}
 	for _, endpoint := range candidates {
-		targets = append(targets, probeTarget{peerID: call.PeerID(), endpoint: endpoint})
+		add(endpoint)
 	}
 	r.offerBurst(probeBatch{generation: generation, targets: targets})
 }
@@ -897,7 +913,7 @@ func (r *Runtime) runBursts(ctx context.Context) {
 				if batch.generation != r.activeGeneration() {
 					break
 				}
-				_, _ = r.probe(ctx, batch.generation, target.peerID, target.endpoint)
+				_, _ = r.probe(ctx, batch.generation, target.peerID, target.endpoint, false)
 				select {
 				case <-ctx.Done():
 					return

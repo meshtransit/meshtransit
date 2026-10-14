@@ -38,6 +38,11 @@ func TestRoundTargetsRotateSoNoPeerStarves(t *testing.T) {
 	if _, _, err := runtime.Activate(snapshot, generation); err != nil {
 		t.Fatal(err)
 	}
+	// Answered candidates are due every round, whatever the rounds the
+	// scheduler runs meanwhile sent (budget.go).
+	for _, peer := range snapshot.Peers {
+		runtime.registry.ConfirmProbe(peer.ID, peer.Endpoints[0], time.Now())
+	}
 	ids := func(targets []probeTarget) []uint64 {
 		out := make([]uint64, 0, len(targets))
 		for _, target := range targets {

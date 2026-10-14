@@ -310,3 +310,33 @@ func TestMapStateChecksMTT2Zones(t *testing.T) {
 		t.Fatalf("an MTT1 ticket kept the old zone list: %v", err)
 	}
 }
+
+// TestMapStateDropsEndpointsANodeMustNotProbe keeps a peer whose map entry
+// names an overlay address as an endpoint, as an older Core may send, and
+// drops only that endpoint.
+func TestMapStateDropsEndpointsANodeMustNotProbe(t *testing.T) {
+	t.Parallel()
+	state := newMapState()
+	if err := state.applySnapshot(snapshotMessage(7)); err != nil {
+		t.Fatal(err)
+	}
+	endpoint := func(address string) *mtcpv1.Endpoint {
+		return &mtcpv1.Endpoint{
+			Ip: netip.MustParseAddr(address).AsSlice(), Port: 41641,
+			Kind: mtcpv1.Endpoint_SERVER_REFLEXIVE,
+		}
+	}
+	err := state.applyDelta(&mtcpv1.MapDelta{
+		View: &mtcpv1.View{Epoch: 7, Seq: 2},
+		PeerPatches: []*mtcpv1.PeerPatch{{DeviceId: "peer-a", Endpoints: &mtcpv1.EndpointList{
+			Items: []*mtcpv1.Endpoint{endpoint("100.64.0.4"), endpoint("198.51.100.7"), endpoint("127.0.0.1")},
+		}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := build(t, state)
+	if got := snapshot.Peers[0].Endpoints; len(got) != 1 || got[0] != netip.MustParseAddrPort("198.51.100.7:41641") {
+		t.Fatalf("peer endpoints = %v, want only the public one", got)
+	}
+}

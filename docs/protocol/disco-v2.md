@@ -133,12 +133,20 @@ candidate immediately. This is how two nodes open their NATs at the same time.
   was last advertised or observed; the oldest unproven candidate is evicted
   first.
 - A node only initiates traffic to candidates of peers in the current map.
+- A candidate must be an address the probe policy accepts (mtcp-v1 §8.1),
+  and never the overlay address of a node in the map or a relay's address,
+  nor a NAT64 address embedding one. A node neither learns such an address
+  from CALL_ME_MAYBE or a ping's source nor answers a packet from one, and
+  drops candidates a new map refuses.
 
 ### 4.2 Probing
 
-- A node pings every candidate of a peer when it needs a path (traffic or a
-  CALL_ME_MAYBE), at most once per candidate per 5 s, with sends paced at
+- A probe round pings at most 8 candidates of a peer: first those that
+  answered within 2 min, then those with the fewest unanswered pings, so a
+  peer with many candidates is reached across rounds. Sends are paced at
   least 10 ms apart per node.
+- A CALL_ME_MAYBE is answered at most once per 2 s per peer, with at most 8
+  pings: the candidates it names first, then the others.
 - When it starts probing a peer that has no trusted direct path, it also
   sends CALL_ME_MAYBE through the relay with its current endpoints (refreshing
   its own STUN results first if they are older than 27 s).
@@ -166,11 +174,36 @@ candidate immediately. This is how two nodes open their NATs at the same time.
 
 ### 4.4 Limits
 
-- Incoming disco packets per source address: 50/s, burst 100. PONGs sent per
-  source address: 10/s, burst 20.
-- At most 1 CALL_ME_MAYBE accepted per sender per second.
-- All counters are kept per peer and per node with bounded memory; state for a
-  peer is erased when it leaves the map.
+- Authenticated PINGs answered: at most 16 per peer and 128 in all per
+  second; a PING over the limit is neither answered nor learned from.
+- A CALL_ME_MAYBE is answered at most once per 2 s per peer (section 4.2);
+  replays are refused.
+- **Probe budget.** A peer chooses its candidates, so it chooses where a node
+  sends pings; the budget bounds what it can make a node send to addresses
+  that never answered:
+  - a candidate with no PONG is pinged again after 3 s, then 6, 12, 24 and
+    48 s, then every minute; a new map generation cancels pending pings,
+    so it ends the wait but keeps the count;
+  - pings to all such candidates of one peer spend a bucket of 24, refilled
+    one per 5 s, so naming new endpoints does not bypass the backoff;
+  - while the peer has no candidate that answered, pings beyond the bucket
+    spend a path-setup credit of 120, also refilled one per 5 s;
+  - a candidate that answered within 2 min is pinged freely, so a working
+    path is kept alive; it reaches only the peer itself;
+  - the budget belongs to the peer's Device, not its keys or the current
+    map: a new disco key, a new map and the peer leaving and rejoining the
+    map all keep it, until it would be full again anyway; a ping that was
+    never sent is refunded.
+
+  So a node sends a peer's unanswered candidates at most 144 pings at once
+  and 0.4 per second in the long run; a victim named by M Devices receives
+  at most 0.4 × M pings per second from each node that has them in its map.
+  This bounds the pings a node starts. Its PONGs go to the source of an
+  authenticated PING, at most 16 per peer per second, so a peer that can
+  forge its source address can aim those at a victim, one for one.
+- All counters are kept per peer and per node with bounded memory. A peer's
+  candidates are forgotten when it leaves the map; its probe budget is kept,
+  for at most twice the map's peer limit of Devices, until it is full again.
 
 ## 5. Test vectors
 

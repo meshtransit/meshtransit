@@ -166,3 +166,70 @@ func TestLearnedCandidatesAreBoundedAndSurviveReplace(t *testing.T) {
 		t.Fatalf("expired learned candidates still offered: %d", len(candidates))
 	}
 }
+
+// TestRuntimeBoundsItsAnswerToCallMeMaybe checks that a peer naming many
+// endpoints, or calling often, gets at most one scheduled round's worth of
+// probes per answer, and never a probe at an overlay address.
+func TestRuntimeBoundsItsAnswerToCallMeMaybe(t *testing.T) {
+	t.Parallel()
+
+	runtime, transport, local, remote := newRelayRuntime(t)
+	snapshot, generation := runtimeSnapshot(t, local, remote)
+	overlay := netip.MustParseAddr("fd7a:115c:a1e0::2")
+	snapshot.Peers[0].Endpoints = nil
+	snapshot.Peers[0].Addresses = []netip.Prefix{netip.PrefixFrom(overlay, 128)}
+	if _, _, err := runtime.Activate(snapshot, generation); err != nil {
+		t.Fatal(err)
+	}
+	named := []disco.Endpoint{{Kind: disco.EndpointServerReflex, Addr: netip.AddrPortFrom(overlay, 41641)}}
+	for index := range disco.MaxEndpoints - 1 {
+		named = append(named, disco.Endpoint{
+			Kind: disco.EndpointServerReflex,
+			Addr: netip.AddrPortFrom(netip.MustParseAddr("203.0.113.40"), uint16(41000+index)),
+		})
+	}
+	wire := testPeerChannel(t, remote, local)
+	seal := func(seq uint64) []byte {
+		packet, err := wire.Seal(disco.CallMeMaybe{Seq: seq, SentAt: time.Now().UnixMilli(), Endpoints: named})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return packet
+	}
+	peerNode := testNodeKey(t, snapshot.Peers[0].PublicKey)
+	quiet := func() []runtimeSend {
+		t.Helper()
+		for {
+			select {
+			case <-transport.attempts:
+			case <-time.After(300 * time.Millisecond):
+				return transport.sentSnapshot()
+			}
+		}
+	}
+
+	runtime.HandleRelayDatagram(seal(1), peerNode)
+	sends := quiet()
+	if len(sends) != maxScheduledPerPeer {
+		t.Fatalf("answered with %d probes, want %d", len(sends), maxScheduledPerPeer)
+	}
+	if sends[0].destination != named[1].Addr {
+		t.Fatalf("first probe went to %v, want the first usable endpoint the call named", sends[0].destination)
+	}
+	for _, sent := range sends {
+		if sent.destination.Addr() == overlay {
+			t.Fatal("probed the peer's overlay address")
+		}
+	}
+	if slices.Contains(runtime.registry.PeerCandidates(snapshot.Peers[0].ID, time.Now()),
+		netip.AddrPortFrom(overlay, 41641)) {
+		t.Fatal("learned the peer's overlay address as a candidate")
+	}
+
+	// A second call right away is accepted but not answered.
+	runtime.HandleRelayDatagram(seal(2), peerNode)
+	if again := quiet(); len(again) != len(sends) {
+		t.Fatalf("a call within %s was answered with %d more probes", callMeMaybeAnswerSpacing,
+			len(again)-len(sends))
+	}
+}

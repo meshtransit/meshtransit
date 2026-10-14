@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -475,4 +476,117 @@ func cloneTestSnapshot(snapshot networkmap.Snapshot) networkmap.Snapshot {
 	}
 
 	return clone
+}
+
+// TestRegistryRefusesRelayAndOverlayAddresses checks that a peer cannot
+// make this node learn, probe or answer an address of the map's relays or
+// overlay, directly or through NAT64.
+func TestRegistryRefusesRelayAndOverlayAddresses(t *testing.T) {
+	t.Parallel()
+	local, remote, registry, snapshot, generation := testRegistry(t)
+	now := time.Unix(1_000, 0)
+	relayAddress := netip.MustParseAddrPort("198.51.100.200:3478")
+	overlay := netip.MustParseAddr("fd7a:115c:a1e0::2")
+	snapshot.Peers[0].Addresses = []netip.Prefix{netip.PrefixFrom(overlay, 128)}
+	snapshot.Relays = map[int]networkmap.RelayRegion{1: {ID: 1, Nodes: []networkmap.RelayNode{{IPv4: "198.51.100.200"}}}}
+	snapshot.Revision++
+	generation.MapRevision = snapshot.Revision
+	if _, err := registry.Replace(snapshot, generation, now); err != nil {
+		t.Fatal(err)
+	}
+	peerID := snapshot.Peers[0].ID
+	refused := []netip.AddrPort{
+		relayAddress,
+		netip.MustParseAddrPort("[64:ff9b::c633:64c8]:3478"), // the relay through NAT64
+		netip.AddrPortFrom(overlay, 41641),
+		netip.MustParseAddrPort("100.64.0.9:41641"),
+	}
+	wire := testPeerChannel(t, remote, local)
+	var named []disco.Endpoint
+	for _, endpoint := range refused {
+		named = append(named, disco.Endpoint{Kind: disco.EndpointServerReflex, Addr: endpoint})
+	}
+	call, err := wire.Seal(disco.CallMeMaybe{Seq: 1, SentAt: time.Now().UnixMilli(), Endpoints: named})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.OpenRelayed(call, testNodeKey(t, snapshot.Peers[0].PublicKey), generation, now); err != nil {
+		t.Fatalf("OpenRelayed(CALL_ME_MAYBE) error = %v", err)
+	}
+	for _, endpoint := range refused {
+		if registry.LearnPeerReflexive(peerID, endpoint, now) {
+			t.Errorf("learned %v from a ping", endpoint)
+		}
+		if _, ok := registry.ClaimProbe(peerID, endpoint, false, now); ok {
+			t.Errorf("a probe to %v was allowed", endpoint)
+		}
+	}
+	if candidates := registry.PeerCandidates(peerID, now); len(candidates) != len(snapshot.Peers[0].Endpoints) {
+		t.Fatalf("candidates = %v, want only the map's", candidates)
+	}
+	// A ping from the relay's address is refused, so it is never answered.
+	ping, err := wire.Seal(disco.Ping{TxID: disco.TxID{1}, Node: testNodeKey(t, snapshot.Peers[0].PublicKey)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Open(ping, relayAddress, generation, now); !errors.Is(err, ErrInvalidPacket) {
+		t.Fatalf("Open(ping from the relay) error = %v", err)
+	}
+}
+
+// TestRegistryForgetsLearnedCandidatesTheNewMapRefuses learns an address
+// that a later map names as a relay: the candidate is dropped.
+func TestRegistryForgetsLearnedCandidatesTheNewMapRefuses(t *testing.T) {
+	t.Parallel()
+	_, _, registry, snapshot, generation := testRegistry(t)
+	now := time.Unix(1_000, 0)
+	learned := netip.MustParseAddrPort("198.51.100.201:41641")
+	peerID := snapshot.Peers[0].ID
+	if !registry.LearnPeerReflexive(peerID, learned, now) {
+		t.Fatal("not learned")
+	}
+	snapshot.Relays = map[int]networkmap.RelayRegion{1: {ID: 1, Nodes: []networkmap.RelayNode{{IPv4: "198.51.100.201"}}}}
+	snapshot.Revision++
+	generation.MapRevision = snapshot.Revision
+	if _, err := registry.Replace(snapshot, generation, now); err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(registry.PeerCandidates(peerID, now), learned) {
+		t.Fatal("kept a learned candidate that is now a relay")
+	}
+}
+
+// TestRegistryRoundsRotateThroughCandidates gives a peer more candidates
+// than a round probes: the next rounds reach the others first.
+func TestRegistryRoundsRotateThroughCandidates(t *testing.T) {
+	t.Parallel()
+	_, _, registry, snapshot, generation := testRegistry(t)
+	now := time.Unix(1_000, 0)
+	snapshot.Peers[0].Endpoints = nil
+	for index := range 2 * maxScheduledPerPeer {
+		snapshot.Peers[0].Endpoints = append(snapshot.Peers[0].Endpoints,
+			netip.AddrPortFrom(netip.MustParseAddr("10.0.0.1"), uint16(40000+index)))
+	}
+	snapshot.Revision++
+	generation.MapRevision = snapshot.Revision
+	if _, err := registry.Replace(snapshot, generation, now); err != nil {
+		t.Fatal(err)
+	}
+	peerID := snapshot.Peers[0].ID
+	seen := map[netip.AddrPort]bool{}
+	for round := range 2 {
+		candidates := registry.peers(now)[0].candidates
+		for _, endpoint := range candidates[:maxScheduledPerPeer] {
+			if seen[endpoint] {
+				t.Fatalf("round %d probed %v again before the others", round, endpoint)
+			}
+			seen[endpoint] = true
+			if _, ok := registry.ClaimProbe(peerID, endpoint, true, now); !ok {
+				t.Fatalf("round %d: probe to %v refused", round, endpoint)
+			}
+		}
+	}
+	if len(seen) != 2*maxScheduledPerPeer {
+		t.Fatalf("two rounds reached %d candidates", len(seen))
+	}
 }

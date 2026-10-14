@@ -255,11 +255,7 @@ func validateNode(node Node, self bool, now time.Time) error {
 	}
 	seenEndpoints := make(map[netip.AddrPort]struct{}, len(node.Endpoints))
 	for _, endpoint := range node.Endpoints {
-		address := endpoint.Addr()
-		if !endpoint.IsValid() || endpoint.Port() == 0 || !address.IsValid() ||
-			address.Is4In6() || address.Zone() != "" || address != address.Unmap() ||
-			!address.IsGlobalUnicast() || address.IsUnspecified() ||
-			address.IsMulticast() || address.IsLoopback() || address.IsLinkLocalUnicast() {
+		if !UsableEndpoint(endpoint) {
 			return fmt.Errorf("endpoint %q is invalid", endpoint)
 		}
 		if _, exists := seenEndpoints[endpoint]; exists {

@@ -250,7 +250,7 @@ func (state *mapState) build(input snapshotInput) (networkmap.Snapshot, error) {
 	if interchange, regions, ok := state.interchange(input.now); ok {
 		snapshot.Interchange, snapshot.Relays = interchange, regions
 	}
-	return networkmap.ValidateAndClone(snapshot, input.now)
+	return networkmap.ValidateAndClone(networkmap.WithUsableEndpoints(snapshot), input.now)
 }
 
 // interchange verifies the relay map with the grant's signing keys and

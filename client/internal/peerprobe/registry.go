@@ -23,6 +23,9 @@ import (
 
 const (
 	maxPeerChannels = 10_000 // matches Core's largest map (MESHTRANSIT_CONTROL_MAP_PEER_LIMIT, at most 10,000)
+	// maxRetainedAllowances bounds the probe budgets kept by peer ID: the
+	// map's peers plus as many that left it recently.
+	maxRetainedAllowances = 2 * maxPeerChannels
 	// maxLearnedCandidates bounds the candidates learned per peer from
 	// CALL_ME_MAYBE and peer-reflexive sources (disco-v2 §4.1).
 	maxLearnedCandidates = 64
@@ -52,6 +55,9 @@ var (
 	// ErrInvalidPacket means an incoming packet failed bounded parsing,
 	// authentication, or its node-identity binding.
 	ErrInvalidPacket = errors.New("peerprobe: invalid packet")
+
+	// ErrProbeThrottled reports a probe the peer's probe budget refused.
+	ErrProbeThrottled = errors.New("peerprobe: probe budget exhausted")
 )
 
 // MapDiscoveryKey formats a disco public key as the legacy control map
@@ -145,6 +151,9 @@ type peerChannel struct {
 	wire         *disco.PeerKey
 	firstSeen    time.Time
 	lastPong     time.Time
+	// allowance is the peer's probe budget (budget.go), owned by the
+	// registry and shared with the peer's channels of later maps.
+	allowance *peerAllowance
 }
 
 func (p *peerChannel) isCandidate(endpoint netip.AddrPort, now time.Time) bool {
@@ -170,8 +179,12 @@ func (p *peerChannel) candidates(now time.Time) []netip.AddrPort {
 }
 
 // learn adds or refreshes candidates, evicting the oldest learned one when
-// full. It returns whether anything new was added.
-func (p *peerChannel) learn(endpoints []netip.AddrPort, kind disco.EndpointKind, now time.Time) bool {
+// full; an address the map refuses (an overlay or relay address) is never
+// learned. It returns whether anything
+// new was added.
+func (p *peerChannel) learn(endpoints []netip.AddrPort, kind disco.EndpointKind, filter networkmap.EndpointFilter,
+	now time.Time,
+) bool {
 	added := false
 	for endpoint := range p.learned {
 		if !now.Before(p.learned[endpoint].expires) {
@@ -179,7 +192,7 @@ func (p *peerChannel) learn(endpoints []netip.AddrPort, kind disco.EndpointKind,
 		}
 	}
 	for _, endpoint := range endpoints {
-		if !validEndpoint(endpoint) {
+		if !filter.Allows(endpoint) {
 			continue
 		}
 		if _, inMap := p.mapEndpoints[endpoint]; inMap {
@@ -209,6 +222,7 @@ func (p *peerChannel) evictOldest() {
 
 type channelSet struct {
 	localNodeKey key.NodePublic
+	filter       networkmap.EndpointFilter
 	byID         map[uint64]*peerChannel
 	byDiscovery  map[key.DiscoPublic]*peerChannel
 }
@@ -225,9 +239,15 @@ type Registry struct {
 	generation       pathdiscovery.ProbeGeneration
 	latestGeneration pathdiscovery.ProbeGeneration
 	localNodeKey     key.NodePublic
-	byID             map[uint64]*peerChannel
-	byDiscovery      map[key.DiscoPublic]*peerChannel
-	closed           bool
+	// filter holds the active map's overlay and relay addresses, which are
+	// never candidates nor answered.
+	filter      networkmap.EndpointFilter
+	byID        map[uint64]*peerChannel
+	byDiscovery map[key.DiscoPublic]*peerChannel
+	// allowances are the peers' probe budgets by peer ID; they outlive maps
+	// and deactivations (budget.go).
+	allowances map[uint64]*peerAllowance
+	closed     bool
 }
 
 // NewRegistry creates an inactive registry tied to one session disco key.
@@ -240,6 +260,7 @@ func NewRegistry(identity key.DiscoPrivate) (*Registry, error) {
 		identity:          identity,
 		localDiscoveryKey: identity.Public(),
 		random:            rand.Reader,
+		allowances:        make(map[uint64]*peerAllowance),
 	}, nil
 }
 
@@ -281,12 +302,32 @@ func (r *Registry) Replace(
 	if err := r.canReplaceLocked(generation); err != nil {
 		return 0, err
 	}
+	filter := next.filter
 	for id, peer := range next.byID {
-		if previous, ok := r.byID[id]; ok && previous.discoveryKey == peer.discoveryKey &&
-			previous.nodeKey == peer.nodeKey {
-			peer.learned, peer.firstSeen, peer.lastPong = previous.learned, previous.firstSeen, previous.lastPong
+		// The probe budget belongs to the peer's ID and outlives this map:
+		// a Device that comes back with a new disco key, or after the map
+		// was deactivated or it left the map, does not get a fresh one.
+		allowance := r.allowances[id]
+		if allowance == nil {
+			allowance = newPeerAllowance()
+			r.allowances[id] = allowance
+		}
+		allowance.renew(peer.nodeKey, peer.discoveryKey)
+		peer.allowance = allowance
+		previous, ok := r.byID[id]
+		if !ok || previous.discoveryKey != peer.discoveryKey || previous.nodeKey != peer.nodeKey {
+			continue
+		}
+		peer.learned, peer.firstSeen, peer.lastPong = previous.learned, previous.firstSeen, previous.lastPong
+		// A candidate the new map refuses (a new relay, a new peer's
+		// overlay address) is not kept.
+		for endpoint := range peer.learned {
+			if !filter.Allows(endpoint) {
+				delete(peer.learned, endpoint)
+			}
 		}
 	}
+	r.forgetFreshAllowances(next.byID, now)
 	for discoveryKey := range r.byDiscovery {
 		if _, kept := next.byDiscovery[discoveryKey]; !kept {
 			r.guard.Forget(discoveryKey)
@@ -295,10 +336,42 @@ func (r *Registry) Replace(
 	r.generation = generation
 	r.latestGeneration = generation
 	r.localNodeKey = next.localNodeKey
+	r.filter = filter
 	r.byID = next.byID
 	r.byDiscovery = next.byDiscovery
 
 	return len(next.byID), nil
+}
+
+// forgetFreshAllowances drops the allowances of peers outside the map that
+// are back to a fresh one's state, so forgetting them changes nothing; the
+// rest stay, bounded by the peers that recently left the map.
+func (r *Registry) forgetFreshAllowances(current map[uint64]*peerChannel, now time.Time) {
+	for id, allowance := range r.allowances {
+		if _, inMap := current[id]; inMap {
+			continue
+		}
+		if allowance.fresh(now) {
+			delete(r.allowances, id)
+			continue
+		}
+		// Outside the map only the unanswered counts still matter.
+		for endpoint, state := range allowance.probes {
+			if state.unanswered == 0 {
+				delete(allowance.probes, endpoint)
+			}
+		}
+	}
+	// A hard bound for a map that churns through many peers: past it, the
+	// allowances of peers outside the map go.
+	for id := range r.allowances {
+		if len(r.allowances) <= maxRetainedAllowances {
+			break
+		}
+		if _, inMap := current[id]; !inMap {
+			delete(r.allowances, id)
+		}
+	}
 }
 
 // Deactivate invalidates the active map. The latest generation is retained
@@ -315,6 +388,7 @@ func (r *Registry) Deactivate() int {
 	removed := len(r.byID)
 	r.generation = pathdiscovery.ProbeGeneration{}
 	r.localNodeKey = key.NodePublic{}
+	r.filter = networkmap.EndpointFilter{}
 	r.byID = nil
 	r.byDiscovery = nil
 
@@ -385,6 +459,14 @@ func (r *Registry) Open(
 		return nil, ErrInactive
 	}
 	if !validEndpoint(source) || !generation.IsValid() {
+		return nil, ErrInvalidPacket
+	}
+	// A packet from an overlay or relay address is never a direct path, and
+	// answering it would aim our pong there.
+	r.mu.RLock()
+	refused := !r.filter.Allows(source)
+	r.mu.RUnlock()
+	if refused {
 		return nil, ErrInvalidPacket
 	}
 	peer, message, err := r.open(packet, generation)
@@ -484,7 +566,7 @@ func (r *Registry) acceptCallMeMaybe(peer *peerChannel, message disco.CallMeMayb
 	}
 	r.mu.Lock()
 	if current, ok := r.byID[peer.peerID]; ok && current == peer {
-		peer.learn(endpoints, disco.EndpointStatic, now)
+		peer.learn(endpoints, disco.EndpointStatic, r.filter, now)
 	}
 	r.mu.Unlock()
 
@@ -505,6 +587,9 @@ func (r *Registry) SealPong(ping IncomingPing) ([]byte, error) {
 
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	if !r.filter.Allows(ping.source) {
+		return nil, ErrInvalidProbe
+	}
 	if err := r.validateGenerationLocked(ping.generation); err != nil {
 		return nil, err
 	}
@@ -563,7 +648,58 @@ func (r *Registry) LearnPeerReflexive(peerID uint64, source netip.AddrPort, now 
 		return false
 	}
 
-	return peer.learn([]netip.AddrPort{source}, disco.EndpointPeerReflexive, now)
+	return peer.learn([]netip.AddrPort{source}, disco.EndpointPeerReflexive, r.filter, now)
+}
+
+// ClaimProbe records a probe to one of the peer's candidates and reports
+// whether its probe budget allows it (budget.go). scheduled is a probe of
+// a regular round; any other is a burst.
+func (r *Registry) ClaimProbe(peerID uint64, endpoint netip.AddrPort, scheduled bool, now time.Time) (probeClaim, bool) {
+	if r == nil {
+		return probeClaim{}, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	peer, exists := r.byID[peerID]
+	if !exists || !r.filter.Allows(endpoint) {
+		return probeClaim{}, false
+	}
+	return peer.claim(endpoint, scheduled, now)
+}
+
+// ReleaseProbe refunds a claimed probe that was never sent.
+func (r *Registry) ReleaseProbe(peerID uint64, claim probeClaim) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if peer, exists := r.byID[peerID]; exists {
+		peer.release(claim)
+	}
+}
+
+// ConfirmProbe notes an authenticated pong from the probed endpoint.
+func (r *Registry) ConfirmProbe(peerID uint64, endpoint netip.AddrPort, now time.Time) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if peer, exists := r.byID[peerID]; exists {
+		peer.confirm(endpoint, now)
+	}
+}
+
+// AllowAnswer permits one answer of kind per spacing to the peer.
+func (r *Registry) AllowAnswer(peerID uint64, kind answerKind, spacing time.Duration, now time.Time) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	peer, exists := r.byID[peerID]
+	return exists && peer.allowAnswer(kind, spacing, now)
 }
 
 // MarkPong notes an authenticated reply from a peer: it has a trusted direct
@@ -624,9 +760,18 @@ func (r *Registry) peers(now time.Time) []peerStatus {
 	defer r.mu.RUnlock()
 	out := make([]peerStatus, 0, len(r.byID))
 	for _, peer := range r.byID {
+		// A round probes only the candidates that are due: those that
+		// answered first, then those tried least, so candidates that keep
+		// not answering make room for the others.
+		candidates := slices.DeleteFunc(peer.candidates(now), func(endpoint netip.AddrPort) bool {
+			return !peer.due(endpoint, now)
+		})
+		slices.SortStableFunc(candidates, func(a, b netip.AddrPort) int {
+			return peer.probeOrder(a, now) - peer.probeOrder(b, now)
+		})
 		out = append(out, peerStatus{
 			peerID: peer.peerID, probe: peer.probe, firstSeen: peer.firstSeen, lastPong: peer.lastPong,
-			candidates: peer.candidates(now),
+			candidates: candidates,
 		})
 	}
 	slices.SortFunc(out, func(a, b peerStatus) int {
@@ -651,9 +796,11 @@ func (r *Registry) Close() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.closed = true
+	r.allowances = nil
 	r.generation = pathdiscovery.ProbeGeneration{}
 	r.latestGeneration = pathdiscovery.ProbeGeneration{}
 	r.localNodeKey = key.NodePublic{}
+	r.filter = networkmap.EndpointFilter{}
 	r.byID = nil
 	r.byDiscovery = nil
 }
@@ -709,6 +856,7 @@ func buildChannelSet(
 
 	next := channelSet{
 		localNodeKey: key.NodePublic(localNodeKey),
+		filter:       networkmap.NewEndpointFilter(snapshot),
 		byID:         make(map[uint64]*peerChannel, len(snapshot.Peers)),
 		byDiscovery:  make(map[key.DiscoPublic]*peerChannel, len(snapshot.Peers)),
 	}
@@ -749,6 +897,9 @@ func buildChannelSet(
 			if !validEndpoint(endpoint) {
 				return channelSet{}, ErrInvalidSnapshot
 			}
+			if !next.filter.Allows(endpoint) {
+				continue // an overlay or relay address is never a candidate
+			}
 			if _, exists := endpoints[endpoint]; exists {
 				return channelSet{}, ErrInvalidSnapshot
 			}
@@ -778,12 +929,4 @@ func buildChannelSet(
 	return next, nil
 }
 
-func validEndpoint(endpoint netip.AddrPort) bool {
-	address := endpoint.Addr()
-
-	return endpoint.IsValid() && endpoint.Port() != 0 && address.IsValid() &&
-		address == address.Unmap() && !address.Is4In6() && address.Zone() == "" &&
-		address.IsGlobalUnicast() && !address.IsUnspecified() &&
-		!address.IsMulticast() && !address.IsLoopback() &&
-		!address.IsLinkLocalUnicast()
-}
+func validEndpoint(endpoint netip.AddrPort) bool { return networkmap.UsableEndpoint(endpoint) }

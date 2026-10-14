@@ -24,6 +24,7 @@ type ProbeTelemetrySnapshot struct {
 	DatagramDrops                uint64
 	AuthenticatedPings           uint64
 	PingRateLimited              uint64
+	ProbesThrottled              uint64
 	PongsSent                    uint64
 	PongSendFailures             uint64
 	AuthenticatedPongs           uint64
@@ -61,6 +62,7 @@ type ProbeTelemetry struct {
 	datagramDrops                atomic.Uint64
 	authenticatedPings           atomic.Uint64
 	pingRateLimited              atomic.Uint64
+	probesThrottled              atomic.Uint64
 	pongsSent                    atomic.Uint64
 	pongSendFailures             atomic.Uint64
 	authenticatedPongs           atomic.Uint64
@@ -117,6 +119,9 @@ func (t *ProbeTelemetry) RecordProbeSendFailure()  { addProbeCounter(&t.probeSen
 func (t *ProbeTelemetry) RecordDatagramDrop()      { addProbeCounter(&t.datagramDrops, 1) }
 func (t *ProbeTelemetry) RecordAuthenticatedPing() { addProbeCounter(&t.authenticatedPings, 1) }
 func (t *ProbeTelemetry) RecordPingRateLimited()   { addProbeCounter(&t.pingRateLimited, 1) }
+
+// RecordProbeThrottled counts a probe the per-peer probe budget refused.
+func (t *ProbeTelemetry) RecordProbeThrottled()    { addProbeCounter(&t.probesThrottled, 1) }
 func (t *ProbeTelemetry) RecordPongSent()          { addProbeCounter(&t.pongsSent, 1) }
 func (t *ProbeTelemetry) RecordPongSendFailure()   { addProbeCounter(&t.pongSendFailures, 1) }
 func (t *ProbeTelemetry) RecordAuthenticatedPong() { addProbeCounter(&t.authenticatedPongs, 1) }
@@ -181,6 +186,7 @@ func (t *ProbeTelemetry) Snapshot() ProbeTelemetrySnapshot {
 		DatagramDrops:                t.datagramDrops.Load(),
 		AuthenticatedPings:           t.authenticatedPings.Load(),
 		PingRateLimited:              t.pingRateLimited.Load(),
+		ProbesThrottled:              t.probesThrottled.Load(),
 		PongsSent:                    t.pongsSent.Load(),
 		PongSendFailures:             t.pongSendFailures.Load(),
 		AuthenticatedPongs:           t.authenticatedPongs.Load(),
