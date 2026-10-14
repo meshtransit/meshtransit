@@ -45,6 +45,53 @@ func TestEndpointValidatesAddressAndSource(t *testing.T) {
 	}
 }
 
+func TestEndpointClassifiesUndistributedAddresses(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		address       string
+		distributable bool
+	}{
+		{address: "100.64.0.1:41641"},      // Network overlay
+		{address: "100.127.255.254:41641"}, // Network overlay
+		{address: "0.1.2.3:41641"},
+		{address: "240.0.0.1:41641"},
+		{address: "255.255.255.255:41641"},
+		{address: "127.0.0.1:41641"},
+		{address: "[::1]:41641"},
+		{address: "[fe80::1]:41641"},
+		{address: "[::192.0.2.1]:41641"}, // IPv4-compatible
+		{address: "[100::1]:41641"},
+		{address: "[ff02::1]:41641"},
+		{address: "100.63.255.255:41641", distributable: true},
+		{address: "100.128.0.1:41641", distributable: true},
+		{address: "10.0.0.2:41641", distributable: true},       // LAN
+		{address: "192.168.1.2:41641", distributable: true},    // LAN
+		{address: "[fd12:3456::1]:41641", distributable: true}, // LAN ULA
+		{address: "[64:ff9b::c000:201]:41641", distributable: true},
+		{address: "[2001:db8::1]:41641", distributable: true},
+		{address: "198.51.100.7:41641", distributable: true},
+	} {
+		t.Run(test.address, func(t *testing.T) {
+			t.Parallel()
+			_, err := NewEndpoint(netip.MustParseAddrPort(test.address), EndpointSourceLocal)
+			switch {
+			case test.distributable && err != nil:
+				t.Fatalf("NewEndpoint() error = %v, want a distributable endpoint", err)
+			case !test.distributable && !errors.Is(err, ErrUndistributableEndpoint):
+				t.Fatalf("NewEndpoint() error = %v, want ErrUndistributableEndpoint", err)
+			}
+		})
+	}
+	// Malformed endpoints are not merely undistributed.
+	for _, address := range []netip.AddrPort{{}, netip.MustParseAddrPort("192.0.2.10:0"),
+		netip.MustParseAddrPort("[::ffff:192.0.2.10]:41641"), netip.MustParseAddrPort("[fe80::1%en0]:41641")} {
+		if _, err := NewEndpoint(address, EndpointSourceLocal); errors.Is(err, ErrUndistributableEndpoint) ||
+			!errors.Is(err, ErrInvalidEndpoint) {
+			t.Fatalf("NewEndpoint(%v) error = %v, want only ErrInvalidEndpoint", address, err)
+		}
+	}
+}
+
 func TestEndpointSetCanonicalizesAndCopies(t *testing.T) {
 	t.Parallel()
 

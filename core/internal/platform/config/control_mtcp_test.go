@@ -38,6 +38,22 @@ func TestLoadControlMTCPConfig(t *testing.T) {
 			envControlMTCPEnabled: "true", envControlMTCPKeyNotAfter: "2027-10-10T07:00:00+07:00",
 			envControlMTCPTrustedProxies: "10.0.0.0/8,2001:db8::/32",
 		}},
+		{name: "denied endpoints", values: map[string]string{
+			envControlMTCPKeyNotAfter: "2027-10-10T00:00:00Z", envControlMTCPTrustedProxies: "10.0.0.0/8,2001:db8::/32",
+			envControlMTCPDeniedEndpoints: "203.0.113.10/32,2001:db8:1::/48",
+		}},
+		{name: "denied endpoints not canonical", values: map[string]string{
+			envControlMTCPKeyNotAfter: "2027-10-10T00:00:00Z", envControlMTCPDeniedEndpoints: "203.0.113.10/24",
+		}, wantErr: envControlMTCPDeniedEndpoints},
+		{name: "denied endpoints cover everything", values: map[string]string{
+			envControlMTCPKeyNotAfter: "2027-10-10T00:00:00Z", envControlMTCPDeniedEndpoints: "203.0.113.10/32,::/0",
+		}, wantErr: envControlMTCPDeniedEndpoints},
+		{name: "denied endpoints mapped", values: map[string]string{
+			envControlMTCPKeyNotAfter: "2027-10-10T00:00:00Z", envControlMTCPDeniedEndpoints: "::ffff:203.0.113.0/120",
+		}, wantErr: envControlMTCPDeniedEndpoints},
+		{name: "denied endpoints repeated", values: map[string]string{
+			envControlMTCPKeyNotAfter: "2027-10-10T00:00:00Z", envControlMTCPDeniedEndpoints: "203.0.113.10/32,203.0.113.10/32",
+		}, wantErr: envControlMTCPDeniedEndpoints},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -62,6 +78,11 @@ func TestLoadControlMTCPConfig(t *testing.T) {
 			proxies[0] = netip.Prefix{}
 			if got.TrustedProxyPrefixes()[0] != netip.MustParsePrefix("10.0.0.0/8") {
 				t.Fatal("TrustedProxyPrefixes returned internal state")
+			}
+			denied := got.DeniedEndpointPrefixes()
+			if value := test.values[envControlMTCPDeniedEndpoints]; value == "" && len(denied) != 0 ||
+				value != "" && (len(denied) != 2 || denied[0] != netip.MustParsePrefix("203.0.113.10/32")) {
+				t.Fatalf("denied endpoints = %v", denied)
 			}
 		})
 	}

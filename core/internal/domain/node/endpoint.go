@@ -2,8 +2,11 @@ package node
 
 import (
 	"errors"
+	"fmt"
 	"net/netip"
 	"slices"
+
+	"meshtransit.net/shared/endpointpolicy"
 )
 
 const maximumEndpointCount = 64
@@ -11,6 +14,10 @@ const maximumEndpointCount = 64
 var (
 	// ErrInvalidEndpoint reports an unusable client endpoint.
 	ErrInvalidEndpoint = errors.New("node: invalid endpoint")
+	// ErrUndistributableEndpoint reports a well-formed endpoint that peers
+	// are never sent, such as a loopback or overlay address; it wraps
+	// ErrInvalidEndpoint.
+	ErrUndistributableEndpoint = fmt.Errorf("%w: not distributed to peers", ErrInvalidEndpoint)
 	// ErrInvalidEndpointSet reports an incomplete or unsafe endpoint set.
 	ErrInvalidEndpointSet = errors.New("node: invalid endpoint set")
 )
@@ -44,10 +51,14 @@ type Endpoint struct {
 	source  EndpointSource
 }
 
-// NewEndpoint validates one client-reported UDP endpoint.
+// NewEndpoint validates one client-reported UDP endpoint. A well-formed
+// endpoint that peers are never sent fails with ErrUndistributableEndpoint.
 func NewEndpoint(address netip.AddrPort, source EndpointSource) (Endpoint, error) {
-	if !validEndpointAddress(address) || !source.IsValid() {
+	if !wellFormedEndpointAddress(address) || !source.IsValid() {
 		return Endpoint{}, ErrInvalidEndpoint
+	}
+	if !distributableAddress(address.Addr()) {
+		return Endpoint{}, ErrUndistributableEndpoint
 	}
 	return Endpoint{address: address, source: source}, nil
 }
@@ -118,13 +129,18 @@ func (set EndpointSet) Equal(other EndpointSet) bool {
 }
 
 func validEndpointAddress(address netip.AddrPort) bool {
+	return wellFormedEndpointAddress(address) && distributableAddress(address.Addr())
+}
+
+func wellFormedEndpointAddress(address netip.AddrPort) bool {
 	endpointAddress := address.Addr()
 	return address.IsValid() && address.Port() != 0 && endpointAddress.IsValid() &&
-		endpointAddress.Zone() == "" && endpointAddress == endpointAddress.Unmap() &&
-		endpointAddress.IsGlobalUnicast() && !endpointAddress.IsUnspecified() &&
-		!endpointAddress.IsMulticast() && !endpointAddress.IsLoopback() &&
-		!endpointAddress.IsLinkLocalUnicast()
+		endpointAddress.Zone() == "" && endpointAddress == endpointAddress.Unmap()
 }
+
+// distributableAddress is the shared probe policy (mtcp-v1 §8.1), so Core
+// and nodes drop the same addresses.
+func distributableAddress(address netip.Addr) bool { return endpointpolicy.Usable(address) }
 
 func compareEndpoints(left, right Endpoint) int {
 	if compared := left.Address().Compare(right.Address()); compared != 0 {

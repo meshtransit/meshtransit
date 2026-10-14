@@ -52,15 +52,19 @@ func splitGrant(grant mapsession.RelayGrant) (grantParts, error) {
 }
 
 // encodeSnapshot builds a complete MapSnapshot for view.
-func encodeSnapshot(snapshot mapsession.Snapshot, view *mtcpv1.View, aliases bool) (*mtcpv1.MapSnapshot, error) {
+// encodeSnapshot encodes a full map; denied are the operator's ranges never
+// sent as endpoints.
+func encodeSnapshot(snapshot mapsession.Snapshot, view *mtcpv1.View, aliases bool,
+	denied []netip.Prefix) (*mtcpv1.MapSnapshot, error) {
 	if !snapshot.IsValid() {
 		return nil, ErrMapEncoding
 	}
-	self, err := encodeSelf(snapshot)
+	endpoints := newEndpointFilter(snapshot.RelayDirectory(), denied)
+	self, err := encodeSelf(snapshot, endpoints)
 	if err != nil {
 		return nil, err
 	}
-	peers, err := encodePeers(snapshot, snapshot.AuthorizedPeers(), aliases)
+	peers, err := encodePeers(snapshot, snapshot.AuthorizedPeers(), aliases, endpoints)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +97,7 @@ func networkRevisions(snapshot mapsession.Snapshot) []*mtcpv1.NetworkRevision {
 	}}
 }
 
-func encodeSelf(snapshot mapsession.Snapshot) (*mtcpv1.Device, error) {
+func encodeSelf(snapshot mapsession.Snapshot, endpoints endpointFilter) (*mtcpv1.Device, error) {
 	key := snapshot.NodeKey().Bytes()
 	device := &mtcpv1.Device{
 		DeviceId: snapshot.NodeID().String(), Name: snapshot.Hostname().String() + ".",
@@ -102,7 +106,7 @@ func encodeSelf(snapshot mapsession.Snapshot) (*mtcpv1.Device, error) {
 	}
 	encodeAddresses(device, snapshot.Addresses())
 	if connectivity, found := snapshot.ConnectivityFor(snapshot.NodeID()); found {
-		if err := encodeConnectivity(device, connectivity, true); err != nil {
+		if err := encodeConnectivity(device, connectivity, true, endpoints, snapshot.Addresses()); err != nil {
 			return nil, err
 		}
 	}
@@ -111,10 +115,10 @@ func encodeSelf(snapshot mapsession.Snapshot) (*mtcpv1.Device, error) {
 
 // encodePeers encodes candidates sorted by device ID.
 func encodePeers(snapshot mapsession.Snapshot, candidates []mapsession.PeerCandidate,
-	aliases bool) ([]*mtcpv1.Device, error) {
+	aliases bool, endpoints endpointFilter) ([]*mtcpv1.Device, error) {
 	peers := make([]*mtcpv1.Device, 0, len(candidates))
 	for _, candidate := range candidates {
-		peer, err := encodePeer(snapshot, candidate, aliases)
+		peer, err := encodePeer(snapshot, candidate, aliases, endpoints)
 		if err != nil {
 			return nil, err
 		}
@@ -125,7 +129,7 @@ func encodePeers(snapshot mapsession.Snapshot, candidates []mapsession.PeerCandi
 }
 
 func encodePeer(snapshot mapsession.Snapshot, candidate mapsession.PeerCandidate,
-	aliases bool) (*mtcpv1.Device, error) {
+	aliases bool, endpoints endpointFilter) (*mtcpv1.Device, error) {
 	key := candidate.NodeKey().Bytes()
 	device := &mtcpv1.Device{
 		DeviceId: candidate.NodeID().String(), Name: candidate.Hostname().String() + ".",
@@ -137,7 +141,7 @@ func encodePeer(snapshot mapsession.Snapshot, candidate mapsession.PeerCandidate
 	}
 	encodeAddresses(device, candidate.Addresses())
 	if connectivity, found := snapshot.ConnectivityFor(candidate.NodeID()); found {
-		if err := encodeConnectivity(device, connectivity, false); err != nil {
+		if err := encodeConnectivity(device, connectivity, false, endpoints, candidate.Addresses()); err != nil {
 			return nil, err
 		}
 	}
@@ -163,7 +167,10 @@ func encodeAddresses(device *mtcpv1.Device, addresses []netip.Prefix) {
 	}
 }
 
-func encodeConnectivity(device *mtcpv1.Device, connectivity mapsession.Connectivity, self bool) error {
+// encodeConnectivity encodes the endpoints endpoints allows for a Device
+// whose overlay addresses are overlay.
+func encodeConnectivity(device *mtcpv1.Device, connectivity mapsession.Connectivity, self bool,
+	endpoints endpointFilter, overlay []netip.Prefix) error {
 	if !connectivity.IsValid() {
 		return ErrMapEncoding
 	}
@@ -172,10 +179,10 @@ func encodeConnectivity(device *mtcpv1.Device, connectivity mapsession.Connectiv
 		device.DiscoKey = disco[:]
 		for _, endpoint := range set.Endpoints() {
 			kind, ok := endpointKind(endpoint.Source())
-			if !ok {
+			address := endpoint.Address()
+			if !ok || !endpoints.allows(address.Addr(), overlay) {
 				continue
 			}
-			address := endpoint.Address()
 			device.Endpoints = append(device.Endpoints, &mtcpv1.Endpoint{
 				Ip: address.Addr().Unmap().AsSlice(), Port: uint32(address.Port()), Kind: kind,
 			})

@@ -18,7 +18,7 @@ import (
 
 func TestEncodeSnapshot(t *testing.T) {
 	snapshot := snapshotFixture(t, 7)
-	message, err := encodeSnapshot(snapshot, &mtcpv1.View{Epoch: 9, Seq: 1}, false)
+	message, err := encodeSnapshot(snapshot, &mtcpv1.View{Epoch: 9, Seq: 1}, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

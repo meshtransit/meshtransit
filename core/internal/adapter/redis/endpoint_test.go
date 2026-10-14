@@ -337,6 +337,28 @@ func TestDecodeEndpointSetRejectsCorruptPayload(t *testing.T) {
 	}
 }
 
+func TestDecodeEndpointSetDropsUndistributedEndpoints(t *testing.T) {
+	t.Parallel()
+	// An older replica may have stored an overlay address; the rest of the
+	// report is still used.
+	payload := []byte(`{"version":1,"discovery_key":"1111111111111111111111111111111111111111111111111111111111111111",` +
+		`"endpoints":[{"address":"100.64.0.9:41641","source":1},{"address":"198.51.100.7:41641","source":2}]}`)
+	set, err := decodeEndpointSet(payload)
+	if err != nil {
+		t.Fatalf("decodeEndpointSet() error = %v", err)
+	}
+	if endpoints := set.Endpoints(); len(endpoints) != 1 ||
+		endpoints[0].Address() != netip.MustParseAddrPort("198.51.100.7:41641") {
+		t.Fatalf("decodeEndpointSet() = %+v, want only the public endpoint", endpoints)
+	}
+	// A malformed endpoint still makes the payload corrupt.
+	malformed := []byte(`{"version":1,"discovery_key":"1111111111111111111111111111111111111111111111111111111111111111",` +
+		`"endpoints":[{"address":"198.51.100.7:0","source":2}]}`)
+	if _, err := decodeEndpointSet(malformed); !errors.Is(err, ErrLoadEndpoints) {
+		t.Fatalf("decodeEndpointSet(port 0) error = %v, want ErrLoadEndpoints", err)
+	}
+}
+
 func testEndpointObservation(t testing.TB, generation int64) node.EndpointObservation {
 	t.Helper()
 	nodeID, err := node.ParseID("01890f00-0000-7000-8000-000000000701")

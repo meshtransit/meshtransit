@@ -1,10 +1,13 @@
 package mtcp
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -1406,5 +1409,119 @@ func TestEndpointBackoffDoublesUpToItsLimit(t *testing.T) {
 		if got := endpointBackoff(failures); got != want {
 			t.Fatalf("endpointBackoff(%d) = %s, want %s", failures, got, want)
 		}
+	}
+}
+
+func TestConversationDropsEndpointsPeersMustNotProbe(t *testing.T) {
+	t.Parallel()
+	f := endpointPacingFixture(t)
+	f.talk.application.options.DeniedEndpointPrefixes = []netip.Prefix{netip.MustParsePrefix("203.0.113.0/24")}
+	endpoint := func(address string) *mtcpv1.Endpoint {
+		parsed := netip.MustParseAddrPort(address)
+		return &mtcpv1.Endpoint{Ip: parsed.Addr().AsSlice(), Port: uint32(parsed.Port()), Kind: mtcpv1.Endpoint_HOST}
+	}
+	report := endpointReportFixture(41641) // 198.51.100.7, kept
+	report.Endpoints = append(report.Endpoints,
+		endpoint("100.64.0.1:41641"),         // the Device's own overlay address
+		endpoint("100.100.1.1:41641"),        // another overlay address
+		endpoint("192.0.2.10:3478"),          // a relay
+		endpoint("[2001:db8::10]:3478"),      // a relay over IPv6
+		endpoint("203.0.113.5:443"),          // the operator's denied range
+		endpoint("[64:ff9b::c000:20a]:3478"), // the relay through NAT64
+		endpoint("192.168.1.20:41641"),       // LAN, kept
+		endpoint("[fd12:3456::7]:41641"),     // LAN ULA, kept
+	)
+	// An IPv4-mapped address is held to the IPv4 rules.
+	report.Endpoints = append(report.Endpoints, &mtcpv1.Endpoint{
+		Ip: netip.MustParseAddr("::ffff:203.0.113.6").AsSlice(), Port: 443, Kind: mtcpv1.Endpoint_HOST,
+	})
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEndpointReport, report); err != nil {
+		t.Fatal(err)
+	}
+	f.endpoints.mu.Lock()
+	defer f.endpoints.mu.Unlock()
+	if len(f.endpoints.sets) != 1 {
+		t.Fatalf("%d stored, want one report", len(f.endpoints.sets))
+	}
+	var got []string
+	for _, stored := range f.endpoints.sets[0].Endpoints() {
+		got = append(got, stored.Address().String())
+	}
+	want := []string{"192.168.1.20:41641", "198.51.100.7:41641", "[fd12:3456::7]:41641"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("stored %v, want %v", got, want)
+	}
+}
+
+func TestApplicationValidatesDeniedEndpointPrefixes(t *testing.T) {
+	t.Parallel()
+	for _, prefixes := range [][]netip.Prefix{
+		{netip.MustParsePrefix("0.0.0.0/0")},
+		{netip.PrefixFrom(netip.MustParseAddr("203.0.113.5"), 24)},
+		{netip.MustParsePrefix("::ffff:203.0.113.0/120")},
+		make([]netip.Prefix, maxDeniedEndpointPrefixes+1),
+	} {
+		if validDeniedEndpointPrefixes(prefixes) {
+			t.Fatalf("validDeniedEndpointPrefixes(%v) = true", prefixes)
+		}
+	}
+	if !validDeniedEndpointPrefixes([]netip.Prefix{netip.MustParsePrefix("203.0.113.10/32")}) ||
+		!validDeniedEndpointPrefixes(nil) {
+		t.Fatal("a valid list was refused")
+	}
+}
+
+func TestEndpointFilterDropsTheDevicesOwnOverlayAndInfrastructure(t *testing.T) {
+	t.Parallel()
+	filter := newEndpointFilter(relayDirectoryFixture(t), []netip.Prefix{netip.MustParsePrefix("203.0.113.0/24")})
+	overlay := []netip.Prefix{netip.MustParsePrefix("100.64.0.1/32"), netip.MustParsePrefix("fd7a:115c:a1e0::1/128")}
+	for address, allowed := range map[string]bool{
+		"fd7a:115c:a1e0::1":  false, // the Device's own IPv6 overlay address
+		"fd7a:115c:a1e0::2":  true,  // another address of that range: the node drops its peers' own
+		"192.0.2.10":         false, // relay
+		"2001:db8::10":       false, // relay over IPv6
+		"64:ff9b::c000:20a":  false, // relay through NAT64
+		"203.0.113.77":       false, // denied
+		"64:ff9b::cb00:714d": false, // denied through NAT64
+		"198.51.100.7":       true,
+		"64:ff9b::c633:6407": true, // 198.51.100.7 through NAT64
+	} {
+		if got := filter.allows(netip.MustParseAddr(address), overlay); got != allowed {
+			t.Errorf("allows(%s) = %t, want %t", address, got, allowed)
+		}
+	}
+}
+
+// TestMapEncodingDropsStoredEndpointsPeersMustNotProbe checks the second
+// application of the filter: an endpoint stored before its relay or denied
+// range was known is not sent in the map either.
+func TestMapEncodingDropsStoredEndpointsPeersMustNotProbe(t *testing.T) {
+	t.Parallel()
+	snapshot := streamFixture(t, 1)
+	peer := snapshot.AuthorizedPeers()[0]
+	disco := must(node.NewDiscoveryKey([32]byte{7}))
+	var stored []node.Endpoint
+	for _, address := range []string{"192.0.2.10:3478", "203.0.113.9:41641", "198.51.100.7:41641"} {
+		stored = append(stored, must(node.NewEndpoint(netip.MustParseAddrPort(address), node.EndpointSourceSTUN)))
+	}
+	connectivity := []mapsession.Connectivity{
+		must(mapsession.NewConnectivity(mapsession.ConnectivityParams{
+			Key:    must(mapsession.NewConnectivityKey(snapshot.NodeID(), snapshot.SessionGeneration())),
+			Online: true,
+		})),
+		must(mapsession.NewConnectivity(mapsession.ConnectivityParams{
+			Key:         must(mapsession.NewConnectivityKey(peer.NodeID(), peer.SessionGeneration())),
+			EndpointSet: must(node.NewEndpointSet(disco, stored)), EndpointSetPresent: true, Online: true,
+		})),
+	}
+	snapshot = must(snapshot.WithConnectivity(connectivity))
+	message, err := encodeSnapshot(snapshot, &mtcpv1.View{Epoch: 1, Seq: 1}, false,
+		[]netip.Prefix{netip.MustParsePrefix("203.0.113.0/24")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoints := message.GetPeers()[0].GetEndpoints()
+	if len(endpoints) != 1 || !bytes.Equal(endpoints[0].GetIp(), []byte{198, 51, 100, 7}) {
+		t.Fatalf("peer endpoints = %v, want only 198.51.100.7", endpoints)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -26,7 +27,9 @@ type mapSink struct {
 	session     *Session
 	aliases     bool
 	controlKeys []*mtcpv1.KeyUpdate_ControlKey
-	now         func() time.Time
+	// deniedEndpoints are the operator's ranges never sent as endpoints.
+	deniedEndpoints []netip.Prefix
+	now             func() time.Time
 
 	mu         sync.Mutex
 	epoch, seq uint64
@@ -77,7 +80,7 @@ func (sink *mapSink) sendSnapshotLocked(_ context.Context, snapshot mapsession.S
 		return err
 	}
 	epoch := max(sink.epoch+1, uint64(sink.now().UnixMilli()))
-	message, err := encodeSnapshot(snapshot, &mtcpv1.View{Epoch: epoch, Seq: 1}, sink.aliases)
+	message, err := encodeSnapshot(snapshot, &mtcpv1.View{Epoch: epoch, Seq: 1}, sink.aliases, sink.deniedEndpoints)
 	if err != nil {
 		return err
 	}
@@ -159,12 +162,13 @@ func (sink *mapSink) deltaLocked(snapshot mapsession.Snapshot, selfChanged bool,
 		return nil, grantParts{}, err
 	}
 	message := &mtcpv1.MapDelta{NetworkRevisions: networkRevisions(snapshot)}
+	filter := newEndpointFilter(snapshot.RelayDirectory(), sink.deniedEndpoints)
 	if selfChanged {
-		if message.Self, err = encodeSelf(snapshot); err != nil {
+		if message.Self, err = encodeSelf(snapshot, filter); err != nil {
 			return nil, grantParts{}, err
 		}
 	}
-	if message.PeersUpsert, err = encodePeers(snapshot, changed, sink.aliases); err != nil {
+	if message.PeersUpsert, err = encodePeers(snapshot, changed, sink.aliases, filter); err != nil {
 		return nil, grantParts{}, err
 	}
 	if !bytes.Equal(grant.relayMap, sink.relayMap) {

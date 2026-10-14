@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/netip"
+	"slices"
 	"sync"
 	"time"
 
@@ -66,6 +67,9 @@ type ApplicationOptions struct {
 	ApprovalTTL    time.Duration
 	// Metrics, when set, counts map stream ends.
 	Metrics *Metrics
+	// DeniedEndpointPrefixes are ranges, such as Core's own addresses,
+	// that are dropped from every endpoint report.
+	DeniedEndpointPrefixes []netip.Prefix
 }
 
 // Application turns established sessions into registrations and map
@@ -89,15 +93,20 @@ func NewApplication(options ApplicationOptions) (*Application, error) {
 		options.ApprovalTTL > maxApprovalTTL) {
 		return nil, ErrInvalidServer
 	}
+	if !validDeniedEndpointPrefixes(options.DeniedEndpointPrefixes) {
+		return nil, ErrInvalidServer
+	}
+	options.DeniedEndpointPrefixes = slices.Clone(options.DeniedEndpointPrefixes)
 	return &Application{options: options, now: time.Now, poll: approvalPollInterval,
 		endpointTimer: realEndpointTimer}, nil
 }
 
 // Open implements SessionHandler.
 func (application *Application) Open(session *Session) Conversation {
-	return &conversation{application: application, session: session,
-		sink: newMapSink(session, session.Supports("device-alias.v1"), application.options.ControlKeys,
-			application.now),
+	sink := newMapSink(session, session.Supports("device-alias.v1"), application.options.ControlKeys,
+		application.now)
+	sink.deniedEndpoints = application.options.DeniedEndpointPrefixes
+	return &conversation{application: application, session: session, sink: sink,
 		wake: make(chan struct{}, 1), approvals: make(chan approval, 1)}
 }
 
@@ -395,6 +404,7 @@ func (conversation *conversation) endpoints(report *mtcpv1.EndpointReport) error
 		// mtcp-v1 §8.1: another disco key than the one the node proved.
 		return conversation.sendError(mtcpv1.Error_INVALID, "the disco key is not the Device's", 0)
 	}
+	filter := newEndpointFilter(snapshot.RelayDirectory(), conversation.application.options.DeniedEndpointPrefixes)
 	endpoints := make([]node.Endpoint, 0, len(report.GetEndpoints()))
 	for _, reported := range report.GetEndpoints() {
 		source, known := endpointSource(reported.GetKind())
@@ -407,8 +417,8 @@ func (conversation *conversation) endpoints(report *mtcpv1.EndpointReport) error
 		}
 		port := uint16(reported.GetPort()) //nolint:gosec // G115: checked to be 1–65535 above
 		endpoint, err := node.NewEndpoint(netip.AddrPortFrom(address.Unmap(), port), source)
-		if err != nil {
-			continue // well formed but not distributable (loopback, link-local, multicast…)
+		if err != nil || !filter.allows(endpoint.Address().Addr(), snapshot.Addresses()) {
+			continue // well formed but not distributed (loopback, overlay, a relay…)
 		}
 		endpoints = append(endpoints, endpoint)
 	}

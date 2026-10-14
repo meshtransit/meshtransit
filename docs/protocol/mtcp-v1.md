@@ -561,10 +561,36 @@ address (that is a `PORT_MAPPED` endpoint).
     most one interval later, peers keep using the old one.
 - Core rejects a malformed endpoint (address not 4 or 16 bytes, port outside
   1–65535) with `Error{INVALID}`, ignores endpoints of unknown kind and
-  silently drops well-formed endpoints it does not distribute (unspecified,
-  loopback, link-local, multicast or broadcast addresses). It distributes
-  only the latest report to peers, in a map delta; Core currently sends the
-  whole peer entry in `peers_upsert`.
+  silently drops well-formed endpoints peers must not probe:
+  - unspecified, loopback, link-local, multicast and broadcast addresses;
+  - `100.64.0.0/10`, which holds every Network's IPv4 overlay, so a probe
+    there would loop through the tunnel; `0.0.0.0/8`, `240.0.0.0/4` and
+    `100::/64`;
+  - IPv6 forms that embed an IPv4 address and would escape the IPv4 rules:
+    IPv4-compatible `::/96`, SIIT `::ffff:0:0:0/96`, 6to4 `2002::/16` and
+    Teredo `2001::/32`. A NAT64 address (`64:ff9b::/96`) is kept only when
+    the IPv4 address it embeds is global, and every rule below applies to
+    that IPv4 address too. Operator-specific NAT64 prefixes are not
+    recognised;
+  - the Device's own overlay addresses;
+  - the addresses of the relays in the relay directory, and the ranges the
+    operator denies (`MESHTRANSIT_CONTROL_MTCP_DENIED_ENDPOINT_CIDRS`, for
+    Core and its load balancers), so a Device cannot point its peers'
+    probes at the infrastructure. A relay listed only by hostname has no
+    address to drop; list its addresses in the denied ranges.
+
+  Private ranges, ULA (`fc00::/7`) and the documentation ranges are kept:
+  they are LAN paths, or reach no Internet host. Core applies these rules
+  when a report arrives and again when it sends a map, so an endpoint
+  stored before a relay or a denied range was added, or by an older Core,
+  is not sent either. Core distributes only the latest report to peers, in
+  a map delta; it currently sends the whole peer entry in `peers_upsert`.
+- A node applies the same address rules to its map, dropping an endpoint
+  instead of refusing the map, and refuses the overlay address of any node
+  in its map and the relays' addresses, also as candidates learned from
+  CALL_ME_MAYBE or from a ping's source (disco-v2 §4.1). It does not know
+  the operator's denied ranges, so a peer can still name one in a
+  CALL_ME_MAYBE; the probe budget (disco-v2 §4.4) bounds what that costs.
 
 ### 8.2 Hostinfo
 
@@ -773,6 +799,7 @@ secrets or other tenants' data, and is at most 512 bytes.
 | C17 | One source holds every session slot of a replica with sessions that never register, kept alive by Pings | Such sessions count as unauthenticated for their source until they receive a map, bounded per source, and close after the unproven lifetime (section 14) |
 | C18 | One Device churns its whole Network by rotating its node key in a loop, each change advancing the revision and resetting its peers' WireGuard sessions | At most 4 key changes per Device per hour, checked under the Device lock; registration and rotation requests are also rate limited per session (sections 6.3, 14). A refused request still briefly takes the Network's revision lock; the per-source handshake rate bounds how often |
 | C19 | One Device floods its Network with endpoint changes, each costing one map delta per peer | At most one announced change per Device per announce interval, gated atomically in Redis across sessions and replicas; the latest change is still delivered (section 8.1) |
+| C20 | A Device announces endpoints that point its peers' probes at a victim: the overlay, a relay, Core | Core drops overlay, special-purpose, relay and operator-denied addresses, also through NAT64, when a report arrives and when it sends a map; nodes refuse overlay and relay addresses as candidates; each node's pings to a peer's unanswered candidates are bounded by a backoff and a per-Device budget: at most 144 at once and 0.4/s in the long run, so a victim named by M Devices receives at most 0.4 × M pings/s from each node that has them in its map (section 8.1, disco-v2 §4.4) |
 
 ## 17. Test vectors
 

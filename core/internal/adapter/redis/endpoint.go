@@ -604,16 +604,22 @@ func decodeEndpointSet(payload []byte) (node.EndpointSet, error) {
 	if err != nil {
 		return node.EndpointSet{}, ErrLoadEndpoints
 	}
-	endpoints := make([]node.Endpoint, len(wire.Endpoints))
-	for index, value := range wire.Endpoints {
+	endpoints := make([]node.Endpoint, 0, len(wire.Endpoints))
+	for _, value := range wire.Endpoints {
 		address, err := netip.ParseAddrPort(value.Address)
 		if err != nil {
 			return node.EndpointSet{}, ErrLoadEndpoints
 		}
-		endpoints[index], err = node.NewEndpoint(address, value.Source)
+		endpoint, err := node.NewEndpoint(address, value.Source)
+		if errors.Is(err, node.ErrUndistributableEndpoint) {
+			// Stored before peers stopped being sent such addresses, or by
+			// an older replica: dropped, the rest of the report still holds.
+			continue
+		}
 		if err != nil {
 			return node.EndpointSet{}, ErrLoadEndpoints
 		}
+		endpoints = append(endpoints, endpoint)
 	}
 	set, err := node.NewEndpointSet(discoveryKey, endpoints)
 	if err != nil {

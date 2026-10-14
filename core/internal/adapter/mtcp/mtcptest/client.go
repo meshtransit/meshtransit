@@ -141,7 +141,8 @@ func NewClient(options Options) (*Client, error) {
 		identity: Identity{MachineKey: machine.Public(), NodeKey: node.Public()},
 		connectivity: Connectivity{
 			DiscoveryKey: disco.Public(),
-			Endpoints:    []netip.AddrPort{netip.MustParseAddrPort("192.0.2.10:41641")},
+			// Not a relay's address, which Core never distributes.
+			Endpoints: []netip.AddrPort{netip.MustParseAddrPort("198.51.100.10:41641")},
 		},
 	}, nil
 }

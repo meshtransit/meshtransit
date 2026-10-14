@@ -118,6 +118,7 @@ func composeMTCP(
 		Streams: deps.streams, Endpoints: deps.sessions, Snapshots: deps.sessions, ControlKeys: keys,
 		Logger: logger, Registrations: deps.registrations, RegistrationIDs: intake.PublicRegistrationIDGenerator{},
 		Logout: deps.logout, Paths: deps.paths, Connectivity: deps.connectivity, Metrics: metrics,
+		DeniedEndpointPrefixes: controlConfig.MTCP.DeniedEndpointPrefixes(),
 	}
 	if deps.browser != nil {
 		applicationOptions.BrowserIssuer = deps.browser.issuer

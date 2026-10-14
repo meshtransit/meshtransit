@@ -15,6 +15,9 @@ const (
 	// is set.
 	envControlMTCPNextKeyNotAfter = "MESHTRANSIT_CONTROL_MTCP_NEXT_KEY_NOT_AFTER"
 	envControlMTCPTrustedProxies  = "MESHTRANSIT_CONTROL_MTCP_TRUSTED_PROXY_CIDRS"
+	// envControlMTCPDeniedEndpoints names the operator's ranges, such as
+	// Core and load balancer addresses, that peers are never told to probe.
+	envControlMTCPDeniedEndpoints = "MESHTRANSIT_CONTROL_MTCP_DENIED_ENDPOINT_CIDRS"
 	// Per-source handshake admission (mtcp-v1 §14). A source is an IPv4
 	// address or IPv6 /64; raise these where many Devices share one NAT.
 	envControlMTCPHandshakeRate      = "MESHTRANSIT_CONTROL_MTCP_HANDSHAKE_RATE"
@@ -62,11 +65,18 @@ type ControlMTCPConfig struct {
 	// TrustedProxyPrefixes are the reverse proxies whose X-Forwarded-For
 	// names the client for per-source admission; empty uses the peer.
 	trustedProxyPrefixes []netip.Prefix
+	// deniedEndpointPrefixes are dropped from every endpoint report.
+	deniedEndpointPrefixes []netip.Prefix
 }
 
 // TrustedProxyPrefixes returns a defensive copy.
 func (cfg ControlMTCPConfig) TrustedProxyPrefixes() []netip.Prefix {
 	return slices.Clone(cfg.trustedProxyPrefixes)
+}
+
+// DeniedEndpointPrefixes returns a defensive copy.
+func (cfg ControlMTCPConfig) DeniedEndpointPrefixes() []netip.Prefix {
+	return slices.Clone(cfg.deniedEndpointPrefixes)
 }
 
 func loadControlMTCPConfig(lookup LookupFunc, now time.Time, hasNextKey bool) (ControlMTCPConfig, error) {
@@ -91,6 +101,15 @@ func loadControlMTCPConfig(lookup LookupFunc, now time.Time, hasNextKey bool) (C
 	proxies, err := parseTrustedProxyPrefixes(valueOrDefault(lookup, envControlMTCPTrustedProxies, ""))
 	if err != nil {
 		return ControlMTCPConfig{}, settingError(envControlMTCPTrustedProxies)
+	}
+	// The list reuses the proxy list's canonical form and bound; a /0 would
+	// silently drop every direct path, and an IPv4-mapped prefix would never
+	// match, because endpoints are compared unmapped.
+	denied, err := parseTrustedProxyPrefixes(valueOrDefault(lookup, envControlMTCPDeniedEndpoints, ""))
+	if err != nil || slices.ContainsFunc(denied, func(prefix netip.Prefix) bool {
+		return prefix.Bits() == 0 || prefix.Addr().Is4In6()
+	}) {
+		return ControlMTCPConfig{}, settingError(envControlMTCPDeniedEndpoints)
 	}
 	rate, err := parseIntInRange(valueOrDefault(lookup, envControlMTCPHandshakeRate,
 		strconv.Itoa(defaultControlMTCPHandshakeRate)), 1, maxControlMTCPHandshakeRate)
@@ -118,5 +137,5 @@ func loadControlMTCPConfig(lookup LookupFunc, now time.Time, hasNextKey bool) (C
 	}
 	return ControlMTCPConfig{KeyNotAfter: notAfter.UTC(), NextKeyNotAfter: nextNotAfter, HandshakeRate: rate, HandshakeBurst: burst,
 		UnauthenticatedPerSource: unauthenticated, UnprovenLifetime: unprovenLifetime,
-		trustedProxyPrefixes: proxies}, nil
+		trustedProxyPrefixes: proxies, deniedEndpointPrefixes: denied}, nil
 }
