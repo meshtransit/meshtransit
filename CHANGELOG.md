@@ -13,6 +13,9 @@ merge (2026-10-09) are kept below.
   identity broker image and the clients are built with the new release. The
   Dex workspace verifier accepts a later patch release of the qualified Go
   minor line.
+- Core refuses to start, and stops being ready, on a schema older than its
+  binary; run the migration before rolling out a new release. A newer schema
+  is still accepted, so a rollback is still a binary rollback.
 - Core opens its PostgreSQL connections with join_collapse_limit and
   from_collapse_limit 4 (default 8). Searching the join orders of the
   authority functions cost 40-210 MB of planner memory on a backend's first
