@@ -52,6 +52,7 @@ type Client struct {
 	renewPresence      presenceRenewFunc
 	releasePresence    presenceReleaseFunc
 	observeEndpoints   observeEndpointsFunc
+	flushEndpoints     flushEndpointsFunc
 	loadEndpoints      loadEndpointsFunc
 	loadConnectivity   loadConnectivityFunc
 	applyRateLimit     rateLimitFunc
@@ -166,30 +167,25 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 				wakeup,
 			).Int64()
 		},
-		observeEndpoints: func(
-			observeCtx context.Context,
-			endpointKey string,
-			presenceKey string,
-			generation int64,
-			payload []byte,
-			preferredRelayPresent int64,
-			preferredRelay int,
-			ttl time.Duration,
-			channel string,
-			wakeup []byte,
-		) (int64, error) {
-			return observeEndpointsScript.Run(
-				observeCtx,
-				client,
-				[]string{endpointKey, presenceKey},
-				generation,
-				payload,
-				preferredRelayPresent,
-				preferredRelay,
-				ttl.Milliseconds(),
-				channel,
-				wakeup,
-			).Int64()
+		observeEndpoints: func(observeCtx context.Context, observation endpointObservation) (int64, int64, error) {
+			return runEndpointScript(observeCtx, observeEndpointsScript, client,
+				[]string{observation.endpointKey, observation.presenceKey},
+				observation.generation,
+				observation.payload,
+				observation.preferredRelayPresent,
+				observation.preferredRelay,
+				observation.ttl.Milliseconds(),
+				observation.channel,
+				observation.wakeup,
+				observation.interval.Milliseconds(),
+				observation.discoveryKey,
+				observation.discoSpacing.Milliseconds(),
+			)
+		},
+		flushEndpoints: func(flushCtx context.Context, endpointKey string, generation int64, channel string,
+			wakeup []byte, interval time.Duration) (int64, int64, error) {
+			return runEndpointScript(flushCtx, flushEndpointsScript, client, []string{endpointKey},
+				generation, channel, wakeup, interval.Milliseconds())
 		},
 		loadEndpoints: func(
 			loadCtx context.Context,

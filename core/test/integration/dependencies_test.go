@@ -110,6 +110,7 @@ func TestTLSAuthenticatedDependencies(t *testing.T) {
 	}
 	assertRedisPresenceLeaseFencing(ctx, t, redisClient)
 	assertRedisEndpointObservationFencing(ctx, t, redisClient)
+	assertRedisEndpointAnnouncementPacing(ctx, t, redisClient)
 	assertRedisRateLimit(ctx, t, redisClient)
 	assertRedisDeliveryRecords(ctx, t, redisClient)
 	assertRedisReplicaLoads(ctx, t, redisClient)
@@ -153,16 +154,21 @@ func TestTLSAuthenticatedDependencies(t *testing.T) {
 	for name, value := range map[string]string{
 		"successful ping":       `meshtransit_redis_commands_total{operation="ping",result="success"} 1`,
 		"successful publish":    `meshtransit_redis_commands_total{operation="publish",result="success"} 1`,
-		"successful subscribe":  `meshtransit_redis_commands_total{operation="subscribe",result="success"} 2`,
-		"successful receive":    `meshtransit_redis_commands_total{operation="receive",result="success"} 2`,
+		"successful subscribe":  `meshtransit_redis_commands_total{operation="subscribe",result="success"} 3`,
+		"successful receive":    `meshtransit_redis_commands_total{operation="receive",result="success"} 6`,
 		"presence acquisitions": `meshtransit_redis_commands_total{operation="presence_acquire",result="success"} 5`,
 		"presence renewals":     `meshtransit_redis_commands_total{operation="presence_renew",result="success"} 5`,
 		"presence releases":     `meshtransit_redis_commands_total{operation="presence_release",result="success"} 4`,
-		"endpoint observations": `meshtransit_redis_commands_total{operation="endpoints_observe",result="success"} 3`,
-		"endpoint loads":        `meshtransit_redis_commands_total{operation="endpoints_load",result="success"} 4`,
+		"endpoint observations": `meshtransit_redis_commands_total{operation="endpoints_observe",result="success"} 10`,
+		"endpoint loads":        `meshtransit_redis_commands_total{operation="endpoints_load",result="success"} 7`,
 		"connectivity loads":    `meshtransit_redis_commands_total{operation="connectivity_load",result="success"} 2`,
-		"command-pool state":    `meshtransit_redis_pool_connections`,
-		"active subscriptions":  `meshtransit_redis_subscriptions_active 1`,
+		// Endpoint pacing (H4): every flush timing differs, so only the
+		// outcomes that do not depend on it.
+		"announced changes":    `meshtransit_endpoint_announcements_total{outcome="announced"} 5`,
+		"unchanged reports":    `meshtransit_endpoint_announcements_total{outcome="unchanged"} 1`,
+		"flushed changes":      `meshtransit_endpoint_announcements_total{outcome="flushed"} 1`,
+		"command-pool state":   `meshtransit_redis_pool_connections`,
+		"active subscriptions": `meshtransit_redis_subscriptions_active 1`,
 	} {
 		if !strings.Contains(metricsBody, value) {
 			t.Errorf("Redis metrics missing %s %q", name, value)

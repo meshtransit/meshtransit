@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -46,30 +47,22 @@ func TestClientObservesAndLoadsGenerationFencedEndpoints(t *testing.T) {
 	var observedPayload []byte
 	var observedChannel string
 	var observedWakeup []byte
+	var observedInterval, observedSpacing time.Duration
+	var observedDisco string
 	client := &Client{
-		observeEndpoints: func(
-			gotContext context.Context,
-			endpointKey string,
-			presenceKey string,
-			generation int64,
-			payload []byte,
-			preferredRelayPresence int64,
-			preferredRelay int,
-			ttl time.Duration,
-			channel string,
-			wakeup []byte,
-		) (int64, error) {
+		observeEndpoints: func(gotContext context.Context, call endpointObservation) (int64, int64, error) {
 			if gotContext != ctx {
 				t.Fatal("ObserveEndpoints() did not propagate context")
 			}
-			observedEndpointKey, observedPresenceKey = endpointKey, presenceKey
-			observedGeneration, observedTTL = generation, ttl
-			observedPreferredRelayPresence = preferredRelayPresence
-			observedPreferredRelay = preferredRelay
-			observedPayload = append([]byte(nil), payload...)
-			observedChannel = channel
-			observedWakeup = append([]byte(nil), wakeup...)
-			return 1, nil
+			observedEndpointKey, observedPresenceKey = call.endpointKey, call.presenceKey
+			observedGeneration, observedTTL = call.generation, call.ttl
+			observedPreferredRelayPresence = call.preferredRelayPresent
+			observedPreferredRelay = call.preferredRelay
+			observedPayload = append([]byte(nil), call.payload...)
+			observedChannel = call.channel
+			observedWakeup = append([]byte(nil), call.wakeup...)
+			observedInterval, observedDisco, observedSpacing = call.interval, call.discoveryKey, call.discoSpacing
+			return 1, 0, nil
 		},
 		loadEndpoints: func(
 			gotContext context.Context,
@@ -84,9 +77,14 @@ func TestClientObservesAndLoadsGenerationFencedEndpoints(t *testing.T) {
 		},
 	}
 	scope := testNetworkScope(t)
-	accepted, err := client.ObserveEndpoints(ctx, scope, observation)
-	if err != nil || !accepted {
-		t.Fatalf("ObserveEndpoints() = (%t, %v), want accepted", accepted, err)
+	accepted, announcement, err := client.ObserveEndpoints(ctx, scope, observation, 5*time.Second)
+	if err != nil || !accepted || announcement.Deferred {
+		t.Fatalf("ObserveEndpoints() = (%t, %+v, %v), want announced", accepted, announcement, err)
+	}
+	disco := observation.Set().DiscoveryKey().Bytes()
+	if observedInterval != 5*time.Second || observedSpacing != discoAnnounceSpacing ||
+		observedDisco != hex.EncodeToString(disco[:]) {
+		t.Fatalf("announce arguments = %s, %s, %q", observedInterval, observedSpacing, observedDisco)
 	}
 	set, found, err := client.LoadEndpoints(ctx, observation.NodeID(), observation.Generation())
 	if err != nil || !found {
@@ -116,28 +114,18 @@ func TestClientTreatsStaleAndMissingEndpointsAsCleanResults(t *testing.T) {
 
 	observation := testEndpointObservation(t, 7)
 	client := &Client{
-		observeEndpoints: func(
-			context.Context,
-			string,
-			string,
-			int64,
-			[]byte,
-			int64,
-			int,
-			time.Duration,
-			string,
-			[]byte,
-		) (int64, error) {
-			return 0, nil
+		observeEndpoints: func(context.Context, endpointObservation) (int64, int64, error) {
+			return 0, 0, nil
 		},
 		loadEndpoints: func(context.Context, string, int64) ([]byte, error) {
 			return nil, nil
 		},
 	}
-	if accepted, err := client.ObserveEndpoints(
+	if accepted, _, err := client.ObserveEndpoints(
 		t.Context(),
 		testNetworkScope(t),
 		observation,
+		5*time.Second,
 	); err != nil || accepted {
 		t.Fatalf("ObserveEndpoints() = (%t, %v), want clean rejection", accepted, err)
 	}
@@ -280,24 +268,14 @@ func TestClientRejectsInvalidEndpointInputsAndResults(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			client := &Client{observeEndpoints: func(
-				context.Context,
-				string,
-				string,
-				int64,
-				[]byte,
-				int64,
-				int,
-				time.Duration,
-				string,
-				[]byte,
-			) (int64, error) {
-				return test.result, test.err
+			client := &Client{observeEndpoints: func(context.Context, endpointObservation) (int64, int64, error) {
+				return test.result, 0, test.err
 			}}
-			if _, err := client.ObserveEndpoints(
+			if _, _, err := client.ObserveEndpoints(
 				t.Context(),
 				testNetworkScope(t),
 				observation,
+				5*time.Second,
 			); !errors.Is(err, test.want) {
 				t.Fatalf("ObserveEndpoints() error = %v, want %v", err, test.want)
 			}
@@ -305,30 +283,20 @@ func TestClientRejectsInvalidEndpointInputsAndResults(t *testing.T) {
 	}
 
 	client := &Client{
-		observeEndpoints: func(
-			context.Context,
-			string,
-			string,
-			int64,
-			[]byte,
-			int64,
-			int,
-			time.Duration,
-			string,
-			[]byte,
-		) (int64, error) {
+		observeEndpoints: func(context.Context, endpointObservation) (int64, int64, error) {
 			t.Fatal("ObserveEndpoints() called for invalid observation")
-			return 0, nil
+			return 0, 0, nil
 		},
 		loadEndpoints: func(context.Context, string, int64) ([]byte, error) {
 			t.Fatal("LoadEndpoints() called for invalid identity")
 			return nil, nil
 		},
 	}
-	if _, err := client.ObserveEndpoints(
+	if _, _, err := client.ObserveEndpoints(
 		t.Context(),
 		testNetworkScope(t),
 		node.EndpointObservation{},
+		5*time.Second,
 	); !errors.Is(err, ErrInvalidOptions) {
 		t.Fatalf("ObserveEndpoints(zero) error = %v, want ErrInvalidOptions", err)
 	}

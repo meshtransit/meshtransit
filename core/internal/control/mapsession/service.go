@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"meshtransit.net/core/internal/control"
 	"meshtransit.net/core/internal/domain/network"
@@ -36,8 +37,14 @@ type DeviceAliasVersionObserver interface {
 }
 
 // EndpointObserver records only generation-fenced transient connectivity.
+// It always stores the observation it accepts and announces it to the
+// Device's peers at once, or answers Deferred when another one was announced
+// within the announce interval; FlushEndpoints then announces the deferred
+// change once the interval ended.
 type EndpointObserver interface {
-	ObserveEndpoints(context.Context, network.Scope, node.EndpointObservation) (bool, error)
+	ObserveEndpoints(context.Context, network.Scope, node.EndpointObservation, time.Duration) (
+		bool, EndpointAnnouncement, error)
+	FlushEndpoints(context.Context, network.Scope, node.ID, int64, time.Duration) (EndpointAnnouncement, error)
 }
 
 // ConnectivityStore loads only exact-generation transient state for keys that
@@ -211,7 +218,10 @@ func (service *Service) open(
 			}
 		}
 	}
-	if err := service.observeEndpoints(ctx, snapshot, request); err != nil {
+	// A deferred announcement is not flushed here: peers get the stored
+	// endpoints with the Device's next announcement, or at the latest with
+	// the connectivity resync (ReconcileInterval).
+	if _, err := service.observeEndpoints(ctx, snapshot, request); err != nil {
 		return Snapshot{}, err
 	}
 	snapshot.peerLimit = service.options.sessionPeerLimit(request)
@@ -223,10 +233,10 @@ func (service *Service) observeEndpoints(
 	ctx context.Context,
 	snapshot Snapshot,
 	request Request,
-) error {
+) (EndpointAnnouncement, error) {
 	set, present := request.EndpointSet()
 	if !present {
-		return nil
+		return EndpointAnnouncement{}, nil
 	}
 	observation, err := node.NewEndpointObservation(
 		snapshot.NodeID(),
@@ -235,31 +245,35 @@ func (service *Service) observeEndpoints(
 		service.options.EndpointTTL,
 	)
 	if err != nil {
-		return errors.Join(ErrOpen, err)
+		return EndpointAnnouncement{}, errors.Join(ErrOpen, err)
 	}
 	if preferredRelay, preferredRelayPresent := request.PreferredRelay(); preferredRelayPresent {
 		if preferredRelay > 0 && !usableRelayPreference(snapshot, preferredRelay) {
-			return ErrOpen
+			return EndpointAnnouncement{}, ErrOpen
 		}
 		observation, err = observation.WithPreferredRelay(preferredRelay)
 		if err != nil {
-			return errors.Join(ErrOpen, err)
+			return EndpointAnnouncement{}, errors.Join(ErrOpen, err)
 		}
 	}
 	operationCtx, cancel := context.WithTimeout(ctx, service.options.EndpointTimeout)
 	defer cancel()
-	accepted, err := service.endpoints.ObserveEndpoints(
+	accepted, announcement, err := service.endpoints.ObserveEndpoints(
 		operationCtx,
 		snapshot.Scope(),
 		observation,
+		service.options.endpointAnnounceInterval(),
 	)
 	if err != nil {
-		return fmt.Errorf("%w: observe transient endpoints: %w", ErrOpen, err)
+		return EndpointAnnouncement{}, fmt.Errorf("%w: %w: %w", ErrOpen, ErrEndpointStore, err)
 	}
 	if !accepted {
-		return errors.Join(ErrOpen, ErrEndpointObservationRejected)
+		return EndpointAnnouncement{}, errors.Join(ErrOpen, ErrEndpointObservationRejected)
 	}
-	return nil
+	if !announcement.valid() {
+		return EndpointAnnouncement{}, errEndpointAnnouncement
+	}
+	return announcement, nil
 }
 
 func usableRelayPreference(snapshot Snapshot, regionID int) bool {
@@ -376,11 +390,13 @@ func (service *Service) boundConnectivity(ctx context.Context, snapshot Snapshot
 
 // ObserveSessionEndpoints records a node's transient connectivity for the
 // map session of snapshot, which the caller already holds (MTCP sessions
-// report endpoints on their live stream instead of a separate request).
+// report endpoints on their live stream instead of a separate request). A
+// Deferred announcement must be flushed with FlushSessionEndpoints after
+// RetryAfter.
 func (service *Service) ObserveSessionEndpoints(ctx context.Context, snapshot Snapshot, set node.EndpointSet,
-	preferredRelay int, hasPreferredRelay bool) error {
+	preferredRelay int, hasPreferredRelay bool) (EndpointAnnouncement, error) {
 	if ctx == nil || service == nil || !snapshot.IsValid() || !set.IsValid() {
-		return ErrInvalidRequest
+		return EndpointAnnouncement{}, ErrInvalidRequest
 	}
 	request, err := NewRequest(snapshot.NodeKey())
 	if err == nil {
@@ -390,7 +406,7 @@ func (service *Service) ObserveSessionEndpoints(ctx context.Context, snapshot Sn
 		request, err = request.WithPreferredRelay(preferredRelay)
 	}
 	if err != nil {
-		return err
+		return EndpointAnnouncement{}, err
 	}
 	return service.observeEndpoints(ctx, snapshot, request)
 }

@@ -147,8 +147,19 @@ func (mapEndpointObserverFixture) ObserveEndpoints(
 	context.Context,
 	network.Scope,
 	node.EndpointObservation,
-) (bool, error) {
-	return false, errors.New("composition fixture must not be called")
+	time.Duration,
+) (bool, mapsession.EndpointAnnouncement, error) {
+	return false, mapsession.EndpointAnnouncement{}, errors.New("composition fixture must not be called")
+}
+
+func (mapEndpointObserverFixture) FlushEndpoints(
+	context.Context,
+	network.Scope,
+	node.ID,
+	int64,
+	time.Duration,
+) (mapsession.EndpointAnnouncement, error) {
+	return mapsession.EndpointAnnouncement{}, errors.New("composition fixture must not be called")
 }
 
 type mapPresenceStoreFixture struct{}

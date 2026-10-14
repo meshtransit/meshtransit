@@ -51,6 +51,13 @@ func peerFixture(t *testing.T, scope network.Scope, id string, numeric int64, ad
 // that must not appear in its inbound filter.
 func snapshotFixture(t *testing.T, revision int64, peers ...mapsession.PeerCandidate) mapsession.Snapshot {
 	t.Helper()
+	return snapshotGenerationFixture(t, revision, 3, peers...)
+}
+
+// snapshotGenerationFixture is snapshotFixture for a session generation.
+func snapshotGenerationFixture(t *testing.T, revision, generation int64,
+	peers ...mapsession.PeerCandidate) mapsession.Snapshot {
+	t.Helper()
 	scope := must(network.NewScope(must(workspace.ParseID("01890f00-0000-7000-8000-000000000101")),
 		must(network.ParseID("01890f00-0000-7000-8000-000000000201"))))
 	self := must(node.ParseID("01890f00-0000-7000-8000-000000000701"))
@@ -77,7 +84,7 @@ func snapshotFixture(t *testing.T, revision int64, peers ...mapsession.PeerCandi
 	createdAt := time.Date(2026, time.September, 14, 3, 0, 0, 0, time.UTC)
 	return must(mapsession.NewSnapshot(mapsession.SnapshotParams{
 		Scope: scope, NetworkName: must(network.ParseDisplayName("Development Mesh")),
-		NetworkRevision: revision, RecoveryEpoch: 2, SessionGeneration: 3, NumericNodeID: 701, NumericOwnerID: 11,
+		NetworkRevision: revision, RecoveryEpoch: 2, SessionGeneration: generation, NumericNodeID: 701, NumericOwnerID: 11,
 		NodeID: self, Hostname: must(node.ParseHostname("node-one.example")),
 		MachineKey: must(node.NewMachineKey([32]byte{1})), NodeKey: must(node.NewKey([32]byte{1, 2, 3})),
 		Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.0.1/32")}, CreatedAt: createdAt,

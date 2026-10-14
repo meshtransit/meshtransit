@@ -527,16 +527,44 @@ address (that is a `PORT_MAPPED` endpoint).
 - The node sends its first report right after its first map, with an empty
   `endpoints` list when it has no candidates yet: relay tickets bind the
   disco key, so Core issues the relay grant (section 9) only once it has one.
-- The node sends it after each change and at least every 20 s ± 5 s while
-  connected; Core treats endpoints as stale after 30 s without a report.
+- The node sends it after each change, and again every 5 minutes. Core keeps
+  the endpoints while the session lives and drops them about 30 s (the
+  presence TTL) after it ends.
 - A node sends at most one report per second: it coalesces faster changes
-  and sends the latest when the second has passed. Core drops reports that
-  arrive less than a second after the last one it accepted.
+  and sends the latest when the second has passed. Core never drops a
+  report: one that arrives less than a second after the last one it stored
+  is kept, replacing any kept before, and stored when the second ends.
+- **Announce interval.** A Device's peers learn of at most one change of
+  its endpoints, disco key or preferred relay per announce interval (5 s by
+  default), across its sessions and Core replicas, plus the disco key
+  changes announced at once below: every change wakes the map stream of
+  each peer, so a Device changing them in a loop would otherwise cost its
+  Network one delta per peer per change.
+  - The first change after a quiet interval is announced at once.
+  - Changes within the interval are stored at once, so a new map stream sees
+    them, and the latest one is announced when the interval ends. None is
+    lost: if the session or replica ends first, the connectivity resync
+    (every 30 s) announces it.
+  - A new disco key is announced at once, at most once every 20 s (three
+    times a minute): the node's own map waits for it, so a reconnect is not
+    held back. Another new disco key within those 20 s waits like any other
+    change, at most one interval.
+  - A new session generation (a key rotation, section 6.3) starts its own
+    interval. So does a Device whose endpoint state expired (about 30 s
+    after its last session ended); the session limits (section 14) bound how
+    often that happens.
+  - Peers keep reaching a Device whose new endpoints wait: a direct path
+    still open keeps working, and otherwise the Device's CALL_ME_MAYBE
+    through the relay names its current endpoints and a peer learns an
+    address the Device pings it from (peer-reflexive, disco-v2 §4.1). A
+    new preferred relay is not learned this way: until it is announced, at
+    most one interval later, peers keep using the old one.
 - Core rejects a malformed endpoint (address not 4 or 16 bytes, port outside
   1–65535) with `Error{INVALID}`, ignores endpoints of unknown kind and
   silently drops well-formed endpoints it does not distribute (unspecified,
   loopback, link-local, multicast or broadcast addresses). It distributes
-  only the latest report to peers as `peer_patches`.
+  only the latest report to peers, in a map delta; Core currently sends the
+  whole peer entry in `peers_upsert`.
 
 ### 8.2 Hostinfo
 
@@ -684,6 +712,7 @@ Unknown names are ignored. Core sends a feature only when both sides list it.
 | New handshakes per source (IPv4 address or IPv6 /64) | 10/s burst 50 by default, configurable; before any Noise work |
 | Unauthenticated connections per source (IPv4 address or IPv6 /64) | handshakes in progress plus established sessions that have not yet received a map snapshot; by default the handshake burst plus 10 seconds at the handshake rate (150), configurable |
 | Node key changes per Device | 4 per hour (6.3); over it `Error{NOT_PERMITTED, retry_after_ms}` |
+| Endpoint changes a Device's peers see | 1 per 5 s by default, configurable (8.1); the latest is always delivered |
 | New Devices a person adds to one Network by browser sign-in | 20 per 24 hours, revoked ones included; over it `Rejected{NOT_PERMITTED}`. Resuming a Device is not adding one. |
 | `RegisterRequest` and `RotateNodeKey` per session | 4 at once, then 1 per second; over it `Error{OVERLOADED, retry_after_ms}` |
 | Lifetime of a session that receives no map snapshot | 15 minutes by default, configurable; longer than a browser approval (6.2), then the session closes |
@@ -743,6 +772,7 @@ secrets or other tenants' data, and is at most 512 bytes.
 | C16 | Shared peers reveal another Workspace's data | Foreign peers carry no owner or provider names; foreign Network revisions never listed |
 | C17 | One source holds every session slot of a replica with sessions that never register, kept alive by Pings | Such sessions count as unauthenticated for their source until they receive a map, bounded per source, and close after the unproven lifetime (section 14) |
 | C18 | One Device churns its whole Network by rotating its node key in a loop, each change advancing the revision and resetting its peers' WireGuard sessions | At most 4 key changes per Device per hour, checked under the Device lock; registration and rotation requests are also rate limited per session (sections 6.3, 14). A refused request still briefly takes the Network's revision lock; the per-source handshake rate bounds how often |
+| C19 | One Device floods its Network with endpoint changes, each costing one map delta per peer | At most one announced change per Device per announce interval, gated atomically in Redis across sessions and replicas; the latest change is still delivered (section 8.1) |
 
 ## 17. Test vectors
 

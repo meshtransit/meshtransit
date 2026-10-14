@@ -14,6 +14,13 @@ const (
 	envControlMapCoordinationTimeout  = "MESHTRANSIT_CONTROL_MAP_COORDINATION_TIMEOUT"
 	envControlMapKeepAliveInterval    = "MESHTRANSIT_CONTROL_MAP_KEEPALIVE_INTERVAL"
 	envControlMapReconcileInterval    = "MESHTRANSIT_CONTROL_MAP_RECONCILE_INTERVAL"
+	// How often a Device's peers may see its endpoints change (mtcp-v1
+	// §8.1). Unset, it is 5 s, or half the presence TTL when that is
+	// shorter: a deferred change must be announced before endpoints expire.
+	envControlMapEndpointAnnounceInterval     = "MESHTRANSIT_CONTROL_MAP_ENDPOINT_ANNOUNCE_INTERVAL"
+	defaultControlMapEndpointAnnounceInterval = 5 * time.Second
+	minControlMapEndpointAnnounceInterval     = time.Second
+	maxControlMapEndpointAnnounceInterval     = 30 * time.Second
 	// Shared Network inventory (scale-out S1): one read of a Network's live
 	// Devices per revision, shared by its Devices' maps. On by default; off
 	// reads every other Device for each map as before.
@@ -72,6 +79,9 @@ type ControlMapConfig struct {
 	// PeerLimit bounds the peers of one map; a Device authorized for more
 	// receives a prioritized subset.
 	PeerLimit int
+	// EndpointAnnounceInterval spaces the endpoint changes a Device's peers
+	// see; always below PresenceTTL.
+	EndpointAnnounceInterval time.Duration
 }
 
 func loadControlMapConfig(lookup LookupFunc) (ControlMapConfig, error) {
@@ -180,6 +190,16 @@ func loadControlMapConfig(lookup LookupFunc) (ControlMapConfig, error) {
 	if err != nil {
 		return ControlMapConfig{}, settingError(envControlMapShareStatementTimeout)
 	}
+	announceDefault := max(min(defaultControlMapEndpointAnnounceInterval, presenceTTL/2),
+		minControlMapEndpointAnnounceInterval)
+	announceInterval, err := parseDurationInRange(
+		valueOrDefault(lookup, envControlMapEndpointAnnounceInterval, announceDefault.String()),
+		minControlMapEndpointAnnounceInterval,
+		maxControlMapEndpointAnnounceInterval,
+	)
+	if err != nil || announceInterval >= presenceTTL {
+		return ControlMapConfig{}, settingError(envControlMapEndpointAnnounceInterval)
+	}
 	// The relay directory file is optional: a relay authority with a relay
 	// map supplies the directory instead (checked by Load).
 	var relayDirectory *RelayDirectoryConfig
@@ -208,5 +228,6 @@ func loadControlMapConfig(lookup LookupFunc) (ControlMapConfig, error) {
 		ShareStatementTimeout:     shareTimeout,
 		SharedConnectivity:        sharedConnectivity == "true",
 		PeerLimit:                 peerLimit,
+		EndpointAnnounceInterval:  announceInterval,
 	}, nil
 }

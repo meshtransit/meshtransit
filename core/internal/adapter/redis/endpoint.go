@@ -30,53 +30,117 @@ var (
 	// ErrLoadEndpoints classifies unavailable or corrupt Redis endpoint state.
 	ErrLoadEndpoints = errors.New("redis: load endpoints")
 	// ErrLoadConnectivity classifies unavailable or corrupt transient projection.
-	ErrLoadConnectivity    = errors.New("redis: load connectivity")
+	ErrLoadConnectivity = errors.New("redis: load connectivity")
+	// observeEndpointsScript always stores the latest observation and
+	// announces a change at once when the Device announced none within the
+	// interval (ARGV[8], Redis time), or, for a new disco key, none within
+	// the disco spacing (ARGV[10]); otherwise it marks the change pending
+	// for flushEndpointsScript. It answers {status, retry_after_ms}: -1
+	// malformed, 0 stale generation, 1 announced, 2 unchanged, 3 pending.
+	// A clock that went back counts as an ended interval, so nothing waits
+	// for it.
 	observeEndpointsScript = redisclient.NewScript(`
 local current_endpoint_generation = redis.call('HGET', KEYS[1], 'generation')
 local current_payload = redis.call('HGET', KEYS[1], 'payload')
 if (current_endpoint_generation == false) ~= (current_payload == false) then
-    return -1
+    return {-1, 0}
 end
 local current_preferred_relay_present = redis.call('HGET', KEYS[1], 'preferred_relay_present')
 local current_preferred_relay = redis.call('HGET', KEYS[1], 'preferred_relay')
 if (current_preferred_relay_present == false) ~= (current_preferred_relay == false) then
-    return -1
+    return {-1, 0}
 end
 if current_endpoint_generation == false and current_preferred_relay_present ~= false then
-    return -1
+    return {-1, 0}
+end
+local requested_generation = tonumber(ARGV[1])
+local interval = tonumber(ARGV[8])
+local disco_spacing = tonumber(ARGV[10])
+if requested_generation == nil or interval == nil or interval <= 0 or
+    disco_spacing == nil or disco_spacing <= 0 then
+    return {-1, 0}
 end
 if current_endpoint_generation ~= false then
     local stored_generation = tonumber(current_endpoint_generation)
-    local requested_generation = tonumber(ARGV[1])
-    if stored_generation == nil or requested_generation == nil then
-        return -1
+    if stored_generation == nil then
+        return {-1, 0}
     end
     if requested_generation < stored_generation then
-        return 0
+        return {0, 0}
     end
 end
 
 local current_presence_generation = redis.call('HGET', KEYS[2], 'generation')
 if current_presence_generation ~= false then
     local presence_generation = tonumber(current_presence_generation)
-    local requested_generation = tonumber(ARGV[1])
-    if presence_generation == nil or requested_generation == nil then
-        return -1
+    if presence_generation == nil then
+        return {-1, 0}
     end
     if requested_generation < presence_generation then
-        return 0
+        return {0, 0}
     end
 end
 
-redis.call('HSET', KEYS[1], 'generation', ARGV[1], 'payload', ARGV[2],
-    'preferred_relay_present', ARGV[3], 'preferred_relay', ARGV[4])
-redis.call('PEXPIRE', KEYS[1], ARGV[5])
-if current_endpoint_generation == ARGV[1] and current_payload == ARGV[2] and
-    current_preferred_relay_present == ARGV[3] and current_preferred_relay == ARGV[4] then
-    return 2
+local clock = redis.call('TIME')
+local now = tonumber(clock[1]) * 1000 + math.floor(tonumber(clock[2]) / 1000)
+local same_generation = current_endpoint_generation == ARGV[1]
+local announced_at = nil
+local disco_announced_at = nil
+local pending = false
+local disco_changed = true
+if same_generation then
+    announced_at = tonumber(redis.call('HGET', KEYS[1], 'announced_at'))
+    disco_announced_at = tonumber(redis.call('HGET', KEYS[1], 'disco_announced_at'))
+    pending = redis.call('HGET', KEYS[1], 'pending') == '1'
+    disco_changed = redis.call('HGET', KEYS[1], 'disco') ~= ARGV[9]
+elseif current_endpoint_generation ~= false then
+    -- A new generation starts its own announcement history.
+    redis.call('DEL', KEYS[1])
 end
-redis.call('PUBLISH', ARGV[6], ARGV[7])
-return 1
+local unchanged = same_generation and current_payload == ARGV[2] and
+    current_preferred_relay_present == ARGV[3] and current_preferred_relay == ARGV[4]
+
+redis.call('HSET', KEYS[1], 'generation', ARGV[1], 'payload', ARGV[2],
+    'preferred_relay_present', ARGV[3], 'preferred_relay', ARGV[4], 'disco', ARGV[9])
+redis.call('PEXPIRE', KEYS[1], ARGV[5])
+if unchanged and not pending then
+    return {2, 0}
+end
+local due = announced_at == nil or now >= announced_at + interval or now < announced_at
+if not due and disco_changed and
+    (disco_announced_at == nil or now >= disco_announced_at + disco_spacing or now < disco_announced_at) then
+    due = true
+    redis.call('HSET', KEYS[1], 'disco_announced_at', now)
+end
+if due then
+    redis.call('HSET', KEYS[1], 'announced_at', now, 'pending', '0')
+    redis.call('PUBLISH', ARGV[6], ARGV[7])
+    return {1, 0}
+end
+redis.call('HSET', KEYS[1], 'pending', '1')
+return {3, announced_at + interval - now}
+`)
+	// flushEndpointsScript announces a pending change of the exact
+	// generation once its interval ended: {1, 0} announced, {2, 0} nothing
+	// pending or another generation, {3, retry_after_ms} not yet.
+	flushEndpointsScript = redisclient.NewScript(`
+if redis.call('HGET', KEYS[1], 'generation') ~= ARGV[1] or
+    redis.call('HGET', KEYS[1], 'pending') ~= '1' then
+    return {2, 0}
+end
+local interval = tonumber(ARGV[4])
+if interval == nil or interval <= 0 then
+    return {-1, 0}
+end
+local clock = redis.call('TIME')
+local now = tonumber(clock[1]) * 1000 + math.floor(tonumber(clock[2]) / 1000)
+local announced_at = tonumber(redis.call('HGET', KEYS[1], 'announced_at'))
+if announced_at ~= nil and now >= announced_at and now < announced_at + interval then
+    return {3, announced_at + interval - now}
+end
+redis.call('HSET', KEYS[1], 'announced_at', now, 'pending', '0')
+redis.call('PUBLISH', ARGV[2], ARGV[3])
+return {1, 0}
 `)
 	loadEndpointsScript = redisclient.NewScript(`
 local current_generation = redis.call('HGET', KEYS[1], 'generation')
@@ -128,37 +192,63 @@ return result
 `)
 )
 
-type observeEndpointsFunc func(
-	context.Context,
-	string,
-	string,
-	int64,
-	[]byte,
-	int64,
-	int,
-	time.Duration,
-	string,
-	[]byte,
-) (int64, error)
+// endpointObservation is one call of observeEndpointsScript.
+type endpointObservation struct {
+	endpointKey, presenceKey string
+	generation               int64
+	payload                  []byte
+	preferredRelayPresent    int64
+	preferredRelay           int
+	ttl                      time.Duration
+	channel                  string
+	wakeup                   []byte
+	interval                 time.Duration
+	discoveryKey             string
+	discoSpacing             time.Duration
+}
+
+// observeEndpointsFunc and flushEndpointsFunc answer the scripts' status
+// and retry_after_ms.
+type observeEndpointsFunc func(context.Context, endpointObservation) (int64, int64, error)
+type flushEndpointsFunc func(ctx context.Context, endpointKey string, generation int64, channel string,
+	wakeup []byte, interval time.Duration) (int64, int64, error)
+
+// discoAnnounceSpacing lets a Device announce a new disco key at once
+// three times a minute: its own map waits for that key (mtcp-v1 §8.1), so
+// a reconnect is never held back by an interval, and a session cannot use
+// new disco keys to bypass it.
+const discoAnnounceSpacing = 20 * time.Second
+
+// Script statuses (observeEndpointsScript, flushEndpointsScript).
+const (
+	endpointsStale     = 0
+	endpointsAnnounced = 1
+	endpointsUnchanged = 2
+	endpointsPending   = 3
+)
+
 type loadEndpointsFunc func(context.Context, string, int64) ([]byte, error)
 type loadConnectivityFunc func(context.Context, []string, []int64) ([]any, error)
 
 const maximumConnectivityLoadBatch = 128
 
-// ObserveEndpoints stores a bounded non-authoritative connectivity report. A
-// false result is a successful rejection by a newer Node generation.
+// ObserveEndpoints stores a bounded non-authoritative connectivity report
+// and announces it to the Device's peers at once or, when it announced
+// another within interval, later through FlushEndpoints. A false result is
+// a successful rejection by a newer Node generation.
 func (client *Client) ObserveEndpoints(
 	ctx context.Context,
 	scope network.Scope,
 	observation node.EndpointObservation,
-) (bool, error) {
+	interval time.Duration,
+) (bool, mapsession.EndpointAnnouncement, error) {
 	if ctx == nil || client == nil || client.observeEndpoints == nil ||
-		!scope.IsValid() || !observation.IsValid() {
-		return false, ErrInvalidOptions
+		!scope.IsValid() || !observation.IsValid() || interval <= 0 || interval >= observation.TTL() {
+		return false, mapsession.EndpointAnnouncement{}, ErrInvalidOptions
 	}
 	payload, err := encodeEndpointSet(observation.Set())
 	if err != nil {
-		return false, err
+		return false, mapsession.EndpointAnnouncement{}, err
 	}
 	defer clear(payload)
 	wakeup, err := encodeConnectivityWakeup(
@@ -168,7 +258,7 @@ func (client *Client) ObserveEndpoints(
 		mapsession.ConnectivityChangeEndpoints,
 	)
 	if err != nil {
-		return false, err
+		return false, mapsession.EndpointAnnouncement{}, err
 	}
 	defer clear(wakeup)
 	preferredRelay, preferredRelayPresent := observation.PreferredRelay()
@@ -176,29 +266,101 @@ func (client *Client) ObserveEndpoints(
 	if preferredRelayPresent {
 		preferredRelayPresence = 1
 	}
+	discoveryKey := observation.Set().DiscoveryKey().Bytes()
 	startedAt := time.Now()
-	result, err := client.observeEndpoints(
-		ctx,
-		endpointKey(observation.NodeID()),
-		presenceKeyForNode(observation.NodeID()),
-		observation.Generation(),
-		payload,
-		preferredRelayPresence,
-		preferredRelay,
-		observation.TTL(),
-		connectivityChangedChannel,
-		wakeup,
-	)
+	status, retryAfter, err := client.observeEndpoints(ctx, endpointObservation{
+		endpointKey:           endpointKey(observation.NodeID()),
+		presenceKey:           presenceKeyForNode(observation.NodeID()),
+		generation:            observation.Generation(),
+		payload:               payload,
+		preferredRelayPresent: preferredRelayPresence,
+		preferredRelay:        preferredRelay,
+		ttl:                   observation.TTL(),
+		channel:               connectivityChangedChannel,
+		wakeup:                wakeup,
+		interval:              interval,
+		discoveryKey:          hex.EncodeToString(discoveryKey[:]),
+		discoSpacing:          discoAnnounceSpacing,
+	})
 	if err != nil {
 		client.metrics.observeCommand(redisCommandObserveEndpoints, startedAt, err)
-		return false, errors.Join(ErrObserveEndpoints, err)
+		return false, mapsession.EndpointAnnouncement{}, errors.Join(ErrObserveEndpoints, err)
 	}
-	if result < 0 || result > 2 {
+	announcement, outcome, valid := endpointAnnouncement(status, retryAfter, interval)
+	if !valid {
 		client.metrics.observeCommand(redisCommandObserveEndpoints, startedAt, ErrObserveEndpoints)
-		return false, ErrObserveEndpoints
+		return false, mapsession.EndpointAnnouncement{}, ErrObserveEndpoints
 	}
 	client.metrics.observeCommand(redisCommandObserveEndpoints, startedAt, nil)
-	return result > 0, nil
+	if status == endpointsStale {
+		return false, mapsession.EndpointAnnouncement{}, nil
+	}
+	client.metrics.endpointAnnouncement(outcome)
+	return true, announcement, nil
+}
+
+var _ mapsession.EndpointObserver = (*Client)(nil)
+
+// FlushEndpoints announces the pending endpoint change of the exact Node
+// generation once its interval ended; it answers Deferred while it has not.
+// Nothing pending, or another generation, is a successful no-op.
+func (client *Client) FlushEndpoints(
+	ctx context.Context,
+	scope network.Scope,
+	nodeID node.ID,
+	generation int64,
+	interval time.Duration,
+) (mapsession.EndpointAnnouncement, error) {
+	if ctx == nil || client == nil || client.flushEndpoints == nil || !scope.IsValid() ||
+		!nodeID.IsValid() || generation <= 0 || interval <= 0 {
+		return mapsession.EndpointAnnouncement{}, ErrInvalidOptions
+	}
+	wakeup, err := encodeConnectivityWakeup(scope, nodeID, generation, mapsession.ConnectivityChangeEndpoints)
+	if err != nil {
+		return mapsession.EndpointAnnouncement{}, err
+	}
+	defer clear(wakeup)
+	startedAt := time.Now()
+	status, retryAfter, err := client.flushEndpoints(ctx, endpointKey(nodeID), generation,
+		connectivityChangedChannel, wakeup, interval)
+	if err != nil {
+		client.metrics.observeCommand(redisCommandFlushEndpoints, startedAt, err)
+		return mapsession.EndpointAnnouncement{}, errors.Join(ErrObserveEndpoints, err)
+	}
+	announcement, _, valid := endpointAnnouncement(status, retryAfter, interval)
+	if !valid || status == endpointsStale {
+		client.metrics.observeCommand(redisCommandFlushEndpoints, startedAt, ErrObserveEndpoints)
+		return mapsession.EndpointAnnouncement{}, ErrObserveEndpoints
+	}
+	client.metrics.observeCommand(redisCommandFlushEndpoints, startedAt, nil)
+	// Only a change announced now counts: a flush that is still early was
+	// already counted as deferred when it was stored.
+	if status == endpointsAnnounced {
+		client.metrics.endpointAnnouncement("flushed")
+	}
+	return announcement, nil
+}
+
+// endpointAnnouncement maps a script answer; a pending change must name a
+// retry within the interval.
+func endpointAnnouncement(status, retryAfterMS int64, interval time.Duration) (
+	mapsession.EndpointAnnouncement, string, bool) {
+	switch status {
+	case endpointsStale:
+		return mapsession.EndpointAnnouncement{}, "", retryAfterMS == 0
+	case endpointsAnnounced:
+		return mapsession.EndpointAnnouncement{}, "announced", retryAfterMS == 0
+	case endpointsUnchanged:
+		return mapsession.EndpointAnnouncement{}, "unchanged", retryAfterMS == 0
+	case endpointsPending:
+		retryAfter := time.Duration(retryAfterMS) * time.Millisecond
+		if retryAfterMS <= 0 || retryAfter > interval {
+			return mapsession.EndpointAnnouncement{}, "", false
+		}
+		return mapsession.EndpointAnnouncement{Deferred: true, RetryAfter: retryAfter}, "deferred", true
+	default:
+		return mapsession.EndpointAnnouncement{}, "", false
+	}
 }
 
 // LoadConnectivity returns one exact-generation transient projection per key,
@@ -461,3 +623,16 @@ func decodeEndpointSet(payload []byte) (node.EndpointSet, error) {
 }
 
 func endpointKey(nodeID node.ID) string { return endpointKeyPrefix + nodeID.String() }
+
+// runEndpointScript runs an endpoint script answering {status, retry_after_ms}.
+func runEndpointScript(ctx context.Context, script *redisclient.Script, client redisclient.Scripter,
+	keys []string, args ...any) (int64, int64, error) {
+	values, err := script.Run(ctx, client, keys, args...).Int64Slice()
+	if err != nil {
+		return 0, 0, err
+	}
+	if len(values) != 2 {
+		return 0, 0, ErrObserveEndpoints
+	}
+	return values[0], values[1], nil
+}

@@ -19,6 +19,7 @@ const (
 	redisCommandRenew              redisCommand = "presence_renew"
 	redisCommandRelease            redisCommand = "presence_release"
 	redisCommandObserveEndpoints   redisCommand = "endpoints_observe"
+	redisCommandFlushEndpoints     redisCommand = "endpoints_flush"
 	redisCommandLoadEndpoints      redisCommand = "endpoints_load"
 	redisCommandLoadConnectivity   redisCommand = "connectivity_load"
 	redisCommandRateLimit          redisCommand = "rate_limit"
@@ -40,6 +41,7 @@ var redisCommands = [...]redisCommand{
 	redisCommandRenew,
 	redisCommandRelease,
 	redisCommandObserveEndpoints,
+	redisCommandFlushEndpoints,
 	redisCommandLoadEndpoints,
 	redisCommandLoadConnectivity,
 	redisCommandRateLimit,
@@ -52,8 +54,13 @@ var redisCommands = [...]redisCommand{
 	redisCommandReplicaLoad,
 }
 
+// endpointAnnouncementOutcomes is the closed set of what an endpoint
+// observation or flush did for the Device's peers.
+var endpointAnnouncementOutcomes = [...]string{"announced", "deferred", "unchanged", "flushed"}
+
 type redisMetrics struct {
 	commandTotal        *prometheus.CounterVec
+	announcements       *prometheus.CounterVec
 	commandDuration     *prometheus.HistogramVec
 	poolStats           func() *redisclient.PoolStats
 	poolConnectionsDesc *prometheus.Desc
@@ -86,8 +93,20 @@ func newRedisMetrics(poolLimit int, poolStats func() *redisclient.PoolStats) *re
 		}
 	}
 
+	// Dashboard: sum by (outcome) (rate(meshtransit_endpoint_announcements_total[5m]))
+	// A high deferred rate means Devices whose endpoints change faster than
+	// the announce interval (mtcp-v1 §8.1).
+	announcements := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "meshtransit_endpoint_announcements_total",
+		Help: "Endpoint observations and flushes by what they did for the Device's peers.",
+	}, []string{"outcome"})
+	for _, outcome := range endpointAnnouncementOutcomes {
+		announcements.WithLabelValues(outcome)
+	}
+
 	return &redisMetrics{
 		commandTotal:    commandTotal,
+		announcements:   announcements,
 		commandDuration: commandDuration,
 		poolStats:       poolStats,
 		poolLimit:       poolLimit,
@@ -134,6 +153,7 @@ func newRedisMetrics(poolLimit int, poolStats func() *redisclient.PoolStats) *re
 
 func (metrics *redisMetrics) Describe(descriptions chan<- *prometheus.Desc) {
 	metrics.commandTotal.Describe(descriptions)
+	metrics.announcements.Describe(descriptions)
 	metrics.commandDuration.Describe(descriptions)
 	descriptions <- metrics.poolConnectionsDesc
 	descriptions <- metrics.poolLimitDesc
@@ -144,6 +164,7 @@ func (metrics *redisMetrics) Describe(descriptions chan<- *prometheus.Desc) {
 
 func (metrics *redisMetrics) Collect(output chan<- prometheus.Metric) {
 	metrics.commandTotal.Collect(output)
+	metrics.announcements.Collect(output)
 	metrics.commandDuration.Collect(output)
 
 	stats := &redisclient.PoolStats{}
@@ -198,6 +219,12 @@ func (metrics *redisMetrics) observeCommand(command redisCommand, startedAt time
 	}
 	metrics.commandTotal.WithLabelValues(string(command), result).Inc()
 	metrics.commandDuration.WithLabelValues(string(command), result).Observe(time.Since(startedAt).Seconds())
+}
+
+func (metrics *redisMetrics) endpointAnnouncement(outcome string) {
+	if metrics != nil {
+		metrics.announcements.WithLabelValues(outcome).Inc()
+	}
 }
 
 func (metrics *redisMetrics) subscriptionOpened() {

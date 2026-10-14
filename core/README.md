@@ -196,6 +196,13 @@ Transient subscription loss keeps existing watchers registered while each feed
 reconnects with bounded jittered exponential backoff. Reconnect attempts and
 successful recoveries are exported as bounded metrics. A notification missed
 during recovery is repaired by periodic authoritative PostgreSQL reconciliation.
+A Device's endpoint, disco-key and preferred-relay changes reach its peers at
+most once per announce interval: the Redis observation script stores every
+report, announces the first change at once and keeps later ones pending, and
+the reporting session flushes the latest when the interval ends (mtcp-v1
+§8.1). The interval is enforced per Device with Redis time, so neither a
+reconnect within the presence TTL nor several replicas reset it; a failed
+store or flush is retried with a backoff of 1 s up to 30 s.
 Same-revision endpoint and online changes use bounded complete-node deltas;
 authority, DNS, and relay deltas, durable endpoint history, and relay behavior
 are not implemented.
@@ -508,6 +515,7 @@ semantics. TLS, Noise, and enrollment private-key files must be purpose-separate
 | `MESHTRANSIT_CONTROL_MAP_STATEMENT_TIMEOUT` | `3s` | PostgreSQL statement timeout for one authenticated map snapshot, from 1ms through 1 minute. |
 | `MESHTRANSIT_CONTROL_MAP_TRANSACTION_IDLE_LIMIT` | `5s` | PostgreSQL idle-in-transaction limit for one map snapshot, from 1ms through 1 minute. |
 | `MESHTRANSIT_CONTROL_MAP_PRESENCE_TTL` | `30s` | Generation-fenced Redis presence and endpoint-observation TTL from 3 seconds through 5 minutes. |
+| `MESHTRANSIT_CONTROL_MAP_ENDPOINT_ANNOUNCE_INTERVAL` | `5s` | How often a Device's peers may see its endpoints, disco key or preferred relay change, from 1 second through 30 seconds and below the presence TTL. Unset with a presence TTL under 10 s, it is half the TTL (at least 1 s). The latest change is always delivered; a new disco key is announced at once up to three times a minute. |
 | `MESHTRANSIT_CONTROL_MAP_COORDINATION_TIMEOUT` | `2s` | Redis presence and endpoint-operation deadline from 100ms through 30 seconds and below one third of the presence TTL. |
 | `MESHTRANSIT_CONTROL_MAP_KEEPALIVE_INTERVAL` | `30s` | Silent-stream keepalive interval from 1 second through 90 seconds. Keep it below every proxy idle timeout on the control path. |
 | `MESHTRANSIT_CONTROL_MAP_RECONCILE_INTERVAL` | `30s` | Authoritative PostgreSQL resync interval from 1 second through 5 minutes. |
@@ -895,7 +903,10 @@ latency for the fixed connection, wakeup, presence, endpoint, connectivity, and
 rate-limit
 projection operations,
 plus command-pool usage, pending requests, pool timeouts, and active
-subscriptions. Operation and result labels are closed sets; Node IDs, endpoint
+subscriptions. `meshtransit_endpoint_announcements_total{outcome}` counts what
+each endpoint observation or flush did for the Device's peers (`announced`,
+`deferred`, `unchanged`, `flushed`); a sustained `deferred` rate means Devices
+whose endpoints change faster than the announce interval. Operation and result labels are closed sets; Node IDs, endpoint
 values, and discovery keys are never labels. Pool state is sampled only when
 metrics are scraped; no observability goroutine or unbounded label is introduced.
 

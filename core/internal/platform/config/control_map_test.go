@@ -37,6 +37,7 @@ func TestLoadControlMapDefaults(t *testing.T) {
 		PeerLimit:                 defaultControlMapPeerLimit,
 		InventoryStatementTimeout: defaultControlMapInventoryStatement,
 		ShareStatementTimeout:     defaultControlMapShareStatement,
+		EndpointAnnounceInterval:  defaultControlMapEndpointAnnounceInterval,
 	}
 	directory := got.Control.Map.RelayDirectory
 	if directory == nil || *directory != relayDirectoryConfigFixture(t) {
@@ -84,6 +85,7 @@ func TestLoadControlMapExplicitValues(t *testing.T) {
 		PeerLimit:                 defaultControlMapPeerLimit,
 		InventoryStatementTimeout: defaultControlMapInventoryStatement,
 		ShareStatementTimeout:     defaultControlMapShareStatement,
+		EndpointAnnounceInterval:  defaultControlMapEndpointAnnounceInterval,
 	}) {
 		t.Fatalf("Control.Map = %+v, want explicit values", got.Control)
 	}
@@ -293,6 +295,44 @@ func TestLoadControlMapShareStatementTimeout(t *testing.T) {
 		}
 		if err != nil || got.ShareStatementTimeout != test.timeout {
 			t.Errorf("%s: got %v, %v", name, got.ShareStatementTimeout, err)
+		}
+	}
+}
+
+func TestLoadControlMapEndpointAnnounceInterval(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string]struct {
+		presenceTTL, value string
+		want               time.Duration
+		bad                bool
+	}{
+		"default":                    {want: 5 * time.Second},
+		"default under a short TTL":  {presenceTTL: "6s", want: 3 * time.Second},
+		"default never below 1 s":    {presenceTTL: "3s", want: 1500 * time.Millisecond},
+		"explicit":                   {value: "10s", want: 10 * time.Second},
+		"too short":                  {value: "500ms", bad: true},
+		"too long":                   {presenceTTL: "60s", value: "31s", bad: true},
+		"not below the presence TTL": {presenceTTL: "10s", value: "10s", bad: true},
+		"not a duration":             {value: "often", bad: true},
+	} {
+		// A short presence TTL needs a short coordination timeout too.
+		values := map[string]string{envControlMapCoordinationTimeout: "500ms"}
+		if test.presenceTTL != "" {
+			values[envControlMapPresenceTTL] = test.presenceTTL
+		}
+		if test.value != "" {
+			values[envControlMapEndpointAnnounceInterval] = test.value
+		}
+		got, err := loadControlMapConfig(mapLookup(values))
+		if test.bad {
+			if err == nil || !strings.HasSuffix(err.Error(), ": "+envControlMapEndpointAnnounceInterval) ||
+				strings.Contains(err.Error(), test.value) {
+				t.Errorf("%s: error = %v", name, err)
+			}
+			continue
+		}
+		if err != nil || got.EndpointAnnounceInterval != test.want {
+			t.Errorf("%s: got %s, %v", name, got.EndpointAnnounceInterval, err)
 		}
 	}
 }

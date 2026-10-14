@@ -166,8 +166,19 @@ func (unusedEndpointObserver) ObserveEndpoints(
 	context.Context,
 	network.Scope,
 	node.EndpointObservation,
-) (bool, error) {
-	return false, errors.New("unused endpoint observer called")
+	time.Duration,
+) (bool, mapsession.EndpointAnnouncement, error) {
+	return false, mapsession.EndpointAnnouncement{}, errors.New("unused endpoint observer called")
+}
+
+func (unusedEndpointObserver) FlushEndpoints(
+	context.Context,
+	network.Scope,
+	node.ID,
+	int64,
+	time.Duration,
+) (mapsession.EndpointAnnouncement, error) {
+	return mapsession.EndpointAnnouncement{}, errors.New("unused endpoint observer called")
 }
 
 type unusedConnectivityStore struct{}

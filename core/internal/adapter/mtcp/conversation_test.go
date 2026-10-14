@@ -67,15 +67,115 @@ func (streams *fakeStreams) ReportEnforcement(_ context.Context, _ control.Authe
 }
 
 type fakeEndpoints struct {
+	mu     sync.Mutex
 	sets   []node.EndpointSet
 	relays []int
+	// announcement is what each observation answers; flushes counts
+	// FlushSessionEndpoints calls, each answering the next of flushResults.
+	announcement mapsession.EndpointAnnouncement
+	flushes      int
+	flushResults []mapsession.EndpointAnnouncement
+	// observeErrs and flushErrs fail the next calls, one error each.
+	observeErrs []error
+	flushErrs   []error
+	attempts    int
+	// block, when set, holds the next observation until it is closed;
+	// entered is signalled when that observation starts.
+	block   chan struct{}
+	entered chan struct{}
 }
 
 func (endpoints *fakeEndpoints) ObserveSessionEndpoints(_ context.Context, _ mapsession.Snapshot, set node.EndpointSet,
-	preferredRelay int, _ bool) error {
+	preferredRelay int, _ bool) (mapsession.EndpointAnnouncement, error) {
+	endpoints.mu.Lock()
+	block, entered := endpoints.block, endpoints.entered
+	endpoints.block, endpoints.entered = nil, nil
+	endpoints.mu.Unlock()
+	if block != nil {
+		close(entered)
+		<-block
+	}
+	endpoints.mu.Lock()
+	defer endpoints.mu.Unlock()
+	endpoints.attempts++
+	if len(endpoints.observeErrs) > 0 {
+		err := endpoints.observeErrs[0]
+		endpoints.observeErrs = endpoints.observeErrs[1:]
+		return mapsession.EndpointAnnouncement{}, err
+	}
 	endpoints.sets = append(endpoints.sets, set)
 	endpoints.relays = append(endpoints.relays, preferredRelay)
-	return nil
+	return endpoints.announcement, nil
+}
+
+func (endpoints *fakeEndpoints) FlushSessionEndpoints(context.Context, mapsession.Snapshot) (
+	mapsession.EndpointAnnouncement, error) {
+	endpoints.mu.Lock()
+	defer endpoints.mu.Unlock()
+	endpoints.flushes++
+	if len(endpoints.flushErrs) > 0 {
+		err := endpoints.flushErrs[0]
+		endpoints.flushErrs = endpoints.flushErrs[1:]
+		return mapsession.EndpointAnnouncement{}, err
+	}
+	if len(endpoints.flushResults) == 0 {
+		return mapsession.EndpointAnnouncement{}, nil
+	}
+	result := endpoints.flushResults[0]
+	endpoints.flushResults = endpoints.flushResults[1:]
+	return result, nil
+}
+
+func (endpoints *fakeEndpoints) stored() int {
+	endpoints.mu.Lock()
+	defer endpoints.mu.Unlock()
+	return len(endpoints.sets)
+}
+
+// fakeTimer is the conversation's endpoint timer; the test fires it.
+type fakeTimer struct {
+	mu    sync.Mutex
+	fire  func()
+	delay time.Duration
+	armed bool
+}
+
+func (timer *fakeTimer) start(delay time.Duration, fire func()) endpointTimer {
+	timer.mu.Lock()
+	defer timer.mu.Unlock()
+	timer.fire, timer.delay, timer.armed = fire, delay, true
+	return timer
+}
+
+func (timer *fakeTimer) Reset(delay time.Duration) bool {
+	timer.mu.Lock()
+	defer timer.mu.Unlock()
+	timer.delay, timer.armed = delay, true
+	return true
+}
+
+func (timer *fakeTimer) Stop() bool {
+	timer.mu.Lock()
+	defer timer.mu.Unlock()
+	armed := timer.armed
+	timer.armed = false
+	return armed
+}
+
+// pending reports whether the timer is armed and for how long.
+func (timer *fakeTimer) pending() (time.Duration, bool) {
+	timer.mu.Lock()
+	defer timer.mu.Unlock()
+	return timer.delay, timer.armed
+}
+
+// trigger runs the timer's function as if it had expired.
+func (timer *fakeTimer) trigger() {
+	timer.mu.Lock()
+	fire := timer.fire
+	timer.armed = false
+	timer.mu.Unlock()
+	fire()
 }
 
 // fakeSnapshots knows which node keys are current.
@@ -223,12 +323,15 @@ type conversationFixture struct {
 	clockMu       sync.Mutex
 	clock         time.Time
 	talk          *conversation
+	timer         *fakeTimer
 }
 
 func newConversationFixture(t *testing.T, openedBy sharedmtcp.MessageType) *conversationFixture {
 	t.Helper()
 	session, view, controlKey := testSession(t)
 	session.openedBy = openedBy
+	// Session.run sets it before any message; endpoint pacing works under it.
+	session.ctx, session.cancel = context.WithCancelCause(t.Context())
 	snapshot := streamFixture(t, 1)
 	result := must(registration.NewResult(must(sequentialIDs{}.NewRegistrationID()), snapshot.Scope(),
 		snapshot.NodeID(), snapshot.Hostname(), registration.DispositionCreated, 1))
@@ -251,6 +354,8 @@ func newConversationFixture(t *testing.T, openedBy sharedmtcp.MessageType) *conv
 	}
 	application.now = f.now
 	application.poll = 5 * time.Millisecond
+	f.timer = &fakeTimer{}
+	application.endpointTimer = f.timer.start
 	f.talk, _ = application.Open(session).(*conversation)
 	return f
 }
@@ -728,15 +833,26 @@ func TestConversationEndpointReports(t *testing.T) {
 	if len(f.endpoints.sets) != 1 || len(f.endpoints.sets[0].Endpoints()) != 1 || f.endpoints.relays[0] != 3 {
 		t.Fatalf("stored %v, want only the public endpoint and relay 3", f.endpoints.sets)
 	}
-	// A second report within a second is dropped; after it, accepted.
+	// A second report within a second is kept, not dropped, and stored
+	// when the second ends; a third replaces it.
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEndpointReport, report()); err != nil ||
+		f.endpoints.stored() != 1 {
+		t.Fatalf("fast report: %v, %d stored", err, f.endpoints.stored())
+	}
 	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEndpointReport, report(public)); err != nil ||
-		len(f.endpoints.sets) != 1 {
-		t.Fatalf("fast report: %v, %d stored", err, len(f.endpoints.sets))
+		f.endpoints.stored() != 1 {
+		t.Fatalf("second fast report: %v, %d stored", err, f.endpoints.stored())
+	}
+	if delay, armed := f.timer.pending(); !armed || delay != endpointReportInterval {
+		t.Fatalf("timer %s armed %t, want the rest of the second", delay, armed)
 	}
 	f.advance(endpointReportInterval)
-	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEndpointReport, report()); err != nil ||
-		len(f.endpoints.sets) != 2 {
-		t.Fatalf("report after the interval: %v, %d stored", err, len(f.endpoints.sets))
+	f.timer.trigger()
+	if f.endpoints.stored() != 2 || len(f.endpoints.sets[1].Endpoints()) != 1 {
+		t.Fatalf("kept report: %d stored, want the latest one", f.endpoints.stored())
+	}
+	if _, armed := f.timer.pending(); armed {
+		t.Fatal("timer left armed with nothing waiting")
 	}
 	for name, bad := range map[string]*mtcpv1.EndpointReport{
 		"short disco key": {DiscoKey: []byte{1}},
@@ -992,6 +1108,303 @@ func TestServeDeclaresLargeMapsOnlyForClientsThatDo(t *testing.T) {
 		f.streams.mu.Unlock()
 		if len(requests) != 1 || requests[0].LargeMap() != large {
 			t.Fatalf("map.large1 negotiated %v: requests %d, large %v", large, len(requests), len(requests) == 1 && requests[0].LargeMap())
+		}
+	}
+}
+
+func TestConversationFlushesADeferredEndpointChange(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	if err := f.talk.sink.SendSnapshot(t.Context(), streamFixture(t, 1)); err != nil {
+		t.Fatal(err)
+	}
+	disco := make([]byte, 32)
+	disco[0] = 9
+	report := &mtcpv1.EndpointReport{DiscoKey: disco, Endpoints: []*mtcpv1.Endpoint{
+		{Ip: []byte{198, 51, 100, 7}, Port: 41641, Kind: mtcpv1.Endpoint_SERVER_REFLEXIVE}}}
+	// Core stores the change but defers its announcement for 3 s, then for
+	// another 1 s when the flush comes a little early.
+	f.endpoints.announcement = mapsession.EndpointAnnouncement{Deferred: true, RetryAfter: 3 * time.Second}
+	f.endpoints.flushResults = []mapsession.EndpointAnnouncement{{Deferred: true, RetryAfter: time.Second}, {}}
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEndpointReport, report); err != nil {
+		t.Fatal(err)
+	}
+	if delay, armed := f.timer.pending(); !armed || delay != 3*time.Second {
+		t.Fatalf("timer %s armed %t, want the deferral", delay, armed)
+	}
+	f.advance(3 * time.Second)
+	f.timer.trigger()
+	if delay, armed := f.timer.pending(); f.endpoints.flushes != 1 || !armed || delay != time.Second {
+		t.Fatalf("after the first flush: %d flushes, timer %s armed %t", f.endpoints.flushes, delay, armed)
+	}
+	f.advance(time.Second)
+	f.timer.trigger()
+	if _, armed := f.timer.pending(); f.endpoints.flushes != 2 || armed {
+		t.Fatalf("after the announcing flush: %d flushes, armed %t", f.endpoints.flushes, armed)
+	}
+	// A timer firing early does nothing and waits again.
+	f.endpoints.announcement = mapsession.EndpointAnnouncement{Deferred: true, RetryAfter: 2 * time.Second}
+	f.advance(endpointReportInterval)
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEndpointReport, report); err != nil {
+		t.Fatal(err)
+	}
+	f.timer.trigger()
+	if delay, armed := f.timer.pending(); f.endpoints.flushes != 2 || !armed || delay != 2*time.Second {
+		t.Fatalf("early fire: %d flushes, timer %s armed %t", f.endpoints.flushes, delay, armed)
+	}
+	// Once the session ends nothing is stored or flushed.
+	f.talk.stopEndpointPacing()
+	f.advance(2 * time.Second)
+	f.timer.trigger()
+	if f.endpoints.flushes != 2 {
+		t.Fatal("a flush ran after the session ended")
+	}
+	f.advance(endpointReportInterval)
+	stored := f.endpoints.stored()
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEndpointReport, report); err != nil ||
+		f.endpoints.stored() != stored {
+		t.Fatalf("a report was stored after the session ended: %v", err)
+	}
+}
+
+func endpointReportFixture(port uint32) *mtcpv1.EndpointReport {
+	disco := make([]byte, 32)
+	disco[0] = 9
+	return &mtcpv1.EndpointReport{DiscoKey: disco, Endpoints: []*mtcpv1.Endpoint{
+		{Ip: []byte{198, 51, 100, 7}, Port: port, Kind: mtcpv1.Endpoint_SERVER_REFLEXIVE}}}
+}
+
+// storedPort is the port of the latest stored report.
+func (endpoints *fakeEndpoints) storedPort() uint16 {
+	endpoints.mu.Lock()
+	defer endpoints.mu.Unlock()
+	if len(endpoints.sets) == 0 {
+		return 0
+	}
+	return endpoints.sets[len(endpoints.sets)-1].Endpoints()[0].Address().Port()
+}
+
+func (endpoints *fakeEndpoints) failures(observe []error, flush ...error) {
+	endpoints.mu.Lock()
+	defer endpoints.mu.Unlock()
+	endpoints.observeErrs, endpoints.flushErrs = observe, flush
+}
+
+func storeUnavailable() error { return fmt.Errorf("%w: redis timeout", mapsession.ErrEndpointStore) }
+
+func flushUnavailable() error { return fmt.Errorf("%w: redis timeout", mapsession.ErrEndpointFlush) }
+
+// endpointPacingFixture is a conversation with a map and one stored report.
+func endpointPacingFixture(t *testing.T) *conversationFixture {
+	t.Helper()
+	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	if err := f.talk.sink.SendSnapshot(t.Context(), streamFixture(t, 1)); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func (f *conversationFixture) sendReport(port uint32) {
+	f.t.Helper()
+	if err := f.talk.Receive(f.t.Context(), sharedmtcp.MessageEndpointReport, endpointReportFixture(port)); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func TestConversationRetriesAStoreRedisCouldNotTake(t *testing.T) {
+	t.Parallel()
+	f := endpointPacingFixture(t)
+	// A store that fails is kept and retried after 1 s, then 2 s, until it is
+	// stored: a Redis failover never loses the latest report.
+	f.endpoints.failures([]error{storeUnavailable(), storeUnavailable()})
+	f.sendReport(1001)
+	for attempt, want := range []time.Duration{time.Second, 2 * time.Second} {
+		delay, armed := f.timer.pending()
+		if !armed || delay != want || f.endpoints.stored() != 0 {
+			t.Fatalf("after failure %d: timer %s armed %t, %d stored", attempt+1, delay, armed, f.endpoints.stored())
+		}
+		f.advance(want)
+		f.timer.trigger()
+	}
+	if f.endpoints.stored() != 1 || f.endpoints.attempts != 3 {
+		t.Fatalf("stored %d after %d attempts, want the report stored on the third", f.endpoints.stored(),
+			f.endpoints.attempts)
+	}
+	if _, armed := f.timer.pending(); armed {
+		t.Fatal("timer still armed after the store")
+	}
+}
+
+func TestConversationReplacesAFailedReportAndKeepsTheBackoff(t *testing.T) {
+	t.Parallel()
+	f := endpointPacingFixture(t)
+	f.endpoints.failures([]error{storeUnavailable(), storeUnavailable()})
+	f.sendReport(1001) // fails; retried in 1 s
+	f.advance(time.Second)
+	f.timer.trigger() // fails again; the backoff is now 2 s
+	f.advance(time.Second)
+	f.sendReport(1002) // replaces it, but Redis is still given the backoff
+	if delay, armed := f.timer.pending(); !armed || delay != time.Second || f.endpoints.stored() != 0 {
+		t.Fatalf("newer report: timer %s armed %t, %d stored", delay, armed, f.endpoints.stored())
+	}
+	f.advance(time.Second)
+	f.timer.trigger()
+	if f.endpoints.stored() != 1 || f.endpoints.storedPort() != 1002 || f.endpoints.attempts != 3 {
+		t.Fatalf("stored %d (port %d) after %d attempts, want only the newer report", f.endpoints.stored(),
+			f.endpoints.storedPort(), f.endpoints.attempts)
+	}
+}
+
+func TestConversationDropsAReportThatCannotBeStored(t *testing.T) {
+	t.Parallel()
+	f := endpointPacingFixture(t)
+	// A rejected observation is final: it is not retried.
+	f.endpoints.failures([]error{errors.Join(mapsession.ErrOpen, mapsession.ErrEndpointObservationRejected)})
+	f.sendReport(1001)
+	if _, armed := f.timer.pending(); armed || f.endpoints.attempts != 1 {
+		t.Fatalf("a rejected report was kept: armed %t, %d attempts", armed, f.endpoints.attempts)
+	}
+	// A report Redis keeps refusing is given up after endpointRetryAttempts.
+	f.advance(time.Second)
+	refusals := make([]error, endpointRetryAttempts+1)
+	for index := range refusals {
+		refusals[index] = storeUnavailable()
+	}
+	f.endpoints.failures(refusals)
+	f.sendReport(1002)
+	for range endpointRetryAttempts - 1 {
+		delay, armed := f.timer.pending()
+		if !armed || delay > endpointRetryLimit {
+			t.Fatalf("retry not scheduled: %s %t", delay, armed)
+		}
+		f.advance(delay)
+		f.timer.trigger()
+	}
+	if _, armed := f.timer.pending(); armed || f.endpoints.attempts != 1+endpointRetryAttempts {
+		t.Fatalf("after %d attempts the report is still kept (armed %t)", f.endpoints.attempts, armed)
+	}
+}
+
+func TestConversationRetriesAFlushRedisCouldNotTake(t *testing.T) {
+	t.Parallel()
+	f := endpointPacingFixture(t)
+	f.endpoints.announcement = mapsession.EndpointAnnouncement{Deferred: true, RetryAfter: time.Second}
+	f.endpoints.failures(nil, flushUnavailable())
+	f.sendReport(1001)
+	f.advance(time.Second)
+	f.timer.trigger() // the flush fails
+	if delay, armed := f.timer.pending(); f.endpoints.flushes != 1 || !armed || delay != time.Second {
+		t.Fatalf("after a failed flush: %d flushes, timer %s armed %t", f.endpoints.flushes, delay, armed)
+	}
+	f.advance(time.Second)
+	f.timer.trigger()
+	if _, armed := f.timer.pending(); f.endpoints.flushes != 2 || armed {
+		t.Fatalf("after the retried flush: %d flushes, armed %t", f.endpoints.flushes, armed)
+	}
+	// A flush that is final is not retried; the resync announces the change.
+	f.endpoints.failures(nil, errNoSnapshot)
+	f.advance(time.Second)
+	f.sendReport(1002)
+	f.advance(time.Second)
+	f.timer.trigger()
+	if _, armed := f.timer.pending(); f.endpoints.flushes != 3 || armed {
+		t.Fatalf("after a final flush failure: %d flushes, armed %t", f.endpoints.flushes, armed)
+	}
+}
+
+// TestConversationKeepsAReportThatArrivesDuringAStore runs a timer-fired
+// store and a report from the session at once: the report is kept and the
+// timer re-armed for it when the store ends.
+func TestConversationKeepsAReportThatArrivesDuringAStore(t *testing.T) {
+	t.Parallel()
+	f := endpointPacingFixture(t)
+	f.sendReport(1001) // stored at once
+	f.advance(100 * time.Millisecond)
+	f.sendReport(1002) // kept for the end of the second
+	block, entered := make(chan struct{}), make(chan struct{})
+	f.endpoints.mu.Lock()
+	f.endpoints.block, f.endpoints.entered = block, entered
+	f.endpoints.mu.Unlock()
+	f.advance(900 * time.Millisecond)
+	fired := make(chan struct{})
+	go func() {
+		defer close(fired)
+		f.timer.trigger() // stores 1002 and blocks in Redis
+	}()
+	<-entered
+	f.sendReport(1003) // busy: kept without waiting for the store
+	if f.endpoints.stored() != 1 {
+		t.Fatalf("%d stored while the store is blocked", f.endpoints.stored())
+	}
+	close(block)
+	<-fired
+	delay, armed := f.timer.pending()
+	if f.endpoints.stored() != 2 || f.endpoints.storedPort() != 1002 || !armed || delay != time.Second {
+		t.Fatalf("after the store: %d stored (port %d), timer %s armed %t", f.endpoints.stored(),
+			f.endpoints.storedPort(), delay, armed)
+	}
+	f.advance(time.Second)
+	f.timer.trigger()
+	if f.endpoints.stored() != 3 || f.endpoints.storedPort() != 1003 {
+		t.Fatalf("the report kept during the store was lost: %d stored (port %d)", f.endpoints.stored(),
+			f.endpoints.storedPort())
+	}
+}
+
+// TestConversationEndOfSessionWaitsForAStore ends the session while a
+// store runs: the end waits for it, and nothing starts afterwards.
+func TestConversationEndOfSessionWaitsForAStore(t *testing.T) {
+	t.Parallel()
+	f := endpointPacingFixture(t)
+	f.sendReport(1001)
+	f.advance(100 * time.Millisecond)
+	f.sendReport(1002)
+	block, entered := make(chan struct{}), make(chan struct{})
+	f.endpoints.mu.Lock()
+	f.endpoints.block, f.endpoints.entered = block, entered
+	f.endpoints.mu.Unlock()
+	f.advance(900 * time.Millisecond)
+	go f.timer.trigger()
+	<-entered
+	f.sendReport(1003) // kept, and dropped when the session ends
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		f.talk.stopEndpointPacing()
+	}()
+	select {
+	case <-stopped:
+		t.Fatal("the session ended before its store")
+	case <-time.After(20 * time.Millisecond): //nolint:forbidigo // a stop that returns early would be seen here
+	}
+	close(block)
+	<-stopped
+	if _, armed := f.timer.pending(); armed || f.endpoints.stored() != 2 {
+		t.Fatalf("after the end: %d stored, armed %t", f.endpoints.stored(), armed)
+	}
+	f.sendReport(1004)
+	if f.endpoints.stored() != 2 {
+		t.Fatal("a report was stored after the session ended")
+	}
+}
+
+func TestEndpointReportBelongsToItsStream(t *testing.T) {
+	t.Parallel()
+	reported := snapshotGenerationFixture(t, 1, 3)
+	if !sameStream(snapshotGenerationFixture(t, 2, 3), reported) {
+		t.Fatal("a new revision of the same stream rejected the report")
+	}
+	if sameStream(snapshotGenerationFixture(t, 1, 4), reported) {
+		t.Fatal("a report of an older session generation was accepted")
+	}
+}
+
+func TestEndpointBackoffDoublesUpToItsLimit(t *testing.T) {
+	t.Parallel()
+	for failures, want := range map[int]time.Duration{1: time.Second, 2: 2 * time.Second, 5: 16 * time.Second,
+		6: endpointRetryLimit, 100: endpointRetryLimit} {
+		if got := endpointBackoff(failures); got != want {
+			t.Fatalf("endpointBackoff(%d) = %s, want %s", failures, got, want)
 		}
 	}
 }

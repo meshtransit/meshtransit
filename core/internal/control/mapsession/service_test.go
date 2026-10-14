@@ -166,9 +166,13 @@ func TestServiceFailsClosedWhenEndpointObservationIsUnavailableOrStale(t *testin
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			service := newServiceFixture(t, &recordingSnapshotStore{snapshot: snapshot}, test.observer)
-			if _, err := service.Open(t.Context(), machine, request); !errors.Is(err, test.want) ||
-				!errors.Is(err, ErrOpen) {
+			_, err := service.Open(t.Context(), machine, request)
+			if !errors.Is(err, test.want) || !errors.Is(err, ErrOpen) {
 				t.Fatalf("Open() error = %v, want ErrOpen and %v", err, test.want)
+			}
+			// Only a store failure may be retried.
+			if errors.Is(err, ErrEndpointStore) != errors.Is(test.want, wantErr) {
+				t.Fatalf("Open() error = %v, retryable %t", err, errors.Is(err, ErrEndpointStore))
 			}
 		})
 	}
@@ -307,22 +311,40 @@ type recordingSnapshotStore struct {
 }
 
 type recordingEndpointObserver struct {
-	accepted    bool
-	err         error
-	observation node.EndpointObservation
-	scope       network.Scope
-	calls       int
+	accepted     bool
+	announcement EndpointAnnouncement
+	err          error
+	observation  node.EndpointObservation
+	scope        network.Scope
+	interval     time.Duration
+	calls        int
+	// flushes records FlushEndpoints calls: the Node and generation.
+	flushes     []ConnectivityKey
+	flushResult EndpointAnnouncement
 }
 
 func (observer *recordingEndpointObserver) ObserveEndpoints(
 	_ context.Context,
 	scope network.Scope,
 	observation node.EndpointObservation,
-) (bool, error) {
+	interval time.Duration,
+) (bool, EndpointAnnouncement, error) {
 	observer.calls++
 	observer.scope = scope
 	observer.observation = observation
-	return observer.accepted, observer.err
+	observer.interval = interval
+	return observer.accepted, observer.announcement, observer.err
+}
+
+func (observer *recordingEndpointObserver) FlushEndpoints(_ context.Context, _ network.Scope, nodeID node.ID,
+	generation int64, interval time.Duration) (EndpointAnnouncement, error) {
+	key, err := NewConnectivityKey(nodeID, generation)
+	if err != nil {
+		return EndpointAnnouncement{}, err
+	}
+	observer.flushes = append(observer.flushes, key)
+	observer.interval = interval
+	return observer.flushResult, observer.err
 }
 
 type recordingConnectivityStore struct {

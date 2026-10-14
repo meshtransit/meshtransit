@@ -30,10 +30,11 @@ type MapStreams interface {
 }
 
 // EndpointObserver records a node's endpoints for its live map session
-// (mapsession.Service).
+// and flushes a change Core deferred (mapsession.Service).
 type EndpointObserver interface {
 	ObserveSessionEndpoints(ctx context.Context, snapshot mapsession.Snapshot, set node.EndpointSet,
-		preferredRelay int, hasPreferredRelay bool) error
+		preferredRelay int, hasPreferredRelay bool) (mapsession.EndpointAnnouncement, error)
+	FlushSessionEndpoints(ctx context.Context, snapshot mapsession.Snapshot) (mapsession.EndpointAnnouncement, error)
 }
 
 // Snapshots opens the authoritative snapshot of a machine and node key
@@ -70,9 +71,10 @@ type ApplicationOptions struct {
 // Application turns established sessions into registrations and map
 // streams.
 type Application struct {
-	options ApplicationOptions
-	now     func() time.Time
-	poll    time.Duration // how often a pending approval is checked
+	options       ApplicationOptions
+	now           func() time.Time
+	poll          time.Duration // how often a pending approval is checked
+	endpointTimer func(time.Duration, func()) endpointTimer
 }
 
 // NewApplication validates its dependencies.
@@ -87,7 +89,8 @@ func NewApplication(options ApplicationOptions) (*Application, error) {
 		options.ApprovalTTL > maxApprovalTTL) {
 		return nil, ErrInvalidServer
 	}
-	return &Application{options: options, now: time.Now, poll: approvalPollInterval}, nil
+	return &Application{options: options, now: time.Now, poll: approvalPollInterval,
+		endpointTimer: realEndpointTimer}, nil
 }
 
 // Open implements SessionHandler.
@@ -103,12 +106,16 @@ type conversation struct {
 	session     *Session
 	sink        *mapSink
 
-	lastEndpoints time.Time // when the last EndpointReport was accepted; Receive is serial
-	lastPaths     time.Time // when the last PathStatsReport was stored
+	// endpointPacing keeps and paces this session's endpoint reports.
+	endpointPacing endpointPacing
+	lastPaths      time.Time // when the last PathStatsReport was stored
 	// identity is the session's budget for RegisterRequest and
 	// RotateNodeKey; Receive is serial, so it needs no lock.
 	identity identityBudget
 	// lastConnectivity is the connectivity last stored for this session.
+	// Only a store claimed by endpointPacing reads and writes it, without
+	// the lock: busy runs one store at a time, and claiming and finishing
+	// under the pacing lock order the stores one after another.
 	lastConnectivity *distribution.Connectivity
 
 	mu         sync.Mutex
@@ -146,6 +153,7 @@ func (conversation *conversation) Run(ctx context.Context) error {
 	}
 	conversation.watchApprovalsWithin(ctx)
 	defer conversation.stopApprovals()
+	defer conversation.stopEndpointPacing()
 	for {
 		nodeKey, generation, streamCtx, cancel := conversation.startStream(ctx)
 		if nodeKey.IsValid() {
@@ -320,7 +328,7 @@ func (conversation *conversation) Receive(ctx context.Context, _ sharedmtcp.Mess
 	case *mtcpv1.EnforcementReport:
 		conversation.enforcement(ctx, m)
 	case *mtcpv1.EndpointReport:
-		return conversation.endpoints(ctx, m)
+		return conversation.endpoints(m)
 	case *mtcpv1.PathStatsReport:
 		return conversation.paths(ctx, m)
 	case *mtcpv1.HostinfoReport, *mtcpv1.HealthReport:
@@ -364,23 +372,20 @@ func (conversation *conversation) enforcement(ctx context.Context, report *mtcpv
 }
 
 // maxReportedEndpoints bounds an EndpointReport, and endpointReportInterval
-// is the shortest interval between accepted reports (mtcp-v1 §8.1).
+// is the shortest interval between stored reports of a session: a sooner
+// one is kept and stored when it ends (mtcp-v1 §8.1).
 const (
 	maxReportedEndpoints   = 32
 	endpointReportInterval = time.Second
 )
 
-func (conversation *conversation) endpoints(ctx context.Context, report *mtcpv1.EndpointReport) error {
+func (conversation *conversation) endpoints(report *mtcpv1.EndpointReport) error {
 	if len(report.GetEndpoints()) > maxReportedEndpoints || len(report.GetDiscoKey()) != 32 {
 		return Violation(mtcpv1.Error_INVALID, "invalid endpoint report")
 	}
 	snapshot, ok := conversation.sink.snapshot()
 	if !ok {
 		return nil // no map yet; the node reports again within its interval
-	}
-	now := conversation.application.now()
-	if now.Sub(conversation.lastEndpoints) < endpointReportInterval {
-		return nil // faster than allowed: dropped
 	}
 	disco, err := node.NewDiscoveryKey([32]byte(report.GetDiscoKey()))
 	if err != nil {
@@ -411,12 +416,8 @@ func (conversation *conversation) endpoints(ctx context.Context, report *mtcpv1.
 	if err != nil {
 		return Violation(mtcpv1.Error_INVALID, "invalid endpoint report")
 	}
-	conversation.lastEndpoints = now
-	relay := int(report.GetPreferredRelay())
-	if err := conversation.application.options.Endpoints.ObserveSessionEndpoints(ctx, snapshot, set, relay, true); err != nil {
-		conversation.application.options.Logger.DebugContext(ctx, "mtcp endpoint report not stored", "error", err)
-	}
-	conversation.connectivity(ctx, snapshot, report, now)
+	conversation.report(endpointReport{snapshot: snapshot, set: set, relay: int(report.GetPreferredRelay()),
+		report: report})
 	return nil
 }
 

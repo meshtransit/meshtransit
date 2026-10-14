@@ -34,8 +34,13 @@ func (mtcpStreamsFixture) ReportEnforcement(context.Context, control.Authenticat
 type mtcpEndpointsFixture struct{}
 
 func (mtcpEndpointsFixture) ObserveSessionEndpoints(context.Context, mapsession.Snapshot, node.EndpointSet, int,
-	bool) error {
-	return nil
+	bool) (mapsession.EndpointAnnouncement, error) {
+	return mapsession.EndpointAnnouncement{}, nil
+}
+
+func (mtcpEndpointsFixture) FlushSessionEndpoints(context.Context, mapsession.Snapshot) (
+	mapsession.EndpointAnnouncement, error) {
+	return mapsession.EndpointAnnouncement{}, nil
 }
 
 func (mtcpEndpointsFixture) Open(context.Context, control.AuthenticatedMachine, mapsession.Request) (

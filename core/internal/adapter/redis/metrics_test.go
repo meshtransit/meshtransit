@@ -84,19 +84,8 @@ func TestClientMetricsTrackCommandsPoolAndSubscriptionLifecycle(t *testing.T) {
 		) (int64, error) {
 			return 1, nil
 		},
-		observeEndpoints: func(
-			context.Context,
-			string,
-			string,
-			int64,
-			[]byte,
-			int64,
-			int,
-			time.Duration,
-			string,
-			[]byte,
-		) (int64, error) {
-			return 1, nil
+		observeEndpoints: func(context.Context, endpointObservation) (int64, int64, error) {
+			return 1, 0, nil
 		},
 		loadEndpoints: func(context.Context, string, int64) ([]byte, error) {
 			return encodeEndpointSet(testEndpointObservation(t, 7).Set())
@@ -132,7 +121,8 @@ func TestClientMetricsTrackCommandsPoolAndSubscriptionLifecycle(t *testing.T) {
 		t.Fatalf("ReleasePresence() = (%t, %v), want true", released, err)
 	}
 	observation := testEndpointObservation(t, 7)
-	if accepted, err := client.ObserveEndpoints(t.Context(), scope, observation); err != nil || !accepted {
+	if accepted, _, err := client.ObserveEndpoints(t.Context(), scope, observation, 5*time.Second); err != nil ||
+		!accepted {
 		t.Fatalf("ObserveEndpoints() = (%t, %v), want true", accepted, err)
 	}
 	if _, found, err := client.LoadEndpoints(t.Context(), observation.NodeID(), 7); err != nil || !found {
