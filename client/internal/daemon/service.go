@@ -175,6 +175,7 @@ type ControlProbe struct {
 	Protocol         string
 	Capability       int
 	KeyFingerprint   string
+	LinkFingerprint  string
 	NoiseEstablished bool
 	NoiseVersion     int
 }
@@ -1805,6 +1806,7 @@ func (s *Service) ProbeControl(ctx context.Context) (ControlProbe, error) {
 		Protocol:         result.Protocol,
 		Capability:       result.Capability,
 		KeyFingerprint:   result.KeyFingerprint,
+		LinkFingerprint:  result.LinkFingerprint,
 		NoiseEstablished: result.NoiseEstablished,
 		NoiseVersion:     result.NoiseVersion,
 	}, nil

@@ -212,6 +212,7 @@ func (c *Client) Probe(ctx context.Context, controlURL string) (controlplane.Res
 	return controlplane.Result{
 		Protocol: Protocol, Capability: sharedmtcp.Version,
 		KeyFingerprint:   controlplane.ControlKeyFingerprint(keys[0].Key),
+		LinkFingerprint:  sharedmtcp.ControlFingerprint(keys[0].Key),
 		NoiseEstablished: true, NoiseVersion: sharedmtcp.Version,
 	}, nil
 }

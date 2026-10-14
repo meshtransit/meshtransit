@@ -19,7 +19,9 @@ func TestProbeUsesTheUpgradeAndFallsBackToWebSocket(t *testing.T) {
 		if err != nil {
 			t.Fatalf("refuse upgrade %t: %v", refuse, err)
 		}
-		if result.Protocol != Protocol || result.KeyFingerprint != controlplane.ControlKeyFingerprint(core.controlKey().Public()) {
+		public := core.controlKey().Public()
+		if result.Protocol != Protocol || result.KeyFingerprint != controlplane.ControlKeyFingerprint(public) ||
+			result.LinkFingerprint != sharedmtcp.ControlFingerprint(public) {
 			t.Fatalf("result %+v", result)
 		}
 		_, modes := core.sessions()

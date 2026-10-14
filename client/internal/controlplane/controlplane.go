@@ -58,9 +58,13 @@ var (
 
 // Result describes a successful control probe.
 type Result struct {
-	Protocol         string
-	Capability       int
-	KeyFingerprint   string
+	Protocol       string
+	Capability     int
+	KeyFingerprint string
+	// LinkFingerprint is the same key's ck= form, the one install commands
+	// and enrollment links carry (mtcp-v1 §2.1); empty when the protocol
+	// has none.
+	LinkFingerprint  string
 	NoiseEstablished bool
 	NoiseVersion     int
 }
