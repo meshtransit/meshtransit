@@ -3,6 +3,7 @@ package mtcp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	"meshtransit.net/core/internal/domain/ipam"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/node/distribution"
+	"meshtransit.net/core/internal/domain/node/keyrotation"
 	"meshtransit.net/shared/key"
 	sharedmtcp "meshtransit.net/shared/mtcp"
 )
@@ -594,6 +596,49 @@ func TestRotateNodeKey(t *testing.T) {
 			}
 			break
 		}
+	}
+}
+
+func TestRotationOverTheDeviceBudgetIsRefused(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	f.run()
+	f.expectStream(node.Key(f.session.Hello().GetNodeKey()))
+	f.expect(sharedmtcp.MessageKeyUpdate)
+	f.expect(sharedmtcp.MessageMapSnapshot)
+	f.registrations.mu.Lock()
+	f.registrations.err = fmt.Errorf("%w: rotate authenticated Node key: %w", control.ErrRegistrationFailed,
+		&keyrotation.RateLimitedError{RetryAfter: 40 * time.Minute})
+	f.registrations.mu.Unlock()
+	_, nodeKey, nodeProof, discoKey, discoProof := f.keys(6)
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageRotateNodeKey, &mtcpv1.RotateNodeKey{NewNodeKey: nodeKey,
+		NodeKeyProof: nodeProof, NewDiscoKey: discoKey, DiscoKeyProof: discoProof}); err != nil {
+		t.Fatal(err)
+	}
+	m := f.expect(sharedmtcp.MessageError).(*mtcpv1.Error)
+	if m.GetCode() != mtcpv1.Error_NOT_PERMITTED || m.GetRetryAfterMs() != 2_400_000 || m.GetFatal() {
+		t.Fatalf("rotation over the budget answered %v", m)
+	}
+}
+
+func TestIdentityRequestsOverTheSessionBudgetAreOverloaded(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	f.run()
+	f.expectStream(node.Key(f.session.Hello().GetNodeKey()))
+	f.expect(sharedmtcp.MessageKeyUpdate)
+	f.expect(sharedmtcp.MessageMapSnapshot)
+	f.talk.identity.spent = identityBurst // a session that already sent its burst
+	f.talk.identity.updated = f.talk.application.now()
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageRotateNodeKey, &mtcpv1.RotateNodeKey{}); err != nil {
+		t.Fatal(err)
+	}
+	if m := f.expect(sharedmtcp.MessageError).(*mtcpv1.Error); m.GetCode() != mtcpv1.Error_OVERLOADED ||
+		m.GetRetryAfterMs() == 0 || m.GetFatal() {
+		t.Fatalf("rotation over the session budget answered %v", m)
+	}
+	if len(f.registrations.calls()) != 0 {
+		t.Fatal("a request over the session budget reached the domain")
 	}
 }
 

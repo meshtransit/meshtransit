@@ -106,6 +106,9 @@ type OpenResolutionParams struct {
 	NodeKeyEpoch      int64
 	NodeKeyVersion    int64
 	NodeKeyValidFrom  time.Time
+	// BudgetWindowStart is when the epoch BudgetEpoch names became active;
+	// it must be zero exactly when BudgetEpoch reports false.
+	BudgetWindowStart time.Time
 }
 
 // Resolution is either locked mutable authority or a converged replay result.
@@ -122,6 +125,7 @@ type Resolution struct {
 	nodeKeyEpoch      int64
 	nodeKeyVersion    int64
 	nodeKeyValidFrom  time.Time
+	budgetWindowStart time.Time
 	completed         Result
 }
 
@@ -140,6 +144,7 @@ func NewOpenResolution(params OpenResolutionParams) (Resolution, error) {
 		nodeKeyEpoch:      params.NodeKeyEpoch,
 		nodeKeyVersion:    params.NodeKeyVersion,
 		nodeKeyValidFrom:  params.NodeKeyValidFrom.UTC(),
+		budgetWindowStart: params.BudgetWindowStart.UTC(),
 	}
 	if !resolution.isOpenValid() {
 		return Resolution{}, ErrInvalidResolution
@@ -209,7 +214,7 @@ func (resolution Resolution) isOpenValid() bool {
 		resolution.inventoryRevision > 0 && resolution.deviceVersion > 0 &&
 		resolution.sessionGeneration > 0 && resolution.nodeKeyEpoch > 0 &&
 		resolution.nodeKeyVersion > 0 && !resolution.nodeKeyValidFrom.IsZero() &&
-		!resolution.completed.IsValid()
+		resolution.budgetEvidenceValid() && !resolution.completed.IsValid()
 }
 
 func (resolution Resolution) isCompletedValid() bool {
@@ -219,7 +224,7 @@ func (resolution Resolution) isCompletedValid() bool {
 		resolution.networkRevision == 0 && resolution.inventoryRevision == 0 &&
 		resolution.deviceVersion == 0 && resolution.sessionGeneration == 0 &&
 		resolution.nodeKeyEpoch == 0 && resolution.nodeKeyVersion == 0 &&
-		resolution.nodeKeyValidFrom.IsZero()
+		resolution.nodeKeyValidFrom.IsZero() && resolution.budgetWindowStart.IsZero()
 }
 
 // ResultParams contains the complete committed rotation projection.

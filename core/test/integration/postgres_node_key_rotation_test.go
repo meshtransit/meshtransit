@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -115,6 +116,61 @@ FROM mesh_ops.resolve_node_key_rotation_scope($1::BYTEA, $2::BYTEA, $3::BYTEA, $
 	}
 	if got := readNodeKeyRotationEvidence(ctx, t, adminConnection, machineKey[:]); got != after {
 		t.Fatalf("rejected historical-key reuse changed authority: before=%+v after=%+v", after, got)
+	}
+	assertPostgreSQLNodeKeyRotationBudget(ctx, t, adminConnection, service, command)
+}
+
+// assertPostgreSQLNodeKeyRotationBudget rotates the Device of previous (its
+// first key change) up to the budget, then checks that one more is refused
+// without any write and that the last rotation still replays.
+func assertPostgreSQLNodeKeyRotationBudget(
+	ctx context.Context,
+	t *testing.T,
+	adminConnection *pgx.Conn,
+	service *keyrotation.Service,
+	previous keyrotation.Command,
+) {
+	t.Helper()
+	machineKey := previous.MachineKey().Bytes()
+	next := func(material byte, suffix string) keyrotation.Command {
+		t.Helper()
+		operationID, err := enrollment.ParseRegistrationID("01890f30-0000-7000-8000-" + suffix)
+		if err != nil {
+			t.Fatalf("parse Node-key rotation operation ID: %v", err)
+		}
+		newNodeKey, err := node.NewKey(filledIntegrationKey(material))
+		if err != nil {
+			t.Fatalf("construct rotated Node key: %v", err)
+		}
+		command, err := keyrotation.NewCommand(keyrotation.CommandParams{OperationID: operationID,
+			MachineKey: previous.MachineKey(), OldNodeKey: previous.NewNodeKey(), NewNodeKey: newNodeKey})
+		if err != nil {
+			t.Fatalf("keyrotation.NewCommand() error = %v", err)
+		}
+		return command
+	}
+	for index, material := range []byte{0x25, 0x26, 0x27} {
+		command := next(material, fmt.Sprintf("00000000071%d", index))
+		if _, err := service.Rotate(ctx, command); err != nil {
+			t.Fatalf("rotation %d within the budget: %v", index+2, err)
+		}
+		previous = command
+	}
+	spent := readNodeKeyRotationEvidence(ctx, t, adminConnection, machineKey[:])
+	_, err := service.Rotate(ctx, next(0x28, "000000000719"))
+	var limited *keyrotation.RateLimitedError
+	if !errors.Is(err, keyrotation.ErrRateLimited) || !errors.As(err, &limited) ||
+		limited.RetryAfter <= keyrotation.RotationWindow-5*time.Minute || limited.RetryAfter > keyrotation.RotationWindow {
+		t.Fatalf("rotation over the budget error = %v, want rate limited for about one window", err)
+	}
+	if got := readNodeKeyRotationEvidence(ctx, t, adminConnection, machineKey[:]); got != spent {
+		t.Fatalf("refused rotation changed authority: before=%+v after=%+v", spent, got)
+	}
+	if _, err := service.Rotate(ctx, previous); err != nil {
+		t.Fatalf("replay of the last rotation while the budget is spent: %v", err)
+	}
+	if got := readNodeKeyRotationEvidence(ctx, t, adminConnection, machineKey[:]); got != spent {
+		t.Fatalf("replay changed authority: before=%+v after=%+v", spent, got)
 	}
 }
 

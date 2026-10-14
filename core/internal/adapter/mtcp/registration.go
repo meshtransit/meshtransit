@@ -197,8 +197,10 @@ func (conversation *conversation) registrationFailed(ctx context.Context, err er
 		return conversation.reject(rejection{code: mtcpv1.RegisterResponse_Rejected_INVALID,
 			message: "invalid registration"})
 	case errors.Is(err, registration.ErrIntentConflict), errors.Is(err, keyrotation.ErrConflict):
+		// Also a repeat of a registration with another hostname, such as
+		// after the computer was renamed: name it so the user can act.
 		return conversation.reject(rejection{code: mtcpv1.RegisterResponse_Rejected_CONFLICT,
-			message: "the keys conflict with an existing Device"})
+			message: "the keys or the Device name conflict with an earlier registration"})
 	case errors.Is(err, ipam.ErrAddressExhausted):
 		// Permanent until an admin adds an address range; retrying would
 		// only load Core.
@@ -424,11 +426,21 @@ func (conversation *conversation) rotate(ctx context.Context, request *mtcpv1.Ro
 		return conversation.sendError(mtcpv1.Error_INVALID, "invalid rotation", 0)
 	}
 	if _, err := options.Registrations.Register(ctx, machine, command); err != nil {
+		var limited *keyrotation.RateLimitedError
+		// NOT_PERMITTED tells the node to discard its staged keys (mtcp-v1
+		// §6.3), so send it only where the rotation surely was not applied:
+		// both cases below come after the replay checks.
 		switch {
 		case errors.Is(err, keyrotation.ErrConflict), errors.Is(err, registration.ErrIntentConflict):
 			return conversation.sendError(mtcpv1.Error_NOT_PERMITTED, "the keys conflict with an existing Device", 0)
 		case errors.Is(err, keyrotation.ErrNotFound):
 			return conversation.sendError(mtcpv1.Error_NOT_AUTHORIZED, "rotation needs an authorized Device", 0)
+		case errors.As(err, &limited):
+			// NOT_PERMITTED, not OVERLOADED: the refusal is definitive (a
+			// repeat of a committed rotation succeeds above), so the node can
+			// drop its staged key and keep the current one (mtcp-v1 §6.3).
+			return conversation.sendError(mtcpv1.Error_NOT_PERMITTED,
+				"the Device changed its node key too often; try again later", retryAfterMS(limited.RetryAfter))
 		default:
 			return conversation.sendError(mtcpv1.Error_INTERNAL, "rotation unavailable", 2000)
 		}

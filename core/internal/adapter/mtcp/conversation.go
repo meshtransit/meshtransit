@@ -105,6 +105,9 @@ type conversation struct {
 
 	lastEndpoints time.Time // when the last EndpointReport was accepted; Receive is serial
 	lastPaths     time.Time // when the last PathStatsReport was stored
+	// identity is the session's budget for RegisterRequest and
+	// RotateNodeKey; Receive is serial, so it needs no lock.
+	identity identityBudget
 	// lastConnectivity is the connectivity last stored for this session.
 	lastConnectivity *distribution.Connectivity
 
@@ -323,8 +326,14 @@ func (conversation *conversation) Receive(ctx context.Context, _ sharedmtcp.Mess
 	case *mtcpv1.HostinfoReport, *mtcpv1.HealthReport:
 		// Accepted; nothing reads them yet.
 	case *mtcpv1.RegisterRequest:
+		if wait, ok := conversation.identity.spend(conversation.application.now()); !ok {
+			return conversation.sendError(mtcpv1.Error_OVERLOADED, "too many registration requests", retryAfterMS(wait))
+		}
 		return conversation.register(ctx, m)
 	case *mtcpv1.RotateNodeKey:
+		if wait, ok := conversation.identity.spend(conversation.application.now()); !ok {
+			return conversation.sendError(mtcpv1.Error_OVERLOADED, "too many rotation requests", retryAfterMS(wait))
+		}
 		return conversation.rotate(ctx, m)
 	case *mtcpv1.Logout:
 		return conversation.logout(ctx)

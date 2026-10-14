@@ -52,6 +52,16 @@ WHERE device.workspace_id = $1::BIGINT
   AND device.expires_at > pg_catalog.transaction_timestamp()
 FOR UPDATE OF device, machine_key, node_key`
 
+// readNodeKeyRotationBudgetSQL reads when an earlier key epoch began. It
+// runs under the Device lock, which orders every key change of the Device,
+// so the rotation budget holds across replicas.
+const readNodeKeyRotationBudgetSQL = `SELECT valid_from
+FROM mesh.device_node_key_epoch
+WHERE workspace_id = $1::BIGINT
+  AND network_id = $2::BIGINT
+  AND device_id = $3::BIGINT
+  AND epoch = $4::BIGINT`
+
 const lockNodeKeyRotationReplaySQL = `SELECT
     previous.public_key,
     current.rotation_proof_hash,

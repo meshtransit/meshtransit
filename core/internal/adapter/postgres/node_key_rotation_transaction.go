@@ -162,6 +162,10 @@ func (transaction *nodeKeyRotationTransaction) resolveLocked(
 
 	switch currentNodeKey {
 	case command.OldNodeKey():
+		budgetStart, err := transaction.readBudgetStart(ctx, nodeKeyEpoch)
+		if err != nil {
+			return keyrotation.Resolution{}, err
+		}
 		if err := transaction.lockAuditHead(ctx); err != nil {
 			return keyrotation.Resolution{}, err
 		}
@@ -178,6 +182,7 @@ func (transaction *nodeKeyRotationTransaction) resolveLocked(
 			NodeKeyEpoch:      nodeKeyEpoch,
 			NodeKeyVersion:    nodeKeyVersion,
 			NodeKeyValidFrom:  nodeKeyValidFrom,
+			BudgetWindowStart: budgetStart,
 		})
 		if err != nil {
 			return keyrotation.Resolution{}, ErrNodeKeyRotationEvidence
@@ -198,6 +203,33 @@ func (transaction *nodeKeyRotationTransaction) resolveLocked(
 	default:
 		return keyrotation.Resolution{}, keyrotation.ErrConflict
 	}
+}
+
+// readBudgetStart returns when the epoch the rotation budget compares
+// against began, zero while the Device has changed its key too few times.
+func (transaction *nodeKeyRotationTransaction) readBudgetStart(ctx context.Context, current int64) (time.Time, error) {
+	epoch, counts := keyrotation.BudgetEpoch(current)
+	if !counts {
+		return time.Time{}, nil
+	}
+	var validFrom time.Time
+	if err := transaction.database.QueryRow(
+		ctx,
+		readNodeKeyRotationBudgetSQL,
+		transaction.workspaceInternalID,
+		transaction.networkInternalID,
+		transaction.locked.deviceInternalID,
+		epoch,
+	).Scan(&validFrom); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return time.Time{}, ErrNodeKeyRotationEvidence // epochs are never deleted
+		}
+		return time.Time{}, fmt.Errorf("read Node-key rotation budget: %w", err)
+	}
+	if validFrom.IsZero() {
+		return time.Time{}, ErrNodeKeyRotationEvidence
+	}
+	return validFrom, nil
 }
 
 func (transaction *nodeKeyRotationTransaction) resolveReplay(

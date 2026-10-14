@@ -342,6 +342,20 @@ the new keys. After a crash it reconnects with the old node key in
 request whose keys already are the Device's current keys as a successful
 repeat. Rotation does not need a new approval.
 
+Every key change advances the Network revision and resets the WireGuard
+sessions of the Device's peers, so a Device may change its node key at most 4
+times within one hour (section 14). Core checks it under the Device's lock,
+so it holds across replicas. A rotation over the budget is answered
+`Error{NOT_PERMITTED, retry_after_ms}`.
+
+A repeat of a committed rotation always succeeds, so `NOT_PERMITTED` (budget
+or key conflict) is definitive: Core did not apply the rotation. The node
+discards the staged keys, goes on with its current keys and may request a new
+rotation after `retry_after_ms`. Any other error (`OVERLOADED`, `INTERNAL`,
+a lost connection) leaves the outcome unknown, and the node keeps the staged
+keys and repeats the same request. Core therefore sends `NOT_PERMITTED` for
+`RotateNodeKey` only after it checked that the rotation is not a repeat.
+
 ### 6.4 Proof of possession
 
 For a node key or disco key with private part `k` and public part `K`:
@@ -669,6 +683,8 @@ Unknown names are ignored. Core sends a feature only when both sides list it.
 | Concurrent sessions per Core replica | configurable (default 4096) |
 | New handshakes per source (IPv4 address or IPv6 /64) | 10/s burst 50 by default, configurable; before any Noise work |
 | Unauthenticated connections per source (IPv4 address or IPv6 /64) | handshakes in progress plus established sessions that have not yet received a map snapshot; by default the handshake burst plus 10 seconds at the handshake rate (150), configurable |
+| Node key changes per Device | 4 per hour (6.3); over it `Error{NOT_PERMITTED, retry_after_ms}` |
+| `RegisterRequest` and `RotateNodeKey` per session | 4 at once, then 1 per second; over it `Error{OVERLOADED, retry_after_ms}` |
 | Lifetime of a session that receives no map snapshot | 15 minutes by default, configurable; longer than a browser approval (6.2), then the session closes |
 | Buffered outbound bytes per session | 16 MiB plus one snapshot in flight; beyond it the session closes |
 | Unacknowledged map messages | 8 (7.2) |
@@ -725,6 +741,7 @@ secrets or other tenants' data, and is at most 512 bytes.
 | C15 | Stolen machine key renews an expired Device | `auth.resume` only before expiry unless policy enables auto-renewal |
 | C16 | Shared peers reveal another Workspace's data | Foreign peers carry no owner or provider names; foreign Network revisions never listed |
 | C17 | One source holds every session slot of a replica with sessions that never register, kept alive by Pings | Such sessions count as unauthenticated for their source until they receive a map, bounded per source, and close after the unproven lifetime (section 14) |
+| C18 | One Device churns its whole Network by rotating its node key in a loop, each change advancing the revision and resetting its peers' WireGuard sessions | At most 4 key changes per Device per hour, checked under the Device lock; registration and rotation requests are also rate limited per session (sections 6.3, 14). A refused request still briefly takes the Network's revision lock; the per-source handshake rate bounds how often |
 
 ## 17. Test vectors
 

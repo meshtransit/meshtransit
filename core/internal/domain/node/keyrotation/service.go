@@ -143,6 +143,10 @@ func (service *Service) attempt(
 		resolution.CurrentNodeKey() != command.OldNodeKey() {
 		return Result{}, ErrConflict
 	}
+	// After the replay check: repeating a committed rotation always succeeds.
+	if wait := resolution.rotationWait(occurredAt); wait > 0 {
+		return Result{}, &RateLimitedError{RetryAfter: wait}
+	}
 	change, err := NewChange(command, resolution, mutationIDs, occurredAt)
 	if err != nil {
 		return Result{}, err

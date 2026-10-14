@@ -421,3 +421,74 @@ func nodeKeyRotationPublicIDFixture(t *testing.T, suffix string) publicid.ID {
 func nodeKeyRotationTimeFixture() time.Time {
 	return time.Date(2026, time.September, 16, 4, 5, 6, 0, time.UTC)
 }
+
+func TestNodeKeyRotationResolveReadsTheBudgetUnderTheDeviceLock(t *testing.T) {
+	t.Parallel()
+
+	command := nodeKeyRotationCommandFixture(t)
+	decisionTime := nodeKeyRotationTimeFixture()
+	budgetStart := decisionTime.Add(-30 * time.Minute)
+	databaseTransaction := newFakeDeviceRevocationTransaction()
+	enqueueNodeKeyRotationSetup(t, databaseTransaction, command)
+	enqueueNodeKeyRotationRevisions(databaseTransaction, 10, 7)
+	enqueueNodeKeyRotationTarget(t, databaseTransaction, command, command.OldNodeKey(), 4, 3, 6,
+		decisionTime.Add(-time.Minute))
+	databaseTransaction.enqueueRow(readNodeKeyRotationBudgetSQL, deviceRevocationTestRow{
+		scan: func(destinations ...any) error {
+			*destinations[0].(*time.Time) = budgetStart
+			return nil
+		},
+	})
+	databaseTransaction.enqueueRow(lockNodeKeyRotationAuditStreamSQL, deviceRevocationTestRow{
+		scan: func(destinations ...any) error {
+			*destinations[0].(*int64) = 3
+			*destinations[1].(*int64) = 4
+			*destinations[2].(*[]byte) = make([]byte, 32)
+			return nil
+		},
+	})
+	store := beginTestNodeKeyRotationStore(t, databaseTransaction)
+	transaction, err := store.Begin(t.Context(), command)
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	if _, err := transaction.Resolve(t.Context(), command); err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	var budgetCall *deviceRevocationTestCall
+	for index := range databaseTransaction.calls {
+		if databaseTransaction.calls[index].query == readNodeKeyRotationBudgetSQL {
+			budgetCall = &databaseTransaction.calls[index]
+		}
+	}
+	if budgetCall == nil {
+		t.Fatal("the rotation budget was not read")
+	}
+	// Epoch 6 is the Device's fifth key change; the budget compares with
+	// the oldest of the last four, epoch 3, of the locked Device.
+	if got := budgetCall.arguments[2:]; !reflect.DeepEqual(got, []any{int64(301), int64(3)}) {
+		t.Fatalf("budget arguments = %#v, want Device 301 epoch 3", got)
+	}
+}
+
+func TestNodeKeyRotationResolveRefusesMissingBudgetEvidence(t *testing.T) {
+	t.Parallel()
+
+	command := nodeKeyRotationCommandFixture(t)
+	databaseTransaction := newFakeDeviceRevocationTransaction()
+	enqueueNodeKeyRotationSetup(t, databaseTransaction, command)
+	enqueueNodeKeyRotationRevisions(databaseTransaction, 10, 7)
+	enqueueNodeKeyRotationTarget(t, databaseTransaction, command, command.OldNodeKey(), 4, 3, 6,
+		nodeKeyRotationTimeFixture())
+	databaseTransaction.enqueueRow(readNodeKeyRotationBudgetSQL, deviceRevocationTestRow{
+		scan: func(...any) error { return pgx.ErrNoRows },
+	})
+	store := beginTestNodeKeyRotationStore(t, databaseTransaction)
+	transaction, err := store.Begin(t.Context(), command)
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	if _, err := transaction.Resolve(t.Context(), command); !errors.Is(err, ErrNodeKeyRotationEvidence) {
+		t.Fatalf("Resolve() error = %v, want missing budget evidence", err)
+	}
+}
