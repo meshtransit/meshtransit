@@ -44,7 +44,7 @@ func TestUntrustedForwardingIsCountedAndWarnedAtABoundedRate(t *testing.T) {
 		defer mu.Unlock()
 		return now
 	}
-	trusted, err := clientip.NewResolver([]netip.Prefix{netip.MustParsePrefix("10.108.0.0/16")})
+	trusted, err := clientip.NewResolver([]netip.Prefix{netip.MustParsePrefix("10.20.0.0/16")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestUntrustedForwardingIsCountedAndWarnedAtABoundedRate(t *testing.T) {
 		return 0
 	}
 
-	upgrade("10.108.3.4:443", "X-Forwarded-For")
+	upgrade("10.20.3.4:443", "X-Forwarded-For")
 	upgrade("203.0.113.7:443", "")
 	if counted() != 0 || logs.count("mtcp_untrusted_forwarding") != 0 {
 		t.Fatal("a trusted proxy or a plain direct client was reported as untrusted forwarding")

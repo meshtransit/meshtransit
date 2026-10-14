@@ -21,7 +21,7 @@ func TestLoadAPIConfigForAPIRoles(t *testing.T) {
 				envAPIRequestTimeout:                      "7s",
 				envAPIMaxConnections:                      "17",
 				envAPIMaxConcurrentRequests:               "9",
-				envAPITrustedProxyCIDRs:                   "10.108.0.0/16,2001:db8::/32",
+				envAPITrustedProxyCIDRs:                   "10.20.0.0/16,2001:db8::/32",
 				envAPISourceRateLimitCapacity:             "19",
 				envAPISourceRateLimitRefillInterval:       "2s",
 				envAPISessionRateLimitCapacity:            "29",

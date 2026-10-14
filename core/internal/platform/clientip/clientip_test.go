@@ -50,7 +50,7 @@ func TestResolverRejectsMalformedTrustedForwarding(t *testing.T) {
 
 func TestForwardedByUntrustedPeer(t *testing.T) {
 	t.Parallel()
-	resolver, err := NewResolver([]netip.Prefix{netip.MustParsePrefix("10.108.0.0/16")})
+	resolver, err := NewResolver([]netip.Prefix{netip.MustParsePrefix("10.20.0.0/16")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestForwardedByUntrustedPeer(t *testing.T) {
 		"untrusted peer forwarding":       {remote: "203.0.113.7:443", header: "X-Forwarded-For", want: true},
 		"untrusted peer naming via a CDN": {remote: "203.0.113.7:443", header: "CF-Connecting-IP", want: true},
 		"untrusted peer without headers":  {remote: "203.0.113.7:443"},
-		"trusted proxy forwarding":        {remote: "10.108.3.4:443", header: "X-Forwarded-For"},
+		"trusted proxy forwarding":        {remote: "10.20.3.4:443", header: "X-Forwarded-For"},
 		"unparseable peer":                {remote: "not-an-address", header: "X-Forwarded-For"},
 	} {
 		t.Run(name, func(t *testing.T) {
