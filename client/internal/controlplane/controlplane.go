@@ -35,6 +35,10 @@ var (
 	ErrRegistration = errors.New("control: registration failed")
 	// ErrRegistrationTemporary indicates a retryable transport or server failure.
 	ErrRegistrationTemporary = fmt.Errorf("%w: temporarily unavailable", ErrRegistration)
+	// ErrNodeKeyRotationRefused reports a definitive refusal of a node key
+	// rotation (mtcp-v1 §6.3): Control did not apply it and the current key
+	// stays in use, so the staged key may be discarded.
+	ErrNodeKeyRotationRefused = fmt.Errorf("%w: node key rotation refused", ErrRegistration)
 	// ErrNodeKeyExpired indicates that the Device must register again.
 	ErrNodeKeyExpired = errors.New("control: node key expired")
 	// ErrNetmapRejected indicates a permanent client or registration error.

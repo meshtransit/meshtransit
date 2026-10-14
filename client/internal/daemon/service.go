@@ -589,6 +589,12 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 
 				continue
 			}
+			if errors.Is(rotationErr, controlplane.ErrNodeKeyRotationRefused) {
+				// The staged key was discarded; sync with the current key.
+				s.logControlSessionFailure("node key rotation refused", rotationErr)
+
+				continue
+			}
 			if rotationErr != nil {
 				s.logControlSessionFailure("node key rotation resume failed", rotationErr)
 				recoverable := errors.Is(rotationErr, controlplane.ErrRegistrationTemporary)
@@ -2092,6 +2098,16 @@ func (s *Service) rotateNodeKeyLocked(
 			PinnedFingerprint: record.ControlKeyFingerprint(),
 		},
 	)
+	if errors.Is(err, controlplane.ErrNodeKeyRotationRefused) {
+		// Control did not apply it and keeps the current key: drop the staged
+		// key so the Device goes on with the current one instead of waiting.
+		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rotationPersistTimeout)
+		defer cancel()
+		if _, abandonErr := s.identities.AbandonNodeKeyRotation(persistCtx, active.ID, pendingNodePrivateKey); abandonErr != nil {
+			// Not ErrNodeKeyRotationRefused: the key stays staged and is retried.
+			return NodeKeyRotation{}, false, fmt.Errorf("%w: discarding refused key: %w", ErrNodeKeyRotation, abandonErr)
+		}
+	}
 	if err != nil {
 		return NodeKeyRotation{}, false, fmt.Errorf("%w: %w", ErrNodeKeyRotation, err)
 	}

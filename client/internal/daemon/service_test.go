@@ -424,6 +424,91 @@ func TestService_RunResumesPendingNodeKeyRotation(t *testing.T) {
 	}
 }
 
+func TestService_RefusedNodeKeyRotationKeepsTheCurrentKey(t *testing.T) {
+	t.Parallel()
+
+	service, identities, control, profileID, _ := newTestService(t)
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatalf("TrustControl() error = %v", err)
+	}
+	control.registrationResults = []controlplane.RegistrationResult{{
+		State:             controlplane.RegistrationStateAuthorized,
+		MachineAuthorized: true,
+	}}
+	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
+		t.Fatalf("StartLogin() error = %v", err)
+	}
+	before, err := identities.Get(t.Context(), profileID)
+	if err != nil {
+		t.Fatalf("identity Get() before rotation error = %v", err)
+	}
+	oldMaterial := before.Material()
+	defer clearIdentityMaterial(oldMaterial)
+	control.rotateFunc = func(context.Context, []byte) (controlplane.RegistrationResult, error) {
+		return controlplane.RegistrationResult{}, fmt.Errorf("%w: rotated too often",
+			controlplane.ErrNodeKeyRotationRefused)
+	}
+
+	if _, err := service.RotateNodeKey(t.Context()); !errors.Is(err, controlplane.ErrNodeKeyRotationRefused) ||
+		!errors.Is(err, ErrNodeKeyRotation) {
+		t.Fatalf("RotateNodeKey() error = %v, want the refusal", err)
+	}
+	after, err := identities.Get(t.Context(), profileID)
+	if err != nil {
+		t.Fatalf("identity Get() after refusal error = %v", err)
+	}
+	afterMaterial := after.Material()
+	defer clearIdentityMaterial(afterMaterial)
+	if after.HasPendingNodeKeyRotation() || !bytes.Equal(afterMaterial.NodePrivateKey, oldMaterial.NodePrivateKey) {
+		t.Fatal("a refused rotation kept its staged key or changed the current key")
+	}
+}
+
+func TestService_RunGoesOnWithTheCurrentKeyAfterARefusedResume(t *testing.T) {
+	t.Parallel()
+
+	service, identities, control, profileID, _ := newTestService(t)
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatalf("TrustControl() error = %v", err)
+	}
+	control.registrationResults = []controlplane.RegistrationResult{{
+		State:             controlplane.RegistrationStateAuthorized,
+		MachineAuthorized: true,
+	}}
+	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
+		t.Fatalf("StartLogin() error = %v", err)
+	}
+	pendingNodePrivateKey, err := controlplane.GenerateNodePrivateKey()
+	if err != nil {
+		t.Fatalf("GenerateNodePrivateKey() error = %v", err)
+	}
+	defer clear(pendingNodePrivateKey)
+	if _, err := identities.BeginNodeKeyRotation(t.Context(), profileID, pendingNodePrivateKey); err != nil {
+		t.Fatalf("BeginNodeKeyRotation() error = %v", err)
+	}
+	control.rotateFunc = func(context.Context, []byte) (controlplane.RegistrationResult, error) {
+		return controlplane.RegistrationResult{}, fmt.Errorf("%w: rotated too often",
+			controlplane.ErrNodeKeyRotationRefused)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	runResult := make(chan error, 1)
+	go func() { runResult <- service.Run(ctx) }()
+	// The map stream starts with the current key instead of waiting.
+	waitForStreamStart(t, control)
+	cancel()
+	if err := <-runResult; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context cancellation", err)
+	}
+	after, err := identities.Get(t.Context(), profileID)
+	if err != nil {
+		t.Fatalf("identity Get() after refusal error = %v", err)
+	}
+	if after.HasPendingNodeKeyRotation() {
+		t.Fatal("Run() kept the refused staged key")
+	}
+}
+
 func TestService_CompleteLoginSerializesPendingAuthorization(t *testing.T) {
 	t.Parallel()
 

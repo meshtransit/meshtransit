@@ -197,7 +197,7 @@ func TestRotateNodeKey(t *testing.T) {
 	newRaw, _ := controlplane.ParsePrivateKey(newKey)
 	newNode, _ := key.NodePrivateFromBytes(newRaw[:])
 	newPublic := newNode.Public()
-	var fail atomic.Bool
+	var fail atomic.Int32 // an Error code Core answers with; 0 rotates
 	rotationCore := func(s *coreSession) {
 		if _, first, err := s.receive(5 * time.Second); err != nil || first == nil {
 			return
@@ -214,8 +214,8 @@ func TestRotateNodeKey(t *testing.T) {
 			if !ok {
 				continue
 			}
-			if fail.Load() {
-				_ = s.send(sharedmtcp.MessageError, &mtcpv1.Error{Code: mtcpv1.Error_NOT_AUTHORIZED})
+			if code := fail.Load(); code != 0 {
+				_ = s.send(sharedmtcp.MessageError, &mtcpv1.Error{Code: mtcpv1.Error_Code(code), RetryAfterMs: 60_000})
 				return
 			}
 			if !sharedmtcp.VerifyKeyProof(s.control, s.hash, [32]byte(rotate.GetNewNodeKey()), rotate.GetNodeKeyProof()) ||
@@ -241,10 +241,24 @@ func TestRotateNodeKey(t *testing.T) {
 	if last := hellos[len(hellos)-1]; string(last.GetNodeKey()) != string(oldPublic[:]) {
 		t.Fatal("the rotation session must be opened by the current node key")
 	}
-	fail.Store(true)
-	_, err = core.client().RotateNodeKey(t.Context(), core.origin(), trust.Material, newKey, options)
-	if !errors.Is(err, controlplane.ErrRegistration) || errors.Is(err, controlplane.ErrRegistrationTemporary) {
-		t.Fatalf("refused rotation: %v", err)
+	for _, testCase := range []struct {
+		code               mtcpv1.Error_Code
+		refused, temporary bool
+	}{
+		{code: mtcpv1.Error_NOT_AUTHORIZED},
+		// Definitive: the node may drop the staged key (mtcp-v1 §6.3).
+		{code: mtcpv1.Error_NOT_PERMITTED, refused: true},
+		// Outcome unknown: the node keeps the staged key and repeats.
+		{code: mtcpv1.Error_OVERLOADED, temporary: true},
+		{code: mtcpv1.Error_INTERNAL, temporary: true},
+	} {
+		fail.Store(int32(testCase.code))
+		_, err = core.client().RotateNodeKey(t.Context(), core.origin(), trust.Material, newKey, options)
+		if !errors.Is(err, controlplane.ErrRegistration) ||
+			errors.Is(err, controlplane.ErrNodeKeyRotationRefused) != testCase.refused ||
+			errors.Is(err, controlplane.ErrRegistrationTemporary) != testCase.temporary {
+			t.Errorf("%s: RotateNodeKey() error = %v", testCase.code, err)
+		}
 	}
 }
 

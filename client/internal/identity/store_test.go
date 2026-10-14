@@ -144,6 +144,46 @@ func TestStore_NodeKeyRotationStagesBeforeAtomicPromotion(t *testing.T) {
 	}
 }
 
+func TestStore_AbandonNodeKeyRotationKeepsTheActiveKey(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.September, 16, 7, 8, 9, 0, time.UTC)
+	store, err := openWith(t.TempDir(), func() time.Time { return now }, testProtector(t, 0x1a))
+	if err != nil {
+		t.Fatalf("openWith() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	record := testRecord(t, now)
+	record.isRegistered = true
+	if err := store.Create(t.Context(), record); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	pendingKey := []byte("pending-node-secret")
+	if _, err := store.BeginNodeKeyRotation(t.Context(), testProfileID, pendingKey); err != nil {
+		t.Fatalf("BeginNodeKeyRotation() error = %v", err)
+	}
+	if _, err := store.AbandonNodeKeyRotation(t.Context(), testProfileID, []byte("another-key")); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("abandoning another key: error = %v, want ErrInvalid", err)
+	}
+	abandoned, err := store.AbandonNodeKeyRotation(t.Context(), testProfileID, pendingKey)
+	if err != nil {
+		t.Fatalf("AbandonNodeKeyRotation() error = %v", err)
+	}
+	reloaded, err := store.Get(t.Context(), testProfileID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	for _, got := range []Record{abandoned, reloaded} {
+		if got.HasPendingNodeKeyRotation() || string(got.Material().NodePrivateKey) != "node-secret" {
+			t.Fatal("abandoned rotation changed the active key or kept the staged one")
+		}
+	}
+	// A new rotation can be staged afterwards.
+	if _, err := store.BeginNodeKeyRotation(t.Context(), testProfileID, []byte("next-node-secret")); err != nil {
+		t.Fatalf("BeginNodeKeyRotation() after abandoning: %v", err)
+	}
+}
+
 func TestStore_UpgradesProtectedVersionOneRecord(t *testing.T) {
 	t.Parallel()
 

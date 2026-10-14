@@ -465,6 +465,46 @@ func (s *Store) CompleteNodeKeyRotation(
 	return record, nil
 }
 
+// AbandonNodeKeyRotation durably discards the exact staged key after Control
+// refused the rotation definitively; the active key is unchanged.
+func (s *Store) AbandonNodeKeyRotation(
+	ctx context.Context,
+	profileID string,
+	expectedPendingNodePrivateKey []byte,
+) (Record, error) {
+	if err := ctx.Err(); err != nil {
+		return Record{}, fmt.Errorf("abandoning node key rotation: %w", err)
+	}
+	if !isProfileID(profileID) {
+		return Record{}, ErrNotFound
+	}
+	if s == nil || s.root == nil || s.protector == nil {
+		return Record{}, errors.New("identity store is not initialized")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	record, _, err := s.loadLocked(ctx, profileID)
+	if err != nil {
+		return Record{}, err
+	}
+	expected := string(expectedPendingNodePrivateKey)
+	if expected == "" || record.pendingNodePrivateKey != expected {
+		return Record{}, fmt.Errorf("%w: pending node key rotation changed", ErrInvalid)
+	}
+	record.pendingNodePrivateKey = ""
+	record.updatedAt = s.clock().UTC()
+	if err := validateRecord(record); err != nil {
+		return Record{}, err
+	}
+	if err := s.persistLocked(ctx, record, true); err != nil {
+		return Record{}, err
+	}
+
+	return record, nil
+}
+
 // StageNextControlKey durably records the next control key Core announced,
 // or clears it when publicKey is empty. Repeating the staged key is a no-op.
 func (s *Store) StageNextControlKey(

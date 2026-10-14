@@ -264,6 +264,12 @@ func (c *Client) RotateNodeKey(ctx context.Context, controlURL string, material 
 				MachineAuthorized: true,
 			}, nil
 		case *mtcpv1.Error:
+			if m.GetCode() == mtcpv1.Error_NOT_PERMITTED {
+				// Definitive: Core answers a repeat of a committed rotation
+				// with success, so this one was not applied (mtcp-v1 §6.3).
+				return controlplane.RegistrationResult{}, fmt.Errorf("%w: %s",
+					controlplane.ErrNodeKeyRotationRefused, boundedText(m.GetMessage()))
+			}
 			return controlplane.RegistrationResult{}, sessionError(m)
 		}
 		// Map messages for the old key arrive meanwhile and are not needed.
