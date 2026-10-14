@@ -208,3 +208,33 @@ func TestService_LogoutWhileDownStaysDown(t *testing.T) {
 	}
 	waitForControlSession(t, service, ControlSessionDown)
 }
+
+func TestService_UpRetriesAPendingRecoveryOnly(t *testing.T) {
+	t.Parallel()
+
+	service, _, _, _, _ := newTestService(t)
+	if _, err := service.Up(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	drainSyncSignal(service)
+	if _, err := service.Up(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(service.syncSignal) != 0 {
+		t.Fatal("a repeated Up signalled a running session to restart")
+	}
+	service.runtimePending.Store(true)
+	if _, err := service.Up(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(service.syncSignal) != 1 {
+		t.Fatal("Up did not wake a pending runtime recovery")
+	}
+}
+
+func drainSyncSignal(service *Service) {
+	select {
+	case <-service.syncSignal:
+	default:
+	}
+}

@@ -78,7 +78,10 @@ func (s *Service) Up(ctx context.Context) (ConnectionChange, error) {
 	if err != nil {
 		return ConnectionChange{}, fmt.Errorf("saving the connected preference: %w", err)
 	}
-	if changed {
+	// Already wanted but waiting to retry a failed runtime (on a phone, the
+	// VPN interface was not there yet): try now rather than after the
+	// backoff. A running session is never restarted by a repeated Up.
+	if changed || s.runtimePending.Load() {
 		s.signalControlSync()
 	}
 
