@@ -93,7 +93,9 @@ drops a pool whose server became read-only.
 
 1. Run `meshcore migrate up` with the migrator's settings (`MESHTRANSIT_MIGRATION_*`).
    It applies every pending migration in one transaction, under an advisory
-   lock, so concurrent runs serialize. See [upgrades](upgrades.md).
+   lock, so concurrent runs serialize. Core refuses to start on a schema
+   older than its binary, so run this before starting a new release. See
+   [upgrades](upgrades.md).
 2. As a database superuser, run the **operator SQL** in
    `core/migrations/operator/` (in the source tree; it is not in the image), in
    file order:

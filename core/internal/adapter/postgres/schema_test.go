@@ -42,6 +42,20 @@ func TestValidateRuntimeSchemaCompatibility(t *testing.T) {
 			name:          "compatible future schema",
 			compatibility: withRuntimeVersion(valid, migrations.LatestVersion()+1, "future-checksum"),
 		},
+		{
+			name: "schema older than binary",
+			compatibility: withRuntimeVersion(
+				valid,
+				migrations.LatestVersion()-1,
+				catalog[len(catalog)-2].Checksum,
+			),
+			wantErr: true,
+		},
+		{
+			name:          "first migration only",
+			compatibility: withRuntimeVersion(valid, 1, catalog[0].Checksum),
+			wantErr:       true,
+		},
 	}
 
 	for _, test := range tests {

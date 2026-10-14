@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"meshtransit.net/core/migrations"
@@ -175,8 +176,20 @@ func validateRuntimeSchemaCompatibility(
 		) {
 		return ErrSchemaIncompatible
 	}
-	if compatibility.currentVersion <= int64(len(catalog)) &&
-		compatibility.currentChecksum != catalog[compatibility.currentVersion-1].Checksum {
+	// The binary calls objects up to its newest migration, so an older schema
+	// must stay closed. A newer schema stays open: expand-only migrations keep
+	// the previous binary working during a rollback.
+	latestVersion := int64(len(catalog))
+	if compatibility.currentVersion < latestVersion {
+		return fmt.Errorf(
+			"%w: schema version %d is older than binary version %d",
+			ErrSchemaIncompatible,
+			compatibility.currentVersion,
+			latestVersion,
+		)
+	}
+	if compatibility.currentVersion == latestVersion &&
+		compatibility.currentChecksum != catalog[latestVersion-1].Checksum {
 		return ErrSchemaIncompatible
 	}
 	return nil

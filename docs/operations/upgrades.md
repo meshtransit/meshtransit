@@ -13,11 +13,13 @@ How to move a deployment to a new Core or relay release, and back.
   runs: **a rollback is a binary rollback.**
 - **Core checks the schema before serving.** At start, and at every
   dependency check, a Core process requires a clean migration state and a
-  continuous, successful history whose checksums match its own catalog. A
-  schema newer than the binary is accepted; a failed or dirty migration or a
-  changed checksum is refused and the process does not become ready. A schema
-  **older** than the binary is not detected yet, so always migrate before
-  rolling out a new binary.
+  continuous, successful history whose checksums match its own catalog, at
+  least up to the newest migration the binary knows. A schema newer than the
+  binary is accepted. A schema **older** than the binary, a failed or dirty
+  migration, or a changed checksum is refused: a process that starts on it
+  exits with an error, and a running process reports PostgreSQL unavailable
+  and stops being ready. So migrate before rolling out a new binary; replicas
+  of the new release stay down until the migration has run.
 
 `meshcore migrate status` prints the schema version, the newest version the
 binary knows and the state (`uninitialized`, `pending` or `clean`) as JSON.
@@ -32,7 +34,8 @@ binary knows and the state (`uninitialized`, `pending` or `clean`) as JSON.
    migrator's settings. All pending migrations apply in one transaction (the
    statement timeout, 30 s by default, applies to each statement); it takes an
    advisory lock, so a second runner waits. Old replicas keep serving on the
-   new schema.
+   new schema; replicas of the new release refuse to start until this step
+   has finished.
 5. **Roll out** the new binary, role by role. Any order works, since old and
    new binaries run on the new schema.
 6. **Run the new `…_ownership.sql` operator files**, as a database superuser,
