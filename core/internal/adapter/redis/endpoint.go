@@ -630,8 +630,8 @@ func decodeEndpointSet(payload []byte) (node.EndpointSet, error) {
 
 func endpointKey(nodeID node.ID) string { return endpointKeyPrefix + nodeID.String() }
 
-// runEndpointScript runs an endpoint script answering {status, retry_after_ms}.
-func runEndpointScript(ctx context.Context, script *redisclient.Script, client redisclient.Scripter,
+// runStatusScript runs a script answering {status, retry_after_ms}.
+func runStatusScript(ctx context.Context, script *redisclient.Script, client redisclient.Scripter,
 	keys []string, args ...any) (int64, int64, error) {
 	values, err := script.Run(ctx, client, keys, args...).Int64Slice()
 	if err != nil {

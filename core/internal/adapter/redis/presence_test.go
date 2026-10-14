@@ -32,14 +32,14 @@ func TestClientAcquiresAndRenewsExactPresenceLease(t *testing.T) {
 			ttl time.Duration,
 			channel string,
 			wakeup []byte,
-		) (int64, error) {
+		) (int64, int64, error) {
 			if gotContext != ctx {
 				t.Fatal("AcquirePresence() did not propagate context")
 			}
 			acquireKey, acquireEndpointKey = key, gotEndpointKey
 			acquireGeneration, acquireReplica, acquireTTL = generation, replicaID, ttl
 			acquireChannel, acquireWakeup = channel, append([]byte(nil), wakeup...)
-			return 1, nil
+			return 1, 0, nil
 		},
 		renewPresence: func(
 			gotContext context.Context,
@@ -140,8 +140,8 @@ func TestClientTreatsPresenceFenceRejectionAsSuccessfulResult(t *testing.T) {
 			time.Duration,
 			string,
 			[]byte,
-		) (int64, error) {
-			return 0, nil
+		) (int64, int64, error) {
+			return 0, 0, nil
 		},
 		renewPresence: func(
 			context.Context,
@@ -218,8 +218,8 @@ func TestClientRejectsMalformedPresenceResultsAndTransportErrors(t *testing.T) {
 					time.Duration,
 					string,
 					[]byte,
-				) (int64, error) {
-					return test.result, test.err
+				) (int64, int64, error) {
+					return test.result, 0, test.err
 				},
 				renewPresence: func(
 					context.Context,
@@ -272,9 +272,9 @@ func TestClientRejectsInvalidPresenceLeaseBeforeRedis(t *testing.T) {
 			time.Duration,
 			string,
 			[]byte,
-		) (int64, error) {
+		) (int64, int64, error) {
 			acquires++
-			return 1, nil
+			return 1, 0, nil
 		},
 		renewPresence: func(
 			context.Context,
@@ -340,4 +340,35 @@ func testPresenceLease(t *testing.T, generation int64, replicaID string) node.Pr
 		t.Fatalf("node.NewPresenceLease() error = %v", err)
 	}
 	return lease
+}
+
+func TestClientReportsPresenceChurn(t *testing.T) {
+	t.Parallel()
+	lease := testPresenceLease(t, 7, "control-a")
+	for name, test := range map[string]struct {
+		status, retryMS int64
+		churn           bool
+	}{
+		"churn":                 {status: 2, retryMS: 12_000, churn: true},
+		"churn without a wait":  {status: 2, retryMS: 0},
+		"churn past the window": {status: 2, retryMS: presenceTransferWindow.Milliseconds() + 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			client := &Client{acquirePresence: func(context.Context, string, string, int64, string, time.Duration,
+				string, []byte) (int64, int64, error) {
+				return test.status, test.retryMS, nil
+			}}
+			acquired, err := client.AcquirePresence(t.Context(), testNetworkScope(t), lease)
+			var churn *mapsession.PresenceChurnError
+			switch {
+			case acquired:
+				t.Fatal("a refused move acquired the lease")
+			case test.churn && (!errors.As(err, &churn) || churn.RetryAfter != 12*time.Second):
+				t.Fatalf("AcquirePresence() error = %v, want a 12 s churn refusal", err)
+			case !test.churn && !errors.Is(err, ErrAcquirePresence):
+				t.Fatalf("AcquirePresence() error = %v, want ErrAcquirePresence", err)
+			}
+		})
+	}
 }

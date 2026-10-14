@@ -1752,3 +1752,15 @@ func TestConversationResyncBudgetRecovers(t *testing.T) {
 		t.Fatal("a resync after 5 s refused")
 	}
 }
+
+func TestPresenceChurnAsksTheNodeToWait(t *testing.T) {
+	t.Parallel()
+	err := &mapsession.PresenceChurnError{RetryAfter: 42 * time.Second}
+	lifecycle := lifecycleFor(err)
+	if lifecycle.GetState() != mtcpv1.Lifecycle_RECONNECT || lifecycle.GetRetryAfterMs() != 42_000 {
+		t.Fatalf("lifecycle = %v, want RECONNECT after 42 s", lifecycle)
+	}
+	if reason := streamEndReason(err); reason != "presence_churn" {
+		t.Fatalf("end reason = %q", reason)
+	}
+}

@@ -109,6 +109,7 @@ func TestTLSAuthenticatedDependencies(t *testing.T) {
 		t.Fatalf("redis Check() error = %v", err)
 	}
 	assertRedisPresenceLeaseFencing(ctx, t, redisClient)
+	assertRedisPresenceTransferLimit(ctx, t, redisClient)
 	assertRedisEndpointObservationFencing(ctx, t, redisClient)
 	assertRedisEndpointAnnouncementPacing(ctx, t, redisClient)
 	assertRedisRateLimit(ctx, t, redisClient)
@@ -156,9 +157,9 @@ func TestTLSAuthenticatedDependencies(t *testing.T) {
 		"successful publish":    `meshtransit_redis_commands_total{operation="publish",result="success"} 1`,
 		"successful subscribe":  `meshtransit_redis_commands_total{operation="subscribe",result="success"} 3`,
 		"successful receive":    `meshtransit_redis_commands_total{operation="receive",result="success"} 6`,
-		"presence acquisitions": `meshtransit_redis_commands_total{operation="presence_acquire",result="success"} 5`,
-		"presence renewals":     `meshtransit_redis_commands_total{operation="presence_renew",result="success"} 5`,
-		"presence releases":     `meshtransit_redis_commands_total{operation="presence_release",result="success"} 4`,
+		"presence acquisitions": `meshtransit_redis_commands_total{operation="presence_acquire",result="success"} 19`,
+		"presence renewals":     `meshtransit_redis_commands_total{operation="presence_renew",result="success"} 6`,
+		"presence releases":     `meshtransit_redis_commands_total{operation="presence_release",result="success"} 5`,
 		"endpoint observations": `meshtransit_redis_commands_total{operation="endpoints_observe",result="success"} 10`,
 		"endpoint loads":        `meshtransit_redis_commands_total{operation="endpoints_load",result="success"} 7`,
 		"connectivity loads":    `meshtransit_redis_commands_total{operation="connectivity_load",result="success"} 2`,

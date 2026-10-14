@@ -21,6 +21,9 @@ var (
 	ErrStreamUnavailable = errors.New("map session: stream unavailable")
 	// ErrPresenceConflict reports a generation-fenced lease owned elsewhere.
 	ErrPresenceConflict = errors.New("map session: presence lease conflict")
+	// ErrPresenceChurn reports a lease that moved between replicas too often;
+	// a *PresenceChurnError says when the node may try again.
+	ErrPresenceChurn = errors.New("map session: presence lease moved too often")
 	// ErrPresenceLost reports a lease that could not be renewed by its owner.
 	ErrPresenceLost = errors.New("map session: presence lease lost")
 	// ErrStreamDiscontinuity reports regressed or incompatible authority evidence.
@@ -207,6 +210,9 @@ func (service *StreamService) Serve(
 		return errors.Join(ErrInvalidStreamService, err)
 	}
 	claimed, err := service.acquirePresence(ctx, snapshot.Scope(), lease)
+	if errors.Is(err, ErrPresenceChurn) {
+		return err
+	}
 	if err != nil {
 		return errors.Join(ErrStreamUnavailable, err)
 	}
@@ -751,6 +757,17 @@ func (service *StreamService) openSnapshot(
 	}
 	return snapshot, err
 }
+
+// PresenceChurnError refuses a lease that moved between replicas too often
+// (mtcp-v1 §14); the node may try again after RetryAfter.
+type PresenceChurnError struct {
+	RetryAfter time.Duration
+}
+
+func (err *PresenceChurnError) Error() string { return ErrPresenceChurn.Error() }
+
+// Is makes the error match ErrPresenceChurn.
+func (err *PresenceChurnError) Is(target error) bool { return target == ErrPresenceChurn }
 
 func (service *StreamService) acquirePresence(
 	ctx context.Context,

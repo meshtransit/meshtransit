@@ -60,8 +60,8 @@ func TestClientMetricsTrackCommandsPoolAndSubscriptionLifecycle(t *testing.T) {
 			time.Duration,
 			string,
 			[]byte,
-		) (int64, error) {
-			return 1, nil
+		) (int64, int64, error) {
+			return 1, 0, nil
 		},
 		renewPresence: func(
 			context.Context,

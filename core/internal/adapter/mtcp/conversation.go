@@ -302,6 +302,8 @@ func streamEndReason(err error) string {
 		return "unauthorized"
 	case errors.Is(err, mapsession.ErrPresenceConflict):
 		return "presence_conflict"
+	case errors.Is(err, mapsession.ErrPresenceChurn):
+		return "presence_churn"
 	case errors.Is(err, mapsession.ErrStreamWrite):
 		return "write_failed"
 	case errors.Is(err, mapsession.ErrStreamDiscontinuity):
@@ -319,6 +321,10 @@ func needsRegistration(err error) bool {
 	return errors.Is(err, mapsession.ErrUnauthorized) || errors.Is(err, mapsession.ErrAuthorizationExpired)
 }
 
+// presenceChurnWait is the wait for a presence churn refusal that names
+// none; Core's window is a minute.
+const presenceChurnWait = time.Minute
+
 // lifecycleFor maps how a map stream ended. Core never tells a node to erase
 // its keys from an ambiguous cause: an unauthorized key ends as EXPIRED,
 // which asks the node to register again; REVOKED comes with registration.
@@ -331,6 +337,16 @@ func lifecycleFor(err error) *mtcpv1.Lifecycle {
 	case errors.Is(err, mapsession.ErrPresenceConflict):
 		return &mtcpv1.Lifecycle{State: mtcpv1.Lifecycle_RECONNECT, Reason: "another session is ending",
 			RetryAfterMs: 2000}
+	case errors.Is(err, mapsession.ErrPresenceChurn):
+		// Two processes share this machine key and keep taking the session
+		// from each other; each waits out the window.
+		var churn *mapsession.PresenceChurnError
+		wait := presenceChurnWait
+		if errors.As(err, &churn) {
+			wait = churn.RetryAfter
+		}
+		return &mtcpv1.Lifecycle{State: mtcpv1.Lifecycle_RECONNECT,
+			Reason: "this Device's key is in use by another session", RetryAfterMs: retryAfterMS(wait)}
 	default:
 		return &mtcpv1.Lifecycle{State: mtcpv1.Lifecycle_RECONNECT, Reason: "the map stream ended",
 			RetryAfterMs: 1000}

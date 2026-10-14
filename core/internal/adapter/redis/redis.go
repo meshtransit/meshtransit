@@ -119,17 +119,11 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 			ttl time.Duration,
 			channel string,
 			wakeup []byte,
-		) (int64, error) {
-			return acquirePresenceScript.Run(
-				acquireCtx,
-				client,
+		) (int64, int64, error) {
+			return runStatusScript(acquireCtx, acquirePresenceScript, client,
 				[]string{presenceKey, endpointKey},
-				generation,
-				replicaID,
-				ttl.Milliseconds(),
-				channel,
-				wakeup,
-			).Int64()
+				generation, replicaID, ttl.Milliseconds(), channel, wakeup,
+				presenceTransferLimit, presenceTransferWindow.Milliseconds())
 		},
 		renewPresence: func(
 			renewCtx context.Context,
@@ -168,7 +162,7 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 			).Int64()
 		},
 		observeEndpoints: func(observeCtx context.Context, observation endpointObservation) (int64, int64, error) {
-			return runEndpointScript(observeCtx, observeEndpointsScript, client,
+			return runStatusScript(observeCtx, observeEndpointsScript, client,
 				[]string{observation.endpointKey, observation.presenceKey},
 				observation.generation,
 				observation.payload,
@@ -184,7 +178,7 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 		},
 		flushEndpoints: func(flushCtx context.Context, endpointKey string, generation int64, channel string,
 			wakeup []byte, interval time.Duration) (int64, int64, error) {
-			return runEndpointScript(flushCtx, flushEndpointsScript, client, []string{endpointKey},
+			return runStatusScript(flushCtx, flushEndpointsScript, client, []string{endpointKey},
 				generation, channel, wakeup, interval.Milliseconds())
 		},
 		loadEndpoints: func(

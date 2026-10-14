@@ -35,7 +35,8 @@ var sessionLimits = []string{limitInbound, limitResync, limitEnforcement, limitB
 
 // streamEndReasons is the closed set of map stream end causes.
 var streamEndReasons = []string{
-	"suspended", "unauthorized", "presence_conflict", "unavailable", "write_failed", "discontinuity", "other",
+	"suspended", "unauthorized", "presence_conflict", "presence_churn", "unavailable", "write_failed",
+	"discontinuity", "other",
 }
 
 var handshakeResults = []string{

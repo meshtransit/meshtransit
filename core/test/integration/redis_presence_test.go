@@ -4,10 +4,12 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	redisadapter "meshtransit.net/core/internal/adapter/redis"
+	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/publicid"
@@ -128,4 +130,43 @@ func redisIntegrationScope(t testing.TB) network.Scope {
 		t.Fatalf("construct Redis integration scope: %v", err)
 	}
 	return scope
+}
+
+// assertRedisPresenceTransferLimit plays two processes sharing one machine
+// key, each taking the live lease from the other: past the limit the move
+// is refused until the window ends, while the holder keeps it.
+func assertRedisPresenceTransferLimit(
+	ctx context.Context,
+	t *testing.T,
+	client *redisadapter.Client,
+) {
+	t.Helper()
+	nodeIDValue, err := publicid.Parse("01890f70-0000-7000-8000-000000000702")
+	if err != nil {
+		t.Fatalf("parse presence Node ID: %v", err)
+	}
+	nodeID, err := node.NewID(nodeIDValue.Bytes())
+	if err != nil {
+		t.Fatalf("construct presence Node ID: %v", err)
+	}
+	leases := []node.PresenceLease{
+		integrationPresenceLease(t, nodeID, 4, "control-a"),
+		integrationPresenceLease(t, nodeID, 4, "control-b"),
+	}
+	// Taking a free lease, or the holder taking it again, is no move.
+	assertPresenceAcquire(ctx, t, client, leases[0], true)
+	assertPresenceAcquire(ctx, t, client, leases[0], true)
+	for move := range 10 {
+		assertPresenceAcquire(ctx, t, client, leases[(move+1)%2], true)
+	}
+	holder := leases[10%2]
+	_, err = client.AcquirePresence(ctx, redisIntegrationScope(t), leases[11%2])
+	var churn *mapsession.PresenceChurnError
+	if !errors.As(err, &churn) || churn.RetryAfter <= 0 || churn.RetryAfter > time.Minute {
+		t.Fatalf("the 11th move in a minute: %v, want a churn refusal within a minute", err)
+	}
+	assertPresenceRenew(ctx, t, client, holder, true)
+	// A new generation (a key rotation) is no move either.
+	assertPresenceAcquire(ctx, t, client, integrationPresenceLease(t, nodeID, 5, "control-b"), true)
+	assertPresenceRelease(ctx, t, client, integrationPresenceLease(t, nodeID, 5, "control-b"), true)
 }
