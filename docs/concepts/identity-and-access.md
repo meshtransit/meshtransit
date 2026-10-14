@@ -2,7 +2,7 @@
 
 How people sign in to MeshTransit, how Workspaces and their members are
 managed, and how Core decides what each person may do. Devices are covered in
-[devices](devices.md).
+[devices](devices.md), packet access in [policy](policy.md).
 
 ## Signing in
 

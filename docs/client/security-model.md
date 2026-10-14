@@ -253,8 +253,8 @@ widen access. Checksum-invalid or unsupported alias packets are denied without
 mutation. Admission pauses during key/route replacement; apply failure removes
 packet authority. Bounds cover peers, grants, decoder depth and reply state.
 
-This implementation is advertised only with the explicit qualification opt-in
-and is disabled by default. It is not released as qualified sharing support.
-Durable alias ownership/quarantine, Core bilateral authority and wakeups, real
-encrypted overlap/isolation matrices, imported DNS and scoped alias telemetry
-remain gates. See [device-alias.md](device-alias.md).
+`meshd` advertises `device-alias.v1` when started with
+`--enable-device-aliases`, which the packages set; Core sends alias peers only
+when the deployment enables Device aliases. Core allocates and quarantines
+aliases and builds both sides' maps. See [sharing](../concepts/sharing.md) and
+[Device alias v1](../protocol/device-alias-v1.md).

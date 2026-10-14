@@ -628,8 +628,28 @@ transition as denial evidence. A missing listener while its inbound route
 remains is still an infrastructure failure.
 The report schema is `meshtransit.linux-policy-qualification/v1`. Reports omit
 SSH destinations, overlay addresses, policy contents, raw status, and payloads.
-See [policy.md](policy.md) for the complete enforcement and staged rollback
-contract.
+The node's enforcement rules are described in
+[policy](../concepts/policy.md#on-the-node).
+
+Stage the policy phases one by one, each published with the current revision
+as `If-Match`, and restore the original rules at the end:
+
+1. Record the current rules and policy revision (`GET …/policy`).
+2. Allow A to B for TCP, UDP and ICMP; expect new B-to-A flows to fail while
+   replies to A-to-B traffic succeed.
+3. Reverse the grant and the expectations.
+4. Allow one TCP and one UDP destination port; verify that port and deny an
+   adjacent one.
+5. Publish an empty policy and expect every new flow to fail. Peers may
+   disappear from the reduced map in this phase.
+6. Publish the original rules again with the current revision, then verify
+   that both nodes are online, synchronized and healthy.
+
+The harness requires the `meshd` PID and systemd restart count to stay the
+same on both nodes; otherwise it reports `daemon_restarted` and fails the
+phase. Unit and race tests remain the primary proof for malformed packets,
+exact return tuples, flow expiry, table bounds and update invalidation; the
+live matrix proves control-to-host behaviour but does not replace them.
 
 ## Local validation
 

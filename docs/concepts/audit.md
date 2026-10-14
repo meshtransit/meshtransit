@@ -133,7 +133,7 @@ Device's state at an instant, and a Device entering or leaving `mismatch` writes
 The Access Graph lists who may reach what in a Network, Explain says why a
 given connection is allowed or denied, and Simulate shows the effect of a
 policy change before it is published. These are reads and write no audit
-events.
+events; see [policy](policy.md#explaining-access).
 
 ## Retention
 

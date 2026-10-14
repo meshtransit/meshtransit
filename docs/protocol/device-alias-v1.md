@@ -1,100 +1,165 @@
 # Device alias v1
 
-> MTCP v1 carries this grant as typed fields of a peer's `alias`
-> ([mtcp-v1 §7.4](mtcp-v1.md)). The semantics below are normative for it. The
-> JSON capability encoding under "Wire grant" was the form used by the retired
-> legacy control protocol; its fields map one to one onto the MTCP fields and
-> it is no longer served.
+Draft 2, 2026-10-14. Implementation: Core `core/internal/control/mapsession`
+(projection) and `core/internal/adapter/mtcp/mapencode.go` (encoding); node
+`client/internal/networkmap/alias.go` (validation),
+`client/internal/dataplane/alias.go` (enforcement) and
+`client/internal/packetmeta` (rewriting). Schema: `AliasGrant` in
+[`api/mtcp/v1/mtcp.proto`](../../api/mtcp/v1/mtcp.proto), carried by MTCP v1
+§7.4.
 
-## Boundary and admission
+A Device shared from a **provider** Network to a **consumer** Network is
+reached through aliases, so that neither node learns the other's overlay
+addresses and both Networks may use the same ones. The consumer node sees the
+provider at its **Resource Alias**; the provider node sees each consumer
+Device at its **Consumer Source Alias**. The two nodes translate addresses in
+every packet. Core and relays never translate or decrypt packets. How shares
+are made is described in [sharing](../concepts/sharing.md).
 
-A qualified client advertises version 1 on its authenticated map request
-(MTCP capability `device-alias.v1`). The control plane must bind that declaration
-to the current Device session and machine/Node key epochs, and require both
-peers' current declarations before delivery. A declaration grants no permission.
-Unknown versions or incomplete evidence fail closed. This encoder increment
-provides no runtime admission, allocator worker or reader.
+## 1. Negotiation
 
-The pinned client implementation is `meshd bbe1ec7b77ea35e7217e53694bbe9f5201d82d89`.
-The participating clients translate the packet; Core and relays do not decrypt
-or translate it. An additional gateway is not part of this contract.
+- A node that supports this document advertises the MTCP capability
+  `device-alias.v1` in `ClientHello`.
+- Core MUST NOT send a peer with an `alias` to a node that did not advertise
+  it. When a node's view contains alias peers and the node did not advertise
+  the capability, Core refuses the map rather than send those peers as
+  ordinary peers.
+- The capability is a declaration only: it grants no access. Core allocates an
+  alias for a pair of Devices only while both have declared the capability in
+  their current session, with their current keys.
 
-## Wire grant
+## 2. The grant
 
-Each alias peer carries exactly one JSON object under Node CapMap capability
-`https://meshtransit.io/cap/device-alias-v1`. It includes exact `version:1`,
-`contract_id`, `endpoint_id`, positive `generation`, `grant_revision`,
-`recovery_epoch`, exact `self_key`, `peer_key`, `role` (`consumer` or `provider`),
-exclusive finite `expires_at`, and ordered disjoint `services`. Each service has
-numeric `protocol`, `port_from`, and `port_to`: TCP6/UDP17 ports1–65535;
-ICMPv4 1 and ICMPv6 58 echo grants use zero ports and the corresponding family.
+A peer that is reached through an alias carries `Device.alias` (field 16), an
+`AliasGrant`:
 
-Peer Addresses and AllowedIPs are identical exact remote alias host routes.
-SelfNodeV4MasqAddrForThisPeer / SelfNodeV6MasqAddrForThisPeer contain the matching
-local aliases. The self Node retains canonical addresses and no peer binding.
-Aliases are required for every enabled family; no raw remote address fallback.
-Both Workspaces may use identical canonical addresses.
+| # | Field | Type | Meaning |
+|---|---|---|---|
+| 1 | `contract_id` | string | The Trust Contract (lowercase UUID) |
+| 2 | `endpoint_id` | string | The Private Endpoint (lowercase UUID) |
+| 3 | `generation` | uint64 | The endpoint generation, ≥ 1 |
+| 4 | `grant_revision` | uint64 | Provider Network revision plus consumer Network revision, ≥ 1 |
+| 5 | `recovery_epoch` | uint64 | The Deployment's recovery epoch, ≥ 1 |
+| 6 | `role` | enum | This node's role: `CONSUMER` (1) or `PROVIDER` (2) |
+| 7 | `expires_ms` | int64 | Exclusive deadline, Unix milliseconds |
+| 8 | `services` | repeated `AliasService` | What the consumer may open |
+| 9 | `masquerade_v4` | bytes | This node's own alias toward this peer, IPv4 |
+| 10 | `masquerade_v6` | bytes | This node's own alias toward this peer, IPv6 |
 
-The document is at most8192 bytes, at most64 services, and one map has at
-most256 authorized peers when aliases are present. The complete encoded map
-must also fit the current256KiB server envelope. Excess fails the whole map.
-One peer key cannot carry incompatible contracts/endpoints/generations.
-Multiple compatible current consumer rules are canonicalized into one grant.
-A provider Resource Alias may serve multiple distinct consumer source aliases
-only within the exact same contract/endpoint/generation/recovery epoch.
+`AliasService` is `protocol` (uint32), `port_from` and `port_to` (uint32):
 
-## Packet policy and lifetime
+- TCP (6) and UDP (17): `1 ≤ port_from ≤ port_to ≤ 65535`;
+- ICMP echo: protocol 1 for IPv4 or 58 for IPv6, both ports 0, present only
+  for a family the node has an alias in.
 
-The provider PacketFilter source is the Consumer Source Alias. Its destination
-is the provider canonical address, because the client validates the original
-local alias and normalizes the destination before applying the filter. The
-consumer receives no reverse allow rule. Replies require an admitted tracked
-flow; provider initiation is denied by the role even with a local wildcard.
+The grant names no keys: it belongs to the peer entry it is in and to the
+node's own entry.
 
-Each grant is the exact intersection of current export maximum, consumer rule,
-both Guardrails, Resource constraints and endpoint grant. Peer and grant
-deadlines are bounded by both Device key deadlines, contract, endpoint and
-lease expiry. Every packet enforces the exclusive deadline.
+### 2.1 What Core sends
 
-The grant revision is the sum of the positive provider and consumer Network
-revisions. Their signed64-bit bounds make this sum fit uint64; neither may
-regress. A grant-only change forces a complete peer replacement in the atomic
-policy delta even when key/address/deadline remain identical. Connectivity
-deltas preserve the complete grant. Removal clears peer and filter together.
+- The peer's `addresses` and `allowed_prefixes` are the peer's aliases as
+  exact host routes (`/32`, `/128`), never its overlay addresses.
+- `masquerade_v4` and `masquerade_v6` are the receiving node's aliases toward
+  that peer.
+- `services` is the exact intersection of the contract's maximum traffic and
+  the consumer's current rules for this pair: 1 to 64 entries, sorted by
+  protocol then `port_from`, disjoint. (Guardrails act when a share or a
+  policy changes, not here.)
+- When several current consumer rules connect the same pair, Core merges them
+  into one grant with the earliest deadline.
+- `expires_ms` is no later than either Device's key expiry or the Private
+  Endpoint's expiry.
+- The provider's packet filter (MTCP §7.3) names the Consumer Source Alias as
+  source and the provider's own overlay address as destination. The consumer
+  receives no rule allowing the provider in.
 
-## Fixtures and threat cases
+## 3. Validating a grant
 
-`fixtures/device-alias-v1/` contains six synthetic Core-encoded full maps for
-TCP8443, UDP8443 and both-family ICMP echo, in each direction, with identical
-canonical addresses. They contain public test keys and reserved example names.
-Generate only with the explicit adapter test output flag; ordinary tests never
-rewrite fixtures. The same bytes must pass the pinned client decoder.
+A node MUST reject the whole map if any alias peer breaks a rule below.
 
-Tests cover exact scope/keys/sessions, expiry extension, generation/recovery
-mismatch, raw peer addresses, alias collisions, incomplete families, no ordinary
-inventory union, no reverse filter, immutable grant copies, service limits and
-atomic grant replacement. Runtime SQL authority, notifications and live
-encrypted packet qualification remain separate required evidence.
+- The node's own entry carries no alias.
+- `contract_id` and `endpoint_id` are non-zero lowercase UUIDs; `generation`,
+  `grant_revision` and `recovery_epoch` are non-zero.
+- Both node keys have an expiry, and `expires_ms` is in the future and no
+  later than either; the peer is authorized and not expired.
+- The peer has one or two addresses, at most one per family, and its
+  `allowed_prefixes` equal them exactly.
+- The node has a masquerade address in exactly the families the peer has,
+  and exactly one overlay address of its own in each of them.
+- Alias addresses and those overlay addresses are global unicast: not
+  IPv4-mapped, without zone, not loopback, not link-local.
+- A local alias does not collide with any other address in the map. Two
+  peers may share a local alias only when both grants have role `PROVIDER`
+  and the same contract, endpoint, generation and recovery epoch.
+- `services` has 1 to 64 entries, ordered and disjoint, valid as in §2.
+- At most 10,000 alias peers per map. (Core sends at most 256 peers of any
+  kind to a node that did not advertise `map.large1`, MTCP §13.)
 
-## Authenticated compatibility metadata — schema82
+### 3.1 Replacing a grant
 
-The declaration is the exact root map-request field `DeviceAliasVersion`.
-Omission or numeric zero means unsupported; numeric one means v1. Null,
-strings, fractions, alternate casing, duplicates and unknown versions are
-invalid. The claim is authenticated only as coming from the current Noise
-machine/Node pair; it does not attest a trusted binary or grant packet access.
+When a later map changes a grant for the same contract:
 
-The opt-in map store records one metadata row per Device through a separately
-owned NOLOGIN, NOBYPASSRLS observer. It derives scope from the authenticated
-pair, matches current session and key epochs, locks those identities and checks
-fresh expiry after waits. Caller scope is ignored and restored. Ordinary
-serving roles have no table access. The observer exposes only acceptance, never
-foreign identity or scope. Exact repeated claims cause no row mutation.
+- a peer MUST NOT turn from an alias peer into an ordinary peer;
+- `role` and `recovery_epoch` MUST NOT change;
+- `generation` and `grant_revision` MUST NOT decrease;
+- within one `generation`, the node and peer keys and the node's masquerade
+  addresses MUST NOT change;
+- within one `generation` and `grant_revision`, nothing changes.
 
-Version changes remain compatibility observations, not authority mutations.
-They never allocate an alias, advance packet policy, create membership, or
-publish DNS. Future alias readers must match both current claims to the exact
-Device session and key epochs and independently validate every sharing
-permission. Node-key rotation cannot transfer a previous epoch's declaration.
-The feature remains disabled by default and is not yet advertised by the
-qualified client or connected to live alias projection.
+A change of the grant alone replaces the peer atomically in the same map
+message. Removing the share removes the peer and its filter rules together.
+
+## 4. Packets
+
+The node applies a grant at its TUN interface, before its ordinary packet
+filter; alias addresses never match ordinary rules.
+
+**Consumer.**
+
+- Outbound to the Resource Alias: the source must be the node's overlay
+  address and the packet must match a service. The node records the flow and
+  rewrites the source to its Consumer Source Alias.
+- Inbound from the Resource Alias to its Consumer Source Alias: allowed only
+  as a reply to a recorded flow. The destination is rewritten back to the
+  node's overlay address.
+
+**Provider.**
+
+- Inbound from a Consumer Source Alias to its Resource Alias: the packet must
+  match a service and the provider's packet filter. The node records the flow
+  and rewrites the destination to its overlay address.
+- Outbound to a Consumer Source Alias: allowed only as a reply to a recorded
+  flow, with the source rewritten to the Resource Alias. The provider can
+  never open a connection to the consumer.
+
+In both roles:
+
+- every packet is refused at or after `expires_ms`;
+- a bare TCP SYN is never a reply;
+- ICMP grants cover echo requests and their replies only;
+- rewriting accepts IPv4 without options and IPv6 without extension headers,
+  carrying TCP, UDP or ICMP echo with an identifier. It changes only the
+  addresses and checksums: ports, TCP flags, echo identifiers and payload are
+  unchanged. A packet that cannot be rewritten is dropped.
+
+Checksums:
+
+- The IPv4 header checksum and the TCP, UDP and ICMPv6 checksums are verified
+  before rewriting and recomputed after.
+- An IPv4 UDP packet with checksum 0 (no checksum) is accepted without
+  verification and keeps checksum 0.
+- An IPv6 UDP packet with checksum 0 is refused.
+- A recomputed UDP checksum of 0 is written as `0xffff`.
+
+## 5. Test vectors
+
+- `client/internal/packetmeta/testdata/alias_packets_v1.json`: packets before
+  and after rewriting, both directions, both families, including a UDP packet
+  without checksum.
+- `client/internal/dataplane/testdata/alias_roundtrips_v1.json`: complete
+  request and reply exchanges through both nodes.
+- `core/internal/adapter/mtcp/mapencode_test.go`: encoded alias peers.
+- `core/test/integration/testdata/device_alias_map_intent.sql`: a full share
+  for the integration tests.
+
+An implementation MUST reproduce the rewriting vectors byte for byte.

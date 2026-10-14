@@ -490,13 +490,14 @@ imported shares, `resolvers` (IP and optional DoH/DoT URL), `search_domains`,
 
 ### 7.4 Device alias grants
 
-The `alias` field carries the [device alias v1](device-alias-v1.md) grant as
-typed fields: `contract_id`, `endpoint_id`, `generation`,
-`grant_revision`, `recovery_epoch`, `role` (consumer or provider),
-`expires_at`, `services` (protocol, port range) and the local masquerade
-addresses for this peer. All semantics (exact intersection, deadlines,
-atomic replacement, no reverse rule) carry over unchanged. A node that does
-not advertise `device-alias.v1` never receives alias peers.
+The `alias` field (`AliasGrant`) carries the [device alias v1](device-alias-v1.md)
+grant: `contract_id`, `endpoint_id`, `generation`, `grant_revision`,
+`recovery_epoch`, `role` (consumer or provider), `expires_ms`, `services`
+(protocol and port range) and `masquerade_v4` / `masquerade_v6`, the
+receiving node's own aliases toward this peer. Device alias v1 defines the
+grant's rules: exact intersection, deadlines, atomic replacement, no reverse
+rule. A node that does not advertise `device-alias.v1` never receives alias
+peers.
 
 ### 7.5 Withdrawal
 
@@ -728,7 +729,7 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `dns.split` | Node applies split DNS routes |
 | `stats.path1` | Node sends `PathStatsReport` |
 | `nat.report1` | Node sends NAT classification in `EndpointReport` |
-| `map.large1` | Node applies maps of up to 10,000 peers |
+| `map.large1` | Node applies maps of up to 10,000 peers; without it Core sends at most 256 |
 | `relay.zones2` | Node hands relays MTT2 tickets and their ZONES (MTRP §5.4, §6.1). Core offers it only once every relay accepts them |
 
 Unknown names are ignored. Core sends a feature only when both sides list it.

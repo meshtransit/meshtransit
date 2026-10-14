@@ -157,7 +157,7 @@ See [architecture](../docs/architecture/client.md),
 [platform contracts](../docs/client/platform-contracts.md),
 [security model](../docs/client/security-model.md),
 [direct paths](../docs/client/direct-path.md), [DNS](../docs/client/dns.md),
-[policy](../docs/client/policy.md),
+[policy](../docs/concepts/policy.md),
 [Linux packaging](../docs/client/linux-packaging.md) and
 [Linux qualification](../docs/client/linux-qualification.md).
 

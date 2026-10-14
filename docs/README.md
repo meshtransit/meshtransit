@@ -22,6 +22,8 @@ How the product behaves, as implemented:
 |---|---|
 | [Identity and access](concepts/identity-and-access.md) | Sign-in, sessions, Workspaces, members, invitations, roles, groups, tags, guardrails |
 | [Devices](concepts/devices.md) | Registration, addresses and names, ownership, lifecycle, members leaving, limits |
+| [Policy](concepts/policy.md) | Access Rules, changing policy (simulate, approve, publish), enforcement on the node, explaining access |
+| [Sharing](concepts/sharing.md) | Share offers, Trust Contracts, Imported Resources, Device aliases, ending a share |
 | [Audit and evidence](concepts/audit.md) | What is recorded, reading the history, connection history, policy distribution and enforcement |
 
 ## Protocols
@@ -40,16 +42,13 @@ Language-independent specifications, with test vectors: see
 [direct paths](client/direct-path.md),
 [port mapping](client/port-mapping.md),
 [cloud addresses](client/cloud-addresses.md), [DNS](client/dns.md),
-[policy](client/policy.md), [Device aliases](client/device-alias.md),
 [Linux packaging](client/linux-packaging.md) and
 [Linux qualification](client/linux-qualification.md).
 
 ## Core
 
-[Active policy in the Console](core/active-policy-console.md), and the design
-notes in [core/design](core/design/): Device alias sharing, Console
-resource-sharing boundary, consumer contract reads, imported policy simulation
-and the Device sharing deployment gate.
+[Device sharing deployment gate](core/design/device-sharing-deployment-gate.md):
+the checks before enabling sharing on a deployment.
 
 Component READMEs: [`core/README.md`](../core/README.md) (configuration),
 [`client/README.md`](../client/README.md),

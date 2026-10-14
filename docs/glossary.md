@@ -107,6 +107,7 @@ reduced from the Network's policy to what concerns the node.
 
 **Policy.** The Access Rules of a Network. A change is published as an
 immutable **Policy Release**, optionally after a simulation and an approval.
+See [policy](concepts/policy.md).
 
 **Principal.** Anyone who can act: an Account (a person) or a service
 identity.
@@ -136,7 +137,8 @@ Network-scoped permission in the Workspace's Networks.
 
 **Share.** An offer from one Network to another, in the same or another
 Workspace, to reach one Device on given protocols and ports. A **share offer**
-is accepted or declined once; acceptance creates a **Trust Contract**.
+is accepted or declined once; acceptance creates a **Trust Contract**. See
+[sharing](concepts/sharing.md).
 
 **Trust Contract.** The agreement that lets a consumer Network reach a shared
 Device: both sides' consent, the terms and an expiry. Either side can revoke
