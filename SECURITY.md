@@ -28,5 +28,6 @@ CI runs race detection, `go vet`, `golangci-lint` (including `gosec`),
 CodeQL. The CodeQL workflow requires the repository variable `ENABLE_CODEQL`
 set to `true`.
 
-Component threat models: `docs/client/security-model.md` and the Core
-documents under `docs/core/`.
+Threat models: `docs/protocol/threat-model.md` (network protocols), the trust
+boundaries in `docs/architecture/overview.md`, and the client's
+`docs/clients/security-model.md`.

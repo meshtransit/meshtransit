@@ -11,6 +11,7 @@
 - client/AGENTS.md, client/README.md: meshd, meshnetd, meshcred, meshctl
 - docs/README.md: documentation index; docs/glossary.md: terms
 - docs/architecture/: overview, Core, client and relay architecture
-- docs/client/security-model.md: client security model
+- docs/clients/: installing the client per platform, client security model
+- docs/operations/: configuring, deploying, upgrading and monitoring
 - docs/protocol/: protocol specifications (MTCP, MTRP, disco, audit records)
 - docs/core/: Core design notes

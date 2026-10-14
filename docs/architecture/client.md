@@ -11,7 +11,7 @@ Code: `client/` (Apache-2.0).
 |---|---|---|
 | `meshd` | An unprivileged service user (Linux, macOS); LocalSystem (Windows) | The node daemon: everything below |
 | `meshnetd` | root, Linux with only `CAP_NET_ADMIN` and `CAP_CHOWN` | The network helper: creates the TUN interface and applies addresses, routes and host DNS for `meshd` |
-| `meshcred` | root, on demand | Provisions the host key that encrypts `meshd`'s identity at rest; on Linux also rotates it (`rotate`, `finalize`, `commit`, `recover`) |
+| `meshcred` | root: on Linux a oneshot `meshd` requires (normally once per boot), on macOS by the installer | Provisions the host key that encrypts `meshd`'s identity at rest; on Linux also rotates it (`rotate`, `finalize`, `commit`, `recover`) |
 | `meshctl` | Any allowed user | Command-line client of `meshd`'s local API |
 
 On Android and iOS the same daemon runs inside the app, through the gomobile

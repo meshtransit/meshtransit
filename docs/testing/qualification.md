@@ -1,6 +1,7 @@
-# Linux qualification
+# Qualification
 
-The Linux qualification tools measure recovery of one installed MeshTransit
+The qualification tools in `client/tools/qualification` cover Linux nodes
+today. They measure recovery of one installed MeshTransit
 node against one healthy peer. They cover explicit restart or abrupt `SIGKILL`
 of either `meshd.service` or `meshnetd.service`, a full host reboot, and a
 controlled interface-address change. They also exercise direct-path loss,
@@ -76,7 +77,7 @@ sudo tools/qualification/linux-restart.sh \
   --node-label ubuntu-a \
   --peer-label ubuntu-b \
   --peer-v4 100.64.0.6 \
-  --peer-v6 fd07:d4de:9d87::d \
+  --peer-v6 fd12:3456:789a::d \
   --peer-name ubuntu-b \
   --service meshd \
   --artifact-sha256 SHA256_OF_DEB \
@@ -148,7 +149,7 @@ sudo tools/qualification/linux-crash-repeat.sh \
   --node-label ubuntu-a \
   --peer-label ubuntu-b \
   --peer-v4 100.64.0.6 \
-  --peer-v6 fd07:d4de:9d87::d \
+  --peer-v6 fd12:3456:789a::d \
   --peer-name ubuntu-b \
   --service meshd \
   --iterations 3 \
@@ -187,7 +188,7 @@ sudo tools/qualification/linux-helper-recovery-change.sh \
   --node-label ubuntu-a \
   --peer-label ubuntu-b \
   --peer-v4 100.64.0.6 \
-  --peer-v6 fd07:d4de:9d87::d \
+  --peer-v6 fd12:3456:789a::d \
   --peer-name ubuntu-b \
   --artifact-sha256 SHA256_OF_DEB \
   --confirm-recovery-change ubuntu-a \
@@ -316,7 +317,7 @@ sudo tools/qualification/linux-soak-systemd.sh start \
   --node-label ubuntu-a \
   --peer-label ubuntu-b \
   --peer-v4 100.64.0.6 \
-  --peer-v6 fd07:d4de:9d87::d \
+  --peer-v6 fd12:3456:789a::d \
   --peer-name ubuntu-b \
   --artifact-sha256 SHA256_OF_DEB
 ```
@@ -377,10 +378,10 @@ tools/qualification/linux-reboot.sh \
   --target-label ubuntu-a \
   --observer-label ubuntu-b \
   --target-v4 100.64.0.5 \
-  --target-v6 fd07:d4de:9d87::6 \
+  --target-v6 fd12:3456:789a::6 \
   --target-name ubuntu-a \
   --observer-v4 100.64.0.6 \
-  --observer-v6 fd07:d4de:9d87::d \
+  --observer-v6 fd12:3456:789a::d \
   --observer-name ubuntu-b \
   --artifact-sha256 SHA256_OF_DEB \
   --confirm-reboot ubuntu-a \
@@ -420,7 +421,7 @@ sudo tools/qualification/linux-network-change.sh \
   --node-label ubuntu-a \
   --peer-label ubuntu-b \
   --peer-v4 100.64.0.6 \
-  --peer-v6 fd07:d4de:9d87::d \
+  --peer-v6 fd12:3456:789a::d \
   --peer-name ubuntu-b \
   --artifact-sha256 SHA256_OF_DEB \
   --confirm-network-change ubuntu-a \
@@ -462,7 +463,7 @@ sudo tools/qualification/linux-relay-fallback.sh \
   --node-label ubuntu-a \
   --peer-label ubuntu-b \
   --peer-v4 100.64.0.6 \
-  --peer-v6 fd07:d4de:9d87::d \
+  --peer-v6 fd12:3456:789a::d \
   --peer-name ubuntu-b \
   --peer-underlay-v4 PEER_PUBLIC_IPV4 \
   --peer-underlay-v4 PEER_PRIVATE_IPV4 \
@@ -503,7 +504,7 @@ sudo tools/qualification/linux-dns.sh \
   --node-label ubuntu-a \
   --peer-label ubuntu-b \
   --peer-v4 100.64.0.6 \
-  --peer-v6 fd07:d4de:9d87::d \
+  --peer-v6 fd12:3456:789a::d \
   --peer-name ubuntu-b \
   --dns-domain NETWORK_DNS_DOMAIN \
   --artifact-sha256 SHA256_OF_DEB \

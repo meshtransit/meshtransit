@@ -1,18 +1,20 @@
 # meshctl
 
-`meshctl` is the unprivileged command-line client for the local MeshTransit daemon. It controls profiles and reads status only through the versioned `meshd` Unix API.
+`meshctl` is the unprivileged command-line client for the local MeshTransit daemon. It controls profiles and reads status only through `meshd`'s versioned local API: a Unix socket on Linux and macOS, a named pipe on Windows.
 
 ## Demo
+
+A daemon started without `--enable-data-plane` and not yet registered:
 
 ```console
 $ meshctl status
 Daemon: dev
 State: offline
 Data plane: not_implemented
-DNS: not_implemented
+DNS: inactive
 Network changes: unavailable
-Runtime recovery: unavailable
-Runtime: unavailable
+Runtime recovery: idle (failures: 0, recoveries: 0)
+Runtime: 8 goroutines, 0.6 MiB heap allocated, 12.3 MiB system, 0 GC cycles
 Active profile: none
 Profiles: 0
 Control trust: unconfigured
@@ -26,6 +28,9 @@ Peer paths: unavailable
 Path transitions: unavailable
 Path probes: unavailable
 Relay: unavailable
+NAT: unavailable
+Port mapping: off
+Cloud: off
 Policy rules: 0
 Control key: none
 Note: control synchronization is available; encrypted tunnel is not active
@@ -53,25 +58,26 @@ Running `meshctl up` again on a connected machine changes nothing.
 
 ### Building from source
 
-Requirements: Go 1.26.8 or newer and a running `meshd` from the matching API generation.
+Requirements: Go 1.26.8 or newer and a running `meshd` from the matching API
+generation (see [running it by hand](../../README.md#running-it-by-hand)).
 
 ```bash
 make test
 make build
-./bin/meshctl --socket /tmp/meshd.sock status
-./bin/meshctl --socket /tmp/meshd.sock profile create \
+./bin/meshctl --socket /tmp/meshd-dev/meshd.sock status
+./bin/meshctl --socket /tmp/meshd-dev/meshd.sock profile create \
   --name production \
   --control-url https://transit.example.com
-./bin/meshctl --socket /tmp/meshd.sock profile list
-./bin/meshctl --socket /tmp/meshd.sock doctor control
-./bin/meshctl --socket /tmp/meshd.sock profile trust \
+./bin/meshctl --socket /tmp/meshd-dev/meshd.sock profile list
+./bin/meshctl --socket /tmp/meshd-dev/meshd.sock doctor control
+./bin/meshctl --socket /tmp/meshd-dev/meshd.sock profile trust \
   --fingerprint sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-./bin/meshctl --socket /tmp/meshd.sock login
-./bin/meshctl --socket /tmp/meshd.sock identity rotate-node-key
+./bin/meshctl --socket /tmp/meshd-dev/meshd.sock login
+./bin/meshctl --socket /tmp/meshd-dev/meshd.sock identity rotate-node-key
 ```
 
-Linux amd64/arm64 Debian package build and installation are documented in
-[Linux packaging](../../../docs/client/linux-packaging.md).
+Installing the packages: [Linux](../../../docs/clients/linux.md),
+[macOS](../../../docs/clients/macos.md), [Windows](../../../docs/clients/windows.md).
 
 Global flags must appear before the command. `MESHCTL_SOCKET` and `MESHCTL_TIMEOUT` provide environment defaults; explicit flags take precedence.
 
@@ -142,7 +148,7 @@ After registration, `meshd` automatically maintains the active profile's control
 
 ## Security boundary
 
-`meshctl` does not read `/var/lib/meshd`, access private keys, or manipulate network devices. On Linux, `meshd` additionally checks kernel `SO_PEERCRED` identity for every accepted Unix-socket connection.
+`meshctl` does not read `meshd`'s state, access private keys, or manipulate network devices. `meshd` checks the caller of every connection (`SO_PEERCRED` or `LOCAL_PEERCRED` and the socket's permissions, or the Windows caller's access token); see the [security model](../../../docs/clients/security-model.md#local-api).
 
 ## Contributing
 

@@ -50,12 +50,25 @@ Language-independent specifications, with test vectors: see
 [disco v2](protocol/disco-v2.md) (path discovery) and
 [audit record v2](protocol/audit-record-v2.md).
 
-## Client
+## Clients
 
-[Security model](client/security-model.md),
-[platform contracts](client/platform-contracts.md),
-[Linux packaging](client/linux-packaging.md) and
-[Linux qualification](client/linux-qualification.md).
+Installing and running the client on each platform:
+
+| Document | Covers |
+|---|---|
+| [Linux](clients/linux.md) | Packages, services, joining, troubleshooting, removing, identity key rotation |
+| [macOS](clients/macos.md) | Tarball install, launch daemons, DNS, removing |
+| [Windows](clients/windows.md) | Zip install, the service, who may use `meshctl`, firewall, removing |
+| [Android and iOS](clients/android.md) | The Android app and the mobile library |
+| [Security model](clients/security-model.md) | Trust boundaries and the controls that hold them |
+| [Platform contracts](clients/platform-contracts.md) | Rules for operating-system adapters |
+
+`meshctl` commands: [`client/cmd/meshctl/README.md`](../client/cmd/meshctl/README.md).
+
+## Testing
+
+[Qualification](testing/qualification.md): the Linux node procedures for
+restarts, reboots, network changes, relay fallback, DNS and policy.
 
 ## Core
 
