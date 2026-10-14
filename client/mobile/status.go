@@ -14,12 +14,14 @@ const statusSchemaVersion = 1
 // status is the JSON the app reads from StatusJSON. Every field comes from
 // state the daemon already holds; it carries no keys, tokens or endpoints.
 type status struct {
-	SchemaVersion  int        `json:"schemaVersion"`
-	Running        bool       `json:"running"`
-	State          string     `json:"state"`
-	DataPlane      string     `json:"dataPlane"`
-	DNS            string     `json:"dns"`
-	ControlTrust   string     `json:"controlTrust"`
+	SchemaVersion int    `json:"schemaVersion"`
+	Running       bool   `json:"running"`
+	State         string `json:"state"`
+	DataPlane     string `json:"dataPlane"`
+	DNS           string `json:"dns"`
+	ControlTrust  string `json:"controlTrust"`
+	// ControlKey is the fingerprint of the pinned Core key, once trusted.
+	ControlKey     string     `json:"controlFingerprint,omitempty"`
 	Registration   string     `json:"registration"`
 	ControlSession string     `json:"controlSession"`
 	ProfileID      string     `json:"profileId,omitempty"`
@@ -52,6 +54,7 @@ func newStatus(running bool, current daemon.Status) status {
 		DataPlane:      current.DataPlane,
 		DNS:            current.DNS,
 		ControlTrust:   current.ControlTrust,
+		ControlKey:     current.ControlFingerprint,
 		Registration:   current.Registration,
 		ControlSession: current.ControlSession,
 		ProfileID:      current.ActiveProfileID,

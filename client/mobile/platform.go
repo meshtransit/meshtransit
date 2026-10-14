@@ -36,3 +36,17 @@ type KeyStore interface {
 type LogSink interface {
 	Log(line string)
 }
+
+// SocketProtector excludes the engine's own sockets from the app's VPN.
+//
+// Android routes the whole app through its VpnService interface unless each
+// socket is protected: Protect must call VpnService.protect(fd) and return
+// its result. While no VPN interface is up there is nothing to exclude the
+// socket from, and Protect returns true. iOS needs no protector: a packet
+// tunnel's own traffic never enters the tunnel.
+//
+// Protect is called from many engine goroutines at once and must be safe
+// for that; it runs before the socket is used, so it should return quickly.
+type SocketProtector interface {
+	Protect(fd int) bool
+}

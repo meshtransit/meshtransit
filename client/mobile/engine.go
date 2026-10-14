@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,7 @@ import (
 	"meshtransit.net/client/internal/mtcpclient"
 	"meshtransit.net/client/internal/profile"
 	"meshtransit.net/client/internal/secretstore"
+	"meshtransit.net/client/internal/underlay"
 	"meshtransit.net/client/internal/version"
 )
 
@@ -51,9 +53,20 @@ var (
 	errPlatform = errors.New("mobile: invalid platform implementation")
 	// errStopTimeout reports a runtime that did not stop within stopTimeout.
 	errStopTimeout = errors.New("mobile: engine did not stop in time")
+	// errProtectRefused reports a socket the platform did not protect.
+	errProtectRefused = errors.New("mobile: the platform refused to protect a socket")
+	// errProtectorInUse reports a SocketProtector another Engine installed.
+	errProtectorInUse = errors.New("mobile: another engine's socket protector is installed")
+	// errNoProtector reports Start on Android without a SocketProtector.
+	errNoProtector = errors.New("mobile: Android needs a socket protector before Start")
 	// errPanic reports a panic recovered at the API boundary.
 	errPanic = errors.New("mobile: internal error")
 )
+
+// requireProtector is set where the platform VPN captures the app's own
+// sockets unless each is protected (Android); Start needs a SocketProtector
+// there. Tests change it.
+var requireProtector = runtime.GOOS == "android"
 
 // ClientVersion returns the client build version.
 func ClientVersion() string { return version.Current().Version }
@@ -66,6 +79,7 @@ type Engine struct {
 	identities *identity.Store
 	logger     *slog.Logger
 	logs       *asyncLog // nil without a log sink
+	hosts      *hostAddressList
 	network    chan struct{}
 	// stopWait bounds how long Stop and Close wait for the runtime.
 	stopWait time.Duration
@@ -126,7 +140,7 @@ func build(resolved Config, tun TunProvider, keys KeyStore, queue *asyncLog) (*E
 		return nil, err
 	}
 	packets, err := dataplane.NewWireGuardWithObserver(
-		platformTUN{provider: tun, mtu: DefaultMTU},
+		newPlatformTUN(tun, DefaultMTU, logger.With("component", "tun")),
 		uint16(resolved.ListenPort), //nolint:gosec // validated to 1024-65535
 		nil,
 	)
@@ -134,9 +148,11 @@ func build(resolved Config, tun TunProvider, keys KeyStore, queue *asyncLog) (*E
 		return nil, errors.Join(fmt.Errorf("mobile: create data plane: %w", err), closeStores(profiles, identities))
 	}
 	packets.SetLogger(logger.With("component", "data_plane"))
+	hosts := &hostAddressList{}
+	packets.SetHostAddressSource(hosts.load)
 	network := make(chan struct{}, 1)
 	service, err := daemon.New(profiles, identities, version.Current(), mtcpclient.New(), daemon.Options{
-		Hostname:       resolved.DeviceName,
+		Hostname:       hostnameFor(resolved.DeviceName),
 		DataPlane:      packets,
 		Logger:         logger.With("component", "daemon"),
 		NetworkChanges: network,
@@ -146,7 +162,7 @@ func build(resolved Config, tun TunProvider, keys KeyStore, queue *asyncLog) (*E
 	}
 	return &Engine{
 		service: service, serve: service.Run, profiles: profiles, identities: identities, logger: logger, logs: queue,
-		network: network, stopWait: stopTimeout,
+		network: network, stopWait: stopTimeout, hosts: hosts,
 	}, nil
 }
 
@@ -198,6 +214,10 @@ func (engine *Engine) Start() (err error) {
 	engine.access.RUnlock()
 	if closed {
 		return errEngineClosed
+	}
+	if requireProtector && !protects(engine) {
+		// Unprotected, the packet path would loop through the app's own VPN.
+		return errNoProtector
 	}
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
@@ -290,11 +310,77 @@ func (engine *Engine) Close() (err error) {
 		return err
 	}
 	engine.closed = true
+	releaseProtector(engine)
 	err = closeStores(engine.profiles, engine.identities)
 	if engine.logs != nil {
 		engine.logs.close()
 	}
 	return err
+}
+
+// SetSocketProtector installs protector for every socket the runtime
+// opens; nil removes it. Call it before Start: a socket opened before would
+// stay unprotected. The protector is process-wide, as the platform VPN is,
+// and Close removes it.
+func (engine *Engine) SetSocketProtector(protector SocketProtector) (err error) {
+	defer recoverPanic(&err)
+	if engine == nil {
+		return errEngineClosed
+	}
+	engine.lifecycle.Lock()
+	defer engine.lifecycle.Unlock()
+	engine.access.RLock()
+	defer engine.access.RUnlock()
+	if engine.closed {
+		return errEngineClosed
+	}
+	if engine.Running() {
+		return errEngineRunning
+	}
+	if protector == nil {
+		releaseProtector(engine)
+		return nil
+	}
+	return installProtector(engine, func(fd uintptr) error {
+		if !protector.Protect(int(fd)) {
+			return errProtectRefused
+		}
+		return nil
+	})
+}
+
+// protectorOwner is the Engine whose SocketProtector is installed: the
+// protector is process-wide, and one Engine must not replace or remove
+// another's.
+var protectorOwner struct {
+	sync.Mutex
+	engine *Engine
+}
+
+func installProtector(engine *Engine, protect underlay.Protector) error {
+	protectorOwner.Lock()
+	defer protectorOwner.Unlock()
+	if protectorOwner.engine != nil && protectorOwner.engine != engine {
+		return errProtectorInUse
+	}
+	underlay.SetProtector(protect)
+	protectorOwner.engine = engine
+	return nil
+}
+
+func releaseProtector(engine *Engine) {
+	protectorOwner.Lock()
+	defer protectorOwner.Unlock()
+	if protectorOwner.engine == engine {
+		underlay.SetProtector(nil)
+		protectorOwner.engine = nil
+	}
+}
+
+func protects(engine *Engine) bool {
+	protectorOwner.Lock()
+	defer protectorOwner.Unlock()
+	return protectorOwner.engine == engine
 }
 
 // Running reports whether the runtime runs.
@@ -318,6 +404,24 @@ func (engine *Engine) NetworkChanged() {
 	case engine.network <- struct{}{}:
 	default:
 	}
+}
+
+// SetHostAddresses tells the runtime the device's addresses on its
+// networks, other than the app's own VPN: a comma-separated list of IP
+// addresses, each optionally with its prefix length. Mobile platforms do not
+// let apps list network interfaces, so the app reports them whenever a
+// network changes, then calls NetworkChanged. It never blocks.
+func (engine *Engine) SetHostAddresses(addresses string) (err error) {
+	defer recoverPanic(&err)
+	if engine == nil {
+		return errEngineClosed
+	}
+	parsed, err := parseHostAddresses(addresses)
+	if err != nil {
+		return err
+	}
+	engine.hosts.current.Store(&parsed)
+	return nil
 }
 
 // StatusJSON returns the current status as the versioned JSON of status.
@@ -355,6 +459,24 @@ func (engine *Engine) ActivateProfile(id string) (err error) {
 	})
 }
 
+// ProbeControl reaches the active profile's Core and returns the
+// fingerprint of the key it proves, for the person to compare with the one
+// their administrator gave them before TrustControl. It is the ck= form
+// install commands and enrollment links carry, when the protocol has one;
+// TrustControl takes either form.
+func (engine *Engine) ProbeControl() (fingerprint string, err error) {
+	defer recoverPanic(&err)
+	err = engine.act(func(ctx context.Context) error {
+		probe, probeErr := engine.service.ProbeControl(ctx)
+		fingerprint = probe.LinkFingerprint
+		if fingerprint == "" {
+			fingerprint = probe.KeyFingerprint
+		}
+		return probeErr
+	})
+	return fingerprint, err
+}
+
 // TrustControl pins the active profile's Core after it proves the key whose
 // fingerprint the person confirmed, and creates the Device's keys.
 func (engine *Engine) TrustControl(fingerprint string) (err error) {
@@ -378,13 +500,20 @@ func (engine *Engine) Login(enrollmentKey string) (authURL string, err error) {
 	return authURL, err
 }
 
-// CompleteLogin finishes a browser registration started by Login.
-func (engine *Engine) CompleteLogin() (err error) {
+// CompleteLogin checks whether the person approved the Device in the
+// browser registration Login started. It waits a few seconds for Core and
+// returns false while the approval is still pending; the app calls it again.
+func (engine *Engine) CompleteLogin() (registered bool, err error) {
 	defer recoverPanic(&err)
-	return engine.act(func(ctx context.Context) error {
+	err = engine.act(func(ctx context.Context) error {
 		_, loginErr := engine.service.CompleteLogin(ctx)
+		if errors.Is(loginErr, daemon.ErrAuthorizationPending) {
+			return nil
+		}
+		registered = loginErr == nil
 		return loginErr
 	})
+	return registered, err
 }
 
 // Up connects the active profile and keeps it connected across restarts.

@@ -15,7 +15,7 @@ import (
 
 	"meshtransit.net/client/internal/daemon"
 	"meshtransit.net/client/internal/dataplane"
-	"meshtransit.net/client/internal/netadmin"
+	"meshtransit.net/client/internal/underlay"
 )
 
 type fakeKeys struct {
@@ -36,13 +36,23 @@ type fakeTUN struct {
 	mtu       int
 	fd        int
 	err       error
+	next      func() (int, error) // when set, gives each call's descriptor
 }
 
 func (tun *fakeTUN) OpenTUN(addresses, routes string, mtu int) (int, error) {
 	tun.mu.Lock()
 	defer tun.mu.Unlock()
 	tun.addresses, tun.routes, tun.mtu = addresses, routes, mtu
+	if tun.next != nil {
+		return tun.next()
+	}
 	return tun.fd, tun.err
+}
+
+func (tun *fakeTUN) last() (addresses, routes string, mtu int) {
+	tun.mu.Lock()
+	defer tun.mu.Unlock()
+	return tun.addresses, tun.routes, tun.mtu
 }
 
 type recordingLogs struct {
@@ -71,7 +81,7 @@ func TestConfigValidation(t *testing.T) {
 		"relative dir":       {config: &Config{StateDir: "state", DeviceName: "pixel"}, wantErr: true},
 		"no name":            {config: &Config{StateDir: dir, DeviceName: "  "}, wantErr: true},
 		"name with newline":  {config: &Config{StateDir: dir, DeviceName: "a\nb"}, wantErr: true},
-		"name too long":      {config: &Config{StateDir: dir, DeviceName: strings.Repeat("a", 64)}, wantErr: true},
+		"name too long":      {config: &Config{StateDir: dir, DeviceName: strings.Repeat("a", maxDeviceNameBytes+1)}, wantErr: true},
 		"privileged port":    {config: &Config{StateDir: dir, DeviceName: "pixel", ListenPort: 80}, wantErr: true},
 		"port out of range":  {config: &Config{StateDir: dir, DeviceName: "pixel", ListenPort: 70000}, wantErr: true},
 		"invalid name bytes": {config: &Config{StateDir: dir, DeviceName: "\xff"}, wantErr: true},
@@ -87,32 +97,6 @@ func TestConfigValidation(t *testing.T) {
 			}
 			if err != nil || got.ListenPort != test.wantPort || strings.TrimSpace(got.DeviceName) != got.DeviceName {
 				t.Fatalf("validated() = %+v, %v", got, err)
-			}
-		})
-	}
-}
-
-func TestPlatformTUNFailsClosed(t *testing.T) {
-	t.Parallel()
-	address := []netip.Prefix{netip.MustParsePrefix("100.64.0.5/32")}
-	canceled, cancel := context.WithCancel(t.Context())
-	cancel()
-	for name, test := range map[string]struct {
-		ctx    context.Context
-		tun    *fakeTUN
-		config netadmin.TUNConfig
-	}{
-		"platform error":    {ctx: t.Context(), tun: &fakeTUN{err: errors.New("no permission")}, config: netadmin.TUNConfig{Addresses: address}},
-		"negative fd":       {ctx: t.Context(), tun: &fakeTUN{fd: -1}, config: netadmin.TUNConfig{Addresses: address}},
-		"stdin":             {ctx: t.Context(), tun: &fakeTUN{fd: 0}, config: netadmin.TUNConfig{Addresses: address}},
-		"stderr":            {ctx: t.Context(), tun: &fakeTUN{fd: 2}, config: netadmin.TUNConfig{Addresses: address}},
-		"no addresses":      {ctx: t.Context(), tun: &fakeTUN{}},
-		"context cancelled": {ctx: canceled, tun: &fakeTUN{}, config: netadmin.TUNConfig{Addresses: address}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			if _, err := (platformTUN{provider: test.tun, mtu: DefaultMTU}).OpenTUN(test.ctx, test.config); err == nil {
-				t.Fatal("OpenTUN() succeeded")
 			}
 		})
 	}
@@ -407,6 +391,116 @@ func TestEngineSerializesConcurrentCalls(t *testing.T) {
 	}
 }
 
+type fakeProtector struct {
+	mu    sync.Mutex
+	fds   []int
+	allow bool
+}
+
+func (protector *fakeProtector) Protect(fd int) bool {
+	protector.mu.Lock()
+	defer protector.mu.Unlock()
+	protector.fds = append(protector.fds, fd)
+	return protector.allow
+}
+
+// TestEngineSocketProtector is not parallel: the protector is process-wide.
+func TestEngineSocketProtector(t *testing.T) {
+	engine := newTestEngine(t, t.TempDir(), fakeKeys{key: validKey()}, nil)
+	t.Cleanup(func() { _ = engine.Close() })
+	engine.serve = func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	allowing := &fakeProtector{allow: true}
+	if err := engine.SetSocketProtector(allowing); err != nil || !underlay.Active() {
+		t.Fatalf("SetSocketProtector() error = %v, active = %t", err, underlay.Active())
+	}
+	if err := underlay.Protect(7); err != nil || len(allowing.fds) != 1 || allowing.fds[0] != 7 {
+		t.Fatalf("Protect(7) error = %v, platform saw %v", err, allowing.fds)
+	}
+	if err := engine.SetSocketProtector(&fakeProtector{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := underlay.Protect(7); !errors.Is(err, underlay.ErrNotProtected) {
+		t.Fatalf("Protect() refused error = %v, want ErrNotProtected", err)
+	}
+	if err := engine.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.SetSocketProtector(allowing); !errors.Is(err, errEngineRunning) {
+		t.Fatalf("SetSocketProtector() while running error = %v", err)
+	}
+	if err := engine.Close(); err != nil || underlay.Active() {
+		t.Fatalf("Close() error = %v, protector still active = %t", err, underlay.Active())
+	}
+	if err := engine.SetSocketProtector(allowing); !errors.Is(err, errEngineClosed) {
+		t.Fatalf("SetSocketProtector() after Close error = %v", err)
+	}
+}
+
+// TestEngineProtectorOwnership is not parallel: the protector is process-wide.
+func TestEngineProtectorOwnership(t *testing.T) {
+	first := newTestEngine(t, t.TempDir(), fakeKeys{key: validKey()}, nil)
+	second := newTestEngine(t, t.TempDir(), fakeKeys{key: validKey()}, nil)
+	t.Cleanup(func() { _ = first.Close(); _ = second.Close() })
+	if err := first.SetSocketProtector(&fakeProtector{allow: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.SetSocketProtector(&fakeProtector{allow: true}); !errors.Is(err, errProtectorInUse) {
+		t.Fatalf("second engine's SetSocketProtector() error = %v, want errProtectorInUse", err)
+	}
+	if err := second.SetSocketProtector(nil); err != nil || !underlay.Active() {
+		t.Fatalf("second engine removed the first's protector: error = %v, active = %t", err, underlay.Active())
+	}
+	if err := second.Close(); err != nil || !underlay.Active() {
+		t.Fatalf("closing the second engine removed the first's protector: error = %v", err)
+	}
+	if err := first.Close(); err != nil || underlay.Active() {
+		t.Fatalf("closing the owner left the protector: error = %v, active = %t", err, underlay.Active())
+	}
+}
+
+// TestEngineStartNeedsAProtectorWhereRequired is not parallel: it changes
+// requireProtector.
+func TestEngineStartNeedsAProtectorWhereRequired(t *testing.T) {
+	requireProtector = true
+	t.Cleanup(func() { requireProtector = false })
+	engine := newTestEngine(t, t.TempDir(), fakeKeys{key: validKey()}, nil)
+	t.Cleanup(func() { _ = engine.Close() })
+	engine.serve = func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	if err := engine.Start(); !errors.Is(err, errNoProtector) || engine.Running() {
+		t.Fatalf("Start() without a protector error = %v, running = %t", err, engine.Running())
+	}
+	if err := engine.SetSocketProtector(&fakeProtector{allow: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Start(); err != nil {
+		t.Fatalf("Start() with a protector error = %v", err)
+	}
+}
+
+func TestEngineCompleteLoginWithoutAPendingLogin(t *testing.T) {
+	t.Parallel()
+	engine := newTestEngine(t, t.TempDir(), fakeKeys{key: validKey()}, nil)
+	t.Cleanup(func() { _ = engine.Close() })
+	if registered, err := engine.CompleteLogin(); err == nil || errors.Is(err, errPanic) || registered {
+		t.Fatalf("CompleteLogin() = %t, %v; want a plain error", registered, err)
+	}
+}
+
+func TestEngineProbeControlNeedsAProfile(t *testing.T) {
+	t.Parallel()
+	engine := newTestEngine(t, t.TempDir(), fakeKeys{key: validKey()}, nil)
+	t.Cleanup(func() { _ = engine.Close() })
+	if fingerprint, err := engine.ProbeControl(); err == nil || errors.Is(err, errPanic) || fingerprint != "" {
+		t.Fatalf("ProbeControl() = %q, %v; want a plain error", fingerprint, err)
+	}
+}
+
 func TestRecoverPanicReturnsAnError(t *testing.T) {
 	t.Parallel()
 	call := func() (err error) {
@@ -439,5 +533,41 @@ func waitForGoroutines(t *testing.T, want int) {
 			t.Fatalf("goroutines = %d after Stop, want at most %d", runtime.NumGoroutine(), want)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestParseHostAddresses(t *testing.T) {
+	t.Parallel()
+	// Link-local and zoned addresses parse; the data plane drops them.
+	addresses, err := parseHostAddresses(" 10.63.186.255/20, 2001:db8::5/64,, 192.168.1.20 ")
+	if err != nil || len(addresses) != 3 || addresses[0] != netip.MustParseAddr("10.63.186.255") {
+		t.Fatalf("parseHostAddresses() = %v, %v", addresses, err)
+	}
+	if _, err := parseHostAddresses("10.0.0.1,not-an-address"); !errors.Is(err, errInvalidConfig) {
+		t.Fatalf("invalid entry error = %v", err)
+	}
+	if addresses, err := parseHostAddresses(""); err != nil || len(addresses) != 0 {
+		t.Fatalf("parseHostAddresses(\"\") = %v, %v", addresses, err)
+	}
+	if _, err := parseHostAddresses(strings.Repeat("10.0.0.1,", maxHostAddresses+1)); !errors.Is(err, errInvalidConfig) {
+		t.Fatalf("too many addresses error = %v", err)
+	}
+}
+
+func TestEngineSetHostAddressesFeedsTheDataPlane(t *testing.T) {
+	t.Parallel()
+	engine := newTestEngine(t, t.TempDir(), fakeKeys{key: validKey()}, nil)
+	t.Cleanup(func() { _ = engine.Close() })
+	if err := engine.SetHostAddresses("192.168.1.20/24,2001:db8::5"); err != nil {
+		t.Fatal(err)
+	}
+	if got := engine.hosts.load(); len(got) != 2 || got[0] != netip.MustParseAddr("192.168.1.20") {
+		t.Fatalf("host addresses = %v", got)
+	}
+	if err := engine.SetHostAddresses("not-an-address"); !errors.Is(err, errInvalidConfig) {
+		t.Fatalf("SetHostAddresses(invalid) error = %v", err)
+	}
+	if got := engine.hosts.load(); len(got) != 2 {
+		t.Fatalf("an invalid list replaced the addresses: %v", got)
 	}
 }

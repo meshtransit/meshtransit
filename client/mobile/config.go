@@ -16,7 +16,9 @@ const (
 	// smallest MTU every mesh path carries without fragmentation.
 	DefaultMTU = 1280
 
-	maxDeviceNameBytes = 63
+	// maxDeviceNameBytes bounds the name the person gave the device; the
+	// hostname made from it is shorter (hostnameFor).
+	maxDeviceNameBytes = 255
 )
 
 // errInvalidConfig reports a Config the engine cannot start from.
@@ -27,8 +29,8 @@ type Config struct {
 	// StateDir is a directory private to the app (Android filesDir, iOS App
 	// Group container) where profiles and sealed identities are kept.
 	StateDir string
-	// DeviceName is the hostname the Device registers with, chosen by the
-	// person or taken from the device model.
+	// DeviceName is the name the person gave the device, or its model. The
+	// Device registers with a hostname made from it (hostnameFor).
 	DeviceName string
 	// ListenPort is the local UDP port; 0 means DefaultListenPort.
 	ListenPort int
