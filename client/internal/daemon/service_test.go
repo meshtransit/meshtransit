@@ -2982,3 +2982,75 @@ func TestControlConnectionLossShowsReconnectingOnlyAfterSync(t *testing.T) {
 		t.Fatalf("blocked became %q", got)
 	}
 }
+
+func TestRuntimeRecoveryWaitsAtLeastCoresRetryAfter(t *testing.T) {
+	t.Parallel()
+	service, _, _, _, _ := newTestService(t)
+	service.runtimeRetryDelay = func(time.Duration) time.Duration { return time.Millisecond }
+	start := time.Now()
+	elapsed, err := service.waitForRuntimeRecoveryAtLeast(t.Context(), time.Second, 50*time.Millisecond)
+	if err != nil || !elapsed || time.Since(start) < 50*time.Millisecond {
+		t.Fatalf("waited %s (%t, %v), want at least Core's 50ms", time.Since(start), elapsed, err)
+	}
+}
+
+// TestEndpointRefreshSpacesRoundsOfFlappingNetwork sends a burst of network
+// changes: the first runs a round at once, the rest share one round when
+// the spacing ends.
+func TestEndpointRefreshSpacesRoundsOfFlappingNetwork(t *testing.T) {
+	t.Parallel()
+	discoverer := &refreshDiscoverer{calls: make(chan struct{}, 16)}
+	networkChanges := make(chan struct{}, 1)
+	service := &Service{
+		clock:                time.Now,
+		endpointRefreshDelay: func() time.Duration { return time.Hour },
+		eventRefreshSpacing:  200 * time.Millisecond,
+		networkChanges:       networkChanges,
+	}
+	requests := make(chan endpointRefreshRequest, 1)
+	updates := make(chan controlplane.EndpointUpdate, 16)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() { _ = service.runEndpointRefresh(ctx, 15, discoverer, requests, updates) }()
+	requests <- endpointRefreshRequest{active: true}
+	rounds := func(within time.Duration) int {
+		count := 0
+		deadline := time.After(within)
+		for {
+			select {
+			case <-discoverer.calls:
+				count++
+			case <-deadline:
+				return count
+			}
+		}
+	}
+	if got := rounds(100 * time.Millisecond); got != 1 {
+		t.Fatalf("%d rounds for the session, want 1", got)
+	}
+	for range 5 {
+		networkChanges <- struct{}{}
+		time.Sleep(10 * time.Millisecond) //nolint:forbidigo // events spread over the spacing
+	}
+	if got := rounds(100 * time.Millisecond); got != 1 {
+		t.Fatalf("%d rounds right after the first change, want 1", got)
+	}
+	select {
+	case <-discoverer.calls: // the later changes share this one round
+	case <-time.After(time.Second):
+		t.Fatal("no round for the later changes")
+	}
+	// The deferred round starts the next spacing: a change right after it
+	// waits too.
+	networkChanges <- struct{}{}
+	if got := rounds(100 * time.Millisecond); got != 0 {
+		t.Fatalf("%d rounds right after the deferred one, want the change deferred", got)
+	}
+	if got := rounds(300 * time.Millisecond); got != 1 {
+		t.Fatalf("%d rounds for the change after the deferred round, want 1", got)
+	}
+	if observed, refreshes := service.networkObserved.Load(), service.networkRefreshes.Load(); observed != 6 ||
+		refreshes != 3 {
+		t.Fatalf("network changes observed %d, refreshes %d; want 6 and 3", observed, refreshes)
+	}
+}

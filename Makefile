@@ -26,7 +26,7 @@ DEX_OLD_SOURCE ?=
 DEX_CURRENT_BINARY ?=
 DEX_CURRENT_BINARY_SHA256 ?=
 
-.PHONY: help build build-core build-client mobile-tools mobile-android mobile-ios package-deb package-deb-meshd package-deb-meshctl package-darwin package-windows lint-client lint-relay build-relay natlab-matrix proto proto-check mtcp-crosscheck check-boundaries scan-secrets fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace qualification-dex-upgrade-restore verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
+.PHONY: test-linux-client help build build-core build-client mobile-tools mobile-android mobile-ios package-deb package-deb-meshd package-deb-meshctl package-darwin package-windows lint-client lint-relay build-relay natlab-matrix proto proto-check mtcp-crosscheck check-boundaries scan-secrets fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace qualification-dex-upgrade-restore verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
 	container-build container-build-multiarch container-push-multiarch container-push-relay-multiarch container-push-dexbroker-multiarch container-inspect container-smoke container-scan
 
 help:
@@ -112,6 +112,16 @@ test:
 
 test-race:
 	$(GO) test -timeout=$(TEST_TIMEOUT) -race -shuffle=on ./...
+
+# Runs the client tests in a Linux container, so the Linux-only ones
+# (identity renameat2, netadmin, netwatch, secretstore, socket, ...) run on a
+# macOS workstation too. Tests that need privileges skip themselves. The
+# module cache is mounted read-only and go.mod is never rewritten.
+LINUX_GO_IMAGE ?= golang:1.26.8-bookworm@sha256:9fdc884aacc3bec89b20ffc69f4bb369c78210e3e4f600387b5128b12c199f81
+test-linux-client:
+	docker run --rm -v "$(CURDIR):/src" -v "$$($(GO) env GOMODCACHE):/go/pkg/mod:ro" -w /src \
+		-e GOFLAGS=-mod=readonly -e GOPROXY=off -e CGO_ENABLED=1 "$(LINUX_GO_IMAGE)" \
+		go test -timeout=$(TEST_TIMEOUT) -race -count=1 ./client/... ./shared/...
 
 integration-deps:
 	$(GO) test -timeout=$(INTEGRATION_TEST_TIMEOUT) -tags=integration -count=1 \

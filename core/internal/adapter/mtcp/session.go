@@ -275,8 +275,8 @@ func (session *Session) run(parent context.Context, establishBy time.Time, relea
 // conversation. It reports false when the session must end.
 func (session *Session) dispatch(conversation Conversation, message inbound) bool {
 	now := session.server.options.Now()
-	// A MapAck answers a map message Core chose to send, and nodes ack each
-	// one, so acks follow Core's own rate: they count only as bytes.
+	// A MapAck answers map messages Core chose to send, and a node may ack
+	// each one (older nodes do), so acks follow Core's own rate: they count only as bytes.
 	cost := 1.0
 	if message.t == sharedmtcp.MessageMapAck {
 		cost = 0

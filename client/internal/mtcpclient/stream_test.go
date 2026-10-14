@@ -359,3 +359,70 @@ func TestStreamNetmapStagesAndFollowsTheNextControlKey(t *testing.T) {
 		t.Fatalf("staged next keys = %q", staged)
 	}
 }
+
+// TestStreamNetmapBatchesMapAcks checks mtcp-v1 §7.2: a snapshot is
+// acknowledged at once, deltas once ackBatch of them wait, and the rest
+// ackDelay after the first of them.
+func TestStreamNetmapBatchesMapAcks(t *testing.T) {
+	t.Parallel()
+	type ack struct {
+		seq uint64
+		at  time.Duration
+	}
+	acks := make(chan []ack, 1)
+	core := newStreamCore(t, func(core *streamCore, s *coreSession, _ int32) {
+		core.keyUpdate(s)
+		_ = s.send(sharedmtcp.MessageMapSnapshot, snapshotMessage(10))
+		core.expect(s, sharedmtcp.MessageMapAck)
+		report, ok := core.expect(s, sharedmtcp.MessageEndpointReport).(*mtcpv1.EndpointReport)
+		if !ok {
+			return
+		}
+		self := snapshotMessage(10).GetSelf()
+		self.DiscoKey = report.GetDiscoKey()
+		start := time.Now()
+		_ = s.send(sharedmtcp.MessageMapDelta, &mtcpv1.MapDelta{View: &mtcpv1.View{Epoch: 10, Seq: 2}, Self: self})
+		for seq := uint64(3); seq <= 7; seq++ {
+			_ = s.send(sharedmtcp.MessageMapDelta, &mtcpv1.MapDelta{View: &mtcpv1.View{Epoch: 10, Seq: seq}})
+		}
+		var got []ack
+		for range 2 {
+			if message, ok := core.expect(s, sharedmtcp.MessageMapAck).(*mtcpv1.MapAck); ok {
+				got = append(got, ack{seq: message.GetView().GetSeq(), at: time.Since(start)})
+			}
+		}
+		acks <- got
+		_ = s.send(sharedmtcp.MessageLifecycle, &mtcpv1.Lifecycle{State: mtcpv1.Lifecycle_SUSPENDED})
+		answerPings(s)
+	})
+	material, options := core.options(t)
+	err := core.client().StreamNetmap(t.Context(), core.origin(), material, options,
+		func(context.Context, networkmap.Snapshot) error { return nil })
+	if !errors.Is(err, controlplane.ErrNetmapAuthorityPaused) {
+		t.Fatalf("StreamNetmap = %v, want paused", err)
+	}
+	got := <-acks
+	if len(got) != 2 || got[0].seq != 5 || got[0].at >= ackDelay || got[1].seq != 7 || got[1].at < ackDelay {
+		t.Fatalf("acks %+v, want seq 5 at once and seq 7 after %s", got, ackDelay)
+	}
+}
+
+// TestStreamNetmapHandsCoresWaitToTheDaemon ends a stream with SUSPENDED
+// and a retry_after: the daemon, which decides what follows, gets the wait.
+func TestStreamNetmapHandsCoresWaitToTheDaemon(t *testing.T) {
+	t.Parallel()
+	core := newStreamCore(t, func(core *streamCore, s *coreSession, _ int32) {
+		core.keyUpdate(s)
+		_ = s.send(sharedmtcp.MessageLifecycle, &mtcpv1.Lifecycle{
+			State:        mtcpv1.Lifecycle_SUSPENDED,
+			RetryAfterMs: 7000,
+		})
+		answerPings(s)
+	})
+	material, options := core.options(t)
+	err := core.client().StreamNetmap(t.Context(), core.origin(), material, options,
+		func(context.Context, networkmap.Snapshot) error { return nil })
+	if !errors.Is(err, controlplane.ErrNetmapAuthorityPaused) || controlplane.RetryAfterOf(err) != 7*time.Second {
+		t.Fatalf("StreamNetmap = %v, wait %s; want paused with 7s", err, controlplane.RetryAfterOf(err))
+	}
+}

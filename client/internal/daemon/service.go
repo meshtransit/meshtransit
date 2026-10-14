@@ -117,6 +117,13 @@ const (
 	maxQuickDataPlaneStops = 3
 	minEndpointRefresh     = 20 * time.Second
 	maxEndpointRefresh     = 26 * time.Second
+	// minEventRefreshSpacing spaces discovery rounds that a network change or
+	// a relay failure starts (port mapping and cloud address changes are
+	// rare, local, and published at once):
+	// an event after a quiet spell runs a round at once, and events sooner
+	// than this after the last event's round share one round when it ends,
+	// so a flapping interface or relay does not send STUN in a loop.
+	minEventRefreshSpacing = 5 * time.Second
 	relayPreparationPoll   = time.Second
 	relayPreparationWait   = 1500 * time.Millisecond
 	relayPreparationTick   = 50 * time.Millisecond
@@ -346,12 +353,14 @@ type Service struct {
 	clock                func() time.Time
 	runtimeRetryDelay    func(time.Duration) time.Duration
 	endpointRefreshDelay func() time.Duration
-	newDiscoKey          func() (key.DiscoPrivate, error)
-	localEndpointsMu     sync.Mutex
-	localEndpointSink    func(pathdiscovery.Set)
-	logger               *slog.Logger
-	networkChanges       <-chan struct{}
-	syncSignal           chan struct{}
+	// eventRefreshSpacing overrides minEventRefreshSpacing in tests.
+	eventRefreshSpacing time.Duration
+	newDiscoKey         func() (key.DiscoPrivate, error)
+	localEndpointsMu    sync.Mutex
+	localEndpointSink   func(pathdiscovery.Set)
+	logger              *slog.Logger
+	networkChanges      <-chan struct{}
+	syncSignal          chan struct{}
 	// loggingOut holds the session loop down while Logout runs; downAcks
 	// counts the times the loop has stopped the runtime for a down.
 	loggingOut        atomic.Bool
@@ -611,7 +620,8 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				if recoverable {
 					s.runtimeFailures.Add(1)
 					s.runtimePending.Store(true)
-					backoffElapsed, waitErr := s.waitForRuntimeRecovery(ctx, runtimeRetry)
+					backoffElapsed, waitErr := s.waitForRuntimeRecoveryAtLeast(ctx, runtimeRetry,
+						controlplane.RetryAfterOf(rotationErr))
 					if waitErr != nil {
 						return waitErr
 					}
@@ -1074,7 +1084,10 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				if suspendedSince.IsZero() || !synchronizedAt.IsZero() {
 					suspendedSince = now // suspended in this session, or anew
 				}
-				if _, err := s.waitForRuntimeRecovery(ctx, suspendedRetryDelay(now.Sub(suspendedSince))); err != nil {
+				// Core's retry_after is a floor: a Core under load may ask
+				// suspended Devices to wait longer than the local schedule.
+				if _, err := s.waitForRuntimeRecoveryAtLeast(ctx, suspendedRetryDelay(now.Sub(suspendedSince)),
+					controlplane.RetryAfterOf(streamErr)); err != nil {
 					return err
 				}
 				runtimeRetry = minRuntimeRetry
@@ -1331,6 +1344,35 @@ func (s *Service) runEndpointRefresh(
 	var timer *time.Timer
 	var timerChannel <-chan time.Time
 	defer func() { stopRefreshTimer(timer) }()
+	// lastEventRound is when an event last ran a discovery round, deferred
+	// says the armed timer serves deferred events, and pendingNetwork keeps
+	// a network change until a round runs for it.
+	var lastEventRound time.Time
+	deferred := false
+	pendingNetwork := false
+	// deferEvent reports whether an event must wait for the spacing, and if
+	// so arms the timer for the round that will serve it. Otherwise the
+	// event runs a round now, which starts the spacing.
+	deferEvent := func() bool {
+		if !hasCurrent || !current.active {
+			return false // no round runs for it, so it starts no spacing
+		}
+		now := s.clock()
+		spacing := minEventRefreshSpacing
+		if s.eventRefreshSpacing > 0 {
+			spacing = s.eventRefreshSpacing
+		}
+		wait := spacing - now.Sub(lastEventRound)
+		if lastEventRound.IsZero() || wait <= 0 {
+			lastEventRound = now
+			return false
+		}
+		stopRefreshTimer(timer)
+		timer = time.NewTimer(min(wait, spacing))
+		timerChannel = timer.C
+		deferred = true
+		return true
+	}
 	publish := func(candidates pathdiscovery.Set, preferredRelay int) {
 		update := controlplane.EndpointUpdate{
 			Candidates:        candidates,
@@ -1375,6 +1417,10 @@ func (s *Service) runEndpointRefresh(
 		case <-timerChannel:
 			timer = nil
 			timerChannel = nil
+			if deferred {
+				// The deferred events' round starts the next spacing.
+				lastEventRound, deferred = s.clock(), false
+			}
 		case _, open := <-networkChanges:
 			if !open {
 				networkChanges = nil
@@ -1382,7 +1428,6 @@ func (s *Service) runEndpointRefresh(
 				continue
 			}
 			s.networkObserved.Add(1)
-			networkTriggered = true
 			if s.logger != nil {
 				// Without an active map session the change waits for the
 				// session's first discovery round.
@@ -1396,6 +1441,10 @@ func (s *Service) runEndpointRefresh(
 			}
 			if s.cloud != nil {
 				s.cloud.NetworkChanged()
+			}
+			pendingNetwork = true
+			if deferEvent() {
+				continue
 			}
 		case <-portChanges:
 			// The mapped endpoint changed: publish it now.
@@ -1412,6 +1461,9 @@ func (s *Service) runEndpointRefresh(
 			stopRefreshTimer(timer)
 			timer = nil
 			timerChannel = nil
+			if deferEvent() {
+				continue
+			}
 		case <-natChanges:
 			// A new NAT classification: report it with the current
 			// candidates, without another discovery round.
@@ -1424,6 +1476,10 @@ func (s *Service) runEndpointRefresh(
 		if !hasCurrent {
 			continue
 		}
+		// Whatever starts this round, it serves a network change still
+		// waiting for one.
+		networkTriggered, pendingNetwork = networkTriggered || pendingNetwork, false
+		deferred = false
 		if s.portMapper != nil {
 			if current.active && current.socket.IsOpen() {
 				s.portMapper.SetPort(current.socket.Port)
@@ -2389,6 +2445,16 @@ func (s *Service) waitForRuntimeRecovery(
 	ctx context.Context,
 	base time.Duration,
 ) (bool, error) {
+	return s.waitForRuntimeRecoveryAtLeast(ctx, base, 0)
+}
+
+// waitForRuntimeRecoveryAtLeast waits like waitForRuntimeRecovery, but never
+// less than floor: the wait Core asked for is not cut by the jitter.
+func (s *Service) waitForRuntimeRecoveryAtLeast(
+	ctx context.Context,
+	base time.Duration,
+	floor time.Duration,
+) (bool, error) {
 	if s.runtimeRetryDelay == nil {
 		return false, errors.New("daemon: runtime retry delay is unavailable")
 	}
@@ -2396,6 +2462,7 @@ func (s *Service) waitForRuntimeRecovery(
 	if delay < 0 {
 		return false, errors.New("daemon: runtime retry delay is invalid")
 	}
+	delay = max(delay, floor)
 	timer := time.NewTimer(delay)
 	defer stopRefreshTimer(timer)
 	select {

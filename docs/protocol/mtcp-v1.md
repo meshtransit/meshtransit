@@ -410,8 +410,12 @@ may reach it, packet filter, DNS, relay map and settings.
 
 ### 7.2 Flow control
 
-The node sends `MapAck{epoch, seq}` after applying a message, at most once per
-second (it acknowledges the latest applied `seq`). Core keeps at most 8
+The node sends `MapAck{epoch, seq}` for the latest applied message: at once
+for a snapshot, and for deltas once 4 of them are unacknowledged or 1 s after
+the first of them, whichever comes first. Core's window below never stalls,
+and a node sends fewer acks than map messages. Core does not count acks
+against a session's message budget (section 14), so a node that acknowledges
+every message still works. Core keeps at most 8
 unacknowledged map messages per session. When that window is full, Core stops
 sending and coalesces pending changes; if they exceed 8 MiB, or the window
 stays full for 60 s, it discards them and sends one fresh snapshot (new epoch)

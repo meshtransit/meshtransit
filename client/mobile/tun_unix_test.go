@@ -389,3 +389,31 @@ func TestReplaceableTUNUnderConcurrentUse(t *testing.T) {
 		t.Fatal("readers or writers hung after Close")
 	}
 }
+
+// TestPlatformTUNKeepsItsInterfaceWhenPeersComeAndGo changes the peers within
+// one Network's block: the stable routes do not change, so the platform is
+// not asked for a new interface.
+func TestPlatformTUNKeepsItsInterfaceWhenPeersComeAndGo(t *testing.T) {
+	t.Parallel()
+	fixture, opener := newPlatformFixture(t)
+	opened, err := opener.OpenTUN(t.Context(), netadmin.TUNConfig{
+		Addresses: testAddresses,
+		Routes:    prefixes("100.64.0.2/32", "100.64.0.3/32"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = opened.Device.Close() })
+	if _, routes, _ := fixture.provider.last(); routes != "100.64.0.0/16" {
+		t.Fatalf("platform got routes %q", routes)
+	}
+	if err := opener.ConfigureTUNRoutes(t.Context(), netadmin.TUNConfig{
+		Addresses: testAddresses,
+		Routes:    prefixes("100.64.0.2/32", "100.64.0.7/32", "100.64.0.8/32"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.device(0).isClosed() {
+		t.Fatal("a peer joining in the same block rebuilt the interface")
+	}
+}

@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"net/url"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -201,7 +203,7 @@ func (c *Client) upgrade(ctx context.Context, origin *url.URL, control key.Contr
 		return nil, nil, fmt.Errorf("%w: %w", errSessionRefused, err)
 	}
 	_ = response.Body.Close()
-	if err := refusal(response.StatusCode); err != nil {
+	if err := refusal(response.StatusCode, response.Header); err != nil {
 		_ = conn.Close()
 		return nil, nil, err
 	}
@@ -214,18 +216,30 @@ func (c *Client) upgrade(ctx context.Context, origin *url.URL, control key.Contr
 	return &streamConn{conn: conn, reader: sharedmtcp.NewRecordReader(buffered)}, body, nil
 }
 
-// refusal classifies an upgrade answer (mtcp-v1 §2.2).
-func refusal(status int) error {
+// refusal classifies an upgrade answer (mtcp-v1 §2.2). An overloaded Core
+// may say when to come back in Retry-After, in seconds.
+func refusal(status int, header http.Header) error {
 	switch status {
 	case http.StatusSwitchingProtocols:
 		return nil
 	case http.StatusMisdirectedRequest:
 		return errUnknownKey
 	case http.StatusServiceUnavailable, http.StatusTooManyRequests:
-		return fmt.Errorf("%w: %w", controlplane.ErrRegistrationTemporary, errOverloaded)
+		return controlplane.WithRetryAfter(fmt.Errorf("%w: %w", controlplane.ErrRegistrationTemporary, errOverloaded),
+			retryAfterHeader(header))
 	default:
 		return fmt.Errorf("%w: http %d", errSessionRefused, status)
 	}
+}
+
+// retryAfterHeader reads a Retry-After of whole seconds; a date or a
+// malformed value counts as none.
+func retryAfterHeader(header http.Header) time.Duration {
+	seconds, err := strconv.Atoi(strings.TrimSpace(header.Get("Retry-After")))
+	if err != nil || seconds <= 0 {
+		return 0
+	}
+	return min(time.Duration(seconds)*time.Second, controlplane.MaxRetryAfter)
 }
 
 func decodeHandshake(values []string) ([]byte, error) {
@@ -255,7 +269,7 @@ func (c *Client) webSocket(ctx context.Context, origin *url.URL, control key.Con
 	}
 	if err != nil {
 		if response != nil {
-			if refused := refusal(response.StatusCode); refused != nil {
+			if refused := refusal(response.StatusCode, response.Header); refused != nil {
 				return nil, nil, refused
 			}
 		}

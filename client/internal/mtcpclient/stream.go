@@ -208,13 +208,15 @@ func (stream *netmapStream) run(ctx context.Context) error {
 			return ctxErr
 		}
 		if permanentStreamError(err) {
-			return err
+			// The daemon decides what follows (a suspended Device waits to
+			// be resumed); Core's wait goes with the error.
+			return controlplane.WithRetryAfter(err, retryAfter)
 		}
 		stream.setConnected(false)
 		if mapped && time.Since(started) >= reconnectResetAfter {
 			backoff = minReconnectDelay
 		}
-		delay := max(jittered(backoff), retryAfter)
+		delay := max(jittered(backoff), min(retryAfter, controlplane.MaxRetryAfter))
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
@@ -284,7 +286,7 @@ func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, e
 		nodeKey: nodePublic[:], capabilities: capabilities, version: stream.options.Version,
 	})
 	if err != nil {
-		return false, 0, err
+		return false, controlplane.RetryAfterOf(err), err
 	}
 	defer s.close()
 	if err := s.send(sharedmtcp.MessagePing, &mtcpv1.Ping{}); err != nil {
@@ -327,7 +329,21 @@ type sessionRun struct {
 	lastSent    time.Time // when the last EndpointReport left
 	sentReport  bool
 	enforced    *controlplane.EnforcementReport
+	// unacked counts applied deltas not acknowledged yet, ackView is the
+	// latest applied view and ackTimer acknowledges it (mtcp-v1 §7.2).
+	unacked  int
+	ackView  *mtcpv1.View
+	ackTimer *time.Timer
 }
+
+// A node acknowledges a snapshot at once, and deltas once ackBatch of them
+// are unacknowledged or ackDelay after the first, whichever comes first
+// (mtcp-v1 §7.2): fewer acks than one per message, while Core's window of
+// 8 never stalls.
+const (
+	ackBatch = 4
+	ackDelay = time.Second
+)
 
 func (run *sessionRun) loop(ctx context.Context, inbox <-chan incoming) (bool, time.Duration, error) {
 	keepalive := time.NewTicker(run.s.keepalive)
@@ -337,6 +353,9 @@ func (run *sessionRun) loop(ctx context.Context, inbox <-chan incoming) (bool, t
 	endpointTimer := time.NewTimer(time.Hour)
 	endpointTimer.Stop()
 	defer endpointTimer.Stop()
+	run.ackTimer = time.NewTimer(time.Hour)
+	run.ackTimer.Stop()
+	defer run.ackTimer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -366,6 +385,10 @@ func (run *sessionRun) loop(ctx context.Context, inbox <-chan incoming) (bool, t
 			if err := run.s.send(sharedmtcp.MessagePing, &mtcpv1.Ping{}); err != nil {
 				return run.mapped, 0, errors.Join(errSessionEnded, err)
 			}
+		case <-run.ackTimer.C:
+			if err := run.acknowledge(); err != nil {
+				return run.mapped, 0, err
+			}
 		}
 	}
 }
@@ -380,7 +403,7 @@ func (run *sessionRun) handle(ctx context.Context, message proto.Message) (time.
 			return 0, err
 		}
 		run.resyncing = false
-		return 0, run.mapChanged(ctx, m.GetView())
+		return 0, run.mapChanged(ctx, m.GetView(), true)
 	case *mtcpv1.MapDelta:
 		if run.resyncing {
 			return 0, nil // waiting for the snapshot that answers the resync
@@ -393,7 +416,7 @@ func (run *sessionRun) handle(ctx context.Context, message proto.Message) (time.
 			view := &mtcpv1.View{Epoch: run.state.epoch, Seq: run.state.seq}
 			return 0, run.send(sharedmtcp.MessageMapResync, &mtcpv1.MapResync{View: view})
 		}
-		return 0, run.mapChanged(ctx, m.GetView())
+		return 0, run.mapChanged(ctx, m.GetView(), false)
 	case *mtcpv1.RelayTicket:
 		if err := run.state.setTicket(m); err != nil {
 			return 0, err
@@ -450,11 +473,29 @@ func (run *sessionRun) keyUpdate(ctx context.Context, update *mtcpv1.KeyUpdate) 
 	return nil
 }
 
-// mapChanged delivers the view, acknowledges it, and after the first map
-// of the session sends the node's reports.
-func (run *sessionRun) mapChanged(ctx context.Context, view *mtcpv1.View) error {
-	if err := run.send(sharedmtcp.MessageMapAck, &mtcpv1.MapAck{View: view}); err != nil {
-		return err
+// acknowledge sends a MapAck for the latest applied view, if one is
+// unacknowledged.
+func (run *sessionRun) acknowledge() error {
+	if run.unacked == 0 || run.ackView == nil {
+		return nil
+	}
+	run.ackTimer.Stop()
+	run.unacked = 0
+	return run.send(sharedmtcp.MessageMapAck, &mtcpv1.MapAck{View: run.ackView})
+}
+
+// mapChanged delivers the view, acknowledges it now or soon, and after the
+// first map of the session sends the node's reports.
+func (run *sessionRun) mapChanged(ctx context.Context, view *mtcpv1.View, snapshot bool) error {
+	run.ackView = view
+	run.unacked++
+	switch {
+	case snapshot || run.unacked >= ackBatch:
+		if err := run.acknowledge(); err != nil {
+			return err
+		}
+	case run.unacked == 1:
+		run.ackTimer.Reset(ackDelay)
 	}
 	if !run.mapped {
 		run.mapped = true

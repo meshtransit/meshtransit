@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 
@@ -39,8 +40,9 @@ type platformTUN struct {
 	logger   *slog.Logger
 	adopt    adoptTUN
 
-	mu   sync.Mutex
-	open *replaceableTUN // the TUN last given to the data plane
+	mu     sync.Mutex
+	open   *replaceableTUN // the TUN last given to the data plane
+	routes []netip.Prefix  // the stable routes the open TUN's interface has
 }
 
 func newPlatformTUN(provider TunProvider, mtu int, logger *slog.Logger) *platformTUN {
@@ -51,13 +53,14 @@ func newPlatformTUN(provider TunProvider, mtu int, logger *slog.Logger) *platfor
 // and routes of the current map. The platform cannot be cancelled mid-call;
 // a context already done is honoured before calling it.
 func (opener *platformTUN) OpenTUN(ctx context.Context, config netadmin.TUNConfig) (netadmin.TUN, error) {
-	device, err := opener.openDevice(ctx, config)
+	routes := stableRoutes(config.Routes)
+	device, err := opener.openDevice(ctx, config.Addresses, routes)
 	if err != nil {
 		return netadmin.TUN{}, err
 	}
 	replaceable := newReplaceableTUN(device, opener.mtu, opener.logger)
 	opener.mu.Lock()
-	opener.open = replaceable
+	opener.open, opener.routes = replaceable, routes
 	opener.mu.Unlock()
 	return netadmin.TUN{
 		Device:    replaceable,
@@ -69,29 +72,45 @@ func (opener *platformTUN) OpenTUN(ctx context.Context, config netadmin.TUNConfi
 }
 
 // ConfigureTUNRoutes gives the open TUN the map's new routes; the addresses
-// are unchanged (the data plane rebuilds the TUN when they change). The
-// platform makes a new interface for them and the running device moves to
-// it. On an error the old interface stays and the data plane rebuilds.
+// are unchanged (the data plane rebuilds the TUN when they change). When
+// the stable routes are the same, as for most peers joining or leaving,
+// nothing changes. Otherwise the platform makes a new interface for them
+// and the running device moves to it. On an error the old interface stays
+// and the data plane rebuilds.
 func (opener *platformTUN) ConfigureTUNRoutes(ctx context.Context, config netadmin.TUNConfig) error {
+	routes := stableRoutes(config.Routes)
 	opener.mu.Lock()
-	current := opener.open
+	current, unchanged := opener.open, slices.Equal(opener.routes, routes)
 	opener.mu.Unlock()
 	if current == nil || current.isClosed() {
 		return fmt.Errorf("%w: no open TUN to change", errNoTUN)
 	}
-	return current.Replace(func() (tun.Device, error) { return opener.openDevice(ctx, config) })
+	if unchanged {
+		return nil
+	}
+	if err := current.Replace(func() (tun.Device, error) {
+		return opener.openDevice(ctx, config.Addresses, routes)
+	}); err != nil {
+		return err
+	}
+	opener.mu.Lock()
+	if opener.open == current {
+		opener.routes = routes
+	}
+	opener.mu.Unlock()
+	return nil
 }
 
 // openDevice asks the platform for a configured interface and adopts its
 // descriptor.
-func (opener *platformTUN) openDevice(ctx context.Context, config netadmin.TUNConfig) (tun.Device, error) {
+func (opener *platformTUN) openDevice(ctx context.Context, addresses, routes []netip.Prefix) (tun.Device, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if len(config.Addresses) == 0 {
+	if len(addresses) == 0 {
 		return nil, fmt.Errorf("%w: no addresses", errNoTUN)
 	}
-	fd, err := opener.provider.OpenTUN(joinPrefixes(config.Addresses), joinPrefixes(config.Routes), opener.mtu)
+	fd, err := opener.provider.OpenTUN(joinPrefixes(addresses), joinPrefixes(routes), opener.mtu)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", errNoTUN, err)
 	}
