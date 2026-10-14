@@ -14,6 +14,16 @@ protocols its parts speak, and how they behave. New to the project? Read the
 | [Client](architecture/client.md) | `meshd` and its helpers, privilege boundary, data plane, paths, DNS, mobile |
 | [Relay](architecture/relay.md) | `meshrelay`: sessions, tickets, limits, drain |
 
+## Concepts
+
+How the product behaves, as implemented:
+
+| Document | Covers |
+|---|---|
+| [Identity and access](concepts/identity-and-access.md) | Sign-in, sessions, Workspaces, members, invitations, roles, groups, tags, guardrails |
+| [Devices](concepts/devices.md) | Registration, addresses and names, ownership, lifecycle, members leaving, limits |
+| [Audit and evidence](concepts/audit.md) | What is recorded, reading the history, connection history, policy distribution and enforcement |
+
 ## Protocols
 
 Language-independent specifications, with test vectors: see
@@ -36,12 +46,10 @@ Language-independent specifications, with test vectors: see
 
 ## Core
 
-[Workspace owner authority](core/workspace-owner-authority.md),
-[default Workspace and display identifiers](core/account-default-workspace-and-display-identifiers.md),
-[active policy in the Console](core/active-policy-console.md), and the design
-notes in [core/design](core/design/): Device alias sharing, browser re-login,
-Console resource-sharing boundary, consumer contract reads, imported policy
-simulation and the Device sharing deployment gate.
+[Active policy in the Console](core/active-policy-console.md), and the design
+notes in [core/design](core/design/): Device alias sharing, Console
+resource-sharing boundary, consumer contract reads, imported policy simulation
+and the Device sharing deployment gate.
 
 Component READMEs: [`core/README.md`](../core/README.md) (configuration),
 [`client/README.md`](../client/README.md),

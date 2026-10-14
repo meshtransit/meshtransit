@@ -33,9 +33,8 @@ signed entitlement) or the **self-hosted** profile (one Workspace unless an
 entitlement allows more).
 
 **Device.** A machine registered in a Network: a laptop, server, phone or
-container. It has an owner, a hostname, overlay addresses, an expiry and its
-keys. A Device owned by a person is a member's device; a tagged Device is a
-service Device.
+container. It has an owner (a member, or the Workspace itself), a hostname,
+overlay addresses, an expiry and its keys. See [devices](concepts/devices.md).
 
 **Device alias.** The address under which a shared Device and its consumers
 see each other, so neither side learns the other's real overlay address and
@@ -51,7 +50,8 @@ Membership is resolved when maps are built, so changing a group does not
 republish rules.
 
 **Device Tag.** A label from the Workspace's catalog applied to Devices. A
-tagged Device matches rules by its tags, not by its owner.
+tagged Device is a service Device: it matches rules by its tags, not by its
+owner's groups.
 
 **Disco key.** A node's per-session key for path discovery (disco v2) and
 relay sessions.
@@ -61,8 +61,8 @@ directly. Nodes report their endpoints to Core, which passes them to the
 node's peers.
 
 **Enrollment key.** A secret that lets a new Device register without a
-browser sign-in, issued from an enrollment profile that sets what such
-Devices become (for example persistent or ephemeral).
+browser sign-in. It belongs to an enrollment profile, which sets what such
+Devices become (their lifetime, persistent or ephemeral).
 
 **Guardrail.** A Workspace-wide rule set by the owner that blocks risky
 changes; it can only narrow what policy allows.
