@@ -142,6 +142,108 @@ func TestVerifyArtifactPreparesWorkspace(t *testing.T) {
 	}
 }
 
+func TestVerifyArtifactPreparesWorkspaceOnNewerPatchToolchain(t *testing.T) {
+	t.Parallel()
+
+	fixture := newArtifactFixture(t)
+	preparedRoot := t.TempDir()
+	meshcoreRoot := createMeshCoreModuleWithGo(t, fixture.moduleVersion, "go 1.26.9", "")
+	report, err := verifyArtifact(t.Context(), rawOptions{
+		manifestPath:        fixture.manifestPath,
+		sourcePath:          fixture.sourcePath,
+		binaryPath:          fixture.binaryPath,
+		preparedRootPath:    preparedRoot,
+		workspaceModulePath: meshcoreRoot,
+	})
+	if err != nil {
+		t.Fatalf("verifyArtifact() error = %v", err)
+	}
+	if !report.WorkspacePrepared {
+		t.Fatalf("verifyArtifact() report = %+v", report)
+	}
+	workspace, err := os.ReadFile(filepath.Join(preparedRoot, "go.work")) // #nosec G304 -- preparedRoot is an isolated test directory.
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"go 1.26.9\n", "toolchain go1.26.9\n"} {
+		if !strings.Contains(string(workspace), expected) {
+			t.Fatalf("go.work does not contain %q: %s", expected, workspace)
+		}
+	}
+}
+
+func TestValidateWorkspaceModuleAcceptsQualifiedGoVersion(t *testing.T) {
+	t.Parallel()
+
+	moduleVersion := "v0.0.0-20260303133905-11d2eeb52b42"
+	tests := []struct {
+		name          string
+		goDirective   string
+		wantToolchain string
+	}{
+		{name: "qualified release", goDirective: "go 1.26.8", wantToolchain: "go1.26.8"},
+		{name: "later patch", goDirective: "go 1.26.9", wantToolchain: "go1.26.9"},
+		{name: "trailing comment", goDirective: "go 1.26.9 // security patch", wantToolchain: "go1.26.9"},
+		{name: "tab separator", goDirective: "go\t1.26.9", wantToolchain: "go1.26.9"},
+		{name: "carriage return", goDirective: "go 1.26.9\r", wantToolchain: "go1.26.9"},
+		{name: "matching toolchain directive", goDirective: "go 1.26.9\ntoolchain go1.26.9", wantToolchain: "go1.26.9"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			meshcoreRoot := createMeshCoreModuleWithGo(t, moduleVersion, test.goDirective, "")
+			_, toolchain, err := validateWorkspaceModule(meshcoreRoot, moduleVersion, "go1.26.8")
+			if err != nil {
+				t.Fatalf("validateWorkspaceModule() error = %v", err)
+			}
+			if toolchain != test.wantToolchain {
+				t.Fatalf("validateWorkspaceModule() toolchain = %q, want %q", toolchain, test.wantToolchain)
+			}
+		})
+	}
+}
+
+func TestValidateWorkspaceModuleRejectsUnqualifiedGoVersion(t *testing.T) {
+	t.Parallel()
+
+	moduleVersion := "v0.0.0-20260303133905-11d2eeb52b42"
+	tests := []struct {
+		name        string
+		goDirective string
+	}{
+		{name: "older patch", goDirective: "go 1.26.7"},
+		{name: "newer minor", goDirective: "go 1.27.0"},
+		{name: "older minor", goDirective: "go 1.25.9"},
+		{name: "newer major", goDirective: "go 2.26.9"},
+		{name: "missing patch", goDirective: "go 1.26"},
+		{name: "release candidate", goDirective: "go 1.26.9rc1"},
+		{name: "leading zero patch", goDirective: "go 1.26.09"},
+		{name: "two directives", goDirective: "go 1.26.8\ngo 1.26.9"},
+		{name: "repeated directive", goDirective: "go 1.26.9\ngo 1.26.9"},
+		{name: "bare directive", goDirective: "go"},
+		{name: "oversized patch", goDirective: "go 1.26.10000"},
+		{name: "minor pre-release", goDirective: "go 1.27rc1"},
+		{name: "extra token", goDirective: "go 1.26.9 x"},
+		{name: "signed patch", goDirective: "go 1.26.+9"},
+		{name: "quoted version", goDirective: `go "1.26.9"`},
+		{name: "newer toolchain directive", goDirective: "go 1.26.9\ntoolchain go1.27.0"},
+		{name: "older toolchain directive", goDirective: "go 1.26.9\ntoolchain go1.26.8"},
+		{name: "repeated toolchain directive", goDirective: "go 1.26.9\ntoolchain go1.26.9\ntoolchain go1.26.9"},
+		{name: "no directive", goDirective: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			meshcoreRoot := createMeshCoreModuleWithGo(t, moduleVersion, test.goDirective, "")
+			if _, _, err := validateWorkspaceModule(meshcoreRoot, moduleVersion, "go1.26.8"); !errors.Is(err, errVerification) {
+				t.Fatalf("validateWorkspaceModule() error = %v, want errVerification", err)
+			}
+		})
+	}
+}
+
 func TestValidateWorkspaceModuleRejectsDexReplace(t *testing.T) {
 	t.Parallel()
 
@@ -151,7 +253,7 @@ func TestValidateWorkspaceModuleRejectsDexReplace(t *testing.T) {
 		moduleVersion,
 		"\nreplace github.com/dexidp/dex => /tmp/dex\n",
 	)
-	if _, err := validateWorkspaceModule(meshcoreRoot, moduleVersion, "go1.26.8"); !errors.Is(err, errVerification) {
+	if _, _, err := validateWorkspaceModule(meshcoreRoot, moduleVersion, "go1.26.8"); !errors.Is(err, errVerification) {
 		t.Fatalf("validateWorkspaceModule() error = %v, want errVerification", err)
 	}
 }
@@ -442,9 +544,15 @@ func newArtifactFixture(t *testing.T) artifactFixture {
 func createMeshCoreModule(t *testing.T, moduleVersion, suffix string) string {
 	t.Helper()
 
+	return createMeshCoreModuleWithGo(t, moduleVersion, "go 1.26.8", suffix)
+}
+
+func createMeshCoreModuleWithGo(t *testing.T, moduleVersion, goDirective, suffix string) string {
+	t.Helper()
+
 	root := t.TempDir()
 	contents := "module meshtransit.net\n\n" +
-		"go 1.26.8\n\nrequire github.com/dexidp/dex " + moduleVersion + "\n" + suffix
+		goDirective + "\n\nrequire github.com/dexidp/dex " + moduleVersion + "\n" + suffix
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}

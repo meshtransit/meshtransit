@@ -10,7 +10,7 @@ resolved by `go.mod` and `go.sum`.
 | `github.com/prometheus/client_golang` | `v1.24.1` | Apache-2.0 |
 | `github.com/redis/go-redis/v9` | `v9.22.0` | BSD-2-Clause |
 | `go.uber.org/goleak` (test only) | `v1.3.0` | MIT |
-| `golang.org/x/net` | `v0.58.0` | BSD-3-Clause |
+| `golang.org/x/net` | `v0.60.0` | BSD-3-Clause |
 | `github.com/beorn7/perks` | `v1.0.1` | MIT |
 | `github.com/cespare/xxhash/v2` | `v2.3.0` | MIT |
 | `github.com/flynn/noise` | `v1.1.0` | BSD-3-Clause |
@@ -22,11 +22,11 @@ resolved by `go.mod` and `go.sum`.
 | `github.com/prometheus/common` | `v0.70.1` | Apache-2.0 |
 | `github.com/prometheus/procfs` | `v0.21.1` | Apache-2.0 |
 | `go.uber.org/atomic` | `v1.11.0` | MIT |
-| `golang.org/x/crypto` | `v0.55.0` | BSD-3-Clause |
+| `golang.org/x/crypto` | `v0.57.0` | BSD-3-Clause |
 | `golang.org/x/exp` | `v0.0.0-20260410095643-746e56fc9e2f` | BSD-3-Clause |
-| `golang.org/x/sync` | `v0.22.0` | BSD-3-Clause |
-| `golang.org/x/sys` | `v0.47.0` | BSD-3-Clause |
-| `golang.org/x/text` | `v0.41.0` | BSD-3-Clause |
+| `golang.org/x/sync` | `v0.23.0` | BSD-3-Clause |
+| `golang.org/x/sys` | `v0.48.0` | BSD-3-Clause |
+| `golang.org/x/text` | `v0.42.0` | BSD-3-Clause |
 | `google.golang.org/protobuf` | `v1.36.11` | BSD-3-Clause |
 
 ## Reviewed dependency set

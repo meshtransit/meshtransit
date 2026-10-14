@@ -67,6 +67,8 @@ mkdir -p "${old_tree}"
 git -C "${old_source}" archive --format=tar "${old_commit}" \
 	| tar --extract --file=- --directory="${old_tree}"
 
+# The previous release is rebuilt as a disposable fixture with the toolchain it
+# was qualified on; it never ships.
 env GOWORK=off GOTOOLCHAIN=go1.26.8 CGO_ENABLED=0 \
 	go -C "${old_tree}" build -buildvcs=false -trimpath \
 	-ldflags "-w -X main.version=${old_version}" \
@@ -77,9 +79,14 @@ old_binary_sha256="$(openssl dgst -sha256 -r "${old_binary}" | awk '{print $1}')
 	exit 1
 }
 
-env GOWORK="${prepared_root}/go.work" GOTOOLCHAIN=go1.26.8 CGO_ENABLED=0 \
+# The verified go.work pins the MeshCore toolchain (the qualified release or a
+# later patch of its minor line); build the broker side with exactly that.
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+workspace_toolchain="$(bash "${repo_root}/core/scripts/qualification/check-dex-workspace.sh" "${prepared_root}" "${repo_root}")"
+
+env GOWORK="${prepared_root}/go.work" GOTOOLCHAIN="${workspace_toolchain}" CGO_ENABLED=0 \
 	go test -count=1 -tags=dexbroker,qualification ./tools/qualification/dexstorage
-env GOWORK="${prepared_root}/go.work" GOTOOLCHAIN=go1.26.8 CGO_ENABLED=0 \
+env GOWORK="${prepared_root}/go.work" GOTOOLCHAIN="${workspace_toolchain}" CGO_ENABLED=0 \
 	go build -buildvcs=false -trimpath -tags=dexbroker,qualification \
 	-o "${storage_helper}" ./tools/qualification/dexstorage
 storage_helper_sha256="$(openssl dgst -sha256 -r "${storage_helper}" | awk '{print $1}')"

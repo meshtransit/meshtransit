@@ -1,6 +1,6 @@
 module meshtransit.net/hack/protogen
 
-go 1.26.8
+go 1.26.9
 
 require (
 	github.com/bufbuild/protocompile v0.14.1

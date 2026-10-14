@@ -6,10 +6,15 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq docker.io openssl rsync >/dev/null
 systemctl enable --now docker >/dev/null
-GO_VERSION=1.26.8
-if ! /usr/local/go/bin/go version 2>/dev/null | grep -q "go${GO_VERSION}"; then
-	curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tgz
-	rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tgz && rm /tmp/go.tgz
+GO_VERSION=1.26.9
+# SHA-256 of go1.26.9.linux-amd64.tar.gz as published on go.dev/dl.
+GO_SHA256=42d158b4d8f7b61ac0a830567c940a86098fb7aac52e467a5ebec03ef5cc2f8d
+if [[ "$(/usr/local/go/bin/go version 2>/dev/null || true)" != "go version go${GO_VERSION} linux/amd64" ]]; then
+	download="$(mktemp -d)"
+	trap 'rm -rf "${download:?}"' EXIT
+	curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o "${download}/go.tgz"
+	echo "${GO_SHA256}  ${download}/go.tgz" | sha256sum --check --quiet -
+	rm -rf /usr/local/go && tar -C /usr/local -xzf "${download}/go.tgz"
 fi
 cat >/etc/sysctl.d/90-meshtransit-loadtest.conf <<'SYSCTL'
 fs.file-max = 4194304

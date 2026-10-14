@@ -88,8 +88,9 @@ func verifyArtifact(ctx context.Context, options rawOptions) (report verificatio
 		}
 	}
 	workspaceModule := ""
+	workspaceToolchain := ""
 	if options.workspaceModulePath != "" {
-		workspaceModule, err = validateWorkspaceModule(
+		workspaceModule, workspaceToolchain, err = validateWorkspaceModule(
 			options.workspaceModulePath,
 			loaded.manifest.Upstream.ModuleVersion,
 			loaded.manifest.Build.GoVersion,
@@ -125,7 +126,7 @@ func verifyArtifact(ctx context.Context, options rawOptions) (report verificatio
 	}
 	workspacePrepared := false
 	if workspaceModule != "" {
-		if err := writeGoWorkspace(preparedRoot, workspaceModule, manifest.Build.GoVersion); err != nil {
+		if err := writeGoWorkspace(preparedRoot, workspaceModule, workspaceToolchain); err != nil {
 			_ = os.RemoveAll(filepath.Join(preparedRoot, "source"))
 			_ = os.Remove(filepath.Join(preparedRoot, "go.work"))
 			return verificationReport{}, errVerification
@@ -378,26 +379,33 @@ func moduleVersionForCommit(commit string, unixSeconds int64) (string, error) {
 	return "v0.0.0-" + timestamp + "-" + commit[:12], nil
 }
 
-func validateWorkspaceModule(value, dexModuleVersion, goToolchain string) (string, error) {
+// validateWorkspaceModule checks the MeshCore module that joins the prepared
+// Dex workspace and returns its root and the Go toolchain the workspace pins.
+// The module's go directive may name a later patch release of the qualified
+// toolchain's minor line, so security patch releases are not blocked by
+// evidence recorded on an earlier patch; an older patch or another minor line
+// is refused.
+func validateWorkspaceModule(value, dexModuleVersion, qualifiedToolchain string) (string, string, error) {
 	moduleRoot, err := directoryAbsolutePath(value)
 	if err != nil {
-		return "", errVerification
+		return "", "", errVerification
 	}
 	moduleFile := filepath.Join(moduleRoot, "go.mod")
 	info, err := os.Lstat(moduleFile)
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 ||
 		info.Size() < 0 || info.Size() > maximumManifestBytes {
-		return "", errVerification
+		return "", "", errVerification
 	}
 	contents, err := readBoundedFile(moduleFile, maximumManifestBytes)
 	if err != nil {
-		return "", errVerification
+		return "", "", errVerification
 	}
 
 	moduleCount := 0
 	goVersionCount := 0
 	requireCount := 0
-	expectedGoVersion := strings.TrimPrefix(goToolchain, "go")
+	workspaceToolchain := ""
+	var toolchainDirectives []string
 	for _, rawLine := range strings.Split(string(contents), "\n") {
 		line, _, _ := strings.Cut(rawLine, "//")
 		fields := strings.Fields(line)
@@ -407,8 +415,16 @@ func validateWorkspaceModule(value, dexModuleVersion, goToolchain string) (strin
 		if len(fields) == 2 && fields[0] == "module" && fields[1] == meshcoreModulePath {
 			moduleCount++
 		}
-		if len(fields) == 2 && fields[0] == "go" && fields[1] == expectedGoVersion {
+		if fields[0] == "go" {
 			goVersionCount++
+			toolchain, ok := workspaceGoToolchain(qualifiedToolchain, fields)
+			if !ok {
+				return "", "", errVerification
+			}
+			workspaceToolchain = toolchain
+		}
+		if fields[0] == "toolchain" {
+			toolchainDirectives = append(toolchainDirectives, strings.Join(fields[1:], " "))
 		}
 		if (len(fields) == 2 && fields[0] == dexUpstreamModule && fields[1] == dexModuleVersion) ||
 			(len(fields) == 3 && fields[0] == "require" && fields[1] == dexUpstreamModule &&
@@ -416,13 +432,66 @@ func validateWorkspaceModule(value, dexModuleVersion, goToolchain string) (strin
 			requireCount++
 		}
 		if hasDexReplacement(fields) {
-			return "", errVerification
+			return "", "", errVerification
 		}
 	}
 	if moduleCount != 1 || goVersionCount != 1 || requireCount != 1 {
-		return "", errVerification
+		return "", "", errVerification
 	}
-	return moduleRoot, nil
+	// A toolchain directive could select another release than the one the
+	// workspace pins, so it may only repeat that release.
+	if len(toolchainDirectives) > 1 ||
+		(len(toolchainDirectives) == 1 && toolchainDirectives[0] != workspaceToolchain) {
+		return "", "", errVerification
+	}
+	return moduleRoot, workspaceToolchain, nil
+}
+
+// workspaceGoToolchain accepts a go directive naming the qualified toolchain
+// or a later patch release of the same minor line, and returns it as a
+// toolchain name.
+func workspaceGoToolchain(qualifiedToolchain string, directive []string) (string, bool) {
+	if len(directive) != 2 {
+		return "", false
+	}
+	qualifiedMinor, qualifiedPatch, ok := parseGoRelease(strings.TrimPrefix(qualifiedToolchain, "go"))
+	if !ok {
+		return "", false
+	}
+	minor, patch, ok := parseGoRelease(directive[1])
+	if !ok || minor != qualifiedMinor || patch < qualifiedPatch {
+		return "", false
+	}
+	return "go" + directive[1], true
+}
+
+// parseGoRelease parses a Go 1 release "1.<minor>.<patch>" with canonical
+// decimal numbers; pre-releases and other forms are refused.
+func parseGoRelease(version string) (int, int, bool) {
+	parts := strings.Split(version, ".")
+	if len(parts) != 3 || parts[0] != "1" {
+		return 0, 0, false
+	}
+	minor, ok := parseCanonicalDecimal(parts[1])
+	if !ok {
+		return 0, 0, false
+	}
+	patch, ok := parseCanonicalDecimal(parts[2])
+	if !ok {
+		return 0, 0, false
+	}
+	return minor, patch, true
+}
+
+func parseCanonicalDecimal(value string) (int, bool) {
+	if value == "" || len(value) > 4 || (len(value) > 1 && value[0] == '0') {
+		return 0, false
+	}
+	number, err := strconv.Atoi(value)
+	if err != nil || number < 0 || strconv.Itoa(number) != value {
+		return 0, false
+	}
+	return number, true
 }
 
 func hasDexReplacement(fields []string) bool {

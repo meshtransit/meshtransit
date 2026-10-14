@@ -5,6 +5,14 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Go 1.26.9 toolchain baseline and `golang.org/x/net` v0.60.0 (with the
+  `x/crypto`, `x/text`, `x/sync`, `x/mod` and `x/tools` releases it requires).
+  Go 1.26.8 and `x/net` v0.58.0 carried reachable vulnerabilities, among them
+  an HTTP/2 server crash, HTTP/2 memory exhaustion and HTTP/1 connection
+  desynchronization (GO-2026-6599 to GO-2026-6617). Core, relay, the
+  identity broker image and the clients are built with the new release. The
+  Dex workspace verifier accepts a later patch release of the qualified Go
+  minor line.
 - Core opens its PostgreSQL connections with join_collapse_limit and
   from_collapse_limit 4 (default 8). Searching the join orders of the
   authority functions cost 40-210 MB of planner memory on a backend's first

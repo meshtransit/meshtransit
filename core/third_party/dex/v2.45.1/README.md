@@ -40,7 +40,7 @@ MeshTransit does not maintain a Dex fork.
 3. `patches/0003-security-dependency-updates.patch`
    - SHA-256: `43912a1c989c540c7d1a73e301205b0e18d8f1306ad0d14bafa3b8bc0c4fda7f`;
    - raises the minimum Go language version to 1.26 and pins the qualified
-     build to the fully patched Go 1.26.8 toolchain;
+     build to Go 1.26.8, the latest patch release when it was qualified;
    - upgrades only existing dependencies needed to remove reachable binary
      findings reported on 2026-09-25; and
    - contains two format-call compatibility fixes required by Go 1.26 vet.
@@ -95,6 +95,15 @@ longer valid at the current date; the same test fails without these patches.
 source tree, build inputs, exact binary, and four evidence files. The
 qualification binary is `v2.45.1+compat.8`, built with Go 1.26.8 and
 `CGO_ENABLED=0` for `darwin/arm64`.
+
+The broker-capable MeshCore image is built with the Go release named by the
+repository's root `go.mod`, not with the manifest's. `prepare-dex-workspace`
+accepts that release when it is the qualified one or a later patch release of
+the same minor line (for example Go 1.26.9 against a Go 1.26.8 manifest), and
+pins the prepared `go.work` to it; an older patch or another minor line is
+refused. A later patch release therefore ships security fixes before the
+evidence below is regenerated; the evidence still describes the Go 1.26.8
+qualification binary.
 
 - source tree SHA-256:
   `31e9f91bd3761028f838e7f00635cded92bbd661a4264b8b58ba391546422bae`;

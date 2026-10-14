@@ -22,7 +22,7 @@ Commands: [meshctl](cmd/meshctl/README.md). Flags:
 
 ## Build and test
 
-From the repository root, with Go 1.26.8 or newer:
+From the repository root, with Go 1.26.9 or newer:
 
 ```bash
 make build-client        # bin/meshd, bin/meshnetd, bin/meshcred, bin/meshctl

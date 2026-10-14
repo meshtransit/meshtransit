@@ -58,7 +58,7 @@ Running `meshctl up` again on a connected machine changes nothing.
 
 ### Building from source
 
-Requirements: Go 1.26.8 or newer and a running `meshd` from the matching API
+Requirements: Go 1.26.9 or newer and a running `meshd` from the matching API
 generation (see [running it by hand](../../README.md#running-it-by-hand)).
 
 ```bash

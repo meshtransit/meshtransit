@@ -48,7 +48,7 @@ Run individual gates with `make fmt-check`, `make tidy-check`, `make vet`,
 `make vuln`. `make quality` runs the complete bootstrap set. The integration
 lint target compiles and analyzes the build-tagged test harness without dialing
 dependencies. The lint and vulnerability commands pin tool versions for
-reproducible execution with the module's Go 1.26.8 baseline.
+reproducible execution with the module's Go 1.26.9 baseline.
 
 `make qualification-dex DEX_QUALIFICATION_BINARY=/absolute/path/to/dex`
 runs `SSO-BROKER-000` against the default pinned release. Override
@@ -221,7 +221,7 @@ creates a temporary Go workspace inside the builder, and selects only the
 MeshCore repository. A future Dex release must produce its own verified prepared
 workspace before it can use the unchanged image target.
 
-The image uses a digest-pinned Go 1.26.8 builder and a `scratch` runtime. It has
+The image uses a digest-pinned Go 1.26.9 builder and a `scratch` runtime. It has
 no shell or package manager, contains only the static binary, public CA bundle,
 and third-party notices, and runs as UID/GID `65532:65532`. The health listener
 remains bound to loopback unless `MESHTRANSIT_HEALTH_ADDRESS` is explicitly

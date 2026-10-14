@@ -118,7 +118,7 @@ test-race:
 # (identity renameat2, netadmin, netwatch, secretstore, socket, ...) run on a
 # macOS workstation too. Tests that need privileges skip themselves. The
 # module cache is mounted read-only and go.mod is never rewritten.
-LINUX_GO_IMAGE ?= golang:1.26.8-bookworm@sha256:9fdc884aacc3bec89b20ffc69f4bb369c78210e3e4f600387b5128b12c199f81
+LINUX_GO_IMAGE ?= golang:1.26.9-bookworm@sha256:d9c68c2c51161e12fd77e4c6320687c9cd86e1af1e3ad6e6cd63ff970641453c
 test-linux-client:
 	docker run --rm -v "$(CURDIR):/src" -v "$$($(GO) env GOMODCACHE):/go/pkg/mod:ro" -w /src \
 		-e GOFLAGS=-mod=readonly -e GOPROXY=off -e CGO_ENABLED=1 "$(LINUX_GO_IMAGE)" \
@@ -157,9 +157,9 @@ qualification-dex-compile:
 
 qualification-dex-workspace:
 	@test -n "$(DEX_PREPARED_ROOT)" || { echo "set DEX_PREPARED_ROOT to the verified workspace directory"; exit 2; }
-	@test -f "$(DEX_PREPARED_ROOT)/go.work" || { echo "verified go.work is absent"; exit 2; }
-	@test "$$(GOWORK=off $(GO) env GOVERSION)" = "go1.26.8" || { echo "Go 1.26.8 is required"; exit 1; }
-	GOWORK="$(DEX_PREPARED_ROOT)/go.work" $(GO) test -timeout=$(TEST_TIMEOUT) -count=1 \
+	@toolchain="$$(bash core/scripts/qualification/check-dex-workspace.sh "$(DEX_PREPARED_ROOT)" "$(CURDIR)")" && \
+	test "$$(GOWORK=off GOTOOLCHAIN="$$toolchain" $(GO) env GOVERSION)" = "$$toolchain" && \
+	GOWORK="$(DEX_PREPARED_ROOT)/go.work" GOTOOLCHAIN="$$toolchain" $(GO) test -timeout=$(TEST_TIMEOUT) -count=1 \
 		-tags=dexbroker ./core/internal/adapter/dexbroker ./core/cmd/meshcore
 
 qualification-dex-upgrade-restore:
