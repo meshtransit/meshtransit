@@ -56,8 +56,43 @@ func TestCapRetryForCauseKeepsDataPlaneStopsShort(t *testing.T) {
 		{"long stop retry", 16 * time.Second, stopped, maxDataPlaneStopRetry},
 		{"other failure", 16 * time.Second, errRuntimeRecovery, 16 * time.Second},
 	} {
-		if got := capRetryForCause(testCase.retry, testCase.cause); got != testCase.want {
+		if got := capRetryForCause(testCase.retry, testCase.cause, 1); got != testCase.want {
 			t.Errorf("%s: capRetryForCause() = %v, want %v", testCase.name, got, testCase.want)
+		}
+	}
+}
+
+func TestCapRetryForCauseBacksOffADeviceThatKeepsStopping(t *testing.T) {
+	t.Parallel()
+
+	stopped := fmt.Errorf("%w: %w", errRuntimeRecovery, errDataPlaneStopped)
+	if got := capRetryForCause(16*time.Second, stopped, maxQuickDataPlaneStops); got != maxDataPlaneStopRetry {
+		t.Fatalf("stop %d: retry = %v, want the short cap", maxQuickDataPlaneStops, got)
+	}
+	if got := capRetryForCause(16*time.Second, stopped, maxQuickDataPlaneStops+1); got != 16*time.Second {
+		t.Fatalf("stop %d: retry = %v, want the normal backoff", maxQuickDataPlaneStops+1, got)
+	}
+}
+
+func TestCountQuickStops(t *testing.T) {
+	t.Parallel()
+
+	stopped := fmt.Errorf("%w: %w", errRuntimeRecovery, errDataPlaneStopped)
+	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	for _, testCase := range []struct {
+		name           string
+		stops          int
+		cause          error
+		synchronizedAt time.Time
+		want           int
+	}{
+		{"a stop before any map", 2, stopped, time.Time{}, 3},
+		{"a stop soon after the map", 2, stopped, now.Add(-5 * time.Second), 3},
+		{"a stop after a long session", 5, stopped, now.Add(-runtimeRetryReset), 1},
+		{"another failure", 5, errRuntimeRecovery, time.Time{}, 0},
+	} {
+		if got := countQuickStops(testCase.stops, testCase.cause, testCase.synchronizedAt, now); got != testCase.want {
+			t.Errorf("%s: countQuickStops() = %d, want %d", testCase.name, got, testCase.want)
 		}
 	}
 }

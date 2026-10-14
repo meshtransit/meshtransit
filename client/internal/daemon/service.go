@@ -112,11 +112,14 @@ const (
 	// stopped on its own: rebuilding it is local, and the window that stops
 	// it (boot, a network change) ends within seconds.
 	maxDataPlaneStopRetry = 4 * time.Second
-	minEndpointRefresh    = 20 * time.Second
-	maxEndpointRefresh    = 26 * time.Second
-	relayPreparationPoll  = time.Second
-	relayPreparationWait  = 1500 * time.Millisecond
-	relayPreparationTick  = 50 * time.Millisecond
+	// maxQuickDataPlaneStops is how many quick stops in a row keep the short
+	// backoff (capRetryForCause).
+	maxQuickDataPlaneStops = 3
+	minEndpointRefresh     = 20 * time.Second
+	maxEndpointRefresh     = 26 * time.Second
+	relayPreparationPoll   = time.Second
+	relayPreparationWait   = 1500 * time.Millisecond
+	relayPreparationTick   = 50 * time.Millisecond
 )
 
 // Status is the daemon-owned status model before it is mapped to a wire format.
@@ -514,6 +517,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 	default:
 	}
 	runtimeRetry := minRuntimeRetry
+	// quickStops counts consecutive data plane stops of sessions that did
+	// not stay synchronized for runtimeRetryReset (capRetryForCause).
+	quickStops := 0
 	var suspendedSince time.Time
 	for {
 		if err := ctx.Err(); err != nil {
@@ -1070,10 +1076,11 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				continue
 			}
 			if recoverable {
+				quickStops = countQuickStops(quickStops, streamErr, synchronizedAt, s.clock())
 				if runtimeRetry, err = s.recoverRuntime(ctx, runtimeRetry, synchronizedAt); err != nil {
 					return err
 				}
-				runtimeRetry = capRetryForCause(runtimeRetry, streamErr)
+				runtimeRetry = capRetryForCause(runtimeRetry, streamErr, quickStops)
 
 				continue
 			}
@@ -1131,12 +1138,28 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 }
 
 // capRetryForCause keeps the backoff short when the data plane device
-// stopped on its own.
-func capRetryForCause(retry time.Duration, cause error) time.Duration {
-	if errors.Is(cause, errDataPlaneStopped) {
+// stopped on its own, for the first maxQuickDataPlaneStops stops in a row.
+// A device that keeps stopping soon after it starts is not a passing
+// window: it then backs off like any other failure, so one broken Device
+// costs Core a session at most every maxRuntimeRetry.
+func capRetryForCause(retry time.Duration, cause error, quickStops int) time.Duration {
+	if errors.Is(cause, errDataPlaneStopped) && quickStops <= maxQuickDataPlaneStops {
 		return min(retry, maxDataPlaneStopRetry)
 	}
 	return retry
+}
+
+// countQuickStops returns the new count of consecutive quick data plane
+// stops: a stop of a session synchronized for less than runtimeRetryReset
+// adds one, anything else starts over.
+func countQuickStops(stops int, cause error, synchronizedAt, now time.Time) int {
+	if !errors.Is(cause, errDataPlaneStopped) {
+		return 0
+	}
+	if !synchronizedAt.IsZero() && now.Sub(synchronizedAt) >= runtimeRetryReset {
+		return 1 // a long session ended: this is the first quick stop again
+	}
+	return stops + 1
 }
 
 // watchDataPlaneStops ends the session with errDataPlaneStopped when the
