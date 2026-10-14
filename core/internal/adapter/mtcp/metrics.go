@@ -19,7 +19,19 @@ type Metrics struct {
 	unproven   prometheus.Counter
 	forwarding prometheus.Counter
 	keyExpiry  prometheus.Gauge
+	limits     *prometheus.CounterVec
 }
+
+// The closed set of per-session limits (rate_budget.go).
+const (
+	limitInbound     = "inbound"
+	limitResync      = "resync"
+	limitEnforcement = "enforcement"
+	limitBrowser     = "browser"
+	limitIdentity    = "identity"
+)
+
+var sessionLimits = []string{limitInbound, limitResync, limitEnforcement, limitBrowser, limitIdentity}
 
 // streamEndReasons is the closed set of map stream end causes.
 var streamEndReasons = []string{
@@ -72,6 +84,12 @@ func NewMetrics() *Metrics {
 		}),
 		// Alert on: meshtransit_mtcp_control_key_not_after_timestamp_seconds - time() < 60 * 86400
 		// Past it nodes refuse the key and the control role no longer starts.
+		// Watch: a rising rate means nodes that do not follow the protocol,
+		// or a limit too tight for real traffic.
+		limits: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "meshtransit_mtcp_session_limits_total",
+			Help: "MTCP messages refused, or sessions ended, by the per-session limit they exceeded.",
+		}, []string{"limit"}),
 		keyExpiry: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "meshtransit_mtcp_control_key_not_after_timestamp_seconds",
 			Help: "Expiry of the latest control key this replica answers with (Unix seconds).",
@@ -79,6 +97,9 @@ func NewMetrics() *Metrics {
 	}
 	for _, result := range handshakeResults {
 		metrics.handshakes.WithLabelValues(result)
+	}
+	for _, limit := range sessionLimits {
+		metrics.limits.WithLabelValues(limit)
 	}
 	for _, reason := range streamEndReasons {
 		metrics.streamEnds.WithLabelValues(reason)
@@ -89,7 +110,7 @@ func NewMetrics() *Metrics {
 // Collectors returns the collectors to register.
 func (metrics *Metrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{metrics.handshakes, metrics.sessions, metrics.messages, metrics.streamEnds,
-		metrics.sheds, metrics.unproven, metrics.forwarding, metrics.keyExpiry}
+		metrics.sheds, metrics.unproven, metrics.forwarding, metrics.keyExpiry, metrics.limits}
 }
 
 // streamEnded counts a map stream end; a nil Metrics counts nothing.
@@ -120,6 +141,13 @@ func (metrics *Metrics) sessionOpened()  { metrics.sessions.Inc() }
 func (metrics *Metrics) sessionClosed()  { metrics.sessions.Dec() }
 func (metrics *Metrics) shed(count int)  { metrics.sheds.Add(float64(count)) }
 func (metrics *Metrics) unprovenClosed() { metrics.unproven.Inc() }
+
+func (metrics *Metrics) limited(limit string) {
+	if metrics == nil {
+		return
+	}
+	metrics.limits.WithLabelValues(limit).Inc()
+}
 
 func (metrics *Metrics) untrustedForwarding() { metrics.forwarding.Inc() }
 

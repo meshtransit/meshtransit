@@ -79,6 +79,9 @@ type Application struct {
 	now           func() time.Time
 	poll          time.Duration // how often a pending approval is checked
 	endpointTimer func(time.Duration, func()) endpointTimer
+	// enforcementTimer starts the enforcement pacing's timer; tests
+	// replace it as they do endpointTimer.
+	enforcementTimer func(time.Duration, func()) endpointTimer
 }
 
 // NewApplication validates its dependencies.
@@ -98,7 +101,7 @@ func NewApplication(options ApplicationOptions) (*Application, error) {
 	}
 	options.DeniedEndpointPrefixes = slices.Clone(options.DeniedEndpointPrefixes)
 	return &Application{options: options, now: time.Now, poll: approvalPollInterval,
-		endpointTimer: realEndpointTimer}, nil
+		endpointTimer: realEndpointTimer, enforcementTimer: realEndpointTimer}, nil
 }
 
 // Open implements SessionHandler.
@@ -107,7 +110,10 @@ func (application *Application) Open(session *Session) Conversation {
 		application.now)
 	sink.deniedEndpoints = application.options.DeniedEndpointPrefixes
 	return &conversation{application: application, session: session, sink: sink,
-		wake: make(chan struct{}, 1), approvals: make(chan approval, 1)}
+		wake: make(chan struct{}, 1), approvals: make(chan approval, 1),
+		identity: newRateBudget(identityBurst, identityRate), browser: newRateBudget(browserBurst, browserRate),
+		resync:            newRateBudget(resyncBurst, resyncRate),
+		enforcementPacing: enforcementPacing{budget: newRateBudget(enforcementBurst, enforcementRate)}}
 }
 
 type conversation struct {
@@ -118,9 +124,14 @@ type conversation struct {
 	// endpointPacing keeps and paces this session's endpoint reports.
 	endpointPacing endpointPacing
 	lastPaths      time.Time // when the last PathStatsReport was stored
-	// identity is the session's budget for RegisterRequest and
-	// RotateNodeKey; Receive is serial, so it needs no lock.
-	identity identityBudget
+	// identity, browser and resync are the session's budgets for
+	// RegisterRequest and RotateNodeKey, browser approval URLs and
+	// MapResync (rate_budget.go); Receive is serial, so they need no lock.
+	identity rateBudget
+	browser  rateBudget
+	resync   rateBudget
+	// enforcementPacing paces EnforcementReports.
+	enforcementPacing enforcementPacing
 	// lastConnectivity is the connectivity last stored for this session.
 	// Only a store claimed by endpointPacing reads and writes it, without
 	// the lock: busy runs one store at a time, and claiming and finishing
@@ -163,6 +174,7 @@ func (conversation *conversation) Run(ctx context.Context) error {
 	conversation.watchApprovalsWithin(ctx)
 	defer conversation.stopApprovals()
 	defer conversation.stopEndpointPacing()
+	defer conversation.stopEnforcementPacing()
 	for {
 		nodeKey, generation, streamCtx, cancel := conversation.startStream(ctx)
 		if nodeKey.IsValid() {
@@ -331,11 +343,18 @@ func (conversation *conversation) Receive(ctx context.Context, _ sharedmtcp.Mess
 	case *mtcpv1.MapAck:
 		conversation.sink.ack(m.GetView())
 	case *mtcpv1.MapResync:
+		// Each one costs a whole map. A node over the limit does not follow
+		// the protocol; it reconnects and gets a fresh snapshot then.
+		if wait, ok := conversation.resync.spend(conversation.application.now(), 1); !ok {
+			conversation.application.options.Metrics.limited(limitResync)
+			conversation.session.endOverloaded("too many map resyncs", wait)
+			return errSessionLimited
+		}
 		return conversation.sink.resync(ctx, m.GetView())
 	case *mtcpv1.Pong:
 		conversation.sink.pong(m.GetNonce())
 	case *mtcpv1.EnforcementReport:
-		conversation.enforcement(ctx, m)
+		conversation.reportEnforcement(m)
 	case *mtcpv1.EndpointReport:
 		return conversation.endpoints(m)
 	case *mtcpv1.PathStatsReport:
@@ -343,12 +362,14 @@ func (conversation *conversation) Receive(ctx context.Context, _ sharedmtcp.Mess
 	case *mtcpv1.HostinfoReport, *mtcpv1.HealthReport:
 		// Accepted; nothing reads them yet.
 	case *mtcpv1.RegisterRequest:
-		if wait, ok := conversation.identity.spend(conversation.application.now()); !ok {
+		if wait, ok := conversation.identity.spend(conversation.application.now(), 1); !ok {
+			conversation.application.options.Metrics.limited(limitIdentity)
 			return conversation.sendError(mtcpv1.Error_OVERLOADED, "too many registration requests", retryAfterMS(wait))
 		}
 		return conversation.register(ctx, m)
 	case *mtcpv1.RotateNodeKey:
-		if wait, ok := conversation.identity.spend(conversation.application.now()); !ok {
+		if wait, ok := conversation.identity.spend(conversation.application.now(), 1); !ok {
+			conversation.application.options.Metrics.limited(limitIdentity)
 			return conversation.sendError(mtcpv1.Error_OVERLOADED, "too many rotation requests", retryAfterMS(wait))
 		}
 		return conversation.rotate(ctx, m)
@@ -360,9 +381,13 @@ func (conversation *conversation) Receive(ctx context.Context, _ sharedmtcp.Mess
 	return nil
 }
 
-func (conversation *conversation) enforcement(ctx context.Context, report *mtcpv1.EnforcementReport) {
-	nodeKey := conversation.currentKey()
-	if !nodeKey.IsValid() || len(report.GetDigest()) != 32 || report.GetAppliedMs() <= 0 {
+// enforcement stores evidence the node sent while nodeKey was its key. A
+// report kept by the pacing is dropped if the key changed meanwhile: it
+// describes the filter of a map the new key never had.
+func (conversation *conversation) enforcement(ctx context.Context, report *mtcpv1.EnforcementReport,
+	nodeKey node.Key) {
+	if !nodeKey.IsValid() || nodeKey != conversation.currentKey() || len(report.GetDigest()) != 32 ||
+		report.GetAppliedMs() <= 0 {
 		return
 	}
 	filter, err := mapsession.NewFilterDigest(policydigest.Digest(report.GetDigest()), int(report.GetGrants()))

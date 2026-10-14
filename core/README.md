@@ -544,6 +544,11 @@ handshake results, active sessions and message counts (`meshtransit_mtcp_*`)
 are exported only through the private operator
 `/metrics` endpoint. Result labels come from fixed internal sets and never
 contain machine identity, endpoint, credential, or request data.
+`meshtransit_mtcp_session_limits_total{limit}` counts messages refused or
+sessions ended by a per-session limit (mtcp-v1 §14): `inbound` (all messages
+and bytes), `resync`, `enforcement`, `browser` and `identity`. Nodes that
+follow the protocol stay well inside them, so a sustained rate means a
+misbehaving node or a limit too tight for real traffic.
 
 ### Client addresses behind a reverse proxy
 

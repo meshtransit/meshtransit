@@ -224,13 +224,19 @@ func (conversation *conversation) registerInteractively(ctx context.Context, mac
 		return conversation.reject(rejection{code: mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED,
 			message: "interactive registration is not enabled"})
 	}
+	if handle != "" && (len(handle) > maxResumeHandle || strings.ContainsAny(handle, "/?#")) {
+		return conversation.reject(rejection{code: mtcpv1.RegisterResponse_Rejected_INVALID,
+			message: "invalid resume handle"})
+	}
+	// Issuing or resuming an approval reads and writes the database; a node
+	// asks once per sign-in and once per reconnect while it waits.
+	if wait, ok := conversation.browser.spend(conversation.application.now(), 1); !ok {
+		options.Metrics.limited(limitBrowser)
+		return conversation.sendError(mtcpv1.Error_OVERLOADED, "too many browser sign-in requests", retryAfterMS(wait))
+	}
 	prefix := options.ApprovalOrigin + approvalPath
 	var followup string
 	if handle != "" {
-		if len(handle) > maxResumeHandle || strings.ContainsAny(handle, "/?#") {
-			return conversation.reject(rejection{code: mtcpv1.RegisterResponse_Rejected_INVALID,
-				message: "invalid resume handle"})
-		}
 		followup = prefix + handle
 		result, found, err := options.BrowserApproval.CompleteBrowser(ctx, machine, nodeKey, hostname, followup)
 		switch {

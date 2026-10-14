@@ -41,6 +41,10 @@ type fakeStreams struct {
 	requests []mapsession.Request
 	reports  []mapsession.ClientEnforcement
 	started  chan node.Key
+	// block, when set, holds the next ReportEnforcement until it is closed;
+	// entered is signalled when that call starts.
+	block   chan struct{}
+	entered chan struct{}
 }
 
 func (streams *fakeStreams) Serve(ctx context.Context, _ control.AuthenticatedMachine, request mapsession.Request,
@@ -63,6 +67,14 @@ func (streams *fakeStreams) Serve(ctx context.Context, _ control.AuthenticatedMa
 
 func (streams *fakeStreams) ReportEnforcement(_ context.Context, _ control.AuthenticatedMachine,
 	report mapsession.ClientEnforcement) error {
+	streams.mu.Lock()
+	block, entered := streams.block, streams.entered
+	streams.block, streams.entered = nil, nil
+	streams.mu.Unlock()
+	if block != nil {
+		close(entered)
+		<-block
+	}
 	streams.mu.Lock()
 	defer streams.mu.Unlock()
 	streams.reports = append(streams.reports, report)
@@ -327,6 +339,8 @@ type conversationFixture struct {
 	clock         time.Time
 	talk          *conversation
 	timer         *fakeTimer
+	// enforcementTimer is the enforcement pacing's timer.
+	enforcementTimer *fakeTimer
 }
 
 func newConversationFixture(t *testing.T, openedBy sharedmtcp.MessageType) *conversationFixture {
@@ -359,6 +373,8 @@ func newConversationFixture(t *testing.T, openedBy sharedmtcp.MessageType) *conv
 	application.poll = 5 * time.Millisecond
 	f.timer = &fakeTimer{}
 	application.endpointTimer = f.timer.start
+	f.enforcementTimer = &fakeTimer{}
+	application.enforcementTimer = f.enforcementTimer.start
 	f.talk, _ = application.Open(session).(*conversation)
 	return f
 }
@@ -1523,5 +1539,216 @@ func TestMapEncodingDropsStoredEndpointsPeersMustNotProbe(t *testing.T) {
 	endpoints := message.GetPeers()[0].GetEndpoints()
 	if len(endpoints) != 1 || !bytes.Equal(endpoints[0].GetIp(), []byte{198, 51, 100, 7}) {
 		t.Fatalf("peer endpoints = %v, want only 198.51.100.7", endpoints)
+	}
+}
+
+func TestConversationLimitsMapResyncs(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	if err := f.talk.sink.SendSnapshot(t.Context(), streamFixture(t, 1)); err != nil {
+		t.Fatal(err)
+	}
+	// The first snapshot follows the session's key and relay messages.
+	for {
+		if got, _ := f.next(); got == sharedmtcp.MessageMapSnapshot {
+			break
+		}
+	}
+	resync := &mtcpv1.MapResync{View: &mtcpv1.View{}}
+	for attempt := range resyncBurst {
+		if err := f.talk.Receive(t.Context(), sharedmtcp.MessageMapResync, resync); err != nil {
+			t.Fatalf("resync %d: %v", attempt+1, err)
+		}
+		f.expect(sharedmtcp.MessageMapSnapshot)
+	}
+	// One more is a node that does not follow the protocol: the session
+	// ends, and the node reconnects for a fresh snapshot.
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageMapResync, resync); !errors.Is(err, errSessionLimited) {
+		t.Fatalf("resync over the limit: %v", err)
+	}
+	failure, _ := f.expect(sharedmtcp.MessageError).(*mtcpv1.Error)
+	if failure.GetCode() != mtcpv1.Error_OVERLOADED || !failure.GetFatal() || failure.GetRetryAfterMs() != 5000 {
+		t.Fatalf("resync over the limit answered %v", failure)
+	}
+}
+
+func TestConversationLimitsEnforcementReports(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	f.talk.nodeKey = node.Key(f.session.Hello().GetNodeKey())
+	report := func(grants uint32) *mtcpv1.EnforcementReport {
+		digest := make([]byte, 32)
+		digest[0] = 1
+		return &mtcpv1.EnforcementReport{Digest: digest, Grants: grants, AppliedMs: f.now().UnixMilli()}
+	}
+	stored := func() []uint32 {
+		f.streams.mu.Lock()
+		defer f.streams.mu.Unlock()
+		var grants []uint32
+		for _, stored := range f.streams.reports {
+			grants = append(grants, uint32(stored.Filter.Grants())) //nolint:gosec // small test values
+		}
+		return grants
+	}
+	for grants := range uint32(enforcementBurst + 3) {
+		if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEnforcementReport, report(grants+1)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The burst is stored at once; of the rest only the latest is kept, and
+	// it is stored when a token is back.
+	if got := stored(); len(got) != enforcementBurst {
+		t.Fatalf("stored %v at once, want the first %d", got, enforcementBurst)
+	}
+	delay, armed := f.enforcementTimer.pending()
+	if !armed || delay != time.Second {
+		t.Fatalf("timer %s armed %t, want a second", delay, armed)
+	}
+	f.advance(time.Second)
+	f.enforcementTimer.trigger()
+	got := stored()
+	if len(got) != enforcementBurst+1 || got[len(got)-1] != enforcementBurst+3 {
+		t.Fatalf("stored %v, want the latest report last", got)
+	}
+	if _, armed := f.enforcementTimer.pending(); armed {
+		t.Fatal("timer still armed with nothing kept")
+	}
+	// The end of the session drops a kept report.
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEnforcementReport, report(99)); err != nil {
+		t.Fatal(err)
+	}
+	f.talk.stopEnforcementPacing()
+	f.advance(time.Minute)
+	f.enforcementTimer.trigger()
+	if got := stored(); got[len(got)-1] == 99 {
+		t.Fatal("a report was stored after the session ended")
+	}
+}
+
+func TestConversationLimitsBrowserSignIns(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessageRegisterRequest)
+	f.run()
+	for attempt := range browserBurst {
+		if err := f.talk.Receive(t.Context(), sharedmtcp.MessageRegisterRequest,
+			f.request(4, interactiveAuth(""))); err != nil {
+			t.Fatalf("sign-in %d: %v", attempt+1, err)
+		}
+		if f.expect(sharedmtcp.MessageRegisterResponse).(*mtcpv1.RegisterResponse).GetPending() == nil {
+			t.Fatalf("sign-in %d got no approval URL", attempt+1)
+		}
+	}
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageRegisterRequest, f.request(4, interactiveAuth(""))); err != nil {
+		t.Fatal(err)
+	}
+	failure, _ := f.expect(sharedmtcp.MessageError).(*mtcpv1.Error)
+	if failure.GetCode() != mtcpv1.Error_OVERLOADED || failure.GetFatal() || failure.GetRetryAfterMs() != 10000 {
+		t.Fatalf("a sign-in over the limit answered %v", failure)
+	}
+}
+
+func enforcementReportFixture(grants uint32) *mtcpv1.EnforcementReport {
+	digest := make([]byte, 32)
+	digest[0] = 1
+	return &mtcpv1.EnforcementReport{Digest: digest, Grants: grants, AppliedMs: 1_800_000_000_000}
+}
+
+func (f *conversationFixture) storedGrants() []int {
+	f.streams.mu.Lock()
+	defer f.streams.mu.Unlock()
+	grants := make([]int, 0, len(f.streams.reports))
+	for _, stored := range f.streams.reports {
+		grants = append(grants, stored.Filter.Grants())
+	}
+	return grants
+}
+
+// TestEnforcementPacingKeepsReportsThatArriveDuringAStore runs a store
+// that blocks in Redis while more reports arrive, then ends the session
+// during another store.
+func TestEnforcementPacingKeepsReportsThatArriveDuringAStore(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	f.talk.nodeKey = node.Key(f.session.Hello().GetNodeKey())
+	block, entered := make(chan struct{}), make(chan struct{})
+	f.streams.mu.Lock()
+	f.streams.block, f.streams.entered = block, entered
+	f.streams.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = f.talk.Receive(t.Context(), sharedmtcp.MessageEnforcementReport, enforcementReportFixture(1))
+	}()
+	<-entered
+	// A store is in flight: these are kept, the latest replacing the other.
+	for _, grants := range []uint32{2, 3} {
+		if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEnforcementReport,
+			enforcementReportFixture(grants)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	close(block)
+	<-done
+	if got := f.storedGrants(); !slices.Equal(got, []int{1, 3}) {
+		t.Fatalf("stored %v, want the first and then the latest", got)
+	}
+	// The end of the session waits for a store in flight.
+	block, entered = make(chan struct{}), make(chan struct{})
+	f.streams.mu.Lock()
+	f.streams.block, f.streams.entered = block, entered
+	f.streams.mu.Unlock()
+	go func() {
+		_ = f.talk.Receive(t.Context(), sharedmtcp.MessageEnforcementReport, enforcementReportFixture(4))
+	}()
+	<-entered
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		f.talk.stopEnforcementPacing()
+	}()
+	select {
+	case <-stopped:
+		t.Fatal("the session ended before its store")
+	case <-time.After(20 * time.Millisecond): //nolint:forbidigo // a stop that returns early would be seen here
+	}
+	close(block)
+	<-stopped
+}
+
+func TestEnforcementPacingDropsAReportOfAnOldKey(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	f.talk.nodeKey = node.Key(f.session.Hello().GetNodeKey())
+	for grants := range uint32(enforcementBurst + 1) {
+		if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEnforcementReport,
+			enforcementReportFixture(grants+1)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The kept report describes the old key's filter.
+	f.talk.mu.Lock()
+	f.talk.nodeKey = node.Key{9}
+	f.talk.mu.Unlock()
+	f.advance(time.Second)
+	f.enforcementTimer.trigger()
+	if got := f.storedGrants(); len(got) != enforcementBurst {
+		t.Fatalf("stored %v, want the kept report of the old key dropped", got)
+	}
+}
+
+func TestConversationResyncBudgetRecovers(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	now := f.now()
+	for range resyncBurst {
+		if _, ok := f.talk.resync.spend(now, 1); !ok {
+			t.Fatal("burst refused")
+		}
+	}
+	if _, ok := f.talk.resync.spend(now.Add(5*time.Second-time.Millisecond), 1); ok {
+		t.Fatal("a resync before 5 s admitted")
+	}
+	if _, ok := f.talk.resync.spend(now.Add(5*time.Second), 1); !ok {
+		t.Fatal("a resync after 5 s refused")
 	}
 }

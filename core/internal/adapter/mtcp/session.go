@@ -56,12 +56,19 @@ type Session struct {
 	releaseSource func()
 	proveOnce     sync.Once
 	proven        atomic.Bool
+
+	// inboundMessages and inboundBytes bound everything the node sends
+	// (rate_budget.go); only the run loop uses them.
+	inboundMessages rateBudget
+	inboundBytes    rateBudget
 }
 
 func newSession(server *Server, transport recordConn, noise *sharedmtcp.Session, control key.ControlPrivate,
 	machine key.MachinePublic, hello *mtcpv1.ClientHello, reply *mtcpv1.ServerHello) *Session {
 	return &Session{server: server, transport: transport, noise: noise, control: control, machine: machine,
-		hello: hello, reply: reply, capabilities: reply.GetCapabilities()}
+		hello: hello, reply: reply, capabilities: reply.GetCapabilities(),
+		inboundMessages: newRateBudget(inboundMessageBurst, inboundMessageRate),
+		inboundBytes:    newRateBudget(inboundByteBurst, inboundByteRate)}
 }
 
 // Machine returns the session's authenticated machine key.
@@ -130,6 +137,17 @@ func (session *Session) SendError(code mtcpv1.Error_Code, message string, fatal 
 	}
 }
 
+// errSessionLimited ends a session that went over one of its limits.
+var errSessionLimited = errors.New("mtcp: session over its limits")
+
+// endOverloaded ends a session that sends more than the protocol allows:
+// the node reconnects after wait (mtcp-v1 §14).
+func (session *Session) endOverloaded(message string, wait time.Duration) {
+	_ = session.Send(sharedmtcp.MessageError, &mtcpv1.Error{Code: mtcpv1.Error_OVERLOADED, Message: message,
+		Fatal: true, RetryAfterMs: retryAfterMS(wait)})
+	session.close(errSessionLimited)
+}
+
 func (session *Session) close(cause error) {
 	session.once.Do(func() {
 		if session.cancel != nil {
@@ -148,6 +166,7 @@ func (session *Session) replace() {
 type inbound struct {
 	t       sharedmtcp.MessageType
 	message proto.Message
+	size    int // bytes of the records that carried it
 }
 
 // run waits for the first TRANSPORT record, which establishes the session,
@@ -255,6 +274,26 @@ func (session *Session) run(parent context.Context, establishBy time.Time, relea
 // dispatch answers Ping, ignores Pong and gives everything else to the
 // conversation. It reports false when the session must end.
 func (session *Session) dispatch(conversation Conversation, message inbound) bool {
+	now := session.server.options.Now()
+	// A MapAck answers a map message Core chose to send, and nodes ack each
+	// one, so acks follow Core's own rate: they count only as bytes.
+	cost := 1.0
+	if message.t == sharedmtcp.MessageMapAck {
+		cost = 0
+	}
+	wait, ok := session.inboundMessages.spend(now, cost)
+	if ok {
+		var byteWait time.Duration
+		if byteWait, ok = session.inboundBytes.spend(now, float64(message.size)); !ok {
+			wait = byteWait
+			session.inboundMessages.refund(cost) // the message was not admitted
+		}
+	}
+	if !ok {
+		session.server.options.Metrics.limited(limitInbound)
+		session.endOverloaded("too many messages", wait)
+		return false
+	}
 	switch message.t {
 	case sharedmtcp.MessagePing:
 		ping, _ := message.message.(*mtcpv1.Ping)
@@ -294,11 +333,13 @@ func (session *Session) readLoop(assembler *sharedmtcp.Assembler, messages chan<
 
 // receive reads records until one message is complete.
 func (session *Session) receive(assembler *sharedmtcp.Assembler, deadline time.Time) (inbound, error) {
+	size := 0
 	for {
 		recordType, body, err := session.transport.ReadRecord(deadline)
 		if err != nil {
 			return inbound{}, err
 		}
+		size += len(body)
 		if recordType != sharedmtcp.RecordTransport {
 			return inbound{}, ErrProtocol
 		}
@@ -324,7 +365,7 @@ func (session *Session) receive(assembler *sharedmtcp.Assembler, deadline time.T
 			return inbound{}, err
 		}
 		session.server.options.Metrics.received(t)
-		return inbound{t: t, message: message}, nil
+		return inbound{t: t, message: message, size: size}, nil
 	}
 }
 

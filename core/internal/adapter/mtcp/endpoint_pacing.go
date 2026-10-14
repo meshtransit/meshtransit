@@ -292,8 +292,7 @@ func (conversation *conversation) armLocked(now time.Time) {
 }
 
 // stopEndpointPacing ends the pacing when the session ends and waits for a
-// store or flush already running; the session's context, cancelled by
-// then, bounds that wait.
+// store or flush already running; their endpoint timeout bounds that wait.
 func (conversation *conversation) stopEndpointPacing() {
 	pacing := &conversation.endpointPacing
 	pacing.mu.Lock()
