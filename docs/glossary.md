@@ -82,8 +82,8 @@ installation to Core.
 packet filter, DNS settings and the relay map. A node receives a **snapshot**
 and then **deltas**.
 
-**MeshTransit DNS.** The resolver in `meshd` that answers names of the mesh:
-Devices and shared resources.
+**MeshTransit DNS.** The resolver in `meshd` that answers names of the mesh;
+today the names of shared Devices. See [DNS](concepts/dns.md).
 
 **Network.** The unit of connectivity inside a Workspace: an overlay address
 range, its Devices, policy and DNS. Devices in different Networks are isolated

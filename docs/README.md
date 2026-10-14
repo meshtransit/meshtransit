@@ -24,6 +24,8 @@ How the product behaves, as implemented:
 | [Devices](concepts/devices.md) | Registration, addresses and names, ownership, lifecycle, members leaving, limits |
 | [Policy](concepts/policy.md) | Access Rules, changing policy (simulate, approve, publish), enforcement on the node, explaining access |
 | [Sharing](concepts/sharing.md) | Share offers, Trust Contracts, Imported Resources, Device aliases, ending a share |
+| [DNS](concepts/dns.md) | What resolves, how the resolver answers, wiring into each platform, limits |
+| [Paths and relays](concepts/paths-and-relays.md) | A node's addresses, what peers learn, finding a direct path, relays, Private Interchange |
 | [Audit and evidence](concepts/audit.md) | What is recorded, reading the history, connection history, policy distribution and enforcement |
 
 ## Protocols
@@ -39,9 +41,6 @@ Language-independent specifications, with test vectors: see
 
 [Security model](client/security-model.md),
 [platform contracts](client/platform-contracts.md),
-[direct paths](client/direct-path.md),
-[port mapping](client/port-mapping.md),
-[cloud addresses](client/cloud-addresses.md), [DNS](client/dns.md),
 [Linux packaging](client/linux-packaging.md) and
 [Linux qualification](client/linux-qualification.md).
 

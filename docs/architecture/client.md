@@ -124,27 +124,28 @@ whose disco key changed starts a new session.
 
 ### Paths
 
-Every peer is reachable through the relay from the start; a direct path is
-added once it is proven ([disco v2](../protocol/disco-v2.md) §4):
+Every peer with a home relay starts on the relay path; a direct path replaces
+it once proven
+([paths and relays](../concepts/paths-and-relays.md)):
 
 - **Endpoints.** The node learns its own candidate addresses from STUN on the
-  WireGuard socket, local interfaces, a port mapping (PCP, NAT-PMP or UPnP, used
-  only if the node observed the external address itself) and, on AWS, GCP,
-  Azure or DigitalOcean, the instance metadata. It reports them to Core,
-  with its NAT type and home relay, in an `EndpointReport`. It refreshes them
-  every 20 to 26 seconds while it has peers, and after a network change or a
-  relay failure, but such event rounds at most once every 5 seconds.
-- **Probing.** disco pings test each candidate of a peer that has traffic;
-  idle peers (no traffic for 45 seconds) are not probed. A `CALL_ME_MAYBE`
-  through the relay asks the peer to probe back, which opens both NATs. Pings
-  are authenticated with the disco keys, and a per-peer budget bounds what a
-  peer, or a Device lying about its endpoints, can make the node send.
-- **Selection.** Until a direct path is trusted, WireGuard packets go both
-  through the relay and to the best direct candidate. A candidate becomes the
-  path once it answers; another replaces it only if at least 10% and 2 ms
+  WireGuard socket, local interfaces, a port mapping (PCP, NAT-PMP or UPnP,
+  used only if the node observed the external address itself) and, on AWS,
+  GCP, Azure or DigitalOcean under Linux, the instance metadata. It reports
+  them to Core, with its NAT type and home relay, in an `EndpointReport`. It
+  refreshes them every 20 to 26 seconds while it has peers, and after a
+  network change or a relay failure, but such event rounds at most once every
+  5 seconds.
+- **Probing.** About every 3 seconds the node pings the candidates of each
+  online peer. A `CALL_ME_MAYBE` through the relay asks a peer without a
+  working path to ping back, which opens both NATs. Pings are authenticated
+  with the disco keys, and a per-peer budget bounds what a peer, or a Device
+  lying about its endpoints, can make the node send.
+- **Selection.** The first candidate that answers becomes the peer's
+  WireGuard endpoint; another replaces it only if at least 10% and 2 ms
   faster. Without fresh pongs a path is trusted for 6.5 seconds, after which
-  the peer falls back to the relay; a candidate silent for 30 seconds is
-  dropped.
+  the peer falls back to the relay. WireGuard traffic goes to one path at a
+  time.
 
 ### Relays
 
@@ -155,17 +156,18 @@ handshake against its key in the signed relay map, not by its TLS
 certificate, and the node presents the ticket Core issued for it.
 
 The node keeps one **home relay**: a region its Network prefers (Private
-Interchange) if there is one, otherwise the fastest shared region; it switches
-only to a clearly faster region. See [Relay](relay.md).
+Interchange) if one is usable, otherwise the home Core last recorded for it,
+otherwise the lowest usable region; it switches only to a clearly faster
+region. See [paths and relays](../concepts/paths-and-relays.md#relays) and
+[Relay](relay.md).
 
 ### DNS
 
-MeshTransit DNS answers the names in the map: Device names and the names of
-shared resources, with reverse records for overlay addresses. `meshd` runs
-the resolver on a local address and the host routes only the mesh domains to
-it (split DNS); other names keep using the host's resolvers, unless Core
-configured upstream resolvers for specific domains. On Android and iOS, DNS is not implemented
-yet.
+MeshTransit DNS answers the names in the map. `meshd` runs the resolver on a
+local address and the host routes only the mesh names to it (split DNS);
+other names keep using the host's resolvers. Today the map names only shared
+Devices; Device names of the node's own Network do not resolve yet. On Android
+and iOS, DNS is not implemented. See [DNS](../concepts/dns.md).
 
 ### Device aliases
 
