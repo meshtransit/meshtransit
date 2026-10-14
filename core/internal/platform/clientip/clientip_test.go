@@ -1,6 +1,7 @@
 package clientip
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"testing"
@@ -44,5 +45,35 @@ func TestResolverRejectsMalformedTrustedForwarding(t *testing.T) {
 	request.Header.Set("X-Forwarded-For", "not-an-ip")
 	if _, err := resolver.Resolve(request); err == nil {
 		t.Fatal("Resolve() accepted malformed trusted forwarding")
+	}
+}
+
+func TestForwardedByUntrustedPeer(t *testing.T) {
+	t.Parallel()
+	resolver, err := NewResolver([]netip.Prefix{netip.MustParsePrefix("10.108.0.0/16")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, test := range map[string]struct {
+		remote string
+		header string
+		want   bool
+	}{
+		"untrusted peer forwarding":       {remote: "203.0.113.7:443", header: "X-Forwarded-For", want: true},
+		"untrusted peer naming via a CDN": {remote: "203.0.113.7:443", header: "CF-Connecting-IP", want: true},
+		"untrusted peer without headers":  {remote: "203.0.113.7:443"},
+		"trusted proxy forwarding":        {remote: "10.108.3.4:443", header: "X-Forwarded-For"},
+		"unparseable peer":                {remote: "not-an-address", header: "X-Forwarded-For"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			request := &http.Request{RemoteAddr: test.remote, Header: http.Header{}}
+			if test.header != "" {
+				request.Header.Set(test.header, "198.51.100.9")
+			}
+			if got := resolver.ForwardedByUntrustedPeer(request); got != test.want {
+				t.Fatalf("ForwardedByUntrustedPeer() = %t, want %t", got, test.want)
+			}
+		})
 	}
 }

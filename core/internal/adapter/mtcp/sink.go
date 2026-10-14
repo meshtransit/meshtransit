@@ -84,6 +84,8 @@ func (sink *mapSink) sendSnapshotLocked(_ context.Context, snapshot mapsession.S
 	if err := sink.session.Send(sharedmtcp.MessageMapSnapshot, message); err != nil {
 		return err
 	}
+	// A map was authorized for this session: it serves a Device now.
+	sink.session.proveDevice()
 	sink.epoch, sink.seq, sink.acked = epoch, 1, 0
 	sink.adoptLocked(snapshot, grant)
 	return sink.sendTicketLocked(grant)

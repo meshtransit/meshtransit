@@ -29,12 +29,17 @@ import (
 const (
 	DefaultKeepalive   = 25 * time.Second
 	DefaultIdleTimeout = 75 * time.Second
-	DefaultMaxSessions = 4096
-	handshakeDeadline  = 10 * time.Second
-	writeTimeout       = 10 * time.Second
-	timestampWindow    = 10 * time.Minute
-	maxUnackedMap      = 8
-	maxKeyDocument     = 4 << 10
+	// DefaultUnprovenLimit is how long a session may stay open without
+	// proving a Device (mtcp-v1 §14): longer than a browser approval
+	// (10 min), so an approval requested when the session opens is never
+	// cut off. Nodes send each registration on a fresh session.
+	DefaultUnprovenLimit = 15 * time.Minute
+	DefaultMaxSessions   = 4096
+	handshakeDeadline    = 10 * time.Second
+	writeTimeout         = 10 * time.Second
+	timestampWindow      = 10 * time.Minute
+	maxUnackedMap        = 8
+	maxKeyDocument       = 4 << 10
 )
 
 var (
@@ -87,8 +92,15 @@ type Options struct {
 	// uses the mtcp-v1 §14 defaults).
 	HandshakeRate  int
 	HandshakeBurst int
-	Keepalive      time.Duration
-	IdleTimeout    time.Duration
+	// UnauthenticatedPerSource bounds a source's connections that serve no
+	// Device yet (zero derives it from the handshake rate and burst,
+	// mtcp-v1 §14).
+	UnauthenticatedPerSource int
+	Keepalive                time.Duration
+	IdleTimeout              time.Duration
+	// UnprovenLimit closes a session that has not proved a Device within it
+	// (zero: DefaultUnprovenLimit).
+	UnprovenLimit time.Duration
 	// DrainWindow spreads the reconnects of a shutdown: each session is told
 	// to come back after a random delay within it (zero: at once).
 	DrainWindow time.Duration
@@ -98,10 +110,11 @@ type Options struct {
 // Server serves MTCP on the control listener. It is an http.Handler for
 // the /mtcp/v1 paths; Shutdown closes and joins every session.
 type Server struct {
-	options   Options
-	keys      map[key.KeyID]ControlKey
-	admission *admission
-	recent    *timestampCache
+	options    Options
+	keys       map[key.KeyID]ControlKey
+	admission  *admission
+	recent     *timestampCache
+	forwarding forwardingWarning
 
 	mu        sync.Mutex
 	shutdown  bool
@@ -129,6 +142,9 @@ func NewServer(options Options) (*Server, error) {
 	if options.IdleTimeout <= options.Keepalive {
 		return nil, ErrInvalidServer
 	}
+	if options.UnprovenLimit <= 0 {
+		options.UnprovenLimit = DefaultUnprovenLimit
+	}
 	if options.Now == nil {
 		options.Now = time.Now
 	}
@@ -143,9 +159,11 @@ func NewServer(options Options) (*Server, error) {
 		return nil, ErrInvalidServer
 	}
 	options.Metrics.controlKeysExpire(options.Keys)
+	rate := handshakeLimit(options.HandshakeRate, defaultHandshakeRate)
+	burst := handshakeLimit(options.HandshakeBurst, defaultHandshakeBurst)
 	return &Server{options: options, keys: keys,
-		admission: newAdmission(handshakeLimit(options.HandshakeRate, defaultHandshakeRate),
-			handshakeLimit(options.HandshakeBurst, defaultHandshakeBurst), defaultUnauthPerIP, options.Now),
+		admission: newAdmission(rate, burst,
+			positiveOr(options.UnauthenticatedPerSource, defaultUnauthenticated(rate, burst)), options.Now),
 		recent: newTimestampCache(), byMachine: make(map[key.MachinePublic]*Session),
 		live: make(map[*Session]struct{})}, nil
 }
@@ -205,8 +223,8 @@ func (server *Server) serveKeys(response http.ResponseWriter, request *http.Requ
 }
 
 // pendingHandshake is an INIT admitted before cryptography. The source
-// stays counted as unauthenticated until the session is established; the
-// slot is held for the whole session.
+// stays counted as unauthenticated until the session proves a Device (its
+// first map snapshot) or ends; the slot is held for the whole session.
 type pendingHandshake struct {
 	init          []byte
 	control       ControlKey
@@ -226,6 +244,9 @@ func (server *Server) admit(response http.ResponseWriter, request *http.Request,
 	if err != nil {
 		http.Error(response, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return nil, false
+	}
+	if server.options.ClientIPs.ForwardedByUntrustedPeer(request) {
+		server.noteUntrustedForwarding(request.Context())
 	}
 	keyID, err := hex.DecodeString(request.Header.Get(sharedmtcp.HeaderKey))
 	if err != nil || len(keyID) != key.KeyIDSize {
@@ -505,6 +526,14 @@ func intersect(offered, supported []string) []string {
 		}
 	}
 	return both
+}
+
+// positiveOr returns configured, or fallback when it is not positive.
+func positiveOr(configured, fallback int) int {
+	if configured <= 0 {
+		return fallback
+	}
+	return configured
 }
 
 func handshakeLimit(configured int, fallback float64) float64 {

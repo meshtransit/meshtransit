@@ -97,6 +97,50 @@ func TestLoadControlMTCPHandshakeLimits(t *testing.T) {
 	}
 }
 
+func TestLoadControlMTCPUnauthenticatedLimits(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)
+	base := map[string]string{envControlMTCPKeyNotAfter: "2027-10-10T00:00:00Z"}
+	got, err := loadControlMTCPConfig(mapLookup(base), now, false)
+	if err != nil || got.UnauthenticatedPerSource != 150 || got.UnprovenLifetime != 15*time.Minute {
+		t.Fatalf("defaults = %d/%s, %v; want 150/15m", got.UnauthenticatedPerSource, got.UnprovenLifetime, err)
+	}
+	// The default follows raised handshake limits, up to its maximum.
+	for _, test := range []struct {
+		rate, burst string
+		want        int
+	}{{"100", "200", 200 + 100*10}, {"2000", "20000", 10000}} {
+		values := map[string]string{envControlMTCPKeyNotAfter: "2027-10-10T00:00:00Z",
+			envControlMTCPHandshakeRate: test.rate, envControlMTCPHandshakeBurst: test.burst}
+		if got, err := loadControlMTCPConfig(mapLookup(values), now, false); err != nil ||
+			got.UnauthenticatedPerSource != test.want {
+			t.Errorf("rate %s burst %s: unauthenticated = %d, %v; want %d", test.rate, test.burst,
+				got.UnauthenticatedPerSource, err, test.want)
+		}
+	}
+	raised := map[string]string{envControlMTCPKeyNotAfter: "2027-10-10T00:00:00Z",
+		envControlMTCPUnauthenticatedPerSource: "500", envControlMTCPUnprovenLifetime: "1h"}
+	if got, err := loadControlMTCPConfig(mapLookup(raised), now, false); err != nil ||
+		got.UnauthenticatedPerSource != 500 || got.UnprovenLifetime != time.Hour {
+		t.Fatalf("raised = %d/%s, %v", got.UnauthenticatedPerSource, got.UnprovenLifetime, err)
+	}
+	for _, test := range []struct{ name, value string }{
+		{envControlMTCPUnauthenticatedPerSource, "0"},
+		{envControlMTCPUnauthenticatedPerSource, "10001"},
+		{envControlMTCPUnauthenticatedPerSource, "many"},
+		// Shorter than a browser approval would cut registrations off.
+		{envControlMTCPUnprovenLifetime, "10m"},
+		{envControlMTCPUnprovenLifetime, "25h"},
+		{envControlMTCPUnprovenLifetime, "900"},
+	} {
+		values := map[string]string{envControlMTCPKeyNotAfter: "2027-10-10T00:00:00Z", test.name: test.value}
+		if _, err := loadControlMTCPConfig(mapLookup(values), now, false); err == nil ||
+			!strings.HasSuffix(err.Error(), ": "+test.name) || strings.Contains(err.Error(), test.value) {
+			t.Errorf("%s=%s: %v", test.name, test.value, err)
+		}
+	}
+}
+
 func TestLoadControlMTCPNextKeyExpiry(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)

@@ -16,6 +16,8 @@ type Metrics struct {
 	messages   *prometheus.CounterVec
 	streamEnds *prometheus.CounterVec
 	sheds      prometheus.Counter
+	unproven   prometheus.Counter
+	forwarding prometheus.Counter
 	keyExpiry  prometheus.Gauge
 }
 
@@ -54,6 +56,20 @@ func NewMetrics() *Metrics {
 			Name: "meshtransit_mtcp_sessions_shed_total",
 			Help: "MTCP sessions this replica asked to reconnect elsewhere to rebalance load.",
 		}),
+		// Watch, not page: a rising rate means sessions held open without
+		// registering, a slot-holding pattern; nodes whose key was not found
+		// also end here after the unproven lifetime.
+		unproven: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "meshtransit_mtcp_unproven_sessions_closed_total",
+			Help: "MTCP sessions closed because they proved no Device within the unproven limit.",
+		}),
+		// Alert on: rate(meshtransit_mtcp_untrusted_forwarding_total[15m]) > 0 for long:
+		// a reverse proxy missing from the trusted proxies. Clients that
+		// connect directly and send such headers themselves also count.
+		forwarding: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "meshtransit_mtcp_untrusted_forwarding_total",
+			Help: "MTCP requests whose client-forwarding headers were ignored because the peer is not a trusted proxy.",
+		}),
 		// Alert on: meshtransit_mtcp_control_key_not_after_timestamp_seconds - time() < 60 * 86400
 		// Past it nodes refuse the key and the control role no longer starts.
 		keyExpiry: prometheus.NewGauge(prometheus.GaugeOpts{
@@ -73,7 +89,7 @@ func NewMetrics() *Metrics {
 // Collectors returns the collectors to register.
 func (metrics *Metrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{metrics.handshakes, metrics.sessions, metrics.messages, metrics.streamEnds,
-		metrics.sheds, metrics.keyExpiry}
+		metrics.sheds, metrics.unproven, metrics.forwarding, metrics.keyExpiry}
 }
 
 // streamEnded counts a map stream end; a nil Metrics counts nothing.
@@ -100,9 +116,12 @@ func (metrics *Metrics) controlKeysExpire(keys []ControlKey) {
 	}
 	metrics.keyExpiry.Set(float64(latest.Unix()))
 }
-func (metrics *Metrics) sessionOpened() { metrics.sessions.Inc() }
-func (metrics *Metrics) sessionClosed() { metrics.sessions.Dec() }
-func (metrics *Metrics) shed(count int) { metrics.sheds.Add(float64(count)) }
+func (metrics *Metrics) sessionOpened()  { metrics.sessions.Inc() }
+func (metrics *Metrics) sessionClosed()  { metrics.sessions.Dec() }
+func (metrics *Metrics) shed(count int)  { metrics.sheds.Add(float64(count)) }
+func (metrics *Metrics) unprovenClosed() { metrics.unproven.Inc() }
+
+func (metrics *Metrics) untrustedForwarding() { metrics.forwarding.Inc() }
 
 func (metrics *Metrics) sent(t sharedmtcp.MessageType) {
 	metrics.messages.WithLabelValues("sent", fmt.Sprintf("%#02x", uint8(t))).Inc()

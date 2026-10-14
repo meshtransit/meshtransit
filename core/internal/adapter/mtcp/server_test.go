@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -404,6 +405,102 @@ func TestAdmissionShedsBeforeCryptography(t *testing.T) {
 	if !shed {
 		t.Fatal("a burst over the source rate was not shed with Retry-After")
 	}
+}
+
+func TestUnprovenSessionsCountAgainstTheirSource(t *testing.T) {
+	f := newFixture(t, nil)
+	// A generous rate, so only the unauthenticated count can refuse.
+	f.server.admission = newAdmission(1000, 1000, 2, time.Now)
+	for range 2 {
+		c, response, err := f.dial(dialOptions{})
+		if err != nil || c == nil {
+			t.Fatalf("dial: %v %v", response, err)
+		}
+		c.send(sharedmtcp.MessagePing, &mtcpv1.Ping{})
+		c.expect(sharedmtcp.MessagePong)
+	}
+	// Both sessions are established but serve no Device: the source is full.
+	if _, response, _ := f.dial(dialOptions{}); response == nil || response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("a third unproven connection from one source was admitted: %+v", response)
+	}
+	// Once a session proves a Device it no longer counts.
+	waitFor(t, func() bool { return f.handler.opened.Load() == 2 })
+	f.handler.last().proveDevice()
+	if c, response, err := f.dial(dialOptions{}); err != nil || c == nil {
+		t.Fatalf("dial after a session proved a Device: %v %v", response, err)
+	}
+}
+
+func TestUnprovenSessionClosesAtItsLimit(t *testing.T) {
+	f := newFixture(t, func(options *Options) { options.UnprovenLimit = 200 * time.Millisecond })
+	unproven, _, _ := f.dial(dialOptions{})
+	unproven.send(sharedmtcp.MessagePing, &mtcpv1.Ping{})
+	unproven.expect(sharedmtcp.MessagePong)
+	proven, _, _ := f.dial(dialOptions{})
+	proven.send(sharedmtcp.MessagePing, &mtcpv1.Ping{})
+	proven.expect(sharedmtcp.MessagePong)
+	waitFor(t, func() bool { return f.handler.opened.Load() == 2 })
+	f.handler.last().proveDevice()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, _, err := unproven.receive(); err != nil {
+			break // Core closed the session that proved no Device
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("an unproven session stayed open past its limit")
+		}
+	}
+	// The limit firing for the proven session closes nothing.
+	f.handler.last().closeUnproven()
+	proven.send(sharedmtcp.MessagePing, &mtcpv1.Ping{Nonce: []byte("still")})
+	if pong := proven.expect(sharedmtcp.MessagePong).(*mtcpv1.Pong); string(pong.GetNonce()) != "still" {
+		t.Fatalf("pong nonce %q", pong.GetNonce())
+	}
+}
+
+// pendingFrom reads the unauthenticated count of address's source.
+func (a *admission) pendingFrom(address netip.Addr) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if state, found := a.sources[sourceKey(address)]; found {
+		return state.pending
+	}
+	return 0
+}
+
+func TestUnprovenSessionsReturnTheirSourceCountOnEveryEnd(t *testing.T) {
+	f := newFixture(t, nil)
+	f.server.admission = newAdmission(1000, 1000, 8, time.Now)
+	loopback := netip.MustParseAddr("127.0.0.1")
+	pending := func(want int) {
+		t.Helper()
+		waitFor(t, func() bool { return f.server.admission.pendingFrom(loopback) == want })
+	}
+	// A node that hangs up before proving a Device.
+	closed, _, _ := f.dial(dialOptions{})
+	closed.send(sharedmtcp.MessagePing, &mtcpv1.Ping{})
+	closed.expect(sharedmtcp.MessagePong)
+	pending(1)
+	_ = closed.conn.Close()
+	pending(0)
+	// A session replaced by a newer one of the same machine.
+	machine, err := key.NewMachinePrivate(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		c, response, err := f.dial(dialOptions{machine: machine})
+		if err != nil || c == nil {
+			t.Fatalf("dial: %v %v", response, err)
+		}
+		c.send(sharedmtcp.MessagePing, &mtcpv1.Ping{})
+		c.expect(sharedmtcp.MessagePong)
+	}
+	pending(1)
+	// The remaining session proves a Device.
+	waitFor(t, func() bool { return f.handler.opened.Load() == 3 })
+	f.handler.last().proveDevice()
+	pending(0)
 }
 
 func TestIdleSessionCloses(t *testing.T) {

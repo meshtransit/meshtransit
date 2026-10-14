@@ -487,7 +487,7 @@ semantics. TLS, Noise, and enrollment private-key files must be purpose-separate
 | `MESHTRANSIT_CONTROL_TLS_PRIVATE_KEY_FILE` | none | Absolute path to the bounded TLS private-key PEM. |
 | `MESHTRANSIT_CONTROL_NOISE_PRIVATE_KEY_FILE` | none | Absolute path to the canonical, single-line MTCP control private key (`privkey:<hex>`). |
 | `MESHTRANSIT_CONTROL_MTCP_KEY_NOT_AFTER` | none | Required RFC 3339 expiry advertised for the control key in the MTCP key document; in the future and at most five years ahead. The control role logs a warning in the last 30 days and refuses to start after it: extend the date (same key) or rotate the key before then. |
-| `MESHTRANSIT_CONTROL_MTCP_TRUSTED_PROXY_CIDRS` | none | Comma-separated reverse-proxy prefixes whose `X-Forwarded-For` names the client for per-source admission. |
+| `MESHTRANSIT_CONTROL_MTCP_TRUSTED_PROXY_CIDRS` | none | Comma-separated reverse-proxy prefixes whose `X-Forwarded-For` names the client for per-source admission. See [Client addresses behind a reverse proxy](#client-addresses-behind-a-reverse-proxy). |
 | `MESHTRANSIT_CONTROL_MAP_SHARED_INVENTORY` | `true` | Read each Network's live Devices once per revision and share them between its Devices' maps (`false` reads every other Device for each map). |
 | `MESHTRANSIT_CONTROL_MAP_SHARED_CONNECTIVITY` | `true` | Keep one connectivity table per Network on each replica: a wakeup is read from Redis once per replica and each stream catches up from the table's change log (`false` makes every stream reread all its peers on each wakeup). |
 | `MESHTRANSIT_CONTROL_MAP_PEER_LIMIT` | `10000` | Most peers one map carries (100 through 10000). A Device whose policy authorizes more receives the peers that matter most: explicit Device shares, then peers online now, then a stable order; the subset is chosen again at every full refresh (revision change or reconcile). Packet rules only allow, so a peer left out never widens access. The Console shows the cut on the Devices page and warns in the policy preview. |
@@ -495,6 +495,8 @@ semantics. TLS, Noise, and enrollment private-key files must be purpose-separate
 | `MESHTRANSIT_CONTROL_MAP_SHARE_STATEMENT_TIMEOUT` | `10s` | Statement bound of a map's share readers when above `MESHTRANSIT_CONTROL_MAP_STATEMENT_TIMEOUT`, from 1ms through 1 minute. They read at most 10000 shares at about half a millisecond each, so a Device receiving thousands of shares needs more than the map's other reads; the request timeout still bounds the whole map. |
 | `MESHTRANSIT_CONTROL_MTCP_HANDSHAKE_RATE` | `10` | New MTCP handshakes per second per source (IPv4 address or IPv6 /64), from 1 through 10000, before any cryptography. Raise it where many Devices share one NAT. |
 | `MESHTRANSIT_CONTROL_MTCP_HANDSHAKE_BURST` | `50` | Handshake burst per source, from the rate through 100000. |
+| `MESHTRANSIT_CONTROL_MTCP_UNAUTHENTICATED_PER_SOURCE` | burst + 10 × rate (`150`) | Connections per source that serve no Device yet (handshakes in progress and sessions before their first map), from 1 through 10000. Sessions that received a map do not count. The default follows the handshake rate and burst, leaving room for a full burst plus 10 seconds of handshakes while first maps are slow (a reconnect after a restart, or many registrations at once from one NAT). |
+| `MESHTRANSIT_CONTROL_MTCP_UNPROVEN_SESSION_LIFETIME` | `15m` | How long a session may stay open without proving a Device, from 11 minutes through 24 hours. It must outlast a browser approval (10 minutes). |
 | `MESHTRANSIT_CONTROL_MTCP_ENABLED` | `true` | Accepted only as `true`, for existing deployments; MTCP is the only control protocol. |
 | `MESHTRANSIT_CONTROL_MAX_SESSIONS` | `1024` | Per-process connection and session admission cap from 1 through 16384. |
 | `MESHTRANSIT_CONTROL_HANDSHAKE_TIMEOUT` | `5s` | TLS and HTTP header deadline from 100ms through 30 seconds. |
@@ -533,6 +535,37 @@ handshake results, active sessions and message counts (`meshtransit_mtcp_*`)
 are exported only through the private operator
 `/metrics` endpoint. Result labels come from fixed internal sets and never
 contain machine identity, endpoint, credential, or request data.
+
+### Client addresses behind a reverse proxy
+
+The per-source MTCP limits count clients by address (an IPv4 address or an
+IPv6 /64). Core takes the client from `X-Forwarded-For` only when the TCP peer
+is in `MESHTRANSIT_CONTROL_MTCP_TRUSTED_PROXY_CIDRS`, and then uses the
+rightmost hop that is not itself a trusted proxy. From any other peer the
+header is ignored, so a client cannot pick its own source. `Forwarded`,
+`X-Real-IP` and `CF-Connecting-IP` are never read.
+
+| Deployment | Trusted proxies | Notes |
+| --- | --- | --- |
+| Core reached directly | leave unset | The peer address is the client. |
+| nginx, Caddy, Traefik or HAProxy in front | the proxy's addresses (its host or pod range) | The proxy must terminate HTTP and append the client to `X-Forwarded-For`. Caddy and Traefik do so by default; nginx needs `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` and HAProxy `option forwardfor`. A TCP or TLS passthrough proxy (HAProxy `mode tcp`, nginx `stream`) cannot name the client, and the PROXY protocol is not supported: every client then shares the proxy's address. |
+| Cloudflare directly in front of Core | [Cloudflare's published ranges](https://www.cloudflare.com/ips/) | Cloudflare appends the client to `X-Forwarded-For`. Keep the list current: a range Cloudflare adds later is treated as a client. |
+| Cloudflare, then a reverse proxy, then Core | the reverse proxy only | The proxy restores the client from `CF-Connecting-IP`, trusting it only from Cloudflare's ranges (nginx `real_ip_header` and `set_real_ip_from`), and forwards that address in `X-Forwarded-For`. |
+
+Never trust a prefix that ordinary clients connect from, such as
+`0.0.0.0/0`: each of them could then claim any source. The proxy must pass
+HTTP upgrades (or at least WebSocket, which is all Cloudflare passes; nodes
+fall back to it on their own, mtcp-v1 §2.3) and keep idle connections open
+longer than 75 seconds.
+
+A proxy missing from the trusted set does not break connections, but every
+client then shares the proxy's address and one busy source can fill the
+limits for all. Core reports it: requests that carry `X-Forwarded-For`,
+`Forwarded`, `X-Real-IP`, `CF-Connecting-IP` or `True-Client-IP` from an
+untrusted peer increment `meshtransit_mtcp_untrusted_forwarding_total`, and
+at most every 10 minutes log a warning with `error_code=mtcp_untrusted_forwarding`.
+Clients that connect directly and send such headers themselves count too, so
+alert on a sustained rate rather than a single increment.
 
 Enrollment credentials use the canonical transport grammar
 `mtc1.<credential-uuid>.<base64url-32-byte-token>`. The complete value is a

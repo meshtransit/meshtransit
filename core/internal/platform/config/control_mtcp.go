@@ -23,6 +23,21 @@ const (
 	defaultControlMTCPHandshakeBurst = 50
 	maxControlMTCPHandshakeRate      = 10000
 	maxControlMTCPHandshakeBurst     = 100000
+	// Connections per source that serve no Device yet: handshakes in progress
+	// and sessions without a map snapshot (mtcp-v1 §14). The default admits
+	// a full burst plus 10 seconds (the default map request timeout) at the
+	// handshake rate, so a slow Core paces a reconnect storm from one NAT
+	// instead of refusing it: 150 with the default rate and burst.
+	envControlMTCPUnauthenticatedPerSource = "MESHTRANSIT_CONTROL_MTCP_UNAUTHENTICATED_PER_SOURCE"
+	controlMTCPSnapshotAllowanceSeconds    = 10
+	maxControlMTCPUnauthenticatedPerSource = 10000
+	// How long a session may stay open without proving a Device. It must
+	// outlast a browser approval (10 min), so an approval requested when the
+	// session opens is never cut off.
+	envControlMTCPUnprovenLifetime     = "MESHTRANSIT_CONTROL_MTCP_UNPROVEN_SESSION_LIFETIME"
+	defaultControlMTCPUnprovenLifetime = 15 * time.Minute
+	minControlMTCPUnprovenLifetime     = 11 * time.Minute
+	maxControlMTCPUnprovenLifetime     = 24 * time.Hour
 	// The advertised key lifetime is bounded so a forgotten value cannot
 	// pin clients to one key indefinitely.
 	maxControlMTCPKeyLifetime = 5 * 365 * 24 * time.Hour
@@ -40,6 +55,10 @@ type ControlMTCPConfig struct {
 	// second, before any cryptography.
 	HandshakeRate  int
 	HandshakeBurst int
+	// UnauthenticatedPerSource bounds a source's connections that serve no
+	// Device yet; UnprovenLifetime closes a session that proves none.
+	UnauthenticatedPerSource int
+	UnprovenLifetime         time.Duration
 	// TrustedProxyPrefixes are the reverse proxies whose X-Forwarded-For
 	// names the client for per-source admission; empty uses the peer.
 	trustedProxyPrefixes []netip.Prefix
@@ -83,9 +102,21 @@ func loadControlMTCPConfig(lookup LookupFunc, now time.Time, hasNextKey bool) (C
 	if err != nil || burst < rate {
 		return ControlMTCPConfig{}, settingError(envControlMTCPHandshakeBurst)
 	}
+	unauthenticated, err := parseIntInRange(valueOrDefault(lookup, envControlMTCPUnauthenticatedPerSource,
+		strconv.Itoa(min(burst+rate*controlMTCPSnapshotAllowanceSeconds, maxControlMTCPUnauthenticatedPerSource))),
+		1, maxControlMTCPUnauthenticatedPerSource)
+	if err != nil {
+		return ControlMTCPConfig{}, settingError(envControlMTCPUnauthenticatedPerSource)
+	}
+	unprovenLifetime, err := time.ParseDuration(valueOrDefault(lookup, envControlMTCPUnprovenLifetime,
+		defaultControlMTCPUnprovenLifetime.String()))
+	if err != nil || unprovenLifetime < minControlMTCPUnprovenLifetime || unprovenLifetime > maxControlMTCPUnprovenLifetime {
+		return ControlMTCPConfig{}, settingError(envControlMTCPUnprovenLifetime)
+	}
 	if !nextNotAfter.IsZero() {
 		nextNotAfter = nextNotAfter.UTC()
 	}
 	return ControlMTCPConfig{KeyNotAfter: notAfter.UTC(), NextKeyNotAfter: nextNotAfter, HandshakeRate: rate, HandshakeBurst: burst,
+		UnauthenticatedPerSource: unauthenticated, UnprovenLifetime: unprovenLifetime,
 		trustedProxyPrefixes: proxies}, nil
 }

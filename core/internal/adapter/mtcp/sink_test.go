@@ -119,6 +119,27 @@ func testSession(t *testing.T) (*Session, *nodeView, key.ControlPrivate) {
 		asm: sharedmtcp.NewAssembler(sharedmtcp.CoreToNode)}, control
 }
 
+func TestSinkSnapshotProvesTheSessionsDevice(t *testing.T) {
+	session, node, control := testSession(t)
+	released := 0
+	session.releaseSource = func() { released++ }
+	sink := newMapSink(session, false, []ControlKey{{Private: control, NotAfter: time.Now().Add(time.Hour)}}, time.Now)
+	if session.proven.Load() {
+		t.Fatal("a session counted as proven before any map")
+	}
+	if err := sink.SendSnapshot(t.Context(), streamFixture(t, 7)); err != nil {
+		t.Fatal(err)
+	}
+	node.read() // KeyUpdate
+	node.read() // MapSnapshot
+	if err := sink.SendSnapshot(t.Context(), streamFixture(t, 8)); err != nil {
+		t.Fatal(err)
+	}
+	if !session.proven.Load() || released != 1 {
+		t.Fatalf("proven = %t, source released %d times; want true, once", session.proven.Load(), released)
+	}
+}
+
 func TestSinkSendsKeysFirstThenSnapshotAndDeltas(t *testing.T) {
 	session, node, control := testSession(t)
 	sink := newMapSink(session, false, []ControlKey{{Private: control, NotAfter: time.Now().Add(time.Hour)}}, time.Now)

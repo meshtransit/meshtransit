@@ -207,6 +207,8 @@ func startScaleControlOnly(t *testing.T, binary, healthAddress, controlAddress s
 		scaleEnvironmentOr("MESHTRANSIT_SCALE_HANDSHAKE_RATE", "2000"))
 	environment = setEnvironmentValue(environment, "MESHTRANSIT_CONTROL_MTCP_HANDSHAKE_BURST",
 		scaleEnvironmentOr("MESHTRANSIT_SCALE_HANDSHAKE_BURST", "20000"))
+	environment = setEnvironmentValue(environment, "MESHTRANSIT_CONTROL_MTCP_UNAUTHENTICATED_PER_SOURCE",
+		scaleEnvironmentOr("MESHTRANSIT_SCALE_UNAUTHENTICATED_PER_SOURCE", "10000"))
 	environment = setEnvironmentValue(environment, "MESHTRANSIT_POSTGRES_RUNTIME_MAX_CONNECTIONS",
 		scaleEnvironmentOr(scalePostgresPoolEnvironment, scaleDefaultPoolSize))
 	environment = setEnvironmentValue(environment, "MESHTRANSIT_REDIS_POOL_SIZE",

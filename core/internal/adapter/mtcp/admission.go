@@ -10,9 +10,21 @@ import (
 const (
 	defaultHandshakeRate  = 10 // per second per source address
 	defaultHandshakeBurst = 50
-	defaultUnauthPerIP    = 32
 	maxTrackedSources     = 1 << 16
+	// snapshotAllowanceSeconds is how long first maps may take while Core is
+	// slow but healthy: the default map request timeout. The default
+	// unauthenticated limit admits a full burst plus this long at the
+	// handshake rate, so a reconnect storm from one NAT is paced by the rate
+	// limit and not refused by the unauthenticated limit (150 by default).
+	snapshotAllowanceSeconds = 10
+	maxUnauthPerSource       = 10000
 )
+
+// defaultUnauthenticated is the unauthenticated limit for a handshake rate
+// and burst (mtcp-v1 §14).
+func defaultUnauthenticated(rate, burst float64) int {
+	return int(min(burst+rate*snapshotAllowanceSeconds, maxUnauthPerSource))
+}
 
 // admission limits new handshakes and unauthenticated connections per
 // source before any cryptography. IPv6 sources are grouped by /64.

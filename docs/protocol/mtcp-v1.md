@@ -668,14 +668,24 @@ Unknown names are ignored. Core sends a feature only when both sides list it.
 | Transport record | 65535 bytes |
 | Concurrent sessions per Core replica | configurable (default 4096) |
 | New handshakes per source (IPv4 address or IPv6 /64) | 10/s burst 50 by default, configurable; before any Noise work |
-| Unauthenticated connections per source IP | 32 |
+| Unauthenticated connections per source (IPv4 address or IPv6 /64) | handshakes in progress plus established sessions that have not yet received a map snapshot; by default the handshake burst plus 10 seconds at the handshake rate (150), configurable |
+| Lifetime of a session that receives no map snapshot | 15 minutes by default, configurable; longer than a browser approval (6.2), then the session closes |
 | Buffered outbound bytes per session | 16 MiB plus one snapshot in flight; beyond it the session closes |
 | Unacknowledged map messages | 8 (7.2) |
 | Reports | per type, section 8 |
 
 Core performs the X25519 operations of a handshake only after the source IP
 passed the rate limit, so a flood costs at most the configured handshake rate
-of CPU. The upgrade request itself is rejected (400/503) without any
+of CPU. A session counts as unauthenticated until Core sends it a map
+snapshot, which proves it serves an authorized Device. A source therefore
+cannot hold more than that many sessions that serve no Device, however long
+it keeps them alive with Pings, and none of them lives past the unproven
+lifetime. Sessions that received a map do not count, so the limit does not
+grow with the number of Devices behind one address. It does count Devices
+that are still waiting for their first map: the default leaves room for a
+full burst and 10 seconds of handshakes (the default map request timeout), so
+a reconnect storm from one NAT is paced by the handshake rate rather than
+refused while Core is slow. The upgrade request itself is rejected (400/503) without any
 cryptographic work when headers are malformed or the replica is shedding load.
 
 ## 15. Errors
@@ -714,6 +724,7 @@ secrets or other tenants' data, and is at most 512 bytes.
 | C14 | Registering someone else's public node or disco key | Uniqueness against current and retired keys; proof of possession bound to the handshake hash |
 | C15 | Stolen machine key renews an expired Device | `auth.resume` only before expiry unless policy enables auto-renewal |
 | C16 | Shared peers reveal another Workspace's data | Foreign peers carry no owner or provider names; foreign Network revisions never listed |
+| C17 | One source holds every session slot of a replica with sessions that never register, kept alive by Pings | Such sessions count as unauthenticated for their source until they receive a map, bounded per source, and close after the unproven lifetime (section 14) |
 
 ## 17. Test vectors
 

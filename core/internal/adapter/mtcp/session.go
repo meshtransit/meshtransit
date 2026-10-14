@@ -19,6 +19,9 @@ var (
 	// ErrSessionReplaced ends a session that a newer one for the same
 	// machine key replaced.
 	ErrSessionReplaced = errors.New("mtcp: session replaced")
+	// errSessionUnproven ends a session that proved no Device within the
+	// unproven limit (mtcp-v1 §14).
+	errSessionUnproven = errors.New("mtcp: session proved no Device in time")
 	// ErrIdle ends a session that received nothing within the idle timeout.
 	ErrIdle = errors.New("mtcp: session idle")
 	// ErrProtocol ends a session whose peer broke the protocol.
@@ -47,6 +50,12 @@ type Session struct {
 	ctx    context.Context
 	cancel context.CancelCauseFunc
 	once   sync.Once
+
+	// releaseSource stops counting the session against its source's
+	// unauthenticated connections (mtcp-v1 §14); proveDevice runs it once.
+	releaseSource func()
+	proveOnce     sync.Once
+	proven        atomic.Bool
 }
 
 func newSession(server *Server, transport recordConn, noise *sharedmtcp.Session, control key.ControlPrivate,
@@ -143,7 +152,30 @@ type inbound struct {
 
 // run waits for the first TRANSPORT record, which establishes the session,
 // then serves it until either side ends it (mtcp-v1 §3, §5).
-func (session *Session) run(parent context.Context, establishBy time.Time, established func()) {
+// proveDevice records that the session serves an authorized Device: it no
+// longer counts against its source, and it may stay open past the
+// unproven limit. Sending the first map snapshot proves it.
+func (session *Session) proveDevice() {
+	session.proveOnce.Do(func() {
+		session.proven.Store(true)
+		if session.releaseSource != nil {
+			session.releaseSource()
+		}
+	})
+}
+
+// closeUnproven ends a session that did not prove a Device in time.
+func (session *Session) closeUnproven() {
+	if session.proven.Load() || session.ctx.Err() != nil {
+		return // proved, or already ending for another reason
+	}
+	session.server.options.Metrics.unprovenClosed()
+	session.close(errSessionUnproven)
+}
+
+// run serves the session. releaseSource is called once the session proves a
+// Device; the caller releases the source again, idempotently, when run ends.
+func (session *Session) run(parent context.Context, establishBy time.Time, releaseSource func()) {
 	session.ctx, session.cancel = context.WithCancelCause(context.WithoutCancel(parent))
 	defer session.close(context.Canceled)
 	assembler := sharedmtcp.NewAssembler(sharedmtcp.NodeToCore)
@@ -161,7 +193,9 @@ func (session *Session) run(parent context.Context, establishBy time.Time, estab
 		return
 	}
 	defer session.server.forget(session)
-	established()
+	session.releaseSource = releaseSource
+	unproven := time.AfterFunc(session.server.options.UnprovenLimit, session.closeUnproven)
+	defer unproven.Stop()
 	session.server.options.Metrics.handshake("established")
 
 	conversation := session.server.options.Handler.Open(session)

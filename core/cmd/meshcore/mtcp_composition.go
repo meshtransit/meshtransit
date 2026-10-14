@@ -139,6 +139,9 @@ func composeMTCP(
 		Metrics:        metrics,
 		HandshakeRate:  controlConfig.MTCP.HandshakeRate,
 		HandshakeBurst: controlConfig.MTCP.HandshakeBurst,
+		// Sessions that serve no Device yet, and how long they may last.
+		UnauthenticatedPerSource: controlConfig.MTCP.UnauthenticatedPerSource,
+		UnprovenLimit:            controlConfig.MTCP.UnprovenLifetime,
 		// MTCP connections count against the listener's connection bound.
 		MaxSessions: controlConfig.MaxSessions,
 		DrainWindow: controlConfig.DrainWindow,

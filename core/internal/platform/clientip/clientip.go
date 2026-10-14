@@ -92,6 +92,35 @@ func (resolver Resolver) trusted(address netip.Addr) bool {
 	return false
 }
 
+// forwardingHeaders are the headers reverse proxies and CDNs use to name the
+// client. Their presence on a request from an untrusted peer suggests a
+// proxy that should be listed as trusted.
+var forwardingHeaders = []string{"X-Forwarded-For", "Forwarded", "X-Real-IP", "CF-Connecting-IP", "True-Client-IP"}
+
+// ForwardedByUntrustedPeer reports whether a request from a peer that is not
+// a trusted proxy carries a client-forwarding header. The header is ignored
+// either way; this only detects a reverse proxy missing from the trusted set,
+// which would make every client share the proxy's address.
+func (resolver Resolver) ForwardedByUntrustedPeer(request *http.Request) bool {
+	if request == nil {
+		return false
+	}
+	host, _, err := net.SplitHostPort(request.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	peer, err := netip.ParseAddr(host)
+	if err != nil || resolver.trusted(peer.Unmap()) {
+		return false
+	}
+	for _, header := range forwardingHeaders {
+		if request.Header.Get(header) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // TrustedProxies returns a copy of the trusted proxy prefixes.
 func (resolver Resolver) TrustedProxies() []netip.Prefix {
 	return slices.Clone(resolver.trustedProxyPrefixes)
