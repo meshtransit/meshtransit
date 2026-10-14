@@ -371,6 +371,8 @@ WHERE aggregate_kind='device' AND aggregate_public_id=$1::UUID
 	assertPostgreSQLBrowserHandover(ctx, t, admin, runtime, intentStore, approvalStore,
 		completionStore, deploymentID, recoveryEpoch, sessionDigest,
 		selectedNetwork, identity, hostname, completed)
+	assertPostgreSQLBrowserHostnameRelease(ctx, t, admin, runtime, intentStore, approvalStore,
+		completionStore, deploymentID, recoveryEpoch, sessionDigest, selectedNetwork)
 
 }
 

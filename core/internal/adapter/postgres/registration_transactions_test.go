@@ -68,6 +68,7 @@ func TestRegistrationTransactionCreatesCompleteAtomicMutation(t *testing.T) {
 		lockRegistrationAddressFloorSQL,
 		loadRegistrationLeasesSQL,
 		setRegistrationChangeSQL,
+		releaseRegistrationHostnameSQL,
 		insertRegistrationDeviceSQL,
 		insertRegistrationMachineKeySQL,
 		insertRegistrationNodeKeySQL,
@@ -84,10 +85,18 @@ func TestRegistrationTransactionCreatesCompleteAtomicMutation(t *testing.T) {
 		t.Fatalf("database call order mismatch\ngot:  %#v\nwant: %#v", got, wantCalls)
 	}
 	hostnameCall := findRegistrationCall(t, database.calls, registrationHostnamesTakenSQL)
-	if len(hostnameCall.arguments) != 4 ||
+	if len(hostnameCall.arguments) != 5 ||
 		!reflect.DeepEqual(hostnameCall.arguments[2], []string{command.Hostname.String()}) ||
-		hostnameCall.arguments[3] != nil {
-		t.Fatalf("hostname arguments = %#v, want the requested hostname alone first", hostnameCall.arguments)
+		hostnameCall.arguments[3] != nil || hostnameCall.arguments[4] != int64(11) {
+		t.Fatalf("hostname arguments = %#v, want the requested hostname alone first, for the issuer",
+			hostnameCall.arguments)
+	}
+	// The name chosen is released from a revoked Device that may give it up,
+	// for the same owner, right before the Device is written.
+	releaseCall := findRegistrationCall(t, database.calls, releaseRegistrationHostnameSQL)
+	if len(releaseCall.arguments) != 5 || releaseCall.arguments[3] != nil ||
+		releaseCall.arguments[4] != int64(11) {
+		t.Fatalf("release arguments = %#v", releaseCall.arguments)
 	}
 	floorCall := findRegistrationCall(t, database.calls, storeRegistrationAddressFloorSQL)
 	if !reflect.DeepEqual(floorCall.arguments, []any{int64(501), "100.64.1.2/32", "100.64.1.0/24"}) {
@@ -121,6 +130,7 @@ func TestRegistrationTransactionResumesWithoutReplacingKeysOrLeases(t *testing.T
 		*destinations[4].(*int64) = 5
 		*destinations[5].(*[]byte) = append([]byte(nil), machineKey[:]...)
 		*destinations[6].(*[]byte) = append([]byte(nil), nodeKey[:]...)
+		*destinations[10].(*int64) = 12 // owned by someone other than the key's issuer
 		return nil
 	}}
 	database.enqueueRows(lockRegistrationDeviceLeasesSQL, &registrationTestRows{scans: []func(...any) error{
@@ -186,6 +196,12 @@ func TestRegistrationTransactionResumesWithoutReplacingKeysOrLeases(t *testing.T
 	evidenceCall := findRegistrationCall(t, database.calls, appendRegistrationEvidenceSQL)
 	if evidenceCall.arguments[10] != "device.resumed" {
 		t.Fatalf("resume audit action = %#v, want device.resumed", evidenceCall.arguments[10])
+	}
+	// A resume names the Device on its owner's behalf, not the key issuer's.
+	for _, query := range []string{registrationHostnamesTakenSQL, releaseRegistrationHostnameSQL} {
+		if call := findRegistrationCall(t, database.calls, query); call.arguments[4] != int64(12) {
+			t.Fatalf("hostname owner = %v, want the Device's owner", call.arguments[4])
+		}
 	}
 }
 

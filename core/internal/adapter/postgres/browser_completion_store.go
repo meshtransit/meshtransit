@@ -45,6 +45,17 @@ const insertBrowserCompletionDeviceSQL = `INSERT INTO mesh.device (
     'active', $9::TIMESTAMPTZ, $9::TIMESTAMPTZ
 ) RETURNING id, version`
 
+// countRecentBrowserDevicesSQL counts the Devices a person added to the
+// Network by signing in since $4, whatever their state now. It runs under
+// the Network revision lock, which orders every registration of the Network.
+const countRecentBrowserDevicesSQL = `SELECT pg_catalog.count(*)
+FROM mesh.device
+WHERE registered_by_principal_id = $3::BIGINT
+  AND workspace_id = $1::BIGINT
+  AND network_id = $2::BIGINT
+  AND registered_by_kind = 'principal'
+  AND created_at > pg_catalog.transaction_timestamp() - ($4::BIGINT * INTERVAL '1 millisecond')`
+
 const finishBrowserIntentSQL = `SELECT mesh_ops.complete_browser_registration_intent_v1(
     $1::UUID, $2::UUID, $3::UUID, $4::BYTEA, $5::BYTEA, $6::BYTEA
 )`
@@ -291,6 +302,11 @@ func completeApprovedBrowserRegistration(
 	if err != nil {
 		return registration.Result{}, err
 	}
+	if !resumed {
+		if err := checkNewDeviceLimit(ctx, tx, authority); err != nil {
+			return registration.Result{}, err
+		}
+	}
 	disposition := registration.DispositionCreated
 	if resumed {
 		id, parseErr := publicid.Parse(existing.publicID)
@@ -309,6 +325,7 @@ func completeApprovedBrowserRegistration(
 	if resumed {
 		helper.locked.device = existing
 	}
+	helper.locked.hostnameOwner = authority.principalInternalID
 	if err := helper.selectHostname(ctx, &helper.locked, requestedHostname); err != nil {
 		return registration.Result{}, err
 	}
@@ -360,6 +377,9 @@ func completeApprovedBrowserRegistration(
 			return registration.Result{}, errors.Join(ErrRegistrationEvidence, err)
 		}
 	} else {
+		if err := helper.releaseHostname(ctx, selectedHostname); err != nil {
+			return registration.Result{}, err
+		}
 		if err := tx.QueryRow(ctx, insertBrowserCompletionDeviceSQL,
 			ids.device.String(), authority.workspaceInternalID, authority.networkInternalID,
 			authority.profileInternalID, authority.principalInternalID,
@@ -509,6 +529,25 @@ func appendBrowserCompletionEvidence(
 		semanticHash[:], auditPayload, outboxPayload,
 	).Scan(&sequence); err != nil || sequence != head.nextSequence {
 		return errors.Join(ErrRegistrationEvidence, err)
+	}
+	return nil
+}
+
+// checkNewDeviceLimit refuses a new Device for a person who already added
+// registration.NewDeviceLimit to the Network within its window.
+func checkNewDeviceLimit(ctx context.Context, tx registrationDatabaseTransaction, authority browserCompletionAuthority) error {
+	var recent int64
+	if err := tx.QueryRow(ctx, countRecentBrowserDevicesSQL,
+		authority.workspaceInternalID, authority.networkInternalID, authority.principalInternalID,
+		registration.NewDeviceWindow.Milliseconds(),
+	).Scan(&recent); err != nil {
+		return errors.Join(ErrRegistrationEvidence, err)
+	}
+	if recent < 0 {
+		return ErrRegistrationEvidence
+	}
+	if recent >= registration.NewDeviceLimit {
+		return registration.ErrNewDeviceLimit
 	}
 	return nil
 }

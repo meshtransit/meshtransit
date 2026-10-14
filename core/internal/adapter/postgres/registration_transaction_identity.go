@@ -98,6 +98,11 @@ func (transaction *registrationTransaction) resolveOpen(
 	if err := transaction.lockAuditHead(ctx, &locked); err != nil {
 		return registrationLockedState{}, err
 	}
+	// A new Device belongs to the key's issuer; a resumed one keeps its owner.
+	locked.hostnameOwner = locked.credential.issuerInternalID
+	if locked.device.internalID > 0 {
+		locked.hostnameOwner = locked.device.ownerInternalID
+	}
 	if err := transaction.selectHostname(ctx, &locked, command.Hostname); err != nil {
 		return registrationLockedState{}, err
 	}
@@ -136,6 +141,7 @@ func (transaction *registrationTransaction) lockExistingDevice(
 		&record.hostnameLocked,
 		&record.workspaceOwned,
 		&record.expiresAt,
+		&record.ownerInternalID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return node.ID{}, nil
@@ -146,7 +152,7 @@ func (transaction *registrationTransaction) lockExistingDevice(
 	machineKey := command.Identity.MachineKey().Bytes()
 	nodeKey := command.Identity.NodeKey().Bytes()
 	if record.internalID <= 0 || record.profileInternalID != locked.profileInternalID() ||
-		record.version <= 0 ||
+		record.version <= 0 || record.ownerInternalID <= 0 ||
 		subtle.ConstantTimeCompare(record.machineKey, machineKey[:]) != 1 ||
 		subtle.ConstantTimeCompare(record.nodeKey, nodeKey[:]) != 1 {
 		return node.ID{}, registration.ErrIntentConflict

@@ -11,5 +11,7 @@ func RegistrationAllocationPlanStatements() map[string]string {
 		"reclaimable address": lowestReclaimableRegistrationAddressSQL,
 		"lease window":        loadRegistrationLeasesSQL,
 		"hostname candidates": registrationHostnamesTakenSQL,
+		"hostname release":    releaseRegistrationHostnameSQL,
+		"recent Devices":      countRecentBrowserDevicesSQL,
 	}
 }

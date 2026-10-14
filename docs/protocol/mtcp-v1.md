@@ -684,6 +684,7 @@ Unknown names are ignored. Core sends a feature only when both sides list it.
 | New handshakes per source (IPv4 address or IPv6 /64) | 10/s burst 50 by default, configurable; before any Noise work |
 | Unauthenticated connections per source (IPv4 address or IPv6 /64) | handshakes in progress plus established sessions that have not yet received a map snapshot; by default the handshake burst plus 10 seconds at the handshake rate (150), configurable |
 | Node key changes per Device | 4 per hour (6.3); over it `Error{NOT_PERMITTED, retry_after_ms}` |
+| New Devices a person adds to one Network by browser sign-in | 20 per 24 hours, revoked ones included; over it `Rejected{NOT_PERMITTED}`. Resuming a Device is not adding one. |
 | `RegisterRequest` and `RotateNodeKey` per session | 4 at once, then 1 per second; over it `Error{OVERLOADED, retry_after_ms}` |
 | Lifetime of a session that receives no map snapshot | 15 minutes by default, configurable; longer than a browser approval (6.2), then the session closes |
 | Buffered outbound bytes per session | 16 MiB plus one snapshot in flight; beyond it the session closes |

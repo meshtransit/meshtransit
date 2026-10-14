@@ -238,6 +238,8 @@ func (conversation *conversation) registerInteractively(ctx context.Context, mac
 			return conversation.reject(expiredApproval)
 		case errors.Is(err, ipam.ErrAddressExhausted):
 			return conversation.reject(networkFull)
+		case errors.Is(err, registration.ErrNewDeviceLimit):
+			return conversation.reject(newDeviceLimit)
 		case err != nil:
 			return conversation.sendError(mtcpv1.Error_INTERNAL, "registration unavailable", 2000)
 		case found:
@@ -273,8 +275,13 @@ func (conversation *conversation) registerInteractively(ctx context.Context, mac
 	return nil
 }
 
+// networkFull leaves out adding an address range: no API does that yet.
 var networkFull = rejection{code: mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED,
-	message: "the Network has no free address; its administrator can add an address range"}
+	message: "the Network has no free address; an administrator can remove Devices that are no longer used, " +
+		"whose addresses become free a day later"}
+
+var newDeviceLimit = rejection{code: mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED,
+	message: "you added too many new Devices to this Network in the last day; try again later"}
 
 var expiredApproval = rejection{code: mtcpv1.RegisterResponse_Rejected_EXPIRED,
 	message: "the approval is unknown or has expired; start a new one"}
@@ -369,8 +376,17 @@ func (conversation *conversation) checkApproval(ctx context.Context, pending app
 	result, found, err := conversation.application.options.BrowserApproval.CompleteBrowser(ctx, pending.machine,
 		pending.keys.node, pending.hostname, pending.url)
 	if err != nil {
-		if errors.Is(err, control.ErrInvalidBrowserRegistration) {
+		switch {
+		case errors.Is(err, control.ErrInvalidBrowserRegistration):
 			_ = conversation.reject(expiredApproval)
+			return true
+		// Neither ends by itself within an approval: answer instead of
+		// retrying on every tick.
+		case errors.Is(err, ipam.ErrAddressExhausted):
+			_ = conversation.reject(networkFull)
+			return true
+		case errors.Is(err, registration.ErrNewDeviceLimit):
+			_ = conversation.reject(newDeviceLimit)
 			return true
 		}
 		return false // transient; checked again on the next tick

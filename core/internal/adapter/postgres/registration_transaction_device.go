@@ -15,6 +15,9 @@ func (transaction *registrationTransaction) persistRegistrationDevice(
 	hostname node.Hostname,
 	expiresAt time.Time,
 ) (internalID int64, version int64, resultErr error) {
+	if err := transaction.releaseHostname(ctx, hostname); err != nil {
+		return 0, 0, err
+	}
 	if change.Disposition() == registration.DispositionResumed {
 		internalID = transaction.locked.device.internalID
 		if err := transaction.database.QueryRow(

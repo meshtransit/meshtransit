@@ -205,6 +205,9 @@ type registrationDeviceRecord struct {
 	hostnameLocked bool
 	workspaceOwned bool
 	expiresAt      time.Time
+	// ownerInternalID owns the Device; a resume names it on the owner's
+	// behalf, whoever issued the enrollment key.
+	ownerInternalID int64
 }
 
 type registrationLockedState struct {
@@ -218,8 +221,11 @@ type registrationLockedState struct {
 	currentInventoryRevision int64
 	audit                    registrationAuditHead
 	hostname                 node.Hostname
-	prefixes                 []registrationPrefix
-	activeLeaseFamilies      map[int]struct{}
+	// hostnameOwner owns the Device being registered; a name a revoked
+	// Device of the same owner holds is free for it at once.
+	hostnameOwner       int64
+	prefixes            []registrationPrefix
+	activeLeaseFamilies map[int]struct{}
 }
 
 func registrationBytes32(value []byte) ([32]byte, error) {

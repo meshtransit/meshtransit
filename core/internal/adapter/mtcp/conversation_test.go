@@ -127,6 +127,7 @@ type fakeBrowser struct {
 	mu       sync.Mutex
 	approved bool
 	result   registration.Result
+	err      error    // what completing an approval fails with, if set
 	issued   []string // follow-up URL of each issue call
 }
 
@@ -148,7 +149,16 @@ func (browser *fakeBrowser) CompleteBrowser(_ context.Context, _ control.Authent
 	if followupURL != testApprovalOrigin+approvalPath+"token-1" {
 		return registration.Result{}, false, control.ErrInvalidBrowserRegistration
 	}
+	if browser.err != nil {
+		return registration.Result{}, false, browser.err
+	}
 	return browser.result, browser.approved, nil
+}
+
+func (browser *fakeBrowser) fail(err error) {
+	browser.mu.Lock()
+	defer browser.mu.Unlock()
+	browser.err = err
 }
 
 func (browser *fakeBrowser) approve() {
@@ -503,6 +513,42 @@ func TestInteractiveRegistrationWaitsForApproval(t *testing.T) {
 	f.expectStream(node.Key(request.GetNodeKey()))
 	if f.expect(sharedmtcp.MessageRegisterResponse).(*mtcpv1.RegisterResponse).GetAuthorized() == nil {
 		t.Fatal("no authorized response after the approval")
+	}
+}
+
+func TestInteractiveRegistrationAnswersLastingRefusals(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		err     error
+		message string
+	}{
+		{errors.Join(control.ErrBrowserRegistrationUnavailable, registration.ErrNewDeviceLimit), newDeviceLimit.message},
+		{errors.Join(control.ErrBrowserRegistrationUnavailable, ipam.ErrAddressExhausted), networkFull.message},
+	} {
+		// While the approval is awaited: answered once, not retried each tick.
+		f := newConversationFixture(t, sharedmtcp.MessageRegisterRequest)
+		f.run()
+		if err := f.talk.Receive(t.Context(), sharedmtcp.MessageRegisterRequest, f.request(4, interactiveAuth(""))); err != nil {
+			t.Fatal(err)
+		}
+		f.expect(sharedmtcp.MessageRegisterResponse)
+		f.browser.fail(test.err)
+		rejected := f.expect(sharedmtcp.MessageRegisterResponse).(*mtcpv1.RegisterResponse).GetRejected()
+		if rejected.GetCode() != mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED || rejected.GetMessage() != test.message {
+			t.Fatalf("awaited approval answered %v", rejected)
+		}
+		// On a resume after a reconnect.
+		resumed := newConversationFixture(t, sharedmtcp.MessageRegisterRequest)
+		resumed.run()
+		resumed.browser.fail(test.err)
+		if err := resumed.talk.Receive(t.Context(), sharedmtcp.MessageRegisterRequest,
+			resumed.request(4, interactiveAuth("token-1"))); err != nil {
+			t.Fatal(err)
+		}
+		rejected = resumed.expect(sharedmtcp.MessageRegisterResponse).(*mtcpv1.RegisterResponse).GetRejected()
+		if rejected.GetCode() != mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED || rejected.GetMessage() != test.message {
+			t.Fatalf("resumed approval answered %v", rejected)
+		}
 	}
 }
 

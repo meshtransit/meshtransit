@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 157 {
-		t.Fatalf("len(Catalog()) = %d, want 157", len(catalog))
+	if len(catalog) != 158 {
+		t.Fatalf("len(Catalog()) = %d, want 158", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 157 {
-		t.Fatalf("LatestVersion() = %d, want 157", LatestVersion())
+	if LatestVersion() != 158 {
+		t.Fatalf("LatestVersion() = %d, want 158", LatestVersion())
 	}
 }
 
@@ -4001,6 +4001,26 @@ func TestRegistrationAddressFloor(t *testing.T) {
 		"ON mesh.device"} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 157 must not contain %q", forbidden)
+		}
+	}
+}
+
+func TestRegistrationRecentDevices(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[157]
+	if migration.Version != 158 {
+		t.Fatalf("migration 158 = %+v", migration)
+	}
+	want := "CREATE INDEX device_registered_principal_recent_idx\n" +
+		"    ON mesh.device (registered_by_principal_id, workspace_id, network_id, created_at)\n" +
+		"    WHERE registered_by_kind = 'principal';"
+	if !strings.Contains(migration.SQL, want) {
+		t.Errorf("schema 158 must contain %q", want)
+	}
+	// An index alone: no function, grant or row change.
+	for _, forbidden := range []string{"FUNCTION", "GRANT", "UPDATE ", "DELETE ", "DROP ", "ALTER "} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 158 must not contain %q", forbidden)
 		}
 	}
 }

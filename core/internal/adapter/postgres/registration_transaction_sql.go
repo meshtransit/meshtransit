@@ -57,7 +57,8 @@ const lockRegistrationDeviceSQL = `SELECT
     node_key.public_key,
     device.hostname_locked,
     device.ownership = 'workspace',
-    device.expires_at
+    device.expires_at,
+    device.owner_principal_id
 FROM mesh.device_machine_key_epoch AS machine
 JOIN mesh.device AS device
   ON device.workspace_id = machine.workspace_id
@@ -88,6 +89,25 @@ FROM mesh_audit.lock_network_stream_head()`
 // created after mesh.device was last analyzed is rated at about one row,
 // and the planner may then probe another Workspace-led index and filter the
 // Workspace's Devices until autovacuum analyzes the table again.
+// releasableHostnamePredicate matches a Device (as device) whose hostname a
+// registration for owner $5 may take: one revoked a day ago, as long as its
+// address is held, or revoked at any time by the same owner, so signing in
+// again after logging out keeps the name. The Device keeps its row, state
+// and history; only its hostname_key is released.
+const releasableHostnamePredicate = `device.state = 'revoked' AND (
+        device.owner_principal_id = $5::BIGINT
+        OR EXISTS (
+            SELECT 1 FROM mesh.device_machine_key_epoch AS machine
+            WHERE machine.workspace_id = device.workspace_id
+              AND machine.network_id = device.network_id
+              AND machine.device_id = device.id
+              AND machine.epoch = device.current_machine_key_epoch
+              AND machine.state = 'revoked'
+              AND machine.valid_until <= pg_catalog.transaction_timestamp()
+                  - mesh_ops.node_address_quarantine_v1()
+        )
+    )`
+
 const registrationHostnamesTakenSQL = `SELECT probe.hostname_key
 FROM pg_catalog.unnest($3::TEXT[]) AS candidate(hostname_key)
 CROSS JOIN LATERAL (
@@ -98,8 +118,24 @@ CROSS JOIN LATERAL (
       AND device.hostname_key = candidate.hostname_key
       AND device.deleted_at IS NULL
       AND ($4::BIGINT IS NULL OR device.id <> $4::BIGINT)
+      AND NOT (` + releasableHostnamePredicate + `)
     LIMIT 1
 ) AS probe`
+
+// releaseRegistrationHostnameSQL frees $3 from the revoked Device holding
+// it, if any, before a registration writes it. The marker contains ':',
+// which no hostname does, so it never collides with a real one. updated_at
+// stays: it dates the revocation for older readers (address reclaim of
+// Devices revoked before schema 143, relay revocation listing).
+const releaseRegistrationHostnameSQL = `UPDATE mesh.device AS device
+SET hostname_key = 'released:' || device.public_id::TEXT,
+    version = device.version + 1
+WHERE device.workspace_id = $1::BIGINT
+  AND device.network_id = $2::BIGINT
+  AND device.hostname_key = $3::TEXT
+  AND device.deleted_at IS NULL
+  AND ($4::BIGINT IS NULL OR device.id <> $4::BIGINT)
+  AND ` + releasableHostnamePredicate
 
 const lockRegistrationPrefixesSQL = `SELECT *
 FROM mesh_ops.lock_registration_prefixes($1::BIGINT)`

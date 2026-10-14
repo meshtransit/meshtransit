@@ -49,7 +49,7 @@ func (transaction *registrationTransaction) selectHostname(
 		if err != nil {
 			return errors.Join(ErrRegistrationAllocation, err)
 		}
-		taken, err := transaction.takenHostnames(ctx, candidates, excludedDeviceID)
+		taken, err := transaction.takenHostnames(ctx, candidates, excludedDeviceID, locked.hostnameOwner)
 		if err != nil {
 			return err
 		}
@@ -71,7 +71,11 @@ func (transaction *registrationTransaction) takenHostnames(
 	ctx context.Context,
 	candidates []node.Hostname,
 	excludedDeviceID any,
+	owner int64,
 ) (map[string]struct{}, error) {
+	if owner <= 0 {
+		return nil, ErrRegistrationEvidence
+	}
 	values := make([]string, len(candidates))
 	for index, candidate := range candidates {
 		values[index] = candidate.String()
@@ -83,6 +87,7 @@ func (transaction *registrationTransaction) takenHostnames(
 		transaction.networkInternalID,
 		values,
 		excludedDeviceID,
+		owner,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("look up candidate hostnames: %w", err)
@@ -197,4 +202,36 @@ func (transaction *registrationTransaction) lockDeviceLeaseFamilies(
 // are stored in.
 func hostPrefix(address netip.Addr) string {
 	return netip.PrefixFrom(address, address.BitLen()).String()
+}
+
+// releaseHostname frees hostname from a revoked Device that may give it up
+// (releasableHostnamePredicate) right before the registration writes it.
+// It runs after the change context is set, so the audit captures it.
+func (transaction *registrationTransaction) releaseHostname(
+	ctx context.Context,
+	hostname node.Hostname,
+) error {
+	var excludedDeviceID any
+	if transaction.locked.device.internalID > 0 {
+		excludedDeviceID = transaction.locked.device.internalID
+	}
+	if transaction.locked.hostnameOwner <= 0 {
+		return ErrRegistrationEvidence
+	}
+	result, err := transaction.database.Exec(
+		ctx,
+		releaseRegistrationHostnameSQL,
+		transaction.workspaceInternalID,
+		transaction.networkInternalID,
+		hostname.String(),
+		excludedDeviceID,
+		transaction.locked.hostnameOwner,
+	)
+	if err != nil {
+		return fmt.Errorf("release hostname of a revoked Device: %w", err)
+	}
+	if result.RowsAffected() > 1 {
+		return ErrRegistrationEvidence // hostname keys are unique among live rows
+	}
+	return nil
 }

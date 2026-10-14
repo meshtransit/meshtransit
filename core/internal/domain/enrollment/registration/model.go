@@ -10,6 +10,13 @@ import (
 	"meshtransit.net/core/internal/domain/node"
 )
 
+// A person may add at most NewDeviceLimit Devices to one Network by signing
+// in within NewDeviceWindow; resuming or handing over a Device is not adding.
+const (
+	NewDeviceLimit  = 20
+	NewDeviceWindow = 24 * time.Hour
+)
+
 var (
 	// ErrInvalidCommand reports an incomplete registration request.
 	ErrInvalidCommand = errors.New("registration: invalid command")
@@ -21,6 +28,11 @@ var (
 	ErrInvalidResult = errors.New("registration: invalid result")
 	// ErrIntentConflict reports reuse of an intent ID with different authenticated semantics.
 	ErrIntentConflict = errors.New("registration: intent conflict")
+	// ErrNewDeviceLimit reports a person who added NewDeviceLimit Devices to
+	// the Network within NewDeviceWindow by signing in. It bounds a sign-in
+	// loop that would fill the Network's address range, since a revoked
+	// Device's address is held for a day; a person never reaches it otherwise.
+	ErrNewDeviceLimit = errors.New("registration: too many new Devices")
 )
 
 // Command is an authenticated, server-scoped credential registration request.

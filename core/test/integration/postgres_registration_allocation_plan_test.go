@@ -107,7 +107,12 @@ ON CONFLICT (network_prefix_id) DO UPDATE SET floor_address = EXCLUDED.floor_add
 	}
 	hostnameChecks := []allocationPlanCheck{
 		{"hostname candidates", "hostname candidates",
-			[]any{shareScaleWorkspace, side.network, []string{taken, "unseeded-name.example"}, nil}, 1, allocationRows},
+			[]any{shareScaleWorkspace, side.network, []string{taken, "unseeded-name.example"}, nil, int64(1)}, 1, allocationRows},
+		// The name is live, so nothing is released; the probe stays a probe.
+		{"hostname release", "hostname release",
+			[]any{shareScaleWorkspace, side.network, taken, nil, int64(1)}, 0, allocationRows},
+		{"recent Devices", "recent Devices",
+			[]any{shareScaleWorkspace, side.network, int64(1), int64(24 * 60 * 60 * 1000)}, 1, allocationRows},
 	}
 	run := func(checks []allocationPlanCheck) {
 		for _, mode := range []string{"auto", "force_generic_plan"} {
