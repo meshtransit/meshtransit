@@ -9,6 +9,8 @@
 - AGENTS.md: repository-wide rules for coding agents
 - core/AGENTS.md, core/README.md: control plane
 - client/AGENTS.md, client/README.md: meshd, meshnetd, meshcred, meshctl
-- docs/client/architecture.md, docs/client/security-model.md: client design
+- docs/README.md: documentation index; docs/glossary.md: terms
+- docs/architecture/: overview, Core, client and relay architecture
+- docs/client/security-model.md: client security model
 - docs/protocol/: protocol specifications (MTCP, MTRP, disco, audit records)
 - docs/core/: Core design notes

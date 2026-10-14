@@ -418,11 +418,11 @@ and a node sends fewer acks than map messages. Core does not count acks
 against a session's message budget (section 14), so a node that acknowledges
 every message still works. Core keeps at most 8
 unacknowledged map messages per session. When that window is full, Core stops
-sending and coalesces pending changes; if they exceed 8 MiB, or the window
-stays full for 60 s, it discards them and sends one fresh snapshot (new epoch)
-once the node acknowledges. The pending delta budget (8 MiB) and the one
-snapshot in flight are exempt from the 16 MiB outbound cap of section 14. A slow node therefore costs bounded memory and gets a
-correct (if later) map.
+sending; changes that commit meanwhile are coalesced into the next delta, or
+into a full reread of the node's view. If the window stays full for 60 s, Core
+ends the stream; the node reconnects and receives a fresh snapshot (new
+epoch). A slow node therefore costs bounded memory and gets a correct (if
+later) map.
 
 ### 7.3 Contents
 

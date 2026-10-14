@@ -44,7 +44,7 @@ at any past moment, and is recorded in a tamper-evident audit trail.
 | [`api/`](api/) | Management API (OpenAPI) and protocol contracts | Apache-2.0 |
 | `test/` | Shared test infrastructure, including the NAT traversal lab (`test/natlab`) | Apache-2.0 |
 | [`packaging/`](packaging/) | Linux packages (deb) and service units | Apache-2.0 |
-| [`docs/`](docs/) | Protocol specifications, architecture and client documents | Apache-2.0 |
+| [`docs/`](docs/README.md) | Architecture, protocol specifications and design documents | Apache-2.0 |
 | [`hack/`](hack/) | Development, CI and supply-chain scripts | Apache-2.0 |
 
 The web Console, the Helm chart and the website live in separate repositories.
@@ -54,7 +54,7 @@ The web Console, the Helm chart and the website live in separate repositories.
 Requires the Go version declared in [`go.mod`](go.mod).
 
 ```bash
-make build            # bin/meshcore, bin/meshd, bin/meshnetd, bin/meshcred, bin/meshctl
+make build            # bin/meshcore, bin/meshrelay, bin/meshd, bin/meshnetd, bin/meshcred, bin/meshctl
 make test             # unit tests for every component
 make quality          # formatting, vet, race tests, lint, vulnerabilities, boundaries
 make integration-platform-container   # Core integration tests on PostgreSQL and Redis
