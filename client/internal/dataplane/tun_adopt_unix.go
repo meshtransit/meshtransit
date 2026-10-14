@@ -14,16 +14,34 @@ import (
 	"meshtransit.net/client/internal/netadmin"
 )
 
-// acquireTUN adopts the TUN descriptor meshnetd opened for meshd.
+// acquireTUN adopts the TUN descriptor meshnetd opened for meshd, or takes
+// the device a mobile platform's VPN interface gave the app (client/mobile).
 func acquireTUN(tunValue netadmin.TUN, logger *slog.Logger) (tun.Device, error) {
 	if tunValue.Device != nil {
-		return nil, errors.New("dataplane: an in-process tun is unsupported here")
+		return inProcessTUN(tunValue)
 	}
 
 	return adoptPrivilegedTUNDescriptor(tunValue.File, tunValue.MTU, inheritedTUNOpenerFor(logger))
 }
 
+// AdoptTUN wraps a TUN descriptor configured outside meshd, such as by a
+// mobile platform's VPN API, in a WireGuard TUN device of the given MTU. It
+// takes file: file is closed whether or not it succeeds.
+func AdoptTUN(file *os.File, mtu int, logger *slog.Logger) (tun.Device, error) {
+	device, err := adoptPrivilegedTUNDescriptor(file, mtu, inheritedTUNOpenerFor(logger))
+	if err != nil && file != nil {
+		_ = file.Close()
+	}
+	return device, err
+}
+
+// inheritedTUNOpener wraps a descriptor in a TUN device. On failure the
+// caller closes the descriptor, unless the error is errDescriptorTaken.
 type inheritedTUNOpener func(int) (tun.Device, string, error)
+
+// errDescriptorTaken reports an opener failure after the opener took the
+// descriptor: something else (an os.File's finalizer) will close it.
+var errDescriptorTaken = errors.New("dataplane: the tun opener kept the descriptor")
 
 // adoptPrivilegedTUNDescriptor transfers a helper-configured TUN descriptor
 // into the unprivileged packet engine without attempting privileged link
@@ -52,9 +70,10 @@ func adoptPrivilegedTUNDescriptor(
 
 	tunDevice, actualName, err := open(descriptor)
 	if err != nil {
-		if tunDevice != nil {
+		switch {
+		case tunDevice != nil:
 			_ = tunDevice.Close()
-		} else {
+		case !errors.Is(err, errDescriptorTaken):
 			_ = unix.Close(descriptor)
 		}
 
