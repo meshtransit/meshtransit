@@ -118,6 +118,12 @@ func (b *sharedBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 
 		return nil, 0, errors.New("dataplane: wireguard bind returned invalid socket metadata")
 	}
+	// Before Open returns: wireguard-go sends nothing on a bind until then.
+	if err := protectBindSockets(b.inner); err != nil {
+		_ = b.inner.Close()
+
+		return nil, 0, err
+	}
 	if b.relay != nil {
 		if err := b.relay.Open(); err != nil {
 			_ = b.inner.Close()

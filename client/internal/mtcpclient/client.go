@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"meshtransit.net/client/internal/controlplane"
+	"meshtransit.net/client/internal/underlay"
 	"meshtransit.net/shared/key"
 	sharedmtcp "meshtransit.net/shared/mtcp"
 )
@@ -30,6 +31,9 @@ const (
 	maxKeyDocument   = 4 << 10
 	userAgent        = "meshd"
 	controlHTTPSPort = "443"
+	// dialTimeout and dialKeepAlive are net/http's defaults.
+	dialTimeout   = 30 * time.Second
+	dialKeepAlive = 30 * time.Second
 )
 
 var (
@@ -59,6 +63,9 @@ func New() *Client {
 	transport.DisableCompression = true
 	transport.Proxy = nil
 	transport.MaxResponseHeaderBytes = maxKeyDocument
+	dialer := underlay.Dialer(dialTimeout)
+	dialer.KeepAlive = dialKeepAlive
+	transport.DialContext = dialer.DialContext
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
 	transport.TLSClientConfig = tlsConfig.Clone()
 	return &Client{
@@ -77,7 +84,7 @@ func New() *Client {
 }
 
 func dialTLS(ctx context.Context, address string, config *tls.Config) (net.Conn, error) {
-	dialer := &tls.Dialer{NetDialer: &net.Dialer{Timeout: requestTimeout}, Config: config}
+	dialer := &tls.Dialer{NetDialer: underlay.Dialer(requestTimeout), Config: config}
 	return dialer.DialContext(ctx, "tcp", address)
 }
 

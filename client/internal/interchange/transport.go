@@ -16,6 +16,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"meshtransit.net/client/internal/underlay"
 	"meshtransit.net/shared/mtrp"
 )
 
@@ -68,8 +69,7 @@ func (e endpoint) tlsAddr() string {
 type udpTransport struct{ conn *net.UDPConn }
 
 func dialUDP(ctx context.Context, e endpoint) (transport, error) {
-	var d net.Dialer
-	conn, err := d.DialContext(ctx, "udp", e.udpAddr().String())
+	conn, err := underlay.Dialer(0).DialContext(ctx, "udp", e.udpAddr().String())
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +115,7 @@ type streamTransport struct {
 func dialTLS(ctx context.Context, e endpoint) (transport, error) {
 	ctx, cancel := context.WithTimeout(ctx, streamDialTO)
 	defer cancel()
-	d := tls.Dialer{Config: tlsConfig(e.host, alpnMTRP)}
+	d := tls.Dialer{NetDialer: underlay.Dialer(0), Config: tlsConfig(e.host, alpnMTRP)}
 	conn, err := d.DialContext(ctx, "tcp", e.tlsAddr())
 	if err != nil {
 		return nil, err
@@ -174,8 +174,7 @@ func dialWebSocket(ctx context.Context, e endpoint) (transport, error) {
 		ForceAttemptHTTP2: false,
 		Proxy:             http.ProxyFromEnvironment,
 		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			var d net.Dialer
-			return d.DialContext(ctx, network, e.tlsAddr())
+			return underlay.Dialer(0).DialContext(ctx, network, e.tlsAddr())
 		},
 	}}
 	url := "wss://" + net.JoinHostPort(e.host, strconv.Itoa(int(e.tlsPort))) + wsPath

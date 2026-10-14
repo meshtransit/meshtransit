@@ -22,6 +22,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"meshtransit.net/client/internal/underlay"
 )
 
 // Platform is a cloud provider recognised from DMI data.
@@ -103,6 +105,7 @@ func NewClient() *Client {
 	return newClient(metadataBase, &http.Client{
 		Transport: &http.Transport{
 			Proxy:                  nil,
+			DialContext:            underlay.Dialer(0).DialContext,
 			DisableKeepAlives:      true,
 			ResponseHeaderTimeout:  requestTimeout,
 			MaxResponseHeaderBytes: 16 << 10,

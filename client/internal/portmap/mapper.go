@@ -3,6 +3,7 @@ package portmap
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -10,6 +11,8 @@ import (
 	"slices"
 	"sync"
 	"time"
+
+	"meshtransit.net/client/internal/underlay"
 )
 
 // Mapper states reported in Status.
@@ -125,8 +128,17 @@ func newMapper(options Options, clients []client) *Mapper {
 	}
 }
 
-func listenUDP(_ context.Context, local netip.Addr) (PacketConn, error) {
-	return net.ListenUDP("udp4", net.UDPAddrFromAddrPort(netip.AddrPortFrom(local, 0)))
+func listenUDP(ctx context.Context, local netip.Addr) (PacketConn, error) {
+	conn, err := underlay.ListenConfig().ListenPacket(ctx, "udp4", netip.AddrPortFrom(local, 0).String())
+	if err != nil {
+		return nil, fmt.Errorf("portmap: listening on udp: %w", err)
+	}
+	udp, ok := conn.(*net.UDPConn)
+	if !ok {
+		_ = conn.Close()
+		return nil, errors.New("portmap: not a UDP socket")
+	}
+	return udp, nil
 }
 
 func signal(channel chan struct{}) {

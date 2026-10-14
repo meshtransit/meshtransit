@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"meshtransit.net/client/internal/underlay"
 )
 
 // UPnP IGD service types, most capable first.
@@ -97,6 +99,7 @@ func newUPnPHTTPClient() *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
 			Proxy:                  nil,
+			DialContext:            underlay.Dialer(0).DialContext,
 			DisableKeepAlives:      true,
 			ResponseHeaderTimeout:  upnpRequestTimeout,
 			MaxResponseHeaderBytes: 16 << 10,

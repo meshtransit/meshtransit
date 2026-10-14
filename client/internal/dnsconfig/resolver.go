@@ -7,13 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/netip"
 	"slices"
 	"strings"
 	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
+
+	"meshtransit.net/client/internal/underlay"
 )
 
 const (
@@ -488,7 +489,7 @@ func exchangeUDP(ctx context.Context, query []byte, resolver netip.AddrPort) ([]
 	if resolver.Addr().Is6() {
 		network = "udp6"
 	}
-	connection, err := (&net.Dialer{}).DialContext(ctx, network, resolver.String())
+	connection, err := underlay.Dialer(0).DialContext(ctx, network, resolver.String())
 	if err != nil {
 		return nil, fmt.Errorf("dialing udp: %w", err)
 	}
@@ -521,7 +522,7 @@ func exchangeTCP(ctx context.Context, query []byte, resolver netip.AddrPort) ([]
 	if resolver.Addr().Is6() {
 		network = "tcp6"
 	}
-	connection, err := (&net.Dialer{}).DialContext(ctx, network, resolver.String())
+	connection, err := underlay.Dialer(0).DialContext(ctx, network, resolver.String())
 	if err != nil {
 		return nil, fmt.Errorf("dialing tcp: %w", err)
 	}
