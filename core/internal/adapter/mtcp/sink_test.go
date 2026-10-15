@@ -307,7 +307,7 @@ func TestSinkSendsDNSOnlyWhenItChanged(t *testing.T) {
 		next    mapsession.Snapshot
 		records int // A records the delta carries; -1: no DNS
 	}{
-		{next: connected(8, 9, "100.64.0.2"), records: -1},             // a peer key changed, not its name
+		{next: connected(8, 9, "100.64.0.2"), records: -1},              // a peer key changed, not its name
 		{next: connected(9, 9, "100.64.0.2", "100.64.0.3"), records: 3}, // a peer joined
 		{next: connected(10, 20, "100.64.0.2", "100.64.0.3"), records: -1},
 	}
