@@ -56,7 +56,7 @@ func assertPostgreSQLPolicyInactiveDevice(ctx context.Context, t *testing.T, adm
 		deviceGroups = append(deviceGroups, created.Group)
 	}
 	group, otherGroup := deviceGroups[0].ID, deviceGroups[1].ID
-	resourceID, resourceGroupID := inactiveDeviceResources(ctx, t, admin, runtimePool, owner, scope, leaving)
+	resourceID, resourceGroupID, otherResourceGroupID := inactiveDeviceResources(ctx, t, admin, runtimePool, owner, scope, leaving)
 
 	rule := func(params compilation.RuleIntentParams) compilation.RuleIntent {
 		t.Helper()
@@ -135,6 +135,29 @@ func assertPostgreSQLPolicyInactiveDevice(ctx context.Context, t *testing.T, adm
 			t.Fatalf("%s naming a revoked Device: %v, want ErrDeviceUnavailable", refused.name, err)
 		}
 	}
+	assertActiveCompiledRuleCounts(ctx, t, admin, 3, 2)
+	assertActiveResourceDestinationCounts(ctx, t, admin, 1, 1)
+
+	// A kept Resource Group rule moved to another group on the same Device
+	// compiles to the same Device rule, so only the Resource Group attach
+	// function can refuse it.
+	movedGroupRule := rule(compilation.RuleIntentParams{
+		ID: resourceGroupRule.ID(), SourceNodeID: staying, DestinationGroupID: otherResourceGroupID,
+	})
+	movedRules := make([]compilation.RuleIntent, 0, len(kept))
+	for _, keptRule := range kept {
+		if keptRule.ID() != movedGroupRule.ID() {
+			movedRules = append(movedRules, keptRule)
+		}
+	}
+	if err := publishIntegrationRulesError(ctx, t, runtimePool, owner, scope, fixturePolicyRevision(ctx, t, admin),
+		append(movedRules, movedGroupRule)...); !errors.Is(err, publication.ErrDeviceUnavailable) ||
+		!refusedBy(err, "attach_policy_resource_group_destinations") {
+		t.Errorf("Resource Group rule moved to another group: %v (context %q), want MTP05 from the Resource Group attach",
+			err, postgresWhere(err))
+	}
+	assertForgedDestinationHistoryRefused(ctx, t, admin, resourceRule.ID(), resourceGroupRule.ID(),
+		staying, leaving, resourceID, resourceGroupID)
 	assertActiveCompiledRuleCounts(ctx, t, admin, 3, 2)
 	assertActiveResourceDestinationCounts(ctx, t, admin, 1, 1)
 

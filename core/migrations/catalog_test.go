@@ -4475,6 +4475,8 @@ func TestPolicyGoneDeviceDestinations(t *testing.T) {
 		{"AND previous.policy_revision = release_policy_revision - 1\n      AND previous.state = 'superseded';", 4},
 		// A new or changed rule for a gone Device is MTP05 in every function.
 		{"ERRCODE = 'MTP05'", 6},
+		// Every function tells a left-out rule by its projection ID.
+		{"WHERE attached.public_id = rule.projection_public_id", 6},
 		{"GRANT EXECUTE ON FUNCTION mesh_ops.attach_policy_resource_destinations(UUID, TIMESTAMPTZ, JSONB) TO mesh_runtime;", 1},
 		{"GRANT EXECUTE ON FUNCTION mesh_ops.attach_policy_group_rules_v2(UUID, TIMESTAMPTZ, JSONB) TO mesh_runtime;", 1},
 	} {

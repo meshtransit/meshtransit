@@ -360,9 +360,8 @@ BEGIN
                 WHERE side.node_public_id IS NOT NULL
                   AND NOT EXISTS (
                     SELECT 1
-                    FROM mesh.compiled_policy_rule AS inserted
-                    WHERE inserted.public_id = rule.projection_public_id
-                      AND inserted.policy_release_id = new_release_id
+                    FROM mesh.compiled_policy_rule AS attached
+                    WHERE attached.public_id = rule.projection_public_id
                   )
                   AND NOT EXISTS (
                     SELECT 1
@@ -559,7 +558,7 @@ BEGIN
         -- that is gone, is new or changed: refuse it as such.
         IF EXISTS (
             SELECT 1 FROM pg_catalog.jsonb_to_recordset(p_rules) AS rule(
-                access_rule_public_id UUID, source_node_public_id UUID, destination_node_public_id UUID
+                projection_public_id UUID, source_node_public_id UUID, destination_node_public_id UUID
             )
             CROSS JOIN LATERAL (VALUES
                 (rule.source_node_public_id), (rule.destination_node_public_id)
@@ -567,8 +566,7 @@ BEGIN
             WHERE side.node_public_id IS NOT NULL
               AND NOT EXISTS (
                   SELECT 1 FROM mesh.compiled_policy_group_rule AS attached
-                  WHERE attached.policy_release_id = v_release.id
-                    AND attached.access_rule_public_id = rule.access_rule_public_id
+                  WHERE attached.public_id = rule.projection_public_id
               )
               AND NOT EXISTS (
                   SELECT 1 FROM mesh.device AS device
@@ -1871,10 +1869,7 @@ BEGIN
               AND NOT EXISTS (
                     SELECT 1
                     FROM mesh.compiled_policy_imported_resource_destination AS attached
-                    WHERE attached.workspace_id = scoped_workspace_id
-                      AND attached.network_id = scoped_network_id
-                      AND attached.policy_release_id = release_internal_id
-                      AND attached.access_rule_public_id = rule.access_rule_public_id
+                    WHERE attached.public_id = rule.projection_public_id
                   )
               AND NOT EXISTS (
                     SELECT 1
@@ -2392,10 +2387,7 @@ BEGIN
               AND NOT EXISTS (
                     SELECT 1
                     FROM mesh.compiled_policy_imported_resource_destination AS attached
-                    WHERE attached.workspace_id = scoped_workspace_id
-                      AND attached.network_id = scoped_network_id
-                      AND attached.policy_release_id = release_internal_id
-                      AND attached.access_rule_public_id = rule.access_rule_public_id
+                    WHERE attached.public_id = rule.projection_public_id
                   )
               AND NOT EXISTS (
                     SELECT 1

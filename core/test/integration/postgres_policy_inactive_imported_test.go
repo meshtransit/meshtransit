@@ -7,12 +7,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"meshtransit.net/core/internal/domain/sharing"
 )
 
@@ -100,9 +98,43 @@ WHERE workspace_id = 103 AND network_id = 204 AND public_id = $1::UUID`, source)
 	published("with an expired source Device", kept, suspended, expired)
 	setSource("state = 'revoked'")
 	published("with a revoked source Device", kept, suspended, expired)
-	err = publish(kept, suspended, expired, newCorrelationID(t).String())
-	if postgresError, ok := errors.AsType[*pgconn.PgError](err); !ok || postgresError.Code != "MTP05" {
-		t.Fatalf("%s new rule for a revoked source Device: %v, want MTP05", function, err)
+	attach := "attach_policy_imported_resource_destinations_internal_v1"
+	if function == "publish_compiled_policy_v2" {
+		attach = "attach_policy_imported_resource_destinations_internal_v2"
+	}
+	if err := publish(kept, suspended, expired, newCorrelationID(t).String()); !refusedBy(err, attach) {
+		t.Errorf("%s new rule for a revoked source Device: %v (context %q), want MTP05 from %s",
+			function, err, postgresWhere(err), attach)
+	}
+	// The share allows TCP 443 only, so a kept rule changed in protocol,
+	// ports or Imported Resource cannot be sent through the share; the
+	// active release's row is rewritten instead, as if the rule had been
+	// different, and resending the rule must then be refused.
+	for _, change := range []struct{ name, assignment string }{
+		{"another protocol", "protocol = 'udp'"},
+		{"other ports", "destination_ports = '{[444,445)}'"},
+		{"another Imported Resource", `imported_resource_id = COALESCE((
+    SELECT other.id FROM mesh.imported_resource AS other
+    WHERE other.workspace_id = 103 AND other.network_id = 204 AND other.id <> carried.imported_resource_id
+    ORDER BY other.id LIMIT 1), carried.imported_resource_id + 1000000)`},
+	} {
+		savepoint, err := transaction.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		forgeActiveReleaseRow(ctx, t, savepoint, `UPDATE mesh.compiled_policy_imported_resource_destination AS carried
+SET `+change.assignment+`
+FROM mesh.policy_release AS release
+WHERE release.id = carried.policy_release_id
+  AND release.workspace_id = 103 AND release.network_id = 204 AND release.state = 'active'
+  AND carried.access_rule_public_id = $1::UUID`, kept)
+		if err := publish(kept, suspended, expired); !refusedBy(err, attach) {
+			t.Errorf("%s kept rule with %s for a revoked source Device: %v (context %q), want MTP05 from %s",
+				function, change.name, err, postgresWhere(err), attach)
+		}
+		if err := savepoint.Rollback(ctx); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
