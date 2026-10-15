@@ -43,9 +43,9 @@ type flowState struct {
 }
 
 // policyFilter enforces the node-specific inbound policy and keeps a bounded
-// table of flows initiated by this node so their replies can return. Headscale
-// reduces packet filters to destinations owned by the receiving node, so
-// outbound authorization is enforced by the destination node.
+// table of flows initiated by this node so their replies can return. Packet
+// filters are reduced to destinations owned by the receiving node, so outbound
+// authorization is enforced by the destination node.
 type policyFilter struct {
 	mu            sync.Mutex
 	self          map[netip.Addr]struct{}

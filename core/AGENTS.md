@@ -39,16 +39,16 @@ protocol specification.
 ## Clean-room and compatibility boundaries
 
 This repository MUST NOT copy, port, translate, or mechanically rewrite
-Headscale source code. It MUST NOT depend on Headscale packages, schemas,
-migrations, generated files, binaries, internal IDs, configuration models, or
-runtime behavior.
+source code of any third-party VPN control plane. It MUST NOT depend on such a
+project's packages, schemas, migrations, generated files, binaries, internal
+IDs, configuration models, or runtime behavior.
 
-The sibling `../headscale` checkout is a read-only interoperability reference.
-It may be inspected to understand externally observable legacy behavior, but it
-is not an architecture template. Never copy its files, comments, tests, SQL,
-types, package layout, or control flow. Express a required observation first as
-a product-owned specification or sanitized black-box fixture, then implement it
-independently.
+Any third-party control-plane implementation is a read-only interoperability
+reference. It may be inspected to understand externally observable legacy
+behavior, but it is not an architecture template. Never copy its files,
+comments, tests, SQL, types, package layout, or control flow. Express a required
+observation first as a product-owned specification or sanitized black-box
+fixture, then implement it independently.
 
 The MeshTransit client in `client/` (formerly the `meshd` repository) is the implementation reference
 for currently supported client behavior. Before changing a client-facing
@@ -549,7 +549,8 @@ Before merge, run all relevant gates plus:
 - integration and conformance suites with test caching disabled;
 - parser/compiler fuzz smoke tests and scheduled extended fuzzing;
 - OpenAPI/protocol backward-compatibility and generated-file checks;
-- import-boundary checks that reject Headscale and any module outside
+- import-boundary checks that reject third-party control-plane modules and any
+  module outside
   `hack/allowed-modules.txt`;
 - migration lint, clean-install, upgrade, mixed-version, RLS/grant, query-plan,
   backup/restore, and rollback tests;
@@ -620,7 +621,8 @@ A change is complete only when:
 - intended behavior and invariants are explicit and tested;
 - client, API, schema, security, HA, and self-host compatibility impacts are
   resolved;
-- no Headscale dependency or legacy type leaks beyond the permitted adapter;
+- no third-party control-plane dependency or legacy type leaks beyond the
+  permitted adapter;
 - exact scope, idempotency, transaction, revision, audit, outbox, and Redis-loss
   behavior are correct;
 - failure, cancellation, retry, cleanup, and concurrency behavior are bounded;
@@ -631,7 +633,7 @@ A change is complete only when:
 - there is no unresolved Critical/High security finding, silent waiver, or
   ambiguous authority behavior.
 
-Renaming Headscale concepts is not a rewrite. The Core is complete only when
+Renaming legacy concepts is not a rewrite. The Core is complete only when
 MeshTransit owns its domain model, policy language, management API, database,
 protocol contracts, security properties, HA behavior, performance envelope,
 self-hosting experience, migration, and operational lifecycle.
@@ -640,8 +642,9 @@ self-hosting experience, migration, and operational lifecycle.
 
 Never:
 
-- copy or mechanically translate Headscale code;
-- import Headscale or any module outside `hack/allowed-modules.txt`;
+- copy or mechanically translate third-party control-plane code;
+- import a third-party control-plane module or any module outside
+  `hack/allowed-modules.txt`;
 - trust a client-provided Workspace, Network, role, group, route, endpoint, or
   capability as authority;
 - implement sharing by merging Networks or exposing ambiguous overlapping

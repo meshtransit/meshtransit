@@ -17,7 +17,7 @@ the `samber/cc-skills-golang@golang-how-to` skill first.
 - MeshTransit speaks its own MTCP/MTRP protocols; never copy code from other
   VPN products. Dependencies come only from the reviewed
   `hack/allowed-modules.txt`, which `make check-boundaries` enforces.
-- Never copy Headscale source code, schemas or migrations.
+- Never copy third-party control-plane source code, schemas or migrations.
 - Shared protocol code (MTCP, MTRP, disco, keys) belongs in `shared/` with a
   language-independent specification under `docs/`.
 - Cryptography uses standard constructions only (Noise, Ed25519, X25519,
