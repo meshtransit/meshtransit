@@ -1,6 +1,9 @@
 package node
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 // ErrInvalidDNSLabel reports a value that is not one canonical Device DNS label.
 var ErrInvalidDNSLabel = errors.New("node: invalid DNS label")
@@ -30,6 +33,58 @@ func (label DNSLabel) String() string { return label.value }
 func (label DNSLabel) IsValid() bool {
 	_, err := ParseDNSLabel(label.value)
 	return err == nil
+}
+
+// fallbackDNSLabel names a Device whose hostname gives no usable label, and
+// prefixes an all-digit or reserved one.
+const fallbackDNSLabel = "device"
+
+// reservedDNSLabels are names hosts and browsers look up on their own (proxy
+// and tunnel autodiscovery, local host names, common service names). A
+// Device's label is completed with the Network's zone as search domain, so a
+// Device must never claim one of them: it is prefixed with "device-".
+var reservedDNSLabels = map[string]struct{}{
+	"autoconfig": {}, "autodiscover": {}, "broadcasthost": {}, "dns": {}, "gateway": {}, "imap": {},
+	"ip6-localhost": {}, "ip6-loopback": {}, "isatap": {}, "local": {}, "localdomain": {}, "localhost": {},
+	"mail": {}, "ns": {}, "ntp": {}, "pop": {}, "proxy": {}, "router": {}, "smtp": {}, "wpad": {}, "www": {},
+}
+
+// DeriveDNSLabel is the label a hostname gives before deduplication; the
+// database's mesh_ops.derive_device_dns_label_v1 computes the same. It takes
+// the first hostname label, lowercased, replaces each run of other
+// characters with one hyphen (so no label starts with an IDNA "xn--"
+// prefix), trims hyphens and truncates to 63 bytes. Nothing left gives
+// "device"; an all-digit or reserved result is prefixed with "device-".
+func DeriveDNSLabel(hostname string) DNSLabel {
+	first, _, _ := strings.Cut(strings.Trim(hostname, " "), ".")
+	var builder strings.Builder
+	hyphen := false
+	for _, character := range strings.ToLower(first) {
+		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' {
+			builder.WriteRune(character)
+			hyphen = false
+			continue
+		}
+		if !hyphen {
+			builder.WriteByte('-')
+			hyphen = true
+		}
+	}
+	label := truncateDNSLabel(strings.Trim(builder.String(), "-"))
+	if _, reserved := reservedDNSLabels[label]; reserved || allDigits(label) {
+		label = truncateDNSLabel(fallbackDNSLabel + "-" + label)
+	}
+	if label == "" {
+		label = fallbackDNSLabel
+	}
+	return DNSLabel{value: label}
+}
+
+func truncateDNSLabel(label string) string {
+	if len(label) <= maxDNSLabelBytes {
+		return label
+	}
+	return strings.TrimRight(label[:maxDNSLabelBytes], "-")
 }
 
 func allDigits(value string) bool {

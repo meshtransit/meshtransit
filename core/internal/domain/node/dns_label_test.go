@@ -41,3 +41,35 @@ func TestParseDNSLabel(t *testing.T) {
 		t.Fatal("zero DNSLabel must be invalid")
 	}
 }
+
+func TestDeriveDNSLabel(t *testing.T) {
+	t.Parallel()
+	tests := map[string]string{
+		"laptop":                       "laptop",
+		"Laptop.Example":               "laptop",
+		"my_box.local":                 "my-box",
+		"a--b":                         "a-b",
+		"xn--80ak6aa92e":               "xn-80ak6aa92e",
+		"-edge-.x":                     "edge",
+		"...":                          "device",
+		"":                             "device",
+		" spaced ":                     "spaced",
+		"1234":                         "device-1234",
+		"1234.example":                 "device-1234",
+		"wpad":                         "device-wpad",
+		"WPAD.corp":                    "device-wpad",
+		"isatap":                       "device-isatap",
+		"localhost":                    "device-localhost",
+		"www":                          "device-www",
+		"wpad-1":                       "wpad-1",
+		"café-bar":                     "caf-bar",
+		strings.Repeat("y", 63) + "-z": strings.Repeat("y", 63),
+		strings.Repeat("9", 70):        "device-" + strings.Repeat("9", 56),
+	}
+	for hostname, want := range tests {
+		label := DeriveDNSLabel(hostname)
+		if label.String() != want || !label.IsValid() {
+			t.Errorf("DeriveDNSLabel(%q) = %q (valid %v), want %q", hostname, label, label.IsValid(), want)
+		}
+	}
+}

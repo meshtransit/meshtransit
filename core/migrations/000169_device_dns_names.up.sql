@@ -1,9 +1,12 @@
 -- Schema 169: every Device has a DNS name in its Network.
 --
 -- A Device is named <dns label>.<workspace code>.<network code>.<suffix>. The
--- label is derived from the hostname (its first label, lowercased, other
--- characters replaced by hyphens, trimmed to 63 bytes; "device" when nothing
--- is left, "device-" before an all-digit result) and is unique among the
+-- label is derived from the hostname (its first label, lowercased, each run
+-- of other characters replaced by one hyphen, so no label carries an IDNA
+-- "xn--" prefix, trimmed to 63 bytes; "device" when nothing is left,
+-- "device-" before an all-digit result or a name hosts look up on their own,
+-- such as wpad or localhost, which the zone's search domain would otherwise
+-- hand to a Device) and is unique among the
 -- live Devices of one Network: a Device whose hostname derives a taken label
 -- gets the first free numbered variant (<label>-1, <label>-2, ...); existing
 -- Devices are labeled Network by Network in Device order.
@@ -58,7 +61,8 @@ REVOKE ALL ON mesh.device_dns_label
     FROM PUBLIC, mesh_runtime, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;
 GRANT SELECT ON mesh.device_dns_label TO mesh_runtime;
 
--- The label a hostname derives, before deduplication.
+-- The label a hostname derives, before deduplication (node.DeriveDNSLabel
+-- computes the same).
 CREATE FUNCTION mesh_ops.derive_device_dns_label_v1(p_hostname TEXT)
 RETURNS TEXT
 LANGUAGE sql
@@ -68,12 +72,16 @@ SET search_path = pg_catalog
 AS $function$
     SELECT CASE
         WHEN bounded.label = '' THEN 'device'
-        WHEN bounded.label ~ '^[0-9]+$' THEN pg_catalog.rtrim(pg_catalog.left('device-' || bounded.label, 63), '-')
+        WHEN bounded.label ~ '^[0-9]+$' OR bounded.label IN (
+            'autoconfig', 'autodiscover', 'broadcasthost', 'dns', 'gateway', 'imap', 'ip6-localhost',
+            'ip6-loopback', 'isatap', 'local', 'localdomain', 'localhost', 'mail', 'ns', 'ntp', 'pop',
+            'proxy', 'router', 'smtp', 'wpad', 'www'
+        ) THEN pg_catalog.rtrim(pg_catalog.left('device-' || bounded.label, 63), '-')
         ELSE bounded.label
     END
     FROM (
         SELECT pg_catalog.rtrim(pg_catalog.left(pg_catalog.btrim(pg_catalog.regexp_replace(
-            pg_catalog.lower(pg_catalog.split_part(pg_catalog.btrim(COALESCE(p_hostname, '')), '.', 1)),
+            pg_catalog.lower(pg_catalog.split_part(pg_catalog.btrim(COALESCE(p_hostname, ''), ' '), '.', 1)),
             '[^a-z0-9]+', '-', 'g'), '-'), 63), '-') AS label
     ) AS bounded
 $function$;
