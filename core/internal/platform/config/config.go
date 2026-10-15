@@ -8,12 +8,13 @@ import (
 	"strings"
 	"time"
 
+	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/platform/app"
 )
 
 const (
 	// SchemaVersion identifies the validated environment configuration contract.
-	SchemaVersion = 25
+	SchemaVersion = 26
 
 	envRole            = "MESHTRANSIT_ROLE"
 	envHealthAddress   = "MESHTRANSIT_HEALTH_ADDRESS"
@@ -50,9 +51,11 @@ type Config struct {
 	HealthAddress string
 	// ProfileAddress, when set, serves Go runtime profiles (pprof) on a
 	// loopback address only; empty disables them.
-	ProfileAddress        string
-	ShutdownTimeout       time.Duration
-	LogLevel              slog.Level
+	ProfileAddress  string
+	ShutdownTimeout time.Duration
+	LogLevel        slog.Level
+	// DNSSuffix is the suffix Device and share names are built under.
+	DNSSuffix             dnsname.Suffix
 	Dependencies          DependencyConfig
 	Storage               *StorageConfig
 	API                   *APIConfig
@@ -161,6 +164,10 @@ func Load(lookup LookupFunc) (Config, error) {
 	}
 
 	dependencyConfig, err := loadDependencyConfig(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+	dnsSuffix, err := loadDNSSuffix(lookup)
 	if err != nil {
 		return Config{}, err
 	}
@@ -290,6 +297,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		ProfileAddress:          profileAddress,
 		ShutdownTimeout:         shutdownTimeout,
 		LogLevel:                logLevel,
+		DNSSuffix:               dnsSuffix,
 		Dependencies:            dependencyConfig,
 		Storage:                 storageConfig,
 		API:                     apiConfig,

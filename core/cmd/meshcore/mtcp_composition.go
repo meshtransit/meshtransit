@@ -9,6 +9,7 @@ import (
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	"meshtransit.net/core/internal/control"
 	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/enrollment/registration/intake"
 	"meshtransit.net/core/internal/platform/clientip"
 	"meshtransit.net/core/internal/platform/config"
@@ -51,7 +52,8 @@ type mtcpDependencies struct {
 	origin        string
 	guard         mtcpadapter.TimestampGuard
 	logger        *slog.Logger
-	relayZones    bool // offer relay.zones2 (MESHTRANSIT_RELAY_TICKET_ZONES_V2)
+	relayZones    bool           // offer relay.zones2 (MESHTRANSIT_RELAY_TICKET_ZONES_V2)
+	dnsSuffix     dnsname.Suffix // MESHTRANSIT_DNS_SUFFIX; zero: the default
 }
 
 // mtcpMapSessions is mapsession.Service: endpoints and snapshot opening.
@@ -119,6 +121,7 @@ func composeMTCP(
 		Logger: logger, Registrations: deps.registrations, RegistrationIDs: intake.PublicRegistrationIDGenerator{},
 		Logout: deps.logout, Paths: deps.paths, Connectivity: deps.connectivity, Metrics: metrics,
 		DeniedEndpointPrefixes: controlConfig.MTCP.DeniedEndpointPrefixes(),
+		DNSSuffix:              deps.dnsSuffix,
 	}
 	if deps.browser != nil {
 		applicationOptions.BrowserIssuer = deps.browser.issuer
