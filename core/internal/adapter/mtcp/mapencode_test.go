@@ -11,6 +11,7 @@ import (
 
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
 	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/policy"
 	"meshtransit.net/core/internal/domain/sharing"
 	sharedmtcp "meshtransit.net/shared/mtcp"
@@ -18,12 +19,12 @@ import (
 
 func TestEncodeSnapshot(t *testing.T) {
 	snapshot := snapshotFixture(t, 7)
-	message, err := encodeSnapshot(snapshot, &mtcpv1.View{Epoch: 9, Seq: 1}, false, nil)
+	message, err := encodeSnapshot(snapshot, &mtcpv1.View{Epoch: 9, Seq: 1}, false, nil, dnsname.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
 	self, peers := message.GetSelf(), message.GetPeers()
-	if self.GetDeviceId() != "01890f00-0000-7000-8000-000000000701" || self.GetName() != "node-one.example." ||
+	if self.GetDeviceId() != "01890f00-0000-7000-8000-000000000701" || self.GetName() != "node-one.000000000101.000000000201.mesh.internal." ||
 		len(self.GetAddresses()) != 1 || len(self.GetAddresses()[0]) != 4 || len(peers) != 1 ||
 		peers[0].GetDeviceId() != "01890f00-0000-7000-8000-000000000702" || peers[0].GetDisplayName() == "" {
 		t.Fatalf("devices = %v / %v", self, peers)
@@ -45,6 +46,39 @@ func TestEncodeSnapshot(t *testing.T) {
 	}
 	if message.GetDns() == nil || message.GetSettings().GetEndpointReportS() != endpointReportSeconds {
 		t.Fatal("snapshot without DNS or settings")
+	}
+}
+
+// TestEncodeSnapshotPublishesDeviceNames checks that self and its
+// same-Network peers resolve: names in the Network's zone, an address
+// record each, the suffix answered locally and the zone searched
+// (mtcp-v1 §7.3).
+func TestEncodeSnapshotPublishesDeviceNames(t *testing.T) {
+	snapshot := snapshotFixture(t, 7)
+	message, err := encodeSnapshot(snapshot, &mtcpv1.View{Epoch: 9, Seq: 1}, false, nil, dnsname.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const zone = "000000000101.000000000201.mesh.internal"
+	if message.GetSelf().GetName() != "node-one."+zone+"." || message.GetPeers()[0].GetName() != "peer-2."+zone+"." {
+		t.Fatalf("names = %q / %q", message.GetSelf().GetName(), message.GetPeers()[0].GetName())
+	}
+	dns := message.GetDns()
+	var records []string
+	for _, record := range dns.GetRecords() {
+		address, _ := netip.AddrFromSlice(record.GetValue())
+		records = append(records, record.GetType().String()+" "+record.GetName()+" "+address.String())
+	}
+	want := "A node-one." + zone + " 100.64.0.1,A peer-2." + zone + " 100.64.0.2"
+	if strings.Join(records, ",") != want {
+		t.Fatalf("records = %v, want %s", records, want)
+	}
+	if len(dns.GetRoutes()) != 1 || dns.GetRoutes()[0].GetSuffix() != "mesh.internal" ||
+		len(dns.GetRoutes()[0].GetResolvers()) != 0 || len(dns.GetResolvers()) != 0 {
+		t.Fatalf("routes = %v, resolvers = %v; want the suffix answered locally", dns.GetRoutes(), dns.GetResolvers())
+	}
+	if domains := dns.GetSearchDomains(); len(domains) != 1 || domains[0] != zone {
+		t.Fatalf("search domains = %v", domains)
 	}
 }
 

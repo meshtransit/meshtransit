@@ -15,6 +15,7 @@ import (
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
 	"meshtransit.net/core/internal/control"
 	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/enrollment"
 	"meshtransit.net/core/internal/domain/enrollment/registration"
 	"meshtransit.net/core/internal/domain/enrollment/registration/intake"
@@ -1549,7 +1550,7 @@ func TestMapEncodingDropsStoredEndpointsPeersMustNotProbe(t *testing.T) {
 	}
 	snapshot = must(snapshot.WithConnectivity(connectivity))
 	message, err := encodeSnapshot(snapshot, &mtcpv1.View{Epoch: 1, Seq: 1}, false,
-		[]netip.Prefix{netip.MustParsePrefix("203.0.113.0/24")})
+		[]netip.Prefix{netip.MustParsePrefix("203.0.113.0/24")}, dnsname.Default())
 	if err != nil {
 		t.Fatal(err)
 	}

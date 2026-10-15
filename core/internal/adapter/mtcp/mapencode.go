@@ -9,6 +9,7 @@ import (
 
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
 	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/policy"
 	sharedmtcp "meshtransit.net/shared/mtcp"
@@ -51,28 +52,27 @@ func splitGrant(grant mapsession.RelayGrant) (grantParts, error) {
 	return parts, nil
 }
 
-// encodeSnapshot builds a complete MapSnapshot for view.
 // encodeSnapshot encodes a full map; denied are the operator's ranges never
-// sent as endpoints.
+// sent as endpoints, and suffix the deployment's DNS suffix.
 func encodeSnapshot(snapshot mapsession.Snapshot, view *mtcpv1.View, aliases bool,
-	denied []netip.Prefix) (*mtcpv1.MapSnapshot, error) {
+	denied []netip.Prefix, suffix dnsname.Suffix) (*mtcpv1.MapSnapshot, error) {
 	if !snapshot.IsValid() {
 		return nil, ErrMapEncoding
 	}
-	endpoints := newEndpointFilter(snapshot.RelayDirectory(), denied)
-	self, err := encodeSelf(snapshot, endpoints)
+	names, err := dnsView(snapshot, suffix)
 	if err != nil {
 		return nil, err
 	}
-	peers, err := encodePeers(snapshot, snapshot.AuthorizedPeers(), aliases, endpoints)
+	endpoints := newEndpointFilter(snapshot.RelayDirectory(), denied)
+	self, err := encodeSelf(snapshot, endpoints, names)
+	if err != nil {
+		return nil, err
+	}
+	peers, err := encodePeers(snapshot, snapshot.AuthorizedPeers(), aliases, endpoints, names)
 	if err != nil {
 		return nil, err
 	}
 	filter, err := encodePacketFilter(snapshot)
-	if err != nil {
-		return nil, err
-	}
-	dns, err := encodeDNS(snapshot)
 	if err != nil {
 		return nil, err
 	}
@@ -82,8 +82,17 @@ func encodeSnapshot(snapshot mapsession.Snapshot, view *mtcpv1.View, aliases boo
 	}
 	return &mtcpv1.MapSnapshot{
 		View: view, NetworkRevisions: networkRevisions(snapshot), Self: self, Peers: peers,
-		PacketFilter: filter, Dns: dns, RelayMap: grant.relayMap, Settings: settings(),
+		PacketFilter: filter, Dns: encodeDNS(names), RelayMap: grant.relayMap, Settings: settings(),
 	}, nil
+}
+
+// dnsView names the Devices and shares of snapshot under suffix.
+func dnsView(snapshot mapsession.Snapshot, suffix dnsname.Suffix) (mapsession.DNSView, error) {
+	names, err := snapshot.DNSView(suffix)
+	if err != nil {
+		return mapsession.DNSView{}, errors.Join(ErrMapEncoding, err)
+	}
+	return names, nil
 }
 
 func settings() *mtcpv1.Settings {
@@ -97,10 +106,11 @@ func networkRevisions(snapshot mapsession.Snapshot) []*mtcpv1.NetworkRevision {
 	}}
 }
 
-func encodeSelf(snapshot mapsession.Snapshot, endpoints endpointFilter) (*mtcpv1.Device, error) {
+func encodeSelf(snapshot mapsession.Snapshot, endpoints endpointFilter,
+	names mapsession.DNSView) (*mtcpv1.Device, error) {
 	key := snapshot.NodeKey().Bytes()
 	device := &mtcpv1.Device{
-		DeviceId: snapshot.NodeID().String(), Name: snapshot.Hostname().String() + ".",
+		DeviceId: snapshot.NodeID().String(), Name: names.SelfName() + ".",
 		DisplayName: snapshot.Hostname().String(), NodeKey: key[:],
 		KeyExpiryMs: snapshot.KeyExpiry().UnixMilli(),
 	}
@@ -115,10 +125,10 @@ func encodeSelf(snapshot mapsession.Snapshot, endpoints endpointFilter) (*mtcpv1
 
 // encodePeers encodes candidates sorted by device ID.
 func encodePeers(snapshot mapsession.Snapshot, candidates []mapsession.PeerCandidate,
-	aliases bool, endpoints endpointFilter) ([]*mtcpv1.Device, error) {
+	aliases bool, endpoints endpointFilter, names mapsession.DNSView) ([]*mtcpv1.Device, error) {
 	peers := make([]*mtcpv1.Device, 0, len(candidates))
 	for _, candidate := range candidates {
-		peer, err := encodePeer(snapshot, candidate, aliases, endpoints)
+		peer, err := encodePeer(snapshot, candidate, aliases, endpoints, names)
 		if err != nil {
 			return nil, err
 		}
@@ -129,14 +139,19 @@ func encodePeers(snapshot mapsession.Snapshot, candidates []mapsession.PeerCandi
 }
 
 func encodePeer(snapshot mapsession.Snapshot, candidate mapsession.PeerCandidate,
-	aliases bool, endpoints endpointFilter) (*mtcpv1.Device, error) {
+	aliases bool, endpoints endpointFilter, names mapsession.DNSView) (*mtcpv1.Device, error) {
+	name, named := names.PeerName(candidate.NodeID())
+	if !named {
+		return nil, ErrMapEncoding // only authorized peers are encoded
+	}
 	key := candidate.NodeKey().Bytes()
 	device := &mtcpv1.Device{
-		DeviceId: candidate.NodeID().String(), Name: candidate.Hostname().String() + ".",
+		DeviceId: candidate.NodeID().String(), Name: name + ".",
 		NodeKey: key[:], KeyExpiryMs: candidate.KeyExpiry().UnixMilli(),
 	}
-	// A peer of another Workspace carries no display name (mtcp-v1 §7.3).
-	if candidate.Scope().WorkspaceID() == snapshot.Scope().WorkspaceID() {
+	// A peer of another Network carries neither its hostname nor its own
+	// name, only the name this map imports it under (mtcp-v1 §7.3).
+	if candidate.Scope() == snapshot.Scope() {
 		device.DisplayName = candidate.Hostname().String()
 	}
 	encodeAddresses(device, candidate.Addresses())
@@ -412,15 +427,13 @@ func trafficKey(destinations []*mtcpv1.Destination, protocols []uint32) string {
 	return builder.String()
 }
 
-// encodeDNS publishes the exact imported share names as A/AAAA records.
-// It is never nil: within a stream an absent DNS means "unchanged".
-func encodeDNS(snapshot mapsession.Snapshot) (*mtcpv1.DnsConfig, error) {
-	records, err := snapshot.SharedDNSRecords()
-	if err != nil {
-		return nil, errors.Join(ErrMapEncoding, err)
-	}
+// encodeDNS publishes the names of names as A/AAAA records, the suffix as a
+// locally answered route (no resolvers) and the Network's zone as the search
+// domain (mtcp-v1 §7.3). It is never nil: within a stream an absent DNS
+// means "unchanged".
+func encodeDNS(names mapsession.DNSView) *mtcpv1.DnsConfig {
 	config := &mtcpv1.DnsConfig{}
-	for _, record := range records {
+	for _, record := range names.Records() {
 		for _, address := range record.Addresses {
 			recordType := mtcpv1.DnsRecord_AAAA
 			if address.Is4() {
@@ -431,5 +444,11 @@ func encodeDNS(snapshot mapsession.Snapshot) (*mtcpv1.DnsConfig, error) {
 			})
 		}
 	}
-	return config, nil
+	if suffix := names.LocalSuffix(); suffix != "" {
+		config.Routes = []*mtcpv1.DnsRoute{{Suffix: suffix}}
+	}
+	if domain := names.SearchDomain(); domain != "" {
+		config.SearchDomains = []string{domain}
+	}
+	return config
 }

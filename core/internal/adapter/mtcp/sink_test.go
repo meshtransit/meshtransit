@@ -274,3 +274,57 @@ func TestSinkDeliversRelayGrants(t *testing.T) {
 		t.Fatalf("key change sent %v, want KeyUpdate then RelayTicket", types)
 	}
 }
+
+// TestSinkSendsDNSOnlyWhenItChanged: an authority delta carries DNS only
+// when the names it publishes changed (an absent DNS means unchanged).
+func TestSinkSendsDNSOnlyWhenItChanged(t *testing.T) {
+	session, node, control := testSession(t)
+	sink := newMapSink(session, false, []ControlKey{{Private: control, NotAfter: time.Now().Add(time.Hour)}}, time.Now)
+	scope := snapshotFixture(t, 1).Scope()
+	connected := func(revision int64, keyByte byte, peers ...string) mapsession.Snapshot {
+		candidates := make([]mapsession.PeerCandidate, 0, len(peers))
+		for index, address := range peers {
+			candidates = append(candidates, peerFixture(t, scope,
+				"01890f00-0000-7000-8000-00000000070"+string(rune('2'+index)), int64(702+index), address, keyByte+byte(index)))
+		}
+		snapshot := snapshotFixture(t, revision, candidates...)
+		connectivity := []mapsession.Connectivity{must(mapsession.NewConnectivity(mapsession.ConnectivityParams{
+			Key: must(mapsession.NewConnectivityKey(snapshot.NodeID(), snapshot.SessionGeneration())), Online: true,
+		}))}
+		for _, peer := range snapshot.AuthorizedPeers() {
+			connectivity = append(connectivity, must(mapsession.NewConnectivity(mapsession.ConnectivityParams{
+				Key: must(mapsession.NewConnectivityKey(peer.NodeID(), peer.SessionGeneration())), Online: true,
+			})))
+		}
+		return must(snapshot.WithConnectivity(connectivity))
+	}
+	initial := connected(7, 2, "100.64.0.2")
+	if err := sink.SendSnapshot(t.Context(), initial); err != nil {
+		t.Fatal(err)
+	}
+	node.messages()
+	steps := []struct {
+		next    mapsession.Snapshot
+		records int // A records the delta carries; -1: no DNS
+	}{
+		{next: connected(8, 9, "100.64.0.2"), records: -1},             // a peer key changed, not its name
+		{next: connected(9, 9, "100.64.0.2", "100.64.0.3"), records: 3}, // a peer joined
+		{next: connected(10, 20, "100.64.0.2", "100.64.0.3"), records: -1},
+	}
+	current := initial
+	for index, step := range steps {
+		if err := sink.SendAuthorityDelta(t.Context(), must(mapsession.NewAuthorityDelta(current, step.next))); err != nil {
+			t.Fatal(err)
+		}
+		messageType, message, _ := node.read()
+		delta, ok := message.(*mtcpv1.MapDelta)
+		if messageType != sharedmtcp.MessageMapDelta || !ok {
+			t.Fatalf("step %d sent %#x", index, uint8(messageType))
+		}
+		if got := len(delta.GetDns().GetRecords()); (delta.GetDns() == nil) != (step.records < 0) ||
+			step.records >= 0 && got != step.records {
+			t.Fatalf("step %d DNS = %v, want %d records", index, delta.GetDns(), step.records)
+		}
+		current = step.next
+	}
+}

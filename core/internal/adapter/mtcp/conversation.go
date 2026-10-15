@@ -14,6 +14,7 @@ import (
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
 	"meshtransit.net/core/internal/control"
 	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/node/distribution"
 	"meshtransit.net/shared/key"
@@ -70,6 +71,9 @@ type ApplicationOptions struct {
 	// DeniedEndpointPrefixes are ranges, such as Core's own addresses,
 	// that are dropped from every endpoint report.
 	DeniedEndpointPrefixes []netip.Prefix
+	// DNSSuffix is the deployment's DNS suffix maps name Devices and shares
+	// under; the zero value is dnsname.DefaultSuffix.
+	DNSSuffix dnsname.Suffix
 }
 
 // Application turns established sessions into registrations and map
@@ -100,6 +104,12 @@ func NewApplication(options ApplicationOptions) (*Application, error) {
 		return nil, ErrInvalidServer
 	}
 	options.DeniedEndpointPrefixes = slices.Clone(options.DeniedEndpointPrefixes)
+	if options.DNSSuffix == (dnsname.Suffix{}) {
+		options.DNSSuffix = dnsname.Default()
+	}
+	if !options.DNSSuffix.IsValid() {
+		return nil, ErrInvalidServer
+	}
 	return &Application{options: options, now: time.Now, poll: approvalPollInterval,
 		endpointTimer: realEndpointTimer, enforcementTimer: realEndpointTimer}, nil
 }
@@ -109,6 +119,7 @@ func (application *Application) Open(session *Session) Conversation {
 	sink := newMapSink(session, session.Supports("device-alias.v1"), application.options.ControlKeys,
 		application.now)
 	sink.deniedEndpoints = application.options.DeniedEndpointPrefixes
+	sink.suffix = application.options.DNSSuffix
 	return &conversation{application: application, session: session, sink: sink,
 		wake: make(chan struct{}, 1), approvals: make(chan approval, 1),
 		identity: newRateBudget(identityBurst, identityRate), browser: newRateBudget(browserBurst, browserRate),

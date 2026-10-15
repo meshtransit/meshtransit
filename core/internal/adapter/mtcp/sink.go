@@ -9,8 +9,10 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
 	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/dnsname"
 	sharedmtcp "meshtransit.net/shared/mtcp"
 )
 
@@ -29,7 +31,9 @@ type mapSink struct {
 	controlKeys []*mtcpv1.KeyUpdate_ControlKey
 	// deniedEndpoints are the operator's ranges never sent as endpoints.
 	deniedEndpoints []netip.Prefix
-	now             func() time.Time
+	// suffix is the deployment's DNS suffix the map names Devices under.
+	suffix dnsname.Suffix
+	now    func() time.Time
 
 	mu         sync.Mutex
 	epoch, seq uint64
@@ -43,7 +47,8 @@ type mapSink struct {
 	keyNonce   []byte
 	ticket     []byte
 	relayMap   []byte
-	authorized bool // a registration awaits its RegisterResponse
+	dns        *mtcpv1.DnsConfig // the DNS configuration the node holds
+	authorized bool              // a registration awaits its RegisterResponse
 }
 
 func newMapSink(session *Session, aliases bool, controlKeys []ControlKey, now func() time.Time) *mapSink {
@@ -52,7 +57,7 @@ func newMapSink(session *Session, aliases bool, controlKeys []ControlKey, now fu
 		public := controlKey.Private.Public()
 		keys = append(keys, &mtcpv1.KeyUpdate_ControlKey{Key: public[:], NotAfterMs: controlKey.NotAfter.UnixMilli()})
 	}
-	return &mapSink{session: session, aliases: aliases, controlKeys: keys, now: now,
+	return &mapSink{session: session, aliases: aliases, controlKeys: keys, now: now, suffix: dnsname.Default(),
 		ackSignal: make(chan struct{}, 1), peerIDs: make(map[int64]string)}
 }
 
@@ -80,13 +85,15 @@ func (sink *mapSink) sendSnapshotLocked(_ context.Context, snapshot mapsession.S
 		return err
 	}
 	epoch := max(sink.epoch+1, uint64(sink.now().UnixMilli()))
-	message, err := encodeSnapshot(snapshot, &mtcpv1.View{Epoch: epoch, Seq: 1}, sink.aliases, sink.deniedEndpoints)
+	message, err := encodeSnapshot(snapshot, &mtcpv1.View{Epoch: epoch, Seq: 1}, sink.aliases, sink.deniedEndpoints,
+		sink.suffix)
 	if err != nil {
 		return err
 	}
 	if err := sink.session.Send(sharedmtcp.MessageMapSnapshot, message); err != nil {
 		return err
 	}
+	sink.dns = message.GetDns()
 	// A map was authorized for this session: it serves a Device now.
 	sink.session.proveDevice()
 	sink.epoch, sink.seq, sink.acked = epoch, 1, 0
@@ -129,7 +136,11 @@ func (sink *mapSink) SendAuthorityDelta(ctx context.Context, delta mapsession.Au
 		}
 		removed = append(removed, deviceID)
 	}
-	message, grant, err := sink.deltaLocked(snapshot, delta.SelfChanged(), delta.ChangedPeers())
+	names, err := dnsView(snapshot, sink.suffix)
+	if err != nil {
+		return err
+	}
+	message, grant, err := sink.deltaLocked(snapshot, delta.SelfChanged(), delta.ChangedPeers(), names)
 	if err != nil {
 		return err
 	}
@@ -137,10 +148,17 @@ func (sink *mapSink) SendAuthorityDelta(ctx context.Context, delta mapsession.Au
 	if message.PacketFilter, err = encodePacketFilter(snapshot); err != nil {
 		return err
 	}
-	if message.Dns, err = encodeDNS(snapshot); err != nil {
+	// DNS is sent only when it changed; an absent one means "unchanged".
+	if dns := encodeDNS(names); !proto.Equal(dns, sink.dns) {
+		message.Dns = dns
+	}
+	if err := sink.sendDeltaLocked(ctx, message, snapshot, grant); err != nil {
 		return err
 	}
-	return sink.sendDeltaLocked(ctx, message, snapshot, grant)
+	if message.Dns != nil {
+		sink.dns = message.Dns
+	}
+	return nil
 }
 
 // SendConnectivityDelta sends changed endpoints and presence as full peer
@@ -148,7 +166,11 @@ func (sink *mapSink) SendAuthorityDelta(ctx context.Context, delta mapsession.Au
 func (sink *mapSink) SendConnectivityDelta(ctx context.Context, delta mapsession.ConnectivityDelta) error {
 	sink.mu.Lock()
 	defer sink.mu.Unlock()
-	message, grant, err := sink.deltaLocked(delta.Snapshot(), delta.SelfChanged(), delta.ChangedPeers())
+	names, err := dnsView(delta.Snapshot(), sink.suffix)
+	if err != nil {
+		return err
+	}
+	message, grant, err := sink.deltaLocked(delta.Snapshot(), delta.SelfChanged(), delta.ChangedPeers(), names)
 	if err != nil {
 		return err
 	}
@@ -156,7 +178,7 @@ func (sink *mapSink) SendConnectivityDelta(ctx context.Context, delta mapsession
 }
 
 func (sink *mapSink) deltaLocked(snapshot mapsession.Snapshot, selfChanged bool,
-	changed []mapsession.PeerCandidate) (*mtcpv1.MapDelta, grantParts, error) {
+	changed []mapsession.PeerCandidate, names mapsession.DNSView) (*mtcpv1.MapDelta, grantParts, error) {
 	grant, err := splitGrant(snapshot.RelayGrant())
 	if err != nil {
 		return nil, grantParts{}, err
@@ -164,11 +186,11 @@ func (sink *mapSink) deltaLocked(snapshot mapsession.Snapshot, selfChanged bool,
 	message := &mtcpv1.MapDelta{NetworkRevisions: networkRevisions(snapshot)}
 	filter := newEndpointFilter(snapshot.RelayDirectory(), sink.deniedEndpoints)
 	if selfChanged {
-		if message.Self, err = encodeSelf(snapshot, filter); err != nil {
+		if message.Self, err = encodeSelf(snapshot, filter, names); err != nil {
 			return nil, grantParts{}, err
 		}
 	}
-	if message.PeersUpsert, err = encodePeers(snapshot, changed, sink.aliases, filter); err != nil {
+	if message.PeersUpsert, err = encodePeers(snapshot, changed, sink.aliases, filter, names); err != nil {
 		return nil, grantParts{}, err
 	}
 	if !bytes.Equal(grant.relayMap, sink.relayMap) {
