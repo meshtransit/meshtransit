@@ -10,7 +10,7 @@
 # takes its dependency versions from that file and not from the current
 # repository go.mod, which moves with every Go or dependency upgrade. Building
 # with the current go.mod yields a different, equally valid, digest that the
-# verifier refuses. See docs/plan-identity-go1269.md.
+# verifier refuses.
 #
 # Everything happens in a private temporary directory; nothing in the checkout
 # or the repository is written. The result must equal binary_sha256.
