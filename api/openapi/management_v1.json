@@ -1284,6 +1284,7 @@
       "post": {
         "operationId": "createShareOffer",
         "summary": "Create a provider-bounded Resource Export and one targeted Share Offer",
+        "description": "While a guardrail of the providing Workspace is being saved, this answers 409 conflict; retry it.",
         "security": [{"accountSessionBearer": []}],
         "parameters": [
           {"$ref": "#/components/parameters/WorkspaceID"},
@@ -1339,6 +1340,7 @@
       "post": {
         "operationId": "decideShareOffer",
         "summary": "Accept, reject, or revoke one still-current Share Offer",
+        "description": "Accepting: While a guardrail of either Workspace of the share is being saved, this answers 409 conflict; retry it.",
         "security": [{"accountSessionBearer": []}],
         "parameters": [
           {"$ref": "#/components/parameters/WorkspaceID"},
@@ -1468,7 +1470,7 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/trust-contracts/{trust_contract_id}/actions/activate": {"post":{"operationId":"activateTrustContract","summary":"Activate an accepted Trust Contract from its exact consumer Network","security":[{"accountSessionBearer":[]}],"parameters":[{"$ref":"#/components/parameters/WorkspaceID"},{"$ref":"#/components/parameters/NetworkID"},{"$ref":"#/components/parameters/TrustContractID"},{"$ref":"#/components/parameters/AggregateIfMatch"},{"$ref":"#/components/parameters/IdempotencyKey"}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/ActivateTrustContractRequest"}}}},"responses":{"200":{"description":"The Trust Contract and Imported Resource were activated atomically after fresh two-sided authority checks.","headers":{"ETag":{"$ref":"#/components/headers/TrustContractETag"},"X-Correlation-ID":{"$ref":"#/components/headers/CorrelationID"}},"content":{"application/json":{"schema":{"$ref":"#/components/schemas/TrustContractResponse"}}}},"400":{"$ref":"#/components/responses/InvalidRequest"},"401":{"$ref":"#/components/responses/Unauthenticated"},"403":{"$ref":"#/components/responses/Forbidden"},"404":{"$ref":"#/components/responses/NotFound"},"405":{"$ref":"#/components/responses/MethodNotAllowed"},"409":{"$ref":"#/components/responses/Conflict"},"412":{"$ref":"#/components/responses/PreconditionFailed"},"428":{"$ref":"#/components/responses/PreconditionRequired"},"429":{"$ref":"#/components/responses/RateLimited"},"503":{"$ref":"#/components/responses/Unavailable"},"504":{"$ref":"#/components/responses/Timeout"}}}}
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/trust-contracts/{trust_contract_id}/actions/activate": {"post":{"operationId":"activateTrustContract","summary":"Activate an accepted Trust Contract from its exact consumer Network","description":"While a guardrail of either Workspace of the share is being saved, this answers 409 conflict; retry it.","security":[{"accountSessionBearer":[]}],"parameters":[{"$ref":"#/components/parameters/WorkspaceID"},{"$ref":"#/components/parameters/NetworkID"},{"$ref":"#/components/parameters/TrustContractID"},{"$ref":"#/components/parameters/AggregateIfMatch"},{"$ref":"#/components/parameters/IdempotencyKey"}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/ActivateTrustContractRequest"}}}},"responses":{"200":{"description":"The Trust Contract and Imported Resource were activated atomically after fresh two-sided authority checks.","headers":{"ETag":{"$ref":"#/components/headers/TrustContractETag"},"X-Correlation-ID":{"$ref":"#/components/headers/CorrelationID"}},"content":{"application/json":{"schema":{"$ref":"#/components/schemas/TrustContractResponse"}}}},"400":{"$ref":"#/components/responses/InvalidRequest"},"401":{"$ref":"#/components/responses/Unauthenticated"},"403":{"$ref":"#/components/responses/Forbidden"},"404":{"$ref":"#/components/responses/NotFound"},"405":{"$ref":"#/components/responses/MethodNotAllowed"},"409":{"$ref":"#/components/responses/Conflict"},"412":{"$ref":"#/components/responses/PreconditionFailed"},"428":{"$ref":"#/components/responses/PreconditionRequired"},"429":{"$ref":"#/components/responses/RateLimited"},"503":{"$ref":"#/components/responses/Unavailable"},"504":{"$ref":"#/components/responses/Timeout"}}}}
   },
   "components": {
     "securitySchemes": {

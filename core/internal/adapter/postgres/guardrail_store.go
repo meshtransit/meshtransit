@@ -3,6 +3,7 @@ package postgres
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -51,28 +52,60 @@ const appendGuardrailEvidenceSQL = `SELECT mesh_audit.append_authority_evidence(
 type GuardrailStore struct {
 	database accountSessionDatabase
 	options  AccountSessionOptions
-	// impactLimit bounds the shares a preview and an enforce-mode save read.
-	impactLimit int
+	limits   GuardrailShareLimits
+	// retryDelay is how long to wait before attempt (2, 3, ...) of a change
+	// a concurrent share changed under.
+	retryDelay func(attempt int) time.Duration
 }
 
 var _ guardrail.Store = (*GuardrailStore)(nil)
 
-// NewGuardrailStore uses the runtime pool.
-func NewGuardrailStore(pool *Pool, options AccountSessionOptions) (*GuardrailStore, error) {
-	return NewGuardrailStoreWithImpactLimit(pool, options, guardrail.MaximumShareContracts)
+// Bounds of the share work one guardrail change does.
+const (
+	// MaximumGuardrailWakeNetworks bounds the Networks a change that only
+	// restores shares wakes (schema 167); the others are rebuilt at the next
+	// map reconcile interval, which can only withhold access longer.
+	MaximumGuardrailWakeNetworks = 1024
+	// maximumGuardrailChangeAttempts bounds how often a change is redone when
+	// a share appeared or ended while it ran.
+	maximumGuardrailChangeAttempts = 3
+)
+
+// GuardrailShareLimits bounds the share work of a guardrail change: Impact,
+// the active shares a preview and a save in enforce mode read (at most
+// guardrail.MaximumShareContracts); WakeNetworks, the Networks a change that
+// only restores shares wakes (at most MaximumGuardrailWakeNetworks).
+type GuardrailShareLimits struct {
+	Impact       int
+	WakeNetworks int
 }
 
-// NewGuardrailStoreWithImpactLimit bounds the active shares a preview and an
-// enforce-mode save evaluate by impactLimit instead of
-// guardrail.MaximumShareContracts, which it may not exceed. Other changes
-// always read up to guardrail.MaximumChangeShareContracts.
-func NewGuardrailStoreWithImpactLimit(pool *Pool, options AccountSessionOptions,
-	impactLimit int) (*GuardrailStore, error) {
+// NewGuardrailStore uses the runtime pool and the largest bounds.
+func NewGuardrailStore(pool *Pool, options AccountSessionOptions) (*GuardrailStore, error) {
+	return NewGuardrailStoreWithLimits(pool, options, GuardrailShareLimits{
+		Impact: guardrail.MaximumShareContracts, WakeNetworks: MaximumGuardrailWakeNetworks,
+	})
+}
+
+// NewGuardrailStoreWithLimits uses smaller share bounds, for tests of what
+// happens past them.
+func NewGuardrailStoreWithLimits(pool *Pool, options AccountSessionOptions,
+	limits GuardrailShareLimits) (*GuardrailStore, error) {
 	if pool == nil || pool.role != PoolRoleRuntime || pool.workspaceRenameDatabase == nil ||
-		!validAccountSessionOptions(options) || impactLimit < 1 || impactLimit > guardrail.MaximumShareContracts {
+		!validAccountSessionOptions(options) || limits.Impact < 1 || limits.Impact > guardrail.MaximumShareContracts ||
+		limits.WakeNetworks < 1 || limits.WakeNetworks > MaximumGuardrailWakeNetworks {
 		return nil, guardrail.ErrInvalid
 	}
-	return &GuardrailStore{database: pool.workspaceRenameDatabase, options: options, impactLimit: impactLimit}, nil
+	return &GuardrailStore{database: pool.workspaceRenameDatabase, options: options, limits: limits,
+		retryDelay: jitteredGuardrailRetryDelay}, nil
+}
+
+// jitteredGuardrailRetryDelay waits 10 to 40 ms times the attempt, so
+// changes that conflicted do not retry in step.
+func jitteredGuardrailRetryDelay(attempt int) time.Duration {
+	var jitter [1]byte
+	_, _ = rand.Read(jitter[:])
+	return time.Duration(attempt) * (10*time.Millisecond + time.Duration(jitter[0])*120*time.Microsecond)
 }
 
 type guardrailDocument struct {
@@ -149,6 +182,8 @@ func guardrailDatabaseError(err error) error {
 			return guardrail.ErrNotFound
 		case "40001", "40P01", "55P03":
 			return guardrail.ErrVersionConflict
+		case "MTG03":
+			return errors.Join(guardrail.ErrVersionConflict, errGuardrailSharesChanged)
 		case "54000":
 			return guardrail.ErrImpactTooLarge
 		case "MTG01":
@@ -229,13 +264,38 @@ type guardrailActorEvidence struct {
 	OwnerGeneration      int64  `json:"owner_generation"`
 }
 
+// errGuardrailSharesChanged marks a change that a concurrent share made or
+// ended under (schema 167 MTG03); the whole change is redone.
+var errGuardrailSharesChanged = errors.New("guardrail: a share changed during the change")
+
 // Change commits one guardrail change and its evidence in one transaction,
-// with the revisions and evidence of every share it cuts or restores.
-func (store *GuardrailStore) Change(ctx context.Context, change guardrail.Change) (_ guardrail.Result, resultErr error) {
+// with the revisions and evidence of every share it cuts or restores. When
+// a share appeared or ended meanwhile it redoes the whole transaction, at
+// most three times in all with a short jittered wait, then answers a
+// version conflict.
+func (store *GuardrailStore) Change(ctx context.Context, change guardrail.Change) (guardrail.Result, error) {
 	if !change.Session.IsValid() || !change.WorkspaceID.IsValid() || !change.GuardrailID.IsValid() ||
-		!change.CorrelationID.IsValid() || !change.Spec.IsValid() {
+		!change.CorrelationID.IsValid() || !change.Spec.IsValid() || ctx == nil || store == nil ||
+		store.retryDelay == nil {
 		return guardrail.Result{}, guardrail.ErrInvalid
 	}
+	for attempt := 1; ; attempt++ {
+		result, err := store.changeOnce(ctx, change)
+		if !errors.Is(err, errGuardrailSharesChanged) || attempt == maximumGuardrailChangeAttempts {
+			return result, err
+		}
+		timer := time.NewTimer(store.retryDelay(attempt + 1))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return guardrail.Result{}, errors.Join(guardrail.ErrUnavailable, ctx.Err())
+		case <-timer.C:
+		}
+	}
+}
+
+func (store *GuardrailStore) changeOnce(ctx context.Context, change guardrail.Change) (_ guardrail.Result,
+	resultErr error) {
 	params, err := change.Spec.ParamsDocument()
 	if err != nil {
 		return guardrail.Result{}, err
@@ -293,21 +353,16 @@ func (store *GuardrailStore) Change(ctx context.Context, change guardrail.Change
 	}
 	// Shares first: their Network revisions are locked before any audit
 	// stream, as other Network changes do (schema 164).
-	shares, err := checkGuardrailShareImpact(ctx, tx, change, saved, deleted, changeID, store.impactLimit)
+	shares, err := store.changeShares(ctx, tx, change, saved, deleted, changeID)
 	if err != nil {
 		return guardrail.Result{}, err
 	}
-	heads, err := bumpGuardrailShareNetworks(ctx, tx, shares, changeID)
-	if err != nil {
-		return guardrail.Result{}, err
-	}
-	if err := appendGuardrailEvidence(ctx, tx, change, saved, previousHash, actor, changeID); err != nil {
+	if err := appendGuardrailEvidence(ctx, tx, change, saved, previousHash, actor, changeID,
+		shares.deferred); err != nil {
 		return guardrail.Result{}, errors.Join(guardrail.ErrUnavailable, err)
 	}
-	if len(heads) != 0 {
-		if err := appendGuardrailShareNetworkEvidence(ctx, tx, change, saved, changeID, shares, heads); err != nil {
-			return guardrail.Result{}, errors.Join(guardrail.ErrUnavailable, err)
-		}
+	if err := appendGuardrailShareNetworkEvidence(ctx, tx, change, saved, changeID, shares); err != nil {
+		return guardrail.Result{}, errors.Join(guardrail.ErrUnavailable, err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return guardrail.Result{}, errors.Join(guardrail.ErrUnavailable, err)
@@ -316,7 +371,8 @@ func (store *GuardrailStore) Change(ctx context.Context, change guardrail.Change
 }
 
 func appendGuardrailEvidence(ctx context.Context, tx accountSessionTransaction, change guardrail.Change,
-	saved guardrail.Guardrail, previousHash []byte, actor guardrailActorEvidence, changeID publicid.ID) error {
+	saved guardrail.Guardrail, previousHash []byte, actor guardrailActorEvidence, changeID publicid.ID,
+	deferred bool) error {
 	var streamID, sequence int64
 	var previous []byte
 	if err := tx.QueryRow(ctx, lockWorkspaceStreamHeadSQL, change.Session.DeploymentID().String(),
@@ -353,8 +409,11 @@ func appendGuardrailEvidence(ctx context.Context, tx accountSessionTransaction, 
 		Params      json.RawMessage        `json:"params"`
 		Weakened    bool                   `json:"weakened"`
 		Authority   guardrailActorEvidence `json:"authority"`
+		// Deferred: more Networks than a change wakes were left to the map
+		// reconcile interval (schema 167).
+		Deferred bool `json:"share_networks_deferred,omitempty"`
 	}{change.WorkspaceID.String(), change.Session.ID().String(), saved.ID.String(), string(saved.Kind), saved.Name,
-		string(saved.Mode), params, string(change.Permission) == "guardrail.weaken", actor})
+		string(saved.Mode), params, string(change.Permission) == "guardrail.weaken", actor, deferred})
 	if err != nil {
 		return err
 	}

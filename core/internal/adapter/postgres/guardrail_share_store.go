@@ -136,51 +136,76 @@ func (store *GuardrailStore) ShareInventory(ctx context.Context, session account
 	}
 	var encoded *string
 	if err := tx.QueryRow(ctx, listGuardrailShareContractsSQL,
-		append(sessionQueryArguments(session), workspaceID.String(), store.impactLimit)...).Scan(&encoded); err != nil {
+		append(sessionQueryArguments(session), workspaceID.String(), store.limits.Impact)...).Scan(&encoded); err != nil {
 		return guardrail.ShareInventory{}, guardrailDatabaseError(err)
 	}
 	if encoded == nil {
 		return guardrail.ShareInventory{}, guardrail.ErrForbidden
 	}
-	inventory, err := decodeGuardrailShareInventory(*encoded, store.impactLimit)
+	inventory, err := decodeGuardrailShareInventory(*encoded, store.limits.Impact)
 	if err != nil {
 		return guardrail.ShareInventory{}, errors.Join(guardrail.ErrUnavailable, err)
 	}
 	return inventory, nil
 }
 
-// guardrailShareChange is what a committed guardrail change does to shares:
-// the guardrails after it, the shares it evaluated, and those whose
-// blocked state it flips.
+// guardrailShareChange is what a guardrail change whose result is in enforce
+// mode does to shares: the guardrails after it, the shares it evaluated, and
+// those whose blocked state it flips.
 type guardrailShareChange struct {
 	after     []guardrail.Guardrail
 	contracts []guardrail.ShareContract
 	changed   []guardrail.ShareContract
 }
 
-// shareReadLimit is how many active shares a change reads: an enforce-mode
-// create or update evaluates its impact under the preview's bound; any
-// other change, which only restores or keeps shares, reads them all, so a
-// Workspace past the preview bound can still loosen or delete guardrails.
-func shareReadLimit(change guardrail.Change, deleted bool, impactLimit int) int {
-	if !deleted && change.Spec.Mode == guardrail.ModeEnforce {
-		return impactLimit
-	}
-	return guardrail.MaximumChangeShareContracts
+// guardrailShareOutcome is what a change did to shares: the Networks it
+// advanced, with their locked stream heads, and either the evaluated shares
+// (a result in enforce mode) or a wakeup of Networks chosen in SQL (a
+// change that only restores), deferred when more were left to the
+// reconcile interval.
+type guardrailShareOutcome struct {
+	heads    []guardrailShareHead
+	shares   *guardrailShareChange
+	deferred bool
 }
 
-// checkGuardrailShareImpact reads, after the change in this transaction, the
-// Workspace's guardrails and shares; refuses an enforce-mode create or
-// update whose impact is not the preview's; and returns the shares whose
-// blocked state the change flips.
+// changeShares advances the revisions of the Networks whose maps a change
+// affects. Only a result in enforce mode can cut a share: it evaluates the
+// shares (at most the impact bound), checks the preview's hash and
+// rechecks them under the revision locks. Deleting or switching an enforced
+// guardrail to audit mode can only restore shares: PostgreSQL picks the
+// Networks and no share list is read. Any other change (one that never
+// enforced) changes no map.
+func (store *GuardrailStore) changeShares(ctx context.Context, tx accountSessionTransaction, change guardrail.Change,
+	saved guardrail.Guardrail, deleted bool, changeID publicid.ID) (guardrailShareOutcome, error) {
+	if !deleted && change.Spec.Mode == guardrail.ModeEnforce {
+		shares, err := checkGuardrailShareImpact(ctx, tx, change, saved, deleted, changeID, store.limits.Impact)
+		if err != nil {
+			return guardrailShareOutcome{}, err
+		}
+		heads, err := bumpGuardrailShareNetworks(ctx, tx, shares, changeID)
+		if err != nil {
+			return guardrailShareOutcome{}, err
+		}
+		return guardrailShareOutcome{heads: heads, shares: &shares}, nil
+	}
+	if change.Previous == nil || change.Previous.Mode != guardrail.ModeEnforce {
+		return guardrailShareOutcome{}, nil
+	}
+	return wakeGuardrailShareNetworks(ctx, tx, *change.Previous, changeID, store.limits.WakeNetworks)
+}
+
+// checkGuardrailShareImpact reads, after an enforce-mode change in this
+// transaction, the Workspace's guardrails and at most impactLimit shares;
+// refuses the change when its impact is not the preview's; and returns the
+// shares whose blocked state the change flips.
 func checkGuardrailShareImpact(ctx context.Context, tx accountSessionTransaction, change guardrail.Change,
 	saved guardrail.Guardrail, deleted bool, changeID publicid.ID, impactLimit int) (guardrailShareChange, error) {
-	limit := shareReadLimit(change, deleted, impactLimit)
 	var encoded string
-	if err := tx.QueryRow(ctx, guardrailChangeShareContractsSQL, changeID.String(), limit).Scan(&encoded); err != nil {
+	if err := tx.QueryRow(ctx, guardrailChangeShareContractsSQL, changeID.String(), impactLimit).Scan(&encoded); err != nil {
 		return guardrailShareChange{}, guardrailDatabaseError(err)
 	}
-	inventory, err := decodeGuardrailShareInventory(encoded, limit)
+	inventory, err := decodeGuardrailShareInventory(encoded, impactLimit)
 	if err != nil {
 		return guardrailShareChange{}, errors.Join(guardrail.ErrUnavailable, err)
 	}
@@ -195,22 +220,21 @@ func checkGuardrailShareImpact(ctx context.Context, tx accountSessionTransaction
 		}
 		before = append(before, item)
 	}
-	if present == deleted || (change.Operation == guardrail.OperationCreate) != (change.Previous == nil) {
+	if deleted || !present || change.Spec.Mode != guardrail.ModeEnforce ||
+		(change.Operation == guardrail.OperationCreate) != (change.Previous == nil) {
 		return guardrailShareChange{}, guardrail.ErrUnavailable
 	}
 	if change.Previous != nil {
 		before = append(before, guardrail.Guardrail{ID: saved.ID, Version: change.ExpectedVersion, Spec: *change.Previous})
 	}
-	if !deleted && change.Spec.Mode == guardrail.ModeEnforce {
-		impact, err := guardrail.ComputeImpact(change.WorkspaceID, before,
-			guardrail.Candidate{GuardrailID: saved.ID, ExpectedVersion: change.ExpectedVersion, Spec: change.Spec},
-			inventory.Contracts)
-		if err != nil {
-			return guardrailShareChange{}, errors.Join(guardrail.ErrUnavailable, err)
-		}
-		if change.ImpactHash.IsZero() || impact.Hash != change.ImpactHash {
-			return guardrailShareChange{}, guardrail.ErrImpactChanged
-		}
+	impact, err := guardrail.ComputeImpact(change.WorkspaceID, before,
+		guardrail.Candidate{GuardrailID: saved.ID, ExpectedVersion: change.ExpectedVersion, Spec: change.Spec},
+		inventory.Contracts)
+	if err != nil {
+		return guardrailShareChange{}, errors.Join(guardrail.ErrUnavailable, err)
+	}
+	if change.ImpactHash.IsZero() || impact.Hash != change.ImpactHash {
+		return guardrailShareChange{}, guardrail.ErrImpactChanged
 	}
 	return guardrailShareChange{
 		after: inventory.Guardrails, contracts: inventory.Contracts,
@@ -235,8 +259,8 @@ type guardrailShareHead struct {
 // share and returns the locked stream heads of those Networks. It runs even
 // when nothing changed: once the revisions are locked, PostgreSQL checks
 // that the shares evaluated are still exactly the Workspace's active ones,
-// so a share made concurrently fails the change (40001, retryable) instead
-// of being missed.
+// so a share made or ended meanwhile fails the attempt (MTG03), which
+// Change redoes, instead of being missed.
 func bumpGuardrailShareNetworks(ctx context.Context, tx accountSessionTransaction,
 	shares guardrailShareChange, changeID publicid.ID) ([]guardrailShareHead, error) {
 	ids := contractIDs(shares.changed)
@@ -253,6 +277,39 @@ func bumpGuardrailShareNetworks(ctx context.Context, tx accountSessionTransactio
 	return heads, nil
 }
 
+// wakeGuardrailShareNetworksSQL wakes, for a change that only restores, the
+// Networks on both sides of the shares of the Networks the guardrail named
+// (schema 167), at most $3 of them.
+const wakeGuardrailShareNetworksSQL = `SELECT mesh_ops.wake_guardrail_share_networks_v1($1::UUID,$2::UUID[],$3::INTEGER)::TEXT`
+
+// wakeGuardrailShareNetworks advances the Networks whose maps deleting or
+// switching to audit the enforced guardrail previous may restore. The
+// guardrail's own Networks narrow the shares (none named means every
+// Network of the Workspace); PostgreSQL picks at most limit Networks in a
+// stable order and says whether it deferred others.
+func wakeGuardrailShareNetworks(ctx context.Context, tx accountSessionTransaction, previous guardrail.Spec,
+	changeID publicid.ID, limit int) (guardrailShareOutcome, error) {
+	named := previous.Networks()
+	networks := make([]string, len(named))
+	for index, id := range named {
+		networks[index] = id.String()
+	}
+	var encoded string
+	if err := tx.QueryRow(ctx, wakeGuardrailShareNetworksSQL, changeID.String(), networks, limit).
+		Scan(&encoded); err != nil {
+		return guardrailShareOutcome{}, guardrailDatabaseError(err)
+	}
+	var document struct {
+		Heads    []guardrailShareHead `json:"heads"`
+		Deferred bool                 `json:"deferred"`
+	}
+	if err := strictJSON([]byte(encoded), &document); err != nil || document.Heads == nil ||
+		len(document.Heads) > limit || (document.Deferred && len(document.Heads) != limit) {
+		return guardrailShareOutcome{}, guardrail.ErrUnavailable
+	}
+	return guardrailShareOutcome{heads: document.Heads, deferred: document.Deferred}, nil
+}
+
 func contractIDs(contracts []guardrail.ShareContract) []string {
 	ids := make([]string, len(contracts))
 	for index, contract := range contracts {
@@ -261,16 +318,19 @@ func contractIDs(contracts []guardrail.ShareContract) []string {
 	return ids
 }
 
-// guardrailShareNetworkEvidence lists, for one Network, the shares the
-// change cut and restored: complete counts, at most 64 IDs each.
+// guardrailShareNetworkEvidence is what one Network records about a change
+// of its shares: for a result in enforce mode, the shares cut and restored
+// (complete counts, at most 64 IDs each); for a wakeup, only that shares
+// may have been restored.
 type guardrailShareNetworkEvidence struct {
-	NetworkID     string   `json:"network_id"`
-	GuardrailID   string   `json:"guardrail_id,omitempty"`
-	ActingSide    string   `json:"acting_side_details,omitempty"`
-	CutCount      int      `json:"cut_count"`
-	Cut           []string `json:"cut_contracts"`
-	RestoredCount int      `json:"restored_count"`
-	Restored      []string `json:"restored_contracts"`
+	NetworkID     string    `json:"network_id"`
+	GuardrailID   string    `json:"guardrail_id,omitempty"`
+	ActingSide    string    `json:"acting_side_details,omitempty"`
+	Reason        string    `json:"reason,omitempty"`
+	CutCount      *int      `json:"cut_count,omitempty"`
+	Cut           *[]string `json:"cut_contracts,omitempty"`
+	RestoredCount *int      `json:"restored_count,omitempty"`
+	Restored      *[]string `json:"restored_contracts,omitempty"`
 }
 
 // guardrailShareCounterpartDetails tells the other Workspace's Network that
@@ -278,8 +338,12 @@ type guardrailShareNetworkEvidence struct {
 // not see.
 const guardrailShareCounterpartDetails = "counterpart_guardrail"
 
-func appendGuardrailShareNetworkEvidence(ctx context.Context, tx accountSessionTransaction, change guardrail.Change,
-	saved guardrail.Guardrail, changeID publicid.ID, shares guardrailShareChange, heads []guardrailShareHead) error {
+// guardrailShareWakeReason marks a wakeup by a change that only restores.
+const guardrailShareWakeReason = "guardrail_no_longer_enforced"
+
+// shareChangeEvidence lists, per Network, the shares an enforce-mode result
+// cut and restored.
+func shareChangeEvidence(change guardrail.Change, shares guardrailShareChange) map[string]*guardrailShareNetworkEvidence {
 	evidence := map[string]*guardrailShareNetworkEvidence{}
 	for _, contract := range shares.changed {
 		cut := guardrail.Blocks(shares.after, change.WorkspaceID, contract.Edge)
@@ -287,31 +351,51 @@ func appendGuardrailShareNetworkEvidence(ctx context.Context, tx accountSessionT
 			key := scope.NetworkID().String()
 			entry := evidence[key]
 			if entry == nil {
-				entry = &guardrailShareNetworkEvidence{NetworkID: key, Cut: []string{}, Restored: []string{}}
+				cutCount, restoredCount, cutIDs, restoredIDs := 0, 0, []string{}, []string{}
+				entry = &guardrailShareNetworkEvidence{NetworkID: key, CutCount: &cutCount, Cut: &cutIDs,
+					RestoredCount: &restoredCount, Restored: &restoredIDs}
 				evidence[key] = entry
 			}
+			count, ids := entry.RestoredCount, entry.Restored
 			if cut {
-				entry.CutCount++
-				if len(entry.Cut) < maximumGuardrailShareEvidenceIDs {
-					entry.Cut = append(entry.Cut, contract.ID.String())
-				}
-			} else {
-				entry.RestoredCount++
-				if len(entry.Restored) < maximumGuardrailShareEvidenceIDs {
-					entry.Restored = append(entry.Restored, contract.ID.String())
-				}
+				count, ids = entry.CutCount, entry.Cut
+			}
+			*count++
+			if len(*ids) < maximumGuardrailShareEvidenceIDs {
+				*ids = append(*ids, contract.ID.String())
 			}
 		}
 	}
-	if len(heads) != len(evidence) {
-		return guardrail.ErrInvalid
+	for _, entry := range evidence {
+		slices.Sort(*entry.Cut)
+		slices.Sort(*entry.Restored)
+	}
+	return evidence
+}
+
+// appendGuardrailShareNetworkEvidence records the change on the stream of
+// every Network it advanced, with the revision wakeup.
+func appendGuardrailShareNetworkEvidence(ctx context.Context, tx accountSessionTransaction, change guardrail.Change,
+	saved guardrail.Guardrail, changeID publicid.ID, outcome guardrailShareOutcome) error {
+	if len(outcome.heads) == 0 {
+		return nil
+	}
+	var evidence map[string]*guardrailShareNetworkEvidence
+	if outcome.shares != nil {
+		evidence = shareChangeEvidence(change, *outcome.shares)
+		if len(outcome.heads) != len(evidence) {
+			return guardrail.ErrInvalid
+		}
 	}
 	after, err := saved.SemanticHash()
 	if err != nil {
 		return err
 	}
-	for _, head := range heads {
-		entry := evidence[head.NetworkID]
+	for _, head := range outcome.heads {
+		entry := &guardrailShareNetworkEvidence{NetworkID: head.NetworkID, Reason: guardrailShareWakeReason}
+		if evidence != nil {
+			entry = evidence[head.NetworkID]
+		}
 		networkID, parseErr := publicid.Parse(head.NetworkID)
 		previous, hashErr := hex.DecodeString(head.LatestEventHash)
 		if entry == nil || parseErr != nil || hashErr != nil || len(previous) != sha256.Size ||
@@ -319,8 +403,6 @@ func appendGuardrailShareNetworkEvidence(ctx context.Context, tx accountSessionT
 			head.OwnWorkspace != (head.WorkspaceID == change.WorkspaceID.String()) {
 			return guardrail.ErrInvalid
 		}
-		slices.Sort(entry.Cut)
-		slices.Sort(entry.Restored)
 		event := guardrailShareEvent{
 			head: head, previous: [sha256.Size]byte(previous), changeID: changeID,
 			aggregateKind: "network", aggregateID: networkID, aggregateVersion: head.NetworkRevision,

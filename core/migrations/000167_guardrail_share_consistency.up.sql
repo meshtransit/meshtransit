@@ -1,4 +1,4 @@
--- Schema 165: guardrail share changes stay consistent under concurrency.
+-- Schema 167: guardrail share changes stay consistent under concurrency.
 --
 -- Schema 164 cut shares an enforced guardrail blocks. Review found four
 -- gaps; the schema 164 functions stay for the previous binary.
@@ -15,7 +15,8 @@
 --   waits for a share already holding the row and then reads it.
 --   bump_guardrail_share_networks_v2 takes the shares MeshCore evaluated
 --   and, once the Network revisions are locked, compares them with the
---   Workspace's active shares; any difference fails with 40001.
+--   Workspace's active shares; any difference fails with MTG03, which
+--   MeshCore retries a few times before answering a version conflict.
 --
 -- A deadlock. change_workspace_guardrail_v1 holds the Workspace row FOR
 -- UPDATE and since schema 164 then waits for Network revisions, while an
@@ -25,9 +26,15 @@
 --
 -- A cap that blocked loosening. The 20000-share bound applied to every
 -- guardrail change, so a Workspace above it could not delete or loosen a
--- guardrail. The share readers now take the bound from MeshCore (at most
--- 200000): the preview and an enforce-mode save use 20000, other changes
--- the full 200000.
+-- guardrail. Only a change whose result is in enforce mode can cut shares,
+-- so only the preview and such a save read the shares, under a bound
+-- MeshCore gives (at most 20000). A change that only restores (a deletion
+-- or a switch to audit mode of an enforced guardrail) reads no share list:
+-- wake_guardrail_share_networks_v1 picks, in SQL, the Networks on both
+-- sides of the active shares of the Networks the guardrail named, and
+-- advances at most 1024 of them. Restoring late only withholds access
+-- longer, and the Networks past the bound are rebuilt at the next
+-- reconcile interval.
 --
 -- The map reader scanned every offer of the Network. map_share_guardrails_v2
 -- looks each requested Workspace up in accepted offers through two partial
@@ -129,7 +136,7 @@ DECLARE
     v_candidates BIGINT;
     v_contracts JSONB;
 BEGIN
-    IF p_limit IS NULL OR p_limit < 1 OR p_limit > 200000 THEN
+    IF p_limit IS NULL OR p_limit < 1 OR p_limit > 20000 THEN
         RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'invalid share limit';
     END IF;
     WITH candidate AS MATERIALIZED (
@@ -264,7 +271,7 @@ $function$;
 -- p_contracts (none is allowed), once per Network in (Workspace, Network)
 -- order, then checks that p_inventory, the shares MeshCore evaluated, is
 -- still exactly the Workspace's active and activating shares; a share made
--- or ended since fails with 40001. It returns the locked audit stream
+-- or ended since fails with MTG03. It returns the locked audit stream
 -- heads of the advanced Networks as schema 164's bump does.
 CREATE FUNCTION mesh_ops.bump_guardrail_share_networks_v2(
     p_contracts UUID[],
@@ -289,7 +296,7 @@ DECLARE
     v_live BIGINT;
     v_matched BIGINT;
 BEGIN
-    IF p_contracts IS NULL OR p_inventory IS NULL OR v_requested > v_inventory OR v_inventory > 200000
+    IF p_contracts IS NULL OR p_inventory IS NULL OR v_requested > v_inventory OR v_inventory > 20000
         OR pg_catalog.array_position(p_contracts, NULL) IS NOT NULL
         OR pg_catalog.array_position(p_inventory, NULL) IS NOT NULL
         OR (SELECT pg_catalog.count(DISTINCT requested.public_id)
@@ -347,7 +354,7 @@ BEGIN
     LEFT JOIN pg_catalog.unnest(p_inventory) AS evaluated(public_id) ON evaluated.public_id = live.public_id;
     IF v_live <> v_inventory OR v_matched <> v_inventory THEN
         PERFORM pg_catalog.set_config('mesh.guardrail_share_fanout', '', TRUE);
-        RAISE EXCEPTION USING ERRCODE = '40001', MESSAGE = 'a share changed during the guardrail change';
+        RAISE EXCEPTION USING ERRCODE = 'MTG03', MESSAGE = 'a share changed during the guardrail change';
     END IF;
 
     IF v_requested = 0 THEN
@@ -376,6 +383,129 @@ BEGIN
         RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'Network audit stream is unavailable';
     END IF;
     RETURN v_heads;
+END;
+$function$;
+
+-- Wakes the maps a guardrail change that only restores shares affects: the
+-- Networks on both sides of the Workspace's active and activating shares
+-- that have their Workspace side in p_networks (the Networks the guardrail
+-- named; none means every Network of the Workspace). It advances the Network
+-- and sharing revisions of at most p_limit of them (at most 1024), in
+-- (Workspace, Network) order, locks their audit streams in stream order and
+-- returns {"heads": [...as bump_guardrail_share_networks_v2], "deferred":
+-- whether more Networks were left to the reconcile interval}. It reads no
+-- share list into the caller and needs no recheck: restoring can only open
+-- a share later than it could, never earlier.
+CREATE FUNCTION mesh_ops.wake_guardrail_share_networks_v1(p_change UUID, p_networks UUID[], p_limit INTEGER)
+RETURNS JSONB
+LANGUAGE plpgsql
+VOLATILE
+PARALLEL UNSAFE
+SECURITY DEFINER
+SET search_path = pg_catalog, mesh, mesh_ops, mesh_audit
+AS $function$
+DECLARE
+    scoped_workspace_id BIGINT;
+    v_local BIGINT[];
+    v_workspaces BIGINT[];
+    v_networks BIGINT[];
+    v_deferred BOOLEAN;
+    v_scope RECORD;
+    v_heads JSONB;
+    v_found INTEGER;
+BEGIN
+    IF p_networks IS NULL OR pg_catalog.cardinality(p_networks) > 256
+        OR pg_catalog.array_position(p_networks, NULL) IS NOT NULL
+        OR p_limit IS NULL OR p_limit < 1 OR p_limit > 1024 THEN
+        RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'invalid guardrail share wakeup';
+    END IF;
+    scoped_workspace_id := mesh_ops.guardrail_change_workspace_internal_v1(p_change);
+    IF pg_catalog.cardinality(p_networks) > 0 THEN
+        SELECT pg_catalog.array_agg(network.id) INTO v_local
+        FROM mesh.network AS network
+        WHERE network.workspace_id = scoped_workspace_id AND network.public_id = ANY (p_networks);
+        IF v_local IS NULL THEN
+            RETURN pg_catalog.jsonb_build_object('heads', '[]'::JSONB, 'deferred', FALSE);
+        END IF;
+    END IF;
+
+    WITH touched AS (
+        SELECT provided.provider_workspace_id, provided.provider_network_id,
+            provided.consumer_workspace_id, provided.consumer_network_id
+        FROM mesh.trust_contract AS provided
+        WHERE provided.provider_workspace_id = scoped_workspace_id
+          AND provided.state IN ('activating', 'active')
+          AND (v_local IS NULL OR provided.provider_network_id = ANY (v_local))
+        UNION ALL
+        SELECT received.provider_workspace_id, received.provider_network_id,
+            received.consumer_workspace_id, received.consumer_network_id
+        FROM mesh.trust_contract AS received
+        WHERE received.consumer_workspace_id = scoped_workspace_id
+          AND received.state IN ('activating', 'active')
+          AND (v_local IS NULL OR received.consumer_network_id = ANY (v_local))
+    ), side AS (
+        SELECT touched.provider_workspace_id AS workspace_id, touched.provider_network_id AS network_id
+        FROM touched
+        UNION
+        SELECT touched.consumer_workspace_id, touched.consumer_network_id FROM touched
+    ), chosen AS (
+        SELECT side.workspace_id, side.network_id FROM side
+        ORDER BY side.workspace_id, side.network_id
+        LIMIT p_limit + 1
+    )
+    SELECT pg_catalog.array_agg(chosen.workspace_id ORDER BY chosen.workspace_id, chosen.network_id),
+        pg_catalog.array_agg(chosen.network_id ORDER BY chosen.workspace_id, chosen.network_id)
+    INTO v_workspaces, v_networks
+    FROM chosen;
+    v_deferred := COALESCE(pg_catalog.cardinality(v_networks), 0) > p_limit;
+    IF v_deferred THEN
+        v_workspaces := v_workspaces[1:p_limit];
+        v_networks := v_networks[1:p_limit];
+    END IF;
+    IF v_networks IS NULL THEN
+        RETURN pg_catalog.jsonb_build_object('heads', '[]'::JSONB, 'deferred', FALSE);
+    END IF;
+
+    PERFORM pg_catalog.set_config('mesh.guardrail_share_fanout', 'on', TRUE);
+    FOR v_scope IN
+        SELECT revision.workspace_id, revision.network_id
+        FROM mesh_ops.network_revision AS revision
+        WHERE (revision.workspace_id, revision.network_id) IN (
+            SELECT chosen.workspace_id, chosen.network_id
+            FROM ROWS FROM (pg_catalog.unnest(v_workspaces), pg_catalog.unnest(v_networks)) AS chosen(workspace_id, network_id)
+        )
+        ORDER BY revision.workspace_id, revision.network_id
+        FOR UPDATE
+    LOOP
+        UPDATE mesh_ops.network_revision AS revision
+        SET network_revision = revision.network_revision + 1,
+            sharing_revision = revision.sharing_revision + 1,
+            updated_at = GREATEST(revision.updated_at, pg_catalog.clock_timestamp())
+        WHERE revision.workspace_id = v_scope.workspace_id AND revision.network_id = v_scope.network_id;
+    END LOOP;
+    SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+            'workspace_id', head.workspace_public_id, 'network_id', head.network_public_id,
+            'own_workspace', head.workspace_id = scoped_workspace_id,
+            'network_revision', head.network_revision, 'sharing_revision', head.sharing_revision,
+            'stream_id', head.id, 'next_sequence', head.next_sequence,
+            'latest_event_hash', pg_catalog.encode(head.latest_event_hash, 'hex')
+        ) ORDER BY head.id), pg_catalog.count(*)
+    INTO v_heads, v_found
+    FROM (
+        SELECT stream.id, stream.workspace_id, stream.workspace_public_id, stream.network_public_id,
+            stream.next_sequence, stream.latest_event_hash, revision.network_revision, revision.sharing_revision
+        FROM mesh_audit.audit_stream AS stream
+        JOIN mesh_ops.network_revision AS revision
+          ON revision.workspace_id = stream.workspace_id AND revision.network_id = stream.network_id
+        WHERE stream.scope_kind = 'network' AND stream.network_id = ANY (v_networks)
+        ORDER BY stream.id
+        FOR UPDATE OF stream
+    ) AS head;
+    PERFORM pg_catalog.set_config('mesh.guardrail_share_fanout', '', TRUE);
+    IF v_found <> pg_catalog.cardinality(v_networks) THEN
+        RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'Network audit stream is unavailable';
+    END IF;
+    RETURN pg_catalog.jsonb_build_object('heads', v_heads, 'deferred', v_deferred);
 END;
 $function$;
 
@@ -585,6 +715,9 @@ GRANT EXECUTE ON FUNCTION mesh_ops.guardrail_change_share_contracts_v2(UUID, INT
 REVOKE ALL ON FUNCTION mesh_ops.bump_guardrail_share_networks_v2(UUID[], UUID[], UUID)
     FROM PUBLIC, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;
 GRANT EXECUTE ON FUNCTION mesh_ops.bump_guardrail_share_networks_v2(UUID[], UUID[], UUID) TO mesh_runtime;
+REVOKE ALL ON FUNCTION mesh_ops.wake_guardrail_share_networks_v1(UUID, UUID[], INTEGER)
+    FROM PUBLIC, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;
+GRANT EXECUTE ON FUNCTION mesh_ops.wake_guardrail_share_networks_v1(UUID, UUID[], INTEGER) TO mesh_runtime;
 REVOKE ALL ON FUNCTION mesh_ops.active_workspace_guardrails_v2()
     FROM PUBLIC, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;
 GRANT EXECUTE ON FUNCTION mesh_ops.active_workspace_guardrails_v2() TO mesh_runtime;

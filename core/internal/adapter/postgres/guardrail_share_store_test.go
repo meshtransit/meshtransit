@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -65,7 +66,6 @@ func TestCheckGuardrailShareImpact(t *testing.T) {
 	id, _ := publicid.Parse(shareStoreGuardrail)
 	changeID, _ := publicid.Parse("01890f00-0000-7000-8000-000000000a03")
 	enforced := shareStoreSpec(t, guardrail.ModeEnforce)
-	audit := shareStoreSpec(t, guardrail.ModeAudit)
 	preview, err := guardrail.ComputeImpact(workspaceID, nil, guardrail.Candidate{Spec: enforced},
 		mustInventory(t, shareStoreInventory(t)).Contracts)
 	if err != nil || len(preview.Affected) != 1 {
@@ -91,16 +91,6 @@ func TestCheckGuardrailShareImpact(t *testing.T) {
 			change: guardrail.Change{WorkspaceID: workspaceID, Operation: guardrail.OperationCreate, Spec: enforced,
 				ImpactHash: guardrail.ImpactHash{1}},
 			inventory: shareStoreInventory(t, saved)},
-		{name: "switching to audit restores without a hash", changed: 1,
-			saved: guardrail.Guardrail{ID: id, Version: 2, Spec: audit},
-			change: guardrail.Change{WorkspaceID: workspaceID, Operation: guardrail.OperationUpdate, Spec: audit,
-				ExpectedVersion: 1, Previous: &enforced},
-			inventory: shareStoreInventory(t, guardrail.Guardrail{ID: id, Version: 2, Spec: audit})},
-		{name: "deleting restores without a hash", changed: 1, deleted: true,
-			saved: guardrail.Guardrail{ID: id, Version: 2, Spec: enforced},
-			change: guardrail.Change{WorkspaceID: workspaceID, Operation: guardrail.OperationDelete, Spec: enforced,
-				ExpectedVersion: 1, Previous: &enforced},
-			inventory: shareStoreInventory(t)},
 		{name: "a read without the saved guardrail", saved: saved, err: guardrail.ErrUnavailable,
 			change:    guardrail.Change{WorkspaceID: workspaceID, Operation: guardrail.OperationCreate, Spec: enforced, ImpactHash: preview.Hash},
 			inventory: shareStoreInventory(t)},
@@ -156,40 +146,114 @@ func TestDecodeGuardrailShareInventoryIsStrict(t *testing.T) {
 	}
 }
 
-// Only an enforce-mode save reads under the preview's bound; deleting or
-// switching to audit reads every active share, so a Workspace past the bound
-// can still loosen its guardrails.
-func TestGuardrailShareReadLimit(t *testing.T) {
+// Only a result in enforce mode reads shares, under the impact bound. A
+// deletion or switch to audit of an enforced guardrail asks PostgreSQL to
+// wake the Networks the guardrail named, without a share list; any other
+// change reads nothing.
+func TestGuardrailChangeSharesDispatch(t *testing.T) {
 	t.Parallel()
 	workspaceID, _ := workspace.ParseID(shareStoreWorkspace)
 	id, _ := publicid.Parse(shareStoreGuardrail)
 	changeID, _ := publicid.Parse("01890f00-0000-7000-8000-000000000a03")
 	enforced, audit := shareStoreSpec(t, guardrail.ModeEnforce), shareStoreSpec(t, guardrail.ModeAudit)
+	store := &GuardrailStore{limits: GuardrailShareLimits{Impact: 7, WakeNetworks: 3}}
 	for _, test := range []struct {
 		name    string
 		change  guardrail.Change
 		saved   guardrail.Guardrail
 		deleted bool
+		query   string
 		limit   int
 	}{
-		{name: "enforce create", limit: 7, saved: guardrail.Guardrail{ID: id, Version: 1, Spec: enforced},
+		{name: "enforce create reads shares", query: guardrailChangeShareContractsSQL, limit: 7,
+			saved:  guardrail.Guardrail{ID: id, Version: 1, Spec: enforced},
 			change: guardrail.Change{WorkspaceID: workspaceID, Operation: guardrail.OperationCreate, Spec: enforced}},
-		{name: "switch to audit", limit: guardrail.MaximumChangeShareContracts,
+		{name: "switch to audit wakes", query: wakeGuardrailShareNetworksSQL, limit: 3,
 			saved: guardrail.Guardrail{ID: id, Version: 2, Spec: audit},
 			change: guardrail.Change{WorkspaceID: workspaceID, Operation: guardrail.OperationUpdate, Spec: audit,
 				ExpectedVersion: 1, Previous: &enforced}},
-		{name: "delete", limit: guardrail.MaximumChangeShareContracts, deleted: true,
+		{name: "delete wakes", query: wakeGuardrailShareNetworksSQL, limit: 3, deleted: true,
 			saved: guardrail.Guardrail{ID: id, Version: 2, Spec: enforced},
 			change: guardrail.Change{WorkspaceID: workspaceID, Operation: guardrail.OperationDelete, Spec: enforced,
 				ExpectedVersion: 1, Previous: &enforced}},
+		{name: "an audit edit changes no map", saved: guardrail.Guardrail{ID: id, Version: 2, Spec: audit},
+			change: guardrail.Change{WorkspaceID: workspaceID, Operation: guardrail.OperationUpdate, Spec: audit,
+				ExpectedVersion: 1, Previous: &audit}},
+		{name: "deleting an audit guardrail changes no map", deleted: true,
+			saved: guardrail.Guardrail{ID: id, Version: 2, Spec: audit},
+			change: guardrail.Change{WorkspaceID: workspaceID, Operation: guardrail.OperationDelete, Spec: audit,
+				ExpectedVersion: 1, Previous: &audit}},
 	} {
-		transaction := &fakeAccountSessionTransaction{row: fakeAccountSessionRow{err: errors.New("stop")}}
-		_, _ = checkGuardrailShareImpact(t.Context(), transaction, test.change, test.saved, test.deleted, changeID, 7)
-		if len(transaction.arguments) != 2 || transaction.arguments[1] != test.limit {
-			t.Errorf("%s: read with %v, want limit %d", test.name, transaction.arguments, test.limit)
+		transaction := &recordingGuardrailTransaction{err: errors.New("stop")}
+		_, _ = store.changeShares(t.Context(), transaction, test.change, test.saved, test.deleted, changeID)
+		switch {
+		case test.query == "" && len(transaction.queries) != 0:
+			t.Errorf("%s: read %v", test.name, transaction.queries)
+		case test.query != "" && (len(transaction.queries) != 1 || transaction.queries[0] != test.query):
+			t.Errorf("%s: read %v, want %s", test.name, transaction.queries, test.query)
+		case test.query == wakeGuardrailShareNetworksSQL:
+			networks, _ := transaction.arguments[0][1].([]string)
+			if len(networks) != 1 || networks[0] != shareStoreNetwork || transaction.arguments[0][2] != test.limit {
+				t.Errorf("%s: wakeup arguments %v", test.name, transaction.arguments[0])
+			}
+		case test.query != "" && transaction.arguments[0][1] != test.limit:
+			t.Errorf("%s: read limit %v, want %d", test.name, transaction.arguments[0][1], test.limit)
 		}
 	}
 }
+
+// The wakeup answer is trusted only within its bound.
+func TestWakeGuardrailShareNetworksBounds(t *testing.T) {
+	t.Parallel()
+	changeID, _ := publicid.Parse("01890f00-0000-7000-8000-000000000a03")
+	head := `{"workspace_id":"` + shareStoreWorkspace + `","network_id":"` + shareStoreNetwork +
+		`","own_workspace":true,"network_revision":2,"sharing_revision":2,"stream_id":1,"next_sequence":1,` +
+		`"latest_event_hash":"` + strings.Repeat("00", 32) + `"}`
+	for _, test := range []struct {
+		name, answer string
+		valid        bool
+		deferred     bool
+	}{
+		{name: "none", answer: `{"heads":[],"deferred":false}`, valid: true},
+		{name: "one", answer: `{"heads":[` + head + `],"deferred":false}`, valid: true},
+		{name: "one deferred at a bound of one", answer: `{"heads":[` + head + `],"deferred":true}`, valid: true,
+			deferred: true},
+		{name: "deferred below the bound", answer: `{"heads":[],"deferred":true}`},
+		{name: "over the bound", answer: `{"heads":[` + head + `,` + head + `],"deferred":false}`},
+		{name: "no heads", answer: `{"deferred":false}`},
+	} {
+		transaction := &recordingGuardrailTransaction{answer: test.answer}
+		outcome, err := wakeGuardrailShareNetworks(t.Context(), transaction,
+			shareStoreSpec(t, guardrail.ModeEnforce), changeID, 1)
+		if (err == nil) != test.valid || outcome.deferred != test.deferred {
+			t.Errorf("%s: %+v, %v", test.name, outcome, err)
+		}
+	}
+}
+
+// recordingGuardrailTransaction records each query and answers it with
+// answer, or fails with err.
+type recordingGuardrailTransaction struct {
+	queries   []string
+	arguments [][]any
+	answer    string
+	err       error
+}
+
+func (*recordingGuardrailTransaction) Exec(context.Context, string, ...any) error { return nil }
+
+func (transaction *recordingGuardrailTransaction) QueryRow(_ context.Context, query string,
+	arguments ...any) accountSessionRow {
+	transaction.queries = append(transaction.queries, query)
+	transaction.arguments = append(transaction.arguments, arguments)
+	if transaction.err != nil {
+		return fakeAccountSessionRow{err: transaction.err}
+	}
+	return fakeAccountSessionRow{values: []any{transaction.answer}}
+}
+
+func (*recordingGuardrailTransaction) Commit(context.Context) error   { return nil }
+func (*recordingGuardrailTransaction) Rollback(context.Context) error { return nil }
 
 // The bump always runs with every share evaluated, so PostgreSQL can refuse
 // the change when a share appeared or ended meanwhile; that refusal is a

@@ -136,7 +136,7 @@ WHERE provider_workspace_id = $1 AND provider_network_id = $2 AND consumer_netwo
 		share.String()).Scan(&contractState); err != nil || contractState != "active" {
 		t.Fatalf("the share's contract is %q (%v); a guardrail never changes it", contractState, err)
 	}
-	assertLooseningPastImpactLimit(ctx, t, runtimePool, session, workspaceID, isolation, audit,
+	assertLooseningPastImpactLimit(ctx, t, admin, runtimePool, session, workspaceID, isolation, audit,
 		providers[0], consumer)
 }
 
@@ -144,7 +144,7 @@ WHERE provider_workspace_id = $1 AND provider_network_id = $2 AND consumer_netwo
 // change of Workspace 103, that the bump compares the shares MeshCore
 // evaluated with the active shares once it holds the revision locks: an
 // evaluated set missing a share (one made after the read) or naming one no
-// longer active fails with 40001; the exact set passes. The transaction
+// longer active fails with MTG03; the exact set passes. The transaction
 // rolls back.
 func assertBumpRechecksShares(ctx context.Context, t *testing.T, admin *pgx.Conn, guardrailID publicid.ID) {
 	t.Helper()
@@ -166,7 +166,7 @@ func assertBumpRechecksShares(ctx context.Context, t *testing.T, admin *pgx.Conn
 		}
 	}
 	var encoded string
-	if err := tx.QueryRow(ctx, `SELECT mesh_ops.guardrail_change_share_contracts_v2($1::UUID, 200000)::TEXT`,
+	if err := tx.QueryRow(ctx, `SELECT mesh_ops.guardrail_change_share_contracts_v2($1::UUID, 20000)::TEXT`,
 		change).Scan(&encoded); err != nil {
 		t.Fatalf("read the shares: %v", err)
 	}
@@ -205,7 +205,7 @@ func assertBumpRechecksShares(ctx context.Context, t *testing.T, admin *pgx.Conn
 		{name: "nothing changed, a share ended", changed: []string{}, evaluated: ended},
 	} {
 		t.Logf("bump recheck: %s", test.name)
-		assertPostgreSQLCode(t, bump(test.changed, test.evaluated), "40001")
+		assertPostgreSQLCode(t, bump(test.changed, test.evaluated), "MTG03")
 	}
 	if err := bump(ids[:1], ids); err != nil {
 		t.Fatalf("the exact shares were refused: %v", err)
@@ -216,15 +216,18 @@ func assertBumpRechecksShares(ctx context.Context, t *testing.T, admin *pgx.Conn
 }
 
 // assertLooseningPastImpactLimit uses a store whose preview bound (1) is
-// below the active shares from 203 into 204: previewing or saving an
-// enforce-mode guardrail is refused as too large, while switching one to
-// audit and deleting it still work and restore the share.
-func assertLooseningPastImpactLimit(ctx context.Context, t *testing.T, runtimePool *postgresadapter.Pool,
+// below the active shares from 203 into 204 and which wakes one Network:
+// previewing or saving an enforce-mode guardrail is refused as too large,
+// while switching one to audit (which reads no share list) wakes Network
+// 203 only, records that it deferred the rest, and restores the share;
+// deleting the audit-mode guardrail then wakes nothing.
+func assertLooseningPastImpactLimit(ctx context.Context, t *testing.T, admin *pgx.Conn, runtimePool *postgresadapter.Pool,
 	session accountsession.Session, workspaceID workspace.ID, isolation, audit guardrail.Spec,
 	provider, consumer shareScaleDevice) {
 	t.Helper()
-	store, err := postgresadapter.NewGuardrailStoreWithImpactLimit(runtimePool,
-		postgresadapter.AccountSessionOptions{StatementTimeout: 3 * time.Second, IdleTimeout: 5 * time.Second}, 1)
+	store, err := postgresadapter.NewGuardrailStoreWithLimits(runtimePool,
+		postgresadapter.AccountSessionOptions{StatementTimeout: 3 * time.Second, IdleTimeout: 5 * time.Second},
+		postgresadapter.GuardrailShareLimits{Impact: 1, WakeNetworks: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,15 +250,29 @@ func assertLooseningPastImpactLimit(ctx context.Context, t *testing.T, runtimePo
 		t.Fatalf("enforce the isolation: %v", err)
 	}
 	assertShareInMaps(ctx, t, runtimePool, provider, consumer, false)
+	before := guardrailShareCutRevisions(ctx, t, admin)
 	audited, err := limited.Update(ctx, session, workspaceID, created.Guardrail.ID, created.Guardrail.Version, audit,
 		guardrail.ImpactHash{}, newCorrelationID(t))
 	if err != nil {
 		t.Fatalf("switch to audit past the bound: %v", err)
 	}
+	woken := guardrailShareCutRevisions(ctx, t, admin)
+	if woken[0].network != before[0].network+1 || woken[1] != before[1] {
+		t.Fatalf("a wakeup bounded to one Network moved %v -> %v, want Network 203 only", before, woken)
+	}
+	var deferred bool
+	if err := admin.QueryRow(ctx, `SELECT COALESCE((payload->>'share_networks_deferred')::BOOLEAN, FALSE)
+FROM mesh_audit.audit_event WHERE target_kind = 'guardrail' AND target_public_id = $1::UUID AND network_id IS NULL
+ORDER BY event_identity_id DESC LIMIT 1`, audited.Guardrail.ID.String()).Scan(&deferred); err != nil || !deferred {
+		t.Fatalf("the switch to audit did not record deferred Networks (%v)", err)
+	}
 	assertShareInMaps(ctx, t, runtimePool, provider, consumer, true)
 	if _, err := limited.Delete(ctx, session, workspaceID, audited.Guardrail.ID, audited.Guardrail.Version,
 		newCorrelationID(t)); err != nil {
 		t.Fatalf("delete past the bound: %v", err)
+	}
+	if after := guardrailShareCutRevisions(ctx, t, admin); after != woken {
+		t.Fatalf("deleting an audit-mode guardrail moved revisions %v -> %v", woken, after)
 	}
 }
 

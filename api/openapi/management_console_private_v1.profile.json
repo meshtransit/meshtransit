@@ -3914,7 +3914,7 @@
     "post": {
       "operationId": "previewWorkspaceGuardrail",
       "summary": "Preview what saving a guardrail does to existing shares",
-      "description": "Requires guardrail.manage or guardrail.weaken. Reads the Workspace's active guardrails and active shares and returns the shares the guardrail would cut (enforce mode) or report (audit mode), with the impact_hash an enforce-mode create or update must send. Changes nothing. More than 20,000 active shares are refused with guardrail_impact_too_large; switching a guardrail to audit mode or deleting it needs no preview.",
+      "description": "Requires guardrail.manage or guardrail.weaken. Reads the Workspace's active guardrails and active shares and returns the shares the guardrail would cut (enforce mode) or report (audit mode), with the impact_hash an enforce-mode create or update must send. Changes nothing. More than 20,000 active shares are refused with guardrail_impact_too_large; switching a guardrail to audit mode or deleting it needs no preview. While a guardrail of a Workspace is saved, offering, accepting or enabling a share of that Workspace answers a retryable conflict.",
       "security": [
         {
           "accountSessionCookie": [],
@@ -4245,7 +4245,7 @@
     "post": {
       "operationId": "updateWorkspaceGuardrail",
       "summary": "Change a guardrail",
-      "description": "Replaces name, description, mode and parameters at the version in If-Match. Deleting, switching from enforce to audit, or letting through anything it used to block needs guardrail.weaken; adding or narrowing needs guardrail.manage. The kind never changes. A result in enforce mode needs the impact_hash of a preview; switching to audit mode or loosening restores the shares it no longer blocks.",
+      "description": "Replaces name, description, mode and parameters at the version in If-Match. Deleting, switching from enforce to audit, or letting through anything it used to block needs guardrail.weaken; adding or narrowing needs guardrail.manage. The kind never changes. A result in enforce mode needs the impact_hash of a preview; switching to audit mode or loosening restores the shares it no longer blocks. Above 20,000 active shares a result in enforce mode is refused with guardrail_impact_too_large, even when it loosens; switch the guardrail to audit mode or delete it instead. A share changed concurrently is retried by Core, then answered with version_conflict (412).",
       "security": [
         {
           "accountSessionCookie": [],
@@ -4687,7 +4687,7 @@
     "post": {
       "operationId": "deleteWorkspaceGuardrail",
       "summary": "Delete a guardrail",
-      "description": "Requires guardrail.weaken. Deletes the guardrail at the version in If-Match; its record stays in the audit trail. Shares the guardrail cut come back; no preview is needed.",
+      "description": "Requires guardrail.weaken. Deletes the guardrail at the version in If-Match; its record stays in the audit trail. Shares the guardrail cut come back; no preview is needed. Deleting an enforced guardrail wakes the maps of at most 1,024 Networks at once; the others follow at the next map reconcile interval.",
       "security": [
         {
           "accountSessionCookie": [],

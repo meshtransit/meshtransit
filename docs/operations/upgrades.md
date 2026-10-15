@@ -102,6 +102,13 @@ operator step:
   interval of the last control replica running the new binary, shares that
   existing guardrails block are gone from every map. Until then, the previous
   binary keeps them, as it did before the upgrade.
+- **Do not change enforce-mode guardrails while binaries from before and
+  after schema 167 run together**, during a rollout or a rollback. A share
+  change made by an older binary does not take the Workspace's guardrail
+  state lock, so a guardrail saved at the same time can miss it: the share
+  stays in maps until the next reconcile interval, or longer with an older
+  binary building the map. Save guardrails before the rollout starts or
+  after every API and control replica runs the same binary.
 
 ## Relays
 

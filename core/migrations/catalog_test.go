@@ -3358,13 +3358,15 @@ func TestRetroactiveShareGuardrails(t *testing.T) {
 	}
 }
 
-// Schema 165 keeps the schema 164 functions for the previous binary and
+// Schema 167 keeps the schema 164 functions for the previous binary and
 // adds versions that differ only where review required: the guardrail
 // change takes the Workspace row FOR NO KEY UPDATE, the acting Workspace's
 // guardrail reader locks its state row with NOWAIT, the share readers take
-// their bound from the caller, the preview also admits guardrail.weaken,
-// the bump rechecks the evaluated shares after its revision locks, and the
-// map reader looks Workspaces up through the accepted-offer indexes.
+// their bound (at most 20000) from the caller, the preview also admits
+// guardrail.weaken, the bump rechecks the evaluated shares after its
+// revision locks, a change that only restores wakes at most 1024 Networks
+// chosen in SQL, and the map reader looks Workspaces up through the
+// accepted-offer indexes.
 func TestGuardrailShareConsistency(t *testing.T) {
 	t.Parallel()
 	migration := migrationVersion(t, 167)
@@ -3389,7 +3391,7 @@ func TestGuardrailShareConsistency(t *testing.T) {
 	}
 	bump := extract(migration.SQL, "bump_guardrail_share_networks_v2")
 	locked := strings.Index(bump, "        FOR UPDATE\n        LOOP")
-	recheck := strings.Index(bump, "RAISE EXCEPTION USING ERRCODE = '40001', MESSAGE = 'a share changed during the guardrail change';")
+	recheck := strings.Index(bump, "RAISE EXCEPTION USING ERRCODE = 'MTG03', MESSAGE = 'a share changed during the guardrail change';")
 	if locked < 0 || recheck < 0 || recheck < locked ||
 		!strings.Contains(bump, "IF v_live <> v_inventory OR v_matched <> v_inventory THEN") {
 		t.Error("the bump must recheck the evaluated shares after locking revisions")
@@ -3400,9 +3402,24 @@ func TestGuardrailShareConsistency(t *testing.T) {
 		t.Error("the preview must admit guardrail.manage or guardrail.weaken")
 	}
 	internal := extract(migration.SQL, "guardrail_share_contracts_internal_v2")
-	if !strings.Contains(internal, "LIMIT p_limit + 1") || !strings.Contains(internal, "p_limit > 200000") ||
+	if !strings.Contains(internal, "LIMIT p_limit + 1") || !strings.Contains(internal, "p_limit > 20000 THEN") ||
 		strings.Contains(internal, "20001") {
 		t.Error("the share reader must take its bound from the caller")
+	}
+	wake := extract(migration.SQL, "wake_guardrail_share_networks_v1")
+	for _, required := range []string{
+		"OR p_limit IS NULL OR p_limit < 1 OR p_limit > 1024 THEN",
+		"scoped_workspace_id := mesh_ops.guardrail_change_workspace_internal_v1(p_change);",
+		"ORDER BY side.workspace_id, side.network_id\n        LIMIT p_limit + 1",
+		"ORDER BY revision.workspace_id, revision.network_id\n        FOR UPDATE",
+		"PERFORM pg_catalog.set_config('mesh.guardrail_share_fanout', '', TRUE);",
+	} {
+		if !strings.Contains(wake, required) {
+			t.Errorf("wake_guardrail_share_networks_v1 missing %q", required)
+		}
+	}
+	if strings.Contains(wake, "jsonb_agg(pg_catalog.jsonb_build_object(\n            'trust_contract_id'") {
+		t.Error("the wakeup must not return a share list")
 	}
 	mapReader := extract(migration.SQL, "map_share_guardrails_v2")
 	for _, required := range []string{
@@ -3421,6 +3438,7 @@ func TestGuardrailShareConsistency(t *testing.T) {
 		"GRANT EXECUTE ON FUNCTION mesh_ops.map_share_guardrails_v2(UUID[]) TO mesh_runtime;",
 		"GRANT EXECUTE ON FUNCTION mesh_ops.bump_guardrail_share_networks_v2(UUID[], UUID[], UUID) TO mesh_runtime;",
 		"GRANT EXECUTE ON FUNCTION mesh_ops.active_workspace_guardrails_v2() TO mesh_runtime;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.wake_guardrail_share_networks_v1(UUID, UUID[], INTEGER) TO mesh_runtime;",
 		"REVOKE ALL ON FUNCTION mesh_ops.guardrail_share_contracts_internal_v2(BIGINT, INTEGER)\n    FROM PUBLIC, mesh_runtime,",
 	} {
 		if !strings.Contains(migration.SQL, required) {

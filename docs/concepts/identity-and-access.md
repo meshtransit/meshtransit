@@ -249,13 +249,19 @@ the save is refused with `guardrail_impact_changed` (409). In audit mode the
 preview lists the shares the guardrail would report and the save needs no
 hash; deleting never needs one. The preview needs `guardrail.manage` or
 `guardrail.weaken`. A Workspace with more than 20,000 active shares cannot
-preview or save a guardrail in enforce mode, but can still switch one to
-audit mode or delete it. A share accepted or enabled while its Workspace's
-guardrails are being saved fails as a retryable conflict, and a guardrail
-save that a share changed under fails with `version_conflict`; retrying
-either is safe. A save that cuts or restores shares advances
-the Network revision of both sides of each share and records the change on
-each Network's audit stream, so connected Devices receive new maps.
+preview or save a guardrail whose result is in enforce mode, not even to
+loosen it; it can switch the guardrail to audit mode or delete it, which
+needs no preview. A share offered, accepted or enabled while a guardrail of
+either Workspace of the share is being saved fails as a retryable conflict;
+a guardrail save that a share changed under is redone by Core up to three
+times, then fails with `version_conflict`; retrying either is safe
+([limits](../operations/limits.md#product)). A save in enforce mode advances
+the Network revision of both sides of each share it cuts or restores;
+switching an enforced guardrail to audit mode or deleting it advances the
+Networks of the shares of the Networks it named (at most 1,024 at once; the
+others follow at the next map reconcile interval). Each advanced Network
+records the change on its audit stream, so connected Devices receive new
+maps.
 
 Across Workspaces, each side's guardrails apply. When the consumer accepts an
 offer, activates its Trust Contract or publishes rules to the Imported

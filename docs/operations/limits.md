@@ -59,8 +59,29 @@ reached.
 | Members removed with a Device plan | 250 Devices per plan | [devices](../concepts/devices.md#members-leaving) |
 | Pending invitations | 200 per Workspace | [identity and access](../concepts/identity-and-access.md#members-and-invitations) |
 | Private Interchanges | 16 per Workspace, 256 Networks each | [paths and relays](../concepts/paths-and-relays.md#private-interchange) |
-| Guardrails | 100 per Workspace | — |
+| Guardrails | 100 per Workspace | [identity and access](../concepts/identity-and-access.md#guardrails) |
+| Shares a guardrail preview or an enforce-mode save evaluates | 20,000 active shares of the Workspace | [identity and access](../concepts/identity-and-access.md#guardrails) |
+| Networks a guardrail change that only restores shares wakes | 1,024 | [identity and access](../concepts/identity-and-access.md#guardrails) |
 | Bootstrap plan | 100 Accounts, 64 KiB | [deployment](deployment.md#first-data) |
+
+Guardrails and shares of one Workspace:
+
+- Above 20,000 active shares, previewing a guardrail and saving one whose
+  result is in enforce mode are refused with `guardrail_impact_too_large`
+  (422). That includes loosening an enforced guardrail into a narrower
+  enforced one: switch it to audit mode or delete it instead, which needs no
+  preview and works at any size.
+- Switching an enforced guardrail to audit mode or deleting it wakes the
+  maps of at most 1,024 Networks right away (those of the shares of the
+  Networks the guardrail named); the others get the restored shares at the
+  next map reconcile interval (`MESHTRANSIT_CONTROL_MAP_RECONCILE_INTERVAL`,
+  30 s by default). Restoring later only withholds access longer.
+- While a guardrail of a Workspace is being saved, offering a share from
+  that Workspace, and accepting an offer or enabling a Trust Contract of a
+  share that Workspace takes part in (as either side), returns a retryable
+  conflict (409); retry it. A guardrail save that a share accepted, enabled,
+  revoked or ended at the same moment changes under is redone by Core up to
+  three times, then returns `version_conflict` (412).
 
 Without the operator steps of the
 [Device sharing deployment gate](../core/design/device-sharing-deployment-gate.md),
