@@ -163,6 +163,7 @@ type integrationSubjectProfile struct {
 	authTime bool
 	sid, acr string
 	amr      []string
+	email    string
 }
 type integrationSubjectProvider struct {
 	nonce   oidcauth.Nonce
@@ -178,6 +179,7 @@ func (provider integrationSubjectProvider) Authenticate(_ context.Context, reque
 	return oidcauth.NewTokenEvidence(oidcauth.TokenEvidenceParams{
 		Issuer: request.Route().Issuer(), Subject: " Exact-é ", Nonce: provider.nonce, IssuedAt: now, ExpiresAt: now.Add(5 * time.Minute),
 		AuthTime: authTime, SessionID: provider.profile.sid, ACR: provider.profile.acr, AMR: provider.profile.amr,
+		VerifiedEmail: provider.profile.email,
 	})
 }
 

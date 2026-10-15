@@ -35,7 +35,7 @@
       "post": {
         "operationId": "prepareInvitationSignIn",
         "summary": "Preview a Workspace invitation and bind it to the next sign-in",
-        "description": "Shared source budget precedes the lookup. Answers only a pending, unexpired invitation: the Workspace, the inviter, the invited address and the role; anything else is 404 without detail. Issues __Host-mt_invite, Secure/HttpOnly/SameSite=Lax/Path=/, no Domain, lasting 10 minutes; the next sign-in completion in this browser accepts the invitation and clears it. Grants nothing by itself.",
+        "description": "Shared source budget precedes the lookup. Answers only a pending, unexpired invitation: the Workspace, the inviter, the invited address and the role; anything else is 404 without detail. Issues __Host-mt_invite, Secure/HttpOnly/SameSite=Lax/Path=/, no Domain, lasting 10 minutes; the next sign-in completion in this browser accepts the invitation, only when the provider verified the invited address, and clears it. Grants nothing by itself.",
         "security": [],
         "parameters": [
           {

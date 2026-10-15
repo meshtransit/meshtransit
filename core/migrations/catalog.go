@@ -526,6 +526,7 @@ func Catalog() []Migration {
 		newMigration(157, "Registration address floor", registrationAddressFloorSQL),
 		newMigration(158, "Registration recent Devices", registrationRecentDevicesSQL),
 		newMigration(159, "Network address usage", networkAddressUsageSQL),
+		newMigration(160, "Invitation email binding", invitationEmailBindingSQL),
 	}
 }
 
@@ -782,3 +783,6 @@ var registrationRecentDevicesSQL string
 
 //go:embed 000159_network_address_usage.up.sql
 var networkAddressUsageSQL string
+
+//go:embed 000160_invitation_email_binding.up.sql
+var invitationEmailBindingSQL string

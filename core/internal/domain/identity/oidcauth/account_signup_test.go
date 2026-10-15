@@ -90,6 +90,7 @@ func TestCallbackRefusesASignUpItCannotBound(t *testing.T) {
 func TestCallbackSkipsSignUpForAnInvitationOrWhenOff(t *testing.T) {
 	t.Parallel()
 	fixture := newCallbackFixture(t)
+	fixture.providerEmail = "invited@example.test"
 	store := &signupTestStore{fixture: fixture}
 	withSignups(t, fixture, store, &invitationTestAcceptor{fixture: fixture})
 	command, err := fixture.command.WithInvitation(NewInvitationProof([32]byte{7}))

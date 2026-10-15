@@ -22,11 +22,14 @@ What Core keeps about a person:
 - the provider's subject only as a keyed HMAC digest, never in clear;
 - a display name, set once when the Account is created: from a self sign-up,
   the provider's name, else the verified email, else "MeshTransit user"; from
-  an invitation, the invited address; from a bootstrap plan, the plan's name.
+  an invitation, the verified email as the provider spells it (the invited
+  address when that is longer than 128 characters); from a bootstrap plan, the
+  plan's name.
 
 Core does not store a person's email as an attribute, and an email never
-identifies, links or authorizes anyone. Only invitations keep the address
-they were sent to.
+identifies or links anyone. Only invitations keep the address they were sent
+to, and an invitation is accepted only by a sign-in whose provider verified
+that address.
 
 Every Workspace and Network also has a **display code** of twelve digits,
 for example in the names of shared Devices.
@@ -93,9 +96,16 @@ People join a Workspace by invitation (`member.invite`):
   what the inviter may grant, and is valid for 7 days. A Workspace has at
   most 200 pending invitations, one per address; a resend waits at least a
   minute.
-- **The link is the proof.** Whoever completes sign-in with it joins the
-  Workspace; the invited address is not compared with the person's email.
-  Treat an invitation link like a password. It works once.
+- **The link and the address together are the proof.** The person must
+  complete sign-in with the link through a provider that verifies the
+  invited address: the provider's verified email must equal it, ignoring
+  ASCII letter case only. Invited addresses are ASCII, so a verified address
+  with any other character is refused rather than folded. A sign-in that
+  proves another address, or none, fails;
+  the invitation stays pending and nothing is created, so the right person
+  can still use it. The link works once.
+- The address only narrows who may use the link. The provider's subject
+  still decides who the person is.
 - A person without an Account gets one on acceptance; an existing member
   keeps their membership and gains the role; a suspended member is refused.
 - A new member joins every Network that is active at acceptance. A Network

@@ -8,7 +8,8 @@ import (
 
 var (
 	// ErrInvitationRejected reports an invitation that cannot be accepted by
-	// this sign-in: unknown, used, revoked, expired, or a suspended member.
+	// this sign-in: unknown, used, revoked, expired, a suspended member, or a
+	// sign-in whose provider did not verify the invited address.
 	ErrInvitationRejected = errors.New("oidcauth: invitation rejected")
 	// ErrInvitationUnavailable reports a dependency failure while accepting.
 	ErrInvitationUnavailable = errors.New("oidcauth: invitation acceptance unavailable")
@@ -38,6 +39,9 @@ func (InvitationProof) LogValue() slog.Value { return slog.StringValue("[REDACTE
 type InvitationAcceptance struct {
 	Lookup SubjectLookup
 	Proof  InvitationProof
+	// Email is the address the provider marked verified for this sign-in.
+	// The invitation is accepted only when it equals the invited address.
+	Email string
 }
 
 // InvitationAcceptor makes the signed-in identity a member through the
@@ -60,7 +64,14 @@ func (service *CallbackService) acceptInvitation(ctx context.Context, exchange E
 	if err != nil {
 		return ErrInvitationRejected
 	}
-	if err := service.invitations.AcceptInvitation(ctx, InvitationAcceptance{Lookup: lookup, Proof: proof}); err != nil {
+	// The link names one address. Without an address the provider verified,
+	// this sign-in cannot show it is that person, so the link is not used.
+	email := exchange.identity.Profile().Email()
+	if email == "" {
+		return ErrInvitationRejected
+	}
+	acceptance := InvitationAcceptance{Lookup: lookup, Proof: proof, Email: email}
+	if err := service.invitations.AcceptInvitation(ctx, acceptance); err != nil {
 		if errors.Is(err, ErrInvitationRejected) {
 			return ErrInvitationRejected
 		}

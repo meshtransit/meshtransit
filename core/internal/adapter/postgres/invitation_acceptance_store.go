@@ -3,7 +3,9 @@ package postgres
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -15,9 +17,15 @@ import (
 	"meshtransit.net/core/internal/domain/workspace"
 )
 
-const acceptWorkspaceInvitationSQL = `SELECT mesh_ops.accept_workspace_invitation_v1(
+// Schema 160: the invitation is consumed only when $17, the address the
+// provider verified for this sign-in, equals the invited address.
+const acceptWorkspaceInvitationSQL = `SELECT mesh_ops.accept_workspace_invitation_v2(
  $1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::BIGINT,$6::UUID,$7::BIGINT,$8::BYTEA,$9::TIMESTAMPTZ,
- $10::TEXT,$11::TEXT,$12::BYTEA,$13::TEXT,$14::BYTEA,$15::BYTEA,$16::UUID)::TEXT`
+ $10::TEXT,$11::TEXT,$12::BYTEA,$13::TEXT,$14::BYTEA,$15::BYTEA,$16::UUID,$17::TEXT)::TEXT`
+
+// invitationEmailDigestDomain separates the evidence digest of an accepting
+// address from every other digest.
+const invitationEmailDigestDomain = "meshtransit-invitation-email-v1\x00"
 
 const previewWorkspaceInvitationSQL = `SELECT COALESCE(mesh_ops.preview_workspace_invitation_v1($1::BYTEA,
  $2::TIMESTAMPTZ)::TEXT, '')`
@@ -39,7 +47,7 @@ func invitationAcceptanceError(err error) error {
 	var pgError *pgconn.PgError
 	if errors.As(err, &pgError) {
 		switch pgError.Code {
-		case "P0002", "MTV05", "42501", "22023", "23505":
+		case "P0002", "MTV05", "MTV06", "42501", "22023", "23505":
 			return oidcauth.ErrInvitationRejected
 		}
 	}
@@ -53,7 +61,7 @@ func invitationAcceptanceError(err error) error {
 // of one consuming sign-in, with evidence on the Workspace stream whose actor
 // is the accepting principal. The sign-in then resolves the subject as usual.
 func (store *InvitationStore) AcceptInvitation(ctx context.Context, acceptance oidcauth.InvitationAcceptance) error {
-	if !acceptance.Lookup.IsValid() || !acceptance.Proof.IsValid() {
+	if !acceptance.Lookup.IsValid() || !acceptance.Proof.IsValid() || acceptance.Email == "" {
 		return oidcauth.ErrInvitationRejected
 	}
 	changeID, err := publicid.New()
@@ -73,13 +81,15 @@ func (store *InvitationStore) AcceptInvitation(ctx context.Context, acceptance o
 	}
 	hash := snapshot.SemanticHash()
 	token := acceptance.Proof.Digest()
+	// Evidence names the accepting address by a digest, never in clear.
+	emailDigest := sha256.Sum256([]byte(invitationEmailDigestDomain + strings.ToLower(acceptance.Email)))
 	return store.transact(ctx, func(tx accountSessionTransaction) (bool, error) {
 		var encoded string
 		if err := tx.QueryRow(ctx, acceptWorkspaceInvitationSQL, route.DeploymentID().String(),
 			route.ProviderID().String(), route.ClientID().String(), route.ProviderGeneration(), route.RecoveryEpoch(),
 			snapshot.TransactionID().String(), claimed.Version(), hash[:], claimed.ConsumedAt(),
 			digests[0].Algorithm(), digests[0].KeyID().String(), active[:], previousID, previousBytes, token[:],
-			changeID.String()).Scan(&encoded); err != nil {
+			changeID.String(), acceptance.Email).Scan(&encoded); err != nil {
 			return false, invitationAcceptanceError(err)
 		}
 		var record invitationAcceptanceRecord
@@ -111,8 +121,9 @@ func (store *InvitationStore) AcceptInvitation(ctx context.Context, acceptance o
 				NetworkCount   int    `json:"network_count"`
 				Role           string `json:"role,omitempty"`
 				Transaction    string `json:"auth_transaction_id"`
+				EmailDigest    string `json:"verified_email_sha256"`
 			}{workspaceID.String(), invitationID.String(), principal.String(), *record.AccountCreated, *record.Joined,
-				*record.NetworkCount, role, snapshot.TransactionID().String()},
+				*record.NetworkCount, role, snapshot.TransactionID().String(), hex.EncodeToString(emailDigest[:])},
 			outboxClass: "member.invitation_accepted",
 			outbox: struct {
 				WorkspaceID  string `json:"workspace_id"`

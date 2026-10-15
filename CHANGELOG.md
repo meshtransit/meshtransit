@@ -5,6 +5,12 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core schema 160: a Workspace invitation is accepted only by a sign-in whose
+  identity provider verified the invited address (equal ignoring ASCII letter
+  case; non-ASCII addresses are refused). Before, the link alone let anyone who
+  completed sign-in join with the invited role. A refused sign-in creates
+  nothing and leaves the invitation pending. Login profiles must request the
+  `email` scope; the acceptance evidence carries a digest of the address.
 - Go 1.26.9 toolchain baseline and `golang.org/x/net` v0.60.0 (with the
   `x/crypto`, `x/text`, `x/sync`, `x/mod` and `x/tools` releases it requires).
   Go 1.26.8 and `x/net` v0.58.0 carried reachable vulnerabilities, among them

@@ -481,7 +481,9 @@ type callbackFixture struct {
 	observer                    *callbackTestObserver
 	loaderMissing               bool
 	providerFault, subjectFault string
-	providerCalls               int
+	// providerEmail is the address the provider marks verified.
+	providerEmail string
+	providerCalls int
 }
 
 func newCallbackFixture(t *testing.T) *callbackFixture {
@@ -537,7 +539,7 @@ func newCallbackFixture(t *testing.T) *callbackFixture {
 			}
 			return NewTokenEvidence(TokenEvidenceParams{
 				Issuer: params.Route.Issuer(), Subject: " Case-é ", Nonce: nonce, IssuedAt: fixture.now,
-				ExpiresAt: fixture.now.Add(time.Minute), AuthTime: authTime,
+				ExpiresAt: fixture.now.Add(time.Minute), AuthTime: authTime, VerifiedEmail: fixture.providerEmail,
 			})
 		}},
 		Subjects: subjectTestResolver{resolve: func(_ context.Context, lookup SubjectLookup) (LoginSubjectSnapshot, error) {

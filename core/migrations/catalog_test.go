@@ -3,6 +3,7 @@ package migrations
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -11,8 +12,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 159 {
-		t.Fatalf("len(Catalog()) = %d, want 159", len(catalog))
+	if len(catalog) != 160 {
+		t.Fatalf("len(Catalog()) = %d, want 160", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1608,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 159 {
-		t.Fatalf("LatestVersion() = %d, want 159", LatestVersion())
+	if LatestVersion() != 160 {
+		t.Fatalf("LatestVersion() = %d, want 160", LatestVersion())
 	}
 }
 
@@ -3093,6 +3094,48 @@ func TestWorkspaceInvitationAcceptance(t *testing.T) {
 	} {
 		if !strings.Contains(migration.SQL, required) {
 			t.Errorf("schema 129 missing %q", required)
+		}
+	}
+}
+
+// Schema 160 binds acceptance to the invited address: under the invitation
+// lock it refuses a non-ASCII or differently spelled address before v1
+// consumes the link, folds ASCII case only, and keeps v1 for rollback.
+func TestInvitationEmailBinding(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[159]
+	if migration.Version != 160 {
+		t.Fatalf("migration 160 = %+v", migration)
+	}
+	sql := migration.SQL
+	body := sql[strings.Index(sql, "AS $function$"):]
+	ascii := regexp.MustCompile(`OR pg_catalog\.octet_length\(p_verified_email\) <> pg_catalog\.char_length\(p_verified_email\)\s+` +
+		`OR p_verified_email ~ '\[\[:space:\]\[:cntrl:\]\]' THEN\s+RAISE EXCEPTION USING ERRCODE = 'MTV06'`)
+	compare := regexp.MustCompile(`IF v_invited IS NOT NULL AND pg_catalog\.translate\(p_verified_email,\s+` +
+		`'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'\) <> v_invited THEN\s+` +
+		`RAISE EXCEPTION USING ERRCODE = 'MTV06'`)
+	asciiAt, compareAt := ascii.FindStringIndex(body), compare.FindStringIndex(body)
+	lockAt := strings.Index(body, "FOR UPDATE OF invitation")
+	consumeAt := strings.Index(body, "mesh_ops.accept_workspace_invitation_v1(")
+	if asciiAt == nil || compareAt == nil || lockAt < 0 || consumeAt < 0 ||
+		asciiAt[1] >= lockAt || lockAt >= compareAt[0] || compareAt[1] >= consumeAt {
+		t.Fatal("schema 160 must refuse non-ASCII, lock, then refuse another address, all before v1 consumes the link")
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.accept_workspace_invitation_v2(",
+		"AND invitation.state = 'pending'",
+		"AND deployment.installation_public_id = p_deployment_public_id",
+		"TO mesh_runtime;",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Errorf("schema 160 missing %q", required)
+		}
+	}
+	// lower() follows the database locale and folds non-ASCII letters.
+	for _, forbidden := range []string{"lower(p_verified_email)", "REVOKE ALL ON FUNCTION mesh_ops.accept_workspace_invitation_v1",
+		"DROP FUNCTION"} {
+		if strings.Contains(sql, forbidden) {
+			t.Errorf("schema 160 must not contain %q", forbidden)
 		}
 	}
 }

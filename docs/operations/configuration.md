@@ -184,7 +184,13 @@ the client secret file, and the purpose keys (`initiation`, `capture`,
 `continuation`, `management_csrf`, `transaction_digest`,
 `verifier_encryption`, `subject_active`, optionally `subject_previous`,
 `provider_session`), each as `{id, file}`. Unknown, duplicate or null fields
-are refused.
+are refused. The scopes must include `email` for invitations to work: an
+invitation is accepted only when the ID token carries a verified email
+(`email_verified` as a JSON `true`) equal to the invited address. Profiles
+before version 3 have no scopes field and request `openid federated:id` only,
+so their sign-ins cannot accept invitations. The profile's scopes must also
+equal the client's stored `allowed_scopes` exactly, or every sign-in is
+refused: change both together, never only the profile.
 
 ### Self sign-up, entitlement, mail
 

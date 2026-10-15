@@ -145,7 +145,7 @@ func assertPostgreSQLInvitationAcceptance(ctx context.Context, t *testing.T, adm
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO mesh.workspace_invitation (public_id, deployment_id, workspace_id, email,
     role_key, token_digest, expires_at, invited_by_principal_id, created_at, updated_at)
-VALUES ($1::UUID, 1, 101, 'newcomer@example.test', 'auditor', $2, now() + INTERVAL '1 day', 11, now(), now())`,
+VALUES ($1::UUID, 1, 101, 'newcomer.k@example.test', 'auditor', $2, now() + INTERVAL '1 day', 11, now(), now())`,
 		invitationID, digest[:]); err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ VALUES ($1::UUID, 1, 101, 'newcomer@example.test', 'auditor', $2, now() + INTERV
 		t.Fatal(err)
 	}
 	preview, err := invitations.PreviewInvitation(ctx, digest, time.Now())
-	if err != nil || preview.Email != "newcomer@example.test" || preview.Role != "auditor" || preview.WorkspaceName == "" {
+	if err != nil || preview.Email != "newcomer.k@example.test" || preview.Role != "auditor" || preview.WorkspaceName == "" {
 		t.Fatalf("preview = %+v, %v", preview, err)
 	}
 
@@ -161,8 +161,9 @@ VALUES ($1::UUID, 1, 101, 'newcomer@example.test', 'auditor', $2, now() + INTERV
 	if err != nil {
 		t.Fatal(err)
 	}
-	accept := func(suffix string) (oidcauth.ExchangeResult, error) {
-		exchange, route := integrationSubjectExchangeWithProfile(ctx, t, authStore, suffix, integrationSubjectProfile{})
+	accept := func(suffix, email string) (oidcauth.ExchangeResult, error) {
+		exchange, route := integrationSubjectExchangeWithProfile(ctx, t, authStore, suffix,
+			integrationSubjectProfile{email: email})
 		digests, err := keys.Digests(route, exchange.Identity())
 		if err != nil {
 			t.Fatal(err)
@@ -172,10 +173,31 @@ VALUES ($1::UUID, 1, 101, 'newcomer@example.test', 'auditor', $2, now() + INTERV
 			t.Fatal(err)
 		}
 		return exchange, invitations.AcceptInvitation(ctx, oidcauth.InvitationAcceptance{
-			Lookup: lookup, Proof: oidcauth.NewInvitationProof(digest),
+			Lookup: lookup, Proof: oidcauth.NewInvitationProof(digest), Email: exchange.Identity().Profile().Email(),
 		})
 	}
-	exchange, err := accept("e71")
+	// The link alone is not enough: a sign-in that proves another address, a
+	// non-ASCII lookalike (the Kelvin sign folds to "k" under lower()), or no
+	// address is refused, and nothing is created or consumed.
+	before := invitationAuthorityCounts(ctx, t, admin)
+	for _, refused := range []struct{ suffix, email string }{
+		{suffix: "e70", email: "someone.else@example.test"},
+		{suffix: "e74", email: "newcomer.\u212a@example.test"},
+		{suffix: "e73", email: ""},
+	} {
+		if _, err := accept(refused.suffix, refused.email); !errors.Is(err, oidcauth.ErrInvitationRejected) {
+			t.Fatalf("accept(%q) = %v, want ErrInvitationRejected", refused.email, err)
+		}
+	}
+	var pendingState string
+	if err := admin.QueryRow(ctx, `SELECT state FROM mesh.workspace_invitation WHERE public_id = $1::UUID`,
+		invitationID).Scan(&pendingState); err != nil {
+		t.Fatal(err)
+	}
+	if after := invitationAuthorityCounts(ctx, t, admin); pendingState != "pending" || after != before {
+		t.Fatalf("after refused sign-ins: invitation %s, authority %+v, want %+v", pendingState, after, before)
+	}
+	exchange, err := accept("e71", "Newcomer.K@Example.test")
 	if err != nil {
 		t.Fatalf("accept: %v", err)
 	}
@@ -194,7 +216,7 @@ WHERE invitation.public_id = $1::UUID`, invitationID).Scan(&state, &displayName,
 		&activeNetworks); err != nil {
 		t.Fatal(err)
 	}
-	if state != "accepted" || displayName != "newcomer@example.test" || memberships != 1 || roles != 1 ||
+	if state != "accepted" || displayName != "Newcomer.K@Example.test" || memberships != 1 || roles != 1 ||
 		networks != activeNetworks {
 		t.Fatalf("accepted = %s %s members=%d roles=%d networks=%d/%d", state, displayName, memberships, roles,
 			networks, activeNetworks)
@@ -210,7 +232,63 @@ WHERE invitation.public_id = $1::UUID`, invitationID).Scan(&state, &displayName,
 	if err != nil || resolved.WorkspaceID().String() != integrationLoginWorkspacePublicID {
 		t.Fatalf("the new member must resolve into the invited Workspace: %v", err)
 	}
-	if _, err := accept("e72"); !errors.Is(err, oidcauth.ErrInvitationRejected) {
+	if _, err := accept("e72", "newcomer.k@example.test"); !errors.Is(err, oidcauth.ErrInvitationRejected) {
 		t.Fatalf("a used link must be refused: %v", err)
 	}
+
+	// A member cannot raise their own role through a link sent to someone
+	// else: the admin invitation for another address stays pending.
+	adminToken, err := invitation.NewToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminDigest := adminToken.Digest()
+	const adminInvitationID = "01890f00-0000-7000-8000-000000001972"
+	tx, err = admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `RESET ROLE; SET LOCAL session_replication_role = replica`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO mesh.workspace_invitation (public_id, deployment_id, workspace_id, email,
+    role_key, token_digest, expires_at, invited_by_principal_id, created_at, updated_at)
+VALUES ($1::UUID, 1, 101, 'boss@example.test', 'admin', $2, now() + INTERVAL '1 day', 11, now(), now())`,
+		adminInvitationID, adminDigest[:]); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	digest = adminDigest
+	before = invitationAuthorityCounts(ctx, t, admin)
+	if _, err := accept("e75", "Newcomer.K@Example.test"); !errors.Is(err, oidcauth.ErrInvitationRejected) {
+		t.Fatalf("a member using an admin link for another address = %v, want ErrInvitationRejected", err)
+	}
+	if after := invitationAuthorityCounts(ctx, t, admin); after != before {
+		t.Fatalf("a refused member link changed authority: %+v, want %+v", after, before)
+	}
+}
+
+// invitationAuthorityCounts counts every row an invitation acceptance can
+// create, so a refused sign-in can be shown to create none.
+type invitationAuthority struct {
+	accounts, subjects, memberships, networkMemberships, roles, pending int64
+}
+
+func invitationAuthorityCounts(ctx context.Context, t *testing.T, admin *pgx.Conn) invitationAuthority {
+	t.Helper()
+	var counts invitationAuthority
+	if err := admin.QueryRow(ctx, `SELECT
+    (SELECT count(*) FROM mesh.account),
+    (SELECT count(*) FROM mesh.identity_subject),
+    (SELECT count(*) FROM mesh.workspace_membership),
+    (SELECT count(*) FROM mesh.network_membership),
+    (SELECT count(*) FROM mesh.workspace_role_assignment),
+    (SELECT count(*) FROM mesh.workspace_invitation WHERE state = 'pending')`).Scan(&counts.accounts,
+		&counts.subjects, &counts.memberships, &counts.networkMemberships, &counts.roles,
+		&counts.pending); err != nil {
+		t.Fatal(err)
+	}
+	return counts
 }

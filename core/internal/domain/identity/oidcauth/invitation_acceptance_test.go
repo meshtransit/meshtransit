@@ -37,6 +37,7 @@ func withInvitation(t *testing.T, fixture *callbackFixture, acceptor InvitationA
 func TestCallbackAcceptsAnInvitationBeforeResolvingTheSubject(t *testing.T) {
 	t.Parallel()
 	fixture := newCallbackFixture(t)
+	fixture.providerEmail = "Newcomer@Example.test"
 	acceptor := &invitationTestAcceptor{fixture: fixture}
 	command := withInvitation(t, fixture, acceptor)
 	result, err := fixture.service.CompleteBrowser(t.Context(), command)
@@ -50,6 +51,26 @@ func TestCallbackAcceptsAnInvitationBeforeResolvingTheSubject(t *testing.T) {
 	}
 	if !acceptor.acceptance.Lookup.IsValid() || acceptor.acceptance.Proof.Digest() != [32]byte{7} {
 		t.Fatal("the acceptor must receive the sign-in lookup and the proof")
+	}
+	if acceptor.acceptance.Email != "Newcomer@Example.test" {
+		t.Fatalf("acceptance email = %q, want the provider-verified address", acceptor.acceptance.Email)
+	}
+}
+
+// An invitation names one address; a sign-in whose provider proved no address
+// cannot show it is that person, so it never reaches the store.
+func TestCallbackRefusesAnInvitationWithoutAVerifiedEmail(t *testing.T) {
+	t.Parallel()
+	fixture := newCallbackFixture(t)
+	acceptor := &invitationTestAcceptor{fixture: fixture}
+	command := withInvitation(t, fixture, acceptor)
+	if _, err := fixture.service.CompleteBrowser(t.Context(), command); err == nil {
+		t.Fatal("an invitation without a verified email must not issue a Session")
+	}
+	for _, effect := range []string{"accept", "resolve", "issue"} {
+		if slices.Contains(fixture.effects, effect) {
+			t.Fatalf("effects = %v, want no %s", fixture.effects, effect)
+		}
 	}
 }
 
