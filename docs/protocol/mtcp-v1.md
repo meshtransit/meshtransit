@@ -502,7 +502,8 @@ record for each address of self and of each same-Network peer under its name,
 and one for each address of each imported share under its share name; one
 route for the suffix with no resolvers, so the node answers every name under
 it and an unknown one is `NXDOMAIN`; and the Network's zone as the only
-search domain. Core sends no pointer records: the node answers PTR queries
+search domain. A node ignores a route without resolvers for the root or a
+single-label suffix. Core sends no pointer records: the node answers PTR queries
 for the addresses of the records under its own zone (the zone its own name is
 in). Within a stream, Core sends `dns` in a delta only when it changed.
 

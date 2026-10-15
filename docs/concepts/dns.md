@@ -14,8 +14,12 @@ Every Device has a DNS name in its Network:
 ```
 
 - The **label** is derived from the hostname by Core: its first label,
-  lowercased, other characters replaced by hyphens, at most 63 bytes
-  (`device` when nothing is left, `device-` before an all-digit result). It is
+  lowercased, each run of other characters replaced by one hyphen (so a label
+  never starts with an IDNA `xn--` prefix), at most 63 bytes. Nothing left
+  gives `device`; an all-digit label, or a name hosts look up on their own
+  (`wpad`, `isatap`, `localhost`, `gateway`, `dns`, `www`, `mail`, `proxy`,
+  ...), is prefixed with `device-`, so no Device can answer it through the
+  search domain. It is
   unique among the live Devices of the Network: a Device whose hostname gives
   a label another Device holds gets the first free numbered variant
   (`laptop-1`, `laptop-2`, ...). A revoked Device releases its label at once.
@@ -24,6 +28,15 @@ Every Device has a DNS name in its Network:
 - The **Workspace and Network codes** are their twelve-digit display codes.
 - The **suffix** is deployment configuration, `MESHTRANSIT_DNS_SUFFIX`, by
   default `mesh.internal` ([configuration](../operations/configuration.md)).
+  It has at least two labels and is never a special-use zone (`local`,
+  `localhost`, `arpa`, `invalid`, `test`, `onion`, `example` and names under
+  them): the node answers every name under it. A node also ignores a
+  locally answered route for the root or a single label from Core.
+
+Names never stop a map: a Device without a label is listed without a name,
+and a record whose name another record took, or past the record limit, is
+left out (the control role counts both in
+`meshtransit_mtcp_map_names_degraded_total`).
 
 A node resolves its own name and the names of the peers its map lists, which
 are the Devices of its Network that policy pairs it with. Its resolver also
