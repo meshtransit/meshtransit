@@ -70,12 +70,26 @@ func (handler *recordingHandler) last() *Session {
 	return handler.sessions[len(handler.sessions)-1]
 }
 
+// nextHelloTimestamp returns now in milliseconds, or one more than the last
+// timestamp it returned.
+func (f *fixture) nextHelloTimestamp() int64 {
+	for {
+		last := f.lastHello.Load()
+		next := max(time.Now().UnixMilli(), last+1)
+		if f.lastHello.CompareAndSwap(last, next) {
+			return next
+		}
+	}
+}
+
 type fixture struct {
 	t       *testing.T
 	server  *Server
 	http    *httptest.Server
 	control key.ControlPrivate
 	handler *recordingHandler
+	// lastHello is the newest hello timestamp the fixture dialled with.
+	lastHello atomic.Int64
 }
 
 func newFixture(t *testing.T, mutate func(*Options)) *fixture {
@@ -142,7 +156,12 @@ func (f *fixture) dial(options dialOptions) (*client, *refusal, error) {
 		options.machine, _ = key.NewMachinePrivate(nil)
 	}
 	if options.timestamp == 0 {
-		options.timestamp = time.Now().UnixMilli()
+		// Each dial gets a newer timestamp than the last: two hellos of one
+		// machine in the same millisecond are a replay, which Core refuses.
+		options.timestamp = f.nextHelloTimestamp()
+	}
+	for last := f.lastHello.Load(); options.timestamp > last && !f.lastHello.CompareAndSwap(last, options.timestamp); {
+		last = f.lastHello.Load()
 	}
 	if options.version == 0 {
 		options.version = 1
