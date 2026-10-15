@@ -117,16 +117,18 @@ func compareGuardrailFindings(first, second GuardrailFinding) int {
 }
 
 func validGuardrailFindings(findings []GuardrailFinding) bool {
-	for index, finding := range findings {
+	var previous *GuardrailFinding
+	for _, finding := range findings {
 		if !finding.SourceNodeID.IsValid() || !finding.ImportedResourceID.IsValid() ||
 			(finding.Mode != guardrail.ModeAudit && finding.Mode != guardrail.ModeEnforce) ||
 			(finding.Blocks && finding.Mode != guardrail.ModeEnforce) ||
 			(finding.Side == GuardrailSideActing) != (finding.Guardrail != nil) ||
 			(finding.Side == GuardrailSideProvider && !finding.Blocks) ||
 			(finding.Side != GuardrailSideActing && finding.Side != GuardrailSideProvider) ||
-			index > 0 && compareGuardrailFindings(findings[index-1], finding) >= 0 {
+			previous != nil && compareGuardrailFindings(*previous, finding) >= 0 {
 			return false
 		}
+		previous = &finding
 	}
 	return true
 }

@@ -22,7 +22,7 @@ import (
 // keeps recent rows, and the history read answers at an instant under
 // policy.read and device.read.
 func assertPostgreSQLAccessEdgeLedger(ctx context.Context, t *testing.T,
-	admin *pgx.Conn, workerPool, runtimePool *postgresadapter.Pool,
+	admin *pgx.Conn, workerPool, _ *postgresadapter.Pool,
 ) {
 	t.Helper()
 	var installationText string

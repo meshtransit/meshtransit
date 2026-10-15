@@ -227,11 +227,11 @@ func integrationGET(
 	address string,
 	path string,
 ) (int, string, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+address+path, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+address+path, nil) //nolint:gosec // Test process on loopback.
 	if err != nil {
 		return 0, "", err
 	}
-	response, err := client.Do(request)
+	response, err := client.Do(request) //nolint:gosec // Test process on loopback.
 	if err != nil {
 		return 0, "", err
 	}

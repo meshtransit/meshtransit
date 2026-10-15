@@ -929,7 +929,7 @@ func saveScaleHeapProfile(ctx context.Context, t *testing.T) {
 		t.Logf("heap profile unavailable: %d, %v", status, err)
 		return
 	}
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil { //nolint:gosec // Path from the test environment.
 		t.Logf("save heap profile: %v", err)
 		return
 	}
@@ -937,6 +937,6 @@ func saveScaleHeapProfile(ctx context.Context, t *testing.T) {
 	// Goroutines grouped by stack, next to it, to see what holds stacks.
 	if status, body, err := integrationGET(readCtx, client, address, "/debug/pprof/goroutine?debug=1"); err == nil &&
 		status == http.StatusOK {
-		_ = os.WriteFile(path+".goroutines.txt", []byte(body), 0o600)
+		_ = os.WriteFile(path+".goroutines.txt", []byte(body), 0o600) //nolint:gosec // Path from the test environment.
 	}
 }

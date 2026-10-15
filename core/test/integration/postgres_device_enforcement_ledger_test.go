@@ -24,7 +24,7 @@ import (
 // restore on the Network stream, keeps recent rows, and the history read
 // answers at an instant under device.read only.
 func assertPostgreSQLDeviceEnforcementLedger(ctx context.Context, t *testing.T,
-	admin *pgx.Conn, workerPool, runtimePool *postgresadapter.Pool,
+	admin *pgx.Conn, workerPool, _ *postgresadapter.Pool,
 ) {
 	t.Helper()
 	var installationText string
