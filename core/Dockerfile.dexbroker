@@ -17,6 +17,7 @@ RUN go work init ./meshcore ./dex ./dex/api/v2 && \
     go mod download
 
 COPY api ./meshcore/api
+COPY shared ./meshcore/shared
 COPY core/cmd ./meshcore/core/cmd
 COPY core/internal ./meshcore/core/internal
 COPY core/migrations ./meshcore/core/migrations
