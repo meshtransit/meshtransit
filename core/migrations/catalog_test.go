@@ -12,8 +12,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 167 {
-		t.Fatalf("len(Catalog()) = %d, want 167", len(catalog))
+	if len(catalog) != 168 {
+		t.Fatalf("len(Catalog()) = %d, want 168", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1608,8 +1608,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 167 {
-		t.Fatalf("LatestVersion() = %d, want 167", LatestVersion())
+	if LatestVersion() != 168 {
+		t.Fatalf("LatestVersion() = %d, want 168", LatestVersion())
 	}
 }
 
@@ -4572,5 +4572,52 @@ func TestNetworkMemberManagement(t *testing.T) {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 166 must not contain %q", forbidden)
 		}
+	}
+}
+
+// Schema 168 keeps the schema 55 and 56 publication functions for the
+// previous binary. The candidate list v2 is v1 that also waits for the
+// database clock to reach the endpoint's creation, and the snapshot read v3
+// refuses a snapshot taken before it, as the confirmation does.
+func TestPrivateEndpointPublicationClock(t *testing.T) {
+	t.Parallel()
+	migration := migrationVersion(t, 168)
+	extract := func(sql, name string) string {
+		start := strings.Index(sql, "FUNCTION mesh_ops."+name+"(")
+		if start < 0 {
+			t.Fatalf("%s not found", name)
+		}
+		end := strings.Index(sql[start:], "$function$;")
+		return sql[start : start+end]
+	}
+	list := extract(migration.SQL, "list_private_endpoint_publication_candidates_v2")
+	previous := strings.Replace(extract(migrationVersion(t, 55).SQL, "list_private_endpoint_publication_candidates_v1"),
+		"list_private_endpoint_publication_candidates_v1(", "list_private_endpoint_publication_candidates_v2(", 1)
+	if strings.Replace(list, "          AND endpoint.created_at <= decision_at\n", "", 1) != previous ||
+		!strings.Contains(list, "AND endpoint.created_at <= decision_at") {
+		t.Error("list_private_endpoint_publication_candidates_v2 must be v1 that also waits for the endpoint's creation")
+	}
+	read := extract(migration.SQL, "read_private_endpoint_publication_snapshot_v3")
+	for _, required := range []string{
+		"SECURITY DEFINER\nSET search_path = pg_catalog, mesh, mesh_ops\n",
+		"snapshot := mesh_ops.read_private_endpoint_publication_snapshot_v2(",
+		"IF (snapshot->>'snapshot_at')::TIMESTAMPTZ < endpoint_created_at THEN\n        RAISE EXCEPTION USING ERRCODE = '40001',",
+	} {
+		if !strings.Contains(read, required) {
+			t.Errorf("read_private_endpoint_publication_snapshot_v3 missing %q", required)
+		}
+	}
+	for _, name := range []string{
+		"list_private_endpoint_publication_candidates_v2(UUID, INTEGER)",
+		"read_private_endpoint_publication_snapshot_v3(UUID, UUID)",
+	} {
+		if !strings.Contains(migration.SQL, "REVOKE ALL ON FUNCTION mesh_ops."+name+"\nFROM PUBLIC, mesh_runtime, mesh_observer, mesh_audit_writer, mesh_share_writer;") ||
+			!strings.Contains(migration.SQL, "GRANT EXECUTE ON FUNCTION mesh_ops."+name+"\nTO mesh_worker;") {
+			t.Errorf("schema 168 must grant %s to mesh_worker only", name)
+		}
+	}
+	if strings.Contains(migration.SQL, "DROP FUNCTION") || strings.Contains(migration.SQL, "REVOKE EXECUTE") ||
+		strings.Contains(migration.SQL, "CREATE OR REPLACE FUNCTION") {
+		t.Error("schema 168 must keep every previous function for the previous binary")
 	}
 }

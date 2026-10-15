@@ -437,6 +437,51 @@ WHERE namespace.nspname = 'mesh_ops'
 			helperPath,
 		)
 	}
+
+	// Schema 168 versions the candidate list and snapshot read for the
+	// database clock; they keep the worker-only contract of the versions
+	// they wrap.
+	var clockCount int
+	var clockWorker, clockClosed, clockPublicClosed, clockDefiner, clockPath bool
+	if err := admin.QueryRow(ctx, `SELECT
+    pg_catalog.count(*)::INTEGER,
+    pg_catalog.bool_and(pg_catalog.has_function_privilege('mesh_worker', procedure.oid, 'EXECUTE')),
+    pg_catalog.bool_and(
+        NOT pg_catalog.has_function_privilege('mesh_runtime', procedure.oid, 'EXECUTE')
+        AND NOT pg_catalog.has_function_privilege('mesh_observer', procedure.oid, 'EXECUTE')
+        AND NOT pg_catalog.has_function_privilege('mesh_audit_writer', procedure.oid, 'EXECUTE')
+        AND NOT pg_catalog.has_function_privilege('mesh_share_writer', procedure.oid, 'EXECUTE')
+    ),
+    pg_catalog.bool_and(NOT EXISTS (
+        SELECT 1
+        FROM pg_catalog.aclexplode(COALESCE(
+            procedure.proacl,
+            pg_catalog.acldefault('f', procedure.proowner)
+        )) AS privilege
+        WHERE privilege.grantee = 0 AND privilege.privilege_type = 'EXECUTE'
+    )),
+    pg_catalog.bool_and(procedure.prosecdef),
+    pg_catalog.bool_and(
+        procedure.proconfig @> ARRAY['search_path=pg_catalog, mesh, mesh_ops, mesh_audit']
+        OR procedure.proconfig @> ARRAY['search_path=pg_catalog, mesh, mesh_ops']
+    )
+FROM pg_catalog.pg_proc AS procedure
+JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
+WHERE namespace.nspname = 'mesh_ops'
+  AND procedure.proname = ANY(ARRAY[
+      'list_private_endpoint_publication_candidates_v2',
+      'read_private_endpoint_publication_snapshot_v3'
+  ]::TEXT[])`).Scan(
+		&clockCount, &clockWorker, &clockClosed, &clockPublicClosed, &clockDefiner, &clockPath,
+	); err != nil {
+		t.Fatal("query schema 168 Private Endpoint publication privileges", err)
+	}
+	if clockCount != 2 || !clockWorker || !clockClosed || !clockPublicClosed || !clockDefiner || !clockPath {
+		t.Fatalf(
+			"schema 168 Private Endpoint publication functions count=%d worker=%t closed=%t public_closed=%t definer=%t path=%t",
+			clockCount, clockWorker, clockClosed, clockPublicClosed, clockDefiner, clockPath,
+		)
+	}
 }
 
 func assertImportedPolicyPrivilegeContract(ctx context.Context, t *testing.T, admin *pgx.Conn) {

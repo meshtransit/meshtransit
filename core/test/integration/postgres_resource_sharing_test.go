@@ -633,7 +633,14 @@ func assertCrossWorkspaceResourceSharingConsent(
 		t.Fatalf("consumer activated against the provider's enforced guardrail: %v", err)
 	}
 	providerRail = setProviderShareGuardrail(ctx, t, admin, runtimePool, providerRail, guardrail.ModeAudit)
-	activated, err := service.ActivateContract(ctx, activateCommand)
+	// The activating MeshCore runs ahead of the database host, so the Private
+	// Endpoint is created after the database clock's now.
+	aheadService, err := sharing.NewService(newIntegrationResourceSharingStore(t, runtimePool),
+		integrationAheadClock{ahead: integrationActivationClockAhead})
+	if err != nil {
+		t.Fatalf("sharing.NewService() error = %v", err)
+	}
+	activated, err := aheadService.ActivateContract(ctx, activateCommand)
 	if err != nil {
 		t.Fatalf("activate cross-Workspace Trust Contract: %v", err)
 	}
@@ -1434,6 +1441,7 @@ WHERE imported.public_id = $1::UUID`, importedResourceID.String()).Scan(&endpoin
 	if err != nil {
 		t.Fatalf("construct adapter publication store: %v", err)
 	}
+	assertPrivateEndpointAwaitsDatabaseClock(ctx, t, admin, store, deploymentID, endpointID)
 	candidates, err := store.ListPublicationCandidates(ctx, deploymentID, 128)
 	if err != nil {
 		t.Fatalf("list adapter publication candidates: %v", err)
@@ -2271,4 +2279,63 @@ WHERE workspace_id = 103`).Scan(&value); err != nil {
 		offerID.String()).Scan(&stale)
 	assertPostgreSQLCode(t, err, "40001")
 	return rail
+}
+
+// integrationActivationClockAhead is how far the activating MeshCore's clock
+// runs ahead of the database host in the cross-Workspace share flow.
+const integrationActivationClockAhead = time.Second
+
+// integrationAheadClock is a MeshCore clock ahead of the database host's.
+type integrationAheadClock struct{ ahead time.Duration }
+
+func (clock integrationAheadClock) Now() time.Time { return time.Now().UTC().Add(clock.ahead) }
+
+// assertPrivateEndpointAwaitsDatabaseClock qualifies schema 168: a Private
+// Endpoint created by a MeshCore clock ahead of the database is neither a
+// publication candidate nor readable for publication until the database
+// clock reaches its creation, which the confirmation requires of the
+// snapshot. Each refusal is asserted only when the database clock was still
+// behind after the call, so a stalled host cannot fail it; the wait then
+// sleeps on the database clock.
+func assertPrivateEndpointAwaitsDatabaseClock(
+	ctx context.Context,
+	t *testing.T,
+	admin *pgx.Conn,
+	store *postgresadapter.PrivateEndpointPublicationStore,
+	deploymentID deployment.ID,
+	endpointID sharing.PrivateEndpointID,
+) {
+	t.Helper()
+	var createdAt time.Time
+	if err := admin.QueryRow(ctx, `SELECT created_at FROM mesh.private_endpoint WHERE public_id = $1::UUID`,
+		endpointID.String()).Scan(&createdAt); err != nil {
+		t.Fatalf("read Private Endpoint creation: %v", err)
+	}
+	if !createdAt.After(integrationDatabaseNow(ctx, t, admin)) {
+		t.Fatal("Private Endpoint creation is not ahead of the database clock")
+	}
+	candidates, err := store.ListPublicationCandidates(ctx, deploymentID, 128)
+	if err != nil {
+		t.Fatalf("list early publication candidates: %v", err)
+	}
+	if integrationDatabaseNow(ctx, t, admin).Before(createdAt) {
+		for _, candidate := range candidates {
+			if candidate.EndpointID == endpointID {
+				t.Fatal("Private Endpoint is a publication candidate before the database clock reached its creation")
+			}
+		}
+	}
+	snapshot, err := store.ReadPublicationSnapshot(ctx, deploymentID, endpointID)
+	var databaseError *pgconn.PgError
+	switch {
+	case err == nil:
+		if snapshot.SnapshotAt.Before(createdAt) {
+			t.Fatalf("publication snapshot at %s predates the Private Endpoint (%s)", snapshot.SnapshotAt, createdAt)
+		}
+	case !errors.As(err, &databaseError) || databaseError.Code != "40001":
+		t.Fatalf("early publication snapshot error = %v, want SQLSTATE 40001", err)
+	}
+	if _, err := admin.Exec(ctx, `SELECT pg_catalog.pg_sleep_until($1::TIMESTAMPTZ)`, createdAt); err != nil {
+		t.Fatalf("wait for the database clock: %v", err)
+	}
 }

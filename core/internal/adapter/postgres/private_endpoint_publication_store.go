@@ -712,8 +712,8 @@ func (result withdrawalResult) matchesWithdrawal(snapshot endpointpublication.Wi
 }
 
 const (
-	listPrivateEndpointPublicationsSQL   = `SELECT mesh_ops.list_private_endpoint_publication_candidates_v1($1::UUID,$2::INTEGER)`
-	readPrivateEndpointPublicationSQL    = `SELECT mesh_ops.read_private_endpoint_publication_snapshot_v2($1::UUID,$2::UUID)`
+	listPrivateEndpointPublicationsSQL   = `SELECT mesh_ops.list_private_endpoint_publication_candidates_v2($1::UUID,$2::INTEGER)`
+	readPrivateEndpointPublicationSQL    = `SELECT mesh_ops.read_private_endpoint_publication_snapshot_v3($1::UUID,$2::UUID)`
 	stagePrivateEndpointPublicationSQL   = `SELECT mesh_ops.stage_private_endpoint_route_v1($1::UUID,$2::UUID,$3::BIGINT,$4::BIGINT,$5::UUID,$6::BYTEA,$7::TEXT,$8::TIMESTAMPTZ)`
 	listPrivateEndpointWithdrawalsSQL    = `SELECT mesh_ops.list_private_endpoint_withdrawal_candidates_v1($1::UUID,$2::INTEGER)`
 	readPrivateEndpointWithdrawalSQL     = `SELECT mesh_ops.read_private_endpoint_withdrawal_snapshot_v1($1::UUID,$2::UUID)`

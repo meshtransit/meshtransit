@@ -5,6 +5,12 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core schema 168: the Private Endpoint route worker no longer applies and
+  withdraws a route for an endpoint created by a MeshCore whose clock runs
+  ahead of the database host. Such an endpoint waits until the database clock
+  reaches its creation time; before, the readiness confirmation failed with a
+  serialization error, the worker withdrew the route it had just applied and
+  retried after its backoff. No operator step is needed.
 - Core schema 167: guardrail saves and share changes no longer race. A
   share accepted or enabled while its Workspace's guardrails are being saved
   fails as a retryable conflict; a guardrail save that a concurrent share
