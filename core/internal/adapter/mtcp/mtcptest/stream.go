@@ -1,7 +1,9 @@
 package mtcptest
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"slices"
@@ -146,7 +148,39 @@ func (stream *MapStream) converge(ctx context.Context, initial MapUpdate) (MapUp
 		}
 		update = next
 	}
-	return update, nil
+	// A map that already carries the endpoints (stored by an earlier
+	// session) does not show that Core handled this report; settle does.
+	return stream.settle(ctx, update)
+}
+
+// settle sends a Ping and reads until Core answers it, applying any map
+// message on the way. Core handles a session's messages in order, so the
+// Pong means it has handled everything sent before, such as an
+// EndpointReport, and a session closed after it loses none of them.
+func (stream *MapStream) settle(ctx context.Context, update MapUpdate) (MapUpdate, error) {
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		return MapUpdate{}, errors.Join(ErrMap, err)
+	}
+	if err := stream.session.send(sharedmtcp.MessagePing, &mtcpv1.Ping{Nonce: nonce}); err != nil {
+		return MapUpdate{}, errors.Join(ErrMap, fmt.Errorf("send ping: %w", err))
+	}
+	for {
+		message, err := stream.session.receive(ctx)
+		if err != nil {
+			return MapUpdate{}, errors.Join(ErrMap, fmt.Errorf("await pong: %w", err))
+		}
+		if pong, ok := message.(*mtcpv1.Pong); ok && bytes.Equal(pong.GetNonce(), nonce) {
+			return update, nil
+		}
+		next, delivered, err := stream.apply(message)
+		if err != nil {
+			return MapUpdate{}, err
+		}
+		if delivered {
+			update = next
+		}
+	}
 }
 
 func carries(full FullMap, connectivity Connectivity) bool {
