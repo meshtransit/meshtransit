@@ -13,7 +13,8 @@ import (
 	"meshtransit.net/core/internal/domain/workspace"
 )
 
-// MemberLifecycleManager suspends, resumes and removes Workspace members.
+// MemberLifecycleManager suspends, resumes and removes Workspace members, and
+// ends their sessions in a Workspace.
 type MemberLifecycleManager interface {
 	Change(context.Context, accountsession.Session, memberlifecycle.Request) (memberlifecycle.Result, error)
 	Remove(context.Context, accountsession.Session, memberlifecycle.RemovalRequest) (
@@ -28,7 +29,7 @@ type memberLifecyclePath struct {
 
 // parseMemberLifecyclePath matches, with no query,
 //
-//	POST /api/v1/workspaces/{ws}/members/{principal}/actions/{suspend|resume|remove}
+//	POST /api/v1/workspaces/{ws}/members/{principal}/actions/{suspend|resume|revoke-sessions|remove}
 func parseMemberLifecyclePath(request *http.Request) (memberLifecyclePath, bool) {
 	if request == nil || request.URL == nil || request.URL.RawPath != "" || request.URL.RawQuery != "" {
 		return memberLifecyclePath{}, false
@@ -40,7 +41,7 @@ func parseMemberLifecyclePath(request *http.Request) (memberLifecyclePath, bool)
 	}
 	action := memberlifecycle.Action(segments[7])
 	if action != memberlifecycle.ActionSuspend && action != memberlifecycle.ActionResume &&
-		action != memberlifecycle.ActionRemove {
+		action != memberlifecycle.ActionRevokeSessions && action != memberlifecycle.ActionRemove {
 		return memberLifecyclePath{}, false
 	}
 	workspaceID, workspaceOK := canonicalPublicID(segments[3])
@@ -57,7 +58,9 @@ func isMemberLifecycleOperation(request *http.Request) bool {
 	return ok && request.Method == http.MethodPost
 }
 
-func (path memberLifecyclePath) operation() string { return "workspace_member_" + string(path.action) }
+func (path memberLifecyclePath) operation() string {
+	return "workspace_member_" + strings.ReplaceAll(string(path.action), "-", "_")
+}
 
 func (handler *ManagementHandler) handleMemberLifecycle(ctx context.Context, response http.ResponseWriter,
 	request *http.Request, correlationID publicid.ID, path memberLifecyclePath, session accountsession.Session) string {
@@ -146,7 +149,7 @@ func classifyMemberLifecycleError(err error) managementError {
 			Message: "You cannot make this change to the member"}
 	case errors.Is(err, memberlifecycle.ErrProtected):
 		return managementError{Status: http.StatusForbidden, Code: "member_protected",
-			Message: "Nobody can suspend or remove the owner or themselves"}
+			Message: "Nobody can suspend, sign out or remove the owner or themselves"}
 	case errors.Is(err, memberlifecycle.ErrPlan):
 		return managementError{Status: http.StatusConflict, Code: "device_plan_conflict",
 			Message: "A Device in the plan is not the member's, or cannot take that action. Reload the Devices."}

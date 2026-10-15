@@ -19,8 +19,9 @@ func TestParseMemberLifecyclePath(t *testing.T) {
 	const prefix = "/api/v1/workspaces/01890f00-0000-7000-8000-000000000101/members/" +
 		"01890f00-0000-7000-8000-000000000402/actions/"
 	for path, valid := range map[string]bool{
-		prefix + "suspend": true, prefix + "resume": true,
+		prefix + "suspend": true, prefix + "resume": true, prefix + "revoke-sessions": true,
 		prefix + "remove": true, prefix + "delete": false, prefix + "suspend?x=1": false, prefix + "suspend/now": false,
+		prefix + "revoke_sessions": false,
 		strings.Replace(prefix, "01890f00-0000-7000-8000-000000000402", "01890F00-0000-7000-8000-000000000402", 1) +
 			"suspend": false,
 		"/api/v1/workspaces/01890f00-0000-7000-8000-000000000101/members": false,
@@ -29,6 +30,10 @@ func TestParseMemberLifecyclePath(t *testing.T) {
 		if _, ok := parseMemberLifecyclePath(request); ok != valid {
 			t.Errorf("%s: matched = %t, want %t", path, ok, valid)
 		}
+	}
+	revoke := httptest.NewRequestWithContext(t.Context(), http.MethodPost, prefix+"revoke-sessions", nil)
+	if path, ok := parseMemberLifecyclePath(revoke); !ok || path.operation() != "workspace_member_revoke_sessions" {
+		t.Errorf("revoke-sessions operation = %q", path.operation())
 	}
 	get := httptest.NewRequestWithContext(t.Context(), http.MethodGet, prefix+"suspend", nil)
 	if isMemberLifecycleOperation(get) {

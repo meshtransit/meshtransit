@@ -5,6 +5,15 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core schema 162: Console sessions can be ended beyond one at a time. A
+  person signs out everywhere (`POST /auth/v1/session/logout-all`), which ends
+  every session of their Account. An administrator with `member.manage` ends
+  the sessions a member signed in to their Workspace
+  (`…/members/{member}/actions/revoke-sessions`). The operator ends every
+  session of an Account, quarantines it (no sign-in until released) or
+  releases it with `meshcore account revoke-sessions|quarantine|release`.
+  Before, the Account's session generation was checked but nothing advanced
+  it. Devices are not affected; each change writes an audit event.
 - Core schema 161 and meshd: a revoked Device is told `REVOKED`, no longer
   `EXPIRED`. Core says so only for the exact machine and node keys it revoked
   (any other key without authority still gets `EXPIRED`, a failed lookup

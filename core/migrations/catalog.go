@@ -528,6 +528,7 @@ func Catalog() []Migration {
 		newMigration(159, "Network address usage", networkAddressUsageSQL),
 		newMigration(160, "Invitation email binding", invitationEmailBindingSQL),
 		newMigration(161, "Map session revocation", mapSessionRevocationSQL),
+		newMigration(162, "Account session revocation", accountSessionRevocationSQL),
 	}
 }
 
@@ -790,3 +791,6 @@ var invitationEmailBindingSQL string
 
 //go:embed 000161_map_session_revocation.up.sql
 var mapSessionRevocationSQL string
+
+//go:embed 000162_account_session_revocation.up.sql
+var accountSessionRevocationSQL string

@@ -17,6 +17,9 @@ import (
 	"meshtransit.net/core/internal/domain/publicid"
 )
 
+const revokeWorkspaceMemberSessionsSQL = `SELECT mesh_ops.revoke_workspace_member_sessions_v1(` + sessionArguments + `,
+ $10::UUID,$11::UUID,$12::UUID,$13::TIMESTAMPTZ)::TEXT`
+
 const changeWorkspaceMemberSQL = `SELECT mesh_ops.change_workspace_member_v1(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::TEXT,$13::UUID,$14::TIMESTAMPTZ)::TEXT`
 
@@ -206,6 +209,8 @@ func memberSemanticHash(member memberlifecycle.Member) ([32]byte, error) {
 var memberLifecycleAction = map[memberlifecycle.Action]string{
 	memberlifecycle.ActionSuspend: "member.suspended",
 	memberlifecycle.ActionResume:  "member.reactivated",
+	// Revoking sessions travels through RevokeSessions.
+	memberlifecycle.ActionRevokeSessions: "member.sessions_revoked",
 }
 
 // Change authorizes member.manage, applies the change and commits it with its
@@ -214,6 +219,9 @@ func (store *MemberLifecycleStore) Change(ctx context.Context, change memberlife
 	memberlifecycle.Result, error) {
 	if !change.IsValid() {
 		return memberlifecycle.Result{}, memberlifecycle.ErrInvalid
+	}
+	if change.Action == memberlifecycle.ActionRevokeSessions {
+		return store.revokeSessions(ctx, change)
 	}
 	changeID, err := publicid.New()
 	if err != nil {
@@ -277,6 +285,85 @@ func (store *MemberLifecycleStore) Change(ctx context.Context, change memberlife
 			return false, errors.Join(memberlifecycle.ErrUnavailable, err)
 		}
 		if err := appendNetworkWakeEvents(ctx, tx, identityAdvancedNetworks(result.Networks), event, reason); err != nil {
+			return false, errors.Join(memberlifecycle.ErrUnavailable, err)
+		}
+		return true, nil
+	})
+	if err != nil {
+		return memberlifecycle.Result{}, err
+	}
+	return result, nil
+}
+
+type memberSessionsRecord struct {
+	Member        memberLifecycleDocument `json:"member"`
+	SessionsEnded *int                    `json:"sessions_ended"`
+	Authority     catalogAuthority        `json:"authority"`
+}
+
+// revokeSessions authorizes member.manage, ends the member's sessions signed
+// in to the Workspace and records it on the Workspace stream. The membership
+// itself is unchanged, so the result's member is the same before and after.
+// Ending no session changes nothing and records nothing.
+func (store *MemberLifecycleStore) revokeSessions(ctx context.Context, change memberlifecycle.Change) (
+	memberlifecycle.Result, error) {
+	changeID, err := publicid.New()
+	if err != nil {
+		return memberlifecycle.Result{}, memberlifecycle.ErrUnavailable
+	}
+	var result memberlifecycle.Result
+	err = store.transact(ctx, func(tx accountSessionTransaction) (bool, error) {
+		var encoded string
+		if err := tx.QueryRow(ctx, revokeWorkspaceMemberSessionsSQL, append(sessionQueryArguments(change.Session),
+			change.WorkspaceID.String(), change.MemberID.String(), changeID.String(),
+			change.EvaluatedAt)...).Scan(&encoded); err != nil {
+			return false, memberLifecycleDatabaseError(err)
+		}
+		var record memberSessionsRecord
+		if err := decodeIdentityCatalogJSON([]byte(encoded), &record); err != nil {
+			return false, memberlifecycle.ErrInvalid
+		}
+		member, err := record.Member.member()
+		if err != nil || member.PrincipalID != change.MemberID || member.State != "active" ||
+			record.SessionsEnded == nil || *record.SessionsEnded < 0 {
+			return false, memberlifecycle.ErrInvalid
+		}
+		result = memberlifecycle.Result{
+			Before: member, After: member, Devices: []memberlifecycle.ChangedDevice{},
+			SessionsEnded: *record.SessionsEnded, Networks: []memberlifecycle.AdvancedNetwork{},
+		}
+		// No session ended, so nothing changed and there is nothing to record.
+		if result.SessionsEnded == 0 {
+			return true, nil
+		}
+		hash, err := memberSemanticHash(member)
+		if err != nil {
+			return false, err
+		}
+		action := memberLifecycleAction[change.Action]
+		event := catalogEvent{
+			session: change.Session, correlationID: change.CorrelationID, changeID: changeID,
+			aggregateKind: "workspace_membership", aggregateID: change.MemberID, version: member.Version,
+			action: action, permission: "member.manage", before: &hash, after: hash,
+			payload: struct {
+				WorkspaceID string           `json:"workspace_id"`
+				SessionID   string           `json:"session_id"`
+				Change      any              `json:"change"`
+				Authority   catalogAuthority `json:"authority"`
+			}{change.WorkspaceID.String(), change.Session.ID().String(), struct {
+				MemberID      string `json:"member_principal_id"`
+				Action        string `json:"action"`
+				Reason        string `json:"reason"`
+				SessionsEnded int    `json:"sessions_ended"`
+			}{change.MemberID.String(), string(change.Action), change.Reason, result.SessionsEnded}, record.Authority},
+			outboxClass: action,
+			outbox: struct {
+				WorkspaceID   string `json:"workspace_id"`
+				MemberID      string `json:"member_principal_id"`
+				SessionsEnded int    `json:"sessions_ended"`
+			}{change.WorkspaceID.String(), change.MemberID.String(), result.SessionsEnded},
+		}
+		if err := appendWorkspaceCatalogEvent(ctx, tx, change.WorkspaceID, event); err != nil {
 			return false, errors.Join(memberlifecycle.ErrUnavailable, err)
 		}
 		return true, nil

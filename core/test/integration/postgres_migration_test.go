@@ -432,6 +432,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertPostgreSQLDeviceLifecycle(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLMemberSuspension(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLMemberRemoval(ctx, t, adminConnection, runtimePool)
+	assertPostgreSQLAccountSessionRevocation(ctx, t, adminConnection, runtimePool, migrationConfig)
 	assertPostgreSQLInvitations(ctx, t, adminConnection, runtimePool)
 	// After the tests that need four active Devices: it revokes one.
 	assertPostgreSQLPolicyInactiveDevice(ctx, t, adminConnection, runtimePool)

@@ -22,6 +22,7 @@ import (
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/identity/sessioncontext"
 	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/platform/ratelimit"
 )
 
@@ -30,6 +31,8 @@ const (
 	AccountSessionCSRFPreparePath = "/auth/v1/session/prepare"
 	// AccountSessionLogoutPath is fixed private same-origin durable logout.
 	AccountSessionLogoutPath = "/auth/v1/session/logout"
+	// AccountSessionLogoutAllPath ends every session of the signed-in Account.
+	AccountSessionLogoutAllPath = "/auth/v1/session/logout-all"
 	// AccountSessionManagementScopesPath is the fixed private management-scope projection.
 	AccountSessionManagementScopesPath = "/auth/v1/session/management-scopes"
 	// DeploymentCapabilitiesPath is the fixed authenticated Deployment projection.
@@ -54,6 +57,7 @@ var (
 type BrowserManagementOptions struct {
 	Management *ManagementHandler
 	Logout     AccountSessionLogout
+	LogoutAll  AccountSessionLogoutAll
 	Scopes     SessionManagementScopes
 	Inventory  SessionDeviceInventory
 	// Distribution is optional; without it the status route is not served.
@@ -75,6 +79,7 @@ type BrowserManagementOptions struct {
 type BrowserManagement struct {
 	management   *ManagementHandler
 	logout       AccountSessionLogout
+	logoutAll    AccountSessionLogoutAll
 	scopes       SessionManagementScopes
 	inventory    SessionDeviceInventory
 	distribution SessionDeviceDistribution
@@ -99,6 +104,13 @@ type AccountSessionLogout interface {
 	Logout(context.Context, accountsession.Token) (bool, error)
 }
 
+// AccountSessionLogoutAll ends every session of the Account behind one active
+// session, including that one, and returns how many ended. A session that is
+// no longer active is accountsession.ErrUnauthenticated.
+type AccountSessionLogoutAll interface {
+	RevokeAll(context.Context, accountsession.Session, publicid.ID) (int, error)
+}
+
 // SessionManagementScopes reads one fresh server-authoritative Console projection.
 type SessionManagementScopes interface {
 	List(context.Context, accountsession.Session, int, network.ID) (sessioncontext.Page, error)
@@ -109,7 +121,8 @@ type SessionManagementScopes interface {
 func NewBrowserManagement(options BrowserManagementOptions) (*BrowserManagement, error) {
 	handler := options.Management
 	validAuthorityProfile := validBrowserManagementHandler(handler) && options.DeploymentID.IsValid() &&
-		!nilContinuationDependency(options.Logout) && !nilContinuationDependency(options.Scopes) &&
+		!nilContinuationDependency(options.Logout) && !nilContinuationDependency(options.LogoutAll) &&
+		!nilContinuationDependency(options.Scopes) &&
 		!nilContinuationDependency(options.Capabilities)
 	if !validAuthorityProfile || nilContinuationDependency(options.Clock) {
 		return nil, ErrInvalidBrowserManagement
@@ -140,7 +153,8 @@ func NewBrowserManagement(options BrowserManagementOptions) (*BrowserManagement,
 	if !validLifetime {
 		return nil, ErrInvalidBrowserManagement
 	}
-	browser := &BrowserManagement{management: handler, logout: options.Logout, scopes: options.Scopes, inventory: options.Inventory,
+	browser := &BrowserManagement{management: handler, logout: options.Logout, logoutAll: options.LogoutAll,
+		scopes: options.Scopes, inventory: options.Inventory,
 		distribution: options.Distribution, history: options.AccessGraphHistory,
 		enforcementHistory: options.EnforcementHistory, capabilities: options.Capabilities,
 		deploymentID: options.DeploymentID,
@@ -156,6 +170,7 @@ func NewBrowserManagement(options BrowserManagementOptions) (*BrowserManagement,
 func validBrowserManagementOwner(browser *BrowserManagement) bool {
 	if browser == nil || !validBrowserManagementHandler(browser.management) ||
 		nilContinuationDependency(browser.logout) ||
+		nilContinuationDependency(browser.logoutAll) ||
 		nilContinuationDependency(browser.scopes) ||
 		nilContinuationDependency(browser.capabilities) ||
 		nilContinuationDependency(browser.clock) || browser.slots == nil {
@@ -251,7 +266,12 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		return ErrInvalidBrowserManagement
 	}
 	prepare := request.URL.Path == AccountSessionCSRFPreparePath
-	logout := request.URL.Path == AccountSessionLogoutPath
+	logoutAll := request.URL.Path == AccountSessionLogoutAllPath
+	logout := request.URL.Path == AccountSessionLogoutPath || logoutAll
+	// Ending sessions always needs a proof, which only a POST requires.
+	if logout && request.Method != http.MethodPost {
+		return ErrInvalidBrowserManagement
+	}
 	managementScopes := request.URL.Path == AccountSessionManagementScopesPath && request.Method == http.MethodGet
 	inventoryScope, inventoryMatched := parseDeviceInventoryPath(request)
 	inventoryRead := inventoryMatched && !nilContinuationDependency(browser.inventory)
@@ -290,6 +310,8 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	operation = "mutation"
 	if prepare {
 		operation = "prepare"
+	} else if logoutAll {
+		operation = "logout_all"
 	} else if logout {
 		operation = "logout"
 	} else if request.Method == http.MethodGet {
@@ -325,7 +347,7 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 			return err
 		}
 	} else if logout {
-		if err := browser.endSession(ctx, candidate, request, admission); err != nil {
+		if err := browser.endSession(ctx, candidate, request, admission, logoutAll); err != nil {
 			return err
 		}
 	} else if managementScopes {
@@ -411,6 +433,7 @@ func (browser *BrowserManagement) endSession(
 	response *browserManagementResponse,
 	request *http.Request,
 	admission *browserManagementAdmission,
+	everywhere bool,
 ) error {
 	correlationID, err := browser.management.correlationIDs.NewID()
 	if err != nil || !correlationID.IsValid() {
@@ -421,8 +444,12 @@ func (browser *BrowserManagement) endSession(
 	if err != nil {
 		return ErrInvalidBrowserManagement
 	}
+	scope := "browser-session-logout"
+	if everywhere {
+		scope = "browser-session-logout-all"
+	}
 	if err := browser.budget(ctx, continuationBudget{response: response, kind: ratelimit.SubjectSource,
-		raw:    "browser-session-logout-source/v1\x00" + browser.deploymentID.String() + "\x00" + address.String(),
+		raw:    scope + "-source/v1\x00" + browser.deploymentID.String() + "\x00" + address.String(),
 		policy: browser.management.sourcePolicy}); err != nil {
 		return err
 	}
@@ -441,14 +468,30 @@ func (browser *BrowserManagement) endSession(
 		return nil
 	}
 	if err := browser.budget(ctx, continuationBudget{response: response, kind: ratelimit.SubjectAccountSession,
-		raw:    "browser-session-logout-session/v1\x00" + browser.deploymentID.String() + "\x00" + session.ID().String(),
+		raw:    scope + "-session/v1\x00" + browser.deploymentID.String() + "\x00" + session.ID().String(),
 		policy: browser.management.sessionPolicy}); err != nil {
 		return err
 	}
 	if err := admission.validateFresh(ctx, time.Second); err != nil {
 		return ErrBrowserManagementUnavailable
 	}
-	if _, err := browser.logout.Logout(ctx, admission.token); err != nil || ctx.Err() != nil {
+	if everywhere {
+		_, err := browser.logoutAll.RevokeAll(ctx, session, correlationID)
+		if errors.Is(err, accountsession.ErrUnauthenticated) && ctx.Err() == nil {
+			// The session ended (or its Account changed) before this request
+			// could end the others; this one ended nothing.
+			writeManagementError(ctx, browser.management.logger, response, correlationID,
+				classifyAuthenticationError(err))
+			return nil
+		}
+		if err != nil || ctx.Err() != nil {
+			writeManagementError(ctx, browser.management.logger, response, correlationID, managementError{
+				Status: http.StatusServiceUnavailable, Code: "logout_unavailable",
+				Message: "logout is temporarily unavailable", Retryable: true,
+			})
+			return nil
+		}
+	} else if _, err := browser.logout.Logout(ctx, admission.token); err != nil || ctx.Err() != nil {
 		writeManagementError(ctx, browser.management.logger, response, correlationID, managementError{
 			Status: http.StatusServiceUnavailable, Code: "logout_unavailable",
 			Message: "logout is temporarily unavailable", Retryable: true,

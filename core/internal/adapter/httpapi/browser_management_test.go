@@ -41,6 +41,8 @@ type browserManagementFixture struct {
 	approvalGet, approvalList                       int
 	capabilityReads                                 int
 	sessionRevoked                                  bool
+	logoutAll                                       int
+	logoutAllErr                                    error
 }
 
 func preparedBrowserProof(t *testing.T, browser *BrowserManagement) string {
@@ -369,10 +371,103 @@ func TestBrowserManagementLogoutRevokesOnceAndClearsOnlyItsCookie(t *testing.T) 
 	}
 }
 
+type managementAccountSessionLogoutAllFunc func(context.Context, accountsession.Session, publicid.ID) (int, error)
+
+func (function managementAccountSessionLogoutAllFunc) RevokeAll(ctx context.Context,
+	session accountsession.Session, correlationID publicid.ID) (int, error) {
+	return function(ctx, session, correlationID)
+}
+
+func TestBrowserManagementLogoutAllEndsTheAccountAndClearsItsCookie(t *testing.T) {
+	t.Parallel()
+	browser, fixture := newBrowserManagementFixture(t)
+	proof := preparedBrowserProof(t, browser)
+	request := browserManagementRequest(t, AccountSessionLogoutAllPath, "{}")
+	request.Header.Set("X-MeshTransit-CSRF", proof)
+	response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+	if err := browser.Handle(response, request); err != nil {
+		t.Fatal("sign-out everywhere was not submitted", err)
+	}
+	values := response.Header().Values("Set-Cookie")
+	if response.Code != http.StatusNoContent || response.Body.Len() != 0 || fixture.logoutAll != 1 ||
+		fixture.logout != 0 || len(values) != 1 {
+		t.Fatalf("sign-out everywhere = %d, logoutAll=%d logout=%d cookies=%d", response.Code, fixture.logoutAll,
+			fixture.logout, len(values))
+	}
+	if cookie, err := http.ParseSetCookie(values[0]); err != nil || cookie.Name != AccountSessionCookieName ||
+		cookie.Value != "" || cookie.MaxAge >= 0 {
+		t.Fatal("sign-out everywhere did not delete the cookie", err)
+	}
+	replay := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+	request = browserManagementRequest(t, AccountSessionLogoutAllPath, "{}")
+	request.Header.Set("X-MeshTransit-CSRF", proof)
+	if err := browser.Handle(replay, request); err != nil {
+		t.Fatal(err)
+	}
+	if replay.Code != http.StatusUnauthorized || fixture.logoutAll != 1 {
+		t.Fatal("sign-out everywhere replay repeated the change")
+	}
+}
+
+func TestBrowserManagementLogoutAllNeedsAPostWithAProof(t *testing.T) {
+	t.Parallel()
+	browser, fixture := newBrowserManagementFixture(t)
+	proof := preparedBrowserProof(t, browser)
+	get := browserManagementRequest(t, AccountSessionLogoutAllPath, "{}")
+	get.Method = http.MethodGet
+	get.Header.Set("X-MeshTransit-CSRF", proof)
+	if err := browser.Handle(&continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()},
+		get); !errors.Is(err, ErrInvalidBrowserManagement) {
+		t.Fatalf("GET sign-out everywhere = %v", err)
+	}
+	for name, value := range map[string]string{"no proof": "", "foreign proof": "mtscsrf1.foreign"} {
+		request := browserManagementRequest(t, AccountSessionLogoutAllPath, "{}")
+		if value != "" {
+			request.Header.Set("X-MeshTransit-CSRF", value)
+		}
+		response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+		_ = browser.Handle(response, request)
+		if response.Header().Get("Set-Cookie") != "" {
+			t.Fatalf("%s: cookie cleared", name)
+		}
+	}
+	if fixture.logoutAll != 0 {
+		t.Fatalf("sign-out everywhere ran %d times without a POST and a proof", fixture.logoutAll)
+	}
+}
+
+func TestBrowserManagementLogoutAllFailureKeepsTheCookie(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string]struct {
+		err  error
+		code int
+	}{
+		"ended first": {accountsession.ErrUnauthenticated, http.StatusUnauthorized},
+		"unavailable": {accountsession.ErrLogoutUnavailable, http.StatusServiceUnavailable},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			browser, fixture := newBrowserManagementFixture(t)
+			fixture.logoutAllErr = test.err
+			proof := preparedBrowserProof(t, browser)
+			request := browserManagementRequest(t, AccountSessionLogoutAllPath, "{}")
+			request.Header.Set("X-MeshTransit-CSRF", proof)
+			response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+			if err := browser.Handle(response, request); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != test.code || fixture.logoutAll != 1 || response.Header().Get("Set-Cookie") != "" {
+				t.Fatalf("failed sign-out everywhere = %d, cookie %q", response.Code,
+					response.Header().Get("Set-Cookie"))
+			}
+		})
+	}
+}
+
 func TestBrowserManagementConstructorIsClosedAndCopiesKey(t *testing.T) {
 	t.Parallel()
 	for _, invalid := range []string{
-		"nil handler", "nil logout", "nil scopes", "typed nil scopes", "nil capabilities",
+		"nil handler", "nil logout", "nil logout all", "nil scopes", "typed nil scopes", "nil capabilities",
 		"typed nil capabilities", "typed nil clock", "nil sessions",
 		"short key", "zero key", "bad key id",
 		"short ttl", "fraction ttl", "long ttl", "http", "path", "query", "userinfo", "uppercase",
@@ -385,6 +480,8 @@ func TestBrowserManagementConstructorIsClosedAndCopiesKey(t *testing.T) {
 				options.Management = nil
 			case "nil logout":
 				options.Logout = nil
+			case "nil logout all":
+				options.LogoutAll = nil
 			case "nil scopes":
 				options.Scopes = nil
 			case "typed nil scopes":
@@ -1161,7 +1258,20 @@ func browserManagementTestOptions(t *testing.T) (BrowserManagementOptions, *brow
 	if err != nil {
 		t.Fatal(err)
 	}
-	return BrowserManagementOptions{Management: handler, Logout: logout, Scopes: scopes, Capabilities: capabilities,
+	logoutAll := managementAccountSessionLogoutAllFunc(func(ctx context.Context, actual accountsession.Session,
+		correlationID publicid.ID) (int, error) {
+		fixture.logoutAll++
+		if ctx.Err() != nil || actual.ID() != session.ID() || !correlationID.IsValid() || fixture.sessionRevoked {
+			t.Error("sign-out everywhere lost the exact live session")
+		}
+		if fixture.logoutAllErr != nil {
+			return 0, fixture.logoutAllErr
+		}
+		fixture.sessionRevoked = true
+		return 3, nil
+	})
+	return BrowserManagementOptions{Management: handler, Logout: logout, LogoutAll: logoutAll, Scopes: scopes,
+		Capabilities: capabilities,
 		Origin:       "https://console.example.test",
 		DeploymentID: managementSessionFixture(t).DeploymentID(), Clock: fixture,
 		Key:           BrowserLoginKey{ID: "browser-session-csrf-v1", Material: bytes.Repeat([]byte{0x54}, 32)},

@@ -141,7 +141,8 @@ administrator's revoke and needs only the node's current keys.
 ## Members leaving
 
 - **Suspending a member** suspends their active member-owned Devices and ends
-  their Console sessions; Workspace-owned Devices keep working. Resuming the
+  their Console sessions; Workspace-owned Devices keep working. Ending only a
+  member's sessions, or an Account's, leaves every Device as it is. Resuming the
   member resumes exactly those Devices.
 - **Removing a member** applies a plan for their Devices, up to 250 entries:
   transfer to the Workspace, hand over to another member, or revoke. Devices

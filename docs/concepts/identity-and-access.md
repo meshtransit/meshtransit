@@ -70,8 +70,19 @@ Signing in creates an **Account Session**, an opaque token
   another one of the person's Workspaces without signing in again. At sign-in
   Core picks the Workspace of the last session, else one the person owns,
   else their oldest membership.
-- **Ending:** signing out revokes the session. Suspending or removing a
-  member ends their sessions in that Workspace.
+- **Ending:** signing out ends that session. **Sign out everywhere**
+  (`POST /auth/v1/session/logout-all`, in the Console's account menu) ends
+  every session of the Account in every Workspace, including the current
+  one; Devices keep working. Suspending or removing a member ends their
+  sessions in that Workspace.
+- **An administrator** with `member.manage` can end the sessions a member
+  signed in to their Workspace
+  (`POST /api/v1/workspaces/{workspace}/members/{member}/actions/revoke-sessions`,
+  with a reason). Sessions the member signed in to other Workspaces stay, and
+  the member can sign in again; suspending the member is what cuts them off
+  in the Workspace.
+- **The operator** can end every session of an Account, or quarantine it,
+  with `meshcore account` ([deployment](../operations/deployment.md#accounts)).
 
 ## Workspaces
 
@@ -114,7 +125,7 @@ People join a Workspace by invitation (`member.invite`):
 
 Members are suspended, resumed and removed with `member.manage`; what happens
 to their Devices is described in [devices](devices.md#members-leaving).
-Nobody can suspend or remove themselves or the owner, and an administrator
+Nobody can suspend, sign out or remove themselves or the owner, and an administrator
 can act on a member only if they could grant every role the member holds.
 
 ## Roles and permissions

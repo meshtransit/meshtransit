@@ -139,7 +139,7 @@ func validLoginCallbackPath(value string) bool {
 	switch value {
 	case "/auth/v1/login/prepare", "/auth/v1/login/start", "/auth/v1/login/continue",
 		"/auth/v1/login/continue/prepare", consoleSessionPreparePath, consoleSessionLogoutPath,
-		consoleSessionManagementScopesPath:
+		consoleSessionLogoutAllPath, consoleSessionManagementScopesPath:
 		return false
 	default:
 		return true

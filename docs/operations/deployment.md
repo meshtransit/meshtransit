@@ -232,6 +232,23 @@ Enable the worker jobs the deployment needs
 ([configuration](configuration.md#worker)), and Device aliases if Networks
 will share Devices ([sharing](../concepts/sharing.md#turning-it-on)).
 
+## Accounts
+
+When an Account may be compromised, the operator acts on it by its principal
+ID (the member ID the Console shows), with the migrator's settings like
+`meshcore migrate`:
+
+| Command | Effect |
+|---|---|
+| `meshcore account revoke-sessions <principal>` | Ends every Console session of the Account; the person can sign in again |
+| `meshcore account quarantine <principal>` | Ends every session and refuses sign-in and every session until released |
+| `meshcore account release <principal>` | Lets a quarantined Account sign in again |
+
+Each prints the result as JSON and writes one audit event on the
+deployment's stream, with no actor. None of them touches the Account's
+Devices, enrollment keys, memberships or roles: suspend or remove the member,
+or revoke the Devices, for that.
+
 ## Relays
 
 On each relay host:

@@ -12,8 +12,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 161 {
-		t.Fatalf("len(Catalog()) = %d, want 161", len(catalog))
+	if len(catalog) != 162 {
+		t.Fatalf("len(Catalog()) = %d, want 162", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1608,8 +1608,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 161 {
-		t.Fatalf("LatestVersion() = %d, want 161", LatestVersion())
+	if LatestVersion() != 162 {
+		t.Fatalf("LatestVersion() = %d, want 162", LatestVersion())
 	}
 }
 
@@ -3167,6 +3167,77 @@ func TestMapSessionRevocation(t *testing.T) {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 161 must only read revoked authority: found %q", forbidden)
 		}
+	}
+}
+
+// Schema 162 advances the Account's session generation and ends every active
+// session for the person and the operator, while an administrator ends only
+// the sessions signed in to their Workspace, under the suspension guards.
+func TestAccountSessionRevocation(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[161]
+	if migration.Version != 162 {
+		t.Fatalf("migration 162 = %+v", migration)
+	}
+	sql := migration.SQL
+	section := func(name string) string {
+		start := strings.Index(sql, "CREATE FUNCTION mesh_ops."+name+"(")
+		if start < 0 {
+			t.Fatalf("schema 162 missing %s", name)
+		}
+		end := strings.Index(sql[start:], "$function$;")
+		if end < 0 {
+			t.Fatalf("schema 162 %s is unterminated", name)
+		}
+		return sql[start : start+end]
+	}
+	for name, required := range map[string][]string{
+		"logout_all_account_sessions_v1": {
+			"ORDER BY session.id\n    FOR UPDATE;",
+			"AND session.version >= p_session_version;",
+			"FROM mesh_ops.resolve_account_session_v1(",
+			"OR v_account.recovery_state <> 'verified' THEN",
+			"SET session_generation = account.session_generation + 1, version = account.version + 1,",
+			"SET state = 'revoked', ended_at = v_now, end_reason = 'logout_all',",
+			"WHERE session.deployment_id = v_deployment AND session.principal_id = v_principal",
+		},
+		"revoke_workspace_member_sessions_v1": {
+			"NOT mesh_ops.session_bound_to_workspace_v1(p_session_public_id, v_workspace)",
+			"p_workspace_public_id, 'member.manage', v_now",
+			"IF v_member = v_owner OR v_member = v_actor THEN",
+			"NOT (role.assignable_by && mesh_ops.workspace_role_assigners_v1(v_workspace, v_actor, v_now))",
+			"WHERE session.deployment_id = v_membership.deployment_id AND session.principal_id = v_member\n" +
+				"      AND session.login_workspace_id = v_workspace",
+		},
+		"change_account_recovery_v1": {
+			"SECURITY INVOKER",
+			"IF p_action = 'release' AND v_account.recovery_state <> 'quarantined' THEN",
+			"WHEN 'quarantine' THEN 'quarantined'",
+			"+ CASE WHEN p_action = 'release' THEN 0 ELSE 1 END,",
+		},
+	} {
+		body := section(name)
+		for _, text := range required {
+			if !strings.Contains(body, text) {
+				t.Errorf("schema 162 %s missing %q", name, text)
+			}
+		}
+	}
+	// An administrator never moves the Account-wide generation.
+	if strings.Contains(section("revoke_workspace_member_sessions_v1"), "UPDATE mesh.account ") {
+		t.Error("schema 162 lets a Workspace administrator end sessions in other Workspaces")
+	}
+	for _, required := range []string{
+		"GRANT EXECUTE ON FUNCTION mesh_ops.logout_all_account_sessions_v1(\n    UUID, UUID, UUID, UUID, BIGINT, BIGINT, BIGINT, BIGINT, BIGINT, UUID\n) TO mesh_runtime;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.revoke_workspace_member_sessions_v1(\n    UUID, UUID, UUID, UUID, BIGINT, BIGINT, BIGINT, BIGINT, BIGINT, UUID, UUID, UUID, TIMESTAMPTZ\n) TO mesh_runtime;",
+		"REVOKE ALL ON FUNCTION mesh_ops.change_account_recovery_v1(UUID, TEXT, UUID)\n    FROM PUBLIC, mesh_runtime,",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Errorf("schema 162 missing %q", required)
+		}
+	}
+	if strings.Contains(sql, "change_account_recovery_v1(UUID, TEXT, UUID) TO") {
+		t.Error("schema 162 must not grant operator Account recovery to any role")
 	}
 }
 

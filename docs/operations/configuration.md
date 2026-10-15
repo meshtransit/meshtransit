@@ -104,7 +104,8 @@ the runtime user, `worker` uses the worker user, `all` both.
 
 ### Migrations and bootstrap
 
-Read only by `meshcore migrate status|up` and `meshcore bootstrap check|apply`;
+Read only by `meshcore migrate status|up`, `meshcore bootstrap check|apply`
+and `meshcore account`;
 they never fall back to the runtime credentials.
 
 | Variable | Default | Allowed | Meaning |

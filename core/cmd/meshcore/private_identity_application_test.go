@@ -106,6 +106,7 @@ func TestComposePrivateIdentityRejectsTypedNilEffectsBeforeWork(t *testing.T) {
 		{name: "subjects", change: func(p *privateIdentityPorts) { p.Subjects = missing }},
 		{name: "session authority", change: func(p *privateIdentityPorts) { p.SessionAuthority = missingAuthority }},
 		{name: "session revocations", change: func(p *privateIdentityPorts) { p.SessionRevocations = missingAuthority }},
+		{name: "session logout all", change: func(p *privateIdentityPorts) { p.SessionLogoutAll = nil }},
 		{name: "session scopes", change: func(p *privateIdentityPorts) { p.SessionScopes = missingScopes }},
 		{name: "session capabilities", change: func(p *privateIdentityPorts) { p.SessionCapabilities = missingCapabilities }},
 		{name: "start ids", change: func(p *privateIdentityPorts) { p.StartIDs = missing }},
@@ -670,6 +671,7 @@ func newPrivateIdentityFixture(t *testing.T) *privateIdentityFixture {
 		Admission: fixture, Metadata: &privateIdentityMetadata{fixture: fixture}, Creations: fixture, Committed: fixture,
 		CreationClock: fixture, Pending: fixture, Claims: fixture, Failures: fixture, Issues: fixture, Provider: fixture, Subjects: fixture,
 		SessionAuthority: authority, SessionRevocations: authority,
+		SessionLogoutAll:    privateIdentityLogoutAll{},
 		SessionScopes:       &privateIdentityManagementScopes{},
 		SessionCapabilities: &privateIdentityManagementCapabilities{},
 		StartIDs:            fixture, Secrets: fixture, ClaimIDs: fixture,
@@ -689,6 +691,12 @@ func newPrivateIdentityFixture(t *testing.T) *privateIdentityFixture {
 type privateIdentityPolicyApprovals struct{}
 
 type privateIdentityManagementScopes struct{}
+
+type privateIdentityLogoutAll struct{}
+
+func (privateIdentityLogoutAll) RevokeAll(context.Context, accountsession.Session, publicid.ID) (int, error) {
+	return 0, accountsession.ErrUnauthenticated
+}
 
 type privateIdentityManagementCapabilities struct{}
 

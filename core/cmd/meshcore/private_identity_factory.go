@@ -245,6 +245,10 @@ func composePrivateIdentityFactory(
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
+	logoutAllStore, err := postgresadapter.NewAccountSessionRevocationStore(dependencies.Runtime, catalogOptions)
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
 	memberLifecycleStore, err := postgresadapter.NewMemberLifecycleStore(dependencies.Runtime, catalogOptions)
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
@@ -386,7 +390,8 @@ func composePrivateIdentityFactory(
 		Admission: transactions, Metadata: owner.discovery, Creations: transactions, Committed: transactions,
 		CreationClock: transactions, Pending: transactions, Claims: transactions, Failures: transactions, Issues: transactions,
 		Provider: owner.provider, Subjects: transactions, SessionAuthority: authority, SessionRevocations: logoutStore,
-		SessionScopes: managementScopes, DeviceInventory: deviceInventory, DeviceDistribution: deviceDistribution,
+		SessionLogoutAll: logoutAllStore,
+		SessionScopes:    managementScopes, DeviceInventory: deviceInventory, DeviceDistribution: deviceDistribution,
 		AccessGraphHistory: accessGraphHistory, EnforcementHistory: enforcementHistory,
 		SessionCapabilities: managementCapabilities,
 		StartIDs:            oidcauth.SystemStartIDs{}, Secrets: oidcauth.SystemSecrets{},

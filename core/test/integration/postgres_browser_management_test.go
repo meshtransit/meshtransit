@@ -26,6 +26,7 @@ import (
 	"meshtransit.net/core/internal/domain/policy/approval"
 	"meshtransit.net/core/internal/domain/policy/compilation"
 	publication "meshtransit.net/core/internal/domain/policy/publication"
+	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/domain/resource/catalog"
 	"meshtransit.net/core/internal/platform/ratelimit"
 )
@@ -48,6 +49,7 @@ func prepareIntegrationBrowserManagement(
 		Logout: integrationAccountSessionLogoutFunc(func(context.Context, accountsession.Token) (bool, error) {
 			return false, nil
 		}),
+		LogoutAll:    integrationLogoutAll{},
 		Scopes:       integrationManagementScopes{},
 		Capabilities: integrationDeploymentCapabilities{},
 		DeploymentID: token.DeploymentID(), Origin: "https://console.example.test", Clock: accountsession.SystemClock{},
@@ -100,6 +102,12 @@ func (integrationDeploymentCapabilities) Read(
 	accountsession.Session,
 ) (sessioncontext.DeploymentCapabilities, error) {
 	return sessioncontext.DeploymentCapabilities{}, sessioncontext.ErrCapabilitiesUnavailable
+}
+
+type integrationLogoutAll struct{}
+
+func (integrationLogoutAll) RevokeAll(context.Context, accountsession.Session, publicid.ID) (int, error) {
+	return 0, accountsession.ErrUnauthenticated
 }
 
 type integrationAccountSessionLogoutFunc func(context.Context, accountsession.Token) (bool, error)

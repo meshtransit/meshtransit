@@ -1,4 +1,5 @@
-// Package memberlifecycle suspends, resumes and removes Workspace members.
+// Package memberlifecycle suspends, resumes and removes Workspace members,
+// and ends their Console sessions in a Workspace.
 // Suspending a member cuts them off in the Workspace at once: their
 // membership grants nothing, the Devices they own there are suspended, and
 // their Console sessions in the Workspace end. Resuming restores exactly what
@@ -47,6 +48,9 @@ type Action string
 const (
 	ActionSuspend Action = "suspend"
 	ActionResume  Action = "resume"
+	// ActionRevokeSessions ends the member's Console sessions signed in to
+	// the Workspace and changes nothing else.
+	ActionRevokeSessions Action = "revoke-sessions"
 	// ActionRemove names a removal, which travels as a Removal, never as a
 	// Change.
 	ActionRemove Action = "remove"
@@ -104,6 +108,7 @@ func ValidReason(reason string) bool {
 // IsValid reports a complete change with a reason.
 func (change Change) IsValid() bool {
 	return change.Session.IsValid() && change.WorkspaceID.IsValid() && change.MemberID.IsValid() &&
-		(change.Action == ActionSuspend || change.Action == ActionResume) && ValidReason(change.Reason) &&
+		(change.Action == ActionSuspend || change.Action == ActionResume || change.Action == ActionRevokeSessions) &&
+		ValidReason(change.Reason) &&
 		change.CorrelationID.IsValid() && !change.EvaluatedAt.IsZero()
 }

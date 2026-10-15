@@ -22,6 +22,7 @@ const (
 	maximumManagementDocumentBytes     = 1 << 20
 	consoleSessionPreparePath          = "/auth/v1/session/prepare"
 	consoleSessionLogoutPath           = "/auth/v1/session/logout"
+	consoleSessionLogoutAllPath        = "/auth/v1/session/logout-all"
 	consoleSessionManagementScopesPath = "/auth/v1/session/management-scopes"
 	consoleDeploymentCapabilitiesPath  = "/v1/system/capabilities"
 	deviceRevokePath                   = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
@@ -62,6 +63,7 @@ type consoleManagementProfile struct {
 	Schemas                 map[string]json.RawMessage `json:"schemas"`
 	Prepare                 json.RawMessage            `json:"prepare"`
 	Logout                  json.RawMessage            `json:"logout"`
+	LogoutAll               json.RawMessage            `json:"logoutAll"`
 	ManagementScopes        json.RawMessage            `json:"managementScopes"`
 	DeploymentCapabilities  json.RawMessage            `json:"deploymentCapabilities"`
 	DeviceInventory         json.RawMessage            `json:"deviceInventory"`
@@ -106,6 +108,7 @@ type consoleManagementProfile struct {
 	NetworkDeviceRename     json.RawMessage            `json:"networkDeviceRename"`
 	WorkspaceMemberSuspend  json.RawMessage            `json:"workspaceMemberSuspend"`
 	WorkspaceMemberResume   json.RawMessage            `json:"workspaceMemberResume"`
+	WorkspaceMemberSessions json.RawMessage            `json:"workspaceMemberRevokeSessions"`
 	WorkspaceMemberRemove   json.RawMessage            `json:"workspaceMemberRemove"`
 	WorkspaceInvitations    json.RawMessage            `json:"workspaceInvitations"`
 	InvitationCreate        json.RawMessage            `json:"workspaceInvitationCreate"`
@@ -160,6 +163,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		profile.Format == "meshtransit-management-auth-profile/v1"
 	validTransport := len(profile.SecuritySchemes) == 2 && len(profile.Parameters) == 3
 	validShape := len(profile.Schemas) == 5 && len(profile.Prepare) > 0 && len(profile.Logout) > 0 &&
+		consoleCookieOperation(profile.LogoutAll, "post", "logoutAllConsoleSessions", true) &&
 		len(profile.ManagementScopes) > 0 && len(profile.DeploymentCapabilities) > 0 &&
 		len(profile.DeviceInventory) > 0 && consoleWorkspaceRenameOperation(profile.WorkspaceRename) &&
 		consoleCookieOperation(profile.WorkspaceMembers, "get", "listWorkspaceMembers", false) &&
@@ -202,6 +206,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		consoleCookieOperation(profile.NetworkDeviceRename, "post", "renameNetworkDevice", true) &&
 		consoleCookieOperation(profile.WorkspaceMemberSuspend, "post", "suspendWorkspaceMember", true) &&
 		consoleCookieOperation(profile.WorkspaceMemberResume, "post", "resumeWorkspaceMember", true) &&
+		consoleCookieOperation(profile.WorkspaceMemberSessions, "post", "revokeWorkspaceMemberSessions", true) &&
 		consoleCookieOperation(profile.WorkspaceMemberRemove, "post", "removeWorkspaceMember", true) &&
 		consoleCookieOperation(profile.WorkspaceInvitations, "get", "listWorkspaceInvitations", false) &&
 		consoleCookieOperation(profile.InvitationCreate, "post", "createWorkspaceInvitation", true) &&
@@ -344,6 +349,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	memberActions := "/api/v1/workspaces/{workspace_id}/members/{principal_id}/actions/"
 	consolePaths[memberActions+"suspend"] = profile.WorkspaceMemberSuspend
 	consolePaths[memberActions+"resume"] = profile.WorkspaceMemberResume
+	consolePaths[memberActions+"revoke-sessions"] = profile.WorkspaceMemberSessions
 	consolePaths[memberActions+"remove"] = profile.WorkspaceMemberRemove
 	invitations := "/api/v1/workspaces/{workspace_id}/invitations"
 	consolePaths[invitations] = profile.WorkspaceInvitations
@@ -354,6 +360,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments/{assignment_id}/actions/revoke"] = profile.WorkspaceRoleRevoke
 	consolePaths[consoleSessionPreparePath] = profile.Prepare
 	consolePaths[consoleSessionLogoutPath] = profile.Logout
+	consolePaths[consoleSessionLogoutAllPath] = profile.LogoutAll
 	consolePaths[consoleSessionManagementScopesPath] = profile.ManagementScopes
 	consolePaths[consoleDeploymentCapabilitiesPath] = profile.DeploymentCapabilities
 	consolePaths["/api/v1/workspaces/{workspace_id}/networks/{network_id}/devices"] = profile.DeviceInventory

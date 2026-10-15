@@ -82,6 +82,9 @@ func TestServiceStampsAndValidatesChanges(t *testing.T) {
 		{name: "resume", mutate: func(request *memberlifecycle.Request) {
 			request.Action = memberlifecycle.ActionResume
 		}},
+		{name: "revoke sessions", mutate: func(request *memberlifecycle.Request) {
+			request.Action = memberlifecycle.ActionRevokeSessions
+		}},
 		{name: "unknown action", mutate: func(request *memberlifecycle.Request) {
 			request.Action = "remove"
 		}, want: memberlifecycle.ErrInvalid},

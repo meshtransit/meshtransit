@@ -567,6 +567,66 @@
       }
     }
   },
+  "logoutAll": {
+    "post": {
+      "operationId": "logoutAllConsoleSessions",
+      "summary": "End every Core Session of the signed-in Account",
+      "description": "Require the current host-only Session cookie and a fresh proof bound to that exact cookie, Origin and Deployment. Atomically advance the Account's session generation and end every active Core Session of the Account in every Workspace, including the current one, then expire only __Host-mt_session. Devices are not affected. A Session that another sign-out already ended gets the bounded authentication denial and ends nothing. No provider token, upstream logout, alternate cookie, redirect or authority renewal is performed. JSON whitespace around the literal empty object is allowed.",
+      "security": [
+        {
+          "accountSessionCookie": [],
+          "sessionCSRF": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionProof"
+        }
+      ],
+      "requestBody": {
+        "required": true,
+        "x-meshtransit-max-bytes": 4096,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "maxProperties": 0
+            }
+          }
+        }
+      },
+      "responses": {
+        "204": {
+          "description": "Every Core Session of the Account is durably ended and the browser cookie is expired. The response has no body.",
+          "headers": {
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            },
+            "Set-Cookie": {
+              "description": "Exact host-only deletion for the Core Session cookie; no Domain or other cookie is changed.",
+              "schema": {
+                "type": "string",
+                "const": "__Host-mt_session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT; Max-Age=0; HttpOnly; Secure; SameSite=Lax"
+              }
+            }
+          }
+        },
+        "default": {
+          "description": "Private pre-release failure leaves status/headers/body untouched. Authentication failures use the existing bounded management denial without clearing or renewing cookies. Durable submission failure is uncertain delivery, never non-commit evidence or an automatic retry."
+        }
+      }
+    }
+  },
   "managementScopes": {
     "get": {
       "operationId": "listConsoleManagementScopes",
@@ -9209,6 +9269,208 @@
       "responses": {
         "200": {
           "description": "The member after the change and the Devices it changed",
+          "headers": {
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "member",
+                      "devices",
+                      "sessions_ended",
+                      "network_count"
+                    ],
+                    "properties": {
+                      "member": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "principal_id",
+                          "membership_state",
+                          "membership_expires_at",
+                          "version"
+                        ],
+                        "properties": {
+                          "principal_id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "membership_state": {
+                            "type": "string",
+                            "enum": [
+                              "active",
+                              "suspended"
+                            ]
+                          },
+                          "membership_expires_at": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "format": "date-time"
+                          },
+                          "version": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      "devices": {
+                        "type": "array",
+                        "maxItems": 10000,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "device_id",
+                            "network_id",
+                            "hostname",
+                            "state"
+                          ],
+                          "properties": {
+                            "device_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "network_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "hostname": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253
+                            },
+                            "state": {
+                              "type": "string",
+                              "enum": [
+                                "active",
+                                "suspended"
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      "sessions_ended": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "network_count": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "invalid_request"
+        },
+        "403": {
+          "description": "permission_denied or member_protected"
+        },
+        "404": {
+          "description": "member_not_found"
+        },
+        "409": {
+          "description": "member_state_conflict"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Unavailable"
+        }
+      }
+    }
+  },
+  "workspaceMemberRevokeSessions": {
+    "post": {
+      "operationId": "revokeWorkspaceMemberSessions",
+      "summary": "End a Workspace member's Console sessions",
+      "description": "Requires member.manage and a delegation ceiling covering every role the member holds. Nobody ends the sessions of the owner or themselves. Ends every active Console session the member signed in to this Workspace. Sessions the member signed in to other Workspaces, the membership, Devices and roles are unchanged; to cut the member off here, suspend them. The member must be active.",
+      "security": [
+        {
+          "accountSessionCookie": [],
+          "sessionCSRF": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "name": "workspace_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "principal_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionProof"
+        }
+      ],
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "reason"
+              ],
+              "properties": {
+                "reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "The unchanged member and how many sessions ended; devices is empty and network_count is 0",
           "headers": {
             "Cache-Control": {
               "schema": {
