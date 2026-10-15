@@ -533,6 +533,7 @@ func Catalog() []Migration {
 		newMigration(164, "Retroactive share guardrails", retroactiveShareGuardrailsSQL),
 		newMigration(165, "Policy rules to gone Devices", policyGoneDeviceDestinationsSQL),
 		newMigration(166, "Network member management", networkMemberManagementSQL),
+		newMigration(167, "Guardrail share consistency", guardrailShareConsistencySQL),
 	}
 }
 
@@ -810,3 +811,6 @@ var policyGoneDeviceDestinationsSQL string
 
 //go:embed 000166_network_member_management.up.sql
 var networkMemberManagementSQL string
+
+//go:embed 000167_guardrail_share_consistency.up.sql
+var guardrailShareConsistencySQL string

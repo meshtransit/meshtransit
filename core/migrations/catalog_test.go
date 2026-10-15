@@ -12,8 +12,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 166 {
-		t.Fatalf("len(Catalog()) = %d, want 166", len(catalog))
+	if len(catalog) != 167 {
+		t.Fatalf("len(Catalog()) = %d, want 167", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1608,8 +1608,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 166 {
-		t.Fatalf("LatestVersion() = %d, want 166", LatestVersion())
+	if LatestVersion() != 167 {
+		t.Fatalf("LatestVersion() = %d, want 167", LatestVersion())
 	}
 }
 
@@ -3355,6 +3355,81 @@ func TestRetroactiveShareGuardrails(t *testing.T) {
 			strings.ReplaceAll(replaced, "FOR SHARE NOWAIT;", "FOR SHARE;") != extract(Catalog()[162].SQL, name) {
 			t.Errorf("schema 164 must replace %s with only NOWAIT added", name)
 		}
+	}
+}
+
+// Schema 165 keeps the schema 164 functions for the previous binary and
+// adds versions that differ only where review required: the guardrail
+// change takes the Workspace row FOR NO KEY UPDATE, the acting Workspace's
+// guardrail reader locks its state row with NOWAIT, the share readers take
+// their bound from the caller, the preview also admits guardrail.weaken,
+// the bump rechecks the evaluated shares after its revision locks, and the
+// map reader looks Workspaces up through the accepted-offer indexes.
+func TestGuardrailShareConsistency(t *testing.T) {
+	t.Parallel()
+	migration := migrationVersion(t, 167)
+	extract := func(sql, name string) string {
+		start := strings.Index(sql, "FUNCTION mesh_ops."+name+"(")
+		if start < 0 {
+			t.Fatalf("%s not found", name)
+		}
+		end := strings.Index(sql[start:], "$function$;")
+		return sql[start : start+end]
+	}
+	change := extract(migration.SQL, "change_workspace_guardrail_v2")
+	previous := strings.Replace(extract(Catalog()[162].SQL, "change_workspace_guardrail_v1"),
+		"change_workspace_guardrail_v1(", "change_workspace_guardrail_v2(", 1)
+	if strings.Replace(change, "scoped_workspace_id FOR NO KEY UPDATE;", "scoped_workspace_id FOR UPDATE;", 1) != previous {
+		t.Error("change_workspace_guardrail_v2 must be v1 with only the Workspace row lock weakened")
+	}
+	active := extract(migration.SQL, "active_workspace_guardrails_v2")
+	if !strings.Contains(active, "VOLATILE") ||
+		!strings.Contains(active, "WHERE state.workspace_id = scoped_workspace_id FOR SHARE NOWAIT;") {
+		t.Error("active_workspace_guardrails_v2 must lock the acting state row with NOWAIT")
+	}
+	bump := extract(migration.SQL, "bump_guardrail_share_networks_v2")
+	locked := strings.Index(bump, "        FOR UPDATE\n        LOOP")
+	recheck := strings.Index(bump, "RAISE EXCEPTION USING ERRCODE = '40001', MESSAGE = 'a share changed during the guardrail change';")
+	if locked < 0 || recheck < 0 || recheck < locked ||
+		!strings.Contains(bump, "IF v_live <> v_inventory OR v_matched <> v_inventory THEN") {
+		t.Error("the bump must recheck the evaluated shares after locking revisions")
+	}
+	listing := extract(migration.SQL, "list_guardrail_share_contracts_v2")
+	if !strings.Contains(listing, "'guardrail.manage', evaluated_at))") ||
+		!strings.Contains(listing, "'guardrail.weaken', evaluated_at)) THEN") {
+		t.Error("the preview must admit guardrail.manage or guardrail.weaken")
+	}
+	internal := extract(migration.SQL, "guardrail_share_contracts_internal_v2")
+	if !strings.Contains(internal, "LIMIT p_limit + 1") || !strings.Contains(internal, "p_limit > 200000") ||
+		strings.Contains(internal, "20001") {
+		t.Error("the share reader must take its bound from the caller")
+	}
+	mapReader := extract(migration.SQL, "map_share_guardrails_v2")
+	for _, required := range []string{
+		"AND locator.provider_workspace_public_id = v_public_id\n              AND locator.state = 'accepted'",
+		"AND locator.consumer_workspace_public_id = v_public_id\n              AND locator.state = 'accepted'",
+		"RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'Workspace is unavailable to this Network';",
+		"AND guardrail.mode = 'enforce'",
+	} {
+		if !strings.Contains(mapReader, required) {
+			t.Errorf("map_share_guardrails_v2 missing %q", required)
+		}
+	}
+	for _, required := range []string{
+		"CREATE INDEX share_offer_locator_accepted_provider_idx",
+		"CREATE INDEX share_offer_locator_accepted_consumer_idx",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.map_share_guardrails_v2(UUID[]) TO mesh_runtime;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.bump_guardrail_share_networks_v2(UUID[], UUID[], UUID) TO mesh_runtime;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.active_workspace_guardrails_v2() TO mesh_runtime;",
+		"REVOKE ALL ON FUNCTION mesh_ops.guardrail_share_contracts_internal_v2(BIGINT, INTEGER)\n    FROM PUBLIC, mesh_runtime,",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 167 missing %q", required)
+		}
+	}
+	if strings.Contains(migration.SQL, "DROP FUNCTION") || strings.Contains(migration.SQL, "REVOKE EXECUTE") ||
+		strings.Contains(migration.SQL, "CREATE OR REPLACE FUNCTION") {
+		t.Error("schema 167 must keep every previous function for the previous binary")
 	}
 }
 

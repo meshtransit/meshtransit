@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"meshtransit.net/core/internal/domain/guardrail"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/publicid"
@@ -109,7 +111,8 @@ func TestCheckGuardrailShareImpact(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			transaction := &fakeAccountSessionTransaction{row: fakeAccountSessionRow{values: []any{test.inventory}}}
-			shares, err := checkGuardrailShareImpact(t.Context(), transaction, test.change, test.saved, test.deleted, changeID)
+			shares, err := checkGuardrailShareImpact(t.Context(), transaction, test.change, test.saved, test.deleted, changeID,
+				guardrail.MaximumShareContracts)
 			if test.err != nil {
 				if !errors.Is(err, test.err) {
 					t.Fatalf("error = %v, want %v", err, test.err)
@@ -125,7 +128,7 @@ func TestCheckGuardrailShareImpact(t *testing.T) {
 
 func mustInventory(t *testing.T, encoded string) guardrail.ShareInventory {
 	t.Helper()
-	inventory, err := decodeGuardrailShareInventory(encoded)
+	inventory, err := decodeGuardrailShareInventory(encoded, guardrail.MaximumShareContracts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,8 +150,82 @@ func TestDecodeGuardrailShareInventoryIsStrict(t *testing.T) {
 		"foreign Network": strings.Replace(valid, `"network_id":"`+shareStoreNetwork, `"network_id":"x`, 1),
 		"guardrails null": strings.Replace(valid, `"guardrails":[]`, `"guardrails":null`, 1),
 	} {
-		if _, err := decodeGuardrailShareInventory(encoded); err == nil {
+		if _, err := decodeGuardrailShareInventory(encoded, guardrail.MaximumShareContracts); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+// Only an enforce-mode save reads under the preview's bound; deleting or
+// switching to audit reads every active share, so a Workspace past the bound
+// can still loosen its guardrails.
+func TestGuardrailShareReadLimit(t *testing.T) {
+	t.Parallel()
+	workspaceID, _ := workspace.ParseID(shareStoreWorkspace)
+	id, _ := publicid.Parse(shareStoreGuardrail)
+	changeID, _ := publicid.Parse("01890f00-0000-7000-8000-000000000a03")
+	enforced, audit := shareStoreSpec(t, guardrail.ModeEnforce), shareStoreSpec(t, guardrail.ModeAudit)
+	for _, test := range []struct {
+		name    string
+		change  guardrail.Change
+		saved   guardrail.Guardrail
+		deleted bool
+		limit   int
+	}{
+		{name: "enforce create", limit: 7, saved: guardrail.Guardrail{ID: id, Version: 1, Spec: enforced},
+			change: guardrail.Change{WorkspaceID: workspaceID, Operation: guardrail.OperationCreate, Spec: enforced}},
+		{name: "switch to audit", limit: guardrail.MaximumChangeShareContracts,
+			saved: guardrail.Guardrail{ID: id, Version: 2, Spec: audit},
+			change: guardrail.Change{WorkspaceID: workspaceID, Operation: guardrail.OperationUpdate, Spec: audit,
+				ExpectedVersion: 1, Previous: &enforced}},
+		{name: "delete", limit: guardrail.MaximumChangeShareContracts, deleted: true,
+			saved: guardrail.Guardrail{ID: id, Version: 2, Spec: enforced},
+			change: guardrail.Change{WorkspaceID: workspaceID, Operation: guardrail.OperationDelete, Spec: enforced,
+				ExpectedVersion: 1, Previous: &enforced}},
+	} {
+		transaction := &fakeAccountSessionTransaction{row: fakeAccountSessionRow{err: errors.New("stop")}}
+		_, _ = checkGuardrailShareImpact(t.Context(), transaction, test.change, test.saved, test.deleted, changeID, 7)
+		if len(transaction.arguments) != 2 || transaction.arguments[1] != test.limit {
+			t.Errorf("%s: read with %v, want limit %d", test.name, transaction.arguments, test.limit)
+		}
+	}
+}
+
+// The bump always runs with every share evaluated, so PostgreSQL can refuse
+// the change when a share appeared or ended meanwhile; that refusal is a
+// retryable conflict.
+func TestBumpGuardrailShareNetworksRechecks(t *testing.T) {
+	t.Parallel()
+	changeID, _ := publicid.Parse("01890f00-0000-7000-8000-000000000a03")
+	inventory := mustInventory(t, shareStoreInventory(t))
+	transaction := &fakeAccountSessionTransaction{row: fakeAccountSessionRow{values: []any{"[]"}}}
+	heads, err := bumpGuardrailShareNetworks(t.Context(), transaction,
+		guardrailShareChange{contracts: inventory.Contracts, changed: []guardrail.ShareContract{}}, changeID)
+	if err != nil || len(heads) != 0 {
+		t.Fatalf("nothing changed: heads %v, %v", heads, err)
+	}
+	evaluated, ok := transaction.arguments[1].([]string)
+	if changed, _ := transaction.arguments[0].([]string); !ok || len(changed) != 0 || len(evaluated) != 1 ||
+		evaluated[0] != shareStoreContract {
+		t.Fatalf("bump arguments = %v", transaction.arguments)
+	}
+	stale := &fakeAccountSessionTransaction{row: fakeAccountSessionRow{err: &pgconn.PgError{Code: "40001"}}}
+	if _, err := bumpGuardrailShareNetworks(t.Context(), stale,
+		guardrailShareChange{contracts: inventory.Contracts, changed: inventory.Contracts}, changeID); !errors.Is(err,
+		guardrail.ErrVersionConflict) {
+		t.Fatalf("a share made meanwhile: %v", err)
+	}
+	// Heads for a change that changed nothing, or none for one that did, are
+	// not trusted.
+	odd := &fakeAccountSessionTransaction{row: fakeAccountSessionRow{values: []any{`[{"stream_id":1}]`}}}
+	if _, err := bumpGuardrailShareNetworks(t.Context(), odd,
+		guardrailShareChange{contracts: inventory.Contracts}, changeID); !errors.Is(err, guardrail.ErrUnavailable) {
+		t.Errorf("heads for nothing: %v", err)
+	}
+	none := &fakeAccountSessionTransaction{row: fakeAccountSessionRow{values: []any{"[]"}}}
+	if _, err := bumpGuardrailShareNetworks(t.Context(), none,
+		guardrailShareChange{contracts: inventory.Contracts, changed: inventory.Contracts}, changeID); !errors.Is(err,
+		guardrail.ErrUnavailable) {
+		t.Errorf("no heads for a change: %v", err)
 	}
 }

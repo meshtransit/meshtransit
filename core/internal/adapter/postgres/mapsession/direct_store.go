@@ -132,8 +132,9 @@ func (store *Store) loadShareEdges(
 		projections = append(projections, aliases...)
 		limited = limited || aliasesLimited
 	}
-	// Enforced guardrails cut shares before the map's bounds apply, so a cut
-	// share takes no place another share could have.
+	// Enforced guardrails cut shares after the readers' own row limits but
+	// before the map's share cap, so a cut share does not count against the
+	// cap; it still counts against a reader's limit.
 	projections, cut, err := dropGuardrailBlocked(ctx, transaction, projections)
 	if err != nil {
 		return appmapsession.Snapshot{}, err

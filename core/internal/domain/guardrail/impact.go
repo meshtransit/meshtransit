@@ -31,6 +31,9 @@ var (
 const (
 	// MaximumShareContracts bounds the active shares one preview reads.
 	MaximumShareContracts = 20000
+	// MaximumChangeShareContracts bounds the active shares any other change
+	// (delete, switch to audit, loosen) reads to find what it restores.
+	MaximumChangeShareContracts = 200000
 	// MaximumPreviewItems bounds the affected shares a preview lists.
 	MaximumPreviewItems = 256
 )

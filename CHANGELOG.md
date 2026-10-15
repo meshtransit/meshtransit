@@ -5,6 +5,16 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core schema 167: guardrail saves and share changes no longer race. A
+  share accepted or enabled while its Workspace's guardrails are being saved
+  fails as a retryable conflict; a guardrail save that a concurrent share
+  changed under fails with `version_conflict` instead of missing it. Saving a
+  guardrail no longer deadlocks with a share offer of another Workspace.
+  Above 20,000 active shares a Workspace can still switch a guardrail to
+  audit mode or delete it (only previews and enforce-mode saves are bounded),
+  `guardrail.weaken` may preview, and the map reads guardrails through
+  indexes. Existing shares that enforced guardrails block leave maps within
+  one reconcile interval of the new binary; no operator step is needed.
 - Core: members can be added to and removed from an existing Network. Before,
   a Network created after people joined the Workspace held only its creator,
   so nobody else could enroll a Device into it. The new

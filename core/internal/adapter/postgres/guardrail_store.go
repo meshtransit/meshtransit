@@ -26,13 +26,18 @@ const listWorkspaceGuardrailsSQL = `SELECT mesh_ops.list_workspace_guardrails_v1
 const changeWorkspaceGuardrailSQL = `SELECT guardrail::TEXT, previous_semantic_hash,
  COALESCE(actor_binding_public_id::TEXT,''), COALESCE(actor_role_public_id::TEXT,''),
  COALESCE(actor_binding_generation,0), COALESCE(actor_membership_generation,0), COALESCE(actor_owner_generation,0)
-FROM mesh_ops.change_workspace_guardrail_v1(` + sessionArguments + `,
+FROM mesh_ops.change_workspace_guardrail_v2(` + sessionArguments + `,
  $10::UUID,$11::TEXT,$12::UUID,$13::BIGINT,$14::TEXT,$15::TEXT,$16::TEXT,$17::TEXT,$18::JSONB,$19::BYTEA,
  $20::UUID[],$21::TEXT,$22::UUID)`
 
 // activeWorkspaceGuardrailsSQL reads the guardrails of the Workspace bound to
 // the current transaction's verified scope.
 const activeWorkspaceGuardrailsSQL = `SELECT mesh_ops.active_workspace_guardrails_v1()::TEXT`
+
+// actingShareGuardrailsSQL is that read for a share change: it also locks
+// the Workspace's guardrail state row with NOWAIT (schema 167), so the share
+// change and a guardrail change of the Workspace never overlap.
+const actingShareGuardrailsSQL = `SELECT mesh_ops.active_workspace_guardrails_v2()::TEXT`
 
 const activeReleaseImportedPathsSQL = `SELECT mesh_ops.active_release_imported_paths_v1()::TEXT`
 
@@ -46,17 +51,28 @@ const appendGuardrailEvidenceSQL = `SELECT mesh_audit.append_authority_evidence(
 type GuardrailStore struct {
 	database accountSessionDatabase
 	options  AccountSessionOptions
+	// impactLimit bounds the shares a preview and an enforce-mode save read.
+	impactLimit int
 }
 
 var _ guardrail.Store = (*GuardrailStore)(nil)
 
 // NewGuardrailStore uses the runtime pool.
 func NewGuardrailStore(pool *Pool, options AccountSessionOptions) (*GuardrailStore, error) {
+	return NewGuardrailStoreWithImpactLimit(pool, options, guardrail.MaximumShareContracts)
+}
+
+// NewGuardrailStoreWithImpactLimit bounds the active shares a preview and an
+// enforce-mode save evaluate by impactLimit instead of
+// guardrail.MaximumShareContracts, which it may not exceed. Other changes
+// always read up to guardrail.MaximumChangeShareContracts.
+func NewGuardrailStoreWithImpactLimit(pool *Pool, options AccountSessionOptions,
+	impactLimit int) (*GuardrailStore, error) {
 	if pool == nil || pool.role != PoolRoleRuntime || pool.workspaceRenameDatabase == nil ||
-		!validAccountSessionOptions(options) {
+		!validAccountSessionOptions(options) || impactLimit < 1 || impactLimit > guardrail.MaximumShareContracts {
 		return nil, guardrail.ErrInvalid
 	}
-	return &GuardrailStore{database: pool.workspaceRenameDatabase, options: options}, nil
+	return &GuardrailStore{database: pool.workspaceRenameDatabase, options: options, impactLimit: impactLimit}, nil
 }
 
 type guardrailDocument struct {
@@ -277,11 +293,11 @@ func (store *GuardrailStore) Change(ctx context.Context, change guardrail.Change
 	}
 	// Shares first: their Network revisions are locked before any audit
 	// stream, as other Network changes do (schema 164).
-	shares, err := checkGuardrailShareImpact(ctx, tx, change, saved, deleted, changeID)
+	shares, err := checkGuardrailShareImpact(ctx, tx, change, saved, deleted, changeID, store.impactLimit)
 	if err != nil {
 		return guardrail.Result{}, err
 	}
-	heads, err := bumpGuardrailShareNetworks(ctx, tx, shares.changed, changeID)
+	heads, err := bumpGuardrailShareNetworks(ctx, tx, shares, changeID)
 	if err != nil {
 		return guardrail.Result{}, err
 	}

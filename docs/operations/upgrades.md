@@ -86,6 +86,23 @@ Some changes need every component to be ready before they are turned on:
 
 Core does not yet enforce a minimum client version.
 
+## Changes that take effect with the binary
+
+Some changes are made by the new binary, not by the migration, and need no
+operator step:
+
+- **Enforced guardrails cut existing shares** (schemas 164 and 167). Maps
+  built by the new binary leave out every existing share an enforce-mode
+  guardrail blocks. The migration advances no revision: an old binary would
+  rebuild the same maps, and the new one reaches every map anyway. Its
+  rollout reconnects the nodes of each control replica it replaces, and every
+  map stream rereads PostgreSQL at the reconcile interval
+  (`MESHTRANSIT_CONTROL_MAP_RECONCILE_INTERVAL`, 30 s by default), which
+  rebuilds the map of every Device that takes part in a share. So within one
+  interval of the last control replica running the new binary, shares that
+  existing guardrails block are gone from every map. Until then, the previous
+  binary keeps them, as it did before the upgrade.
+
 ## Relays
 
 Replace relay nodes one at a time. On `SIGTERM` a relay stops admitting

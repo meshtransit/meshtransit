@@ -67,7 +67,7 @@ func checkShareGuardrails(ctx context.Context, transaction resourceAuthorityData
 	}
 	edge := guardrail.ShareEdge{Provider: locator.provider.scope, Consumer: locator.consumer.scope}
 	var encoded string
-	if err := transaction.QueryRow(ctx, activeWorkspaceGuardrailsSQL).Scan(&encoded); err != nil {
+	if err := transaction.QueryRow(ctx, actingShareGuardrailsSQL).Scan(&encoded); err != nil {
 		return shareGuardrailFindings{}, resourceSharingDatabaseError(ctx, err)
 	}
 	guardrails, err := decodeActiveGuardrails(encoded)

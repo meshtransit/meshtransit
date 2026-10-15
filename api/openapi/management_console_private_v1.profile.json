@@ -3914,7 +3914,7 @@
     "post": {
       "operationId": "previewWorkspaceGuardrail",
       "summary": "Preview what saving a guardrail does to existing shares",
-      "description": "Requires guardrail.manage. Reads the Workspace's active guardrails and active shares and returns the shares the guardrail would cut (enforce mode) or report (audit mode), with the impact_hash an enforce-mode create or update must send. Changes nothing.",
+      "description": "Requires guardrail.manage or guardrail.weaken. Reads the Workspace's active guardrails and active shares and returns the shares the guardrail would cut (enforce mode) or report (audit mode), with the impact_hash an enforce-mode create or update must send. Changes nothing. More than 20,000 active shares are refused with guardrail_impact_too_large; switching a guardrail to audit mode or deleting it needs no preview.",
       "security": [
         {
           "accountSessionCookie": [],

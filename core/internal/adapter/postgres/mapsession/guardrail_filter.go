@@ -15,8 +15,9 @@ import (
 )
 
 // mapShareGuardrailsSQL reads the enforce-mode guardrails of the Workspaces
-// of this Network's shares (schema 164); any other Workspace fails it.
-const mapShareGuardrailsSQL = `SELECT mesh_ops.map_share_guardrails_v1($1::UUID[])::TEXT`
+// of this Network's accepted offers (schema 167, through indexes); any other
+// Workspace fails it.
+const mapShareGuardrailsSQL = `SELECT mesh_ops.map_share_guardrails_v2($1::UUID[])::TEXT`
 
 // maximumGuardrailWorkspaces is what schema 164 accepts in one read: the
 // Workspaces of every share a map may read, its own included.

@@ -23,12 +23,15 @@ import (
 // both sides' Network revisions, with evidence and the revision wakeup on
 // each Network's own stream, so their maps are rebuilt.
 
-const listGuardrailShareContractsSQL = `SELECT mesh_ops.list_guardrail_share_contracts_v1(` + sessionArguments +
-	`,$10::UUID)::TEXT`
+// Schema 167 versions: the share readers take their bound from MeshCore,
+// the preview admits guardrail.manage or guardrail.weaken, and the bump
+// rechecks the shares MeshCore evaluated once it holds the revision locks.
+const listGuardrailShareContractsSQL = `SELECT mesh_ops.list_guardrail_share_contracts_v2(` + sessionArguments +
+	`,$10::UUID,$11::INTEGER)::TEXT`
 
-const guardrailChangeShareContractsSQL = `SELECT mesh_ops.guardrail_change_share_contracts_v1($1::UUID)::TEXT`
+const guardrailChangeShareContractsSQL = `SELECT mesh_ops.guardrail_change_share_contracts_v2($1::UUID,$2::INTEGER)::TEXT`
 
-const bumpGuardrailShareNetworksSQL = `SELECT mesh_ops.bump_guardrail_share_networks_v1($1::UUID[],$2::UUID)::TEXT`
+const bumpGuardrailShareNetworksSQL = `SELECT mesh_ops.bump_guardrail_share_networks_v2($1::UUID[],$2::UUID[],$3::UUID)::TEXT`
 
 const appendGuardrailShareEvidenceSQL = `SELECT mesh_audit.append_authority_evidence(
  $1::BIGINT,$2::UUID,$3::UUID,$4::BIGINT,$5::BYTEA,$6::BYTEA,
@@ -84,15 +87,16 @@ func scopeFromPublicIDs(workspaceText, networkText string) (network.Scope, error
 	return network.NewScope(workspaceID, networkID)
 }
 
-// decodeGuardrailShareInventory reads the schema 164 inventory document.
-func decodeGuardrailShareInventory(encoded string) (guardrail.ShareInventory, error) {
+// decodeGuardrailShareInventory reads the schema 164 inventory document of
+// at most limit shares.
+func decodeGuardrailShareInventory(encoded string, limit int) (guardrail.ShareInventory, error) {
 	var document struct {
 		Guardrails []guardrailDocument              `json:"guardrails"`
 		Contracts  []guardrailShareContractDocument `json:"contracts"`
 	}
 	if err := strictJSON([]byte(encoded), &document); err != nil || document.Guardrails == nil ||
 		document.Contracts == nil || len(document.Guardrails) > guardrail.MaximumGuardrails ||
-		len(document.Contracts) > guardrail.MaximumShareContracts {
+		len(document.Contracts) > limit {
 		return guardrail.ShareInventory{}, guardrail.ErrInvalid
 	}
 	inventory := guardrail.ShareInventory{
@@ -132,23 +136,37 @@ func (store *GuardrailStore) ShareInventory(ctx context.Context, session account
 	}
 	var encoded *string
 	if err := tx.QueryRow(ctx, listGuardrailShareContractsSQL,
-		append(sessionQueryArguments(session), workspaceID.String())...).Scan(&encoded); err != nil {
+		append(sessionQueryArguments(session), workspaceID.String(), store.impactLimit)...).Scan(&encoded); err != nil {
 		return guardrail.ShareInventory{}, guardrailDatabaseError(err)
 	}
 	if encoded == nil {
 		return guardrail.ShareInventory{}, guardrail.ErrForbidden
 	}
-	inventory, err := decodeGuardrailShareInventory(*encoded)
+	inventory, err := decodeGuardrailShareInventory(*encoded, store.impactLimit)
 	if err != nil {
 		return guardrail.ShareInventory{}, errors.Join(guardrail.ErrUnavailable, err)
 	}
 	return inventory, nil
 }
 
-// guardrailShareChange is what a committed guardrail change does to shares.
+// guardrailShareChange is what a committed guardrail change does to shares:
+// the guardrails after it, the shares it evaluated, and those whose
+// blocked state it flips.
 type guardrailShareChange struct {
-	after   []guardrail.Guardrail
-	changed []guardrail.ShareContract
+	after     []guardrail.Guardrail
+	contracts []guardrail.ShareContract
+	changed   []guardrail.ShareContract
+}
+
+// shareReadLimit is how many active shares a change reads: an enforce-mode
+// create or update evaluates its impact under the preview's bound; any
+// other change, which only restores or keeps shares, reads them all, so a
+// Workspace past the preview bound can still loosen or delete guardrails.
+func shareReadLimit(change guardrail.Change, deleted bool, impactLimit int) int {
+	if !deleted && change.Spec.Mode == guardrail.ModeEnforce {
+		return impactLimit
+	}
+	return guardrail.MaximumChangeShareContracts
 }
 
 // checkGuardrailShareImpact reads, after the change in this transaction, the
@@ -156,12 +174,13 @@ type guardrailShareChange struct {
 // update whose impact is not the preview's; and returns the shares whose
 // blocked state the change flips.
 func checkGuardrailShareImpact(ctx context.Context, tx accountSessionTransaction, change guardrail.Change,
-	saved guardrail.Guardrail, deleted bool, changeID publicid.ID) (guardrailShareChange, error) {
+	saved guardrail.Guardrail, deleted bool, changeID publicid.ID, impactLimit int) (guardrailShareChange, error) {
+	limit := shareReadLimit(change, deleted, impactLimit)
 	var encoded string
-	if err := tx.QueryRow(ctx, guardrailChangeShareContractsSQL, changeID.String()).Scan(&encoded); err != nil {
+	if err := tx.QueryRow(ctx, guardrailChangeShareContractsSQL, changeID.String(), limit).Scan(&encoded); err != nil {
 		return guardrailShareChange{}, guardrailDatabaseError(err)
 	}
-	inventory, err := decodeGuardrailShareInventory(encoded)
+	inventory, err := decodeGuardrailShareInventory(encoded, limit)
 	if err != nil {
 		return guardrailShareChange{}, errors.Join(guardrail.ErrUnavailable, err)
 	}
@@ -194,7 +213,7 @@ func checkGuardrailShareImpact(ctx context.Context, tx accountSessionTransaction
 		}
 	}
 	return guardrailShareChange{
-		after:   inventory.Guardrails,
+		after: inventory.Guardrails, contracts: inventory.Contracts,
 		changed: guardrail.ChangedShares(change.WorkspaceID, before, inventory.Guardrails, inventory.Contracts),
 	}, nil
 }
@@ -213,25 +232,33 @@ type guardrailShareHead struct {
 }
 
 // bumpGuardrailShareNetworks advances both sides' revisions of every changed
-// share and returns the locked stream heads of those Networks.
+// share and returns the locked stream heads of those Networks. It runs even
+// when nothing changed: once the revisions are locked, PostgreSQL checks
+// that the shares evaluated are still exactly the Workspace's active ones,
+// so a share made concurrently fails the change (40001, retryable) instead
+// of being missed.
 func bumpGuardrailShareNetworks(ctx context.Context, tx accountSessionTransaction,
-	changed []guardrail.ShareContract, changeID publicid.ID) ([]guardrailShareHead, error) {
-	if len(changed) == 0 {
-		return nil, nil
-	}
-	ids := make([]string, len(changed))
-	for index, contract := range changed {
-		ids[index] = contract.ID.String()
-	}
+	shares guardrailShareChange, changeID publicid.ID) ([]guardrailShareHead, error) {
+	ids := contractIDs(shares.changed)
 	var encoded string
-	if err := tx.QueryRow(ctx, bumpGuardrailShareNetworksSQL, ids, changeID.String()).Scan(&encoded); err != nil {
+	if err := tx.QueryRow(ctx, bumpGuardrailShareNetworksSQL, ids, contractIDs(shares.contracts),
+		changeID.String()).Scan(&encoded); err != nil {
 		return nil, guardrailDatabaseError(err)
 	}
 	var heads []guardrailShareHead
-	if err := strictJSON([]byte(encoded), &heads); err != nil || len(heads) == 0 || len(heads) > 2*len(changed) {
+	if err := strictJSON([]byte(encoded), &heads); err != nil || heads == nil || len(heads) > 2*len(ids) ||
+		(len(ids) == 0) != (len(heads) == 0) {
 		return nil, guardrail.ErrUnavailable
 	}
 	return heads, nil
+}
+
+func contractIDs(contracts []guardrail.ShareContract) []string {
+	ids := make([]string, len(contracts))
+	for index, contract := range contracts {
+		ids[index] = contract.ID.String()
+	}
+	return ids
 }
 
 // guardrailShareNetworkEvidence lists, for one Network, the shares the

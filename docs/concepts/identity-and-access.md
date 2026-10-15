@@ -234,7 +234,13 @@ update) returns the shares the save would cut that no guardrail cuts yet
 update sends that `impact_hash`; when the shares it cuts changed in between,
 the save is refused with `guardrail_impact_changed` (409). In audit mode the
 preview lists the shares the guardrail would report and the save needs no
-hash; deleting never needs one. A save that cuts or restores shares advances
+hash; deleting never needs one. The preview needs `guardrail.manage` or
+`guardrail.weaken`. A Workspace with more than 20,000 active shares cannot
+preview or save a guardrail in enforce mode, but can still switch one to
+audit mode or delete it. A share accepted or enabled while its Workspace's
+guardrails are being saved fails as a retryable conflict, and a guardrail
+save that a share changed under fails with `version_conflict`; retrying
+either is safe. A save that cuts or restores shares advances
 the Network revision of both sides of each share and records the change on
 each Network's audit stream, so connected Devices receive new maps.
 

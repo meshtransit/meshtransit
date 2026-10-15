@@ -92,7 +92,7 @@ func workspaceRoleError(err error) error {
 			return roles.ErrInvalid
 		case "P0002":
 			return roles.ErrNotFound
-		case "23505", "40001":
+		case "23505", "40001", "40P01", "55P03":
 			return roles.ErrConflict
 		}
 	}
