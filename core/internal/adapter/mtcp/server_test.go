@@ -325,10 +325,18 @@ func TestSessionEstablishesOnFirstRecordAndAnswersPing(t *testing.T) {
 func TestNewerSessionReplacesOlder(t *testing.T) {
 	f := newFixture(t, nil)
 	machine, _ := key.NewMachinePrivate(nil)
-	first, _, _ := f.dial(dialOptions{machine: machine})
+	// Distinct timestamps: two hellos in one millisecond are a replay.
+	now := time.Now().UnixMilli()
+	first, _, err := f.dial(dialOptions{machine: machine, timestamp: now})
+	if first == nil {
+		t.Fatalf("first dial failed: %v", err)
+	}
 	first.send(sharedmtcp.MessagePing, &mtcpv1.Ping{})
 	first.expect(sharedmtcp.MessagePong)
-	second, _, _ := f.dial(dialOptions{machine: machine})
+	second, _, err := f.dial(dialOptions{machine: machine, timestamp: now + 1})
+	if second == nil {
+		t.Fatalf("second dial failed: %v", err)
+	}
 	second.send(sharedmtcp.MessagePing, &mtcpv1.Ping{})
 	second.expect(sharedmtcp.MessagePong)
 	if failure := first.expect(sharedmtcp.MessageError).(*mtcpv1.Error); failure.GetCode() != mtcpv1.Error_SESSION_REPLACED {
