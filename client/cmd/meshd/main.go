@@ -72,7 +72,7 @@ func runContext(parent context.Context, args []string, stdout, stderr io.Writer)
 			logger.Error("closing profile store failed", "error", closeErr)
 		}
 	}()
-	protector, err := loadIdentityProtector(cfg.IdentityKeyPath, cfg.StateDir)
+	protector, err := loadIdentityProtector(cfg.IdentityKeyPath, cfg.StateDir, logger)
 	if err != nil {
 		logger.Error("loading identity envelope key failed", "error", err)
 

@@ -83,7 +83,7 @@ Packet payloads are never collected.
   |---|---|---|
   | Linux | A systemd credential encrypted with the host key, created by the `meshcred` oneshot (no capabilities, no network) and decrypted only into `meshd`'s private credential mount | Copying the state to another host; reading the disk offline |
   | macOS | A file only `_meshd` can read, excluded from Time Machine | Other users; not root, and not hardware-bound yet |
-  | Windows | DPAPI, sealed for LocalSystem | Other users and other machines; not code running as LocalSystem |
+  | Windows | DPAPI, sealed for LocalSystem with a fixed MeshTransit entropy | Other users, other machines and generic DPAPI tools; not code running as LocalSystem |
   | Android | The app's Android Keystore key | Other apps; backups are disabled |
 
   `meshnetd` never receives the key.

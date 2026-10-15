@@ -43,7 +43,7 @@ state.
 |---|---|
 | `C:\Program Files\MeshTransit` | Binaries, `wintun.dll`, `uninstall.ps1` |
 | `C:\ProgramData\MeshTransit\state` | State |
-| `C:\ProgramData\MeshTransit\meshd.identity-key` | Identity key, sealed with DPAPI for LocalSystem |
+| `C:\ProgramData\MeshTransit\meshd.identity-key` | Identity key, sealed with DPAPI for LocalSystem and a fixed MeshTransit entropy |
 | `C:\ProgramData\MeshTransit\logs\meshd.log` | Log; readable by SYSTEM and Administrators only; not rotated yet |
 | `\\.\pipe\ProtectedPrefix\Administrators\MeshTransit\meshd` | Local API |
 
@@ -98,6 +98,11 @@ meshctl up --server https://control.example.com --fingerprint sha256:…
   them is a link or junction or is owned by anyone else; it does not create a
   missing parent folder. A log file another account could read, or one that
   is a link, is replaced by a new one.
+- A key sealed by an older `meshd`, without the entropy, still opens and is
+  resealed on the first start. From then on an older `meshd` cannot open it:
+  to go back to an older version, restore the key file backed up before the
+  upgrade, or stay on a version that has the entropy. If resealing fails,
+  `meshd` logs a warning, keeps working and retries on the next start.
 
 ## Remove
 

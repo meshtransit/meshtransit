@@ -5,6 +5,11 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Windows: `meshd` seals its identity key with DPAPI plus a fixed MeshTransit
+  entropy, so a generic DPAPI unseal no longer opens it (code running as
+  LocalSystem still can). A key sealed by an older `meshd` opens, is resealed
+  and atomically replaced on the first start; an older `meshd` cannot open
+  the resealed key, so restore the pre-upgrade key file before downgrading.
 - Clients: `meshd` creates only the last folder of its state, key, socket and
   log paths and requires the parent to exist; an existing folder must be a
   real folder (not a link, junction or other reparse point) owned by the
