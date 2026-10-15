@@ -46,6 +46,15 @@ func assertAuditHistory(ctx context.Context, t *testing.T, admin *pgx.Conn, runt
 		t.Fatalf("history before audit.read error = %v, want ErrForbidden", err)
 	}
 	grantFixturePermission(ctx, t, admin, 890, "audit.read")
+	// Every read below shares one window that ends after both clocks. A
+	// default window ends at this host's clock, but the database clock stamps
+	// occurred_at: when the host runs behind, the grant's own record joins the
+	// history between two reads and the pages disagree with the full list.
+	provider.Until = time.Now().UTC()
+	if databaseNow := integrationDatabaseNow(ctx, t, admin); databaseNow.After(provider.Until) {
+		provider.Until = databaseNow
+	}
+	provider.Until = provider.Until.Add(time.Microsecond)
 	page, err := list(provider)
 	if err != nil {
 		t.Fatalf("list provider Network history: %v", err)
