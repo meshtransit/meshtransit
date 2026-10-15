@@ -5,6 +5,14 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Clients: a failure to apply host DNS now sets the DNS state to `failed`
+  and turns the mesh names off on the host; the control session and data
+  plane stay up and the next map retries. Before, the node left the mesh and reconnected to Core every few
+  seconds, receiving the same map. All shared names are routed by one
+  locally authoritative `shared.mesh` route instead of one route per name, so
+  importing more than 256 shares no longer exceeds the host's route limit,
+  and unknown names under `shared.mesh` are answered `NXDOMAIN` instead of
+  going to the host's resolvers.
 - Windows: `meshd` seals its identity key with DPAPI plus a fixed MeshTransit
   entropy, so a generic DPAPI unseal no longer opens it (code running as
   LocalSystem still can). A key sealed by an older `meshd` opens, is resealed

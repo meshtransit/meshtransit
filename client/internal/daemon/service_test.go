@@ -948,8 +948,8 @@ func TestService_RunPublishesLatestValidatedSnapshot(t *testing.T) {
 	if dataPlane.applyCalls != 1 || dataPlane.closeCalls != 1 {
 		t.Fatalf("data plane calls apply=%d close=%d, want 1/1", dataPlane.applyCalls, dataPlane.closeCalls)
 	}
-	if dns.applyCalls != 1 || dns.resetCalls != 0 || dns.closeCalls != 1 {
-		t.Fatalf("dns calls apply=%d reset=%d close=%d, want 1/0/1", dns.applyCalls, dns.resetCalls, dns.closeCalls)
+	if applies, resets, closes := dns.calls(); applies != 1 || resets != 0 || closes != 1 {
+		t.Fatalf("dns calls apply=%d reset=%d close=%d, want 1/0/1", applies, resets, closes)
 	}
 }
 
@@ -1133,6 +1133,137 @@ func TestService_RuntimeRecoveryStatusTracksPendingAndSuccess(t *testing.T) {
 	cancel()
 	if err := <-runResult; !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v, want context cancellation", err)
+	}
+}
+
+// A host DNS failure leaves only DNS failed: the node stays in the mesh and
+// does not restart its runtime over a map it will receive again.
+func TestService_RunKeepsTheSessionWhenDNSFails(t *testing.T) {
+	t.Parallel()
+
+	service, _, control, _, _ := newTestService(t)
+	dataPlane := &fakeDataPlane{}
+	dns := &fakeDNS{applyErr: errors.New("host dns refused 300 route domains")}
+	service.dataPlane = dataPlane
+	service.dns = dns
+	service.setSyncStatus(syncStatus{
+		state:     ControlSessionInactive,
+		dataPlane: string(dataplane.StateIdle),
+	})
+	restarted := make(chan struct{}, 1)
+	service.runtimeRetryDelay = func(time.Duration) time.Duration {
+		select {
+		case restarted <- struct{}{}:
+		default:
+		}
+
+		return time.Hour
+	}
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatalf("TrustControl() error = %v", err)
+	}
+	control.registrationResults = []controlplane.RegistrationResult{{
+		State:             controlplane.RegistrationStateAuthorized,
+		MachineAuthorized: true,
+	}}
+	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
+		t.Fatalf("StartLogin() error = %v", err)
+	}
+	control.streamSnapshot = &networkmap.Snapshot{
+		Revision: 9,
+		Peers:    make([]networkmap.Node, 1),
+		DNS:      &networkmap.DNSConfig{},
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	runResult := make(chan error, 1)
+	go func() { runResult <- service.Run(ctx) }()
+	select {
+	case <-control.streamPublished:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for network snapshot")
+	}
+	select {
+	case <-restarted:
+		t.Fatal("a DNS failure restarted the runtime")
+	case <-time.After(200 * time.Millisecond):
+	}
+	status, err := service.Status(t.Context())
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	if status.ControlSession != ControlSessionSynchronized || status.NetmapRevision != 9 ||
+		status.DataPlane != string(dataplane.StateTUNReady) || status.DNS != DNSFailed {
+		t.Fatalf("status = %#v, want synchronized with DNS failed", status)
+	}
+
+	cancel()
+	if err := <-runResult; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context cancellation", err)
+	}
+	if applies, resets, _ := dns.calls(); dataPlane.applyCalls != 1 || dataPlane.closeCalls != 1 ||
+		applies < 1 || resets != applies {
+		t.Fatalf("calls data plane apply=%d close=%d dns apply=%d reset=%d: the old names must go "+
+			"after every failure and the runtime must not restart",
+			dataPlane.applyCalls, dataPlane.closeCalls, applies, resets)
+	}
+}
+
+// A DNS failure is retried on the same map, so a host resolver that comes
+// back recovers without another map from Core.
+func TestService_RunRetriesDNSOnTheSameMap(t *testing.T) {
+	t.Parallel()
+
+	service, _, control, _, _ := newTestService(t)
+	dataPlane := &fakeDataPlane{}
+	dns := &fakeDNS{configured: true, applyErrors: []error{errors.New("resolver endpoint is not ready")}}
+	service.dataPlane = dataPlane
+	service.dns = dns
+	service.setSyncStatus(syncStatus{
+		state:     ControlSessionInactive,
+		dataPlane: string(dataplane.StateIdle),
+	})
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatalf("TrustControl() error = %v", err)
+	}
+	control.registrationResults = []controlplane.RegistrationResult{{
+		State:             controlplane.RegistrationStateAuthorized,
+		MachineAuthorized: true,
+	}}
+	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
+		t.Fatalf("StartLogin() error = %v", err)
+	}
+	control.streamSnapshot = &networkmap.Snapshot{Revision: 4, DNS: &networkmap.DNSConfig{}}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	runResult := make(chan error, 1)
+	go func() { runResult <- service.Run(ctx) }()
+	select {
+	case <-control.streamPublished:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for network snapshot")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		status, err := service.Status(t.Context())
+		if err != nil {
+			t.Fatalf("Status() error = %v", err)
+		}
+		if status.DNS == DNSConfigured && status.ControlSession == ControlSessionSynchronized {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("DNS was not retried: %#v", status)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	cancel()
+	if err := <-runResult; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context cancellation", err)
+	}
+	if applies, resets, _ := dns.calls(); applies != 2 || resets != 1 || dataPlane.applyCalls != 1 {
+		t.Fatalf("dns apply=%d reset=%d data plane apply=%d, want 2/1/1", applies, resets, dataPlane.applyCalls)
 	}
 }
 
@@ -2510,28 +2641,54 @@ type fakeDataPlane struct {
 }
 
 type fakeDNS struct {
-	applyCalls int
-	resetCalls int
-	closeCalls int
-	configured bool
+	mu          sync.Mutex
+	applyCalls  int
+	resetCalls  int
+	closeCalls  int
+	configured  bool
+	applyErr    error
+	applyErrors []error
 }
 
 func (f *fakeDNS) Apply(context.Context, networkmap.Snapshot) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.applyCalls++
+	if len(f.applyErrors) != 0 {
+		err := f.applyErrors[0]
+		f.applyErrors = f.applyErrors[1:]
+		if err != nil {
+			return false, err
+		}
+	}
+	if f.applyErr != nil {
+		return false, f.applyErr
+	}
 
 	return f.configured, nil
 }
 
 func (f *fakeDNS) Reset(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.resetCalls++
 
 	return nil
 }
 
 func (f *fakeDNS) Close(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.closeCalls++
 
 	return nil
+}
+
+func (f *fakeDNS) calls() (apply, reset, closed int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.applyCalls, f.resetCalls, f.closeCalls
 }
 
 func (f *fakeDataPlane) Apply(

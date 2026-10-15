@@ -17,6 +17,12 @@ var ErrInvalid = errors.New("dnsconfig: invalid plan")
 
 const maxAddressesPerHost = 32
 
+// sharedZone holds the names of shared Devices. One locally authoritative
+// route covers all of them, so the number of shares never reaches the
+// host's route limit, and an unknown shared name is answered NXDOMAIN
+// instead of leaving for the host's resolvers.
+const sharedZone = "shared.mesh"
+
 // Plan is an immutable-by-convention DNS configuration ready for a local
 // resolver and an operating-system configurator.
 type Plan struct {
@@ -125,6 +131,10 @@ func Compile(snapshot networkmap.Snapshot) (Plan, error) {
 			return left.Compare(right)
 		})
 		plan.Hosts = append(plan.Hosts, Host{Name: name, Addresses: addresses})
+		if !locallyAuthoritative(plan.Routes, name) && dnsSuffixContains(sharedZone, name) && name != sharedZone &&
+			!hasRouteSuffix(plan.Routes, sharedZone) {
+			plan.Routes = append(plan.Routes, Route{Suffix: sharedZone, Resolvers: []netip.AddrPort{}})
+		}
 		if !locallyAuthoritative(plan.Routes, name) {
 			if _, isNode := findReverseName(plan.Reverse, name); isNode {
 				return Plan{}, fmt.Errorf(
@@ -223,6 +233,10 @@ func findReverseName(records []Reverse, name string) (Reverse, bool) {
 	}
 
 	return Reverse{}, false
+}
+
+func hasRouteSuffix(routes []Route, suffix string) bool {
+	return slices.ContainsFunc(routes, func(route Route) bool { return route.Suffix == suffix })
 }
 
 func hasRoute(routes []Route, name string) bool {

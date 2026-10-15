@@ -73,6 +73,31 @@ func TestResolvedHostRestoresPreviousConfigAfterFailure(t *testing.T) {
 	}
 }
 
+// A first configuration that fails part way may leave domains on the link;
+// turning DNS off afterwards still reverts it.
+func TestResolvedHostRevertsAFailedFirstConfiguration(t *testing.T) {
+	t.Parallel()
+
+	admin := &fakeDNSAdministrator{failAt: 1}
+	host, err := NewResolvedHost(admin, staticEndpoint{value: testDNSEndpoint(), ready: true})
+	if err != nil {
+		t.Fatalf("NewResolvedHost() error = %v", err)
+	}
+	plan, err := Compile(dnsSnapshot())
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	if err := host.Apply(t.Context(), plan); err == nil {
+		t.Fatal("Apply() error = nil")
+	}
+	if err := host.Apply(t.Context(), Plan{Revision: plan.Revision}); err != nil {
+		t.Fatalf("disable Apply() error = %v", err)
+	}
+	if admin.resetCalls != 1 {
+		t.Fatalf("reset calls = %d, want 1", admin.resetCalls)
+	}
+}
+
 func TestResolvedHostRejectsMissingEndpoint(t *testing.T) {
 	t.Parallel()
 

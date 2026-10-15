@@ -2,6 +2,7 @@ package dnsconfig
 
 import (
 	"errors"
+	"fmt"
 	"net/netip"
 	"testing"
 
@@ -162,5 +163,72 @@ func dnsSnapshot() networkmap.Snapshot {
 				Address: netip.MustParseAddr("100.64.0.10"),
 			}},
 		},
+	}
+}
+
+// Shared names are routed by one shared.mesh route however many there are,
+// so a Device importing many shares stays within the host's route limits.
+func TestCompileRoutesSharedNamesAsOneZone(t *testing.T) {
+	t.Parallel()
+
+	snapshot := dnsSnapshot()
+	for index := range 300 {
+		snapshot.DNS.Records = append(snapshot.DNS.Records, networkmap.DNSRecord{
+			Name:    fmt.Sprintf("share%d.ws01.net01.shared.mesh", index),
+			Type:    networkmap.DNSRecordA,
+			Address: netip.AddrFrom4([4]byte{198, 18, byte(index >> 8), byte(index)}),
+		})
+	}
+	plan, err := Compile(snapshot)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	shared := 0
+	for _, route := range plan.Routes {
+		if dnsSuffixContains(sharedZone, route.Suffix) {
+			shared++
+			if route.Suffix != sharedZone || len(route.Resolvers) != 0 {
+				t.Fatalf("shared route = %#v, want one local %s route", route, sharedZone)
+			}
+		}
+	}
+	if shared != 1 {
+		t.Fatalf("plan has %d shared routes, want 1: %#v", shared, plan.Routes)
+	}
+	if !locallyAuthoritative(plan.Routes, "unknown.ws01.net01.shared.mesh") {
+		t.Fatal("an unknown shared name would leave the mesh resolver")
+	}
+}
+
+// A shared.mesh route Core configures itself is kept; names under it are not
+// re-routed locally.
+func TestCompileKeepsACoreSharedRoute(t *testing.T) {
+	t.Parallel()
+
+	snapshot := dnsSnapshot()
+	snapshot.DNS.Routes = append(snapshot.DNS.Routes, networkmap.DNSRoute{
+		Suffix:    sharedZone,
+		Resolvers: []networkmap.DNSResolver{{Address: netip.MustParseAddrPort("192.0.2.53:53")}},
+	})
+	snapshot.DNS.Records = append(snapshot.DNS.Records, networkmap.DNSRecord{
+		Name:    "db.ws01.net01.shared.mesh",
+		Type:    networkmap.DNSRecordA,
+		Address: netip.MustParseAddr("198.18.0.5"),
+	})
+	plan, err := Compile(snapshot)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	routes := 0
+	for _, route := range plan.Routes {
+		if route.Suffix == sharedZone {
+			routes++
+			if len(route.Resolvers) != 1 {
+				t.Fatalf("Core's shared.mesh route lost its resolver: %#v", route)
+			}
+		}
+	}
+	if routes != 1 || !locallyAuthoritative(plan.Routes, "db.ws01.net01.shared.mesh") {
+		t.Fatalf("routes = %#v", plan.Routes)
 	}
 }

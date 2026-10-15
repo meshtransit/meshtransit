@@ -76,9 +76,11 @@ macOS and Windows, stale entries left by a crash are removed at the next
 start.
 
 `meshctl status` shows the DNS state: `inactive`, `configured`, `failed` or
-`not_implemented`. A failure to apply DNS currently stops the node's control
-session and data plane as well; the node stays offline until it is told to
-sync again, for example by a restart or a reconnect.
+`not_implemented`. A failure to apply DNS sets DNS to `failed` and turns the
+mesh names off on the host, so no name keeps pointing at an address from an
+earlier map; the control session and data plane stay up, and the next map
+from Core tries again. Names then go to the host's own resolvers. Only if
+turning DNS off fails as well does the node leave the mesh and reconnect.
 
 The packages enable DNS (`--enable-dns`).
 
@@ -88,12 +90,14 @@ The packages enable DNS (`--enable-dns`).
 |---|---|
 | Records in a map, one per address | 32,768 (accepted by the node) |
 | Addresses per name | 32 |
-| Mesh names routed to the resolver | 256, and 16 KiB of names, on Linux and macOS (the helper); 256 NRPT namespaces on Windows |
+| Domains routed to the resolver | 256, and 16 KiB of names, on Linux and macOS (the helper); 256 NRPT namespaces on Windows |
 
-Each shared name is routed separately, so a Device that imports more than
-256 shares exceeds the host's limit, and today that takes the node offline
-(see above). Other names under `shared.mesh` are not routed to the resolver
-and go to the host's own resolvers.
+All shared names are routed to the resolver by one route, `shared.mesh`, so
+the number of shares does not count against the host's limit. (If Core ever
+configures a route for `shared.mesh` itself, that route is kept and each
+shared name is routed on its own again.) The resolver
+owns that zone: a name under `shared.mesh` that is not a share the Device
+imported gets `NXDOMAIN` and never reaches the host's own resolvers.
 
 ## Not yet
 

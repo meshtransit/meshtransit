@@ -23,6 +23,9 @@ type ResolvedHost struct {
 	endpoint EndpointSource
 	current  netadmin.DNSConfig
 	isActive bool
+	// dirty marks a configuration that failed part way: the link may hold
+	// some of it, so turning DNS off must revert the link.
+	dirty bool
 }
 
 // NewResolvedHost constructs the OS-facing DNS adapter.
@@ -46,7 +49,7 @@ func (h *ResolvedHost) Apply(ctx context.Context, plan Plan) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if !plan.Enabled {
-		if !h.isActive {
+		if !h.isActive && !h.dirty {
 			return nil
 		}
 		if err := h.admin.ResetDNS(ctx); err != nil {
@@ -54,6 +57,7 @@ func (h *ResolvedHost) Apply(ctx context.Context, plan Plan) error {
 		}
 		h.current = netadmin.DNSConfig{}
 		h.isActive = false
+		h.dirty = false
 
 		return nil
 	}
@@ -71,6 +75,7 @@ func (h *ResolvedHost) Apply(ctx context.Context, plan Plan) error {
 	previous := cloneDNSConfig(h.current)
 	wasActive := h.isActive
 	if err := h.admin.ConfigureDNS(ctx, config); err != nil {
+		h.dirty = true
 		var rollbackErr error
 		if wasActive {
 			rollbackCtx, cancel := rollbackContext(ctx)
@@ -85,6 +90,7 @@ func (h *ResolvedHost) Apply(ctx context.Context, plan Plan) error {
 	}
 	h.current = cloneDNSConfig(config)
 	h.isActive = true
+	h.dirty = false
 
 	return nil
 }

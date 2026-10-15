@@ -21,6 +21,7 @@ import (
 
 	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/dataplane"
+	"meshtransit.net/client/internal/dnsconfig"
 	"meshtransit.net/client/internal/identity"
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/pathdiscovery"
@@ -761,7 +762,10 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				<-pathDone
 			}
 		}
+		dnsRetries := &dnsRetry{}
 		cleanupSession := func() error {
+			// Before the runtime resets DNS: no retry may apply it again.
+			dnsRetries.stop()
 			stopPathStats()
 			s.setLocalEndpointSink(nil)
 			if probeRuntime != nil {
@@ -943,20 +947,41 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 						}
 					}
 					dnsState := DNSInactive
+					var retryDNS func() bool
 					if s.dns != nil {
-						configured, err := s.dns.Apply(callbackCtx, snapshot)
-						if err != nil {
-							s.setSyncStatus(syncStatus{
-								profileID: active.ID,
-								state:     ControlSessionBlocked,
-								dataPlane: dataPlaneState,
-								dns:       DNSFailed,
-							})
+						// A host that refuses DNS fails DNS only: restarting the
+						// runtime would fetch the same map. Retries with backoff
+						// apply this map again until a newer one arrives.
+						var dnsErr, lastDNSFailure error
+						dnsRetries.apply(func() bool {
+							dnsState, lastDNSFailure, dnsErr = s.applyMapDNS(callbackCtx, snapshot)
+							return dnsErr == nil && dnsState != DNSFailed
+						})
+						if dnsErr != nil {
+							if callbackCtx.Err() == nil {
+								s.setSyncStatus(syncStatus{
+									profileID: active.ID,
+									state:     ControlSessionBlocked,
+									dataPlane: dataPlaneState,
+									dns:       DNSFailed,
+								})
+							}
 
-							return fmt.Errorf("applying dns configuration: %w", err)
+							return dnsErr
 						}
-						if configured {
-							dnsState = DNSConfigured
+						// A map the plan refuses fails the same way every time.
+						if dnsState == DNSFailed && !errors.Is(lastDNSFailure, dnsconfig.ErrInvalid) {
+							retryDNS = func() bool {
+								state, _, err := s.applyMapDNS(streamCtx, snapshot)
+								if streamCtx.Err() != nil {
+									return true
+								}
+								if err != nil {
+									state = DNSFailed
+								}
+								s.setDNSState(state)
+								return state != DNSFailed
+							}
 						}
 					} else if snapshot.DNS != nil {
 						dnsState = DNSPending
@@ -973,6 +998,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 						dataPlane:       dataPlaneState,
 						dns:             dnsState,
 					})
+					if retryDNS != nil {
+						dnsRetries.schedule(retryDNS)
+					}
 					if synchronizedAt.IsZero() {
 						synchronizedAt = s.clock()
 					}
@@ -2635,6 +2663,37 @@ func (s *Service) currentDNSState() string {
 
 func (s *Service) stopRuntime() error {
 	return errors.Join(s.resetDNS(), s.stopDataPlane())
+}
+
+// applyMapDNS applies a map's DNS. When the host refuses it, the mesh names
+// are removed rather than left at an earlier map, whose addresses may now
+// belong to someone else, and the state is DNSFailed with the failure. The
+// last error means the context ended or the names could not be removed.
+func (s *Service) applyMapDNS(ctx context.Context, snapshot networkmap.Snapshot) (string, error, error) {
+	configured, err := s.dns.Apply(ctx, snapshot)
+	switch {
+	case err != nil && ctx.Err() != nil:
+		return DNSFailed, err, fmt.Errorf("applying dns configuration: %w", err)
+	case err != nil:
+		s.logControlSessionFailure("applying dns configuration failed; mesh names are off", err)
+		if resetErr := s.resetDNS(); resetErr != nil {
+			return DNSFailed, err, fmt.Errorf("applying dns configuration: %w", errors.Join(err, resetErr))
+		}
+		return DNSFailed, err, nil
+	case configured:
+		return DNSConfigured, nil, nil
+	default:
+		return DNSInactive, nil, nil
+	}
+}
+
+// setDNSState records a retried DNS apply on a synchronized session.
+func (s *Service) setDNSState(state string) {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+	if s.syncState.state == ControlSessionSynchronized {
+		s.syncState.dns = state
+	}
 }
 
 func (s *Service) resetDNS() error {
