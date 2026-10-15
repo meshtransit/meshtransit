@@ -41,23 +41,61 @@ func guardrailFindingsEvidence(findings []guardrail.Finding) []guardrailFindingE
 	return evidence
 }
 
+// shareOfferProviderGuardrailsSQL reads the provider Workspace's guardrails
+// for an offer this consumer scope received (schema 163).
+const shareOfferProviderGuardrailsSQL = `SELECT mesh_ops.share_offer_provider_guardrails_v1($1::UUID)::TEXT`
+
+// shareGuardrailFindings are the findings of each side: the acting side's,
+// recorded in its own evidence, and, when the consumer acts on a share from
+// another Workspace, the provider's, recorded only on the provider's side.
+type shareGuardrailFindings struct {
+	acting   []guardrail.Finding
+	provider []guardrail.Finding
+}
+
 // checkShareGuardrails evaluates a share change against the guardrails of
-// the acting Workspace, whose verified scope this transaction holds. An
-// enforced guardrail returns *guardrail.ViolationError and the transaction
-// rolls back; audit-mode findings come back for the evidence.
+// the acting Workspace, whose verified scope this transaction holds, and,
+// when the consumer accepts or activates a share from another Workspace,
+// against the provider's. An enforced guardrail of the acting side returns
+// *guardrail.ViolationError, one of the provider's
+// *guardrail.CounterpartViolationError, and the transaction rolls back;
+// audit-mode findings come back for the evidence.
 func checkShareGuardrails(ctx context.Context, transaction resourceAuthorityDatabaseTransaction, action string,
-	localScope network.Scope, locator resourceSharingScopeLocator) ([]guardrail.Finding, error) {
+	localScope network.Scope, locator resourceSharingScopeLocator) (shareGuardrailFindings, error) {
 	if !guardedShareActions[action] {
-		return nil, nil
+		return shareGuardrailFindings{}, nil
 	}
+	edge := guardrail.ShareEdge{Provider: locator.provider.scope, Consumer: locator.consumer.scope}
 	var encoded string
 	if err := transaction.QueryRow(ctx, activeWorkspaceGuardrailsSQL).Scan(&encoded); err != nil {
-		return nil, resourceSharingDatabaseError(ctx, err)
+		return shareGuardrailFindings{}, resourceSharingDatabaseError(ctx, err)
 	}
 	guardrails, err := decodeActiveGuardrails(encoded)
 	if err != nil {
-		return nil, sharing.ErrUnavailable
+		return shareGuardrailFindings{}, sharing.ErrUnavailable
 	}
-	return guardrail.Check(guardrails, localScope.WorkspaceID(),
-		guardrail.ShareEdge{Provider: locator.provider.scope, Consumer: locator.consumer.scope})
+	acting, err := guardrail.Check(guardrails, localScope.WorkspaceID(), edge)
+	if err != nil {
+		return shareGuardrailFindings{}, err
+	}
+	result := shareGuardrailFindings{acting: acting}
+	providerWorkspace := locator.provider.scope.WorkspaceID()
+	if localScope != locator.consumer.scope || providerWorkspace == locator.consumer.scope.WorkspaceID() {
+		return result, nil
+	}
+	if !locator.offerID.IsValid() {
+		return shareGuardrailFindings{}, sharing.ErrUnavailable
+	}
+	if err := transaction.QueryRow(ctx, shareOfferProviderGuardrailsSQL, locator.offerID.String()).
+		Scan(&encoded); err != nil {
+		return shareGuardrailFindings{}, resourceSharingDatabaseError(ctx, err)
+	}
+	if guardrails, err = decodeActiveGuardrails(encoded); err != nil {
+		return shareGuardrailFindings{}, sharing.ErrUnavailable
+	}
+	result.provider = guardrail.Evaluate(guardrails, providerWorkspace, edge)
+	if len(guardrail.Blocking(result.provider)) > 0 {
+		return shareGuardrailFindings{}, &guardrail.CounterpartViolationError{}
+	}
+	return result, nil
 }

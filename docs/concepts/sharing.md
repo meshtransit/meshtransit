@@ -56,10 +56,10 @@ consumer's rules let through.
 
 For a share between Workspaces, each Workspace gives its own consent with its
 own authority. [Guardrails](identity-and-access.md#guardrails) are checked when
-a change is made, against the Workspace making it: the provider's when the
-offer is created, the consumer's when it is accepted, activated, and when the
-consumer publishes rules that reach it. They do not cut a share that already
-exists.
+a change is made: the provider's when the offer is created, and both the
+consumer's and the provider's when it is accepted, activated, and when the
+consumer publishes new rules that reach it. They do not cut a share that
+already exists.
 
 The consumer reaches the shared Device by name:
 

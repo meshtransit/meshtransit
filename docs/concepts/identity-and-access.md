@@ -191,6 +191,15 @@ isolation, Network sharing and external sharing. Each runs in audit mode
 offers, acceptances and Trust Contract activations, and policy publications
 whose rules reach shared or imported Devices, whoever makes the change; rules
 inside one Network are not affected. It is not retroactive: it does not cut
-existing paths, and closing access is never refused. Adding or narrowing a
+existing paths, and closing access is never refused.
+
+Across Workspaces, each side's guardrails apply. When the consumer accepts an
+offer, activates its Trust Contract or publishes rules to the Imported
+Resource, the provider Workspace's guardrails are checked too, so a provider
+can stop a share it already offered. The consumer then gets only
+`counterpart_guardrail_violation` (409), which names nothing of the provider's
+guardrails. The provider's audit-mode findings on an acceptance or activation
+are recorded in the provider Network's audit record of that change, never the
+consumer's; on a publication they are not recorded. Adding or narrowing a
 guardrail needs `guardrail.manage`; loosening one needs `guardrail.weaken`,
 held by the owner, `admin` and `security_admin`.

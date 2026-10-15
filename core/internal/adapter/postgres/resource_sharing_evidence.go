@@ -46,6 +46,9 @@ type resourceSharingCounterpartAuditPayload struct {
 	ProviderNetwork   string `json:"provider_network"`
 	ConsumerNetwork   string `json:"consumer_network"`
 	ActingSideDetails string `json:"acting_side_details"`
+	// GuardrailFindings are the provider's audit-mode findings on a change
+	// the consumer made; only the provider's record carries them.
+	GuardrailFindings []guardrailFindingEvidence `json:"guardrail_findings,omitempty"`
 }
 
 // resourceSharingDetailsInActingNetwork tells a reader where the reason and
@@ -162,6 +165,16 @@ func appendResourceSharingMutationEvidence(
 			ConsumerNetwork:   resourceSharingScopeKey(locator.consumer.scope),
 			ActingSideDetails: resourceSharingDetailsInActingNetwork,
 		}
+		if target.state.scope == locator.provider.scope && target.state.scope != localScope {
+			auditDocument = resourceSharingCounterpartAuditPayload{
+				ScopeRelation: relation.String(), AuthoritySide: authoritySide,
+				EvidenceNetwork:   resourceSharingScopeKey(target.state.scope),
+				ProviderNetwork:   resourceSharingScopeKey(locator.provider.scope),
+				ConsumerNetwork:   resourceSharingScopeKey(locator.consumer.scope),
+				ActingSideDetails: resourceSharingDetailsInActingNetwork,
+				GuardrailFindings: guardrailFindingsEvidence(guardrailFindings.provider),
+			}
+		}
 		if target.state.scope == localScope {
 			auditDocument = resourceSharingAuditPayload{
 				AuditReason: reason.String(), ScopeRelation: relation.String(), AuthoritySide: authoritySide,
@@ -176,7 +189,7 @@ func appendResourceSharingMutationEvidence(
 				BindingAuthorityGeneration:        authorizationEvidence.bindingAuthorityGeneration,
 				RoleAuthorityGeneration:           authorizationEvidence.roleAuthorityGeneration,
 				WorkspaceOwnerAuthorityGeneration: authorizationEvidence.workspaceOwnerAuthorityGeneration,
-				GuardrailFindings:                 guardrailFindingsEvidence(guardrailFindings),
+				GuardrailFindings:                 guardrailFindingsEvidence(guardrailFindings.acting),
 			}
 		}
 		auditPayload, err := json.Marshal(auditDocument)

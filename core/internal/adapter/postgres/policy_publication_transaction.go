@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"meshtransit.net/core/internal/domain/network"
 	publication "meshtransit.net/core/internal/domain/policy/publication"
 	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/workspace"
 )
 
 type policyPublicationTransactionState uint8
@@ -549,9 +551,6 @@ func (transaction *policyPublicationTransaction) checkGuardrails(
 	if err != nil {
 		return nil, fmt.Errorf("read guardrails: %w", err)
 	}
-	if len(guardrails) == 0 {
-		return nil, nil
-	}
 	type pathFinding struct {
 		finding guardrail.Finding
 		path    string
@@ -589,7 +588,90 @@ func (transaction *policyPublicationTransaction) checkGuardrails(
 	if len(blocking) > 0 {
 		return findings, &guardrail.ViolationError{Findings: blocking}
 	}
+	if err := transaction.checkProviderGuardrails(ctx, destinations, existing); err != nil {
+		return nil, err
+	}
 	return findings, nil
+}
+
+// importedResourceProviderGuardrailsSQL reads the guardrails of each other
+// Workspace that provides an Imported Resource of this Network (schema 163).
+const importedResourceProviderGuardrailsSQL = `SELECT mesh_ops.imported_resource_provider_guardrails_v1()::TEXT`
+
+type providerGuardrailsDocument struct {
+	WorkspaceID string          `json:"workspace_id"`
+	Guardrails  json.RawMessage `json:"guardrails"`
+}
+
+// checkProviderGuardrails blocks a new path to an Imported Resource that an
+// enforced guardrail of its provider's Workspace forbids, with
+// *guardrail.CounterpartViolationError, which names nothing of the provider.
+// Paths the active release already opens are not blocked: guardrails are not
+// retroactive. The provider's findings are never recorded in this Network's
+// evidence.
+func (transaction *policyPublicationTransaction) checkProviderGuardrails(ctx context.Context,
+	destinations []publication.ImportedResourceDestination, existing map[string]bool) error {
+	local := transaction.scope.WorkspaceID()
+	external := false
+	for _, destination := range destinations {
+		if destination.Resolution().ProviderScope().WorkspaceID() != local {
+			external = true
+			break
+		}
+	}
+	if !external {
+		return nil
+	}
+	var encoded string
+	if err := transaction.database.QueryRow(ctx, importedResourceProviderGuardrailsSQL).Scan(&encoded); err != nil {
+		return fmt.Errorf("read provider guardrails: %w", err)
+	}
+	var documents []providerGuardrailsDocument
+	if err := strictJSON([]byte(encoded), &documents); err != nil || documents == nil {
+		return fmt.Errorf("read provider guardrails: %w", guardrail.ErrInvalid)
+	}
+	providers := make(map[workspace.ID][]guardrail.Guardrail, len(documents))
+	for _, document := range documents {
+		id, err := workspace.ParseID(document.WorkspaceID)
+		if err != nil {
+			return fmt.Errorf("read provider guardrails: %w", guardrail.ErrInvalid)
+		}
+		guardrails, err := decodeActiveGuardrails(string(document.Guardrails))
+		if err != nil {
+			return fmt.Errorf("read provider guardrails: %w", err)
+		}
+		providers[id] = guardrails
+	}
+	for _, destination := range destinations {
+		provider := destination.Resolution().ProviderScope()
+		if provider.WorkspaceID() == local {
+			continue
+		}
+		// Fail closed: a provider the reader does not know is never assumed
+		// to have no guardrail.
+		guardrails, known := providers[provider.WorkspaceID()]
+		if !known {
+			return fmt.Errorf("read provider guardrails: %w", guardrail.ErrInvalid)
+		}
+		if len(guardrails) == 0 {
+			continue
+		}
+		edge := guardrail.ShareEdge{Provider: provider, Consumer: transaction.scope}
+		if len(guardrail.Blocking(guardrail.Evaluate(guardrails, provider.WorkspaceID(), edge))) == 0 {
+			continue
+		}
+		if existing == nil {
+			var err error
+			if existing, err = transaction.activeImportedPaths(ctx); err != nil {
+				return err
+			}
+		}
+		path := destination.SourceNodeID().String() + ":" + destination.Resolution().ImportedResourceID().String()
+		if !existing[path] {
+			return &guardrail.CounterpartViolationError{}
+		}
+	}
+	return nil
 }
 
 // activeImportedPaths reads the source-Device-to-Imported-Resource paths the

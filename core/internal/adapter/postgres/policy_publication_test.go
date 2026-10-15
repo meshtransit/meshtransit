@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -260,6 +261,7 @@ func TestPolicyPublicationTransactionPublishesImportedResourceAtomically(t *test
 		lockActivePolicyReleaseSQL,
 		lockPolicyPublicationAuditStreamSQL,
 		activeWorkspaceGuardrailsSQL,
+		importedResourceProviderGuardrailsSQL,
 		setPolicyPublicationChangeSQL,
 		scaledPolicyPublicationGrantedSQL,
 		publishCompiledPolicySQL,
@@ -375,6 +377,119 @@ func enqueueActiveGuardrails(transaction *fakePolicyPublicationTransaction, enco
 		*destinations[0].(*string) = encoded
 		return nil
 	}})
+	// The Imported Resource fixture's provider Workspace, with no guardrail.
+	enqueueProviderGuardrails(transaction, `[{"workspace_id":"01890f00-0000-7000-8000-000000000102","guardrails":[]}]`)
+}
+
+func enqueueProviderGuardrails(transaction *fakePolicyPublicationTransaction, encoded string) {
+	transaction.enqueueRow(importedResourceProviderGuardrailsSQL, policyPublicationTestRow{
+		scan: func(destinations ...any) error {
+			*destinations[0].(*string) = encoded
+			return nil
+		}})
+}
+
+// A provider the reader does not report is never taken to have no guardrail:
+// the publication fails before anything is published.
+func TestPolicyPublicationTransactionFailsClosedOnUnknownProvider(t *testing.T) {
+	t.Parallel()
+	command := policyImportedResourcePublicationCommandFixture(t)
+	databaseTransaction := newFakePolicyPublicationTransaction()
+	enqueuePolicyPublicationResolution(t, databaseTransaction, command, 5, 1)
+	enqueuePolicyPublicationApply(databaseTransaction, 6, 2)
+	databaseTransaction.enqueueRow(activeWorkspaceGuardrailsSQL, policyPublicationTestRow{
+		scan: func(destinations ...any) error {
+			*destinations[0].(*string) = "[]"
+			return nil
+		}})
+	enqueueProviderGuardrails(databaseTransaction, "[]")
+	store := beginTestPolicyPublicationStore(t, databaseTransaction)
+	value, err := store.Begin(t.Context(), command.Candidate().Snapshot().Scope())
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	transaction := value.(*policyPublicationTransaction)
+	resolution, err := transaction.Resolve(t.Context(), command, policyPublicationTestTime)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if _, err := transaction.Apply(t.Context(), policyPublicationChangeFixture(t, command, resolution)); err == nil {
+		t.Fatal("published although the provider's guardrails were unknown")
+	}
+	for _, call := range databaseTransaction.calls {
+		if call.query == publishCompiledPolicySQL {
+			t.Fatal("published although the provider's guardrails were unknown")
+		}
+	}
+}
+
+// The provider of an Imported Resource keeps its guardrails private: an
+// enforced one refuses a new path with a refusal that names nothing, even
+// when this Workspace has no guardrail; a path already open is not blocked,
+// and the provider's findings never reach this Network's evidence.
+func TestPolicyPublicationTransactionAppliesProviderGuardrailsToNewPathsOnly(t *testing.T) {
+	t.Parallel()
+
+	for _, existing := range []bool{false, true} {
+		command := policyImportedResourcePublicationCommandFixture(t)
+		destination := command.Candidate().ImportedResourceDestinations()[0]
+		provider := destination.Resolution().ProviderScope()
+		databaseTransaction := newFakePolicyPublicationTransaction()
+		enqueuePolicyPublicationResolution(t, databaseTransaction, command, 5, 1)
+		enqueuePolicyPublicationApply(databaseTransaction, 6, 2)
+		databaseTransaction.enqueueRow(activeWorkspaceGuardrailsSQL, policyPublicationTestRow{
+			scan: func(destinations ...any) error {
+				*destinations[0].(*string) = "[]"
+				return nil
+			}})
+		providerLock := `[{"guardrail_id":"01890f00-0000-7000-8000-00000000e002",
+"kind":"network_sharing","name":"Provider secret lock","description":"","mode":"enforce",
+"params":{"direction":"outgoing","networks":["` + provider.NetworkID().String() + `"]},"version":1,
+"created_at":"2026-10-07T00:00:00Z","updated_at":"2026-10-07T00:00:00Z"}]`
+		enqueueProviderGuardrails(databaseTransaction, `[{"workspace_id":"`+
+			provider.WorkspaceID().String()+`","guardrails":`+providerLock+`}]`)
+		paths := "[]"
+		if existing {
+			paths = `["` + destination.SourceNodeID().String() + ":" +
+				destination.Resolution().ImportedResourceID().String() + `"]`
+		}
+		databaseTransaction.enqueueRow(activeReleaseImportedPathsSQL, policyPublicationTestRow{
+			scan: func(destinations ...any) error {
+				*destinations[0].(*string) = paths
+				return nil
+			}})
+		store := beginTestPolicyPublicationStore(t, databaseTransaction)
+		value, err := store.Begin(t.Context(), command.Candidate().Snapshot().Scope())
+		if err != nil {
+			t.Fatalf("Begin() error = %v", err)
+		}
+		transaction := value.(*policyPublicationTransaction)
+		resolution, err := transaction.Resolve(t.Context(), command, policyPublicationTestTime)
+		if err != nil {
+			t.Fatalf("Resolve() error = %v", err)
+		}
+		_, err = transaction.Apply(t.Context(), policyPublicationChangeFixture(t, command, resolution))
+		if existing {
+			if err != nil {
+				t.Fatalf("Apply() on an existing path error = %v", err)
+			}
+			auditCall := findPolicyPublicationCall(t, databaseTransaction.calls, appendPolicyPublicationEvidenceSQL)
+			if strings.Contains(string(auditCall.arguments[len(auditCall.arguments)-2].([]byte)), "Provider secret lock") {
+				t.Fatal("the provider's guardrail reached the consumer's evidence")
+			}
+			continue
+		}
+		var counterpart *guardrail.CounterpartViolationError
+		var violation *guardrail.ViolationError
+		if !errors.As(err, &counterpart) || errors.As(err, &violation) {
+			t.Fatalf("Apply() error = %v, want a refusal that names no provider guardrail", err)
+		}
+		for _, call := range databaseTransaction.calls {
+			if call.query == publishCompiledPolicySQL || call.query == appendPolicyPublicationEvidenceSQL {
+				t.Fatalf("blocked publication still ran %q", call.query)
+			}
+		}
+	}
 }
 
 func TestPolicyPublicationTransactionAuthorizesManagementSessionUnderLock(t *testing.T) {

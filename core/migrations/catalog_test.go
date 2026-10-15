@@ -12,8 +12,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 162 {
-		t.Fatalf("len(Catalog()) = %d, want 162", len(catalog))
+	if len(catalog) != 163 {
+		t.Fatalf("len(Catalog()) = %d, want 163", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1608,8 +1608,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 162 {
-		t.Fatalf("LatestVersion() = %d, want 162", LatestVersion())
+	if LatestVersion() != 163 {
+		t.Fatalf("LatestVersion() = %d, want 163", LatestVersion())
 	}
 }
 
@@ -3238,6 +3238,61 @@ func TestAccountSessionRevocation(t *testing.T) {
 	}
 	if strings.Contains(sql, "change_account_recovery_v1(UUID, TEXT, UUID) TO") {
 		t.Error("schema 162 must not grant operator Account recovery to any role")
+	}
+}
+
+// Schema 163 hands a consumer's transaction the provider's guardrails only
+// for a share that scope is the consumer of, under the provider's Workspace
+// lock, and only to the runtime role.
+func TestShareProviderGuardrails(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[162]
+	if migration.Version != 163 {
+		t.Fatalf("migration 163 = %+v", migration)
+	}
+	for _, required := range []string{
+		"WHERE locator.local_workspace_id = scoped_workspace_id",
+		"IF v_provider IS NULL THEN",
+		"IF v_provider = v_consumer THEN",
+		"WHERE imported.workspace_id = scoped_workspace_id\n      AND imported.network_id = scoped_network_id",
+		"AND imported.state IN ('activating', 'active')",
+		"AND locator.state IN ('offered', 'accepted');",
+		"PERFORM 1 FROM mesh.workspace_guardrail_state AS state WHERE state.workspace_id = v_provider FOR SHARE;",
+		"AFTER INSERT OR UPDATE ON mesh.guardrail",
+		"AFTER INSERT ON mesh.workspace",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.share_offer_provider_guardrails_v1(UUID) TO mesh_runtime;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.imported_resource_provider_guardrails_v1() TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 163 missing %q", required)
+		}
+	}
+	// The replaced guardrail change is schema 119's, plus the state row lock
+	// taken before the Workspace row.
+	extract := func(sql string) string {
+		start := strings.Index(sql, "FUNCTION mesh_ops.change_workspace_guardrail_v1(")
+		end := strings.Index(sql[start:], "$function$;")
+		if start < 0 || end < 0 {
+			t.Fatal("schema 163 lost change_workspace_guardrail_v1")
+		}
+		return sql[start : start+end]
+	}
+	const stateLock = `    -- The guardrail state row first, then the Workspace row: share and
+    -- publication transactions hold the state row FOR SHARE and may then need
+    -- the Workspace row (schema 163).
+    PERFORM 1 FROM mesh.workspace_guardrail_state AS state
+    WHERE state.workspace_id = scoped_workspace_id FOR UPDATE;
+`
+	replaced := extract(migration.SQL)
+	if !strings.Contains(replaced, stateLock+"    SELECT workspace.deployment_id INTO deployment_internal_id") ||
+		strings.Replace(replaced, stateLock, "", 1) != extract(Catalog()[118].SQL) {
+		t.Error("schema 163 must replace change_workspace_guardrail_v1 with only the state row lock added")
+	}
+	// The readers lock only the guardrail state row, never the Workspace row
+	// other flows lock before Network revisions.
+	if strings.Contains(migration.SQL, "FROM mesh.workspace AS workspace WHERE workspace.id = v_provider FOR SHARE") ||
+		strings.Contains(migration.SQL, "ORDER BY workspace.id\n    FOR SHARE") {
+		t.Error("schema 163 locks the Workspace row")
 	}
 }
 

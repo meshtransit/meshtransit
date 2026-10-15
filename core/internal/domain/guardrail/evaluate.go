@@ -116,6 +116,15 @@ func (violation *ViolationError) Error() string {
 	return "guardrail: change breaks an enforced guardrail"
 }
 
+// CounterpartViolationError reports a share change that the other
+// Workspace's enforced guardrails block. It names no guardrail: a Workspace's
+// guardrails stay private to it.
+type CounterpartViolationError struct{}
+
+func (*CounterpartViolationError) Error() string {
+	return "guardrail: the other Workspace's guardrails block this change"
+}
+
 // Check evaluates an edge and returns a *ViolationError when an enforced
 // guardrail blocks it, plus every finding for audit evidence.
 func Check(guardrails []Guardrail, owner workspace.ID, edge ShareEdge) ([]Finding, error) {

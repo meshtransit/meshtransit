@@ -5,6 +5,12 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core schema 163: a share between Workspaces also answers to the provider's
+  guardrails when the consumer accepts the offer, activates the Trust
+  Contract or publishes new rules to the Imported Resource. Before, only the
+  consumer's guardrails were checked, so a provider could not stop a share it
+  had already offered. The consumer gets `counterpart_guardrail_violation`
+  (409) without the provider's guardrail details.
 - Core schema 162: Console sessions can be ended beyond one at a time. A
   person signs out everywhere (`POST /auth/v1/session/logout-all`), which ends
   every session of their Account. An administrator with `member.manage` ends

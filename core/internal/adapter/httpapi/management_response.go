@@ -193,6 +193,14 @@ func writeManagementJSON(
 // each guardrail of the acting Workspace that applies, so the caller can show
 // which invariant it broke. ok is false for any other error.
 func guardrailViolation(err error) (managementError, bool) {
+	// The other Workspace's guardrails stay private: no name, kind or reason.
+	var counterpart *guardrail.CounterpartViolationError
+	if errors.As(err, &counterpart) {
+		return managementError{
+			Status: http.StatusConflict, Code: "counterpart_guardrail_violation",
+			Message: "the other Workspace does not allow this share",
+		}, true
+	}
 	var violation *guardrail.ViolationError
 	if !errors.As(err, &violation) || len(violation.Findings) == 0 {
 		return managementError{}, false

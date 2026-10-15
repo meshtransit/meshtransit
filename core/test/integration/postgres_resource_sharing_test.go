@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	"meshtransit.net/core/internal/domain/audit"
 	"meshtransit.net/core/internal/domain/deployment"
+	"meshtransit.net/core/internal/domain/guardrail"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/policy"
@@ -592,10 +594,21 @@ func assertCrossWorkspaceResourceSharingConsent(
 	if err != nil {
 		t.Fatalf("construct consumer acceptance: %v", err)
 	}
+	// The provider locks its Network after offering: the consumer can no
+	// longer accept, and learns nothing of the provider's guardrail.
+	providerRail := setProviderShareGuardrail(ctx, t, admin, runtimePool, guardrail.Guardrail{}, guardrail.ModeEnforce)
+	var counterpart *guardrail.CounterpartViolationError
+	var ownViolation *guardrail.ViolationError
+	if _, err := service.DecideOffer(ctx, consumerDecision); !errors.As(err, &counterpart) ||
+		errors.As(err, &ownViolation) {
+		t.Fatalf("consumer accepted against the provider's enforced guardrail: %v", err)
+	}
+	providerRail = setProviderShareGuardrail(ctx, t, admin, runtimePool, providerRail, guardrail.ModeAudit)
 	accepted, err := service.DecideOffer(ctx, consumerDecision)
 	if err != nil {
 		t.Fatalf("consumer accept cross-Workspace Share Offer: %v", err)
 	}
+	assertProviderFindingRecordedOnProviderSide(ctx, t, admin, offer.Offer().ID(), providerRail, "share_offer.accepted")
 	contract, hasContract := accepted.Contract()
 	if !hasContract || contract.State() != sharing.ContractStateActivating ||
 		contract.ScopeRelation() != sharing.ScopeRelationCrossWorkspace {
@@ -613,10 +626,18 @@ func assertCrossWorkspaceResourceSharingConsent(
 	if err != nil {
 		t.Fatalf("construct cross-Workspace activation: %v", err)
 	}
+	providerRail = setProviderShareGuardrail(ctx, t, admin, runtimePool, providerRail, guardrail.ModeEnforce)
+	if _, err := service.ActivateContract(ctx, activateCommand); !errors.As(err, &counterpart) ||
+		errors.As(err, &ownViolation) {
+		t.Fatalf("consumer activated against the provider's enforced guardrail: %v", err)
+	}
+	providerRail = setProviderShareGuardrail(ctx, t, admin, runtimePool, providerRail, guardrail.ModeAudit)
 	activated, err := service.ActivateContract(ctx, activateCommand)
 	if err != nil {
 		t.Fatalf("activate cross-Workspace Trust Contract: %v", err)
 	}
+	providerRail = assertProviderGuardrailReaders(ctx, t, admin, runtimePool, offer.Offer().ID(), providerRail)
+	deleteProviderShareGuardrail(ctx, t, admin, runtimePool, providerRail)
 	activeContract, hasContract := activated.Contract()
 	if !hasContract || activeContract.State() != sharing.ContractStateActive ||
 		activeContract.ScopeRelation() != sharing.ScopeRelationCrossWorkspace {
@@ -2095,4 +2116,154 @@ func assertCrossWorkspaceNoExpiryOffer(
 	if _, err := service.DecideOffer(ctx, reject); err != nil {
 		t.Fatalf("reject cross-Workspace share without expiry: %v", err)
 	}
+}
+
+// setProviderShareGuardrail creates (from the zero Guardrail) or updates the
+// provider Workspace's lock on its production Network in the given mode, as
+// the Workspace owner, and returns it.
+func setProviderShareGuardrail(ctx context.Context, t *testing.T, admin *pgx.Conn, runtimePool *postgresadapter.Pool,
+	rail guardrail.Guardrail, mode guardrail.Mode) guardrail.Guardrail {
+	t.Helper()
+	guardrails := newIntegrationGuardrailService(t, runtimePool)
+	setWorkspaceRenameFixtureOwner(ctx, t, admin, 11)
+	defer setWorkspaceRenameFixtureOwner(ctx, t, admin, 14)
+	owner := managementRBACAccountSessionFixture(t)
+	workspaceID, _ := owner.LoginWorkspaceID()
+	spec := productionSharingLock(t, mode, guardrail.DirectionOutgoing)
+	var result guardrail.Result
+	var err error
+	if !rail.ID.IsValid() {
+		result, err = guardrails.Create(ctx, owner, workspaceID, spec, newCorrelationID(t))
+	} else {
+		result, err = guardrails.Update(ctx, owner, workspaceID, rail.ID, rail.Version, spec, newCorrelationID(t))
+	}
+	if err != nil {
+		t.Fatalf("set provider share guardrail (%s): %v", mode, err)
+	}
+	return result.Guardrail
+}
+
+func deleteProviderShareGuardrail(ctx context.Context, t *testing.T, admin *pgx.Conn, runtimePool *postgresadapter.Pool,
+	rail guardrail.Guardrail) {
+	t.Helper()
+	guardrails := newIntegrationGuardrailService(t, runtimePool)
+	setWorkspaceRenameFixtureOwner(ctx, t, admin, 11)
+	defer setWorkspaceRenameFixtureOwner(ctx, t, admin, 14)
+	owner := managementRBACAccountSessionFixture(t)
+	workspaceID, _ := owner.LoginWorkspaceID()
+	if _, err := guardrails.Delete(ctx, owner, workspaceID, rail.ID, rail.Version, newCorrelationID(t)); err != nil {
+		t.Fatalf("delete provider share guardrail: %v", err)
+	}
+}
+
+// assertProviderFindingRecordedOnProviderSide checks the consumer's change
+// recorded the provider's audit-mode finding in the provider Network's record
+// only: the consumer's own record never names the provider's guardrail.
+func assertProviderFindingRecordedOnProviderSide(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	offerID interface{ String() string }, rail guardrail.Guardrail, action string) {
+	t.Helper()
+	var provider, consumer int64
+	if err := admin.QueryRow(ctx, `SELECT
+    count(*) FILTER (WHERE event.payload->>'evidence_network' = event.payload->>'provider_network'),
+    count(*) FILTER (WHERE event.payload->>'evidence_network' = event.payload->>'consumer_network')
+FROM mesh_audit.audit_event AS event,
+     LATERAL jsonb_array_elements(COALESCE(event.payload->'guardrail_findings', '[]'::JSONB)) AS finding
+WHERE event.target_public_id = $1::UUID AND event.action = $2
+  AND finding->>'guardrail_id' = $3::TEXT`, offerID.String(), action, rail.ID.String()).Scan(
+		&provider, &consumer); err != nil {
+		t.Fatal(err)
+	}
+	if provider != 1 || consumer != 0 {
+		t.Fatalf("%s: provider finding on provider side %d, consumer side %d; want 1 and 0", action, provider, consumer)
+	}
+}
+
+// assertProviderGuardrailReaders checks the schema 163 readers as the runtime
+// role: the consumer Network sees its provider's guardrail through its
+// Imported Resource, the provider Network sees no other Workspace's, and a
+// provider guardrail change committed after a repeatable-read snapshot fails
+// the reader instead of letting it read stale guardrails.
+func assertProviderGuardrailReaders(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	runtimePool *postgresadapter.Pool, offerID interface{ String() string }, rail guardrail.Guardrail) guardrail.Guardrail {
+	t.Helper()
+	read := func(workspaceID, networkID int64, query string, arguments ...any) string {
+		tx, err := admin.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		setIntegrationScope(ctx, t, tx, workspaceID, networkID)
+		if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+			t.Fatal(err)
+		}
+		var encoded string
+		if err := tx.QueryRow(ctx, query, arguments...).Scan(&encoded); err != nil {
+			t.Fatalf("%s: %v", query, err)
+		}
+		return encoded
+	}
+	consumer := read(102, 202, `SELECT mesh_ops.imported_resource_provider_guardrails_v1()::TEXT`)
+	if !strings.Contains(consumer, "01890f00-0000-7000-8000-000000000103") || !strings.Contains(consumer, rail.ID.String()) {
+		t.Fatalf("consumer reads %s, want the provider Workspace and its guardrail", consumer)
+	}
+	if own := read(103, 203, `SELECT mesh_ops.imported_resource_provider_guardrails_v1()::TEXT`); strings.Contains(own, rail.ID.String()) {
+		t.Fatalf("provider Network read its own Workspace as a provider: %s", own)
+	}
+	if offered := read(102, 202, `SELECT mesh_ops.share_offer_provider_guardrails_v1($1::UUID)::TEXT`,
+		offerID.String()); !strings.Contains(offered, rail.ID.String()) {
+		t.Fatalf("consumer reads %s for its offer, want the provider's guardrail", offered)
+	}
+	// The provider's own scope did not receive the offer: an error, never [].
+	func() {
+		tx, err := admin.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		setIntegrationScope(ctx, t, tx, 103, 203)
+		if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+			t.Fatal(err)
+		}
+		var encoded string
+		err = tx.QueryRow(ctx, `SELECT mesh_ops.share_offer_provider_guardrails_v1($1::UUID)::TEXT`,
+			offerID.String()).Scan(&encoded)
+		assertPostgreSQLCode(t, err, "55000")
+	}()
+
+	other, err := pgx.ConnectConfig(ctx, admin.Config())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = other.Close(ctx) }()
+	tx, err := other.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	setIntegrationScope(ctx, t, tx, 102, 202)
+	if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+		t.Fatal(err)
+	}
+	// Take the snapshot, then let the provider's guardrails change.
+	if _, err := tx.Exec(ctx, `SELECT 1`); err != nil {
+		t.Fatal(err)
+	}
+	revision := func() int64 {
+		var value int64
+		if err := admin.QueryRow(ctx, `SELECT revision FROM mesh.workspace_guardrail_state
+WHERE workspace_id = 103`).Scan(&value); err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	before := revision()
+	rail = setProviderShareGuardrail(ctx, t, admin, runtimePool, rail, guardrail.ModeAudit)
+	if after := revision(); after != before+1 {
+		t.Fatalf("a guardrail change moved the state revision %d -> %d, want +1", before, after)
+	}
+	var stale string
+	err = tx.QueryRow(ctx, `SELECT mesh_ops.share_offer_provider_guardrails_v1($1::UUID)::TEXT`,
+		offerID.String()).Scan(&stale)
+	assertPostgreSQLCode(t, err, "40001")
+	return rail
 }

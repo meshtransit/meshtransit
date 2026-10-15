@@ -529,6 +529,7 @@ func Catalog() []Migration {
 		newMigration(160, "Invitation email binding", invitationEmailBindingSQL),
 		newMigration(161, "Map session revocation", mapSessionRevocationSQL),
 		newMigration(162, "Account session revocation", accountSessionRevocationSQL),
+		newMigration(163, "Share provider guardrails", shareProviderGuardrailsSQL),
 	}
 }
 
@@ -794,3 +795,6 @@ var mapSessionRevocationSQL string
 
 //go:embed 000162_account_session_revocation.up.sql
 var accountSessionRevocationSQL string
+
+//go:embed 000163_share_provider_guardrails.up.sql
+var shareProviderGuardrailsSQL string
