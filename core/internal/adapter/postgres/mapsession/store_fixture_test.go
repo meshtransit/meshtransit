@@ -273,6 +273,11 @@ func (row snapshotRow) Scan(destinations ...any) error {
 	if len(destinations) > 13 {
 		*destinations[13].(*time.Time) = record.readAt
 	}
+	if len(destinations) > 16 {
+		*destinations[14].(**string) = record.dnsLabel
+		*destinations[15].(**string) = record.workspaceCode
+		*destinations[16].(**string) = record.networkCode
+	}
 	return nil
 }
 
@@ -457,6 +462,9 @@ func (rows *peerCandidateRows) Scan(destinations ...any) error {
 	*destinations[8].(*time.Time) = record.createdAt
 	*destinations[9].(*time.Time) = record.keyExpiry
 	*destinations[10].(*[]string) = append([]string(nil), record.addresses...)
+	if len(destinations) > 11 {
+		*destinations[11].(**string) = record.dnsLabel
+	}
 	return nil
 }
 
@@ -561,8 +569,19 @@ func validSnapshotRecord(t *testing.T, identity control.AuthenticatedNode) snaps
 		networkRevision:   7,
 		policyRevision:    5,
 		addresses:         []string{"100.64.0.1/32", "fd07:d4de:9d87::1/128"},
+		dnsLabel:          textPointer("node-1"),
+		workspaceCode:     textPointer(testWorkspaceCode),
+		networkCode:       textPointer(testNetworkCode),
 	}
 }
+
+// The display codes of the fixture's Network zone.
+const (
+	testWorkspaceCode = "000000000101"
+	testNetworkCode   = "000000000201"
+)
+
+func textPointer(value string) *string { return &value }
 
 func validStoreFixture(
 	t *testing.T,
@@ -648,6 +667,7 @@ func validPeerCandidateRecord(marker byte) peerCandidateRecord {
 		createdAt:         createdAt,
 		keyExpiry:         createdAt.Add(24 * time.Hour),
 		addresses:         []string{fmt.Sprintf("100.64.0.%d/32", marker)},
+		dnsLabel:          textPointer(fmt.Sprintf("node-%d", marker)),
 	}
 }
 
@@ -706,5 +726,7 @@ type networkHeaderRow struct{}
 func (networkHeaderRow) Scan(destinations ...any) error {
 	*destinations[0].(*string) = "Development Mesh"
 	*destinations[1].(*int64) = 2
+	*destinations[2].(**string) = textPointer(testWorkspaceCode)
+	*destinations[3].(**string) = textPointer(testNetworkCode)
 	return nil
 }

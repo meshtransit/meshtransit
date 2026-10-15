@@ -61,6 +61,7 @@ func (store *Store) Derive(
 	if err != nil {
 		return appmapsession.Snapshot{}, false, errors.Join(ErrSnapshotEvidence, err)
 	}
+	selfLabel, _ := self.DNSLabel()
 	snapshot, err := appmapsession.NewSnapshot(appmapsession.SnapshotParams{
 		Scope:             scope,
 		NetworkName:       cached.networkName,
@@ -71,6 +72,9 @@ func (store *Store) Derive(
 		NumericOwnerID:    self.NumericOwnerID(),
 		NodeID:            self.NodeID(),
 		Hostname:          self.Hostname(),
+		DNSLabel:          selfLabel,
+		WorkspaceCode:     cached.workspaceCode,
+		NetworkCode:       cached.networkCode,
 		MachineKey:        self.MachineKey(),
 		NodeKey:           self.NodeKey(),
 		Addresses:         self.Addresses(),
@@ -117,6 +121,7 @@ func (store *Store) Unchanged(ctx context.Context, current appmapsession.Snapsho
 	unchanged := cached.serveable && cached.policy.IsValid() && cached.revision == current.NetworkRevision() &&
 		cached.policy.Revision() == current.PacketPolicy().Revision() && current.SharesInventory(cached.inventory) &&
 		cached.networkName == current.NetworkName() && cached.recoveryEpoch == current.RecoveryEpoch() &&
+		sameDisplayCodes(cached, current) &&
 		(changesAt.IsZero() || now.Add(clockMargin).Before(changesAt)) &&
 		directory.Revision() == current.RelayDirectory().Revision() &&
 		directory.Fingerprint() == current.RelayDirectory().Fingerprint()
@@ -124,4 +129,11 @@ func (store *Store) Unchanged(ctx context.Context, current appmapsession.Snapsho
 		store.stats.unchanged.Add(1)
 	}
 	return unchanged, nil
+}
+
+// sameDisplayCodes reports whether current names its zone with the view's
+// display codes.
+func sameDisplayCodes(cached cachedInventory, current appmapsession.Snapshot) bool {
+	workspaceCode, networkCode, _ := current.DisplayCodes()
+	return workspaceCode == cached.workspaceCode && networkCode == cached.networkCode
 }

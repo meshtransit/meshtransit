@@ -41,7 +41,16 @@ const loadSnapshotSQL = `SELECT
           AND lease.lease_role = 'primary'
         ORDER BY lease.family, lease.address, lease.id
     ),
-    pg_catalog.transaction_timestamp()
+    pg_catalog.transaction_timestamp(),
+    (
+        SELECT label.dns_label
+        FROM mesh.device_dns_label AS label
+        WHERE label.workspace_id = device.workspace_id
+          AND label.network_id = device.network_id
+          AND label.device_id = device.id
+    ),
+    codes.workspace_code,
+    codes.network_code
 FROM mesh.device AS device
 JOIN mesh.network AS network
   ON network.workspace_id = device.workspace_id
@@ -57,6 +66,7 @@ JOIN mesh.device_node_key_epoch AS node_key
 JOIN mesh_ops.network_revision AS revision
   ON revision.workspace_id = device.workspace_id
  AND revision.network_id = device.network_id
+LEFT JOIN mesh_ops.read_scope_display_codes_v1() AS codes ON TRUE
 WHERE machine.fingerprint = $1::BYTEA
   AND machine.state = 'active'
   AND machine.epoch = device.current_machine_key_epoch
@@ -69,19 +79,35 @@ WHERE machine.fingerprint = $1::BYTEA
   AND device.deleted_at IS NULL
   AND device.expires_at > pg_catalog.transaction_timestamp()`
 
+// loadPeerCandidatesSQL reads the other Devices of the installed scope with
+// their DNS labels (schema 168).
 const loadPeerCandidatesSQL = `SELECT
-    numeric_node_id,
-    numeric_owner_id,
-    node_public_id::TEXT,
-    owner_public_id::TEXT,
-    hostname,
-    machine_key,
-    node_key,
-    session_generation,
-    created_at,
-    key_expiry,
-    addresses
-FROM mesh_ops.load_map_peer_candidates_v2($1::BYTEA, $2::BYTEA, $3::INTEGER)`
+    candidate.numeric_node_id,
+    candidate.numeric_owner_id,
+    candidate.node_public_id::TEXT,
+    candidate.owner_public_id::TEXT,
+    candidate.hostname,
+    candidate.machine_key,
+    candidate.node_key,
+    candidate.session_generation,
+    candidate.created_at,
+    candidate.key_expiry,
+    candidate.addresses,
+    label.dns_label
+FROM mesh_ops.load_map_peer_candidates_v2($1::BYTEA, $2::BYTEA, $3::INTEGER) AS candidate
+` + scopedDNSLabelJoin
+
+// scopedDNSLabelJoin adds the DNS label of each listed Device (candidate) of
+// the installed scope by key; LIMIT 1 keeps it one index probe per Device
+// whatever the planner estimates (as in schema 152).
+const scopedDNSLabelJoin = `LEFT JOIN LATERAL (
+    SELECT device_label.dns_label
+    FROM mesh.device_dns_label AS device_label
+    WHERE device_label.workspace_id = mesh_ops.current_workspace_id()
+      AND device_label.network_id = mesh_ops.current_network_id()
+      AND device_label.device_id = candidate.numeric_node_id
+    LIMIT 1
+) AS label ON TRUE`
 
 // loadPacketPolicySQL reads the Device's edges of the active release:
 // Device-to-Device rules plus group rules resolved from current membership

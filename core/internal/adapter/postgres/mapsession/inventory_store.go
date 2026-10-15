@@ -46,8 +46,11 @@ FROM mesh_ops.load_map_network_policy_devices_v1($1::INTEGER)`
 	// target, a rule source of an Imported Resource.
 	loadNetworkSharingDevicesSQL = `SELECT COALESCE(pg_catalog.array_agg(device_id), '{}')
 FROM mesh_ops.map_network_sharing_devices_v1($1::INTEGER)`
-	loadNetworkHeaderSQL = `SELECT network_display_name, recovery_epoch
-FROM mesh_ops.load_map_network_header_v1()`
+	// The header with the scope's display codes (schema 168).
+	loadNetworkHeaderSQL = `SELECT header.network_display_name, header.recovery_epoch,
+    codes.workspace_code, codes.network_code
+FROM mesh_ops.load_map_network_header_v1() AS header
+LEFT JOIN mesh_ops.read_scope_display_codes_v1() AS codes ON TRUE`
 
 	// Whether the Network holds a legacy direct share endpoint (schema 154),
 	// used once this role may run it.
@@ -59,18 +62,20 @@ FROM mesh_ops.load_map_network_header_v1()`
 // loadNetworkDevicesSQL reads every live Device of the installed scope
 // (schema 140), with the liveness filters of the per-Device candidate read.
 const loadNetworkDevicesSQL = `SELECT
-    numeric_node_id,
-    numeric_owner_id,
-    node_public_id::TEXT,
-    owner_public_id::TEXT,
-    hostname,
-    machine_key,
-    node_key,
-    session_generation,
-    created_at,
-    key_expiry,
-    addresses
-FROM mesh_ops.load_map_network_devices_v1($1::INTEGER)`
+    candidate.numeric_node_id,
+    candidate.numeric_owner_id,
+    candidate.node_public_id::TEXT,
+    candidate.owner_public_id::TEXT,
+    candidate.hostname,
+    candidate.machine_key,
+    candidate.node_key,
+    candidate.session_generation,
+    candidate.created_at,
+    candidate.key_expiry,
+    candidate.addresses,
+    label.dns_label
+FROM mesh_ops.load_map_network_devices_v1($1::INTEGER) AS candidate
+` + scopedDNSLabelJoin
 
 // The Network's change counter and the Devices changed after a counter
 // (schema 153), used once this role may run them.
@@ -80,12 +85,16 @@ const (
     AND COALESCE(pg_catalog.has_function_privilege(
     pg_catalog.to_regprocedure('mesh_ops.read_map_inventory_change_head_v1()'), 'EXECUTE'), FALSE)`
 	loadInventoryChangeHeadSQL  = `SELECT mesh_ops.read_map_inventory_change_head_v1()`
-	loadNetworkDeviceChangesSQL = `SELECT change_seq, numeric_node_id, listed,
-    COALESCE(numeric_owner_id, 0), COALESCE(node_public_id::TEXT, ''), COALESCE(owner_public_id::TEXT, ''),
-    COALESCE(hostname, ''), COALESCE(machine_key, ''::BYTEA), COALESCE(node_key, ''::BYTEA),
-    COALESCE(session_generation, 0), COALESCE(created_at, 'epoch'::TIMESTAMPTZ),
-    COALESCE(key_expiry, 'epoch'::TIMESTAMPTZ), COALESCE(addresses, '{}'::TEXT[])
-FROM mesh_ops.load_map_network_device_changes_v1($1::BIGINT, $2::INTEGER)`
+	loadNetworkDeviceChangesSQL = `SELECT candidate.change_seq, candidate.numeric_node_id, candidate.listed,
+    COALESCE(candidate.numeric_owner_id, 0), COALESCE(candidate.node_public_id::TEXT, ''),
+    COALESCE(candidate.owner_public_id::TEXT, ''), COALESCE(candidate.hostname, ''),
+    COALESCE(candidate.machine_key, ''::BYTEA), COALESCE(candidate.node_key, ''::BYTEA),
+    COALESCE(candidate.session_generation, 0), COALESCE(candidate.created_at, 'epoch'::TIMESTAMPTZ),
+    COALESCE(candidate.key_expiry, 'epoch'::TIMESTAMPTZ), COALESCE(candidate.addresses, '{}'::TEXT[]),
+    label.dns_label
+FROM mesh_ops.load_map_network_device_changes_v1($1::BIGINT, $2::INTEGER) AS candidate
+` + scopedDNSLabelJoin + `
+ORDER BY candidate.change_seq, candidate.numeric_node_id`
 
 	// maximumInventoryChanges bounds one read of changed Devices; a Network
 	// with more since the cached inventory is read whole.
@@ -283,7 +292,7 @@ func readNetworkDeviceChanges(
 		var record peerCandidateRecord
 		if err := rows.Scan(&changeSeq, &record.numericNodeID, &listed, &record.numericOwnerID, &record.nodeID,
 			&record.ownerID, &record.hostname, &record.machineKey, &record.nodeKey, &record.sessionGeneration,
-			&record.createdAt, &record.keyExpiry, &record.addresses); err != nil {
+			&record.createdAt, &record.keyExpiry, &record.addresses, &record.dnsLabel); err != nil {
 			return nil, false, errors.Join(ErrLoadSnapshot, fmt.Errorf("scan network inventory change: %w", err))
 		}
 		if changeSeq <= since || changeSeq > head || record.numericNodeID <= 0 {
@@ -291,7 +300,7 @@ func readNetworkDeviceChanges(
 		}
 		change := appmapsession.InventoryChange{NumericNodeID: record.numericNodeID, Removed: !listed}
 		if listed {
-			if change.Device, err = record.candidate(scope); err != nil {
+			if change.Device, err = record.scopedCandidate(scope); err != nil {
 				return nil, false, err
 			}
 		}
@@ -334,10 +343,11 @@ func (store *Store) readNetworkDevices(
 			&record.createdAt,
 			&record.keyExpiry,
 			&record.addresses,
+			&record.dnsLabel,
 		); err != nil {
 			return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("scan network inventory: %w", err))
 		}
-		device, err := record.candidate(scope)
+		device, err := record.scopedCandidate(scope)
 		if err != nil {
 			return nil, err
 		}
@@ -515,7 +525,9 @@ func readDirectEndpoints(ctx context.Context, transaction databaseTransaction, c
 
 func readNetworkHeader(ctx context.Context, transaction databaseTransaction, cached *cachedInventory) error {
 	var name string
-	err := transaction.QueryRow(ctx, loadNetworkHeaderSQL).Scan(&name, &cached.recoveryEpoch)
+	var workspaceCode, networkCode *string
+	err := transaction.QueryRow(ctx, loadNetworkHeaderSQL).Scan(&name, &cached.recoveryEpoch,
+		&workspaceCode, &networkCode)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -525,6 +537,9 @@ func readNetworkHeader(ctx context.Context, transaction databaseTransaction, cac
 	displayName, err := network.ParseDisplayName(name)
 	if err != nil || cached.recoveryEpoch <= 0 {
 		return ErrSnapshotEvidence
+	}
+	if cached.workspaceCode, cached.networkCode, err = displayCodes(workspaceCode, networkCode); err != nil {
+		return err
 	}
 	cached.networkName, cached.serveable = displayName, true
 	return nil

@@ -210,6 +210,8 @@ func TestDirectRecordProviderReceivesOnlyConsumerInitiation(t *testing.T) {
 		machineKey: machine, nodeKey: key, sessionGeneration: record.Peer.SessionGeneration,
 		createdAt: record.Peer.CreatedAt, keyExpiry: record.Peer.KeyExpiry,
 		networkRevision: record.ProviderNetworkRevision, policyRevision: 1, addresses: record.Peer.Addresses,
+		dnsLabel: textPointer("provider"), workspaceCode: textPointer("000000000102"),
+		networkCode: textPointer("000000000202"),
 	}).snapshot(record.ProviderWorkspaceID, record.ProviderNetworkID, record.RecoveryEpoch,
 		nil, packetPolicy, consumer.RelayDirectory())
 	if err != nil {

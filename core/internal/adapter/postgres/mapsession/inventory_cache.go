@@ -6,6 +6,7 @@ import (
 	"time"
 
 	appmapsession "meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/identity"
 	"meshtransit.net/core/internal/domain/network"
 )
 
@@ -24,6 +25,9 @@ type cachedInventory struct {
 	serveable     bool
 	networkName   network.DisplayName
 	recoveryEpoch int64
+	// The Workspace and Network display codes of the Network's DNS zone
+	// (schema 168); immutable.
+	workspaceCode, networkCode identity.DisplayCode
 	// sharingDevices: numeric node identifiers of the Devices a share binds
 	// (schema 146). Their maps depend on state outside the view (aliases,
 	// peers across Networks), so they are always read per Device.

@@ -322,3 +322,54 @@ func TestStoreTellsASuspendedDeviceApart(t *testing.T) {
 		t.Fatalf("committed=%t observer calls=%d, want false/1", transaction.committed, observer.calls)
 	}
 }
+
+// TestStoreLoadsDeviceNamingFacts: the snapshot carries the Device's DNS
+// label, its peers' labels and the scope's display codes (schema 168), and
+// a Device of the scope without a label fails the read closed.
+func TestStoreLoadsDeviceNamingFacts(t *testing.T) {
+	t.Parallel()
+	store, _, _, _, identity := validStoreFixture(t)
+	snapshot, err := store.Load(t.Context(), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	label, labeled := snapshot.DNSLabel()
+	workspaceCode, networkCode, coded := snapshot.DisplayCodes()
+	if !labeled || label.String() != "node-1" || !coded ||
+		workspaceCode.String() != testWorkspaceCode || networkCode.String() != testNetworkCode {
+		t.Fatalf("label %q (%v), codes %q %q (%v)", label, labeled, workspaceCode, networkCode, coded)
+	}
+	peers := snapshot.PeerCandidates()
+	if peerLabel, ok := peers[0].DNSLabel(); len(peers) != 1 || !ok || peerLabel.String() != "node-2" {
+		t.Fatalf("peer label = %q, %v", peerLabel, ok)
+	}
+	for name, mutate := range map[string]func(*fakeTransaction){
+		"self without label": func(transaction *fakeTransaction) {
+			record := transaction.rows[2].(snapshotRow).record
+			record.dnsLabel = nil
+			transaction.rows[2] = snapshotRow{record: record}
+		},
+		"self without codes": func(transaction *fakeTransaction) {
+			record := transaction.rows[2].(snapshotRow).record
+			record.networkCode = nil
+			transaction.rows[2] = snapshotRow{record: record}
+		},
+		"invalid label": func(transaction *fakeTransaction) {
+			record := transaction.rows[2].(snapshotRow).record
+			record.dnsLabel = textPointer("Node_1")
+			transaction.rows[2] = snapshotRow{record: record}
+		},
+		"peer without label": func(transaction *fakeTransaction) {
+			transaction.candidateRows.records[0].dnsLabel = nil
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			store, _, transaction, _, identity := validStoreFixture(t)
+			mutate(transaction)
+			if _, err := store.Load(t.Context(), identity); !errors.Is(err, ErrSnapshotEvidence) {
+				t.Fatalf("Load() error = %v, want snapshot evidence error", err)
+			}
+		})
+	}
+}

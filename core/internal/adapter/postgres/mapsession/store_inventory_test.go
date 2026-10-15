@@ -16,6 +16,7 @@ func selfCandidateRecord(record snapshotRecord) peerCandidateRecord {
 		ownerID: "01890f00-0000-7000-8000-000000000011", hostname: record.hostname,
 		machineKey: record.machineKey, nodeKey: record.nodeKey, sessionGeneration: record.sessionGeneration,
 		createdAt: record.createdAt, keyExpiry: record.keyExpiry, addresses: record.addresses,
+		dnsLabel: record.dnsLabel,
 	}
 }
 

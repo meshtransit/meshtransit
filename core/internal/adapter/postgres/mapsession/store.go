@@ -388,6 +388,9 @@ func (store *Store) loadSnapshot(
 		&record.policyRevision,
 		&record.addresses,
 		&record.readAt,
+		&record.dnsLabel,
+		&record.workspaceCode,
+		&record.networkCode,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return snapshotRead{}, appmapsession.ErrUnauthorized
@@ -626,10 +629,11 @@ func (store *Store) loadPeerCandidates(
 			&record.createdAt,
 			&record.keyExpiry,
 			&record.addresses,
+			&record.dnsLabel,
 		); err != nil {
 			return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("scan peer candidate: %w", err))
 		}
-		candidate, err := record.candidate(scope)
+		candidate, err := record.scopedCandidate(scope)
 		if err != nil {
 			return nil, err
 		}
