@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"meshtransit.net/core/internal/domain/identity"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
@@ -37,6 +38,7 @@ type Device struct {
 	version                         int64
 	createdAt, updatedAt, expiresAt time.Time
 	lifecycle                       Lifecycle
+	dnsLabel                        node.DNSLabel
 }
 
 // Member names one member a Device belongs to or is handed over to.
@@ -109,6 +111,21 @@ func NewDevice(id node.ID, hostname node.Hostname, state string, ephemeral bool,
 	return device, nil
 }
 
+// WithDNSLabel returns the Device with the DNS label it holds in its
+// Network (only a live Device holds one).
+func (device Device) WithDNSLabel(label node.DNSLabel) (Device, error) {
+	if !device.IsValid() || !label.IsValid() {
+		return Device{}, ErrInvalidResult
+	}
+	device.dnsLabel = label
+	return device, nil
+}
+
+// DNSLabel returns the Device's DNS label, if it holds one.
+func (device Device) DNSLabel() (node.DNSLabel, bool) {
+	return device.dnsLabel, device.dnsLabel.IsValid()
+}
+
 // ID returns the public Device identity.
 func (device Device) ID() node.ID { return device.id }
 
@@ -156,6 +173,8 @@ type ReadResult struct {
 	Scope    network.Scope
 	Revision int64
 	Devices  []Device
+	// The Workspace and Network display codes of the scope's DNS zone.
+	WorkspaceCode, NetworkCode identity.DisplayCode
 }
 
 // Reader authorizes and reads one snapshot from durable authority.
@@ -182,10 +201,17 @@ func NewService(reader Reader, clock Clock) (*Service, error) {
 
 // Page is an immutable, scope-bound inventory page.
 type Page struct {
-	scope    network.Scope
-	revision int64
-	devices  []Device
-	next     Cursor
+	scope                      network.Scope
+	revision                   int64
+	devices                    []Device
+	next                       Cursor
+	workspaceCode, networkCode identity.DisplayCode
+}
+
+// DisplayCodes returns the Workspace and Network display codes that, with
+// the deployment's DNS suffix, form the Network's DNS zone.
+func (page Page) DisplayCodes() (identity.DisplayCode, identity.DisplayCode) {
+	return page.workspaceCode, page.networkCode
 }
 
 // Scope returns the exact authorized Workspace and Network.
@@ -217,7 +243,8 @@ func (service *Service) List(ctx context.Context, session accountsession.Session
 	if err != nil {
 		return Page{}, err
 	}
-	if result.Scope != scope || result.Revision < 1 || len(result.Devices) > limit+1 {
+	if result.Scope != scope || result.Revision < 1 || len(result.Devices) > limit+1 ||
+		!result.WorkspaceCode.IsValid() || !result.NetworkCode.IsValid() {
 		return Page{}, ErrInvalidResult
 	}
 	if cursor.IsValid() && cursor.Revision != result.Revision {
@@ -229,7 +256,8 @@ func (service *Service) List(ctx context.Context, session accountsession.Session
 			return Page{}, ErrInvalidResult
 		}
 	}
-	page := Page{scope: scope, revision: result.Revision, devices: append([]Device(nil), result.Devices...)}
+	page := Page{scope: scope, revision: result.Revision, devices: append([]Device(nil), result.Devices...),
+		workspaceCode: result.WorkspaceCode, networkCode: result.NetworkCode}
 	if len(page.devices) > limit {
 		page.devices = page.devices[:limit]
 		page.next = Cursor{After: page.devices[limit-1].ID(), Revision: page.revision}

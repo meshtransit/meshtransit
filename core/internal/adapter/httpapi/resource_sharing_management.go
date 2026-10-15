@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/policy"
@@ -389,7 +390,7 @@ func (handler *ManagementHandler) createShareOffer(
 		(accessLabel.IsValid() && offer.AccessLabel() != accessLabel) {
 		return handler.writeSharingInternalError(ctx, response, correlationID)
 	}
-	data := shareOfferDataFromSnapshot(offer)
+	data := shareOfferDataFromSnapshot(offer, handler.dnsSuffix)
 	data.ProviderNetworkRevision = result.ProviderNetworkRevision()
 	data.ProviderSharingRevision = result.ProviderSharingRevision()
 	data.ConsumerNetworkRevision = result.ConsumerNetworkRevision()
@@ -474,7 +475,9 @@ func (handler *ManagementHandler) decideShareOffer(
 	}
 	var accessName sharing.AccessName
 	if body.AccessName != "" {
-		accessName, err = sharing.ParseAccessName(body.AccessName)
+		// A name presented under the deployment suffix is compared in its
+		// stored form.
+		accessName, err = sharing.ParseAccessName(handler.dnsSuffix.StoredSharedName(body.AccessName))
 		if err != nil {
 			return handler.writeSharingRequestError(ctx, response, correlationID)
 		}
@@ -523,6 +526,7 @@ func (handler *ManagementHandler) decideShareOffer(
 				contract,
 				result.ImportedResourceVersion(),
 				accessName,
+				handler.dnsSuffix,
 			),
 			CorrelationID: correlationID.String(),
 		})
@@ -530,7 +534,7 @@ func (handler *ManagementHandler) decideShareOffer(
 	}
 	response.Header().Set("ETag", strongVersionETag(offer.Offer().Version()))
 	writeManagementJSON(ctx, handler.logger, response, http.StatusOK, shareOfferEnvelope{
-		Data: shareOfferDataFromSnapshot(offer), CorrelationID: correlationID.String(),
+		Data: shareOfferDataFromSnapshot(offer, handler.dnsSuffix), CorrelationID: correlationID.String(),
 	})
 	return "success"
 }
@@ -629,6 +633,7 @@ func (handler *ManagementHandler) changeTrustContract(
 			contract,
 			result.ImportedResourceVersion(),
 			sharing.AccessName{},
+			handler.dnsSuffix,
 		),
 		CorrelationID: correlationID.String(),
 	})
@@ -667,7 +672,7 @@ func (handler *ManagementHandler) getShareOffer(
 	}
 	response.Header().Set("ETag", strongVersionETag(snapshot.Offer().Version()))
 	writeManagementJSON(ctx, handler.logger, response, http.StatusOK, shareOfferEnvelope{
-		Data: shareOfferDataFromSnapshot(snapshot), CorrelationID: correlationID.String(),
+		Data: shareOfferDataFromSnapshot(snapshot, handler.dnsSuffix), CorrelationID: correlationID.String(),
 	})
 	return "success"
 }
@@ -711,7 +716,7 @@ func (handler *ManagementHandler) listShareOffers(
 			direction == sharing.DirectionIncoming && item.Offer().ConsumerScope() != scope {
 			return handler.writeSharingInternalError(ctx, response, correlationID)
 		}
-		data[index] = shareOfferDataFromSnapshot(item)
+		data[index] = shareOfferDataFromSnapshot(item, handler.dnsSuffix)
 	}
 	nextToken := ""
 	if next, found := page.Next(); found {
@@ -974,7 +979,9 @@ func decodeSharingPageCursor(
 	return sharing.NewPageCursor(wire.Revision, after)
 }
 
-func shareOfferDataFromSnapshot(snapshot sharing.OfferSnapshot) shareOfferData {
+// shareOfferDataFromSnapshot renders an offer; its access name is presented
+// under the deployment's DNS suffix.
+func shareOfferDataFromSnapshot(snapshot sharing.OfferSnapshot, suffix dnsname.Suffix) shareOfferData {
 	offer := snapshot.Offer()
 	binding := snapshot.Resource()
 	data := shareOfferData{
@@ -994,7 +1001,7 @@ func shareOfferDataFromSnapshot(snapshot sharing.OfferSnapshot) shareOfferData {
 		data.AcceptedTrustContractID = contractID.String()
 	}
 	data.AccessLabel = snapshot.AccessLabel().String()
-	data.AccessName = snapshot.AccessName().String()
+	data.AccessName = suffix.SharedName(snapshot.AccessName().String())
 	if contract, accepted := snapshot.Contract(); accepted {
 		data.TrustContract = &shareOfferContract{
 			TrustContractID: contract.ID().String(), State: sharingContractStateString(contract.State()),
@@ -1031,11 +1038,12 @@ func shareContractDataFromResult(
 	contract sharing.Contract,
 	importedVersion int64,
 	accessName sharing.AccessName,
+	suffix dnsname.Suffix,
 ) shareContractData {
 	return shareContractData{
 		TrustContractID:    contract.ID().String(),
 		ImportedResourceID: contract.ImportedResourceID().String(),
-		AccessName:         accessName.String(),
+		AccessName:         suffix.SharedName(accessName.String()),
 		OfferID:            contract.OfferID().String(), State: sharingContractStateString(contract.State()),
 		Version: contract.Version(), ImportedResourceVersion: importedVersion,
 	}

@@ -15,16 +15,18 @@ import (
 )
 
 type inventoryTestReader struct {
-	scope network.Scope
-	err   error
-	reads int
+	scope   network.Scope
+	devices []inventory.Device
+	err     error
+	reads   int
 }
 
 func (reader *inventoryTestReader) ReadDevices(_ context.Context, _ accountsession.Session,
 	_ network.Scope, _ node.ID, _ int, _ time.Time,
 ) (inventory.ReadResult, error) {
 	reader.reads++
-	return inventory.ReadResult{Scope: reader.scope, Revision: 5}, reader.err
+	return inventory.ReadResult{Scope: reader.scope, Revision: 5, Devices: reader.devices,
+		WorkspaceCode: "000000000101", NetworkCode: "000000000201"}, reader.err
 }
 
 func deviceInventoryTestPath() string {
@@ -39,7 +41,7 @@ func TestBrowserDeviceInventoryFreshReadAndDeniedRefresh(t *testing.T) {
 	if !ok {
 		t.Fatal("valid exact scope rejected")
 	}
-	reader := &inventoryTestReader{scope: scope}
+	reader := &inventoryTestReader{scope: scope, devices: []inventory.Device{inventoryTestDevice(t)}}
 	service, err := inventory.NewService(reader, fixture)
 	if err != nil {
 		t.Fatal(err)
@@ -57,6 +59,9 @@ func TestBrowserDeviceInventoryFreshReadAndDeniedRefresh(t *testing.T) {
 		response.Header().Get("Cache-Control") != "no-store" || response.Header().Get("Set-Cookie") != "" ||
 		strings.Contains(response.Body.String(), managementTokenFixture) {
 		t.Fatal("inventory bypassed private read contract", response.Code)
+	}
+	if !strings.Contains(response.Body.String(), `"dns_name":"laptop.000000000101.000000000201.mesh.internal"`) {
+		t.Fatalf("inventory has no Device DNS name: %s", response.Body.String())
 	}
 	reader.err = inventory.ErrForbidden
 	response = &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
@@ -120,4 +125,21 @@ func TestBrowserDeviceInventoryRejectsPrivateTransportAndScopeCursor(t *testing.
 			t.Fatal("invalid inventory query accepted", query)
 		}
 	}
+}
+
+// inventoryTestDevice is one active Device labeled laptop.
+func inventoryTestDevice(t *testing.T) inventory.Device {
+	t.Helper()
+	id, _ := node.ParseID("01890f00-0000-7000-8000-000000000901")
+	hostname, _ := node.ParseHostname("laptop.example")
+	created := time.Date(2026, time.October, 1, 8, 0, 0, 0, time.UTC)
+	device, err := inventory.NewDevice(id, hostname, "active", false, 1, created, created, created.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	label, _ := node.ParseDNSLabel("laptop")
+	if device, err = device.WithDNSLabel(label); err != nil {
+		t.Fatal(err)
+	}
+	return device
 }

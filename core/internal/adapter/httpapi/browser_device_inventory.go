@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
@@ -114,6 +115,9 @@ type deviceInventoryItem struct {
 	Owner           *deviceInventoryMember `json:"owner"`
 	SuspendedReason *string                `json:"suspended_reason"`
 	HandoverTo      *deviceInventoryMember `json:"handover_to"`
+	// DNSName is <label>.<workspace code>.<network code>.<suffix>, null for
+	// a Device that holds no name (revoked).
+	DNSName *string `json:"dns_name"`
 }
 
 type deviceInventoryMember struct {
@@ -128,7 +132,7 @@ func newDeviceInventoryMember(member inventory.Member) *deviceInventoryMember {
 	return &deviceInventoryMember{PrincipalID: member.PrincipalID.String(), DisplayName: member.DisplayName}
 }
 
-func newDeviceInventoryItem(device inventory.Device) deviceInventoryItem {
+func newDeviceInventoryItem(device inventory.Device, zone dnsname.Zone) deviceInventoryItem {
 	lifecycle := device.Lifecycle()
 	item := deviceInventoryItem{ID: device.ID().String(), Hostname: device.Hostname(),
 		State: device.State(), Ephemeral: device.Ephemeral(), Version: device.Version(),
@@ -141,6 +145,11 @@ func newDeviceInventoryItem(device inventory.Device) deviceInventoryItem {
 	if lifecycle.SuspendedReason != "" {
 		reason := lifecycle.SuspendedReason
 		item.SuspendedReason = &reason
+	}
+	if label, labeled := device.DNSLabel(); labeled {
+		if name, named := zone.DeviceName(label); named {
+			item.DNSName = &name
+		}
 	}
 	return item
 }
@@ -215,10 +224,16 @@ func (browser *BrowserManagement) readDeviceInventory(ctx context.Context, respo
 		fail(internalManagementError())
 		return nil
 	}
+	workspaceCode, networkCode := page.DisplayCodes()
+	zone, err := dnsname.NewZone(workspaceCode, networkCode, browser.management.dnsSuffix)
+	if err != nil {
+		fail(internalManagementError())
+		return nil
+	}
 	data := deviceInventoryData{WorkspaceID: scope.WorkspaceID().String(), NetworkID: scope.NetworkID().String(),
 		Revision: page.Revision(), Devices: make([]deviceInventoryItem, 0, limit)}
 	for _, device := range page.Devices() {
-		data.Devices = append(data.Devices, newDeviceInventoryItem(device))
+		data.Devices = append(data.Devices, newDeviceInventoryItem(device, zone))
 	}
 	next := ""
 	if cursor, ok := page.Next(); ok {

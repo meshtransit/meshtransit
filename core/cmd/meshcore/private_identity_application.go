@@ -13,6 +13,7 @@ import (
 	"meshtransit.net/api/openapi"
 	"meshtransit.net/core/internal/adapter/httpapi"
 	"meshtransit.net/core/internal/adapter/oidc"
+	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/identity/oidcauth"
 	"meshtransit.net/core/internal/platform/ratelimit"
@@ -41,6 +42,8 @@ type privateIdentityManagementOptions struct {
 	RequestTimeout, ProofLifetime     time.Duration
 	MaxConcurrent                     int
 	SourceRateLimit, SessionRateLimit ratelimit.Policy
+	// DNSSuffix names Devices and shares in responses; zero: the default.
+	DNSSuffix dnsname.Suffix
 }
 
 // Ports are effects, not prebuilt authentication services or secret owners.
@@ -231,6 +234,7 @@ func composePrivateIdentity(
 		TrustedProxyPrefixes: profile.TrustedProxyPrefixes, SourceRateLimit: managementOptions.SourceRateLimit,
 		SessionRateLimit: managementOptions.SessionRateLimit, CorrelationIDs: ports.CorrelationIDs, Logger: ports.Logger,
 		RequestTimeout: managementOptions.RequestTimeout, MaxConcurrentRequests: managementOptions.MaxConcurrent,
+		DNSSuffix: managementOptions.DNSSuffix,
 	})
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition

@@ -92,6 +92,17 @@ func (suffix Suffix) SharedName(stored string) string {
 	return presented
 }
 
+// StoredSharedName is the inverse of SharedName: a name ending in
+// .shared.<suffix> is returned ending in .shared.mesh, the form Core stores
+// and compares. Any other name is returned unchanged.
+func (suffix Suffix) StoredSharedName(presented string) string {
+	presentedSuffix := "." + sharedLabel + "." + suffix.value
+	if !suffix.IsValid() || !strings.HasSuffix(presented, presentedSuffix) {
+		return presented
+	}
+	return presented[:len(presented)-len(presentedSuffix)] + storedSharedSuffix
+}
+
 // Zone is one Network's DNS zone: <workspace code>.<network code>.<suffix>.
 type Zone struct {
 	value string

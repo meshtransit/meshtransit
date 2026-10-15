@@ -2919,7 +2919,7 @@
           },
           "provider_workspace_code": {"type": "string", "pattern": "^[0-9]{12}$"},
           "provider_network_code": {"type": "string", "pattern": "^[0-9]{12}$"},
-          "access_name": {"type": ["string", "null"], "maxLength": 253}
+          "access_name": {"type": ["string", "null"], "maxLength": 253, "description": "Consumer DNS name; a derived name is presented under the deployment's DNS suffix (…shared.<suffix>)."}
         }
       },
       "ExplainedPolicyAction": {
@@ -3597,7 +3597,7 @@
           "consumer_network_id": {"$ref": "#/components/schemas/PublicID"},
           "offer_token": {"type": "string", "minLength": 43, "maxLength": 43, "pattern": "^[A-Za-z0-9_-]{43}$"},
           "imported_display_name": {"type": "string", "minLength": 1, "maxLength": 128},
-          "access_name": {"type": "string", "minLength": 3, "maxLength": 253, "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", "description": "Forbidden for reject or revoke. On accept of a labeled offer it may be omitted and, when present, must equal the offer access_name; an unlabeled offer requires it. Canonical lower-case consumer-local DNS name."},
+          "access_name": {"type": "string", "minLength": 3, "maxLength": 253, "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", "description": "Forbidden for reject or revoke. On accept of a labeled offer it may be omitted and, when present, must equal the offer access_name; an unlabeled offer requires it. Canonical lower-case consumer-local DNS name; a name ending in .shared.<DNS suffix> is the same name as the offer presents it."},
           "reason": {"type": "string", "minLength": 1, "maxLength": 512}
         }
       },
@@ -3667,7 +3667,7 @@
           "consumer_workspace_code": {"type": "string", "pattern": "^[0-9]{12}$"},
           "consumer_network_code": {"type": "string", "pattern": "^[0-9]{12}$"},
           "access_label": {"type": "string", "minLength": 1, "maxLength": 63, "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", "readOnly": true, "description": "Frozen provider label; absent for offers created before labels."},
-          "access_name": {"type": "string", "minLength": 3, "maxLength": 253, "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", "readOnly": true, "description": "Consumer DNS name acceptance reserves; present exactly when access_label is."},
+          "access_name": {"type": "string", "minLength": 3, "maxLength": 253, "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", "readOnly": true, "description": "Consumer DNS name acceptance reserves; present exactly when access_label is. Derived names are presented under the deployment's DNS suffix: <label>.<workspace code>.<network code>.shared.<suffix> (default suffix mesh.internal)."},
           "created_at": {"type": "string", "format": "date-time"},
           "expires_at": {"type": "string", "format": "date-time", "description": "Offer decision deadline, at most seven days after creation."},
           "share_expires_at": {"type": "string", "format": "date-time", "description": "Share grant deadline after acceptance; 2200-01-01T00:00:00Z represents until revoked."},
@@ -3705,7 +3705,7 @@
         "properties": {
           "trust_contract_id": {"$ref": "#/components/schemas/PublicID"},
           "imported_resource_id": {"$ref": "#/components/schemas/PublicID"},
-          "access_name": {"type": "string", "minLength": 3, "maxLength": 253, "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", "readOnly": true},
+          "access_name": {"type": "string", "minLength": 3, "maxLength": 253, "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", "readOnly": true, "description": "Consumer DNS name; a derived name is presented under the deployment's DNS suffix (…shared.<suffix>)."},
           "offer_id": {"$ref": "#/components/schemas/PublicID"},
           "state": {"type": "string", "enum": ["activating", "active", "revoked", "expired", "invalidated"]},
           "version": {"type": "integer", "format": "int64", "minimum": 1},
@@ -3747,7 +3747,8 @@
             "minLength": 3,
             "maxLength": 253,
             "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$",
-            "readOnly": true
+            "readOnly": true,
+            "description": "Consumer DNS name; a derived name is presented under the deployment's DNS suffix (…shared.<suffix>)."
           },
           "offer_id": {
             "$ref": "#/components/schemas/PublicID"

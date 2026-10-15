@@ -767,7 +767,7 @@ func TestManagementHandlerCreatesShareOfferWithProviderLabel(t *testing.T) {
 			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil ||
 				captured.AccessLabel().String() != wantLabel ||
 				body.Data.AccessLabel != "poc01" ||
-				body.Data.AccessName != "poc01.111111111111.222222222222.shared.mesh" {
+				body.Data.AccessName != "poc01.111111111111.222222222222.shared.mesh.internal" {
 				t.Fatalf("captured label %q, response %+v, error %v", captured.AccessLabel(), body.Data, err)
 			}
 		})
@@ -827,7 +827,15 @@ func TestManagementHandlerAcceptsLabeledShareOfferWithoutAccessName(t *testing.T
 	var envelope shareContractEnvelope
 	if response.Code != http.StatusOK || !captured.IsValid() || captured.AccessName() != (sharing.AccessName{}) ||
 		json.Unmarshal(response.Body.Bytes(), &envelope) != nil ||
-		envelope.Data.AccessName != "poc01.111111111111.222222222222.shared.mesh" {
+		envelope.Data.AccessName != "poc01.111111111111.222222222222.shared.mesh.internal" {
 		t.Fatalf("status/command/body = %d/%+v/%s", response.Code, captured, response.Body.String())
+	}
+
+	// The name as presented is compared in its stored form.
+	presented := strings.Replace(body, `"reason"`, `"access_name":"`+envelope.Data.AccessName+`","reason"`, 1)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, newManagementRequest(t, http.MethodPost, path, presented))
+	if response.Code != http.StatusOK || captured.AccessName() != name {
+		t.Fatalf("presented name: status %d, command name %q, want %q", response.Code, captured.AccessName(), name)
 	}
 }

@@ -52,7 +52,8 @@ func (handler *ManagementHandler) getTrustContract(ctx context.Context, response
 		return handler.writeSharingInternalError(ctx, response, correlationID)
 	}
 	data := shareContractDetailData{
-		shareContractData:   shareContractDataFromResult(contract, snapshot.ImportedResourceVersion(), snapshot.AccessName()),
+		shareContractData: shareContractDataFromResult(contract, snapshot.ImportedResourceVersion(), snapshot.AccessName(),
+			handler.dnsSuffix),
 		ImportedDisplayName: snapshot.ImportedDisplayName().String(),
 		ScopeRelation:       contract.ScopeRelation().String(),
 		ProviderWorkspaceID: contract.ProviderScope().WorkspaceID().String(), ProviderNetworkID: contract.ProviderScope().NetworkID().String(),

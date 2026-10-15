@@ -13,6 +13,7 @@ import (
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	"meshtransit.net/core/internal/domain/accessgraph"
 	"meshtransit.net/core/internal/domain/accessgraph/simulation"
+	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/node/revocation"
 	policyapproval "meshtransit.net/core/internal/domain/policy/approval"
@@ -47,10 +48,13 @@ type managementCompositionKeys struct {
 type managementCompositionOptions struct {
 	API  config.APIConfig
 	Keys managementCompositionKeys
+	// DNSSuffix presents share names (MESHTRANSIT_DNS_SUFFIX); zero: the default.
+	DNSSuffix dnsname.Suffix
 }
 
 func composeManagementAPI(
 	apiConfig config.APIConfig,
+	dnsSuffix dnsname.Suffix,
 	runtimePool *postgresadapter.Pool,
 	rateLimiter httpapi.ManagementRateLimiter,
 	logger *slog.Logger,
@@ -74,6 +78,7 @@ func composeManagementAPI(
 		API: apiConfig, Keys: managementCompositionKeys{
 			sessions: keyring, idempotency: idempotencyDigester, rateLimit: rateLimitDigester,
 		},
+		DNSSuffix: dnsSuffix,
 	}, runtimePool, rateLimiter, logger)
 }
 
@@ -397,6 +402,7 @@ func composeManagementAPIWithKeys(
 		CorrelationIDs: httpapi.PublicCorrelationIDGenerator{}, Logger: logger,
 		RequestTimeout:        apiConfig.RequestTimeout,
 		MaxConcurrentRequests: apiConfig.MaxConcurrentRequests,
+		DNSSuffix:             options.DNSSuffix,
 	})
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)

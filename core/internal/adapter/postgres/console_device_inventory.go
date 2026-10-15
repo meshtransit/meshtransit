@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"meshtransit.net/core/internal/domain/identity"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
@@ -16,7 +17,9 @@ import (
 	"meshtransit.net/core/internal/domain/workspace"
 )
 
-const readConsoleDeviceInventorySQL = `SELECT mesh_ops.read_console_devices_v2(
+// readConsoleDeviceInventorySQL reads v2 with each Device's DNS label and
+// the scope's display codes (schema 168).
+const readConsoleDeviceInventorySQL = `SELECT mesh_ops.read_console_devices_v3(
     $1::UUID, $2::UUID, $3::UUID, $4::UUID,
     $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
     $10::UUID, $11::UUID, $12::TIMESTAMPTZ, $13::UUID, $14::INTEGER
@@ -115,7 +118,10 @@ type consoleDeviceInventoryWire struct {
 	WorkspaceID string `json:"workspace_id"`
 	NetworkID   string `json:"network_id"`
 	Revision    int64  `json:"inventory_revision"`
-	Devices     []struct {
+	// Schema 168: the scope's display codes.
+	WorkspaceCode string `json:"workspace_code"`
+	NetworkCode   string `json:"network_code"`
+	Devices       []struct {
 		ID        string    `json:"id"`
 		Hostname  string    `json:"hostname"`
 		State     string    `json:"state"`
@@ -129,6 +135,8 @@ type consoleDeviceInventoryWire struct {
 		Owner           *consoleDeviceInventoryMember `json:"owner"`
 		SuspendedReason *string                       `json:"suspended_reason"`
 		HandoverTo      *consoleDeviceInventoryMember `json:"handover_to"`
+		// Schema 168: null for a Device that holds no label (revoked).
+		DNSLabel *string `json:"dns_label"`
 	} `json:"devices"`
 }
 
@@ -165,7 +173,13 @@ func decodeConsoleDeviceInventory(encoded string) (inventory.ReadResult, error) 
 	if workspaceErr != nil || networkErr != nil || scopeErr != nil || wire.Revision < 1 {
 		return inventory.ReadResult{}, inventory.ErrInvalidResult
 	}
-	result := inventory.ReadResult{Scope: scope, Revision: wire.Revision, Devices: make([]inventory.Device, len(wire.Devices))}
+	workspaceCode, workspaceCodeErr := identity.ParseDisplayCode(wire.WorkspaceCode)
+	networkCode, networkCodeErr := identity.ParseDisplayCode(wire.NetworkCode)
+	if workspaceCodeErr != nil || networkCodeErr != nil {
+		return inventory.ReadResult{}, inventory.ErrInvalidResult
+	}
+	result := inventory.ReadResult{Scope: scope, Revision: wire.Revision, Devices: make([]inventory.Device, len(wire.Devices)),
+		WorkspaceCode: workspaceCode, NetworkCode: networkCode}
 	for index, item := range wire.Devices {
 		if item.Ephemeral == nil {
 			return inventory.ReadResult{}, inventory.ErrInvalidResult
@@ -185,6 +199,15 @@ func decodeConsoleDeviceInventory(encoded string) (inventory.ReadResult, error) 
 		}
 		if device, deviceErr = device.WithLifecycle(lifecycle); deviceErr != nil {
 			return inventory.ReadResult{}, inventory.ErrInvalidResult
+		}
+		if item.DNSLabel != nil {
+			label, labelErr := node.ParseDNSLabel(*item.DNSLabel)
+			if labelErr != nil {
+				return inventory.ReadResult{}, inventory.ErrInvalidResult
+			}
+			if device, deviceErr = device.WithDNSLabel(label); deviceErr != nil {
+				return inventory.ReadResult{}, inventory.ErrInvalidResult
+			}
 		}
 		result.Devices[index] = device
 	}

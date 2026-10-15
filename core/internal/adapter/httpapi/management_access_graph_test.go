@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"meshtransit.net/core/internal/domain/accessgraph"
+	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/identity"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/node"
@@ -422,4 +423,24 @@ func validAccessGraphExplainBody() string {
 	return `{"source_device_id":"01890f00-0000-7000-8000-000000000301",` +
 		`"destination_resource_id":"01890f00-0000-7000-8000-000000000601",` +
 		`"protocol":"tcp","destination_port":443}`
+}
+
+// TestExplainedPolicySharePresentsNameUnderSuffix: a stored share name
+// (…shared.mesh) is presented under the deployment's suffix.
+func TestExplainedPolicySharePresentsNameUnderSuffix(t *testing.T) {
+	t.Parallel()
+	share := managementAccessGraphShare(t, sharing.ContractStateActive)
+	for suffix, want := range map[string]string{
+		"mesh.internal": "poc01.280133080243.467111232749.shared.mesh.internal",
+		"corp.example":  "poc01.280133080243.467111232749.shared.corp.example",
+	} {
+		parsed, err := dnsname.ParseSuffix(suffix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rendered := newExplainedPolicyShare(*share, parsed)
+		if rendered.AccessName == nil || *rendered.AccessName != want {
+			t.Fatalf("suffix %s: access name = %v, want %s", suffix, rendered.AccessName, want)
+		}
+	}
 }

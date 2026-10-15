@@ -16,6 +16,7 @@ import (
 	"meshtransit.net/core/internal/domain/devicegroup"
 	"meshtransit.net/core/internal/domain/devicelifecycle"
 	"meshtransit.net/core/internal/domain/devicetag"
+	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/guardrail"
 	"meshtransit.net/core/internal/domain/identity/oidcauth"
 	"meshtransit.net/core/internal/domain/identity/sessioncontext"
@@ -65,6 +66,9 @@ type privateIdentityFactoryDependencies struct {
 	Signup *config.SignupConfig
 	// Interchange is shown with the Private Interchange relay command.
 	Interchange *config.InterchangeConfig
+	// DNSSuffix names Devices and shares in Console responses
+	// (MESHTRANSIT_DNS_SUFFIX); the zero value is the default.
+	DNSSuffix dnsname.Suffix
 }
 
 // This owner closes only its HTTP clients. Admission/drain and borrowed pool/
@@ -95,6 +99,7 @@ func composePrivateIdentityFactory(
 	ctx, cancel := context.WithTimeout(ctx, privateIdentityConstructionTimeout)
 	defer cancel()
 	application := options.Application
+	application.Management.DNSSuffix = dependencies.DNSSuffix
 	explicitDiscovery := options.Discovery.Timeout > 0 && options.Discovery.MaxMetadataBytes > 0
 	discoveryWithinWork := options.Discovery.Timeout <= application.Start.RequestTimeout
 	tokenWithinWork := options.Token.Timeout <= application.Callback.RequestTimeout

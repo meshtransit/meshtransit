@@ -327,7 +327,8 @@
                   "ownership",
                   "owner",
                   "suspended_reason",
-                  "handover_to"
+                  "handover_to",
+                  "dns_name"
                 ],
                 "properties": {
                   "id": {
@@ -433,6 +434,15 @@
                       }
                     },
                     "description": "The member a handover waits for."
+                  },
+                  "dns_name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "minLength": 1,
+                    "maxLength": 253,
+                    "description": "The Device's DNS name <label>.<workspace code>.<network code>.<suffix>, unique in the Network; null for a Device that holds no name (revoked or deleted). The suffix is the deployment's (default mesh.internal)."
                   }
                 }
               }

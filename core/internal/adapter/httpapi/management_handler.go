@@ -17,6 +17,7 @@ import (
 
 	"meshtransit.net/core/internal/domain/accessgraph"
 	"meshtransit.net/core/internal/domain/accessgraph/simulation"
+	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
@@ -293,6 +294,9 @@ type ManagementHandlerOptions struct {
 	Logger                    *slog.Logger
 	RequestTimeout            time.Duration
 	MaxConcurrentRequests     int
+	// DNSSuffix presents share access names under the deployment's suffix
+	// (MESHTRANSIT_DNS_SUFFIX); the zero value is dnsname.DefaultSuffix.
+	DNSSuffix dnsname.Suffix
 }
 
 // ManagementHandler validates public management requests before application use cases.
@@ -341,6 +345,7 @@ type ManagementHandler struct {
 	sourcePolicy              ratelimit.Policy
 	sessionPolicy             ratelimit.Policy
 	correlationIDs            PublicIDGenerator
+	dnsSuffix                 dnsname.Suffix
 	logger                    *slog.Logger
 	timeout                   time.Duration
 	slots                     chan struct{}
@@ -415,6 +420,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		sourcePolicy:              options.SourceRateLimit,
 		sessionPolicy:             options.SessionRateLimit,
 		correlationIDs:            options.CorrelationIDs,
+		dnsSuffix:                 managementDNSSuffix(options.DNSSuffix),
 		logger:                    options.Logger,
 		timeout:                   options.RequestTimeout,
 		slots:                     make(chan struct{}, options.MaxConcurrentRequests),
@@ -1105,4 +1111,12 @@ func (PublicCorrelationIDGenerator) NewID() (publicid.ID, error) {
 		return publicid.ID{}, fmt.Errorf("generate management correlation id: %w", err)
 	}
 	return id, nil
+}
+
+// managementDNSSuffix is suffix, or the default for the zero value.
+func managementDNSSuffix(suffix dnsname.Suffix) dnsname.Suffix {
+	if suffix.IsValid() {
+		return suffix
+	}
+	return dnsname.Default()
 }

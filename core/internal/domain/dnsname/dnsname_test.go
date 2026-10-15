@@ -115,6 +115,9 @@ func TestSharedNameMovesUnderSuffix(t *testing.T) {
 			if len(got)+1 > 253 {
 				t.Fatalf("SharedName(%q) is %d bytes with its root dot", test.stored, len(got)+1)
 			}
+			if test.suffix.IsValid() && test.suffix.StoredSharedName(got) != test.stored {
+				t.Fatalf("StoredSharedName(%q) = %q, want %q", got, test.suffix.StoredSharedName(got), test.stored)
+			}
 		})
 	}
 }

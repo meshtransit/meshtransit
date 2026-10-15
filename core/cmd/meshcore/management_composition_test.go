@@ -38,6 +38,7 @@ func TestComposeManagementAPIBuildsBoundedServer(t *testing.T) {
 
 	server, metrics, err := composeManagementAPI(
 		*processConfig.API,
+		processConfig.DNSSuffix,
 		runtimePool,
 		managementCompositionRateLimiter{},
 		discardCompositionLogger(),

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"meshtransit.net/core/internal/domain/accessgraph"
+	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
@@ -141,7 +142,7 @@ func (handler *ManagementHandler) listAccessGraph(
 	response.Header().Set("ETag", strongVersionETag(page.Revision().PolicyRevision()))
 	response.Header().Set("Cache-Control", "no-store")
 	writeManagementJSON(ctx, handler.logger, response, http.StatusOK, accessGraphListResponse{
-		Data:          newAccessGraphListing(page),
+		Data:          newAccessGraphListing(page, handler.dnsSuffix),
 		CorrelationID: correlationID.String(),
 	})
 	return "success"
@@ -184,7 +185,7 @@ type accessGraphNode struct {
 	Share *explainedPolicyShare `json:"share"`
 }
 
-func newAccessGraphListing(page accessgraph.GraphPage) accessGraphListing {
+func newAccessGraphListing(page accessgraph.GraphPage, suffix dnsname.Suffix) accessGraphListing {
 	revision := page.Revision()
 	releaseID, compilerFormat, semanticHash, hasRelease := page.ActiveRelease()
 	evidence := newExplainedPolicyEvidenceFrom(revision, releaseID.String(), compilerFormat, semanticHash, hasRelease)
@@ -205,7 +206,7 @@ func newAccessGraphListing(page accessgraph.GraphPage) accessGraphListing {
 			rendered.ID = graphNode.ImportedResourceID().String()
 		}
 		if share, ok := graphNode.Share(); ok {
-			rendered.Share = newExplainedPolicyShare(share)
+			rendered.Share = newExplainedPolicyShare(share, suffix)
 		}
 		nodes[index] = rendered
 	}
@@ -220,12 +221,14 @@ func newAccessGraphListing(page accessgraph.GraphPage) accessGraphListing {
 	return listing
 }
 
-func newExplainedPolicyShare(share accessgraph.ShareContext) *explainedPolicyShare {
+// newExplainedPolicyShare renders a share; its access name is presented
+// under the deployment's DNS suffix.
+func newExplainedPolicyShare(share accessgraph.ShareContext, suffix dnsname.Suffix) *explainedPolicyShare {
 	rendered := &explainedPolicyShare{
 		TrustContractID: share.ContractID().String(), State: sharingContractStateString(share.State()),
 		ProviderWorkspaceCode: share.ProviderWorkspaceCode().String(),
 		ProviderNetworkCode:   share.ProviderNetworkCode().String(),
-		AccessName:            optionalText(share.AccessName()),
+		AccessName:            optionalText(suffix.SharedName(share.AccessName())),
 	}
 	if expiresAt, expires := share.ExpiresAt(); expires {
 		value := expiresAt.UTC().Format(time.RFC3339)

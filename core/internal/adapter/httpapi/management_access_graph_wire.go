@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 
 	"meshtransit.net/core/internal/domain/accessgraph"
+	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/policy"
 	"meshtransit.net/core/internal/domain/policy/publication"
 )
@@ -38,7 +39,7 @@ type explainedPolicyShare struct {
 }
 
 // newExplainedPolicy renders one validated explanation for the wire.
-func newExplainedPolicy(query accessgraph.Query, result accessgraph.Result) explainedPolicy {
+func newExplainedPolicy(query accessgraph.Query, result accessgraph.Result, suffix dnsname.Suffix) explainedPolicy {
 	snapshot := result.Snapshot()
 	explained := explainedPolicy{
 		Decision: result.Decision().String(), Reason: result.Reason().String(),
@@ -46,7 +47,7 @@ func newExplainedPolicy(query accessgraph.Query, result accessgraph.Result) expl
 		Subject: explainedPolicySubject{DeviceID: query.SourceNodeID().String()},
 		Target:  newExplainedPolicyTarget(query), Evidence: newExplainedPolicyEvidence(snapshot),
 		Paths: newExplainedPolicyPaths(result.Paths()), Truncated: result.Truncated(),
-		Context: newExplainedPolicyContext(snapshot),
+		Context: newExplainedPolicyContext(snapshot, suffix),
 	}
 	if reason, denied := result.DenyReason(); denied {
 		value := reason.String()
@@ -152,7 +153,7 @@ func newExplainedPolicyPaths(paths []accessgraph.Path) []explainedPolicyPath {
 	return rendered
 }
 
-func newExplainedPolicyContext(snapshot accessgraph.Snapshot) explainedPolicyContext {
+func newExplainedPolicyContext(snapshot accessgraph.Snapshot, suffix dnsname.Suffix) explainedPolicyContext {
 	source, target := snapshot.Source(), snapshot.Target()
 	context := explainedPolicyContext{
 		Source: explainedPolicyParticipant{State: source.State().String(), Name: optionalText(source.Name())},
@@ -161,7 +162,7 @@ func newExplainedPolicyContext(snapshot accessgraph.Snapshot) explainedPolicyCon
 		},
 	}
 	if share, ok := snapshot.Share(); ok {
-		context.Share = newExplainedPolicyShare(share)
+		context.Share = newExplainedPolicyShare(share, suffix)
 	}
 	return context
 }

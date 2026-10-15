@@ -162,7 +162,7 @@ func (handler *ManagementHandler) explainPolicy(
 	input.response.Header().Set("ETag", strongVersionETag(snapshot.PolicyRevision()))
 	input.response.Header().Set("Cache-Control", "no-store")
 	writeManagementJSON(ctx, handler.logger, input.response, http.StatusOK, explainPolicyResponse{
-		Data:          newExplainedPolicy(query, result),
+		Data:          newExplainedPolicy(query, result, handler.dnsSuffix),
 		CorrelationID: input.correlationID.String(),
 	})
 	return "success"
