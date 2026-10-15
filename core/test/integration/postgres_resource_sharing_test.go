@@ -1198,6 +1198,16 @@ func assertPrivateEndpointPublication(
 ) {
 	t.Helper()
 	const deploymentID = "01890f00-0000-7000-8000-000000000001"
+	// These schema 55 functions take no account of the clock that created
+	// the endpoint (MeshCore's), and the confirmation refuses a snapshot
+	// older than it; the schema 168 worker reads wait for the database clock
+	// to reach it, and so does this qualification of the previous binary's.
+	if _, err := admin.Exec(ctx, `SELECT pg_catalog.pg_sleep_until(endpoint.created_at)
+FROM mesh.private_endpoint AS endpoint
+JOIN mesh.imported_resource AS imported ON imported.id = endpoint.imported_resource_id
+WHERE imported.public_id = $1::UUID`, importedResourceID.String()); err != nil {
+		t.Fatalf("wait for the database clock to reach the Private Endpoint: %v", err)
+	}
 	var encoded []byte
 	if err := worker.QueryRow(ctx, `SELECT
     mesh_ops.list_private_endpoint_publication_candidates_v1($1::UUID, 128)`,
