@@ -5,6 +5,13 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: a node must take each whole MTCP message within 30 s plus its size at
+  64 KiB/s (at most 10 minutes), besides 10 s per record; otherwise Core
+  closes the session (counted as `send_deadline` in
+  `meshtransit_mtcp_session_limits_total`) and the node reconnects. A node
+  reading one record every few seconds could hold a 32 MiB map in Core's
+  memory for over an hour. The protocol limits table described a 16 MiB
+  outbound buffer that never existed; it now states the real bounds.
 - Core: policy simulation evaluates guardrails. `guardrail_findings` lists,
   for each proposed path to an Imported Resource, the guardrails publication
   would apply: the publishing Workspace's by name, and the provider's only

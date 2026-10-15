@@ -29,9 +29,12 @@ const (
 	limitEnforcement = "enforcement"
 	limitBrowser     = "browser"
 	limitIdentity    = "identity"
+	// limitSendDeadline: a message was not sent by its send deadline.
+	limitSendDeadline = "send_deadline"
 )
 
-var sessionLimits = []string{limitInbound, limitResync, limitEnforcement, limitBrowser, limitIdentity}
+var sessionLimits = []string{limitInbound, limitResync, limitEnforcement, limitBrowser, limitIdentity,
+	limitSendDeadline}
 
 // streamEndReasons is the closed set of map stream end causes.
 var streamEndReasons = []string{

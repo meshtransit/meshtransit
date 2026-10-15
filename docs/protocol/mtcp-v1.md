@@ -762,7 +762,7 @@ Unknown names are ignored. Core sends a feature only when both sides list it.
 | A Device's live presence lease moving to another Core replica | 10 per minute; past it the stream ends with `Lifecycle{RECONNECT, retry_after_ms}` until the minute is over. Two processes sharing one machine key are bounded to that rate, not stopped; a reconnect after a replica ended, a rolling update or a rebalance moves it once. A refused attempt still costs Core the snapshot and relay ticket it prepared, but not their delivery |
 | Everything a node sends, per session | 200 messages at once, then 50 per second, and 1 MiB of records at once, then 256 KiB per second; over either, fatal `Error{OVERLOADED, retry_after_ms}`. `MapAck` counts only as bytes: it answers map messages Core chose to send, and nodes that ack every message (7.2) must not reach the limit |
 | Lifetime of a session that receives no map snapshot | 15 minutes by default, configurable; longer than a browser approval (6.2), then the session closes |
-| Buffered outbound bytes per session | 16 MiB plus one snapshot in flight; beyond it the session closes |
+| Outbound messages per session | No send queue: one message is written at a time. Each record must be written within 10 s, and each whole message within 30 s plus its size at 64 KiB/s, at most 10 minutes; otherwise Core closes the session and the node reconnects |
 | Unacknowledged map messages | 8 (7.2) |
 | Reports | per type, section 8 |
 
@@ -805,7 +805,7 @@ secrets or other tenants' data, and is at most 512 bytes.
 | C3 | Stolen machine key | Bound to one Device; admins revoke the Device; key never leaves the node's protected store |
 | C4 | Handshake flood exhausts Core CPU | Per-IP rate and connection limits before X25519; load shedding with 503 |
 | C5 | Compression or reassembly bomb | Limits enforced during reassembly and decompression; declared decompressed size required; 8 MiB window |
-| C6 | Slow node exhausts Core memory | Ack window, coalescing, snapshot fallback, 16 MiB outbound cap |
+| C6 | Slow node exhausts Core memory | Ack window, coalescing, snapshot fallback, no send queue, per-record and per-message send deadlines |
 | C7 | Cross-tenant disclosure through the map | The map contains only peers the node may reach or be reached by; error messages carry no foreign data |
 | C8 | Malicious node floods reports | Per-type rate limits, latest-wins coalescing, size caps |
 | C9 | Downgrade to an older protocol | No in-band version fallback; no older protocol is served |

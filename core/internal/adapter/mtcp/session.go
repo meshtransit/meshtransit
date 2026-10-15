@@ -3,6 +3,7 @@ package mtcp
 import (
 	"context"
 	"errors"
+	"os"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -114,13 +115,30 @@ func (session *Session) Send(t sharedmtcp.MessageType, message proto.Message) er
 	}
 	session.sendMu.Lock()
 	defer session.sendMu.Unlock()
+	size := 0
+	for _, fragment := range fragments {
+		size += len(fragment)
+	}
+	// Each record still has writeTimeout, but the whole message must also go
+	// out by its send deadline: a node that reads one record every few
+	// seconds cannot hold a large map in memory for an hour (mtcp-v1 §14).
+	overall := sendDeadline(session.server.options.Now(), size)
 	for _, fragment := range fragments {
 		record, err := session.noise.Seal(nil, fragment)
 		if err != nil {
 			return err
 		}
-		if err := session.transport.WriteRecord(sharedmtcp.RecordTransport, record,
-			session.server.options.Now().Add(writeTimeout)); err != nil {
+		deadline := session.server.options.Now().Add(writeTimeout)
+		if deadline.After(overall) {
+			deadline = overall
+		}
+		if err := session.transport.WriteRecord(sharedmtcp.RecordTransport, record, deadline); err != nil {
+			if !session.server.options.Now().Before(overall) &&
+				(errors.Is(err, os.ErrDeadlineExceeded) || errors.Is(err, context.DeadlineExceeded)) {
+				session.server.options.Metrics.limited(limitSendDeadline)
+				session.close(errSendDeadline)
+				return errors.Join(errSendDeadline, err)
+			}
 			return err
 		}
 	}
@@ -135,6 +153,23 @@ func (session *Session) SendError(code mtcpv1.Error_Code, message string, fatal 
 	if fatal {
 		session.close(ErrProtocol)
 	}
+}
+
+// Send deadline (mtcp-v1 §14): every message gets sendDeadlineBase plus the
+// time to send it at sendMinimumRate, at most sendDeadlineMaximum.
+const (
+	sendDeadlineBase    = 30 * time.Second
+	sendMinimumRate     = 64 * 1024 // bytes per second
+	sendDeadlineMaximum = 10 * time.Minute
+)
+
+// errSendDeadline ends a session that did not take a message by its send
+// deadline; the node reconnects.
+var errSendDeadline = errors.New("mtcp: message not sent by its deadline")
+
+func sendDeadline(start time.Time, size int) time.Time {
+	limit := sendDeadlineBase + time.Duration(size)*time.Second/sendMinimumRate
+	return start.Add(min(limit, sendDeadlineMaximum))
 }
 
 // errSessionLimited ends a session that went over one of its limits.
