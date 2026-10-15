@@ -12,8 +12,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 168 {
-		t.Fatalf("len(Catalog()) = %d, want 168", len(catalog))
+	if len(catalog) != 169 {
+		t.Fatalf("len(Catalog()) = %d, want 169", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1608,8 +1608,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 168 {
-		t.Fatalf("LatestVersion() = %d, want 168", LatestVersion())
+	if LatestVersion() != 169 {
+		t.Fatalf("LatestVersion() = %d, want 169", LatestVersion())
 	}
 }
 
@@ -4619,5 +4619,81 @@ func TestPrivateEndpointPublicationClock(t *testing.T) {
 	if strings.Contains(migration.SQL, "DROP FUNCTION") || strings.Contains(migration.SQL, "REVOKE EXECUTE") ||
 		strings.Contains(migration.SQL, "CREATE OR REPLACE FUNCTION") {
 		t.Error("schema 168 must keep every previous function for the previous binary")
+	}
+}
+
+// Schema 169 names every live Device of a Network with a unique DNS label
+// kept beside the Device row, so neither the backfill nor a later label
+// change versions the Device or needs audit evidence.
+func TestDeviceDNSNames(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 169 {
+		t.Fatalf("len(Catalog()) = %d, want schema 169", len(catalog))
+	}
+	migration := catalog[168]
+	if migration.Version != 169 {
+		t.Fatalf("migration 169 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE TABLE mesh.device_dns_label (",
+		"dns_label TEXT COLLATE \"C\" NOT NULL",
+		"CONSTRAINT device_dns_label_network_label_key UNIQUE (workspace_id, network_id, dns_label)",
+		"AND dns_label ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'\n        AND dns_label !~ '^[0-9]+$'",
+		"REFERENCES mesh.device (workspace_id, network_id, id) ON DELETE CASCADE",
+		"ALTER TABLE mesh.device_dns_label FORCE ROW LEVEL SECURITY;",
+		"CREATE POLICY device_dns_label_exact_scope_policy ON mesh.device_dns_label\n    FOR SELECT\n    TO mesh_runtime",
+		"GRANT SELECT ON mesh.device_dns_label TO mesh_runtime;",
+		"CREATE FUNCTION mesh_ops.derive_device_dns_label_v1(p_hostname TEXT)",
+		"CREATE FUNCTION mesh_ops.assign_device_dns_label_internal_v1(",
+		"WHEN ((OLD.hostname, OLD.state, OLD.deleted_at) IS DISTINCT FROM (NEW.hostname, NEW.state, NEW.deleted_at))",
+		"IF NEW.state IN ('revoked', 'deleted') OR NEW.deleted_at IS NOT NULL THEN",
+		"ORDER BY device.workspace_id, device.network_id, device.id",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_scope_display_codes_v1() TO mesh_runtime;",
+		"CREATE FUNCTION mesh_ops.read_console_devices_v3(",
+		"v_page := mesh_ops.read_console_devices_v2(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.change_device_lifecycle_v1(",
+		"AND other.dns_label = mesh_ops.derive_device_dns_label_v1(v_hostname)",
+		"RAISE EXCEPTION USING ERRCODE = 'MTL03', MESSAGE = 'another Device has this DNS name';",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 169 must contain %q", want)
+		}
+	}
+	// Internal helpers stay with their owner; only the readers are granted.
+	for _, name := range []string{"derive_device_dns_label_v1(TEXT)", "device_dns_label_variant_v1(TEXT, INTEGER)",
+		"assign_device_dns_label_internal_v1(BIGINT, BIGINT, BIGINT, TEXT)", "maintain_device_dns_label_v1()"} {
+		if !strings.Contains(migration.SQL, "REVOKE ALL ON FUNCTION mesh_ops."+name+"\n    FROM PUBLIC, mesh_runtime,") ||
+			strings.Contains(migration.SQL, "GRANT EXECUTE ON FUNCTION mesh_ops."+name) {
+			t.Errorf("schema 169 must keep mesh_ops.%s from the application roles", name)
+		}
+	}
+	// The rename keeps schema 127's function otherwise: same signature,
+	// configuration and every other action.
+	previous := catalog[126].SQL
+	start := strings.Index(previous, "CREATE OR REPLACE FUNCTION mesh_ops.change_device_lifecycle_v1(")
+	end := strings.Index(previous[start:], "$function$;") + start
+	current := migration.SQL[strings.Index(migration.SQL, "CREATE OR REPLACE FUNCTION mesh_ops.change_device_lifecycle_v1("):]
+	current = current[:strings.Index(current, "$function$;")]
+	labelCheck := `        IF EXISTS (
+            SELECT 1 FROM mesh.device_dns_label AS other
+            WHERE other.workspace_id = v_workspace AND other.network_id = v_network
+              AND other.dns_label = mesh_ops.derive_device_dns_label_v1(v_hostname)
+              AND other.device_id <> v_device.id
+        ) THEN
+            RAISE EXCEPTION USING ERRCODE = 'MTL03', MESSAGE = 'another Device has this DNS name';
+        END IF;
+`
+	if strings.Replace(current, labelCheck, "", 1) != previous[start:end] {
+		t.Error("schema 169 change_device_lifecycle_v1 must be schema 127's plus the label check")
+	}
+	// Device rows are neither altered nor written by the migration itself
+	// (only by the unchanged actions of the lifecycle function).
+	outside := strings.Replace(migration.SQL, current, "", 1)
+	for _, forbidden := range []string{"ALTER TABLE mesh.device ", "UPDATE mesh.device",
+		"DROP ", "OWNER TO", "TO mesh_worker", "BYPASSRLS", "GRANT INSERT", "GRANT UPDATE", "GRANT DELETE"} {
+		if strings.Contains(outside, forbidden) {
+			t.Errorf("schema 169 must not contain %q", forbidden)
+		}
 	}
 }

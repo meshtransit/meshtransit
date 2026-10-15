@@ -535,6 +535,7 @@ func Catalog() []Migration {
 		newMigration(166, "Network member management", networkMemberManagementSQL),
 		newMigration(167, "Guardrail share consistency", guardrailShareConsistencySQL),
 		newMigration(168, "Private Endpoint publication clock", privateEndpointPublicationClockSQL),
+		newMigration(169, "Device DNS names", deviceDNSNamesSQL),
 	}
 }
 
@@ -818,3 +819,6 @@ var guardrailShareConsistencySQL string
 
 //go:embed 000168_private_endpoint_publication_clock.up.sql
 var privateEndpointPublicationClockSQL string
+
+//go:embed 000169_device_dns_names.up.sql
+var deviceDNSNamesSQL string
