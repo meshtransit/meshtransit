@@ -6,6 +6,7 @@ import (
 	"slices"
 	"time"
 
+	"meshtransit.net/core/internal/domain/identity"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/policy"
@@ -36,11 +37,17 @@ type SnapshotParams struct {
 	NumericOwnerID    int64
 	NodeID            node.ID
 	Hostname          node.Hostname
-	MachineKey        node.MachineKey
-	NodeKey           node.Key
-	Addresses         []netip.Prefix
-	CreatedAt         time.Time
-	KeyExpiry         time.Time
+	// DNSLabel and the Workspace and Network display codes name the Device
+	// <label>.<workspace code>.<network code>.<suffix>. Zero values mean the
+	// store gave none: the map then publishes no Device names.
+	DNSLabel      node.DNSLabel
+	WorkspaceCode identity.DisplayCode
+	NetworkCode   identity.DisplayCode
+	MachineKey    node.MachineKey
+	NodeKey       node.Key
+	Addresses     []netip.Prefix
+	CreatedAt     time.Time
+	KeyExpiry     time.Time
 	// PeerCandidates lists the other Devices of the Network. When it is nil,
 	// Inventory (the whole Network, self included) provides them instead and
 	// is shared, not copied.
@@ -67,6 +74,9 @@ type Snapshot struct {
 	numericOwnerID          int64
 	nodeID                  node.ID
 	hostname                node.Hostname
+	dnsLabel                node.DNSLabel
+	workspaceCode           identity.DisplayCode
+	networkCode             identity.DisplayCode
 	machineKey              node.MachineKey
 	nodeKey                 node.Key
 	addresses               []netip.Prefix
@@ -139,6 +149,9 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 		numericOwnerID:          params.NumericOwnerID,
 		nodeID:                  params.NodeID,
 		hostname:                params.Hostname,
+		dnsLabel:                params.DNSLabel,
+		workspaceCode:           params.WorkspaceCode,
+		networkCode:             params.NetworkCode,
 		machineKey:              params.MachineKey,
 		nodeKey:                 params.NodeKey,
 		addresses:               slices.Clone(params.Addresses),
@@ -236,6 +249,19 @@ func (snapshot Snapshot) NodeID() node.ID { return snapshot.nodeID }
 
 // Hostname returns the canonical allocated hostname.
 func (snapshot Snapshot) Hostname() node.Hostname { return snapshot.hostname }
+
+// DNSLabel returns the first label of the Device's name, and whether the
+// store gave one.
+func (snapshot Snapshot) DNSLabel() (node.DNSLabel, bool) {
+	return snapshot.dnsLabel, snapshot.dnsLabel.IsValid()
+}
+
+// DisplayCodes returns the Workspace and Network display codes of the
+// Network's DNS zone, and whether the store gave them.
+func (snapshot Snapshot) DisplayCodes() (identity.DisplayCode, identity.DisplayCode, bool) {
+	return snapshot.workspaceCode, snapshot.networkCode,
+		snapshot.workspaceCode.IsValid() && snapshot.networkCode.IsValid()
+}
 
 // MachineKey returns the active machine key epoch.
 func (snapshot Snapshot) MachineKey() node.MachineKey { return snapshot.machineKey }
@@ -361,6 +387,9 @@ func (snapshot Snapshot) params() SnapshotParams {
 		NumericOwnerID:          snapshot.numericOwnerID,
 		NodeID:                  snapshot.nodeID,
 		Hostname:                snapshot.hostname,
+		DNSLabel:                snapshot.dnsLabel,
+		WorkspaceCode:           snapshot.workspaceCode,
+		NetworkCode:             snapshot.networkCode,
 		MachineKey:              snapshot.machineKey,
 		NodeKey:                 snapshot.nodeKey,
 		Addresses:               slices.Clone(snapshot.addresses),
@@ -386,7 +415,7 @@ func validSnapshotCore(params SnapshotParams) bool {
 		params.SessionGeneration > 0 && validNumericID(params.NumericNodeID) &&
 		validNumericID(params.NumericOwnerID) && params.NodeID.IsValid() &&
 		params.Hostname.IsValid() && params.MachineKey.IsValid() && params.NodeKey.IsValid() &&
-		validSnapshotAddresses(params.Addresses) && !params.CreatedAt.IsZero() &&
+		validSnapshotNaming(params) && validSnapshotAddresses(params.Addresses) && !params.CreatedAt.IsZero() &&
 		params.KeyExpiry.After(params.CreatedAt) &&
 		params.PacketPolicy.IsValid() && params.PacketPolicy.Scope() == params.Scope &&
 		validSharingDependencies(params) && params.RelayDirectory.IsValid()
@@ -408,6 +437,14 @@ func validSnapshotConnectivity(params SnapshotParams, candidates snapshotCandida
 		}
 	}
 	return true
+}
+
+// validSnapshotNaming accepts absent naming facts or valid ones; the codes
+// come together.
+func validSnapshotNaming(params SnapshotParams) bool {
+	return (params.DNSLabel == node.DNSLabel{} || params.DNSLabel.IsValid()) &&
+		(params.WorkspaceCode == "") == (params.NetworkCode == "") &&
+		(params.WorkspaceCode == "" || params.WorkspaceCode.IsValid() && params.NetworkCode.IsValid())
 }
 
 func validNumericID(value int64) bool { return value > 0 && value <= maximumSafeNumericID }

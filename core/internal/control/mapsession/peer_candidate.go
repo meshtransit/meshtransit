@@ -27,12 +27,15 @@ var (
 // PeerCandidateParams contains durable, protocol-independent facts for one
 // same-Network Node that may be considered by a later policy decision.
 type PeerCandidateParams struct {
-	NumericNodeID     int64
-	NumericOwnerID    int64
-	Scope             network.Scope
-	NodeID            node.ID
-	OwnerID           identity.PrincipalID
-	Hostname          node.Hostname
+	NumericNodeID  int64
+	NumericOwnerID int64
+	Scope          network.Scope
+	NodeID         node.ID
+	OwnerID        identity.PrincipalID
+	Hostname       node.Hostname
+	// DNSLabel is the first label of the Device's name in its Network's
+	// zone; the zero value means the store gave none (no name is published).
+	DNSLabel          node.DNSLabel
 	MachineKey        node.MachineKey
 	NodeKey           node.Key
 	SessionGeneration int64
@@ -50,6 +53,7 @@ type PeerCandidate struct {
 	nodeID            node.ID
 	ownerID           identity.PrincipalID
 	hostname          node.Hostname
+	dnsLabel          node.DNSLabel
 	machineKey        node.MachineKey
 	nodeKey           node.Key
 	sessionGeneration int64
@@ -70,6 +74,7 @@ func NewPeerCandidate(params PeerCandidateParams) (PeerCandidate, error) {
 		nodeID:            params.NodeID,
 		ownerID:           params.OwnerID,
 		hostname:          params.Hostname,
+		dnsLabel:          params.DNSLabel,
 		machineKey:        params.MachineKey,
 		nodeKey:           params.NodeKey,
 		sessionGeneration: params.SessionGeneration,
@@ -96,6 +101,12 @@ func (candidate PeerCandidate) OwnerID() identity.PrincipalID { return candidate
 
 // Hostname returns the canonical allocated hostname.
 func (candidate PeerCandidate) Hostname() node.Hostname { return candidate.hostname }
+
+// DNSLabel returns the first label of the Device's name in its Network's
+// zone, and whether the store gave one.
+func (candidate PeerCandidate) DNSLabel() (node.DNSLabel, bool) {
+	return candidate.dnsLabel, candidate.dnsLabel.IsValid()
+}
 
 // MachineKey returns the active machine-key epoch.
 func (candidate PeerCandidate) MachineKey() node.MachineKey { return candidate.machineKey }
@@ -128,6 +139,7 @@ func (candidate PeerCandidate) params() PeerCandidateParams {
 		NodeID:            candidate.nodeID,
 		OwnerID:           candidate.ownerID,
 		Hostname:          candidate.hostname,
+		DNSLabel:          candidate.dnsLabel,
 		MachineKey:        candidate.machineKey,
 		NodeKey:           candidate.nodeKey,
 		SessionGeneration: candidate.sessionGeneration,
@@ -140,7 +152,8 @@ func (candidate PeerCandidate) params() PeerCandidateParams {
 func validPeerCandidateParams(params PeerCandidateParams) bool {
 	return validNumericID(params.NumericNodeID) && validNumericID(params.NumericOwnerID) &&
 		params.Scope.IsValid() && params.NodeID.IsValid() && params.OwnerID.IsValid() &&
-		params.Hostname.IsValid() && params.MachineKey.IsValid() && params.NodeKey.IsValid() &&
+		params.Hostname.IsValid() && (params.DNSLabel == node.DNSLabel{} || params.DNSLabel.IsValid()) &&
+		params.MachineKey.IsValid() && params.NodeKey.IsValid() &&
 		params.SessionGeneration > 0 && validSnapshotAddresses(params.Addresses) &&
 		!params.CreatedAt.IsZero() && params.KeyExpiry.After(params.CreatedAt)
 }
@@ -162,6 +175,7 @@ func equalPeerCandidates(first, second []PeerCandidate) bool {
 			left.numericOwnerID == right.numericOwnerID &&
 			left.scope == right.scope && left.nodeID == right.nodeID &&
 			left.ownerID == right.ownerID && left.hostname == right.hostname &&
+			left.dnsLabel == right.dnsLabel &&
 			left.machineKey == right.machineKey && left.nodeKey == right.nodeKey &&
 			left.sessionGeneration == right.sessionGeneration &&
 			slices.Equal(left.addresses, right.addresses) &&

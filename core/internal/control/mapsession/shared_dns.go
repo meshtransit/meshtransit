@@ -4,6 +4,8 @@ import (
 	"net/netip"
 	"slices"
 	"strings"
+
+	"meshtransit.net/core/internal/domain/node"
 )
 
 // SharedDNSRecord maps one consumer-local imported Resource name to the
@@ -45,4 +47,22 @@ func (snapshot Snapshot) SharedDNSRecords() ([]SharedDNSRecord, error) {
 		}
 	}
 	return records, nil
+}
+
+// ImportedPeerName returns the consumer-local name under which this map
+// imports peer (the smallest, when several shares import it), and whether
+// it imports it at all. A provider-side map, which only exports to the
+// peer, has no name for it.
+func (snapshot Snapshot) ImportedPeerName(peer node.ID) (string, bool) {
+	name := ""
+	for _, projection := range snapshot.directDeviceProjections {
+		if snapshot.Scope() != projection.authority.Contract.ConsumerScope() || projection.peer.NodeID() != peer {
+			continue
+		}
+		access := projection.authority.Endpoint.AccessName()
+		if access.IsValid() && (name == "" || access.String() < name) {
+			name = access.String()
+		}
+	}
+	return name, name != ""
 }

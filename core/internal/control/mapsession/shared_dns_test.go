@@ -74,3 +74,32 @@ func TestSharedDNSRecordsEmptyWithoutShares(t *testing.T) {
 		t.Fatalf("records = %+v error = %v, want none", records, err)
 	}
 }
+
+func TestImportedPeerNameIsConsumerSideOnly(t *testing.T) {
+	t.Parallel()
+	provider, consumer, evidence := deviceAliasFixture(t)
+	for _, self := range []Snapshot{provider, consumer} {
+		projection, err := NewDirectDeviceProjection(deviceAliasProjectionParams(t, self, provider, consumer, evidence))
+		if err != nil {
+			t.Fatal(err)
+		}
+		mapped, err := self.WithDirectDeviceProjections([]DirectDeviceProjection{projection})
+		if err != nil {
+			t.Fatal(err)
+		}
+		peer := projection.Peer().NodeID()
+		name, found := mapped.ImportedPeerName(peer)
+		if self.Scope() == provider.Scope() {
+			if found || name != "" {
+				t.Fatalf("provider map names its consumer peer %q", name)
+			}
+			continue
+		}
+		if !found || name != evidence.Authority.Endpoint.AccessName().String() {
+			t.Fatalf("ImportedPeerName = %q, %v", name, found)
+		}
+		if _, found := mapped.ImportedPeerName(self.NodeID()); found {
+			t.Fatal("self is not an imported peer")
+		}
+	}
+}

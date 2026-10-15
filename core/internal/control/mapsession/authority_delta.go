@@ -148,7 +148,8 @@ func stableSelfAuthority(current, next Snapshot) bool {
 	return current.KeyExpiry().Equal(next.KeyExpiry()) &&
 		current.NumericOwnerID() == next.NumericOwnerID() &&
 		current.NetworkName() == next.NetworkName() &&
-		current.Hostname() == next.Hostname() &&
+		current.Hostname() == next.Hostname() && current.dnsLabel == next.dnsLabel &&
+		current.workspaceCode == next.workspaceCode && current.networkCode == next.networkCode &&
 		slices.Equal(current.Addresses(), next.Addresses())
 }
 
