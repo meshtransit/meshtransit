@@ -5,6 +5,10 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: a test now refuses an operator ownership step that takes a previous
+  function version away from `mesh_runtime` or `mesh_worker` (steps after
+  migration 93 already keep them for rollback), and the `…_role.sql` steps
+  create their role only if it is missing, so they can run again.
 - Clients: a failure to apply host DNS now sets the DNS state to `failed`
   and turns the mesh names off on the host; the control session and data
   plane stay up and the next map retries. Before, the node left the mesh and reconnected to Core every few

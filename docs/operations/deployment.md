@@ -100,13 +100,16 @@ drops a pool whose server became read-only.
    `core/migrations/operator/` (in the source tree; it is not in the image), in
    file order:
    - `…_role.sql` creates a NOLOGIN role and must run **before** the migration
-     of the same number; it is a plain `CREATE ROLE`, so skip a role that
-     exists. A fresh install that created every role above already has them.
+     of the same number. It creates the role only if it is missing, and resets
+     the attributes of an existing one to NOLOGIN and no other privilege, so it
+     is safe to run again. A fresh install that created every role above
+     already has them.
    - `…_ownership.sql` moves the new functions to their owner role and grants
      `EXECUTE` to the runtime or worker role; run it **after** its migration.
-     Some of these files also revoke the previous version of a function, so on
-     an upgrade run them only once no older Core replica is left
-     ([upgrades](upgrades.md)).
+     Those of migrations 53 to 93 also revoke the previous version of a
+     function, so on an upgrade across them run them only once no older Core
+     replica is left ([upgrades](upgrades.md)); later ones keep previous
+     versions executable.
 
    Core has no command for this step yet. `core/scripts/qualification/`
    has `check-device-sharing-database.sql`, which checks the result for the
