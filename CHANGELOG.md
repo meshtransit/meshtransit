@@ -5,6 +5,13 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Windows: `meshd` authorizes local API callers from the named-pipe
+  connection's own access token, read by impersonating the client, instead
+  of the token of whatever process has the client's process ID, which a
+  reused ID or a handed-over pipe handle could make the wrong one.
+  Anonymous clients are refused. `meshctl` now opens the pipe at the
+  identification level (it used to connect anonymously), so a new `meshd`
+  needs the matching `meshctl`.
 - Core: a node must take each whole MTCP message within 30 s plus its size at
   64 KiB/s (at most 10 minutes), besides 10 s per record; otherwise Core
   closes the session (counted as `send_deadline` in

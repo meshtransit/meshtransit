@@ -33,7 +33,7 @@ kernel or the OS, never by an address or a value the caller supplies.
 |---|---|---|
 | Linux | Unix socket | `SO_PEERCRED` |
 | macOS | Unix socket | `LOCAL_PEERCRED` |
-| Windows | Named pipe under `ProtectedPrefix\Administrators`, remote clients refused | The caller's access token: SID, elevation, group membership |
+| Windows | Named pipe under `ProtectedPrefix\Administrators`, remote clients refused | The connection's own access token, read by impersonating the client at the identification level: SID, elevation, group membership |
 | Android, iOS | None: the app calls `client/mobile` in process | — |
 
 Permissions are set before the first request is accepted. The Unix socket

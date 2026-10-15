@@ -54,10 +54,13 @@ Packet payloads are never collected.
     0750) limits that to the `meshtransit` group.
   - **Windows:** the pipe lives under `ProtectedPrefix\Administrators`, so
     only an administrator or LocalSystem can create it, and it refuses remote
-    clients. Callers are authorized from the access token of the client
-    process (found by its process ID): LocalSystem, an
-    elevated administrator or a member of **MeshTransit Users**. `meshctl`
-    checks that the pipe's owner is SYSTEM before talking to it.
+    clients. Callers are authorized from the access token of the connection
+    itself, read by impersonating the client at the identification level, not
+    from whatever process holds the client's process ID: LocalSystem, an
+    elevated administrator or a member of **MeshTransit Users**. An anonymous
+    client is refused. `meshctl` opens the pipe at the identification level,
+    which lets `meshd` read its token but never act as it, and checks that the
+    pipe's owner is SYSTEM before sending anything.
 - The socket is never created over a regular file or over a socket another
   `meshd` still answers on.
 - Errors do not reveal state paths or internal storage errors. Keys are never
