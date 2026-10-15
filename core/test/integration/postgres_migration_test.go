@@ -343,6 +343,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		adminContenderConnection,
 		runtimePool,
 	)
+	assertPostgreSQLMapDeviceNames(ctx, t, adminConnection, runtimePool, peerIdentity)
 	assertCompiledPacketPolicyRuleImmutability(ctx, t, adminConnection)
 	assertPostgreSQLPolicyPublication(ctx, t, adminConnection, runtimePool, peerIdentity)
 	assertIdentityProviderSchemaFoundation(ctx, t, adminConnection, runtimeConnection)
@@ -454,6 +455,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	if sharedPoliciesExpanded.Load() == 0 {
 		t.Fatal("no shared map load expanded the Network policy")
 	}
+	assertPostgreSQLDeviceDNSLabels(ctx, t, adminConnection)
 	// Last, so every evidence writer exercised above is covered.
 	assertAuditSealV2(ctx, t, adminConnection)
 }

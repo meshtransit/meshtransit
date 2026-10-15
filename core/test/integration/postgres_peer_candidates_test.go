@@ -27,6 +27,8 @@ type peerProjectionNodeFixture struct {
 	address         string
 	createdAt       time.Time
 	expiresAt       time.Time
+	// hostname, when set, replaces peer-<id>.example.
+	hostname string
 }
 
 func assertPostgreSQLPeerCandidateProjection(
@@ -460,6 +462,9 @@ func seedPeerProjectionNode(
 	nodeBytes := nodeKey.Bytes()
 	nodeFingerprint := nodeKey.Fingerprint()
 	hostname := fmt.Sprintf("peer-%d.example", fixture.id)
+	if fixture.hostname != "" {
+		hostname = fixture.hostname
+	}
 	if _, err := transaction.Exec(ctx, `INSERT INTO mesh.device (
     id, public_id, workspace_id, network_id, enrollment_profile_id,
     owner_principal_id, custodian_principal_id, registered_by_kind,

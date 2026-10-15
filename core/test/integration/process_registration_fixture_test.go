@@ -49,6 +49,8 @@ type processRegistrationEvidence struct {
 	networkRevision      int64
 	inventoryRevision    int64
 	completedRevision    int64
+	// dnsName is the Device's DNS name under the default suffix (schema 169).
+	dnsName string
 }
 
 func seedProcessRegistrationCredential(
@@ -233,7 +235,18 @@ func readProcessRegistrationEvidence(
        AND device_outbox.event_class = 'network.revision.advanced'),
     revision.network_revision,
     revision.inventory_revision,
-    registration.completed_network_revision
+    registration.completed_network_revision,
+    COALESCE((SELECT label.dns_label || '.' || workspace_identity.display_code || '.' ||
+            network_identity.display_code || '.mesh.internal'
+        FROM mesh.device_dns_label AS label
+        JOIN mesh.workspace AS workspace ON workspace.id = label.workspace_id
+        JOIN mesh.network AS network ON network.workspace_id = label.workspace_id AND network.id = label.network_id
+        JOIN mesh_ops.tenant_display_identity AS workspace_identity
+          ON workspace_identity.workspace_public_id = workspace.public_id
+        JOIN mesh_ops.tenant_display_identity AS network_identity
+          ON network_identity.network_public_id = network.public_id
+        WHERE label.workspace_id = device.workspace_id AND label.network_id = device.network_id
+          AND label.device_id = device.id), '')
 FROM mesh.enrollment_credential AS credential
 JOIN mesh.pending_registration AS registration
   ON registration.enrollment_credential_id = credential.id
@@ -272,6 +285,7 @@ WHERE credential.public_id = $1::UUID
 		&evidence.networkRevision,
 		&evidence.inventoryRevision,
 		&evidence.completedRevision,
+		&evidence.dnsName,
 	); err != nil {
 		t.Fatalf("read process registration evidence: %v", err)
 	}

@@ -190,10 +190,23 @@ func assertPostgreSQLDeviceLifecycle(ctx context.Context, t *testing.T, admin *p
 		Hostname: taken}); !errors.Is(err, devicelifecycle.ErrHostnameTaken) {
 		t.Fatalf("rename to a taken hostname: %v", err)
 	}
+	// Schema 169: nor to one whose DNS label another Device holds.
+	otherLabel := deviceDNSLabel(ctx, t, admin, other)
+	sameLabel, _ := node.ParseHostname(otherLabel + ".elsewhere")
+	if otherLabel == "" {
+		t.Fatal("an active Device holds no DNS label")
+	}
+	if _, err := change(owner, devicelifecycle.Request{Action: devicelifecycle.ActionRename,
+		Hostname: sameLabel}); !errors.Is(err, devicelifecycle.ErrHostnameTaken) {
+		t.Fatalf("rename to a taken DNS label: %v", err)
+	}
 	fresh, _ := node.ParseHostname("lifecycle-server")
 	if renamed, err := change(owner, devicelifecycle.Request{Action: devicelifecycle.ActionRename,
 		Hostname: fresh}); err != nil || renamed.After.Hostname != "lifecycle-server" || !renamed.After.HostnameLocked {
 		t.Fatalf("rename = %+v, %v", renamed, err)
+	}
+	if label := deviceDNSLabel(ctx, t, admin, device); label != "lifecycle-server" {
+		t.Fatalf("renamed Device DNS label = %q, want lifecycle-server", label)
 	}
 
 	inventoryStore, err := postgresadapter.NewConsoleDeviceInventoryStore(runtimePool,
@@ -207,8 +220,12 @@ func assertPostgreSQLDeviceLifecycle(ctx context.Context, t *testing.T, admin *p
 	}
 	for _, listed := range page.Devices {
 		if listed.ID() == device {
-			if listed.Lifecycle().Ownership != "workspace" || listed.Hostname() != "lifecycle-server" {
-				t.Fatalf("inventory lifecycle = %+v", listed.Lifecycle())
+			label, labeled := listed.DNSLabel()
+			if listed.Lifecycle().Ownership != "workspace" || listed.Hostname() != "lifecycle-server" ||
+				!labeled || label.String() != "lifecycle-server" || !page.WorkspaceCode.IsValid() ||
+				!page.NetworkCode.IsValid() {
+				t.Fatalf("inventory lifecycle = %+v, label %q, codes %q %q", listed.Lifecycle(), label,
+					page.WorkspaceCode, page.NetworkCode)
 			}
 			return
 		}
@@ -389,4 +406,21 @@ WHERE device.public_id = $1::UUID`, device.String()).Scan(&deviceID, &fingerprin
 			t.Fatalf("schema 161 answered revoked for %s", name)
 		}
 	}
+}
+
+// deviceDNSLabel returns the DNS label a Device holds ("" for none).
+func deviceDNSLabel(ctx context.Context, t *testing.T, admin *pgx.Conn, device node.ID) string {
+	t.Helper()
+	var label string
+	err := admin.QueryRow(ctx, `SELECT label.dns_label FROM mesh.device_dns_label AS label
+JOIN mesh.device AS device ON device.workspace_id = label.workspace_id
+ AND device.network_id = label.network_id AND device.id = label.device_id
+WHERE device.public_id = $1::UUID`, device.String()).Scan(&label)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ""
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return label
 }

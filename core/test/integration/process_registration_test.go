@@ -438,7 +438,7 @@ func assertProcessFullMap(
 ) {
 	t.Helper()
 	if result.DeviceID != evidence.nodePublicID ||
-		result.Name != evidence.hostname+"." || result.DisplayName != evidence.hostname ||
+		evidence.dnsName == "" || result.Name != evidence.dnsName+"." || result.DisplayName != evidence.hostname ||
 		result.NodeKey != identity.NodeKey ||
 		len(result.Addresses) != 1 || result.Addresses[0].String() != evidence.primaryAddress ||
 		len(result.AllowedPrefixes) != 1 || result.AllowedPrefixes[0] != result.Addresses[0] ||
