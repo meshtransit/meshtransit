@@ -10,7 +10,7 @@ trap 'on_error "${LINENO}"' ERR
 
 readonly old_version='v2.45.0'
 readonly old_commit='bcc2283694018a59e9b84c43c6c50ce996e9409b'
-readonly current_version='v2.45.1+compat.8'
+readonly current_version='v2.45.1+compat.9'
 readonly postgres_image='postgres@sha256:3725f4e2499eef5134592b3b4ab79a543ed7f8e533b05b5b637af926630f6650'
 
 old_source="${DEX_OLD_SOURCE:-}"
@@ -85,10 +85,10 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 workspace_toolchain="$(bash "${repo_root}/core/scripts/qualification/check-dex-workspace.sh" "${prepared_root}" "${repo_root}")"
 
 env GOWORK="${prepared_root}/go.work" GOTOOLCHAIN="${workspace_toolchain}" CGO_ENABLED=0 \
-	go test -count=1 -tags=dexbroker,qualification ./tools/qualification/dexstorage
+	go test -count=1 -tags=dexbroker,qualification ./core/tools/qualification/dexstorage >&2
 env GOWORK="${prepared_root}/go.work" GOTOOLCHAIN="${workspace_toolchain}" CGO_ENABLED=0 \
 	go build -buildvcs=false -trimpath -tags=dexbroker,qualification \
-	-o "${storage_helper}" ./tools/qualification/dexstorage
+	-o "${storage_helper}" ./core/tools/qualification/dexstorage
 storage_helper_sha256="$(openssl dgst -sha256 -r "${storage_helper}" | awk '{print $1}')"
 
 postgres_password="$(openssl rand -hex 24)"

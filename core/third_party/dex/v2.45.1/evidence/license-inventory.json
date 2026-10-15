@@ -1,8 +1,8 @@
 {
   "artifact": {
-    "binary_sha256": "dfaf9cb0afd9b6c07790c55daae6e8eee5a59dbac86faffe366767def8a1165a",
-    "candidate_version": "v2.45.1+compat.8",
-    "sbom_sha256": "1eea085ef204f3232a365059951112ec76e16021341b748e33c82adf30f08b5a",
+    "binary_sha256": "1f44d7fb8e95c488da01b0bd927510a51cb37838541b2991a7200196423b654d",
+    "candidate_version": "v2.45.1+compat.9",
+    "sbom_sha256": "b6a2d2f614131d62a4d26b41f60cc7170d13f4ae77fb593c5d8244dfcc69de96",
     "upstream_version": "v2.45.1"
   },
   "components": [
@@ -306,8 +306,8 @@
         }
       ],
       "name": "github.com/dexidp/dex",
-      "purl": "pkg:golang/github.com/dexidp/dex@v2.45.1+compat.8",
-      "version": "v2.45.1+compat.8"
+      "purl": "pkg:golang/github.com/dexidp/dex@v2.45.1+compat.9",
+      "version": "v2.45.1+compat.9"
     },
     {
       "licenses": [
@@ -1103,12 +1103,12 @@
       "licenses": [
         {
           "identifier": "BSD-3-Clause",
-          "source": "file://$GOPATH/pkg/mod/golang.org/x/crypto@v0.56.0/LICENSE"
+          "source": "file://$GOPATH/pkg/mod/golang.org/x/crypto@v0.57.0/LICENSE"
         }
       ],
       "name": "golang.org/x/crypto",
-      "purl": "pkg:golang/golang.org/x/crypto@v0.56.0",
-      "version": "v0.56.0"
+      "purl": "pkg:golang/golang.org/x/crypto@v0.57.0",
+      "version": "v0.57.0"
     },
     {
       "licenses": [
@@ -1125,23 +1125,23 @@
       "licenses": [
         {
           "identifier": "BSD-3-Clause",
-          "source": "file://$GOPATH/pkg/mod/golang.org/x/mod@v0.40.0/LICENSE"
+          "source": "file://$GOPATH/pkg/mod/golang.org/x/mod@v0.41.0/LICENSE"
         }
       ],
       "name": "golang.org/x/mod",
-      "purl": "pkg:golang/golang.org/x/mod@v0.40.0",
-      "version": "v0.40.0"
+      "purl": "pkg:golang/golang.org/x/mod@v0.41.0",
+      "version": "v0.41.0"
     },
     {
       "licenses": [
         {
           "identifier": "BSD-3-Clause",
-          "source": "file://$GOPATH/pkg/mod/golang.org/x/net@v0.58.0/LICENSE"
+          "source": "file://$GOPATH/pkg/mod/golang.org/x/net@v0.60.0/LICENSE"
         }
       ],
       "name": "golang.org/x/net",
-      "purl": "pkg:golang/golang.org/x/net@v0.58.0",
-      "version": "v0.58.0"
+      "purl": "pkg:golang/golang.org/x/net@v0.60.0",
+      "version": "v0.60.0"
     },
     {
       "licenses": [
@@ -1158,23 +1158,23 @@
       "licenses": [
         {
           "identifier": "BSD-3-Clause",
-          "source": "file://$GOPATH/pkg/mod/golang.org/x/sys@v0.47.0/LICENSE"
+          "source": "file://$GOPATH/pkg/mod/golang.org/x/sys@v0.48.0/LICENSE"
         }
       ],
       "name": "golang.org/x/sys",
-      "purl": "pkg:golang/golang.org/x/sys@v0.47.0",
-      "version": "v0.47.0"
+      "purl": "pkg:golang/golang.org/x/sys@v0.48.0",
+      "version": "v0.48.0"
     },
     {
       "licenses": [
         {
           "identifier": "BSD-3-Clause",
-          "source": "file://$GOPATH/pkg/mod/golang.org/x/text@v0.41.0/LICENSE"
+          "source": "file://$GOPATH/pkg/mod/golang.org/x/text@v0.42.0/LICENSE"
         }
       ],
       "name": "golang.org/x/text",
-      "purl": "pkg:golang/golang.org/x/text@v0.41.0",
-      "version": "v0.41.0"
+      "purl": "pkg:golang/golang.org/x/text@v0.42.0",
+      "version": "v0.42.0"
     },
     {
       "licenses": [
@@ -1277,8 +1277,8 @@
         }
       ],
       "name": "stdlib",
-      "purl": "pkg:golang/stdlib@1.26.8",
-      "version": "go1.26.8"
+      "purl": "pkg:golang/stdlib@1.26.9",
+      "version": "go1.26.9"
     }
   ],
   "generator": {

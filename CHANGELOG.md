@@ -17,6 +17,14 @@ merge (2026-10-09) are kept below.
   completed sign-in join with the invited role. A refused sign-in creates
   nothing and leaves the invitation pending. Login profiles must request the
   `email` scope; the acceptance evidence carries a digest of the address.
+- Dex broker artifact re-qualified at Go 1.26.9: `v2.45.1+compat.9`
+  adds patch 0009 (`golang.org/x/net` v0.60.0 and its modules, removing the
+  reachable `x/net/http2` findings GO-2026-6603, -6610, -6611, -6612 and -6617
+  from the Dex dependency graph), a new source tree and binary digest, and
+  regenerated SBOM, license, vulnerability, qualification and upgrade/restore
+  evidence. The qualification binary is a standalone build and no longer
+  depends on MeshCore's `go.mod`. The upgrade/restore script ran only from the
+  old flat layout; it now uses `core/tools/qualification/dexstorage`.
 - Go 1.26.9 toolchain baseline and `golang.org/x/net` v0.60.0 (with the
   `x/crypto`, `x/text`, `x/sync`, `x/mod` and `x/tools` releases it requires).
   Go 1.26.8 and `x/net` v0.58.0 carried reachable vulnerabilities, among them

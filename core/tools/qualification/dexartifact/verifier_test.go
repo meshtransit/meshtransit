@@ -286,8 +286,8 @@ func TestPinnedDexManifestFiles(t *testing.T) {
 			t.Errorf("remove patch copies: %v", err)
 		}
 	})
-	if got := len(loaded.manifest.Patches); got != 8 {
-		t.Fatalf("patch count = %d, want 8", got)
+	if got := len(loaded.manifest.Patches); got != 9 {
+		t.Fatalf("patch count = %d, want 9", got)
 	}
 }
 

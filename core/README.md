@@ -142,7 +142,7 @@ removes readiness and subsequent requests fail with a generic no-store 503.
 The runtime graph is redacted from formatting and structured logging and refuses
 JSON serialization. Unit and race tests cover typed-nil construction, admission
 fencing, drain order, timeout continuation, concurrent shutdown, unexpected
-completion, and fail-closed zero values. The verified `compat.8` input supplies
+completion, and fail-closed zero values. The verified `compat.9` input supplies
 the worker/connector join fences, no-DDL prepared-schema open, a context-bounded
 exact-schema readiness check, and caller-owned per-connector HTTP clients.
 Upstream-negative compile checks, candidate compilation, full

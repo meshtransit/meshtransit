@@ -47,13 +47,18 @@
       "id": "inject-connector-http-client",
       "path": "patches/0008-inject-connector-http-client.patch",
       "sha256": "524158992232a39496c976fa712a58405d52cc6abfd1eb01104232efdaf9b257"
+    },
+    {
+      "id": "security-dependency-updates-go1269",
+      "path": "patches/0009-security-dependency-updates-go1269.patch",
+      "sha256": "21ba45cb7569c5fc5a36a1ad85825c669797f012bd9d07036f1d7da9f98021b5"
     }
   ],
-  "source_tree_sha256": "31e9f91bd3761028f838e7f00635cded92bbd661a4264b8b58ba391546422bae",
+  "source_tree_sha256": "8a02556656744ff449eecb562eef5203915e8a6c5b28be71d66078db6765dd1b",
   "build": {
-    "go_version": "go1.26.8",
+    "go_version": "go1.26.9",
     "flags": [
-      "GOTOOLCHAIN=go1.26.8",
+      "GOTOOLCHAIN=go1.26.9",
       "GOOS=darwin",
       "GOARCH=arm64",
       "GOARM64=v8.0",
@@ -61,27 +66,27 @@
       "go build",
       "-buildvcs=false",
       "-trimpath",
-      "-ldflags=-w -X main.version=v2.45.1+compat.8",
+      "-ldflags=-w -X main.version=v2.45.1+compat.9",
       "./cmd/dex"
     ],
-    "binary_sha256": "dfaf9cb0afd9b6c07790c55daae6e8eee5a59dbac86faffe366767def8a1165a"
+    "binary_sha256": "1f44d7fb8e95c488da01b0bd927510a51cb37838541b2991a7200196423b654d"
   },
   "evidence": {
     "license_inventory": {
       "path": "evidence/license-inventory.json",
-      "sha256": "cdb981eeffbd812ce661421c631dd8195531eed945d6af24b508c99db05d229a"
+      "sha256": "8d24f1f13cd6708fe9f50e28bc9139c4440b9513ab13cb283ce2b80d1cfebf00"
     },
     "sbom": {
       "path": "evidence/sbom.cdx.json",
-      "sha256": "68b215d18fbcd956fdc59c2be1ec3391c92e135a556a00ab75230a85c190615d"
+      "sha256": "b6a2d2f614131d62a4d26b41f60cc7170d13f4ae77fb593c5d8244dfcc69de96"
     },
     "vulnerability_report": {
       "path": "evidence/vulnerability-report.json",
-      "sha256": "14d58ead0a83a1d8237ed79e3947b79033fd6d3d04437d31bb3a25901d3de48a"
+      "sha256": "24c7ea5d69e189557decf3a94855e9428214666eeb5d100b05603130171621d7"
     },
     "qualification_report": {
       "path": "evidence/qualification-report.json",
-      "sha256": "d3d3167e4024b090c39f999aa1ad052ea5125956d98da7bdb0b79174687a2df7"
+      "sha256": "1cc3d2baacc703de1c5d9f346c6042c480d97d0421a74eac0b5ad7b3ef14ff80"
     }
   }
 }

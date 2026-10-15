@@ -1,21 +1,21 @@
 {
   "backups": {
-    "post_upgrade_sha256": "f50263c7095b85d06c0e88a385065721f476b6d52dacb4df6757fbe89ebf10e9",
-    "pre_upgrade_sha256": "88b516fce8af156be0f44f9632be4e4e4739474683e8103df5e6d4c6bcc142fc"
+    "post_upgrade_sha256": "298e36883dee60cb8bd26b64e3dcd53de2ef7a29704522a7fb00bb3500e79600",
+    "pre_upgrade_sha256": "919770907c3e33e5ef95a35313bf06a4d5cd639d577505a89a26553aa6bcf600"
   },
   "continuity": {
-    "normalized_public_jwks_sha256": "6c4e1400ce965c955dfb27ac44eb6d7aa8e3ab8bf64cb3d249be02d6c16f58aa",
+    "normalized_public_jwks_sha256": "028df328022b0b0687be949ca91ca85816e28794c957d35d57fd824208ebe32f",
     "restored_current_equal": true,
     "restored_old_rollback_equal": true,
     "upgrade_equal": true
   },
   "current": {
-    "binary_sha256": "ffcc9a389a0e7eed1a37cad53da8bf82b155d2c114ccc7b4d9ebcf145947098b",
+    "binary_sha256": "1f44d7fb8e95c488da01b0bd927510a51cb37838541b2991a7200196423b654d",
     "migration_level": 14,
-    "storage_helper_sha256": "1b775622c64a12adbb72402499651e67e6de4a17d1f8b683b2f9adffb809d3a5",
-    "version": "v2.45.1+compat.8"
+    "storage_helper_sha256": "fae788879287f3d7866fc48fe45e7c918c23f0d74b14ba3b41f946a23e8a1bd9",
+    "version": "v2.45.1+compat.9"
   },
-  "evaluated_on": "2026-09-28",
+  "evaluated_on": "2026-10-15",
   "old": {
     "binary_sha256": "a4483be4dc8618659c8cfa2ab52463cbe683c03e4573d3b9a214c63d69bc0c7e",
     "commit": "bcc2283694018a59e9b84c43c6c50ce996e9409b",

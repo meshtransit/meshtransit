@@ -1,13 +1,13 @@
 {
   "schema_version": "meshtransit.dex-qualification-report/v1",
-  "evaluated_on": "2026-09-26",
+  "evaluated_on": "2026-10-15",
   "artifact": {
     "upstream_version": "v2.45.1",
-    "candidate_version": "v2.45.1+compat.8",
+    "candidate_version": "v2.45.1+compat.9",
     "upstream_commit": "11d2eeb52b42e1980e14cb91e69dd9e3faab2076",
-    "source_tree_sha256": "31e9f91bd3761028f838e7f00635cded92bbd661a4264b8b58ba391546422bae",
-    "binary_sha256": "dfaf9cb0afd9b6c07790c55daae6e8eee5a59dbac86faffe366767def8a1165a",
-    "go_version": "go1.26.8",
+    "source_tree_sha256": "8a02556656744ff449eecb562eef5203915e8a6c5b28be71d66078db6765dd1b",
+    "binary_sha256": "1f44d7fb8e95c488da01b0bd927510a51cb37838541b2991a7200196423b654d",
+    "go_version": "go1.26.9",
     "goos": "darwin",
     "goarch": "arm64",
     "cgo_enabled": false
@@ -44,17 +44,21 @@
     {
       "id": "inject-connector-http-client",
       "sha256": "524158992232a39496c976fa712a58405d52cc6abfd1eb01104232efdaf9b257"
+    },
+    {
+      "id": "security-dependency-updates-go1269",
+      "sha256": "21ba45cb7569c5fc5a36a1ad85825c669797f012bd9d07036f1d7da9f98021b5"
     }
   ],
   "build": {
     "independent_builds": 2,
     "matching_binary_digests": true,
     "flags": [
-      "GOTOOLCHAIN=go1.26.8",
+      "GOTOOLCHAIN=go1.26.9",
       "CGO_ENABLED=0",
       "-buildvcs=false",
       "-trimpath",
-      "-ldflags=-w -X main.version=v2.45.1+compat.8"
+      "-ldflags=-w -X main.version=v2.45.1+compat.9"
     ]
   },
   "tests": {

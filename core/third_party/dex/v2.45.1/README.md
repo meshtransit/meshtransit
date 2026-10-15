@@ -39,8 +39,9 @@ MeshTransit does not maintain a Dex fork.
    - includes signing, refresh, discovery, persistence, and race coverage.
 3. `patches/0003-security-dependency-updates.patch`
    - SHA-256: `43912a1c989c540c7d1a73e301205b0e18d8f1306ad0d14bafa3b8bc0c4fda7f`;
-   - raises the minimum Go language version to 1.26 and pins the qualified
-     build to Go 1.26.8, the latest patch release when it was qualified;
+   - raises the minimum Go language version to 1.26 (the qualified build
+     toolchain is recorded in the manifest and was Go 1.26.8 when this patch
+     was written);
    - upgrades only existing dependencies needed to remove reachable binary
      findings reported on 2026-09-25; and
    - contains two format-call compatibility fixes required by Go 1.26 vet.
@@ -83,6 +84,14 @@ MeshTransit does not maintain a Dex fork.
    - fails closed when a configured connector cannot accept injection; and
    - includes connector and server tests, including nil-client rejection.
 
+9. `patches/0009-security-dependency-updates-go1269.patch`
+   - SHA-256: `21ba45cb7569c5fc5a36a1ad85825c669797f012bd9d07036f1d7da9f98021b5`;
+   - raises `golang.org/x/net` to v0.60.0 (GO-2026-6603, -6610, -6611, -6612
+     and -6617 are reachable through `x/net/http2` at v0.58.0) and the
+     modules it requires (`x/crypto` v0.57.0, `x/sys` v0.48.0, `x/text`
+     v0.42.0, `x/mod` v0.41.0, `x/sync` v0.23.0); and
+   - changes only `go.mod` and `go.sum`.
+
 The ordered patch set applies only to the exact tag commit above. It passed the
 complete Dex `./server` and `./server/signer` package and race suites before
 being stored here. With `CGO_ENABLED=1`, the only failure in the complete Dex
@@ -91,24 +100,23 @@ longer valid at the current date; the same test fails without these patches.
 
 ## Qualified artifact evidence
 
-`manifest.darwin-arm64.json` binds the eight ordered patches, canonical patched
+`manifest.darwin-arm64.json` binds the nine ordered patches, canonical patched
 source tree, build inputs, exact binary, and four evidence files. The
-qualification binary is `v2.45.1+compat.8`, built with Go 1.26.8 and
+qualification binary is `v2.45.1+compat.9`, built with Go 1.26.9 and
 `CGO_ENABLED=0` for `darwin/arm64`.
 
 The broker-capable MeshCore image is built with the Go release named by the
 repository's root `go.mod`, not with the manifest's. `prepare-dex-workspace`
 accepts that release when it is the qualified one or a later patch release of
-the same minor line (for example Go 1.26.9 against a Go 1.26.8 manifest), and
-pins the prepared `go.work` to it; an older patch or another minor line is
-refused. A later patch release therefore ships security fixes before the
-evidence below is regenerated; the evidence still describes the Go 1.26.8
-qualification binary.
+the same minor line, and pins the prepared `go.work` to it; an older patch or
+another minor line is refused. The evidence below was regenerated for
+Go 1.26.9; a later patch release ships security fixes before the evidence is
+regenerated again.
 
 - source tree SHA-256:
-  `31e9f91bd3761028f838e7f00635cded92bbd661a4264b8b58ba391546422bae`;
+  `8a02556656744ff449eecb562eef5203915e8a6c5b28be71d66078db6765dd1b`;
 - binary SHA-256:
-  `dfaf9cb0afd9b6c07790c55daae6e8eee5a59dbac86faffe366767def8a1165a`;
+  `1f44d7fb8e95c488da01b0bd927510a51cb37838541b2991a7200196423b654d`;
 - two clean independent builds produced the same binary digest;
 - the CycloneDX 1.7 SBOM contains 107 components and is normalized to remove
   scan timestamps, random identifiers, and temporary paths;
@@ -129,14 +137,11 @@ identity above. This artifact is qualification evidence for the recorded host
 platform. It is not a Linux production artifact and legal approval remains a
 separate `SSO-BROKER-001` decision.
 
-The recorded binary digest is the digest of a build made inside a `go.work`
-together with a module whose `go.mod`/`go.sum` are frozen in
-`qualification-workspace.go.mod` and `qualification-workspace.go.sum`, because
-the Dex dependency versions then follow that file and not MeshCore's current
-`go.mod`. `core/scripts/qualification/build-dex-qualification-binary.sh
+The recorded binary digest is that of a standalone build of the verified patched
+tree with the manifest's toolchain and flags (no `go.work`, so it does not move
+with MeshCore's `go.mod`). `core/scripts/qualification/build-dex-qualification-binary.sh
 <Dex checkout> <new file>` rebuilds it and refuses a result that differs from
-`binary_sha256`. Do not refresh the frozen files without regenerating the
-manifest and evidence.
+`binary_sha256`.
 
 `make prepare-dex-source` can materialize this exact patched tree into the
 `source` child of an existing empty private directory. The operation verifies
