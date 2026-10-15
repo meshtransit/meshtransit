@@ -323,16 +323,17 @@ func assertBrowserFailureAuditWait(ctx context.Context, t *testing.T, admin *pgx
 		}
 		finished := make(chan completion, 1)
 		go func() { result, err := service.FailBrowser(ctx, receipt); finished <- completion{result, err} }()
-		// Wait on a real clock, not frozen transaction_timestamp. Audit head is
-		// held throughout; any early completion fails instead of silently passing.
-		timer := time.NewTimer(time.Until(expiresAt) + 20*time.Millisecond)
-		defer timer.Stop()
+		// Sleep on the database clock, which decides expiry, past the deadline:
+		// this host's clock may run ahead of it. The audit head is held
+		// throughout; any early completion fails instead of silently passing.
+		if _, err := held.Exec(ctx, `SELECT pg_catalog.pg_sleep_until($1::TIMESTAMPTZ + INTERVAL '20 milliseconds')`,
+			expiresAt); err != nil {
+			t.Fatal(err)
+		}
 		select {
 		case early := <-finished:
 			t.Fatal("failure did not wait for audit lock", early.err)
-		case <-ctx.Done():
-			t.Fatal(ctx.Err())
-		case <-timer.C:
+		default:
 		}
 		if err := held.Rollback(ctx); err != nil {
 			t.Fatal(err)
