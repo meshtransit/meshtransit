@@ -41,6 +41,8 @@ const (
 	PermissionNetworkDelete Permission = "network.delete"
 	// PermissionDNSManage changes network DNS configuration.
 	PermissionDNSManage Permission = "dns.manage"
+	// PermissionNetworkMemberManage adds and removes the members of a network.
+	PermissionNetworkMemberManage Permission = "network.member.manage"
 
 	// PermissionMemberRead reads workspace membership.
 	PermissionMemberRead Permission = "member.read"
@@ -265,5 +267,6 @@ func Permissions() []Permission {
 		PermissionDeviceTagManage,
 		PermissionInterchangeRead,
 		PermissionInterchangeManage,
+		PermissionNetworkMemberManage,
 	}
 }

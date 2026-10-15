@@ -1,5 +1,6 @@
 // Package memberlifecycle suspends, resumes and removes Workspace members,
-// and ends their Console sessions in a Workspace.
+// ends their Console sessions in a Workspace, and adds members to and
+// removes them from one Network.
 // Suspending a member cuts them off in the Workspace at once: their
 // membership grants nothing, the Devices they own there are suspended, and
 // their Console sessions in the Workspace end. Resuming restores exactly what

@@ -49,13 +49,19 @@ func TestBuiltinRoleBoundaries(t *testing.T) {
 		notGranted []Permission
 	}{
 		{
-			role:       BuiltinRoleNetworkAdmin,
-			granted:    []Permission{"policy.publish", "share.offer", "dns.manage", "route.approve"},
-			notGranted: []Permission{"device.manage", "member.invite", "role_binding.manage", "billing.manage"},
+			role:    BuiltinRoleAdmin,
+			granted: []Permission{"member.manage", "network.member.manage", "device.transfer"},
 		},
 		{
-			role:       BuiltinRoleITAdmin,
-			granted:    []Permission{"device.manage", "member.invite", "role_binding.manage", "session.revoke"},
+			role:    BuiltinRoleNetworkAdmin,
+			granted: []Permission{"policy.publish", "share.offer", "dns.manage", "route.approve"},
+			notGranted: []Permission{"device.manage", "member.invite", "role_binding.manage", "billing.manage",
+				"network.member.manage"},
+		},
+		{
+			role: BuiltinRoleITAdmin,
+			granted: []Permission{"device.manage", "member.invite", "role_binding.manage", "session.revoke",
+				"network.member.manage"},
 			notGranted: []Permission{"policy.publish", "share.offer", "dns.manage", "billing.manage"},
 		},
 		{
@@ -64,9 +70,10 @@ func TestBuiltinRoleBoundaries(t *testing.T) {
 			notGranted: []Permission{"device.read", "policy.read", "member.read"},
 		},
 		{
-			role:       BuiltinRoleAuditor,
-			granted:    []Permission{"audit.export", "policy.read", "member.read"},
-			notGranted: []Permission{"policy.publish", "device.manage", "billing.manage", "audit.read.secret"},
+			role:    BuiltinRoleAuditor,
+			granted: []Permission{"audit.export", "policy.read", "member.read"},
+			notGranted: []Permission{"policy.publish", "device.manage", "billing.manage", "audit.read.secret",
+				"network.member.manage"},
 		},
 	} {
 		for _, permission := range test.granted {

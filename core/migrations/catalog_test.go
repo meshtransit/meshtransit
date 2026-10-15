@@ -12,8 +12,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 165 {
-		t.Fatalf("len(Catalog()) = %d, want 165", len(catalog))
+	if len(catalog) != 166 {
+		t.Fatalf("len(Catalog()) = %d, want 166", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1608,8 +1608,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 165 {
-		t.Fatalf("LatestVersion() = %d, want 165", LatestVersion())
+	if LatestVersion() != 166 {
+		t.Fatalf("LatestVersion() = %d, want 166", LatestVersion())
 	}
 }
 
@@ -4414,6 +4414,66 @@ func TestPolicyGoneDeviceDestinations(t *testing.T) {
 	} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 165 must not contain %q", forbidden)
+		}
+	}
+}
+
+// Schema 166 lets network.member.manage list, add and remove the members of
+// one Network, removing a member's Devices there as schema 130 does for the
+// Workspace.
+func TestNetworkMemberManagement(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 166 {
+		t.Fatalf("len(Catalog()) = %d, want schema 166", len(catalog))
+	}
+	migration := catalog[165]
+	if migration.Version != 166 {
+		t.Fatalf("migration 166 = %+v", migration)
+	}
+	for _, want := range []string{
+		"('network.member.manage', 'Add and remove the members of a Network', 'mutation', ARRAY['network'], 1)",
+		"('admin', 'network.member.manage'),\n    ('it_admin', 'network.member.manage')",
+		"CREATE FUNCTION mesh_ops.list_network_members_v1(",
+		"CREATE FUNCTION mesh_ops.add_network_members_v1(",
+		"CREATE FUNCTION mesh_ops.remove_network_member_v1(",
+		"p_workspace_public_id, p_network_public_id, 'network.read', p_evaluated_at",
+		"p_workspace_public_id, p_network_public_id, 'network.member.manage', v_now",
+		"pg_catalog.cardinality(p_member_public_ids) NOT BETWEEN 1 AND 150",
+		"RAISE EXCEPTION USING ERRCODE = 'MTM01'",
+		"RAISE EXCEPTION USING ERRCODE = 'MTM02'",
+		"RAISE EXCEPTION USING ERRCODE = 'MTM03'",
+		"RAISE EXCEPTION USING ERRCODE = 'MTM04'",
+		"AND (assignment.network_id IS NULL OR assignment.network_id = v_scope.network_id)",
+		"PERFORM mesh_ops.revoke_member_device_internal_v1(v_device.id, 'network member removed', v_now);",
+		"mesh_ops.advance_member_networks_internal_v1(v_scope.workspace_id, ARRAY[v_scope.network_id])",
+		"AND credential.issuer_principal_id = v_member AND credential.state = 'active'",
+		") TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 166 must contain %q", want)
+		}
+	}
+	// The Workspace row is locked before the Network revision in every write.
+	for _, name := range []string{"add_network_members_v1(", "remove_network_member_v1("} {
+		start := strings.Index(migration.SQL, "CREATE FUNCTION mesh_ops."+name)
+		body := migration.SQL[start:]
+		body = body[:strings.Index(body, "$function$;")]
+		workspaceLock := strings.Index(body, "FROM mesh.workspace AS workspace")
+		revision := strings.Index(body, "mesh_ops.network_revision")
+		if workspaceLock < 0 || revision < 0 || workspaceLock > revision {
+			t.Errorf("%s must lock the Workspace row before the Network revision", name)
+		}
+		if !strings.Contains(body, "SET join_collapse_limit = 1\nSET from_collapse_limit = 1\n"+
+			"SET plan_cache_mode = force_generic_plan") {
+			t.Errorf("%s must keep its written join order and a generic plan", name)
+		}
+	}
+	// Sessions, Identity Groups and the Workspace membership stay as they are.
+	for _, forbidden := range []string{"UPDATE mesh.account_session", "DELETE FROM mesh.identity_group_member",
+		"UPDATE mesh.workspace_membership", "DELETE ", "DROP ", "OWNER TO", "TO mesh_worker", "GRANT SELECT"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 166 must not contain %q", forbidden)
 		}
 	}
 }

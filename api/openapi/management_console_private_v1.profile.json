@@ -10216,6 +10216,638 @@
       }
     }
   },
+  "networkMembers": {
+    "get": {
+      "operationId": "listNetworkMembers",
+      "summary": "One page of a Network's members",
+      "description": "Requires network.read. Lists the Workspace's members ordered by principal ID with their membership of this Network (null when they are not a member); pass next_after as after for the next page. Members of the Network are always listed; the rest of the Workspace only when the caller can add them (network.member.manage) or read the Workspace's members (member.read). can_manage reports network.member.manage. A suspended Workspace member is listed but cannot be added.",
+      "security": [
+        {
+          "accountSessionCookie": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "name": "workspace_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "network_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 100
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Members",
+          "headers": {
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "network_id",
+                      "can_manage",
+                      "members"
+                    ],
+                    "properties": {
+                      "network_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "can_manage": {
+                        "type": "boolean",
+                        "description": "The caller holds network.member.manage"
+                      },
+                      "members": {
+                        "type": "array",
+                        "maxItems": 200,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "principal_id",
+                            "display_name",
+                            "workspace_membership_state",
+                            "owner",
+                            "network_membership"
+                          ],
+                          "properties": {
+                            "principal_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "display_name": {
+                              "type": "string"
+                            },
+                            "workspace_membership_state": {
+                              "type": "string",
+                              "enum": [
+                                "active",
+                                "suspended"
+                              ]
+                            },
+                            "owner": {
+                              "type": "boolean"
+                            },
+                            "network_membership": {
+                              "type": [
+                                "object",
+                                "null"
+                              ],
+                              "additionalProperties": false,
+                              "required": [
+                                "membership_id",
+                                "principal_id",
+                                "state",
+                                "version",
+                                "added_at"
+                              ],
+                              "properties": {
+                                "membership_id": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "principal_id": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "state": {
+                                  "type": "string",
+                                  "enum": [
+                                    "active",
+                                    "suspended"
+                                  ]
+                                },
+                                "version": {
+                                  "type": "integer",
+                                  "minimum": 1
+                                },
+                                "added_at": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                }
+                              },
+                              "description": "The member's membership of this Network, or null when they are not a member"
+                            }
+                          }
+                        }
+                      },
+                      "next_after": {
+                        "type": "string",
+                        "format": "uuid"
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "invalid_request"
+        },
+        "403": {
+          "description": "permission_denied"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Unavailable"
+        }
+      }
+    }
+  },
+  "networkMemberAdd": {
+    "post": {
+      "operationId": "addNetworkMembers",
+      "summary": "Add Workspace members to a Network",
+      "description": "Requires network.member.manage (the owner, admin, or an it_admin of the Workspace or of this Network). Adds up to 150 active Workspace members, each named once; a member already in the Network is reported unchanged. A member of the Network can enroll Devices into it and receive Devices handed over in it. A suspended Workspace member cannot be added. Maps are not rebuilt.",
+      "security": [
+        {
+          "accountSessionCookie": [],
+          "sessionCSRF": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "name": "workspace_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "network_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionProof"
+        }
+      ],
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "principal_ids"
+              ],
+              "properties": {
+                "principal_ids": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 150,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "The memberships created and the members already in the Network",
+          "headers": {
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "network_id",
+                      "added",
+                      "unchanged"
+                    ],
+                    "properties": {
+                      "network_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "added": {
+                        "type": "array",
+                        "maxItems": 150,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "membership_id",
+                            "principal_id",
+                            "state",
+                            "version",
+                            "added_at"
+                          ],
+                          "properties": {
+                            "membership_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "principal_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "state": {
+                              "type": "string",
+                              "enum": [
+                                "active",
+                                "suspended"
+                              ]
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "added_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        }
+                      },
+                      "unchanged": {
+                        "type": "array",
+                        "maxItems": 150,
+                        "items": {
+                          "type": "string",
+                          "format": "uuid"
+                        }
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "invalid_request"
+        },
+        "403": {
+          "description": "permission_denied"
+        },
+        "404": {
+          "description": "member_not_found"
+        },
+        "409": {
+          "description": "member_state_conflict"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Unavailable"
+        }
+      }
+    }
+  },
+  "networkMemberRemove": {
+    "post": {
+      "operationId": "removeNetworkMember",
+      "summary": "Remove a member from a Network",
+      "description": "Requires network.member.manage and a delegation ceiling covering every Workspace role, and every role of this Network, the member holds. Nobody removes the owner or themselves. Each Device the member owns in this Network is moved to the Workspace, handed to another active member of this Network (suspended until that member signs in on it), or revoked as the plan says; a Device the plan does not name is revoked. A Device of this Network waiting to be handed to the member stays suspended for an administrator. The enrollment keys they issued for this Network are revoked, their roles for this Network end, and the Network membership is revoked. Their Workspace membership, Identity Groups, other Networks and Console sessions are unchanged.",
+      "security": [
+        {
+          "accountSessionCookie": [],
+          "sessionCSRF": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "name": "workspace_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "network_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "principal_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionProof"
+        }
+      ],
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "reason",
+                "devices"
+              ],
+              "properties": {
+                "reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "devices": {
+                  "type": "array",
+                  "maxItems": 250,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "device_id",
+                      "action"
+                    ],
+                    "properties": {
+                      "device_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "action": {
+                        "type": "string",
+                        "enum": [
+                          "transfer_workspace",
+                          "transfer_member",
+                          "revoke"
+                        ]
+                      },
+                      "new_owner_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Required for transfer_member and absent otherwise"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "The removed membership and what happened to each of the member's Devices in the Network",
+          "headers": {
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "member",
+                      "devices",
+                      "handovers_cancelled",
+                      "enrollment_keys_revoked",
+                      "roles_revoked",
+                      "network_revision"
+                    ],
+                    "properties": {
+                      "member": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "membership_id",
+                          "principal_id",
+                          "state",
+                          "version"
+                        ],
+                        "properties": {
+                          "membership_id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "principal_id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "revoked"
+                            ]
+                          },
+                          "version": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      "devices": {
+                        "type": "array",
+                        "maxItems": 10000,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "device_id",
+                            "hostname",
+                            "action",
+                            "state"
+                          ],
+                          "properties": {
+                            "device_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "hostname": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253
+                            },
+                            "action": {
+                              "type": "string",
+                              "enum": [
+                                "transfer_workspace",
+                                "transfer_member",
+                                "revoke"
+                              ]
+                            },
+                            "state": {
+                              "type": "string",
+                              "enum": [
+                                "active",
+                                "suspended",
+                                "revoked"
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      "handovers_cancelled": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "enrollment_keys_revoked": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "roles_revoked": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "network_revision": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "invalid_request"
+        },
+        "403": {
+          "description": "permission_denied or member_protected"
+        },
+        "404": {
+          "description": "member_not_found"
+        },
+        "409": {
+          "description": "device_plan_conflict or new_owner_unavailable"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Unavailable"
+        }
+      }
+    }
+  },
   "workspaceInvitations": {
     "get": {
       "operationId": "listWorkspaceInvitations",

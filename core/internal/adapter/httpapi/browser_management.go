@@ -298,7 +298,7 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		isNetworkAliasRangeOperation(request) || isNetworkAddressUsageRead(request) || isAuditEventListRead(request) ||
 		isAuditEventExportRead(request) || isGuardrailOperation(request) || isInterchangeOperation(request) || isDeviceGroupOperation(request) ||
 		isIdentityCatalogOperation(request) || isDeviceLifecycleOperation(request) ||
-		isMemberLifecycleOperation(request) ||
+		isMemberLifecycleOperation(request) || isNetworkMemberOperation(request) ||
 		isInvitationOperation(request)
 	resourceSharing, _ := browserResourceSharingOperation(request)
 	if !prepare && !logout && !managementScopes && !inventoryRead && !distributionRead && !historyRead &&
@@ -550,7 +550,7 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 			isInterchangeRead(request) ||
 			isInvitationRead(request))
 	auditRead := isAuditEventListRead(request) || isAuditEventExportRead(request) || isDeviceGroupRead(request) ||
-		isIdentityCatalogRead(request)
+		isIdentityCatalogRead(request) || isNetworkMemberRead(request)
 	safeRead := approvalRead || managementScopeRead || inventoryRead || distributionRead || historyRead ||
 		enforcementRead ||
 		deploymentCapabilityRead ||

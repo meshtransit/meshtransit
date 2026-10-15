@@ -111,6 +111,9 @@ type consoleManagementProfile struct {
 	WorkspaceMemberResume   json.RawMessage            `json:"workspaceMemberResume"`
 	WorkspaceMemberSessions json.RawMessage            `json:"workspaceMemberRevokeSessions"`
 	WorkspaceMemberRemove   json.RawMessage            `json:"workspaceMemberRemove"`
+	NetworkMembers          json.RawMessage            `json:"networkMembers"`
+	NetworkMemberAdd        json.RawMessage            `json:"networkMemberAdd"`
+	NetworkMemberRemove     json.RawMessage            `json:"networkMemberRemove"`
 	WorkspaceInvitations    json.RawMessage            `json:"workspaceInvitations"`
 	InvitationCreate        json.RawMessage            `json:"workspaceInvitationCreate"`
 	InvitationResend        json.RawMessage            `json:"workspaceInvitationResend"`
@@ -210,6 +213,9 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		consoleCookieOperation(profile.WorkspaceMemberResume, "post", "resumeWorkspaceMember", true) &&
 		consoleCookieOperation(profile.WorkspaceMemberSessions, "post", "revokeWorkspaceMemberSessions", true) &&
 		consoleCookieOperation(profile.WorkspaceMemberRemove, "post", "removeWorkspaceMember", true) &&
+		consoleCookieOperation(profile.NetworkMembers, "get", "listNetworkMembers", false) &&
+		consoleCookieOperation(profile.NetworkMemberAdd, "post", "addNetworkMembers", true) &&
+		consoleCookieOperation(profile.NetworkMemberRemove, "post", "removeNetworkMember", true) &&
 		consoleCookieOperation(profile.WorkspaceInvitations, "get", "listWorkspaceInvitations", false) &&
 		consoleCookieOperation(profile.InvitationCreate, "post", "createWorkspaceInvitation", true) &&
 		consoleCookieOperation(profile.InvitationResend, "post", "resendWorkspaceInvitation", true) &&
@@ -354,6 +360,10 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	consolePaths[memberActions+"resume"] = profile.WorkspaceMemberResume
 	consolePaths[memberActions+"revoke-sessions"] = profile.WorkspaceMemberSessions
 	consolePaths[memberActions+"remove"] = profile.WorkspaceMemberRemove
+	networkMembers := "/api/v1/workspaces/{workspace_id}/networks/{network_id}/members"
+	consolePaths[networkMembers] = profile.NetworkMembers
+	consolePaths[networkMembers+"/actions/add"] = profile.NetworkMemberAdd
+	consolePaths[networkMembers+"/{principal_id}/actions/remove"] = profile.NetworkMemberRemove
 	invitations := "/api/v1/workspaces/{workspace_id}/invitations"
 	consolePaths[invitations] = profile.WorkspaceInvitations
 	consolePaths[invitations+"/actions/create"] = profile.InvitationCreate

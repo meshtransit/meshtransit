@@ -108,6 +108,7 @@ func LookupPermission(permission Permission) (PermissionDefinition, bool) {
 		PermissionNetworkSuspend,
 		PermissionNetworkDelete,
 		PermissionDNSManage,
+		PermissionNetworkMemberManage,
 		PermissionDeviceRead,
 		PermissionDeviceManage,
 		PermissionDeviceTransfer,
