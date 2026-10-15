@@ -5,6 +5,18 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: members can be added to and removed from an existing Network. Before,
+  a Network created after people joined the Workspace held only its creator,
+  so nobody else could enroll a Device into it. The new
+  `network.member.manage` permission (owner, `admin`, `it_admin`; a
+  Network-scope `it_admin` for its Network only) lists a Network's members,
+  adds up to 150 active Workspace members at once, and removes one, handling
+  their Devices in that Network with the same plan as a Workspace removal
+  (move to the Workspace, hand over to another Network member, or revoke).
+  Console routes: `GET /api/v1/workspaces/{workspace}/networks/{network}/members`,
+  `POST .../members/actions/add` and `POST .../members/{member}/actions/remove`.
+  Additions and removals are recorded on the Network's audit stream as
+  `network.member.added` and `network.member.removed` (schema 166).
 - Core: a policy holding a rule to a Resource, a Resource Group member or an
   Imported Resource whose Device was suspended, expired or revoked no longer
   fails every publication with a stale revision (412). Such rules publish

@@ -120,13 +120,41 @@ People join a Workspace by invitation (`member.invite`):
 - A person without an Account gets one on acceptance; an existing member
   keeps their membership and gains the role; a suspended member is refused.
 - A new member joins every Network that is active at acceptance. A Network
-  created later has only its creator as a member; no operation adds members
-  to an existing Network yet.
+  created later starts with only its creator as a member; others are added
+  to it as described in [Network members](#network-members).
 
 Members are suspended, resumed and removed with `member.manage`; what happens
 to their Devices is described in [devices](devices.md#members-leaving).
 Nobody can suspend, sign out or remove themselves or the owner, and an administrator
 can act on a member only if they could grant every role the member holds.
+
+### Network members
+
+Being a member of a Network lets a Workspace member enroll Devices into it
+from the browser and receive Devices handed over in it. It grants no packet
+access and no management permission; those come from policy and roles.
+`network.member.manage` changes a Network's members. The owner, `admin` and
+`it_admin` hold it; an `it_admin` bound to one Network manages only that
+Network's members.
+
+- **Listing** (`GET /api/v1/workspaces/{workspace}/networks/{network}/members`,
+  `network.read`) pages the Workspace's members, up to 200 at a time ordered
+  by principal ID, each with their membership of the Network or none, and
+  says whether the caller can change them. Members of the Network are always
+  listed; the rest of the Workspace only to a caller who can add them or read
+  the Workspace's members (`member.read`).
+- **Adding** (`POST .../members/actions/add` with `principal_ids`, up to 150
+  at once) adds active Workspace members; anyone already in the Network is
+  reported unchanged. A suspended Workspace member cannot be added. Maps are
+  not rebuilt: membership decides who may enroll, not who can reach whom.
+- **Removing** (`POST .../members/{member}/actions/remove` with a reason and
+  a Device plan) handles the member's Devices in that Network as a Workspace
+  removal does (see [devices](devices.md#members-leaving)), revokes the
+  enrollment keys they issued for it and their roles bound to it, and ends
+  the membership. Their Workspace membership, Workspace roles, Identity
+  Groups, other Networks and sessions are untouched. Nobody removes the owner
+  or themselves, and the actor must be able to grant every Workspace role,
+  and every role of that Network, the member holds.
 
 ## Roles and permissions
 
@@ -147,8 +175,9 @@ Permissions come from roles:
 - Only holders bound to the whole Workspace assign roles.
 - A role assignment can expire. Nobody changes their own roles, and the owner
   holds no role assignment.
-- In short: `it_admin` manages members, Devices (`device.manage`,
-  `device.transfer`, `device.quarantine`), enrollment and groups;
+- In short: `it_admin` manages members (including each Network's members,
+  `network.member.manage`), Devices (`device.manage`, `device.transfer`,
+  `device.quarantine`), enrollment and groups;
   `network_admin` manages Networks' settings, DNS, Device Groups, policy,
   Resources and shares; `auditor` reads everything and exports audit;
   `admin` holds both administrators' permissions and more.

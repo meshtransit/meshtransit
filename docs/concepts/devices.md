@@ -15,7 +15,9 @@ The node asks Core to register; Core answers with an approval link on the
 Console's host, `/register/v1/<token>`, which `meshctl up` prints or opens. A
 signed-in person opens it, picks the Workspace and Network (Core never picks
 one) and approves. Approving needs no role: the person must be an active
-member of the Workspace and of that Network. The node waits up to 10 minutes
+member of the Workspace and of that Network (Network members are managed as
+described in [identity and access](identity-and-access.md#network-members)).
+The node waits up to 10 minutes
 on one session (the link stays valid 14 minutes); Core checks the approval
 every 2 seconds and completes the registration on the same session.
 
@@ -148,6 +150,12 @@ administrator's revoke and needs only the node's current keys.
   transfer to the Workspace, hand over to another member, or revoke. Devices
   the plan does not name are revoked. Their enrollment keys are revoked and
   their roles and group memberships end.
+- **Removing a member from one Network** applies the same kind of plan to
+  their Devices in that Network only; a handover goes to another member of
+  that Network. Their enrollment keys and roles for that Network end, and a
+  Device of that Network waiting to be handed to them stays suspended for an
+  administrator. They stay a member of the Workspace and of their other
+  Networks.
 
 Nobody can suspend themselves or the Workspace owner, and an administrator can
 act on a member only if they could grant every role that member holds.

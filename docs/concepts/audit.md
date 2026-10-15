@@ -23,7 +23,7 @@ Actions are named `<object>.<verb>`, for example:
 | Policy | `policy.published`, `policy.approval.requested`, `policy.approval.approved` |
 | Devices | `device.registered`, `device.renamed`, `device.suspended`, `device.reactivated`, `device.ownership_transferred`, `device.handover_started`, `device.handover_completed`, `device.node_key_rotated`, `device.tags_changed`, `device.logged_out`, `device.revoked` |
 | Registration | `registration.requested`, `registration.browser.requested`, `registration.browser.approved`, `registration.expired` |
-| Members | `member.invited`, `member.invitation_accepted`, `member.invitation_revoked`, `member.suspended`, `member.reactivated`, `member.removed` |
+| Members | `member.invited`, `member.invitation_accepted`, `member.invitation_revoked`, `member.suspended`, `member.reactivated`, `member.removed`, `network.member.added`, `network.member.removed` |
 | Workspaces and Networks | `workspace.created`, `workspace.renamed`, `workspace_role.assigned`, `workspace_role.revoked`, `network.created`, `network.alias_range.updated` |
 | Groups, tags, guardrails | `device_group.*`, `identity_group.*`, `device_tag.*`, `guardrail.*`, `interchange.*` |
 | Resources and sharing | `resource.*`, `resource_group.*`, `share_offer.*`, `trust_contract.*`, `sharing.private_endpoint.published` |
