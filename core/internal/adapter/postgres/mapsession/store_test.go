@@ -324,8 +324,8 @@ func TestStoreTellsASuspendedDeviceApart(t *testing.T) {
 }
 
 // TestStoreLoadsDeviceNamingFacts: the snapshot carries the Device's DNS
-// label, its peers' labels and the scope's display codes (schema 169), and
-// a Device of the scope without a label fails the read closed.
+// label, its peers' labels and the scope's display codes (schema 169); a
+// Device without a label, or a read without codes, still loads, unnamed.
 func TestStoreLoadsDeviceNamingFacts(t *testing.T) {
 	t.Parallel()
 	store, _, _, _, identity := validStoreFixture(t)
@@ -367,8 +367,15 @@ func TestStoreLoadsDeviceNamingFacts(t *testing.T) {
 			t.Parallel()
 			store, _, transaction, _, identity := validStoreFixture(t)
 			mutate(transaction)
-			if _, err := store.Load(t.Context(), identity); !errors.Is(err, ErrSnapshotEvidence) {
-				t.Fatalf("Load() error = %v, want snapshot evidence error", err)
+			snapshot, err := store.Load(t.Context(), identity)
+			if err != nil {
+				t.Fatalf("Load() error = %v; a missing name must not fail the map", err)
+			}
+			_, selfLabeled := snapshot.DNSLabel()
+			_, _, coded := snapshot.DisplayCodes()
+			peerLabel, peerLabeled := snapshot.PeerCandidates()[0].DNSLabel()
+			if selfLabeled && coded && peerLabeled && peerLabel.String() == "node-2" {
+				t.Fatal("the mutated naming fact was kept")
 			}
 		})
 	}

@@ -63,6 +63,12 @@ func encodeSnapshot(snapshot mapsession.Snapshot, view *mtcpv1.View, aliases boo
 	if err != nil {
 		return nil, err
 	}
+	return encodeNamedSnapshot(snapshot, view, aliases, denied, names)
+}
+
+// encodeNamedSnapshot is encodeSnapshot with the names already computed.
+func encodeNamedSnapshot(snapshot mapsession.Snapshot, view *mtcpv1.View, aliases bool,
+	denied []netip.Prefix, names mapsession.DNSView) (*mtcpv1.MapSnapshot, error) {
 	endpoints := newEndpointFilter(snapshot.RelayDirectory(), denied)
 	self, err := encodeSelf(snapshot, endpoints, names)
 	if err != nil {

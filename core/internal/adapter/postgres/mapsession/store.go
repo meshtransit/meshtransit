@@ -633,7 +633,7 @@ func (store *Store) loadPeerCandidates(
 		); err != nil {
 			return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("scan peer candidate: %w", err))
 		}
-		candidate, err := record.scopedCandidate(scope)
+		candidate, err := record.candidate(scope)
 		if err != nil {
 			return nil, err
 		}

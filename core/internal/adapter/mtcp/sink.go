@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"log/slog"
 	"net/netip"
 	"sync"
 	"time"
@@ -33,7 +34,10 @@ type mapSink struct {
 	deniedEndpoints []netip.Prefix
 	// suffix is the deployment's DNS suffix the map names Devices under.
 	suffix dnsname.Suffix
-	now    func() time.Time
+	// logger and metrics, when set, report names a map left out.
+	logger  *slog.Logger
+	metrics *Metrics
+	now     func() time.Time
 
 	mu         sync.Mutex
 	epoch, seq uint64
@@ -85,8 +89,12 @@ func (sink *mapSink) sendSnapshotLocked(_ context.Context, snapshot mapsession.S
 		return err
 	}
 	epoch := max(sink.epoch+1, uint64(sink.now().UnixMilli()))
-	message, err := encodeSnapshot(snapshot, &mtcpv1.View{Epoch: epoch, Seq: 1}, sink.aliases, sink.deniedEndpoints,
-		sink.suffix)
+	names, err := sink.names(snapshot)
+	if err != nil {
+		return err
+	}
+	message, err := encodeNamedSnapshot(snapshot, &mtcpv1.View{Epoch: epoch, Seq: 1}, sink.aliases,
+		sink.deniedEndpoints, names)
 	if err != nil {
 		return err
 	}
@@ -136,7 +144,7 @@ func (sink *mapSink) SendAuthorityDelta(ctx context.Context, delta mapsession.Au
 		}
 		removed = append(removed, deviceID)
 	}
-	names, err := dnsView(snapshot, sink.suffix)
+	names, err := sink.names(snapshot)
 	if err != nil {
 		return err
 	}
@@ -166,7 +174,7 @@ func (sink *mapSink) SendAuthorityDelta(ctx context.Context, delta mapsession.Au
 func (sink *mapSink) SendConnectivityDelta(ctx context.Context, delta mapsession.ConnectivityDelta) error {
 	sink.mu.Lock()
 	defer sink.mu.Unlock()
-	names, err := dnsView(delta.Snapshot(), sink.suffix)
+	names, err := sink.names(delta.Snapshot())
 	if err != nil {
 		return err
 	}
@@ -252,6 +260,23 @@ func (sink *mapSink) SendRelayGrant(ctx context.Context, snapshot mapsession.Sna
 // SendKeepAlive sends a Ping.
 func (sink *mapSink) SendKeepAlive(context.Context) error {
 	return sink.session.Send(sharedmtcp.MessagePing, &mtcpv1.Ping{})
+}
+
+// names computes the map's names and reports any it left out.
+func (sink *mapSink) names(snapshot mapsession.Snapshot) (mapsession.DNSView, error) {
+	names, err := dnsView(snapshot, sink.suffix)
+	if err != nil {
+		return mapsession.DNSView{}, err
+	}
+	if names.Unnamed() > 0 || names.Dropped() > 0 {
+		sink.metrics.namesDegraded(namesUnlabeled, names.Unnamed())
+		sink.metrics.namesDegraded(namesDropped, names.Dropped())
+		if sink.logger != nil {
+			sink.logger.Debug("map names degraded", "unlabeled_devices", names.Unnamed(),
+				"dropped_records", names.Dropped())
+		}
+	}
+	return names, nil
 }
 
 func (sink *mapSink) adoptLocked(snapshot mapsession.Snapshot, grant grantParts) {

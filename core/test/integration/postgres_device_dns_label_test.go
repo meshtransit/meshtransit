@@ -12,7 +12,7 @@ import (
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	"meshtransit.net/core/internal/control"
 	"meshtransit.net/core/internal/domain/dnsname"
-	"meshtransit.net/core/internal/domain/sharing"
+	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/migrations"
 )
 
@@ -89,22 +89,35 @@ func assertPostgreSQLDeviceDNSLabels(ctx context.Context, t *testing.T, admin *p
 			t.Fatalf("backfill relabeled Device %d from %q to %q", device, label, after[device])
 		}
 	}
+	// Every write path of the whole suite left every live Device labeled.
+	var unlabeled int64
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM mesh.device AS device
+WHERE device.state NOT IN ('revoked', 'deleted') AND device.deleted_at IS NULL
+  AND NOT EXISTS (SELECT 1 FROM mesh.device_dns_label AS label
+      WHERE label.workspace_id = device.workspace_id AND label.network_id = device.network_id
+        AND label.device_id = device.id)`).Scan(&unlabeled); err != nil {
+		t.Fatal(err)
+	}
+	if unlabeled != 0 {
+		t.Fatalf("%d live Devices hold no DNS label", unlabeled)
+	}
 }
 
-// assertDeviceDNSLabelDerivation checks the SQL derivation against the
-// share access label derivation it mirrors.
+// assertDeviceDNSLabelDerivation checks the SQL derivation against its Go
+// mirror.
 func assertDeviceDNSLabelDerivation(ctx context.Context, t *testing.T, admin *pgx.Conn) {
 	t.Helper()
 	for _, hostname := range []string{
 		"laptop", "Laptop.Example", "my_box.local", "1234", "1234.example", "a--b", "-edge-.x", "...",
-		"", strings.Repeat("y", 63) + "-z", strings.Repeat("9", 70), "café-bar",
+		"", strings.Repeat("y", 63) + "-z", strings.Repeat("9", 70), "café-bar", " spaced ",
+		"wpad", "WPAD.corp", "isatap", "localhost", "www", "wpad-1", "xn--80ak6aa92e",
 	} {
 		var derived string
 		if err := admin.QueryRow(ctx, `SELECT mesh_ops.derive_device_dns_label_v1($1)`, hostname).
 			Scan(&derived); err != nil {
 			t.Fatal(err)
 		}
-		if want := sharing.DefaultAccessLabel(hostname).String(); derived != want {
+		if want := node.DeriveDNSLabel(hostname).String(); derived != want {
 			t.Errorf("derive_device_dns_label_v1(%q) = %q, want %q", hostname, derived, want)
 		}
 	}

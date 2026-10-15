@@ -20,7 +20,16 @@ type Metrics struct {
 	forwarding prometheus.Counter
 	keyExpiry  prometheus.Gauge
 	limits     *prometheus.CounterVec
+	mapNames   *prometheus.CounterVec
 }
+
+// The closed set of ways a map's names were degraded (mapsession.DNSView).
+const (
+	// namesUnlabeled: a Device of the Network was listed without a name.
+	namesUnlabeled = "unlabeled_device"
+	// namesDropped: a record was left out (a taken name or past the limit).
+	namesDropped = "dropped_record"
+)
 
 // The closed set of per-session limits (rate_budget.go).
 const (
@@ -94,6 +103,12 @@ func NewMetrics() *Metrics {
 			Name: "meshtransit_mtcp_session_limits_total",
 			Help: "MTCP messages refused, or sessions ended, by the per-session limit they exceeded.",
 		}, []string{"limit"}),
+		// Watch: a Device without a DNS label (a write path that bypassed the
+		// label trigger) or names that collide; the maps themselves still flow.
+		mapNames: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "meshtransit_mtcp_map_names_degraded_total",
+			Help: "Device names and DNS records left out of encoded maps, by bounded cause.",
+		}, []string{"reason"}),
 		keyExpiry: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "meshtransit_mtcp_control_key_not_after_timestamp_seconds",
 			Help: "Expiry of the latest control key this replica answers with (Unix seconds).",
@@ -108,13 +123,16 @@ func NewMetrics() *Metrics {
 	for _, reason := range streamEndReasons {
 		metrics.streamEnds.WithLabelValues(reason)
 	}
+	for _, reason := range []string{namesUnlabeled, namesDropped} {
+		metrics.mapNames.WithLabelValues(reason)
+	}
 	return metrics
 }
 
 // Collectors returns the collectors to register.
 func (metrics *Metrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{metrics.handshakes, metrics.sessions, metrics.messages, metrics.streamEnds,
-		metrics.sheds, metrics.unproven, metrics.forwarding, metrics.keyExpiry, metrics.limits}
+		metrics.sheds, metrics.unproven, metrics.forwarding, metrics.keyExpiry, metrics.limits, metrics.mapNames}
 }
 
 // streamEnded counts a map stream end; a nil Metrics counts nothing.
@@ -123,6 +141,14 @@ func (metrics *Metrics) streamEnded(reason string) {
 		return
 	}
 	metrics.streamEnds.WithLabelValues(reason).Inc()
+}
+
+// namesDegraded counts names a map left out; a nil Metrics counts nothing.
+func (metrics *Metrics) namesDegraded(reason string, count int) {
+	if metrics == nil || count <= 0 {
+		return
+	}
+	metrics.mapNames.WithLabelValues(reason).Add(float64(count))
 }
 
 func (metrics *Metrics) handshake(result string) { metrics.handshakes.WithLabelValues(result).Inc() }

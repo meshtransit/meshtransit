@@ -120,6 +120,7 @@ func (application *Application) Open(session *Session) Conversation {
 		application.now)
 	sink.deniedEndpoints = application.options.DeniedEndpointPrefixes
 	sink.suffix = application.options.DNSSuffix
+	sink.logger, sink.metrics = application.options.Logger, application.options.Metrics
 	return &conversation{application: application, session: session, sink: sink,
 		wake: make(chan struct{}, 1), approvals: make(chan approval, 1),
 		identity: newRateBudget(identityBurst, identityRate), browser: newRateBudget(browserBurst, browserRate),

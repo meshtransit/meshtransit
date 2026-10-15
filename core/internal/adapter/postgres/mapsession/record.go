@@ -87,14 +87,10 @@ func (record snapshotRecord) snapshot(
 	if err != nil {
 		return appmapsession.Snapshot{}, err
 	}
-	dnsLabel, err := requiredDNSLabel(record.dnsLabel)
-	if err != nil {
-		return appmapsession.Snapshot{}, err
-	}
-	workspaceCode, networkCode, err := displayCodes(record.workspaceCode, record.networkCode)
-	if err != nil {
-		return appmapsession.Snapshot{}, err
-	}
+	// Names are discovery metadata: without them the map publishes no Device
+	// names, it does not fail.
+	dnsLabel := optionalDNSLabel(record.dnsLabel)
+	workspaceCode, networkCode := optionalDisplayCodes(record.workspaceCode, record.networkCode)
 	snapshot, err := appmapsession.NewSnapshot(appmapsession.SnapshotParams{
 		Scope:             scope,
 		NetworkName:       networkName,
@@ -121,15 +117,6 @@ func (record snapshotRecord) snapshot(
 		return appmapsession.Snapshot{}, ErrSnapshotEvidence
 	}
 	return snapshot, nil
-}
-
-// scopedCandidate converts a Device of the read scope, which always has a
-// DNS label (schema 169).
-func (record peerCandidateRecord) scopedCandidate(scope network.Scope) (appmapsession.PeerCandidate, error) {
-	if record.dnsLabel == nil {
-		return appmapsession.PeerCandidate{}, ErrSnapshotEvidence
-	}
-	return record.candidate(scope)
 }
 
 func (record peerCandidateRecord) candidate(
@@ -159,12 +146,7 @@ func (record peerCandidateRecord) candidate(
 	if err != nil {
 		return appmapsession.PeerCandidate{}, err
 	}
-	var dnsLabel node.DNSLabel
-	if record.dnsLabel != nil {
-		if dnsLabel, err = requiredDNSLabel(record.dnsLabel); err != nil {
-			return appmapsession.PeerCandidate{}, err
-		}
-	}
+	dnsLabel := optionalDNSLabel(record.dnsLabel)
 	candidate, err := appmapsession.NewPeerCandidate(appmapsession.PeerCandidateParams{
 		NumericNodeID:     record.numericNodeID,
 		NumericOwnerID:    record.numericOwnerID,
@@ -186,27 +168,32 @@ func (record peerCandidateRecord) candidate(
 	return candidate, nil
 }
 
-func requiredDNSLabel(value *string) (node.DNSLabel, error) {
+// optionalDNSLabel is the Device's label, or the zero label when the read
+// gave none or a malformed one: such a Device is listed without a name
+// (DNSView.Unnamed counts it), never failing the map.
+func optionalDNSLabel(value *string) node.DNSLabel {
 	if value == nil {
-		return node.DNSLabel{}, ErrSnapshotEvidence
+		return node.DNSLabel{}
 	}
 	label, err := node.ParseDNSLabel(*value)
 	if err != nil {
-		return node.DNSLabel{}, ErrSnapshotEvidence
+		return node.DNSLabel{}
 	}
-	return label, nil
+	return label
 }
 
-func displayCodes(workspaceValue, networkValue *string) (identity.DisplayCode, identity.DisplayCode, error) {
+// optionalDisplayCodes are the scope's display codes, or none when either is
+// missing or malformed: the map then names no Device.
+func optionalDisplayCodes(workspaceValue, networkValue *string) (identity.DisplayCode, identity.DisplayCode) {
 	if workspaceValue == nil || networkValue == nil {
-		return "", "", ErrSnapshotEvidence
+		return "", ""
 	}
 	workspaceCode, workspaceErr := identity.ParseDisplayCode(*workspaceValue)
 	networkCode, networkErr := identity.ParseDisplayCode(*networkValue)
 	if workspaceErr != nil || networkErr != nil {
-		return "", "", ErrSnapshotEvidence
+		return "", ""
 	}
-	return workspaceCode, networkCode, nil
+	return workspaceCode, networkCode
 }
 
 func scopeFromText(workspaceValue, networkValue string) (network.Scope, error) {

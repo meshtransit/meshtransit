@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/protobuf/proto"
 
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
@@ -327,4 +328,48 @@ func TestSinkSendsDNSOnlyWhenItChanged(t *testing.T) {
 		}
 		current = step.next
 	}
+}
+
+// TestSinkSendsMapsWithUnlabeledDevicesAndCountsThem: a Device without a DNS
+// label is sent unnamed, and the map still goes out.
+func TestSinkSendsMapsWithUnlabeledDevicesAndCountsThem(t *testing.T) {
+	session, node, control := testSession(t)
+	sink := newMapSink(session, false, []ControlKey{{Private: control, NotAfter: time.Now().Add(time.Hour)}}, time.Now)
+	sink.metrics = NewMetrics()
+	scope := snapshotFixture(t, 1).Scope()
+	labeled := peerFixture(t, scope, "01890f00-0000-7000-8000-000000000702", 702, "100.64.0.2", 2)
+	createdAt := time.Date(2026, time.September, 14, 3, 0, 0, 0, time.UTC)
+	unlabeled := must(mapsession.NewPeerCandidate(mapsession.PeerCandidateParams{
+		NumericNodeID: labeled.NumericNodeID(), NumericOwnerID: labeled.NumericOwnerID(), Scope: scope,
+		NodeID: labeled.NodeID(), OwnerID: labeled.OwnerID(), Hostname: labeled.Hostname(),
+		MachineKey: labeled.MachineKey(), NodeKey: labeled.NodeKey(), SessionGeneration: 1,
+		Addresses: labeled.Addresses(), CreatedAt: createdAt, KeyExpiry: createdAt.Add(24 * time.Hour),
+	}))
+	if err := sink.SendSnapshot(t.Context(), snapshotFixture(t, 7, unlabeled)); err != nil {
+		t.Fatalf("a Device without a label failed the map: %v", err)
+	}
+	node.read() // KeyUpdate
+	_, message, _ := node.read()
+	snapshot, ok := message.(*mtcpv1.MapSnapshot)
+	if !ok || len(snapshot.GetPeers()) != 1 || snapshot.GetPeers()[0].GetName() != "peer-2.example." ||
+		len(snapshot.GetDns().GetRecords()) != 1 {
+		t.Fatalf("map = %v", message)
+	}
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(sink.metrics.Collectors()...)
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() != "meshtransit_mtcp_map_names_degraded_total" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			if metric.GetLabel()[0].GetValue() == namesUnlabeled && metric.GetCounter().GetValue() == 1 {
+				return
+			}
+		}
+	}
+	t.Fatal("the unlabeled Device was not counted")
 }

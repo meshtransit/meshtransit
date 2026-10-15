@@ -300,7 +300,7 @@ func readNetworkDeviceChanges(
 		}
 		change := appmapsession.InventoryChange{NumericNodeID: record.numericNodeID, Removed: !listed}
 		if listed {
-			if change.Device, err = record.scopedCandidate(scope); err != nil {
+			if change.Device, err = record.candidate(scope); err != nil {
 				return nil, false, err
 			}
 		}
@@ -347,7 +347,7 @@ func (store *Store) readNetworkDevices(
 		); err != nil {
 			return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("scan network inventory: %w", err))
 		}
-		device, err := record.scopedCandidate(scope)
+		device, err := record.candidate(scope)
 		if err != nil {
 			return nil, err
 		}
@@ -538,9 +538,7 @@ func readNetworkHeader(ctx context.Context, transaction databaseTransaction, cac
 	if err != nil || cached.recoveryEpoch <= 0 {
 		return ErrSnapshotEvidence
 	}
-	if cached.workspaceCode, cached.networkCode, err = displayCodes(workspaceCode, networkCode); err != nil {
-		return err
-	}
+	cached.workspaceCode, cached.networkCode = optionalDisplayCodes(workspaceCode, networkCode)
 	cached.networkName, cached.serveable = displayName, true
 	return nil
 }

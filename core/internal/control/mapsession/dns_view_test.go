@@ -3,6 +3,7 @@ package mapsession
 import (
 	"net/netip"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -144,5 +145,59 @@ func TestDNSViewNamesOtherNetworkPeersOnlyByShare(t *testing.T) {
 			records[1].Name != wantShare {
 			t.Fatalf("consumer records = %+v", records)
 		}
+	}
+}
+
+// TestDNSViewLeavesUnlabeledDevicesUnnamed: a Device of the Network the
+// store gave no label never fails the map; it gets no name or record.
+func TestDNSViewLeavesUnlabeledDevicesUnnamed(t *testing.T) {
+	t.Parallel()
+	named := namedSnapshot(t)
+	params := named.params()
+	params.DNSLabel = node.DNSLabel{}
+	candidates := named.candidates.list()
+	unlabeled := candidates[1].params() // peer-9, the authorized one (sorted by ID)
+	unlabeled.DNSLabel = node.DNSLabel{}
+	params.PeerCandidates = []PeerCandidate{candidates[0], must(NewPeerCandidate(unlabeled))}
+	snapshot := must(NewSnapshot(params))
+	view, err := snapshot.DNSView(dnsname.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer, _ := view.PeerName(unlabeled.NodeID)
+	if len(view.Records()) != 0 || view.Unnamed() != 2 || view.SelfName() != snapshot.Hostname().String() ||
+		peer != unlabeled.Hostname.String() || view.SearchDomain() == "" {
+		t.Fatalf("view = %+v, peer %q", view, peer)
+	}
+}
+
+// TestDNSViewDropsConflictingAndExcessRecords: a name already taken and
+// records past MaximumDNSRecords addresses are left out in a fixed order,
+// never failing the map.
+func TestDNSViewDropsConflictingAndExcessRecords(t *testing.T) {
+	t.Parallel()
+	address := func(index int) netip.Addr {
+		value := netip.MustParseAddr("10.0.0.0")
+		for range index {
+			value = value.Next()
+		}
+		return value
+	}
+	candidates := []DNSRecord{
+		{Name: "self.zone", Addresses: []netip.Addr{address(1)}},
+		{Name: "db.shared.mesh.internal", Addresses: []netip.Addr{address(2)}},
+		{Name: "db.shared.mesh.internal", Addresses: []netip.Addr{address(3)}},
+	}
+	next := address(10)
+	for index := range MaximumDNSRecords - 1 {
+		candidates = append(candidates, DNSRecord{Name: "share-" + strconv.Itoa(index), Addresses: []netip.Addr{next}})
+		next = next.Next()
+	}
+	var view DNSView
+	view.keep(candidates)
+	if len(view.records) != MaximumDNSRecords || view.dropped != 2 ||
+		view.records[1].Addresses[0] != address(2) || view.records[len(view.records)-1].Name != "share-49997" {
+		t.Fatalf("kept %d records, dropped %d, second %+v, last %+v", len(view.records), view.dropped,
+			view.records[1], view.records[len(view.records)-1])
 	}
 }
