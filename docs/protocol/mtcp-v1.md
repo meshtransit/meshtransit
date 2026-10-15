@@ -683,6 +683,15 @@ evidence from the node, not attestation (policy digest §6).
 Lifecycle changes caused by admins (suspend, revoke, transfer) reach the node
 within seconds while it is connected, and on its next connect otherwise.
 
+Core sends `REVOKED` only when it knows the session's exact machine and node
+keys were the current keys of a Device that was revoked with them. Any other
+key without authority (unknown, rotated away) gets `EXPIRED`, and a lookup
+that fails gets `RECONNECT`, so a node never erases keys on an ambiguous cause.
+A node erases only the keys the revoked session used: keys that a login,
+rotation or logout has replaced since are kept. After
+`REVOKED` Core does not accept a registration on the same session: those keys
+never become a Device again.
+
 ## 11. Core keys and their rotation
 
 `KeyUpdate{control_keys, signing_keys, nonce}` carries:

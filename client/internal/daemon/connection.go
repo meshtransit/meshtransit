@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"time"
@@ -190,10 +192,61 @@ func (s *Service) replaceCredentials(ctx context.Context, profileID string) erro
 	persistCtx, cancel := context.WithTimeout(ctx, credentialsTimeout)
 	defer cancel()
 	if _, err := s.identities.ReplaceCredentials(persistCtx, profileID, machine, node); err != nil {
-		return fmt.Errorf("replacing the profile keys after logout: %w", err)
+		return fmt.Errorf("replacing the profile keys: %w", err)
 	}
 
 	return nil
+}
+
+// revokedCredentialsWait bounds how long the session loop waits for a login or
+// rotation holding the registration gate; Core answers REVOKED again on the
+// next connect, so a skipped replacement is only delayed.
+const revokedCredentialsWait = 5 * time.Second
+
+// replaceRevokedCredentials gives the profile new keys after Core revoked its
+// Device, but only while the profile still holds the keys the revoked session
+// used: a login, rotation or logout that changed them since keeps its keys.
+func (s *Service) replaceRevokedCredentials(ctx context.Context, profileID string, sessionKeys [32]byte) (bool, error) {
+	gateCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), revokedCredentialsWait)
+	defer cancel()
+	release, err := s.acquireRegistration(gateCtx)
+	if err != nil {
+		return false, fmt.Errorf("waiting for the registration gate: %w", err)
+	}
+	defer release()
+	record, err := s.identities.Get(gateCtx, profileID)
+	if err != nil {
+		return false, fmt.Errorf("reading identity: %w", err)
+	}
+	material := record.Material()
+	current := credentialDigest(material)
+	clearIdentityMaterial(material)
+	if subtle.ConstantTimeCompare(current[:], sessionKeys[:]) != 1 {
+		return false, nil
+	}
+	if err := s.replaceCredentials(gateCtx, profileID); err != nil {
+		return false, err
+	}
+	if s.logger != nil {
+		s.logger.Info("the Device was revoked; the profile has new keys and must log in again",
+			"profile_id", profileID)
+	}
+
+	return true, nil
+}
+
+// credentialDigest names a profile's machine and node keys without keeping
+// them.
+func credentialDigest(material identity.Material) [32]byte {
+	digest := sha256.New()
+	digest.Write([]byte("meshd-credentials-v1\x00"))
+	digest.Write(material.MachinePrivateKey)
+	digest.Write([]byte{0})
+	digest.Write(material.NodePrivateKey)
+	var sum [32]byte
+	copy(sum[:], digest.Sum(nil))
+
+	return sum
 }
 
 // heldDown reports whether the session loop must keep the runtime stopped.

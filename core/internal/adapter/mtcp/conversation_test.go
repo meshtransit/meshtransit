@@ -487,6 +487,8 @@ func TestLifecycleFor(t *testing.T) {
 		{name: "suspended sent by the sink", err: mapsession.ErrSuspended},
 		{name: "expired", err: mapsession.ErrAuthorizationExpired, state: mtcpv1.Lifecycle_EXPIRED},
 		{name: "unauthorized is never revoked", err: mapsession.ErrUnauthorized, state: mtcpv1.Lifecycle_EXPIRED},
+		{name: "a proven revocation is revoked", err: errors.Join(mapsession.ErrStreamUnavailable, mapsession.ErrRevoked),
+			state: mtcpv1.Lifecycle_REVOKED},
 		{name: "presence conflict", err: mapsession.ErrPresenceConflict, state: mtcpv1.Lifecycle_RECONNECT, retry: 2000},
 		{name: "other", err: errors.New("redis down"), state: mtcpv1.Lifecycle_RECONNECT, retry: 1000},
 	} {
@@ -503,6 +505,21 @@ func TestLifecycleFor(t *testing.T) {
 				t.Fatalf("got %v, want %v retry %d", got, test.state, test.retry)
 			}
 		})
+	}
+}
+
+// A revoked Device's keys never come back: registering on the same session
+// cannot repair it, and the metric names the cause.
+func TestRevokedStreamIsNotRepairedByRegistration(t *testing.T) {
+	t.Parallel()
+	if needsRegistration(mapsession.ErrRevoked) {
+		t.Fatal("a revoked Device must not be asked to register on the same session")
+	}
+	if !needsRegistration(mapsession.ErrUnauthorized) || !needsRegistration(mapsession.ErrAuthorizationExpired) {
+		t.Fatal("an unauthorized or expired Device may still register on the same session")
+	}
+	if got := streamEndReason(mapsession.ErrRevoked); got != "revoked" {
+		t.Fatalf("streamEndReason(ErrRevoked) = %q, want revoked", got)
 	}
 }
 

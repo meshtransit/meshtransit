@@ -643,6 +643,8 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		}
 		identityMaterial := record.Material()
 		protocolMaterial := toProtocolMaterial(identityMaterial)
+		// Binds a REVOKED answer to the keys this session used (below).
+		sessionKeys := credentialDigest(identityMaterial)
 		clearIdentityMaterial(identityMaterial)
 		privateKey := dataplane.NodePrivateKey{}
 		if s.dataPlane != nil {
@@ -1043,12 +1045,26 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			recoverable := errors.Is(streamErr, errRuntimeRecovery) || pathErr != nil
 			suspended := errors.Is(streamErr, controlplane.ErrNetmapAuthorityPaused)
 			rotated := errors.Is(streamErr, controlplane.ErrControlKeyRotated)
+			revokedKeysReplaced := false
+			if !recoverable && errors.Is(streamErr, controlplane.ErrNetmapAuthorityRevoked) {
+				// mtcp-v1 section 10: Core revoked this Device and will never
+				// accept its keys again; only a REVOKED or LOGGED_OUT lifecycle
+				// produces this error. Give the profile new keys so the next
+				// login registers from scratch, as a logout would.
+				replaced, err := s.replaceRevokedCredentials(ctx, active.ID, sessionKeys)
+				if err != nil {
+					s.logControlSessionFailure("replacing the keys of the revoked Device failed", err)
+				}
+				revokedKeysReplaced = replaced
+			}
 			controlState := ControlSessionBlocked
 			switch {
 			case suspended:
 				controlState = ControlSessionSuspended
 			case recoverable, rotated:
 				controlState = ControlSessionConnecting
+			case revokedKeysReplaced:
+				controlState = ControlSessionInactive // no registered Device left
 			}
 			s.setSyncStatus(syncStatus{
 				profileID: active.ID,

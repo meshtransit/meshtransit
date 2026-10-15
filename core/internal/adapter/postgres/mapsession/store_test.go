@@ -81,7 +81,7 @@ func TestStoreLoadsConsistentScopedSnapshot(t *testing.T) {
 
 func TestStoreMapsUnknownIdentityToUnauthorized(t *testing.T) {
 	store, _, transaction, observer, identity := validStoreFixture(t)
-	transaction.rows = []databaseRow{errorRow{err: pgx.ErrNoRows}, suspendedRow{}}
+	transaction.rows = []databaseRow{errorRow{err: pgx.ErrNoRows}, suspendedRow{}, suspendedRow{}}
 
 	if _, err := store.Load(t.Context(), identity); !errors.Is(err, appmapsession.ErrUnauthorized) {
 		t.Fatalf("Load() error = %v, want mapsession.ErrUnauthorized", err)
@@ -261,6 +261,45 @@ func TestStoreFailsClosedWhenPeerCandidateBoundIsExceeded(t *testing.T) {
 	}
 	if transaction.committed || transaction.rollbackCalls != 1 {
 		t.Fatalf("transaction committed=%t rollbacks=%d, want false/1", transaction.committed, transaction.rollbackCalls)
+	}
+}
+
+// Schema 161: only a revocation proven for exactly the authenticated keys is
+// reported as revoked; any other missing authority stays unauthorized.
+func TestStoreTellsARevokedDeviceApart(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		revoked bool
+	}{{name: "revoked", revoked: true}, {name: "no authority", revoked: false}} {
+		t.Run(test.name, func(t *testing.T) {
+			store, _, transaction, _, identity := validStoreFixture(t)
+			transaction.rows = []databaseRow{errorRow{err: pgx.ErrNoRows}, suspendedRow{suspended: false},
+				suspendedRow{suspended: test.revoked}}
+			_, err := store.Load(t.Context(), identity)
+			if !errors.Is(err, appmapsession.ErrUnauthorized) || errors.Is(err, appmapsession.ErrRevoked) != test.revoked {
+				t.Fatalf("Load() error = %v, want unauthorized, revoked=%t", err, test.revoked)
+			}
+			fingerprint := identity.MachineFingerprint()
+			nodeKey := identity.NodeKey().Bytes()
+			last := len(transaction.queries) - 1
+			if transaction.queries[last] != mapSessionRevokedSQL ||
+				!reflect.DeepEqual(transaction.arguments[last], []any{fingerprint[:], nodeKey[:]}) {
+				t.Fatal("revocation read was not pinned to the authenticated keys")
+			}
+		})
+	}
+}
+
+// A failed revocation read is never proof: it must not reach the node as
+// REVOKED (or as EXPIRED), only as a load failure the node retries.
+func TestStoreRevocationReadFailureIsNotRevoked(t *testing.T) {
+	store, _, transaction, _, identity := validStoreFixture(t)
+	transaction.rows = []databaseRow{errorRow{err: pgx.ErrNoRows}, suspendedRow{suspended: false},
+		errorRow{err: errors.New("connection reset")}}
+	_, err := store.Load(t.Context(), identity)
+	if !errors.Is(err, ErrLoadSnapshot) || errors.Is(err, appmapsession.ErrUnauthorized) ||
+		errors.Is(err, appmapsession.ErrRevoked) {
+		t.Fatalf("Load() error = %v, want ErrLoadSnapshot only", err)
 	}
 }
 

@@ -47,8 +47,9 @@ var (
 	ErrNetmapInvalid = errors.New("control: invalid map update")
 	// ErrNetmapConsumer indicates that the product consumer rejected a snapshot.
 	ErrNetmapConsumer = errors.New("control: map consumer failed")
-	// ErrNetmapAuthorityRevoked indicates that control withdrew the session's
-	// authority.
+	// ErrNetmapAuthorityRevoked indicates that control revoked the Device (a
+	// REVOKED or LOGGED_OUT lifecycle). The daemon erases the profile's keys
+	// on it, so it must never stand for an ambiguous or transient failure.
 	ErrNetmapAuthorityRevoked = errors.New("control: map authority revoked")
 	// ErrNetmapAuthorityPaused indicates that control suspended this Device:
 	// it keeps its identity and retries until an administrator resumes it.

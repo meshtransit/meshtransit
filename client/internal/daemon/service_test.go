@@ -1367,6 +1367,107 @@ func TestService_RunWaitsWhileSuspendedAndRetries(t *testing.T) {
 	}
 }
 
+// mtcp-v1 section 10: REVOKED means Core will never accept these keys again,
+// so the profile gets new ones and must register from scratch; EXPIRED keeps
+// them so the Device can register again with the same identity.
+func TestService_RunErasesKeysOnlyWhenRevoked(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		stream error
+		erased bool
+	}{
+		{name: "revoked", stream: controlplane.ErrNetmapAuthorityRevoked, erased: true},
+		{name: "expired", stream: fmt.Errorf("%w: %w", controlplane.ErrNetmapRejected, controlplane.ErrNodeKeyExpired)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			service, identities, control, profileID, _ := newTestService(t)
+			if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+				t.Fatalf("TrustControl() error = %v", err)
+			}
+			control.registrationResults = []controlplane.RegistrationResult{{
+				State:             controlplane.RegistrationStateAuthorized,
+				MachineAuthorized: true,
+			}}
+			if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
+				t.Fatalf("StartLogin() error = %v", err)
+			}
+			before, err := identities.Get(t.Context(), profileID)
+			if err != nil || !before.IsRegistered() {
+				t.Fatalf("identity before = registered %t, %v", before.IsRegistered(), err)
+			}
+			control.mu.Lock()
+			control.streamError = test.stream
+			control.mu.Unlock()
+
+			ctx, cancel := context.WithCancel(t.Context())
+			runResult := make(chan error, 1)
+			go func() { runResult <- service.Run(ctx) }()
+			waitForStreamStart(t, control)
+			want := ControlSessionBlocked
+			if test.erased {
+				want = ControlSessionInactive // no registered Device left
+			}
+			waitForControlSession(t, service, want)
+			after, err := identities.Get(t.Context(), profileID)
+			cancel()
+			if runErr := <-runResult; !errors.Is(runErr, context.Canceled) {
+				t.Fatalf("Run() error = %v, want context cancellation", runErr)
+			}
+			if err != nil {
+				t.Fatalf("identities.Get() error = %v", err)
+			}
+			changed := !bytes.Equal(before.Material().MachinePrivateKey, after.Material().MachinePrivateKey) &&
+				!bytes.Equal(before.Material().NodePrivateKey, after.Material().NodePrivateKey)
+			if changed != test.erased || after.IsRegistered() == test.erased {
+				t.Fatalf("keys replaced = %t, registered = %t; want replaced %t", changed, after.IsRegistered(),
+					test.erased)
+			}
+		})
+	}
+}
+
+// A REVOKED answer names the keys the revoked session used. Keys a login,
+// rotation or logout put in place since then are not the revoked ones and
+// must survive it.
+func TestReplaceRevokedCredentialsKeepsNewerKeys(t *testing.T) {
+	t.Parallel()
+	service, identities, control, profileID, _ := newTestService(t)
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatalf("TrustControl() error = %v", err)
+	}
+	control.registrationResults = []controlplane.RegistrationResult{{
+		State: controlplane.RegistrationStateAuthorized, MachineAuthorized: true,
+	}}
+	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
+		t.Fatalf("StartLogin() error = %v", err)
+	}
+	record, err := identities.Get(t.Context(), profileID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	material := record.Material()
+	sessionKeys := credentialDigest(material)
+	material.NodePrivateKey[0] ^= 0xff
+	staleKeys := credentialDigest(material)
+
+	if replaced, err := service.replaceRevokedCredentials(t.Context(), profileID, staleKeys); err != nil || replaced {
+		t.Fatalf("stale REVOKED replaced = %t, %v; want the current keys kept", replaced, err)
+	}
+	if kept, _ := identities.Get(t.Context(), profileID); !kept.IsRegistered() ||
+		!bytes.Equal(kept.Material().NodePrivateKey, record.Material().NodePrivateKey) {
+		t.Fatal("a REVOKED for other keys changed the profile")
+	}
+	if replaced, err := service.replaceRevokedCredentials(t.Context(), profileID, sessionKeys); err != nil || !replaced {
+		t.Fatalf("REVOKED for the session keys replaced = %t, %v; want replaced", replaced, err)
+	}
+	if after, _ := identities.Get(t.Context(), profileID); after.IsRegistered() ||
+		bytes.Equal(after.Material().NodePrivateKey, record.Material().NodePrivateKey) {
+		t.Fatal("the revoked keys were kept")
+	}
+}
+
 func TestService_RunRejectsConcurrentSupervisor(t *testing.T) {
 	t.Parallel()
 

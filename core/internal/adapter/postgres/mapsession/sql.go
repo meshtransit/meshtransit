@@ -12,6 +12,9 @@ FROM mesh_ops.resolve_map_session_scope($1::BYTEA, $2::BYTEA)`
 
 const mapSessionSuspendedSQL = `SELECT mesh_ops.map_session_suspended_v1($1::BYTEA, $2::BYTEA)`
 
+// Schema 161: whether the Device bound to exactly these keys was revoked.
+const mapSessionRevokedSQL = `SELECT mesh_ops.map_session_revoked_v1($1::BYTEA, $2::BYTEA)`
+
 const setScopeSQL = `SELECT workspace_internal_id, network_internal_id
 FROM mesh_ops.set_network_scope($1::UUID, $2::UUID)`
 

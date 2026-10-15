@@ -116,6 +116,13 @@ ownership of the Workspace. A node can also remove its own Device: `meshctl
 logout` sends an MTCP `Logout`, which revokes an active Device like an
 administrator's revoke and needs only the node's current keys.
 
+- **Revocation reaches the node.** A connected node is told `REVOKED`; a node
+  that connects later with the revoked keys is told so on connect. The node
+  drops its peers, replaces the profile's machine and node keys and shows the
+  profile as not registered; `meshctl login` then registers a new Device.
+  Core says `REVOKED` only for the exact keys it revoked; any other key
+  without authority is told `EXPIRED` and keeps its keys.
+
 - **Expiry.** A Device whose expiry has passed loses its peers. It is renewed
   by signing in again from the browser on the same machine, with the same
   profile and keys and the same owner; the new expiry comes from the

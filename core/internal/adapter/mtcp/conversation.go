@@ -298,6 +298,8 @@ func streamEndReason(err error) string {
 	switch {
 	case errors.Is(err, mapsession.ErrSuspended):
 		return "suspended"
+	case errors.Is(err, mapsession.ErrRevoked):
+		return "revoked"
 	case errors.Is(err, mapsession.ErrUnauthorized), errors.Is(err, mapsession.ErrAuthorizationExpired):
 		return "unauthorized"
 	case errors.Is(err, mapsession.ErrPresenceConflict):
@@ -316,8 +318,12 @@ func streamEndReason(err error) string {
 }
 
 // needsRegistration reports a stream end the node can repair on the same
-// session by registering.
+// session by registering. Revoked keys never come back, so a revoked Device
+// cannot.
 func needsRegistration(err error) bool {
+	if errors.Is(err, mapsession.ErrRevoked) {
+		return false
+	}
 	return errors.Is(err, mapsession.ErrUnauthorized) || errors.Is(err, mapsession.ErrAuthorizationExpired)
 }
 
@@ -326,12 +332,15 @@ func needsRegistration(err error) bool {
 const presenceChurnWait = time.Minute
 
 // lifecycleFor maps how a map stream ended. Core never tells a node to erase
-// its keys from an ambiguous cause: an unauthorized key ends as EXPIRED,
-// which asks the node to register again; REVOKED comes with registration.
+// its keys from an ambiguous cause: only a revocation proven for exactly the
+// session's keys (schema 161) ends as REVOKED; any other unauthorized key ends
+// as EXPIRED, which asks the node to register again and keeps its keys.
 func lifecycleFor(err error) *mtcpv1.Lifecycle {
 	switch {
 	case errors.Is(err, mapsession.ErrSuspended):
 		return nil // the sink already sent SUSPENDED
+	case errors.Is(err, mapsession.ErrRevoked):
+		return &mtcpv1.Lifecycle{State: mtcpv1.Lifecycle_REVOKED, Reason: "the Device was revoked"}
 	case errors.Is(err, mapsession.ErrAuthorizationExpired), errors.Is(err, mapsession.ErrUnauthorized):
 		return &mtcpv1.Lifecycle{State: mtcpv1.Lifecycle_EXPIRED, Reason: "the Device is not authorized"}
 	case errors.Is(err, mapsession.ErrPresenceConflict):

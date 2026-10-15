@@ -5,6 +5,12 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core schema 161 and meshd: a revoked Device is told `REVOKED`, no longer
+  `EXPIRED`. Core says so only for the exact machine and node keys it revoked
+  (any other key without authority still gets `EXPIRED`, a failed lookup
+  `RECONNECT`). meshd then replaces the profile's keys, if they are still the
+  ones the revoked session used, and shows the profile as not registered;
+  `meshctl login` registers a new Device without a `meshctl logout` first.
 - Core schema 160: a Workspace invitation is accepted only by a sign-in whose
   identity provider verified the invited address (equal ignoring ASCII letter
   case; non-ASCII addresses are refused). Before, the link alone let anyone who

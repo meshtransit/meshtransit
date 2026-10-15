@@ -46,6 +46,7 @@ func TestObserveDeviceAliasVersionBindsIdentityAndJoinsCleanupFailures(t *testin
 			transaction.rows = []databaseRow{
 				aliasVersionRow{accepted: test.accepted},
 				suspendedRow{suspended: test.suspended},
+				suspendedRow{}, // schema 161: not revoked
 			}
 			if test.errorRow {
 				transaction.rows = []databaseRow{errorRow{err: failure}}

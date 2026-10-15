@@ -19,6 +19,11 @@ var (
 	// ErrSuspended reports that the bound identity's Device is suspended: it
 	// has no authority now but keeps its identity and may be resumed.
 	ErrSuspended = errors.New("map session: device suspended")
+	// ErrRevoked reports that the bound identity's Device was revoked with
+	// exactly these keys: the node must erase them (mtcp-v1 section 10). It
+	// is also ErrUnauthorized, so every path that withdraws authority on
+	// ErrUnauthorized does so here too.
+	ErrRevoked = fmt.Errorf("%w: device revoked", ErrUnauthorized)
 	// ErrOpen classifies a map session that could not be opened safely.
 	ErrOpen = errors.New("map session: open failed")
 	// ErrEndpointObservationRejected reports a stale transient endpoint update.

@@ -137,6 +137,7 @@ func assertPostgreSQLDeviceLifecycle(ctx context.Context, t *testing.T, admin *p
 	if mapSessionSuspended(ctx, t, admin, device) {
 		t.Fatal("schema 126 must not report an active Device as suspended")
 	}
+	assertMapSessionRevoked(ctx, t, admin, device)
 
 	// A handover needs an active member of the Workspace and Network.
 	if _, err := change(owner, devicelifecycle.Request{Action: devicelifecycle.ActionTransferMember,
@@ -319,4 +320,73 @@ WHERE device.public_id = $1::UUID`, device.String()).Scan(&fingerprint, &nodeKey
 		t.Fatalf("another node key must never learn the suspension: %t, %v", wrongKey, err)
 	}
 	return suspended
+}
+
+// assertMapSessionRevoked qualifies schema 161 inside a transaction it rolls
+// back: an active Device is not revoked; once revoked, its own keys learn it
+// and another node key never does.
+func assertMapSessionRevoked(ctx context.Context, t *testing.T, admin *pgx.Conn, device node.ID) {
+	t.Helper()
+	transaction, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+	var deviceID int64
+	var fingerprint, nodeKey []byte
+	if err := transaction.QueryRow(ctx, `SELECT device.id, machine.fingerprint, node_key.public_key
+FROM mesh.device AS device
+JOIN mesh.device_machine_key_epoch AS machine
+  ON machine.workspace_id = device.workspace_id AND machine.network_id = device.network_id
+ AND machine.device_id = device.id AND machine.epoch = device.current_machine_key_epoch
+JOIN mesh.device_node_key_epoch AS node_key
+  ON node_key.workspace_id = device.workspace_id AND node_key.network_id = device.network_id
+ AND node_key.device_id = device.id AND node_key.epoch = device.current_node_key_epoch
+WHERE device.public_id = $1::UUID`, device.String()).Scan(&deviceID, &fingerprint, &nodeKey); err != nil {
+		t.Fatal(err)
+	}
+	revokedFor := func(machine, key []byte) bool {
+		t.Helper()
+		if _, err := transaction.Exec(ctx, "SET LOCAL ROLE mesh_runtime"); err != nil {
+			t.Fatal(err)
+		}
+		var result bool
+		if err := transaction.QueryRow(ctx, `SELECT mesh_ops.map_session_revoked_v1($1::BYTEA, $2::BYTEA)`,
+			machine, key).Scan(&result); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := transaction.Exec(ctx, "RESET ROLE"); err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	revoked := func(key []byte) bool { t.Helper(); return revokedFor(fingerprint, key) }
+	if revoked(nodeKey) {
+		t.Fatal("schema 161 must not report an active Device as revoked")
+	}
+	if _, err := transaction.Exec(ctx, `SELECT pg_catalog.set_config('mesh.change_public_id', $1, TRUE)`,
+		newCorrelationID(t).String()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transaction.Exec(ctx, `SELECT mesh_ops.revoke_member_device_internal_v1($1, 'qualification',
+    pg_catalog.clock_timestamp())`, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	if !revoked(nodeKey) {
+		t.Fatal("schema 161 must report the revoked Device to its own keys")
+	}
+	if revoked(make([]byte, 32)) {
+		t.Fatal("another node key must never learn the revocation")
+	}
+	for name, keys := range map[string][2][]byte{
+		"another machine": {make([]byte, 32), nodeKey},
+		"no machine":      {nil, nodeKey},
+		"no node key":     {fingerprint, nil},
+		"short machine":   {fingerprint[:31], nodeKey},
+		"short node key":  {fingerprint, nodeKey[:31]},
+	} {
+		if revokedFor(keys[0], keys[1]) {
+			t.Fatalf("schema 161 answered revoked for %s", name)
+		}
+	}
 }

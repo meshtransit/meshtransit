@@ -690,7 +690,9 @@ func rollback(transaction databaseTransaction) error {
 }
 
 // suspendedOrUnauthorized tells a suspended Device apart from one without
-// authority, so the client waits instead of stopping for good.
+// authority, so the client waits instead of stopping for good, and a Device
+// revoked with exactly these keys apart from both, so the client erases them
+// (schema 161). Anything else stays unauthorized and the client keeps its keys.
 func suspendedOrUnauthorized(
 	ctx context.Context,
 	transaction databaseTransaction,
@@ -703,6 +705,13 @@ func suspendedOrUnauthorized(
 	}
 	if suspended {
 		return appmapsession.ErrSuspended
+	}
+	var revoked bool
+	if err := transaction.QueryRow(ctx, mapSessionRevokedSQL, fingerprint, nodeKey).Scan(&revoked); err != nil {
+		return errors.Join(ErrLoadSnapshot, fmt.Errorf("read revocation: %w", err))
+	}
+	if revoked {
+		return appmapsession.ErrRevoked
 	}
 	return appmapsession.ErrUnauthorized
 }

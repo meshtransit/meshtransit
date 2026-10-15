@@ -12,8 +12,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 160 {
-		t.Fatalf("len(Catalog()) = %d, want 160", len(catalog))
+	if len(catalog) != 161 {
+		t.Fatalf("len(Catalog()) = %d, want 161", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1608,8 +1608,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 160 {
-		t.Fatalf("LatestVersion() = %d, want 160", LatestVersion())
+	if LatestVersion() != 161 {
+		t.Fatalf("LatestVersion() = %d, want 161", LatestVersion())
 	}
 }
 
@@ -3136,6 +3136,36 @@ func TestInvitationEmailBinding(t *testing.T) {
 		"DROP FUNCTION"} {
 		if strings.Contains(sql, forbidden) {
 			t.Errorf("schema 160 must not contain %q", forbidden)
+		}
+	}
+}
+
+// Schema 161 answers "revoked" only for the exact current keys of a Device
+// revoked with them, and only to the runtime role.
+func TestMapSessionRevocation(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[160]
+	if migration.Version != 161 {
+		t.Fatalf("migration 161 = %+v", migration)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.map_session_revoked_v1(",
+		"AND machine.fingerprint = p_machine_key_fingerprint",
+		"AND machine.state = 'revoked'",
+		"AND machine.epoch = device.current_machine_key_epoch",
+		"AND node_key.public_key = p_node_key",
+		"AND node_key.state = 'revoked'",
+		"AND node_key.epoch = device.current_node_key_epoch",
+		"AND device.state = 'revoked'",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.map_session_revoked_v1(BYTEA, BYTEA) TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 161 missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"INSERT", "UPDATE", "DELETE", "'deleted'", "'expired'"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 161 must only read revoked authority: found %q", forbidden)
 		}
 	}
 }
