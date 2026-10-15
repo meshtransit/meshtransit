@@ -3,7 +3,7 @@
 Core is configured only with environment variables, read once at start.
 `meshcore config validate` checks a configuration without serving: it also
 reads the secret files and connects to PostgreSQL and Redis, so it needs them
-reachable. It prints the configuration schema version (25) and the role. `meshrelay` takes flags
+reachable. It prints the configuration schema version (26) and the role. `meshrelay` takes flags
 or `MESHRELAY_*` variables; `meshd` and `meshnetd` take flags only.
 
 ## Rules for every variable
@@ -79,6 +79,7 @@ Generating keys:
 | `MESHTRANSIT_SHUTDOWN_TIMEOUT` | `15s` | 1s–5m | Deadline for a graceful stop |
 | `MESHTRANSIT_DEPENDENCY_CHECK_TIMEOUT` | `2s` | 100ms–30s, below the interval | Deadline of one dependency check |
 | `MESHTRANSIT_DEPENDENCY_CHECK_INTERVAL` | `10s` | 1s–5m | How often readiness checks dependencies |
+| `MESHTRANSIT_DNS_SUFFIX` | `mesh.internal` | DNS name, at most 155 bytes; labels of `a-z`, `0-9` and `-`, the last not all digits; lowercased | Suffix of Device names (`<label>.<Workspace code>.<Network code>.<suffix>`) and share names (`….shared.<suffix>`) in maps and API responses. Set the same value on every role. Changing it renames every Device and share at the next map; see [DNS](../concepts/dns.md) |
 
 The API, control, identity and Console login listeners may not share a port
 with each other or with the health listener; a wildcard host on the same port

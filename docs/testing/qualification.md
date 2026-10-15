@@ -506,11 +506,15 @@ sudo tools/qualification/linux-dns.sh \
   --peer-v4 100.64.0.6 \
   --peer-v6 fd12:3456:789a::d \
   --peer-name ubuntu-b \
-  --dns-domain NETWORK_DNS_DOMAIN \
+  --dns-domain WORKSPACE_CODE.NETWORK_CODE.mesh.internal \
   --artifact-sha256 SHA256_OF_DEB \
   --confirm-dns-lifecycle ubuntu-a \
   >ubuntu-a-dns.json
 ```
+
+`--dns-domain` is the Network's DNS zone (the node's search domain) and
+`--peer-name` the peer's DNS label, which the Console shows as the first label
+of the Device's DNS name.
 
 The schema identifier is `meshtransit.linux-dns-qualification/v1`. Reports do
 not include DNS names, DNS answers, addresses, network identifiers, resolver

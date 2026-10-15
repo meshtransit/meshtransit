@@ -33,6 +33,10 @@ A/AAAA/PTR/NODATA/NXDOMAIN responses over UDP and TCP, short-name search, and
 preservation of the host's non-mesh DNS path. It then stops only meshd.service,
 proves that the dedicated DNS link and listeners are removed, and starts the
 service again. A trap restores the service after interruption or failure.
+
+DOMAIN is the peer's Network zone, <workspace code>.<network code>.<suffix>
+(the node's search domain), and SHORT_NAME the peer's DNS label, so the peer
+resolves as SHORT_NAME.DOMAIN.
 EOF
 }
 

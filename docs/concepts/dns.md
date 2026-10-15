@@ -7,10 +7,34 @@ platform, and what is not done yet.
 
 ## What resolves today
 
-Only the names of **shared Devices** resolve, on the consumer side:
+Every Device has a DNS name in its Network:
 
 ```
-<label>.<provider Workspace code>.<provider Network code>.shared.mesh
+<label>.<Workspace code>.<Network code>.<suffix>
+```
+
+- The **label** is derived from the hostname by Core: its first label,
+  lowercased, other characters replaced by hyphens, at most 63 bytes
+  (`device` when nothing is left, `device-` before an all-digit result). It is
+  unique among the live Devices of the Network: a Device whose hostname gives
+  a label another Device holds gets the first free numbered variant
+  (`laptop-1`, `laptop-2`, ...). A revoked Device releases its label at once.
+  Renaming a Device to a hostname whose label another Device holds is refused,
+  as a taken hostname is. See [devices](devices.md#addresses-and-names).
+- The **Workspace and Network codes** are their twelve-digit display codes.
+- The **suffix** is deployment configuration, `MESHTRANSIT_DNS_SUFFIX`, by
+  default `mesh.internal` ([configuration](../operations/configuration.md)).
+
+A node resolves its own name and the names of the peers its map lists, which
+are the Devices of its Network that policy pairs it with. Its resolver also
+answers reverse (PTR) queries for those addresses, and short names resolve: the
+Network's zone `<Workspace code>.<Network code>.<suffix>` is its search
+domain (on Windows, see [Not yet](#not-yet)).
+
+Shared Devices resolve on the consumer side only, by their share name:
+
+```
+<label>.<provider Workspace code>.<provider Network code>.shared.<suffix>
 ```
 
 The name points to the shared Device's Resource Alias (IPv4 and/or IPv6), as
@@ -18,17 +42,15 @@ described in [sharing](sharing.md#accepting); on a deployment without Device
 aliases, to the provider Device's own overlay address. The label is chosen by
 the provider in the offer and frozen there; Core builds the name from it when
 the consumer accepts. (Offers created before labels existed carry a name the
-consumer typed instead.)
+consumer typed instead; such a name is published as typed.) A Device of
+another Network is never known by its hostname or its own name: a provider's
+map shows a consumer Device only under a placeholder that does not resolve.
 
-**Device names do not resolve yet.** A Device has a hostname, unique in its
-Network ([devices](devices.md#addresses-and-names)), and its peers know it,
-but Core does not publish it in DNS and `meshd` does not answer it; reach
-Devices of your own Network by address. There is no reverse (PTR) lookup
-either.
-
-Core sends the names in each map (MTCP §7.3) and the node replaces its whole
-DNS configuration with every map. Core does not yet send upstream resolvers,
-search domains or routes, and there is no API to configure DNS for a Network.
+Core sends the names in each map (MTCP §7.3): an address record per name and
+address, the suffix as a route the node answers itself, and the Network's
+zone as search domain. The node replaces its whole DNS configuration with
+every map and derives the reverse records itself. Core does not yet send
+upstream resolvers, and there is no API to configure DNS for a Network.
 
 ## How the resolver answers
 
@@ -88,22 +110,26 @@ The packages enable DNS (`--enable-dns`).
 
 | Limit | Value |
 |---|---|
-| Records in a map, one per address | 32,768 (accepted by the node) |
+| Records in a map, one per address | 50,000 |
 | Addresses per name | 32 |
 | Domains routed to the resolver | 256, and 16 KiB of names, on Linux and macOS (the helper); 256 NRPT namespaces on Windows |
 
-All shared names are routed to the resolver by one route, `shared.mesh`, so
-the number of shares does not count against the host's limit. (If Core ever
-configures a route for `shared.mesh` itself, that route is kept and each
-shared name is routed on its own again.) The resolver
-owns that zone: a name under `shared.mesh` that is not a share the Device
-imported gets `NXDOMAIN` and never reaches the host's own resolvers.
+The suffix is routed to the resolver as one domain, so neither the number of
+Devices nor the number of shares counts against the host's limit. The
+resolver owns that zone: a name under the suffix that is not a Device or
+share of the map gets `NXDOMAIN` and never reaches the host's own resolvers.
+A Core that predates the suffix names shares under `shared.mesh`; the node
+then routes `shared.mesh` as one domain the same way (unless Core configures
+that route itself).
 
 ## Not yet
 
-- Names and reverse lookups for Devices.
-- A DNS domain per Network, custom records, and resolvers, routes and search
-  domains configured in Core (`dns.manage` has no operation yet).
+- Custom records, and resolvers and routes configured in Core (`dns.manage`
+  has no operation yet).
+- The search domain on Windows: the NRPT routes the zone to the resolver, but
+  short names are not completed.
+- Reverse lookups through the host's resolver: the node's resolver answers
+  PTR queries sent to it, but reverse zones are not routed to it.
 - Encrypted upstream resolvers.
 - "DNS for all names" on macOS and Windows.
 - DNS on Android and iOS.

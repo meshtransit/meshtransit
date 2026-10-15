@@ -473,10 +473,20 @@ removal of the same ID, makes the delta invalid (the node resyncs).
 | `capabilities` | Feature names the peer supports (section 13) |
 | `alias` | Device alias grant, when the peer is reached through a share (7.4) |
 
-A peer from another Workspace (reached through a share or Trust Contract)
-carries only what the node needs: its consumer-side name, keys, alias
-addresses, endpoints and presence. `display_name`, `owner` and the provider's
-own name are omitted.
+**Names.** Core names Devices under the deployment's DNS suffix (Core
+configuration, `mesh.internal` by default). Self and every peer of the node's
+own Network are named `<label>.<workspace code>.<network code>.<suffix>.`,
+where the label is the Device's DNS label (one DNS label, unique among the
+live Devices of the Network) and the codes are the twelve-digit display codes
+of its Workspace and Network; `<workspace code>.<network code>.<suffix>` is
+the Network's **zone**. A peer from another Network (reached through a share
+or Trust Contract) carries only what the node needs: keys, alias addresses,
+endpoints and presence, and as `name` the name the node imports it under
+(its share name, `<label>.<provider workspace code>.<provider network code>.shared.<suffix>.`)
+or, when the node only exports to it, a placeholder under `invalid.` that
+does not resolve. Its hostname, its own name, `display_name` and `owner` are
+omitted. Every name is at most 253 bytes with its trailing dot; Core bounds
+the suffix accordingly.
 
 **Packet filter** (`PacketFilter`): a list of inbound allow rules, default
 deny. Each rule has `sources` (prefixes, at most 1024), `destinations`
@@ -486,7 +496,15 @@ traffic this node can receive.
 
 **DNS** (`DnsConfig`): `records` (name, A/AAAA, value) for Device names and
 imported shares, `resolvers` (IP and optional DoH/DoT URL), `search_domains`,
-`routes` (name suffix → resolvers, for split DNS). At most 50,000 records.
+`routes` (name suffix → resolvers, for split DNS; a route without resolvers is
+answered by the node itself). At most 50,000 records. Core sends an A or AAAA
+record for each address of self and of each same-Network peer under its name,
+and one for each address of each imported share under its share name; one
+route for the suffix with no resolvers, so the node answers every name under
+it and an unknown one is `NXDOMAIN`; and the Network's zone as the only
+search domain. Core sends no pointer records: the node answers PTR queries
+for the addresses of the records under its own zone (the zone its own name is
+in). Within a stream, Core sends `dns` in a delta only when it changed.
 
 ### 7.4 Device alias grants
 

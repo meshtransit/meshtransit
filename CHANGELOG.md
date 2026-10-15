@@ -5,6 +5,27 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core schema 169 and meshd: Device names resolve again. Every live Device
+  has a DNS name, `<label>.<Workspace code>.<Network code>.<suffix>`, where
+  the label is derived from the hostname and unique in the Network (numbered
+  variants such as `laptop-1` when two hostnames give the same label; existing
+  Devices are labeled in registration order by the migration). Maps carry an
+  address record for the node itself and its same-Network peers, the suffix
+  as a route the node answers itself and the Network's zone as search domain;
+  `meshd` answers reverse (PTR) queries for those names. Renaming a Device to
+  a hostname whose label another Device holds is refused like a taken
+  hostname. The Console Device inventory returns `dns_name`.
+- Core: **share names change** from `….shared.mesh` to `….shared.<suffix>`
+  (`….shared.mesh.internal` by default) in maps and in the management API.
+  Applications that reach shared Devices by name must use the new name; a
+  name sent back on accept may use either form. Names a consumer typed before
+  share names were derived are unchanged.
+- Core: peers of another Network no longer carry their hostname, in the map's
+  name or display name: a consumer knows a shared Device only by its share
+  name, a provider its consumers only by a placeholder that does not resolve.
+- Core: `MESHTRANSIT_DNS_SUFFIX` (default `mesh.internal`) sets the suffix of
+  Device and share names; set it on every role. Configuration schema 26.
+- meshd: a map may carry 50,000 DNS records (was 32,768), as MTCP v1 allows.
 - Core schema 168: the Private Endpoint route worker no longer applies and
   withdraws a route for an endpoint created by a MeshCore whose clock runs
   ahead of the database host. Such an endpoint waits until the database clock

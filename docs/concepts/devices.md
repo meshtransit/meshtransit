@@ -86,6 +86,17 @@ longer changes it. A revoked Device's name can be taken at once by a new
 Device of the same owner (so signing in again after a logout keeps the name),
 and by anyone after 24 hours.
 
+Each live Device also has a **DNS name**,
+`<label>.<Workspace code>.<Network code>.<suffix>` (suffix `mesh.internal`
+unless the deployment sets another). The label is the first label of the
+hostname, cleaned into one DNS label and unique in the Network: when another
+Device holds it, the Device gets the first free numbered variant
+(`laptop.home` and `laptop.office` become `laptop` and `laptop-1`). A rename
+to a hostname whose label another Device holds is refused like a taken
+hostname. A revoked Device releases its label at once. The Console shows the
+name as `dns_name`; peers of the same Network resolve it, Devices of other
+Networks never see it ([DNS](dns.md)).
+
 ## Ownership
 
 | Ownership | Owned by | Expiry |

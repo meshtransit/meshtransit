@@ -69,11 +69,12 @@ leave out.
 The consumer reaches the shared Device by name:
 
 ```
-<label>.<provider Workspace code>.<provider Network code>.shared.mesh
+<label>.<provider Workspace code>.<provider Network code>.shared.<suffix>
 ```
 
-The codes are the provider's display codes, so a name always says where the
-Device lives. Names are only for finding the Device; authorization is the
+The suffix is the deployment's DNS suffix, `mesh.internal` unless it sets
+another ([DNS](dns.md)); the API shows the name the same way. The codes are
+the provider's display codes, so a name always says where the Device lives. Names are only for finding the Device; authorization is the
 contract and the rules.
 
 ## Addresses: Device aliases

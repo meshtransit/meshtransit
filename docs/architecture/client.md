@@ -165,9 +165,12 @@ region. See [paths and relays](../concepts/paths-and-relays.md#relays) and
 
 MeshTransit DNS answers the names in the map. `meshd` runs the resolver on a
 local address and the host routes only the mesh names to it (split DNS);
-other names keep using the host's resolvers. Today the map names only shared
-Devices; Device names of the node's own Network do not resolve yet. On Android
-and iOS, DNS is not implemented. See [DNS](../concepts/dns.md).
+other names keep using the host's resolvers. The map carries an address
+record for each name (the node's own, its same-Network peers' and its
+imported shares'), the suffix as a locally answered route and the Network's
+zone as search domain. The node derives reverse (PTR) records itself from the
+records of the zone its own name is in. On Android and iOS, DNS is not
+implemented. See [DNS](../concepts/dns.md).
 
 ### Device aliases
 

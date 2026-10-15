@@ -34,7 +34,14 @@ entitlement allows more).
 
 **Device.** A machine registered in a Network: a laptop, server, phone or
 container. It has an owner (a member, or the Workspace itself), a hostname,
-overlay addresses, an expiry and its keys. See [devices](concepts/devices.md).
+a DNS name, overlay addresses, an expiry and its keys. See
+[devices](concepts/devices.md).
+
+**DNS label, DNS name.** A Device's DNS name is
+`<label>.<Workspace code>.<Network code>.<suffix>`. Core derives the label
+from the hostname and keeps it unique in the Network; the suffix is
+deployment configuration (`mesh.internal` by default). See
+[DNS](concepts/dns.md).
 
 **Device alias.** The address under which a shared Device and its consumers
 see each other, so neither side learns the other's real overlay address and
@@ -82,8 +89,9 @@ installation to Core.
 packet filter, DNS settings and the relay map. A node receives a **snapshot**
 and then **deltas**.
 
-**MeshTransit DNS.** The resolver in `meshd` that answers names of the mesh;
-today the names of shared Devices. See [DNS](concepts/dns.md).
+**MeshTransit DNS.** The resolver in `meshd` that answers names of the mesh:
+the Devices of the node's Network and the shares it imports. See
+[DNS](concepts/dns.md).
 
 **Network.** The unit of connectivity inside a Workspace: an overlay address
 range, its Devices, policy and DNS. Devices in different Networks are isolated
