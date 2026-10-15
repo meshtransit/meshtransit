@@ -432,7 +432,7 @@ func TestExplainedPolicySharePresentsNameUnderSuffix(t *testing.T) {
 	share := managementAccessGraphShare(t, sharing.ContractStateActive)
 	for suffix, want := range map[string]string{
 		"mesh.internal": "poc01.280133080243.467111232749.shared.mesh.internal",
-		"corp.example":  "poc01.280133080243.467111232749.shared.corp.example",
+		"corp.internal": "poc01.280133080243.467111232749.shared.corp.internal",
 	} {
 		parsed, err := dnsname.ParseSuffix(suffix)
 		if err != nil {

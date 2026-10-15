@@ -16,8 +16,10 @@ func TestLoadDNSSuffix(t *testing.T) {
 		want  string
 	}{
 		{name: "default", want: dnsname.DefaultSuffix},
-		{name: "custom", value: pointer("corp.example"), want: "corp.example"},
-		{name: "lowercased", value: pointer("Corp.Example"), want: "corp.example"},
+		{name: "custom", value: pointer("corp.internal"), want: "corp.internal"},
+		{name: "lowercased", value: pointer("Corp.Internal"), want: "corp.internal"},
+		{name: "single label", value: pointer("mesh")},
+		{name: "special use", value: pointer("mesh.local")},
 		{name: "empty", value: pointer("")},
 		{name: "trailing dot", value: pointer("corp.example.")},
 		{name: "invalid label", value: pointer("corp_example")},

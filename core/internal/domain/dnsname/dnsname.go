@@ -40,10 +40,21 @@ var (
 	ErrInvalidZone = errors.New("dnsname: invalid zone")
 )
 
-// Suffix is the deployment's DNS suffix: lowercase labels of [a-z0-9-],
-// without a trailing dot, whose last label is not all digits.
+// Suffix is the deployment's DNS suffix: at least two lowercase labels of
+// [a-z0-9-], without a trailing dot, whose last label is not all digits, and
+// outside the special-use zones. Nodes answer every name under it themselves,
+// so a suffix that is or covers names the host resolves elsewhere (a public
+// top-level domain, local, localhost, arpa, ...) would hide them.
 type Suffix struct {
 	value string
+}
+
+// specialUseZones are refused as a suffix and as any parent of one: names
+// under them resolve outside the mesh (RFC 6761, RFC 6762, RFC 7686, RFC
+// 8375, RFC 2606).
+var specialUseZones = []string{
+	"local", "localhost", "arpa", "invalid", "test", "onion", "example",
+	"example.com", "example.net", "example.org",
 }
 
 // ParseSuffix validates and canonicalizes a suffix to lowercase.
@@ -58,8 +69,13 @@ func ParseSuffix(value string) (Suffix, error) {
 			return Suffix{}, ErrInvalidSuffix
 		}
 	}
-	if allDigits(labels[len(labels)-1]) {
+	if len(labels) < 2 || allDigits(labels[len(labels)-1]) {
 		return Suffix{}, ErrInvalidSuffix
+	}
+	for _, zone := range specialUseZones {
+		if canonical == zone || strings.HasSuffix(canonical, "."+zone) {
+			return Suffix{}, ErrInvalidSuffix
+		}
 	}
 	return Suffix{value: canonical}, nil
 }

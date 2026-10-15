@@ -51,6 +51,7 @@ func platformDNS(_ *netadmin.Client, logger *slog.Logger) (*dnsconfig.Manager, e
 	if err != nil {
 		return nil, fmt.Errorf("creating dns manager: %w", err)
 	}
+	manager.SetLogger(logger)
 
 	return manager, nil
 }

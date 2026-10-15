@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"sync"
 	"time"
@@ -37,6 +38,14 @@ type Manager struct {
 	host     HostConfigurator
 	current  Plan
 	closed   bool
+	logger   *slog.Logger
+}
+
+// SetLogger reports, from now on, routes from control a plan ignored.
+func (m *Manager) SetLogger(logger *slog.Logger) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.logger = logger
 }
 
 // NewManager creates a DNS transaction manager from explicit backends.
@@ -70,6 +79,10 @@ func (m *Manager) Apply(ctx context.Context, snapshot networkmap.Snapshot) (bool
 	}
 	if err := ctx.Err(); err != nil {
 		return false, err
+	}
+	if plan.IgnoredRoutes > 0 && m.logger != nil {
+		m.logger.Warn("dns routes from control ignored: a locally answered route for the root or a top-level name",
+			"routes", plan.IgnoredRoutes)
 	}
 	previous := clonePlan(m.current)
 	if !plan.Enabled {

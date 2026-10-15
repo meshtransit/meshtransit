@@ -36,6 +36,10 @@ type Plan struct {
 	SearchDomains     []string
 	Hosts             []Host
 	Reverse           []Reverse
+	// IgnoredRoutes counts locally answered routes control sent for the
+	// root or a single-label suffix, which would hide names the host
+	// resolves elsewhere; they are not installed.
+	IgnoredRoutes int
 }
 
 // Route is one canonical suffix and its ordered resolver set. An empty
@@ -71,12 +75,16 @@ func Compile(snapshot networkmap.Snapshot) (Plan, error) {
 	config := snapshot.DNS
 	plan.DefaultResolvers = resolverAddresses(config.Resolvers)
 	plan.FallbackResolvers = resolverAddresses(config.FallbackResolvers)
-	plan.Routes = make([]Route, len(config.Routes))
-	for index, route := range config.Routes {
-		plan.Routes[index] = Route{
+	plan.Routes = make([]Route, 0, len(config.Routes))
+	for _, route := range config.Routes {
+		if len(route.Resolvers) == 0 && (route.Suffix == "." || !strings.Contains(route.Suffix, ".")) {
+			plan.IgnoredRoutes++
+			continue
+		}
+		plan.Routes = append(plan.Routes, Route{
 			Suffix:    route.Suffix,
 			Resolvers: resolverAddresses(route.Resolvers),
-		}
+		})
 	}
 	plan.SearchDomains = append([]string(nil), config.SearchDomains...)
 

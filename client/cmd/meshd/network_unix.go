@@ -39,7 +39,7 @@ func networkLogAttrs(cfg config.Config) []any {
 
 // platformDNS serves MeshTransit DNS on meshnetd's dedicated link and
 // configures the host resolver (systemd-resolved, macOS configd) through it.
-func platformDNS(client *netadmin.Client, _ *slog.Logger) (*dnsconfig.Manager, error) {
+func platformDNS(client *netadmin.Client, logger *slog.Logger) (*dnsconfig.Manager, error) {
 	resolver, err := dnsconfig.NewServer(client)
 	if err != nil {
 		return nil, fmt.Errorf("creating local dns resolver: %w", err)
@@ -52,6 +52,7 @@ func platformDNS(client *netadmin.Client, _ *slog.Logger) (*dnsconfig.Manager, e
 	if err != nil {
 		return nil, fmt.Errorf("creating dns manager: %w", err)
 	}
+	manager.SetLogger(logger)
 
 	return manager, nil
 }

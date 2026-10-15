@@ -313,3 +313,24 @@ func TestCompileKeepsTheSharedMeshFallbackBesideTheSuffixRoute(t *testing.T) {
 		t.Fatalf("routes = %#v, reverse = %#v", plan.Routes, plan.Reverse)
 	}
 }
+
+// A locally answered route for the root or a single label from control
+// would hide names the host resolves elsewhere: it is skipped, not fatal.
+func TestCompileSkipsLocalRoutesForTheRootAndSingleLabels(t *testing.T) {
+	t.Parallel()
+
+	snapshot := coreSnapshot()
+	snapshot.DNS.Routes = append(snapshot.DNS.Routes,
+		networkmap.DNSRoute{Suffix: ".", Resolvers: []networkmap.DNSResolver{}},
+		networkmap.DNSRoute{Suffix: "com", Resolvers: []networkmap.DNSResolver{}},
+		networkmap.DNSRoute{Suffix: "corp", Resolvers: []networkmap.DNSResolver{{Address: netip.MustParseAddrPort("192.0.2.53:53")}}},
+	)
+	plan, err := Compile(snapshot)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	if plan.IgnoredRoutes != 2 || len(plan.Routes) != 2 || plan.Routes[0].Suffix != "corp" ||
+		plan.Routes[1].Suffix != "mesh.internal" || locallyAuthoritative(plan.Routes, "www.example.com") {
+		t.Fatalf("routes = %#v, ignored %d", plan.Routes, plan.IgnoredRoutes)
+	}
+}
