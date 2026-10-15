@@ -2469,6 +2469,8 @@
           "affected_resource_group_count",
           "affected_resource_group_ids",
           "unsupported_capabilities",
+          "guardrail_finding_count",
+          "guardrail_findings",
           "truncated",
           "stale_inputs",
           "uncertain"
@@ -2536,9 +2538,45 @@
               ]
             }
           },
+          "guardrail_finding_count": {"type": "integer", "minimum": 0},
+          "guardrail_findings": {
+            "type": "array",
+            "maxItems": 256,
+            "description": "Guardrails the proposed paths to Imported Resources break, as publication applies them: the publishing Workspace's (named) and, only where it blocks, the provider Workspace's (never named). blocks is true for an enforced guardrail on a path the active release does not already open; publication refuses such a draft. Blocking findings come first; guardrail_finding_count is the total.",
+            "items": {"$ref": "#/components/schemas/PolicySimulationGuardrailFinding"}
+          },
           "truncated": {"type": "boolean"},
           "stale_inputs": {"type": "boolean", "const": false},
           "uncertain": {"type": "boolean", "const": false}
+        }
+      },
+      "PolicySimulationGuardrailFinding": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source_device_id", "imported_resource_id", "side", "mode", "blocks", "guardrail"],
+        "properties": {
+          "source_device_id": {"$ref": "#/components/schemas/PublicID"},
+          "imported_resource_id": {"$ref": "#/components/schemas/PublicID"},
+          "side": {"type": "string", "enum": ["acting", "provider"]},
+          "mode": {"type": "string", "enum": ["audit", "enforce"]},
+          "blocks": {"type": "boolean"},
+          "guardrail": {
+            "description": "The publishing Workspace's guardrail; null for the provider's.",
+            "oneOf": [
+              {"type": "null"},
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["guardrail_id", "name", "kind", "reason"],
+                "properties": {
+                  "guardrail_id": {"$ref": "#/components/schemas/PublicID"},
+                  "name": {"type": "string", "maxLength": 80},
+                  "kind": {"type": "string", "enum": ["network_isolation", "network_sharing", "external_sharing"]},
+                  "reason": {"type": "string", "enum": ["isolated_networks", "network_sharing_locked", "external_sharing_blocked"]}
+                }
+              }
+            ]
+          }
         }
       },
       "PolicySimulationImportedIntentChanges": {

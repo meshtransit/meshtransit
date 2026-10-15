@@ -603,6 +603,27 @@ type providerGuardrailsDocument struct {
 	Guardrails  json.RawMessage `json:"guardrails"`
 }
 
+// decodeProviderGuardrails reads imported_resource_provider_guardrails_v1.
+func decodeProviderGuardrails(encoded string) (map[workspace.ID][]guardrail.Guardrail, error) {
+	var documents []providerGuardrailsDocument
+	if err := strictJSON([]byte(encoded), &documents); err != nil || documents == nil {
+		return nil, guardrail.ErrInvalid
+	}
+	providers := make(map[workspace.ID][]guardrail.Guardrail, len(documents))
+	for _, document := range documents {
+		id, err := workspace.ParseID(document.WorkspaceID)
+		if err != nil {
+			return nil, guardrail.ErrInvalid
+		}
+		guardrails, err := decodeActiveGuardrails(string(document.Guardrails))
+		if err != nil {
+			return nil, err
+		}
+		providers[id] = guardrails
+	}
+	return providers, nil
+}
+
 // checkProviderGuardrails blocks a new path to an Imported Resource that an
 // enforced guardrail of its provider's Workspace forbids, with
 // *guardrail.CounterpartViolationError, which names nothing of the provider.
@@ -626,21 +647,9 @@ func (transaction *policyPublicationTransaction) checkProviderGuardrails(ctx con
 	if err := transaction.database.QueryRow(ctx, importedResourceProviderGuardrailsSQL).Scan(&encoded); err != nil {
 		return fmt.Errorf("read provider guardrails: %w", err)
 	}
-	var documents []providerGuardrailsDocument
-	if err := strictJSON([]byte(encoded), &documents); err != nil || documents == nil {
-		return fmt.Errorf("read provider guardrails: %w", guardrail.ErrInvalid)
-	}
-	providers := make(map[workspace.ID][]guardrail.Guardrail, len(documents))
-	for _, document := range documents {
-		id, err := workspace.ParseID(document.WorkspaceID)
-		if err != nil {
-			return fmt.Errorf("read provider guardrails: %w", guardrail.ErrInvalid)
-		}
-		guardrails, err := decodeActiveGuardrails(string(document.Guardrails))
-		if err != nil {
-			return fmt.Errorf("read provider guardrails: %w", err)
-		}
-		providers[id] = guardrails
+	providers, err := decodeProviderGuardrails(encoded)
+	if err != nil {
+		return fmt.Errorf("read provider guardrails: %w", err)
 	}
 	for _, destination := range destinations {
 		provider := destination.Resolution().ProviderScope()

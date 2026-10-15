@@ -105,9 +105,54 @@ type simulatedPolicyImpact struct {
 	AffectedGroupCount       int                             `json:"affected_resource_group_count"`
 	AffectedGroupIDs         []string                        `json:"affected_resource_group_ids"`
 	UnsupportedCapabilities  []string                        `json:"unsupported_capabilities"`
+	GuardrailFindingCount    int                             `json:"guardrail_finding_count"`
+	GuardrailFindings        []simulatedGuardrailFinding     `json:"guardrail_findings"`
 	Truncated                bool                            `json:"truncated"`
 	StaleInputs              bool                            `json:"stale_inputs"`
 	Uncertain                bool                            `json:"uncertain"`
+}
+
+// maximumSimulatedGuardrailFindings bounds the findings one response lists;
+// guardrail_finding_count carries the total.
+const maximumSimulatedGuardrailFindings = 256
+
+type simulatedGuardrailFinding struct {
+	SourceDeviceID     string                     `json:"source_device_id"`
+	ImportedResourceID string                     `json:"imported_resource_id"`
+	Side               string                     `json:"side"`
+	Mode               string                     `json:"mode"`
+	Blocks             bool                       `json:"blocks"`
+	Guardrail          *simulatedGuardrailDetails `json:"guardrail"`
+}
+
+type simulatedGuardrailDetails struct {
+	GuardrailID string `json:"guardrail_id"`
+	Name        string `json:"name"`
+	Kind        string `json:"kind"`
+	Reason      string `json:"reason"`
+}
+
+// encodeSimulatedGuardrailFindings names only the publishing Workspace's
+// guardrails; a provider's finding says nothing of which guardrail it is.
+func encodeSimulatedGuardrailFindings(findings []simulation.GuardrailFinding) []simulatedGuardrailFinding {
+	encoded := make([]simulatedGuardrailFinding, 0, min(len(findings), maximumSimulatedGuardrailFindings))
+	for _, finding := range findings {
+		if len(encoded) == maximumSimulatedGuardrailFindings {
+			break
+		}
+		item := simulatedGuardrailFinding{
+			SourceDeviceID: finding.SourceNodeID.String(), ImportedResourceID: finding.ImportedResourceID.String(),
+			Side: string(finding.Side), Mode: string(finding.Mode), Blocks: finding.Blocks,
+		}
+		if finding.Side == simulation.GuardrailSideActing && finding.Guardrail != nil {
+			item.Guardrail = &simulatedGuardrailDetails{
+				GuardrailID: finding.Guardrail.GuardrailID.String(), Name: finding.Guardrail.Name,
+				Kind: string(finding.Guardrail.Kind), Reason: finding.Guardrail.Reason,
+			}
+		}
+		encoded = append(encoded, item)
+	}
+	return encoded
 }
 
 type simulatedImportedIntentChanges struct {
@@ -328,6 +373,8 @@ func encodePolicySimulationResult(result simulation.Result) simulatedPolicy {
 		AffectedGroupCount:       result.AffectedGroupCount(),
 		AffectedGroupIDs:         make([]string, 0, len(result.AffectedGroups())),
 		UnsupportedCapabilities:  make([]string, 0, len(result.UnsupportedCapabilities())),
+		GuardrailFindingCount:    len(result.GuardrailFindings()),
+		GuardrailFindings:        encodeSimulatedGuardrailFindings(result.GuardrailFindings()),
 		Truncated:                result.Truncated(), StaleInputs: result.StaleInputs(), Uncertain: result.Uncertain(),
 	}
 	for _, id := range result.AffectedDevices() {

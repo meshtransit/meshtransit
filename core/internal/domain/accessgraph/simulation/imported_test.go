@@ -7,11 +7,13 @@ import (
 	"time"
 
 	"meshtransit.net/core/internal/domain/accessgraph/simulation"
+	"meshtransit.net/core/internal/domain/guardrail"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/policy"
 	"meshtransit.net/core/internal/domain/policy/compilation"
 	"meshtransit.net/core/internal/domain/policy/publication"
+	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/domain/resource"
 	"meshtransit.net/core/internal/domain/sharing"
 	"meshtransit.net/core/internal/domain/workspace"
@@ -50,7 +52,7 @@ func TestServiceReportsImportedIntentWithoutManufacturingPacketAuthority(t *test
 			if !result.IsValid() || result.AddedImportedIntentCount() != test.added ||
 				result.RemovedImportedIntentCount() != test.removed || result.AddedRelationshipCount() != 0 ||
 				result.RemovedRelationshipCount() != 0 || result.AddedExplanationCount() != 0 ||
-				result.RemovedExplanationCount() != 0 || len(result.UnsupportedCapabilities()) != 6 {
+				result.RemovedExplanationCount() != 0 || len(result.UnsupportedCapabilities()) != 5 {
 				t.Fatalf("incorrect intent or synthetic packet impact: %+v", result)
 			}
 			wantDevices := 0
@@ -256,4 +258,105 @@ func simulationImportedResolution(t *testing.T, consumerRevision, contractVersio
 		t.Fatal(err)
 	}
 	return value
+}
+
+// Simulation reports guardrails exactly as publication applies them: both
+// the publishing Workspace's and the provider's, blocking only new paths,
+// and never naming the provider's guardrail.
+func TestServiceEvaluatesBothSidesGuardrails(t *testing.T) {
+	t.Parallel()
+	providerWS, _ := workspace.ParseID("01890f00-0000-7000-8000-000000000102")
+	providerNet, _ := network.ParseID("01890f00-0000-7000-8000-000000000202")
+	ownID, _ := publicid.Parse("01890f00-0000-7000-8000-00000000e001")
+	providerID, _ := publicid.Parse("01890f00-0000-7000-8000-00000000e002")
+	own := guardrail.Guardrail{ID: ownID, Version: 1, Spec: guardrail.Spec{
+		Kind: guardrail.KindExternalSharing, Name: "No imports", Mode: guardrail.ModeEnforce,
+		External: guardrail.ExternalSharingParams{Direction: guardrail.DirectionIncoming},
+	}}
+	provider := guardrail.Guardrail{ID: providerID, Version: 3, Spec: guardrail.Spec{
+		Kind: guardrail.KindNetworkSharing, Name: "Provider secret", Mode: guardrail.ModeEnforce,
+		Sharing: guardrail.NetworkSharingParams{Networks: []network.ID{providerNet}, Direction: guardrail.DirectionOutgoing},
+	}}
+	for _, existing := range []bool{false, true} {
+		resolver := &simulationImportedResolver{value: simulationImportedResolution(t, 6, 2, simulationTime())}
+		compiler := simulationImportedCompiler(t, resolver)
+		currentIntents := []compilation.RuleIntent{}
+		if existing {
+			currentIntents = []compilation.RuleIntent{simulationImportedIntent(t, 1, 443, 443)}
+		}
+		current, err := compiler.Compile(t.Context(), simulationSession(t),
+			simulationRequest(t, simulationScope(t), 6, currentIntents))
+		if err != nil {
+			t.Fatal(err)
+		}
+		releaseID, _ := publication.ParseReleaseID("01890f00-0000-7000-8000-000000000901")
+		baseline, err := simulation.NewBaseline(simulation.BaselineParams{
+			Scope: current.Snapshot().Scope(), RevisionVector: simulationVectorWithSharing(t, 12, 8, 9, 6, 6),
+			HasActiveRelease: true, ReleaseID: releaseID, SemanticHash: current.SemanticHash(), Candidate: current,
+			Guardrails:         []guardrail.Guardrail{own},
+			ProviderGuardrails: map[workspace.ID][]guardrail.Guardrail{providerWS: {provider}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		reader := &simulationBaselineReader{values: []simulation.Baseline{baseline, baseline}}
+		result, err := simulationService(t, reader, compiler).Simulate(t.Context(), simulationSession(t),
+			simulationRequest(t, simulationScope(t), 7, []compilation.RuleIntent{simulationImportedIntent(t, 1, 443, 443)}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The provider's guardrail is reported only where it blocks, as
+		// publication reveals; on an existing path it is not reported at all.
+		findings := result.GuardrailFindings()
+		if want := map[bool]int{false: 2, true: 1}[existing]; len(findings) != want {
+			t.Fatalf("existing=%t findings = %+v, want %d", existing, findings, want)
+		}
+		if !existing && findings[0].Side != simulation.GuardrailSideProvider && !findings[0].Blocks {
+			t.Fatalf("a blocking finding does not come first: %+v", findings)
+		}
+		for _, finding := range findings {
+			switch finding.Side {
+			case simulation.GuardrailSideActing:
+				if finding.Guardrail == nil || finding.Guardrail.Name != "No imports" || finding.Blocks == existing {
+					t.Fatalf("existing=%t own finding = %+v", existing, finding)
+				}
+			case simulation.GuardrailSideProvider:
+				if finding.Guardrail != nil || !finding.Blocks || existing {
+					t.Fatalf("provider finding exposes or misreports: %+v", finding)
+				}
+			}
+		}
+		for _, capability := range result.UnsupportedCapabilities() {
+			if capability == simulation.UnsupportedCapabilityGuardrailEvaluation {
+				t.Fatal("simulation still reports guardrails as unsupported")
+			}
+		}
+	}
+}
+
+// Like publication, simulation never takes an unknown provider to have no
+// guardrail.
+func TestServiceFailsClosedWithoutTheProvidersGuardrails(t *testing.T) {
+	t.Parallel()
+	resolver := &simulationImportedResolver{value: simulationImportedResolution(t, 6, 2, simulationTime())}
+	compiler := simulationImportedCompiler(t, resolver)
+	current, err := compiler.Compile(t.Context(), simulationSession(t),
+		simulationRequest(t, simulationScope(t), 6, []compilation.RuleIntent{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseID, _ := publication.ParseReleaseID("01890f00-0000-7000-8000-000000000901")
+	baseline, err := simulation.NewBaseline(simulation.BaselineParams{
+		Scope: current.Snapshot().Scope(), RevisionVector: simulationVectorWithSharing(t, 12, 8, 9, 6, 6),
+		HasActiveRelease: true, ReleaseID: releaseID, SemanticHash: current.SemanticHash(), Candidate: current,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := &simulationBaselineReader{values: []simulation.Baseline{baseline, baseline}}
+	if _, err := simulationService(t, reader, compiler).Simulate(t.Context(), simulationSession(t),
+		simulationRequest(t, simulationScope(t), 7, []compilation.RuleIntent{simulationImportedIntent(t, 1, 443, 443)}),
+	); !errors.Is(err, simulation.ErrInvalidBaseline) {
+		t.Fatalf("Simulate() without the provider's guardrails = %v, want invalid baseline", err)
+	}
 }

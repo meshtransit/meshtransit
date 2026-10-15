@@ -10,11 +10,13 @@ import (
 	"strings"
 
 	"meshtransit.net/core/internal/domain/accessgraph"
+	"meshtransit.net/core/internal/domain/guardrail"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/policy"
 	"meshtransit.net/core/internal/domain/policy/publication"
 	"meshtransit.net/core/internal/domain/resource"
+	"meshtransit.net/core/internal/domain/workspace"
 )
 
 const (
@@ -60,18 +62,26 @@ type BaselineParams struct {
 	// Group and tag of the Network that has any, used to resolve group rules
 	// of the baseline and the draft. A selector that is absent has none.
 	SelectorMembers map[publication.RuleSide][]node.ID
+	// Guardrails are the active guardrails of the Network's Workspace.
+	Guardrails []guardrail.Guardrail
+	// ProviderGuardrails are the active guardrails of each other Workspace
+	// that provides an Imported Resource of the Network. They are evaluated
+	// but never named in a result.
+	ProviderGuardrails map[workspace.ID][]guardrail.Guardrail
 }
 
 // Baseline is one immutable active release plus its complete authority vector.
 // Before the first publication, Candidate is the canonical empty format-v1 policy.
 type Baseline struct {
-	scope            network.Scope
-	revisionVector   accessgraph.RevisionVector
-	hasActiveRelease bool
-	releaseID        publication.ReleaseID
-	semanticHash     publication.SemanticHash
-	candidate        publication.Candidate
-	selectorMembers  map[publication.RuleSide][]node.ID
+	scope              network.Scope
+	revisionVector     accessgraph.RevisionVector
+	hasActiveRelease   bool
+	releaseID          publication.ReleaseID
+	semanticHash       publication.SemanticHash
+	candidate          publication.Candidate
+	selectorMembers    map[publication.RuleSide][]node.ID
+	guardrails         []guardrail.Guardrail
+	providerGuardrails map[workspace.ID][]guardrail.Guardrail
 }
 
 // NewBaseline validates current effective-policy evidence.
@@ -87,6 +97,13 @@ func NewBaseline(params BaselineParams) (Baseline, error) {
 		scope: params.Scope, revisionVector: params.RevisionVector,
 		hasActiveRelease: params.HasActiveRelease, releaseID: params.ReleaseID,
 		semanticHash: params.SemanticHash, candidate: params.Candidate, selectorMembers: members,
+		guardrails: slices.Clone(params.Guardrails), providerGuardrails: map[workspace.ID][]guardrail.Guardrail{},
+	}
+	for id, guardrails := range params.ProviderGuardrails {
+		if !id.IsValid() || id == params.Scope.WorkspaceID() {
+			return Baseline{}, ErrInvalidBaseline
+		}
+		baseline.providerGuardrails[id] = slices.Clone(guardrails)
 	}
 	if !baseline.IsValid() {
 		return Baseline{}, ErrInvalidBaseline
@@ -141,7 +158,9 @@ func (baseline Baseline) Equal(other Baseline) bool {
 		baseline.hasActiveRelease == other.hasActiveRelease && baseline.releaseID == other.releaseID &&
 		baseline.semanticHash == other.semanticHash &&
 		baseline.candidate.CompilerFormatVersion() == other.candidate.CompilerFormatVersion() &&
-		baseline.candidate.SemanticHash() == other.candidate.SemanticHash()
+		baseline.candidate.SemanticHash() == other.candidate.SemanticHash() &&
+		guardrailsEqual(baseline.guardrails, other.guardrails) &&
+		providerGuardrailsEqual(baseline.providerGuardrails, other.providerGuardrails)
 }
 
 // Relationship is one effective packet authorization interval. Rule identity
@@ -390,6 +409,7 @@ type Result struct {
 	affectedResources      []resource.ID
 	affectedGroups         []resource.GroupID
 	unsupported            []UnsupportedCapability
+	guardrailFindings      []GuardrailFinding
 	hash                   ImpactHash
 	peers                  PeerEstimate // not part of the impact hash
 }
@@ -411,6 +431,7 @@ func (result Result) IsValid() bool {
 		!validImportedIntents(result.removedImportedIntents, result.baseline.scope) ||
 		!validNodeIDs(result.affectedDevices) || !validResourceIDs(result.affectedResources) ||
 		!validGroupIDs(result.affectedGroups) || !validCapabilities(result.unsupported) ||
+		!validGuardrailFindings(result.guardrailFindings) ||
 		!result.hash.IsValid() {
 		return false
 	}

@@ -13,6 +13,7 @@ import (
 	"meshtransit.net/core/internal/domain/accessgraph/simulation"
 	"meshtransit.net/core/internal/domain/devicegroup"
 	"meshtransit.net/core/internal/domain/devicetag"
+	"meshtransit.net/core/internal/domain/guardrail"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/identitygroup"
 	"meshtransit.net/core/internal/domain/network"
@@ -22,6 +23,7 @@ import (
 	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/domain/resource"
 	"meshtransit.net/core/internal/domain/sharing"
+	"meshtransit.net/core/internal/domain/workspace"
 )
 
 const maximumPolicySimulationBaselineRules = policy.MaximumRules + 1
@@ -163,6 +165,11 @@ func (store *PolicySimulationStore) readSimulationBaselineOnce(
 	}
 	record.ReleaseID = releaseID
 	record.CompilerFormatVersion = compilerFormatVersion
+	// Only after the session is authorized for the Network: the guardrails
+	// publication would apply, the provider's included (schema 163).
+	if record.guardrails, record.providerGuardrails, err = readSimulationGuardrails(ctx, transaction); err != nil {
+		return simulation.Baseline{}, err
+	}
 	if err := json.Unmarshal([]byte(rules), &record.Rules); err != nil {
 		return simulation.Baseline{}, simulation.ErrInvalidBaseline
 	}
@@ -204,6 +211,8 @@ type policySimulationBaselineRecord struct {
 		SelectorID string   `json:"selector_id"`
 		DeviceIDs  []string `json:"device_ids"`
 	}
+	guardrails         []guardrail.Guardrail
+	providerGuardrails map[workspace.ID][]guardrail.Guardrail
 }
 
 var selectorKinds = map[string]publication.SideKind{
@@ -351,6 +360,7 @@ func (record policySimulationBaselineRecord) baseline(
 		}
 		return simulation.NewBaseline(simulation.BaselineParams{
 			Scope: scope, RevisionVector: vector, Candidate: candidate, SelectorMembers: members,
+			Guardrails: record.guardrails, ProviderGuardrails: record.providerGuardrails,
 		})
 	}
 	if record.ReleaseID == nil || record.CompilerFormatVersion == nil ||
@@ -395,6 +405,7 @@ func (record policySimulationBaselineRecord) baseline(
 	return simulation.NewBaseline(simulation.BaselineParams{
 		Scope: scope, RevisionVector: vector, HasActiveRelease: true,
 		ReleaseID: releaseID, SemanticHash: semanticHash, Candidate: candidate, SelectorMembers: members,
+		Guardrails: record.guardrails, ProviderGuardrails: record.providerGuardrails,
 	})
 }
 
@@ -783,4 +794,27 @@ func policySimulationDatabaseError(ctx context.Context, err error) error {
 		return simulation.ErrTooLarge
 	}
 	return errors.Join(simulation.ErrUnavailable, fmt.Errorf("read policy simulation baseline: %w", err))
+}
+
+// readSimulationGuardrails reads, in the baseline transaction, the active
+// guardrails of the Network's Workspace and of each other Workspace that
+// provides one of its Imported Resources.
+func readSimulationGuardrails(ctx context.Context, transaction resourceAuthorityDatabaseTransaction) (
+	[]guardrail.Guardrail, map[workspace.ID][]guardrail.Guardrail, error) {
+	var encoded string
+	if err := transaction.QueryRow(ctx, activeWorkspaceGuardrailsSQL).Scan(&encoded); err != nil {
+		return nil, nil, policySimulationDatabaseError(ctx, err)
+	}
+	own, err := decodeActiveGuardrails(encoded)
+	if err != nil {
+		return nil, nil, simulation.ErrInvalidBaseline
+	}
+	if err := transaction.QueryRow(ctx, importedResourceProviderGuardrailsSQL).Scan(&encoded); err != nil {
+		return nil, nil, policySimulationDatabaseError(ctx, err)
+	}
+	providers, err := decodeProviderGuardrails(encoded)
+	if err != nil {
+		return nil, nil, simulation.ErrInvalidBaseline
+	}
+	return own, providers, nil
 }

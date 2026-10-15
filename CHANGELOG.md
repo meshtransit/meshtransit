@@ -5,6 +5,13 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: policy simulation evaluates guardrails. `guardrail_findings` lists,
+  for each proposed path to an Imported Resource, the guardrails publication
+  would apply: the publishing Workspace's by name, and the provider's only
+  where they block and without detail, with `blocks` where publication would
+  refuse. `guardrail_evaluation` is no longer listed as unsupported. The
+  impact hash includes the findings, so an approval request made before the
+  upgrade (which lives at most 10 minutes) must be made again.
 - Core schema 163: a share between Workspaces also answers to the provider's
   guardrails when the consumer accepts the offer, activates the Trust
   Contract or publishes new rules to the Imported Resource. Before, only the

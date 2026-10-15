@@ -10,6 +10,7 @@ import (
 	"meshtransit.net/core/internal/domain/accessgraph"
 	"meshtransit.net/core/internal/domain/accessgraph/simulation"
 	"meshtransit.net/core/internal/domain/deployment"
+	"meshtransit.net/core/internal/domain/guardrail"
 	"meshtransit.net/core/internal/domain/identity"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
@@ -54,7 +55,7 @@ func TestServiceDerivesExactOverlappingPortDeltaWithPublicationCompiler(t *testi
 		result.AddedExplanationCount() != 1 || result.RemovedExplanationCount() != 1 ||
 		result.AffectedDeviceCount() != 2 || result.Truncated() || result.StaleInputs() ||
 		result.Uncertain() || !result.ImpactHash().IsValid() ||
-		len(result.UnsupportedCapabilities()) != 6 {
+		len(result.UnsupportedCapabilities()) != 5 {
 		t.Fatalf("result = %+v, added = %+v, removed = %+v", result, added, removed)
 	}
 
@@ -451,10 +452,16 @@ func simulationBaseline(
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The Imported Resource fixtures' provider Workspace, with no guardrail.
+	provider, err := workspace.ParseID("01890f00-0000-7000-8000-000000000102")
+	if err != nil {
+		t.Fatal(err)
+	}
 	baseline, err := simulation.NewBaseline(simulation.BaselineParams{
 		Scope: candidate.Snapshot().Scope(), RevisionVector: vector,
 		HasActiveRelease: true, ReleaseID: releaseID,
 		SemanticHash: candidate.SemanticHash(), Candidate: candidate,
+		ProviderGuardrails: map[workspace.ID][]guardrail.Guardrail{provider: {}},
 	})
 	if err != nil {
 		t.Fatal(err)

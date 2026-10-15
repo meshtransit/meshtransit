@@ -65,9 +65,15 @@ change runs the same compiler that publication uses.
    and removed, affected Devices and Resources, an estimate of peers per
    Device (a warning at 5,000, the limit at 10,000), and a hash of the impact.
    Rules to Imported Resources are listed separately as intent changes,
-   without provider details. Simulation does not yet evaluate guardrails,
-   share terms or effective access across Networks; the response lists what
-   it leaves out in `unsupported_capabilities`.
+   without provider details. Their guardrail findings come in
+   `guardrail_findings`, as publication applies them: this Workspace's
+   guardrails by name, and the provider Workspace's only where they block,
+   without any detail. `blocks` marks an enforced guardrail on a path the
+   active release does not already open (publication will refuse it). Simulation does not yet
+   evaluate share terms or effective access across Networks; the response
+   lists what it leaves out in `unsupported_capabilities`. The impact hash
+   covers the guardrail findings; an approval request expires within 10
+   minutes, and publication checks guardrails again in any case.
 2. **Request approval** (optional; `POST …/policy/approval-requests`,
    `policy.validate`): binds the simulated change and its impact.
 3. **Approve** (`POST …/policy/approval-requests/{id}/actions/approve`,

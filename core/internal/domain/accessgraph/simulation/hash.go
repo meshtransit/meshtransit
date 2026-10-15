@@ -9,7 +9,10 @@ import (
 )
 
 const impactHashDomainV1 = "meshtransit/policy-simulation-impact/v1\x00"
-const impactHashDomainV2 = "meshtransit/policy-simulation-impact/v2\x00"
+
+// impactHashDomainV3 replaced v2 for results with Imported Resources: it
+// adds their guardrail findings, so a v2 impact never matches again.
+const impactHashDomainV3 = "meshtransit/policy-simulation-impact/v3\x00"
 
 type impactEncoder struct{ digest hash.Hash }
 
@@ -18,7 +21,7 @@ func hashResult(result Result) ImpactHash {
 	imported := result.baseline.candidate.CompilerFormatVersion() == 4 ||
 		result.proposedCandidate.CompilerFormatVersion() == 4
 	if imported {
-		encoder.write([]byte(impactHashDomainV2))
+		encoder.write([]byte(impactHashDomainV3))
 	} else {
 		encoder.write([]byte(impactHashDomainV1))
 	}
@@ -46,6 +49,10 @@ func hashResult(result Result) ImpactHash {
 	if imported {
 		encoder.writeImportedIntents(result.addedImportedIntents)
 		encoder.writeImportedIntents(result.removedImportedIntents)
+		encoder.writeUint64(uint64(len(result.guardrailFindings)))
+		for _, finding := range result.guardrailFindings {
+			encoder.writeText(guardrailFindingKey(finding))
+		}
 	}
 	encoder.writeUint64(uint64(len(result.affectedDevices)))
 	for _, id := range result.affectedDevices {

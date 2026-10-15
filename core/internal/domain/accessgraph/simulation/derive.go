@@ -86,7 +86,6 @@ func newResult(baseline Baseline, proposed publication.Candidate) (Result, error
 			UnsupportedCapabilityPrincipalProjection,
 			UnsupportedCapabilitySensitiveResourceClassification,
 			UnsupportedCapabilityCrossScopeRelationships,
-			UnsupportedCapabilityGuardrailEvaluation,
 			UnsupportedCapabilityShareIntersection,
 			UnsupportedCapabilityRoutedServiceResources,
 		},
@@ -94,6 +93,9 @@ func newResult(baseline Baseline, proposed publication.Candidate) (Result, error
 	result.addedImportedIntents, result.removedImportedIntents = importedIntentChanges(
 		baseline.candidate.ImportedResourceDestinations(), proposed.ImportedResourceDestinations(),
 	)
+	if result.guardrailFindings, err = guardrailFindings(baseline, proposed); err != nil {
+		return Result{}, err
+	}
 	result.peers = peers
 	result.affectedDevices, result.affectedResources, result.affectedGroups = affectedEntities(result)
 	result.hash = hashResult(result)

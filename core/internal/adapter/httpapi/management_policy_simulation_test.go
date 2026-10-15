@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"meshtransit.net/core/internal/domain/guardrail"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -82,7 +83,7 @@ func TestManagementHandlerSimulatesPolicyWithoutPublishing(t *testing.T) {
 func TestPolicySimulationEncodesImportedIntentAndCountsWithoutPacketEdges(t *testing.T) {
 	t.Parallel()
 	fixture, contract, _ := managementSharingContractFixture(t, sharing.ContractStateActive, 2)
-	baseline := managementPolicySimulationBaseline(t, fixture.consumer)
+	baseline := managementPolicySimulationBaseline(t, fixture.consumer, fixture.provider.WorkspaceID())
 	resolution, err := sharing.NewPolicyDestination(sharing.PolicyDestinationParams{
 		ImportedResourceID: contract.ImportedResourceID(), ImportedResourceVersion: 2,
 		Contract: contract, ExportVersion: 1, ProviderInventoryRevision: 9,
@@ -257,6 +258,7 @@ func (reader *managementPolicySimulationReader) ReadSimulationBaseline(
 func managementPolicySimulationBaseline(
 	t *testing.T,
 	scope network.Scope,
+	providers ...workspace.ID,
 ) simulation.Baseline {
 	t.Helper()
 	snapshot, err := policy.NewSnapshot(policy.SnapshotParams{
@@ -276,8 +278,13 @@ func managementPolicySimulationBaseline(
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Each provider of the fixture's Imported Resources, with no guardrail.
+	providerGuardrails := map[workspace.ID][]guardrail.Guardrail{}
+	for _, provider := range providers {
+		providerGuardrails[provider] = nil
+	}
 	baseline, err := simulation.NewBaseline(simulation.BaselineParams{
-		Scope: scope, RevisionVector: vector, Candidate: candidate,
+		Scope: scope, RevisionVector: vector, Candidate: candidate, ProviderGuardrails: providerGuardrails,
 	})
 	if err != nil {
 		t.Fatal(err)
