@@ -20,27 +20,30 @@ const (
 	guardrailCreateOperation  = "guardrail_create"
 	guardrailUpdateOperation  = "guardrail_update"
 	guardrailDeleteOperation  = "guardrail_delete"
+	guardrailPreviewOperation = "guardrail_preview"
 	maximumGuardrailBodyBytes = 16 << 10
 )
 
 // GuardrailManager lists and changes Workspace guardrails.
 type GuardrailManager interface {
 	List(context.Context, accountsession.Session, workspace.ID) (guardrail.Listing, error)
-	Create(context.Context, accountsession.Session, workspace.ID, guardrail.Spec, publicid.ID) (guardrail.Result, error)
-	Update(context.Context, accountsession.Session, workspace.ID, publicid.ID, int64, guardrail.Spec,
+	Preview(context.Context, accountsession.Session, workspace.ID, guardrail.Candidate) (guardrail.Impact, error)
+	Create(context.Context, accountsession.Session, workspace.ID, guardrail.Spec, guardrail.ImpactHash,
 		publicid.ID) (guardrail.Result, error)
+	Update(context.Context, accountsession.Session, workspace.ID, publicid.ID, int64, guardrail.Spec,
+		guardrail.ImpactHash, publicid.ID) (guardrail.Result, error)
 	Delete(context.Context, accountsession.Session, workspace.ID, publicid.ID, int64, publicid.ID) (guardrail.Result, error)
 }
 
 type guardrailPath struct {
 	workspaceID workspace.ID
 	guardrailID publicid.ID
-	action      string // "" to list, "create", "update" or "delete"
+	action      string // "" to list, "create", "preview", "update" or "delete"
 }
 
 // parseGuardrailPath matches
 // GET /api/v1/workspaces/{ws}/guardrails,
-// POST /api/v1/workspaces/{ws}/guardrails/actions/create and
+// POST /api/v1/workspaces/{ws}/guardrails/actions/{create|preview} and
 // POST /api/v1/workspaces/{ws}/guardrails/{id}/actions/{update|delete}.
 func parseGuardrailPath(request *http.Request) (guardrailPath, bool) {
 	if request == nil || request.URL == nil || request.URL.RawPath != "" || request.URL.RawQuery != "" {
@@ -59,10 +62,10 @@ func parseGuardrailPath(request *http.Request) (guardrailPath, bool) {
 	case 5:
 		return guardrailPath{workspaceID: workspaceID}, true
 	case 7:
-		if segments[5] != "actions" || segments[6] != "create" {
+		if segments[5] != "actions" || (segments[6] != "create" && segments[6] != "preview") {
 			return guardrailPath{}, false
 		}
-		return guardrailPath{workspaceID: workspaceID, action: "create"}, true
+		return guardrailPath{workspaceID: workspaceID, action: segments[6]}, true
 	case 8:
 		id, err := publicid.Parse(segments[5])
 		if err != nil || id.String() != segments[5] || segments[6] != "actions" ||
@@ -90,6 +93,8 @@ func (path guardrailPath) operation(string) string {
 		return guardrailDeleteOperation
 	case "create":
 		return guardrailCreateOperation
+	case "preview":
+		return guardrailPreviewOperation
 	default:
 		return guardrailListOperation
 	}
@@ -134,28 +139,71 @@ var guardrailParamKeys = map[guardrail.Kind][]string{
 	guardrail.KindExternalSharing:  {"direction", "networks", "allowed_workspaces"},
 }
 
-// parseGuardrailSpec accepts exactly kind, name, description, mode and the
-// kind's params, each params key once; the domain validates the values.
-func parseGuardrailSpec(response http.ResponseWriter, request *http.Request) (guardrail.Spec, bool) {
+// guardrailRequest is a create, update or preview body: the spec, the
+// impact hash a save echoes, and for a preview of an update the guardrail
+// and its expected version.
+type guardrailRequest struct {
+	spec            guardrail.Spec
+	impact          guardrail.ImpactHash
+	guardrailID     publicid.ID
+	expectedVersion int64
+}
+
+type guardrailRequestBody struct {
+	Kind            string          `json:"kind"`
+	Name            string          `json:"name"`
+	Description     string          `json:"description"`
+	Mode            string          `json:"mode"`
+	Params          json.RawMessage `json:"params"`
+	ImpactHash      *string         `json:"impact_hash"`
+	GuardrailID     *string         `json:"guardrail_id"`
+	ExpectedVersion *int64          `json:"expected_version"`
+}
+
+// parseGuardrailRequest accepts exactly kind, name, description, mode and
+// the kind's params, each params key once, plus impact_hash on a save or
+// guardrail_id with expected_version (both or neither) on a preview; the
+// domain validates the values.
+func parseGuardrailRequest(response http.ResponseWriter, request *http.Request, preview bool) (guardrailRequest, bool) {
 	if request.Body == nil || !validJSONContentType(singleHeader(request.Header, "Content-Type")) {
-		return guardrail.Spec{}, false
+		return guardrailRequest{}, false
 	}
 	raw, err := io.ReadAll(http.MaxBytesReader(response, request.Body, maximumGuardrailBodyBytes))
 	if err != nil {
-		return guardrail.Spec{}, false
+		return guardrailRequest{}, false
 	}
-	var body struct {
-		Kind        string          `json:"kind"`
-		Name        string          `json:"name"`
-		Description string          `json:"description"`
-		Mode        string          `json:"mode"`
-		Params      json.RawMessage `json:"params"`
-	}
+	var body guardrailRequestBody
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&body); err != nil || ensureJSONEnd(decoder) != nil {
-		return guardrail.Spec{}, false
+		return guardrailRequest{}, false
 	}
+	if preview && body.ImpactHash != nil || !preview && (body.GuardrailID != nil || body.ExpectedVersion != nil) ||
+		(body.GuardrailID == nil) != (body.ExpectedVersion == nil) {
+		return guardrailRequest{}, false
+	}
+	spec, valid := parseGuardrailSpec(body)
+	if !valid {
+		return guardrailRequest{}, false
+	}
+	parsed := guardrailRequest{spec: spec}
+	if body.ImpactHash != nil {
+		if parsed.impact, err = guardrail.ParseImpactHash(*body.ImpactHash); err != nil {
+			return guardrailRequest{}, false
+		}
+	}
+	if body.GuardrailID != nil {
+		id, err := publicid.Parse(*body.GuardrailID)
+		if err != nil || id.String() != *body.GuardrailID || *body.ExpectedVersion <= 0 {
+			return guardrailRequest{}, false
+		}
+		parsed.guardrailID, parsed.expectedVersion = id, *body.ExpectedVersion
+	}
+	return parsed, true
+}
+
+// parseGuardrailSpec requires the kind's params keys, each once.
+func parseGuardrailSpec(body guardrailRequestBody) (guardrail.Spec, bool) {
 	allowed, known := guardrailParamKeys[guardrail.Kind(body.Kind)]
 	var params map[string]json.RawMessage
 	if !known || json.Unmarshal(body.Params, &params) != nil || params == nil || len(params) != len(allowed) {
@@ -171,6 +219,40 @@ func parseGuardrailSpec(response http.ResponseWriter, request *http.Request) (gu
 		return guardrail.Spec{}, false
 	}
 	return spec, spec.IsValid()
+}
+
+type guardrailAffectedBody struct {
+	TrustContractID string `json:"trust_contract_id"`
+	Side            string `json:"side"`
+	NetworkID       string `json:"network_id"`
+	Label           string `json:"label"`
+}
+
+// writeGuardrailPreview answers a preview: the affected shares, at most
+// MaximumPreviewItems of them listed, and the hash a save must echo.
+func (handler *ManagementHandler) writeGuardrailPreview(ctx context.Context, response http.ResponseWriter,
+	correlationID publicid.ID, impact guardrail.Impact) {
+	listed := impact.Affected[:min(len(impact.Affected), guardrail.MaximumPreviewItems)]
+	affected := make([]guardrailAffectedBody, len(listed))
+	for index, contract := range listed {
+		affected[index] = guardrailAffectedBody{TrustContractID: contract.ID.String(), Side: string(contract.Side),
+			NetworkID: contract.NetworkID.String(), Label: contract.Label}
+	}
+	var output struct {
+		Data struct {
+			Mode          string                  `json:"mode"`
+			AffectedCount int                     `json:"affected_count"`
+			Affected      []guardrailAffectedBody `json:"affected"`
+			Truncated     bool                    `json:"truncated"`
+			ImpactHash    string                  `json:"impact_hash"`
+		} `json:"data"`
+		CorrelationID string `json:"correlation_id"`
+	}
+	output.Data.Mode, output.Data.AffectedCount, output.Data.Affected = string(impact.Mode), len(impact.Affected), affected
+	output.Data.Truncated, output.Data.ImpactHash = len(listed) < len(impact.Affected), impact.Hash.String()
+	output.CorrelationID = correlationID.String()
+	response.Header().Set("Cache-Control", "no-store")
+	writeManagementJSON(ctx, handler.logger, response, http.StatusOK, output)
 }
 
 func (handler *ManagementHandler) handleGuardrails(ctx context.Context, response http.ResponseWriter,
@@ -213,27 +295,41 @@ func (handler *ManagementHandler) handleGuardrails(ctx context.Context, response
 		return "success"
 	}
 
+	if path.action == "preview" {
+		body, valid := parseGuardrailRequest(response, request, true)
+		if !valid {
+			return fail(*invalidManagementRequest())
+		}
+		impact, err := handler.guardrails.Preview(ctx, session, path.workspaceID, guardrail.Candidate{
+			GuardrailID: body.guardrailID, ExpectedVersion: body.expectedVersion, Spec: body.spec})
+		if err != nil {
+			return fail(classifyGuardrailError(err))
+		}
+		handler.writeGuardrailPreview(ctx, response, correlationID, impact)
+		return "success"
+	}
+
 	var result guardrail.Result
 	var err error
 	switch path.action {
 	case "create":
-		spec, valid := parseGuardrailSpec(response, request)
+		body, valid := parseGuardrailRequest(response, request, false)
 		if !valid {
 			return fail(*invalidManagementRequest())
 		}
-		result, err = handler.guardrails.Create(ctx, session, path.workspaceID, spec, correlationID)
+		result, err = handler.guardrails.Create(ctx, session, path.workspaceID, body.spec, body.impact, correlationID)
 	default:
 		expectedVersion, precondition := parseIfMatch(request.Header.Values("If-Match"))
 		if precondition != nil {
 			return fail(*precondition)
 		}
 		if path.action == "update" {
-			spec, valid := parseGuardrailSpec(response, request)
+			body, valid := parseGuardrailRequest(response, request, false)
 			if !valid {
 				return fail(*invalidManagementRequest())
 			}
 			result, err = handler.guardrails.Update(ctx, session, path.workspaceID, path.guardrailID,
-				expectedVersion, spec, correlationID)
+				expectedVersion, body.spec, body.impact, correlationID)
 		} else {
 			result, err = handler.guardrails.Delete(ctx, session, path.workspaceID, path.guardrailID,
 				expectedVersion, correlationID)
@@ -281,6 +377,15 @@ func classifyGuardrailError(err error) managementError {
 	case errors.Is(err, guardrail.ErrLimit):
 		return managementError{Status: http.StatusConflict, Code: "guardrail_limit",
 			Message: "This Workspace already has the maximum number of guardrails"}
+	case errors.Is(err, guardrail.ErrImpactChanged):
+		return managementError{Status: http.StatusConflict, Code: "guardrail_impact_changed",
+			Message: "The shares this guardrail cuts changed. Preview it again before saving."}
+	case errors.Is(err, guardrail.ErrImpactTooLarge):
+		return managementError{Status: http.StatusUnprocessableEntity, Code: "guardrail_impact_too_large",
+			Message: "This Workspace has too many active shares to preview a guardrail"}
+	case errors.Is(err, guardrail.ErrUnavailable):
+		return managementError{Status: http.StatusServiceUnavailable, Code: "temporarily_unavailable",
+			Message: "The result is uncertain. Reload guardrails before trying again.", Retryable: true}
 	case errors.Is(err, guardrail.ErrInvalid):
 		return *invalidManagementRequest()
 	default:

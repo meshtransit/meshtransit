@@ -58,8 +58,13 @@ For a share between Workspaces, each Workspace gives its own consent with its
 own authority. [Guardrails](identity-and-access.md#guardrails) are checked when
 a change is made: the provider's when the offer is created, and both the
 consumer's and the provider's when it is accepted, activated, and when the
-consumer publishes new rules that reach it. They do not cut a share that
-already exists.
+consumer publishes new rules that reach it. An enforce-mode guardrail of
+either Workspace also applies to shares that already exist: while it blocks a
+share, Core leaves that share out of both sides' maps (no peer, alias or rule),
+and puts it back once the guardrail is switched to audit mode, loosened or
+deleted. The share itself, its Trust Contract and the consumer's published
+rules stay as they are; a policy release keeps the existing paths, which maps
+leave out.
 
 The consumer reaches the shared Device by name:
 

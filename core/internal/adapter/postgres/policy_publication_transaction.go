@@ -533,7 +533,8 @@ func policyPublicationSemanticHash(value []byte) (publication.SemanticHash, erro
 // added concurrently cannot be missed. Rules between Devices of this Network
 // cross no Network and are not affected. An enforced guardrail blocks only
 // paths the active release does not already open, returning
-// *guardrail.ViolationError: guardrails are not retroactive. Every finding,
+// *guardrail.ViolationError. Existing paths stay in the release; maps leave
+// out the shares an enforced guardrail blocks (schema 164). Every finding,
 // including those on existing paths, comes back for the evidence.
 func (transaction *policyPublicationTransaction) checkGuardrails(
 	ctx context.Context,
@@ -627,8 +628,8 @@ func decodeProviderGuardrails(encoded string) (map[workspace.ID][]guardrail.Guar
 // checkProviderGuardrails blocks a new path to an Imported Resource that an
 // enforced guardrail of its provider's Workspace forbids, with
 // *guardrail.CounterpartViolationError, which names nothing of the provider.
-// Paths the active release already opens are not blocked: guardrails are not
-// retroactive. The provider's findings are never recorded in this Network's
+// Paths the active release already opens are not blocked here; maps leave
+// out the shares an enforced guardrail blocks (schema 164). The provider's findings are never recorded in this Network's
 // evidence.
 func (transaction *policyPublicationTransaction) checkProviderGuardrails(ctx context.Context,
 	destinations []publication.ImportedResourceDestination, existing map[string]bool) error {

@@ -2133,9 +2133,13 @@ func setProviderShareGuardrail(ctx context.Context, t *testing.T, admin *pgx.Con
 	var result guardrail.Result
 	var err error
 	if !rail.ID.IsValid() {
-		result, err = guardrails.Create(ctx, owner, workspaceID, spec, newCorrelationID(t))
+		candidate := guardrail.Candidate{Spec: spec}
+		result, err = guardrails.Create(ctx, owner, workspaceID, spec,
+			enforcedImpact(ctx, t, guardrails, owner, workspaceID, candidate), newCorrelationID(t))
 	} else {
-		result, err = guardrails.Update(ctx, owner, workspaceID, rail.ID, rail.Version, spec, newCorrelationID(t))
+		candidate := guardrail.Candidate{GuardrailID: rail.ID, ExpectedVersion: rail.Version, Spec: spec}
+		result, err = guardrails.Update(ctx, owner, workspaceID, rail.ID, rail.Version, spec,
+			enforcedImpact(ctx, t, guardrails, owner, workspaceID, candidate), newCorrelationID(t))
 	}
 	if err != nil {
 		t.Fatalf("set provider share guardrail (%s): %v", mode, err)

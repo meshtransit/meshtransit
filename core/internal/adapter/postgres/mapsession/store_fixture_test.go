@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,6 +76,33 @@ type fakeTransaction struct {
 	networkOnceDependencies bool
 	// boundDependencies reports the schema 146 dependency reader as granted.
 	boundDependencies bool
+	// guardrails answers the schema 164 guardrail reader: the enforced
+	// guardrails ({"kind","params"} objects) of a requested Workspace, none
+	// when absent. guardrailErr fails the read.
+	guardrails   map[string][]string
+	guardrailErr error
+	// guardrailAnswer, when set, is the reader's whole answer.
+	guardrailAnswer string
+}
+
+// shareGuardrailRows answers mapShareGuardrailsSQL as schema 164 does.
+func (transaction *fakeTransaction) shareGuardrailRows(arguments []any) (databaseRows, error) {
+	if transaction.guardrailErr != nil {
+		return nil, transaction.guardrailErr
+	}
+	if transaction.guardrailAnswer != "" {
+		return &directEdgeRows{values: []string{transaction.guardrailAnswer}}, nil
+	}
+	ids, ok := arguments[0].([]string)
+	if !ok {
+		return nil, errors.New("unexpected guardrail arguments")
+	}
+	documents := make([]string, len(ids))
+	for index, id := range ids {
+		documents[index] = fmt.Sprintf(`{"workspace_id":%q,"guardrails":[%s]}`, id,
+			strings.Join(transaction.guardrails[id], ","))
+	}
+	return &directEdgeRows{values: []string{"[" + strings.Join(documents, ",") + "]"}}, nil
 }
 
 func (transaction *fakeTransaction) Exec(
@@ -171,6 +199,8 @@ func (transaction *fakeTransaction) Query(
 			return &directEdgeRows{}, nil
 		}
 		return transaction.aliasRows, nil
+	case mapShareGuardrailsSQL:
+		return transaction.shareGuardrailRows(arguments)
 	case loadPacketPolicySQL:
 		if transaction.policyRows == nil {
 			return &policyRuleRows{}, nil

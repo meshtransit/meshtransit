@@ -131,8 +131,10 @@ func guardrailDatabaseError(err error) error {
 			return guardrail.ErrForbidden
 		case "P0002":
 			return guardrail.ErrNotFound
-		case "40001":
+		case "40001", "40P01", "55P03":
 			return guardrail.ErrVersionConflict
+		case "54000":
+			return guardrail.ErrImpactTooLarge
 		case "MTG01":
 			return guardrail.ErrUnknownNetwork
 		case "MTG02":
@@ -211,7 +213,8 @@ type guardrailActorEvidence struct {
 	OwnerGeneration      int64  `json:"owner_generation"`
 }
 
-// Change commits one guardrail change and its evidence in one transaction.
+// Change commits one guardrail change and its evidence in one transaction,
+// with the revisions and evidence of every share it cuts or restores.
 func (store *GuardrailStore) Change(ctx context.Context, change guardrail.Change) (_ guardrail.Result, resultErr error) {
 	if !change.Session.IsValid() || !change.WorkspaceID.IsValid() || !change.GuardrailID.IsValid() ||
 		!change.CorrelationID.IsValid() || !change.Spec.IsValid() {
@@ -272,8 +275,23 @@ func (store *GuardrailStore) Change(ctx context.Context, change guardrail.Change
 		(change.Operation != guardrail.OperationCreate && saved.Version != change.ExpectedVersion+1) {
 		return guardrail.Result{}, guardrail.ErrInvalid
 	}
+	// Shares first: their Network revisions are locked before any audit
+	// stream, as other Network changes do (schema 164).
+	shares, err := checkGuardrailShareImpact(ctx, tx, change, saved, deleted, changeID)
+	if err != nil {
+		return guardrail.Result{}, err
+	}
+	heads, err := bumpGuardrailShareNetworks(ctx, tx, shares.changed, changeID)
+	if err != nil {
+		return guardrail.Result{}, err
+	}
 	if err := appendGuardrailEvidence(ctx, tx, change, saved, previousHash, actor, changeID); err != nil {
 		return guardrail.Result{}, errors.Join(guardrail.ErrUnavailable, err)
+	}
+	if len(heads) != 0 {
+		if err := appendGuardrailShareNetworkEvidence(ctx, tx, change, saved, changeID, shares, heads); err != nil {
+			return guardrail.Result{}, errors.Join(guardrail.ErrUnavailable, err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return guardrail.Result{}, errors.Join(guardrail.ErrUnavailable, err)

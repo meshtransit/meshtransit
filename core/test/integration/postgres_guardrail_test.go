@@ -16,6 +16,7 @@ import (
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/domain/sharing"
+	"meshtransit.net/core/internal/domain/workspace"
 	"meshtransit.net/core/internal/domain/workspace/roles"
 )
 
@@ -59,6 +60,18 @@ func productionSharingLock(t *testing.T, mode guardrail.Mode, direction guardrai
 		Sharing: guardrail.NetworkSharingParams{Networks: []network.ID{production}, Direction: direction}}
 }
 
+// previewImpact previews candidate as session and returns the hash an
+// enforce-mode save echoes.
+func previewImpact(ctx context.Context, t *testing.T, service *guardrail.Service, session accountsession.Session,
+	workspaceID workspace.ID, candidate guardrail.Candidate) guardrail.ImpactHash {
+	t.Helper()
+	impact, err := service.Preview(ctx, session, workspaceID, candidate)
+	if err != nil {
+		t.Fatalf("preview guardrail: %v", err)
+	}
+	return impact.Hash
+}
+
 func newCorrelationID(t *testing.T) publicid.ID {
 	t.Helper()
 	id, err := publicid.New()
@@ -93,15 +106,20 @@ func assertPostgreSQLGuardrails(ctx context.Context, t *testing.T, admin *pgx.Co
 		t.Fatalf("plain member listed guardrails: %v", err)
 	}
 	spec := productionSharingLock(t, guardrail.ModeEnforce, guardrail.DirectionOutgoing)
-	if _, err := service.Create(ctx, member, workspaceID, spec, newCorrelationID(t)); !errors.Is(err, guardrail.ErrForbidden) {
+	if _, err := service.Create(ctx, member, workspaceID, spec, guardrail.ImpactHash{}, newCorrelationID(t)); !errors.Is(err, guardrail.ErrForbidden) {
 		t.Fatalf("plain member created a guardrail: %v", err)
 	}
 	foreign := spec
 	foreign.Sharing.Networks = []network.ID{network.ID(newCorrelationID(t))}
-	if _, err := service.Create(ctx, owner, workspaceID, foreign, newCorrelationID(t)); !errors.Is(err, guardrail.ErrUnknownNetwork) {
+	if _, err := service.Create(ctx, owner, workspaceID, foreign, guardrail.ImpactHash{}, newCorrelationID(t)); !errors.Is(err, guardrail.ErrUnknownNetwork) {
 		t.Fatalf("guardrail over a foreign Network: %v", err)
 	}
-	created, err := service.Create(ctx, owner, workspaceID, spec, newCorrelationID(t))
+	if _, err := service.Create(ctx, owner, workspaceID, spec, guardrail.ImpactHash{},
+		newCorrelationID(t)); !errors.Is(err, guardrail.ErrImpactChanged) {
+		t.Fatalf("enforce-mode create without a preview: %v", err)
+	}
+	created, err := service.Create(ctx, owner, workspaceID, spec,
+		previewImpact(ctx, t, service, owner, workspaceID, guardrail.Candidate{Spec: spec}), newCorrelationID(t))
 	if err != nil || created.Guardrail.Version != 1 || created.Guardrail.Mode != guardrail.ModeEnforce {
 		t.Fatalf("owner create = %+v, error = %v", created, err)
 	}
@@ -117,7 +135,8 @@ func assertPostgreSQLGuardrails(ctx context.Context, t *testing.T, admin *pgx.Co
 		t.Fatalf("it_admin guardrails = %+v, error = %v", listing, err)
 	}
 	narrowed := productionSharingLock(t, guardrail.ModeEnforce, guardrail.DirectionBoth)
-	if _, err := service.Update(ctx, member, workspaceID, id, 1, narrowed, newCorrelationID(t)); !errors.Is(err, guardrail.ErrForbidden) {
+	if _, err := service.Update(ctx, member, workspaceID, id, 1, narrowed, guardrail.ImpactHash{},
+		newCorrelationID(t)); !errors.Is(err, guardrail.ErrForbidden) {
 		t.Fatalf("it_admin changed a guardrail: %v", err)
 	}
 	if _, err := roleService.Revoke(ctx, newRevokeCommand(t, owner, workspaceID, itAdmin.AssignmentID, 1)); err != nil {
@@ -137,15 +156,18 @@ func assertPostgreSQLGuardrails(ctx context.Context, t *testing.T, admin *pgx.Co
 	if listing, err := service.List(ctx, member, workspaceID); err != nil || !listing.CanManage || !listing.CanWeaken {
 		t.Fatalf("security_admin guardrails = %+v, error = %v", listing, err)
 	}
-	updated, err := service.Update(ctx, member, workspaceID, id, 1, narrowed, newCorrelationID(t))
+	updated, err := service.Update(ctx, member, workspaceID, id, 1, narrowed,
+		previewImpact(ctx, t, service, member, workspaceID,
+			guardrail.Candidate{GuardrailID: id, ExpectedVersion: 1, Spec: narrowed}), newCorrelationID(t))
 	if err != nil || updated.Guardrail.Version != 2 || updated.Guardrail.Sharing.Direction != guardrail.DirectionBoth {
 		t.Fatalf("security_admin narrowed = %+v, error = %v", updated, err)
 	}
-	if _, err := service.Update(ctx, member, workspaceID, id, 1, narrowed, newCorrelationID(t)); !errors.Is(err, guardrail.ErrVersionConflict) {
+	if _, err := service.Update(ctx, member, workspaceID, id, 1, narrowed, guardrail.ImpactHash{},
+		newCorrelationID(t)); !errors.Is(err, guardrail.ErrVersionConflict) {
 		t.Fatalf("stale update: %v", err)
 	}
 	auditOnly := productionSharingLock(t, guardrail.ModeAudit, guardrail.DirectionBoth)
-	weakened, err := service.Update(ctx, member, workspaceID, id, 2, auditOnly, newCorrelationID(t))
+	weakened, err := service.Update(ctx, member, workspaceID, id, 2, auditOnly, guardrail.ImpactHash{}, newCorrelationID(t))
 	if err != nil || weakened.Guardrail.Version != 3 || weakened.Guardrail.Mode != guardrail.ModeAudit {
 		t.Fatalf("security_admin switched to audit = %+v, error = %v", weakened, err)
 	}
@@ -172,7 +194,7 @@ func countGuardrailAudit(ctx context.Context, t *testing.T, admin *pgx.Conn) int
 	t.Helper()
 	var count int64
 	if err := admin.QueryRow(ctx, `SELECT count(*) FROM mesh_audit.audit_event
-WHERE target_kind = 'guardrail'`).Scan(&count); err != nil {
+WHERE target_kind = 'guardrail' AND network_id IS NULL`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	return count
@@ -182,21 +204,24 @@ func latestGuardrailEventWeakened(ctx context.Context, t *testing.T, admin *pgx.
 	t.Helper()
 	var weakened bool
 	if err := admin.QueryRow(ctx, `SELECT (payload->>'weakened')::BOOLEAN FROM mesh_audit.audit_event
-WHERE target_kind = 'guardrail' AND target_public_id = $1::UUID
+WHERE target_kind = 'guardrail' AND target_public_id = $1::UUID AND network_id IS NULL
 ORDER BY event_identity_id DESC LIMIT 1`, id.String()).Scan(&weakened); err != nil {
 		t.Fatal(err)
 	}
 	return weakened
 }
 
-// assertGuardrailEventsOnWorkspaceStream checks guardrail evidence lands on
-// the Workspace's own stream, never a Network stream.
+// assertGuardrailEventsOnWorkspaceStream checks guardrail changes are
+// recorded on the Workspace's own stream. A Network stream only records,
+// with the revision it advanced, that a change cut or restored its shares
+// (schema 164).
 func assertGuardrailEventsOnWorkspaceStream(ctx context.Context, t *testing.T, admin *pgx.Conn, id publicid.ID) {
 	t.Helper()
 	var outside int64
 	if err := admin.QueryRow(ctx, `SELECT count(*) FROM mesh_audit.audit_event
 WHERE target_kind = 'guardrail' AND target_public_id = $1::UUID
-  AND (workspace_id IS DISTINCT FROM 103 OR network_id IS NOT NULL)`, id.String()).Scan(&outside); err != nil {
+  AND (workspace_id IS DISTINCT FROM 103
+       OR network_id IS NOT NULL AND action <> 'guardrail.share_access_changed')`, id.String()).Scan(&outside); err != nil {
 		t.Fatal(err)
 	}
 	if outside != 0 {
@@ -216,8 +241,9 @@ func blockShareWithGuardrail(ctx context.Context, t *testing.T, admin *pgx.Conn,
 	defer setWorkspaceRenameFixtureOwner(ctx, t, admin, 14)
 	owner := managementRBACAccountSessionFixture(t)
 	workspaceID, _ := owner.LoginWorkspaceID()
-	created, err := guardrails.Create(ctx, owner, workspaceID,
-		productionSharingLock(t, guardrail.ModeEnforce, guardrail.DirectionOutgoing), newCorrelationID(t))
+	lock := productionSharingLock(t, guardrail.ModeEnforce, guardrail.DirectionOutgoing)
+	created, err := guardrails.Create(ctx, owner, workspaceID, lock,
+		previewImpact(ctx, t, guardrails, owner, workspaceID, guardrail.Candidate{Spec: lock}), newCorrelationID(t))
 	if err != nil {
 		t.Fatalf("create share guardrail: %v", err)
 	}
@@ -233,7 +259,8 @@ func blockShareWithGuardrail(ctx context.Context, t *testing.T, admin *pgx.Conn,
 		t.Fatalf("offer out of a locked Network: %v", err)
 	}
 	audit, err := guardrails.Update(ctx, owner, workspaceID, created.Guardrail.ID, 1,
-		productionSharingLock(t, guardrail.ModeAudit, guardrail.DirectionOutgoing), newCorrelationID(t))
+		productionSharingLock(t, guardrail.ModeAudit, guardrail.DirectionOutgoing), guardrail.ImpactHash{},
+		newCorrelationID(t))
 	if err != nil {
 		t.Fatalf("switch share guardrail to audit: %v", err)
 	}
@@ -285,4 +312,14 @@ func assertActiveReleaseImportedPath(ctx context.Context, t *testing.T, transact
 	if !found {
 		t.Fatalf("active release paths omit %s", path)
 	}
+}
+
+// enforcedImpact previews an enforce-mode candidate; audit mode needs no hash.
+func enforcedImpact(ctx context.Context, t *testing.T, service *guardrail.Service, session accountsession.Session,
+	workspaceID workspace.ID, candidate guardrail.Candidate) guardrail.ImpactHash {
+	t.Helper()
+	if candidate.Spec.Mode != guardrail.ModeEnforce {
+		return guardrail.ImpactHash{}
+	}
+	return previewImpact(ctx, t, service, session, workspaceID, candidate)
 }

@@ -190,8 +190,24 @@ isolation, Network sharing and external sharing. Each runs in audit mode
 (recorded) or enforce mode (refused). An enforced guardrail refuses share
 offers, acceptances and Trust Contract activations, and policy publications
 whose rules reach shared or imported Devices, whoever makes the change; rules
-inside one Network are not affected. It is not retroactive: it does not cut
-existing paths, and closing access is never refused.
+inside one Network are not affected. Closing access is never refused.
+
+An enforced guardrail is also retroactive for shares: every existing share it
+blocks is cut from the maps of both sides, while the share and its Trust
+Contract stay as they are. Switching the guardrail to audit mode, loosening it
+or deleting it puts the shares back. A policy publication still keeps paths
+its release already had; maps leave out the ones a guardrail blocks. Saving
+a guardrail in enforce mode therefore needs a preview first:
+`POST /api/v1/workspaces/{workspace}/guardrails/actions/preview` with the
+create or update body (and `guardrail_id` with `expected_version` for an
+update) returns the shares the save would cut that no guardrail cuts yet
+(listed up to 256, with `affected_count`) and an `impact_hash`. The create or
+update sends that `impact_hash`; when the shares it cuts changed in between,
+the save is refused with `guardrail_impact_changed` (409). In audit mode the
+preview lists the shares the guardrail would report and the save needs no
+hash; deleting never needs one. A save that cuts or restores shares advances
+the Network revision of both sides of each share and records the change on
+each Network's audit stream, so connected Devices receive new maps.
 
 Across Workspaces, each side's guardrails apply. When the consumer accepts an
 offer, activates its Trust Contract or publishes rules to the Imported

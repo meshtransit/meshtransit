@@ -163,6 +163,11 @@ func (spec Spec) IsValid() bool {
 		(spec.Mode != ModeAudit && spec.Mode != ModeEnforce) {
 		return false
 	}
+	return spec.paramsValid()
+}
+
+// paramsValid reports complete, bounded parameters for the spec's kind.
+func (spec Spec) paramsValid() bool {
 	switch spec.Kind {
 	case KindNetworkIsolation:
 		params := spec.Isolation

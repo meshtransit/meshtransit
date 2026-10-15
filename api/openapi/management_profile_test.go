@@ -67,8 +67,8 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 	basePaths, paths := profileMap(t, base, "paths"), profileMap(t, console, "paths")
 	// The private document adds only Console session routes, the two
 	// receiving-Network alias range routes, the Workspace audit history and
-	// export, and the four Workspace guardrail routes.
-	if len(basePaths) != 31 || len(paths) != 71 {
+	// export, and the five Workspace guardrail routes.
+	if len(basePaths) != 31 || len(paths) != 72 {
 		t.Fatal("private profile introduced another product resource API")
 	}
 	for path, raw := range paths {

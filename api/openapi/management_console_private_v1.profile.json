@@ -3251,7 +3251,7 @@
     "get": {
       "operationId": "listWorkspaceGuardrails",
       "summary": "List the Workspace's guardrails",
-      "description": "Requires guardrail.read on the Workspace. Guardrails are owner-level limits that no rule or share may break; they are checked when a rule is published and when a share is offered, accepted or enabled.",
+      "description": "Requires guardrail.read on the Workspace. Guardrails are owner-level limits that no rule or share may break; they are checked when a rule is published and when a share is offered, accepted or enabled, and an enforce-mode guardrail also cuts the existing shares it blocks from maps.",
       "security": [
         {
           "accountSessionCookie": []
@@ -3499,7 +3499,7 @@
     "post": {
       "operationId": "createWorkspaceGuardrail",
       "summary": "Add a guardrail",
-      "description": "Requires guardrail.manage. A guardrail only narrows what is reachable; at most 100 per Workspace. Every referenced Network must belong to the Workspace.",
+      "description": "Requires guardrail.manage. A guardrail only narrows what is reachable; at most 100 per Workspace. Every referenced Network must belong to the Workspace. An enforce-mode guardrail cuts the existing shares it blocks from maps, so it needs the impact_hash of a preview.",
       "security": [
         {
           "accountSessionCookie": [],
@@ -3673,6 +3673,11 @@
                       }
                     }
                   ]
+                },
+                "impact_hash": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$",
+                  "description": "The impact_hash of a preview of this exact change. Required when the result is in enforce mode; the save is refused with guardrail_impact_changed when the shares it cuts changed."
                 }
               }
             }
@@ -3891,10 +3896,341 @@
           "description": "permission_denied"
         },
         "409": {
-          "description": "guardrail_limit"
+          "description": "guardrail_limit, guardrail_impact_changed"
         },
         "422": {
-          "description": "guardrail_network_unknown"
+          "description": "guardrail_network_unknown, guardrail_impact_too_large"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Unavailable"
+        }
+      }
+    }
+  },
+  "workspaceGuardrailPreview": {
+    "post": {
+      "operationId": "previewWorkspaceGuardrail",
+      "summary": "Preview what saving a guardrail does to existing shares",
+      "description": "Requires guardrail.manage. Reads the Workspace's active guardrails and active shares and returns the shares the guardrail would cut (enforce mode) or report (audit mode), with the impact_hash an enforce-mode create or update must send. Changes nothing.",
+      "security": [
+        {
+          "accountSessionCookie": [],
+          "sessionCSRF": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "name": "workspace_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionProof"
+        }
+      ],
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "name",
+                "description",
+                "mode",
+                "params"
+              ],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "network_isolation",
+                    "network_sharing",
+                    "external_sharing"
+                  ]
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                },
+                "description": {
+                  "type": "string",
+                  "maxLength": 280
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "audit",
+                    "enforce"
+                  ],
+                  "description": "audit records findings without blocking; enforce blocks"
+                },
+                "params": {
+                  "oneOf": [
+                    {
+                      "title": "network_isolation",
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "from_networks",
+                        "to_networks",
+                        "both_directions"
+                      ],
+                      "properties": {
+                        "from_networks": {
+                          "type": "array",
+                          "maxItems": 64,
+                          "uniqueItems": true,
+                          "items": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "minItems": 1
+                        },
+                        "to_networks": {
+                          "type": "array",
+                          "maxItems": 64,
+                          "uniqueItems": true,
+                          "items": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "minItems": 1
+                        },
+                        "both_directions": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    {
+                      "title": "network_sharing",
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "networks",
+                        "direction"
+                      ],
+                      "properties": {
+                        "networks": {
+                          "type": "array",
+                          "maxItems": 64,
+                          "uniqueItems": true,
+                          "items": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "minItems": 1
+                        },
+                        "direction": {
+                          "type": "string",
+                          "enum": [
+                            "outgoing",
+                            "incoming",
+                            "both"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "title": "external_sharing",
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "direction",
+                        "networks",
+                        "allowed_workspaces"
+                      ],
+                      "properties": {
+                        "direction": {
+                          "type": "string",
+                          "enum": [
+                            "outgoing",
+                            "incoming",
+                            "both"
+                          ]
+                        },
+                        "networks": {
+                          "type": "array",
+                          "maxItems": 64,
+                          "uniqueItems": true,
+                          "items": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "description": "Empty means every Network of the Workspace"
+                        },
+                        "allowed_workspaces": {
+                          "type": "array",
+                          "maxItems": 64,
+                          "uniqueItems": true,
+                          "items": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "description": "Partner Workspaces still allowed"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "guardrail_id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "The guardrail an update would replace; with expected_version, or both absent for a new one"
+                },
+                "expected_version": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "The version the update would replace"
+                }
+              },
+              "dependentRequired": {
+                "guardrail_id": [
+                  "expected_version"
+                ],
+                "expected_version": [
+                  "guardrail_id"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "The shares the guardrail affects",
+          "headers": {
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "mode",
+                      "affected_count",
+                      "affected",
+                      "truncated",
+                      "impact_hash"
+                    ],
+                    "properties": {
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "audit",
+                          "enforce"
+                        ]
+                      },
+                      "affected_count": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 20000,
+                        "description": "enforce: the active shares saving would cut that no guardrail cuts yet; audit: the active shares it would report"
+                      },
+                      "affected": {
+                        "type": "array",
+                        "maxItems": 256,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "trust_contract_id",
+                            "side",
+                            "network_id",
+                            "label"
+                          ],
+                          "properties": {
+                            "trust_contract_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "side": {
+                              "type": "string",
+                              "enum": [
+                                "provider",
+                                "consumer",
+                                "both"
+                              ],
+                              "description": "The Workspace's side of the share; both for a share between two of its Networks"
+                            },
+                            "network_id": {
+                              "type": "string",
+                              "format": "uuid",
+                              "description": "The Workspace's own Network of the share (the provider's for both)"
+                            },
+                            "label": {
+                              "type": "string",
+                              "maxLength": 128,
+                              "description": "The access label the provider gave, or the consumer's Imported Resource name"
+                            }
+                          }
+                        },
+                        "description": "The first affected shares by Trust Contract ID"
+                      },
+                      "truncated": {
+                        "type": "boolean",
+                        "description": "More shares are affected than listed"
+                      },
+                      "impact_hash": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$",
+                        "description": "Send it with the save of this exact change"
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "invalid_request"
+        },
+        "403": {
+          "description": "permission_denied"
+        },
+        "404": {
+          "description": "guardrail_not_found"
+        },
+        "412": {
+          "description": "version_conflict"
+        },
+        "422": {
+          "description": "guardrail_impact_too_large"
         },
         "429": {
           "description": "Rate limited"
@@ -3909,7 +4245,7 @@
     "post": {
       "operationId": "updateWorkspaceGuardrail",
       "summary": "Change a guardrail",
-      "description": "Replaces name, description, mode and parameters at the version in If-Match. Deleting, switching from enforce to audit, or letting through anything it used to block needs guardrail.weaken; adding or narrowing needs guardrail.manage. The kind never changes.",
+      "description": "Replaces name, description, mode and parameters at the version in If-Match. Deleting, switching from enforce to audit, or letting through anything it used to block needs guardrail.weaken; adding or narrowing needs guardrail.manage. The kind never changes. A result in enforce mode needs the impact_hash of a preview; switching to audit mode or loosening restores the shares it no longer blocks.",
       "security": [
         {
           "accountSessionCookie": [],
@@ -4101,6 +4437,11 @@
                       }
                     }
                   ]
+                },
+                "impact_hash": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$",
+                  "description": "The impact_hash of a preview of this exact change. Required when the result is in enforce mode; the save is refused with guardrail_impact_changed when the shares it cuts changed."
                 }
               }
             }
@@ -4321,11 +4662,14 @@
         "404": {
           "description": "guardrail_not_found"
         },
+        "409": {
+          "description": "guardrail_impact_changed"
+        },
         "412": {
           "description": "version_conflict"
         },
         "422": {
-          "description": "guardrail_network_unknown"
+          "description": "guardrail_network_unknown, guardrail_impact_too_large"
         },
         "428": {
           "description": "precondition_required"
@@ -4343,7 +4687,7 @@
     "post": {
       "operationId": "deleteWorkspaceGuardrail",
       "summary": "Delete a guardrail",
-      "description": "Requires guardrail.weaken. Deletes the guardrail at the version in If-Match; its record stays in the audit trail.",
+      "description": "Requires guardrail.weaken. Deletes the guardrail at the version in If-Match; its record stays in the audit trail. Shares the guardrail cut come back; no preview is needed.",
       "security": [
         {
           "accountSessionCookie": [],

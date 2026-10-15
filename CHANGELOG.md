@@ -5,6 +5,19 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core schema 164: an enforce-mode guardrail cuts the existing shares it
+  blocks. Before, guardrails were checked only when a share was made or rules
+  were published, so tightening one later left existing shares open. Maps now
+  leave out every share an enforced guardrail of either Workspace blocks and
+  put it back once the guardrail is switched to audit mode, loosened or
+  deleted; the share itself is unchanged. Saving a guardrail in enforce mode
+  needs the `impact_hash` of a preview
+  (`POST /api/v1/workspaces/{workspace}/guardrails/actions/preview`), which
+  lists the shares the save would cut; a stale or missing hash gets
+  `guardrail_impact_changed` (409). A save that cuts or restores shares wakes
+  the maps of both sides, with evidence on each Network's audit stream. A
+  share accepted or a rule published while the provider's guardrails are
+  being saved now fails as a retryable conflict instead of waiting.
 - Core: a test now refuses an operator ownership step that takes a previous
   function version away from `mesh_runtime` or `mesh_worker` (steps after
   migration 93 already keep them for rollback), and the `…_role.sql` steps

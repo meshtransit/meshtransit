@@ -82,6 +82,7 @@ type consoleManagementProfile struct {
 	WorkspaceAuditExport    json.RawMessage            `json:"workspaceAuditExport"`
 	WorkspaceGuardrails     json.RawMessage            `json:"workspaceGuardrails"`
 	GuardrailCreate         json.RawMessage            `json:"workspaceGuardrailCreate"`
+	GuardrailPreview        json.RawMessage            `json:"workspaceGuardrailPreview"`
 	GuardrailUpdate         json.RawMessage            `json:"workspaceGuardrailUpdate"`
 	GuardrailDelete         json.RawMessage            `json:"workspaceGuardrailDelete"`
 	DeviceGroups            json.RawMessage            `json:"networkDeviceGroups"`
@@ -180,6 +181,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		consoleCookieOperation(profile.WorkspaceAuditExport, "get", "exportWorkspaceAuditEvents", false) &&
 		consoleCookieOperation(profile.WorkspaceGuardrails, "get", "listWorkspaceGuardrails", false) &&
 		consoleCookieOperation(profile.GuardrailCreate, "post", "createWorkspaceGuardrail", true) &&
+		consoleCookieOperation(profile.GuardrailPreview, "post", "previewWorkspaceGuardrail", true) &&
 		consoleCookieOperation(profile.GuardrailUpdate, "post", "updateWorkspaceGuardrail", true) &&
 		consoleCookieOperation(profile.GuardrailDelete, "post", "deleteWorkspaceGuardrail", true) &&
 		consoleCookieOperation(profile.DeviceGroups, "get", "listNetworkDeviceGroups", false) &&
@@ -315,6 +317,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	consolePaths["/api/v1/workspaces/{workspace_id}/audit-events/export"] = profile.WorkspaceAuditExport
 	consolePaths["/api/v1/workspaces/{workspace_id}/guardrails"] = profile.WorkspaceGuardrails
 	consolePaths["/api/v1/workspaces/{workspace_id}/guardrails/actions/create"] = profile.GuardrailCreate
+	consolePaths["/api/v1/workspaces/{workspace_id}/guardrails/actions/preview"] = profile.GuardrailPreview
 	consolePaths["/api/v1/workspaces/{workspace_id}/guardrails/{guardrail_id}/actions/update"] = profile.GuardrailUpdate
 	consolePaths["/api/v1/workspaces/{workspace_id}/guardrails/{guardrail_id}/actions/delete"] = profile.GuardrailDelete
 	deviceGroups := "/api/v1/workspaces/{workspace_id}/networks/{network_id}/device-groups"

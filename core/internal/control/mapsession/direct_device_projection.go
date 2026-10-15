@@ -107,6 +107,16 @@ func (projection DirectDeviceProjection) ContractID() sharing.ContractID {
 	return projection.authority.Contract.ID()
 }
 
+// ProviderScope returns the Network of the shared Device.
+func (projection DirectDeviceProjection) ProviderScope() network.Scope {
+	return projection.authority.Contract.ProviderScope()
+}
+
+// ConsumerScope returns the Network whose Devices reach the shared Device.
+func (projection DirectDeviceProjection) ConsumerScope() network.Scope {
+	return projection.authority.Contract.ConsumerScope()
+}
+
 // ConsumerRuleID returns the immutable consumer Access Rule identity.
 func (projection DirectDeviceProjection) ConsumerRuleID() policy.RuleID {
 	return projection.consumerRule.RuleID()

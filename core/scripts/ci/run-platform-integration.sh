@@ -118,6 +118,7 @@ run_go() {
 		--env MESHTRANSIT_MIGRATION_INTEGRATION \
 		--env MESHTRANSIT_INTEGRATION \
 		--env MESHTRANSIT_SHARE_SCALE \
+		--env MESHTRANSIT_GUARDRAIL_SHARE_CUT \
 		--env MESHTRANSIT_SHARE_SCALE_REPORT \
 		--env MESHTRANSIT_SHARE_SCALE_EXPLAIN \
 		--env MESHTRANSIT_SHARE_SCALE_COLD \
@@ -517,6 +518,17 @@ run_go test \
 	-count=1 \
 	-race \
 	-run '^(TestTLSAuthenticatedDependencies|TestRoleControlProcessRegistrationConvergesAcrossRestart|TestRoleControlProcessRestartsAfterGracefulShutdown|TestRoleControlProcessRejectsInvalidConfigurationBeforeListening|TestRoleWorkerProcessExpiryConvergesAcrossRestart)$' \
+	-timeout=5m \
+	./core/test/integration
+# Retroactive guardrails end to end: a share built through the production
+# writers leaves both maps under an enforced guardrail and comes back when it
+# is weakened. It adds Devices and alias pools, so it runs after every other
+# test of this database.
+MESHTRANSIT_GUARDRAIL_SHARE_CUT=1 run_go test \
+	-tags=integration \
+	-count=1 \
+	-race \
+	-run '^TestPostgreSQLGuardrailShareCut$' \
 	-timeout=5m \
 	./core/test/integration
 export MESHTRANSIT_ROLE=api

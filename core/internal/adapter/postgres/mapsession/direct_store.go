@@ -132,6 +132,13 @@ func (store *Store) loadShareEdges(
 		projections = append(projections, aliases...)
 		limited = limited || aliasesLimited
 	}
+	// Enforced guardrails cut shares before the map's bounds apply, so a cut
+	// share takes no place another share could have.
+	projections, cut, err := dropGuardrailBlocked(ctx, transaction, projections)
+	if err != nil {
+		return appmapsession.Snapshot{}, err
+	}
+	store.stats.guardrailCuts.Add(uint64(cut)) // #nosec G115 -- cut is a non-negative count.
 	omitted := 0
 	if limited {
 		omitted = 1 // at least one; the reader stopped before counting more
@@ -142,7 +149,6 @@ func (store *Store) loadShareEdges(
 		projections = projections[:appmapsession.MaximumDirectDeviceProjections]
 	}
 	result := self
-	var err error
 	if len(projections) != 0 {
 		result, err = self.WithDirectDeviceProjections(projections)
 		if err != nil {

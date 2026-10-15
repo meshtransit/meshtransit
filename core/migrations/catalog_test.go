@@ -12,8 +12,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 163 {
-		t.Fatalf("len(Catalog()) = %d, want 163", len(catalog))
+	if len(catalog) != 164 {
+		t.Fatalf("len(Catalog()) = %d, want 164", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1608,8 +1608,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 163 {
-		t.Fatalf("LatestVersion() = %d, want 163", LatestVersion())
+	if LatestVersion() != 164 {
+		t.Fatalf("LatestVersion() = %d, want 164", LatestVersion())
 	}
 }
 
@@ -3293,6 +3293,68 @@ func TestShareProviderGuardrails(t *testing.T) {
 	if strings.Contains(migration.SQL, "FROM mesh.workspace AS workspace WHERE workspace.id = v_provider FOR SHARE") ||
 		strings.Contains(migration.SQL, "ORDER BY workspace.id\n    FOR SHARE") {
 		t.Error("schema 163 locks the Workspace row")
+	}
+}
+
+// Schema 164 serves enforced guardrails to map transactions only for the
+// Workspaces of their own shares, previews shares to guardrail.manage, and
+// lets only a transaction that changed a guardrail advance the revisions of
+// the shares it cuts or restores. The schema 163 readers take the guardrail
+// state row with NOWAIT and are otherwise unchanged.
+func TestRetroactiveShareGuardrails(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[163]
+	if migration.Version != 164 {
+		t.Fatalf("migration 164 = %+v", migration)
+	}
+	for _, required := range []string{
+		"WHERE locator.local_workspace_id = scoped_workspace_id\n          AND locator.local_network_id = scoped_network_id\n          AND side.public_id = ANY (p_workspaces)",
+		"AND guardrail.mode = 'enforce'",
+		"RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'Workspace is unavailable to this Network';",
+		"OR v_requested > 16384",
+		"p_workspace_public_id, 'guardrail.manage', evaluated_at",
+		"AND mutation.aggregate_kind = 'guardrail'\n              AND guardrail.workspace_id = scoped_workspace_id",
+		"AND scoped_workspace_id IN (contract.provider_workspace_id, contract.consumer_workspace_id);",
+		"ORDER BY revision.workspace_id, revision.network_id\n        FOR UPDATE",
+		"ORDER BY stream.id\n        FOR UPDATE OF stream\n    ) AS head;",
+		"PERFORM pg_catalog.set_config('mesh.guardrail_share_fanout', '', TRUE);",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.map_share_guardrails_v1(UUID[]) TO mesh_runtime;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.guardrail_change_share_contracts_v1(UUID) TO mesh_runtime;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.bump_guardrail_share_networks_v1(UUID[], UUID) TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 164 missing %q", required)
+		}
+	}
+	// The internal helpers are never callable by a login role.
+	for _, internal := range []string{
+		"REVOKE ALL ON FUNCTION mesh_ops.guardrail_share_contracts_internal_v1(BIGINT)\n    FROM PUBLIC, mesh_runtime,",
+		"REVOKE ALL ON FUNCTION mesh_ops.guardrail_change_workspace_internal_v1(UUID)\n    FROM PUBLIC, mesh_runtime,",
+	} {
+		if !strings.Contains(migration.SQL, internal) {
+			t.Errorf("schema 164 exposes %q", internal)
+		}
+	}
+	if strings.Contains(migration.SQL, "GRANT EXECUTE ON FUNCTION mesh_ops.guardrail_share_contracts_internal_v1") ||
+		strings.Contains(migration.SQL, "GRANT EXECUTE ON FUNCTION mesh_ops.guardrail_change_workspace_internal_v1") ||
+		strings.Contains(migration.SQL, "FROM mesh.workspace AS") {
+		t.Error("schema 164 grants an internal helper or reads Workspace rows")
+	}
+	// The replaced schema 163 readers differ only by NOWAIT.
+	extract := func(sql, name string) string {
+		start := strings.Index(sql, "FUNCTION mesh_ops."+name+"(")
+		if start < 0 {
+			t.Fatalf("%s not found", name)
+		}
+		end := strings.Index(sql[start:], "$function$;")
+		return sql[start : start+end]
+	}
+	for _, name := range []string{"share_offer_provider_guardrails_v1", "imported_resource_provider_guardrails_v1"} {
+		replaced := extract(migration.SQL, name)
+		if !strings.Contains(replaced, "FOR SHARE NOWAIT;") ||
+			strings.ReplaceAll(replaced, "FOR SHARE NOWAIT;", "FOR SHARE;") != extract(Catalog()[162].SQL, name) {
+			t.Errorf("schema 164 must replace %s with only NOWAIT added", name)
+		}
 	}
 }
 

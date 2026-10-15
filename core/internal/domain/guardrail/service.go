@@ -32,6 +32,9 @@ type Change struct {
 	Previous      *Spec
 	Permission    authorization.Permission
 	CorrelationID publicid.ID
+	// ImpactHash is the preview's hash; an enforce-mode create or update is
+	// refused unless the store computes the same impact when it saves.
+	ImpactHash ImpactHash
 }
 
 // Result is the guardrail after a change.
@@ -52,6 +55,9 @@ type Listing struct {
 type Store interface {
 	List(ctx context.Context, session accountsession.Session, workspaceID workspace.ID) (Listing, error)
 	Change(ctx context.Context, change Change) (Result, error)
+	// ShareInventory authorizes guardrail.manage and reads the active
+	// guardrails and the active shares touching the Workspace.
+	ShareInventory(ctx context.Context, session accountsession.Session, workspaceID workspace.ID) (ShareInventory, error)
 }
 
 // Clock supplies the current time.
@@ -98,9 +104,49 @@ func (service *Service) List(ctx context.Context, session accountsession.Session
 	return service.store.List(ctx, session, workspaceID)
 }
 
-// Create adds a guardrail; it can only narrow what is reachable.
+// Preview returns what saving candidate would do to the Workspace's active
+// shares; an enforce-mode save must echo its hash.
+func (service *Service) Preview(ctx context.Context, session accountsession.Session, workspaceID workspace.ID,
+	candidate Candidate) (Impact, error) {
+	if err := service.admit(ctx, session); err != nil {
+		return Impact{}, err
+	}
+	creating := candidate.GuardrailID == publicid.ID{}
+	if !workspaceID.IsValid() || !candidate.Spec.IsValid() || (creating && candidate.ExpectedVersion != 0) ||
+		(!creating && (!candidate.GuardrailID.IsValid() || candidate.ExpectedVersion <= 0)) {
+		return Impact{}, ErrInvalid
+	}
+	inventory, err := service.store.ShareInventory(ctx, session, workspaceID)
+	if err != nil {
+		return Impact{}, err
+	}
+	if candidate.GuardrailID.IsValid() {
+		existing, found := findGuardrail(inventory.Guardrails, candidate.GuardrailID)
+		switch {
+		case !found:
+			return Impact{}, ErrNotFound
+		case existing.Version != candidate.ExpectedVersion:
+			return Impact{}, ErrVersionConflict
+		case existing.Kind != candidate.Spec.Kind:
+			return Impact{}, ErrInvalid
+		}
+	}
+	return ComputeImpact(workspaceID, inventory.Guardrails, candidate, inventory.Contracts)
+}
+
+func findGuardrail(guardrails []Guardrail, id publicid.ID) (Guardrail, bool) {
+	for _, item := range guardrails {
+		if item.ID == id {
+			return item, true
+		}
+	}
+	return Guardrail{}, false
+}
+
+// Create adds a guardrail; it can only narrow what is reachable. An
+// enforce-mode guardrail needs the impact hash of a current preview.
 func (service *Service) Create(ctx context.Context, session accountsession.Session, workspaceID workspace.ID,
-	spec Spec, correlationID publicid.ID) (Result, error) {
+	spec Spec, impact ImpactHash, correlationID publicid.ID) (Result, error) {
 	if err := service.admit(ctx, session); err != nil {
 		return Result{}, err
 	}
@@ -113,7 +159,7 @@ func (service *Service) Create(ctx context.Context, session accountsession.Sessi
 	}
 	return service.store.Change(ctx, Change{
 		Session: session, WorkspaceID: workspaceID, Operation: OperationCreate, GuardrailID: id,
-		Spec: spec, Permission: RequiredPermission(nil, &spec), CorrelationID: correlationID,
+		Spec: spec, Permission: RequiredPermission(nil, &spec), CorrelationID: correlationID, ImpactHash: impact,
 	})
 }
 
@@ -135,9 +181,10 @@ func (service *Service) current(ctx context.Context, session accountsession.Sess
 }
 
 // Update replaces a guardrail's spec at the expected version. Loosening it
-// needs guardrail.weaken; the kind never changes.
+// needs guardrail.weaken; the kind never changes. A result in enforce mode
+// needs the impact hash of a current preview.
 func (service *Service) Update(ctx context.Context, session accountsession.Session, workspaceID workspace.ID,
-	id publicid.ID, expectedVersion int64, spec Spec, correlationID publicid.ID) (Result, error) {
+	id publicid.ID, expectedVersion int64, spec Spec, impact ImpactHash, correlationID publicid.ID) (Result, error) {
 	if err := service.admit(ctx, session); err != nil {
 		return Result{}, err
 	}
@@ -155,7 +202,7 @@ func (service *Service) Update(ctx context.Context, session accountsession.Sessi
 	return service.store.Change(ctx, Change{
 		Session: session, WorkspaceID: workspaceID, Operation: OperationUpdate, GuardrailID: id,
 		ExpectedVersion: expectedVersion, Spec: spec, Previous: &previous,
-		Permission: RequiredPermission(&previous, &spec), CorrelationID: correlationID,
+		Permission: RequiredPermission(&previous, &spec), CorrelationID: correlationID, ImpactHash: impact,
 	})
 }
 

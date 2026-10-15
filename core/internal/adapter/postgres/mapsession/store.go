@@ -107,6 +107,9 @@ type InventoryStats struct {
 	// read it anyway and compared (PolicyMismatches counts differences).
 	PoliciesExpanded   uint64
 	PolicyShadowChecks uint64
+	// GuardrailCuts counts shares left out of maps because an enforced
+	// guardrail of either side blocks them (schema 164).
+	GuardrailCuts uint64
 }
 
 // policyShadowInterval: one in this many reads that could expand the
@@ -116,7 +119,8 @@ const policyShadowInterval = 64
 
 type inventoryStats struct {
 	shared, reads, direct, policyMismatch, derived, unchanged, sharingDeclines, changeReads, changeFallbacks,
-	sharesSkipped, shareRechecks, policiesExpanded, policyShadowChecks, policyCandidates atomic.Uint64
+	sharesSkipped, shareRechecks, policiesExpanded, policyShadowChecks, policyCandidates,
+	guardrailCuts atomic.Uint64
 }
 
 // InventoryStats returns the counters since the store was built.
@@ -127,7 +131,7 @@ func (store *Store) InventoryStats() InventoryStats {
 		SharingDeclines: store.stats.sharingDeclines.Load(), ChangeReads: store.stats.changeReads.Load(),
 		ChangeFallbacks: store.stats.changeFallbacks.Load(), SharesSkipped: store.stats.sharesSkipped.Load(),
 		ShareRechecks: store.stats.shareRechecks.Load(), PoliciesExpanded: store.stats.policiesExpanded.Load(),
-		PolicyShadowChecks: store.stats.policyShadowChecks.Load()}
+		PolicyShadowChecks: store.stats.policyShadowChecks.Load(), GuardrailCuts: store.stats.guardrailCuts.Load()}
 }
 
 // policyMatches checks, for a read that read the Device's own packet policy,
