@@ -129,6 +129,15 @@ identity above. This artifact is qualification evidence for the recorded host
 platform. It is not a Linux production artifact and legal approval remains a
 separate `SSO-BROKER-001` decision.
 
+The recorded binary digest is the digest of a build made inside a `go.work`
+together with a module whose `go.mod`/`go.sum` are frozen in
+`qualification-workspace.go.mod` and `qualification-workspace.go.sum`, because
+the Dex dependency versions then follow that file and not MeshCore's current
+`go.mod`. `core/scripts/qualification/build-dex-qualification-binary.sh
+<Dex checkout> <new file>` rebuilds it and refuses a result that differs from
+`binary_sha256`. Do not refresh the frozen files without regenerating the
+manifest and evidence.
+
 `make prepare-dex-source` can materialize this exact patched tree into the
 `source` child of an existing empty private directory. The operation verifies
 the complete manifest, binary, evidence, patch order, tag commit, and canonical
