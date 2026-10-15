@@ -150,11 +150,24 @@ Network's members.
 - **Removing** (`POST .../members/{member}/actions/remove` with a reason and
   a Device plan) handles the member's Devices in that Network as a Workspace
   removal does (see [devices](devices.md#members-leaving)), revokes the
-  enrollment keys they issued for it and their roles bound to it, and ends
-  the membership. Their Workspace membership, Workspace roles, Identity
-  Groups, other Networks and sessions are untouched. Nobody removes the owner
-  or themselves, and the actor must be able to grant every Workspace role,
-  and every role of that Network, the member holds.
+  enrollment keys they issued for it and their roles bound to it (built-in
+  and custom), and ends the membership. Their Workspace membership,
+  Workspace roles, Identity Groups, other Networks and sessions are
+  untouched.
+- **What removal does not take away.** A Workspace-scope role still applies
+  to the Network: a Workspace `it_admin` removed from a Network can still
+  manage its Devices and issue enrollment keys for it. A browser registration
+  the member started but nobody approved yet stays pending; approving it is
+  refused, because approval needs a current Network membership.
+- **Who may remove whom.** Nobody removes the owner or themselves. The actor
+  must outrank each role the member holds in its own scope: a Workspace-scope
+  role needs the owner or a Workspace-scope `admin` or `it_admin` who could
+  grant it; a role bound to this Network may also be outranked by the
+  actor's own `admin` or `it_admin` role bound to this Network (never to
+  another Network); and a custom role binding of the Network needs a
+  Workspace-scope assigner. So an `it_admin` bound to one Network removes
+  members whose only roles are bound to that Network, but not a holder of a
+  Workspace-scope role.
 
 ## Roles and permissions
 
