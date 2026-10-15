@@ -264,12 +264,38 @@ func validSnapshot() Snapshot {
 				{Suffix: "64.100.in-addr.arpa", Resolvers: []DNSResolver{}},
 			},
 			SearchDomains: []string{"example.mesh"},
-			Proxied:       true,
 			Records: []DNSRecord{{
 				Name:    "service.example.mesh",
 				Type:    DNSRecordA,
 				Address: netip.MustParseAddr("100.64.0.10"),
 			}},
 		},
+	}
+}
+
+// TestValidateAndClone_BoundsDNSRecords: a map carries at most 50,000 address
+// records (mtcp-v1 §7.3): an A and an AAAA record for self and 10,000 peers
+// plus 10,000 shares fit.
+func TestValidateAndClone_BoundsDNSRecords(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		count int
+		valid bool
+	}{{count: 50_000, valid: true}, {count: 50_001}} {
+		snapshot := validSnapshot()
+		records := make([]DNSRecord, test.count)
+		for index := range records {
+			address := [16]byte{0: 0xfd, 13: byte(index >> 16), 14: byte(index >> 8), 15: byte(index)}
+			records[index] = DNSRecord{
+				Name: "service.example.mesh", Type: DNSRecordAAAA,
+				Address: netip.AddrFrom16(address),
+			}
+		}
+		snapshot.DNS.Records = records
+		_, err := ValidateAndClone(snapshot, time.Now())
+		if (err == nil) != test.valid {
+			t.Fatalf("%d records: error = %v, valid %v", test.count, err, test.valid)
+		}
 	}
 }

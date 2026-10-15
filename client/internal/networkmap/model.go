@@ -126,7 +126,6 @@ type DNSConfig struct {
 	FallbackResolvers []DNSResolver
 	Routes            []DNSRoute
 	SearchDomains     []string
-	Proxied           bool
 	Records           []DNSRecord
 }
 

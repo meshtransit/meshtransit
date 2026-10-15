@@ -17,7 +17,7 @@ func TestCompileMeshDNSPlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile() error = %v", err)
 	}
-	if !plan.Enabled || !plan.Proxied || plan.Revision != 7 {
+	if !plan.Enabled || plan.Revision != 7 {
 		t.Fatalf("plan state = %#v", plan)
 	}
 	if len(plan.Hosts) != 3 || plan.Hosts[0].Name != "node-a.example.mesh" ||
@@ -29,7 +29,9 @@ func TestCompileMeshDNSPlan(t *testing.T) {
 		!plan.Hosts[0].Addresses[1].Is6() {
 		t.Fatalf("node-a addresses = %#v", plan.Hosts[0].Addresses)
 	}
-	if len(plan.Reverse) != 3 || plan.Reverse[0].Address != netip.MustParseAddr("100.64.0.1") {
+	// Every record of the node's own zone answers PTR, the service too.
+	if len(plan.Reverse) != 4 || plan.Reverse[0].Address != netip.MustParseAddr("100.64.0.1") ||
+		plan.Reverse[0].Name != "node-a.example.mesh" {
 		t.Fatalf("reverse = %#v", plan.Reverse)
 	}
 
@@ -58,7 +60,7 @@ func TestCompileAddsLocalRouteForExtraRecord(t *testing.T) {
 	}
 }
 
-func TestCompileRejectsAmbiguousOrUnroutedNodeNames(t *testing.T) {
+func TestCompileRejectsAmbiguousOrUnroutedZoneNames(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -66,15 +68,9 @@ func TestCompileRejectsAmbiguousOrUnroutedNodeNames(t *testing.T) {
 		mutate func(*networkmap.Snapshot)
 	}{
 		{
-			name: "duplicate node name",
+			name: "duplicate record address",
 			mutate: func(snapshot *networkmap.Snapshot) {
-				snapshot.Peers[0].Name = snapshot.Self.Name
-			},
-		},
-		{
-			name: "extra record shadows node",
-			mutate: func(snapshot *networkmap.Snapshot) {
-				snapshot.DNS.Records[0].Name = "node-a.example.mesh"
+				snapshot.DNS.Records = append(snapshot.DNS.Records, snapshot.DNS.Records[0])
 			},
 		},
 		{
@@ -156,12 +152,15 @@ func dnsSnapshot() networkmap.Snapshot {
 				{Suffix: "example.mesh", Resolvers: []networkmap.DNSResolver{}},
 			},
 			SearchDomains: []string{"example.mesh"},
-			Proxied:       true,
-			Records: []networkmap.DNSRecord{{
-				Name:    "service.example.mesh",
-				Type:    networkmap.DNSRecordA,
-				Address: netip.MustParseAddr("100.64.0.10"),
-			}},
+			Records: []networkmap.DNSRecord{
+				{Name: "service.example.mesh", Type: networkmap.DNSRecordA, Address: netip.MustParseAddr("100.64.0.10")},
+				{Name: "node-a.example.mesh", Type: networkmap.DNSRecordA, Address: netip.MustParseAddr("100.64.0.1")},
+				{
+					Name: "node-a.example.mesh", Type: networkmap.DNSRecordAAAA,
+					Address: netip.MustParseAddr("fd07:d4de:9d87::1"),
+				},
+				{Name: "node-b.example.mesh", Type: networkmap.DNSRecordA, Address: netip.MustParseAddr("100.64.0.2")},
+			},
 		},
 	}
 }
@@ -230,5 +229,87 @@ func TestCompileKeepsACoreSharedRoute(t *testing.T) {
 	}
 	if routes != 1 || !locallyAuthoritative(plan.Routes, "db.ws01.net01.shared.mesh") {
 		t.Fatalf("routes = %#v", plan.Routes)
+	}
+}
+
+// coreSnapshot is a map as Core sends it: Device names in the Network's
+// zone with their records, the suffix answered locally, the zone searched,
+// and share names under shared.<suffix>.
+func coreSnapshot() networkmap.Snapshot {
+	const zone = "000000000101.000000000201.mesh.internal"
+	return networkmap.Snapshot{
+		Revision: 11,
+		Self: networkmap.Node{
+			ID: 1, Name: "laptop." + zone + ".",
+			Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.0.1/32")},
+		},
+		Peers: []networkmap.Node{
+			{ID: 2, Name: "server." + zone + ".", Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.0.2/32")}},
+			{
+				ID: 3, Name: "db.000000000301.000000000401.shared.mesh.internal.",
+				Addresses: []netip.Prefix{netip.MustParsePrefix("198.18.0.5/32")},
+			},
+		},
+		DNS: &networkmap.DNSConfig{
+			Routes:        []networkmap.DNSRoute{{Suffix: "mesh.internal", Resolvers: []networkmap.DNSResolver{}}},
+			SearchDomains: []string{zone},
+			Records: []networkmap.DNSRecord{
+				{Name: "laptop." + zone, Type: networkmap.DNSRecordA, Address: netip.MustParseAddr("100.64.0.1")},
+				{Name: "server." + zone, Type: networkmap.DNSRecordA, Address: netip.MustParseAddr("100.64.0.2")},
+				{
+					Name: "db.000000000301.000000000401.shared.mesh.internal", Type: networkmap.DNSRecordA,
+					Address: netip.MustParseAddr("198.18.0.5"),
+				},
+			},
+		},
+	}
+}
+
+// TestCompileDerivesPointersFromTheNetworkZone: Core sends no pointer
+// records; the node answers PTR for the records of its own Network's zone
+// (the zone its own name is in), never for share names.
+func TestCompileDerivesPointersFromTheNetworkZone(t *testing.T) {
+	t.Parallel()
+
+	plan, err := Compile(coreSnapshot())
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	const zone = "000000000101.000000000201.mesh.internal"
+	want := []Reverse{
+		{Address: netip.MustParseAddr("100.64.0.1"), Name: "laptop." + zone},
+		{Address: netip.MustParseAddr("100.64.0.2"), Name: "server." + zone},
+	}
+	if len(plan.Reverse) != len(want) || plan.Reverse[0] != want[0] || plan.Reverse[1] != want[1] {
+		t.Fatalf("reverse = %#v, want %#v", plan.Reverse, want)
+	}
+	if !plan.Enabled || len(plan.Routes) != 1 || plan.Routes[0].Suffix != "mesh.internal" ||
+		len(plan.Routes[0].Resolvers) != 0 || len(plan.SearchDomains) != 1 || plan.SearchDomains[0] != zone {
+		t.Fatalf("plan = %#v", plan)
+	}
+	for _, name := range []string{"laptop." + zone, "db.000000000301.000000000401.shared.mesh.internal", "unknown." + zone} {
+		if !locallyAuthoritative(plan.Routes, name) {
+			t.Fatalf("%s would leave the mesh resolver", name)
+		}
+	}
+}
+
+// An older Core's share names under shared.mesh still get their one local
+// route next to a current Core's suffix route.
+func TestCompileKeepsTheSharedMeshFallbackBesideTheSuffixRoute(t *testing.T) {
+	t.Parallel()
+
+	snapshot := coreSnapshot()
+	snapshot.DNS.Records = append(snapshot.DNS.Records, networkmap.DNSRecord{
+		Name: "old.000000000301.000000000401.shared.mesh", Type: networkmap.DNSRecordA,
+		Address: netip.MustParseAddr("198.18.0.6"),
+	})
+	plan, err := Compile(snapshot)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	if len(plan.Routes) != 2 || plan.Routes[0].Suffix != "mesh.internal" || plan.Routes[1].Suffix != sharedZone ||
+		len(plan.Reverse) != 2 {
+		t.Fatalf("routes = %#v, reverse = %#v", plan.Routes, plan.Reverse)
 	}
 }
