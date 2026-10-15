@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"meshtransit.net/client/internal/privatefile"
 )
 
 const socketMode = 0o660
@@ -82,15 +84,12 @@ func (l *ownedListener) Close() error {
 }
 
 func ensureSocketDir(dir string) error {
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return fmt.Errorf("creating socket directory: %w", err)
+	if err := privatefile.PrepareDir(dir, 0o750); err != nil {
+		return fmt.Errorf("preparing socket directory: %w", err)
 	}
 	info, err := os.Lstat(dir)
 	if err != nil {
 		return fmt.Errorf("inspecting socket directory: %w", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return errors.New("socket parent must be a directory, not a link")
 	}
 	if info.Mode().Perm()&0o022 != 0 {
 		return fmt.Errorf("socket directory permissions %04o permit writes by group or others", info.Mode().Perm())

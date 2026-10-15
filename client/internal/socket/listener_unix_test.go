@@ -42,3 +42,16 @@ func TestListenRefusesRegularFile(t *testing.T) {
 		t.Fatal("Listen() error = nil, want occupied-path error")
 	}
 }
+
+func TestListenDoesNotCreateParentDirectories(t *testing.T) {
+	t.Parallel()
+
+	missing := filepath.Join(t.TempDir(), "missing")
+	if listener, err := Listen(filepath.Join(missing, "meshd", "meshd.sock")); err == nil {
+		_ = listener.Close()
+		t.Fatal("Listen() created a socket under a missing parent")
+	}
+	if _, err := os.Lstat(missing); !os.IsNotExist(err) {
+		t.Fatalf("Listen() created the missing parent: %v", err)
+	}
+}

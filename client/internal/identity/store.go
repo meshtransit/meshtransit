@@ -98,15 +98,8 @@ func openWith(
 	}
 
 	dir := filepath.Join(stateDir, identityDirName)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("creating identity store directory: %w", err)
-	}
-	info, err := os.Lstat(dir)
-	if err != nil {
-		return nil, fmt.Errorf("inspecting identity store directory: %w", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return nil, errors.New("identity store path must be a directory, not a link")
+	if err := privatefile.PrepareDir(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("preparing identity store directory: %w", err)
 	}
 	if err := privatefile.RestrictDir(dir); err != nil {
 		return nil, fmt.Errorf("restricting identity store directory: %w", err)

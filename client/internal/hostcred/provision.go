@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"meshtransit.net/client/internal/privatefile"
 	"meshtransit.net/client/internal/secretstore"
 )
 
@@ -159,15 +160,8 @@ func validateConfig(cfg Config) error {
 }
 
 func prepareCredentialDirectory(dir string) error {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("creating encrypted credential directory: %w", err)
-	}
-	info, err := os.Lstat(dir)
-	if err != nil {
-		return fmt.Errorf("inspecting encrypted credential directory: %w", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return errors.New("hostcred: credential directory must not be a link")
+	if err := privatefile.PrepareDir(dir, 0o700); err != nil {
+		return fmt.Errorf("hostcred: preparing encrypted credential directory: %w", err)
 	}
 	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // Directories require execute bits.
 		return fmt.Errorf("restricting encrypted credential directory: %w", err)

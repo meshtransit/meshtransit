@@ -310,15 +310,8 @@ func (s *Store) persist(snapshot Snapshot) error {
 }
 
 func ensurePrivateDir(dir string) error {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("creating profile store directory: %w", err)
-	}
-	info, err := os.Lstat(dir)
-	if err != nil {
-		return fmt.Errorf("inspecting profile store directory: %w", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return errors.New("profile store path must be a directory, not a link")
+	if err := privatefile.PrepareDir(dir, 0o700); err != nil {
+		return fmt.Errorf("preparing profile store directory: %w", err)
 	}
 	if err := privatefile.RestrictDir(dir); err != nil {
 		return fmt.Errorf("restricting profile store directory: %w", err)

@@ -93,6 +93,11 @@ meshctl up --server https://control.example.com --fingerprint sha256:…
 - If identity records exist but the key file is missing, `meshd` refuses to
   start: restore `meshd.identity-key`, which can only be unsealed on the same
   machine.
+- `meshd` creates `C:\ProgramData\MeshTransit` and its folders itself, with
+  access for SYSTEM and Administrators only, and refuses to start when one of
+  them is a link or junction or is owned by anyone else; it does not create a
+  missing parent folder. A log file another account could read, or one that
+  is a link, is replaced by a new one.
 
 ## Remove
 

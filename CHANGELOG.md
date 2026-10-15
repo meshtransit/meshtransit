@@ -5,6 +5,16 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Clients: `meshd` creates only the last folder of its state, key, socket and
+  log paths and requires the parent to exist; an existing folder must be a
+  real folder (not a link, junction or other reparse point) owned by the
+  service (its user on Unix; SYSTEM or Administrators on Windows), or `meshd`
+  refuses to start. On Windows, new folders get the restricted access list
+  when they are created, `C:\ProgramData\MeshTransit` and its `logs` folder
+  are restricted on every start, and a service log that is a link, has other
+  hard links or grants anyone else access is replaced. Before, a junction
+  planted at `C:\ProgramData\MeshTransit\logs` made the service write its
+  log through it.
 - Windows: `meshd` authorizes local API callers from the named-pipe
   connection's own access token, read by impersonating the client, instead
   of the token of whatever process has the client's process ID, which a

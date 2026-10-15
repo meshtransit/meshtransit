@@ -69,8 +69,8 @@ func CreateDPAPI(path string) (*Protector, error) {
 		return nil, fmt.Errorf("%w: key path must be absolute", ErrKeyInvalid)
 	}
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("creating the key directory: %w", err)
+	if err := privatefile.PrepareDir(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("preparing the key directory: %w", err)
 	}
 	if err := privatefile.RestrictDir(dir); err != nil {
 		return nil, err

@@ -4,10 +4,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 
 	"meshtransit.net/client/internal/privatefile"
@@ -86,12 +88,57 @@ func (h *serviceHandler) Execute(_ []string, requests <-chan svc.ChangeRequest, 
 // Administrators can read.
 func openServiceLog() (*os.File, error) {
 	dir := filepath.Dir(serviceLogPath)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	// The data directory first: only the last directory of a path is created.
+	// Restricting it also closes a directory an older meshd left open to
+	// users, before anything else is created in it.
+	for _, path := range []string{filepath.Dir(dir), dir} {
+		if err := privatefile.PrepareDir(path, 0o700); err != nil {
+			return nil, err
+		}
+		if err := privatefile.RestrictDir(path); err != nil {
+			return nil, err
+		}
+	}
+	logs, err := os.OpenRoot(dir)
+	if err != nil {
 		return nil, err
 	}
-	if err := privatefile.RestrictDir(dir); err != nil {
-		return nil, err
+	defer func() { _ = logs.Close() }()
+
+	return openPrivateLog(logs, serviceLogPath)
+}
+
+// openPrivateLog opens name in root for appending. A log an older meshd left
+// in a directory users could write may have been replaced by a link to
+// another file, which meshd would then write to as SYSTEM, or created by a
+// user who can still read and change it: a name that is a link, a reparse
+// point, a file with other hard links or a file beyond SYSTEM and
+// Administrators is removed and the log started afresh.
+func openPrivateLog(root *os.Root, path string) (*os.File, error) {
+	const appendFlags = os.O_WRONLY | os.O_CREATE | os.O_APPEND
+	name := filepath.Base(path)
+	if info, err := root.Lstat(name); err == nil && info.Mode().IsRegular() {
+		file, err := root.OpenFile(name, appendFlags, 0o600)
+		if err == nil {
+			if isPlainFile(file) && privatefile.CheckFile(path, info) == nil {
+				return file, nil
+			}
+			_ = file.Close()
+		}
+	}
+	if err := root.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("removing a linked service log: %w", err)
 	}
 
-	return os.OpenFile(serviceLogPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	return root.OpenFile(name, appendFlags|os.O_EXCL, 0o600)
+}
+
+// isPlainFile reports an ordinary file with no other name.
+func isPlainFile(file *os.File) bool {
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(windows.Handle(file.Fd()), &info); err != nil {
+		return false
+	}
+
+	return info.NumberOfLinks == 1 && info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0
 }
