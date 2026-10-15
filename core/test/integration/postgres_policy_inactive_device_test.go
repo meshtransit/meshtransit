@@ -21,12 +21,13 @@ import (
 	"meshtransit.net/core/internal/domain/policy/publication"
 )
 
-// assertPostgreSQLPolicyInactiveDevice qualifies schema 144: rules naming a
-// suspended Device publish, rules naming a Device that is later revoked keep
-// publishing, and only a new rule naming the revoked Device is refused with
-// ErrDeviceUnavailable, both for Device rules and for group rules with a
-// fixed Device side. It revokes one fixture Device and leaves a deny-all
-// policy and no group behind.
+// assertPostgreSQLPolicyInactiveDevice qualifies schemas 144 and 165: rules
+// naming a suspended Device publish, rules naming a Device that is later
+// revoked keep publishing while they stay unchanged, and a new or changed
+// rule naming the revoked Device is refused with ErrDeviceUnavailable. This
+// holds for Device rules, group rules with a fixed Device side, and rules to
+// a Resource or Resource Group on that Device. It revokes one fixture Device
+// and leaves a deny-all policy and no Device Group behind.
 func assertPostgreSQLPolicyInactiveDevice(ctx context.Context, t *testing.T, admin *pgx.Conn,
 	runtimePool *postgresadapter.Pool) {
 	t.Helper()
@@ -46,28 +47,21 @@ func assertPostgreSQLPolicyInactiveDevice(ctx context.Context, t *testing.T, adm
 	devices := activeFixtureDevices(ctx, t, admin, 2)
 	staying, leaving := devices[0], devices[1]
 	groups := newIntegrationDeviceGroupService(t, runtimePool)
-	created, err := groups.Create(ctx, owner, scope, devicegroup.Definition{Name: "Inactive Device rules"},
-		newCorrelationID(t))
-	if err != nil {
-		t.Fatalf("create group: %v", err)
+	var deviceGroups []devicegroup.Group
+	for _, name := range []string{"Inactive Device rules", "Inactive Device rules other"} {
+		created, err := groups.Create(ctx, owner, scope, devicegroup.Definition{Name: name}, newCorrelationID(t))
+		if err != nil {
+			t.Fatalf("create group: %v", err)
+		}
+		deviceGroups = append(deviceGroups, created.Group)
 	}
-	group := created.Group.ID
+	group, otherGroup := deviceGroups[0].ID, deviceGroups[1].ID
+	resourceID, resourceGroupID := inactiveDeviceResources(ctx, t, admin, runtimePool, owner, scope, leaving)
 
-	icmp := func(source, destination node.ID, destinationGroup devicegroup.ID) compilation.RuleIntent {
+	rule := func(params compilation.RuleIntentParams) compilation.RuleIntent {
 		t.Helper()
-		ruleID, err := policy.ParseRuleID(newCorrelationID(t).String())
-		if err != nil {
-			t.Fatal(err)
-		}
-		intent, err := compilation.NewRuleIntent(compilation.RuleIntentParams{
-			ID: ruleID, Scope: scope, SourceNodeID: source, DestinationNodeID: destination,
-			DestinationDeviceGroupID: destinationGroup, Protocol: policy.ProtocolICMP,
-			DestinationPortRanges: []policy.PortRange{},
-		})
-		if err != nil {
-			t.Fatalf("rule intent: %v", err)
-		}
-		return intent
+		params.Scope = scope
+		return inactiveDeviceRule(t, params)
 	}
 	publish := func(rules ...compilation.RuleIntent) {
 		t.Helper()
@@ -79,37 +73,81 @@ func assertPostgreSQLPolicyInactiveDevice(ctx context.Context, t *testing.T, adm
 
 	// Suspended: new and existing rules naming it publish and compile.
 	suspendIntegrationDevice(ctx, t, admin, runtimePool, owner, scope, leaving, devicelifecycle.ActionSuspend)
-	deviceRule := icmp(leaving, staying, devicegroup.ID{})
-	groupRule := icmp(leaving, node.ID{}, group)
-	publish(deviceRule, groupRule)
-	assertActiveCompiledRuleCounts(ctx, t, admin, 1, 1)
+	deviceRule := rule(compilation.RuleIntentParams{SourceNodeID: leaving, DestinationNodeID: staying})
+	groupRule := rule(compilation.RuleIntentParams{SourceNodeID: leaving, DestinationDeviceGroupID: group})
+	resourceRule := rule(compilation.RuleIntentParams{SourceNodeID: staying, DestinationResourceID: resourceID})
+	resourceGroupRule := rule(compilation.RuleIntentParams{
+		SourceNodeID: staying, DestinationGroupID: resourceGroupID,
+	})
+	kept := []compilation.RuleIntent{deviceRule, groupRule, resourceRule, resourceGroupRule}
+	publish(kept...)
+	assertActiveCompiledRuleCounts(ctx, t, admin, 3, 1)
+	assertActiveResourceDestinationCounts(ctx, t, admin, 1, 1)
 	suspendIntegrationDevice(ctx, t, admin, runtimePool, owner, scope, leaving, devicelifecycle.ActionResume)
 
 	// Revoked: the rules the active release holds keep publishing next to an edit.
 	revokeIntegrationFixtureDevice(ctx, t, admin, runtimePool, leaving)
-	unrelated := icmp(staying, node.ID{}, group)
-	publish(deviceRule, groupRule, unrelated)
-	assertActiveCompiledRuleCounts(ctx, t, admin, 1, 2)
+	unrelated := rule(compilation.RuleIntentParams{SourceNodeID: staying, DestinationDeviceGroupID: group})
+	kept = append(kept, unrelated)
+	publish(kept...)
+	assertActiveCompiledRuleCounts(ctx, t, admin, 3, 2)
+	assertActiveResourceDestinationCounts(ctx, t, admin, 1, 1)
 
-	// A new rule naming the revoked Device is refused, whichever function sees it.
-	for name, refused := range map[string]compilation.RuleIntent{
-		"Device rule": icmp(staying, leaving, devicegroup.ID{}),
-		"group rule":  icmp(leaving, node.ID{}, group),
+	// A new rule naming the revoked Device, or a kept one changed in any part,
+	// is refused, whichever function sees it.
+	for _, refused := range []struct {
+		name string
+		rule compilation.RuleIntent
+	}{
+		{"new Device rule", rule(compilation.RuleIntentParams{SourceNodeID: staying, DestinationNodeID: leaving})},
+		{"new group rule", rule(compilation.RuleIntentParams{SourceNodeID: leaving, DestinationDeviceGroupID: group})},
+		{"new Resource rule", rule(compilation.RuleIntentParams{
+			SourceNodeID: staying, DestinationResourceID: resourceID,
+		})},
+		{"new Resource Group rule", rule(compilation.RuleIntentParams{
+			SourceNodeID: staying, DestinationGroupID: resourceGroupID,
+		})},
+		{"Device rule with another protocol", rule(compilation.RuleIntentParams{
+			ID: deviceRule.ID(), SourceNodeID: leaving, DestinationNodeID: staying,
+			Protocol: policy.ProtocolTCP, DestinationPortRanges: tcpPorts(t, 22, 22),
+		})},
+		{"group rule with another group", rule(compilation.RuleIntentParams{
+			ID: groupRule.ID(), SourceNodeID: leaving, DestinationDeviceGroupID: otherGroup,
+		})},
+		{"group rule with another protocol", rule(compilation.RuleIntentParams{
+			ID: groupRule.ID(), SourceNodeID: leaving, DestinationDeviceGroupID: group,
+			Protocol: policy.ProtocolUDP, DestinationPortRanges: tcpPorts(t, 53, 53),
+		})},
+		{"Resource rule with another port", rule(compilation.RuleIntentParams{
+			ID: resourceRule.ID(), SourceNodeID: staying, DestinationResourceID: resourceID,
+			Protocol: policy.ProtocolTCP, DestinationPortRanges: tcpPorts(t, 443, 443),
+		})},
 	} {
+		rules := make([]compilation.RuleIntent, 0, len(kept)+1)
+		for _, keptRule := range kept {
+			if keptRule.ID() != refused.rule.ID() {
+				rules = append(rules, keptRule)
+			}
+		}
 		err := publishIntegrationRulesError(ctx, t, runtimePool, owner, scope,
-			fixturePolicyRevision(ctx, t, admin), deviceRule, groupRule, unrelated, refused)
+			fixturePolicyRevision(ctx, t, admin), append(rules, refused.rule)...)
 		if !errors.Is(err, publication.ErrDeviceUnavailable) {
-			t.Fatalf("new %s naming a revoked Device: %v, want ErrDeviceUnavailable", name, err)
+			t.Fatalf("%s naming a revoked Device: %v, want ErrDeviceUnavailable", refused.name, err)
 		}
 	}
-	assertActiveCompiledRuleCounts(ctx, t, admin, 1, 2)
+	assertActiveCompiledRuleCounts(ctx, t, admin, 3, 2)
+	assertActiveResourceDestinationCounts(ctx, t, admin, 1, 1)
 
 	// Removing the stale rules and restoring deny-all also publish.
 	publish(unrelated)
 	assertActiveCompiledRuleCounts(ctx, t, admin, 0, 1)
+	assertActiveResourceDestinationCounts(ctx, t, admin, 0, 0)
 	publish()
-	if _, err := groups.Delete(ctx, owner, scope, group, created.Group.Version, newCorrelationID(t)); err != nil {
-		t.Fatalf("delete group: %v", err)
+	for _, deviceGroup := range deviceGroups {
+		if _, err := groups.Delete(ctx, owner, scope, deviceGroup.ID, deviceGroup.Version,
+			newCorrelationID(t)); err != nil {
+			t.Fatalf("delete group: %v", err)
+		}
 	}
 }
 

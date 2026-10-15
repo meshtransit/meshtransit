@@ -12,8 +12,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 164 {
-		t.Fatalf("len(Catalog()) = %d, want 164", len(catalog))
+	if len(catalog) != 165 {
+		t.Fatalf("len(Catalog()) = %d, want 165", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1608,8 +1608,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 164 {
-		t.Fatalf("LatestVersion() = %d, want 164", LatestVersion())
+	if LatestVersion() != 165 {
+		t.Fatalf("LatestVersion() = %d, want 165", LatestVersion())
 	}
 }
 
@@ -4308,6 +4308,112 @@ func TestNetworkAddressUsage(t *testing.T) {
 		"TO mesh_worker", "OWNER TO"} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 159 must not contain %q", forbidden)
+		}
+	}
+}
+
+// migrationVersion returns the catalog migration with version.
+func migrationVersion(t *testing.T, version int64) Migration {
+	t.Helper()
+	for _, migration := range Catalog() {
+		if migration.Version == version {
+			return migration
+		}
+	}
+	t.Fatalf("migration %d is not in the catalog", version)
+	return Migration{}
+}
+
+// functionSignature returns the part of a function definition from its name
+// to the start of its body: arguments, result, attributes and settings.
+func functionSignature(t *testing.T, sql, name string) string {
+	t.Helper()
+	start := strings.Index(sql, "FUNCTION mesh_ops."+name+"(")
+	if start < 0 {
+		t.Fatalf("%s not defined", name)
+	}
+	end := strings.Index(sql[start:], "AS $function$")
+	if end < 0 {
+		t.Fatalf("%s has no body", name)
+	}
+	return sql[start : start+end]
+}
+
+// Schema 165 keeps rules to a Resource, a Resource Group member or an
+// Imported Resource publishing after their Device leaves the active state,
+// as schema 144 does for Device and group rules, and compares kept rules in
+// full. Signatures, settings and grants stay the same.
+func TestPolicyGoneDeviceDestinations(t *testing.T) {
+	t.Parallel()
+	migration := migrationVersion(t, 165)
+	previous := map[string]string{
+		"publish_compiled_policy_local_v1":                         migrationVersion(t, 144).SQL,
+		"attach_policy_group_rules_v2":                             migrationVersion(t, 144).SQL,
+		"attach_policy_resource_destinations":                      migrationVersion(t, 43).SQL,
+		"attach_policy_resource_group_destinations":                migrationVersion(t, 44).SQL,
+		"attach_policy_imported_resource_destinations_internal_v1": migrationVersion(t, 52).SQL,
+		"attach_policy_imported_resource_destinations_internal_v2": migrationVersion(t, 148).SQL,
+	}
+	for name, sql := range previous {
+		if !strings.Contains(migration.SQL, "CREATE OR REPLACE FUNCTION mesh_ops."+name+"(") {
+			t.Errorf("schema 165 must replace %s", name)
+			continue
+		}
+		want := functionSignature(t, sql, name)
+		if strings.HasPrefix(name, "attach_policy_imported_resource_destinations_internal_") {
+			// Schema 150 fixed their join order; a replacement must keep it.
+			want = strings.Replace(want, "SET search_path = pg_catalog, mesh, mesh_ops\n",
+				"SET search_path = pg_catalog, mesh, mesh_ops\nSET join_collapse_limit = 1\nSET from_collapse_limit = 1\n", 1)
+		}
+		if got := functionSignature(t, migration.SQL, name); got != want {
+			t.Errorf("schema 165 changed the signature or settings of %s:\n%s\nwant\n%s", name, got, want)
+		}
+	}
+	// The two Imported attach versions differ only in name and bound, as before.
+	imported := func(version string) string {
+		start := strings.Index(migration.SQL,
+			"FUNCTION mesh_ops.attach_policy_imported_resource_destinations_internal_"+version+"(")
+		end := strings.Index(migration.SQL[start:], "$function$;")
+		return migration.SQL[start : start+end]
+	}
+	if strings.Replace(strings.Replace(imported("v1"), "internal_v1(", "internal_v2(", 1),
+		"jsonb_array_length(p_authority) > 256", "jsonb_array_length(p_authority) > 10000", 1) != imported("v2") {
+		t.Error("schema 165 Imported attach v1 and v2 must differ only in name and bound")
+	}
+	for _, want := range []struct {
+		text  string
+		count int
+	}{
+		// Live states as in schema 144; expires_at is not checked.
+		{"WHERE destination.state IN ('active', 'expired', 'suspended')", 2},
+		{"                source.state IN ('active', 'expired', 'suspended')\n                OR EXISTS (", 2},
+		// Kept means unchanged in full.
+		{"AND carried.protocol = rule.protocol\n                      AND carried.destination_ports = rule.destination_ports", 1},
+		{"AND carried.source_device_group_id IS NOT DISTINCT FROM source_group.id", 1},
+		{"AND carried.source_identity_group_id IS NOT DISTINCT FROM source_identity.id", 1},
+		{"AND carried.destination_device_tag_id IS NOT DISTINCT FROM destination_tag.id", 1},
+		{"AND carried.destination_ports = ports.destination_ports", 3},
+		{"AND carried.destination_ports = compiled.destination_ports", 2},
+		{"AND carried_destination.destination_resource_id = resource.id", 2},
+		{"AND carried_destination.destination_resource_group_id = resource_group.id", 1},
+		{"AND carried.imported_resource_id = imported.id", 2},
+		{"AND previous.policy_revision = release_policy_revision - 1\n      AND previous.state = 'superseded';", 4},
+		// A new or changed rule for a gone Device is MTP05 in every function.
+		{"ERRCODE = 'MTP05'", 6},
+		{"GRANT EXECUTE ON FUNCTION mesh_ops.attach_policy_resource_destinations(UUID, TIMESTAMPTZ, JSONB) TO mesh_runtime;", 1},
+		{"GRANT EXECUTE ON FUNCTION mesh_ops.attach_policy_group_rules_v2(UUID, TIMESTAMPTZ, JSONB) TO mesh_runtime;", 1},
+	} {
+		if got := strings.Count(migration.SQL, want.text); got != want.count {
+			t.Errorf("schema 165 has %d of %q, want %d", got, want.text, want.count)
+		}
+	}
+	for _, forbidden := range []string{
+		"AND destination.state = 'active'", "AND source.state = 'active'", "source.expires_at",
+		"source_device.state IN ('active', 'expired', 'suspended') OR EXISTS",
+		"BYPASSRLS", "DROP ", "DELETE ", "OWNER TO", "TO mesh_worker", "TO mesh_share_writer",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 165 must not contain %q", forbidden)
 		}
 	}
 }

@@ -38,9 +38,16 @@ A rule allows one direction: a **source** may open connections to a
   resolved every time a map is built. Adding a Device to a group, tagging it,
   or a member joining an Identity Group changes what nodes get at once,
   without publishing the policy again.
-- Rules may keep naming suspended or expired Devices; they take effect again
-  when the Device does. A new rule cannot name a revoked Device
-  (`device_unavailable`).
+- Rules may name suspended or expired Devices, directly, through a Resource
+  or Resource Group on that Device, or as the source of an Imported Resource
+  rule. Such a rule grants nothing while the Device is not live and takes
+  effect again when the Device is resumed or renewed.
+- Once a Device is revoked or deleted, rules the active policy already holds
+  for it keep publishing as long as they are resent unchanged (same rule ID,
+  both sides, protocol, ports and destination), so other edits to the policy
+  still go through; remove them when convenient. A new rule naming that
+  Device, or a kept rule changed in any part, is refused with 409
+  `device_unavailable`, never with a stale revision.
 
 ### Limits
 

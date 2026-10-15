@@ -531,6 +531,7 @@ func Catalog() []Migration {
 		newMigration(162, "Account session revocation", accountSessionRevocationSQL),
 		newMigration(163, "Share provider guardrails", shareProviderGuardrailsSQL),
 		newMigration(164, "Retroactive share guardrails", retroactiveShareGuardrailsSQL),
+		newMigration(165, "Policy rules to gone Devices", policyGoneDeviceDestinationsSQL),
 	}
 }
 
@@ -802,3 +803,6 @@ var shareProviderGuardrailsSQL string
 
 //go:embed 000164_retroactive_share_guardrails.up.sql
 var retroactiveShareGuardrailsSQL string
+
+//go:embed 000165_policy_gone_device_destinations.up.sql
+var policyGoneDeviceDestinationsSQL string

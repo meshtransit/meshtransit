@@ -5,6 +5,15 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: a policy holding a rule to a Resource, a Resource Group member or an
+  Imported Resource whose Device was suspended, expired or revoked no longer
+  fails every publication with a stale revision (412). Such rules publish
+  like Device rules: suspended and expired Devices are accepted, a revoked
+  Device only in a rule the active policy already holds unchanged, and a new
+  or changed rule for a revoked Device is refused with 409
+  `device_unavailable`. A kept rule now counts as unchanged only when both
+  sides, the protocol, the ports and the destination match, for Device and
+  group rules too (migration 165).
 - Core schema 164: an enforce-mode guardrail cuts the existing shares it
   blocks. Before, guardrails were checked only when a share was made or rules
   were published, so tightening one later left existing shares open. Maps now
