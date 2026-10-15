@@ -15,6 +15,11 @@ import (
 
 const loadDeviceAliasWorkSQL = `SELECT mesh_ops.load_device_alias_work_v2($1::UUID,$2::UUID,$3::UUID,$4::INTEGER)`
 
+// loadReadmittingDeviceAliasWorkSQL is v2 that also hands out reservation and
+// readiness for a consumer Device whose share was withdrawn and that is
+// authorized again (schema 170); used only with prepare v4.
+const loadReadmittingDeviceAliasWorkSQL = `SELECT mesh_ops.load_device_alias_work_v3($1::UUID,$2::UUID,$3::UUID,$4::INTEGER)`
+
 var _ devicealias.Work = (*DeviceAliasWorkerStore)(nil)
 
 // List owns one bounded read-only unit; all cleanup completes before any hint
@@ -56,8 +61,16 @@ func (store *DeviceAliasWorkerStore) List(ctx context.Context, installation depl
 	if after.ConsumerID.IsValid() {
 		consumer = after.ConsumerID.String()
 	}
+	var version int
+	if err := tx.QueryRow(ctx, deviceAliasWorkerVersionSQL).Scan(&version); err != nil {
+		return devicealias.Page{}, errors.Join(ErrDeviceAliasChange, err)
+	}
+	loadQuery := loadDeviceAliasWorkSQL
+	if version == 4 {
+		loadQuery = loadReadmittingDeviceAliasWorkSQL
+	}
 	var encoded []byte
-	if err := tx.QueryRow(ctx, loadDeviceAliasWorkSQL, installation.String(), endpoint, consumer, limit).Scan(&encoded); err != nil {
+	if err := tx.QueryRow(ctx, loadQuery, installation.String(), endpoint, consumer, limit).Scan(&encoded); err != nil {
 		return devicealias.Page{}, errors.Join(ErrDeviceAliasChange, err)
 	}
 	page, err := decodeDeviceAliasWork(encoded, installation, after, limit)

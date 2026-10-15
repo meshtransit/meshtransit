@@ -154,6 +154,9 @@ func assertDeviceAliasGuardedWorker(ctx context.Context, t *testing.T, tx pgx.Tx
 						assertAliasMapCount(ctx, t, tx, provider, 1)
 						assertAliasMapCount(ctx, t, tx, consumer, 1)
 						assertAliasWorkerWithdrawal(ctx, t, tx, deploymentID, endpointID, consumerID, generation, provider, consumer)
+						if version == "v3" {
+							assertAliasWorkerReadmitsResumedConsumer(ctx, t, tx, deploymentID, endpointID, consumerID, provider, consumer)
+						}
 					}
 				}
 			}

@@ -221,3 +221,14 @@ var dependencyReaderNetworkOnceOwnershipSQL string
 // proves each remote Network once (schema 156) to the alias map reader and
 // exposes it to runtime; v5 stays executable for rollback.
 func DependencyReaderNetworkOnceOwnershipSQL() string { return dependencyReaderNetworkOnceOwnershipSQL }
+
+//go:embed operator/000170_device_alias_consumer_readmission_ownership.sql
+var deviceAliasConsumerReadmissionOwnershipSQL string
+
+// DeviceAliasConsumerReadmissionOwnershipSQL hands the alias worker load v3
+// and prepare v4, which readmit a consumer Device whose share was withdrawn
+// once it is authorized again (schema 170), to the alias writer and exposes
+// them to the worker; load v2 and prepare v3 stay executable for rollback.
+func DeviceAliasConsumerReadmissionOwnershipSQL() string {
+	return deviceAliasConsumerReadmissionOwnershipSQL
+}

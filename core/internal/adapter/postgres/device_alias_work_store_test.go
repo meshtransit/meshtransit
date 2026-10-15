@@ -46,17 +46,46 @@ func TestDeviceAliasWorkReadOwnsCleanupBeforeReleasingHints(t *testing.T) {
 	}
 }
 
+// TestDeviceAliasWorkReadsReadmittingWorkOnceGranted: discovery goes through
+// load work v3 (schema 170) only once the worker may run it and prepare v4,
+// and through v2 until then.
+func TestDeviceAliasWorkReadsReadmittingWorkOnceGranted(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		version int
+		want    string
+	}{{2, loadDeviceAliasWorkSQL}, {3, loadDeviceAliasWorkSQL}, {4, loadReadmittingDeviceAliasWorkSQL}} {
+		intent := aliasWorkerIntentFixture(t)
+		tx := &aliasWorkTestTransaction{mode: "valid", version: test.version}
+		store := &DeviceAliasWorkerStore{database: &fakeOutboxDatabase{transaction: tx}}
+		if _, err := store.List(t.Context(), intent.DeploymentID, devicealias.Cursor{}, 1); err != nil {
+			t.Fatalf("version %d: %v", test.version, err)
+		}
+		if tx.loaded != test.want {
+			t.Fatalf("version %d loaded with %q", test.version, tx.loaded)
+		}
+	}
+}
+
 type aliasWorkTestTransaction struct {
 	fakeOutboxTransaction
 	mode   string
 	cancel context.CancelFunc
+	// version is the granted worker version; loaded records the load query.
+	version int
+	loaded  string
 }
 
 func (tx *aliasWorkTestTransaction) QueryRow(_ context.Context, query string, _ ...any) outboxRow {
 	return fakeOutboxRow{scan: func(values ...any) error {
-		if query != loadDeviceAliasWorkSQL {
+		if query == deviceAliasWorkerVersionSQL {
+			*values[0].(*int) = max(tx.version, 2)
+			return nil
+		}
+		if query != loadDeviceAliasWorkSQL && query != loadReadmittingDeviceAliasWorkSQL {
 			return errors.New("unexpected work query")
 		}
+		tx.loaded = query
 		if tx.mode == "query" || tx.mode == "cleanup" {
 			return errors.New("synthetic read query failure")
 		}

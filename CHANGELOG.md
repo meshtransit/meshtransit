@@ -5,6 +5,13 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core schema 170: a consumer Device that was suspended (or whose session or
+  keys changed) gets its shares back once it is active again. The alias
+  worker used to withdraw the share for good, so the Device had no peer for
+  it until the share was revoked and created again. It now reserves a new
+  Consumer Source Alias and makes the pair ready again; the old alias stays
+  quarantined. Run the schema 170 operator step after the migration; until
+  then the worker keeps the previous behaviour.
 - Core schema 169 and meshd: Device names resolve again. Every live Device
   has a DNS name, `<label>.<Workspace code>.<Network code>.<suffix>`, where
   the label is derived from the hostname and unique in the Network (numbered

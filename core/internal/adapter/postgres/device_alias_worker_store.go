@@ -50,9 +50,23 @@ const prepareDeviceAliasChangeSQL = `SELECT mesh_ops.prepare_device_alias_change
 const prepareScaledDeviceAliasChangeSQL = `SELECT mesh_ops.prepare_device_alias_change_v3(
  $1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::BIGINT,$6::BIGINT,$7::UUID[],$8::UUID,$9::UUID,$10::TEXT)`
 
-const scaledDeviceAliasChangeGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
- pg_catalog.to_regprocedure('mesh_ops.prepare_device_alias_change_v3(uuid,uuid,uuid,bigint,bigint,bigint,uuid[],uuid,uuid,text)'),
- 'EXECUTE'), FALSE)`
+// prepareReadmittingDeviceAliasChangeSQL is v3 that reserves fresh source
+// aliases and readiness for a consumer Device whose share was withdrawn and
+// that is authorized again (schema 170); used with load work v3.
+const prepareReadmittingDeviceAliasChangeSQL = `SELECT mesh_ops.prepare_device_alias_change_v4(
+ $1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::BIGINT,$6::BIGINT,$7::UUID[],$8::UUID,$9::UUID,$10::TEXT)`
+
+// deviceAliasWorkerVersionSQL reports the newest prepare the operator granted
+// to the worker: 4 when prepare v4 and load work v3 (schema 170) both are,
+// which the worker then uses together, else 3 (schema 147) or 2.
+const deviceAliasWorkerVersionSQL = `SELECT CASE
+ WHEN COALESCE(pg_catalog.has_function_privilege(
+  pg_catalog.to_regprocedure('mesh_ops.prepare_device_alias_change_v4(uuid,uuid,uuid,bigint,bigint,bigint,uuid[],uuid,uuid,text)'), 'EXECUTE'), FALSE)
+  AND COALESCE(pg_catalog.has_function_privilege(
+  pg_catalog.to_regprocedure('mesh_ops.load_device_alias_work_v3(uuid,uuid,uuid,integer)'), 'EXECUTE'), FALSE) THEN 4
+ WHEN COALESCE(pg_catalog.has_function_privilege(
+  pg_catalog.to_regprocedure('mesh_ops.prepare_device_alias_change_v3(uuid,uuid,uuid,bigint,bigint,bigint,uuid[],uuid,uuid,text)'), 'EXECUTE'), FALSE) THEN 3
+ ELSE 2 END`
 const prepareDeviceAliasResourceQuarantineSQL = `SELECT mesh_ops.prepare_device_alias_resource_quarantine_v2($1::UUID,$2::UUID,$3::BIGINT,$4::UUID)`
 
 const prepareDeviceAliasWithdrawalSQL = `SELECT mesh_ops.prepare_device_alias_withdrawal_v2($1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::UUID,$6::TEXT)`
@@ -104,11 +118,14 @@ func (store *DeviceAliasWorkerStore) Change(ctx context.Context, intent deviceal
 	leases := []string{ids[0].String(), ids[1].String(), ids[2].String(), ids[3].String()}
 	var encoded []byte
 	prepareQuery := prepareDeviceAliasChangeSQL
-	var scaled bool
-	if err := transaction.QueryRow(ctx, scaledDeviceAliasChangeGrantedSQL).Scan(&scaled); err != nil {
+	var version int
+	if err := transaction.QueryRow(ctx, deviceAliasWorkerVersionSQL).Scan(&version); err != nil {
 		return false, errors.Join(ErrDeviceAliasChange, err)
 	}
-	if scaled {
+	switch version {
+	case 4:
+		prepareQuery = prepareReadmittingDeviceAliasChangeSQL
+	case 3:
 		prepareQuery = prepareScaledDeviceAliasChangeSQL
 	}
 	prepareArgs := []any{intent.DeploymentID.String(), intent.EndpointID.String(), intent.ConsumerID.String(), intent.EndpointGeneration, intent.ProviderNodeEpoch, intent.ConsumerNodeEpoch, leases, ids[4].String(), ids[5].String(), string(intent.Mode)}

@@ -42,7 +42,9 @@ binary knows and the state (`uninitialized`, `pending` or `clean`) as JSON.
    once no replica of the previous release is left: those of migrations 53 to
    93 revoke the previous version of a function, which the previous binary
    still calls ([deployment](deployment.md#migrations-and-operator-steps)).
-   Later ones keep previous versions executable.
+   Later ones keep previous versions executable. Run the schema 170 file
+   once no worker of the previous release is left too: a previous worker
+   withdraws again a consumer Device the new one readmitted.
 
 During the rollout:
 
@@ -68,6 +70,10 @@ If step 6 has run for migrations 53 to 93, the previous binary may lack
 `EXECUTE` on function versions an ownership file revoked, so features that use them (sharing,
 Device aliases) fail on it. Grant those versions back to `mesh_runtime` or
 `mesh_worker` for the rollback, or roll back before step 6.
+
+After the schema 170 step, a previous worker may withdraw again a share edge
+that a consumer Device got back after a suspension; the Device gets it back
+once the new release runs again.
 
 `meshcore migrate` from an older binary refuses a schema newer than it knows;
 that is expected after a rollback, since there is nothing for it to apply.

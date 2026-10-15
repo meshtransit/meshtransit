@@ -94,6 +94,11 @@ translate addresses in each packet. Core never carries the traffic, and a
 relay that carries it when there is no direct path sees only WireGuard
 ciphertext. A receiving Network can narrow the range its Resource Aliases come from.
 An alias that is released is quarantined for at least 24 hours before reuse.
+When a consumer Device stops being allowed (suspended, expired, or its session
+or keys changed), Core withdraws its grant and quarantines its Consumer Source
+Alias; once the Device is active again on current keys, still a rule source and
+its client has reconnected, it gets a new Consumer Source Alias and the grant
+returns.
 The grant and how nodes apply it are specified in
 [Device alias v1](../protocol/device-alias-v1.md).
 
