@@ -80,7 +80,7 @@ WHERE machine.fingerprint = $1::BYTEA
   AND device.expires_at > pg_catalog.transaction_timestamp()`
 
 // loadPeerCandidatesSQL reads the other Devices of the installed scope with
-// their DNS labels (schema 168).
+// their DNS labels (schema 169).
 const loadPeerCandidatesSQL = `SELECT
     candidate.numeric_node_id,
     candidate.numeric_owner_id,

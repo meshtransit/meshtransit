@@ -324,7 +324,7 @@ func TestStoreTellsASuspendedDeviceApart(t *testing.T) {
 }
 
 // TestStoreLoadsDeviceNamingFacts: the snapshot carries the Device's DNS
-// label, its peers' labels and the scope's display codes (schema 168), and
+// label, its peers' labels and the scope's display codes (schema 169), and
 // a Device of the scope without a label fails the read closed.
 func TestStoreLoadsDeviceNamingFacts(t *testing.T) {
 	t.Parallel()

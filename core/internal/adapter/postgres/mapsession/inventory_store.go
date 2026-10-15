@@ -46,7 +46,7 @@ FROM mesh_ops.load_map_network_policy_devices_v1($1::INTEGER)`
 	// target, a rule source of an Imported Resource.
 	loadNetworkSharingDevicesSQL = `SELECT COALESCE(pg_catalog.array_agg(device_id), '{}')
 FROM mesh_ops.map_network_sharing_devices_v1($1::INTEGER)`
-	// The header with the scope's display codes (schema 168).
+	// The header with the scope's display codes (schema 169).
 	loadNetworkHeaderSQL = `SELECT header.network_display_name, header.recovery_epoch,
     codes.workspace_code, codes.network_code
 FROM mesh_ops.load_map_network_header_v1() AS header

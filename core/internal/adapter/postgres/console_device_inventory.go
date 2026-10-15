@@ -18,7 +18,7 @@ import (
 )
 
 // readConsoleDeviceInventorySQL reads v2 with each Device's DNS label and
-// the scope's display codes (schema 168).
+// the scope's display codes (schema 169).
 const readConsoleDeviceInventorySQL = `SELECT mesh_ops.read_console_devices_v3(
     $1::UUID, $2::UUID, $3::UUID, $4::UUID,
     $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
@@ -118,7 +118,7 @@ type consoleDeviceInventoryWire struct {
 	WorkspaceID string `json:"workspace_id"`
 	NetworkID   string `json:"network_id"`
 	Revision    int64  `json:"inventory_revision"`
-	// Schema 168: the scope's display codes.
+	// Schema 169: the scope's display codes.
 	WorkspaceCode string `json:"workspace_code"`
 	NetworkCode   string `json:"network_code"`
 	Devices       []struct {
@@ -135,7 +135,7 @@ type consoleDeviceInventoryWire struct {
 		Owner           *consoleDeviceInventoryMember `json:"owner"`
 		SuspendedReason *string                       `json:"suspended_reason"`
 		HandoverTo      *consoleDeviceInventoryMember `json:"handover_to"`
-		// Schema 168: null for a Device that holds no label (revoked).
+		// Schema 169: null for a Device that holds no label (revoked).
 		DNSLabel *string `json:"dns_label"`
 	} `json:"devices"`
 }

@@ -28,7 +28,7 @@ type snapshotRecord struct {
 	policyRevision    int64
 	addresses         []string
 	readAt            time.Time // PostgreSQL transaction time
-	// Schema 168: the Device's DNS label and the scope's display codes.
+	// Schema 169: the Device's DNS label and the scope's display codes.
 	dnsLabel      *string
 	workspaceCode *string
 	networkCode   *string
@@ -46,7 +46,7 @@ type peerCandidateRecord struct {
 	createdAt         time.Time
 	keyExpiry         time.Time
 	addresses         []string
-	// dnsLabel is set for every Device of the read scope (schema 168) and
+	// dnsLabel is set for every Device of the read scope (schema 169) and
 	// absent for a peer of another Network.
 	dnsLabel *string
 }
@@ -124,7 +124,7 @@ func (record snapshotRecord) snapshot(
 }
 
 // scopedCandidate converts a Device of the read scope, which always has a
-// DNS label (schema 168).
+// DNS label (schema 169).
 func (record peerCandidateRecord) scopedCandidate(scope network.Scope) (appmapsession.PeerCandidate, error) {
 	if record.dnsLabel == nil {
 		return appmapsession.PeerCandidate{}, ErrSnapshotEvidence
