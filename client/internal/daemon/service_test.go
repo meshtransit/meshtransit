@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"meshtransit.net/client/internal/peerprobe"
@@ -3254,61 +3255,82 @@ func TestRuntimeRecoveryWaitsAtLeastCoresRetryAfter(t *testing.T) {
 
 // TestEndpointRefreshSpacesRoundsOfFlappingNetwork sends a burst of network
 // changes: the first runs a round at once, the rest share one round when
-// the spacing ends.
+// the spacing ends. It runs on synctest's fake clock, so machine load cannot
+// stretch the burst past the spacing or move a round into another window.
 func TestEndpointRefreshSpacesRoundsOfFlappingNetwork(t *testing.T) {
 	t.Parallel()
-	discoverer := &refreshDiscoverer{calls: make(chan struct{}, 16)}
-	networkChanges := make(chan struct{}, 1)
-	service := &Service{
-		clock:                time.Now,
-		endpointRefreshDelay: func() time.Duration { return time.Hour },
-		eventRefreshSpacing:  200 * time.Millisecond,
-		networkChanges:       networkChanges,
-	}
-	requests := make(chan endpointRefreshRequest, 1)
-	updates := make(chan controlplane.EndpointUpdate, 16)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	go func() { _ = service.runEndpointRefresh(ctx, 15, discoverer, requests, updates) }()
-	requests <- endpointRefreshRequest{active: true}
-	rounds := func(within time.Duration) int {
-		count := 0
-		deadline := time.After(within)
-		for {
-			select {
-			case <-discoverer.calls:
-				count++
-			case <-deadline:
-				return count
+	synctest.Test(t, func(t *testing.T) {
+		const spacing = 200 * time.Millisecond
+		discoverer := &refreshDiscoverer{calls: make(chan struct{}, 16)}
+		networkChanges := make(chan struct{}, 1)
+		service := &Service{
+			clock:                time.Now,
+			endpointRefreshDelay: func() time.Duration { return time.Hour },
+			eventRefreshSpacing:  spacing,
+			networkChanges:       networkChanges,
+		}
+		requests := make(chan endpointRefreshRequest, 1)
+		updates := make(chan controlplane.EndpointUpdate, 16)
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { done <- service.runEndpointRefresh(ctx, 15, discoverer, requests, updates) }()
+		defer func() {
+			cancel()
+			if err := <-done; !errors.Is(err, context.Canceled) {
+				t.Errorf("endpoint refresh stopped with %v, want context canceled", err)
+			}
+		}()
+		// rounds counts the discovery rounds run since the last call, once
+		// the refresh loop has handled everything sent to it.
+		rounds := func() int {
+			synctest.Wait()
+			count := 0
+			for {
+				select {
+				case <-discoverer.calls:
+					count++
+				default:
+					return count
+				}
 			}
 		}
-	}
-	if got := rounds(100 * time.Millisecond); got != 1 {
-		t.Fatalf("%d rounds for the session, want 1", got)
-	}
-	for range 5 {
+		requests <- endpointRefreshRequest{active: true}
+		if got := rounds(); got != 1 {
+			t.Fatalf("%d rounds for the session, want 1", got)
+		}
+		const burst, gap = 5, 10 * time.Millisecond
+		for range burst {
+			networkChanges <- struct{}{}
+			time.Sleep(gap)
+		}
+		if got := rounds(); got != 1 {
+			t.Fatalf("%d rounds right after the first change, want 1", got)
+		}
+		time.Sleep(spacing - burst*gap - time.Nanosecond)
+		if got := rounds(); got != 0 {
+			t.Fatalf("%d rounds before the spacing ended, want the later changes deferred", got)
+		}
+		time.Sleep(time.Nanosecond)
+		if got := rounds(); got != 1 {
+			t.Fatalf("%d rounds when the spacing ended, want 1 for the later changes", got)
+		}
+		// The deferred round starts the next spacing: a change right after it
+		// waits too.
 		networkChanges <- struct{}{}
-		time.Sleep(10 * time.Millisecond) //nolint:forbidigo // events spread over the spacing
-	}
-	if got := rounds(100 * time.Millisecond); got != 1 {
-		t.Fatalf("%d rounds right after the first change, want 1", got)
-	}
-	select {
-	case <-discoverer.calls: // the later changes share this one round
-	case <-time.After(time.Second):
-		t.Fatal("no round for the later changes")
-	}
-	// The deferred round starts the next spacing: a change right after it
-	// waits too.
-	networkChanges <- struct{}{}
-	if got := rounds(100 * time.Millisecond); got != 0 {
-		t.Fatalf("%d rounds right after the deferred one, want the change deferred", got)
-	}
-	if got := rounds(300 * time.Millisecond); got != 1 {
-		t.Fatalf("%d rounds for the change after the deferred round, want 1", got)
-	}
-	if observed, refreshes := service.networkObserved.Load(), service.networkRefreshes.Load(); observed != 6 ||
-		refreshes != 3 {
-		t.Fatalf("network changes observed %d, refreshes %d; want 6 and 3", observed, refreshes)
-	}
+		if got := rounds(); got != 0 {
+			t.Fatalf("%d rounds right after the deferred one, want the change deferred", got)
+		}
+		time.Sleep(spacing - time.Nanosecond)
+		if got := rounds(); got != 0 {
+			t.Fatalf("%d rounds before the next spacing ended, want the change deferred", got)
+		}
+		time.Sleep(time.Nanosecond)
+		if got := rounds(); got != 1 {
+			t.Fatalf("%d rounds for the change after the deferred round, want 1", got)
+		}
+		if observed, refreshes := service.networkObserved.Load(), service.networkRefreshes.Load(); observed != 6 ||
+			refreshes != 3 {
+			t.Fatalf("network changes observed %d, refreshes %d; want 6 and 3", observed, refreshes)
+		}
+	})
 }
