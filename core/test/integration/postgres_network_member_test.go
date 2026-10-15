@@ -27,7 +27,9 @@ const (
 	networkSuspendedID = "01890f00-0000-7000-8000-000000009193"
 	// An active Workspace member an admin adds.
 	networkLateJoinerID = "01890f00-0000-7000-8000-000000009196"
-	networkFixtureID    = "01890f00-0000-7000-8000-000000000203"
+	// An active Workspace member with a custom role binding on Network 203.
+	networkBoundID   = "01890f00-0000-7000-8000-000000009200"
+	networkFixtureID = "01890f00-0000-7000-8000-000000000203"
 )
 
 // networkMemberFixture is the production service and the sessions it is
@@ -218,11 +220,11 @@ func assertPostgreSQLNetworkMembers(ctx context.Context, t *testing.T, admin *pg
 	}
 	revokeAdmin()
 
+	assertNetworkMemberCeiling(ctx, t, admin, fixture)
+
 	// Put the Network back as it was.
-	for _, member := range []string{confirmerID, networkLateJoinerID} {
-		if _, err := fixture.remove(ctx, t, owner, member); err != nil {
-			t.Fatalf("remove %s afterwards: %v", member, err)
-		}
+	if _, err := fixture.remove(ctx, t, owner, confirmerID); err != nil {
+		t.Fatalf("remove the confirmer afterwards: %v", err)
 	}
 	if confirmerCanEnrollInto(ctx, t, admin, runtimePool, fixture.scope) {
 		t.Fatal("a removed member can still enroll into the Network")
@@ -455,8 +457,9 @@ WHERE session.public_id = $1::UUID`, integrationAuthorityConfirmerSessionID).Sca
 }
 
 // seedNetworkMemberPrincipals adds to Workspace 103 the joiner (with an
-// enrollment key for Network 203), a suspended member and a late joiner, none
-// of them in Network 203. Triggers are bypassed only for this fixture.
+// enrollment key for Network 203), a suspended member, a late joiner and a
+// member with a custom role binding on Network 203, none of them in Network
+// 203. Triggers are bypassed only for this fixture.
 func seedNetworkMemberPrincipals(ctx context.Context, t *testing.T, admin *pgx.Conn) {
 	t.Helper()
 	statements := []removalFixtureStatement{}
@@ -467,6 +470,7 @@ func seedNetworkMemberPrincipals(ctx context.Context, t *testing.T, admin *pgx.C
 		{9190, 9191, 9192, "Network Joiner", "active"},
 		{9193, 9194, 9195, "Suspended Member", "suspended"},
 		{9196, 9197, 9198, "Late Joiner", "active"},
+		{9200, 9201, 9202, "Bound Member", "active"},
 	} {
 		statements = append(statements,
 			removalFixtureStatement{sql: `INSERT INTO mesh.principal (id, public_id, deployment_id, kind, state)
@@ -494,6 +498,11 @@ OVERRIDING SYSTEM VALUE SELECT 9199, '01890f00-0000-7000-8000-000000009199', 103
     'bounded', 1, 0, now() - INTERVAL '1 minute', now() + INTERVAL '1 hour', 'active'
 FROM mesh.enrollment_profile AS profile WHERE profile.workspace_id = 103 AND profile.network_id = 203
 ORDER BY profile.id LIMIT 1`})
+	statements = append(statements, removalFixtureStatement{sql: `INSERT INTO mesh.role_binding (id, public_id,
+    deployment_id, workspace_id, network_id, principal_id, workspace_membership_id, role_definition_id, state,
+    valid_from) OVERRIDING SYSTEM VALUE
+VALUES (9203, '01890f00-0000-7000-8000-000000009203', 1, 103, 203, 9200, 9202, 842, 'active',
+    now() - INTERVAL '1 minute')`})
 	runRemovalFixture(ctx, t, admin, statements)
 }
 
@@ -536,4 +545,70 @@ FROM network_member_node_backup AS backup WHERE key_epoch.id = backup.id`},
 			{sql: `DROP TABLE network_member_device_backup, network_member_machine_backup, network_member_node_backup`},
 		})
 	}
+}
+
+// assertNetworkMemberCeiling checks the delegation ceiling of a removal by
+// the scope of each role: an it_admin bound to this Network removes a member
+// whose roles are bound to this Network, but not a Workspace admin, a holder
+// of any Workspace-scope role or a member with a custom role binding of the
+// Network; a Workspace it_admin removes the custom binding holder but not a
+// Workspace admin. It leaves no member or role behind.
+func assertNetworkMemberCeiling(ctx context.Context, t *testing.T, admin *pgx.Conn, fixture networkMemberFixture) {
+	t.Helper()
+	owner, confirmer := fixture.owner, fixture.confirmer
+	confirmerID := publicid.ID(confirmer.PrincipalID()).String()
+	if added, err := fixture.add(ctx, t, owner, networkJoinerID, networkBoundID); err != nil || len(added.Added) != 2 {
+		t.Fatalf("owner add = %+v, %v", added, err)
+	}
+	networkAuditor := newAssignCommand(t, owner, nil, mustIntegrationPublicID(t, networkLateJoinerID),
+		authorization.BuiltinRoleAuditor, fixture.scope.NetworkID())
+	if _, err := fixture.roles.Assign(ctx, networkAuditor); err != nil {
+		t.Fatalf("assign Network auditor: %v", err)
+	}
+	revokeWorkspaceAdmin := fixture.grant(ctx, t, networkJoinerID, authorization.BuiltinRoleAdmin, network.ID{})
+
+	revokeNetworkITAdmin := fixture.grant(ctx, t, confirmerID, authorization.BuiltinRoleITAdmin,
+		fixture.scope.NetworkID())
+	for _, member := range []string{networkJoinerID, networkBoundID} {
+		if _, err := fixture.remove(ctx, t, confirmer, member); !errors.Is(err, memberlifecycle.ErrForbidden) {
+			t.Fatalf("Network it_admin removed %s: %v", member, err)
+		}
+	}
+	revokeWorkspaceAuditor := fixture.grant(ctx, t, networkLateJoinerID, authorization.BuiltinRoleAuditor,
+		network.ID{})
+	if _, err := fixture.remove(ctx, t, confirmer, networkLateJoinerID); !errors.Is(err,
+		memberlifecycle.ErrForbidden) {
+		t.Fatalf("Network it_admin removed a Workspace auditor: %v", err)
+	}
+	revokeWorkspaceAuditor()
+	removed, err := fixture.remove(ctx, t, confirmer, networkLateJoinerID)
+	if err != nil || removed.RolesRevoked != 1 {
+		t.Fatalf("Network it_admin removing a Network auditor = %+v, %v", removed, err)
+	}
+	var auditorState string
+	if err := admin.QueryRow(ctx, `SELECT state FROM mesh.workspace_role_assignment WHERE public_id = $1::UUID`,
+		networkAuditor.AssignmentID.String()).Scan(&auditorState); err != nil || auditorState != "revoked" {
+		t.Fatalf("Network auditor role after removal = %s, %v", auditorState, err)
+	}
+	revokeNetworkITAdmin()
+
+	revokeWorkspaceITAdmin := fixture.grant(ctx, t, confirmerID, authorization.BuiltinRoleITAdmin, network.ID{})
+	if _, err := fixture.remove(ctx, t, confirmer, networkJoinerID); !errors.Is(err, memberlifecycle.ErrForbidden) {
+		t.Fatalf("Workspace it_admin removed a Workspace admin: %v", err)
+	}
+	removed, err = fixture.remove(ctx, t, confirmer, networkBoundID)
+	if err != nil || removed.RolesRevoked != 1 {
+		t.Fatalf("Workspace it_admin removing a custom binding holder = %+v, %v", removed, err)
+	}
+	var bindingState string
+	if err := admin.QueryRow(ctx, `SELECT state FROM mesh.role_binding WHERE id = 9203`).Scan(&bindingState); err != nil ||
+		bindingState != "revoked" {
+		t.Fatalf("custom role binding after removal = %s, %v", bindingState, err)
+	}
+	revokeWorkspaceITAdmin()
+
+	if _, err := fixture.remove(ctx, t, owner, networkJoinerID); err != nil {
+		t.Fatalf("owner removing a Workspace admin from the Network: %v", err)
+	}
+	revokeWorkspaceAdmin()
 }

@@ -26,10 +26,15 @@
 -- revoked); a Device waiting to be handed to them in the Network stays
 -- suspended for an administrator; the enrollment keys they issued for the
 -- Network are revoked; their Network-scope roles for it end; and the
--- membership becomes revoked. The Workspace membership, Identity Groups,
--- other Networks and Console sessions are untouched. Nobody removes the owner
--- or themselves, and the actor must be allowed to assign every Workspace or
--- this Network's role the member holds. The Network is advanced once.
+-- membership becomes revoked. The Workspace membership, Workspace roles,
+-- Identity Groups, other Networks and Console sessions are untouched. Nobody
+-- removes the owner or themselves. The delegation ceiling follows the scope of
+-- each role the member holds: a Workspace-scope role needs an actor who could
+-- assign it from the Workspace (owner, or a Workspace-scope admin/it_admin);
+-- a role bound to this Network may also be outranked by the actor's own
+-- admin/it_admin role bound to this Network, never to another one; and a
+-- custom role binding of this Network needs a Workspace-scope assigner. The
+-- Network is advanced once.
 --
 -- Every entry point runs in the transaction's exact Network scope
 -- (set_network_scope) and the session's login Workspace. Writes lock the
@@ -42,7 +47,7 @@
 -- this Network.
 
 INSERT INTO mesh.permission (permission_key, description, risk_class, allowed_scope_kinds, catalog_version)
-VALUES ('network.member.manage', 'Add and remove the members of a Network', 'mutation', ARRAY['network'], 1);
+VALUES ('network.member.manage', 'Add and remove the members of a Network', 'privileged', ARRAY['network'], 1);
 
 INSERT INTO mesh.builtin_role_permission (role_key, permission_id)
 SELECT grant_row.role_key, permission.id
@@ -375,6 +380,8 @@ DECLARE
     v_keys INTEGER := 0;
     v_roles INTEGER := 0;
     v_bindings INTEGER := 0;
+    v_assigners TEXT[];
+    v_network_assigners TEXT[];
     v_now TIMESTAMPTZ := GREATEST(pg_catalog.clock_timestamp(), p_evaluated_at);
 BEGIN
     IF p_member_public_id IS NULL OR p_plan IS NULL OR pg_catalog.jsonb_typeof(p_plan) <> 'array'
@@ -435,15 +442,35 @@ BEGIN
     IF v_member = v_owner OR v_member = v_actor THEN
         RAISE EXCEPTION USING ERRCODE = 'MTM02', MESSAGE = 'nobody removes the owner or themselves';
     END IF;
+    -- The actor's assigners: from the Workspace, and for roles bound to this
+    -- Network also their own admin/it_admin role bound to this Network.
+    v_assigners := mesh_ops.workspace_role_assigners_v1(v_scope.workspace_id, v_actor, v_now);
+    SELECT v_assigners || COALESCE(pg_catalog.array_agg(DISTINCT assignment.role_key), ARRAY[]::TEXT[])
+    INTO v_network_assigners
+    FROM mesh.workspace_role_assignment AS assignment
+    JOIN mesh.workspace_membership AS actor_membership
+      ON actor_membership.id = assignment.workspace_membership_id AND actor_membership.state = 'active'
+     AND actor_membership.valid_from <= v_now
+     AND (actor_membership.expires_at IS NULL OR actor_membership.expires_at > v_now)
+    WHERE assignment.workspace_id = v_scope.workspace_id AND assignment.principal_id = v_actor
+      AND assignment.network_id = v_scope.network_id AND assignment.role_key IN ('admin', 'it_admin')
+      AND assignment.state = 'active' AND assignment.valid_from <= v_now
+      AND (assignment.expires_at IS NULL OR assignment.expires_at > v_now);
     IF EXISTS (
         SELECT 1 FROM mesh.workspace_role_assignment AS assignment
         JOIN mesh.builtin_role AS role ON role.role_key = assignment.role_key
         WHERE assignment.workspace_id = v_scope.workspace_id
           AND assignment.workspace_membership_id = v_membership.workspace_membership_id
-          AND (assignment.network_id IS NULL OR assignment.network_id = v_scope.network_id)
           AND assignment.state = 'active'
-          AND NOT (role.assignable_by && mesh_ops.workspace_role_assigners_v1(v_scope.workspace_id, v_actor, v_now))
-    ) THEN
+          AND ((assignment.network_id IS NULL AND NOT (role.assignable_by && v_assigners))
+               OR (assignment.network_id = v_scope.network_id
+                   AND NOT (role.assignable_by && v_network_assigners)))
+    ) OR (pg_catalog.cardinality(v_assigners) = 0 AND EXISTS (
+        SELECT 1 FROM mesh.role_binding AS binding
+        WHERE binding.workspace_id = v_scope.workspace_id AND binding.network_id = v_scope.network_id
+          AND binding.workspace_membership_id = v_membership.workspace_membership_id
+          AND binding.state <> 'revoked'
+    )) THEN
         RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'the member holds a role beyond the delegation ceiling';
     END IF;
     IF EXISTS (

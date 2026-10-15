@@ -4507,7 +4507,7 @@ func TestNetworkMemberManagement(t *testing.T) {
 		t.Fatalf("migration 166 = %+v", migration)
 	}
 	for _, want := range []string{
-		"('network.member.manage', 'Add and remove the members of a Network', 'mutation', ARRAY['network'], 1)",
+		"('network.member.manage', 'Add and remove the members of a Network', 'privileged', ARRAY['network'], 1)",
 		"('admin', 'network.member.manage'),\n    ('it_admin', 'network.member.manage')",
 		"CREATE FUNCTION mesh_ops.list_network_members_v1(",
 		"CREATE FUNCTION mesh_ops.add_network_members_v1(",
@@ -4519,7 +4519,9 @@ func TestNetworkMemberManagement(t *testing.T) {
 		"RAISE EXCEPTION USING ERRCODE = 'MTM02'",
 		"RAISE EXCEPTION USING ERRCODE = 'MTM03'",
 		"RAISE EXCEPTION USING ERRCODE = 'MTM04'",
-		"AND (assignment.network_id IS NULL OR assignment.network_id = v_scope.network_id)",
+		"AND ((assignment.network_id IS NULL AND NOT (role.assignable_by && v_assigners))",
+		"AND assignment.network_id = v_scope.network_id AND assignment.role_key IN ('admin', 'it_admin')",
+		"OR (pg_catalog.cardinality(v_assigners) = 0 AND EXISTS (",
 		"PERFORM mesh_ops.revoke_member_device_internal_v1(v_device.id, 'network member removed', v_now);",
 		"mesh_ops.advance_member_networks_internal_v1(v_scope.workspace_id, ARRAY[v_scope.network_id])",
 		"AND credential.issuer_principal_id = v_member AND credential.state = 'active'",
