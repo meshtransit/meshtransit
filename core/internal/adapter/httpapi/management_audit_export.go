@@ -31,14 +31,14 @@ type auditEventExportPath struct {
 	workspaceID workspace.ID
 }
 
-// parseAuditEventExportPath matches GET /api/v1/workspaces/{ws}/audit-events/export.
+// parseAuditEventExportPath matches GET /api/v1/workspaces/{ws}/audit-exports.
 func parseAuditEventExportPath(request *http.Request) (auditEventExportPath, bool) {
 	if request == nil || request.URL == nil || request.URL.RawPath != "" {
 		return auditEventExportPath{}, false
 	}
 	segments := strings.Split(strings.TrimPrefix(request.URL.Path, "/"), "/")
-	if len(segments) != 6 || segments[0] != "api" || segments[1] != "v1" ||
-		segments[2] != "workspaces" || segments[4] != "audit-events" || segments[5] != "export" {
+	if len(segments) != 5 || segments[0] != "api" || segments[1] != "v1" ||
+		segments[2] != "workspaces" || segments[4] != "audit-exports" {
 		return auditEventExportPath{}, false
 	}
 	workspaceID, err := workspace.ParseID(segments[3])

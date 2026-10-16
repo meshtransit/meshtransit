@@ -1146,7 +1146,7 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_id}/audit-events/export": {
+    "/api/v1/workspaces/{workspace_id}/audit-exports": {
       "get": {
         "operationId": "exportWorkspaceAuditEvents",
         "summary": "Export a Workspace's audit evidence",

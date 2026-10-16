@@ -33,9 +33,8 @@ func parseEnforcementHistoryPath(request *http.Request) (network.Scope, bool) {
 		return network.Scope{}, false
 	}
 	parts := strings.Split(request.URL.Path, "/")
-	if len(parts) != 9 || parts[0] != "" || parts[1] != "api" || parts[2] != "v1" ||
-		parts[3] != "workspaces" || parts[5] != "networks" || parts[7] != "devices" ||
-		parts[8] != "enforcement-history" {
+	if len(parts) != 8 || parts[0] != "" || parts[1] != "api" || parts[2] != "v1" ||
+		parts[3] != "workspaces" || parts[5] != "networks" || parts[7] != "enforcement-history" {
 		return network.Scope{}, false
 	}
 	workspaceID, workspaceErr := workspace.ParseID(parts[4])

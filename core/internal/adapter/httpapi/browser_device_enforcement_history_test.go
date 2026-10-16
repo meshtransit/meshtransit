@@ -42,7 +42,7 @@ func (reader *enforcementHistoryTestReader) ReadEnforcementHistory(_ context.Con
 }
 
 func enforcementHistoryTestPath() string {
-	return deviceInventoryTestPath() + "/enforcement-history"
+	return strings.TrimSuffix(deviceInventoryTestPath(), "/devices") + "/enforcement-history"
 }
 
 func TestBrowserEnforcementHistoryReadsEvidenceAtAnInstant(t *testing.T) {
