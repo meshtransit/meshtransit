@@ -42,14 +42,13 @@ type Service struct {
 	transactions Transactions
 	committed    CommittedResultResolver
 	mutationIDs  MutationIDGenerator
-	clock        Clock
 	retry        RetryWaiter
 }
 
 // NewService validates and constructs a Device revocation service.
 func NewService(options Options, dependencies Dependencies) (*Service, error) {
 	if dependencies.Transactions == nil || dependencies.CommittedResults == nil ||
-		dependencies.MutationIDs == nil || dependencies.Clock == nil || dependencies.Retry == nil ||
+		dependencies.MutationIDs == nil || dependencies.Retry == nil ||
 		options.MaxAttempts <= 0 || options.MaxAttempts > maximumAttempts ||
 		options.RollbackTimeout <= 0 || options.RollbackTimeout > 5*time.Second ||
 		options.IdempotencyTTL < minimumIdempotencyTTL ||
@@ -61,47 +60,36 @@ func NewService(options Options, dependencies Dependencies) (*Service, error) {
 		transactions: dependencies.Transactions,
 		committed:    dependencies.CommittedResults,
 		mutationIDs:  dependencies.MutationIDs,
-		clock:        dependencies.Clock,
 		retry:        dependencies.Retry,
 	}, nil
 }
 
 // Revoke terminally revokes one Device and its current machine/Node key epochs.
-// Every retry reuses the same IDs, decision time, and replay window.
+// Every retry reuses the same IDs; each attempt decides on its own
+// transaction's database time.
 func (service *Service) Revoke(ctx context.Context, command Command) (Result, error) {
 	if ctx == nil || service == nil || service.transactions == nil || service.committed == nil ||
-		service.mutationIDs == nil || service.clock == nil || service.retry == nil ||
+		service.mutationIDs == nil || service.retry == nil ||
 		!command.IsValid() {
 		return Result{}, ErrInvalidCommand
 	}
 	if err := ctx.Err(); err != nil {
 		return Result{}, errors.Join(ErrRevocationFailed, err)
 	}
-	now := service.clock.Now().UTC()
-	if now.IsZero() {
-		return Result{}, ErrInvalidService
-	}
-	if !command.AccountSession().IsActiveAt(now) {
-		return Result{}, errors.Join(ErrRevocationFailed, ErrForbidden)
-	}
 	mutationIDs, err := service.mutationIDs.NewMutationIDs()
 	if err != nil || !mutationIDs.IsValid() {
 		return Result{}, errors.Join(ErrRevocationFailed, ErrInvalidMutationIDs, err)
 	}
-	attempt, err := NewAttempt(mutationIDs, now, now.Add(service.options.IdempotencyTTL))
-	if err != nil {
-		return Result{}, errors.Join(ErrRevocationFailed, err)
-	}
 
 	var lastErr error
 	for ordinal := 1; ordinal <= service.options.MaxAttempts; ordinal++ {
-		result, attemptErr := service.attempt(ctx, command, attempt)
+		result, attemptErr := service.attempt(ctx, command, mutationIDs)
 		if attemptErr == nil {
 			return result, nil
 		}
 		lastErr = attemptErr
 		if errors.Is(attemptErr, ErrCommitOutcomeUnknown) {
-			resolved, found, resolveErr := service.committed.ResolveCommitted(ctx, command, attempt)
+			resolved, found, resolveErr := service.committed.ResolveCommitted(ctx, command, mutationIDs)
 			if resolveErr == nil && found {
 				if !resultMatchesCommand(resolved, command) {
 					return Result{}, errors.Join(ErrRevocationFailed, ErrInvalidResult)
@@ -127,7 +115,7 @@ func (service *Service) Revoke(ctx context.Context, command Command) (Result, er
 func (service *Service) attempt(
 	ctx context.Context,
 	command Command,
-	attempt Attempt,
+	mutationIDs MutationIDs,
 ) (result Result, resultErr error) {
 	transaction, err := service.transactions.Begin(ctx, command.Scope())
 	if err != nil || transaction == nil {
@@ -159,6 +147,19 @@ func (service *Service) attempt(
 		}
 	}()
 
+	// The session check, the decision time and the replay window are the
+	// database clock's.
+	now := transaction.DecisionTime()
+	if now.IsZero() {
+		return Result{}, ErrInvalidService
+	}
+	if !command.AccountSession().IsActiveAt(now) {
+		return Result{}, ErrForbidden
+	}
+	attempt, err := NewAttempt(mutationIDs, now, now.Add(service.options.IdempotencyTTL))
+	if err != nil {
+		return Result{}, err
+	}
 	resolution, err := transaction.Resolve(ctx, command, attempt)
 	if err != nil {
 		return Result{}, fmt.Errorf("resolve device revocation under lock: %w", err)

@@ -47,7 +47,7 @@ func TestServiceRevokesActiveDevice(t *testing.T) {
 	}
 }
 
-func TestServiceRejectsExpiredAccountSessionBeforeTransaction(t *testing.T) {
+func TestServiceRejectsAccountSessionExpiredAtDatabaseTime(t *testing.T) {
 	t.Parallel()
 
 	base := revocationCommandFixture(t)
@@ -85,7 +85,12 @@ func TestServiceRejectsExpiredAccountSessionBeforeTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("construct expired-session command: %v", err)
 	}
-	transactions := &fakeRevocationTransactions{}
+	// The session is judged at the transaction's database time, before
+	// anything is resolved or written.
+	transaction := &fakeRevocationTransaction{}
+	transactions := &fakeRevocationTransactions{
+		transactions: []*fakeRevocationTransaction{transaction},
+	}
 	service := newRevocationServiceFixture(
 		t,
 		transactions,
@@ -99,17 +104,21 @@ func TestServiceRejectsExpiredAccountSessionBeforeTransaction(t *testing.T) {
 	) {
 		t.Fatalf("Revoke() error = %v, want ErrForbidden", err)
 	}
-	if transactions.beginCalls != 0 {
-		t.Fatalf("transaction begins = %d, want 0", transactions.beginCalls)
+	if transactions.beginCalls != 1 || transaction.attempt.IsValid() || transaction.applyCalls != 0 ||
+		transaction.committed || !transaction.rolledBack {
+		t.Fatalf("expired-session transaction = %+v", transaction)
 	}
 }
 
-func TestServiceRetriesWholeTransactionWithStableAttempt(t *testing.T) {
+func TestServiceRetriesWholeTransactionOnEachAttemptsDatabaseTime(t *testing.T) {
 	t.Parallel()
 
 	command := revocationCommandFixture(t)
 	first := &fakeRevocationTransaction{resolveErr: revocation.ErrRetryableTransaction}
-	second := &fakeRevocationTransaction{resolution: openRevocationResolutionFixture(t, command)}
+	second := &fakeRevocationTransaction{
+		decisionAt: revocationDecisionTime().Add(time.Second),
+		resolution: openRevocationResolutionFixture(t, command),
+	}
 	waits := &recordingRetryWaiter{}
 	transactions := &fakeRevocationTransactions{
 		transactions: []*fakeRevocationTransaction{first, second},
@@ -129,10 +138,13 @@ func TestServiceRetriesWholeTransactionWithStableAttempt(t *testing.T) {
 		len(waits.attempts) != 1 || waits.attempts[0] != 1 {
 		t.Fatalf("retry lifecycle first=%+v second=%+v waits=%v", first, second, waits.attempts)
 	}
+	// The identities stay; each attempt's decision time and replay window
+	// are its own transaction's database time.
 	if first.attempt.MutationIDs() != second.attempt.MutationIDs() ||
-		!first.attempt.OccurredAt().Equal(second.attempt.OccurredAt()) ||
-		!first.attempt.ExpiresAt().Equal(second.attempt.ExpiresAt()) {
-		t.Fatal("whole-transaction retry changed stable attempt evidence")
+		!first.attempt.OccurredAt().Equal(revocationDecisionTime()) ||
+		!second.attempt.OccurredAt().Equal(second.decisionAt) ||
+		!second.attempt.ExpiresAt().Equal(second.decisionAt.Add(time.Hour)) {
+		t.Fatal("whole-transaction retry did not decide on each attempt's database time")
 	}
 }
 
@@ -326,6 +338,7 @@ func (transactions *fakeRevocationTransactions) Begin(
 }
 
 type fakeRevocationTransaction struct {
+	decisionAt time.Time
 	resolution revocation.Resolution
 	resolveErr error
 	commitErr  error
@@ -333,6 +346,13 @@ type fakeRevocationTransaction struct {
 	applyCalls int
 	committed  bool
 	rolledBack bool
+}
+
+func (transaction *fakeRevocationTransaction) DecisionTime() time.Time {
+	if transaction.decisionAt.IsZero() {
+		return revocationDecisionTime()
+	}
+	return transaction.decisionAt
 }
 
 func (transaction *fakeRevocationTransaction) Resolve(
@@ -372,7 +392,7 @@ type fakeCommittedRevocationResolver struct {
 func (resolver *fakeCommittedRevocationResolver) ResolveCommitted(
 	context.Context,
 	revocation.Command,
-	revocation.Attempt,
+	revocation.MutationIDs,
 ) (revocation.Result, bool, error) {
 	resolver.calls++
 	return resolver.result, resolver.found, resolver.err
@@ -383,10 +403,6 @@ type fixedMutationIDGenerator struct{ ids revocation.MutationIDs }
 func (generator fixedMutationIDGenerator) NewMutationIDs() (revocation.MutationIDs, error) {
 	return generator.ids, nil
 }
-
-type fixedClock struct{ now time.Time }
-
-func (clock fixedClock) Now() time.Time { return clock.now }
 
 type recordingRetryWaiter struct{ attempts []int }
 
@@ -429,7 +445,6 @@ func newRevocationServiceFixtureWithRetry(
 			Transactions:     transactions,
 			CommittedResults: resolver,
 			MutationIDs:      fixedMutationIDGenerator{ids: ids},
-			Clock:            fixedClock{now: revocationDecisionTime()},
 			Retry:            retry,
 		},
 	)

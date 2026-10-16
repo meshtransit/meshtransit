@@ -61,6 +61,7 @@ func assertPostgreSQLDeviceRevocation(
 		t.Fatalf("revocation result = %+v, want one exact Device/inventory revision advance", result)
 	}
 	assertCommittedDeviceRevocation(ctx, t, adminConnection, command, result, 203)
+	assertUpdatedByDatabaseClock(ctx, t, adminConnection, "device", command.NodeID().String())
 
 	replayed, err := service.Revoke(ctx, command)
 	if err != nil {
@@ -174,7 +175,6 @@ func newIntegrationDeviceRevocationService(
 			Transactions:     store,
 			CommittedResults: store,
 			MutationIDs:      revocation.PublicMutationIDGenerator{},
-			Clock:            revocation.SystemClock{},
 			Retry:            retry,
 		},
 	)

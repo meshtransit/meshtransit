@@ -140,3 +140,26 @@ WHERE release.public_id = $1::UUID`, releasePublicID).Scan(&onDatabaseClock); er
 		t.Fatalf("policy release %s times are not the database clock's", releasePublicID)
 	}
 }
+
+// assertUpdatedByDatabaseClock checks only the current version of a row Core
+// did not create: its updated_at is the database time of the transaction
+// that produced that version.
+func assertUpdatedByDatabaseClock(ctx context.Context, t *testing.T, admin *pgx.Conn, kind, publicID string) {
+	t.Helper()
+	table, ok := databaseClockAggregates[kind]
+	if !ok {
+		t.Fatalf("no database clock check for aggregate %q", kind)
+	}
+	var updated bool
+	if err := admin.QueryRow(ctx, `SELECT aggregate.updated_at = current_version.occurred_at
+FROM `+table+` AS aggregate
+JOIN mesh_audit.authority_mutation AS current_version
+  ON current_version.aggregate_kind = $1 AND current_version.row_public_id = aggregate.public_id
+ AND current_version.after_version = aggregate.version
+WHERE aggregate.public_id = $2::UUID`, kind, publicID).Scan(&updated); err != nil {
+		t.Fatalf("read %s %s database clock evidence: %v", kind, publicID, err)
+	}
+	if !updated {
+		t.Fatalf("%s %s updated_at is not the database clock's", kind, publicID)
+	}
+}

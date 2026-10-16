@@ -249,7 +249,7 @@ func TestDeviceRevocationStoreResolveCommittedReauthorizesInScopedTransaction(t 
 		t.Fatalf("newDeviceRevocationStore() error = %v", err)
 	}
 
-	result, found, err := store.ResolveCommitted(context.Background(), command, attempt)
+	result, found, err := store.ResolveCommitted(context.Background(), command, attempt.MutationIDs())
 	if err != nil {
 		t.Fatalf("ResolveCommitted() error = %v", err)
 	}
@@ -310,5 +310,31 @@ func TestNewDeviceRevocationStoreRejectsWorkerPool(t *testing.T) {
 	}
 	if _, err := NewDeviceRevocationStore(pool, testDeviceRevocationOptions()); !errors.Is(err, ErrInvalidDeviceRevocationStore) {
 		t.Fatalf("NewDeviceRevocationStore() error = %v, want ErrInvalidDeviceRevocationStore", err)
+	}
+}
+
+func TestDeviceRevocationTransactionDecidesOnlyOnItsDatabaseTime(t *testing.T) {
+	t.Parallel()
+
+	command := deviceRevocationCommandFixture(t)
+	fixture := deviceRevocationAttemptFixture(t)
+	hostAttempt, err := revocation.NewAttempt(
+		fixture.MutationIDs(), fixture.OccurredAt().Add(200*time.Millisecond), fixture.ExpiresAt(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	databaseTransaction := newFakeDeviceRevocationTransaction()
+	enqueueDeviceRevocationSetup(databaseTransaction)
+	store := beginTestDeviceRevocationStore(t, databaseTransaction)
+	transaction, err := store.Begin(context.Background(), command.Scope())
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	if !transaction.DecisionTime().Equal(deviceRevocationFixtureTime) {
+		t.Fatalf("DecisionTime() = %s, want the database time %s", transaction.DecisionTime(), deviceRevocationFixtureTime)
+	}
+	if _, err := transaction.Resolve(context.Background(), command, hostAttempt); !errors.Is(err, ErrDeviceRevocationState) {
+		t.Fatalf("Resolve(attempt at another clock's time) error = %v, want ErrDeviceRevocationState", err)
 	}
 }

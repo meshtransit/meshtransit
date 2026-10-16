@@ -117,8 +117,13 @@ func (store *DeviceRevocationStore) Begin(
 	if err != nil {
 		return nil, errors.Join(ErrBeginDeviceRevocation, err)
 	}
+	decisionAt, err := readTransactionTime(ctx, databaseTransaction.QueryRow)
+	if err != nil {
+		return nil, errors.Join(ErrBeginDeviceRevocation, classifyDeviceRevocationDatabaseError(ctx, err))
+	}
 	owned = true
 	return &deviceRevocationTransaction{
+		decisionAt:          decisionAt,
 		database:            databaseTransaction,
 		scope:               scope,
 		workspaceInternalID: workspaceInternalID,
@@ -131,14 +136,14 @@ func (store *DeviceRevocationStore) Begin(
 func (store *DeviceRevocationStore) ResolveCommitted(
 	ctx context.Context,
 	command revocation.Command,
-	attempt revocation.Attempt,
+	ids revocation.MutationIDs,
 ) (_ revocation.Result, found bool, resultErr error) {
 	startedAt := time.Now()
 	defer func() {
 		store.observe(postgresOperationDeviceRevocationReplay, startedAt, resultErr)
 	}()
 
-	if ctx == nil || store == nil || store.database == nil || !command.IsValid() || !attempt.IsValid() ||
+	if ctx == nil || store == nil || store.database == nil || !command.IsValid() || !ids.IsValid() ||
 		!validDeviceRevocationOptions(store.options) {
 		return revocation.Result{}, false, ErrInvalidDeviceRevocationStore
 	}
@@ -164,11 +169,18 @@ func (store *DeviceRevocationStore) ResolveCommitted(
 	); err != nil {
 		return revocation.Result{}, false, errors.Join(ErrResolveCommittedDeviceRevocation, err)
 	}
+	// Replay evidence is judged on this transaction's database time.
+	evaluatedAt, err := readTransactionTime(ctx, databaseTransaction.QueryRow)
+	if err != nil {
+		return revocation.Result{}, false, errors.Join(
+			ErrResolveCommittedDeviceRevocation, classifyDeviceRevocationDatabaseError(ctx, err),
+		)
+	}
 	if _, err := resolveDeviceRevocationAuthorization(
 		ctx,
 		databaseTransaction,
 		command,
-		attempt.OccurredAt(),
+		evaluatedAt,
 	); err != nil {
 		return revocation.Result{}, false, errors.Join(ErrResolveCommittedDeviceRevocation, err)
 	}
@@ -201,7 +213,7 @@ func (store *DeviceRevocationStore) ResolveCommitted(
 			classifyDeviceRevocationDatabaseError(ctx, err),
 		)
 	}
-	result, found, err := deviceRevocationCommittedRecord(record, command, attempt.OccurredAt())
+	result, found, err := deviceRevocationCommittedRecord(record, command, evaluatedAt)
 	if err != nil {
 		return revocation.Result{}, false, errors.Join(ErrResolveCommittedDeviceRevocation, err)
 	}

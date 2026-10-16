@@ -468,7 +468,7 @@ func privateIdentityManagementServices(
 		MaxAttempts: 3, RollbackTimeout: managementRollbackTimeout, IdempotencyTTL: managementIdempotencyTTL,
 	}, revocation.Dependencies{
 		Transactions: revocationStore, CommittedResults: revocationStore,
-		MutationIDs: revocation.PublicMutationIDGenerator{}, Clock: clock, Retry: retry,
+		MutationIDs: revocation.PublicMutationIDGenerator{}, Retry: retry,
 	})
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition

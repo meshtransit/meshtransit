@@ -14,6 +14,9 @@ type Transactions interface {
 
 // Transaction is one short revocation unit with application-owned completion.
 type Transaction interface {
+	// DecisionTime is the database clock's time for this transaction: every
+	// evaluation and persisted time of the attempt uses it.
+	DecisionTime() time.Time
 	Resolve(context.Context, Command, Attempt) (Resolution, error)
 	Apply(context.Context, Change) (Result, error)
 	Commit(context.Context) error
@@ -22,17 +25,14 @@ type Transaction interface {
 
 // CommittedResultResolver resolves an uncertain commit from durable idempotency evidence.
 type CommittedResultResolver interface {
-	ResolveCommitted(context.Context, Command, Attempt) (Result, bool, error)
+	// ResolveCommitted judges replay evidence on its own transaction's
+	// database time.
+	ResolveCommitted(context.Context, Command, MutationIDs) (Result, bool, error)
 }
 
 // MutationIDGenerator creates stable public IDs once for all retry attempts.
 type MutationIDGenerator interface {
 	NewMutationIDs() (MutationIDs, error)
-}
-
-// Clock supplies one stable decision time to the replayable operation.
-type Clock interface {
-	Now() time.Time
 }
 
 // RetryWaiter applies bounded delay between complete transaction attempts.
@@ -45,6 +45,5 @@ type Dependencies struct {
 	Transactions     Transactions
 	CommittedResults CommittedResultResolver
 	MutationIDs      MutationIDGenerator
-	Clock            Clock
 	Retry            RetryWaiter
 }

@@ -136,8 +136,8 @@ func composeManagementAPIWithKeys(
 		},
 		revocation.Dependencies{
 			Transactions: revocationStore, CommittedResults: revocationStore,
-			MutationIDs: revocation.PublicMutationIDGenerator{}, Clock: revocation.SystemClock{},
-			Retry: backoff,
+			MutationIDs: revocation.PublicMutationIDGenerator{},
+			Retry:       backoff,
 		},
 	)
 	if err != nil {

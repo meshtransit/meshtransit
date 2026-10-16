@@ -81,6 +81,13 @@ func (transaction *fakeDeviceRevocationTransaction) QueryRow(
 	query string,
 	arguments ...any,
 ) deviceRevocationRow {
+	if query == transactionTimeSQL {
+		// Every unit of work reads its time on the database clock.
+		return deviceRevocationTestRow{scan: func(destinations ...any) error {
+			*destinations[0].(*time.Time) = deviceRevocationFixtureTime
+			return nil
+		}}
+	}
 	transaction.record(query, arguments)
 	queued := transaction.rows[query]
 	if len(queued) == 0 {
@@ -434,7 +441,7 @@ func deviceRevocationAttemptFixture(t *testing.T) revocation.Attempt {
 	if err != nil {
 		t.Fatalf("revocation.NewMutationIDs() error = %v", err)
 	}
-	occurredAt := time.Date(2026, time.September, 16, 2, 0, 0, 0, time.UTC)
+	occurredAt := deviceRevocationFixtureTime
 	attempt, err := revocation.NewAttempt(ids, occurredAt, occurredAt.Add(time.Hour))
 	if err != nil {
 		t.Fatalf("revocation.NewAttempt() error = %v", err)
@@ -458,3 +465,7 @@ func deviceRevocationCallQueries(calls []deviceRevocationTestCall) []string {
 	}
 	return queries
 }
+
+// deviceRevocationFixtureTime is the database clock's time the fake
+// transactions report.
+var deviceRevocationFixtureTime = time.Date(2026, time.September, 16, 2, 0, 0, 0, time.UTC)

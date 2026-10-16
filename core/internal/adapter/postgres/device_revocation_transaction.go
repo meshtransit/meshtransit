@@ -38,6 +38,7 @@ type deviceRevocationLockedIDs struct {
 type deviceRevocationTransaction struct {
 	mu sync.Mutex
 
+	decisionAt          time.Time
 	database            deviceRevocationDatabaseTransaction
 	scope               network.Scope
 	workspaceInternalID int64
@@ -47,6 +48,11 @@ type deviceRevocationTransaction struct {
 	resolution          revocation.Resolution
 	locked              deviceRevocationLockedIDs
 	audit               deviceRevocationAuditHead
+}
+
+// DecisionTime is this transaction's time on the database clock.
+func (transaction *deviceRevocationTransaction) DecisionTime() time.Time {
+	return transaction.decisionAt
 }
 
 var _ revocation.Transaction = (*deviceRevocationTransaction)(nil)
@@ -66,9 +72,10 @@ func (transaction *deviceRevocationTransaction) Resolve(
 	}
 	transaction.mu.Lock()
 	defer transaction.mu.Unlock()
+	// The attempt decides on this transaction's database time only.
 	if transaction.database == nil || transaction.state != deviceRevocationTransactionOpen ||
 		command.Scope() != transaction.scope || transaction.workspaceInternalID <= 0 ||
-		transaction.networkInternalID <= 0 {
+		transaction.networkInternalID <= 0 || !attempt.OccurredAt().Equal(transaction.decisionAt) {
 		return revocation.Resolution{}, ErrDeviceRevocationState
 	}
 
