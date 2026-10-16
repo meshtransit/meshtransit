@@ -268,8 +268,8 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	prepare := request.URL.Path == AccountSessionCSRFPreparePath
 	logoutAll := request.URL.Path == AccountSessionLogoutAllPath
 	logout := request.URL.Path == AccountSessionLogoutPath || logoutAll
-	// Ending sessions always needs a proof, which only a POST requires.
-	if logout && request.Method != http.MethodPost {
+	// Preparing and ending sessions are POSTs only; ending needs a proof.
+	if (prepare || logout) && request.Method != http.MethodPost {
 		return ErrInvalidBrowserManagement
 	}
 	managementScopes := request.URL.Path == AccountSessionManagementScopesPath && request.Method == http.MethodGet
@@ -515,10 +515,9 @@ func (browser *BrowserManagement) endSession(
 }
 
 // browserManagementMethods are the methods the cookie path accepts: reads,
-// and changes that each need a CSRF proof.
+// and changes that each need a CSRF proof. No route replaces with PUT.
 var browserManagementMethods = map[string]bool{
-	http.MethodGet: true, http.MethodPost: true, http.MethodPut: true, http.MethodPatch: true,
-	http.MethodDelete: true,
+	http.MethodGet: true, http.MethodPost: true, http.MethodPatch: true, http.MethodDelete: true,
 }
 
 func (browser *BrowserManagement) validRequest(request *http.Request) bool {

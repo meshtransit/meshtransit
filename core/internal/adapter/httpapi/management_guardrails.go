@@ -116,7 +116,7 @@ func isGuardrailOperation(request *http.Request) bool {
 // isGuardrailRead admits the exact, query-free list.
 func isGuardrailRead(request *http.Request) bool {
 	path, ok := parseGuardrailPath(request)
-	return ok && path.action == "" && request.Method == http.MethodGet
+	return ok && request.Method == http.MethodGet && path.methods.allows(http.MethodGet)
 }
 
 type guardrailBody struct {

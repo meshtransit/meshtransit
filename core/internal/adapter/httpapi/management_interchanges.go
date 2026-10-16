@@ -121,7 +121,7 @@ func isInterchangeOperation(request *http.Request) bool {
 // isInterchangeRead admits the exact, query-free list.
 func isInterchangeRead(request *http.Request) bool {
 	path, ok := parseInterchangePath(request)
-	return ok && path.action == "" && request.Method == http.MethodGet
+	return ok && request.Method == http.MethodGet && path.methods.allows(http.MethodGet)
 }
 
 type interchangeBody struct {

@@ -113,8 +113,8 @@ after a rule change, again 30 seconds later and every 5 minutes, a node sends
 the [policy digest](../protocol/policy-digest-v1.md) of the packet filter it
 actually installed.
 
-`GET …/networks/{network}/devices/distribution` (Console private API, needs
-`device.read`) shows for every Device:
+`GET …/networks/{network}/devices/{device}/status` (Console private API, needs
+`device.read`) shows for an active or suspended Device:
 
 - **distribution:** `in_sync` (online with the current revision), `behind`
   (online with an older one), `offline`, `never_connected`, or `unknown`
@@ -125,7 +125,7 @@ actually installed.
 
 The **enforcement ledger** (a worker job, off by default,
 `MESHTRANSIT_ENFORCEMENT_LEDGER_WORKER_ENABLED`) keeps this over time:
-`GET …/devices/enforcement-history?at=…` (Console private API) shows each
+`GET …/networks/{network}/enforcement-history?at=…` (Console private API) shows each
 Device's state at an instant at or before the server's time (default now),
 and a Device entering or leaving `mismatch` writes a sealed
 `device.enforcement_mismatch` or `device.enforcement_restored` event.

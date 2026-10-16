@@ -152,9 +152,8 @@ session (1 Gbit/s); see [Relay](../architecture/relay.md#limits).
 A Workspace can run its own relays and offer them to some of its Networks
 (`interchange.manage`, up to 16 per Workspace and 256 Networks each):
 
-- `GET /api/v1/workspaces/{workspace}/interchanges`,
-  `POST …/interchanges/actions/create`,
-  `POST …/interchanges/{id}/actions/update`, `…/delete`.
+- `GET` and `POST /api/v1/workspaces/{workspace}/interchanges` (list, create),
+  `PATCH` and `DELETE …/interchanges/{id}` (change, remove).
 - Core gives each one a region ID and adds it to the granted Networks' relay
   maps as a preferred region; those nodes use it as home whenever it works.
 - The Workspace's operator runs `meshrelay --private-interchange` on the

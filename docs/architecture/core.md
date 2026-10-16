@@ -190,6 +190,14 @@ its exact scope. Mutations take an `Idempotency-Key` and an `If-Match`
 revision, so retries are safe and concurrent edits do not overwrite each
 other.
 
+Both surfaces are versioned `v1` and use resource paths: `POST` on a
+collection creates (`POST …/device-tags`), `PATCH` changes and `DELETE`
+removes an item (`PATCH …/device-tags/{tag}`), and `GET` reads, with filters,
+search and paging in the query (`page_size`, `page_token`). A change that is
+a state transition with its own inputs is an action on the item
+(`POST …/devices/{device}/actions/suspend`). A resource outside the caller's
+scope answers `404`, the same as one that does not exist.
+
 ## Worker
 
 | Job | Does |

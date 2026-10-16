@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"meshtransit.net/core/internal/domain/devicetag"
 	"meshtransit.net/core/internal/domain/identity"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
@@ -228,6 +230,11 @@ func (store *ConsoleDeviceInventoryStore) readOnce(ctx context.Context, session 
 		return nil, errors.Join(inventory.ErrUnavailable, err)
 	}
 	encoded, err := read(transaction, evaluatedAt)
+	var pgError *pgconn.PgError
+	if errors.As(err, &pgError) && pgError.Code == "22023" {
+		// The function refused the input, a cursor naming no Device for one.
+		return nil, inventory.ErrInvalidRequest
+	}
 	if err != nil {
 		return nil, errors.Join(inventory.ErrUnavailable, err)
 	}

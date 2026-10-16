@@ -165,7 +165,7 @@ The record below has seal
 ## 5. Exports
 
 The Console's Activity page exports a Workspace's or a Network's events. It
-calls `GET /api/v1/workspaces/{workspace}/audit-events/export`, an operation of
+calls `GET /api/v1/workspaces/{workspace}/audit-exports`, an operation of
 the Console's private API: it needs a signed-in browser Account Session, not
 an API token. Its query parameters, each at most once, are `format` (`json` or
 `csv`, default `json`), `network_id`, `since` and `until`.

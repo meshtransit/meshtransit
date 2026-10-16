@@ -20,7 +20,7 @@ func TestBrowserManagementAdmitsRESTMethods(t *testing.T) {
 		header func(http.Header)
 		valid  bool
 	}{
-		{"put", http.MethodPut, `{}`, nil, true},
+		{"put", http.MethodPut, `{}`, nil, false},
 		{"patch", http.MethodPatch, `{}`, nil, true},
 		{"patch without a JSON type", http.MethodPatch, `{}`, func(h http.Header) { h.Set("Content-Type", "text/plain") }, false},
 		{"delete", http.MethodDelete, "", func(h http.Header) { h.Del("Content-Type") }, true},

@@ -34,7 +34,7 @@ does not count.
 An enrollment key lets a machine register without a browser, for servers,
 routers and automation. A person with `enrollment_credential.issue` (the
 owner, `admin`, `it_admin`) creates one for a Network in the Console or with
-`POST …/networks/{network}/enrollment-keys/actions/create`, and chooses two
+`POST …/networks/{network}/enrollment-keys`, and chooses two
 lifetimes separately:
 
 - **how long the key can be used**: 5 minutes to 30 days, 24 hours by
@@ -233,7 +233,9 @@ not of the bearer-token management API.
 
 | Endpoint (under `…/networks/{network}/`) | Needs | Shows |
 |---|---|---|
-| `devices` | `device.read` | Inventory: state, ownership, owner, expiry, suspension reason, pending handover |
-| `devices/distribution` | `device.read` | Online state, the policy revision it has, enforcement, paths, NAT, peer limit; see [audit](audit.md#policy-distribution-and-enforcement) |
-| `devices/enforcement-history` | `device.read` | Enforcement at a past instant |
+| `devices?q=&state=` | `device.read` | Inventory in name order, ten at a time: state, ownership, owner, expiry, suspension reason, pending handover. `q` keeps names that start with it; `state` is `active` (can connect now) or `inactive` |
+| `devices/{device}` | `device.read` | One Device, how it was enrolled (browser sign-in, or which enrollment key and who created it) and its tags |
+| `devices/{device}/status` | `device.read` | Online state, the policy revision it has, enforcement, NAT, peer limit and a count of how it reaches its peers; see [audit](audit.md#policy-distribution-and-enforcement) |
+| `devices/{device}/peers?path=` | `device.read` | A page of the peers in its latest path report (its 256 busiest at most): direct, relayed (through which relay, and why) or no path yet. Peers of the Network are named; a shared Device of another Network is not |
+| `enforcement-history` | `device.read` | Enforcement at a past instant |
 | `address-usage` | `network.read` | Addresses used and free in the Network's ranges |

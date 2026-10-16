@@ -41,7 +41,7 @@ func TestParseInvitationPath(t *testing.T) {
 		if ok != test.valid || (ok && path.action != test.action) || isInvitationOperation(request) != test.admit {
 			t.Errorf("%s %s: parsed %+v %t, admitted %t", test.method, test.path, path, ok, isInvitationOperation(request))
 		}
-		wantRead := ok && path.action == "" && test.method == http.MethodGet
+		wantRead := ok && test.method == http.MethodGet && test.admit
 		if isInvitationRead(request) != wantRead {
 			t.Errorf("%s %s: read admission = %t, want %t", test.method, test.path, !wantRead, wantRead)
 		}

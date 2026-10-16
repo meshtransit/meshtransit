@@ -143,7 +143,7 @@ Network's members.
   says whether the caller can change them. Members of the Network are always
   listed; the rest of the Workspace only to a caller who can add them or read
   the Workspace's members (`member.read`).
-- **Adding** (`POST .../members/actions/add` with `principal_ids`, up to 150
+- **Adding** (`POST .../members` with `principal_ids`, up to 150
   at once) adds active Workspace members; anyone already in the Network is
   reported unchanged. A suspended Workspace member cannot be added. Maps are
   not rebuilt: membership decides who may enroll, not who can reach whom.

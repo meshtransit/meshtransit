@@ -79,7 +79,7 @@ func isInvitationOperation(request *http.Request) bool {
 // isInvitationRead admits the exact, query-free invitation list.
 func isInvitationRead(request *http.Request) bool {
 	path, ok := parseInvitationPath(request)
-	return ok && path.action == "" && request.Method == http.MethodGet
+	return ok && request.Method == http.MethodGet && path.methods.allows(http.MethodGet)
 }
 
 // allowedMethod is GET for the list and POST for every action.

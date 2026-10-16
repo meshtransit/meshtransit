@@ -195,6 +195,12 @@ func consoleBearerOperations(body json.RawMessage, operationIDs []string) (map[s
 				continue
 			}
 			operation, err := consoleManagementOperation(rawOperation, method != "get")
+			if err == nil && method == "delete" {
+				// A DELETE names its target in the path and carries no body.
+				if fields, decodeErr := managementObject(rawOperation); decodeErr != nil || fields["requestBody"] != nil {
+					err = ErrInvalidManagementProfile
+				}
+			}
 			if err != nil {
 				return nil, ErrInvalidManagementProfile
 			}

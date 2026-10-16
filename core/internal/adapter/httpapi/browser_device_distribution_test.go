@@ -197,6 +197,14 @@ func TestDeviceDetailPathsAndPeerQueries(t *testing.T) {
 	if _, err := parseDevicePeerQuery("page_token="+token, device); err == nil {
 		t.Fatal("a token of another Device was accepted")
 	}
+	own := base64.RawURLEncoding.EncodeToString([]byte(`{"v":1,"device_id":"` + distributionTestDevice + `",` +
+		`"path":"direct","offset":2,"reported_at":"2027-01-15T08:00:00Z"}`))
+	if _, err := parseDevicePeerQuery("path=direct&page_token="+own, device); err != nil {
+		t.Fatalf("the token was refused for its own filter: %v", err)
+	}
+	if _, err := parseDevicePeerQuery("path=relay&page_token="+own, device); err == nil {
+		t.Fatal("a token continued another path filter")
+	}
 	if !isBrowserManagementOperation(browserManagementReadRequest(t, deviceDetailTestPath("peers")+"?page_size=2")) {
 		t.Fatal("the peer page is not routed to browser management")
 	}

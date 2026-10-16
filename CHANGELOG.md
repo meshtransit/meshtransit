@@ -5,6 +5,25 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core (breaking): every API path follows resource rules, still under `v1`,
+  with no old paths kept. `POST` on a collection creates (device tags, user
+  groups, Network device groups, guardrails, interchanges, invitations,
+  enrollment keys, Network members); `PATCH` and `DELETE` on an item change
+  and remove; group members change with `PATCH …/members`, a Device's tags
+  with `PATCH …/devices/{device}/tags`; Workspaces and Devices are renamed
+  with `PATCH` on the item and alias ranges changed with
+  `PATCH …/alias-ranges`; a role assignment is revoked with `DELETE`. The
+  audit export moves to `GET …/audit-exports`, the enforcement history to
+  `GET …/networks/{network}/enforcement-history`, assignable tags to
+  `GET …/networks/{network}/assignable-device-tags`. The Console's cookie
+  path accepts `PUT`, `PATCH` and `DELETE` with a CSRF proof; a `DELETE`
+  carries no body.
+- Core: the Console lists Devices by name ten at a time with a name prefix
+  (`q`) and an `active`/`inactive` filter, reads one Device with how it was
+  enrolled and its tags (`GET …/devices/{device}`), its delivery status
+  (`…/status`) and a page of the peers it reported (`…/peers`); the
+  Network-wide `…/devices/distribution` read is removed (schema 177).
+
 - Core: enrollment keys can be created, listed and revoked through the API
   (`…/networks/{network}/enrollment-keys`, `enrollment_credential.issue` and
   `.revoke`) and the Console. A key enrolls exactly one Device; its creator

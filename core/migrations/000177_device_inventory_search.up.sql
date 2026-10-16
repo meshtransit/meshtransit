@@ -9,7 +9,8 @@
 -- lower-case [a-z0-9.-], so a "C" collation orders them by byte and serves a
 -- prefix search.
 CREATE INDEX device_network_hostname_order_idx
-    ON mesh.device (workspace_id, network_id, (hostname COLLATE "C"), public_id);
+    ON mesh.device (workspace_id, network_id, (hostname COLLATE "C"), public_id)
+    INCLUDE (state, expires_at);
 
 -- One Device of the scope as the inventory item, with its DNS label.
 CREATE FUNCTION mesh_ops.console_device_item_internal_v1(p_device mesh.device)
@@ -117,6 +118,8 @@ CREATE FUNCTION mesh_ops.read_console_devices_v4(
 RETURNS JSONB
 LANGUAGE plpgsql VOLATILE PARALLEL UNSAFE SECURITY DEFINER
 SET search_path = pg_catalog, mesh, mesh_ops
+-- Each call plans with its own prefix and cursor, so both stay index ranges.
+SET plan_cache_mode = force_custom_plan
 AS $function$
 DECLARE
     v_scope RECORD;
@@ -227,13 +230,18 @@ BEGIN
         'device', mesh_ops.console_device_item_internal_v1(v_device),
         'enrollment', COALESCE(v_enrollment, pg_catalog.jsonb_build_object('kind', 'browser')),
         'tags', COALESCE((
-            SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('id', tag.public_id, 'name', tag.name)
-                ORDER BY tag.name, tag.public_id)
-            FROM mesh.device_tag_assignment AS assignment
-            JOIN mesh.device_tag AS tag
-              ON tag.id = assignment.device_tag_id AND tag.workspace_id = assignment.workspace_id
-            WHERE assignment.workspace_id = v_device.workspace_id AND assignment.network_id = v_device.network_id
-              AND assignment.device_id = v_device.id AND tag.state = 'active'
+            SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('id', held.public_id, 'name', held.name)
+                ORDER BY held.name, held.public_id)
+            FROM (
+                SELECT tag.public_id, tag.name
+                FROM mesh.device_tag_assignment AS assignment
+                JOIN mesh.device_tag AS tag
+                  ON tag.id = assignment.device_tag_id AND tag.workspace_id = assignment.workspace_id
+                WHERE assignment.workspace_id = v_device.workspace_id AND assignment.network_id = v_device.network_id
+                  AND assignment.device_id = v_device.id AND tag.state = 'active'
+                ORDER BY tag.name, tag.public_id
+                LIMIT 64
+            ) AS held
         ), '[]'::JSONB));
 END;
 $function$;
