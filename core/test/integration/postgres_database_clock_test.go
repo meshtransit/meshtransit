@@ -163,3 +163,26 @@ WHERE aggregate.public_id = $2::UUID`, kind, publicID).Scan(&updated); err != ni
 		t.Fatalf("%s %s updated_at is not the database clock's", kind, publicID)
 	}
 }
+
+// assertNewestNodeKeyOnDatabaseClock checks that a rotated Device's newest
+// Node key epoch starts, and was created, at the database time of the
+// transaction that rotated it.
+func assertNewestNodeKeyOnDatabaseClock(ctx context.Context, t *testing.T, admin *pgx.Conn, devicePublicID string) {
+	t.Helper()
+	var onDatabaseClock bool
+	if err := admin.QueryRow(ctx, `SELECT epoch.valid_from = inserted.occurred_at
+    AND epoch.created_at = inserted.occurred_at
+FROM mesh.device AS device
+JOIN mesh.device_node_key_epoch AS epoch ON epoch.device_id = device.id
+JOIN mesh_audit.authority_mutation AS inserted
+  ON inserted.aggregate_kind = 'device_node_key_epoch' AND inserted.row_public_id = epoch.public_id
+ AND inserted.operation = 'insert'
+WHERE device.public_id = $1::UUID
+ORDER BY epoch.epoch DESC
+LIMIT 1`, devicePublicID).Scan(&onDatabaseClock); err != nil {
+		t.Fatalf("read Device %s Node key database clock evidence: %v", devicePublicID, err)
+	}
+	if !onDatabaseClock {
+		t.Fatalf("Device %s newest Node key times are not the database clock's", devicePublicID)
+	}
+}

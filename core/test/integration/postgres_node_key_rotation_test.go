@@ -77,6 +77,8 @@ FROM mesh_ops.resolve_node_key_rotation_scope($1::BYTEA, $2::BYTEA, $3::BYTEA, $
 		result.InventoryRevision() != beforeInventoryRevision+1 {
 		t.Fatalf("Node-key rotation result = %+v, want exact +1 authority", result)
 	}
+	assertUpdatedByDatabaseClock(ctx, t, adminConnection, "device", result.NodeID().String())
+	assertNewestNodeKeyOnDatabaseClock(ctx, t, adminConnection, result.NodeID().String())
 	after := readNodeKeyRotationEvidence(ctx, t, adminConnection, machineKey[:])
 	if after.nodePublicID != before.nodePublicID || after.hostname != before.hostname ||
 		after.deviceVersion != before.deviceVersion+1 ||
@@ -199,7 +201,6 @@ func newIntegrationNodeKeyRotationService(
 		keyrotation.Dependencies{
 			Transactions: store,
 			MutationIDs:  keyrotation.PublicMutationIDGenerator{},
-			Clock:        registrationapp.SystemClock{},
 			Retry:        retry,
 		},
 	)

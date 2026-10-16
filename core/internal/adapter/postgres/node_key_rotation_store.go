@@ -158,8 +158,14 @@ func (store *NodeKeyRotationStore) Begin(
 		return nil, errors.Join(ErrBeginNodeKeyRotation, ErrNodeKeyRotationEvidence)
 	}
 
+	decisionAt, err := readTransactionTime(ctx, databaseTransaction.QueryRow)
+	if err != nil {
+		return nil, errors.Join(ErrBeginNodeKeyRotation, classifyNodeKeyRotationDatabaseError(ctx, err))
+	}
+
 	owned = true
 	return &nodeKeyRotationTransaction{
+		decisionAt:          decisionAt,
 		database:            databaseTransaction,
 		scope:               scope,
 		workspaceInternalID: workspaceInternalID,

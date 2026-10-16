@@ -467,5 +467,5 @@ func deviceRevocationCallQueries(calls []deviceRevocationTestCall) []string {
 }
 
 // deviceRevocationFixtureTime is the database clock's time the fake
-// transactions report.
-var deviceRevocationFixtureTime = time.Date(2026, time.September, 16, 2, 0, 0, 0, time.UTC)
+// transactions report; Node-key rotation tests share these fakes.
+var deviceRevocationFixtureTime = nodeKeyRotationTimeFixture()

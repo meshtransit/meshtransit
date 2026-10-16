@@ -35,14 +35,13 @@ type Service struct {
 	options      Options
 	transactions Transactions
 	mutationIDs  MutationIDGenerator
-	clock        Clock
 	retry        RetryWaiter
 }
 
 // NewService validates and constructs a Node-key rotation service.
 func NewService(options Options, dependencies Dependencies) (*Service, error) {
 	if dependencies.Transactions == nil || dependencies.MutationIDs == nil ||
-		dependencies.Clock == nil || dependencies.Retry == nil ||
+		dependencies.Retry == nil ||
 		options.MaxAttempts <= 0 || options.MaxAttempts > maximumAttempts ||
 		options.RollbackTimeout <= 0 || options.RollbackTimeout > 5*time.Second {
 		return nil, ErrInvalidService
@@ -51,7 +50,6 @@ func NewService(options Options, dependencies Dependencies) (*Service, error) {
 		options:      options,
 		transactions: dependencies.Transactions,
 		mutationIDs:  dependencies.MutationIDs,
-		clock:        dependencies.Clock,
 		retry:        dependencies.Retry,
 	}, nil
 }
@@ -59,16 +57,12 @@ func NewService(options Options, dependencies Dependencies) (*Service, error) {
 // Rotate advances exactly one key/session/revision generation or returns its replay.
 func (service *Service) Rotate(ctx context.Context, command Command) (Result, error) {
 	if ctx == nil || service == nil || service.transactions == nil ||
-		service.mutationIDs == nil || service.clock == nil || service.retry == nil ||
+		service.mutationIDs == nil || service.retry == nil ||
 		!command.IsValid() {
 		return Result{}, ErrInvalidCommand
 	}
 	if err := ctx.Err(); err != nil {
 		return Result{}, errors.Join(ErrRotationFailed, err)
-	}
-	occurredAt := service.clock.Now().UTC()
-	if occurredAt.IsZero() {
-		return Result{}, ErrInvalidService
 	}
 	mutationIDs, err := service.mutationIDs.NewMutationIDs()
 	if err != nil || !mutationIDs.IsValid() {
@@ -77,7 +71,7 @@ func (service *Service) Rotate(ctx context.Context, command Command) (Result, er
 
 	var lastErr error
 	for attempt := 1; attempt <= service.options.MaxAttempts; attempt++ {
-		result, attemptErr := service.attempt(ctx, command, mutationIDs, occurredAt)
+		result, attemptErr := service.attempt(ctx, command, mutationIDs)
 		if attemptErr == nil {
 			return result, nil
 		}
@@ -100,7 +94,6 @@ func (service *Service) attempt(
 	ctx context.Context,
 	command Command,
 	mutationIDs MutationIDs,
-	occurredAt time.Time,
 ) (result Result, resultErr error) {
 	transaction, err := service.transactions.Begin(ctx, command)
 	if err != nil || transaction == nil {
@@ -129,6 +122,12 @@ func (service *Service) attempt(
 		}
 	}()
 
+	// The rotation budget, the new epoch's validity and every persisted time
+	// are the database clock's.
+	occurredAt := transaction.DecisionTime()
+	if occurredAt.IsZero() {
+		return Result{}, ErrInvalidService
+	}
 	resolution, err := transaction.Resolve(ctx, command)
 	if err != nil {
 		return Result{}, fmt.Errorf("resolve Node-key rotation under lock: %w", err)

@@ -13,6 +13,9 @@ type Transactions interface {
 
 // Transaction locks current identity authority and atomically applies one rotation.
 type Transaction interface {
+	// DecisionTime is the database clock's time for this transaction: every
+	// evaluation and persisted time of the attempt uses it.
+	DecisionTime() time.Time
 	Resolve(context.Context, Command) (Resolution, error)
 	Apply(context.Context, Change) (Result, error)
 	Commit(context.Context) error
@@ -24,11 +27,6 @@ type MutationIDGenerator interface {
 	NewMutationIDs() (MutationIDs, error)
 }
 
-// Clock supplies one stable decision time to every replayable attempt.
-type Clock interface {
-	Now() time.Time
-}
-
 // RetryWaiter applies bounded delay between complete transaction attempts.
 type RetryWaiter interface {
 	Wait(context.Context, int) error
@@ -38,6 +36,5 @@ type RetryWaiter interface {
 type Dependencies struct {
 	Transactions Transactions
 	MutationIDs  MutationIDGenerator
-	Clock        Clock
 	Retry        RetryWaiter
 }

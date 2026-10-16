@@ -119,7 +119,6 @@ func newNodeKeyRotationService(
 		keyrotation.Dependencies{
 			Transactions: transactions,
 			MutationIDs:  keyrotation.PublicMutationIDGenerator{},
-			Clock:        registration.SystemClock{},
 			Retry:        retry,
 		},
 	)

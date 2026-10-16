@@ -33,7 +33,6 @@ func budgetService(t *testing.T, transaction *rotationTransaction) *keyrotation.
 		keyrotation.Dependencies{
 			Transactions: &rotationTransactions{transaction: transaction},
 			MutationIDs:  rotationIDGenerator{ids: rotationMutationIDs(t)},
-			Clock:        rotationClock{now: rotationTime()},
 			Retry:        rotationRetry{},
 		},
 	)

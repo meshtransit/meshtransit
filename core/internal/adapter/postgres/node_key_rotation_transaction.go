@@ -38,6 +38,7 @@ type nodeKeyRotationAuditHead struct {
 type nodeKeyRotationTransaction struct {
 	mu sync.Mutex
 
+	decisionAt          time.Time
 	database            deviceRevocationDatabaseTransaction
 	scope               network.Scope
 	workspaceInternalID int64
@@ -47,6 +48,11 @@ type nodeKeyRotationTransaction struct {
 	resolution          keyrotation.Resolution
 	locked              nodeKeyRotationLockedIDs
 	audit               nodeKeyRotationAuditHead
+}
+
+// DecisionTime is this transaction's time on the database clock.
+func (transaction *nodeKeyRotationTransaction) DecisionTime() time.Time {
+	return transaction.decisionAt
 }
 
 var _ keyrotation.Transaction = (*nodeKeyRotationTransaction)(nil)
@@ -332,7 +338,8 @@ func (transaction *nodeKeyRotationTransaction) Apply(
 	defer transaction.mu.Unlock()
 	if transaction.database == nil || transaction.state != nodeKeyRotationTransactionResolved ||
 		transaction.resolution != change.Resolution() ||
-		transaction.scope != change.Resolution().Scope() {
+		transaction.scope != change.Resolution().Scope() ||
+		!change.OccurredAt().Equal(transaction.decisionAt) {
 		return keyrotation.Result{}, ErrNodeKeyRotationState
 	}
 

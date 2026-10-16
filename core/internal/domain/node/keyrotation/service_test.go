@@ -24,7 +24,6 @@ func TestServiceRotatesOneAuthenticatedNodeKeyEpoch(t *testing.T) {
 		keyrotation.Dependencies{
 			Transactions: &rotationTransactions{transaction: transaction},
 			MutationIDs:  rotationIDGenerator{ids: rotationMutationIDs(t)},
-			Clock:        rotationClock{now: rotationTime()},
 			Retry:        rotationRetry{},
 		},
 	)
@@ -76,7 +75,6 @@ func TestServiceReturnsCommittedReplayWithoutMutation(t *testing.T) {
 		keyrotation.Dependencies{
 			Transactions: &rotationTransactions{transaction: transaction},
 			MutationIDs:  rotationIDGenerator{ids: rotationMutationIDs(t)},
-			Clock:        rotationClock{now: rotationTime()},
 			Retry:        rotationRetry{},
 		},
 	)
@@ -151,9 +149,8 @@ func (generator rotationIDGenerator) NewMutationIDs() (keyrotation.MutationIDs, 
 	return generator.ids, nil
 }
 
-type rotationClock struct{ now time.Time }
-
-func (clock rotationClock) Now() time.Time { return clock.now }
+// DecisionTime stands in for the database clock's time of the transaction.
+func (*rotationTransaction) DecisionTime() time.Time { return rotationTime() }
 
 type rotationRetry struct{}
 
