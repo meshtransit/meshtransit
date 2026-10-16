@@ -544,6 +544,7 @@ func Catalog() []Migration {
 		newMigration(175, "Enrollment keys", enrollmentKeysSQL),
 		newMigration(176, "Used enrollment keys are managed through their Device", enrollmentKeyUsedRevokeSQL),
 		newMigration(177, "Devices listed by name and read one at a time", deviceInventorySearchSQL),
+		newMigration(178, "Shares end when their provider Device is removed", trustContractDeviceRemovalSQL),
 	}
 }
 
@@ -854,3 +855,6 @@ var enrollmentKeyUsedRevokeSQL string
 
 //go:embed 000177_device_inventory_search.up.sql
 var deviceInventorySearchSQL string
+
+//go:embed 000178_trust_contract_device_removal.up.sql
+var trustContractDeviceRemovalSQL string

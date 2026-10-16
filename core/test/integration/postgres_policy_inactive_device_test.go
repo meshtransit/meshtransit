@@ -29,7 +29,7 @@ import (
 // a Resource or Resource Group on that Device. It revokes one fixture Device
 // and leaves a deny-all policy and no Device Group behind.
 func assertPostgreSQLPolicyInactiveDevice(ctx context.Context, t *testing.T, admin *pgx.Conn,
-	runtimePool *postgresadapter.Pool) {
+	runtimePool, workerPool *postgresadapter.Pool) {
 	t.Helper()
 	setWorkspaceRenameFixtureOwner(ctx, t, admin, 11)
 	defer setWorkspaceRenameFixtureOwner(ctx, t, admin, 14)
@@ -71,8 +71,12 @@ func assertPostgreSQLPolicyInactiveDevice(ctx context.Context, t *testing.T, adm
 		publishIntegrationRules(ctx, t, runtimePool, owner, scope, fixturePolicyRevision(ctx, t, admin), rules)
 	}
 
+	// Its Resource is shared: suspension keeps the share, revocation ends it.
+	leavingShare := shareLeavingDevice(ctx, t, admin, runtimePool, owner, scope, resourceID)
+
 	// Suspended: new and existing rules naming it publish and compile.
 	suspendIntegrationDevice(ctx, t, admin, runtimePool, owner, scope, leaving, devicelifecycle.ActionSuspend)
+	assertNoDeviceRemovalQueued(ctx, t, admin, leavingShare)
 	deviceRule := rule(compilation.RuleIntentParams{SourceNodeID: leaving, DestinationNodeID: staying})
 	groupRule := rule(compilation.RuleIntentParams{SourceNodeID: leaving, DestinationDeviceGroupID: group})
 	resourceRule := rule(compilation.RuleIntentParams{SourceNodeID: staying, DestinationResourceID: resourceID})
@@ -87,6 +91,7 @@ func assertPostgreSQLPolicyInactiveDevice(ctx context.Context, t *testing.T, adm
 
 	// Revoked: the rules the active release holds keep publishing next to an edit.
 	revokeIntegrationFixtureDevice(ctx, t, admin, runtimePool, leaving)
+	assertDeviceRemovalEndsShare(ctx, t, admin, workerPool, leavingShare)
 	unrelated := rule(compilation.RuleIntentParams{SourceNodeID: staying, DestinationDeviceGroupID: group})
 	kept = append(kept, unrelated)
 	publish(kept...)

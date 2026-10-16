@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"meshtransit.net/core/internal/domain/deployment"
+	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/domain/sharing"
 	"meshtransit.net/core/internal/domain/sharing/contractexpiry"
 )
@@ -149,11 +150,11 @@ func TestTrustContractExpiryFinalizesOnceAndNeverRetriesUnknownCommit(t *testing
 			case "begin":
 				database.beginErr = failure
 			}
-			store := &TrustContractExpiryStore{database: database}
-			changed, err := store.Expire(ctx, installation, contract)
+			store := &TrustContractExpiryStore{trustContractEndStore{database: database, ending: trustContractExpiry}}
+			changed, err := store.End(ctx, installation, contract)
 			if succeeding[name] {
 				if err != nil || changed != (name == "expire") || !transaction.committed || transaction.rollbackCalls != 0 {
-					t.Fatalf("Expire() = %v, %v", changed, err)
+					t.Fatalf("End() = %v, %v", changed, err)
 				}
 				if wantFinalizes := map[bool]int{true: 1, false: 0}[name == "expire"]; transaction.finalizes != wantFinalizes {
 					t.Fatalf("finalizes = %d, want %d", transaction.finalizes, wantFinalizes)
@@ -219,7 +220,7 @@ func TestTrustContractExpiryListDecodesStrictKeysetPages(t *testing.T) {
 			installation, _ := expiryFixture(t)
 			transaction := &expiryListTransaction{body: test.body}
 			database := &fakeOutboxDatabase{transaction: transaction}
-			store := &TrustContractExpiryStore{database: database}
+			store := &TrustContractExpiryStore{trustContractEndStore{database: database, ending: trustContractExpiry}}
 			page, err := store.List(t.Context(), installation, contractexpiry.Cursor{}, 2)
 			if (err != nil) != test.wantErr {
 				t.Fatalf("List() error = %v, wantErr %v", err, test.wantErr)
@@ -239,7 +240,7 @@ func TestTrustContractExpiryListDecodesStrictKeysetPages(t *testing.T) {
 			if page.Done != test.wantDone || len(page.Items) != test.wantLen {
 				t.Fatalf("page = %+v", page)
 			}
-			if !test.wantDone && page.Next != (contractexpiry.Cursor{ExpiresAt: page.Items[1].ExpiresAt, ContractID: page.Items[1].ContractID}) {
+			if !test.wantDone && page.Next != (contractexpiry.Cursor{At: page.Items[1].At, ContractID: page.Items[1].ContractID}) {
 				t.Fatalf("Next = %+v", page.Next)
 			}
 		})
@@ -254,18 +255,60 @@ func TestTrustContractExpiryRejectsUnsafeConstructionAndInput(t *testing.T) {
 		}
 	}
 	installation, contract := expiryFixture(t)
-	store := &TrustContractExpiryStore{database: &fakeOutboxDatabase{}}
-	if _, err := store.Expire(t.Context(), deployment.ID{}, contract); !errors.Is(err, ErrInvalidTrustContractExpiry) {
+	store := &TrustContractExpiryStore{trustContractEndStore{database: &fakeOutboxDatabase{}, ending: trustContractExpiry}}
+	if _, err := store.End(t.Context(), deployment.ID{}, contract); !errors.Is(err, ErrInvalidTrustContractExpiry) {
 		t.Fatal("missing installation accepted")
 	}
-	if _, err := store.Expire(t.Context(), installation, sharing.ContractID{}); !errors.Is(err, ErrInvalidTrustContractExpiry) {
+	if _, err := store.End(t.Context(), installation, sharing.ContractID{}); !errors.Is(err, ErrInvalidTrustContractExpiry) {
 		t.Fatal("missing contract accepted")
 	}
-	partial := contractexpiry.Cursor{ExpiresAt: time.Now()}
+	partial := contractexpiry.Cursor{At: time.Now()}
 	if _, err := store.List(t.Context(), installation, partial, 2); !errors.Is(err, ErrInvalidTrustContractExpiry) {
 		t.Fatal("partial cursor accepted")
 	}
 	if _, err := store.List(t.Context(), installation, contractexpiry.Cursor{}, 129); !errors.Is(err, ErrInvalidTrustContractExpiry) {
 		t.Fatal("unbounded page accepted")
+	}
+}
+
+func TestTrustContractDeviceRemovalDecodesItsOwnPagesAndAction(t *testing.T) {
+	t.Parallel()
+	installation, contract := expiryFixture(t)
+	if _, err := NewTrustContractDeviceRemovalStore(nil); !errors.Is(err, ErrInvalidTrustContractExpiry) {
+		t.Fatalf("nil pool accepted: %v", err)
+	}
+	requested := `{"items":[{"contract_id":"` + expiryTestContract + `","requested_at":"2026-10-16T12:00:00Z"}],"done":true}`
+	page, err := decodeTrustContractPage([]byte(requested), trustContractDeviceRemoval.instant, contractexpiry.Cursor{}, 16)
+	if err != nil || len(page.Items) != 1 || page.Items[0].ContractID != contract ||
+		!page.Items[0].At.Equal(time.Date(2026, time.October, 16, 12, 0, 0, 0, time.UTC)) {
+		t.Fatalf("removal page = %+v, %v", page, err)
+	}
+	for name, body := range map[string]string{
+		"expiry instant": `{"items":[{"contract_id":"` + expiryTestContract + `","expires_at":"2026-10-16T12:00:00Z"}],"done":true}`,
+		"extra key":      `{"items":[{"contract_id":"` + expiryTestContract + `","requested_at":"2026-10-16T12:00:00Z","x":1}],"done":true}`,
+		"missing time":   `{"items":[{"contract_id":"` + expiryTestContract + `"}],"done":true}`,
+	} {
+		if _, err := decodeTrustContractPage([]byte(body), trustContractDeviceRemoval.instant, contractexpiry.Cursor{}, 16); !errors.Is(err, ErrTrustContractExpiry) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+
+	transaction := &expiryTestTransaction{}
+	change := "01890f00-0000-7000-8000-000000000099"
+	proof := transaction.proof([]any{installation.String(), contract.String(), change})
+	proof.Action = trustContractInvalidatedAction
+	encoded, err := json.Marshal(proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changeID, err := publicid.Parse(change)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeTrustContractEndProof(encoded, trustContractDeviceRemoval.action, contract, changeID); err != nil {
+		t.Fatalf("invalidated proof refused: %v", err)
+	}
+	if _, err := decodeTrustContractEndProof(encoded, trustContractExpiry.action, contract, changeID); !errors.Is(err, ErrTrustContractExpiry) {
+		t.Fatalf("an expiry finalizer accepted an invalidation proof: %v", err)
 	}
 }

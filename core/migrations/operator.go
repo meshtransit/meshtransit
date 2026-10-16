@@ -243,3 +243,11 @@ var deviceAliasProviderReadmissionOwnershipSQL string
 func DeviceAliasProviderReadmissionOwnershipSQL() string {
 	return deviceAliasProviderReadmissionOwnershipSQL
 }
+
+//go:embed operator/000178_trust_contract_device_removal_ownership.sql
+var trustContractDeviceRemovalOwnershipSQL string
+
+// TrustContractDeviceRemovalOwnershipSQL moves the entry points that end the
+// shares of removed provider Devices (schema 178) to the sharing writer and
+// exposes them to the worker role only.
+func TrustContractDeviceRemovalOwnershipSQL() string { return trustContractDeviceRemovalOwnershipSQL }

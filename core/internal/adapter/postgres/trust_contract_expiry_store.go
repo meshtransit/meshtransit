@@ -33,31 +33,81 @@ const (
 	listExpiredTrustContractsSQL     = `SELECT mesh_ops.list_expired_trust_contracts_v1($1::UUID,$2::TIMESTAMPTZ,$3::UUID,$4::INTEGER)`
 	prepareTrustContractExpirySQL    = `SELECT mesh_ops.prepare_trust_contract_expiry_v1($1::UUID,$2::UUID,$3::UUID)`
 	finalizeTrustContractExpirySQL   = `SELECT mesh_ops.finalize_trust_contract_expiry_v1($1::UUID,$2::UUID,$3::UUID,$4::JSONB)`
+	listDeviceRemovalsSQL            = `SELECT mesh_ops.list_trust_contract_device_removals_v1($1::UUID,$2::TIMESTAMPTZ,$3::UUID,$4::INTEGER)`
+	prepareDeviceRemovalSQL          = `SELECT mesh_ops.prepare_trust_contract_device_removal_v1($1::UUID,$2::UUID,$3::UUID)`
+	finalizeDeviceRemovalSQL         = `SELECT mesh_ops.finalize_trust_contract_device_removal_v1($1::UUID,$2::UUID,$3::UUID,$4::JSONB)`
 	trustContractExpiryAction        = "trust_contract.expired"
+	trustContractInvalidatedAction   = "trust_contract.invalidated"
 	trustContractExpiryPermission    = "system.reconcile"
 	trustContractExpiryAggregateKind = "trust_contract"
 )
 
-// TrustContractExpiryStore exposes the expiry finalizer through a worker pool
-// only. It holds no authority cache, sticky transaction or goroutine.
-type TrustContractExpiryStore struct{ database outboxDatabase }
+// trustContractEnding names the entry points of one reason to end contracts,
+// the audit action they record and the instant their discovery orders by.
+type trustContractEnding struct {
+	listSQL, prepareSQL, finalizeSQL, action, instant string
+}
+
+var (
+	trustContractExpiry = trustContractEnding{
+		listSQL: listExpiredTrustContractsSQL, prepareSQL: prepareTrustContractExpirySQL,
+		finalizeSQL: finalizeTrustContractExpirySQL, action: trustContractExpiryAction, instant: "expires_at",
+	}
+	trustContractDeviceRemoval = trustContractEnding{
+		listSQL: listDeviceRemovalsSQL, prepareSQL: prepareDeviceRemovalSQL,
+		finalizeSQL: finalizeDeviceRemovalSQL, action: trustContractInvalidatedAction, instant: "requested_at",
+	}
+)
+
+// trustContractEndStore runs one finalizer through a worker pool only. It
+// holds no authority cache, sticky transaction or goroutine.
+type trustContractEndStore struct {
+	database outboxDatabase
+	ending   trustContractEnding
+}
+
+// TrustContractExpiryStore ends contracts past their expiry.
+type TrustContractExpiryStore struct{ trustContractEndStore }
+
+// TrustContractDeviceRemovalStore ends contracts whose provider Device was
+// removed, as queued by the database when the Device left.
+type TrustContractDeviceRemovalStore struct{ trustContractEndStore }
 
 var (
 	_ contractexpiry.Candidates = (*TrustContractExpiryStore)(nil)
 	_ contractexpiry.Finalizer  = (*TrustContractExpiryStore)(nil)
+	_ contractexpiry.Candidates = (*TrustContractDeviceRemovalStore)(nil)
+	_ contractexpiry.Finalizer  = (*TrustContractDeviceRemovalStore)(nil)
 )
+
+func workerEndStore(pool *Pool, ending trustContractEnding) (trustContractEndStore, error) {
+	if pool == nil || pool.role != PoolRoleWorker || pool.outboxDatabase == nil {
+		return trustContractEndStore{}, ErrInvalidTrustContractExpiry
+	}
+	return trustContractEndStore{database: pool.outboxDatabase, ending: ending}, nil
+}
 
 // NewTrustContractExpiryStore rejects non-worker pools before any effect.
 func NewTrustContractExpiryStore(pool *Pool) (*TrustContractExpiryStore, error) {
-	if pool == nil || pool.role != PoolRoleWorker || pool.outboxDatabase == nil {
-		return nil, ErrInvalidTrustContractExpiry
+	store, err := workerEndStore(pool, trustContractExpiry)
+	if err != nil {
+		return nil, err
 	}
-	return &TrustContractExpiryStore{database: pool.outboxDatabase}, nil
+	return &TrustContractExpiryStore{store}, nil
 }
 
-// List reads one keyset page of open contracts already past expiry in one
-// read-only transaction. Discovery writes no mutation, audit or outbox row.
-func (store *TrustContractExpiryStore) List(ctx context.Context, installation deployment.ID, after contractexpiry.Cursor, limit int) (result contractexpiry.Page, resultErr error) {
+// NewTrustContractDeviceRemovalStore rejects non-worker pools before any effect.
+func NewTrustContractDeviceRemovalStore(pool *Pool) (*TrustContractDeviceRemovalStore, error) {
+	store, err := workerEndStore(pool, trustContractDeviceRemoval)
+	if err != nil {
+		return nil, err
+	}
+	return &TrustContractDeviceRemovalStore{store}, nil
+}
+
+// List reads one keyset page of open contracts to end in one read-only
+// transaction. Discovery writes no mutation, audit or outbox row.
+func (store *trustContractEndStore) List(ctx context.Context, installation deployment.ID, after contractexpiry.Cursor, limit int) (result contractexpiry.Page, resultErr error) {
 	if ctx == nil || store == nil || store.database == nil || !installation.IsValid() || !after.IsValid() || limit < 1 || limit > 128 {
 		return contractexpiry.Page{}, ErrInvalidTrustContractExpiry
 	}
@@ -87,15 +137,15 @@ func (store *TrustContractExpiryStore) List(ctx context.Context, installation de
 	if err := transaction.Exec(ctx, configureAuthTransactionSQL, "3000", "1000", "5000"); err != nil {
 		return contractexpiry.Page{}, errors.Join(ErrTrustContractExpiry, err)
 	}
-	var afterExpiry, afterContract any
+	var afterInstant, afterContract any
 	if !after.IsZero() {
-		afterExpiry, afterContract = after.ExpiresAt, after.ContractID.String()
+		afterInstant, afterContract = after.At, after.ContractID.String()
 	}
 	var encoded []byte
-	if err := transaction.QueryRow(ctx, listExpiredTrustContractsSQL, installation.String(), afterExpiry, afterContract, limit).Scan(&encoded); err != nil {
+	if err := transaction.QueryRow(ctx, store.ending.listSQL, installation.String(), afterInstant, afterContract, limit).Scan(&encoded); err != nil {
 		return contractexpiry.Page{}, errors.Join(ErrTrustContractExpiry, err)
 	}
-	page, err := decodeExpiredTrustContracts(encoded, after, limit)
+	page, err := decodeTrustContractPage(encoded, store.ending.instant, after, limit)
 	if err != nil {
 		return contractexpiry.Page{}, err
 	}
@@ -106,16 +156,15 @@ func (store *TrustContractExpiryStore) List(ctx context.Context, installation de
 	return page, nil
 }
 
-func decodeExpiredTrustContracts(encoded []byte, after contractexpiry.Cursor, limit int) (contractexpiry.Page, error) {
+// decodeTrustContractPage reads items of exactly contract_id and the named
+// instant; any other key is rejected.
+func decodeTrustContractPage(encoded []byte, instant string, after contractexpiry.Cursor, limit int) (contractexpiry.Page, error) {
 	if len(encoded) == 0 || len(encoded) > 65536 {
 		return contractexpiry.Page{}, ErrTrustContractExpiry
 	}
 	var record struct {
-		Items []struct {
-			ContractID string    `json:"contract_id"`
-			ExpiresAt  time.Time `json:"expires_at"`
-		} `json:"items"`
-		Done *bool `json:"done"`
+		Items []map[string]json.RawMessage `json:"items"`
+		Done  *bool                        `json:"done"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
 	decoder.DisallowUnknownFields()
@@ -128,13 +177,19 @@ func decodeExpiredTrustContracts(encoded []byte, after contractexpiry.Cursor, li
 	}
 	page := contractexpiry.Page{Done: *record.Done, Items: make([]contractexpiry.Candidate, 0, len(record.Items))}
 	for _, item := range record.Items {
-		contract, err := sharing.ParseContractID(item.ContractID)
+		var contractText string
+		var at time.Time
+		if len(item) != 2 || json.Unmarshal(item["contract_id"], &contractText) != nil ||
+			json.Unmarshal(item[instant], &at) != nil {
+			return contractexpiry.Page{}, ErrTrustContractExpiry
+		}
+		contract, err := sharing.ParseContractID(contractText)
 		if err != nil {
 			return contractexpiry.Page{}, ErrTrustContractExpiry
 		}
-		candidate := contractexpiry.Candidate{ContractID: contract, ExpiresAt: item.ExpiresAt.UTC()}
+		candidate := contractexpiry.Candidate{ContractID: contract, At: at.UTC()}
 		page.Items = append(page.Items, candidate)
-		page.Next = contractexpiry.Cursor{ExpiresAt: candidate.ExpiresAt, ContractID: candidate.ContractID}
+		page.Next = contractexpiry.Cursor{At: candidate.At, ContractID: candidate.ContractID}
 	}
 	if page.Done {
 		page.Next = contractexpiry.Cursor{}
@@ -145,11 +200,11 @@ func decodeExpiredTrustContracts(encoded []byte, after contractexpiry.Cursor, li
 	return page, nil
 }
 
-// Expire prepares the terminal state and locks the audit heads, hashes the
+// End prepares the terminal state and locks the audit heads, hashes the
 // evidence locally, then finalizes and commits in one bounded transaction. An
 // unknown commit outcome is reported and never retried here; the next sweep
 // re-reads committed state.
-func (store *TrustContractExpiryStore) Expire(ctx context.Context, installation deployment.ID, contract sharing.ContractID) (changed bool, resultErr error) {
+func (store *trustContractEndStore) End(ctx context.Context, installation deployment.ID, contract sharing.ContractID) (changed bool, resultErr error) {
 	if ctx == nil || store == nil || store.database == nil || !installation.IsValid() || !contract.IsValid() {
 		return false, ErrInvalidTrustContractExpiry
 	}
@@ -189,20 +244,20 @@ func (store *TrustContractExpiryStore) Expire(ctx context.Context, installation 
 		return false, errors.Join(ErrTrustContractExpiry, err)
 	}
 	var encoded []byte
-	if err := transaction.QueryRow(ctx, prepareTrustContractExpirySQL, installation.String(), contract.String(), change.String()).Scan(&encoded); err != nil {
+	if err := transaction.QueryRow(ctx, store.ending.prepareSQL, installation.String(), contract.String(), change.String()).Scan(&encoded); err != nil {
 		return false, errors.Join(ErrTrustContractExpiry, err)
 	}
-	proof, err := decodeTrustContractExpiryProof(encoded, contract, change)
+	proof, err := decodeTrustContractEndProof(encoded, store.ending.action, contract, change)
 	if err != nil {
 		return false, err
 	}
 	if proof.Changed {
-		events, err := hashTrustContractExpiryEvents(proof, change, ids[1:])
+		events, err := hashTrustContractEndEvents(proof, store.ending.action, change, ids[1:])
 		if err != nil {
 			return false, errors.Join(ErrTrustContractExpiry, err)
 		}
 		var count int
-		if err := transaction.QueryRow(ctx, finalizeTrustContractExpirySQL, installation.String(), contract.String(), change.String(), events).Scan(&count); err != nil {
+		if err := transaction.QueryRow(ctx, store.ending.finalizeSQL, installation.String(), contract.String(), change.String(), events).Scan(&count); err != nil {
 			return false, errors.Join(ErrTrustContractExpiry, err)
 		}
 		if count != 2 {
@@ -246,7 +301,7 @@ type trustContractExpiryEvidence struct {
 	EventHash       string `json:"event_hash,omitempty"`
 }
 
-func decodeTrustContractExpiryProof(encoded []byte, contract sharing.ContractID, change publicid.ID) (trustContractExpiryProof, error) {
+func decodeTrustContractEndProof(encoded []byte, action string, contract sharing.ContractID, change publicid.ID) (trustContractExpiryProof, error) {
 	if len(encoded) == 0 || len(encoded) > 65536 {
 		return trustContractExpiryProof{}, ErrTrustContractExpiry
 	}
@@ -275,7 +330,7 @@ func decodeTrustContractExpiryProof(encoded []byte, contract sharing.ContractID,
 	transaction, err := strconv.ParseInt(proof.TransactionID, 10, 64)
 	if err != nil || transaction <= 0 || proof.ChangeID != change.String() || proof.ContractID != contract.String() ||
 		proof.AggregateKind != trustContractExpiryAggregateKind || proof.AggregateID != contract.String() ||
-		proof.AggregateVersion <= 1 || proof.Action != trustContractExpiryAction || len(proof.Events) != 2 {
+		proof.AggregateVersion <= 1 || proof.Action != action || len(proof.Events) != 2 {
 		return trustContractExpiryProof{}, ErrTrustContractExpiry
 	}
 	for index, event := range proof.Events {
@@ -306,9 +361,9 @@ func validTrustContractExpiryEvidence(event trustContractExpiryEvidence) bool {
 		event.EventID == "" && event.OutboxID == "" && event.EventHash == ""
 }
 
-// hashTrustContractExpiryEvents binds each event to a fresh event and outbox
+// hashTrustContractEndEvents binds each event to a fresh event and outbox
 // id. The system actor and correlation are zero, as in other reconcilers.
-func hashTrustContractExpiryEvents(proof trustContractExpiryProof, change publicid.ID, ids []publicid.ID) ([]byte, error) {
+func hashTrustContractEndEvents(proof trustContractExpiryProof, action string, change publicid.ID, ids []publicid.ID) ([]byte, error) {
 	if len(ids) != 2*len(proof.Events) {
 		return nil, ErrTrustContractExpiry
 	}
@@ -328,7 +383,7 @@ func hashTrustContractExpiryEvents(proof trustContractExpiryProof, change public
 		hash, err := audit.HashEvent(audit.EventHashMaterial{
 			PreviousHash: [32]byte(previous), EventID: eventID, ChangeID: change,
 			AggregateKind: trustContractExpiryAggregateKind, AggregateID: aggregateID, AggregateVersion: proof.AggregateVersion,
-			NetworkRevision: event.NetworkRevision, Action: trustContractExpiryAction, Permission: trustContractExpiryPermission,
+			NetworkRevision: event.NetworkRevision, Action: action, Permission: trustContractExpiryPermission,
 			AuditPayloadHash:  sha256.Sum256([]byte(event.AuditPayload)),
 			OutboxEventClass:  "network.revision.advanced",
 			OutboxPayloadHash: sha256.Sum256([]byte(event.OutboxPayload)),

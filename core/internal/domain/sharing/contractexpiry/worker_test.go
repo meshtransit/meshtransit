@@ -20,7 +20,7 @@ func (list listFunc) List(ctx context.Context, id deployment.ID, after Cursor, l
 
 type expireFunc func(context.Context, deployment.ID, sharing.ContractID) (bool, error)
 
-func (expire expireFunc) Expire(ctx context.Context, id deployment.ID, contract sharing.ContractID) (bool, error) {
+func (expire expireFunc) End(ctx context.Context, id deployment.ID, contract sharing.ContractID) (bool, error) {
 	return expire(ctx, id, contract)
 }
 
@@ -41,7 +41,7 @@ func testOptions(t *testing.T, batch int) Options {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Options{DeploymentID: id, BatchSize: batch, PollInterval: 100 * time.Millisecond, OperationTimeout: time.Second}
+	return Options{Kind: KindExpiry, DeploymentID: id, BatchSize: batch, PollInterval: 100 * time.Millisecond, OperationTimeout: time.Second}
 }
 
 func TestNewRejectsUnsafeConfiguration(t *testing.T) {
@@ -58,6 +58,9 @@ func TestNewRejectsUnsafeConfiguration(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "valid", mutate: func(*Options) {}, list: list, expire: expire, logger: discardLogger},
+		{name: "device removal", mutate: func(o *Options) { o.Kind = KindDeviceRemoval }, list: list, expire: expire, logger: discardLogger},
+		{name: "unknown kind", mutate: func(o *Options) { o.Kind = "renewal" }, list: list, expire: expire, logger: discardLogger, wantErr: true},
+		{name: "missing kind", mutate: func(o *Options) { o.Kind = "" }, list: list, expire: expire, logger: discardLogger, wantErr: true},
 		{name: "missing deployment", mutate: func(o *Options) { o.DeploymentID = deployment.ID{} }, list: list, expire: expire, logger: discardLogger, wantErr: true},
 		{name: "batch too large", mutate: func(o *Options) { o.BatchSize = 129 }, list: list, expire: expire, logger: discardLogger, wantErr: true},
 		{name: "poll too fast", mutate: func(o *Options) { o.PollInterval = time.Millisecond }, list: list, expire: expire, logger: discardLogger, wantErr: true},
@@ -82,11 +85,11 @@ func TestNewRejectsUnsafeConfiguration(t *testing.T) {
 func TestPageIsValid(t *testing.T) {
 	t.Parallel()
 	base := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
-	first := Candidate{ContractID: mustContract(t, "01890f00-0000-7000-8000-000000000010"), ExpiresAt: base}
-	second := Candidate{ContractID: mustContract(t, "01890f00-0000-7000-8000-000000000011"), ExpiresAt: base}
-	later := Candidate{ContractID: mustContract(t, "01890f00-0000-7000-8000-000000000001"), ExpiresAt: base.Add(time.Second)}
+	first := Candidate{ContractID: mustContract(t, "01890f00-0000-7000-8000-000000000010"), At: base}
+	second := Candidate{ContractID: mustContract(t, "01890f00-0000-7000-8000-000000000011"), At: base}
+	later := Candidate{ContractID: mustContract(t, "01890f00-0000-7000-8000-000000000001"), At: base.Add(time.Second)}
 	at := func(candidate Candidate) Cursor {
-		return Cursor{ExpiresAt: candidate.ExpiresAt, ContractID: candidate.ContractID}
+		return Cursor{At: candidate.At, ContractID: candidate.ContractID}
 	}
 	tests := []struct {
 		name  string
@@ -104,7 +107,7 @@ func TestPageIsValid(t *testing.T) {
 		{name: "short page not done", page: Page{Items: []Candidate{first}, Next: at(first)}},
 		{name: "next is not last item", page: Page{Items: []Candidate{first, second}, Next: at(first)}},
 		{name: "too many items", page: Page{Items: []Candidate{first, second, later}, Done: true}},
-		{name: "invalid contract", page: Page{Items: []Candidate{{ExpiresAt: base}}, Done: true}},
+		{name: "invalid contract", page: Page{Items: []Candidate{{At: base}}, Done: true}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -120,10 +123,10 @@ func TestSweepAdvancesPastFailuresAndRestartsWhenDone(t *testing.T) {
 	t.Parallel()
 	options := testOptions(t, 2)
 	base := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
-	failing := Candidate{ContractID: mustContract(t, "01890f00-0000-7000-8000-000000000010"), ExpiresAt: base}
-	open := Candidate{ContractID: mustContract(t, "01890f00-0000-7000-8000-000000000011"), ExpiresAt: base}
-	gone := Candidate{ContractID: mustContract(t, "01890f00-0000-7000-8000-000000000012"), ExpiresAt: base.Add(time.Second)}
-	next := Cursor{ExpiresAt: open.ExpiresAt, ContractID: open.ContractID}
+	failing := Candidate{ContractID: mustContract(t, "01890f00-0000-7000-8000-000000000010"), At: base}
+	open := Candidate{ContractID: mustContract(t, "01890f00-0000-7000-8000-000000000011"), At: base}
+	gone := Candidate{ContractID: mustContract(t, "01890f00-0000-7000-8000-000000000012"), At: base.Add(time.Second)}
+	next := Cursor{At: open.At, ContractID: open.ContractID}
 	reads := 0
 	list := listFunc(func(_ context.Context, id deployment.ID, after Cursor, limit int) (Page, error) {
 		reads++
@@ -164,7 +167,7 @@ func TestSweepAdvancesPastFailuresAndRestartsWhenDone(t *testing.T) {
 		t.Fatalf("a completed sweep must restart, cursor = %+v", cursor)
 	}
 	got := worker.Snapshot()
-	if got.Passes != 2 || got.Expired != 1 || got.Deferred != 1 || got.DiscoveryErrors != 0 {
+	if got.Passes != 2 || got.Ended != 1 || got.Deferred != 1 || got.DiscoveryErrors != 0 {
 		t.Fatalf("Snapshot() = %+v", got)
 	}
 }
@@ -173,8 +176,8 @@ func TestSweepRestartsAfterInvalidDiscovery(t *testing.T) {
 	t.Parallel()
 	options := testOptions(t, 1)
 	base := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
-	candidate := Candidate{ContractID: mustContract(t, "01890f00-0000-7000-8000-000000000010"), ExpiresAt: base}
-	after := Cursor{ExpiresAt: candidate.ExpiresAt, ContractID: candidate.ContractID}
+	candidate := Candidate{ContractID: mustContract(t, "01890f00-0000-7000-8000-000000000010"), At: base}
+	after := Cursor{At: candidate.At, ContractID: candidate.ContractID}
 	tests := []struct {
 		name string
 		page Page
@@ -198,7 +201,7 @@ func TestSweepRestartsAfterInvalidDiscovery(t *testing.T) {
 			if cursor := worker.sweep(t.Context(), after); !cursor.IsZero() {
 				t.Fatalf("cursor = %+v, want restart", cursor)
 			}
-			if got := worker.Snapshot(); got.DiscoveryErrors != 1 || got.Expired != 0 {
+			if got := worker.Snapshot(); got.DiscoveryErrors != 1 || got.Ended != 0 {
 				t.Fatalf("Snapshot() = %+v", got)
 			}
 		})

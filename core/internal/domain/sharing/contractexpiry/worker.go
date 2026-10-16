@@ -23,15 +23,27 @@ var (
 	ErrWorkerNotStarted = errors.New("trust contract expiry worker: not started")
 )
 
+// Kind names why a worker ends contracts, in logs only.
+type Kind string
+
+const (
+	// KindExpiry ends contracts past their expiry.
+	KindExpiry Kind = "expiry"
+	// KindDeviceRemoval ends contracts whose provider Device was removed.
+	KindDeviceRemoval Kind = "device_removal"
+)
+
 // Options binds one process to an exact installation and finite sequential work.
 type Options struct {
+	Kind                           Kind
 	DeploymentID                   deployment.ID
 	BatchSize                      int
 	PollInterval, OperationTimeout time.Duration
 }
 
 func (options Options) valid() bool {
-	return options.DeploymentID.IsValid() && options.BatchSize >= 1 && options.BatchSize <= maximumBatchSize &&
+	return (options.Kind == KindExpiry || options.Kind == KindDeviceRemoval) &&
+		options.DeploymentID.IsValid() && options.BatchSize >= 1 && options.BatchSize <= maximumBatchSize &&
 		options.PollInterval >= 100*time.Millisecond && options.PollInterval <= time.Minute &&
 		options.OperationTimeout >= 100*time.Millisecond && options.OperationTimeout <= 15*time.Second
 }
@@ -50,14 +62,14 @@ type Worker struct {
 	cancel  context.CancelFunc
 	done    chan error
 
-	running                                    atomic.Bool
-	passes, discoveryErrors, expired, deferred atomic.Uint64
+	running                                  atomic.Bool
+	passes, discoveryErrors, ended, deferred atomic.Uint64
 }
 
 // Measurements exposes bounded, identifier-free process measurements.
 type Measurements struct {
-	Running                                    bool
-	Passes, DiscoveryErrors, Expired, Deferred uint64
+	Running                                  bool
+	Passes, DiscoveryErrors, Ended, Deferred uint64
 }
 
 // New constructs a stopped worker without I/O.
@@ -137,7 +149,7 @@ func (worker *Worker) Snapshot() Measurements {
 	}
 	return Measurements{
 		Running: worker.running.Load(), Passes: worker.passes.Load(), DiscoveryErrors: worker.discoveryErrors.Load(),
-		Expired: worker.expired.Load(), Deferred: worker.deferred.Load(),
+		Ended: worker.ended.Load(), Deferred: worker.deferred.Load(),
 	}
 }
 
@@ -168,7 +180,8 @@ func (worker *Worker) sweep(ctx context.Context, after Cursor) Cursor {
 	if err != nil || !page.IsValid(after, worker.options.BatchSize) {
 		if ctx.Err() == nil {
 			worker.discoveryErrors.Add(1)
-			worker.logger.WarnContext(ctx, "Trust Contract expiry discovery deferred", "error_code", "trust_contract_expiry_read_failed")
+			worker.logger.WarnContext(ctx, "Trust Contract end discovery deferred",
+				"finalizer", string(worker.options.Kind), "error_code", "trust_contract_end_read_failed")
 		}
 		return Cursor{}
 	}
@@ -178,19 +191,20 @@ func (worker *Worker) sweep(ctx context.Context, after Cursor) Cursor {
 			return after
 		}
 		operationCtx, stop := context.WithTimeout(ctx, worker.options.OperationTimeout)
-		expired, err := worker.finalizer.Expire(operationCtx, worker.options.DeploymentID, candidate.ContractID)
+		ended, err := worker.finalizer.End(operationCtx, worker.options.DeploymentID, candidate.ContractID)
 		stop()
 		if err != nil {
 			worker.deferred.Add(1)
 			failures = true
 			continue
 		}
-		if expired {
-			worker.expired.Add(1)
+		if ended {
+			worker.ended.Add(1)
 		}
 	}
 	if failures && ctx.Err() == nil {
-		worker.logger.WarnContext(ctx, "Trust Contract expiry deferred", "error_code", "trust_contract_expiry_deferred")
+		worker.logger.WarnContext(ctx, "Trust Contract end deferred",
+			"finalizer", string(worker.options.Kind), "error_code", "trust_contract_end_deferred")
 	}
 	if page.Done {
 		return Cursor{}

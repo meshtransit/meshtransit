@@ -134,6 +134,13 @@ be shared on: a consumer cannot offer it to a third Network.
 - An expired contract stops traffic at its deadline. A worker (off by default,
   `MESHTRANSIT_CONTRACT_EXPIRY_WORKER_ENABLED`) then finalizes it and frees its
   name for reuse.
+- Removing the provider Device (revoked or deleted, by any path) ends its
+  shares. Traffic stops at once because map readers need an active Device;
+  the same worker process then moves the contract, Imported Resource and
+  Private Endpoint to `invalidated`, withdraws the access name and alias, and
+  records `trust_contract.invalidated` with reason `provider_device_removed`
+  in both Networks. A suspended or expired Device keeps its shares, since it
+  can come back.
 
 Every decision is recorded in both Networks' audit streams; the other side's
 record names the relation but not the acting side's reason or session

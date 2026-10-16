@@ -74,9 +74,9 @@ func assertTrustContractExpiryReleasesAccessName(
 		t.Fatal("expired open contract was not discovered")
 	}
 	before := shareRevisions(ctx, t, admin, first.contract.ID())
-	changed, err := expiry.Expire(ctx, installation, first.contract.ID())
+	changed, err := expiry.End(ctx, installation, first.contract.ID())
 	if err != nil || !changed {
-		t.Fatalf("Expire() = %v, %v", changed, err)
+		t.Fatalf("End() = %v, %v", changed, err)
 	}
 	assertExpiredShareRows(ctx, t, admin, first.contract)
 	after := shareRevisions(ctx, t, admin, first.contract.ID())
@@ -87,9 +87,9 @@ func assertTrustContractExpiryReleasesAccessName(
 	}
 	assertTrustContractExpiryEvidence(ctx, t, admin, first.contract.ID())
 
-	changed, err = expiry.Expire(ctx, installation, first.contract.ID())
+	changed, err = expiry.End(ctx, installation, first.contract.ID())
 	if err != nil || changed {
-		t.Fatalf("repeated Expire() = %v, %v, want unchanged", changed, err)
+		t.Fatalf("repeated End() = %v, %v, want unchanged", changed, err)
 	}
 	if listsExpiredContract(ctx, t, expiry, installation, first.contract.ID()) {
 		t.Fatal("finalized contract is still discovered")
@@ -153,7 +153,25 @@ func createLabeledOffer(
 	proofMarker byte,
 ) labeledOffer {
 	t.Helper()
-	label, err := sharing.ParseAccessLabel(expiringShareLabel)
+	return createOfferWithLabel(ctx, t, store, session, providerScope, consumerScope, resourceID,
+		maximumTraffic, reason, expiringShareLabel, expiresAt, proofMarker)
+}
+
+func createOfferWithLabel(
+	ctx context.Context,
+	t *testing.T,
+	store *postgresadapter.ResourceSharingStore,
+	session accountsession.Session,
+	providerScope, consumerScope network.Scope,
+	resourceID resource.ID,
+	maximumTraffic sharing.TrafficSet,
+	reason sharing.AuditReason,
+	accessLabel string,
+	expiresAt time.Time,
+	proofMarker byte,
+) labeledOffer {
+	t.Helper()
+	label, err := sharing.ParseAccessLabel(accessLabel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,8 +235,27 @@ func createLabeledShare(
 	proofMarker byte,
 ) labeledShare {
 	t.Helper()
-	offer := createLabeledOffer(ctx, t, store, session, providerScope, consumerScope, resourceID,
-		maximumTraffic, reason, expiresAt, proofMarker)
+	return createShareWithLabel(ctx, t, store, session, providerScope, consumerScope, resourceID,
+		maximumTraffic, reason, importedName, expiringShareLabel, expiresAt, proofMarker)
+}
+
+func createShareWithLabel(
+	ctx context.Context,
+	t *testing.T,
+	store *postgresadapter.ResourceSharingStore,
+	session accountsession.Session,
+	providerScope, consumerScope network.Scope,
+	resourceID resource.ID,
+	maximumTraffic sharing.TrafficSet,
+	reason sharing.AuditReason,
+	importedName resource.DisplayName,
+	accessLabel string,
+	expiresAt time.Time,
+	proofMarker byte,
+) labeledShare {
+	t.Helper()
+	offer := createOfferWithLabel(ctx, t, store, session, providerScope, consumerScope, resourceID,
+		maximumTraffic, reason, accessLabel, expiresAt, proofMarker)
 	accepted, err := store.DecideOffer(ctx, acceptLabeledOffer(t, session, providerScope, consumerScope,
 		offer, importedName, reason, proofMarker+1))
 	if err != nil {

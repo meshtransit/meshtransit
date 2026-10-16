@@ -235,6 +235,9 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	if _, err := adminConnection.Exec(ctx, migrations.DeviceAliasProviderReadmissionOwnershipSQL()); err != nil {
 		t.Fatalf("harden provider readmitting alias worker: %v", err)
 	}
+	if _, err := adminConnection.Exec(ctx, migrations.TrustContractDeviceRemovalOwnershipSQL()); err != nil {
+		t.Fatalf("harden Trust Contract device removal entry points: %v", err)
+	}
 	assertShareLimitGuardPrivileges(ctx, t, adminConnection)
 	if _, err := adminConnection.Exec(ctx, migrations.PolicyImportedResourceScaleOwnershipSQL()); err != nil {
 		t.Fatalf("harden scaled Imported Resource publication: %v", err)
@@ -446,7 +449,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertPostgreSQLAccountSessionRevocation(ctx, t, adminConnection, runtimePool, migrationConfig)
 	assertPostgreSQLInvitations(ctx, t, adminConnection, runtimePool)
 	// After the tests that need four active Devices: it revokes one.
-	assertPostgreSQLPolicyInactiveDevice(ctx, t, adminConnection, runtimePool)
+	assertPostgreSQLPolicyInactiveDevice(ctx, t, adminConnection, runtimePool, workerPool)
 	assertPostgreSQLAccountSessionActivity(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLAccountSessionLogout(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLRevokedConsoleManagementScopes(ctx, t, runtimePool)

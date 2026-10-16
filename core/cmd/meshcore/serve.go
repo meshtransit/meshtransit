@@ -250,13 +250,15 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		roleServices = append(roleServices, app.OwnedService{Name: "device-alias-worker", Service: workerService})
 	}
 	if processConfig.ContractExpiryWorker != nil {
-		workerService, workerMetrics, composeErr := composeContractExpiryWorker(*processConfig.ContractExpiryWorker, storagePools.worker, logger)
+		workers, composeErr := composeContractEndWorkers(*processConfig.ContractExpiryWorker, storagePools.worker, logger)
 		if composeErr != nil {
 			logger.ErrorContext(ctx, "startup failed", "error_code", "contract_expiry_worker_composition_failure")
 			return 1
 		}
-		additionalMetrics = append(additionalMetrics, workerMetrics)
-		roleServices = append(roleServices, app.OwnedService{Name: "trust-contract-expiry-worker", Service: workerService})
+		for _, composed := range workers {
+			additionalMetrics = append(additionalMetrics, composed.metrics)
+			roleServices = append(roleServices, app.OwnedService{Name: composed.name, Service: composed.worker})
+		}
 	}
 	if processConfig.AccessLedgerWorker != nil {
 		workerService, workerMetrics, composeErr := composeAccessLedgerWorker(*processConfig.AccessLedgerWorker, storagePools.worker, logger)

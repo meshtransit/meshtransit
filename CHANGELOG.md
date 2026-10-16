@@ -5,6 +5,14 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: removing a provider Device ends its shares. A trigger queues the open
+  contracts of a Device that becomes revoked or deleted; the worker that
+  finalizes expiry also moves them to `invalidated`, frees the consumer
+  access name and alias, advances both Networks and audits
+  `trust_contract.invalidated` (reason `provider_device_removed`) on both
+  sides. Existing shares of removed Devices are queued by the migration
+  (schema 178, operator step `000178` before rollout). The Console shows
+  "Ended: the shared Device was removed or changed" to both sides.
 - Core (breaking): every API path follows resource rules, still under `v1`,
   with no old paths kept. `POST` on a collection creates (device tags, user
   groups, Network device groups, guardrails, interchanges, invitations,
@@ -16,8 +24,8 @@ merge (2026-10-09) are kept below.
   audit export moves to `GET …/audit-exports`, the enforcement history to
   `GET …/networks/{network}/enforcement-history`, assignable tags to
   `GET …/networks/{network}/assignable-device-tags`. The Console's cookie
-  path accepts `PUT`, `PATCH` and `DELETE` with a CSRF proof; a `DELETE`
-  carries no body.
+  path accepts `PATCH` and `DELETE` with a CSRF proof; a `DELETE` carries no
+  body.
 - Core: the Console lists Devices by name ten at a time with a name prefix
   (`q`) and an `active`/`inactive` filter, reads one Device with how it was
   enrolled and its tags (`GET …/devices/{device}`), its delivery status
