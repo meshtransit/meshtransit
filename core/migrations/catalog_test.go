@@ -12,8 +12,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 170 {
-		t.Fatalf("len(Catalog()) = %d, want 170", len(catalog))
+	if len(catalog) != 171 {
+		t.Fatalf("len(Catalog()) = %d, want 171", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1608,8 +1608,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 170 {
-		t.Fatalf("LatestVersion() = %d, want 170", LatestVersion())
+	if LatestVersion() != 171 {
+		t.Fatalf("LatestVersion() = %d, want 171", LatestVersion())
 	}
 }
 
@@ -4815,5 +4815,128 @@ func TestDeviceAliasConsumerReadmission(t *testing.T) {
 	}
 	if strings.Contains(operator, "_v2(") || strings.Contains(operator, "_v3(UUID,UUID,UUID,BIGINT") {
 		t.Error("operator step 170 must keep the previous versions for rollback")
+	}
+}
+
+// Schema 171 gives a resumed provider Device the endpoint's own Resource
+// aliases back: each admission is new Resource lease rows, so the unique
+// index over every Resource lease of an endpoint and family becomes a partial
+// one over the reserved lease, and the worker copies differ from their
+// previous version only where the readmission needs it.
+func TestDeviceAliasProviderReadmission(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 171 {
+		t.Fatalf("len(Catalog()) = %d, want schema 171", len(catalog))
+	}
+	migration := catalog[170]
+	if migration.Version != 171 {
+		t.Fatalf("migration 171 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE UNIQUE INDEX device_alias_resource_reserved_uidx\n    ON mesh.device_alias_lease (private_endpoint_id, family) WHERE alias_role = 'resource' AND state = 'reserved';\nDROP INDEX mesh.device_alias_resource_owner_uidx;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.reserve_device_aliases_internal_v5(UUID, UUID, BIGINT, BIGINT, BIGINT, UUID[])\n    TO mesh_device_alias_writer;",
+		"REVOKE ALL ON FUNCTION mesh_ops.reserve_device_aliases_internal_v5(UUID, UUID, BIGINT, BIGINT, BIGINT, UUID[])\n    FROM PUBLIC, mesh_runtime, mesh_worker,",
+		"REVOKE ALL ON FUNCTION mesh_ops.prepare_device_alias_change_v5(UUID,UUID,UUID,BIGINT,BIGINT,BIGINT,UUID[],UUID,UUID,TEXT) FROM PUBLIC,mesh_runtime,mesh_worker,",
+		"REVOKE ALL ON FUNCTION mesh_ops.load_device_alias_work_v4(UUID,UUID,UUID,INTEGER) FROM PUBLIC,mesh_runtime,mesh_worker,",
+		"REVOKE ALL ON FUNCTION mesh_ops.enforce_device_alias_network_uniqueness_v3() FROM PUBLIC;",
+		"DROP TRIGGER device_alias_network_uniqueness ON mesh.device_alias_lease;\nCREATE TRIGGER device_alias_network_uniqueness BEFORE INSERT ON mesh.device_alias_lease\n    FOR EACH ROW EXECUTE FUNCTION mesh_ops.enforce_device_alias_network_uniqueness_v3();",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 171 must contain %q", want)
+		}
+	}
+	if strings.Count(migration.SQL, "DROP INDEX") != 1 {
+		t.Error("schema 171 must drop only the Resource owner index")
+	}
+	for _, forbidden := range []string{"CREATE OR REPLACE", "BYPASSRLS", "OWNER TO", "TO mesh_worker", "TO mesh_runtime",
+		"DROP FUNCTION", "DROP TABLE", "DROP POLICY", "DISABLE ROW LEVEL SECURITY", "NO FORCE ROW LEVEL SECURITY"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 171 must not contain %q", forbidden)
+		}
+	}
+	function := func(sql, name, end string) string {
+		start := strings.Index(sql, "CREATE FUNCTION mesh_ops."+name+"(")
+		if start < 0 {
+			t.Fatalf("no %s", name)
+		}
+		stop := strings.Index(sql[start:], end)
+		if stop < 0 {
+			t.Fatalf("no end of %s", name)
+		}
+		return sql[start : start+stop+len(end)]
+	}
+	replace := func(text, previous, current string) string {
+		if strings.Count(text, previous) != 1 {
+			t.Fatalf("previous version must contain %q once", previous)
+		}
+		return strings.Replace(text, previous, current, 1)
+	}
+	previous := catalog[169].SQL
+	revoke := "\nREVOKE ALL ON FUNCTION mesh_ops."
+	trigger := strings.ReplaceAll(function(previous, "enforce_device_alias_network_uniqueness_v2", "$function$;"), "_v2(", "_v3(")
+	// Only the same endpoint, role, owner Device and family's quarantined
+	// lease may share the new lease's address.
+	trigger = replace(trigger, `          AND NOT (NEW.alias_role = 'consumer_source' AND lease.state = 'quarantined'
+            AND lease.private_endpoint_id = NEW.private_endpoint_id AND lease.alias_role = 'consumer_source'
+            AND lease.owner_device_id = NEW.owner_device_id AND lease.family = NEW.family)`, `          AND NOT (lease.state = 'quarantined'
+            AND lease.private_endpoint_id = NEW.private_endpoint_id AND lease.alias_role = NEW.alias_role
+            AND lease.owner_device_id = NEW.owner_device_id AND lease.family = NEW.family)`)
+	if function(migration.SQL, "enforce_device_alias_network_uniqueness_v3", "$function$;") != trigger {
+		t.Error("uniqueness v3 must be v2 that lets a Resource lease share only its own slot's quarantined address")
+	}
+	reserve := strings.ReplaceAll(function(previous, "reserve_device_aliases_internal_v4", "$function$;"), "_v4(", "_v5(")
+	for _, change := range [][2]string{
+		{"WHERE lease.private_endpoint_id = endpoint_row.id AND lease.alias_role = 'resource')\n        AND (SELECT count(*)",
+			"WHERE lease.private_endpoint_id = endpoint_row.id AND lease.alias_role = 'resource' AND lease.state = 'reserved')\n        AND (SELECT count(*)"},
+		{"WHERE lease.private_endpoint_id = endpoint_row.id AND lease.alias_role = 'resource')\n            <>",
+			"WHERE lease.private_endpoint_id = endpoint_row.id AND lease.alias_role = 'resource' AND lease.state = 'reserved')\n            <>"},
+		{"AND (role_value = 'resource' OR lease.state = 'reserved');", "AND lease.state = 'reserved';"},
+		{`                      AND lease.machine_key_epoch = owner_device.current_machine_key_epoch
+                    ORDER BY lease.id DESC LIMIT 1;
+                END IF;`, `                      AND lease.machine_key_epoch = owner_device.current_machine_key_epoch
+                    ORDER BY lease.id DESC LIMIT 1;
+                ELSE
+                    -- A resumed provider Device gets the endpoint's own
+                    -- quarantined Resource alias back whatever its keys: the
+                    -- share's name points at it. It is retained in both
+                    -- Networks, so no other endpoint can hold it.
+                    SELECT lease.address INTO candidate FROM mesh.device_alias_lease AS lease
+                    WHERE lease.private_endpoint_id = endpoint_row.id AND lease.alias_role = role_value
+                      AND lease.family = family_value AND lease.owner_device_id = owner_device.id
+                      AND lease.state = 'quarantined' AND lease.address_pool_id = pool_row.id
+                      AND lease.address << pool_row.prefix
+                    ORDER BY lease.id DESC LIMIT 1;
+                END IF;`},
+	} {
+		reserve = replace(reserve, change[0], change[1])
+	}
+	if function(migration.SQL, "reserve_device_aliases_internal_v5", "$function$;") != reserve {
+		t.Error("reserve v5 must be v4 that reuses only a reserved Resource lease and gives a resumed provider its own Resource aliases back")
+	}
+	prepare := strings.ReplaceAll(function(previous, "prepare_device_alias_change_v4", revoke), "_v4(", "_v5(")
+	if function(migration.SQL, "prepare_device_alias_change_v5", revoke) != prepare {
+		t.Error("prepare v5 must be v4 that calls reserve v5")
+	}
+	work := strings.ReplaceAll(function(previous, "load_device_alias_work_v3", revoke), "_v3(", "_v4(")
+	work = replace(work, `     IF source_reserved=0 AND NOT EXISTS(SELECT 1 FROM mesh.device_alias_lease WHERE private_endpoint_id=endpoint.id AND alias_role='resource' AND state<>'reserved') THEN mode:='reserve';
+     ELSIF source_reserved>0 AND resource_reserved>0 THEN mode:='ready'; END IF;`, `     IF source_reserved=0 OR resource_reserved=0 THEN mode:='reserve';
+     ELSE mode:='ready'; END IF;`)
+	if function(migration.SQL, "load_device_alias_work_v4", revoke) != work {
+		t.Error("load work v4 must be v3 that reserves when the pair lacks reserved source or Resource leases")
+	}
+	operator := DeviceAliasProviderReadmissionOwnershipSQL()
+	for _, want := range []string{
+		"load_device_alias_work_v4(UUID,UUID,UUID,INTEGER) OWNER TO mesh_device_alias_writer;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_device_alias_work_v4(UUID,UUID,UUID,INTEGER) TO mesh_worker;",
+		"prepare_device_alias_change_v5(UUID,UUID,UUID,BIGINT,BIGINT,BIGINT,UUID[],UUID,UUID,TEXT) OWNER TO mesh_device_alias_writer;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.prepare_device_alias_change_v5(UUID,UUID,UUID,BIGINT,BIGINT,BIGINT,UUID[],UUID,UUID,TEXT) TO mesh_worker;",
+	} {
+		if !strings.Contains(operator, want) {
+			t.Errorf("operator step 171 must contain %q", want)
+		}
+	}
+	if strings.Contains(operator, "_v3(") || strings.Contains(operator, "_v4(UUID,UUID,UUID,BIGINT") {
+		t.Error("operator step 171 must keep the previous versions for rollback")
 	}
 }

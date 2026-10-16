@@ -156,6 +156,8 @@ func assertDeviceAliasGuardedWorker(ctx context.Context, t *testing.T, tx pgx.Tx
 						assertAliasWorkerWithdrawal(ctx, t, tx, deploymentID, endpointID, consumerID, generation, provider, consumer)
 						if version == "v3" {
 							assertAliasWorkerReadmitsResumedConsumer(ctx, t, tx, deploymentID, endpointID, consumerID, provider, consumer)
+							assertAliasWorkerRestoresResumedProvider(ctx, t, tx, deploymentID, endpointID, consumerID, provider, consumer)
+							assertAliasWorkerKeepsGoneProviderOut(ctx, t, tx, deploymentID, endpointID, consumerID, provider, consumer)
 						}
 					}
 				}

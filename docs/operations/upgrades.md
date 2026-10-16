@@ -44,7 +44,9 @@ binary knows and the state (`uninitialized`, `pending` or `clean`) as JSON.
    still calls ([deployment](deployment.md#migrations-and-operator-steps)).
    Later ones keep previous versions executable. Run the schema 170 file
    once no worker of the previous release is left too: a previous worker
-   withdraws again a consumer Device the new one readmitted.
+   withdraws again a consumer Device the new one readmitted. The same holds
+   for the schema 171 file: a previous worker cannot add consumer Devices to
+   a share whose shared Device was readmitted.
 
 During the rollout:
 
@@ -74,6 +76,11 @@ Device aliases) fail on it. Grant those versions back to `mesh_runtime` or
 After the schema 170 step, a previous worker may withdraw again a share edge
 that a consumer Device got back after a suspension; the Device gets it back
 once the new release runs again.
+
+After the schema 171 step, a previous worker cannot reserve aliases or make
+pairs ready on a share whose shared Device was suspended and readmitted; its
+existing grants keep working, and new ones follow once the new release runs
+again.
 
 `meshcore migrate` from an older binary refuses a schema newer than it knows;
 that is expected after a rollback, since there is nothing for it to apply.

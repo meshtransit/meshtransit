@@ -109,7 +109,8 @@ type aliasWorkerTestTransaction struct {
 	intent              devicealias.ChangeIntent
 	cancel              context.CancelFunc
 	prepares, finalizes int
-	// version is the granted worker version (schema 147: 3, schema 170: 4);
+	// version is the granted worker version (schema 147: 3, schema 170: 4,
+	// schema 171: 5);
 	// prepared records the prepare queries run.
 	version  int
 	prepared []string
@@ -122,7 +123,8 @@ func (transaction *aliasWorkerTestTransaction) QueryRow(ctx context.Context, que
 			*values[0].(*int) = max(transaction.version, 2)
 			return nil
 		}}
-	case prepareDeviceAliasChangeSQL, prepareScaledDeviceAliasChangeSQL, prepareReadmittingDeviceAliasChangeSQL, prepareDeviceAliasWithdrawalSQL,
+	case prepareDeviceAliasChangeSQL, prepareScaledDeviceAliasChangeSQL, prepareReadmittingDeviceAliasChangeSQL,
+		prepareProviderReadmittingDeviceAliasChangeSQL, prepareDeviceAliasWithdrawalSQL,
 		prepareDeviceAliasResourceQuarantineSQL:
 		transaction.prepares++
 		transaction.prepared = append(transaction.prepared, query)
@@ -216,7 +218,8 @@ func (transaction *aliasWorkerTestTransaction) Commit(ctx context.Context) error
 }
 
 // TestDeviceAliasWorkerUsesNewestPrepareGranted: reservation and readiness
-// go through prepare v4 (schema 170) once the worker may run it and load work
+// go through prepare v5 (schema 171) once the worker may run it and load work
+// v4, else through prepare v4 (schema 170) once it may run that and load work
 // v3, else through v3 (schema 147) once granted, and through v2 until then;
 // withdrawals keep their own entry points.
 func TestDeviceAliasWorkerUsesNewestPrepareGranted(t *testing.T) {
@@ -231,6 +234,10 @@ func TestDeviceAliasWorkerUsesNewestPrepareGranted(t *testing.T) {
 		{devicealias.Ready, 3, prepareScaledDeviceAliasChangeSQL},
 		{devicealias.Reserve, 4, prepareReadmittingDeviceAliasChangeSQL},
 		{devicealias.Ready, 4, prepareReadmittingDeviceAliasChangeSQL},
+		{devicealias.Reserve, 5, prepareProviderReadmittingDeviceAliasChangeSQL},
+		{devicealias.Ready, 5, prepareProviderReadmittingDeviceAliasChangeSQL},
+		{devicealias.Withdraw, 5, prepareDeviceAliasWithdrawalSQL},
+		{devicealias.QuarantineResource, 5, prepareDeviceAliasResourceQuarantineSQL},
 		{devicealias.Withdraw, 4, prepareDeviceAliasWithdrawalSQL},
 	} {
 		intent := aliasWorkerIntentFixture(t)

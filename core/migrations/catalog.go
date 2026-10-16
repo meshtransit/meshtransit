@@ -537,6 +537,7 @@ func Catalog() []Migration {
 		newMigration(168, "Private Endpoint publication clock", privateEndpointPublicationClockSQL),
 		newMigration(169, "Device DNS names", deviceDNSNamesSQL),
 		newMigration(170, "Device alias consumer readmission", deviceAliasConsumerReadmissionSQL),
+		newMigration(171, "Device alias provider readmission", deviceAliasProviderReadmissionSQL),
 	}
 }
 
@@ -826,3 +827,6 @@ var deviceDNSNamesSQL string
 
 //go:embed 000170_device_alias_consumer_readmission.up.sql
 var deviceAliasConsumerReadmissionSQL string
+
+//go:embed 000171_device_alias_provider_readmission.up.sql
+var deviceAliasProviderReadmissionSQL string

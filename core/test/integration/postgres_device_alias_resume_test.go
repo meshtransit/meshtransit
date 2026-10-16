@@ -14,8 +14,8 @@ import (
 
 // The worker functions the alias worker uses once the operator granted them.
 const (
-	aliasWorkLoadVersion    = "v3"
-	aliasWorkPrepareVersion = "v4"
+	aliasWorkLoadVersion    = "v4"
+	aliasWorkPrepareVersion = "v5"
 )
 
 type aliasWorkItem struct {
@@ -207,8 +207,16 @@ func runAliasWorkItem(ctx context.Context, t *testing.T, tx pgx.Tx, deploymentID
 	}
 	change := next()
 	var body []byte
-	withdrawal := item.Mode == "withdraw" || item.Mode == "quarantine_consumer"
-	if withdrawal {
+	if item.ConsumerID != nil {
+		consumerID = *item.ConsumerID
+	}
+	withdrawal := item.Mode == "withdraw" || item.Mode == "quarantine_consumer" || item.Mode == "quarantine_resource"
+	if item.Mode == "quarantine_resource" {
+		if err := tx.QueryRow(ctx, `SELECT mesh_ops.prepare_device_alias_resource_quarantine_v2($1::UUID,$2::UUID,$3::BIGINT,$4::UUID)`,
+			deploymentID, item.EndpointID, item.Generation, change).Scan(&body); err != nil {
+			t.Fatalf("prepare %s: %v", item.Mode, err)
+		}
+	} else if withdrawal {
 		if err := tx.QueryRow(ctx, `SELECT mesh_ops.prepare_device_alias_withdrawal_v2($1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::UUID,$6::TEXT)`,
 			deploymentID, item.EndpointID, consumerID, item.Generation, change, item.Mode).Scan(&body); err != nil {
 			t.Fatalf("prepare %s: %v", item.Mode, err)

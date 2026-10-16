@@ -99,6 +99,13 @@ or keys changed), Core withdraws its grant and quarantines its Consumer Source
 Alias; once the Device is active again on current keys, still a rule source and
 its client has reconnected, it gets a new Consumer Source Alias and the grant
 returns.
+When the shared Device itself stops being allowed, Core withdraws the grants of
+every consumer Device and quarantines the share's Resource Aliases; once the
+shared Device is active again on current keys, still the Resource's target and
+its client has reconnected, the share gets the same Resource Aliases back (its
+DNS name keeps resolving to the same address) and the grants return. A share
+that was revoked or expired in the meantime, or a Resource that now targets
+another Device, does not come back.
 The grant and how nodes apply it are specified in
 [Device alias v1](../protocol/device-alias-v1.md).
 

@@ -232,3 +232,14 @@ var deviceAliasConsumerReadmissionOwnershipSQL string
 func DeviceAliasConsumerReadmissionOwnershipSQL() string {
 	return deviceAliasConsumerReadmissionOwnershipSQL
 }
+
+//go:embed operator/000171_device_alias_provider_readmission_ownership.sql
+var deviceAliasProviderReadmissionOwnershipSQL string
+
+// DeviceAliasProviderReadmissionOwnershipSQL hands the alias worker load v4
+// and prepare v5, which give a resumed provider Device the endpoint's own
+// Resource aliases back (schema 171), to the alias writer and exposes them to
+// the worker; load v3 and prepare v4 stay executable for rollback.
+func DeviceAliasProviderReadmissionOwnershipSQL() string {
+	return deviceAliasProviderReadmissionOwnershipSQL
+}

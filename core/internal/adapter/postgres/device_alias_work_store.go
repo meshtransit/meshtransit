@@ -20,6 +20,11 @@ const loadDeviceAliasWorkSQL = `SELECT mesh_ops.load_device_alias_work_v2($1::UU
 // authorized again (schema 170); used only with prepare v4.
 const loadReadmittingDeviceAliasWorkSQL = `SELECT mesh_ops.load_device_alias_work_v3($1::UUID,$2::UUID,$3::UUID,$4::INTEGER)`
 
+// loadProviderReadmittingDeviceAliasWorkSQL is v3 that also hands out
+// reservation for an endpoint whose provider Device is authorized again after
+// its Resource aliases were quarantined (schema 171); used only with prepare v5.
+const loadProviderReadmittingDeviceAliasWorkSQL = `SELECT mesh_ops.load_device_alias_work_v4($1::UUID,$2::UUID,$3::UUID,$4::INTEGER)`
+
 var _ devicealias.Work = (*DeviceAliasWorkerStore)(nil)
 
 // List owns one bounded read-only unit; all cleanup completes before any hint
@@ -66,7 +71,10 @@ func (store *DeviceAliasWorkerStore) List(ctx context.Context, installation depl
 		return devicealias.Page{}, errors.Join(ErrDeviceAliasChange, err)
 	}
 	loadQuery := loadDeviceAliasWorkSQL
-	if version == 4 {
+	switch version {
+	case 5:
+		loadQuery = loadProviderReadmittingDeviceAliasWorkSQL
+	case 4:
 		loadQuery = loadReadmittingDeviceAliasWorkSQL
 	}
 	var encoded []byte

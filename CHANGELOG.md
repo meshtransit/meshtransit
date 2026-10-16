@@ -5,6 +5,17 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core schema 171: a shared Device that was suspended (or whose session or
+  keys changed) gives its consumers the share back once it is active again.
+  The alias worker used to quarantine the endpoint's Resource aliases for
+  good, so the endpoint stayed provisioning and every consumer Device lost
+  the share until it was revoked and created again. It now reserves the
+  endpoint's own Resource aliases again, so the share keeps its addresses and
+  DNS name, and makes each pair ready again; the old leases stay as
+  quarantined history. A revoked or expired share, a deleted Device or a
+  Resource that targets another Device still does not come back. Run the
+  schema 171 operator step after the migration; until then the worker keeps
+  the previous behaviour.
 - Core schema 170: a consumer Device that was suspended (or whose session or
   keys changed) gets its shares back once it is active again. The alias
   worker used to withdraw the share for good, so the Device had no peer for

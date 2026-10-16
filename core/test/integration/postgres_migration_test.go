@@ -232,6 +232,9 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	if _, err := adminConnection.Exec(ctx, migrations.DeviceAliasConsumerReadmissionOwnershipSQL()); err != nil {
 		t.Fatalf("harden readmitting alias worker: %v", err)
 	}
+	if _, err := adminConnection.Exec(ctx, migrations.DeviceAliasProviderReadmissionOwnershipSQL()); err != nil {
+		t.Fatalf("harden provider readmitting alias worker: %v", err)
+	}
 	assertShareLimitGuardPrivileges(ctx, t, adminConnection)
 	if _, err := adminConnection.Exec(ctx, migrations.PolicyImportedResourceScaleOwnershipSQL()); err != nil {
 		t.Fatalf("harden scaled Imported Resource publication: %v", err)
