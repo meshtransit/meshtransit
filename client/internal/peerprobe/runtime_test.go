@@ -87,7 +87,10 @@ func TestRuntimeCompletesScheduledProbeAndRepliesToPing(t *testing.T) {
 	if !ok || pong.TxID != remotePingID || pong.Observed != remoteSource {
 		t.Fatalf("remote Open(pong) = %#v", message)
 	}
-	telemetry := runtime.telemetry.Snapshot()
+	// Sent counters move just after the transport returns, so wait for them.
+	telemetry := waitForTelemetry(t, runtime, func(snapshot pathdiscovery.ProbeTelemetrySnapshot) bool {
+		return snapshot.ProbesSent == 1 && snapshot.PongsSent == 1
+	})
 	if telemetry.MapActivations != 1 || telemetry.RoundsStarted != 1 ||
 		telemetry.ProbeAttempts != 1 || telemetry.ProbesStarted != 1 ||
 		telemetry.ProbesSent != 1 || telemetry.AuthenticatedPongs != 1 ||
@@ -179,12 +182,9 @@ func TestRuntimeCancelsTransactionAfterTransportFailure(t *testing.T) {
 	}
 	waitForRuntimeAttempt(t, transport)
 	// The failure is counted just after the send returns.
-	deadline := time.Now().Add(2 * time.Second)
-	telemetry := runtime.telemetry.Snapshot()
-	for telemetry.ProbeSendFailures == 0 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-		telemetry = runtime.telemetry.Snapshot()
-	}
+	telemetry := waitForTelemetry(t, runtime, func(snapshot pathdiscovery.ProbeTelemetrySnapshot) bool {
+		return snapshot.ProbeSendFailures != 0
+	})
 	if telemetry.ProbeAttempts != 1 || telemetry.ProbesStarted != 1 ||
 		telemetry.ProbeSendFailures != 1 || telemetry.ProbesSent != 0 {
 		t.Fatalf("failed-send telemetry = %#v", telemetry)
@@ -716,6 +716,25 @@ func waitForRuntimeAttempt(t *testing.T, transport *runtimeTransport) {
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for runtime send")
 	}
+}
+
+// waitForTelemetry returns the first snapshot that satisfies ready, or the
+// last one after two seconds so the caller's assertion reports it.
+func waitForTelemetry(
+	t *testing.T,
+	runtime *Runtime,
+	ready func(pathdiscovery.ProbeTelemetrySnapshot) bool,
+) pathdiscovery.ProbeTelemetrySnapshot {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	telemetry := runtime.telemetry.Snapshot()
+	for !ready(telemetry) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+		telemetry = runtime.telemetry.Snapshot()
+	}
+
+	return telemetry
 }
 
 var _ PathObserver = (*runtimeObserver)(nil)
