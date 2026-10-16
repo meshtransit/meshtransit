@@ -12,8 +12,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 171 {
-		t.Fatalf("len(Catalog()) = %d, want 171", len(catalog))
+	if len(catalog) != 172 {
+		t.Fatalf("len(Catalog()) = %d, want 172", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1608,8 +1608,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 171 {
-		t.Fatalf("LatestVersion() = %d, want 171", LatestVersion())
+	if LatestVersion() != 172 {
+		t.Fatalf("LatestVersion() = %d, want 172", LatestVersion())
 	}
 }
 
@@ -4938,5 +4938,63 @@ func TestDeviceAliasProviderReadmission(t *testing.T) {
 	}
 	if strings.Contains(operator, "_v3(") || strings.Contains(operator, "_v4(UUID,UUID,UUID,BIGINT") {
 		t.Error("operator step 171 must keep the previous versions for rollback")
+	}
+}
+
+// Schema 172 keeps updated_at in order on the Resource sharing rows: one
+// trigger function raises an older updated_at to the previous version's, and
+// a trigger named to fire before every other BEFORE UPDATE trigger of each
+// table calls it. It changes no table, constraint, grant or older function.
+func TestSharingUpdatedAtOrder(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 172 {
+		t.Fatalf("len(Catalog()) = %d, want schema 172", len(catalog))
+	}
+	migration := catalog[171]
+	if migration.Version != 172 {
+		t.Fatalf("migration 172 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.keep_updated_at_order_v1()\nRETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog",
+		"    IF NEW.updated_at < OLD.updated_at THEN\n        NEW.updated_at := OLD.updated_at;\n    END IF;\n    RETURN NEW;",
+		"REVOKE ALL ON FUNCTION mesh_ops.keep_updated_at_order_v1() FROM PUBLIC;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 172 must contain %q", want)
+		}
+	}
+	tables := []string{
+		"resource_export", "share_offer", "trust_contract", "imported_resource",
+		"imported_resource_access_name", "imported_resource_dns_publication",
+		"private_endpoint", "federation_alias_lease",
+	}
+	for _, table := range tables {
+		trigger := table + "_clock_order"
+		want := "CREATE TRIGGER " + trigger + " BEFORE UPDATE ON mesh." + table +
+			"\n    FOR EACH ROW EXECUTE FUNCTION mesh_ops.keep_updated_at_order_v1();"
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 172 must contain %q", want)
+		}
+		// PostgreSQL fires triggers of one event in name order: the order
+		// keeper must run before the table's transition and other checks.
+		checks := []string{table + "_transition"}
+		if table == "federation_alias_lease" {
+			checks = append(checks, "federation_alias_network_uniqueness")
+		}
+		for _, other := range checks {
+			if trigger >= other {
+				t.Errorf("trigger %s does not fire before %s", trigger, other)
+			}
+		}
+	}
+	if count := strings.Count(migration.SQL, "CREATE TRIGGER "); count != len(tables) {
+		t.Errorf("schema 172 creates %d triggers, want %d", count, len(tables))
+	}
+	for _, forbidden := range []string{"CREATE OR REPLACE", "BYPASSRLS", "OWNER TO", "GRANT ", "TO mesh_worker",
+		"TO mesh_runtime", "DROP ", "ALTER TABLE", "DISABLE ROW LEVEL SECURITY", "NO FORCE ROW LEVEL SECURITY"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 172 must not contain %q", forbidden)
+		}
 	}
 }

@@ -538,6 +538,7 @@ func Catalog() []Migration {
 		newMigration(169, "Device DNS names", deviceDNSNamesSQL),
 		newMigration(170, "Device alias consumer readmission", deviceAliasConsumerReadmissionSQL),
 		newMigration(171, "Device alias provider readmission", deviceAliasProviderReadmissionSQL),
+		newMigration(172, "Sharing updated_at order", sharingUpdatedAtOrderSQL),
 	}
 }
 
@@ -830,3 +831,6 @@ var deviceAliasConsumerReadmissionSQL string
 
 //go:embed 000171_device_alias_provider_readmission.up.sql
 var deviceAliasProviderReadmissionSQL string
+
+//go:embed 000172_sharing_updated_at_order.up.sql
+var sharingUpdatedAtOrderSQL string
