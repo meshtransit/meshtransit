@@ -608,7 +608,7 @@ func newIntegrationPolicyExplainer(
 		t.Fatal(err)
 	}
 	service, err := accessgraph.NewService(accessgraph.Dependencies{
-		Reader: store, Clock: accessgraph.SystemClock{}, GraphReader: store,
+		Reader: store, GraphReader: store,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -634,7 +634,6 @@ func newIntegrationPolicySimulator(
 	}
 	service, err := simulation.NewService(simulation.Dependencies{
 		Baselines: store, Compiler: newIntegrationPolicyCompiler(t, runtimePool),
-		Clock: simulation.SystemClock{},
 	})
 	if err != nil {
 		t.Fatal(err)

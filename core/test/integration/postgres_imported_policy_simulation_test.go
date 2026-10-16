@@ -30,7 +30,7 @@ func assertImportedPolicySimulation(ctx context.Context, t *testing.T, admin *pg
 	if err != nil {
 		t.Fatal(err)
 	}
-	baseline, err := store.ReadSimulationBaseline(ctx, session, scope, time.Now().UTC())
+	baseline, err := store.ReadSimulationBaseline(ctx, session, scope)
 	if err != nil {
 		t.Fatalf("read runtime-scoped imported simulation baseline: %v", err)
 	}
@@ -73,7 +73,7 @@ ORDER BY device.id LIMIT 1`, scope.WorkspaceID().String(), scope.NetworkID().Str
 		t.Fatal(err)
 	}
 	compiler := newIntegrationPolicyCompiler(t, runtimePool, imported)
-	simulator, err := simulation.NewService(simulation.Dependencies{Baselines: store, Compiler: compiler, Clock: simulation.SystemClock{}})
+	simulator, err := simulation.NewService(simulation.Dependencies{Baselines: store, Compiler: compiler})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,11 +86,11 @@ ORDER BY device.id LIMIT 1`, scope.WorkspaceID().String(), scope.NetworkID().Str
 		added.AddedImportedIntents()[0].Resolution().Contract().ID() != destination.Contract().ID() {
 		t.Fatal("runtime simulation omitted Imported Resource intent or invented local packet authority")
 	}
-	afterPreview, err := store.ReadSimulationBaseline(ctx, session, scope, time.Now().UTC())
+	afterPreview, err := store.ReadSimulationBaseline(ctx, session, scope)
 	if err != nil || !baseline.Equal(afterPreview) {
 		t.Fatal("read-only imported preview changed authority", err)
 	}
-	if _, err := store.ReadSimulationBaseline(ctx, session, destination.ProviderScope(), time.Now().UTC()); err != nil {
+	if _, err := store.ReadSimulationBaseline(ctx, session, destination.ProviderScope()); err != nil {
 		t.Fatalf("owner provider baseline became unavailable: %v", err)
 	}
 	publisher := newIntegrationManagementPolicyPublicationService(t, runtimePool)
@@ -107,7 +107,7 @@ ORDER BY device.id LIMIT 1`, scope.WorkspaceID().String(), scope.NetworkID().Str
 	if _, err := publisher.Publish(ctx, command); err != nil {
 		t.Fatalf("publish runtime format-4 candidate: %v", err)
 	}
-	persisted, err := store.ReadSimulationBaseline(ctx, session, scope, time.Now().UTC())
+	persisted, err := store.ReadSimulationBaseline(ctx, session, scope)
 	if err != nil {
 		t.Fatalf("reconstruct actual persisted format-4 baseline: %v", err)
 	}

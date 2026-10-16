@@ -91,27 +91,34 @@ func deviceGroupDatabaseError(err error) error {
 	return errors.Join(devicegroup.ErrUnavailable, err)
 }
 
-func (store *DeviceGroupStore) begin(ctx context.Context, scope network.Scope) (accountSessionTransaction, error) {
+// begin starts one unit of work in the Network scope and reads its time on
+// the database clock, which authorizes it and stamps everything it writes.
+func (store *DeviceGroupStore) begin(ctx context.Context, scope network.Scope) (accountSessionTransaction,
+	time.Time, error) {
 	if ctx == nil || store == nil || store.database == nil || !validAccountSessionOptions(store.options) {
-		return nil, devicegroup.ErrInvalid
+		return nil, time.Time{}, devicegroup.ErrInvalid
 	}
 	tx, err := store.database.Begin(ctx)
 	if err != nil || tx == nil {
-		return nil, errors.Join(devicegroup.ErrUnavailable, err)
+		return nil, time.Time{}, errors.Join(devicegroup.ErrUnavailable, err)
 	}
 	if err := tx.Exec(ctx, configureAccountSessionTransactionSQL,
 		postgresTimeout(store.options.StatementTimeout), postgresTimeout(store.options.IdleTimeout)); err != nil {
-		return tx, errors.Join(devicegroup.ErrUnavailable, err)
+		return tx, time.Time{}, errors.Join(devicegroup.ErrUnavailable, err)
 	}
 	var workspaceInternal, networkInternal int64
 	if err := tx.QueryRow(ctx, setResourceAuthorityScopeSQL, scope.WorkspaceID().String(),
 		scope.NetworkID().String()).Scan(&workspaceInternal, &networkInternal); err != nil {
-		return tx, deviceGroupDatabaseError(err)
+		return tx, time.Time{}, deviceGroupDatabaseError(err)
 	}
 	if workspaceInternal <= 0 || networkInternal <= 0 {
-		return tx, devicegroup.ErrForbidden
+		return tx, time.Time{}, devicegroup.ErrForbidden
 	}
-	return tx, nil
+	at, err := readTransactionTime(ctx, tx.QueryRow)
+	if err != nil {
+		return tx, time.Time{}, errors.Join(devicegroup.ErrUnavailable, err)
+	}
+	return tx, at, nil
 }
 
 func decodeDeviceGroupJSON(encoded []byte, target any) error {
@@ -159,12 +166,12 @@ func (document deviceGroupDocument) group(allowDeleted bool) (devicegroup.Group,
 }
 
 // List authorizes device_group.read and returns the active groups.
-func (store *DeviceGroupStore) List(ctx context.Context, session accountsession.Session, scope network.Scope,
-	at time.Time) (_ devicegroup.Listing, resultErr error) {
-	if !session.IsValid() || !scope.IsValid() || at.IsZero() {
+func (store *DeviceGroupStore) List(ctx context.Context, session accountsession.Session,
+	scope network.Scope) (_ devicegroup.Listing, resultErr error) {
+	if !session.IsValid() || !scope.IsValid() {
 		return devicegroup.Listing{}, devicegroup.ErrInvalid
 	}
-	tx, err := store.begin(ctx, scope)
+	tx, at, err := store.begin(ctx, scope)
 	if tx != nil {
 		defer func() { resultErr = errors.Join(resultErr, rollbackAccountSessionTransaction(tx)) }()
 	}
@@ -201,12 +208,12 @@ func (store *DeviceGroupStore) List(ctx context.Context, session accountsession.
 
 // Members authorizes device_group.read and returns one page of members.
 func (store *DeviceGroupStore) Members(ctx context.Context, session accountsession.Session, scope network.Scope,
-	group devicegroup.ID, after node.ID, limit int, at time.Time) (_ devicegroup.MemberPage, resultErr error) {
+	group devicegroup.ID, after node.ID, limit int) (_ devicegroup.MemberPage, resultErr error) {
 	if !session.IsValid() || !scope.IsValid() || !group.IsValid() || limit < 1 ||
-		limit > devicegroup.MaximumMemberPage || at.IsZero() {
+		limit > devicegroup.MaximumMemberPage {
 		return devicegroup.MemberPage{}, devicegroup.ErrInvalid
 	}
-	tx, err := store.begin(ctx, scope)
+	tx, at, err := store.begin(ctx, scope)
 	if tx != nil {
 		defer func() { resultErr = errors.Join(resultErr, rollbackAccountSessionTransaction(tx)) }()
 	}
@@ -296,14 +303,14 @@ func deviceGroupSemanticHash(document deviceGroupDocument, members []byte) ([32]
 func (store *DeviceGroupStore) Change(ctx context.Context, change devicegroup.Change) (_ devicegroup.Result,
 	resultErr error) {
 	if !change.Session.IsValid() || !change.Scope.IsValid() || !change.GroupID.IsValid() ||
-		!change.CorrelationID.IsValid() || change.EvaluatedAt.IsZero() {
+		!change.CorrelationID.IsValid() {
 		return devicegroup.Result{}, devicegroup.ErrInvalid
 	}
 	changeID, err := publicid.New()
 	if err != nil {
 		return devicegroup.Result{}, devicegroup.ErrUnavailable
 	}
-	tx, err := store.begin(ctx, change.Scope)
+	tx, evaluatedAt, err := store.begin(ctx, change.Scope)
 	committed := false
 	if tx != nil {
 		defer func() {
@@ -326,7 +333,7 @@ func (store *DeviceGroupStore) Change(ctx context.Context, change devicegroup.Ch
 	var encoded string
 	if err := tx.QueryRow(ctx, changeDeviceGroupSQL, append(sessionQueryArguments(change.Session),
 		change.Scope.WorkspaceID().String(), change.Scope.NetworkID().String(), string(change.Operation),
-		change.GroupID.String(), expected, name, description, changeID.String(), change.EvaluatedAt)...).
+		change.GroupID.String(), expected, name, description, changeID.String(), evaluatedAt)...).
 		Scan(&encoded); err != nil {
 		return devicegroup.Result{}, deviceGroupDatabaseError(err)
 	}
@@ -377,7 +384,7 @@ func (store *DeviceGroupStore) ChangeMembers(ctx context.Context, change deviceg
 	_ devicegroup.MembershipResult, resultErr error) {
 	if !change.Session.IsValid() || !change.Scope.IsValid() || !change.GroupID.IsValid() ||
 		change.ExpectedVersion <= 0 || len(change.Add) != len(change.AddMemberIDs) ||
-		!change.CorrelationID.IsValid() || change.EvaluatedAt.IsZero() {
+		!change.CorrelationID.IsValid() {
 		return devicegroup.MembershipResult{}, devicegroup.ErrInvalid
 	}
 	type addition struct {
@@ -402,7 +409,7 @@ func (store *DeviceGroupStore) ChangeMembers(ctx context.Context, change deviceg
 	if err != nil {
 		return devicegroup.MembershipResult{}, devicegroup.ErrUnavailable
 	}
-	tx, err := store.begin(ctx, change.Scope)
+	tx, evaluatedAt, err := store.begin(ctx, change.Scope)
 	committed := false
 	if tx != nil {
 		defer func() {
@@ -417,7 +424,7 @@ func (store *DeviceGroupStore) ChangeMembers(ctx context.Context, change deviceg
 	var encoded string
 	if err := tx.QueryRow(ctx, changeDeviceGroupMembersSQL, append(sessionQueryArguments(change.Session),
 		change.Scope.WorkspaceID().String(), change.Scope.NetworkID().String(), change.GroupID.String(),
-		change.ExpectedVersion, addJSON, removed, changeID.String(), change.EvaluatedAt)...).Scan(&encoded); err != nil {
+		change.ExpectedVersion, addJSON, removed, changeID.String(), evaluatedAt)...).Scan(&encoded); err != nil {
 		return devicegroup.MembershipResult{}, deviceGroupDatabaseError(err)
 	}
 	var record deviceGroupChangeRecord

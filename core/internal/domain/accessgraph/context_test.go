@@ -157,7 +157,6 @@ func TestServiceRejectsSnapshotForAnotherTargetKind(t *testing.T) {
 	}
 	service, err := accessgraph.NewService(accessgraph.Dependencies{
 		Reader: &accessGraphReaderFixture{snapshot: snapshot},
-		Clock:  fixedAccessGraphClock{value: accessGraphTime()},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -213,7 +212,6 @@ func explainSnapshot(t *testing.T, query accessgraph.Query, params accessgraph.S
 	}
 	service, err := accessgraph.NewService(accessgraph.Dependencies{
 		Reader: &accessGraphReaderFixture{snapshot: snapshot},
-		Clock:  fixedAccessGraphClock{value: accessGraphTime()},
 	})
 	if err != nil {
 		t.Fatal(err)

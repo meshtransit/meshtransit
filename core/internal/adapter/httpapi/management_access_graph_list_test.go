@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"meshtransit.net/core/internal/domain/accessgraph"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
@@ -18,16 +17,15 @@ import (
 )
 
 type managementGraphReaderFunc func(
-	context.Context, accountsession.Session, accessgraph.GraphQuery, time.Time,
+	context.Context, accountsession.Session, accessgraph.GraphQuery,
 ) (accessgraph.GraphPage, error)
 
 func (function managementGraphReaderFunc) ReadGraph(
 	ctx context.Context,
 	session accountsession.Session,
 	query accessgraph.GraphQuery,
-	evaluatedAt time.Time,
 ) (accessgraph.GraphPage, error) {
-	return function(ctx, session, query, evaluatedAt)
+	return function(ctx, session, query)
 }
 
 func TestManagementHandlerListsAccessGraphPage(t *testing.T) {
@@ -35,7 +33,7 @@ func TestManagementHandlerListsAccessGraphPage(t *testing.T) {
 
 	var seen accessgraph.GraphQuery
 	handler := managementGraphHandler(t, func(
-		_ context.Context, _ accountsession.Session, query accessgraph.GraphQuery, _ time.Time,
+		_ context.Context, _ accountsession.Session, query accessgraph.GraphQuery,
 	) (accessgraph.GraphPage, error) {
 		seen = query
 		return managementGraphPage(t, query, true), nil
@@ -92,7 +90,7 @@ func TestManagementHandlerRejectsInvalidAccessGraphQueries(t *testing.T) {
 	t.Parallel()
 
 	handler := managementGraphHandler(t, func(
-		context.Context, accountsession.Session, accessgraph.GraphQuery, time.Time,
+		context.Context, accountsession.Session, accessgraph.GraphQuery,
 	) (accessgraph.GraphPage, error) {
 		t.Error("reader called for an invalid query")
 		return accessgraph.GraphPage{}, accessgraph.ErrUnavailable
@@ -141,7 +139,7 @@ func TestManagementHandlerMapsAccessGraphListFailures(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			handler := managementGraphHandler(t, func(
-				context.Context, accountsession.Session, accessgraph.GraphQuery, time.Time,
+				context.Context, accountsession.Session, accessgraph.GraphQuery,
 			) (accessgraph.GraphPage, error) {
 				return accessgraph.GraphPage{}, test.err
 			})
@@ -172,11 +170,10 @@ func managementGraphHandler(t *testing.T, reader managementGraphReaderFunc) *Man
 	t.Helper()
 	service, err := accessgraph.NewService(accessgraph.Dependencies{
 		Reader: managementAccessGraphReaderFunc(func(
-			context.Context, accountsession.Session, accessgraph.Query, time.Time,
+			context.Context, accountsession.Session, accessgraph.Query,
 		) (accessgraph.Snapshot, error) {
 			return accessgraph.Snapshot{}, accessgraph.ErrUnavailable
-		}),
-		Clock: accessgraph.SystemClock{}, GraphReader: reader,
+		}), GraphReader: reader,
 	})
 	if err != nil {
 		t.Fatal(err)

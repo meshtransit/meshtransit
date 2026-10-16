@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"meshtransit.net/core/internal/domain/accessgraph/simulation"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
@@ -14,10 +13,10 @@ import (
 	"meshtransit.net/core/internal/domain/policy/catalog"
 )
 
-type activePolicyReaderFunc func(context.Context, accountsession.Session, network.Scope, time.Time) (catalog.Snapshot, error)
+type activePolicyReaderFunc func(context.Context, accountsession.Session, network.Scope) (catalog.Snapshot, error)
 
-func (reader activePolicyReaderFunc) ReadActivePolicy(ctx context.Context, session accountsession.Session, scope network.Scope, now time.Time) (catalog.Snapshot, error) {
-	return reader(ctx, session, scope, now)
+func (reader activePolicyReaderFunc) ReadActivePolicy(ctx context.Context, session accountsession.Session, scope network.Scope) (catalog.Snapshot, error) {
+	return reader(ctx, session, scope)
 }
 
 func TestManagementActivePolicyReadBindsScopeRevisionAndPermissionFailure(t *testing.T) {
@@ -34,8 +33,8 @@ func TestManagementActivePolicyReadBindsScopeRevisionAndPermissionFailure(t *tes
 			t.Parallel()
 			options := validManagementHandlerOptions(t)
 			scope := managementPolicySimulationScope(t)
-			options.ActivePolicies = activePolicyReaderFunc(func(_ context.Context, session accountsession.Session, actual network.Scope, now time.Time) (catalog.Snapshot, error) {
-				if !session.IsValid() || actual != scope || now.IsZero() {
+			options.ActivePolicies = activePolicyReaderFunc(func(_ context.Context, session accountsession.Session, actual network.Scope) (catalog.Snapshot, error) {
+				if !session.IsValid() || actual != scope {
 					t.Fatal("unbound read")
 				}
 				if test.denied {

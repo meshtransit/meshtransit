@@ -339,7 +339,7 @@ func composePrivateIdentityFactory(
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
-	accessGraphHistory, err := ledger.NewService(historyStore, clock)
+	accessGraphHistory, err := ledger.NewService(historyStore)
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
@@ -505,7 +505,7 @@ func privateIdentityManagementServices(
 		return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition
 	}
 	policyExplainer, err := accessgraph.NewService(accessgraph.Dependencies{
-		Reader: accessGraphStore, Clock: accessgraph.SystemClock{}, GraphReader: accessGraphStore,
+		Reader: accessGraphStore, GraphReader: accessGraphStore,
 	})
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition
@@ -518,7 +518,7 @@ func privateIdentityManagementServices(
 		return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition
 	}
 	policySimulator, err := simulation.NewService(simulation.Dependencies{
-		Baselines: policySimulationStore, Compiler: policyCompiler, Clock: clock,
+		Baselines: policySimulationStore, Compiler: policyCompiler,
 	})
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition

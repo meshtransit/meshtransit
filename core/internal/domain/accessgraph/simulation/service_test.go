@@ -368,7 +368,6 @@ func (reader *simulationBaselineReader) ReadSimulationBaseline(
 	_ context.Context,
 	_ accountsession.Session,
 	_ network.Scope,
-	_ time.Time,
 ) (simulation.Baseline, error) {
 	if reader.calls >= len(reader.values) {
 		return simulation.Baseline{}, simulation.ErrUnavailable
@@ -422,7 +421,6 @@ func simulationService(
 	service, err := simulation.NewService(simulation.Dependencies{
 		Baselines: reader,
 		Compiler:  compiler,
-		Clock:     simulation.SystemClock{},
 	})
 	if err != nil {
 		t.Fatal(err)

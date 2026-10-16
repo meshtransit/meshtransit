@@ -3,11 +3,12 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
-	"meshtransit.net/core/internal/domain/guardrail"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"meshtransit.net/core/internal/domain/guardrail"
 
 	"meshtransit.net/core/internal/domain/accessgraph"
 	"meshtransit.net/core/internal/domain/accessgraph/simulation"
@@ -35,7 +36,7 @@ func TestManagementHandlerSimulatesPolicyWithoutPublishing(t *testing.T) {
 		return compileDirectManagementPolicy(request)
 	})
 	service, err := simulation.NewService(simulation.Dependencies{
-		Baselines: reader, Compiler: compiler, Clock: simulation.SystemClock{},
+		Baselines: reader, Compiler: compiler,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +127,7 @@ func TestPolicySimulationEncodesImportedIntentAndCountsWithoutPacketEdges(t *tes
 	compiler := managementPolicyCompilerFunc(func(context.Context, accountsession.Session, compilation.Request) (policypublication.Candidate, error) {
 		return candidate, nil
 	})
-	service, err := simulation.NewService(simulation.Dependencies{Baselines: reader, Compiler: compiler, Clock: simulation.SystemClock{}})
+	service, err := simulation.NewService(simulation.Dependencies{Baselines: reader, Compiler: compiler})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +246,6 @@ func (reader *managementPolicySimulationReader) ReadSimulationBaseline(
 	_ context.Context,
 	_ accountsession.Session,
 	_ network.Scope,
-	_ time.Time,
 ) (simulation.Baseline, error) {
 	if reader.calls >= len(reader.values) {
 		return simulation.Baseline{}, simulation.ErrUnavailable

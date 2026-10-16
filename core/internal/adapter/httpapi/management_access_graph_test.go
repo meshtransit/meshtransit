@@ -27,12 +27,11 @@ func TestManagementHandlerExplainsActiveResourceGroupPolicy(t *testing.T) {
 		_ context.Context,
 		_ accountsession.Session,
 		query accessgraph.Query,
-		_ time.Time,
 	) (accessgraph.Snapshot, error) {
 		return managementAccessGraphSnapshot(t, query), nil
 	})
 	service, err := accessgraph.NewService(accessgraph.Dependencies{
-		Reader: reader, Clock: accessgraph.SystemClock{},
+		Reader: reader,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -84,12 +83,11 @@ func TestManagementHandlerExplainsSharedDeviceNotTurnedOn(t *testing.T) {
 		_ context.Context,
 		_ accountsession.Session,
 		query accessgraph.Query,
-		_ time.Time,
 	) (accessgraph.Snapshot, error) {
 		return managementImportedAccessGraphSnapshot(t, query), nil
 	})
 	service, err := accessgraph.NewService(accessgraph.Dependencies{
-		Reader: reader, Clock: accessgraph.SystemClock{},
+		Reader: reader,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -217,13 +215,12 @@ func TestManagementHandlerAccessGraphFailsClosed(t *testing.T) {
 				_ context.Context,
 				_ accountsession.Session,
 				_ accessgraph.Query,
-				_ time.Time,
 			) (accessgraph.Snapshot, error) {
 				called = true
 				return accessgraph.Snapshot{}, test.readerErr
 			})
 			service, err := accessgraph.NewService(accessgraph.Dependencies{
-				Reader: reader, Clock: accessgraph.SystemClock{},
+				Reader: reader,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -277,16 +274,14 @@ type managementAccessGraphReaderFunc func(
 	context.Context,
 	accountsession.Session,
 	accessgraph.Query,
-	time.Time,
 ) (accessgraph.Snapshot, error)
 
 func (function managementAccessGraphReaderFunc) ReadActive(
 	ctx context.Context,
 	session accountsession.Session,
 	query accessgraph.Query,
-	evaluatedAt time.Time,
 ) (accessgraph.Snapshot, error) {
-	return function(ctx, session, query, evaluatedAt)
+	return function(ctx, session, query)
 }
 
 func managementAccessGraphSnapshot(

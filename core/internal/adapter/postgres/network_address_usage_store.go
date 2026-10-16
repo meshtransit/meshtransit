@@ -56,11 +56,12 @@ func networkAddressUsageError(err error) error {
 	return errors.Join(addressusage.ErrUnavailable, err)
 }
 
-// Read authorizes network.read and returns the use of every range.
-func (store *NetworkAddressUsageStore) Read(ctx context.Context, session accountsession.Session, scope network.Scope,
-	evaluatedAt time.Time) (_ addressusage.State, resultErr error) {
+// Read authorizes network.read and returns the use of every range, both
+// decided on the database clock of its transaction.
+func (store *NetworkAddressUsageStore) Read(ctx context.Context, session accountsession.Session,
+	scope network.Scope) (_ addressusage.State, resultErr error) {
 	if ctx == nil || store == nil || store.database == nil || !validAccountSessionOptions(store.options) ||
-		!session.IsValid() || !scope.IsValid() || evaluatedAt.IsZero() {
+		!session.IsValid() || !scope.IsValid() {
 		return addressusage.State{}, addressusage.ErrInvalid
 	}
 	tx, err := store.database.Begin(ctx)
@@ -79,6 +80,10 @@ func (store *NetworkAddressUsageStore) Read(ctx context.Context, session account
 	}
 	if workspaceInternal <= 0 || networkInternal <= 0 {
 		return addressusage.State{}, addressusage.ErrForbidden
+	}
+	evaluatedAt, err := readTransactionTime(ctx, tx.QueryRow)
+	if err != nil {
+		return addressusage.State{}, errors.Join(addressusage.ErrUnavailable, err)
 	}
 	args := append(sessionQueryArguments(session), scope.WorkspaceID().String(), scope.NetworkID().String(), evaluatedAt)
 	var encoded string

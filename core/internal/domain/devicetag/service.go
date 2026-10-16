@@ -11,18 +11,17 @@ import (
 	"meshtransit.net/core/internal/domain/workspace"
 )
 
-// Store reads and changes tags; PostgreSQL authorizes each call.
+// Store reads and changes tags; PostgreSQL authorizes each call and decides
+// it, and every time it persists, on the database clock.
 type Store interface {
-	List(ctx context.Context, session accountsession.Session, workspaceID workspace.ID, at time.Time) (Listing, error)
+	List(ctx context.Context, session accountsession.Session, workspaceID workspace.ID) (Listing, error)
 	Change(ctx context.Context, change Change) (Result, error)
-	NetworkTags(ctx context.Context, session accountsession.Session, scope network.Scope,
-		at time.Time) ([]DeviceTags, error)
+	NetworkTags(ctx context.Context, session accountsession.Session, scope network.Scope) ([]DeviceTags, error)
 	ChangeAssignments(ctx context.Context, change AssignmentChange) (AssignmentResult, error)
-	NetworkOptions(ctx context.Context, session accountsession.Session, scope network.Scope,
-		at time.Time) (NetworkOptions, error)
+	NetworkOptions(ctx context.Context, session accountsession.Session, scope network.Scope) (NetworkOptions, error)
 }
 
-// Clock supplies the current time.
+// Clock supplies this host's time for the early session gate only.
 type Clock interface{ Now() time.Time }
 
 // IDs generates public identifiers.
@@ -43,28 +42,30 @@ func NewService(store Store, clock Clock, ids IDs) (*Service, error) {
 	return &Service{store: store, clock: clock, ids: ids}, nil
 }
 
-func (service *Service) now(ctx context.Context, session accountsession.Session) (time.Time, error) {
+// admit is an early, fail-closed gate on this host's clock: it can only deny.
+// PostgreSQL authorizes the call on the database clock.
+func (service *Service) admit(ctx context.Context, session accountsession.Session) error {
 	if ctx == nil || service == nil || service.store == nil {
-		return time.Time{}, ErrInvalid
+		return ErrInvalid
 	}
 	now := service.clock.Now().UTC()
 	if now.IsZero() || !session.IsActiveAt(now) {
-		return time.Time{}, ErrForbidden
+		return ErrForbidden
 	}
-	return now, nil
+	return nil
 }
 
 // List returns the Workspace's tag catalog.
 func (service *Service) List(ctx context.Context, session accountsession.Session,
 	workspaceID workspace.ID) (Listing, error) {
-	now, err := service.now(ctx, session)
+	err := service.admit(ctx, session)
 	if err != nil {
 		return Listing{}, err
 	}
 	if !workspaceID.IsValid() {
 		return Listing{}, ErrInvalid
 	}
-	return service.store.List(ctx, session, workspaceID, now)
+	return service.store.List(ctx, session, workspaceID)
 }
 
 func (service *Service) ownerRows(definition Definition) ([]publicid.ID, error) {
@@ -82,7 +83,7 @@ func (service *Service) ownerRows(definition Definition) ([]publicid.ID, error) 
 // Create adds a tag with its owners.
 func (service *Service) Create(ctx context.Context, session accountsession.Session, workspaceID workspace.ID,
 	definition Definition, correlationID publicid.ID) (Result, error) {
-	now, err := service.now(ctx, session)
+	err := service.admit(ctx, session)
 	if err != nil {
 		return Result{}, err
 	}
@@ -100,7 +101,7 @@ func (service *Service) Create(ctx context.Context, session accountsession.Sessi
 	}
 	return service.store.Change(ctx, Change{
 		Session: session, WorkspaceID: workspaceID, Operation: OperationCreate, TagID: ID(id),
-		Definition: definition, OwnerRowIDs: rows, CorrelationID: correlationID, EvaluatedAt: now,
+		Definition: definition, OwnerRowIDs: rows, CorrelationID: correlationID,
 	})
 }
 
@@ -109,7 +110,7 @@ func (service *Service) Create(ctx context.Context, session accountsession.Sessi
 // unaffected.
 func (service *Service) Update(ctx context.Context, session accountsession.Session, workspaceID workspace.ID,
 	tag ID, expectedVersion int64, definition Definition, correlationID publicid.ID) (Result, error) {
-	now, err := service.now(ctx, session)
+	err := service.admit(ctx, session)
 	if err != nil {
 		return Result{}, err
 	}
@@ -125,14 +126,14 @@ func (service *Service) Update(ctx context.Context, session accountsession.Sessi
 	return service.store.Change(ctx, Change{
 		Session: session, WorkspaceID: workspaceID, Operation: OperationUpdate, TagID: tag,
 		ExpectedVersion: expectedVersion, Definition: definition, OwnerRowIDs: rows,
-		CorrelationID: correlationID, EvaluatedAt: now,
+		CorrelationID: correlationID,
 	})
 }
 
 // Delete removes a tag no active rule selects, with its assignments.
 func (service *Service) Delete(ctx context.Context, session accountsession.Session, workspaceID workspace.ID,
 	tag ID, expectedVersion int64, correlationID publicid.ID) (Result, error) {
-	now, err := service.now(ctx, session)
+	err := service.admit(ctx, session)
 	if err != nil {
 		return Result{}, err
 	}
@@ -141,35 +142,35 @@ func (service *Service) Delete(ctx context.Context, session accountsession.Sessi
 	}
 	return service.store.Change(ctx, Change{
 		Session: session, WorkspaceID: workspaceID, Operation: OperationDelete, TagID: tag,
-		ExpectedVersion: expectedVersion, CorrelationID: correlationID, EvaluatedAt: now,
+		ExpectedVersion: expectedVersion, CorrelationID: correlationID,
 	})
 }
 
 // NetworkTags returns the tags of the Network's tagged Devices.
 func (service *Service) NetworkTags(ctx context.Context, session accountsession.Session,
 	scope network.Scope) ([]DeviceTags, error) {
-	now, err := service.now(ctx, session)
+	err := service.admit(ctx, session)
 	if err != nil {
 		return nil, err
 	}
 	if !scope.IsValid() {
 		return nil, ErrInvalid
 	}
-	return service.store.NetworkTags(ctx, session, scope, now)
+	return service.store.NetworkTags(ctx, session, scope)
 }
 
 // NetworkOptions returns the tags the session may apply in the Network, the
 // tags its Devices carry, and the Devices of the Network the session owns.
 func (service *Service) NetworkOptions(ctx context.Context, session accountsession.Session,
 	scope network.Scope) (NetworkOptions, error) {
-	now, err := service.now(ctx, session)
+	err := service.admit(ctx, session)
 	if err != nil {
 		return NetworkOptions{}, err
 	}
 	if !scope.IsValid() {
 		return NetworkOptions{}, ErrInvalid
 	}
-	return service.store.NetworkOptions(ctx, session, scope, now)
+	return service.store.NetworkOptions(ctx, session, scope)
 }
 
 func uniqueTags(ids []ID) bool {
@@ -190,7 +191,7 @@ func uniqueTags(ids []ID) bool {
 // added and removed in one change.
 func (service *Service) ChangeAssignments(ctx context.Context, session accountsession.Session,
 	scope network.Scope, device node.ID, add, remove []ID, correlationID publicid.ID) (AssignmentResult, error) {
-	now, err := service.now(ctx, session)
+	err := service.admit(ctx, session)
 	if err != nil {
 		return AssignmentResult{}, err
 	}
@@ -208,7 +209,7 @@ func (service *Service) ChangeAssignments(ctx context.Context, session accountse
 	return service.store.ChangeAssignments(ctx, AssignmentChange{
 		Session: session, Scope: scope, DeviceID: device, Add: append([]ID(nil), add...),
 		AddAssignmentIDs: assignmentIDs, Remove: append([]ID(nil), remove...),
-		CorrelationID: correlationID, EvaluatedAt: now,
+		CorrelationID: correlationID,
 	})
 }
 

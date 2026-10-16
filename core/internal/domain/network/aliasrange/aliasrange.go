@@ -158,13 +158,14 @@ func (result Result) matches(command Command) bool {
 	return result.State.Version == command.ExpectedVersion
 }
 
-// Store reads and commits with fresh authority and audit evidence.
+// Store reads and commits with fresh authority and audit evidence. It
+// authorizes and stamps each call on the database clock.
 type Store interface {
-	Read(context.Context, accountsession.Session, network.Scope, time.Time) (State, error)
-	Update(context.Context, Command, time.Time) (Result, error)
+	Read(context.Context, accountsession.Session, network.Scope) (State, error)
+	Update(context.Context, Command) (Result, error)
 }
 
-// Clock supplies the application admission instant.
+// Clock supplies this host's time for the early session gate only.
 type Clock interface{ Now() time.Time }
 
 // Service validates requests and receipts.
@@ -181,15 +182,17 @@ func NewService(store Store, clock Clock) (*Service, error) {
 	return &Service{store: store, clock: clock}, nil
 }
 
-func (service *Service) admit(ctx context.Context, session accountsession.Session) (time.Time, error) {
+// admit is an early, fail-closed gate on this host's clock: it can only deny.
+// PostgreSQL authorizes the call on the database clock.
+func (service *Service) admit(ctx context.Context, session accountsession.Session) error {
 	if ctx == nil || service == nil || service.store == nil || service.clock == nil {
-		return time.Time{}, ErrInvalid
+		return ErrInvalid
 	}
 	now := service.clock.Now().UTC()
 	if now.IsZero() || !session.IsActiveAt(now) {
-		return time.Time{}, ErrForbidden
+		return ErrForbidden
 	}
-	return now, nil
+	return nil
 }
 
 // Read returns the ranges of one Network for an active Session.
@@ -197,11 +200,10 @@ func (service *Service) Read(ctx context.Context, session accountsession.Session
 	if !session.IsValid() || !scope.IsValid() {
 		return State{}, ErrInvalid
 	}
-	now, err := service.admit(ctx, session)
-	if err != nil {
+	if err := service.admit(ctx, session); err != nil {
 		return State{}, err
 	}
-	state, err := service.store.Read(ctx, session, scope, now)
+	state, err := service.store.Read(ctx, session, scope)
 	if err != nil {
 		return State{}, err
 	}
@@ -216,11 +218,10 @@ func (service *Service) Update(ctx context.Context, command Command) (Result, er
 	if !command.IsValid() {
 		return Result{}, ErrInvalid
 	}
-	now, err := service.admit(ctx, command.Session)
-	if err != nil {
+	if err := service.admit(ctx, command.Session); err != nil {
 		return Result{}, err
 	}
-	result, err := service.store.Update(ctx, command, now)
+	result, err := service.store.Update(ctx, command)
 	if err != nil {
 		return Result{}, err
 	}

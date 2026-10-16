@@ -25,7 +25,7 @@ type historyTestReader struct {
 }
 
 func (reader *historyTestReader) ReadHistory(_ context.Context, _ accountsession.Session, _ network.Scope,
-	query ledger.Query, _ time.Time) (ledger.Result, error) {
+	query ledger.Query) (ledger.Result, error) {
 	reader.reads++
 	reader.query = query
 	result := reader.result
@@ -52,7 +52,7 @@ func historyTestEdge(t *testing.T, key byte, from time.Time) ledger.Edge {
 
 func TestBrowserAccessGraphHistoryReadsEdgesAtAnInstant(t *testing.T) {
 	t.Parallel()
-	options, fixture := browserManagementTestOptions(t)
+	options, _ := browserManagementTestOptions(t)
 	at := time.Date(2026, time.September, 1, 11, 0, 0, 0, time.UTC)
 	request := browserManagementReadRequest(t, accessGraphHistoryTestPath()+
 		"?at=2026-09-01T11:00:00Z&protocol=tcp&page_size=1")
@@ -66,7 +66,7 @@ func TestBrowserAccessGraphHistoryReadsEdgesAtAnInstant(t *testing.T) {
 	reader := &historyTestReader{result: ledger.Result{Scope: scope, RecordedSince: at.Add(-time.Hour),
 		NetworkRevision: 6, Edges: []ledger.Edge{historyTestEdge(t, 1, at.Add(-time.Minute)),
 			historyTestEdge(t, 2, at.Add(-time.Minute))}}}
-	service, err := ledger.NewService(reader, fixture)
+	service, err := ledger.NewService(reader)
 	if err != nil {
 		t.Fatal(err)
 	}

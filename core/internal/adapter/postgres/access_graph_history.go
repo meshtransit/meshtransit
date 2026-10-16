@@ -5,6 +5,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"meshtransit.net/core/internal/domain/accessgraph/ledger"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
@@ -40,13 +42,24 @@ func NewAccessGraphHistoryStore(pool *Pool, options AccountSessionOptions) (*Acc
 }
 
 // ReadHistory loads one exact-scope page after current policy.read and
-// device.read checks.
+// device.read checks. Each attempt authorizes on its transaction's database
+// clock, reads a zero At as that instant, and SQL rejects an At after it.
 func (store *AccessGraphHistoryStore) ReadHistory(ctx context.Context, session accountsession.Session,
-	scope network.Scope, query ledger.Query, evaluatedAt time.Time,
+	scope network.Scope, query ledger.Query,
 ) (ledger.Result, error) {
 	return retryReadConflict(ctx, func() (ledger.Result, error) {
-		return store.readOnce(ctx, session, scope, query, evaluatedAt)
+		return store.readOnce(ctx, session, scope, query)
 	})
+}
+
+// accessGraphHistoryError keeps an instant after the database clock's present,
+// and other input SQL rejects, a bad request.
+func accessGraphHistoryError(err error) error {
+	var databaseError *pgconn.PgError
+	if errors.As(err, &databaseError) && databaseError.Code == "22023" {
+		return errors.Join(ledger.ErrInvalidRequest, err)
+	}
+	return errors.Join(ledger.ErrUnavailable, err)
 }
 
 func optionalNode(id node.ID) any {
@@ -57,7 +70,7 @@ func optionalNode(id node.ID) any {
 }
 
 func (store *AccessGraphHistoryStore) readOnce(ctx context.Context, session accountsession.Session,
-	scope network.Scope, query ledger.Query, evaluatedAt time.Time,
+	scope network.Scope, query ledger.Query,
 ) (_ ledger.Result, resultErr error) {
 	startedAt := time.Now()
 	defer func() {
@@ -66,7 +79,7 @@ func (store *AccessGraphHistoryStore) readOnce(ctx context.Context, session acco
 		}
 	}()
 	if ctx == nil || store == nil || store.database == nil || !validAccountSessionOptions(store.options) ||
-		!session.IsValid() || !scope.IsValid() || query.At.IsZero() || evaluatedAt.IsZero() ||
+		!session.IsValid() || !scope.IsValid() ||
 		query.Limit < 1 || query.Limit > ledger.MaximumPageSize+1 {
 		return ledger.Result{}, ledger.ErrInvalidRequest
 	}
@@ -87,6 +100,14 @@ func (store *AccessGraphHistoryStore) readOnce(ctx context.Context, session acco
 	); err != nil {
 		return ledger.Result{}, errors.Join(ledger.ErrUnavailable, err)
 	}
+	evaluatedAt, err := readTransactionTime(ctx, transaction.QueryRow)
+	if err != nil {
+		return ledger.Result{}, errors.Join(ledger.ErrUnavailable, err)
+	}
+	at := query.At
+	if at.IsZero() {
+		at = evaluatedAt
+	}
 	var protocol, after any
 	if query.Protocol != policy.ProtocolUnknown {
 		protocol = query.Protocol.String()
@@ -99,12 +120,12 @@ func (store *AccessGraphHistoryStore) readOnce(ctx context.Context, session acco
 		session.ID().String(), session.DeploymentID().String(), session.PrincipalID().String(),
 		session.IdentitySubjectID().String(), session.Version(), session.PrincipalAuthorityGeneration(),
 		session.AccountSessionGeneration(), session.ProviderGeneration(), session.DeploymentRecoveryEpoch(),
-		scope.WorkspaceID().String(), scope.NetworkID().String(), evaluatedAt, query.At,
+		scope.WorkspaceID().String(), scope.NetworkID().String(), evaluatedAt, at,
 		optionalNode(query.Device), optionalNode(query.Source), optionalNode(query.Destination),
 		protocol, after, query.Limit,
 	).Scan(&encoded)
 	if err != nil {
-		return ledger.Result{}, errors.Join(ledger.ErrUnavailable, err)
+		return ledger.Result{}, accessGraphHistoryError(err)
 	}
 	if encoded == nil {
 		return ledger.Result{}, ledger.ErrForbidden

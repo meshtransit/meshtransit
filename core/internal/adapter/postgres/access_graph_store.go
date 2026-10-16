@@ -52,14 +52,13 @@ func validAccessGraphOptions(options AccessGraphOptions) bool {
 }
 
 // ReadActive authorizes policy.explain and reads the matching active compiled paths
-// from one repeatable-read, exact-Network transaction.
+// from one repeatable-read, exact-Network transaction, on its database clock.
 func (store *AccessGraphStore) ReadActive(
 	ctx context.Context,
 	session accountsession.Session,
 	query accessgraph.Query,
-	evaluatedAt time.Time,
 ) (snapshot accessgraph.Snapshot, resultErr error) {
-	if ctx == nil || !session.IsValid() || !query.IsValid() || evaluatedAt.IsZero() {
+	if ctx == nil || !session.IsValid() || !query.IsValid() {
 		return accessgraph.Snapshot{}, accessgraph.ErrInvalidQuery
 	}
 	if store == nil || store.database == nil || !validAccessGraphOptions(store.options) {
@@ -98,6 +97,10 @@ func (store *AccessGraphStore) ReadActive(
 	}
 	if workspaceInternalID <= 0 || networkInternalID <= 0 {
 		return accessgraph.Snapshot{}, accessgraph.ErrUnavailable
+	}
+	evaluatedAt, err := readTransactionTime(ctx, transaction.QueryRow)
+	if err != nil {
+		return accessgraph.Snapshot{}, accessGraphDatabaseError(ctx, err)
 	}
 
 	var destinationNodeArgument, destinationResourceArgument, destinationImportedArgument any

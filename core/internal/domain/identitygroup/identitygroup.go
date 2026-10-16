@@ -193,7 +193,6 @@ type Change struct {
 	ExpectedVersion int64
 	Definition      Definition
 	CorrelationID   publicid.ID
-	EvaluatedAt     time.Time
 }
 
 // MembershipChange adds and removes principals; each added principal carries
@@ -207,5 +206,4 @@ type MembershipChange struct {
 	AddMemberIDs    []publicid.ID
 	Remove          []publicid.ID
 	CorrelationID   publicid.ID
-	EvaluatedAt     time.Time
 }

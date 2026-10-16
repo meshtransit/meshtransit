@@ -19,12 +19,11 @@ import (
 type stubStore struct {
 	state addressusage.State
 	err   error
-	at    time.Time
+	reads int
 }
 
-func (store *stubStore) Read(_ context.Context, _ accountsession.Session, _ network.Scope,
-	at time.Time) (addressusage.State, error) {
-	store.at = at
+func (store *stubStore) Read(context.Context, accountsession.Session, network.Scope) (addressusage.State, error) {
+	store.reads++
 	return store.state, store.err
 }
 
@@ -102,8 +101,8 @@ func TestServiceRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := service.Read(t.Context(), session, scope)
-	if err != nil || len(got.Ranges) != 1 || got.Ranges[0].InUse != 3 || !store.at.Equal(now) {
-		t.Fatalf("Read() = %+v, %v (store saw %s)", got, err, store.at)
+	if err != nil || len(got.Ranges) != 1 || got.Ranges[0].InUse != 3 || store.reads != 1 {
+		t.Fatalf("Read() = %+v, %v (store reads %d)", got, err, store.reads)
 	}
 	// A Session that ended reads nothing.
 	ended, err := addressusage.NewService(store, fixedClock{now: now.Add(3 * time.Hour)})

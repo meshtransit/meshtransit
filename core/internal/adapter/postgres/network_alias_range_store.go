@@ -75,36 +75,43 @@ func networkAliasRangeError(err error) error {
 	return errors.Join(aliasrange.ErrUnavailable, err)
 }
 
-func (store *NetworkAliasRangeStore) begin(ctx context.Context, scope network.Scope) (accountSessionTransaction, error) {
+// begin starts one exact-Network unit of work and reads its time on the
+// database clock, which authorizes it and stamps everything it writes.
+func (store *NetworkAliasRangeStore) begin(ctx context.Context, scope network.Scope) (accountSessionTransaction,
+	time.Time, error) {
 	if ctx == nil || store == nil || store.database == nil || !validAccountSessionOptions(store.options) {
-		return nil, aliasrange.ErrInvalid
+		return nil, time.Time{}, aliasrange.ErrInvalid
 	}
 	tx, err := store.database.Begin(ctx)
 	if err != nil || tx == nil {
-		return nil, errors.Join(aliasrange.ErrUnavailable, err)
+		return nil, time.Time{}, errors.Join(aliasrange.ErrUnavailable, err)
 	}
 	if err := tx.Exec(ctx, configureAccountSessionTransactionSQL,
 		postgresTimeout(store.options.StatementTimeout), postgresTimeout(store.options.IdleTimeout)); err != nil {
-		return tx, errors.Join(aliasrange.ErrUnavailable, err)
+		return tx, time.Time{}, errors.Join(aliasrange.ErrUnavailable, err)
 	}
 	var workspaceInternal, networkInternal int64
 	if err := tx.QueryRow(ctx, setResourceAuthorityScopeSQL, scope.WorkspaceID().String(),
 		scope.NetworkID().String()).Scan(&workspaceInternal, &networkInternal); err != nil {
-		return tx, networkAliasRangeError(err)
+		return tx, time.Time{}, networkAliasRangeError(err)
 	}
 	if workspaceInternal <= 0 || networkInternal <= 0 {
-		return tx, aliasrange.ErrForbidden
+		return tx, time.Time{}, aliasrange.ErrForbidden
 	}
-	return tx, nil
+	evaluatedAt, err := readTransactionTime(ctx, tx.QueryRow)
+	if err != nil {
+		return tx, time.Time{}, errors.Join(aliasrange.ErrUnavailable, err)
+	}
+	return tx, evaluatedAt, nil
 }
 
 // Read authorizes network.read and returns the frame, ranges and usage.
-func (store *NetworkAliasRangeStore) Read(ctx context.Context, session accountsession.Session, scope network.Scope,
-	evaluatedAt time.Time) (_ aliasrange.State, resultErr error) {
-	if !session.IsValid() || !scope.IsValid() || evaluatedAt.IsZero() {
+func (store *NetworkAliasRangeStore) Read(ctx context.Context, session accountsession.Session,
+	scope network.Scope) (_ aliasrange.State, resultErr error) {
+	if !session.IsValid() || !scope.IsValid() {
 		return aliasrange.State{}, aliasrange.ErrInvalid
 	}
-	tx, err := store.begin(ctx, scope)
+	tx, evaluatedAt, err := store.begin(ctx, scope)
 	if tx != nil {
 		defer func() { resultErr = errors.Join(resultErr, rollbackAccountSessionTransaction(tx)) }()
 	}
@@ -192,9 +199,9 @@ func prefixArgument(change aliasrange.Change) string {
 // Update authorizes network.update, applies the requested ranges and, when
 // anything changed, appends one audit and outbox record on the Network
 // stream. An uncertain commit returns no success and is not retried.
-func (store *NetworkAliasRangeStore) Update(ctx context.Context, command aliasrange.Command,
-	evaluatedAt time.Time) (_ aliasrange.Result, resultErr error) {
-	if !command.IsValid() || evaluatedAt.IsZero() {
+func (store *NetworkAliasRangeStore) Update(ctx context.Context,
+	command aliasrange.Command) (_ aliasrange.Result, resultErr error) {
+	if !command.IsValid() {
 		return aliasrange.Result{}, aliasrange.ErrInvalid
 	}
 	var ids [5]publicid.ID
@@ -206,7 +213,7 @@ func (store *NetworkAliasRangeStore) Update(ctx context.Context, command aliasra
 		ids[index] = id
 	}
 	change, ipv4Row, ipv6Row, event, outbox := ids[0], ids[1], ids[2], ids[3], ids[4]
-	tx, err := store.begin(ctx, command.Scope)
+	tx, evaluatedAt, err := store.begin(ctx, command.Scope)
 	committed := false
 	if tx != nil {
 		defer func() {

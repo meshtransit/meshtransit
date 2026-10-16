@@ -7,7 +7,6 @@ import (
 	"errors"
 	"slices"
 	"strings"
-	"time"
 
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
@@ -472,9 +471,10 @@ func (page GraphPage) MatchingPaths() int { return page.matchingPaths }
 // Next returns the continuation cursor and false on the last page.
 func (page GraphPage) Next() (GraphCursor, bool) { return page.next, page.next.hasContinuation }
 
-// GraphReader loads one freshly authorized page of the effective graph.
+// GraphReader loads one freshly authorized page of the effective graph. It
+// authorizes and evaluates expiry on the database clock.
 type GraphReader interface {
-	ReadGraph(context.Context, accountsession.Session, GraphQuery, time.Time) (GraphPage, error)
+	ReadGraph(context.Context, accountsession.Session, GraphQuery) (GraphPage, error)
 }
 
 // Graph returns one page of edges derived exclusively from the active
@@ -484,7 +484,7 @@ func (service *Service) Graph(
 	session accountsession.Session,
 	query GraphQuery,
 ) (GraphPage, error) {
-	if ctx == nil || service == nil || service.clock == nil || !session.IsValid() || !query.IsValid() {
+	if ctx == nil || service == nil || !session.IsValid() || !query.IsValid() {
 		return GraphPage{}, ErrInvalidQuery
 	}
 	if service.graphReader == nil {
@@ -493,9 +493,5 @@ func (service *Service) Graph(
 	if err := ctx.Err(); err != nil {
 		return GraphPage{}, errors.Join(ErrUnavailable, err)
 	}
-	evaluatedAt := service.clock.Now().UTC()
-	if evaluatedAt.IsZero() {
-		return GraphPage{}, ErrUnavailable
-	}
-	return service.graphReader.ReadGraph(ctx, session, query, evaluatedAt)
+	return service.graphReader.ReadGraph(ctx, session, query)
 }

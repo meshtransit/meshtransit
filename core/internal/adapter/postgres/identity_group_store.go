@@ -82,19 +82,25 @@ func identityGroupDatabaseError(err error) error {
 	return errors.Join(identitygroup.ErrUnavailable, err)
 }
 
-func (store *IdentityGroupStore) begin(ctx context.Context) (accountSessionTransaction, error) {
+// begin starts one unit of work and reads its time on the database clock,
+// which authorizes it and stamps everything it writes.
+func (store *IdentityGroupStore) begin(ctx context.Context) (accountSessionTransaction, time.Time, error) {
 	if ctx == nil || store == nil || store.database == nil || !validAccountSessionOptions(store.options) {
-		return nil, identitygroup.ErrInvalid
+		return nil, time.Time{}, identitygroup.ErrInvalid
 	}
 	tx, err := store.database.Begin(ctx)
 	if err != nil || tx == nil {
-		return nil, errors.Join(identitygroup.ErrUnavailable, err)
+		return nil, time.Time{}, errors.Join(identitygroup.ErrUnavailable, err)
 	}
 	if err := tx.Exec(ctx, configureAccountSessionTransactionSQL,
 		postgresTimeout(store.options.StatementTimeout), postgresTimeout(store.options.IdleTimeout)); err != nil {
-		return tx, errors.Join(identitygroup.ErrUnavailable, err)
+		return tx, time.Time{}, errors.Join(identitygroup.ErrUnavailable, err)
 	}
-	return tx, nil
+	at, err := readTransactionTime(ctx, tx.QueryRow)
+	if err != nil {
+		return tx, time.Time{}, errors.Join(identitygroup.ErrUnavailable, err)
+	}
+	return tx, at, nil
 }
 
 type identityGroupDocument struct {
@@ -126,12 +132,12 @@ func (document identityGroupDocument) group(allowDeleted bool) (identitygroup.Gr
 }
 
 // List authorizes identity_group.read and returns the active groups.
-func (store *IdentityGroupStore) List(ctx context.Context, session accountsession.Session, workspaceID workspace.ID,
-	at time.Time) (_ identitygroup.Listing, resultErr error) {
-	if !session.IsValid() || !workspaceID.IsValid() || at.IsZero() {
+func (store *IdentityGroupStore) List(ctx context.Context, session accountsession.Session,
+	workspaceID workspace.ID) (_ identitygroup.Listing, resultErr error) {
+	if !session.IsValid() || !workspaceID.IsValid() {
 		return identitygroup.Listing{}, identitygroup.ErrInvalid
 	}
-	tx, err := store.begin(ctx)
+	tx, at, err := store.begin(ctx)
 	if tx != nil {
 		defer func() { resultErr = errors.Join(resultErr, rollbackAccountSessionTransaction(tx)) }()
 	}
@@ -165,13 +171,13 @@ func (store *IdentityGroupStore) List(ctx context.Context, session accountsessio
 
 // Members authorizes identity_group.read and returns one page of members.
 func (store *IdentityGroupStore) Members(ctx context.Context, session accountsession.Session,
-	workspaceID workspace.ID, group identitygroup.ID, after publicid.ID, limit int,
-	at time.Time) (_ identitygroup.MemberPage, resultErr error) {
+	workspaceID workspace.ID, group identitygroup.ID, after publicid.ID,
+	limit int) (_ identitygroup.MemberPage, resultErr error) {
 	if !session.IsValid() || !workspaceID.IsValid() || !group.IsValid() || limit < 1 ||
-		limit > identitygroup.MaximumMemberPage || at.IsZero() {
+		limit > identitygroup.MaximumMemberPage {
 		return identitygroup.MemberPage{}, identitygroup.ErrInvalid
 	}
-	tx, err := store.begin(ctx)
+	tx, at, err := store.begin(ctx)
 	if tx != nil {
 		defer func() { resultErr = errors.Join(resultErr, rollbackAccountSessionTransaction(tx)) }()
 	}
@@ -275,8 +281,8 @@ func identityGroupSemanticHash(document identityGroupDocument, members []byte) (
 }
 
 func (store *IdentityGroupStore) transact(ctx context.Context,
-	run func(tx accountSessionTransaction) (bool, error)) (resultErr error) {
-	tx, err := store.begin(ctx)
+	run func(tx accountSessionTransaction, evaluatedAt time.Time) (bool, error)) (resultErr error) {
+	tx, evaluatedAt, err := store.begin(ctx)
 	committed := false
 	if tx != nil {
 		defer func() {
@@ -288,7 +294,7 @@ func (store *IdentityGroupStore) transact(ctx context.Context,
 	if err != nil {
 		return err
 	}
-	commit, err := run(tx)
+	commit, err := run(tx, evaluatedAt)
 	if err != nil || !commit {
 		return err
 	}
@@ -304,7 +310,7 @@ func (store *IdentityGroupStore) transact(ctx context.Context,
 func (store *IdentityGroupStore) Change(ctx context.Context, change identitygroup.Change) (
 	identitygroup.Result, error) {
 	if !change.Session.IsValid() || !change.WorkspaceID.IsValid() || !change.GroupID.IsValid() ||
-		!change.CorrelationID.IsValid() || change.EvaluatedAt.IsZero() {
+		!change.CorrelationID.IsValid() {
 		return identitygroup.Result{}, identitygroup.ErrInvalid
 	}
 	changeID, err := publicid.New()
@@ -319,11 +325,11 @@ func (store *IdentityGroupStore) Change(ctx context.Context, change identitygrou
 		name, description = change.Definition.Name, change.Definition.Description
 	}
 	var result identitygroup.Result
-	err = store.transact(ctx, func(tx accountSessionTransaction) (bool, error) {
+	err = store.transact(ctx, func(tx accountSessionTransaction, evaluatedAt time.Time) (bool, error) {
 		var encoded string
 		if err := tx.QueryRow(ctx, changeIdentityGroupSQL, append(sessionQueryArguments(change.Session),
 			change.WorkspaceID.String(), string(change.Operation), change.GroupID.String(), expected, name,
-			description, changeID.String(), change.EvaluatedAt)...).Scan(&encoded); err != nil {
+			description, changeID.String(), evaluatedAt)...).Scan(&encoded); err != nil {
 			return false, identityGroupDatabaseError(err)
 		}
 		var record identityGroupChangeRecord
@@ -407,7 +413,7 @@ func (store *IdentityGroupStore) ChangeMembers(ctx context.Context, change ident
 	identitygroup.MembershipResult, error) {
 	if !change.Session.IsValid() || !change.WorkspaceID.IsValid() || !change.GroupID.IsValid() ||
 		change.ExpectedVersion <= 0 || len(change.Add) != len(change.AddMemberIDs) ||
-		!change.CorrelationID.IsValid() || change.EvaluatedAt.IsZero() {
+		!change.CorrelationID.IsValid() {
 		return identitygroup.MembershipResult{}, identitygroup.ErrInvalid
 	}
 	type addition struct {
@@ -433,11 +439,11 @@ func (store *IdentityGroupStore) ChangeMembers(ctx context.Context, change ident
 		return identitygroup.MembershipResult{}, identitygroup.ErrUnavailable
 	}
 	var result identitygroup.MembershipResult
-	err = store.transact(ctx, func(tx accountSessionTransaction) (bool, error) {
+	err = store.transact(ctx, func(tx accountSessionTransaction, evaluatedAt time.Time) (bool, error) {
 		var encoded string
 		if err := tx.QueryRow(ctx, changeIdentityGroupMembersSQL, append(sessionQueryArguments(change.Session),
 			change.WorkspaceID.String(), change.GroupID.String(), change.ExpectedVersion, addJSON, removed,
-			changeID.String(), change.EvaluatedAt)...).Scan(&encoded); err != nil {
+			changeID.String(), evaluatedAt)...).Scan(&encoded); err != nil {
 			return false, identityGroupDatabaseError(err)
 		}
 		var record identityGroupChangeRecord

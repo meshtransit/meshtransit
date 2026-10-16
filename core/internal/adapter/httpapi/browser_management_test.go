@@ -1165,12 +1165,10 @@ func browserManagementTestOptions(t *testing.T) (BrowserManagementOptions, *brow
 			_ context.Context,
 			_ accountsession.Session,
 			query accessgraph.Query,
-			_ time.Time,
 		) (accessgraph.Snapshot, error) {
 			fixture.explain++
 			return managementAccessGraphSnapshot(t, query), nil
 		}),
-		Clock: accessgraph.SystemClock{},
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -100,6 +100,7 @@ func assertPostgreSQLDeviceGroups(ctx context.Context, t *testing.T, admin *pgx.
 		t.Fatal(err)
 	}
 	devices := activeFixtureDevices(ctx, t, admin, 2)
+	assertAccessGraphHistoryOnDatabaseClock(ctx, t, admin, runtimePool, owner, scope)
 
 	listing, err := service.List(ctx, owner, scope)
 	if err != nil || len(listing.Groups) != 0 || !listing.CanManage || !listing.CanManageMembers {
@@ -353,7 +354,7 @@ func assertPostgreSQLGroupPolicy(ctx context.Context, t *testing.T, admin *pgx.C
 	if err != nil {
 		t.Fatal(err)
 	}
-	active, err := catalogStore.ReadActivePolicy(ctx, owner, scope, time.Now().UTC())
+	active, err := catalogStore.ReadActivePolicy(ctx, owner, scope)
 	if err != nil || len(active.Rows()) != 1 || !active.DeviceRulesOnly() ||
 		active.Rows()[0].Intent.SourceGroupID() != clients.Group.ID ||
 		active.Rows()[0].Intent.DestinationDeviceGroupID() != servers.Group.ID ||

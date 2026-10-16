@@ -45,14 +45,14 @@ type recordingStore struct {
 	calls      int
 }
 
-func (store *recordingStore) List(context.Context, accountsession.Session, network.Scope, time.Time) (
+func (store *recordingStore) List(context.Context, accountsession.Session, network.Scope) (
 	devicegroup.Listing, error) {
 	store.calls++
 	return devicegroup.Listing{}, nil
 }
 
 func (store *recordingStore) Members(context.Context, accountsession.Session, network.Scope, devicegroup.ID,
-	node.ID, int, time.Time) (devicegroup.MemberPage, error) {
+	node.ID, int) (devicegroup.MemberPage, error) {
 	store.calls++
 	return devicegroup.MemberPage{}, nil
 }

@@ -249,7 +249,6 @@ type Change struct {
 	Definition      Definition
 	OwnerRowIDs     []publicid.ID
 	CorrelationID   publicid.ID
-	EvaluatedAt     time.Time
 }
 
 // AssignmentChange adds and removes tags of one Device; each added tag
@@ -262,5 +261,4 @@ type AssignmentChange struct {
 	AddAssignmentIDs []publicid.ID
 	Remove           []ID
 	CorrelationID    publicid.ID
-	EvaluatedAt      time.Time
 }

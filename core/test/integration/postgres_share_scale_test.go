@@ -689,7 +689,7 @@ func publishShareScaleRules(ctx context.Context, t *testing.T, pool *postgresada
 	if err != nil {
 		t.Fatal(err)
 	}
-	baseline, err := baselines.ReadSimulationBaseline(ctx, session, scope, time.Now().UTC())
+	baseline, err := baselines.ReadSimulationBaseline(ctx, session, scope)
 	if err != nil {
 		t.Fatalf("read consumer policy baseline: %v", err)
 	}
@@ -723,7 +723,7 @@ func publishShareScaleRules(ctx context.Context, t *testing.T, pool *postgresada
 		t.Fatal(err)
 	}
 	compiler := newIntegrationPolicyCompiler(t, pool, newIntegrationResourceSharingStore(t, pool))
-	simulator, err := simulation.NewService(simulation.Dependencies{Baselines: baselines, Compiler: compiler, Clock: simulation.SystemClock{}})
+	simulator, err := simulation.NewService(simulation.Dependencies{Baselines: baselines, Compiler: compiler})
 	if err != nil {
 		t.Fatal(err)
 	}

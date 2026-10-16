@@ -89,12 +89,12 @@ type stubStore struct {
 	calls  int
 }
 
-func (store *stubStore) Read(context.Context, accountsession.Session, network.Scope, time.Time) (aliasrange.State, error) {
+func (store *stubStore) Read(context.Context, accountsession.Session, network.Scope) (aliasrange.State, error) {
 	store.calls++
 	return store.state, store.err
 }
 
-func (store *stubStore) Update(context.Context, aliasrange.Command, time.Time) (aliasrange.Result, error) {
+func (store *stubStore) Update(context.Context, aliasrange.Command) (aliasrange.Result, error) {
 	store.calls++
 	return store.result, store.err
 }

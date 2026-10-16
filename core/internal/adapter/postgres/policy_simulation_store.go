@@ -65,14 +65,15 @@ func validPolicySimulationOptions(options PolicySimulationOptions) bool {
 // ReadSimulationBaseline freshly authorizes policy.validate and reconstructs the
 // current complete compiled artifact inside one repeatable-read transaction,
 // rerun on a fresh snapshot when a concurrent publish holds the revision row.
+// Each attempt authorizes and judges expiry on its transaction's database
+// clock.
 func (store *PolicySimulationStore) ReadSimulationBaseline(
 	ctx context.Context,
 	session accountsession.Session,
 	scope network.Scope,
-	evaluatedAt time.Time,
 ) (simulation.Baseline, error) {
 	return retryReadConflict(ctx, func() (simulation.Baseline, error) {
-		return store.readSimulationBaselineOnce(ctx, session, scope, evaluatedAt)
+		return store.readSimulationBaselineOnce(ctx, session, scope)
 	})
 }
 
@@ -80,9 +81,8 @@ func (store *PolicySimulationStore) readSimulationBaselineOnce(
 	ctx context.Context,
 	session accountsession.Session,
 	scope network.Scope,
-	evaluatedAt time.Time,
 ) (baseline simulation.Baseline, resultErr error) {
-	if ctx == nil || !session.IsValid() || !scope.IsValid() || evaluatedAt.IsZero() {
+	if ctx == nil || !session.IsValid() || !scope.IsValid() {
 		return simulation.Baseline{}, simulation.ErrInvalidRequest
 	}
 	if store == nil || store.database == nil || !validPolicySimulationOptions(store.options) {
@@ -122,6 +122,10 @@ func (store *PolicySimulationStore) readSimulationBaselineOnce(
 	if workspaceInternalID <= 0 || networkInternalID <= 0 {
 		return simulation.Baseline{}, simulation.ErrUnavailable
 	}
+	evaluatedAt, err := readTransactionTime(ctx, transaction.QueryRow)
+	if err != nil {
+		return simulation.Baseline{}, policySimulationDatabaseError(ctx, err)
+	}
 
 	var record policySimulationBaselineRecord
 	var releaseID *string
@@ -141,7 +145,7 @@ func (store *PolicySimulationStore) readSimulationBaselineOnce(
 		session.DeploymentRecoveryEpoch(),
 		scope.WorkspaceID().String(),
 		scope.NetworkID().String(),
-		evaluatedAt.UTC(),
+		evaluatedAt,
 		maximumPolicySimulationBaselineRules,
 	).Scan(
 		&record.NetworkRevision,

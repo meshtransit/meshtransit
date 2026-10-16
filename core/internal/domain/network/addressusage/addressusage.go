@@ -70,12 +70,12 @@ func (state State) IsValid() bool {
 	return true
 }
 
-// Store reads the use under fresh authority.
+// Store reads the use under fresh authority, decided on the database clock.
 type Store interface {
-	Read(context.Context, accountsession.Session, network.Scope, time.Time) (State, error)
+	Read(context.Context, accountsession.Session, network.Scope) (State, error)
 }
 
-// Clock supplies the application admission instant.
+// Clock supplies this host's time for the early session gate only.
 type Clock interface{ Now() time.Time }
 
 // Service validates requests and results.
@@ -98,11 +98,13 @@ func (service *Service) Read(ctx context.Context, session accountsession.Session
 		!session.IsValid() || !scope.IsValid() {
 		return State{}, ErrInvalid
 	}
+	// An early, fail-closed gate on this host's clock: it can only deny.
+	// PostgreSQL authorizes the read on the database clock.
 	now := service.clock.Now().UTC()
 	if now.IsZero() || !session.IsActiveAt(now) {
 		return State{}, ErrForbidden
 	}
-	state, err := service.store.Read(ctx, session, scope, now)
+	state, err := service.store.Read(ctx, session, scope)
 	if err != nil {
 		return State{}, err
 	}

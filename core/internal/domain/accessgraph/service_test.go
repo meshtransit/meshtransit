@@ -30,7 +30,6 @@ func TestServiceExplainsMatchingResourceGroupPath(t *testing.T) {
 	reader := &accessGraphReaderFixture{snapshot: snapshot}
 	service, err := accessgraph.NewService(accessgraph.Dependencies{
 		Reader: reader,
-		Clock:  fixedAccessGraphClock{value: accessGraphTime()},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -41,7 +40,7 @@ func TestServiceExplainsMatchingResourceGroupPath(t *testing.T) {
 		t.Fatalf("Explain() error = %v", err)
 	}
 	paths := result.Paths()
-	if reader.calls != 1 || !reader.evaluatedAt.Equal(accessGraphTime()) || !result.IsValid() ||
+	if reader.calls != 1 || !result.IsValid() ||
 		result.Decision() != accessgraph.DecisionAllow ||
 		result.Reason() != accessgraph.ReasonMatchingActiveRule || result.Truncated() ||
 		len(paths) != 1 || paths[0].SelectorKind() != accessgraph.SelectorKindResourceGroup ||
@@ -68,7 +67,6 @@ func TestServiceExplainsDefaultDenyWithoutActiveRelease(t *testing.T) {
 	}
 	service, err := accessgraph.NewService(accessgraph.Dependencies{
 		Reader: &accessGraphReaderFixture{snapshot: snapshot},
-		Clock:  fixedAccessGraphClock{value: accessGraphTime()},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -97,7 +95,6 @@ func TestServiceExplainsImportedResourceAsFailClosedProvenance(t *testing.T) {
 	}
 	service, err := accessgraph.NewService(accessgraph.Dependencies{
 		Reader: &accessGraphReaderFixture{snapshot: snapshot},
-		Clock:  fixedAccessGraphClock{value: accessGraphTime()},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +121,6 @@ func TestServiceRejectsReaderPathThatDoesNotMatchQuery(t *testing.T) {
 	})
 	service, err := accessgraph.NewService(accessgraph.Dependencies{
 		Reader: &accessGraphReaderFixture{snapshot: snapshot},
-		Clock:  fixedAccessGraphClock{value: accessGraphTime()},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -147,7 +143,6 @@ func TestServiceBoundsMatchingExplanationPaths(t *testing.T) {
 	snapshot := accessGraphSnapshotFixture(t, query, paths)
 	service, err := accessgraph.NewService(accessgraph.Dependencies{
 		Reader: &accessGraphReaderFixture{snapshot: snapshot},
-		Clock:  fixedAccessGraphClock{value: accessGraphTime()},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -168,7 +163,6 @@ func TestServicePreservesForbiddenReaderFailure(t *testing.T) {
 
 	service, err := accessgraph.NewService(accessgraph.Dependencies{
 		Reader: &accessGraphReaderFixture{err: accessgraph.ErrForbidden},
-		Clock:  fixedAccessGraphClock{value: accessGraphTime()},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -230,7 +224,6 @@ func TestServiceRejectsMismatchedResolvedDeviceTarget(t *testing.T) {
 	}
 	service, err := accessgraph.NewService(accessgraph.Dependencies{
 		Reader: &accessGraphReaderFixture{snapshot: snapshot},
-		Clock:  fixedAccessGraphClock{value: accessGraphTime()},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -241,26 +234,19 @@ func TestServiceRejectsMismatchedResolvedDeviceTarget(t *testing.T) {
 }
 
 type accessGraphReaderFixture struct {
-	snapshot    accessgraph.Snapshot
-	err         error
-	calls       int
-	evaluatedAt time.Time
+	snapshot accessgraph.Snapshot
+	err      error
+	calls    int
 }
 
 func (reader *accessGraphReaderFixture) ReadActive(
 	_ context.Context,
 	_ accountsession.Session,
 	_ accessgraph.Query,
-	evaluatedAt time.Time,
 ) (accessgraph.Snapshot, error) {
 	reader.calls++
-	reader.evaluatedAt = evaluatedAt
 	return reader.snapshot, reader.err
 }
-
-type fixedAccessGraphClock struct{ value time.Time }
-
-func (clock fixedAccessGraphClock) Now() time.Time { return clock.value }
 
 func accessGraphQueryFixture(
 	t *testing.T,

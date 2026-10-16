@@ -94,8 +94,9 @@ type Snapshot struct {
 	Digest          string
 }
 
-// Query selects edges at one instant. Zero device filters match any Device;
-// a zero protocol matches any protocol.
+// Query selects edges at one instant; a zero At is the present on the
+// database clock. Zero device filters match any Device; a zero protocol
+// matches any protocol.
 type Query struct {
 	At          time.Time
 	Device      node.ID
@@ -118,12 +119,11 @@ type Result struct {
 }
 
 // Reader authorizes and reads one page under policy.read and device.read.
+// It authorizes on the database clock, reads a zero At as that present and
+// rejects an At after it.
 type Reader interface {
-	ReadHistory(context.Context, accountsession.Session, network.Scope, Query, time.Time) (Result, error)
+	ReadHistory(context.Context, accountsession.Session, network.Scope, Query) (Result, error)
 }
-
-// Clock provides the current authority-evaluation instant.
-type Clock interface{ Now() time.Time }
 
 // Page is one ordered page of edges in effect at At.
 type Page struct {
@@ -142,15 +142,14 @@ type Page struct {
 // Service reads the ledger at a past or present instant.
 type Service struct {
 	reader Reader
-	clock  Clock
 }
 
 // NewService constructs a history reader through explicit dependencies.
-func NewService(reader Reader, clock Clock) (*Service, error) {
-	if reader == nil || clock == nil {
+func NewService(reader Reader) (*Service, error) {
+	if reader == nil {
 		return nil, ErrInvalidRequest
 	}
-	return &Service{reader: reader, clock: clock}, nil
+	return &Service{reader: reader}, nil
 }
 
 // Read returns one page. A zero At reads the present.
@@ -160,17 +159,13 @@ func (service *Service) Read(ctx context.Context, session accountsession.Session
 		return Page{}, ErrInvalidRequest
 	}
 	// PostgreSQL keeps microseconds; the instant must survive the round trip.
-	now := service.clock.Now().UTC().Truncate(time.Microsecond)
-	if query.At.IsZero() {
-		query.At = now
-	}
-	query.At = query.At.UTC().Truncate(time.Microsecond)
-	if query.At.After(now) {
-		return Page{}, ErrInvalidRequest
+	// Whether it is in the past is decided on the database clock.
+	if !query.At.IsZero() {
+		query.At = query.At.UTC().Truncate(time.Microsecond)
 	}
 	limit := query.Limit
 	query.Limit = limit + 1
-	result, err := service.reader.ReadHistory(ctx, session, scope, query, now)
+	result, err := service.reader.ReadHistory(ctx, session, scope, query)
 	if err != nil {
 		return Page{}, err
 	}
@@ -194,10 +189,13 @@ func validQuery(query Query) bool {
 }
 
 func validResult(result Result, scope network.Scope, query Query) bool {
-	if result.Scope != scope || !result.At.Equal(query.At) || result.NetworkRevision < 0 ||
-		len(result.Edges) > query.Limit {
+	// A zero At asked for the present; the reader answers with the instant
+	// it read on the database clock.
+	if result.Scope != scope || result.At.IsZero() || (!query.At.IsZero() && !result.At.Equal(query.At)) ||
+		result.NetworkRevision < 0 || len(result.Edges) > query.Limit {
 		return false
 	}
+	query.At = result.At
 	if result.RecordedSince.IsZero() && len(result.Edges) != 0 {
 		return false
 	}

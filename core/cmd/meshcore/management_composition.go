@@ -312,7 +312,7 @@ func composeManagementAPIWithKeys(
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)
 	}
 	policyExplainer, err := accessgraph.NewService(accessgraph.Dependencies{
-		Reader: accessGraphStore, Clock: accessgraph.SystemClock{}, GraphReader: accessGraphStore,
+		Reader: accessGraphStore, GraphReader: accessGraphStore,
 	})
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)
@@ -335,7 +335,7 @@ func composeManagementAPIWithKeys(
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)
 	}
 	policySimulator, err := simulation.NewService(simulation.Dependencies{
-		Baselines: policySimulationStore, Compiler: policyCompiler, Clock: simulation.SystemClock{},
+		Baselines: policySimulationStore, Compiler: policyCompiler,
 	})
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)

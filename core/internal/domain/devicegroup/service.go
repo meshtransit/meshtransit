@@ -29,7 +29,6 @@ type Change struct {
 	ExpectedVersion int64
 	Definition      Definition
 	CorrelationID   publicid.ID
-	EvaluatedAt     time.Time
 }
 
 // MembershipChange adds and removes Devices; each added Device carries the
@@ -43,19 +42,19 @@ type MembershipChange struct {
 	AddMemberIDs    []publicid.ID
 	Remove          []node.ID
 	CorrelationID   publicid.ID
-	EvaluatedAt     time.Time
 }
 
-// Store reads and changes groups; PostgreSQL authorizes each call.
+// Store reads and changes groups; PostgreSQL authorizes each call and
+// decides it, and every time it persists, on the database clock.
 type Store interface {
-	List(ctx context.Context, session accountsession.Session, scope network.Scope, at time.Time) (Listing, error)
+	List(ctx context.Context, session accountsession.Session, scope network.Scope) (Listing, error)
 	Members(ctx context.Context, session accountsession.Session, scope network.Scope, group ID,
-		after node.ID, limit int, at time.Time) (MemberPage, error)
+		after node.ID, limit int) (MemberPage, error)
 	Change(ctx context.Context, change Change) (Result, error)
 	ChangeMembers(ctx context.Context, change MembershipChange) (MembershipResult, error)
 }
 
-// Clock supplies the current time.
+// Clock supplies this host's time for the early session gate only.
 type Clock interface{ Now() time.Time }
 
 // IDs generates public identifiers.
@@ -76,45 +75,47 @@ func NewService(store Store, clock Clock, ids IDs) (*Service, error) {
 	return &Service{store: store, clock: clock, ids: ids}, nil
 }
 
+// admit is an early, fail-closed gate on this host's clock: it can only deny.
+// PostgreSQL authorizes the call on the database clock.
 func (service *Service) admit(ctx context.Context, session accountsession.Session,
-	scope network.Scope) (time.Time, error) {
+	scope network.Scope) error {
 	if ctx == nil || service == nil || service.store == nil || !scope.IsValid() {
-		return time.Time{}, ErrInvalid
+		return ErrInvalid
 	}
 	now := service.clock.Now().UTC()
 	if now.IsZero() || !session.IsActiveAt(now) {
-		return time.Time{}, ErrForbidden
+		return ErrForbidden
 	}
-	return now, nil
+	return nil
 }
 
 // List returns the Network's active groups.
 func (service *Service) List(ctx context.Context, session accountsession.Session,
 	scope network.Scope) (Listing, error) {
-	now, err := service.admit(ctx, session, scope)
+	err := service.admit(ctx, session, scope)
 	if err != nil {
 		return Listing{}, err
 	}
-	return service.store.List(ctx, session, scope, now)
+	return service.store.List(ctx, session, scope)
 }
 
 // Members returns one page of a group's members after the given Device.
 func (service *Service) Members(ctx context.Context, session accountsession.Session, scope network.Scope,
 	group ID, after node.ID, limit int) (MemberPage, error) {
-	now, err := service.admit(ctx, session, scope)
+	err := service.admit(ctx, session, scope)
 	if err != nil {
 		return MemberPage{}, err
 	}
 	if !group.IsValid() || limit < 1 || limit > MaximumMemberPage {
 		return MemberPage{}, ErrInvalid
 	}
-	return service.store.Members(ctx, session, scope, group, after, limit, now)
+	return service.store.Members(ctx, session, scope, group, after, limit)
 }
 
 // Create adds an empty group.
 func (service *Service) Create(ctx context.Context, session accountsession.Session, scope network.Scope,
 	definition Definition, correlationID publicid.ID) (Result, error) {
-	now, err := service.admit(ctx, session, scope)
+	err := service.admit(ctx, session, scope)
 	if err != nil {
 		return Result{}, err
 	}
@@ -127,14 +128,14 @@ func (service *Service) Create(ctx context.Context, session accountsession.Sessi
 	}
 	return service.store.Change(ctx, Change{
 		Session: session, Scope: scope, Operation: OperationCreate, GroupID: ID(id),
-		Definition: definition, CorrelationID: correlationID, EvaluatedAt: now,
+		Definition: definition, CorrelationID: correlationID,
 	})
 }
 
 // Update renames a group or changes its description at the expected version.
 func (service *Service) Update(ctx context.Context, session accountsession.Session, scope network.Scope,
 	group ID, expectedVersion int64, definition Definition, correlationID publicid.ID) (Result, error) {
-	now, err := service.admit(ctx, session, scope)
+	err := service.admit(ctx, session, scope)
 	if err != nil {
 		return Result{}, err
 	}
@@ -143,14 +144,14 @@ func (service *Service) Update(ctx context.Context, session accountsession.Sessi
 	}
 	return service.store.Change(ctx, Change{
 		Session: session, Scope: scope, Operation: OperationUpdate, GroupID: group,
-		ExpectedVersion: expectedVersion, Definition: definition, CorrelationID: correlationID, EvaluatedAt: now,
+		ExpectedVersion: expectedVersion, Definition: definition, CorrelationID: correlationID,
 	})
 }
 
 // Delete removes a group no active rule selects, with its memberships.
 func (service *Service) Delete(ctx context.Context, session accountsession.Session, scope network.Scope,
 	group ID, expectedVersion int64, correlationID publicid.ID) (Result, error) {
-	now, err := service.admit(ctx, session, scope)
+	err := service.admit(ctx, session, scope)
 	if err != nil {
 		return Result{}, err
 	}
@@ -159,7 +160,7 @@ func (service *Service) Delete(ctx context.Context, session accountsession.Sessi
 	}
 	return service.store.Change(ctx, Change{
 		Session: session, Scope: scope, Operation: OperationDelete, GroupID: group,
-		ExpectedVersion: expectedVersion, CorrelationID: correlationID, EvaluatedAt: now,
+		ExpectedVersion: expectedVersion, CorrelationID: correlationID,
 	})
 }
 
@@ -181,7 +182,7 @@ func uniqueValid(ids []node.ID) bool {
 // cannot be both added and removed in one change.
 func (service *Service) ChangeMembers(ctx context.Context, session accountsession.Session, scope network.Scope,
 	group ID, expectedVersion int64, add, remove []node.ID, correlationID publicid.ID) (MembershipResult, error) {
-	now, err := service.admit(ctx, session, scope)
+	err := service.admit(ctx, session, scope)
 	if err != nil {
 		return MembershipResult{}, err
 	}
@@ -199,7 +200,7 @@ func (service *Service) ChangeMembers(ctx context.Context, session accountsessio
 	}
 	return service.store.ChangeMembers(ctx, MembershipChange{
 		Session: session, Scope: scope, GroupID: group, ExpectedVersion: expectedVersion,
-		Add: add, AddMemberIDs: memberIDs, Remove: remove, CorrelationID: correlationID, EvaluatedAt: now,
+		Add: add, AddMemberIDs: memberIDs, Remove: remove, CorrelationID: correlationID,
 	})
 }
 

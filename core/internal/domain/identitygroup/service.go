@@ -9,16 +9,17 @@ import (
 	"meshtransit.net/core/internal/domain/workspace"
 )
 
-// Store reads and changes groups; PostgreSQL authorizes each call.
+// Store reads and changes groups; PostgreSQL authorizes each call and
+// decides it, and every time it persists, on the database clock.
 type Store interface {
-	List(ctx context.Context, session accountsession.Session, workspaceID workspace.ID, at time.Time) (Listing, error)
+	List(ctx context.Context, session accountsession.Session, workspaceID workspace.ID) (Listing, error)
 	Members(ctx context.Context, session accountsession.Session, workspaceID workspace.ID, group ID,
-		after publicid.ID, limit int, at time.Time) (MemberPage, error)
+		after publicid.ID, limit int) (MemberPage, error)
 	Change(ctx context.Context, change Change) (Result, error)
 	ChangeMembers(ctx context.Context, change MembershipChange) (MembershipResult, error)
 }
 
-// Clock supplies the current time.
+// Clock supplies this host's time for the early session gate only.
 type Clock interface{ Now() time.Time }
 
 // IDs generates public identifiers.
@@ -39,45 +40,47 @@ func NewService(store Store, clock Clock, ids IDs) (*Service, error) {
 	return &Service{store: store, clock: clock, ids: ids}, nil
 }
 
+// admit is an early, fail-closed gate on this host's clock: it can only deny.
+// PostgreSQL authorizes the call on the database clock.
 func (service *Service) admit(ctx context.Context, session accountsession.Session,
-	workspaceID workspace.ID) (time.Time, error) {
+	workspaceID workspace.ID) error {
 	if ctx == nil || service == nil || service.store == nil || !workspaceID.IsValid() {
-		return time.Time{}, ErrInvalid
+		return ErrInvalid
 	}
 	now := service.clock.Now().UTC()
 	if now.IsZero() || !session.IsActiveAt(now) {
-		return time.Time{}, ErrForbidden
+		return ErrForbidden
 	}
-	return now, nil
+	return nil
 }
 
 // List returns the Workspace's active groups.
 func (service *Service) List(ctx context.Context, session accountsession.Session,
 	workspaceID workspace.ID) (Listing, error) {
-	now, err := service.admit(ctx, session, workspaceID)
+	err := service.admit(ctx, session, workspaceID)
 	if err != nil {
 		return Listing{}, err
 	}
-	return service.store.List(ctx, session, workspaceID, now)
+	return service.store.List(ctx, session, workspaceID)
 }
 
 // Members returns one page of a group's members after the given principal.
 func (service *Service) Members(ctx context.Context, session accountsession.Session, workspaceID workspace.ID,
 	group ID, after publicid.ID, limit int) (MemberPage, error) {
-	now, err := service.admit(ctx, session, workspaceID)
+	err := service.admit(ctx, session, workspaceID)
 	if err != nil {
 		return MemberPage{}, err
 	}
 	if !group.IsValid() || limit < 1 || limit > MaximumMemberPage {
 		return MemberPage{}, ErrInvalid
 	}
-	return service.store.Members(ctx, session, workspaceID, group, after, limit, now)
+	return service.store.Members(ctx, session, workspaceID, group, after, limit)
 }
 
 // Create adds an empty group.
 func (service *Service) Create(ctx context.Context, session accountsession.Session, workspaceID workspace.ID,
 	definition Definition, correlationID publicid.ID) (Result, error) {
-	now, err := service.admit(ctx, session, workspaceID)
+	err := service.admit(ctx, session, workspaceID)
 	if err != nil {
 		return Result{}, err
 	}
@@ -90,14 +93,14 @@ func (service *Service) Create(ctx context.Context, session accountsession.Sessi
 	}
 	return service.store.Change(ctx, Change{
 		Session: session, WorkspaceID: workspaceID, Operation: OperationCreate, GroupID: ID(id),
-		Definition: definition, CorrelationID: correlationID, EvaluatedAt: now,
+		Definition: definition, CorrelationID: correlationID,
 	})
 }
 
 // Update renames a group or changes its description at the expected version.
 func (service *Service) Update(ctx context.Context, session accountsession.Session, workspaceID workspace.ID,
 	group ID, expectedVersion int64, definition Definition, correlationID publicid.ID) (Result, error) {
-	now, err := service.admit(ctx, session, workspaceID)
+	err := service.admit(ctx, session, workspaceID)
 	if err != nil {
 		return Result{}, err
 	}
@@ -106,14 +109,14 @@ func (service *Service) Update(ctx context.Context, session accountsession.Sessi
 	}
 	return service.store.Change(ctx, Change{
 		Session: session, WorkspaceID: workspaceID, Operation: OperationUpdate, GroupID: group,
-		ExpectedVersion: expectedVersion, Definition: definition, CorrelationID: correlationID, EvaluatedAt: now,
+		ExpectedVersion: expectedVersion, Definition: definition, CorrelationID: correlationID,
 	})
 }
 
 // Delete removes a group that no active rule selects and that owns no tag.
 func (service *Service) Delete(ctx context.Context, session accountsession.Session, workspaceID workspace.ID,
 	group ID, expectedVersion int64, correlationID publicid.ID) (Result, error) {
-	now, err := service.admit(ctx, session, workspaceID)
+	err := service.admit(ctx, session, workspaceID)
 	if err != nil {
 		return Result{}, err
 	}
@@ -122,7 +125,7 @@ func (service *Service) Delete(ctx context.Context, session accountsession.Sessi
 	}
 	return service.store.Change(ctx, Change{
 		Session: session, WorkspaceID: workspaceID, Operation: OperationDelete, GroupID: group,
-		ExpectedVersion: expectedVersion, CorrelationID: correlationID, EvaluatedAt: now,
+		ExpectedVersion: expectedVersion, CorrelationID: correlationID,
 	})
 }
 
@@ -145,7 +148,7 @@ func uniqueValid(ids []publicid.ID) bool {
 func (service *Service) ChangeMembers(ctx context.Context, session accountsession.Session,
 	workspaceID workspace.ID, group ID, expectedVersion int64, add, remove []publicid.ID,
 	correlationID publicid.ID) (MembershipResult, error) {
-	now, err := service.admit(ctx, session, workspaceID)
+	err := service.admit(ctx, session, workspaceID)
 	if err != nil {
 		return MembershipResult{}, err
 	}
@@ -164,7 +167,7 @@ func (service *Service) ChangeMembers(ctx context.Context, session accountsessio
 	return service.store.ChangeMembers(ctx, MembershipChange{
 		Session: session, WorkspaceID: workspaceID, GroupID: group, ExpectedVersion: expectedVersion,
 		Add: append([]publicid.ID(nil), add...), AddMemberIDs: memberIDs,
-		Remove: append([]publicid.ID(nil), remove...), CorrelationID: correlationID, EvaluatedAt: now,
+		Remove: append([]publicid.ID(nil), remove...), CorrelationID: correlationID,
 	})
 }
 

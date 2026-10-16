@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"net/http"
 	"strings"
-	"time"
 
 	"meshtransit.net/core/internal/domain/accessgraph/simulation"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
@@ -74,7 +73,7 @@ func (handler *ManagementHandler) readActivePolicy(
 		writeManagementError(ctx, handler.logger, response, correlationID, classified)
 		return classified.Code
 	}
-	baseline, err := handler.activePolicies.ReadActivePolicy(ctx, session, scope, time.Now().UTC())
+	baseline, err := handler.activePolicies.ReadActivePolicy(ctx, session, scope)
 	if err == nil && (!baseline.IsValid() || baseline.Scope() != scope) {
 		err = simulation.ErrInvalidBaseline
 	}

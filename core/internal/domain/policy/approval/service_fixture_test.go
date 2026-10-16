@@ -327,7 +327,6 @@ func (fixture simulationBaselineFixture) ReadSimulationBaseline(
 	context.Context,
 	accountsession.Session,
 	network.Scope,
-	time.Time,
 ) (simulation.Baseline, error) {
 	return fixture.baseline, nil
 }
@@ -341,10 +340,6 @@ func (fixture simulationCompilerFixture) Compile(
 ) (publication.Candidate, error) {
 	return fixture.candidate, nil
 }
-
-type simulationClockFixture struct{ now time.Time }
-
-func (fixture simulationClockFixture) Now() time.Time { return fixture.now }
 
 func approvalServiceFixture(
 	t *testing.T,
@@ -426,7 +421,6 @@ func approvalSimulationFixture(
 	service, err := simulation.NewService(simulation.Dependencies{
 		Baselines: simulationBaselineFixture{baseline: baseline},
 		Compiler:  simulationCompilerFixture{candidate: proposedCandidate},
-		Clock:     simulationClockFixture{now: approvalTestTime()},
 	})
 	if err != nil {
 		t.Fatal(err)

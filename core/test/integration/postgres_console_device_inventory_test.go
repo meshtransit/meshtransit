@@ -41,7 +41,7 @@ func assertPostgreSQLConsoleDeviceInventory(ctx context.Context, t *testing.T,
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := policyStore.ReadActivePolicy(ctx, session, scope, time.Now().UTC()); !errors.Is(err, simulation.ErrForbidden) {
+	if _, err := policyStore.ReadActivePolicy(ctx, session, scope); !errors.Is(err, simulation.ErrForbidden) {
 		t.Fatal("approval permission disclosed policy", err)
 	}
 	transaction, err := admin.Begin(ctx)

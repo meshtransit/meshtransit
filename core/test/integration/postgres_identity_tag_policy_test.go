@@ -175,7 +175,7 @@ func assertPostgreSQLIdentityTagPolicy(ctx context.Context, t *testing.T, admin 
 	if err != nil {
 		t.Fatal(err)
 	}
-	active, err := catalogStore.ReadActivePolicy(ctx, owner, scope, time.Now().UTC())
+	active, err := catalogStore.ReadActivePolicy(ctx, owner, scope)
 	if err != nil || len(active.Rows()) != 1 || !active.DeviceRulesOnly() ||
 		active.Rows()[0].Intent.SourceIdentityGroupID() != group ||
 		active.Rows()[0].Intent.DestinationTagID() != tag ||

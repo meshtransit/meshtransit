@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"meshtransit.net/core/internal/domain/accessgraph"
@@ -48,20 +47,20 @@ var _ accessgraph.GraphReader = (*AccessGraphStore)(nil)
 
 // ReadGraph authorizes policy.read and device.read and reads one page of the
 // active compiled edges from one repeatable-read, exact-Network transaction.
+// Each attempt authorizes and judges expiry on its transaction's database clock.
 func (store *AccessGraphStore) ReadGraph(
 	ctx context.Context,
 	session accountsession.Session,
 	query accessgraph.GraphQuery,
-	evaluatedAt time.Time,
 ) (accessgraph.GraphPage, error) {
-	if ctx == nil || !session.IsValid() || !query.IsValid() || evaluatedAt.IsZero() {
+	if ctx == nil || !session.IsValid() || !query.IsValid() {
 		return accessgraph.GraphPage{}, accessgraph.ErrInvalidQuery
 	}
 	if store == nil || store.database == nil || !validAccessGraphOptions(store.options) {
 		return accessgraph.GraphPage{}, accessgraph.ErrUnavailable
 	}
 	return retryReadConflict(ctx, func() (accessgraph.GraphPage, error) {
-		return store.readGraphOnce(ctx, session, query, evaluatedAt)
+		return store.readGraphOnce(ctx, session, query)
 	})
 }
 
@@ -69,7 +68,6 @@ func (store *AccessGraphStore) readGraphOnce(
 	ctx context.Context,
 	session accountsession.Session,
 	query accessgraph.GraphQuery,
-	evaluatedAt time.Time,
 ) (page accessgraph.GraphPage, resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return accessgraph.GraphPage{}, errors.Join(accessgraph.ErrUnavailable, err)
@@ -104,6 +102,10 @@ func (store *AccessGraphStore) readGraphOnce(
 	}
 	if workspaceInternalID <= 0 || networkInternalID <= 0 {
 		return accessgraph.GraphPage{}, accessgraph.ErrUnavailable
+	}
+	evaluatedAt, err := readTransactionTime(ctx, transaction.QueryRow)
+	if err != nil {
+		return accessgraph.GraphPage{}, accessGraphListingError(ctx, err)
 	}
 
 	var deviceArgument, protocolArgument, afterArgument any

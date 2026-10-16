@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"meshtransit.net/core/internal/domain/accessgraph"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
@@ -201,7 +200,7 @@ func TestGraphServiceRejectsInvalidInputBeforeReading(t *testing.T) {
 
 	reader := &graphReaderStub{}
 	service, err := accessgraph.NewService(accessgraph.Dependencies{
-		Reader: explainReaderStub{}, Clock: graphClock{now: accessGraphTime()}, GraphReader: reader,
+		Reader: explainReaderStub{}, GraphReader: reader,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -213,11 +212,11 @@ func TestGraphServiceRejectsInvalidInputBeforeReading(t *testing.T) {
 		t.Fatalf("reader calls = %d, want 0", reader.calls)
 	}
 	page, err := service.Graph(t.Context(), accessGraphSessionFixture(t), graphQueryFixture(t, accessgraph.GraphQueryParams{}))
-	if err != nil || reader.calls != 1 || !reader.evaluatedAt.Equal(accessGraphTime()) || page.Scope() != accessGraphScopeFixture(t) {
+	if err != nil || reader.calls != 1 || page.Scope() != accessGraphScopeFixture(t) {
 		t.Fatalf("Graph() = %+v, %v (calls %d)", page, err, reader.calls)
 	}
 	withoutGraph, err := accessgraph.NewService(accessgraph.Dependencies{
-		Reader: explainReaderStub{}, Clock: graphClock{now: accessGraphTime()},
+		Reader: explainReaderStub{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -230,32 +229,25 @@ func TestGraphServiceRejectsInvalidInputBeforeReading(t *testing.T) {
 type explainReaderStub struct{}
 
 func (explainReaderStub) ReadActive(
-	context.Context, accountsession.Session, accessgraph.Query, time.Time,
+	context.Context, accountsession.Session, accessgraph.Query,
 ) (accessgraph.Snapshot, error) {
 	return accessgraph.Snapshot{}, accessgraph.ErrUnavailable
 }
 
 type graphReaderStub struct {
-	calls       int
-	evaluatedAt time.Time
+	calls int
 }
 
 func (stub *graphReaderStub) ReadGraph(
 	_ context.Context,
 	_ accountsession.Session,
 	query accessgraph.GraphQuery,
-	evaluatedAt time.Time,
 ) (accessgraph.GraphPage, error) {
 	stub.calls++
-	stub.evaluatedAt = evaluatedAt
 	return accessgraph.NewGraphPage(query, accessgraph.GraphPageParams{
 		Scope: query.Scope(), Revision: graphRevisionVector(6),
 	})
 }
-
-type graphClock struct{ now time.Time }
-
-func (clock graphClock) Now() time.Time { return clock.now }
 
 type graphRelease struct {
 	id   publication.ReleaseID

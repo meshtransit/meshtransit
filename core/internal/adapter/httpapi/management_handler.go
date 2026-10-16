@@ -132,7 +132,8 @@ type PolicySimulator interface {
 
 // ActivePolicyReader returns complete compiled evidence after current policy.read.
 type ActivePolicyReader interface {
-	ReadActivePolicy(context.Context, accountsession.Session, network.Scope, time.Time) (policycatalog.Snapshot, error)
+	// ReadActivePolicy authorizes on the database clock.
+	ReadActivePolicy(context.Context, accountsession.Session, network.Scope) (policycatalog.Snapshot, error)
 }
 
 // PolicyApprovalWorkflow persists proposals and independent human decisions.

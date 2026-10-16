@@ -53,20 +53,21 @@ func NewActivePolicyStore(pool *Pool, options PolicySimulationOptions) (*ActiveP
 // ReadActivePolicy rechecks session generations and exact-scope policy.read with
 // authorization and revision locks in one bounded repeatable-read transaction,
 // rerun on a fresh snapshot when a concurrent publish holds the revision row.
-func (store *ActivePolicyStore) ReadActivePolicy(ctx context.Context, session accountsession.Session, scope network.Scope, evaluatedAt time.Time) (catalog.Snapshot, error) {
+// Each attempt authorizes on its transaction's database clock.
+func (store *ActivePolicyStore) ReadActivePolicy(ctx context.Context, session accountsession.Session, scope network.Scope) (catalog.Snapshot, error) {
 	return retryReadConflict(ctx, func() (catalog.Snapshot, error) {
-		return store.readActivePolicyOnce(ctx, session, scope, evaluatedAt)
+		return store.readActivePolicyOnce(ctx, session, scope)
 	})
 }
 
-func (store *ActivePolicyStore) readActivePolicyOnce(ctx context.Context, session accountsession.Session, scope network.Scope, evaluatedAt time.Time) (_ catalog.Snapshot, resultErr error) {
+func (store *ActivePolicyStore) readActivePolicyOnce(ctx context.Context, session accountsession.Session, scope network.Scope) (_ catalog.Snapshot, resultErr error) {
 	startedAt := time.Now()
 	defer func() {
 		if store != nil && store.metrics != nil {
 			store.metrics.observeOperation(postgresOperationActivePolicyRead, time.Since(startedAt), resultErr)
 		}
 	}()
-	if ctx == nil || !session.IsValid() || !scope.IsValid() || evaluatedAt.IsZero() {
+	if ctx == nil || !session.IsValid() || !scope.IsValid() {
 		return catalog.Snapshot{}, simulation.ErrInvalidRequest
 	}
 	if store == nil || store.database == nil || !validPolicySimulationOptions(store.options) {
@@ -92,8 +93,12 @@ func (store *ActivePolicyStore) readActivePolicyOnce(ctx context.Context, sessio
 	if ws < 1 || net < 1 {
 		return catalog.Snapshot{}, simulation.ErrForbidden
 	}
+	evaluatedAt, err := readTransactionTime(ctx, transaction.QueryRow)
+	if err != nil {
+		return catalog.Snapshot{}, policySimulationDatabaseError(ctx, err)
+	}
 	var encoded *string
-	err = transaction.QueryRow(ctx, readActivePolicySQL, session.ID().String(), session.DeploymentID().String(), session.PrincipalID().String(), session.IdentitySubjectID().String(), session.Version(), session.PrincipalAuthorityGeneration(), session.AccountSessionGeneration(), session.ProviderGeneration(), session.DeploymentRecoveryEpoch(), scope.WorkspaceID().String(), scope.NetworkID().String(), evaluatedAt.UTC()).Scan(&encoded)
+	err = transaction.QueryRow(ctx, readActivePolicySQL, session.ID().String(), session.DeploymentID().String(), session.PrincipalID().String(), session.IdentitySubjectID().String(), session.Version(), session.PrincipalAuthorityGeneration(), session.AccountSessionGeneration(), session.ProviderGeneration(), session.DeploymentRecoveryEpoch(), scope.WorkspaceID().String(), scope.NetworkID().String(), evaluatedAt).Scan(&encoded)
 	if err != nil {
 		return catalog.Snapshot{}, policySimulationDatabaseError(ctx, err)
 	}
