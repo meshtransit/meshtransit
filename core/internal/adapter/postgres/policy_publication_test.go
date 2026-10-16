@@ -57,6 +57,7 @@ func TestPolicyPublicationTransactionCommitsReleaseRevisionAuditAndOutbox(t *tes
 		setPolicyPublicationChangeSQL,
 		scaledPolicyPublicationGrantedSQL,
 		publishCompiledPolicySQL,
+		recordPolicyReleaseRuleFingerprintsSQL,
 		appendPolicyPublicationEvidenceSQL,
 	}
 	if got := policyPublicationCallQueries(databaseTransaction.calls); !reflect.DeepEqual(got, wantCalls) {
@@ -148,6 +149,7 @@ func TestPolicyPublicationTransactionRevalidatesAndPersistsResourceDestination(t
 		scaledPolicyPublicationGrantedSQL,
 		publishCompiledPolicySQL,
 		attachPolicyResourceDestinationsSQL,
+		recordPolicyReleaseRuleFingerprintsSQL,
 		appendPolicyPublicationEvidenceSQL,
 	}
 	if got := policyPublicationCallQueries(databaseTransaction.calls); !reflect.DeepEqual(got, wantCalls) {
@@ -207,6 +209,7 @@ func TestPolicyPublicationTransactionRevalidatesAndPersistsResourceGroupDestinat
 		scaledPolicyPublicationGrantedSQL,
 		publishCompiledPolicySQL,
 		attachPolicyResourceGroupDestinationsSQL,
+		recordPolicyReleaseRuleFingerprintsSQL,
 		appendPolicyPublicationEvidenceSQL,
 	}
 	if got := policyPublicationCallQueries(databaseTransaction.calls); !reflect.DeepEqual(got, wantCalls) {
@@ -265,6 +268,7 @@ func TestPolicyPublicationTransactionPublishesImportedResourceAtomically(t *test
 		setPolicyPublicationChangeSQL,
 		scaledPolicyPublicationGrantedSQL,
 		publishCompiledPolicySQL,
+		recordPolicyReleaseRuleFingerprintsSQL,
 		appendPolicyPublicationEvidenceSQL,
 	}
 	if got := policyPublicationCallQueries(databaseTransaction.calls); !reflect.DeepEqual(got, wantCalls) {
@@ -605,6 +609,7 @@ func TestPolicyPublicationTransactionConsumesApprovalWithReleaseAuditAndOutbox(t
 		setPolicyPublicationChangeSQL,
 		scaledPolicyPublicationGrantedSQL,
 		publishCompiledPolicySQL,
+		recordPolicyReleaseRuleFingerprintsSQL,
 		consumePolicyPublicationApprovalSQL,
 		appendPolicyPublicationEvidenceSQL,
 	}

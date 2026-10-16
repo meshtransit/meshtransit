@@ -137,7 +137,13 @@ ORDER BY device.id LIMIT 1`, scope.WorkspaceID().String(), scope.NetworkID().Str
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := publisher.Publish(ctx, restore); err != nil {
+	restored, err := publisher.Publish(ctx, restore)
+	if err != nil {
 		t.Fatalf("restore empty Consumer policy through publication: %v", err)
 	}
+	assertPolicyPublicationChangeSummary(ctx, t, admin, restored.ReleaseID().String(), restored.PolicyRevision(),
+		&policyChangeSummaryWant{Baseline: "previous_release", Removed: 1, Rules: []policyRuleChangeWant{
+			{Change: "removed", RuleID: ruleID.String(), DestinationKind: "imported_resource",
+				DestinationID: destination.ImportedResourceID().String()},
+		}})
 }

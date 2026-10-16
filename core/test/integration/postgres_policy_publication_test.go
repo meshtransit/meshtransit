@@ -237,6 +237,13 @@ WHERE workspace_id = 103 AND network_id = 203
 		resourcePublished,
 		resourceDestination,
 	)
+	assertPolicyPublicationChangeSummary(ctx, t, adminConnection, resourcePublished.ReleaseID().String(), 4,
+		&policyChangeSummaryWant{Baseline: "previous_release", Added: 1, Removed: 1, Rules: []policyRuleChangeWant{
+			{Change: "removed", RuleID: transportRules[0].ID().String(), DestinationKind: "device",
+				DestinationID: transportRules[0].DestinationNodeID().String()},
+			{Change: "added", RuleID: resourceRule.ID().String(), DestinationKind: "resource",
+				DestinationID: resourceID.String()},
+		}})
 
 	snapshot, err := policy.NewSnapshot(policy.SnapshotParams{
 		Scope: scope, Revision: 5, Rules: []policy.Rule{},
@@ -278,6 +285,14 @@ WHERE workspace_id = 103 AND network_id = 203
 		)
 	}
 	assertConsumedPolicyApproval(ctx, t, adminConnection, denyApproval, result)
+	assertJSONBTextForms(ctx, t, adminConnection)
+	assertPolicyReleaseFingerprintGuards(ctx, t, adminConnection, resourcePublished.ReleaseID().String(), 1)
+	assertPolicyReleaseFingerprintGuards(ctx, t, adminConnection, result.ReleaseID().String(), 0)
+	assertPolicyPublicationChangeSummary(ctx, t, adminConnection, result.ReleaseID().String(), 5,
+		&policyChangeSummaryWant{Baseline: "previous_release", Removed: 1, Rules: []policyRuleChangeWant{
+			{Change: "removed", RuleID: resourceRule.ID().String(), DestinationKind: "resource",
+				DestinationID: resourceID.String()},
+		}})
 	assertPolicyReleaseOnDatabaseClock(ctx, t, adminConnection, result.ReleaseID().String())
 	var evidenceCount int
 	if err := adminConnection.QueryRow(ctx, `SELECT pg_catalog.count(*)::INTEGER
@@ -1248,6 +1263,7 @@ func assertCommittedPolicyPublication(
 			outboxCount,
 		)
 	}
+	assertPolicyPublicationChangeSummary(ctx, t, connection, result.ReleaseID().String(), result.PolicyRevision(), nil)
 }
 
 func assertPublishedPolicyVisibleInMap(

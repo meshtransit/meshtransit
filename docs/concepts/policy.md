@@ -92,10 +92,12 @@ change runs the same compiler that publication uses.
    is refused with 428, a stale one with 412. The result is an immutable
    **Policy Release** with the next revision and a semantic hash.
 
-Approval is not required today: a person with `policy.publish` can publish
-directly. When an approval is presented, publication checks that it matches
-the change exactly and uses it once. A policy that names Imported Resources
-cannot go through approval yet.
+Approval is optional: a person with `policy.publish` can publish directly,
+and no setting makes approval mandatory. The `approval_policy.manage`
+permission is reserved and grants nothing yet. When an approval is presented,
+publication checks that it matches the change exactly and uses it once. A
+policy that names Imported Resources cannot go through approval yet. Every
+publication, approved or not, is recorded in the activity log (see below).
 
 At publication Core authorizes the person again, checks that every named
 Device and Resource is valid, and applies the Workspace's enforced
@@ -103,6 +105,55 @@ Device and Resource is valid, and applies the Workspace's enforced
 shared Devices. A refused publication answers `guardrail_violation` with its
 findings. The release, its audit event and the revision wakeup commit
 together.
+
+### What each publication records
+
+Every publication, from the Console or with a bearer token, with or without
+an approval, and whatever its destinations, appends one `policy.published`
+event to the Network's audit stream ([audit](audit.md)) in the same
+transaction as the release. The event records:
+
+| Field | Meaning |
+|---|---|
+| `actor_principal_id`, `network_id` | who published, in which Network |
+| `target_id` | the Policy Release |
+| `before_semantic_hash`, `after_semantic_hash` | semantic hash of the replaced and the new release |
+| `payload.base_policy_revision`, `payload.policy_revision` | revision replaced and revision published |
+| `payload.audit_reason` | the reason given with the request |
+| `payload.rule_count`, `payload.compiler_format_version` | compiled rules and compiler format |
+| `payload.account_session_id`, `role_binding_id`, `role_definition_id` | the session and role that authorized it |
+| `payload.approval_*`, `approver_*` | the approval used, when there was one |
+| `payload.guardrail_findings` | audit-mode guardrails the change breaks; `guardrail_finding_count` and `guardrail_findings_truncated` when not all fit |
+| `payload.change_summary` | which Access Rules changed |
+
+`change_summary` compares the new release's rules with the replaced
+release's. Core computes it from a fingerprint of each rule that every
+release keeps; it is Core's account of the change, not something the
+database derives from the stored rules.
+
+- `added`, `removed`, `changed`, `unchanged`: counts over every rule the
+  release compiled. A rule is **changed** when it keeps its ID but its
+  source, destination, protocol or ports differ. A new version of a Resource
+  or share behind an unchanged rule, or new members in its groups, is not a
+  rule change; the semantic hashes show the first. A rule that compiles to
+  nothing, such as one to a Resource Group without members, is not in the
+  release, so it counts as removed and later as added again.
+- `rules`: at most 20 of the changed rules (removed, then changed, then
+  added, shared between the three), each with its ID, `destination_kind`
+  (`device`, `device_group`, `device_tag`, `resource`, `resource_group` or
+  `imported_resource`) and `destination_id`. An Imported Resource appears by
+  its consumer-local ID. `truncated` is true when more rules changed, or
+  when the list was shortened to keep the event within 16 KiB.
+- `baseline`:
+  - `none`: the Network had no release, so every rule is added;
+  - `previous_release`: compared with the replaced release;
+  - `unavailable`: the replaced release was published by a Core version that
+    did not keep fingerprints;
+  - `unreadable`: its stored fingerprints did not decode, which only a change
+    made directly in the database can cause. Publication still goes ahead,
+    since it may be revoking access.
+
+  The counts are zero for the last two.
 
 There is no rollback operation: to undo a change, publish the earlier rules
 again. The semantic hash covers the rules (with their IDs) and what their

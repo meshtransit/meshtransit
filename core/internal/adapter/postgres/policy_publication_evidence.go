@@ -66,9 +66,13 @@ type policyPublicationRulePayload struct {
 type policyPublicationAuditPayload struct {
 	AuditReason                               string                                   `json:"audit_reason"`
 	BasePolicyRevision                        int64                                    `json:"base_policy_revision"`
+	PolicyRevision                            int64                                    `json:"policy_revision"`
+	ChangeSummary                             policyPublicationChangeSummaryPayload    `json:"change_summary"`
 	CompilerFormatVersion                     int                                      `json:"compiler_format_version"`
 	RuleCount                                 int                                      `json:"rule_count"`
 	GuardrailFindings                         []guardrailFindingEvidence               `json:"guardrail_findings,omitempty"`
+	GuardrailFindingCount                     int                                      `json:"guardrail_finding_count,omitempty"`
+	GuardrailFindingsTruncated                bool                                     `json:"guardrail_findings_truncated,omitempty"`
 	AccountSessionID                          string                                   `json:"account_session_id,omitempty"`
 	RoleBindingID                             string                                   `json:"role_binding_id,omitempty"`
 	RoleDefinitionID                          string                                   `json:"role_definition_id,omitempty"`
@@ -90,6 +94,47 @@ type policyPublicationAuditPayload struct {
 	ApproverBindingAuthorityGeneration        int64                                    `json:"approver_binding_authority_generation,omitempty"`
 	ApproverRoleAuthorityGeneration           int64                                    `json:"approver_role_authority_generation,omitempty"`
 	ApproverWorkspaceOwnerAuthorityGeneration int64                                    `json:"approver_workspace_owner_authority_generation,omitempty"`
+}
+
+// policyPublicationChangeSummaryPayload says which Access Rules this
+// release added, removed or changed relative to the release it replaced.
+// Baseline is "none" (no earlier release), "previous_release",
+// "unavailable" (that release kept no rule fingerprints) or "unreadable"
+// (they did not decode); the counts are zero for the last two.
+type policyPublicationChangeSummaryPayload struct {
+	Baseline  string                               `json:"baseline"`
+	Added     int                                  `json:"added"`
+	Removed   int                                  `json:"removed"`
+	Changed   int                                  `json:"changed"`
+	Unchanged int                                  `json:"unchanged"`
+	Rules     []policyPublicationRuleChangePayload `json:"rules"`
+	Truncated bool                                 `json:"truncated"`
+}
+
+type policyPublicationRuleChangePayload struct {
+	Change          string `json:"change"`
+	RuleID          string `json:"rule_id"`
+	DestinationKind string `json:"destination_kind"`
+	DestinationID   string `json:"destination_id"`
+}
+
+func policyPublicationChangeSummaryEvidence(summary publication.RuleChangeSummary) policyPublicationChangeSummaryPayload {
+	payload := policyPublicationChangeSummaryPayload{
+		Baseline: summary.Baseline().String(), Rules: []policyPublicationRuleChangePayload{},
+	}
+	if !summary.BaselineKnown() {
+		return payload
+	}
+	payload.Added, payload.Removed = summary.Added(), summary.Removed()
+	payload.Changed, payload.Unchanged = summary.Changed(), summary.Unchanged()
+	payload.Truncated = summary.Truncated()
+	for _, change := range summary.Rules() {
+		payload.Rules = append(payload.Rules, policyPublicationRuleChangePayload{
+			Change: change.Kind().String(), RuleID: change.RuleID().String(),
+			DestinationKind: change.DestinationKind().String(), DestinationID: change.DestinationID().String(),
+		})
+	}
+	return payload
 }
 
 type policyPublicationAuthorityVectorPayload struct {
@@ -249,12 +294,15 @@ func (transaction *policyPublicationTransaction) appendPolicyPublicationEvidence
 	change publication.Change,
 	releaseVersion int64,
 	networkRevision int64,
+	ruleChanges publication.RuleChangeSummary,
 ) error {
 	command := change.Command()
 	policyRevision := command.Candidate().Snapshot().Revision()
 	auditEvidence := policyPublicationAuditPayload{
 		AuditReason:           command.AuditReason().String(),
 		BasePolicyRevision:    command.BasePolicyRevision(),
+		PolicyRevision:        policyRevision,
+		ChangeSummary:         policyPublicationChangeSummaryEvidence(ruleChanges),
 		CompilerFormatVersion: command.Candidate().CompilerFormatVersion(),
 		RuleCount:             command.Candidate().ProjectionCount(),
 		GuardrailFindings:     guardrailFindingsEvidence(transaction.guardrailFindings),
@@ -291,9 +339,9 @@ func (transaction *policyPublicationTransaction) appendPolicyPublicationEvidence
 		auditEvidence.ApproverRoleAuthorityGeneration = authorization.roleAuthorityGeneration
 		auditEvidence.ApproverWorkspaceOwnerAuthorityGeneration = authorization.workspaceOwnerAuthorityGeneration
 	}
-	auditPayload, err := json.Marshal(auditEvidence)
+	auditPayload, err := encodePolicyPublicationAuditPayload(auditEvidence)
 	if err != nil {
-		return fmt.Errorf("encode policy publication audit payload: %w", err)
+		return err
 	}
 	outboxPayload, err := json.Marshal(policyPublicationOutboxPayload{
 		NetworkRevision: networkRevision,
@@ -362,6 +410,58 @@ func (transaction *policyPublicationTransaction) appendPolicyPublicationEvidence
 		return ErrPolicyPublicationEvidence
 	}
 	return nil
+}
+
+// maximumAuditPayloadBytes is the audit_event payload bound (schema 3),
+// measured on the payload's jsonb text form.
+const maximumAuditPayloadBytes = 16384
+
+// jsonbTextLength bounds the length of payload::TEXT for compact JSON from
+// encoding/json: jsonb prints a space after every ':' and ',' between
+// tokens, and never uses longer escapes than encoding/json does.
+func jsonbTextLength(encoded []byte) int {
+	length, inString, escaped := len(encoded), false, false
+	for _, character := range encoded {
+		switch {
+		case escaped:
+			escaped = false
+		case inString && character == '\\':
+			escaped = true
+		case character == '"':
+			inString = !inString
+		case !inString && (character == ':' || character == ','):
+			length++
+		}
+	}
+	return length
+}
+
+// encodePolicyPublicationAuditPayload encodes the payload within the audit
+// event bound. When it would not fit it lists fewer changed rules, then
+// fewer guardrail findings, and says so (the counts stay whole), so that
+// audit-mode findings or a large change can never fail a publication.
+func encodePolicyPublicationAuditPayload(evidence policyPublicationAuditPayload) ([]byte, error) {
+	findings := evidence.GuardrailFindings
+	for {
+		encoded, err := json.Marshal(evidence)
+		if err != nil {
+			return nil, fmt.Errorf("encode policy publication audit payload: %w", err)
+		}
+		if jsonbTextLength(encoded) <= maximumAuditPayloadBytes {
+			return encoded, nil
+		}
+		switch {
+		case len(evidence.ChangeSummary.Rules) > 0:
+			evidence.ChangeSummary.Rules = evidence.ChangeSummary.Rules[:len(evidence.ChangeSummary.Rules)/2]
+			evidence.ChangeSummary.Truncated = true
+		case len(evidence.GuardrailFindings) > 0:
+			evidence.GuardrailFindings = findings[:len(evidence.GuardrailFindings)/2]
+			evidence.GuardrailFindingCount = len(findings)
+			evidence.GuardrailFindingsTruncated = true
+		default:
+			return nil, ErrPolicyPublicationEvidence
+		}
+	}
 }
 
 func policyPublicationAuthorityVectorAuditPayload(

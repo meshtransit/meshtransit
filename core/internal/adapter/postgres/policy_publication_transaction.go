@@ -331,6 +331,14 @@ func (transaction *policyPublicationTransaction) applyLocked(
 	if transaction.guardrailFindings, err = transaction.checkGuardrails(ctx, change); err != nil {
 		return publication.Result{}, err
 	}
+	fingerprints, err := publication.FingerprintRules(change.Command().Candidate())
+	if err != nil {
+		return publication.Result{}, ErrPolicyPublicationEvidence
+	}
+	previousFingerprints, baseline, err := transaction.readPreviousRuleFingerprints(ctx)
+	if err != nil {
+		return publication.Result{}, err
+	}
 	if err := transaction.database.Exec(
 		ctx,
 		setPolicyPublicationChangeSQL,
@@ -421,6 +429,18 @@ func (transaction *policyPublicationTransaction) applyLocked(
 			return publication.Result{}, ErrPolicyPublicationEvidence
 		}
 	}
+	var recordedRules int
+	if err := transaction.database.QueryRow(
+		ctx,
+		recordPolicyReleaseRuleFingerprintsSQL,
+		change.MutationIDs().ReleaseID().String(),
+		fingerprints.MarshalBinary(),
+	).Scan(&recordedRules); err != nil {
+		return publication.Result{}, fmt.Errorf("record policy rule fingerprints: %w", err)
+	}
+	if recordedRules != fingerprints.Len() {
+		return publication.Result{}, ErrPolicyPublicationEvidence
+	}
 	if command.HasApprovalEvidence() {
 		impactHash := change.Resolution().ApprovalGate().ImpactHash().Bytes()
 		var consumedRequestVersion int64
@@ -445,6 +465,7 @@ func (transaction *policyPublicationTransaction) applyLocked(
 		change,
 		releaseVersion,
 		networkRevision,
+		publication.SummarizeRuleChanges(previousFingerprints, baseline, fingerprints),
 	); err != nil {
 		return publication.Result{}, err
 	}
@@ -459,6 +480,37 @@ func (transaction *policyPublicationTransaction) applyLocked(
 		return publication.Result{}, ErrPolicyPublicationEvidence
 	}
 	return result, nil
+}
+
+// readPreviousRuleFingerprints returns the rule fingerprints of the release
+// being replaced and what they are: none when the Network has no release,
+// unavailable when that release kept none, unreadable when they do not
+// decode. An unreadable blob never stops publication, since publishing may
+// be how access is revoked; the event records it instead.
+func (transaction *policyPublicationTransaction) readPreviousRuleFingerprints(
+	ctx context.Context,
+) (publication.RuleFingerprintSet, publication.RuleBaseline, error) {
+	activeReleaseID, _, found := transaction.resolution.ActiveRelease()
+	if !found {
+		return publication.RuleFingerprintSet{}, publication.RuleBaselineNone, nil
+	}
+	var encoded []byte
+	if err := transaction.database.QueryRow(
+		ctx,
+		readPolicyReleaseRuleFingerprintsSQL,
+		activeReleaseID.String(),
+	).Scan(&encoded); err != nil {
+		return publication.RuleFingerprintSet{}, publication.RuleBaselineUnknown,
+			fmt.Errorf("read previous policy rule fingerprints: %w", err)
+	}
+	if encoded == nil {
+		return publication.RuleFingerprintSet{}, publication.RuleBaselineUnavailable, nil
+	}
+	previous, err := publication.ParseRuleFingerprintSet(encoded)
+	if err != nil {
+		return publication.RuleFingerprintSet{}, publication.RuleBaselineUnreadable, nil
+	}
+	return previous, publication.RuleBaselinePreviousRelease, nil
 }
 
 func (transaction *policyPublicationTransaction) Commit(ctx context.Context) (resultErr error) {

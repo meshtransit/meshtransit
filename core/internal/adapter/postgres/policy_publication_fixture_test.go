@@ -99,6 +99,24 @@ func (transaction *fakePolicyPublicationTransaction) QueryRow(
 			return nil
 		}}
 	}
+	if len(queued) == 0 && query == readPolicyReleaseRuleFingerprintsSQL {
+		// Unless a test stores some, the replaced release has none.
+		return policyPublicationTestRow{scan: func(destinations ...any) error {
+			*destinations[0].(*[]byte) = nil
+			return nil
+		}}
+	}
+	if len(queued) == 0 && query == recordPolicyReleaseRuleFingerprintsSQL {
+		// Storing fingerprints succeeds and returns their rule count.
+		return policyPublicationTestRow{scan: func(destinations ...any) error {
+			set, err := publication.ParseRuleFingerprintSet(arguments[1].([]byte))
+			if err != nil {
+				return err
+			}
+			*destinations[0].(*int) = set.Len()
+			return nil
+		}}
+	}
 	if len(queued) == 0 {
 		return policyPublicationTestRow{err: fmt.Errorf("unexpected policy publication query: %s", query)}
 	}

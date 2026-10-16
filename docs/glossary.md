@@ -13,8 +13,9 @@ and ports. Everything not allowed by a rule is denied.
 an idle and an absolute expiry. The Console carries it in a cookie; tools send
 it as a bearer token.
 
-**Approval.** A two-person check before a policy change is published: one
-person proposes a simulated change, another approves exactly that change.
+**Approval.** An optional second look at a policy change: one person
+requests approval of a simulated change, a different person approves exactly
+that change. Publication does not require it.
 
 **Audit event.** The record of one change, sealed into its stream's hash
 chain. See [audit records](protocol/audit-record-v2.md).

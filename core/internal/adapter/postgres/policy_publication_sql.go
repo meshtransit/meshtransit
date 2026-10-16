@@ -136,3 +136,13 @@ LEFT JOIN mesh.policy_approval_evidence AS evidence
 WHERE release.workspace_id = $1::BIGINT
   AND release.network_id = $2::BIGINT
   AND release.public_id = $3::UUID`
+
+// readPolicyReleaseRuleFingerprintsSQL returns the stored rule fingerprints
+// of the release being replaced, or NULL when it has none (schema 174).
+const readPolicyReleaseRuleFingerprintsSQL = `SELECT mesh_ops.read_policy_release_rule_fingerprints_v1($1::UUID)`
+
+// recordPolicyReleaseRuleFingerprintsSQL stores the new release's rule
+// fingerprints and returns their rule count (schema 174).
+const recordPolicyReleaseRuleFingerprintsSQL = `SELECT mesh_ops.record_policy_release_rule_fingerprints_v1(
+    $1::UUID, $2::BYTEA
+)`

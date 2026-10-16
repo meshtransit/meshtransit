@@ -12,8 +12,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 173 {
-		t.Fatalf("len(Catalog()) = %d, want 173", len(catalog))
+	if len(catalog) != 174 {
+		t.Fatalf("len(Catalog()) = %d, want 174", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1608,8 +1608,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 173 {
-		t.Fatalf("LatestVersion() = %d, want 173", LatestVersion())
+	if LatestVersion() != 174 {
+		t.Fatalf("LatestVersion() = %d, want 174", LatestVersion())
 	}
 }
 
@@ -5055,5 +5055,39 @@ func TestSharingUpdatedAtOrderLog(t *testing.T) {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 173 must not contain %q", forbidden)
 		}
+	}
+}
+
+// Schema 174 stores one fingerprint row per Policy Release behind two
+// definer functions that only the runtime role runs; the table stays closed
+// to every application role and its rows never change.
+func TestPolicyReleaseRuleFingerprints(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 174 {
+		t.Fatalf("len(Catalog()) = %d, want schema 174", len(catalog))
+	}
+	migration := catalog[173]
+	if migration.Version != 174 {
+		t.Fatalf("migration 174 = %+v", migration)
+	}
+	for _, want := range []string{
+		"ALTER TABLE mesh.policy_release_rule_fingerprint FORCE ROW LEVEL SECURITY;",
+		"REVOKE ALL ON mesh.policy_release_rule_fingerprint\n    FROM PUBLIC, mesh_runtime, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;",
+		"BEFORE UPDATE OR DELETE ON mesh.policy_release_rule_fingerprint\nFOR EACH ROW EXECUTE FUNCTION mesh_audit.reject_immutable_change();",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.record_policy_release_rule_fingerprints_v1(UUID, BYTEA) TO mesh_runtime;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_policy_release_rule_fingerprints_v1(UUID) TO mesh_runtime;",
+		"REVOKE ALL ON FUNCTION mesh_ops.record_policy_release_rule_fingerprints_v1(UUID, BYTEA)\n    FROM PUBLIC,",
+		"REVOKE ALL ON FUNCTION mesh_ops.read_policy_release_rule_fingerprints_v1(UUID)\n    FROM PUBLIC,",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 174 lacks %q", want)
+		}
+	}
+	if count := strings.Count(migration.SQL, "SECURITY DEFINER\nSET search_path = pg_catalog\n"); count != 2 {
+		t.Errorf("schema 174 has %d definer functions pinned to pg_catalog, want 2", count)
+	}
+	if strings.Contains(migration.SQL, "clock_timestamp") || strings.Contains(migration.SQL, "TIMESTAMPTZ,") {
+		t.Error("schema 174 must take no time from the caller and use the transaction clock")
 	}
 }

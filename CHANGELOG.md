@@ -5,6 +5,20 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: every `policy.published` event now records the published
+  `policy_revision` and a `change_summary`: how many Access Rules were added,
+  removed, changed or kept, and up to 20 of the changed rules with their
+  destination (an Imported Resource by its consumer-local ID). Core computes
+  the comparison itself from rule fingerprints that each release now keeps
+  (schema 174, one row per release); the database does not compare compiled
+  rules. A release published by an older Core has no fingerprints, so the
+  next publication records `baseline: unavailable`; fingerprints that do not
+  decode record `unreadable` and never block publication. The event stays
+  within the 16 KiB audit bound: when it would not fit, it lists fewer
+  changed rules, then fewer guardrail findings (with
+  `guardrail_finding_count`), instead of failing the publication. Docs now
+  say that approval is optional and `approval_policy.manage` grants nothing
+  yet.
 - Core: `meshcore migrate operator apply` runs the operator SQL steps from the
   binary instead of by hand with `psql`. It connects with its own
   `MESHTRANSIT_OPERATOR_*` settings as a superuser or `CREATEROLE` role, and
