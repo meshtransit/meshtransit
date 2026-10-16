@@ -105,7 +105,11 @@ drops a pool whose server became read-only.
    no previous release runs), then `meshcore migrate verify`, which must exit 0.
 
 The operator steps are the SQL files in `core/migrations/operator/`, embedded
-in the binary; the command runs only those, never a file from disk:
+in the binary. The command never runs a file from disk, nor a file's text:
+it parses each file with a narrow grammar (whole-line `--` comments only;
+`ALTER FUNCTION … OWNER TO`, `GRANT EXECUTE`, `REVOKE` on `mesh_ops`
+functions; MeshTransit roles only) and runs the statements it rebuilds from
+what it read:
 
 - `…_role.sql` creates a NOLOGIN role and must run **before** the migration
   of the same number. It creates the role only if it is missing, and resets
@@ -113,9 +117,10 @@ in the binary; the command runs only those, never a file from disk:
   is safe to run again.
 - `…_ownership.sql` moves the new functions to their owner role and grants
   `EXECUTE` to the runtime or worker role; it runs **after** its migration.
-  Those of migrations 53 to 93, 170 and 171 wait until no replica of the
-  previous release is left ([upgrades](upgrades.md)); later ones keep previous
-  versions executable.
+  Its first line, `-- operator-step: rollout=before` or `rollout=after`,
+  says whether it may run while a replica of the previous release is left;
+  those of migrations 53 to 93, 170 and 171 are `after`
+  ([upgrades](upgrades.md)).
 
 `meshcore migrate operator apply`:
 
@@ -145,8 +150,10 @@ pending. `meshcore migrate operator status` lists every step and what is
 missing, without changing anything; it needs the operator's settings too,
 while `meshcore migrate verify` gives the same report with the migrator's. A step holds when PostgreSQL shows what
 its file sets: the role and its attributes, the owner of each function, and
-which roles hold `EXECUTE` on it; nothing else records that a step ran, so
-steps applied by hand count as well.
+which roles hold `EXECUTE` on it (a revoked role must not reach it through
+PUBLIC or a membership either); nothing else records that a step ran, so
+steps applied by hand count as well. `meshcore migrate verify` also reports
+any role membership a MeshTransit role takes part in, since none is allowed.
 
 Without the command, run the files with `psql -X -v ON_ERROR_STOP=1 -f` as a
 database superuser, in file order, at the same points (a `…_role.sql` file

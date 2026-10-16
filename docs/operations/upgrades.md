@@ -25,8 +25,9 @@ How to move a deployment to a new Core or relay release, and back.
 binary knows and the state (`uninitialized`, `pending` or `clean`) as JSON.
 `meshcore migrate verify` prints the same and, for every operator step of the
 applied migrations, whether it holds and, when it does not, exactly which
-role, owner or grant is missing; it exits with status 3 while a migration or
-an operator step is pending
+role, owner or grant is missing, and any role membership of a MeshTransit
+role; it exits with status 3 while a migration or an operator step is
+pending or such a membership exists
 ([deployment](deployment.md#migrations-and-operator-steps)).
 
 ## Upgrading Core

@@ -91,8 +91,12 @@ migration is therefore never edited, not even its comments. A migration must
 keep the previous release working on the new schema, so a rollback is a
 binary rollback. Ownership changes that need an operator run separately from
 `core/migrations/operator/`, embedded in the binary, with
-`meshcore migrate operator apply`; `meshcore migrate verify` checks that the
-roles, owners and grants each step sets hold. An operator step may take only a function its own
+`meshcore migrate operator apply`, which runs the statements it rebuilds from
+each parsed file, never the file's text; `meshcore migrate verify` checks
+that the roles, owners and grants each step sets hold. Each ownership file
+declares on its first line whether it waits for the rollout, and a test
+requires `rollout=after` when a step takes a function its own migration did
+not create away from the runtime, worker or migrator role. An operator step may take only a function its own
 migration creates for the first time away from `mesh_runtime` or
 `mesh_worker`; the previous version stays executable until a later release
 removes it. A test checks the operator steps for this. The steps of migrations 53 to 93 predate this rule and do

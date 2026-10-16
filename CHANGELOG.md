@@ -18,11 +18,14 @@ merge (2026-10-09) are kept below.
   roles, function owners and `EXECUTE` grants are in place, so steps applied
   by hand count too; nothing new is stored. `meshcore migrate verify` (with
   the migrator's settings) reports the schema state and exactly which role,
-  owner or grant of which step is missing, and exits with status 3 while a
-  migration or a step is pending.
+  owner or grant of which step is missing and any role membership of a
+  MeshTransit role, and exits with status 3 while any of these is found. The
+  command runs the statements it rebuilds from each parsed file, never the
+  file's text, and each ownership file now starts with
+  `-- operator-step: rollout=before|after`.
 - Core: a pending operator step is now visible. Readiness stays up, since
-  some steps must wait until a rollout ends, but each check logs the pending
-  steps when they change and exports
+  some steps must wait until a rollout ends, but a background read (at most
+  once a minute) logs the pending steps when they change and exports
   `meshtransit_postgres_operator_steps_pending`; the policy publication,
   Imported Resource, share decision, alias worker and map reader paths
   export the function version they selected in
