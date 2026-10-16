@@ -110,8 +110,10 @@ func TestParseNetworkMemberPath(t *testing.T) {
 		{http.MethodGet, networkMembersTestPath("?after=" + strings.ToUpper(networkMemberTestMember)), false, "", 0},
 		{http.MethodGet, networkMembersTestPath("?other=1"), false, "", 0},
 		{http.MethodGet, networkMembersTestPath("?limit=1&limit=2"), false, "", 0},
-		{http.MethodPost, networkMembersTestPath("/actions/add"), true, "network_member_add", 0},
-		{http.MethodPost, networkMembersTestPath("/actions/add?x=1"), false, "", 0},
+		{http.MethodPost, networkMembersTestPath(""), true, "network_member_add", 0},
+		{http.MethodPost, networkMembersTestPath("?x=1"), false, "", 0},
+		{http.MethodPost, networkMembersTestPath("?limit=10"), false, "", 0},
+		{http.MethodPost, networkMembersTestPath("/actions/add"), false, "", 0},
 		{http.MethodPost, networkMembersTestPath("/actions/delete"), false, "", 0},
 		{http.MethodPost, networkMembersTestPath("/" + networkMemberTestMember + "/actions/remove"), true,
 			"network_member_remove", 0},
@@ -133,11 +135,12 @@ func TestParseNetworkMemberPath(t *testing.T) {
 			t.Errorf("%s %s is not admitted", test.method, test.path)
 		}
 	}
-	wrongMethod := httptest.NewRequestWithContext(t.Context(), http.MethodPost, networkMembersTestPath(""), nil)
-	if isNetworkMemberOperation(wrongMethod) || isNetworkMemberRead(wrongMethod) {
-		t.Error("POST to the member list was admitted")
+	wrongMethod := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, networkMembersTestPath(""), nil)
+	if path, ok := parseNetworkMemberPath(wrongMethod); !ok || isNetworkMemberOperation(wrongMethod) ||
+		path.methods.header() != "GET, POST" {
+		t.Error("DELETE on the member list must match for a 405 and not be admitted")
 	}
-	add := httptest.NewRequestWithContext(t.Context(), http.MethodPost, networkMembersTestPath("/actions/add"), nil)
+	add := httptest.NewRequestWithContext(t.Context(), http.MethodPost, networkMembersTestPath(""), nil)
 	if isNetworkMemberRead(add) {
 		t.Error("adding members is not a read")
 	}
@@ -167,26 +170,26 @@ func TestNetworkMemberHTTPBoundary(t *testing.T) {
 			`"network_membership":null`},
 		{"list forbidden", http.MethodGet, networkMembersTestPath(""), "", memberlifecycle.ErrForbidden, 403, 1,
 			"permission_denied"},
-		{"add", http.MethodPost, networkMembersTestPath("/actions/add"), ids(2), nil, 200, 1,
+		{"add", http.MethodPost, networkMembersTestPath(""), ids(2), nil, 200, 1,
 			`"unchanged":["01890f00-0000-7000-8000-000000000501"]`},
-		{"add the maximum", http.MethodPost, networkMembersTestPath("/actions/add"),
+		{"add the maximum", http.MethodPost, networkMembersTestPath(""),
 			ids(memberlifecycle.MaximumNetworkAdditions), nil, 200, 1, `"added":[`},
-		{"add too many", http.MethodPost, networkMembersTestPath("/actions/add"),
+		{"add too many", http.MethodPost, networkMembersTestPath(""),
 			ids(memberlifecycle.MaximumNetworkAdditions + 1), nil, 400, 0, "invalid_request"},
-		{"add nobody", http.MethodPost, networkMembersTestPath("/actions/add"), `{"principal_ids":[]}`, nil, 400, 0,
+		{"add nobody", http.MethodPost, networkMembersTestPath(""), `{"principal_ids":[]}`, nil, 400, 0,
 			"invalid_request"},
-		{"add twice", http.MethodPost, networkMembersTestPath("/actions/add"),
+		{"add twice", http.MethodPost, networkMembersTestPath(""),
 			`{"principal_ids":["` + networkMemberTestMember + `","` + networkMemberTestMember + `"]}`, nil, 400, 0,
 			"invalid_request"},
-		{"add without field", http.MethodPost, networkMembersTestPath("/actions/add"), `{}`, nil, 400, 0,
+		{"add without field", http.MethodPost, networkMembersTestPath(""), `{}`, nil, 400, 0,
 			"invalid_request"},
-		{"add uppercase", http.MethodPost, networkMembersTestPath("/actions/add"),
+		{"add uppercase", http.MethodPost, networkMembersTestPath(""),
 			`{"principal_ids":["` + strings.ToUpper(networkMemberTestMember) + `"]}`, nil, 400, 0, "invalid_request"},
-		{"add suspended", http.MethodPost, networkMembersTestPath("/actions/add"), ids(1),
+		{"add suspended", http.MethodPost, networkMembersTestPath(""), ids(1),
 			memberlifecycle.ErrWrongState, 409, 1, "member_state_conflict"},
-		{"add stranger", http.MethodPost, networkMembersTestPath("/actions/add"), ids(1),
+		{"add stranger", http.MethodPost, networkMembersTestPath(""), ids(1),
 			memberlifecycle.ErrNotFound, 404, 1, "member_not_found"},
-		{"add forbidden", http.MethodPost, networkMembersTestPath("/actions/add"), ids(1),
+		{"add forbidden", http.MethodPost, networkMembersTestPath(""), ids(1),
 			memberlifecycle.ErrForbidden, 403, 1, "permission_denied"},
 		{"remove", http.MethodPost, remove, `{"reason":"Moved team","devices":[{"device_id":"` + device +
 			`","action":"revoke"}]}`, nil, 200, 1, `"network_revision":9`},
@@ -199,7 +202,7 @@ func TestNetworkMemberHTTPBoundary(t *testing.T) {
 			memberlifecycle.ErrPlan, 409, 1, "device_plan_conflict"},
 		{"remove stranger", http.MethodPost, remove, `{"reason":"Moved team","devices":[]}`,
 			memberlifecycle.ErrNotFound, 404, 1, "member_not_found"},
-		{"wrong method", http.MethodGet, networkMembersTestPath("/actions/add"), "", nil, 405, 0,
+		{"wrong method", http.MethodDelete, networkMembersTestPath(""), "", nil, 405, 0,
 			"method_not_allowed"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

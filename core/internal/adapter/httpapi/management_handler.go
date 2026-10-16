@@ -626,11 +626,11 @@ func (handler *ManagementHandler) serveHTTP(
 	} else if identityCatalogMatched {
 		allowedMethod = identityCatalogPathValue.methods.allowedMethod(request.Method)
 	} else if networkMemberMatched {
-		allowedMethod = networkMemberPathValue.allowedMethod()
+		allowedMethod = networkMemberPathValue.methods.allowedMethod(request.Method)
 	} else if enrollmentKeyMatched {
-		allowedMethod = enrollmentKeyPathValue.allowedMethod()
+		allowedMethod = enrollmentKeyPathValue.methods.allowedMethod(request.Method)
 	} else if invitationMatched {
-		allowedMethod = invitationPathValue.allowedMethod()
+		allowedMethod = invitationPathValue.methods.allowedMethod(request.Method)
 	}
 	if allowedMethod == "" || request.Method != allowedMethod {
 		if policyApprovalMatched && policyApprovalPath.isCollection() {
@@ -657,6 +657,12 @@ func (handler *ManagementHandler) serveHTTP(
 			response.Header().Set("Allow", guardrailPathValue.methods.header())
 		} else if interchangeMatched {
 			response.Header().Set("Allow", interchangePathValue.methods.header())
+		} else if enrollmentKeyMatched {
+			response.Header().Set("Allow", enrollmentKeyPathValue.methods.header())
+		} else if invitationMatched {
+			response.Header().Set("Allow", invitationPathValue.methods.header())
+		} else if networkMemberMatched {
+			response.Header().Set("Allow", networkMemberPathValue.methods.header())
 		} else {
 			response.Header().Set("Allow", allowedMethodOrGet(resourceMatched, allowedMethod))
 		}

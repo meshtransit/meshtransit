@@ -33,7 +33,10 @@ type NetworkMemberManager interface {
 
 type networkMemberPath struct {
 	scope network.Scope
-	// kind is "list", "add" or "remove".
+	// methods are the methods the path accepts; kind is what the request's
+	// method does there: "list", "add" or "remove", and "" when the path does
+	// not accept the method.
+	methods  restMethods
 	kind     string
 	memberID publicid.ID
 	after    publicid.ID
@@ -41,9 +44,10 @@ type networkMemberPath struct {
 }
 
 // parseNetworkMemberPath matches, under /api/v1/workspaces/{ws}/networks/{net}:
-// GET members[?after=&limit=], POST members/actions/add and
-// POST members/{principal}/actions/remove. Only the list takes a query, and
-// only those two keys once each.
+// GET members[?after=&limit=], POST members (add) and
+// POST members/{principal}/actions/remove, which carries the plan for the
+// member's Devices. Only the list takes a query, and only those two keys once
+// each.
 func parseNetworkMemberPath(request *http.Request) (networkMemberPath, bool) {
 	if request == nil || request.URL == nil || request.URL.RawPath != "" {
 		return networkMemberPath{}, false
@@ -66,16 +70,23 @@ func parseNetworkMemberPath(request *http.Request) (networkMemberPath, bool) {
 	rest := segments[7:]
 	switch {
 	case len(rest) == 0:
-		path.kind = "list"
-		return path.withPage(request.URL.RawQuery)
-	case len(rest) == 2 && rest[0] == "actions" && rest[1] == "add":
-		path.kind = "add"
+		path.methods = collectionMethods
+		switch request.Method {
+		case http.MethodGet:
+			path.kind = "list"
+			return path.withPage(request.URL.RawQuery)
+		case http.MethodPost:
+			path.kind = "add"
+		}
 	case len(rest) == 3 && rest[1] == "actions" && rest[2] == "remove":
 		member, ok := canonicalPublicID(rest[0])
 		if !ok {
 			return networkMemberPath{}, false
 		}
-		path.kind, path.memberID = "remove", member
+		path.methods, path.memberID = restMethods{http.MethodPost}, member
+		if request.Method == http.MethodPost {
+			path.kind = "remove"
+		}
 	default:
 		return networkMemberPath{}, false
 	}
@@ -113,13 +124,6 @@ func (path networkMemberPath) withPage(rawQuery string) (networkMemberPath, bool
 	return path, true
 }
 
-func (path networkMemberPath) allowedMethod() string {
-	if path.kind == "list" {
-		return http.MethodGet
-	}
-	return http.MethodPost
-}
-
 func (path networkMemberPath) operation() string {
 	switch path.kind {
 	case "list":
@@ -131,10 +135,10 @@ func (path networkMemberPath) operation() string {
 	}
 }
 
-// isNetworkMemberOperation admits only the method each path allows.
+// isNetworkMemberOperation admits only the methods each path accepts.
 func isNetworkMemberOperation(request *http.Request) bool {
 	path, ok := parseNetworkMemberPath(request)
-	return ok && request.Method == path.allowedMethod()
+	return ok && path.methods.allows(request.Method)
 }
 
 // isNetworkMemberRead admits the bounded member page.

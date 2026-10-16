@@ -5317,9 +5317,7 @@
             "description": "Unavailable"
           }
         }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/invitations/actions/create": {
+      },
       "post": {
         "operationId": "createWorkspaceInvitation",
         "summary": "Invite a person by email",
@@ -10457,9 +10455,7 @@
             "description": "Unavailable"
           }
         }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/members/actions/add": {
+      },
       "post": {
         "operationId": "addNetworkMembers",
         "summary": "Add Workspace members to a Network",
@@ -11263,8 +11259,8 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_id}/role-assignments/{assignment_id}/actions/revoke": {
-      "post": {
+    "/api/v1/workspaces/{workspace_id}/role-assignments/{assignment_id}": {
+      "delete": {
         "operationId": "revokeWorkspaceRole",
         "summary": "Revoke one built-in role assignment",
         "description": "Same delegation ceiling as granting. Revocation is terminal and takes effect for new authority checks immediately. Retrying with the reviewed version returns the same receipt.",
@@ -11300,18 +11296,6 @@
             "$ref": "#/components/parameters/ConsoleSessionProof"
           }
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "maxProperties": 0
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "Role revoked",

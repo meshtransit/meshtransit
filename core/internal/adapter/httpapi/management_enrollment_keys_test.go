@@ -101,10 +101,11 @@ func TestParseEnrollmentKeyPath(t *testing.T) {
 		operation    string
 	}{
 		{http.MethodGet, enrollmentKeysTestPath(""), true, "enrollment_key_list"},
-		{http.MethodPost, enrollmentKeysTestPath("/actions/create"), true, "enrollment_key_create"},
+		{http.MethodPost, enrollmentKeysTestPath(""), true, "enrollment_key_create"},
 		{http.MethodPost, enrollmentKeysTestPath("/" + enrollmentKeyTestKey + "/actions/revoke"), true,
 			"enrollment_key_revoke"},
 		{http.MethodGet, enrollmentKeysTestPath("?state=active"), false, ""},
+		{http.MethodPost, enrollmentKeysTestPath("/actions/create"), false, ""},
 		{http.MethodPost, enrollmentKeysTestPath("/actions/delete"), false, ""},
 		{http.MethodPost, enrollmentKeysTestPath("/" + strings.ToUpper(enrollmentKeyTestKey) + "/actions/revoke"),
 			false, ""},
@@ -120,15 +121,15 @@ func TestParseEnrollmentKeyPath(t *testing.T) {
 			t.Errorf("%s: operation %s admitted %t", test.path, path.operation(), isEnrollmentKeyOperation(request))
 		}
 	}
-	if isEnrollmentKeyOperation(httptest.NewRequestWithContext(t.Context(), http.MethodPost,
+	if isEnrollmentKeyOperation(httptest.NewRequestWithContext(t.Context(), http.MethodDelete,
 		enrollmentKeysTestPath(""), nil)) {
-		t.Error("POST to the key list was admitted")
+		t.Error("DELETE on the key list was admitted")
 	}
 }
 
 func TestEnrollmentKeyHTTPBoundary(t *testing.T) {
 	t.Parallel()
-	create := enrollmentKeysTestPath("/actions/create")
+	create := enrollmentKeysTestPath("")
 	revoke := enrollmentKeysTestPath("/" + enrollmentKeyTestKey + "/actions/revoke")
 	for _, test := range []struct {
 		name, method, path, body string
@@ -164,7 +165,7 @@ func TestEnrollmentKeyHTTPBoundary(t *testing.T) {
 		{"revoke unknown", http.MethodPost, revoke, `{}`, enrollmentkey.ErrNotFound, 404, 1,
 			"enrollment_key_not_found", ""},
 		{"revoke with a body", http.MethodPost, revoke, `{"reason":"x"}`, nil, 400, 0, "invalid_request", ""},
-		{"wrong method", http.MethodGet, create, "", nil, 405, 0, "method_not_allowed", ""},
+		{"wrong method", http.MethodDelete, create, "", nil, 405, 0, "method_not_allowed", ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -201,7 +202,7 @@ func TestEnrollmentKeyCreateDefaultsTheKeyLifetime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := newManagementRequest(t, http.MethodPost, enrollmentKeysTestPath("/actions/create"),
+	request := newManagementRequest(t, http.MethodPost, enrollmentKeysTestPath(""),
 		`{"device_lifetime_seconds":7200}`)
 	request.Header.Del("If-Match")
 	response := httptest.NewRecorder()

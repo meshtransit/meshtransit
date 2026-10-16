@@ -55,10 +55,11 @@ func TestParseWorkspaceRolePath(t *testing.T) {
 	}{
 		{"/api/v1/workspaces/" + workspace + "/members", true, workspaceRolePathMembers},
 		{"/api/v1/workspaces/" + workspace + "/role-assignments", true, workspaceRolePathAssign},
-		{"/api/v1/workspaces/" + workspace + "/role-assignments/" + testAssignmentID + "/actions/revoke", true, workspaceRolePathRevoke},
+		{"/api/v1/workspaces/" + workspace + "/role-assignments/" + testAssignmentID, true, workspaceRolePathRevoke},
+		{"/api/v1/workspaces/" + workspace + "/role-assignments/" + testAssignmentID + "/actions/revoke", false, 0},
 		{"/api/v1/workspaces/" + workspace + "/members/x", false, 0},
 		{"/api/v1/workspaces//members", false, 0},
-		{"/api/v1/workspaces/" + workspace + "/role-assignments//actions/revoke", false, 0},
+		{"/api/v1/workspaces/" + workspace + "/role-assignments/", false, 0},
 		{"/api/v1/workspaces/" + workspace + "/role-assignments/" + testAssignmentID + "/actions/delete", false, 0},
 	} {
 		request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, test.path, nil)
@@ -120,7 +121,7 @@ func TestWorkspaceRoleAssignHTTPBoundary(t *testing.T) {
 
 func TestWorkspaceRoleRevokeHTTPBoundary(t *testing.T) {
 	t.Parallel()
-	path := "/api/v1/workspaces/" + managementWorkspaceID() + "/role-assignments/" + testAssignmentID + "/actions/revoke"
+	path := "/api/v1/workspaces/" + managementWorkspaceID() + "/role-assignments/" + testAssignmentID
 	for _, test := range []struct {
 		name, version string
 		authority     error
@@ -140,7 +141,7 @@ func TestWorkspaceRoleRevokeHTTPBoundary(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			request := newManagementRequest(t, http.MethodPost, path, `{}`)
+			request := newManagementRequest(t, http.MethodDelete, path, "")
 			request.Header.Del("If-Match")
 			if test.version != "" {
 				request.Header.Set("If-Match", test.version)

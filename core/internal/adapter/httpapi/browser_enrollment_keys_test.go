@@ -16,7 +16,7 @@ func TestBrowserManagementAdmitsEnrollmentKeyRoutes(t *testing.T) {
 		t.Fatal("the browser cannot read the Network's enrollment keys")
 	}
 	for _, path := range []string{
-		enrollmentKeysTestPath("/actions/create"),
+		enrollmentKeysTestPath(""),
 		enrollmentKeysTestPath("/" + enrollmentKeyTestKey + "/actions/revoke"),
 	} {
 		if !browser.validRequest(browserManagementRequest(t, path, `{}`)) {
@@ -25,7 +25,6 @@ func TestBrowserManagementAdmitsEnrollmentKeyRoutes(t *testing.T) {
 	}
 	for _, path := range []string{
 		enrollmentKeysTestPath("?state=active"),
-		enrollmentKeysTestPath("/actions/create"),
 		enrollmentKeysTestPath("/" + enrollmentKeyTestKey + "/actions/revoke"),
 	} {
 		request := browserManagementReadRequest(t, path)
@@ -34,8 +33,8 @@ func TestBrowserManagementAdmitsEnrollmentKeyRoutes(t *testing.T) {
 			t.Errorf("the browser admitted GET %s", path)
 		}
 	}
-	if isBrowserManagementOperation(browserManagementRequest(t, enrollmentKeysTestPath(""), `{}`)) {
-		t.Error("a POST to the key list is routed to browser management")
+	if isBrowserManagementOperation(browserManagementRequest(t, enrollmentKeysTestPath("/actions/create"), `{}`)) {
+		t.Error("the old create path is routed to browser management")
 	}
 }
 
@@ -51,7 +50,7 @@ func TestBrowserManagementServesEnrollmentKeys(t *testing.T) {
 		t.Fatalf("list = %d after %d store reads; %s", list.Code, fixture.enrollmentKeys.lists, list.Body)
 	}
 
-	request := browserManagementRequest(t, enrollmentKeysTestPath("/actions/create"), `{"device_never_expires":true}`)
+	request := browserManagementRequest(t, enrollmentKeysTestPath(""), `{"device_never_expires":true}`)
 	request.Header.Del("If-Match")
 	request.Header.Del("Idempotency-Key")
 	request.Header.Set("X-MeshTransit-CSRF", preparedBrowserProof(t, browser))

@@ -72,7 +72,7 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 	for _, item := range paths {
 		operations += len(item.(map[string]any))
 	}
-	if len(basePaths) != 34 || operations != 81 {
+	if len(basePaths) != 33 || operations != 81 {
 		t.Fatal("private profile introduced another product resource API", len(basePaths), operations)
 	}
 	for path, raw := range paths {
@@ -500,7 +500,7 @@ func TestManagementDocumentConsoleWorkspaceRolesAreCookieScoped(t *testing.T) {
 		{"/api/v1/workspaces/{workspace_id}/networks/{network_id}/share-targets/{network_display_code}", "get", "resolveShareTarget"},
 		{"/api/v1/workspaces/{workspace_id}/members", "get", "listWorkspaceMembers"},
 		{"/api/v1/workspaces/{workspace_id}/role-assignments", "post", "assignWorkspaceRole"},
-		{"/api/v1/workspaces/{workspace_id}/role-assignments/{assignment_id}/actions/revoke", "post", "revokeWorkspaceRole"},
+		{"/api/v1/workspaces/{workspace_id}/role-assignments/{assignment_id}", "delete", "revokeWorkspaceRole"},
 	} {
 		item := profileMap(t, paths, test.path)
 		if len(item) != 1 {
@@ -508,7 +508,7 @@ func TestManagementDocumentConsoleWorkspaceRolesAreCookieScoped(t *testing.T) {
 		}
 		operation := profileMap(t, item, test.method)
 		security := map[string]any{"accountSessionCookie": []any{}}
-		if test.method == "post" {
+		if test.method != "get" {
 			security["sessionCSRF"] = []any{}
 		}
 		if operation["operationId"] != test.operationID || !reflect.DeepEqual(operation["security"], []any{security}) {

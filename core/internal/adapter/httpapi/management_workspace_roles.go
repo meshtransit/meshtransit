@@ -39,9 +39,9 @@ type workspaceRolePath struct {
 
 // parseWorkspaceRolePath matches:
 //
-//	GET  /api/v1/workspaces/{workspace}/members
-//	POST /api/v1/workspaces/{workspace}/role-assignments
-//	POST /api/v1/workspaces/{workspace}/role-assignments/{assignment}/actions/revoke
+//	GET    /api/v1/workspaces/{workspace}/members
+//	POST   /api/v1/workspaces/{workspace}/role-assignments
+//	DELETE /api/v1/workspaces/{workspace}/role-assignments/{assignment}
 func parseWorkspaceRolePath(request *http.Request) (workspaceRolePath, bool) {
 	if request == nil || request.URL == nil || request.URL.RawQuery != "" || request.URL.RawPath != "" {
 		return workspaceRolePath{}, false
@@ -55,17 +55,21 @@ func parseWorkspaceRolePath(request *http.Request) (workspaceRolePath, bool) {
 		return workspaceRolePath{kind: workspaceRolePathMembers, workspaceID: parts[3]}, true
 	case len(parts) == 5 && parts[4] == "role-assignments":
 		return workspaceRolePath{kind: workspaceRolePathAssign, workspaceID: parts[3]}, true
-	case len(parts) == 8 && parts[4] == "role-assignments" && parts[5] != "" && parts[6] == "actions" && parts[7] == "revoke":
+	case len(parts) == 6 && parts[4] == "role-assignments" && parts[5] != "":
 		return workspaceRolePath{kind: workspaceRolePathRevoke, workspaceID: parts[3], assignmentID: parts[5]}, true
 	}
 	return workspaceRolePath{}, false
 }
 
 func (path workspaceRolePath) allowedMethod() string {
-	if path.kind == workspaceRolePathMembers {
+	switch path.kind {
+	case workspaceRolePathMembers:
 		return http.MethodGet
+	case workspaceRolePathRevoke:
+		return http.MethodDelete
+	default:
+		return http.MethodPost
 	}
-	return http.MethodPost
 }
 
 func (path workspaceRolePath) operation() string {
@@ -246,8 +250,7 @@ func (handler *ManagementHandler) revokeWorkspaceRole(ctx context.Context, respo
 		return precondition.Code
 	}
 	assignmentID, err := publicid.Parse(assignmentPath)
-	var body struct{}
-	if err != nil || !decodeWorkspaceRoleBody(response, request, &body) {
+	if err != nil {
 		writeManagementError(ctx, handler.logger, response, correlationID, *invalidManagementRequest())
 		return "invalid_request"
 	}

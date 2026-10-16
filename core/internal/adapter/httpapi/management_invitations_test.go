@@ -25,9 +25,10 @@ func TestParseInvitationPath(t *testing.T) {
 		valid, admit bool
 	}{
 		{http.MethodGet, base, "", true, true},
-		{http.MethodPost, base, "", true, false},
-		{http.MethodPost, base + "/actions/create", "create", true, true},
-		{http.MethodGet, base + "/actions/create", "create", true, false},
+		{http.MethodPost, base, "create", true, true},
+		{http.MethodDelete, base, "", true, false},
+		{http.MethodPost, base + "/actions/create", "", false, false},
+		{http.MethodGet, base + id + "/actions/resend", "", true, false},
 		{http.MethodPost, base + id + "/actions/resend", "resend", true, true},
 		{http.MethodPost, base + id + "/actions/revoke", "revoke", true, true},
 		{http.MethodPost, base + id + "/actions/accept", "", false, false},
@@ -118,8 +119,7 @@ func TestInvitationHTTPMethods(t *testing.T) {
 		allow, want              string
 	}{
 		{"list", http.MethodGet, base, "", 200, 1, "", `"invitations":[],"mail_configured":true`},
-		{"list by POST", http.MethodPost, base, "{}", 405, 0, http.MethodGet, "method_not_allowed"},
-		{"create by GET", http.MethodGet, base + "/actions/create", "", 405, 0, http.MethodPost, "method_not_allowed"},
+		{"list by DELETE", http.MethodDelete, base, "", 405, 0, "GET, POST", "method_not_allowed"},
 		{"revoke by GET", http.MethodGet, base + "/01890f00-0000-7000-8000-000000000a01/actions/revoke", "", 405, 0,
 			http.MethodPost, "method_not_allowed"},
 	} {

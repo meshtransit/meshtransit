@@ -25,15 +25,17 @@ type InvitationManager interface {
 type invitationPath struct {
 	workspaceID  workspace.ID
 	invitationID publicid.ID
-	// action is "" for the list, else create, resend or revoke.
-	action string
+	// methods are the methods the path accepts; action is what the request's
+	// method does there: "" for the list, else create, resend or revoke, and
+	// "" when the path does not accept the method.
+	methods restMethods
+	action  string
 }
 
 // parseInvitationPath matches, with no query,
 //
-//	GET  /api/v1/workspaces/{ws}/invitations
-//	POST /api/v1/workspaces/{ws}/invitations/actions/create
-//	POST /api/v1/workspaces/{ws}/invitations/{id}/actions/{resend|revoke}
+//	GET|POST /api/v1/workspaces/{ws}/invitations  list, create
+//	POST     /api/v1/workspaces/{ws}/invitations/{id}/actions/{resend|revoke}
 func parseInvitationPath(request *http.Request) (invitationPath, bool) {
 	if request == nil || request.URL == nil || request.URL.RawPath != "" || request.URL.RawQuery != "" {
 		return invitationPath{}, false
@@ -48,37 +50,30 @@ func parseInvitationPath(request *http.Request) (invitationPath, bool) {
 		return invitationPath{}, false
 	}
 	path := invitationPath{workspaceID: workspace.ID(workspaceID)}
+	var actions map[string]string
 	switch len(segments) {
 	case 5:
-		return path, true
-	case 7:
-		if segments[5] != "actions" || segments[6] != "create" {
-			return invitationPath{}, false
-		}
-		path.action = "create"
-		return path, true
+		path.methods, actions = collectionMethods, map[string]string{http.MethodPost: "create"}
 	case 8:
 		invitationID, idOK := canonicalPublicID(segments[5])
 		if !idOK || segments[6] != "actions" || (segments[7] != "resend" && segments[7] != "revoke") {
 			return invitationPath{}, false
 		}
-		path.invitationID, path.action = invitationID, segments[7]
-		return path, true
+		path.invitationID, path.methods = invitationID, restMethods{http.MethodPost}
+		actions = map[string]string{http.MethodPost: segments[7]}
 	default:
 		return invitationPath{}, false
 	}
+	if path.methods.allows(request.Method) {
+		path.action = actions[request.Method]
+	}
+	return path, true
 }
 
-// isInvitationOperation admits GET on the list and POST on an action.
+// isInvitationOperation admits only the methods each path accepts.
 func isInvitationOperation(request *http.Request) bool {
 	path, ok := parseInvitationPath(request)
-	if !ok {
-		return false
-	}
-	if path.action == "" {
-		return request.Method == http.MethodGet
-	}
-	return request.Method == http.MethodPost
+	return ok && path.methods.allows(request.Method)
 }
 
 // isInvitationRead admits the exact, query-free invitation list.
@@ -88,13 +83,6 @@ func isInvitationRead(request *http.Request) bool {
 }
 
 // allowedMethod is GET for the list and POST for every action.
-func (path invitationPath) allowedMethod() string {
-	if path.action == "" {
-		return http.MethodGet
-	}
-	return http.MethodPost
-}
-
 func (path invitationPath) operation() string {
 	if path.action == "" {
 		return "workspace_invitations_read"
@@ -114,7 +102,7 @@ func (handler *ManagementHandler) handleInvitations(ctx context.Context, respons
 			Message: "Invitations are temporarily unavailable", Retryable: true})
 	}
 	if !isInvitationOperation(request) {
-		response.Header().Set("Allow", path.allowedMethod())
+		response.Header().Set("Allow", path.methods.header())
 		return fail(managementError{Status: http.StatusMethodNotAllowed, Code: "method_not_allowed",
 			Message: "the method is not allowed"})
 	}

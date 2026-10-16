@@ -189,9 +189,7 @@
             "$ref": "#/components/responses/Unauthenticated"
           }
         }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/enrollment-keys/actions/create": {
+      },
       "post": {
         "operationId": "createEnrollmentKey",
         "summary": "Create an enrollment key",

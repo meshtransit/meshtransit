@@ -31,13 +31,16 @@ type EnrollmentKeyManager interface {
 
 type enrollmentKeyPath struct {
 	scope network.Scope
-	// kind is "list", "create" or "revoke".
-	kind  string
-	keyID enrollment.CredentialID
+	// methods are the methods the path accepts; kind is what the request's
+	// method does there: "list", "create" or "revoke", and "" when the path
+	// does not accept the method.
+	methods restMethods
+	kind    string
+	keyID   enrollment.CredentialID
 }
 
 // parseEnrollmentKeyPath matches, under /api/v1/workspaces/{ws}/networks/{net}:
-// GET enrollment-keys, POST enrollment-keys/actions/create and
+// GET and POST enrollment-keys (list, create) and
 // POST enrollment-keys/{key}/actions/revoke. None takes a query.
 func parseEnrollmentKeyPath(request *http.Request) (enrollmentKeyPath, bool) {
 	if request == nil || request.URL == nil || request.URL.RawPath != "" || request.URL.RawQuery != "" {
@@ -58,28 +61,22 @@ func parseEnrollmentKeyPath(request *http.Request) (enrollmentKeyPath, bool) {
 		return enrollmentKeyPath{}, false
 	}
 	path := enrollmentKeyPath{scope: scope}
+	var kinds map[string]string
 	switch rest := segments[7:]; {
 	case len(rest) == 0:
-		path.kind = "list"
-	case len(rest) == 2 && rest[0] == "actions" && rest[1] == "create":
-		path.kind = "create"
+		path.methods, kinds = collectionMethods, map[string]string{http.MethodGet: "list", http.MethodPost: "create"}
 	case len(rest) == 3 && rest[1] == "actions" && rest[2] == "revoke":
 		key, ok := canonicalPublicID(rest[0])
 		if !ok {
 			return enrollmentKeyPath{}, false
 		}
-		path.kind, path.keyID = "revoke", enrollment.CredentialID(key)
+		path.keyID, path.methods = enrollment.CredentialID(key), restMethods{http.MethodPost}
+		kinds = map[string]string{http.MethodPost: "revoke"}
 	default:
 		return enrollmentKeyPath{}, false
 	}
+	path.kind = kinds[request.Method]
 	return path, true
-}
-
-func (path enrollmentKeyPath) allowedMethod() string {
-	if path.kind == "list" {
-		return http.MethodGet
-	}
-	return http.MethodPost
 }
 
 func (path enrollmentKeyPath) operation() string {
@@ -93,10 +90,10 @@ func (path enrollmentKeyPath) operation() string {
 	}
 }
 
-// isEnrollmentKeyOperation admits only the method each path allows.
+// isEnrollmentKeyOperation admits only the methods each path accepts.
 func isEnrollmentKeyOperation(request *http.Request) bool {
 	path, ok := parseEnrollmentKeyPath(request)
-	return ok && request.Method == path.allowedMethod()
+	return ok && path.methods.allows(request.Method)
 }
 
 // isEnrollmentKeyRead admits the query-free key list.
