@@ -118,15 +118,18 @@ func (store *AccountSessionStore) Resolve(
 		return accountsession.Session{}, false, errors.Join(ErrResolveAccountSession, err)
 	}
 	digestBytes := digest.Bytes()
+	// The resolution also returns the transaction's database time, which
+	// judges renewal below without another round trip.
+	var resolvedAt time.Time
 	session, err := scanAccountSession(transaction.QueryRow(
 		ctx,
-		resolveAccountSessionSQL,
+		resolveAccountSessionAtSQL,
 		deploymentID.String(),
 		recoveryEpoch,
 		digest.Algorithm(),
 		digest.KeyID().String(),
 		digestBytes[:],
-	))
+	), &resolvedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if err := transaction.Commit(ctx); err != nil {
 			return accountsession.Session{}, false, errors.Join(ErrResolveAccountSession, err)
@@ -144,18 +147,12 @@ func (store *AccountSessionStore) Resolve(
 			ErrAccountSessionEvidence,
 		)
 	}
-	if accountsession.IsActivity(ctx) {
-		// Whether the session is due for renewal is judged on the database
-		// clock, which stamped its deadlines.
-		now, err := readTransactionTime(ctx, transaction.QueryRow)
+	// Whether the session is due for renewal is judged on the database clock,
+	// which stamped its deadlines.
+	if accountsession.IsActivity(ctx) && shouldTouchAccountSession(session, resolvedAt) {
+		session, err = touchResolvedAccountSession(ctx, transaction, session, digest)
 		if err != nil {
 			return accountsession.Session{}, false, errors.Join(ErrResolveAccountSession, err)
-		}
-		if shouldTouchAccountSession(session, now) {
-			session, err = touchResolvedAccountSession(ctx, transaction, session, digest)
-			if err != nil {
-				return accountsession.Session{}, false, errors.Join(ErrResolveAccountSession, err)
-			}
 		}
 	}
 	if err := transaction.Commit(ctx); err != nil {
@@ -283,10 +280,6 @@ func (store *AccountSessionStore) ReadManagementScopes(
 	); err != nil {
 		return sessioncontext.ReadResult{}, errors.Join(sessioncontext.ErrUnavailable, err)
 	}
-	evaluatedAt, err := readTransactionTime(ctx, transaction.QueryRow)
-	if err != nil {
-		return sessioncontext.ReadResult{}, errors.Join(sessioncontext.ErrUnavailable, err)
-	}
 	var afterValue any
 	if after.IsValid() {
 		afterValue = after.String()
@@ -305,7 +298,6 @@ func (store *AccountSessionStore) ReadManagementScopes(
 		session.ProviderGeneration(),
 		session.DeploymentRecoveryEpoch(),
 		workspaceID.String(),
-		evaluatedAt,
 		afterValue,
 		limit,
 	).Scan(&encoded)
@@ -366,10 +358,6 @@ func (store *AccountSessionStore) ReadDeploymentCapabilities(
 	); err != nil {
 		return sessioncontext.CapabilityReadResult{}, errors.Join(sessioncontext.ErrCapabilitiesUnavailable, err)
 	}
-	evaluatedAt, err := readTransactionTime(ctx, transaction.QueryRow)
-	if err != nil {
-		return sessioncontext.CapabilityReadResult{}, errors.Join(sessioncontext.ErrCapabilitiesUnavailable, err)
-	}
 	var encoded *string
 	err = transaction.QueryRow(
 		ctx,
@@ -384,7 +372,6 @@ func (store *AccountSessionStore) ReadDeploymentCapabilities(
 		session.ProviderGeneration(),
 		session.DeploymentRecoveryEpoch(),
 		workspaceID.String(),
-		evaluatedAt,
 	).Scan(&encoded)
 	if err != nil {
 		return sessioncontext.CapabilityReadResult{}, errors.Join(sessioncontext.ErrCapabilitiesUnavailable, err)
@@ -518,7 +505,9 @@ func decodeAccountSessionManagementScopes(encoded string) (sessioncontext.ReadRe
 	return result, nil
 }
 
-func scanAccountSession(row accountSessionRow) (accountsession.Session, error) {
+// scanAccountSession scans one resolved session row; extra destinations
+// receive any columns after the session's.
+func scanAccountSession(row accountSessionRow, extra ...any) (accountsession.Session, error) {
 	var sessionPublicID, deploymentPublicID, principalPublicID, subjectPublicID string
 	var loginWorkspacePublicID *string
 	var authenticationTime, idleExpiresAt, absoluteExpiresAt time.Time
@@ -526,7 +515,7 @@ func scanAccountSession(row accountSessionRow) (accountsession.Session, error) {
 	var amr []string
 	var sessionVersion, principalGeneration, accountGeneration int64
 	var providerGeneration, recoveryEpoch int64
-	if err := row.Scan(
+	destinations := append([]any{
 		&sessionPublicID,
 		&deploymentPublicID,
 		&principalPublicID,
@@ -542,7 +531,8 @@ func scanAccountSession(row accountSessionRow) (accountsession.Session, error) {
 		&recoveryEpoch,
 		&idleExpiresAt,
 		&absoluteExpiresAt,
-	); err != nil {
+	}, extra...)
+	if err := row.Scan(destinations...); err != nil {
 		return accountsession.Session{}, err
 	}
 	sessionID, err := accountsession.ParseID(sessionPublicID)

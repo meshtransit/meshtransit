@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,9 +44,9 @@ func TestAccountSessionStoreReadsManagementScopes(t *testing.T) {
 		t.Fatalf("ReadManagementScopes() result = %+v", result)
 	}
 	if transaction.commits != 1 || transaction.rollbacks != 0 ||
-		len(transaction.arguments) != 13 || transaction.arguments[9] != result.WorkspaceID.String() ||
-		transaction.arguments[10] != accountSessionTestDatabaseTime || transaction.timeReads != 1 ||
-		transaction.arguments[11] != nil || transaction.arguments[12] != 51 {
+		len(transaction.arguments) != 12 || transaction.arguments[9] != result.WorkspaceID.String() ||
+		transaction.timeReads != 0 || transaction.arguments[10] != nil || transaction.arguments[11] != 51 ||
+		!strings.Contains(readAccountSessionManagementScopesSQL, "$10::UUID, pg_catalog.transaction_timestamp(), $11::UUID") {
 		t.Fatalf(
 			"transaction commit/rollback/arguments = %d/%d/%v",
 			transaction.commits,

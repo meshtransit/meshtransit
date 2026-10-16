@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,9 +34,10 @@ func TestAccountSessionStoreReadsDeploymentCapabilities(t *testing.T) {
 		result.Revision != 7 {
 		t.Fatalf("ReadDeploymentCapabilities() result = %+v", result)
 	}
-	if transaction.commits != 1 || transaction.rollbacks != 0 || len(transaction.arguments) != 11 ||
-		transaction.arguments[0] != session.ID().String() ||
-		transaction.arguments[10] != accountSessionTestDatabaseTime || transaction.timeReads != 1 {
+	// Authority is evaluated at transaction_timestamp() inside the read.
+	if transaction.commits != 1 || transaction.rollbacks != 0 || len(transaction.arguments) != 10 ||
+		transaction.arguments[0] != session.ID().String() || transaction.timeReads != 0 ||
+		!strings.Contains(readAccountSessionDeploymentCapabilitiesSQL, "$10::UUID, pg_catalog.transaction_timestamp()") {
 		t.Fatalf("transaction commit/rollback/arguments = %d/%d/%v", transaction.commits, transaction.rollbacks, transaction.arguments)
 	}
 }

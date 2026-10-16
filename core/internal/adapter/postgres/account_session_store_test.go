@@ -35,6 +35,7 @@ func TestAccountSessionStoreResolvesExactAuthority(t *testing.T) {
 			int64(7),
 			now.Add(time.Hour),
 			now.Add(8 * time.Hour),
+			accountSessionTestDatabaseTime,
 		}},
 	}
 	store, err := newAccountSessionStore(
@@ -55,6 +56,10 @@ func TestAccountSessionStoreResolvesExactAuthority(t *testing.T) {
 		session.DeploymentRecoveryEpoch() != 7 || session.PrincipalID().String() !=
 		"01890f00-0000-7000-8000-000000000011" {
 		t.Fatal("Resolve() returned incomplete Account Session authority")
+	}
+	// The resolution returns the database time in the same round trip.
+	if transaction.timeReads != 0 {
+		t.Fatalf("Resolve() read the database clock in %d extra round trips", transaction.timeReads)
 	}
 	if transaction.commits != 1 || transaction.rollbacks != 0 ||
 		len(transaction.arguments) != 5 ||
