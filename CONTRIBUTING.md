@@ -46,4 +46,4 @@ PATH="/tmp/mesh-tools:${PATH}" make package-deb VERSION=0.1.0~dev ARCH=amd64
   enough, checking its license and pinning its version.
 - Use conventional commit messages (`feat:`, `fix:`, `refactor:`, `docs:`,
   `test:`, `chore:`, `perf:`, `ci:`).
-- CI must pass: Core, Client, boundaries and CodeQL workflows.
+- CI must pass: the Core, Client, Relay and CodeQL workflows.

@@ -10,9 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: read
   contents: read
-  security-events: write
 
 env:
   GOTOOLCHAIN: local
@@ -23,11 +21,14 @@ concurrency:
 
 jobs:
   analyze:
-    # Enable after the repository is public or GitHub Advanced Security is active.
-    if: ${{ vars.ENABLE_CODEQL == 'true' }}
     name: Analyze Go
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
+    permissions:
+      # actions: read is only needed while the repository is private.
+      actions: read
+      contents: read
+      security-events: write
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

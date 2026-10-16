@@ -1,0 +1,118 @@
+name: Core
+
+# No paths filter: `make quality` covers every tree (fmt, vet, tests, race,
+# lint, vuln, workflow lint, boundaries), so a change anywhere can break it.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+
+concurrency:
+  group: core-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Go quality gates (make quality)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      # Per test binary. Hosted runners are slower than a workstation under
+      # -race; the job timeout still bounds a real hang.
+      TEST_TIMEOUT: 5m
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      # fmt-check tidy-check vet test test-race lint lint-integration vuln
+      # workflow-lint check-boundaries, over the whole repository.
+      - name: Run quality gates
+        run: make quality
+
+  boundaries:
+    name: Licence, dependency and doc-link boundaries
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Check boundaries
+        run: make check-boundaries
+
+  platform-integration:
+    name: PostgreSQL and Redis platform integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      # Same as the local gate: bash core/scripts/ci/run-platform-integration.sh
+      # with the script's reviewed PostgreSQL and Redis images.
+      - name: Run migration, authority, outbox and wakeup checks
+        run: make integration-platform-container
+
+  container:
+    name: Container build and security gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CONTAINER_TAG: ci
+      CONTAINER_REVISION: ${{ github.sha }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build hardened image
+        env:
+          CONTAINER_PLATFORM: linux/amd64
+        run: make container-build
+
+      - name: Verify and smoke-test image
+        run: make container-inspect container-smoke
+
+      - name: Scan image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: meshtransit/mesh-core:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: false
+          severity: HIGH,CRITICAL
+          vuln-type: os,library
+          version: v0.74.0

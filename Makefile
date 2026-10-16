@@ -1,5 +1,8 @@
 GO := go
-GOLANGCI_LINT := $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+GOLANGCI_LINT_VERSION := v2.13.2
+GOLANGCI_LINT := $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+LINT_GOOS ?= windows
+LINT_GOARCH ?= amd64
 GOVULNCHECK := $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.8.0
 ACTIONLINT := $(GO) run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 GO_FILES := $(shell find core client api shared relay test -type f -name '*.go' 2>/dev/null)
@@ -26,7 +29,7 @@ DEX_OLD_SOURCE ?=
 DEX_CURRENT_BINARY ?=
 DEX_CURRENT_BINARY_SHA256 ?=
 
-.PHONY: test-linux-client help build build-core build-client mobile-tools mobile-android mobile-ios package-deb package-deb-meshd package-deb-meshctl package-darwin package-windows lint-client lint-relay build-relay natlab-matrix proto proto-check mtcp-crosscheck check-boundaries scan-secrets fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace qualification-dex-upgrade-restore verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
+.PHONY: test-linux-client help build build-core build-client mobile-tools mobile-android mobile-ios package-deb package-deb-meshd package-deb-meshctl package-darwin package-windows lint-client lint-client-cross lint-relay build-relay natlab-matrix proto proto-check mtcp-crosscheck check-boundaries scan-secrets fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace qualification-dex-upgrade-restore verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
 	container-build container-build-multiarch container-push-multiarch container-push-relay-multiarch container-push-dexbroker-multiarch container-inspect container-smoke container-scan
 
 help:
@@ -210,6 +213,13 @@ lint:
 
 lint-client:
 	$(GOLANGCI_LINT) run --config client/.golangci.yml ./client/... ./shared/... ./test/...
+
+# Lints the client as LINT_GOOS/LINT_GOARCH sees it (build-tagged files such
+# as *_windows.go), for example: make lint-client-cross LINT_GOOS=windows.
+# The linter itself is built for the host, so it cannot use go run.
+lint-client-cross:
+	GOBIN="$(CURDIR)/bin/tools" $(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	GOOS=$(LINT_GOOS) GOARCH=$(LINT_GOARCH) "$(CURDIR)/bin/tools/golangci-lint" run --config client/.golangci.yml ./client/... ./shared/... ./test/...
 
 # Regenerates test/natlab/testdata/matrix.md; review the diff before committing.
 lint-relay:

@@ -230,7 +230,7 @@ read-only mounts;
 credentials must not be baked into the image or supplied as environment
 values.
 
-The CI workflow (currently disabled, see `.github/workflows-disabled/`) builds,
+The CI workflow (`.github/workflows/core.yml`) builds,
 inspects, smoke-tests, and scans the image but never pushes it. Publishing is a separate, explicitly authorized release
 operation and should use an immutable version tag plus the resulting digest.
 Release automation should pass the source commit through `CONTAINER_REVISION`;
