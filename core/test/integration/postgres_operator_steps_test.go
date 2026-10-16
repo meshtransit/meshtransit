@@ -90,9 +90,7 @@ func TestPostgreSQLOperatorSteps(t *testing.T) {
 		t.Fatalf("schema 170 step before running it = %+v", readmission)
 	}
 	worker := openOperatorStepWorkerPool(ctx, t, adminConfig, database)
-	if pendingSteps := checkOperatorStepPool(ctx, t, worker); pendingSteps != float64(len(pending)) {
-		t.Fatalf("pending operator steps gauge = %v, want %d", pendingSteps, len(pending))
-	}
+	waitOperatorStepGauge(ctx, t, worker, float64(len(pending)))
 	if version := aliasWorkerVersion(ctx, t, worker); version >= 5 {
 		t.Fatalf("alias worker version before the operator steps = %v", version)
 	}
@@ -115,9 +113,7 @@ func TestPostgreSQLOperatorSteps(t *testing.T) {
 		t.Fatalf("Apply(after rollout) = applied %v, waiting %+v, %v", result.Applied, result.Waiting, err)
 	}
 	assertNoPendingOperatorSteps(ctx, t, freshMigration)
-	if pendingSteps := checkOperatorStepPool(ctx, t, worker); pendingSteps != 0 {
-		t.Fatalf("pending operator steps gauge after apply = %v", pendingSteps)
-	}
+	waitOperatorStepGauge(ctx, t, worker, 0)
 	if version := aliasWorkerVersion(ctx, t, worker); version != 5 {
 		t.Fatalf("alias worker version after the operator steps = %v", version)
 	}
@@ -149,6 +145,26 @@ func TestPostgreSQLOperatorSteps(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertNoPendingOperatorSteps(ctx, t, freshMigration)
+
+	// A membership of a MeshTransit role makes verification incomplete.
+	if _, err := admin.Exec(ctx, "CREATE ROLE mesh_operator_test_member NOLOGIN"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = admin.Exec(context.WithoutCancel(ctx), "DROP ROLE IF EXISTS mesh_operator_test_member") })
+	if _, err := admin.Exec(ctx, "GRANT mesh_direct_map_reader TO mesh_operator_test_member"); err != nil {
+		t.Fatal(err)
+	}
+	verification, err = openIntegrationMigrationRunner(ctx, t, freshMigration).Verify(ctx)
+	if err != nil || !slices.Contains(verification.Operator.Memberships,
+		"mesh_operator_test_member is a member of mesh_direct_map_reader") || verification.Operator.Complete() {
+		t.Fatalf("Verify() with a membership = %+v, %v", verification.Operator.Memberships, err)
+	}
+	if report, err := operator.Status(ctx); err != nil || len(report.Memberships) != 1 {
+		t.Fatalf("operator Status() with a membership = %+v, %v", report.Memberships, err)
+	}
+	if _, err := admin.Exec(ctx, "DROP ROLE mesh_operator_test_member"); err != nil {
+		t.Fatal(err)
+	}
 
 	// The runtime role is never an operator.
 	runtimeOperator := freshAdmin
@@ -232,7 +248,7 @@ func openOperatorStepWorkerPool(ctx context.Context, t *testing.T, adminConfig c
 		Role: postgresadapter.PoolRoleWorker, Address: postgresConfig.Address, Database: database,
 		User: postgresConfig.Worker.User, PasswordFile: postgresConfig.Worker.PasswordFile, CAFile: postgresConfig.CAFile,
 		MaxConnections: 2, ConnectTimeout: workerConfig.Dependencies.CheckTimeout,
-		OperatorStepCheckInterval: time.Nanosecond,
+		OperatorStepCheckInterval: 10 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -245,14 +261,25 @@ func openOperatorStepWorkerPool(ctx context.Context, t *testing.T, adminConfig c
 	return pool
 }
 
-// checkOperatorStepPool runs the readiness check, which must pass whatever
-// is pending, and returns the pending-step gauge.
-func checkOperatorStepPool(ctx context.Context, t *testing.T, pool *postgresadapter.Pool) float64 {
+// waitOperatorStepGauge runs readiness checks, which must pass whatever is
+// pending and only wake the background step read, until the pending-step
+// gauge shows want.
+func waitOperatorStepGauge(ctx context.Context, t *testing.T, pool *postgresadapter.Pool, want float64) {
 	t.Helper()
-	if err := pool.Check(ctx); err != nil {
-		t.Fatalf("Check() = %v", err)
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		if err := pool.Check(ctx); err != nil {
+			t.Fatalf("Check() = %v", err)
+		}
+		got, ok := poolGauge(t, pool, "meshtransit_postgres_operator_steps_pending", "")
+		if ok && got == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pending operator steps gauge = %v (exported %t), want %v", got, ok, want)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
-	return gatherPoolGauge(t, pool, "meshtransit_postgres_operator_steps_pending", "")
 }
 
 func aliasWorkerVersion(ctx context.Context, t *testing.T, pool *postgresadapter.Pool) float64 {
@@ -268,10 +295,14 @@ func aliasWorkerVersion(ctx context.Context, t *testing.T, pool *postgresadapter
 	// Discovery selects the version first; the fallback functions may not
 	// be granted on a database no step ran on, so only the version counts.
 	_, _ = store.List(ctx, installation, devicealias.Cursor{}, 1)
-	return gatherPoolGauge(t, pool, "meshtransit_postgres_function_version", "device_alias_worker")
+	version, ok := poolGauge(t, pool, "meshtransit_postgres_function_version", "device_alias_worker")
+	if !ok {
+		t.Fatal("alias worker version not exported")
+	}
+	return version
 }
 
-func gatherPoolGauge(t *testing.T, pool *postgresadapter.Pool, name, path string) float64 {
+func poolGauge(t *testing.T, pool *postgresadapter.Pool, name, path string) (float64, bool) {
 	t.Helper()
 	collector, err := postgresadapter.NewMetricsCollector(pool)
 	if err != nil {
@@ -297,12 +328,11 @@ func gatherPoolGauge(t *testing.T, pool *postgresadapter.Pool, name, path string
 				}
 			}
 			if matches {
-				return metric.GetGauge().GetValue()
+				return metric.GetGauge().GetValue(), true
 			}
 		}
 	}
-	t.Fatalf("metric %s{path=%q} not exported", name, path)
-	return 0
+	return 0, false
 }
 
 func operatorStepStatus(t *testing.T, report postgresadapter.OperatorReport, name string) postgresadapter.OperatorStepStatus {

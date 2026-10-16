@@ -132,6 +132,10 @@ func TestRunMigrateOperatorNamesTheRefusedStep(t *testing.T) {
 			t.Fatalf("error output lacks %s: %s", want, errorOutput.String())
 		}
 	}
+	// Only codes: PostgreSQL error text may echo object or connection details.
+	if strings.Contains(errorOutput.String(), `"error"`) {
+		t.Fatalf("error output carries the error text: %s", errorOutput.String())
+	}
 }
 
 func TestRunMigrateVerifyFailsWhileAnOperatorStepIsPending(t *testing.T) {
@@ -164,6 +168,14 @@ func TestRunMigrateVerifyFailsWhileAnOperatorStepIsPending(t *testing.T) {
 		fakeMigrationFactory(service, nil)); exitCode != 0 {
 		t.Fatalf("clean verify exit %d", exitCode)
 	}
+	service.verification.Operator.Memberships = []string{"mesh_runtime is a member of mesh_share_writer"}
+	output.Reset()
+	if exitCode := runMigrate(t.Context(), "verify", migrationLookup(nil), &output, &errorOutput,
+		fakeMigrationFactory(service, nil)); exitCode != 3 || !strings.Contains(output.String(),
+		`"role_memberships":["mesh_runtime is a member of mesh_share_writer"]`) {
+		t.Fatalf("membership verify exit %d: %s", exitCode, output.String())
+	}
+	service.verification.Operator.Memberships = nil
 	service.verification.Status.State = postgresadapter.MigrationStatePending
 	if exitCode := runMigrate(t.Context(), "verify", migrationLookup(nil), &output, &errorOutput,
 		fakeMigrationFactory(service, nil)); exitCode != 3 {

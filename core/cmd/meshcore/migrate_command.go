@@ -31,6 +31,8 @@ type migrationCommandOutput struct {
 	// ones that do not hold.
 	OperatorSteps        []operatorStepOutput `json:"operator_steps,omitempty"`
 	PendingOperatorSteps []string             `json:"pending_operator_steps,omitempty"`
+	// RoleMemberships lists memberships a MeshTransit role takes part in.
+	RoleMemberships []string `json:"role_memberships,omitempty"`
 }
 
 // verifyIncompleteExitCode reports a schema that is readable but not ready
@@ -114,6 +116,7 @@ func runMigrate(
 		result.State = string(verification.Status.State)
 		result.OperatorSteps = operatorStepsOutput(verification.Operator)
 		result.PendingOperatorSteps = operatorPendingOutput(verification.Operator)
+		result.RoleMemberships = verification.Operator.Memberships
 	default:
 		logger.ErrorContext(ctx, "migration failed", "error_code", "invalid_migration_operation")
 		return 2
@@ -124,7 +127,7 @@ func runMigrate(
 		return 1
 	}
 	if operation == "verify" && (result.State != string(postgresadapter.MigrationStateClean) ||
-		len(result.PendingOperatorSteps) != 0) {
+		len(result.PendingOperatorSteps) != 0 || len(result.RoleMemberships) != 0) {
 		logger.WarnContext(ctx, "migration verification incomplete", "error_code", "migration_verify_incomplete",
 			"schema_state", result.State, "pending_operator_steps", result.PendingOperatorSteps)
 		return verifyIncompleteExitCode

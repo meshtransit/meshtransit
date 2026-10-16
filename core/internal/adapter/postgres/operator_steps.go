@@ -77,6 +77,15 @@ type OperatorStepStatus struct {
 type OperatorReport struct {
 	CurrentSchemaVersion int64
 	Steps                []OperatorStepStatus
+	// Memberships lists each role membership a MeshTransit role takes part
+	// in, as member or as granted role; there must be none.
+	Memberships []string
+}
+
+// Complete reports that no step of an applied migration is pending and no
+// MeshTransit role takes part in a membership.
+func (report OperatorReport) Complete() bool {
+	return len(report.Pending()) == 0 && len(report.Memberships) == 0
 }
 
 // Pending returns the steps whose migration is applied and that do not hold.
@@ -234,11 +243,27 @@ const operatorRequirementsSQL = `SELECT COALESCE(pg_catalog.array_agg(
               AND grant_entry.privilege_type = 'EXECUTE'
               AND grant_entry.grantee = CASE WHEN requirement.role_name = 'public' THEN 0::OID
                   ELSE (SELECT role.oid FROM pg_catalog.pg_roles AS role WHERE role.rolname = requirement.role_name) END
-        ) = (requirement.kind = 'execute'))
+        ) = (requirement.kind = 'execute')
+        -- A revoked role must not reach the function another way either,
+        -- through PUBLIC or a membership.
+        AND (requirement.kind = 'execute' OR requirement.role_name = 'public'
+            OR NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles AS role WHERE role.rolname = requirement.role_name)
+            OR NOT pg_catalog.has_function_privilege(requirement.role_name,
+                pg_catalog.to_regprocedure(requirement.routine_signature), 'EXECUTE')))
     END
     ORDER BY requirement.ordinal), ARRAY[]::BOOLEAN[])
 FROM ROWS FROM (pg_catalog.unnest($1::TEXT[]), pg_catalog.unnest($2::TEXT[]), pg_catalog.unnest($3::TEXT[]))
     WITH ORDINALITY AS requirement(kind, routine_signature, role_name, ordinal)`
+
+// operatorMembershipsSQL lists every membership a MeshTransit role ($1)
+// takes part in. MeshTransit roles are never members of another role.
+const operatorMembershipsSQL = `SELECT COALESCE(pg_catalog.array_agg(
+    member_role.rolname || ' is a member of ' || granted_role.rolname
+    ORDER BY member_role.rolname, granted_role.rolname), ARRAY[]::TEXT[])
+FROM pg_catalog.pg_auth_members AS membership
+JOIN pg_catalog.pg_roles AS member_role ON member_role.oid = membership.member
+JOIN pg_catalog.pg_roles AS granted_role ON granted_role.oid = membership.roleid
+WHERE member_role.rolname = ANY($1::TEXT[]) OR granted_role.rolname = ANY($1::TEXT[])`
 
 const operatorSchemaPresentSQL = `SELECT pg_catalog.to_regclass('mesh_ops.schema_compatibility') IS NOT NULL`
 
@@ -274,7 +299,18 @@ func readOperatorReport(
 	if err := queryRow(ctx, operatorRequirementsSQL, kinds, functions, roles).Scan(&satisfied); err != nil {
 		return OperatorReport{}, fmt.Errorf("read operator step state: %w", err)
 	}
-	return summarizeOperatorSteps(steps, requirements, satisfied, schemaVersion)
+	report, err := summarizeOperatorSteps(steps, requirements, satisfied, schemaVersion)
+	if err != nil {
+		return OperatorReport{}, err
+	}
+	managed, err := migrations.OperatorManagedRoles()
+	if err != nil {
+		return OperatorReport{}, errors.Join(ErrOperatorCatalog, err)
+	}
+	if err := queryRow(ctx, operatorMembershipsSQL, managed).Scan(&report.Memberships); err != nil {
+		return OperatorReport{}, fmt.Errorf("read role memberships: %w", err)
+	}
+	return report, nil
 }
 
 // readOperatorSchemaVersion returns the applied schema version, 0 on a

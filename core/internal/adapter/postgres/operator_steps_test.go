@@ -1,9 +1,12 @@
 package postgres
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"meshtransit.net/core/migrations"
 )
@@ -180,5 +183,73 @@ func TestPlanOperatorStepsRunsRoleStepsBehindAHeldStep(t *testing.T) {
 	plan, err := planOperatorSteps(steps, report, OperatorApplyOptions{})
 	if err != nil || strings.Join(plan.Run, ",") != "000175_f_role" {
 		t.Fatalf("plan = %+v, %v", plan, err)
+	}
+}
+
+type operatorSessionTransaction struct {
+	execs     []string
+	preflight []any
+}
+
+func (transaction *operatorSessionTransaction) Exec(_ context.Context, query string, arguments ...any) error {
+	transaction.execs = append(transaction.execs, query+fmt.Sprint(arguments...))
+	return nil
+}
+
+func (transaction *operatorSessionTransaction) QueryRow(context.Context, string, ...any) migrationRow {
+	return fakeMigrationRow{values: transaction.preflight}
+}
+
+func (*operatorSessionTransaction) Query(context.Context, string, ...any) (migrationRows, error) {
+	return nil, errors.New("unexpected query")
+}
+func (*operatorSessionTransaction) Commit(context.Context) error   { return nil }
+func (*operatorSessionTransaction) Rollback(context.Context) error { return nil }
+
+type operatorSessionConnection struct{ transaction *operatorSessionTransaction }
+
+func (connection operatorSessionConnection) Begin(context.Context, bool) (migrationTransaction, error) {
+	return connection.transaction, nil
+}
+func (operatorSessionConnection) Close(context.Context) error { return nil }
+
+// The operator session pins search_path before anything runs, and the
+// preflight refuses a MeshTransit role, a role without CREATEROLE or
+// superuser, and an operator that is a member of a MeshTransit role.
+func TestOperatorSessionPinsSearchPathAndRefusesManagedMembership(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string]struct {
+		values []any
+		want   error
+	}{
+		"superuser":       {values: []any{180000, "postgres", "postgres", true, false, false}},
+		"member":          {values: []any{180000, "postgres", "postgres", true, false, true}, want: ErrOperatorPreflight},
+		"no privilege":    {values: []any{180000, "postgres", "postgres", false, false, false}, want: ErrOperatorPreflight},
+		"migrator":        {values: []any{180000, "mesh_migrator", "mesh_migrator", false, true, false}, want: ErrOperatorPreflight},
+		"session differs": {values: []any{180000, "postgres", "admin", true, false, false}, want: ErrOperatorPreflight},
+	} {
+		user := test.values[1].(string)
+		transaction := &operatorSessionTransaction{preflight: test.values}
+		runner := &OperatorRunner{connection: operatorSessionConnection{transaction: transaction},
+			options: OperatorOptions{User: user, ConnectTimeout: time.Second, LockTimeout: time.Second, StatementTimeout: 2 * time.Second}}
+		err := runner.withTransaction(t.Context(), true, false, func(migrationTransaction) error { return nil })
+		if !errors.Is(err, test.want) && (test.want != nil || err != nil) {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(transaction.execs) == 0 || !strings.Contains(transaction.execs[0], "'search_path', 'pg_catalog, pg_temp'") {
+			t.Fatalf("%s: first statement %v", name, transaction.execs)
+		}
+	}
+}
+
+func TestOperatorReportCountsMembershipsAsIncomplete(t *testing.T) {
+	t.Parallel()
+	report := operatorFixtureReport(nil, 171)
+	if !report.Complete() {
+		t.Fatal("a report with every step applied is complete")
+	}
+	report.Memberships = []string{"mesh_runtime is a member of mesh_share_writer"}
+	if report.Complete() {
+		t.Fatal("a membership of a MeshTransit role must make verification incomplete")
 	}
 }

@@ -67,12 +67,32 @@ type MigrationVerification struct {
 	Operator OperatorReport
 }
 
-const operatorPreflightSQL = `SELECT
+// operatorSessionSQL bounds the transaction and pins search_path, so no
+// object of another schema can shadow what the steps name.
+const operatorSessionSQL = `SELECT
+    pg_catalog.set_config('search_path', 'pg_catalog, pg_temp', true),
+    pg_catalog.set_config('statement_timeout', $1, true),
+    pg_catalog.set_config('lock_timeout', $2, true),
+    pg_catalog.set_config('idle_in_transaction_session_timeout', $1, true)`
+
+// operatorPreflightSQL also reports whether the operator is, directly or
+// through other roles, a member of a MeshTransit role ($1).
+const operatorPreflightSQL = `WITH RECURSIVE granted(role_oid) AS (
+    SELECT membership.roleid FROM pg_catalog.pg_auth_members AS membership
+    WHERE membership.member = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = CURRENT_USER)
+    UNION
+    SELECT membership.roleid FROM pg_catalog.pg_auth_members AS membership
+    JOIN granted ON membership.member = granted.role_oid
+)
+SELECT
     pg_catalog.current_setting('server_version_num')::integer,
     CURRENT_USER::text,
     SESSION_USER::text,
     role.rolsuper,
-    role.rolcreaterole
+    role.rolcreaterole,
+    EXISTS (
+        SELECT 1 FROM granted JOIN pg_catalog.pg_roles AS managed ON managed.oid = granted.role_oid
+        WHERE managed.rolname = ANY($1::TEXT[]))
 FROM pg_catalog.pg_roles AS role
 WHERE role.rolname = CURRENT_USER`
 
@@ -211,7 +231,7 @@ func (runner *OperatorRunner) withTransaction(
 ) error {
 	return runMigrationTransaction(ctx, runner.connection, runner.options.ConnectTimeout, readOnly,
 		func(transaction migrationTransaction) error {
-			if err := transaction.Exec(ctx, migrationTimeoutsSQL,
+			if err := transaction.Exec(ctx, operatorSessionSQL,
 				postgresTimeoutValue(runner.options.StatementTimeout),
 				postgresTimeoutValue(runner.options.LockTimeout)); err != nil {
 				return fmt.Errorf("configure operator transaction: %w", err)
@@ -230,37 +250,23 @@ func (runner *OperatorRunner) withTransaction(
 }
 
 func (runner *OperatorRunner) validatePreflight(ctx context.Context, transaction migrationTransaction) error {
+	managed, err := migrations.OperatorManagedRoles()
+	if err != nil {
+		return errors.Join(ErrOperatorPreflight, ErrOperatorCatalog)
+	}
 	var serverVersion int
 	var currentUser, sessionUser string
-	var superuser, createRole bool
-	if err := transaction.QueryRow(ctx, operatorPreflightSQL).Scan(
-		&serverVersion, &currentUser, &sessionUser, &superuser, &createRole,
+	var superuser, createRole, managedMember bool
+	if err := transaction.QueryRow(ctx, operatorPreflightSQL, managed).Scan(
+		&serverVersion, &currentUser, &sessionUser, &superuser, &createRole, &managedMember,
 	); err != nil {
 		return errors.Join(ErrOperatorPreflight, err)
 	}
 	if serverVersion < minimumPostgreSQLVersion || currentUser != runner.options.User || sessionUser != currentUser ||
-		!superuser && !createRole || slices.Contains(managedOperatorRoles(), currentUser) {
+		!superuser && !createRole || managedMember || slices.Contains(managed, currentUser) {
 		return ErrOperatorPreflight
 	}
 	return nil
-}
-
-// managedOperatorRoles lists every MeshTransit role: the operator command
-// never runs as one of them.
-func managedOperatorRoles() []string {
-	roles := append(migrationSupportRoles(), "mesh_migrator")
-	steps, err := migrations.OperatorSteps()
-	if err != nil {
-		return roles
-	}
-	for _, step := range steps {
-		for _, effect := range step.Effects {
-			if effect.Role != "public" && !slices.Contains(roles, effect.Role) {
-				roles = append(roles, effect.Role)
-			}
-		}
-	}
-	return roles
 }
 
 func transactionQueryRow(transaction migrationTransaction) operatorQueryRow {

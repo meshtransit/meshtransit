@@ -43,6 +43,7 @@ type operatorCommandOutput struct {
 	Replayed             []string                `json:"replayed,omitempty"`
 	Waiting              []operatorWaitingOutput `json:"waiting,omitempty"`
 	Pending              []string                `json:"pending"`
+	RoleMemberships      []string                `json:"role_memberships,omitempty"`
 	Steps                []operatorStepOutput    `json:"steps,omitempty"`
 }
 
@@ -99,6 +100,7 @@ func runMigrateOperator(
 		result.CurrentSchemaVersion = report.CurrentSchemaVersion
 		result.Steps = operatorStepsOutput(report)
 		result.Pending = operatorPendingOutput(report)
+		result.RoleMemberships = report.Memberships
 	} else {
 		applied, applyErr := service.Apply(ctx, options)
 		if applyErr != nil {
@@ -145,8 +147,9 @@ func parseOperatorArguments(args []string) (string, postgresadapter.OperatorAppl
 	return args[0], options, true
 }
 
-// logOperatorFailure names the step and reason, never the database's text:
-// PostgreSQL errors may echo connection or object details.
+// logOperatorFailure logs codes only (error_code, step, reason, SQLSTATE),
+// never the error text: PostgreSQL errors may echo connection or object
+// details.
 func logOperatorFailure(ctx context.Context, logger *slog.Logger, code string, err error) {
 	attributes := []any{"error_code", code}
 	var refused *postgresadapter.OperatorStepRefusedError
@@ -163,7 +166,7 @@ func logOperatorFailure(ctx context.Context, logger *slog.Logger, code string, e
 	case errors.Is(err, postgresadapter.ErrMigrationState):
 		attributes = []any{"error_code", "operator_schema_not_clean"}
 	}
-	logger.ErrorContext(ctx, "operator migration failed", append(attributes, "error", err)...)
+	logger.ErrorContext(ctx, "operator migration failed", attributes...)
 }
 
 func operatorStepsOutput(report postgresadapter.OperatorReport) []operatorStepOutput {
