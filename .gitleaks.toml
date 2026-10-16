@@ -7,6 +7,8 @@ useDefault = true
 [[allowlists]]
 description = "Go module checksums (go.sum h1: hashes), for example in the vendored Dex dependency patches"
 targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(^|/)go\.sum$''', '''(^|/)third_party/dex/.*\.patch$''']
 regexTarget = "match"
 regexes = ['''h1:[A-Za-z0-9+/]{43}=''']
 
