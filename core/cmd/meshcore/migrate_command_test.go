@@ -146,14 +146,21 @@ func TestRunMigrateRedactsOperationFailureAndStillCloses(t *testing.T) {
 }
 
 type fakeMigrationService struct {
-	status      postgresadapter.MigrationStatus
-	result      postgresadapter.MigrationResult
-	statusErr   error
-	upErr       error
-	closeErr    error
-	statusCalls int
-	upCalls     int
-	closeCalls  int
+	status       postgresadapter.MigrationStatus
+	result       postgresadapter.MigrationResult
+	verification postgresadapter.MigrationVerification
+	statusErr    error
+	upErr        error
+	closeErr     error
+	statusCalls  int
+	upCalls      int
+	verifyCalls  int
+	closeCalls   int
+}
+
+func (service *fakeMigrationService) Verify(context.Context) (postgresadapter.MigrationVerification, error) {
+	service.verifyCalls++
+	return service.verification, nil
 }
 
 func (service *fakeMigrationService) Status(context.Context) (postgresadapter.MigrationStatus, error) {

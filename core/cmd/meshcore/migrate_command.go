@@ -15,6 +15,7 @@ import (
 type migrationService interface {
 	Status(context.Context) (postgresadapter.MigrationStatus, error)
 	Up(context.Context) (postgresadapter.MigrationResult, error)
+	Verify(context.Context) (postgresadapter.MigrationVerification, error)
 	Close(context.Context) error
 }
 
@@ -26,7 +27,15 @@ type migrationCommandOutput struct {
 	CurrentSchemaVersion int64  `json:"current_schema_version"`
 	LatestSchemaVersion  int64  `json:"latest_schema_version"`
 	State                string `json:"state"`
+	// Verify only: every operator step of the applied migrations, and the
+	// ones that do not hold.
+	OperatorSteps        []operatorStepOutput `json:"operator_steps,omitempty"`
+	PendingOperatorSteps []string             `json:"pending_operator_steps,omitempty"`
 }
+
+// verifyIncompleteExitCode reports a schema that is readable but not ready
+// for this binary: migrations or operator steps pending.
+const verifyIncompleteExitCode = 3
 
 func runMigrate(
 	ctx context.Context,
@@ -94,6 +103,17 @@ func runMigrate(
 		result.CurrentSchemaVersion = migrationResult.Status.CurrentVersion
 		result.LatestSchemaVersion = migrationResult.Status.LatestVersion
 		result.State = string(migrationResult.Status.State)
+	case "verify":
+		verification, verifyErr := service.Verify(ctx)
+		if verifyErr != nil {
+			logger.ErrorContext(ctx, "migration failed", "error_code", "migration_verify_failure", "error", verifyErr)
+			return 1
+		}
+		result.CurrentSchemaVersion = verification.Status.CurrentVersion
+		result.LatestSchemaVersion = verification.Status.LatestVersion
+		result.State = string(verification.Status.State)
+		result.OperatorSteps = operatorStepsOutput(verification.Operator)
+		result.PendingOperatorSteps = operatorPendingOutput(verification.Operator)
 	default:
 		logger.ErrorContext(ctx, "migration failed", "error_code", "invalid_migration_operation")
 		return 2
@@ -102,6 +122,12 @@ func runMigrate(
 	if err := json.NewEncoder(output).Encode(result); err != nil {
 		logger.ErrorContext(ctx, "migration failed", "error_code", "migration_output_failure")
 		return 1
+	}
+	if operation == "verify" && (result.State != string(postgresadapter.MigrationStateClean) ||
+		len(result.PendingOperatorSteps) != 0) {
+		logger.WarnContext(ctx, "migration verification incomplete", "error_code", "migration_verify_incomplete",
+			"schema_state", result.State, "pending_operator_steps", result.PendingOperatorSteps)
+		return verifyIncompleteExitCode
 	}
 	return 0
 }

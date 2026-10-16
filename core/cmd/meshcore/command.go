@@ -8,7 +8,7 @@ import (
 	"meshtransit.net/core/internal/platform/config"
 )
 
-const usage = "Usage: meshcore [serve | version | config validate | identity fingerprint | migrate status | migrate up | bootstrap check | bootstrap apply | account revoke-sessions|quarantine|release <principal-id>]\n"
+const usage = "Usage: meshcore [serve | version | config validate | identity fingerprint | migrate status | migrate up | migrate verify | migrate operator status | migrate operator apply [--dry-run] [--after-rollout] [--through N] | bootstrap check | bootstrap apply | account revoke-sessions|quarantine|release <principal-id>]\n"
 
 func execute(
 	ctx context.Context,
@@ -28,8 +28,10 @@ func execute(
 		return runConfigValidate(ctx, lookup, output, errorOutput)
 	case len(args) == 2 && args[0] == "identity" && args[1] == "fingerprint":
 		return runIdentityFingerprint(ctx, lookup, output, errorOutput)
-	case len(args) == 2 && args[0] == "migrate" && (args[1] == "status" || args[1] == "up"):
+	case len(args) == 2 && args[0] == "migrate" && (args[1] == "status" || args[1] == "up" || args[1] == "verify"):
 		return runMigrate(ctx, args[1], lookup, output, errorOutput, openMigrationService)
+	case len(args) >= 2 && args[0] == "migrate" && args[1] == "operator":
+		return runMigrateOperator(ctx, args[2:], lookup, output, errorOutput, openOperatorService)
 	case len(args) == 2 && args[0] == "bootstrap" && (args[1] == "check" || args[1] == "apply"):
 		return runBootstrap(ctx, args[1], lookup, output, errorOutput)
 	case len(args) == 3 && args[0] == "account" && accountCommandActions[args[1]] != "":

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"meshtransit.net/core/migrations"
@@ -238,9 +239,21 @@ func (runner *MigrationRunner) withTransaction(
 	ctx context.Context,
 	readOnly bool,
 	operation func(migrationTransaction) error,
+) error {
+	return runMigrationTransaction(ctx, runner.connection, runner.options.ConnectTimeout, readOnly, operation)
+}
+
+// runMigrationTransaction runs operation in one transaction on a one-shot
+// connection, rolls back on any error and commits otherwise.
+func runMigrationTransaction(
+	ctx context.Context,
+	connection migrationConnection,
+	connectTimeout time.Duration,
+	readOnly bool,
+	operation func(migrationTransaction) error,
 ) (returnErr error) {
-	beginContext, cancelBegin := context.WithTimeout(ctx, runner.options.ConnectTimeout)
-	transaction, err := runner.connection.Begin(beginContext, readOnly)
+	beginContext, cancelBegin := context.WithTimeout(ctx, connectTimeout)
+	transaction, err := connection.Begin(beginContext, readOnly)
 	cancelBegin()
 	if err != nil {
 		return fmt.Errorf("%w: begin transaction: %w", ErrMigrationRun, err)
@@ -252,7 +265,7 @@ func (runner *MigrationRunner) withTransaction(
 		}
 		rollbackContext, cancel := context.WithTimeout(
 			context.WithoutCancel(ctx),
-			runner.options.ConnectTimeout,
+			connectTimeout,
 		)
 		defer cancel()
 		if err := transaction.Rollback(rollbackContext); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
@@ -263,7 +276,7 @@ func (runner *MigrationRunner) withTransaction(
 	if err := operation(transaction); err != nil {
 		return fmt.Errorf("%w: %w", ErrMigrationRun, err)
 	}
-	commitContext, cancelCommit := context.WithTimeout(ctx, runner.options.ConnectTimeout)
+	commitContext, cancelCommit := context.WithTimeout(ctx, connectTimeout)
 	commitErr := transaction.Commit(commitContext)
 	cancelCommit()
 	if commitErr != nil {
