@@ -64,9 +64,9 @@ page) lists events newest first.
 - **Filters:** `network_id`, `since`, `until`, `target_kind` (up to 16),
   `target_id`, `actor_id`, `actor_kind`, `action`, `result`,
   `correlation_id`, `change_id`.
-- **Window:** without `until` it ends now; without `since` it covers the 90
-  days before `until`; longer than 93 days is refused. Read older history
-  window by window.
+- **Window:** without `until` it ends now on the database clock; without
+  `since` it covers the 90 days before `until`; longer than 93 days is
+  refused. Read older history window by window.
 - **Pages:** 50 records by default, at most 100, with an opaque
   `page_token`.
 - **Who may read:** `audit.read` on the Workspace reads the Workspace stream
@@ -97,7 +97,8 @@ edge set, so the ledger can be checked against the audit trail.
 
 `GET /api/v1/workspaces/{workspace}/networks/{network}/access-graph/history`,
 an operation of the Console's private API, answers for an instant `at`
-(default now), optionally filtered by Device,
+(default now), which must be at or before the server's time (the database
+clock's); a later instant is refused. It is optionally filtered by Device,
 source, destination or protocol. It needs `policy.read` and `device.read`.
 The answer includes `recorded_since`: before the first recorded state there
 is no history.
@@ -125,7 +126,8 @@ actually installed.
 The **enforcement ledger** (a worker job, off by default,
 `MESHTRANSIT_ENFORCEMENT_LEDGER_WORKER_ENABLED`) keeps this over time:
 `GET …/devices/enforcement-history?at=…` (Console private API) shows each
-Device's state at an instant, and a Device entering or leaving `mismatch` writes a sealed
+Device's state at an instant at or before the server's time (default now),
+and a Device entering or leaving `mismatch` writes a sealed
 `device.enforcement_mismatch` or `device.enforcement_restored` event.
 
 ## Explaining access

@@ -18,7 +18,9 @@ merge (2026-10-09) are kept below.
   stayed out of maps until the database caught up; recent revocations could
   be left out of the relay state. Schema 172 also keeps `updated_at` in
   order on the Resource sharing rows, so a row a previous binary stamped
-  ahead of the database no longer fails the next write. No operator step.
+  ahead of the database no longer fails the next write; schema 173 logs
+  each such case to the server log. Map streams measure key and projection
+  deadlines from the database time of their read. No operator step.
   Every process with a PostgreSQL connection samples the database clock at
   start and every minute and exports `meshtransit_postgres_clock_skew_seconds`
   (with its round trip, sample time and a samples counter); a skew above one

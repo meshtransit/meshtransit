@@ -123,7 +123,8 @@ operator step:
   binary building the map. Save guardrails before the rollout starts or
   after every API and control replica runs the same binary.
 
-- **Times come from the database clock** (schema 172 and the binary).
+- **Times come from the database clock** (schemas 172 and 173 and the
+  binary).
   The new binary takes every persisted time, and every comparison with one,
   from PostgreSQL's clock instead of its host's
   ([architecture](../architecture/core.md#time)); schema 172 keeps
@@ -132,7 +133,9 @@ operator step:
   together, the previous binary still stamps its writes with its host's
   clock:
   - A sharing row it stamped ahead of the database no longer makes the next
-    write on the database clock fail; `updated_at` keeps the later time.
+    write on the database clock fail; `updated_at` keeps the later time, and
+    the server log records each such case (`kept updated_at in order on …`,
+    schema 173).
   - A Private Endpoint or Federation Alias it created ahead of the database
     is published, and can be withdrawn, only once the database clock reaches
     its creation, as before: a withdrawal before that fails and the worker
@@ -142,8 +145,9 @@ operator step:
     `meshtransit_postgres_clock_skew_seconds` ([monitoring](monitoring.md#clocks))
     during the rollout.
 
-  After a rollback the previous binary runs on schema 172 unchanged: the
-  order trigger only ever raises an `updated_at` to the one before it.
+  After a rollback the previous binary runs on schemas 172 and 173
+  unchanged: the order trigger only ever raises an `updated_at` to the one
+  before it.
 
 ## Relays
 

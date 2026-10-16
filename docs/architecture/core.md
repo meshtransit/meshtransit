@@ -60,8 +60,16 @@ revocation times, expiry, leases, quarantine, idempotency windows, the
 instant an authorization is evaluated at and the order of state transitions.
 A store reads `transaction_timestamp()` inside the transaction that decides,
 and every statement of that unit of work uses that one instant; durations
-(a lifetime, a time to live) are added to it. Times SQL stamps itself use
+(a lifetime, a time to live) are added to it. That instant is when the
+transaction started, not when a statement runs: a decision is taken as of the
+start of its unit of work, and a write that would move `updated_at` before
+the version it replaces keeps the previous time instead (Resource sharing
+rows, schema 172), logging it to the server log (schema 173). Times SQL stamps itself use
 the same clock. A retried attempt reads its own transaction's time.
+
+Map streams measure a key or projection deadline from the database time of
+the read that produced their map plus the time elapsed since on the host's
+monotonic clock, so wall-clock skew does not move it.
 
 A Core host's clock only bounds local timeouts, retry backoff and how long to
 wait, and a few early checks that can only refuse (a session past its expiry
