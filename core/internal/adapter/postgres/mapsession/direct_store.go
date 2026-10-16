@@ -102,7 +102,7 @@ func (store *Store) loadShareEdges(
 ) (appmapsession.Snapshot, error) {
 	if store.options.EnableDeviceAliases {
 		var err error
-		self, err = loadSharingDependencies(ctx, transaction, self, machineFingerprint, nodeKey)
+		self, err = store.loadSharingDependencies(ctx, transaction, self, machineFingerprint, nodeKey)
 		if err != nil {
 			return appmapsession.Snapshot{}, err
 		}
@@ -125,6 +125,7 @@ func (store *Store) loadShareEdges(
 		if err != nil {
 			return appmapsession.Snapshot{}, err
 		}
+		store.observeReader(ctx, FunctionPathAliasMapEdges, reader)
 		aliases, aliasesLimited, err := readSharingEdges(ctx, transaction, self, machineFingerprint, nodeKey, reader, decodeAliasEdge)
 		if err != nil {
 			return appmapsession.Snapshot{}, err

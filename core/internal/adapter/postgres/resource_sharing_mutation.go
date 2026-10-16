@@ -405,16 +405,18 @@ func (store *ResourceSharingStore) DecideOffer(
 	if err := transaction.QueryRow(ctx, singleShareDecisionGrantedSQL).Scan(&single); err != nil {
 		return sharing.MutationResult{}, resourceSharingDatabaseError(ctx, err)
 	}
+	decideVersion := 4
 	if single {
-		decideQuery = decideSingleResourceShareOfferSQL
+		decideQuery, decideVersion = decideSingleResourceShareOfferSQL, 6
 	} else {
 		if err := transaction.QueryRow(ctx, limitedShareDecisionGrantedSQL).Scan(&limited); err != nil {
 			return sharing.MutationResult{}, resourceSharingDatabaseError(ctx, err)
 		}
 		if limited {
-			decideQuery = decideLimitedResourceShareOfferSQL
+			decideQuery, decideVersion = decideLimitedResourceShareOfferSQL, 5
 		}
 	}
+	store.metrics.observeFunctionVersion(ctx, functionPathShareDecision, decideVersion)
 	if err := transaction.QueryRow(
 		ctx,
 		decideQuery,

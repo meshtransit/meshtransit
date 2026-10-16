@@ -453,6 +453,16 @@ run_go test \
 	-run '^TestPostgreSQLMigrations$' \
 	-timeout=5m \
 	./core/test/integration
+# The operator command on the same fixture: the steps the test above applied
+# by hand verify as applied, and a separate empty database goes through every
+# operator step with the command.
+run_go test \
+	-tags=integration \
+	-count=1 \
+	-race \
+	-run '^TestPostgreSQLOperatorSteps$' \
+	-timeout=5m \
+	./core/test/integration
 
 if [[ "${memory_gate_mb}" != 0 ]]; then
 	docker logs "${postgres_container}" > "${fixture_dir}/postgres-statements.log" 2>&1

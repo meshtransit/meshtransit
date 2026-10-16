@@ -114,9 +114,12 @@ func (store *ResourceSharingStore) ResolveImportedPolicyDestinations(
 	if err = transaction.QueryRow(ctx, scaledImportedPolicyDestinationsGrantedSQL).Scan(&scaled); err != nil {
 		return nil, resourceSharingDatabaseError(ctx, err)
 	}
+	resolveVersion := 1
 	if scaled {
-		resolveQuery = resolveScaledImportedPolicyDestinationsSQL
-	} else if len(ids) > legacyImportedPolicyDestinations {
+		resolveQuery, resolveVersion = resolveScaledImportedPolicyDestinationsSQL, 2
+	}
+	store.metrics.observeFunctionVersion(ctx, functionPathImportedPolicyDestinations, resolveVersion)
+	if !scaled && len(ids) > legacyImportedPolicyDestinations {
 		return nil, sharing.ErrInvalidManagementRequest
 	}
 	encodedIDs := make([]string, len(ids))

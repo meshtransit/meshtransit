@@ -347,9 +347,11 @@ func (transaction *policyPublicationTransaction) applyLocked(
 	if err := transaction.database.QueryRow(ctx, scaledPolicyPublicationGrantedSQL).Scan(&scaled); err != nil {
 		return publication.Result{}, fmt.Errorf("check policy publication function: %w", err)
 	}
+	publishVersion := 1
 	if scaled {
-		publishQuery = publishScaledCompiledPolicySQL
+		publishQuery, publishVersion = publishScaledCompiledPolicySQL, 2
 	}
+	transaction.metrics.observeFunctionVersion(ctx, functionPathPolicyPublication, publishVersion)
 	if err := transaction.database.QueryRow(
 		ctx,
 		publishQuery,

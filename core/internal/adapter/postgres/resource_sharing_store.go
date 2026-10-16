@@ -31,6 +31,7 @@ type ResourceSharingOptions struct {
 type ResourceSharingStore struct {
 	database resourceAuthorityDatabase
 	options  ResourceSharingOptions
+	metrics  *postgresPoolMetrics
 }
 
 var _ sharing.Repository = (*ResourceSharingStore)(nil)
@@ -44,7 +45,7 @@ func NewResourceSharingStore(
 		!validResourceSharingOptions(options) {
 		return nil, sharing.ErrUnavailable
 	}
-	return &ResourceSharingStore{database: pool.resourceAuthorityDatabase, options: options}, nil
+	return &ResourceSharingStore{database: pool.resourceAuthorityDatabase, options: options, metrics: pool.metrics}, nil
 }
 
 func validResourceSharingOptions(options ResourceSharingOptions) bool {

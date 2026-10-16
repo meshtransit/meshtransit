@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"strconv"
 	"sync"
@@ -56,15 +57,33 @@ type Options struct {
 	CAFile         config.TrustFile
 	MaxConnections int32
 	ConnectTimeout time.Duration
+	// Logger, when set, reports the function versions the pool's paths
+	// select and the operator steps its readiness check finds pending.
+	Logger *slog.Logger
+	// OperatorStepCheckInterval bounds how often a readiness check also
+	// reads the operator steps; zero means defaultOperatorStepCheckInterval.
+	OperatorStepCheckInterval time.Duration
 }
+
+const (
+	defaultOperatorStepCheckInterval = time.Minute
+	// operatorStepCheckTimeout caps the step probe within a readiness check.
+	operatorStepCheckTimeout = 2 * time.Second
+)
 
 // Pool is the concrete PostgreSQL dependency owned by the composition root.
 type Pool struct {
-	role                            PoolRole
-	ping                            func(context.Context) error
-	checkWritable                   func(context.Context) error
-	checkSchema                     func(context.Context) error
-	databaseClock                   func(context.Context) (time.Time, error)
+	role          PoolRole
+	ping          func(context.Context) error
+	checkWritable func(context.Context) error
+	checkSchema   func(context.Context) error
+	databaseClock func(context.Context) (time.Time, error)
+	// checkOperatorSteps names pending operator steps; it never fails Check.
+	checkOperatorSteps func(context.Context) ([]string, error)
+	// operatorStepInterval spaces probes; zero probes on every check.
+	operatorStepInterval            time.Duration
+	operatorStepMu                  sync.Mutex
+	operatorStepCheckedAt           time.Time
 	outboxDatabase                  outboxDatabase
 	registrationReplayDatabase      registrationReplayDatabase
 	registrationTransactionDatabase registrationTransactionDatabase
@@ -117,6 +136,7 @@ func Open(ctx context.Context, options Options) (*Pool, error) {
 	metrics := newPostgresPoolMetrics(options.Role, func() postgresPoolStats {
 		return snapshotPostgresPoolStats(pool.Stat())
 	})
+	metrics.logger = options.Logger
 	return &Pool{
 		role: options.Role,
 		ping: pool.Ping,
@@ -164,6 +184,12 @@ func Open(ctx context.Context, options Options) (*Pool, error) {
 			err = pool.QueryRow(ctx, databaseClockSQL).Scan(&at)
 			return at, err
 		},
+		operatorStepInterval: operatorStepInterval(options.OperatorStepCheckInterval),
+		checkOperatorSteps: func(ctx context.Context) ([]string, error) {
+			return checkOperatorSteps(ctx, func(ctx context.Context, query string, arguments ...any) migrationRow {
+				return pool.QueryRow(ctx, query, arguments...)
+			})
+		},
 		metrics:  metrics,
 		acquired: func() int32 { return pool.Stat().AcquiredConns() },
 		reset:    pool.Reset,
@@ -202,6 +228,17 @@ func (pool *Pool) Check(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("check postgres schema: %w", err)
 	}
+	// A pending operator step leaves the pool ready: during a rollout some
+	// steps must wait until no previous replica is left. It is reported
+	// instead (metric, log, meshcore migrate verify).
+	if pool.checkOperatorSteps != nil && pool.operatorStepsDue(time.Now()) {
+		probeContext, cancel := context.WithTimeout(ctx, operatorStepCheckTimeout)
+		startedAt = time.Now()
+		pending, stepErr := pool.checkOperatorSteps(probeContext)
+		cancel()
+		pool.metrics.observeOperation(postgresOperationOperatorStepCheck, time.Since(startedAt), stepErr)
+		pool.metrics.observeOperatorSteps(ctx, pending, stepErr)
+	}
 	return nil
 }
 
@@ -223,6 +260,26 @@ func (pool *Pool) DatabaseClock(ctx context.Context) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("read postgres clock: %w", err)
 	}
 	return at.UTC(), nil
+}
+
+func operatorStepInterval(configured time.Duration) time.Duration {
+	if configured <= 0 {
+		return defaultOperatorStepCheckInterval
+	}
+	return configured
+}
+
+// operatorStepsDue reports whether this check should also read the
+// operator steps: the catalog query grows with every step.
+func (pool *Pool) operatorStepsDue(now time.Time) bool {
+	pool.operatorStepMu.Lock()
+	defer pool.operatorStepMu.Unlock()
+	if pool.operatorStepInterval > 0 && !pool.operatorStepCheckedAt.IsZero() &&
+		now.Sub(pool.operatorStepCheckedAt) < pool.operatorStepInterval {
+		return false
+	}
+	pool.operatorStepCheckedAt = now
+	return true
 }
 
 // Shutdown releases an idle pool without starting an unbounded cleanup

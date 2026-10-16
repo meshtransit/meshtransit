@@ -29,7 +29,10 @@ var (
 
 // DeviceAliasWorkerStore exposes guarded functions through a worker pool only.
 // It holds no authority cache, sticky transaction, credentials or goroutines.
-type DeviceAliasWorkerStore struct{ database outboxDatabase }
+type DeviceAliasWorkerStore struct {
+	database outboxDatabase
+	metrics  *postgresPoolMetrics
+}
 
 var _ devicealias.Changes = (*DeviceAliasWorkerStore)(nil)
 
@@ -38,7 +41,7 @@ func NewDeviceAliasWorkerStore(pool *Pool) (*DeviceAliasWorkerStore, error) {
 	if pool == nil || pool.role != PoolRoleWorker || pool.outboxDatabase == nil {
 		return nil, ErrInvalidDeviceAliasWorker
 	}
-	return &DeviceAliasWorkerStore{database: pool.outboxDatabase}, nil
+	return &DeviceAliasWorkerStore{database: pool.outboxDatabase, metrics: pool.metrics}, nil
 }
 
 const prepareDeviceAliasChangeSQL = `SELECT mesh_ops.prepare_device_alias_change_v2(
@@ -133,6 +136,7 @@ func (store *DeviceAliasWorkerStore) Change(ctx context.Context, intent deviceal
 	if err := transaction.QueryRow(ctx, deviceAliasWorkerVersionSQL).Scan(&version); err != nil {
 		return false, errors.Join(ErrDeviceAliasChange, err)
 	}
+	store.metrics.observeFunctionVersion(ctx, functionPathDeviceAliasWorker, version)
 	switch version {
 	case 5:
 		prepareQuery = prepareProviderReadmittingDeviceAliasChangeSQL

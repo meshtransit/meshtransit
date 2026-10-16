@@ -70,6 +70,7 @@ func (store *DeviceAliasWorkerStore) List(ctx context.Context, installation depl
 	if err := tx.QueryRow(ctx, deviceAliasWorkerVersionSQL).Scan(&version); err != nil {
 		return devicealias.Page{}, errors.Join(ErrDeviceAliasChange, err)
 	}
+	store.metrics.observeFunctionVersion(ctx, functionPathDeviceAliasWorker, version)
 	loadQuery := loadDeviceAliasWorkSQL
 	switch version {
 	case 5:

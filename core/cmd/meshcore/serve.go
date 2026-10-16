@@ -116,6 +116,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			processConfig.Storage.PostgreSQL,
 			processConfig.Dependencies.CheckTimeout,
 			resources,
+			logger,
 		)
 		if err != nil {
 			logger.ErrorContext(ctx, "startup failed", "error_code", "postgres_open_failure", "error", err)

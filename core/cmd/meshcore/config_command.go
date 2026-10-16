@@ -110,6 +110,7 @@ func validateDependencyConfiguration(ctx context.Context, processConfig config.C
 		processConfig.Storage.PostgreSQL,
 		processConfig.Dependencies.CheckTimeout,
 		resources,
+		nil,
 	)
 	if err != nil {
 		return fmt.Errorf("validate postgresql settings: %w", err)

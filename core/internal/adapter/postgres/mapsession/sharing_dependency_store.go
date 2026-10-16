@@ -58,11 +58,12 @@ FROM mesh_ops.load_device_sharing_dependencies_v6($1::BYTEA,$2::BYTEA,$3::INTEGE
 const networkOnceSharingDependenciesGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
     pg_catalog.to_regprocedure('mesh_ops.load_device_sharing_dependencies_v6(bytea,bytea,integer)'), 'EXECUTE'), FALSE)`
 
-func loadSharingDependencies(ctx context.Context, transaction databaseTransaction, self appmapsession.Snapshot, machineFingerprint, nodeKey []byte) (appmapsession.Snapshot, error) {
+func (store *Store) loadSharingDependencies(ctx context.Context, transaction databaseTransaction, self appmapsession.Snapshot, machineFingerprint, nodeKey []byte) (appmapsession.Snapshot, error) {
 	reader, err := sharingDependenciesReader(ctx, transaction)
 	if err != nil {
 		return appmapsession.Snapshot{}, err
 	}
+	store.observeReader(ctx, FunctionPathSharingDependencies, reader)
 	requested := reader.limit + 1 // one more row reveals a legacy overflow
 	if reader.scaled {
 		requested = reader.limit

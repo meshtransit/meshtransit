@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"errors"
+	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -115,6 +117,7 @@ const (
 	postgresOperationOutboxLoadRevision        postgresOperation = "outbox_load_revision"
 	postgresOperationOutboxMarkDelivered       postgresOperation = "outbox_mark_delivered"
 	postgresOperationOutboxRetry               postgresOperation = "outbox_retry"
+	postgresOperationOperatorStepCheck         postgresOperation = "operator_step_check"
 )
 
 var (
@@ -219,6 +222,7 @@ var (
 		postgresOperationOutboxLoadRevision,
 		postgresOperationOutboxMarkDelivered,
 		postgresOperationOutboxRetry,
+		postgresOperationOperatorStepCheck,
 	}
 )
 
@@ -250,6 +254,16 @@ type postgresPoolMetrics struct {
 	emptyAcquireWaitDesc *prometheus.Desc
 	connectionsNewDesc   *prometheus.Desc
 	connectionsGoneDesc  *prometheus.Desc
+	// functionVersion and operatorStepsPending show what the operator steps
+	// granted (function_versions.go); logger reports their changes.
+	functionVersion      *prometheus.GaugeVec
+	operatorStepsPending *prometheus.GaugeVec
+	logger               *slog.Logger
+	stateMu              sync.Mutex
+	functionVersions     map[functionPath]int
+	operatorStepsKey     string
+	operatorStepsKnown   bool
+	operatorCheckFailing bool
 }
 
 func newPostgresPoolMetrics(
@@ -283,10 +297,13 @@ func newPostgresPoolMetrics(
 	}
 
 	return &postgresPoolMetrics{
-		role:              role,
-		operationTotal:    operationTotal,
-		operationDuration: operationDuration,
-		poolStats:         poolStats,
+		role:                 role,
+		operationTotal:       operationTotal,
+		operationDuration:    operationDuration,
+		poolStats:            poolStats,
+		functionVersion:      newFunctionVersionGauge(),
+		operatorStepsPending: newOperatorStepsPendingGauge(),
+		functionVersions:     map[functionPath]int{},
 		// Dashboard: meshtransit_postgres_pool_connections
 		// Alert: meshtransit_postgres_pool_connections{state="acquired"} / meshtransit_postgres_pool_connections_max > 0.9
 		poolConnectionsDesc: prometheus.NewDesc(
@@ -387,6 +404,8 @@ func (collector *postgresMetricsCollector) Collect(output chan<- prometheus.Metr
 func (metrics *postgresPoolMetrics) describe(descriptions chan<- *prometheus.Desc) {
 	metrics.operationTotal.Describe(descriptions)
 	metrics.operationDuration.Describe(descriptions)
+	metrics.functionVersion.Describe(descriptions)
+	metrics.operatorStepsPending.Describe(descriptions)
 	descriptions <- metrics.poolConnectionsDesc
 	descriptions <- metrics.poolLimitDesc
 	descriptions <- metrics.poolAcquiresDesc
@@ -400,6 +419,8 @@ func (metrics *postgresPoolMetrics) describe(descriptions chan<- *prometheus.Des
 func (metrics *postgresPoolMetrics) collect(output chan<- prometheus.Metric) {
 	metrics.operationTotal.Collect(output)
 	metrics.operationDuration.Collect(output)
+	metrics.functionVersion.Collect(output)
+	metrics.operatorStepsPending.Collect(output)
 
 	stats := metrics.poolStats()
 	role := string(metrics.role)
@@ -439,7 +460,8 @@ func (metrics *postgresPoolMetrics) observeOperation(
 
 func (operation postgresOperation) validForRole(role PoolRole) bool {
 	if operation == postgresOperationPing || operation == postgresOperationWritableCheck ||
-		operation == postgresOperationSchemaCheck || operation == postgresOperationClockSample {
+		operation == postgresOperationSchemaCheck || operation == postgresOperationClockSample ||
+		operation == postgresOperationOperatorStepCheck {
 		return role.valid()
 	}
 	if role == PoolRoleRuntime {
