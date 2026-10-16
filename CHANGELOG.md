@@ -5,6 +5,24 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core schema 172 and Core: every time Core persists, or compares with
+  persisted state, now comes from the PostgreSQL clock: share, Resource,
+  policy approval and publication, Device registration, revocation and
+  Node-key rotation times, idempotency windows, invitation and browser
+  registration lifetimes, session renewal, the instant authorization and
+  expiry are evaluated at, relay revocation windows and Console reads. A
+  Core host's clock only bounds local timeouts and backoff. Before, a host
+  running ahead of or behind the database wrote rows out of order with the
+  database's own writers: finalizing a just activated Private Endpoint, or
+  revoking a share after its publication, failed with 23514; a new Device
+  stayed out of maps until the database caught up; recent revocations could
+  be left out of the relay state. Schema 172 also keeps `updated_at` in
+  order on the Resource sharing rows, so a row a previous binary stamped
+  ahead of the database no longer fails the next write. No operator step.
+  Every process with a PostgreSQL connection samples the database clock at
+  start and every minute and exports `meshtransit_postgres_clock_skew_seconds`
+  (with its round trip, sample time and a samples counter); a skew above one
+  second logs `clock_skew_exceeded`. Sampling never affects readiness.
 - Core schema 171: a shared Device that was suspended (or whose session or
   keys changed) gives its consumers the share back once it is active again.
   The alias worker used to quarantine the endpoint's Resource aliases for

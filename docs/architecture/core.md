@@ -52,6 +52,27 @@ policy, sharing and audit.
   same transaction, and advances the Network's revision when it changes what
   nodes see.
 
+### Time
+
+The PostgreSQL clock is the single source of truth for every time Core
+persists or compares with persisted state: creation, update, withdrawal and
+revocation times, expiry, leases, quarantine, idempotency windows, the
+instant an authorization is evaluated at and the order of state transitions.
+A store reads `transaction_timestamp()` inside the transaction that decides,
+and every statement of that unit of work uses that one instant; durations
+(a lifetime, a time to live) are added to it. Times SQL stamps itself use
+the same clock. A retried attempt reads its own transaction's time.
+
+A Core host's clock only bounds local timeouts, retry backoff and how long to
+wait, and a few early checks that can only refuse (a session past its expiry
+on the host clock is refused before any database work; the database decides
+whether it is really live). Times signed for relays and nodes (relay state,
+maps) are protocol times on the issuing host's clock, which relays and nodes
+check against their own clocks within a stated skew.
+
+Core samples the database clock at start and every minute and exports how
+far the host's clock is from it ([monitoring](../operations/monitoring.md#clocks)).
+
 ### Migrations
 
 Migrations are forward-only and embedded in the binary with a SHA-256 checksum

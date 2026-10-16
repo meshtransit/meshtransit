@@ -42,6 +42,7 @@ Names are stable; labels carry outcome names only, never identifiers.
 | Maps | `meshtransit_map_snapshots_total{source}`, `meshtransit_map_inventory_reads_total`, `meshtransit_map_inventory_policy_mismatches_total`, `meshtransit_map_connectivity_*` |
 | Endpoints | `meshtransit_endpoint_announcements_total{outcome}` (`announced`, `deferred`, `unchanged`, `flushed`) |
 | PostgreSQL | `meshtransit_postgres_operations_total{pool_role,operation,result}`, `…_operation_duration_seconds`, `meshtransit_postgres_pool_connections{pool_role,state}`, `…_pool_connections_max`, `…_pool_acquires_total{pool_role,result}` |
+| Clocks | `meshtransit_postgres_clock_skew_seconds` (this host's clock minus the database's; positive when the host runs ahead), `…_clock_skew_round_trip_seconds`, `…_clock_skew_sampled_timestamp_seconds`, `…_clock_skew_samples_total{result}` ([clocks](#clocks)) |
 | Redis | `meshtransit_redis_commands_total{operation,result}`, `…_command_duration_seconds`, `meshtransit_redis_pool_connections{state}`, `…_pool_pending_requests`, `…_pool_timeouts_total`, `meshtransit_redis_subscriptions_active` |
 | Wakeups | `meshtransit_revision_feed_*`, `meshtransit_connectivity_feed_*`: subscriber connected, watchers, wakeups, fan-out, reconnects |
 | Revision worker | `meshtransit_revision_worker_ready_backlog_events`, `…_oldest_ready_event_age_seconds`, `…_delivery_attempts_total{result}` |
@@ -77,10 +78,37 @@ Go runtime and process metrics are included.
 | Untrusted proxy | sustained rate of `meshtransit_mtcp_untrusted_forwarding_total` (a proxy is missing from the trusted list) |
 | Revisions not delivered | `meshtransit_revision_worker_oldest_ready_event_age_seconds > 60` |
 | PostgreSQL | error rate of `meshtransit_postgres_operations_total` > 0; p99 duration > 1 s; pool acquired / max > 0.9 |
+| Clock skew | `abs(meshtransit_postgres_clock_skew_seconds) > 1` for 10 m; `time() - meshtransit_postgres_clock_skew_sampled_timestamp_seconds > 300` (no recent sample) |
 | Redis | error rate > 0; p99 > 0.5 s; `…_pool_pending_requests > 0`; timeouts |
 | A worker job stopped | `meshtransit_<job>_worker_running != 1` for an enabled job |
 | Enforcement mismatch | rate of `meshtransit_enforcement_ledger_worker_audited_total` > 0 (Devices not enforcing what they were sent) |
 | Relay | `meshrelay_core_state_polls_total{result!="ok"}` rising; `meshrelay_tls_certificate_expiry_timestamp_seconds > 0` and within 14 days; `network_rate_limited` drops |
+
+## Clocks
+
+Core decides every persisted time, and every comparison with one, on the
+PostgreSQL clock ([architecture](../architecture/core.md#time)), so a Core
+host whose clock drifts does not change who may do what or when something
+expires. The host clock still bounds local timeouts, and a few early checks
+on it can refuse a request the database would have accepted: a session
+within the skew of its expiry, for example. Keep every Core host and the
+database host synchronised (NTP or the platform's time service).
+
+Each Core process with a PostgreSQL connection samples the database's
+`clock_timestamp()` at start and then every minute, in the background, so a
+slow or failing sample never delays startup or readiness. The sample is
+corrected by half its round trip, which bounds its error:
+
+| Metric | Meaning |
+|---|---|
+| `meshtransit_postgres_clock_skew_seconds` | This host's clock minus the database's at the last good sample; positive when the host runs ahead. Absent until a sample succeeds |
+| `meshtransit_postgres_clock_skew_round_trip_seconds` | Round trip of that sample; the skew is accurate to half of it |
+| `meshtransit_postgres_clock_skew_sampled_timestamp_seconds` | When that sample was taken, by this host's clock |
+| `meshtransit_postgres_clock_skew_samples_total{result}` | Samples by `success` or `error` |
+
+A sample further than one second from the database logs a warning with
+`error_code` `clock_skew_exceeded` and the measured `skew_seconds`; a failed
+sample logs `clock_skew_sample_failed`.
 
 ## Logs
 
