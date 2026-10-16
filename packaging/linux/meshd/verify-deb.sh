@@ -45,7 +45,7 @@ done
 [[ -f "${work_dir}/root/usr/share/doc/meshd/LICENSE" ]]
 [[ -f "${work_dir}/root/usr/share/doc/meshd/NOTICE" ]]
 [[ -f "${work_dir}/root/usr/share/doc/meshd/THIRD_PARTY_NOTICES.md" ]]
-"${script_dir}/../../tools/security/audit-release-binary.sh" \
+"${script_dir}/../../../hack/security/audit-release-binary.sh" \
     "${work_dir}/root/usr/bin/meshd" \
     "${work_dir}/root/usr/libexec/meshtransit/meshnetd" \
     "${work_dir}/root/usr/libexec/meshtransit/meshcred"
