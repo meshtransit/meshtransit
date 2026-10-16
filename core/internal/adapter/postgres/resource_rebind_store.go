@@ -20,14 +20,13 @@ var (
 func (store *ResourceAuthorityStore) PreviewRebind(
 	ctx context.Context,
 	preview authority.RebindPreview,
-	evaluatedAt time.Time,
 ) (_ authority.RebindImpact, resultErr error) {
 	startedAt := time.Now()
 	defer func() {
 		store.observe(postgresOperationResourceAuthorityResolve, startedAt, resultErr)
 	}()
 	if ctx == nil || store == nil || store.database == nil || !preview.IsValid() ||
-		evaluatedAt.IsZero() || !validResourceAuthorityOptions(store.options) {
+		!validResourceAuthorityOptions(store.options) {
 		return authority.RebindImpact{}, ErrInvalidResourceAuthorityStore
 	}
 	database, err := store.database.BeginRepeatableRead(ctx)
@@ -42,7 +41,8 @@ func (store *ResourceAuthorityStore) PreviewRebind(
 			resultErr = errors.Join(resultErr, rollbackResourceAuthoritySetup(database))
 		}
 	}()
-	if err := store.configureAndScope(ctx, database, preview.Scope()); err != nil {
+	evaluatedAt, err := store.configureAndScope(ctx, database, preview.Scope())
+	if err != nil {
 		return authority.RebindImpact{}, errors.Join(ErrResolveResourceAuthority, err)
 	}
 	transaction := resourceRebindTransaction{database: database, scope: preview.Scope()}
@@ -97,11 +97,14 @@ func (store *ResourceAuthorityStore) BeginRebind(
 			resultErr = errors.Join(resultErr, rollbackResourceAuthoritySetup(database))
 		}
 	}()
-	if err := store.configureAndScope(ctx, database, scope); err != nil {
+	decisionAt, err := store.configureAndScope(ctx, database, scope)
+	if err != nil {
 		return nil, errors.Join(ErrBeginResourceAuthority, err)
 	}
 	owned = true
-	return &resourceRebindTransaction{database: database, scope: scope, metrics: store.metrics}, nil
+	return &resourceRebindTransaction{
+		decisionAt: decisionAt, database: database, scope: scope, metrics: store.metrics,
+	}, nil
 }
 
 // ResolveCommittedRebind identifies a possibly committed replacement.
@@ -131,10 +134,11 @@ func (store *ResourceAuthorityStore) ResolveCommittedRebind(
 			resultErr = errors.Join(resultErr, rollbackResourceAuthoritySetup(database))
 		}
 	}()
-	if err := store.configureAndScope(ctx, database, command.Scope()); err != nil {
+	decisionAt, err := store.configureAndScope(ctx, database, command.Scope())
+	if err != nil {
 		return authority.RebindResult{}, false, errors.Join(ErrResolveCommittedResourceAuthority, err)
 	}
-	evaluatedAt := time.Now().UTC()
+	evaluatedAt := decisionAt
 	transaction := resourceRebindTransaction{database: database, scope: command.Scope()}
 	if _, err := transaction.authorize(ctx, command.AccountSession(), evaluatedAt); err != nil {
 		return authority.RebindResult{}, false, errors.Join(

@@ -28,7 +28,7 @@ func newPrivateIdentityResourceServices(pool *postgresadapter.Pool, options post
 		MaxAttempts: 3, RollbackTimeout: managementRollbackTimeout, IdempotencyWindow: managementIdempotencyTTL,
 	}, authority.Dependencies{
 		Transactions: authorityStore, CommittedResults: authorityStore,
-		MutationIDs: authority.PublicMutationIDGenerator{}, Clock: authority.SystemClock{}, Retry: backoff,
+		MutationIDs: authority.PublicMutationIDGenerator{}, Retry: backoff,
 	})
 	if err != nil {
 		return invalid, errInvalidPrivateIdentityComposition
@@ -37,7 +37,7 @@ func newPrivateIdentityResourceServices(pool *postgresadapter.Pool, options post
 	if err != nil {
 		return invalid, errInvalidPrivateIdentityComposition
 	}
-	resourceCatalog, err := catalog.NewService(catalog.Dependencies{Transactions: catalogStore, Clock: catalog.SystemClock{}})
+	resourceCatalog, err := catalog.NewService(catalog.Dependencies{Transactions: catalogStore})
 	if err != nil {
 		return invalid, errInvalidPrivateIdentityComposition
 	}

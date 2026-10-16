@@ -15,7 +15,6 @@ type GroupReplaceService struct {
 	transactions GroupReplaceTransactions
 	committed    CommittedGroupReplaceResultResolver
 	mutationIDs  GroupReplaceMutationIDGenerator
-	clock        Clock
 	retry        RetryWaiter
 }
 
@@ -26,7 +25,7 @@ func NewGroupReplaceService(
 ) (*GroupReplaceService, error) {
 	if dependencies.Impacts == nil || dependencies.Transactions == nil ||
 		dependencies.CommittedResults == nil || dependencies.MutationIDs == nil ||
-		dependencies.Clock == nil || dependencies.Retry == nil ||
+		dependencies.Retry == nil ||
 		options.MaxAttempts <= 0 || options.MaxAttempts > maximumAttempts ||
 		options.RollbackTimeout <= 0 || options.RollbackTimeout > 5*time.Second ||
 		options.IdempotencyWindow < minimumIdempotencyWindow ||
@@ -36,7 +35,7 @@ func NewGroupReplaceService(
 	return &GroupReplaceService{
 		options: options, impacts: dependencies.Impacts, transactions: dependencies.Transactions,
 		committed: dependencies.CommittedResults, mutationIDs: dependencies.MutationIDs,
-		clock: dependencies.Clock, retry: dependencies.Retry,
+		retry: dependencies.Retry,
 	}, nil
 }
 
@@ -45,18 +44,14 @@ func (service *GroupReplaceService) Preview(
 	ctx context.Context,
 	preview GroupReplacePreview,
 ) (GroupReplaceImpact, error) {
-	if ctx == nil || service == nil || service.impacts == nil || service.clock == nil ||
+	if ctx == nil || service == nil || service.impacts == nil ||
 		!preview.IsValid() {
 		return GroupReplaceImpact{}, ErrInvalidGroupReplacePreview
 	}
 	if err := ctx.Err(); err != nil {
 		return GroupReplaceImpact{}, errors.Join(ErrMutationFailed, err)
 	}
-	now := service.clock.Now().UTC()
-	if now.IsZero() {
-		return GroupReplaceImpact{}, ErrInvalidService
-	}
-	impact, err := service.impacts.PreviewGroupReplace(ctx, preview, now)
+	impact, err := service.impacts.PreviewGroupReplace(ctx, preview)
 	if err != nil {
 		return GroupReplaceImpact{}, err
 	}
@@ -72,20 +67,12 @@ func (service *GroupReplaceService) Replace(
 	command GroupReplaceCommand,
 ) (GroupReplaceResult, error) {
 	if ctx == nil || service == nil || service.transactions == nil || service.committed == nil ||
-		service.mutationIDs == nil || service.clock == nil || service.retry == nil ||
+		service.mutationIDs == nil || service.retry == nil ||
 		!command.IsValid() {
 		return GroupReplaceResult{}, ErrInvalidGroupReplaceCommand
 	}
 	if err := ctx.Err(); err != nil {
 		return GroupReplaceResult{}, errors.Join(ErrMutationFailed, err)
-	}
-	now := service.clock.Now().UTC()
-	if now.IsZero() {
-		return GroupReplaceResult{}, ErrInvalidService
-	}
-	expiresAt := now.Add(service.options.IdempotencyWindow)
-	if !expiresAt.After(now) {
-		return GroupReplaceResult{}, ErrInvalidService
 	}
 	mutationIDs, err := service.mutationIDs.NewGroupReplaceMutationIDs(command)
 	if err != nil || !mutationIDs.IsValidFor(command) {
@@ -95,7 +82,7 @@ func (service *GroupReplaceService) Replace(
 	}
 	var lastErr error
 	for attempt := 1; attempt <= service.options.MaxAttempts; attempt++ {
-		result, attemptErr := service.attemptReplace(ctx, command, mutationIDs, now, expiresAt)
+		result, attemptErr := service.attemptReplace(ctx, command, mutationIDs)
 		if attemptErr == nil {
 			return result, nil
 		}
@@ -132,7 +119,6 @@ func (service *GroupReplaceService) attemptReplace(
 	ctx context.Context,
 	command GroupReplaceCommand,
 	mutationIDs GroupReplaceMutationIDs,
-	now, expiresAt time.Time,
 ) (result GroupReplaceResult, resultErr error) {
 	transaction, err := service.transactions.BeginGroupReplace(ctx, command.Scope())
 	if err != nil || transaction == nil {
@@ -159,6 +145,12 @@ func (service *GroupReplaceService) attemptReplace(
 			}
 		}
 	}()
+	// Every time of this attempt is the database clock's.
+	now := transaction.DecisionTime()
+	expiresAt := now.Add(service.options.IdempotencyWindow)
+	if now.IsZero() || !expiresAt.After(now) {
+		return GroupReplaceResult{}, ErrInvalidService
+	}
 	resolution, err := transaction.Resolve(ctx, command, mutationIDs, now, expiresAt)
 	if err != nil {
 		return GroupReplaceResult{}, fmt.Errorf("resolve Resource Group replacement under lock: %w", err)

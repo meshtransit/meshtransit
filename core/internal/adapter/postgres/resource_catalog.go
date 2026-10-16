@@ -92,12 +92,18 @@ func (store *ResourceCatalogStore) Begin(
 	if workspaceInternalID <= 0 || networkInternalID <= 0 {
 		return nil, catalog.ErrUnavailable
 	}
+	evaluatedAt, err := readTransactionTime(ctx, database.QueryRow)
+	if err != nil {
+		return nil, resourceCatalogDatabaseError(ctx, err)
+	}
 	owned = true
-	return &resourceCatalogTransaction{database: database, scope: scope}, nil
+	return &resourceCatalogTransaction{evaluatedAt: evaluatedAt, database: database, scope: scope}, nil
 }
 
 type resourceCatalogTransaction struct {
-	mu                 sync.Mutex
+	mu sync.Mutex
+	// evaluatedAt is this transaction's time on the database clock.
+	evaluatedAt        time.Time
 	database           resourceAuthorityDatabaseTransaction
 	scope              network.Scope
 	closed             bool
@@ -111,18 +117,18 @@ func (transaction *resourceCatalogTransaction) Authorize(
 	ctx context.Context,
 	session accountsession.Session,
 	permission authorization.Permission,
-	evaluatedAt time.Time,
 ) error {
 	if ctx == nil || transaction == nil || !session.IsValid() || !transaction.scope.IsValid() ||
 		(permission != authorization.PermissionResourceRead &&
-			permission != authorization.PermissionResourceGroupRead) || evaluatedAt.IsZero() {
+			permission != authorization.PermissionResourceGroupRead) {
 		return catalog.ErrUnavailable
 	}
 	transaction.mu.Lock()
 	defer transaction.mu.Unlock()
-	if transaction.closed || transaction.database == nil {
+	if transaction.closed || transaction.database == nil || transaction.evaluatedAt.IsZero() {
 		return catalog.ErrUnavailable
 	}
+	evaluatedAt := transaction.evaluatedAt
 	var bindingID, roleID string
 	var scopeGeneration, membershipGeneration, bindingGeneration, roleGeneration int64
 	var ownerGeneration int64

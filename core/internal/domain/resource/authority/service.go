@@ -47,14 +47,13 @@ type Service struct {
 	transactions Transactions
 	committed    CommittedResultResolver
 	mutationIDs  MutationIDGenerator
-	clock        Clock
 	retry        RetryWaiter
 }
 
 // NewService validates and constructs the application service.
 func NewService(options Options, dependencies Dependencies) (*Service, error) {
 	if dependencies.Transactions == nil || dependencies.CommittedResults == nil ||
-		dependencies.MutationIDs == nil || dependencies.Clock == nil || dependencies.Retry == nil ||
+		dependencies.MutationIDs == nil || dependencies.Retry == nil ||
 		options.MaxAttempts <= 0 || options.MaxAttempts > maximumAttempts ||
 		options.RollbackTimeout <= 0 || options.RollbackTimeout > 5*time.Second ||
 		options.IdempotencyWindow < minimumIdempotencyWindow ||
@@ -64,27 +63,19 @@ func NewService(options Options, dependencies Dependencies) (*Service, error) {
 	return &Service{
 		options: options, transactions: dependencies.Transactions,
 		committed: dependencies.CommittedResults, mutationIDs: dependencies.MutationIDs,
-		clock: dependencies.Clock, retry: dependencies.Retry,
+		retry: dependencies.Retry,
 	}, nil
 }
 
 // Create commits one Resource or Resource Group with atomic evidence.
 func (service *Service) Create(ctx context.Context, command Command) (Result, error) {
 	if ctx == nil || service == nil || service.transactions == nil || service.committed == nil ||
-		service.mutationIDs == nil || service.clock == nil || service.retry == nil ||
+		service.mutationIDs == nil || service.retry == nil ||
 		!command.IsValid() {
 		return Result{}, ErrInvalidCommand
 	}
 	if err := ctx.Err(); err != nil {
 		return Result{}, errors.Join(ErrMutationFailed, err)
-	}
-	now := service.clock.Now().UTC()
-	if now.IsZero() {
-		return Result{}, ErrInvalidService
-	}
-	expiresAt := now.Add(service.options.IdempotencyWindow)
-	if !expiresAt.After(now) {
-		return Result{}, ErrInvalidService
 	}
 	mutationIDs, err := service.mutationIDs.NewMutationIDs(command)
 	if err != nil || !mutationIDs.IsValidFor(command) {
@@ -92,7 +83,7 @@ func (service *Service) Create(ctx context.Context, command Command) (Result, er
 	}
 	var lastErr error
 	for attempt := 1; attempt <= service.options.MaxAttempts; attempt++ {
-		result, attemptErr := service.attempt(ctx, command, mutationIDs, now, expiresAt)
+		result, attemptErr := service.attempt(ctx, command, mutationIDs)
 		if attemptErr == nil {
 			return result, nil
 		}
@@ -125,8 +116,6 @@ func (service *Service) attempt(
 	ctx context.Context,
 	command Command,
 	mutationIDs MutationIDs,
-	now time.Time,
-	expiresAt time.Time,
 ) (result Result, resultErr error) {
 	transaction, err := service.transactions.Begin(ctx, command.Scope())
 	if err != nil || transaction == nil {
@@ -153,6 +142,12 @@ func (service *Service) attempt(
 			}
 		}
 	}()
+	// Every time of this attempt is the database clock's.
+	now := transaction.DecisionTime()
+	expiresAt := now.Add(service.options.IdempotencyWindow)
+	if now.IsZero() || !expiresAt.After(now) {
+		return Result{}, ErrInvalidService
+	}
 	resolution, err := transaction.Resolve(ctx, command, mutationIDs, now, expiresAt)
 	if err != nil {
 		return Result{}, fmt.Errorf("resolve resource authority under lock: %w", err)
@@ -230,12 +225,6 @@ func resultMatchesChange(result Result, change Change) bool {
 		result.NetworkRevision() == change.Resolution().NetworkRevision()+1 &&
 		result.SubsystemRevision() == change.Command().ExpectedSubsystemRevision()+1
 }
-
-// SystemClock reads wall time without retaining mutable state.
-type SystemClock struct{}
-
-// Now returns current UTC time.
-func (SystemClock) Now() time.Time { return time.Now().UTC() }
 
 // ExponentialBackoff provides capped exponential delay with 50-100% jitter.
 type ExponentialBackoff struct {

@@ -18,6 +18,7 @@ import (
 type resourceAuthorityChangeConfirmationTransaction struct {
 	mu sync.Mutex
 
+	decisionAt    time.Time
 	database      resourceAuthorityDatabaseTransaction
 	scope         network.Scope
 	metrics       *postgresPoolMetrics
@@ -25,6 +26,11 @@ type resourceAuthorityChangeConfirmationTransaction struct {
 	resolution    authority.ChangeConfirmationResolution
 	audit         resourceAuthorityAuditHead
 	authorization resourceAuthorityAuthorizationEvidence
+}
+
+// DecisionTime is this transaction's time on the database clock.
+func (transaction *resourceAuthorityChangeConfirmationTransaction) DecisionTime() time.Time {
+	return transaction.decisionAt
 }
 
 var _ authority.ChangeConfirmationTransaction = (*resourceAuthorityChangeConfirmationTransaction)(nil)

@@ -9,7 +9,7 @@ import (
 
 // ChangeImpactReader computes freshly authorized deterministic impact.
 type ChangeImpactReader interface {
-	PreviewAuthorityChange(context.Context, ChangePreview, time.Time) (ChangeImpact, error)
+	PreviewAuthorityChange(context.Context, ChangePreview) (ChangeImpact, error)
 }
 
 // ChangeRequestTransactions starts exact-scope proposal units of work.
@@ -19,6 +19,9 @@ type ChangeRequestTransactions interface {
 
 // ChangeRequestTransaction persists one pending two-person proposal.
 type ChangeRequestTransaction interface {
+	// DecisionTime is the database clock's time for this transaction: every
+	// evaluation and persisted time of the attempt uses it.
+	DecisionTime() time.Time
 	Resolve(context.Context, ChangeRequestCommand, ChangeRequestMutationIDs, time.Time, time.Time) (ChangeRequestResolution, error)
 	Apply(context.Context, ChangeRequestChange) (ChangeRequestResult, error)
 	Commit(context.Context) error
@@ -37,6 +40,9 @@ type ChangeConfirmationTransactions interface {
 
 // ChangeConfirmationTransaction applies one confirmed pending request.
 type ChangeConfirmationTransaction interface {
+	// DecisionTime is the database clock's time for this transaction: every
+	// evaluation and persisted time of the attempt uses it.
+	DecisionTime() time.Time
 	Resolve(context.Context, ChangeConfirmationCommand, ChangeConfirmationMutationIDs, time.Time, time.Time) (ChangeConfirmationResolution, error)
 	Apply(context.Context, ChangeConfirmationChange) (ChangeConfirmationResult, error)
 	Commit(context.Context) error
@@ -62,6 +68,5 @@ type ChangeDependencies struct {
 	ConfirmationTransactions ChangeConfirmationTransactions
 	CommittedConfirmations   CommittedAuthorityChangeConfirmationResolver
 	MutationIDs              ChangeMutationIDGenerator
-	Clock                    Clock
 	Retry                    RetryWaiter
 }

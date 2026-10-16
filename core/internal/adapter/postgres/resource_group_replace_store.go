@@ -20,14 +20,13 @@ var (
 func (store *ResourceAuthorityStore) PreviewGroupReplace(
 	ctx context.Context,
 	preview authority.GroupReplacePreview,
-	evaluatedAt time.Time,
 ) (_ authority.GroupReplaceImpact, resultErr error) {
 	startedAt := time.Now()
 	defer func() {
 		store.observe(postgresOperationResourceAuthorityResolve, startedAt, resultErr)
 	}()
 	if ctx == nil || store == nil || store.database == nil || !preview.IsValid() ||
-		evaluatedAt.IsZero() || !validResourceAuthorityOptions(store.options) {
+		!validResourceAuthorityOptions(store.options) {
 		return authority.GroupReplaceImpact{}, ErrInvalidResourceAuthorityStore
 	}
 	database, err := store.database.BeginRepeatableRead(ctx)
@@ -42,7 +41,8 @@ func (store *ResourceAuthorityStore) PreviewGroupReplace(
 			resultErr = errors.Join(resultErr, rollbackResourceAuthoritySetup(database))
 		}
 	}()
-	if err := store.configureAndScope(ctx, database, preview.Scope()); err != nil {
+	evaluatedAt, err := store.configureAndScope(ctx, database, preview.Scope())
+	if err != nil {
 		return authority.GroupReplaceImpact{}, errors.Join(ErrResolveResourceAuthority, err)
 	}
 	transaction := resourceGroupReplaceTransaction{database: database, scope: preview.Scope()}
@@ -100,12 +100,13 @@ func (store *ResourceAuthorityStore) BeginGroupReplace(
 			resultErr = errors.Join(resultErr, rollbackResourceAuthoritySetup(database))
 		}
 	}()
-	if err := store.configureAndScope(ctx, database, scope); err != nil {
+	decisionAt, err := store.configureAndScope(ctx, database, scope)
+	if err != nil {
 		return nil, errors.Join(ErrBeginResourceAuthority, err)
 	}
 	owned = true
 	return &resourceGroupReplaceTransaction{
-		database: database, scope: scope, metrics: store.metrics,
+		decisionAt: decisionAt, database: database, scope: scope, metrics: store.metrics,
 	}, nil
 }
 
@@ -136,12 +137,13 @@ func (store *ResourceAuthorityStore) ResolveCommittedGroupReplace(
 			resultErr = errors.Join(resultErr, rollbackResourceAuthoritySetup(database))
 		}
 	}()
-	if err := store.configureAndScope(ctx, database, command.Scope()); err != nil {
+	decisionAt, err := store.configureAndScope(ctx, database, command.Scope())
+	if err != nil {
 		return authority.GroupReplaceResult{}, false, errors.Join(
 			ErrResolveCommittedResourceAuthority, err,
 		)
 	}
-	evaluatedAt := time.Now().UTC()
+	evaluatedAt := decisionAt
 	transaction := resourceGroupReplaceTransaction{database: database, scope: command.Scope()}
 	if _, err := transaction.authorize(ctx, command.AccountSession(), evaluatedAt); err != nil {
 		return authority.GroupReplaceResult{}, false, errors.Join(

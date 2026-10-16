@@ -13,7 +13,6 @@ type LifecycleService struct {
 	transactions LifecycleTransactions
 	committed    CommittedLifecycleResultResolver
 	mutationIDs  LifecycleMutationIDGenerator
-	clock        Clock
 	retry        RetryWaiter
 }
 
@@ -23,7 +22,7 @@ func NewLifecycleService(
 	dependencies LifecycleDependencies,
 ) (*LifecycleService, error) {
 	if dependencies.Transactions == nil || dependencies.CommittedResults == nil ||
-		dependencies.MutationIDs == nil || dependencies.Clock == nil || dependencies.Retry == nil ||
+		dependencies.MutationIDs == nil || dependencies.Retry == nil ||
 		options.MaxAttempts <= 0 || options.MaxAttempts > maximumAttempts ||
 		options.RollbackTimeout <= 0 || options.RollbackTimeout > 5*time.Second ||
 		options.IdempotencyWindow < minimumIdempotencyWindow ||
@@ -33,7 +32,7 @@ func NewLifecycleService(
 	return &LifecycleService{
 		options: options, transactions: dependencies.Transactions,
 		committed: dependencies.CommittedResults, mutationIDs: dependencies.MutationIDs,
-		clock: dependencies.Clock, retry: dependencies.Retry,
+		retry: dependencies.Retry,
 	}, nil
 }
 
@@ -43,20 +42,12 @@ func (service *LifecycleService) Transition(
 	command LifecycleCommand,
 ) (LifecycleResult, error) {
 	if ctx == nil || service == nil || service.transactions == nil || service.committed == nil ||
-		service.mutationIDs == nil || service.clock == nil || service.retry == nil ||
+		service.mutationIDs == nil || service.retry == nil ||
 		!command.IsValid() {
 		return LifecycleResult{}, ErrInvalidLifecycleCommand
 	}
 	if err := ctx.Err(); err != nil {
 		return LifecycleResult{}, errors.Join(ErrMutationFailed, err)
-	}
-	now := service.clock.Now().UTC()
-	if now.IsZero() {
-		return LifecycleResult{}, ErrInvalidService
-	}
-	expiresAt := now.Add(service.options.IdempotencyWindow)
-	if !expiresAt.After(now) {
-		return LifecycleResult{}, ErrInvalidService
 	}
 	mutationIDs, err := service.mutationIDs.NewLifecycleMutationIDs(command)
 	if err != nil || !mutationIDs.IsValid() {
@@ -64,7 +55,7 @@ func (service *LifecycleService) Transition(
 	}
 	var lastErr error
 	for attempt := 1; attempt <= service.options.MaxAttempts; attempt++ {
-		result, attemptErr := service.lifecycleAttempt(ctx, command, mutationIDs, now, expiresAt)
+		result, attemptErr := service.lifecycleAttempt(ctx, command, mutationIDs)
 		if attemptErr == nil {
 			return result, nil
 		}
@@ -99,7 +90,6 @@ func (service *LifecycleService) lifecycleAttempt(
 	ctx context.Context,
 	command LifecycleCommand,
 	mutationIDs LifecycleMutationIDs,
-	now, expiresAt time.Time,
 ) (result LifecycleResult, resultErr error) {
 	transaction, err := service.transactions.BeginLifecycle(ctx, command.Scope())
 	if err != nil || transaction == nil {
@@ -126,6 +116,12 @@ func (service *LifecycleService) lifecycleAttempt(
 			}
 		}
 	}()
+	// Every time of this attempt is the database clock's.
+	now := transaction.DecisionTime()
+	expiresAt := now.Add(service.options.IdempotencyWindow)
+	if now.IsZero() || !expiresAt.After(now) {
+		return LifecycleResult{}, ErrInvalidService
+	}
 	resolution, err := transaction.Resolve(ctx, command, mutationIDs, now, expiresAt)
 	if err != nil {
 		return LifecycleResult{}, fmt.Errorf("resolve Resource lifecycle under lock: %w", err)

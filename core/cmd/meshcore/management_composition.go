@@ -200,8 +200,8 @@ func composeManagementAPIWithKeys(
 		},
 		authority.Dependencies{
 			Transactions: resourceAuthorityStore, CommittedResults: resourceAuthorityStore,
-			MutationIDs: authority.PublicMutationIDGenerator{}, Clock: authority.SystemClock{},
-			Retry: resourceBackoff,
+			MutationIDs: authority.PublicMutationIDGenerator{},
+			Retry:       resourceBackoff,
 		},
 	)
 	if err != nil {
@@ -214,8 +214,8 @@ func composeManagementAPIWithKeys(
 		},
 		authority.LifecycleDependencies{
 			Transactions: resourceAuthorityStore, CommittedResults: resourceAuthorityStore,
-			MutationIDs: authority.PublicLifecycleMutationIDGenerator{}, Clock: authority.SystemClock{},
-			Retry: resourceBackoff,
+			MutationIDs: authority.PublicLifecycleMutationIDGenerator{},
+			Retry:       resourceBackoff,
 		},
 	)
 	if err != nil {
@@ -229,8 +229,8 @@ func composeManagementAPIWithKeys(
 		authority.RebindDependencies{
 			Impacts: resourceAuthorityStore, Transactions: resourceAuthorityStore,
 			CommittedResults: resourceAuthorityStore,
-			MutationIDs:      authority.PublicRebindMutationIDGenerator{}, Clock: authority.SystemClock{},
-			Retry: resourceBackoff,
+			MutationIDs:      authority.PublicRebindMutationIDGenerator{},
+			Retry:            resourceBackoff,
 		},
 	)
 	if err != nil {
@@ -244,8 +244,7 @@ func composeManagementAPIWithKeys(
 		authority.GroupReplaceDependencies{
 			Impacts: resourceAuthorityStore, Transactions: resourceAuthorityStore,
 			CommittedResults: resourceAuthorityStore,
-			MutationIDs:      authority.PublicGroupReplaceMutationIDGenerator{},
-			Clock:            authority.SystemClock{}, Retry: resourceBackoff,
+			MutationIDs:      authority.PublicGroupReplaceMutationIDGenerator{}, Retry: resourceBackoff,
 		},
 	)
 	if err != nil {
@@ -262,8 +261,7 @@ func composeManagementAPIWithKeys(
 			CommittedRequests:        resourceAuthorityStore,
 			ConfirmationTransactions: resourceAuthorityStore,
 			CommittedConfirmations:   resourceAuthorityStore,
-			MutationIDs:              authority.PublicAuthorityChangeMutationIDGenerator{},
-			Clock:                    authority.SystemClock{}, Retry: resourceBackoff,
+			MutationIDs:              authority.PublicAuthorityChangeMutationIDGenerator{}, Retry: resourceBackoff,
 		},
 	)
 	if err != nil {
@@ -282,7 +280,6 @@ func composeManagementAPIWithKeys(
 	}
 	resourceCatalog, err := catalog.NewService(catalog.Dependencies{
 		Transactions: resourceCatalogStore,
-		Clock:        catalog.SystemClock{},
 	})
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)

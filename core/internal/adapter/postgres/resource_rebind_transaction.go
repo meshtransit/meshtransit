@@ -22,6 +22,7 @@ import (
 type resourceRebindTransaction struct {
 	mu sync.Mutex
 
+	decisionAt    time.Time
 	database      resourceAuthorityDatabaseTransaction
 	scope         network.Scope
 	metrics       *postgresPoolMetrics
@@ -30,6 +31,9 @@ type resourceRebindTransaction struct {
 	audit         resourceAuthorityAuditHead
 	authorization resourceAuthorityAuthorizationEvidence
 }
+
+// DecisionTime is this transaction's time on the database clock.
+func (transaction *resourceRebindTransaction) DecisionTime() time.Time { return transaction.decisionAt }
 
 var _ authority.RebindTransaction = (*resourceRebindTransaction)(nil)
 

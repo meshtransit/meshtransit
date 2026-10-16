@@ -165,7 +165,6 @@ func (fixture *catalogTransactionFixture) Authorize(
 	_ context.Context,
 	_ accountsession.Session,
 	permission authorization.Permission,
-	_ time.Time,
 ) error {
 	fixture.permission = permission
 	fixture.permissions = append(fixture.permissions, permission)
@@ -220,17 +219,10 @@ func (fixture *catalogTransactionFixture) Rollback(context.Context) error {
 	return nil
 }
 
-type catalogClockFixture struct{ now time.Time }
-
-func (fixture catalogClockFixture) Now() time.Time { return fixture.now }
-
 func catalogServiceFixture(t *testing.T, transaction *catalogTransactionFixture) *Service {
 	t.Helper()
 	service, err := NewService(Dependencies{
 		Transactions: catalogTransactionsFixture{transaction: transaction},
-		Clock: catalogClockFixture{
-			now: time.Date(2026, time.September, 28, 1, 0, 0, 0, time.UTC),
-		},
 	})
 	if err != nil {
 		t.Fatal(err)

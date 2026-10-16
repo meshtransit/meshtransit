@@ -40,12 +40,13 @@ func (store *ResourceAuthorityStore) BeginLifecycle(
 			resultErr = errors.Join(resultErr, rollbackResourceAuthoritySetup(databaseTransaction))
 		}
 	}()
-	if err := store.configureAndScope(ctx, databaseTransaction, scope); err != nil {
+	decisionAt, err := store.configureAndScope(ctx, databaseTransaction, scope)
+	if err != nil {
 		return nil, errors.Join(ErrBeginResourceAuthority, err)
 	}
 	owned = true
 	return &resourceLifecycleTransaction{
-		database: databaseTransaction, scope: scope, metrics: store.metrics,
+		decisionAt: decisionAt, database: databaseTransaction, scope: scope, metrics: store.metrics,
 	}, nil
 }
 
@@ -76,12 +77,13 @@ func (store *ResourceAuthorityStore) ResolveCommittedLifecycle(
 			resultErr = errors.Join(resultErr, rollbackResourceAuthoritySetup(transaction))
 		}
 	}()
-	if err := store.configureAndScope(ctx, transaction, command.Scope()); err != nil {
+	decisionAt, err := store.configureAndScope(ctx, transaction, command.Scope())
+	if err != nil {
 		return authority.LifecycleResult{}, false, errors.Join(
 			ErrResolveCommittedResourceAuthority, err,
 		)
 	}
-	evaluatedAt := time.Now().UTC()
+	evaluatedAt := decisionAt
 	lifecycleTransaction := resourceLifecycleTransaction{
 		database: transaction, scope: command.Scope(),
 	}

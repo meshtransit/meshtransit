@@ -55,6 +55,7 @@ func assertPostgreSQLResourceAuthority(
 		deviceResult.SubsystemRevision() != inventory203+1 || deviceResult.Version() != 1 {
 		t.Fatalf("Device Resource result = %+v", deviceResult)
 	}
+	assertStampedByDatabaseClock(ctx, t, adminConnection, "resource", deviceResult.ResourceID().String())
 	replayedDeviceResult, err := service.Create(ctx, deviceCommand)
 	if err != nil || replayedDeviceResult != deviceResult {
 		t.Fatalf("replay Device Resource result = %+v, error = %v", replayedDeviceResult, err)
@@ -97,6 +98,7 @@ func assertPostgreSQLResourceAuthority(
 		groupResult.SubsystemRevision() != group203+1 || groupResult.Version() != 1 {
 		t.Fatalf("Resource Group result = %+v", groupResult)
 	}
+	assertStampedByDatabaseClock(ctx, t, adminConnection, "resource_group", groupResult.GroupID().String())
 	assertCommittedResourceGroup(ctx, t, adminConnection, groupCommand, groupResult)
 
 	staleReference, err := resource.NewReference(scope203, deviceResult.ResourceID(), 1, 2)
@@ -693,7 +695,6 @@ func assertResourceCatalogReads(
 	}
 	service, err := catalog.NewService(catalog.Dependencies{
 		Transactions: store,
-		Clock:        catalog.SystemClock{},
 	})
 	if err != nil {
 		t.Fatalf("catalog.NewService() error = %v", err)
@@ -745,7 +746,7 @@ func newIntegrationResourceAuthorityService(
 		authority.Dependencies{
 			Transactions: store, CommittedResults: store,
 			MutationIDs: authority.PublicMutationIDGenerator{},
-			Clock:       authority.SystemClock{}, Retry: retry,
+			Retry:       retry,
 		},
 	)
 	if err != nil {
@@ -782,7 +783,7 @@ func newIntegrationResourceLifecycleService(
 		authority.LifecycleDependencies{
 			Transactions: store, CommittedResults: store,
 			MutationIDs: authority.PublicLifecycleMutationIDGenerator{},
-			Clock:       authority.SystemClock{}, Retry: retry,
+			Retry:       retry,
 		},
 	)
 	if err != nil {
@@ -819,7 +820,7 @@ func newIntegrationResourceRebindService(
 		authority.RebindDependencies{
 			Impacts: store, Transactions: store, CommittedResults: store,
 			MutationIDs: authority.PublicRebindMutationIDGenerator{},
-			Clock:       authority.SystemClock{}, Retry: retry,
+			Retry:       retry,
 		},
 	)
 	if err != nil {
@@ -856,7 +857,7 @@ func newIntegrationResourceGroupReplaceService(
 		authority.GroupReplaceDependencies{
 			Impacts: store, Transactions: store, CommittedResults: store,
 			MutationIDs: authority.PublicGroupReplaceMutationIDGenerator{},
-			Clock:       authority.SystemClock{}, Retry: retry,
+			Retry:       retry,
 		},
 	)
 	if err != nil {
@@ -894,7 +895,7 @@ func newIntegrationResourceAuthorityChangeService(
 			Impacts: store, RequestTransactions: store, CommittedRequests: store,
 			ConfirmationTransactions: store, CommittedConfirmations: store,
 			MutationIDs: authority.PublicAuthorityChangeMutationIDGenerator{},
-			Clock:       authority.SystemClock{}, Retry: retry,
+			Retry:       retry,
 		},
 	)
 	if err != nil {

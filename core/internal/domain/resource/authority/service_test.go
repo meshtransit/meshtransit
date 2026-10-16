@@ -55,15 +55,16 @@ func TestServiceRejectsStaleRevisionAndRollsBack(t *testing.T) {
 	}
 }
 
-func TestServiceRetriesWholeTransactionWithStableDecision(t *testing.T) {
+func TestServiceRetriesWholeTransactionOnEachAttemptsDatabaseTime(t *testing.T) {
 	command := authorityCommandFixture(t, OperationCreateGroup)
 	ids := authorityMutationIDsFixture(t, command)
 	resolution := authorityResolutionFixture(t, command, ids, 7, 3, 2)
 	first := &fakeAuthorityTransaction{
+		decisionAt: authorityDecisionTime,
 		resolution: resolution,
 		applyErr:   errors.Join(ErrRetryableTransaction, errors.New("serialization")),
 	}
-	second := &fakeAuthorityTransaction{resolution: resolution}
+	second := &fakeAuthorityTransaction{decisionAt: authorityDecisionTime.Add(time.Second), resolution: resolution}
 	transactions := &fakeAuthorityTransactions{
 		transactions: []*fakeAuthorityTransaction{first, second},
 	}
@@ -73,10 +74,15 @@ func TestServiceRetriesWholeTransactionWithStableDecision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
+	// Each attempt decides on its own transaction's database time, never on
+	// a time taken before an earlier attempt and its backoff; the mutation's
+	// identity stays the same.
 	if result.GroupID() != ids.GroupID() || first.rollbacks != 1 || second.commits != 1 ||
 		len(first.changes) != 1 || len(second.changes) != 1 ||
 		first.changes[0].MutationIDs().ChangeID() != second.changes[0].MutationIDs().ChangeID() ||
-		!first.changes[0].OccurredAt().Equal(second.changes[0].OccurredAt()) {
+		!first.changes[0].OccurredAt().Equal(first.decisionAt) ||
+		!second.changes[0].OccurredAt().Equal(second.decisionAt) ||
+		!second.changes[0].ExpiresAt().Equal(second.decisionAt.Add(time.Hour)) {
 		t.Fatalf("retry result=%+v first=%+v second=%+v", result, first, second)
 	}
 }
@@ -195,6 +201,7 @@ func (transactions *fakeAuthorityTransactions) ResolveCommitted(
 }
 
 type fakeAuthorityTransaction struct {
+	decisionAt time.Time
 	resolution Resolution
 	applyErr   error
 	commitErr  error
@@ -202,6 +209,13 @@ type fakeAuthorityTransaction struct {
 	applies    int
 	commits    int
 	rollbacks  int
+}
+
+func (transaction *fakeAuthorityTransaction) DecisionTime() time.Time {
+	if transaction.decisionAt.IsZero() {
+		return authorityDecisionTime
+	}
+	return transaction.decisionAt
 }
 
 func (transaction *fakeAuthorityTransaction) Resolve(
@@ -256,9 +270,9 @@ func (generator fixedAuthorityMutationIDs) NewMutationIDs(Command) (MutationIDs,
 	return generator.ids, nil
 }
 
-type fixedAuthorityClock struct{ now time.Time }
-
-func (clock fixedAuthorityClock) Now() time.Time { return clock.now }
+// authorityDecisionTime is the database clock's time the fake transactions
+// report.
+var authorityDecisionTime = time.Date(2026, 9, 28, 1, 0, 0, 0, time.UTC)
 
 type noAuthorityRetryDelay struct{}
 
@@ -278,7 +292,6 @@ func authorityServiceFixture(
 		Dependencies{
 			Transactions: transactions, CommittedResults: transactions,
 			MutationIDs: fixedAuthorityMutationIDs{ids: ids},
-			Clock:       fixedAuthorityClock{now: time.Date(2026, 9, 28, 1, 0, 0, 0, time.UTC)},
 			Retry:       noAuthorityRetryDelay{},
 		},
 	)

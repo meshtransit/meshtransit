@@ -14,7 +14,6 @@ type RebindService struct {
 	transactions RebindTransactions
 	committed    CommittedRebindResultResolver
 	mutationIDs  RebindMutationIDGenerator
-	clock        Clock
 	retry        RetryWaiter
 }
 
@@ -22,7 +21,7 @@ type RebindService struct {
 func NewRebindService(options Options, dependencies RebindDependencies) (*RebindService, error) {
 	if dependencies.Impacts == nil || dependencies.Transactions == nil ||
 		dependencies.CommittedResults == nil || dependencies.MutationIDs == nil ||
-		dependencies.Clock == nil || dependencies.Retry == nil ||
+		dependencies.Retry == nil ||
 		options.MaxAttempts <= 0 || options.MaxAttempts > maximumAttempts ||
 		options.RollbackTimeout <= 0 || options.RollbackTimeout > 5*time.Second ||
 		options.IdempotencyWindow < minimumIdempotencyWindow ||
@@ -32,7 +31,7 @@ func NewRebindService(options Options, dependencies RebindDependencies) (*Rebind
 	return &RebindService{
 		options: options, impacts: dependencies.Impacts, transactions: dependencies.Transactions,
 		committed: dependencies.CommittedResults, mutationIDs: dependencies.MutationIDs,
-		clock: dependencies.Clock, retry: dependencies.Retry,
+		retry: dependencies.Retry,
 	}, nil
 }
 
@@ -41,18 +40,14 @@ func (service *RebindService) Preview(
 	ctx context.Context,
 	preview RebindPreview,
 ) (RebindImpact, error) {
-	if ctx == nil || service == nil || service.impacts == nil || service.clock == nil ||
+	if ctx == nil || service == nil || service.impacts == nil ||
 		!preview.IsValid() {
 		return RebindImpact{}, ErrInvalidRebindPreview
 	}
 	if err := ctx.Err(); err != nil {
 		return RebindImpact{}, errors.Join(ErrMutationFailed, err)
 	}
-	now := service.clock.Now().UTC()
-	if now.IsZero() {
-		return RebindImpact{}, ErrInvalidService
-	}
-	impact, err := service.impacts.PreviewRebind(ctx, preview, now)
+	impact, err := service.impacts.PreviewRebind(ctx, preview)
 	if err != nil {
 		return RebindImpact{}, err
 	}
@@ -71,20 +66,12 @@ func (service *RebindService) Rebind(
 	command RebindCommand,
 ) (RebindResult, error) {
 	if ctx == nil || service == nil || service.transactions == nil || service.committed == nil ||
-		service.mutationIDs == nil || service.clock == nil || service.retry == nil ||
+		service.mutationIDs == nil || service.retry == nil ||
 		!command.IsValid() {
 		return RebindResult{}, ErrInvalidRebindCommand
 	}
 	if err := ctx.Err(); err != nil {
 		return RebindResult{}, errors.Join(ErrMutationFailed, err)
-	}
-	now := service.clock.Now().UTC()
-	if now.IsZero() {
-		return RebindResult{}, ErrInvalidService
-	}
-	expiresAt := now.Add(service.options.IdempotencyWindow)
-	if !expiresAt.After(now) {
-		return RebindResult{}, ErrInvalidService
 	}
 	mutationIDs, err := service.mutationIDs.NewRebindMutationIDs(command)
 	if err != nil || !mutationIDs.IsValid() {
@@ -92,7 +79,7 @@ func (service *RebindService) Rebind(
 	}
 	var lastErr error
 	for attempt := 1; attempt <= service.options.MaxAttempts; attempt++ {
-		result, attemptErr := service.attemptRebind(ctx, command, mutationIDs, now, expiresAt)
+		result, attemptErr := service.attemptRebind(ctx, command, mutationIDs)
 		if attemptErr == nil {
 			return result, nil
 		}
@@ -127,7 +114,6 @@ func (service *RebindService) attemptRebind(
 	ctx context.Context,
 	command RebindCommand,
 	mutationIDs RebindMutationIDs,
-	now, expiresAt time.Time,
 ) (result RebindResult, resultErr error) {
 	transaction, err := service.transactions.BeginRebind(ctx, command.Scope())
 	if err != nil || transaction == nil {
@@ -154,6 +140,12 @@ func (service *RebindService) attemptRebind(
 			}
 		}
 	}()
+	// Every time of this attempt is the database clock's.
+	now := transaction.DecisionTime()
+	expiresAt := now.Add(service.options.IdempotencyWindow)
+	if now.IsZero() || !expiresAt.After(now) {
+		return RebindResult{}, ErrInvalidService
+	}
 	resolution, err := transaction.Resolve(ctx, command, mutationIDs, now, expiresAt)
 	if err != nil {
 		return RebindResult{}, fmt.Errorf("resolve Resource rebind under lock: %w", err)

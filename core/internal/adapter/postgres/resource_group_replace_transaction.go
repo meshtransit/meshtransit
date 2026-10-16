@@ -21,6 +21,7 @@ import (
 type resourceGroupReplaceTransaction struct {
 	mu sync.Mutex
 
+	decisionAt    time.Time
 	database      resourceAuthorityDatabaseTransaction
 	scope         network.Scope
 	metrics       *postgresPoolMetrics
@@ -28,6 +29,11 @@ type resourceGroupReplaceTransaction struct {
 	resolution    authority.GroupReplaceResolution
 	audit         resourceAuthorityAuditHead
 	authorization resourceAuthorityAuthorizationEvidence
+}
+
+// DecisionTime is this transaction's time on the database clock.
+func (transaction *resourceGroupReplaceTransaction) DecisionTime() time.Time {
+	return transaction.decisionAt
 }
 
 var _ authority.GroupReplaceTransaction = (*resourceGroupReplaceTransaction)(nil)

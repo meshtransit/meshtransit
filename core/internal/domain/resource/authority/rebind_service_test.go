@@ -186,7 +186,6 @@ type fakeRebindDependencies struct {
 func (dependencies *fakeRebindDependencies) PreviewRebind(
 	context.Context,
 	RebindPreview,
-	time.Time,
 ) (RebindImpact, error) {
 	return dependencies.impact, dependencies.previewErr
 }
@@ -219,6 +218,8 @@ type fakeRebindTransaction struct {
 	commits    int
 	rollbacks  int
 }
+
+func (*fakeRebindTransaction) DecisionTime() time.Time { return authorityDecisionTime }
 
 func (transaction *fakeRebindTransaction) Resolve(
 	context.Context,
@@ -276,7 +277,6 @@ func rebindServiceFixture(
 		RebindDependencies{
 			Impacts: dependencies, Transactions: dependencies, CommittedResults: dependencies,
 			MutationIDs: fixedRebindMutationIDs{ids: ids},
-			Clock:       fixedAuthorityClock{now: time.Date(2026, 9, 28, 1, 0, 0, 0, time.UTC)},
 			Retry:       noAuthorityRetryDelay{},
 		},
 	)

@@ -19,15 +19,14 @@ const rollbackWindow = 2 * time.Second
 // Service owns authorized Resource catalog transaction boundaries.
 type Service struct {
 	transactions Transactions
-	clock        Clock
 }
 
 // NewService validates and constructs the Resource catalog application service.
 func NewService(dependencies Dependencies) (*Service, error) {
-	if dependencies.Transactions == nil || dependencies.Clock == nil {
+	if dependencies.Transactions == nil {
 		return nil, ErrInvalidRequest
 	}
-	return &Service{transactions: dependencies.Transactions, clock: dependencies.Clock}, nil
+	return &Service{transactions: dependencies.Transactions}, nil
 }
 
 // GetResource returns one freshly authorized exact-scope Resource snapshot.
@@ -46,7 +45,7 @@ func (service *Service) GetResource(
 			closeTransaction(&resultErr)
 		}
 	}()
-	if err = transaction.Authorize(ctx, session, authorization.PermissionResourceRead, service.clock.Now().UTC()); err != nil {
+	if err = transaction.Authorize(ctx, session, authorization.PermissionResourceRead); err != nil {
 		return Resource{}, err
 	}
 	value, err := transaction.Resource(ctx, id)
@@ -108,16 +107,15 @@ func (service *Service) ResolvePolicyDestinations(
 			closeTransaction(&resultErr)
 		}
 	}()
-	evaluatedAt := service.clock.Now().UTC()
 	if len(groupIDs) > 0 {
 		if err = transaction.Authorize(
-			ctx, session, authorization.PermissionResourceGroupRead, evaluatedAt,
+			ctx, session, authorization.PermissionResourceGroupRead,
 		); err != nil {
 			return nil, nil, err
 		}
 	}
 	if err = transaction.Authorize(
-		ctx, session, authorization.PermissionResourceRead, evaluatedAt,
+		ctx, session, authorization.PermissionResourceRead,
 	); err != nil {
 		return nil, nil, err
 	}
@@ -235,7 +233,7 @@ func (service *Service) GetGroup(
 			closeTransaction(&resultErr)
 		}
 	}()
-	if err = transaction.Authorize(ctx, session, authorization.PermissionResourceGroupRead, service.clock.Now().UTC()); err != nil {
+	if err = transaction.Authorize(ctx, session, authorization.PermissionResourceGroupRead); err != nil {
 		return Group{}, err
 	}
 	value, err := transaction.Group(ctx, id)
@@ -269,7 +267,7 @@ func (service *Service) ListResources(
 			closeTransaction(&resultErr)
 		}
 	}()
-	if err = transaction.Authorize(ctx, session, authorization.PermissionResourceRead, service.clock.Now().UTC()); err != nil {
+	if err = transaction.Authorize(ctx, session, authorization.PermissionResourceRead); err != nil {
 		return ResourcePage{}, err
 	}
 	inventoryRevision, _, err := transaction.Revisions(ctx)
@@ -325,7 +323,7 @@ func (service *Service) ListGroups(
 			closeTransaction(&resultErr)
 		}
 	}()
-	if err = transaction.Authorize(ctx, session, authorization.PermissionResourceGroupRead, service.clock.Now().UTC()); err != nil {
+	if err = transaction.Authorize(ctx, session, authorization.PermissionResourceGroupRead); err != nil {
 		return GroupPage{}, err
 	}
 	_, groupRevision, err := transaction.Revisions(ctx)
@@ -414,9 +412,3 @@ func validateGroupPage(page GroupPage, scope network.Scope) error {
 	}
 	return nil
 }
-
-// SystemClock reads wall time without retaining mutable state.
-type SystemClock struct{}
-
-// Now returns the current UTC time.
-func (SystemClock) Now() time.Time { return time.Now().UTC() }

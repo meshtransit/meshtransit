@@ -16,7 +16,6 @@ type ChangeService struct {
 	confirmationTransactions ChangeConfirmationTransactions
 	committedConfirmations   CommittedAuthorityChangeConfirmationResolver
 	mutationIDs              ChangeMutationIDGenerator
-	clock                    Clock
 	retry                    RetryWaiter
 }
 
@@ -29,7 +28,7 @@ func NewAuthorityChangeService(
 		dependencies.CommittedRequests == nil ||
 		dependencies.ConfirmationTransactions == nil ||
 		dependencies.CommittedConfirmations == nil || dependencies.MutationIDs == nil ||
-		dependencies.Clock == nil || dependencies.Retry == nil ||
+		dependencies.Retry == nil ||
 		options.MaxAttempts <= 0 || options.MaxAttempts > maximumAttempts ||
 		options.RollbackTimeout <= 0 || options.RollbackTimeout > 5*time.Second ||
 		options.IdempotencyWindow <= AuthorityChangeRequestLifetime ||
@@ -42,8 +41,8 @@ func NewAuthorityChangeService(
 		committedRequests:        dependencies.CommittedRequests,
 		confirmationTransactions: dependencies.ConfirmationTransactions,
 		committedConfirmations:   dependencies.CommittedConfirmations,
-		mutationIDs:              dependencies.MutationIDs, clock: dependencies.Clock,
-		retry: dependencies.Retry,
+		mutationIDs:              dependencies.MutationIDs,
+		retry:                    dependencies.Retry,
 	}, nil
 }
 
@@ -52,18 +51,14 @@ func (service *ChangeService) Preview(
 	ctx context.Context,
 	preview ChangePreview,
 ) (ChangeImpact, error) {
-	if ctx == nil || service == nil || service.impacts == nil || service.clock == nil ||
+	if ctx == nil || service == nil || service.impacts == nil ||
 		!preview.IsValid() {
 		return ChangeImpact{}, ErrInvalidAuthorityChangePreview
 	}
 	if err := ctx.Err(); err != nil {
 		return ChangeImpact{}, errors.Join(ErrMutationFailed, err)
 	}
-	now := service.clock.Now().UTC()
-	if now.IsZero() {
-		return ChangeImpact{}, ErrInvalidService
-	}
-	impact, err := service.impacts.PreviewAuthorityChange(ctx, preview, now)
+	impact, err := service.impacts.PreviewAuthorityChange(ctx, preview)
 	if err != nil {
 		return ChangeImpact{}, err
 	}
@@ -80,19 +75,13 @@ func (service *ChangeService) Request(
 ) (ChangeRequestResult, error) {
 	if ctx == nil || service == nil || service.requestTransactions == nil ||
 		service.committedRequests == nil || service.mutationIDs == nil ||
-		service.clock == nil || service.retry == nil || !command.IsValid() {
+		service.retry == nil || !command.IsValid() {
 		return ChangeRequestResult{}, ErrInvalidAuthorityChangeRequestCommand
 	}
 	if err := ctx.Err(); err != nil {
 		return ChangeRequestResult{}, errors.Join(ErrMutationFailed, err)
 	}
-	now := service.clock.Now().UTC()
-	if now.IsZero() {
-		return ChangeRequestResult{}, ErrInvalidService
-	}
-	requestExpiresAt := now.Add(AuthorityChangeRequestLifetime)
-	idempotencyExpiresAt := now.Add(service.options.IdempotencyWindow)
-	if !idempotencyExpiresAt.After(requestExpiresAt) {
+	if service.options.IdempotencyWindow <= AuthorityChangeRequestLifetime {
 		return ChangeRequestResult{}, ErrInvalidService
 	}
 	mutationIDs, err := service.mutationIDs.NewAuthorityChangeRequestMutationIDs(command)
@@ -103,9 +92,7 @@ func (service *ChangeService) Request(
 	}
 	var lastErr error
 	for attempt := 1; attempt <= service.options.MaxAttempts; attempt++ {
-		result, attemptErr := service.attemptRequest(
-			ctx, command, mutationIDs, now, requestExpiresAt, idempotencyExpiresAt,
-		)
+		result, attemptErr := service.attemptRequest(ctx, command, mutationIDs)
 		if attemptErr == nil {
 			return result, nil
 		}
@@ -145,7 +132,6 @@ func (service *ChangeService) attemptRequest(
 	ctx context.Context,
 	command ChangeRequestCommand,
 	mutationIDs ChangeRequestMutationIDs,
-	now, requestExpiresAt, idempotencyExpiresAt time.Time,
 ) (result ChangeRequestResult, resultErr error) {
 	transaction, err := service.requestTransactions.BeginAuthorityChangeRequest(ctx, command.Scope())
 	if err != nil || transaction == nil {
@@ -172,6 +158,14 @@ func (service *ChangeService) attemptRequest(
 			}
 		}
 	}()
+	// Every time of this attempt, and the request's deadline, is the
+	// database clock's.
+	now := transaction.DecisionTime()
+	requestExpiresAt := now.Add(AuthorityChangeRequestLifetime)
+	idempotencyExpiresAt := now.Add(service.options.IdempotencyWindow)
+	if now.IsZero() || !idempotencyExpiresAt.After(requestExpiresAt) {
+		return ChangeRequestResult{}, ErrInvalidService
+	}
 	resolution, err := transaction.Resolve(
 		ctx, command, mutationIDs, now, idempotencyExpiresAt,
 	)
@@ -230,19 +224,11 @@ func (service *ChangeService) Confirm(
 ) (ChangeConfirmationResult, error) {
 	if ctx == nil || service == nil || service.confirmationTransactions == nil ||
 		service.committedConfirmations == nil || service.mutationIDs == nil ||
-		service.clock == nil || service.retry == nil || !command.IsValid() {
+		service.retry == nil || !command.IsValid() {
 		return ChangeConfirmationResult{}, ErrInvalidAuthorityChangeConfirmationCommand
 	}
 	if err := ctx.Err(); err != nil {
 		return ChangeConfirmationResult{}, errors.Join(ErrMutationFailed, err)
-	}
-	now := service.clock.Now().UTC()
-	if now.IsZero() {
-		return ChangeConfirmationResult{}, ErrInvalidService
-	}
-	expiresAt := now.Add(service.options.IdempotencyWindow)
-	if !expiresAt.After(now) {
-		return ChangeConfirmationResult{}, ErrInvalidService
 	}
 	mutationIDs, err := service.mutationIDs.NewAuthorityChangeConfirmationMutationIDs(command)
 	if err != nil || !mutationIDs.IsValid() {
@@ -252,9 +238,7 @@ func (service *ChangeService) Confirm(
 	}
 	var lastErr error
 	for attempt := 1; attempt <= service.options.MaxAttempts; attempt++ {
-		result, attemptErr := service.attemptConfirmation(
-			ctx, command, mutationIDs, now, expiresAt,
-		)
+		result, attemptErr := service.attemptConfirmation(ctx, command, mutationIDs)
 		if attemptErr == nil {
 			return result, nil
 		}
@@ -295,7 +279,6 @@ func (service *ChangeService) attemptConfirmation(
 	ctx context.Context,
 	command ChangeConfirmationCommand,
 	mutationIDs ChangeConfirmationMutationIDs,
-	now, expiresAt time.Time,
 ) (result ChangeConfirmationResult, resultErr error) {
 	transaction, err := service.confirmationTransactions.BeginAuthorityChangeConfirmation(
 		ctx, command.Scope(),
@@ -326,6 +309,12 @@ func (service *ChangeService) attemptConfirmation(
 			}
 		}
 	}()
+	// Every time of this attempt is the database clock's.
+	now := transaction.DecisionTime()
+	expiresAt := now.Add(service.options.IdempotencyWindow)
+	if now.IsZero() || !expiresAt.After(now) {
+		return ChangeConfirmationResult{}, ErrInvalidService
+	}
 	resolution, err := transaction.Resolve(ctx, command, mutationIDs, now, expiresAt)
 	if err != nil {
 		return ChangeConfirmationResult{}, fmt.Errorf(

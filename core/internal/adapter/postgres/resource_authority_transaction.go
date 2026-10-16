@@ -52,6 +52,7 @@ func (evidence resourceAuthorityAuthorizationEvidence) isValid() bool {
 type resourceAuthorityTransaction struct {
 	mu sync.Mutex
 
+	decisionAt    time.Time
 	database      resourceAuthorityDatabaseTransaction
 	scope         network.Scope
 	metrics       *postgresPoolMetrics
@@ -59,6 +60,11 @@ type resourceAuthorityTransaction struct {
 	resolution    authority.Resolution
 	audit         resourceAuthorityAuditHead
 	authorization resourceAuthorityAuthorizationEvidence
+}
+
+// DecisionTime is this transaction's time on the database clock.
+func (transaction *resourceAuthorityTransaction) DecisionTime() time.Time {
+	return transaction.decisionAt
 }
 
 var _ authority.Transaction = (*resourceAuthorityTransaction)(nil)

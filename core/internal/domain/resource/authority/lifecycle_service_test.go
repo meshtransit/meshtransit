@@ -148,6 +148,8 @@ type fakeLifecycleTransaction struct {
 	rollbacks  int
 }
 
+func (*fakeLifecycleTransaction) DecisionTime() time.Time { return authorityDecisionTime }
+
 func (transaction *fakeLifecycleTransaction) Resolve(
 	context.Context,
 	LifecycleCommand,
@@ -209,7 +211,6 @@ func lifecycleServiceFixture(
 		LifecycleDependencies{
 			Transactions: transactions, CommittedResults: transactions,
 			MutationIDs: fixedLifecycleMutationIDs{ids: ids},
-			Clock:       fixedAuthorityClock{now: time.Date(2026, 9, 28, 1, 0, 0, 0, time.UTC)},
 			Retry:       noAuthorityRetryDelay{},
 		},
 	)

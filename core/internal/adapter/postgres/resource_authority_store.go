@@ -108,12 +108,13 @@ func (store *ResourceAuthorityStore) Begin(
 			resultErr = errors.Join(resultErr, rollbackResourceAuthoritySetup(databaseTransaction))
 		}
 	}()
-	if err := store.configureAndScope(ctx, databaseTransaction, scope); err != nil {
+	decisionAt, err := store.configureAndScope(ctx, databaseTransaction, scope)
+	if err != nil {
 		return nil, errors.Join(ErrBeginResourceAuthority, err)
 	}
 	owned = true
 	return &resourceAuthorityTransaction{
-		database: databaseTransaction, scope: scope, metrics: store.metrics,
+		decisionAt: decisionAt, database: databaseTransaction, scope: scope, metrics: store.metrics,
 	}, nil
 }
 
@@ -144,10 +145,11 @@ func (store *ResourceAuthorityStore) ResolveCommitted(
 			resultErr = errors.Join(resultErr, rollbackResourceAuthoritySetup(transaction))
 		}
 	}()
-	if err := store.configureAndScope(ctx, transaction, command.Scope()); err != nil {
+	decisionAt, err := store.configureAndScope(ctx, transaction, command.Scope())
+	if err != nil {
 		return authority.Result{}, false, errors.Join(ErrResolveCommittedResourceAuthority, err)
 	}
-	evaluatedAt := time.Now().UTC()
+	evaluatedAt := decisionAt
 	authorizationTransaction := resourceAuthorityTransaction{
 		database: transaction,
 		scope:    command.Scope(),
@@ -310,11 +312,14 @@ func resourceSemanticHash(value []byte) (resource.SemanticHash, error) {
 	return hash, nil
 }
 
+// configureAndScope configures one unit of work, fixes its exact Network
+// scope and returns its time on the database clock, which every
+// authorization, idempotency deadline and persisted time in it uses.
 func (store *ResourceAuthorityStore) configureAndScope(
 	ctx context.Context,
 	transaction resourceAuthorityDatabaseTransaction,
 	scope network.Scope,
-) error {
+) (time.Time, error) {
 	if err := transaction.Exec(
 		ctx,
 		configureResourceAuthoritySQL,
@@ -322,19 +327,23 @@ func (store *ResourceAuthorityStore) configureAndScope(
 		postgresTimeout(store.options.LockTimeout),
 		postgresTimeout(store.options.IdleTimeout),
 	); err != nil {
-		return fmt.Errorf("configure transaction timeouts: %w", classifyResourceAuthorityDatabaseError(ctx, err))
+		return time.Time{}, fmt.Errorf("configure transaction timeouts: %w", classifyResourceAuthorityDatabaseError(ctx, err))
 	}
 	var workspaceInternalID, networkInternalID int64
 	if err := transaction.QueryRow(
 		ctx, setResourceAuthorityScopeSQL,
 		scope.WorkspaceID().String(), scope.NetworkID().String(),
 	).Scan(&workspaceInternalID, &networkInternalID); err != nil {
-		return fmt.Errorf("set exact Network scope: %w", classifyResourceAuthorityDatabaseError(ctx, err))
+		return time.Time{}, fmt.Errorf("set exact Network scope: %w", classifyResourceAuthorityDatabaseError(ctx, err))
 	}
 	if workspaceInternalID <= 0 || networkInternalID <= 0 {
-		return ErrResourceAuthorityEvidence
+		return time.Time{}, ErrResourceAuthorityEvidence
 	}
-	return nil
+	decisionAt, err := readTransactionTime(ctx, transaction.QueryRow)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("read database time: %w", classifyResourceAuthorityDatabaseError(ctx, err))
+	}
+	return decisionAt, nil
 }
 
 func validResourceAuthorityOptions(options ResourceAuthorityOptions) bool {

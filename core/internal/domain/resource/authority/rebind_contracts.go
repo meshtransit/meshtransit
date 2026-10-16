@@ -9,7 +9,7 @@ import (
 
 // RebindImpactReader computes a freshly authorized deterministic preview.
 type RebindImpactReader interface {
-	PreviewRebind(context.Context, RebindPreview, time.Time) (RebindImpact, error)
+	PreviewRebind(context.Context, RebindPreview) (RebindImpact, error)
 }
 
 // RebindTransactions starts exact-scope target-replacement units of work.
@@ -19,6 +19,9 @@ type RebindTransactions interface {
 
 // RebindTransaction is one short target-replacement mutation unit.
 type RebindTransaction interface {
+	// DecisionTime is the database clock's time for this transaction: every
+	// evaluation and persisted time of the attempt uses it.
+	DecisionTime() time.Time
 	Resolve(context.Context, RebindCommand, RebindMutationIDs, time.Time, time.Time) (RebindResolution, error)
 	Apply(context.Context, RebindChange) (RebindResult, error)
 	Commit(context.Context) error
@@ -41,6 +44,5 @@ type RebindDependencies struct {
 	Transactions     RebindTransactions
 	CommittedResults CommittedRebindResultResolver
 	MutationIDs      RebindMutationIDGenerator
-	Clock            Clock
 	Retry            RetryWaiter
 }

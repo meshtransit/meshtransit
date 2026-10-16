@@ -87,14 +87,13 @@ func authorizeResourceAuthorityChange(
 func (store *ResourceAuthorityStore) PreviewAuthorityChange(
 	ctx context.Context,
 	preview authority.ChangePreview,
-	evaluatedAt time.Time,
 ) (_ authority.ChangeImpact, resultErr error) {
 	startedAt := time.Now()
 	defer func() {
 		store.observe(postgresOperationResourceAuthorityResolve, startedAt, resultErr)
 	}()
 	if ctx == nil || store == nil || store.database == nil || !preview.IsValid() ||
-		evaluatedAt.IsZero() || !validResourceAuthorityOptions(store.options) {
+		!validResourceAuthorityOptions(store.options) {
 		return authority.ChangeImpact{}, ErrInvalidResourceAuthorityStore
 	}
 	database, err := store.database.BeginRepeatableRead(ctx)
@@ -109,7 +108,8 @@ func (store *ResourceAuthorityStore) PreviewAuthorityChange(
 			resultErr = errors.Join(resultErr, rollbackResourceAuthoritySetup(database))
 		}
 	}()
-	if err := store.configureAndScope(ctx, database, preview.Scope()); err != nil {
+	evaluatedAt, err := store.configureAndScope(ctx, database, preview.Scope())
+	if err != nil {
 		return authority.ChangeImpact{}, errors.Join(ErrResolveResourceAuthority, err)
 	}
 	if _, err := authorizeResourceAuthorityChange(
@@ -150,12 +150,12 @@ func (store *ResourceAuthorityStore) BeginAuthorityChangeRequest(
 	ctx context.Context,
 	scope network.Scope,
 ) (_ authority.ChangeRequestTransaction, resultErr error) {
-	database, err := store.beginAuthorityChange(ctx, scope)
+	database, decisionAt, err := store.beginAuthorityChange(ctx, scope)
 	if err != nil {
 		return nil, err
 	}
 	return &resourceAuthorityChangeRequestTransaction{
-		database: database, scope: scope, metrics: store.metrics,
+		decisionAt: decisionAt, database: database, scope: scope, metrics: store.metrics,
 	}, nil
 }
 
@@ -164,30 +164,30 @@ func (store *ResourceAuthorityStore) BeginAuthorityChangeConfirmation(
 	ctx context.Context,
 	scope network.Scope,
 ) (_ authority.ChangeConfirmationTransaction, resultErr error) {
-	database, err := store.beginAuthorityChange(ctx, scope)
+	database, decisionAt, err := store.beginAuthorityChange(ctx, scope)
 	if err != nil {
 		return nil, err
 	}
 	return &resourceAuthorityChangeConfirmationTransaction{
-		database: database, scope: scope, metrics: store.metrics,
+		decisionAt: decisionAt, database: database, scope: scope, metrics: store.metrics,
 	}, nil
 }
 
 func (store *ResourceAuthorityStore) beginAuthorityChange(
 	ctx context.Context,
 	scope network.Scope,
-) (_ resourceAuthorityDatabaseTransaction, resultErr error) {
+) (_ resourceAuthorityDatabaseTransaction, _ time.Time, resultErr error) {
 	startedAt := time.Now()
 	defer func() {
 		store.observe(postgresOperationResourceAuthorityBegin, startedAt, resultErr)
 	}()
 	if ctx == nil || store == nil || store.database == nil || !scope.IsValid() ||
 		!validResourceAuthorityOptions(store.options) {
-		return nil, ErrInvalidResourceAuthorityStore
+		return nil, time.Time{}, ErrInvalidResourceAuthorityStore
 	}
 	database, err := store.database.Begin(ctx, false)
 	if err != nil {
-		return nil, errors.Join(
+		return nil, time.Time{}, errors.Join(
 			ErrBeginResourceAuthority, classifyResourceAuthorityDatabaseError(ctx, err),
 		)
 	}
@@ -197,11 +197,12 @@ func (store *ResourceAuthorityStore) beginAuthorityChange(
 			resultErr = errors.Join(resultErr, rollbackResourceAuthoritySetup(database))
 		}
 	}()
-	if err := store.configureAndScope(ctx, database, scope); err != nil {
-		return nil, errors.Join(ErrBeginResourceAuthority, err)
+	decisionAt, err := store.configureAndScope(ctx, database, scope)
+	if err != nil {
+		return nil, time.Time{}, errors.Join(ErrBeginResourceAuthority, err)
 	}
 	owned = true
-	return database, nil
+	return database, decisionAt, nil
 }
 
 // ResolveCommittedAuthorityChangeRequest resolves an uncertain proposal commit.
@@ -214,12 +215,12 @@ func (store *ResourceAuthorityStore) ResolveCommittedAuthorityChangeRequest(
 		!ids.IsValid() || !validResourceAuthorityOptions(store.options) {
 		return authority.ChangeRequestResult{}, false, ErrInvalidResourceAuthorityStore
 	}
-	database, closeDatabase, err := store.beginAuthorityChangeReplay(ctx, command.Scope())
+	database, decisionAt, closeDatabase, err := store.beginAuthorityChangeReplay(ctx, command.Scope())
 	if err != nil {
 		return authority.ChangeRequestResult{}, false, err
 	}
 	defer func() { closeDatabase(&resultErr) }()
-	evaluatedAt := time.Now().UTC()
+	evaluatedAt := decisionAt
 	preview := command.Preview()
 	if _, err := authorizeResourceAuthorityChange(
 		ctx, database, command.Scope(), preview.AccountSession(),
@@ -276,12 +277,12 @@ func (store *ResourceAuthorityStore) ResolveCommittedAuthorityChangeConfirmation
 		return authority.ChangeConfirmationResult{}, false,
 			ErrInvalidResourceAuthorityStore
 	}
-	database, closeDatabase, err := store.beginAuthorityChangeReplay(ctx, command.Scope())
+	database, decisionAt, closeDatabase, err := store.beginAuthorityChangeReplay(ctx, command.Scope())
 	if err != nil {
 		return authority.ChangeConfirmationResult{}, false, err
 	}
 	defer func() { closeDatabase(&resultErr) }()
-	evaluatedAt := time.Now().UTC()
+	evaluatedAt := decisionAt
 	if _, err := authorizeResourceAuthorityChange(
 		ctx, database, command.Scope(), command.AccountSession(),
 		authorityChangePermission(command.SubjectKind()), evaluatedAt,
@@ -329,10 +330,10 @@ func (store *ResourceAuthorityStore) ResolveCommittedAuthorityChangeConfirmation
 func (store *ResourceAuthorityStore) beginAuthorityChangeReplay(
 	ctx context.Context,
 	scope network.Scope,
-) (resourceAuthorityDatabaseTransaction, func(*error), error) {
+) (resourceAuthorityDatabaseTransaction, time.Time, func(*error), error) {
 	database, err := store.database.Begin(ctx, false)
 	if err != nil {
-		return nil, nil, errors.Join(
+		return nil, time.Time{}, nil, errors.Join(
 			ErrResolveCommittedResourceAuthority,
 			classifyResourceAuthorityDatabaseError(ctx, err),
 		)
@@ -340,11 +341,12 @@ func (store *ResourceAuthorityStore) beginAuthorityChangeReplay(
 	closeDatabase := func(resultErr *error) {
 		*resultErr = errors.Join(*resultErr, rollbackResourceAuthoritySetup(database))
 	}
-	if err := store.configureAndScope(ctx, database, scope); err != nil {
+	decisionAt, err := store.configureAndScope(ctx, database, scope)
+	if err != nil {
 		closeDatabase(&err)
-		return nil, nil, errors.Join(ErrResolveCommittedResourceAuthority, err)
+		return nil, time.Time{}, nil, errors.Join(ErrResolveCommittedResourceAuthority, err)
 	}
-	return database, closeDatabase, nil
+	return database, decisionAt, closeDatabase, nil
 }
 
 func loadAuthorityChangeIdempotency(

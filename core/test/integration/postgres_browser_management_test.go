@@ -580,7 +580,6 @@ func newIntegrationPolicyCompiler(
 	}
 	resources, err := catalog.NewService(catalog.Dependencies{
 		Transactions: store,
-		Clock:        catalog.SystemClock{},
 	})
 	if err != nil {
 		t.Fatal(err)

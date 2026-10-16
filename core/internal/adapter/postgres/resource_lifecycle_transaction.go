@@ -17,6 +17,7 @@ import (
 type resourceLifecycleTransaction struct {
 	mu sync.Mutex
 
+	decisionAt    time.Time
 	database      resourceAuthorityDatabaseTransaction
 	scope         network.Scope
 	metrics       *postgresPoolMetrics
@@ -24,6 +25,11 @@ type resourceLifecycleTransaction struct {
 	resolution    authority.LifecycleResolution
 	audit         resourceAuthorityAuditHead
 	authorization resourceAuthorityAuthorizationEvidence
+}
+
+// DecisionTime is this transaction's time on the database clock.
+func (transaction *resourceLifecycleTransaction) DecisionTime() time.Time {
+	return transaction.decisionAt
 }
 
 var _ authority.LifecycleTransaction = (*resourceLifecycleTransaction)(nil)
