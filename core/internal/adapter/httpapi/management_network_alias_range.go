@@ -35,16 +35,18 @@ type networkAliasRangePath struct {
 	update bool
 }
 
-// parseNetworkAliasRangePath matches
-// GET /api/v1/workspaces/{ws}/networks/{net}/alias-ranges and
-// POST /api/v1/workspaces/{ws}/networks/{net}/alias-ranges/actions/update.
+// aliasRangeMethods read the ranges and change some of them.
+var aliasRangeMethods = restMethods{http.MethodGet, http.MethodPatch}
+
+// parseNetworkAliasRangePath matches GET and PATCH (a partial change)
+// /api/v1/workspaces/{ws}/networks/{net}/alias-ranges.
 func parseNetworkAliasRangePath(request *http.Request) (networkAliasRangePath, bool) {
 	if request == nil || request.URL == nil || request.URL.RawPath != "" || request.URL.RawQuery != "" {
 		return networkAliasRangePath{}, false
 	}
 	segments := strings.Split(strings.TrimPrefix(request.URL.Path, "/"), "/")
-	update := len(segments) == 9 && segments[7] == "actions" && segments[8] == "update"
-	if (len(segments) != 7 && !update) || segments[0] != "api" || segments[1] != "v1" ||
+	update := request.Method == http.MethodPatch
+	if len(segments) != 7 || segments[0] != "api" || segments[1] != "v1" ||
 		segments[2] != "workspaces" || segments[4] != "networks" || segments[6] != "alias-ranges" {
 		return networkAliasRangePath{}, false
 	}
@@ -61,7 +63,7 @@ func parseNetworkAliasRangePath(request *http.Request) (networkAliasRangePath, b
 // isNetworkAliasRangeOperation admits only the method each path allows.
 func isNetworkAliasRangeOperation(request *http.Request) bool {
 	path, ok := parseNetworkAliasRangePath(request)
-	return ok && request.Method == path.allowedMethod()
+	return ok && path.allowedMethod(request.Method) != ""
 }
 
 // isNetworkAliasRangeRead admits the exact, query-free read.
@@ -77,11 +79,8 @@ func (path networkAliasRangePath) operation() string {
 	return networkAliasRangeReadOperation
 }
 
-func (path networkAliasRangePath) allowedMethod() string {
-	if path.update {
-		return http.MethodPost
-	}
-	return http.MethodGet
+func (networkAliasRangePath) allowedMethod(method string) string {
+	return aliasRangeMethods.allowedMethod(method)
 }
 
 type networkAliasRangeFamily struct {

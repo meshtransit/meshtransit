@@ -614,7 +614,7 @@ func (handler *ManagementHandler) serveHTTP(
 	} else if shareTargetMatched {
 		allowedMethod = http.MethodGet
 	} else if aliasRangeMatched {
-		allowedMethod = aliasRangePath.allowedMethod()
+		allowedMethod = aliasRangePath.allowedMethod(request.Method)
 	} else if addressUsageMatched {
 		allowedMethod = http.MethodGet
 	} else if guardrailMatched {
@@ -631,6 +631,10 @@ func (handler *ManagementHandler) serveHTTP(
 		allowedMethod = enrollmentKeyPathValue.methods.allowedMethod(request.Method)
 	} else if invitationMatched {
 		allowedMethod = invitationPathValue.methods.allowedMethod(request.Method)
+	} else if deviceLifecycleMatched {
+		allowedMethod = deviceLifecyclePathValue.methods.allowedMethod(request.Method)
+	} else if workspaceRenameMatched {
+		allowedMethod = workspaceRenameMethods.allowedMethod(request.Method)
 	}
 	if allowedMethod == "" || request.Method != allowedMethod {
 		if policyApprovalMatched && policyApprovalPath.isCollection() {
@@ -663,6 +667,12 @@ func (handler *ManagementHandler) serveHTTP(
 			response.Header().Set("Allow", invitationPathValue.methods.header())
 		} else if networkMemberMatched {
 			response.Header().Set("Allow", networkMemberPathValue.methods.header())
+		} else if deviceLifecycleMatched {
+			response.Header().Set("Allow", deviceLifecyclePathValue.methods.header())
+		} else if workspaceRenameMatched {
+			response.Header().Set("Allow", workspaceRenameMethods.header())
+		} else if aliasRangeMatched {
+			response.Header().Set("Allow", aliasRangeMethods.header())
 		} else {
 			response.Header().Set("Allow", allowedMethodOrGet(resourceMatched, allowedMethod))
 		}

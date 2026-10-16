@@ -622,8 +622,8 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_id}/actions/rename": {
-      "post": {
+    "/api/v1/workspaces/{workspace_id}": {
+      "patch": {
         "operationId": "renameWorkspace",
         "summary": "Rename the current owned Workspace",
         "description": "The current owner needs active SSO and Workspace membership. IDs and ownership remain unchanged. Unknown outcomes require a fresh read; do not automatically retry.",
@@ -7396,10 +7396,8 @@
             "description": "Unavailable"
           }
         }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/alias-ranges/actions/update": {
-      "post": {
+      },
+      "patch": {
         "operationId": "updateNetworkAliasRanges",
         "summary": "Choose where Devices shared into this Network appear",
         "description": "Requires network.update. Each prefix must lie inside the Deployment's Resource Alias frame for its family (IPv4 /16–/28, IPv6 /96–/124). An omitted key leaves that family unchanged; null returns it to the whole frame. Other Networks, in any Workspace, may choose the same range. Existing aliases are never renumbered: every alias this Network retains must stay inside the new range. Maps do not change.",
@@ -9142,8 +9140,8 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/devices/{device_id}/actions/rename": {
-      "post": {
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/devices/{device_id}": {
+      "patch": {
         "operationId": "renameNetworkDevice",
         "summary": "Rename a Device",
         "description": "Requires device.manage. Sets the hostname (unique in the Network) and keeps it when the client signs in again.",

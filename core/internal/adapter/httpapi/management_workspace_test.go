@@ -43,7 +43,7 @@ func TestWorkspaceRenameHTTPBoundary(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			request := newManagementRequest(t, http.MethodPost, "/api/v1/workspaces/"+managementWorkspaceID()+"/actions/rename", test.body)
+			request := newManagementRequest(t, http.MethodPatch, "/api/v1/workspaces/"+managementWorkspaceID(), test.body)
 			request.Header.Del("If-Match")
 			if test.version != "" {
 				request.Header.Set("If-Match", test.version)
@@ -68,14 +68,16 @@ func TestBrowserWorkspaceRenameRequiresCSRF(t *testing.T) {
 		calls++
 		return settings.Result{WorkspaceID: command.WorkspaceID, DisplayName: command.DisplayName, DisplayCode: identity.DisplayCode("000000000101"), Version: 2}, nil
 	})
-	path := "/api/v1/workspaces/" + managementWorkspaceID() + "/actions/rename"
+	path := "/api/v1/workspaces/" + managementWorkspaceID()
 	request := browserManagementRequest(t, path, `{"display_name":"New Workspace"}`)
+	request.Method = http.MethodPatch
 	response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
 	if err := browser.Handle(response, request); err != nil || calls != 0 || response.Code != http.StatusUnauthorized {
 		t.Fatalf("missing proof: error=%v calls=%d status=%d body=%s", err, calls, response.Code, response.Body)
 	}
 	proof := preparedBrowserProof(t, browser)
 	request = browserManagementRequest(t, path, `{"display_name":"New Workspace"}`)
+	request.Method = http.MethodPatch
 	request.Header.Set("X-MeshTransit-CSRF", proof)
 	response = &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
 	if err := browser.Handle(response, request); err != nil || calls != 1 || response.Code != http.StatusOK {

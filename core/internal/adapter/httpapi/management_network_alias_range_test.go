@@ -25,9 +25,10 @@ func TestParseNetworkAliasRangePath(t *testing.T) {
 		allowed              bool
 	}{
 		{name: "read", method: http.MethodGet, target: base, matched: true, allowed: true},
-		{name: "update", method: http.MethodPost, target: base + "/actions/update", matched: true, update: true, allowed: true},
-		{name: "post to read path", method: http.MethodPost, target: base, matched: true},
-		{name: "get update path", method: http.MethodGet, target: base + "/actions/update", matched: true, update: true},
+		{name: "update", method: http.MethodPatch, target: base, matched: true, update: true, allowed: true},
+		{name: "post", method: http.MethodPost, target: base, matched: true},
+		{name: "put", method: http.MethodPut, target: base, matched: true},
+		{name: "old update path", method: http.MethodPost, target: base + "/actions/update"},
 		{name: "query", method: http.MethodGet, target: base + "?x=1"},
 		{name: "other action", method: http.MethodPost, target: base + "/actions/delete"},
 		{name: "uppercase id", method: http.MethodGet,

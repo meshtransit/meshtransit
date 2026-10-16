@@ -23,23 +23,30 @@ type DeviceLifecycleManager interface {
 type deviceLifecyclePath struct {
 	scope    network.Scope
 	deviceID node.ID
-	action   string
+	// methods are the methods the path accepts; action is what the request's
+	// method does there, "" when the path does not accept it.
+	methods restMethods
+	action  string
 }
 
 // deviceLifecycleActions are the actions a path may name.
-var deviceLifecycleActions = map[string]bool{"suspend": true, "resume": true, "transfer": true, "rename": true}
+var deviceLifecycleActions = map[string]bool{"suspend": true, "resume": true, "transfer": true}
 
 // parseDeviceLifecyclePath matches, with no query,
 //
-//	POST /api/v1/workspaces/{ws}/networks/{net}/devices/{device}/actions/{suspend|resume|transfer|rename}
+//	PATCH /api/v1/workspaces/{ws}/networks/{net}/devices/{device}  rename
+//	POST  /api/v1/workspaces/{ws}/networks/{net}/devices/{device}/actions/{suspend|resume|transfer}
+//
+// A path matched with a method it does not accept carries no action, for a 405.
 func parseDeviceLifecyclePath(request *http.Request) (deviceLifecyclePath, bool) {
 	if request == nil || request.URL == nil || request.URL.RawPath != "" || request.URL.RawQuery != "" {
 		return deviceLifecyclePath{}, false
 	}
 	segments := strings.Split(strings.TrimPrefix(request.URL.Path, "/"), "/")
-	if len(segments) != 10 || segments[0] != "api" || segments[1] != "v1" || segments[2] != "workspaces" ||
-		segments[4] != "networks" || segments[6] != "devices" || segments[8] != "actions" ||
-		!deviceLifecycleActions[segments[9]] {
+	item := len(segments) == 8
+	action := len(segments) == 10 && segments[8] == "actions" && deviceLifecycleActions[segments[9]]
+	if (!item && !action) || segments[0] != "api" || segments[1] != "v1" || segments[2] != "workspaces" ||
+		segments[4] != "networks" || segments[6] != "devices" {
 		return deviceLifecyclePath{}, false
 	}
 	workspaceID, workspaceOK := canonicalPublicID(segments[3])
@@ -52,13 +59,23 @@ func parseDeviceLifecyclePath(request *http.Request) (deviceLifecyclePath, bool)
 	if err != nil {
 		return deviceLifecyclePath{}, false
 	}
-	return deviceLifecyclePath{scope: scope, deviceID: node.ID(deviceID), action: segments[9]}, true
+	path := deviceLifecyclePath{scope: scope, deviceID: node.ID(deviceID), methods: restMethods{http.MethodPost}}
+	if item {
+		path.methods = restMethods{http.MethodPatch}
+	}
+	switch {
+	case item && request.Method == http.MethodPatch:
+		path.action = "rename"
+	case action && request.Method == http.MethodPost:
+		path.action = segments[9]
+	}
+	return path, true
 }
 
 // isDeviceLifecycleOperation admits only POST to a lifecycle action.
 func isDeviceLifecycleOperation(request *http.Request) bool {
-	_, ok := parseDeviceLifecyclePath(request)
-	return ok && request.Method == http.MethodPost
+	path, ok := parseDeviceLifecyclePath(request)
+	return ok && path.methods.allows(request.Method)
 }
 
 func (path deviceLifecyclePath) operation() string { return "device_" + path.action }

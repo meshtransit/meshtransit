@@ -252,8 +252,11 @@ func isBrowserManagementOperation(request *http.Request) bool {
 	_, workspaceRename := parseWorkspaceRenamePath(request)
 	managementScopes := request.URL != nil && request.URL.Path == AccountSessionManagementScopesPath
 	deploymentCapabilities := request.URL != nil && request.URL.Path == DeploymentCapabilitiesPath
+	if request.Method == http.MethodPatch && workspaceRename {
+		return true
+	}
 	if request.Method == http.MethodPost {
-		return device || policy || simulation || accessGraph || workspaceRename ||
+		return device || policy || simulation || accessGraph ||
 			approval && (approvalPath.kind == policyApprovalPathCollection || approvalPath.isAction())
 	}
 	_, accessGraphList := parseAccessGraphListPath(request)

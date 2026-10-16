@@ -18,12 +18,16 @@ type WorkspaceRenamer interface {
 	Rename(context.Context, settings.Command) (settings.Result, error)
 }
 
+// workspaceRenameMethods change the Workspace item, its name being the one
+// field it takes.
+var workspaceRenameMethods = restMethods{http.MethodPatch}
+
 func parseWorkspaceRenamePath(request *http.Request) (string, bool) {
 	if request == nil || request.URL == nil || request.URL.RawQuery != "" || request.URL.RawPath != "" {
 		return "", false
 	}
 	parts := strings.Split(strings.TrimPrefix(request.URL.Path, "/"), "/")
-	if len(parts) != 6 || parts[0] != "api" || parts[1] != "v1" || parts[2] != "workspaces" || parts[4] != "actions" || parts[5] != "rename" {
+	if len(parts) != 4 || parts[0] != "api" || parts[1] != "v1" || parts[2] != "workspaces" || parts[3] == "" {
 		return "", false
 	}
 	return parts[3], true

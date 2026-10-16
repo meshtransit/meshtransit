@@ -11,17 +11,32 @@ import (
 
 func TestParseDeviceLifecyclePath(t *testing.T) {
 	t.Parallel()
-	const prefix = "/api/v1/workspaces/01890f00-0000-7000-8000-000000000101/networks/" +
-		"01890f00-0000-7000-8000-000000000201/devices/01890f00-0000-7000-8000-000000000901/actions/"
-	for path, valid := range map[string]bool{
-		prefix + "suspend": true, prefix + "resume": true, prefix + "transfer": true, prefix + "rename": true,
-		prefix + "revoke": false, prefix + "delete": false, prefix + "suspend?x=1": false,
-		strings.Replace(prefix, "01890f00-0000-7000-8000-000000000901", "01890F00-0000-7000-8000-000000000901", 1) +
-			"suspend": false,
+	const device = "/api/v1/workspaces/01890f00-0000-7000-8000-000000000101/networks/" +
+		"01890f00-0000-7000-8000-000000000201/devices/01890f00-0000-7000-8000-000000000901"
+	const prefix = device + "/actions/"
+	for _, test := range []struct {
+		method, path, action string
+		matched              bool
+	}{
+		{http.MethodPost, prefix + "suspend", "suspend", true},
+		{http.MethodPost, prefix + "resume", "resume", true},
+		{http.MethodPost, prefix + "transfer", "transfer", true},
+		{http.MethodPatch, device, "rename", true},
+		{http.MethodGet, prefix + "suspend", "", true},
+		{http.MethodPut, device, "", true},
+		{http.MethodPost, prefix + "rename", "", false},
+		{http.MethodPost, prefix + "revoke", "", false},
+		{http.MethodPost, prefix + "delete", "", false},
+		{http.MethodPost, prefix + "suspend?x=1", "", false},
+		{http.MethodPatch, device + "?x=1", "", false},
+		{http.MethodPost, strings.Replace(prefix, "01890f00-0000-7000-8000-000000000901",
+			"01890F00-0000-7000-8000-000000000901", 1) + "suspend", "", false},
 	} {
-		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, nil)
-		if _, ok := parseDeviceLifecyclePath(request); ok != valid {
-			t.Errorf("%s: matched = %t, want %t", path, ok, valid)
+		request := httptest.NewRequestWithContext(t.Context(), test.method, test.path, nil)
+		path, ok := parseDeviceLifecyclePath(request)
+		if ok != test.matched || ok && (path.action != test.action ||
+			isDeviceLifecycleOperation(request) != (test.action != "")) {
+			t.Errorf("%s %s: %+v matched %t", test.method, test.path, path, ok)
 		}
 	}
 }
