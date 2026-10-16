@@ -99,6 +99,12 @@ func isEnrollmentKeyOperation(request *http.Request) bool {
 	return ok && request.Method == path.allowedMethod()
 }
 
+// isEnrollmentKeyRead admits the query-free key list.
+func isEnrollmentKeyRead(request *http.Request) bool {
+	path, ok := parseEnrollmentKeyPath(request)
+	return ok && request.Method == http.MethodGet && path.kind == "list"
+}
+
 type enrollmentKeyCreateRequest struct {
 	Description           *string `json:"description"`
 	KeyLifetimeSeconds    *int64  `json:"key_lifetime_seconds"`

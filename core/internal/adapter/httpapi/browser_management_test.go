@@ -43,6 +43,7 @@ type browserManagementFixture struct {
 	sessionRevoked                                  bool
 	logoutAll                                       int
 	logoutAllErr                                    error
+	enrollmentKeys                                  *enrollmentKeyStub
 }
 
 func preparedBrowserProof(t *testing.T, browser *BrowserManagement) string {
@@ -1203,6 +1204,8 @@ func browserManagementTestOptions(t *testing.T) (BrowserManagementOptions, *brow
 			return approval.CatalogPage{Items: []approval.Snapshot{snapshot}}, nil
 		},
 	}
+	fixture.enrollmentKeys = &enrollmentKeyStub{}
+	options.EnrollmentKeys = fixture.enrollmentKeys
 	handler, err := NewManagementHandler(options)
 	if err != nil {
 		t.Fatal(err)

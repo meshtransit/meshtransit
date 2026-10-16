@@ -550,7 +550,7 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 			isInterchangeRead(request) ||
 			isInvitationRead(request))
 	auditRead := isAuditEventListRead(request) || isAuditEventExportRead(request) || isDeviceGroupRead(request) ||
-		isIdentityCatalogRead(request) || isNetworkMemberRead(request)
+		isIdentityCatalogRead(request) || isNetworkMemberRead(request) || isEnrollmentKeyRead(request)
 	safeRead := approvalRead || managementScopeRead || inventoryRead || distributionRead || historyRead ||
 		enforcementRead ||
 		deploymentCapabilityRead ||
