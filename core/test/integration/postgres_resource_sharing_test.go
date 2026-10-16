@@ -1204,9 +1204,10 @@ func assertPrivateEndpointPublication(
 	t.Helper()
 	const deploymentID = "01890f00-0000-7000-8000-000000000001"
 	// These schema 55 functions take no account of the clock that created
-	// the endpoint (MeshCore's), and the confirmation refuses a snapshot
-	// older than it; the schema 168 worker reads wait for the database clock
-	// to reach it, and so does this qualification of the previous binary's.
+	// the endpoint (a previous binary's MeshCore clock), and the confirmation
+	// refuses a snapshot older than it; the schema 168 worker reads wait for
+	// the database clock to reach it, and so does this qualification of the
+	// previous binary's.
 	if _, err := admin.Exec(ctx, `SELECT pg_catalog.pg_sleep_until(endpoint.created_at)
 FROM mesh.private_endpoint AS endpoint
 JOIN mesh.imported_resource AS imported ON imported.id = endpoint.imported_resource_id

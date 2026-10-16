@@ -367,7 +367,6 @@ func composePrivateIdentityFactory(
 		privateIdentityManagementServices(
 			dependencies.Runtime,
 			managementOptions,
-			clock,
 			resources,
 		)
 	if err != nil {
@@ -442,7 +441,6 @@ func privateIdentityDatabaseWindow(window time.Duration) (postgresadapter.AuthTr
 func privateIdentityManagementServices(
 	pool *postgresadapter.Pool,
 	options postgresadapter.AuthTransactionOptions,
-	clock oidcauth.StartClock,
 	resources privateIdentityResourceServices,
 ) (
 	*revocation.Service,
