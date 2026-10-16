@@ -37,6 +37,8 @@ func (fixture *approvalSimulatorFixture) Simulate(
 	return fixture.result, fixture.err
 }
 
+// approvalClockFixture stands in for the database clock the transactions
+// report as their decision time.
 type approvalClockFixture struct {
 	now   time.Time
 	calls int
@@ -81,6 +83,7 @@ func (fixture *approvalIDGeneratorFixture) NewPolicyApprovalMutationIDs(
 
 type requestTransactionsFixture struct {
 	transactions []*requestTransactionFixture
+	clock        *approvalClockFixture
 	calls        int
 }
 
@@ -93,10 +96,12 @@ func (fixture *requestTransactionsFixture) BeginApprovalRequest(
 	if index >= len(fixture.transactions) {
 		return nil, errors.New("unexpected request transaction")
 	}
+	fixture.transactions[index].clock = fixture.clock
 	return fixture.transactions[index], fixture.transactions[index].beginErr
 }
 
 type requestTransactionFixture struct {
+	clock          *approvalClockFixture
 	beginErr       error
 	resolveErr     error
 	applyErr       error
@@ -108,6 +113,13 @@ type requestTransactionFixture struct {
 	applyCalls     int
 	commitCalls    int
 	rollbackCalls  int
+}
+
+func (fixture *requestTransactionFixture) DecisionTime() time.Time {
+	if fixture.clock == nil {
+		return approvalTestTime()
+	}
+	return fixture.clock.Now()
 }
 
 func (fixture *requestTransactionFixture) Resolve(
@@ -173,6 +185,7 @@ func (fixture *requestTransactionFixture) Rollback(context.Context) error {
 
 type approvalTransactionsFixture struct {
 	transactions []*approvalTransactionFixture
+	clock        *approvalClockFixture
 	calls        int
 }
 
@@ -185,10 +198,12 @@ func (fixture *approvalTransactionsFixture) BeginPolicyApproval(
 	if index >= len(fixture.transactions) {
 		return nil, errors.New("unexpected approval transaction")
 	}
+	fixture.transactions[index].clock = fixture.clock
 	return fixture.transactions[index], fixture.transactions[index].beginErr
 }
 
 type approvalTransactionFixture struct {
+	clock          *approvalClockFixture
 	beginErr       error
 	resolveErr     error
 	applyErr       error
@@ -202,6 +217,13 @@ type approvalTransactionFixture struct {
 	applyCalls     int
 	commitCalls    int
 	rollbackCalls  int
+}
+
+func (fixture *approvalTransactionFixture) DecisionTime() time.Time {
+	if fixture.clock == nil {
+		return approvalTestTime()
+	}
+	return fixture.clock.Now()
 }
 
 func (fixture *approvalTransactionFixture) Resolve(
@@ -330,7 +352,7 @@ func approvalServiceFixture(
 	requests approval.RequestTransactions,
 	approvals approval.Transactions,
 	ids approval.MutationIDGenerator,
-	clock approval.Clock,
+	clock *approvalClockFixture,
 	retry approval.RetryWaiter,
 	committedRequests approval.CommittedRequestResolver,
 	committedApprovals approval.CommittedApprovalResolver,
@@ -342,13 +364,19 @@ func approvalServiceFixture(
 	if committedApprovals == nil {
 		committedApprovals = &committedApprovalFixture{}
 	}
+	if fixture, ok := requests.(*requestTransactionsFixture); ok {
+		fixture.clock = clock
+	}
+	if fixture, ok := approvals.(*approvalTransactionsFixture); ok {
+		fixture.clock = clock
+	}
 	service, err := approval.NewService(approval.Options{
 		MaxAttempts: 3, RollbackTimeout: time.Second, IdempotencyWindow: time.Hour,
 	}, approval.Dependencies{
 		Simulator: simulator, RequestTransactions: requests,
 		CommittedRequests: committedRequests, ApprovalTransactions: approvals,
 		CommittedApprovals: committedApprovals, MutationIDs: ids,
-		Clock: clock, Retry: retry,
+		Retry: retry,
 	})
 	if err != nil {
 		t.Fatalf("approval.NewService() error = %v", err)

@@ -91,13 +91,13 @@ func (store *PolicyApprovalStore) BeginApprovalRequest(
 	defer func() {
 		store.observe(postgresOperationPolicyApprovalRequestBegin, startedAt, resultErr)
 	}()
-	database, err := store.begin(ctx, scope)
+	database, decisionAt, err := store.begin(ctx, scope)
 	if err != nil {
 		return nil, err
 	}
 	return &policyApprovalRequestTransaction{
 		core: policyApprovalTransactionCore{
-			database: database, scope: scope, metrics: store.metrics,
+			decisionAt: decisionAt, database: database, scope: scope, metrics: store.metrics,
 		},
 	}, nil
 }
@@ -111,28 +111,31 @@ func (store *PolicyApprovalStore) BeginPolicyApproval(
 	defer func() {
 		store.observe(postgresOperationPolicyApprovalDecisionBegin, startedAt, resultErr)
 	}()
-	database, err := store.begin(ctx, scope)
+	database, decisionAt, err := store.begin(ctx, scope)
 	if err != nil {
 		return nil, err
 	}
 	return &policyApprovalDecisionTransaction{
 		core: policyApprovalTransactionCore{
-			database: database, scope: scope, metrics: store.metrics,
+			decisionAt: decisionAt, database: database, scope: scope, metrics: store.metrics,
 		},
 	}, nil
 }
 
+// begin starts one read-write unit of work and reads its time on the
+// database clock, which every authorization, deadline and persisted time in
+// it uses.
 func (store *PolicyApprovalStore) begin(
 	ctx context.Context,
 	scope network.Scope,
-) (_ policyApprovalDatabaseTransaction, resultErr error) {
+) (_ policyApprovalDatabaseTransaction, _ time.Time, resultErr error) {
 	if ctx == nil || store == nil || store.database == nil || !scope.IsValid() ||
 		!validPolicyApprovalOptions(store.options) {
-		return nil, ErrInvalidPolicyApprovalStore
+		return nil, time.Time{}, ErrInvalidPolicyApprovalStore
 	}
 	database, err := store.database.Begin(ctx, false)
 	if err != nil {
-		return nil, errors.Join(ErrBeginPolicyApproval, classifyPolicyApprovalDatabaseError(ctx, err))
+		return nil, time.Time{}, errors.Join(ErrBeginPolicyApproval, classifyPolicyApprovalDatabaseError(ctx, err))
 	}
 	owned := false
 	defer func() {
@@ -141,10 +144,14 @@ func (store *PolicyApprovalStore) begin(
 		}
 	}()
 	if _, _, err := store.configureAndScope(ctx, database, scope); err != nil {
-		return nil, errors.Join(ErrBeginPolicyApproval, err)
+		return nil, time.Time{}, errors.Join(ErrBeginPolicyApproval, err)
+	}
+	decisionAt, err := readTransactionTime(ctx, database.QueryRow)
+	if err != nil {
+		return nil, time.Time{}, errors.Join(ErrBeginPolicyApproval, classifyPolicyApprovalDatabaseError(ctx, err))
 	}
 	owned = true
-	return database, nil
+	return database, decisionAt, nil
 }
 
 // ResolveCommittedApprovalRequest resolves an uncertain proposal commit by stable ID.

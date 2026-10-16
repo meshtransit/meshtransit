@@ -26,6 +26,9 @@ type RequestTransactions interface {
 
 // RequestTransaction persists one pending two-person approval request.
 type RequestTransaction interface {
+	// DecisionTime is the database clock's time for this transaction: every
+	// evaluation and persisted time of the attempt uses it.
+	DecisionTime() time.Time
 	Resolve(
 		context.Context,
 		RequestCommand,
@@ -54,6 +57,9 @@ type Transactions interface {
 
 // Transaction commits one immutable human approval decision.
 type Transaction interface {
+	// DecisionTime is the database clock's time for this transaction: every
+	// evaluation and persisted time of the attempt uses it.
+	DecisionTime() time.Time
 	Resolve(
 		context.Context,
 		Command,
@@ -81,15 +87,6 @@ type MutationIDGenerator interface {
 	NewPolicyApprovalMutationIDs(Command) (MutationIDs, error)
 }
 
-// Clock supplies stable decision time across complete transaction retries.
-type Clock interface{ Now() time.Time }
-
-// SystemClock uses the process wall clock.
-type SystemClock struct{}
-
-// Now returns current wall-clock time.
-func (SystemClock) Now() time.Time { return time.Now() }
-
 // RetryWaiter applies bounded delay between complete transaction attempts.
 type RetryWaiter interface {
 	Wait(context.Context, int) error
@@ -103,6 +100,5 @@ type Dependencies struct {
 	ApprovalTransactions Transactions
 	CommittedApprovals   CommittedApprovalResolver
 	MutationIDs          MutationIDGenerator
-	Clock                Clock
 	Retry                RetryWaiter
 }

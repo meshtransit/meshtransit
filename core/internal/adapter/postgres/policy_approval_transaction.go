@@ -59,6 +59,7 @@ func (evidence policyApprovalAuthorizationEvidence) isValid() bool {
 type policyApprovalTransactionCore struct {
 	mu sync.Mutex
 
+	decisionAt    time.Time
 	database      policyApprovalDatabaseTransaction
 	scope         network.Scope
 	metrics       *postgresPoolMetrics

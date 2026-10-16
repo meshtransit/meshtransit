@@ -27,18 +27,17 @@ func (store *PolicyApprovalStore) ReadApprovalRequest(
 	session accountsession.Session,
 	scope network.Scope,
 	id approval.RequestID,
-	evaluatedAt time.Time,
 ) (_ approval.Snapshot, resultErr error) {
 	startedAt := time.Now()
 	defer func() { store.observe(postgresOperationPolicyApprovalCatalogRead, startedAt, resultErr) }()
 	if ctx == nil || store == nil || !session.IsValid() || !scope.IsValid() ||
-		!id.IsValid() || evaluatedAt.IsZero() {
+		!id.IsValid() {
 		return approval.Snapshot{}, approval.ErrInvalidCatalogRequest
 	}
 	// Fresh permission resolution takes share locks on mutable authority rows,
 	// so this read projection needs a read-write transaction even though the
 	// catalog itself performs no mutation.
-	database, err := store.begin(ctx, scope)
+	database, evaluatedAt, err := store.begin(ctx, scope)
 	if err != nil {
 		return approval.Snapshot{}, errors.Join(approval.ErrCatalogUnavailable, err)
 	}
@@ -88,7 +87,6 @@ func (store *PolicyApprovalStore) ListApprovalRequests(
 	state approval.State,
 	after approval.RequestID,
 	limit int,
-	evaluatedAt time.Time,
 ) (_ []approval.Snapshot, resultErr error) {
 	startedAt := time.Now()
 	defer func() { store.observe(postgresOperationPolicyApprovalCatalogList, startedAt, resultErr) }()
@@ -96,12 +94,12 @@ func (store *PolicyApprovalStore) ListApprovalRequests(
 		state == approval.StateApproved || state == approval.StateConsumed
 	if ctx == nil || store == nil || !session.IsValid() || !scope.IsValid() ||
 		!validState || limit < 1 || limit > approval.MaximumCatalogPageSize+1 ||
-		(!after.IsValid() && after != (approval.RequestID{})) || evaluatedAt.IsZero() {
+		(!after.IsValid() && after != (approval.RequestID{})) {
 		return nil, approval.ErrInvalidCatalogRequest
 	}
 	// The permission resolver fences mutable authority with share locks and
 	// therefore cannot run inside a PostgreSQL read-only transaction.
-	database, err := store.begin(ctx, scope)
+	database, evaluatedAt, err := store.begin(ctx, scope)
 	if err != nil {
 		return nil, errors.Join(approval.ErrCatalogUnavailable, err)
 	}

@@ -15,12 +15,6 @@ const maximumRetryDelay = time.Minute
 // ErrInvalidBackoff reports an unsafe retry delay or attempt ordinal.
 var ErrInvalidBackoff = errors.New("policy publication: invalid retry backoff")
 
-// SystemClock reads the process wall clock without retaining mutable state.
-type SystemClock struct{}
-
-// Now returns the current UTC time.
-func (SystemClock) Now() time.Time { return time.Now().UTC() }
-
 // ExponentialBackoff provides capped exponential delay with 50-100% jitter.
 type ExponentialBackoff struct {
 	initial time.Duration

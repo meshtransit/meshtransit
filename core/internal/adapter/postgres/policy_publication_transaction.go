@@ -55,6 +55,7 @@ func (evidence policyPublicationAuthorizationEvidence) isValid() bool {
 type policyPublicationTransaction struct {
 	mu sync.Mutex
 
+	decisionAt            time.Time
 	database              policyPublicationDatabaseTransaction
 	scope                 network.Scope
 	metrics               *postgresPoolMetrics
@@ -67,6 +68,11 @@ type policyPublicationTransaction struct {
 	requireApproval       bool
 	// guardrailFindings are audit-mode guardrails this publication breaks.
 	guardrailFindings []guardrail.Finding
+}
+
+// DecisionTime is this transaction's time on the database clock.
+func (transaction *policyPublicationTransaction) DecisionTime() time.Time {
+	return transaction.decisionAt
 }
 
 var _ publication.Transaction = (*policyPublicationTransaction)(nil)

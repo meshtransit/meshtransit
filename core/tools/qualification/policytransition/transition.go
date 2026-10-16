@@ -81,7 +81,6 @@ func executeTransition(
 			Transactions:     store,
 			CommittedResults: store,
 			MutationIDs:      policypublication.PublicMutationIDGenerator{},
-			Clock:            policypublication.SystemClock{},
 			Retry:            retry,
 		},
 	)

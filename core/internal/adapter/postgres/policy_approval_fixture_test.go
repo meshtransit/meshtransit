@@ -82,6 +82,13 @@ func (transaction *fakePolicyApprovalTransaction) QueryRow(
 	query string,
 	arguments ...any,
 ) policyApprovalRow {
+	if query == transactionTimeSQL {
+		// Every unit of work reads its time on the database clock.
+		return policyApprovalTestRow{scan: func(destinations ...any) error {
+			*destinations[0].(*time.Time) = policyApprovalTestTime()
+			return nil
+		}}
+	}
 	transaction.record(query, arguments)
 	queued := transaction.rows[query]
 	if len(queued) == 0 {

@@ -137,8 +137,13 @@ func (store *PolicyPublicationStore) Begin(
 	if err != nil {
 		return nil, errors.Join(ErrBeginPolicyPublication, err)
 	}
+	decisionAt, err := readTransactionTime(ctx, databaseTransaction.QueryRow)
+	if err != nil {
+		return nil, errors.Join(ErrBeginPolicyPublication, classifyPolicyPublicationDatabaseError(ctx, err))
+	}
 	owned = true
 	return &policyPublicationTransaction{
+		decisionAt:            decisionAt,
 		database:              databaseTransaction,
 		scope:                 scope,
 		metrics:               store.metrics,

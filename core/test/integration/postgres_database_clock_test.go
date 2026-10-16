@@ -121,3 +121,22 @@ func assertShareUpdatedAtKeptOrder(
 		t.Fatalf("contract updated_at = %s, want the kept %s", updatedAt, previous)
 	}
 }
+
+// assertPolicyReleaseOnDatabaseClock checks that a published release's
+// creation and activation are its transaction's database time.
+func assertPolicyReleaseOnDatabaseClock(ctx context.Context, t *testing.T, admin *pgx.Conn, releasePublicID string) {
+	t.Helper()
+	var onDatabaseClock bool
+	if err := admin.QueryRow(ctx, `SELECT release.created_at = inserted.occurred_at
+    AND release.activated_at = inserted.occurred_at
+FROM mesh.policy_release AS release
+JOIN mesh_audit.authority_mutation AS inserted
+  ON inserted.aggregate_kind = 'policy_release' AND inserted.row_public_id = release.public_id
+ AND inserted.operation = 'insert'
+WHERE release.public_id = $1::UUID`, releasePublicID).Scan(&onDatabaseClock); err != nil {
+		t.Fatalf("read policy release %s database clock evidence: %v", releasePublicID, err)
+	}
+	if !onDatabaseClock {
+		t.Fatalf("policy release %s times are not the database clock's", releasePublicID)
+	}
+}

@@ -287,7 +287,7 @@ func TestServiceRetriesWholeProposalWithStableEvidence(t *testing.T) {
 		t.Fatalf("Request() error = %v", err)
 	}
 	if result.RequestID() != ids.requestIDs.RequestID() || transactions.calls != 2 ||
-		ids.requestCalls != 1 || clock.calls != 1 || retry.calls != 1 ||
+		ids.requestCalls != 1 || clock.calls != 2 || retry.calls != 1 ||
 		first.rollbackCalls != 1 || second.commitCalls != 1 || second.rollbackCalls != 0 {
 		t.Fatalf(
 			"result=%+v transactions=%+v ids=%+v clock=%+v retry=%+v first=%+v second=%+v",
@@ -677,7 +677,7 @@ func TestServiceReplaysAndRetriesApprovalWithStableEvidence(t *testing.T) {
 			t.Fatalf("Approve() error = %v", err)
 		}
 		if result.EvidenceID() != ids.EvidenceID() || transactions.calls != 2 ||
-			generator.approvalCalls != 1 || clock.calls != 1 || retry.calls != 1 ||
+			generator.approvalCalls != 1 || clock.calls != 2 || retry.calls != 1 ||
 			first.rollbackCalls != 1 || second.commitCalls != 1 ||
 			second.rollbackCalls != 0 {
 			t.Fatalf(

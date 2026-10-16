@@ -69,8 +69,7 @@ func TestApprovalCatalogServiceValidatesScopeAndPagination(t *testing.T) {
 	snapshot := approvalCatalogSnapshotFixture(t, "01890f00-0000-7000-8000-000000000901")
 	next := approvalCatalogSnapshotFixture(t, "01890f00-0000-7000-8000-000000000905")
 	reader := &approvalCatalogReaderFixture{values: []approval.Snapshot{snapshot, snapshot, next}}
-	clock := &approvalClockFixture{now: time.Date(2026, 9, 29, 2, 0, 0, 0, time.UTC)}
-	service, err := approval.NewCatalogService(reader, clock)
+	service, err := approval.NewCatalogService(reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,8 +84,8 @@ func TestApprovalCatalogServiceValidatesScopeAndPagination(t *testing.T) {
 	if err != nil || len(page.Items) != 1 || page.Next != snapshot.RequestID() {
 		t.Fatalf("List() = (%+v, %v)", page, err)
 	}
-	if reader.getCalls != 1 || reader.listCalls != 1 || reader.permissionTime != clock.now {
-		t.Fatalf("reader calls/time = %d/%d/%v", reader.getCalls, reader.listCalls, reader.permissionTime)
+	if reader.getCalls != 1 || reader.listCalls != 1 {
+		t.Fatalf("reader calls = %d/%d", reader.getCalls, reader.listCalls)
 	}
 }
 
@@ -95,7 +94,7 @@ func TestApprovalCatalogServiceRejectsInvalidResults(t *testing.T) {
 
 	wrong := approvalCatalogSnapshotFixture(t, "01890f00-0000-7000-8000-000000000904")
 	reader := &approvalCatalogReaderFixture{values: []approval.Snapshot{wrong}}
-	service, err := approval.NewCatalogService(reader, &approvalClockFixture{now: time.Now().UTC()})
+	service, err := approval.NewCatalogService(reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,10 +132,9 @@ func TestApprovalCatalogSnapshotRejectsSelfApproval(t *testing.T) {
 }
 
 type approvalCatalogReaderFixture struct {
-	values         []approval.Snapshot
-	getCalls       int
-	listCalls      int
-	permissionTime time.Time
+	values    []approval.Snapshot
+	getCalls  int
+	listCalls int
 }
 
 func (fixture *approvalCatalogReaderFixture) ReadApprovalRequest(
@@ -144,10 +142,8 @@ func (fixture *approvalCatalogReaderFixture) ReadApprovalRequest(
 	_ accountsession.Session,
 	_ network.Scope,
 	_ approval.RequestID,
-	evaluatedAt time.Time,
 ) (approval.Snapshot, error) {
 	fixture.getCalls++
-	fixture.permissionTime = evaluatedAt
 	if len(fixture.values) == 0 {
 		return approval.Snapshot{}, approval.ErrRequestNotFound
 	}
@@ -163,10 +159,8 @@ func (fixture *approvalCatalogReaderFixture) ListApprovalRequests(
 	_ approval.State,
 	_ approval.RequestID,
 	_ int,
-	evaluatedAt time.Time,
 ) ([]approval.Snapshot, error) {
 	fixture.listCalls++
-	fixture.permissionTime = evaluatedAt
 	return append([]approval.Snapshot(nil), fixture.values...), nil
 }
 

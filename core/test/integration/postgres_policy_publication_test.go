@@ -278,6 +278,7 @@ WHERE workspace_id = 103 AND network_id = 203
 		)
 	}
 	assertConsumedPolicyApproval(ctx, t, adminConnection, denyApproval, result)
+	assertPolicyReleaseOnDatabaseClock(ctx, t, adminConnection, result.ReleaseID().String())
 	var evidenceCount int
 	if err := adminConnection.QueryRow(ctx, `SELECT pg_catalog.count(*)::INTEGER
 FROM mesh_audit.audit_event
@@ -923,7 +924,6 @@ func newIntegrationPolicyPublicationService(
 			Transactions:     store,
 			CommittedResults: store,
 			MutationIDs:      publication.PublicMutationIDGenerator{},
-			Clock:            publication.SystemClock{},
 			Retry:            retry,
 		},
 	)
@@ -958,8 +958,7 @@ func newIntegrationManagementPolicyPublicationService(
 		publication.Options{MaxAttempts: 3, RollbackTimeout: 2 * time.Second},
 		publication.Dependencies{
 			Transactions: store, CommittedResults: store,
-			MutationIDs: publication.PublicMutationIDGenerator{},
-			Clock:       publication.SystemClock{}, Retry: retry,
+			MutationIDs: publication.PublicMutationIDGenerator{}, Retry: retry,
 		},
 	)
 	if err != nil {
@@ -1007,13 +1006,13 @@ func newIntegrationPolicyApprovalWorkflow(
 			RequestTransactions: store, CommittedRequests: store,
 			ApprovalTransactions: store, CommittedApprovals: store,
 			MutationIDs: approval.PublicMutationIDGenerator{},
-			Clock:       approval.SystemClock{}, Retry: retry,
+			Retry:       retry,
 		},
 	)
 	if err != nil {
 		t.Fatalf("approval.NewService() error = %v", err)
 	}
-	catalog, err := approval.NewCatalogService(store, approval.SystemClock{})
+	catalog, err := approval.NewCatalogService(store)
 	if err != nil {
 		t.Fatalf("approval.NewCatalogService() error = %v", err)
 	}

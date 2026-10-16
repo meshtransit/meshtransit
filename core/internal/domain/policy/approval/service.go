@@ -44,7 +44,6 @@ type Service struct {
 	approvalTransactions Transactions
 	committedApprovals   CommittedApprovalResolver
 	mutationIDs          MutationIDGenerator
-	clock                Clock
 	retry                RetryWaiter
 }
 
@@ -53,7 +52,7 @@ func NewService(options Options, dependencies Dependencies) (*Service, error) {
 	if dependencies.Simulator == nil || dependencies.RequestTransactions == nil ||
 		dependencies.CommittedRequests == nil || dependencies.ApprovalTransactions == nil ||
 		dependencies.CommittedApprovals == nil || dependencies.MutationIDs == nil ||
-		dependencies.Clock == nil || dependencies.Retry == nil ||
+		dependencies.Retry == nil ||
 		options.MaxAttempts <= 0 || options.MaxAttempts > maximumAttempts ||
 		options.RollbackTimeout <= 0 || options.RollbackTimeout > 5*time.Second ||
 		options.IdempotencyWindow <= RequestLifetime ||
@@ -66,8 +65,8 @@ func NewService(options Options, dependencies Dependencies) (*Service, error) {
 		committedRequests:    dependencies.CommittedRequests,
 		approvalTransactions: dependencies.ApprovalTransactions,
 		committedApprovals:   dependencies.CommittedApprovals,
-		mutationIDs:          dependencies.MutationIDs, clock: dependencies.Clock,
-		retry: dependencies.Retry,
+		mutationIDs:          dependencies.MutationIDs,
+		retry:                dependencies.Retry,
 	}, nil
 }
 
@@ -78,7 +77,7 @@ func (service *Service) Request(
 ) (RequestResult, error) {
 	if ctx == nil || service == nil || service.simulator == nil ||
 		service.requestTransactions == nil || service.committedRequests == nil ||
-		service.mutationIDs == nil || service.clock == nil || service.retry == nil ||
+		service.mutationIDs == nil || service.retry == nil ||
 		!intent.IsValid() {
 		return RequestResult{}, ErrInvalidRequestIntent
 	}
@@ -108,16 +107,6 @@ func (service *Service) Request(
 	if err != nil {
 		return RequestResult{}, err
 	}
-	// PostgreSQL retains microseconds. Use one canonical instant for the
-	// idempotency lease, approval lifetime and committed evidence comparison.
-	// Truncation never extends either deadline beyond the observed clock.
-	now := service.clock.Now().UTC().Truncate(time.Microsecond)
-	if now.IsZero() {
-		return RequestResult{}, ErrInvalidService
-	}
-	if !intent.AccountSession().IsActiveAt(now) {
-		return RequestResult{}, ErrForbidden
-	}
 	command, err := NewRequestCommand(
 		binding,
 		intent.AccountSession(),
@@ -135,36 +124,17 @@ func (service *Service) Request(
 			err,
 		)
 	}
-	requestExpiresAt := now.Add(RequestLifetime)
-	idempotencyExpiresAt := now.Add(service.options.IdempotencyWindow)
-	return service.requestWithRetry(
-		ctx,
-		command,
-		mutationIDs,
-		now,
-		requestExpiresAt,
-		idempotencyExpiresAt,
-	)
+	return service.requestWithRetry(ctx, command, mutationIDs)
 }
 
 func (service *Service) requestWithRetry(
 	ctx context.Context,
 	command RequestCommand,
 	mutationIDs RequestMutationIDs,
-	now time.Time,
-	requestExpiresAt time.Time,
-	idempotencyExpiresAt time.Time,
 ) (RequestResult, error) {
 	var lastErr error
 	for attempt := 1; attempt <= service.options.MaxAttempts; attempt++ {
-		result, attemptErr := service.attemptRequest(
-			ctx,
-			command,
-			mutationIDs,
-			now,
-			requestExpiresAt,
-			idempotencyExpiresAt,
-		)
+		result, attemptErr := service.attemptRequest(ctx, command, mutationIDs)
 		if attemptErr == nil {
 			return result, nil
 		}
@@ -205,9 +175,6 @@ func (service *Service) attemptRequest(
 	ctx context.Context,
 	command RequestCommand,
 	mutationIDs RequestMutationIDs,
-	now time.Time,
-	requestExpiresAt time.Time,
-	idempotencyExpiresAt time.Time,
 ) (result RequestResult, resultErr error) {
 	transaction, err := service.requestTransactions.BeginApprovalRequest(ctx, command.Scope())
 	if err != nil || transaction == nil {
@@ -236,6 +203,18 @@ func (service *Service) attemptRequest(
 		}
 	}()
 
+	// One database-clock instant for the session check, the idempotency
+	// lease, the approval lifetime and the committed evidence comparison.
+	// PostgreSQL retains microseconds; truncation never extends a deadline.
+	now := transaction.DecisionTime().Truncate(time.Microsecond)
+	if now.IsZero() {
+		return RequestResult{}, ErrInvalidService
+	}
+	if !command.AccountSession().IsActiveAt(now) {
+		return RequestResult{}, ErrForbidden
+	}
+	requestExpiresAt := now.Add(RequestLifetime)
+	idempotencyExpiresAt := now.Add(service.options.IdempotencyWindow)
 	resolution, err := transaction.Resolve(
 		ctx,
 		command,
@@ -304,18 +283,11 @@ func (service *Service) Approve(
 ) (Result, error) {
 	if ctx == nil || service == nil || service.approvalTransactions == nil ||
 		service.committedApprovals == nil || service.mutationIDs == nil ||
-		service.clock == nil || service.retry == nil || !command.IsValid() {
+		service.retry == nil || !command.IsValid() {
 		return Result{}, ErrInvalidApprovalCommand
 	}
 	if err := ctx.Err(); err != nil {
 		return Result{}, errors.Join(ErrOperationFailed, err)
-	}
-	now := service.clock.Now().UTC().Truncate(time.Microsecond)
-	if now.IsZero() {
-		return Result{}, ErrInvalidService
-	}
-	if !command.AccountSession().IsActiveAt(now) {
-		return Result{}, ErrForbidden
 	}
 	mutationIDs, err := service.mutationIDs.NewPolicyApprovalMutationIDs(command)
 	if err != nil || !mutationIDs.IsValid() {
@@ -325,26 +297,17 @@ func (service *Service) Approve(
 			err,
 		)
 	}
-	idempotencyExpiresAt := now.Add(service.options.IdempotencyWindow)
-	return service.approveWithRetry(ctx, command, mutationIDs, now, idempotencyExpiresAt)
+	return service.approveWithRetry(ctx, command, mutationIDs)
 }
 
 func (service *Service) approveWithRetry(
 	ctx context.Context,
 	command Command,
 	mutationIDs MutationIDs,
-	now time.Time,
-	idempotencyExpiresAt time.Time,
 ) (Result, error) {
 	var lastErr error
 	for attempt := 1; attempt <= service.options.MaxAttempts; attempt++ {
-		result, attemptErr := service.attemptApproval(
-			ctx,
-			command,
-			mutationIDs,
-			now,
-			idempotencyExpiresAt,
-		)
+		result, attemptErr := service.attemptApproval(ctx, command, mutationIDs)
 		if attemptErr == nil {
 			return result, nil
 		}
@@ -385,8 +348,6 @@ func (service *Service) attemptApproval(
 	ctx context.Context,
 	command Command,
 	mutationIDs MutationIDs,
-	now time.Time,
-	idempotencyExpiresAt time.Time,
 ) (result Result, resultErr error) {
 	transaction, err := service.approvalTransactions.BeginPolicyApproval(ctx, command.Scope())
 	if err != nil || transaction == nil {
@@ -415,6 +376,16 @@ func (service *Service) attemptApproval(
 		}
 	}()
 
+	// One database-clock instant for the session check, the idempotency
+	// lease, the request deadline and the evidence.
+	now := transaction.DecisionTime().Truncate(time.Microsecond)
+	if now.IsZero() {
+		return Result{}, ErrInvalidService
+	}
+	if !command.AccountSession().IsActiveAt(now) {
+		return Result{}, ErrForbidden
+	}
+	idempotencyExpiresAt := now.Add(service.options.IdempotencyWindow)
 	resolution, err := transaction.Resolve(
 		ctx,
 		command,

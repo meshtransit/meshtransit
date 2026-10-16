@@ -31,7 +31,7 @@ func TestPolicyApprovalCatalogReadsAuthorizedExactScopeSnapshot(t *testing.T) {
 	session := policyApprovalSessionFixture(t, 401, 601)
 
 	value, err := store.ReadApprovalRequest(
-		t.Context(), session, binding.Scope(), requestID, policyApprovalTestTime(),
+		t.Context(), session, binding.Scope(), requestID,
 	)
 	if err != nil || !value.IsValid() || value.RequestID() != requestID ||
 		!value.Binding().Equal(binding) {
@@ -79,7 +79,7 @@ func TestPolicyApprovalCatalogListsBoundedKeysetPage(t *testing.T) {
 	store := testPolicyApprovalStore(t, database)
 	values, err := store.ListApprovalRequests(
 		t.Context(), policyApprovalSessionFixture(t, 401, 601), binding.Scope(),
-		approval.StatePending, first, 2, policyApprovalTestTime(),
+		approval.StatePending, first, 2,
 	)
 	if err != nil || len(values) != 2 || values[0].RequestID() != first || values[1].RequestID() != second {
 		t.Fatalf("ListApprovalRequests() = (%+v, %v)", values, err)
@@ -113,7 +113,7 @@ func TestPolicyApprovalCatalogConcealsAbsentRequest(t *testing.T) {
 	store := testPolicyApprovalStore(t, database)
 	_, err := store.ReadApprovalRequest(
 		t.Context(), policyApprovalSessionFixture(t, 401, 601), binding.Scope(),
-		requestID, policyApprovalTestTime(),
+		requestID,
 	)
 	if !errors.Is(err, approval.ErrRequestNotFound) || transaction.commitCalls != 0 ||
 		transaction.rollbackCalls != 1 {

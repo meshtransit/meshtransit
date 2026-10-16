@@ -101,9 +101,8 @@ func (generator *fixedPublicationMutationIDs) NewMutationIDs(
 	return generator.ids, nil
 }
 
-type publicationClockFixture struct{}
-
-func (publicationClockFixture) Now() time.Time { return publicationFixtureTime }
+// DecisionTime stands in for the database clock's time of the transaction.
+func (*publicationTransactionFixture) DecisionTime() time.Time { return publicationFixtureTime }
 
 type publicationRetryFixture struct{ calls []int }
 
@@ -153,7 +152,6 @@ func publicationServiceFixture(
 		Transactions:     transactions,
 		CommittedResults: committed,
 		MutationIDs:      ids,
-		Clock:            publicationClockFixture{},
 		Retry:            retry,
 	})
 	if err != nil {

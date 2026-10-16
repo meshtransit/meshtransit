@@ -232,8 +232,9 @@ func (value Snapshot) IsValid() bool {
 
 // CatalogReader performs one freshly authorized exact-scope read.
 type CatalogReader interface {
-	ReadApprovalRequest(context.Context, accountsession.Session, network.Scope, RequestID, time.Time) (Snapshot, error)
-	ListApprovalRequests(context.Context, accountsession.Session, network.Scope, State, RequestID, int, time.Time) ([]Snapshot, error)
+	// The reader authorizes and judges expiry on the database clock.
+	ReadApprovalRequest(context.Context, accountsession.Session, network.Scope, RequestID) (Snapshot, error)
+	ListApprovalRequests(context.Context, accountsession.Session, network.Scope, State, RequestID, int) ([]Snapshot, error)
 }
 
 // CatalogPage is one deterministic UUIDv7-keyset page.
@@ -245,15 +246,14 @@ type CatalogPage struct {
 // CatalogService validates workflow reads around the PostgreSQL authority adapter.
 type CatalogService struct {
 	reader CatalogReader
-	clock  Clock
 }
 
 // NewCatalogService constructs a validating approval catalog service.
-func NewCatalogService(reader CatalogReader, clock Clock) (*CatalogService, error) {
-	if reader == nil || clock == nil {
+func NewCatalogService(reader CatalogReader) (*CatalogService, error) {
+	if reader == nil {
 		return nil, ErrInvalidCatalogRequest
 	}
-	return &CatalogService{reader: reader, clock: clock}, nil
+	return &CatalogService{reader: reader}, nil
 }
 
 // Get returns one freshly authorized exact-scope approval request.
@@ -263,11 +263,11 @@ func (service *CatalogService) Get(
 	scope network.Scope,
 	id RequestID,
 ) (Snapshot, error) {
-	if ctx == nil || service == nil || service.reader == nil || service.clock == nil ||
+	if ctx == nil || service == nil || service.reader == nil ||
 		!session.IsValid() || !scope.IsValid() || !id.IsValid() {
 		return Snapshot{}, ErrInvalidCatalogRequest
 	}
-	value, err := service.reader.ReadApprovalRequest(ctx, session, scope, id, service.clock.Now().UTC())
+	value, err := service.reader.ReadApprovalRequest(ctx, session, scope, id)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -287,13 +287,13 @@ func (service *CatalogService) List(
 	after RequestID,
 ) (CatalogPage, error) {
 	validState := state == StateUnknown || state == StatePending || state == StateApproved || state == StateConsumed
-	if ctx == nil || service == nil || service.reader == nil || service.clock == nil ||
+	if ctx == nil || service == nil || service.reader == nil ||
 		!session.IsValid() || !scope.IsValid() || !validState || limit < 1 ||
 		limit > MaximumCatalogPageSize || (!after.IsValid() && after != (RequestID{})) {
 		return CatalogPage{}, ErrInvalidCatalogRequest
 	}
 	values, err := service.reader.ListApprovalRequests(
-		ctx, session, scope, state, after, limit+1, service.clock.Now().UTC(),
+		ctx, session, scope, state, after, limit+1,
 	)
 	if err != nil {
 		return CatalogPage{}, err

@@ -169,7 +169,7 @@ func composeManagementAPIWithKeys(
 		policypublication.Dependencies{
 			Transactions: policyStore, CommittedResults: policyStore,
 			MutationIDs: policypublication.PublicMutationIDGenerator{},
-			Clock:       policypublication.SystemClock{}, Retry: policyBackoff,
+			Retry:       policyBackoff,
 		},
 	)
 	if err != nil {
@@ -361,7 +361,7 @@ func composeManagementAPIWithKeys(
 			RequestTransactions: policyApprovalStore, CommittedRequests: policyApprovalStore,
 			ApprovalTransactions: policyApprovalStore, CommittedApprovals: policyApprovalStore,
 			MutationIDs: policyapproval.PublicMutationIDGenerator{},
-			Clock:       policyapproval.SystemClock{}, Retry: policyBackoff,
+			Retry:       policyBackoff,
 		},
 	)
 	if err != nil {
@@ -369,7 +369,6 @@ func composeManagementAPIWithKeys(
 	}
 	policyApprovalCatalog, err := policyapproval.NewCatalogService(
 		policyApprovalStore,
-		policyapproval.SystemClock{},
 	)
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)

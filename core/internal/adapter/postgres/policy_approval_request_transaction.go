@@ -17,6 +17,11 @@ type policyApprovalRequestTransaction struct {
 	resolution approval.RequestResolution
 }
 
+// DecisionTime is this transaction's time on the database clock.
+func (transaction *policyApprovalRequestTransaction) DecisionTime() time.Time {
+	return transaction.core.decisionAt
+}
+
 var _ approval.RequestTransaction = (*policyApprovalRequestTransaction)(nil)
 
 func (transaction *policyApprovalRequestTransaction) Resolve(

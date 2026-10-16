@@ -37,14 +37,13 @@ type Service struct {
 	transactions Transactions
 	committed    CommittedResultResolver
 	mutationIDs  MutationIDGenerator
-	clock        Clock
 	retry        RetryWaiter
 }
 
 // NewService validates and constructs a policy publication application service.
 func NewService(options Options, dependencies Dependencies) (*Service, error) {
 	if dependencies.Transactions == nil || dependencies.CommittedResults == nil ||
-		dependencies.MutationIDs == nil || dependencies.Clock == nil || dependencies.Retry == nil ||
+		dependencies.MutationIDs == nil || dependencies.Retry == nil ||
 		options.MaxAttempts <= 0 || options.MaxAttempts > maximumPublicationAttempts ||
 		options.RollbackTimeout <= 0 || options.RollbackTimeout > 5*time.Second {
 		return nil, ErrInvalidService
@@ -54,25 +53,21 @@ func NewService(options Options, dependencies Dependencies) (*Service, error) {
 		transactions: dependencies.Transactions,
 		committed:    dependencies.CommittedResults,
 		mutationIDs:  dependencies.MutationIDs,
-		clock:        dependencies.Clock,
 		retry:        dependencies.Retry,
 	}, nil
 }
 
 // Publish activates one precompiled candidate with CAS and atomic evidence.
-// Every retry reuses the same decision time and durable public identities.
+// Every retry reuses the same durable public identities; each attempt decides
+// on its own transaction's database time.
 func (service *Service) Publish(ctx context.Context, command Command) (Result, error) {
 	if ctx == nil || service == nil || service.transactions == nil || service.committed == nil ||
-		service.mutationIDs == nil || service.clock == nil || service.retry == nil ||
+		service.mutationIDs == nil || service.retry == nil ||
 		!command.IsValid() {
 		return Result{}, ErrInvalidCommand
 	}
 	if err := ctx.Err(); err != nil {
 		return Result{}, errors.Join(ErrPublicationFailed, err)
-	}
-	now := service.clock.Now().UTC()
-	if now.IsZero() {
-		return Result{}, ErrInvalidService
 	}
 	ruleCount := command.Candidate().ProjectionCount()
 	mutationIDs, err := service.mutationIDs.NewMutationIDs(ruleCount)
@@ -82,7 +77,7 @@ func (service *Service) Publish(ctx context.Context, command Command) (Result, e
 
 	var lastErr error
 	for attempt := 1; attempt <= service.options.MaxAttempts; attempt++ {
-		result, attemptErr := service.attempt(ctx, command, mutationIDs, now)
+		result, attemptErr := service.attempt(ctx, command, mutationIDs)
 		if attemptErr == nil {
 			return result, nil
 		}
@@ -119,7 +114,6 @@ func (service *Service) attempt(
 	ctx context.Context,
 	command Command,
 	mutationIDs MutationIDs,
-	now time.Time,
 ) (result Result, resultErr error) {
 	transaction, err := service.transactions.Begin(ctx, command.Candidate().Snapshot().Scope())
 	if err != nil || transaction == nil {
@@ -151,6 +145,10 @@ func (service *Service) attempt(
 		}
 	}()
 
+	now := transaction.DecisionTime()
+	if now.IsZero() {
+		return Result{}, ErrInvalidService
+	}
 	resolution, err := transaction.Resolve(ctx, command, now)
 	if err != nil {
 		return Result{}, fmt.Errorf("resolve policy publication under lock: %w", err)

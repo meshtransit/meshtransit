@@ -83,6 +83,13 @@ func (transaction *fakePolicyPublicationTransaction) QueryRow(
 	query string,
 	arguments ...any,
 ) policyPublicationRow {
+	if query == transactionTimeSQL {
+		// Every unit of work reads its time on the database clock.
+		return policyPublicationTestRow{scan: func(destinations ...any) error {
+			*destinations[0].(*time.Time) = time.Date(2026, 9, 28, 1, 0, 0, 0, time.UTC)
+			return nil
+		}}
+	}
 	transaction.record(query, arguments)
 	queued := transaction.rows[query]
 	if len(queued) == 0 && query == scaledPolicyPublicationGrantedSQL {

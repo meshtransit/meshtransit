@@ -488,7 +488,7 @@ func privateIdentityManagementServices(
 		MaxAttempts: 3, RollbackTimeout: managementRollbackTimeout,
 	}, policypublication.Dependencies{
 		Transactions: policyStore, CommittedResults: policyStore,
-		MutationIDs: policypublication.PublicMutationIDGenerator{}, Clock: clock, Retry: policyRetry,
+		MutationIDs: policypublication.PublicMutationIDGenerator{}, Retry: policyRetry,
 	})
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition
@@ -540,7 +540,7 @@ func privateIdentityManagementServices(
 			RequestTransactions: policyApprovalStore, CommittedRequests: policyApprovalStore,
 			ApprovalTransactions: policyApprovalStore, CommittedApprovals: policyApprovalStore,
 			MutationIDs: policyapproval.PublicMutationIDGenerator{},
-			Clock:       policyapproval.SystemClock{}, Retry: policyRetry,
+			Retry:       policyRetry,
 		},
 	)
 	if err != nil {
@@ -548,7 +548,6 @@ func privateIdentityManagementServices(
 	}
 	policyApprovalCatalog, err := policyapproval.NewCatalogService(
 		policyApprovalStore,
-		policyapproval.SystemClock{},
 	)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition
