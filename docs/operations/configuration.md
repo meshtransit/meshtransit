@@ -129,7 +129,8 @@ they never fall back to the runtime credentials.
 
 Read only by `meshcore migrate operator status|apply`; they never fall back
 to the migrator's or the runtime's settings. The user is the database
-operator, normally a superuser, never a MeshTransit role
+operator, a superuser (or, on PostgreSQL 16 and later, a `CREATEROLE` role
+with the limits in the deployment guide), never a MeshTransit role
 ([deployment](deployment.md#migrations-and-operator-steps)).
 
 | Variable | Default | Allowed | Meaning |
@@ -141,7 +142,7 @@ operator, normally a superuser, never a MeshTransit role
 | `MESHTRANSIT_OPERATOR_POSTGRES_CA_FILE` | required | path | CA bundle |
 | `MESHTRANSIT_OPERATOR_CONNECT_TIMEOUT` | `5s` | 100ms–30s | |
 | `MESHTRANSIT_OPERATOR_LOCK_TIMEOUT` | `5s` | 100ms–30s, below the statement timeout | |
-| `MESHTRANSIT_OPERATOR_STATEMENT_TIMEOUT` | `30s` | 1s–10m | |
+| `MESHTRANSIT_OPERATOR_STATEMENT_TIMEOUT` | `30s` | 1s–10m | Applies to each statement of a step |
 
 ## Redis
 

@@ -124,12 +124,14 @@ what it read:
 
 `meshcore migrate operator apply`:
 
-- connects as the operator, normally a superuser, and is refused as the
-  migrator, the runtime or worker role, any role the steps manage, or a role
-  that is neither a superuser nor `CREATEROLE` (a `CREATEROLE` role passes
-  the check, but PostgreSQL lets it hand a function over only if it may act
-  as both the migrator and the owner role; otherwise the step fails and
-  nothing is applied);
+- connects as the operator and is refused as the migrator, the runtime or
+  worker role, any role the steps manage, a role that is neither a superuser
+  nor `CREATEROLE`, or a role that may act as a MeshTransit role (a
+  membership with `INHERIT` or `SET`);
+- statements run with `MESHTRANSIT_OPERATOR_STATEMENT_TIMEOUT` applied to
+  each statement of a step (not to the whole step or apply) and
+  `MESHTRANSIT_OPERATOR_LOCK_TIMEOUT` to each lock wait; a timeout rolls back
+  the whole apply;
 - takes the migration lock, so it never runs during `meshcore migrate up`,
   and refuses a schema whose migration state is not clean;
 - runs, in file order and in one transaction, every step that does not hold
@@ -154,6 +156,17 @@ which roles hold `EXECUTE` on it (a revoked role must not reach it through
 PUBLIC or a membership either); nothing else records that a step ran, so
 steps applied by hand count as well. `meshcore migrate verify` also reports
 any role membership a MeshTransit role takes part in, since none is allowed.
+
+**A superuser is the simplest operator.** On PostgreSQL 16 and later a
+`CREATEROLE` role also works for reading and for role steps: PostgreSQL gives
+it an `ADMIN`-only grant (no `INHERIT`, no `SET`) on each role it creates,
+which the command does not count as a membership. It needs `CONNECT` on the
+database, `USAGE` on schema `mesh_ops` and `SELECT` on
+`mesh_ops.schema_compatibility`. To hand a function over in an ownership
+step, PostgreSQL also requires it to act as the function's current owner
+(the migrator, with `INHERIT`) and as the new owner role (with `SET`); those
+are exactly the memberships the command refuses, so pending ownership steps
+need a superuser, and the step fails with nothing applied otherwise.
 
 Without the command, run the files with `psql -X -v ON_ERROR_STOP=1 -f` as a
 database superuser, in file order, at the same points (a `…_role.sql` file

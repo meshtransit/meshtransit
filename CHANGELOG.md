@@ -30,7 +30,9 @@ merge (2026-10-09) are kept below.
   Imported Resource, share decision, alias worker and map reader paths
   export the function version they selected in
   `meshtransit_postgres_function_version` and log a warning naming the
-  operator step while it is below the newest.
+  operator step while it is below the newest. The same background read exports
+  `meshtransit_postgres_role_memberships` and warns when a MeshTransit role
+  takes part in a membership.
 - Core schema 172 and Core: every time Core persists, or compares with
   persisted state, now comes from the PostgreSQL clock: share, Resource,
   policy approval and publication, Device registration, revocation and
