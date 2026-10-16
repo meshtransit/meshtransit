@@ -60,4 +60,6 @@ func assertPostgreSQLAccountSessionActivity(
 	if err != nil || !found || session.Version() != 2 {
 		t.Fatalf("renewal was not throttled: found=%t version=%d err=%v", found, session.Version(), err)
 	}
+	assertSessionExpiryOnDatabaseClock(ctx, t, admin, store, keyring, token,
+		"01890f00-0000-7000-8000-000000000814")
 }

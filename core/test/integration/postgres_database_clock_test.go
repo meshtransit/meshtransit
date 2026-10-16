@@ -4,10 +4,14 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
 )
 
 // databaseClockAggregates names the authority tables whose rows Core writes
@@ -216,5 +220,64 @@ WHERE invitation.public_id = $1::UUID`, invitationPublicID, rotatedVersion, life
 	if !onDatabaseClock {
 		t.Fatalf("invitation %s expires_at %s is not %s after its version %d database time %s",
 			invitationPublicID, expiresAt.UTC(), lifetime, rotatedVersion, writtenAt.UTC())
+	}
+}
+
+// integrationShiftedClock is a MeshCore host clock offset from real time.
+type integrationShiftedClock struct{ offset time.Duration }
+
+func (clock integrationShiftedClock) Now() time.Time { return time.Now().UTC().Add(clock.offset) }
+
+// assertSessionExpiryOnDatabaseClock checks that an Account Session expired
+// on the database clock is refused even by a Core host whose clock runs far
+// behind, so the host clock's IsActiveAt check would still accept it: the
+// resolver's SQL decides expiry on the transaction's database time. The
+// administrator moves every time of the session three hours back, bypassing
+// the evidence triggers only for this fault injection, and restores them.
+func assertSessionExpiryOnDatabaseClock(
+	ctx context.Context,
+	t *testing.T,
+	admin *pgx.Conn,
+	store *postgresadapter.AccountSessionStore,
+	keyring *accountsession.Keyring,
+	token accountsession.Token,
+	sessionPublicID string,
+) {
+	t.Helper()
+	shift := func(by time.Duration) {
+		t.Helper()
+		if _, err := admin.Exec(ctx, `SET session_replication_role = replica`); err != nil {
+			t.Fatalf("enable Account Session clock fault injection: %v", err)
+		}
+		_, err := admin.Exec(ctx, `UPDATE mesh.account_session SET
+    authentication_time = authentication_time + $2::INTERVAL, issued_at = issued_at + $2::INTERVAL,
+    last_used_at = last_used_at + $2::INTERVAL, idle_expires_at = idle_expires_at + $2::INTERVAL,
+    absolute_expires_at = absolute_expires_at + $2::INTERVAL, created_at = created_at + $2::INTERVAL,
+    updated_at = updated_at + $2::INTERVAL
+WHERE public_id = $1::UUID`, sessionPublicID, by)
+		if _, resetErr := admin.Exec(context.WithoutCancel(ctx), `SET session_replication_role = origin`); resetErr != nil {
+			t.Fatalf("disable Account Session clock fault injection: %v", resetErr)
+		}
+		if err != nil {
+			t.Fatalf("move Account Session times by %s: %v", by, err)
+		}
+	}
+	shift(-3 * time.Hour)
+	defer shift(3 * time.Hour)
+	// The resolver's SQL itself leaves the expired session out.
+	digests, err := keyring.Digests(token)
+	if err != nil || len(digests) == 0 {
+		t.Fatal("derive Account Session digest", err)
+	}
+	if _, found, err := store.Resolve(ctx, token.DeploymentID(), token.RecoveryEpoch(), digests[0]); err != nil || found {
+		t.Fatalf("resolver returned a session expired on the database clock: found=%t err=%v", found, err)
+	}
+	behind := integrationShiftedClock{offset: -6 * time.Hour}
+	service, err := accountsession.NewService(keyring, store, behind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Authenticate(ctx, token); !errors.Is(err, accountsession.ErrUnauthenticated) {
+		t.Fatalf("a host six hours behind authenticated a session expired on the database clock: %v", err)
 	}
 }

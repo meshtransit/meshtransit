@@ -76,6 +76,8 @@ func (service *Service) Authenticate(ctx context.Context, token Token) (Session,
 		if !found {
 			continue
 		}
+		// The resolver's SQL returns only a session live at the database
+		// clock's time; this host-clock check can only refuse more.
 		if !session.IsActiveAt(now) ||
 			session.DeploymentID() != token.DeploymentID() ||
 			session.DeploymentRecoveryEpoch() != token.RecoveryEpoch() {
