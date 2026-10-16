@@ -4,8 +4,11 @@ package integration
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -165,6 +168,8 @@ func TestPostgreSQLOperatorSteps(t *testing.T) {
 	if _, err := admin.Exec(ctx, "DROP ROLE mesh_operator_test_member"); err != nil {
 		t.Fatal(err)
 	}
+
+	assertCreateRoleOperator(ctx, t, admin, freshAdmin, freshMigration)
 
 	// The runtime role is never an operator.
 	runtimeOperator := freshAdmin
@@ -351,5 +356,97 @@ func assertNoPendingOperatorSteps(ctx context.Context, t *testing.T, migrationCo
 	verification, err := openIntegrationMigrationRunner(ctx, t, migrationConfig).Verify(ctx)
 	if err != nil || len(verification.Operator.Pending()) != 0 {
 		t.Fatalf("Verify() = pending %+v, %v", verification.Operator.Pending(), err)
+	}
+}
+
+// assertCreateRoleOperator: on PostgreSQL 16 and later a CREATEROLE role that
+// creates a role holds it WITH ADMIN, without INHERIT or SET. That grant is
+// neither counted as a membership nor refused by the operator preflight;
+// one that lets the operator act as the role is.
+func assertCreateRoleOperator(ctx context.Context, t *testing.T, admin *pgx.Conn, operatorConfig,
+	migrationConfig config.MigrationConfig) {
+	t.Helper()
+	secret := make([]byte, 24)
+	if _, err := rand.Read(secret); err != nil {
+		t.Fatal(err)
+	}
+	password := hex.EncodeToString(secret)
+	passwordFile := filepath.Join(t.TempDir(), "operator-password")
+	if err := os.WriteFile(passwordFile, []byte(password), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const operatorRole = "meshtransit_test_createrole_operator"
+	if _, err := admin.Exec(ctx, "CREATE ROLE "+operatorRole+" LOGIN CREATEROLE PASSWORD '"+password+"'"); err != nil {
+		t.Fatal(err)
+	}
+	database := pgx.Identifier{operatorConfig.PostgreSQL.Database}.Sanitize()
+	inDatabase := openFreshAdmin(ctx, t, admin, operatorConfig.PostgreSQL.Database)
+	dropOperator := func(ctx context.Context) error {
+		if _, err := inDatabase.Exec(ctx, "DROP OWNED BY "+operatorRole); err != nil {
+			return err
+		}
+		if _, err := admin.Exec(ctx, "REVOKE CONNECT ON DATABASE "+database+" FROM "+operatorRole); err != nil {
+			return err
+		}
+		_, err := admin.Exec(ctx, "DROP ROLE "+operatorRole)
+		return err
+	}
+	t.Cleanup(func() { _ = dropOperator(context.WithoutCancel(ctx)) })
+	// What a non-superuser operator needs besides CREATEROLE: to connect
+	// and to read the schema state.
+	if _, err := admin.Exec(ctx, "GRANT CONNECT ON DATABASE "+database+" TO "+operatorRole); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inDatabase.Exec(ctx, "GRANT USAGE ON SCHEMA mesh_ops TO "+operatorRole+
+		"; GRANT SELECT ON mesh_ops.schema_compatibility TO "+operatorRole); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, "GRANT mesh_direct_map_reader TO "+operatorRole+
+		" WITH ADMIN OPTION, INHERIT FALSE, SET FALSE"); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := config.LoadOperatorMigration(func(key string) (string, bool) {
+		values := map[string]string{
+			"MESHTRANSIT_OPERATOR_POSTGRES_ADDRESS":       operatorConfig.PostgreSQL.Address,
+			"MESHTRANSIT_OPERATOR_POSTGRES_DATABASE":      operatorConfig.PostgreSQL.Database,
+			"MESHTRANSIT_OPERATOR_POSTGRES_USER":          operatorRole,
+			"MESHTRANSIT_OPERATOR_POSTGRES_PASSWORD_FILE": passwordFile,
+			"MESHTRANSIT_OPERATOR_POSTGRES_CA_FILE":       os.Getenv("MESHTRANSIT_MIGRATION_POSTGRES_CA_FILE"),
+		}
+		value, ok := values[key]
+		return value, ok
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	asOperator := operatorConfig
+	asOperator.PostgreSQL = loaded.PostgreSQL
+	createRoleOperator := openIntegrationOperatorRunner(ctx, t, asOperator)
+	report, err := createRoleOperator.Status(ctx)
+	if err != nil || !report.Complete() {
+		t.Fatalf("CREATEROLE operator Status() = memberships %v pending %v, %v", report.Memberships, report.Pending(), err)
+	}
+	// With every step applied, its apply runs nothing and succeeds.
+	if result, err := createRoleOperator.Apply(ctx, postgresadapter.OperatorApplyOptions{AfterRollout: true}); err != nil ||
+		len(result.Applied) != 0 {
+		t.Fatalf("CREATEROLE operator Apply() = %+v, %v", result.Applied, err)
+	}
+	verification, err := openIntegrationMigrationRunner(ctx, t, migrationConfig).Verify(ctx)
+	if err != nil || !verification.Operator.Complete() {
+		t.Fatalf("Verify() with an admin-only grant = %+v, %v", verification.Operator.Memberships, err)
+	}
+	if _, err := admin.Exec(ctx, "GRANT mesh_direct_map_reader TO "+operatorRole+" WITH INHERIT TRUE"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openIntegrationOperatorRunner(ctx, t, asOperator).Status(ctx); !errors.Is(err, postgresadapter.ErrOperatorPreflight) {
+		t.Fatalf("Status() as a member of an owner role = %v", err)
+	}
+	verification, err = openIntegrationMigrationRunner(ctx, t, migrationConfig).Verify(ctx)
+	if err != nil || !slices.Contains(verification.Operator.Memberships,
+		operatorRole+" is a member of mesh_direct_map_reader") {
+		t.Fatalf("Verify() with an inheriting grant = %+v, %v", verification.Operator.Memberships, err)
+	}
+	if err := dropOperator(ctx); err != nil {
+		t.Fatal(err)
 	}
 }

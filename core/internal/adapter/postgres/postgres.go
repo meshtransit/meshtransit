@@ -134,7 +134,7 @@ func Open(ctx context.Context, options Options) (*Pool, error) {
 		return snapshotPostgresPoolStats(pool.Stat())
 	})
 	metrics.logger = options.Logger
-	stepMonitor := newOperatorStepMonitor(func(ctx context.Context) ([]string, error) {
+	stepMonitor := newOperatorStepMonitor(func(ctx context.Context) (operatorStepSnapshot, error) {
 		return checkOperatorSteps(ctx, func(ctx context.Context, query string, arguments ...any) migrationRow {
 			return pool.QueryRow(ctx, query, arguments...)
 		})

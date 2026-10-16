@@ -55,7 +55,9 @@ func TestOperatorStepMonitorReportsPendingStepsAndFailures(t *testing.T) {
 	metrics.logger = slog.New(slog.NewJSONHandler(&logs, nil))
 	pending := []string{"000170_device_alias_consumer_readmission_ownership"}
 	var probeErr error
-	monitor := newOperatorStepMonitor(func(context.Context) ([]string, error) { return pending, probeErr }, metrics, 0)
+	monitor := newOperatorStepMonitor(func(context.Context) (operatorStepSnapshot, error) {
+		return operatorStepSnapshot{Pending: pending}, probeErr
+	}, metrics, 0)
 	pool := &Pool{role: PoolRoleRuntime, metrics: metrics}
 	collector, err := NewMetricsCollector(pool)
 	if err != nil {
@@ -96,11 +98,11 @@ func TestOperatorStepMonitorRunsOffTheCheckPathAndStopsOnShutdown(t *testing.T) 
 	t.Parallel()
 	started := make(chan struct{}, 1)
 	canceled := make(chan struct{})
-	probe := func(ctx context.Context) ([]string, error) {
+	probe := func(ctx context.Context) (operatorStepSnapshot, error) {
 		started <- struct{}{}
 		<-ctx.Done()
 		close(canceled)
-		return nil, ctx.Err()
+		return operatorStepSnapshot{}, ctx.Err()
 	}
 	metrics := newPostgresPoolMetrics(PoolRoleRuntime, func() postgresPoolStats { return postgresPoolStats{} })
 	monitor := newOperatorStepMonitor(probe, metrics, time.Minute)
@@ -165,5 +167,42 @@ func TestOperatorStepMonitorReadsAtMostOncePerInterval(t *testing.T) {
 	first := every.due(start)
 	if second := every.due(start); !first || !second {
 		t.Fatal("a zero interval must read on every wake")
+	}
+}
+
+// The background read also reports role memberships of MeshTransit roles,
+// which must not exist: a gauge and a warning when they change.
+func TestOperatorStepMonitorReportsRoleMemberships(t *testing.T) {
+	t.Parallel()
+	var logs bytes.Buffer
+	metrics := newPostgresPoolMetrics(PoolRoleWorker, func() postgresPoolStats { return postgresPoolStats{} })
+	metrics.logger = slog.New(slog.NewJSONHandler(&logs, nil))
+	memberships := []string{"mesh_operator is a member of mesh_share_writer"}
+	monitor := newOperatorStepMonitor(func(context.Context) (operatorStepSnapshot, error) {
+		return operatorStepSnapshot{Memberships: memberships}, nil
+	}, metrics, 0)
+	collector, err := NewMetricsCollector(&Pool{role: PoolRoleWorker, metrics: metrics})
+	if err != nil {
+		t.Fatal(err)
+	}
+	monitor.probe(t.Context())
+	if body := gatherPostgresMetrics(t, collector); !strings.Contains(body,
+		`meshtransit_postgres_role_memberships{pool_role="worker"} 1`) {
+		t.Fatalf("metrics:\n%s", body)
+	}
+	if !strings.Contains(logs.String(), `"level":"WARN"`) ||
+		!strings.Contains(logs.String(), `"role_memberships":["mesh_operator is a member of mesh_share_writer"]`) {
+		t.Fatalf("logs = %s", logs.String())
+	}
+	logs.Reset()
+	monitor.probe(t.Context())
+	if logs.Len() != 0 {
+		t.Fatalf("unchanged memberships logged again: %s", logs.String())
+	}
+	memberships = nil
+	monitor.probe(t.Context())
+	if body := gatherPostgresMetrics(t, collector); !strings.Contains(body,
+		`meshtransit_postgres_role_memberships{pool_role="worker"} 0`) {
+		t.Fatalf("metrics:\n%s", body)
 	}
 }

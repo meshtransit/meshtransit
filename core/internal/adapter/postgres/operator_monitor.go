@@ -10,7 +10,7 @@ import (
 // catalog query never runs inside a readiness check. A check only wakes it;
 // it reads at most once per interval and publishes through the pool metrics.
 type operatorStepMonitor struct {
-	read     func(context.Context) ([]string, error)
+	read     func(context.Context) (operatorStepSnapshot, error)
 	metrics  *postgresPoolMetrics
 	interval time.Duration
 	wakeup   chan struct{}
@@ -24,7 +24,7 @@ type operatorStepMonitor struct {
 }
 
 func newOperatorStepMonitor(
-	read func(context.Context) ([]string, error),
+	read func(context.Context) (operatorStepSnapshot, error),
 	metrics *postgresPoolMetrics,
 	interval time.Duration,
 ) *operatorStepMonitor {
@@ -82,12 +82,12 @@ func (monitor *operatorStepMonitor) probe(ctx context.Context) {
 	readContext, cancel := context.WithTimeout(ctx, operatorStepCheckTimeout)
 	defer cancel()
 	startedAt := time.Now()
-	pending, err := monitor.read(readContext)
+	snapshot, err := monitor.read(readContext)
 	if ctx.Err() != nil {
 		return
 	}
 	monitor.metrics.observeOperation(postgresOperationOperatorStepCheck, time.Since(startedAt), err)
-	monitor.metrics.observeOperatorSteps(ctx, pending, err)
+	monitor.metrics.observeOperatorSteps(ctx, snapshot, err)
 }
 
 // stop cancels a read in flight and waits for the goroutine within ctx, so

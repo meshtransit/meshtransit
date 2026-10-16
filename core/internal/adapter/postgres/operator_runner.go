@@ -76,13 +76,17 @@ const operatorSessionSQL = `SELECT
     pg_catalog.set_config('idle_in_transaction_session_timeout', $1, true)`
 
 // operatorPreflightSQL also reports whether the operator is, directly or
-// through other roles, a member of a MeshTransit role ($1).
+// through other roles, a member of a MeshTransit role ($1). Only grants that
+// let a role act as another count (INHERIT or SET, PostgreSQL 16): the
+// ADMIN-only grant a CREATEROLE role keeps on every role it creates does not.
 const operatorPreflightSQL = `WITH RECURSIVE granted(role_oid) AS (
     SELECT membership.roleid FROM pg_catalog.pg_auth_members AS membership
     WHERE membership.member = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = CURRENT_USER)
+      AND (membership.inherit_option OR membership.set_option)
     UNION
     SELECT membership.roleid FROM pg_catalog.pg_auth_members AS membership
     JOIN granted ON membership.member = granted.role_oid
+    WHERE membership.inherit_option OR membership.set_option
 )
 SELECT
     pg_catalog.current_setting('server_version_num')::integer,

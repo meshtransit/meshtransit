@@ -258,6 +258,9 @@ type postgresPoolMetrics struct {
 	// granted (function_versions.go); logger reports their changes.
 	functionVersion      *prometheus.GaugeVec
 	operatorStepsPending *prometheus.GaugeVec
+	roleMemberships      *prometheus.GaugeVec
+	membershipsKey       string
+	membershipsSeen      bool
 	logger               *slog.Logger
 	stateMu              sync.Mutex
 	functionVersions     map[functionPath]int
@@ -303,6 +306,7 @@ func newPostgresPoolMetrics(
 		poolStats:            poolStats,
 		functionVersion:      newFunctionVersionGauge(),
 		operatorStepsPending: newOperatorStepsPendingGauge(),
+		roleMemberships:      newRoleMembershipsGauge(),
 		functionVersions:     map[functionPath]int{},
 		// Dashboard: meshtransit_postgres_pool_connections
 		// Alert: meshtransit_postgres_pool_connections{state="acquired"} / meshtransit_postgres_pool_connections_max > 0.9
@@ -406,6 +410,7 @@ func (metrics *postgresPoolMetrics) describe(descriptions chan<- *prometheus.Des
 	metrics.operationDuration.Describe(descriptions)
 	metrics.functionVersion.Describe(descriptions)
 	metrics.operatorStepsPending.Describe(descriptions)
+	metrics.roleMemberships.Describe(descriptions)
 	descriptions <- metrics.poolConnectionsDesc
 	descriptions <- metrics.poolLimitDesc
 	descriptions <- metrics.poolAcquiresDesc
@@ -421,6 +426,7 @@ func (metrics *postgresPoolMetrics) collect(output chan<- prometheus.Metric) {
 	metrics.operationDuration.Collect(output)
 	metrics.functionVersion.Collect(output)
 	metrics.operatorStepsPending.Collect(output)
+	metrics.roleMemberships.Collect(output)
 
 	stats := metrics.poolStats()
 	role := string(metrics.role)

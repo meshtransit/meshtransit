@@ -101,58 +101,93 @@ func (metrics *postgresPoolMetrics) observeFunctionVersion(ctx context.Context, 
 	metrics.logger.WarnContext(ctx, "postgres function version below newest; operator step pending", attributes...)
 }
 
-// observeOperatorSteps records the pending operator steps a readiness check
-// found. It logs when the pending set changes and once per failing streak.
-func (metrics *postgresPoolMetrics) observeOperatorSteps(ctx context.Context, pending []string, err error) {
-	if metrics == nil || metrics.operatorStepsPending == nil {
+// operatorStepSnapshot is one background read: the pending operator steps
+// and the role memberships MeshTransit roles take part in.
+type operatorStepSnapshot struct {
+	Pending     []string
+	Memberships []string
+}
+
+// observeOperatorSteps records one background read. It logs when the
+// pending steps or the memberships change, and once per failing streak.
+func (metrics *postgresPoolMetrics) observeOperatorSteps(ctx context.Context, snapshot operatorStepSnapshot, err error) {
+	if metrics == nil || metrics.operatorStepsPending == nil || metrics.roleMemberships == nil {
 		return
 	}
+	role := string(metrics.role)
 	metrics.stateMu.Lock()
 	wasFailing := metrics.operatorCheckFailing
 	metrics.operatorCheckFailing = err != nil
-	key := strings.Join(pending, ",")
-	changed := err == nil && (!metrics.operatorStepsKnown || metrics.operatorStepsKey != key)
+	pendingKey := strings.Join(snapshot.Pending, ",")
+	membershipKey := strings.Join(snapshot.Memberships, ",")
+	pendingChanged := err == nil && (!metrics.operatorStepsKnown || metrics.operatorStepsKey != pendingKey)
+	membershipsChanged := err == nil && (!metrics.operatorStepsKnown || metrics.membershipsKey != membershipKey)
 	if err == nil {
 		metrics.operatorStepsKnown = true
-		metrics.operatorStepsKey = key
+		metrics.operatorStepsKey = pendingKey
+		metrics.membershipsKey = membershipKey
 	}
 	metrics.stateMu.Unlock()
 	if err != nil {
 		// -1: unknown, so a stale count never reads as "nothing pending".
-		metrics.operatorStepsPending.WithLabelValues(string(metrics.role)).Set(-1)
+		metrics.operatorStepsPending.WithLabelValues(role).Set(-1)
+		metrics.roleMemberships.WithLabelValues(role).Set(-1)
 		if !wasFailing && metrics.logger != nil {
 			metrics.logger.WarnContext(ctx, "postgres operator step check failed",
-				"pool_role", string(metrics.role), "error_code", "operator_step_check_failure", "error", err)
+				"pool_role", role, "error_code", "operator_step_check_failure", "error", err)
 		}
 		return
 	}
-	metrics.operatorStepsPending.WithLabelValues(string(metrics.role)).Set(float64(len(pending)))
-	if !changed || metrics.logger == nil {
+	metrics.operatorStepsPending.WithLabelValues(role).Set(float64(len(snapshot.Pending)))
+	metrics.roleMemberships.WithLabelValues(role).Set(float64(len(snapshot.Memberships)))
+	if metrics.logger == nil {
 		return
 	}
-	if len(pending) == 0 {
-		metrics.logger.InfoContext(ctx, "postgres operator steps applied", "pool_role", string(metrics.role))
-		return
+	switch {
+	case pendingChanged && len(snapshot.Pending) == 0:
+		metrics.logger.InfoContext(ctx, "postgres operator steps applied", "pool_role", role)
+	case pendingChanged:
+		metrics.logger.WarnContext(ctx, "postgres operator steps pending", "pool_role", role,
+			"pending_count", len(snapshot.Pending), "pending_steps", slices.Clone(snapshot.Pending))
 	}
-	metrics.logger.WarnContext(ctx, "postgres operator steps pending",
-		"pool_role", string(metrics.role), "pending_count", len(pending), "pending_steps", slices.Clone(pending))
+	switch {
+	case membershipsChanged && len(snapshot.Memberships) != 0:
+		metrics.logger.WarnContext(ctx, "postgres role memberships of MeshTransit roles", "pool_role", role,
+			"error_code", "role_membership_found", "role_memberships", slices.Clone(snapshot.Memberships))
+	case membershipsChanged && membershipKey == "" && metrics.membershipsSeen:
+		metrics.logger.InfoContext(ctx, "postgres role memberships cleared", "pool_role", role)
+	}
+	if len(snapshot.Memberships) != 0 {
+		metrics.stateMu.Lock()
+		metrics.membershipsSeen = true
+		metrics.stateMu.Unlock()
+	}
+}
+
+func newRoleMembershipsGauge() *prometheus.GaugeVec {
+	// Dashboard: meshtransit_postgres_role_memberships
+	// Alert: max(meshtransit_postgres_role_memberships) > 0
+	return prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "meshtransit_postgres_role_memberships",
+		Help: "Role memberships MeshTransit roles take part in (there must be none), by fixed pool role.",
+	}, []string{"pool_role"})
 }
 
 // checkOperatorSteps names the pending steps of a schema the binary checked
 // as current: every catalog step's migration is applied.
-func checkOperatorSteps(ctx context.Context, queryRow operatorQueryRow) ([]string, error) {
+func checkOperatorSteps(ctx context.Context, queryRow operatorQueryRow) (operatorStepSnapshot, error) {
 	catalog := migrations.Catalog()
 	if len(catalog) == 0 {
-		return nil, ErrOperatorCatalog
+		return operatorStepSnapshot{}, ErrOperatorCatalog
 	}
 	report, err := readOperatorReport(ctx, queryRow, catalog[len(catalog)-1].Version)
 	if err != nil {
-		return nil, err
+		return operatorStepSnapshot{}, err
 	}
 	pending := report.Pending()
 	names := make([]string, len(pending))
 	for index, step := range pending {
 		names[index] = step.Name
 	}
-	return names, nil
+	return operatorStepSnapshot{Pending: names, Memberships: slices.Clone(report.Memberships)}, nil
 }

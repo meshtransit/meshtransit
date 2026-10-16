@@ -256,14 +256,18 @@ FROM ROWS FROM (pg_catalog.unnest($1::TEXT[]), pg_catalog.unnest($2::TEXT[]), pg
     WITH ORDINALITY AS requirement(kind, routine_signature, role_name, ordinal)`
 
 // operatorMembershipsSQL lists every membership a MeshTransit role ($1)
-// takes part in. MeshTransit roles are never members of another role.
+// takes part in. MeshTransit roles are never members of another role. A
+// grant that carries neither INHERIT nor SET (PostgreSQL 16), such as the
+// ADMIN-only grant a CREATEROLE role keeps on each role it creates, gives no
+// privilege and is not listed.
 const operatorMembershipsSQL = `SELECT COALESCE(pg_catalog.array_agg(
     member_role.rolname || ' is a member of ' || granted_role.rolname
     ORDER BY member_role.rolname, granted_role.rolname), ARRAY[]::TEXT[])
 FROM pg_catalog.pg_auth_members AS membership
 JOIN pg_catalog.pg_roles AS member_role ON member_role.oid = membership.member
 JOIN pg_catalog.pg_roles AS granted_role ON granted_role.oid = membership.roleid
-WHERE member_role.rolname = ANY($1::TEXT[]) OR granted_role.rolname = ANY($1::TEXT[])`
+WHERE (membership.inherit_option OR membership.set_option)
+  AND (member_role.rolname = ANY($1::TEXT[]) OR granted_role.rolname = ANY($1::TEXT[]))`
 
 const operatorSchemaPresentSQL = `SELECT pg_catalog.to_regclass('mesh_ops.schema_compatibility') IS NOT NULL`
 
