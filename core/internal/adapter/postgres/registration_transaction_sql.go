@@ -11,8 +11,10 @@ FROM mesh_ops.set_network_scope($1::UUID, $2::UUID)`
 const lockRegistrationNetworkRevisionSQL = `SELECT *
 FROM mesh_ops.lock_network_revision()`
 
+// lockRegistrationEnrollmentAuthoritySQL also returns the Device lifetime
+// the key chose (schema 175).
 const lockRegistrationEnrollmentAuthoritySQL = `SELECT *
-FROM mesh_ops.lock_registration_credential($1::UUID)`
+FROM mesh_ops.lock_registration_credential_v2($1::UUID)`
 
 const lockRegistrationProfileSQL = `SELECT
     profile.id,

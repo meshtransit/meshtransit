@@ -90,6 +90,9 @@ type CredentialParams struct {
 	IssuedRecoveryEpoch int64
 	ValidFrom           time.Time
 	ExpiresAt           time.Time
+	// DeviceLifetime is how long the Device it enrolls lives; the zero
+	// value defers to the profile.
+	DeviceLifetime DeviceLifetime
 }
 
 // Credential is immutable enrollment authority. Consume returns a new value;
@@ -104,6 +107,7 @@ type Credential struct {
 	issuedRecoveryEpoch int64
 	validFrom           time.Time
 	expiresAt           time.Time
+	deviceLifetime      DeviceLifetime
 }
 
 // NewCredential validates durable credential state.
@@ -111,7 +115,8 @@ func NewCredential(params CredentialParams) (Credential, error) {
 	if !params.ID.IsValid() || !params.ProfileID.IsValid() || !params.IssuerID.IsValid() ||
 		(params.State != CredentialStateActive && params.State != CredentialStateRevoked) ||
 		!params.UseLimit.isValid() || params.UsedCount < 0 || params.IssuedRecoveryEpoch <= 0 ||
-		params.ValidFrom.IsZero() || !params.ExpiresAt.After(params.ValidFrom) {
+		params.ValidFrom.IsZero() || !params.ExpiresAt.After(params.ValidFrom) ||
+		!params.DeviceLifetime.isValid() {
 		return Credential{}, ErrInvalidCredential
 	}
 	if maximum, bounded := params.UseLimit.Maximum(); bounded && params.UsedCount > maximum {
@@ -127,8 +132,12 @@ func NewCredential(params CredentialParams) (Credential, error) {
 		issuedRecoveryEpoch: params.IssuedRecoveryEpoch,
 		validFrom:           params.ValidFrom.UTC(),
 		expiresAt:           params.ExpiresAt.UTC(),
+		deviceLifetime:      params.DeviceLifetime,
 	}, nil
 }
+
+// DeviceLifetime returns how long the Device this credential enrolls lives.
+func (credential Credential) DeviceLifetime() DeviceLifetime { return credential.deviceLifetime }
 
 // ID returns the credential public ID.
 func (credential Credential) ID() CredentialID { return credential.id }
@@ -165,7 +174,7 @@ func (credential Credential) IsValid() bool {
 		(credential.state != CredentialStateActive && credential.state != CredentialStateRevoked) ||
 		!credential.useLimit.isValid() || credential.usedCount < 0 ||
 		credential.issuedRecoveryEpoch <= 0 || credential.validFrom.IsZero() ||
-		!credential.expiresAt.After(credential.validFrom) {
+		!credential.expiresAt.After(credential.validFrom) || !credential.deviceLifetime.isValid() {
 		return false
 	}
 	maximum, bounded := credential.useLimit.Maximum()

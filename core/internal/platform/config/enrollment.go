@@ -34,39 +34,58 @@ type CredentialDigestKeyConfig struct {
 }
 
 func loadEnrollmentConfig(lookup LookupFunc, shutdownTimeout time.Duration) (EnrollmentConfig, error) {
-	active, err := loadCredentialDigestKeyConfig(
-		lookup,
-		envEnrollmentDigestActiveKeyID,
-		envEnrollmentDigestActiveKeyFile,
-	)
+	digest, err := loadCredentialDigestConfig(lookup)
 	if err != nil {
 		return EnrollmentConfig{}, err
-	}
-
-	previous, err := loadPreviousCredentialDigestKeyConfig(lookup)
-	if err != nil {
-		return EnrollmentConfig{}, err
-	}
-	if previous != nil {
-		if previous.ID == active.ID {
-			return EnrollmentConfig{}, settingError(envEnrollmentDigestPreviousKeyID)
-		}
-		if previous.MaterialFile.path == active.MaterialFile.path {
-			return EnrollmentConfig{}, settingError(envEnrollmentDigestPreviousKeyFile)
-		}
 	}
 	registration, err := loadRegistrationConfig(lookup, shutdownTimeout)
 	if err != nil {
 		return EnrollmentConfig{}, err
 	}
 
-	return EnrollmentConfig{
-		CredentialDigest: CredentialDigestConfig{
-			Active:   active,
-			Previous: previous,
-		},
-		Registration: registration,
-	}, nil
+	return EnrollmentConfig{CredentialDigest: digest, Registration: registration}, nil
+}
+
+// loadCredentialDigestConfig reads the enrollment credential digest keys:
+// the active one and an optional previous one.
+func loadCredentialDigestConfig(lookup LookupFunc) (CredentialDigestConfig, error) {
+	active, err := loadCredentialDigestKeyConfig(
+		lookup,
+		envEnrollmentDigestActiveKeyID,
+		envEnrollmentDigestActiveKeyFile,
+	)
+	if err != nil {
+		return CredentialDigestConfig{}, err
+	}
+	previous, err := loadPreviousCredentialDigestKeyConfig(lookup)
+	if err != nil {
+		return CredentialDigestConfig{}, err
+	}
+	if previous != nil {
+		if previous.ID == active.ID {
+			return CredentialDigestConfig{}, settingError(envEnrollmentDigestPreviousKeyID)
+		}
+		if previous.MaterialFile.path == active.MaterialFile.path {
+			return CredentialDigestConfig{}, settingError(envEnrollmentDigestPreviousKeyFile)
+		}
+	}
+	return CredentialDigestConfig{Active: active, Previous: previous}, nil
+}
+
+// loadEnrollmentKeyDigestConfig reads the digest keys an api role uses to
+// issue enrollment keys, when the deployment gives it them; nil otherwise,
+// and key issue then reports itself unavailable.
+func loadEnrollmentKeyDigestConfig(lookup LookupFunc) (*CredentialDigestConfig, error) {
+	_, hasID := lookup(envEnrollmentDigestActiveKeyID)
+	_, hasFile := lookup(envEnrollmentDigestActiveKeyFile)
+	if !hasID && !hasFile {
+		return nil, nil
+	}
+	digest, err := loadCredentialDigestConfig(lookup)
+	if err != nil {
+		return nil, err
+	}
+	return &digest, nil
 }
 
 func loadPreviousCredentialDigestKeyConfig(lookup LookupFunc) (*CredentialDigestKeyConfig, error) {

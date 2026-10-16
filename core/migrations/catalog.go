@@ -541,6 +541,7 @@ func Catalog() []Migration {
 		newMigration(172, "Sharing updated_at order", sharingUpdatedAtOrderSQL),
 		newMigration(173, "Sharing updated_at order log", sharingUpdatedAtOrderLogSQL),
 		newMigration(174, "Policy release rule fingerprints", policyReleaseRuleFingerprintsSQL),
+		newMigration(175, "Enrollment keys", enrollmentKeysSQL),
 	}
 }
 
@@ -842,3 +843,6 @@ var sharingUpdatedAtOrderLogSQL string
 
 //go:embed 000174_policy_release_rule_fingerprints.up.sql
 var policyReleaseRuleFingerprintsSQL string
+
+//go:embed 000175_enrollment_keys.up.sql
+var enrollmentKeysSQL string

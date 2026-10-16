@@ -68,9 +68,10 @@ relay sessions.
 directly. Nodes report their endpoints to Core, which passes them to the
 node's peers.
 
-**Enrollment key.** A secret that lets a new Device register without a
-browser sign-in. It belongs to an enrollment profile, which sets what such
-Devices become (their lifetime, persistent or ephemeral).
+**Enrollment key.** A secret that lets one new Device register without a
+browser sign-in, for servers and automation. Its creator chooses how long it
+can be used and how long the Device it enrolls lives (up to 180 days, or
+never).
 
 **Guardrail.** A Workspace-wide rule set by the owner that blocks risky
 changes; it can only narrow what policy allows.

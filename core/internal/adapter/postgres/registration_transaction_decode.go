@@ -27,6 +27,27 @@ type registrationCredentialRecord struct {
 	validFrom           time.Time
 	expiresAt           time.Time
 	version             int64
+	// deviceLifetimeSeconds and deviceNeverExpires are the Device lifetime
+	// the key chose; neither means the profile's.
+	deviceLifetimeSeconds sql.NullInt64
+	deviceNeverExpires    bool
+}
+
+func (record registrationCredentialRecord) deviceLifetime() (enrollment.DeviceLifetime, error) {
+	switch {
+	case record.deviceNeverExpires && record.deviceLifetimeSeconds.Valid:
+		return enrollment.DeviceLifetime{}, ErrRegistrationEvidence
+	case record.deviceNeverExpires:
+		return enrollment.NeverExpiringDeviceLifetime(), nil
+	case record.deviceLifetimeSeconds.Valid:
+		lifetime, err := enrollment.NewDeviceLifetime(time.Duration(record.deviceLifetimeSeconds.Int64) * time.Second)
+		if err != nil {
+			return enrollment.DeviceLifetime{}, ErrRegistrationEvidence
+		}
+		return lifetime, nil
+	default:
+		return enrollment.DeviceLifetime{}, nil
+	}
 }
 
 func (record registrationCredentialRecord) domainValue(
@@ -49,6 +70,10 @@ func (record registrationCredentialRecord) domainValue(
 	if err != nil {
 		return enrollment.Credential{}, err
 	}
+	deviceLifetime, err := record.deviceLifetime()
+	if err != nil {
+		return enrollment.Credential{}, err
+	}
 	credential, err := enrollment.NewCredential(enrollment.CredentialParams{
 		ID:                  credentialID,
 		ProfileID:           profileID,
@@ -59,6 +84,7 @@ func (record registrationCredentialRecord) domainValue(
 		IssuedRecoveryEpoch: record.issuedRecoveryEpoch,
 		ValidFrom:           record.validFrom,
 		ExpiresAt:           record.expiresAt,
+		DeviceLifetime:      deviceLifetime,
 	})
 	if err != nil {
 		return enrollment.Credential{}, ErrRegistrationEvidence

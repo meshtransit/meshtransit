@@ -235,7 +235,7 @@ func isBrowserManagementOperation(request *http.Request) bool {
 		isNetworkAddressUsageRead(request) ||
 		isAuditEventListRead(request) || isAuditEventExportRead(request) || isGuardrailOperation(request) || isInterchangeOperation(request) ||
 		isDeviceGroupOperation(request) || isIdentityCatalogOperation(request) || isDeviceLifecycleOperation(request) ||
-		isMemberLifecycleOperation(request) || isNetworkMemberOperation(request) ||
+		isMemberLifecycleOperation(request) || isNetworkMemberOperation(request) || isEnrollmentKeyOperation(request) ||
 		isInvitationOperation(request) {
 		return true
 	}

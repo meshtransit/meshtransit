@@ -10,6 +10,589 @@
     }
   ],
   "paths": {
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/enrollment-keys": {
+      "get": {
+        "operationId": "listEnrollmentKeys",
+        "summary": "List a Network's enrollment keys",
+        "description": "Requires enrollment_credential.issue or enrollment_credential.revoke. The Network's enrollment keys, at most 200: every usable key first, then the newest used, expired or revoked ones; never with their secret.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The keys",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "network_id",
+                        "keys"
+                      ],
+                      "properties": {
+                        "network_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "keys": {
+                          "type": "array",
+                          "maxItems": 200,
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "key_id",
+                              "description",
+                              "issued_by_principal_id",
+                              "created_at",
+                              "expires_at",
+                              "revoked_at",
+                              "state",
+                              "device_lifetime",
+                              "device"
+                            ],
+                            "properties": {
+                              "key_id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "description": {
+                                "type": "string",
+                                "maxLength": 128
+                              },
+                              "issued_by_principal_id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "description": "The member who created the key; the Device it enrolls is theirs"
+                              },
+                              "created_at": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "expires_at": {
+                                "type": "string",
+                                "format": "date-time",
+                                "description": "When the key stops being usable to enroll a Device"
+                              },
+                              "revoked_at": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ],
+                                "format": "date-time"
+                              },
+                              "state": {
+                                "type": "string",
+                                "enum": [
+                                  "active",
+                                  "used",
+                                  "expired",
+                                  "revoked"
+                                ]
+                              },
+                              "device_lifetime": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "never_expires",
+                                  "seconds"
+                                ],
+                                "properties": {
+                                  "never_expires": {
+                                    "type": "boolean"
+                                  },
+                                  "seconds": {
+                                    "type": [
+                                      "integer",
+                                      "null"
+                                    ],
+                                    "minimum": 3600,
+                                    "maximum": 15552000
+                                  }
+                                }
+                              },
+                              "device": {
+                                "type": [
+                                  "object",
+                                  "null"
+                                ],
+                                "description": "The Device the key enrolled",
+                                "additionalProperties": false,
+                                "required": [
+                                  "device_id",
+                                  "name"
+                                ],
+                                "properties": {
+                                  "device_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "name": {
+                                    "type": "string"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/enrollment-keys/actions/create": {
+      "post": {
+        "operationId": "createEnrollmentKey",
+        "summary": "Create an enrollment key",
+        "description": "Requires enrollment_credential.issue (the owner, admin or it_admin). Creates a key that enrolls exactly one Device into the Network. The key is usable for key_lifetime_seconds (24 hours by default); the Device it enrolls lives device_lifetime_seconds from registration, or never expires. The Device belongs to the caller. A Network has at most 100 usable keys. Recorded as enrollment_key.created. Creation is not idempotent: when the outcome is uncertain, list the keys and revoke one you cannot use rather than retrying blindly.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "description": {
+                    "type": "string",
+                    "maxLength": 128
+                  },
+                  "key_lifetime_seconds": {
+                    "type": "integer",
+                    "minimum": 300,
+                    "maximum": 2592000,
+                    "default": 86400
+                  },
+                  "device_never_expires": {
+                    "type": "boolean"
+                  },
+                  "device_lifetime_seconds": {
+                    "type": "integer",
+                    "minimum": 3600,
+                    "maximum": 15552000
+                  }
+                },
+                "description": "Set device_never_expires to true, or device_lifetime_seconds, not both."
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The key and its secret",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "key",
+                        "secret"
+                      ],
+                      "properties": {
+                        "key": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "key_id",
+                            "description",
+                            "issued_by_principal_id",
+                            "created_at",
+                            "expires_at",
+                            "revoked_at",
+                            "state",
+                            "device_lifetime",
+                            "device"
+                          ],
+                          "properties": {
+                            "key_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "description": {
+                              "type": "string",
+                              "maxLength": 128
+                            },
+                            "issued_by_principal_id": {
+                              "type": "string",
+                              "format": "uuid",
+                              "description": "The member who created the key; the Device it enrolls is theirs"
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "expires_at": {
+                              "type": "string",
+                              "format": "date-time",
+                              "description": "When the key stops being usable to enroll a Device"
+                            },
+                            "revoked_at": {
+                              "type": [
+                                "string",
+                                "null"
+                              ],
+                              "format": "date-time"
+                            },
+                            "state": {
+                              "type": "string",
+                              "enum": [
+                                "active",
+                                "used",
+                                "expired",
+                                "revoked"
+                              ]
+                            },
+                            "device_lifetime": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": [
+                                "never_expires",
+                                "seconds"
+                              ],
+                              "properties": {
+                                "never_expires": {
+                                  "type": "boolean"
+                                },
+                                "seconds": {
+                                  "type": [
+                                    "integer",
+                                    "null"
+                                  ],
+                                  "minimum": 3600,
+                                  "maximum": 15552000
+                                }
+                              }
+                            },
+                            "device": {
+                              "type": [
+                                "object",
+                                "null"
+                              ],
+                              "description": "The Device the key enrolled",
+                              "additionalProperties": false,
+                              "required": [
+                                "device_id",
+                                "name"
+                              ],
+                              "properties": {
+                                "device_id": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "name": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "secret": {
+                          "type": "string",
+                          "description": "The key to give the Device, shown only in this response (meshctl login --auth-key-stdin). Core keeps a digest of it."
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/enrollment-keys/{key_id}/actions/revoke": {
+      "post": {
+        "operationId": "revokeEnrollmentKey",
+        "summary": "Revoke an enrollment key",
+        "description": "Requires enrollment_credential.revoke. The key can no longer enroll a Device. The Device it already enrolled is not affected. Recorded as enrollment_key.revoked.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "key_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The key after the change",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "key_id",
+                        "description",
+                        "issued_by_principal_id",
+                        "created_at",
+                        "expires_at",
+                        "revoked_at",
+                        "state",
+                        "device_lifetime",
+                        "device"
+                      ],
+                      "properties": {
+                        "key_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "description": {
+                          "type": "string",
+                          "maxLength": 128
+                        },
+                        "issued_by_principal_id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "description": "The member who created the key; the Device it enrolls is theirs"
+                        },
+                        "created_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "expires_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "When the key stops being usable to enroll a Device"
+                        },
+                        "revoked_at": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "format": "date-time"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "used",
+                            "expired",
+                            "revoked"
+                          ]
+                        },
+                        "device_lifetime": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "never_expires",
+                            "seconds"
+                          ],
+                          "properties": {
+                            "never_expires": {
+                              "type": "boolean"
+                            },
+                            "seconds": {
+                              "type": [
+                                "integer",
+                                "null"
+                              ],
+                              "minimum": 3600,
+                              "maximum": 15552000
+                            }
+                          }
+                        },
+                        "device": {
+                          "type": [
+                            "object",
+                            "null"
+                          ],
+                          "description": "The Device the key enrolled",
+                          "additionalProperties": false,
+                          "required": [
+                            "device_id",
+                            "name"
+                          ],
+                          "properties": {
+                            "device_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/policy": {
       "get": {
         "operationId": "getActivePolicy",

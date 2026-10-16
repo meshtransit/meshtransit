@@ -298,7 +298,7 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		isNetworkAliasRangeOperation(request) || isNetworkAddressUsageRead(request) || isAuditEventListRead(request) ||
 		isAuditEventExportRead(request) || isGuardrailOperation(request) || isInterchangeOperation(request) || isDeviceGroupOperation(request) ||
 		isIdentityCatalogOperation(request) || isDeviceLifecycleOperation(request) ||
-		isMemberLifecycleOperation(request) || isNetworkMemberOperation(request) ||
+		isMemberLifecycleOperation(request) || isNetworkMemberOperation(request) || isEnrollmentKeyOperation(request) ||
 		isInvitationOperation(request)
 	resourceSharing, _ := browserResourceSharingOperation(request)
 	if !prepare && !logout && !managementScopes && !inventoryRead && !distributionRead && !historyRead &&

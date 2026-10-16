@@ -176,6 +176,8 @@ func (transaction *registrationTransaction) lockCredential(
 		&record.validFrom,
 		&record.expiresAt,
 		&record.version,
+		&record.deviceLifetimeSeconds,
+		&record.deviceNeverExpires,
 	); err != nil {
 		return fmt.Errorf("lock enrollment credential: %w", err)
 	}

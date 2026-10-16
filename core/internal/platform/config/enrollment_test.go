@@ -124,7 +124,7 @@ func TestLoadEnrollmentConfigRejectsUnsafeRotationWithoutEchoingValues(t *testin
 func TestLoadIgnoresEnrollmentConfigOutsideControlRoles(t *testing.T) {
 	t.Parallel()
 
-	for _, role := range []string{"api", "worker", "relay"} {
+	for _, role := range []string{"worker", "relay"} {
 		t.Run(role, func(t *testing.T) {
 			t.Parallel()
 
@@ -144,5 +144,47 @@ func TestLoadIgnoresEnrollmentConfigOutsideControlRoles(t *testing.T) {
 				t.Fatalf("Enrollment = %+v, want nil for role %s", got.Enrollment, role)
 			}
 		})
+	}
+}
+
+// The api role reads only the digest keys, to issue enrollment keys; it
+// never loads the registration settings, and without the keys it issues
+// none.
+func TestLoadEnrollmentKeyDigestForTheAPIRole(t *testing.T) {
+	t.Parallel()
+
+	got, err := Load(mapLookup(validProcessValues(map[string]string{
+		envRole:                            "api",
+		envEnrollmentDigestPreviousKeyID:   "previous-v1",
+		envEnrollmentDigestPreviousKeyFile: "/run/secrets/enrollment-digest-previous-key",
+		envRegistrationMaxAttempts:         "unbounded",
+	})))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.Enrollment != nil || got.EnrollmentKeyDigest == nil ||
+		got.EnrollmentKeyDigest.Active.ID.String() != "active-v1" || got.EnrollmentKeyDigest.Previous == nil {
+		t.Fatalf("api role Enrollment = %+v, EnrollmentKeyDigest = %+v", got.Enrollment, got.EnrollmentKeyDigest)
+	}
+
+	values := validProcessValues(map[string]string{envRole: "api"})
+	delete(values, envEnrollmentDigestActiveKeyID)
+	delete(values, envEnrollmentDigestActiveKeyFile)
+	got, err = Load(mapLookup(values))
+	if err != nil || got.EnrollmentKeyDigest != nil {
+		t.Fatalf("api role without digest keys: %+v, %v", got.EnrollmentKeyDigest, err)
+	}
+
+	_, err = Load(mapLookup(validProcessValues(map[string]string{
+		envRole: "api", envEnrollmentDigestActiveKeyID: "invalid/key",
+	})))
+	if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), envEnrollmentDigestActiveKeyID) ||
+		strings.Contains(err.Error(), "invalid/key") {
+		t.Fatalf("api role with an invalid digest key: %v", err)
+	}
+
+	all, err := Load(mapLookup(validProcessValues(map[string]string{envRole: "all"})))
+	if err != nil || all.Enrollment == nil || all.EnrollmentKeyDigest != &all.Enrollment.CredentialDigest {
+		t.Fatalf("all role digest = %p, want the Enrollment digest; %v", all.EnrollmentKeyDigest, err)
 	}
 }

@@ -277,6 +277,15 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		additionalMetrics = append(additionalMetrics, workerMetrics)
 		roleServices = append(roleServices, app.OwnedService{Name: "enforcement-ledger-worker", Service: workerService})
 	}
+	var enrollmentKeys httpapi.EnrollmentKeyManager
+	if processConfig.API != nil {
+		composed, composeErr := composeEnrollmentKeys(storagePools.runtime, processConfig.EnrollmentKeyDigest)
+		if composeErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "enrollment_key_composition_failure")
+			return 1
+		}
+		enrollmentKeys = composed
+	}
 	var privateFactory *privateIdentityFactory
 	if privateProfile != nil {
 		var browserRuntime []browserRegistrationRuntime
@@ -295,7 +304,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			privateProfile,
 			privateIdentityFactoryDependencies{Runtime: storagePools.runtime, Redis: redisClient, Logger: logger,
 				Mailer: mailer, Signup: processConfig.Signup, Interchange: processConfig.Interchange,
-				DNSSuffix: processConfig.DNSSuffix},
+				DNSSuffix: processConfig.DNSSuffix, EnrollmentKeys: enrollmentKeys},
 			browserRuntime...,
 		)
 		if composeErr != nil {
@@ -322,7 +331,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		if privateFactory != nil {
 			managementServer, managementMetrics, composeErr = composeManagementAPIWithKeys(
 				managementCompositionOptions{API: *processConfig.API, Keys: privateFactory.managementKeys,
-					DNSSuffix: processConfig.DNSSuffix},
+					DNSSuffix: processConfig.DNSSuffix, EnrollmentKeys: enrollmentKeys},
 				storagePools.runtime,
 				redisClient,
 				logger,
@@ -331,6 +340,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			managementServer, managementMetrics, composeErr = composeManagementAPI(
 				*processConfig.API,
 				processConfig.DNSSuffix,
+				enrollmentKeys,
 				storagePools.runtime,
 				redisClient,
 				logger,

@@ -5,6 +5,16 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: enrollment keys can be created, listed and revoked through the API
+  (`…/networks/{network}/enrollment-keys`, `enrollment_credential.issue` and
+  `.revoke`) and the Console. A key enrolls exactly one Device; its creator
+  chooses how long the key can be used (5 minutes to 30 days, 24 hours by
+  default) and how long the Device lives (1 hour to 180 days, or never). The
+  Device belongs to the key's creator and is not affected when the key
+  expires or is revoked. Each creation and revocation is recorded in the
+  Network's activity log, and each registration records the Device lifetime
+  it got. Schema 175; the `api` role reads `MESHTRANSIT_ENROLLMENT_DIGEST_*`
+  to issue keys.
 - Core: every `policy.published` event now records the published
   `policy_revision` and a `change_summary`: how many Access Rules were added,
   removed, changed or kept, and up to 20 of the changed rules with their

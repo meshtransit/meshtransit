@@ -357,6 +357,11 @@ With the authority disabled, its other variables are refused.
 | `MESHTRANSIT_REGISTRATION_RETRY_MAXIMUM` | `500ms` | the initial delay to 1m | |
 | `MESHTRANSIT_REGISTRATION_ADDRESS_CANDIDATE_LIMIT` | `256` | 1–65536 | Addresses tried per allocation |
 
+The `api` role reads the two digest key settings too, when set, to issue
+enrollment keys; it ignores the registration settings. Give it the same
+keys as `control`. Without them, enrollment key endpoints answer
+`temporarily_unavailable`.
+
 ## Worker
 
 For `worker` and `all`. The revision dispatcher always runs:

@@ -100,7 +100,7 @@ func (transaction *registrationTransaction) applyLocked(
 		return registration.Result{}, ErrRegistrationAllocation
 	}
 	var err error
-	expiresAt, err := change.Profile().DeviceExpiresAt(change.OccurredAt())
+	expiresAt, err := change.Profile().DeviceExpiresAtFor(change.Credential(), change.OccurredAt())
 	if err != nil {
 		return registration.Result{}, err
 	}
@@ -168,6 +168,7 @@ func (transaction *registrationTransaction) applyLocked(
 		deviceVersion,
 		networkRevision,
 		inventoryRevision,
+		expiresAt,
 	); err != nil {
 		return registration.Result{}, err
 	}

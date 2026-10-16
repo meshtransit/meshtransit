@@ -31,22 +31,49 @@ does not count.
 
 ### Enrollment keys
 
-An enrollment key lets a machine register without a browser, for servers and
-automation. It belongs to an **enrollment profile**, which sets what the
-Devices it registers become: how long they live and whether they are
-persistent or ephemeral. Core accepts and consumes keys, but has no API or
-Console page that issues them yet; today they are created by operator
-tooling. A key:
+An enrollment key lets a machine register without a browser, for servers,
+routers and automation. A person with `enrollment_credential.issue` (the
+owner, `admin`, `it_admin`) creates one for a Network in the Console or with
+`POST …/networks/{network}/enrollment-keys/actions/create`, and chooses two
+lifetimes separately:
 
-- has the form `mtc1.<credential id>.<secret>`, with a 256-bit random
-  secret; Core stores only an HMAC digest of it;
-- is valid from a start time until an expiry, for a bounded or unlimited
-  number of uses, never more than its profile allows;
-- can be revoked; revocation is final.
+- **how long the key can be used**: 5 minutes to 30 days, 24 hours by
+  default;
+- **how long the Device it enrolls lives**: 1 hour to 180 days from
+  registration, or never expires.
 
-A Device registered with a key is owned by the person who issued the key.
-Using a key again on a Device that is already registered renews it and
-consumes one use.
+A key:
+
+- enrolls exactly one Device. The first registration that uses it spends
+  it; another machine presenting it, at the same time or later, is refused;
+- has the form `mtc1.<key id>.<secret>`, with a 256-bit random secret. The
+  secret appears once, in the response that creates the key; Core stores
+  only an HMAC digest of it;
+- can be revoked (`POST …/enrollment-keys/{key}/actions/revoke`,
+  `enrollment_credential.revoke`); revocation is final;
+- is listed (`GET …/enrollment-keys`, at most 200, every usable key first)
+  with its state (`active`, `used`, `expired`, `revoked`), the Device lifetime
+  chosen and the Device it enrolled, never with its secret.
+
+A Network has at most 100 usable keys. The Device a key enrolls belongs to
+the person who created the key and is an ordinary Device from then on: the
+key expiring or being revoked does not affect it. Creating, using and
+revoking a key are each recorded in the Network's activity log, with the
+lifetimes chosen.
+
+On the machine, read the key from standard input:
+
+```sh
+sudo meshctl login --auth-key-stdin
+```
+
+A key used on a machine that is already registered in the Network renews
+that Device instead: it keeps its owner, name and addresses, and gets the
+lifetime the key chose. Keys created before the Device lifetime existed (by
+operator tooling) keep their enrollment profile's lifetime and limits.
+
+Creating a key is not idempotent. If a create request fails without a clear
+answer, list the keys and revoke any you did not receive.
 
 ### What Core checks
 
@@ -101,7 +128,7 @@ Networks never see it ([DNS](dns.md)).
 
 | Ownership | Owned by | Expiry |
 |---|---|---|
-| **Member** | The person who registered it or issued its enrollment key, or the member it was handed over to | From its enrollment profile; renewed by signing in again |
+| **Member** | The person who registered it or created its enrollment key, or the member it was handed over to | As its enrollment key chose (up to 180 days, or never), otherwise from its enrollment profile; renewed by signing in again |
 | **Workspace** | The Workspace itself | Never |
 
 A member's Devices take part in the member's Identity Groups. A Device with

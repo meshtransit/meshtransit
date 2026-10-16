@@ -68,8 +68,8 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 	// The private document adds only Console session routes, the two
 	// receiving-Network alias range routes, the Workspace audit history and
 	// export, the five Workspace guardrail routes and the three Network member
-	// routes.
-	if len(basePaths) != 31 || len(paths) != 75 {
+	// routes. The three enrollment key routes are shared with the bearer API.
+	if len(basePaths) != 34 || len(paths) != 78 {
 		t.Fatal("private profile introduced another product resource API")
 	}
 	for path, raw := range paths {

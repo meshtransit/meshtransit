@@ -50,11 +50,14 @@ type managementCompositionOptions struct {
 	Keys managementCompositionKeys
 	// DNSSuffix presents share names (MESHTRANSIT_DNS_SUFFIX); zero: the default.
 	DNSSuffix dnsname.Suffix
+	// EnrollmentKeys issues enrollment keys; nil reports them unavailable.
+	EnrollmentKeys httpapi.EnrollmentKeyManager
 }
 
 func composeManagementAPI(
 	apiConfig config.APIConfig,
 	dnsSuffix dnsname.Suffix,
+	enrollmentKeys httpapi.EnrollmentKeyManager,
 	runtimePool *postgresadapter.Pool,
 	rateLimiter httpapi.ManagementRateLimiter,
 	logger *slog.Logger,
@@ -78,7 +81,7 @@ func composeManagementAPI(
 		API: apiConfig, Keys: managementCompositionKeys{
 			sessions: keyring, idempotency: idempotencyDigester, rateLimit: rateLimitDigester,
 		},
-		DNSSuffix: dnsSuffix,
+		DNSSuffix: dnsSuffix, EnrollmentKeys: enrollmentKeys,
 	}, runtimePool, rateLimiter, logger)
 }
 
@@ -399,6 +402,7 @@ func composeManagementAPIWithKeys(
 		RequestTimeout:        apiConfig.RequestTimeout,
 		MaxConcurrentRequests: apiConfig.MaxConcurrentRequests,
 		DNSSuffix:             options.DNSSuffix,
+		EnrollmentKeys:        options.EnrollmentKeys,
 	})
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)

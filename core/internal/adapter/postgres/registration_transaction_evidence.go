@@ -5,8 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"time"
 
 	"meshtransit.net/core/internal/domain/audit"
+	"meshtransit.net/core/internal/domain/enrollment"
 	"meshtransit.net/core/internal/domain/enrollment/registration"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/publicid"
@@ -19,6 +22,21 @@ type registrationAuditPayload struct {
 	Disposition    string `json:"disposition"`
 	Hostname       string `json:"hostname"`
 	RegistrationID string `json:"registration_id"`
+	// DeviceLifetime is "never", a number of seconds, or "profile" for a
+	// credential that defers to its profile; DeviceExpiresAt is the result.
+	DeviceLifetime  string `json:"device_lifetime"`
+	DeviceExpiresAt string `json:"device_expires_at,omitempty"`
+}
+
+func registrationDeviceLifetimeEvidence(lifetime enrollment.DeviceLifetime) string {
+	switch lifetime.Kind() {
+	case enrollment.DeviceLifetimeNever:
+		return "never"
+	case enrollment.DeviceLifetimeFixed:
+		return strconv.FormatInt(int64(lifetime.Duration()/time.Second), 10)
+	default:
+		return "profile"
+	}
 }
 
 type registrationOutboxPayload struct {
@@ -76,16 +94,19 @@ func (transaction *registrationTransaction) appendRegistrationEvidence(
 	deviceVersion int64,
 	networkRevision int64,
 	inventoryRevision int64,
+	deviceExpiresAt time.Time,
 ) error {
 	action := "device.registered"
 	if change.Disposition() == registration.DispositionResumed {
 		action = "device.resumed"
 	}
 	auditPayload, err := json.Marshal(registrationAuditPayload{
-		CredentialID:   change.Credential().ID().String(),
-		Disposition:    registrationDispositionValue(change.Disposition()),
-		Hostname:       hostname.String(),
-		RegistrationID: change.Registration().ID().String(),
+		CredentialID:    change.Credential().ID().String(),
+		Disposition:     registrationDispositionValue(change.Disposition()),
+		Hostname:        hostname.String(),
+		RegistrationID:  change.Registration().ID().String(),
+		DeviceLifetime:  registrationDeviceLifetimeEvidence(change.Credential().DeviceLifetime()),
+		DeviceExpiresAt: deviceExpiresAt.UTC().Format(time.RFC3339),
 	})
 	if err != nil {
 		return fmt.Errorf("encode registration audit payload: %w", err)

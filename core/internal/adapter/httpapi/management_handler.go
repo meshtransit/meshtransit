@@ -274,6 +274,9 @@ type ManagementHandlerOptions struct {
 	// NetworkMembers lists, adds and removes the members of a Network; nil
 	// answers 503.
 	NetworkMembers NetworkMemberManager
+	// EnrollmentKeys issues, lists and revokes enrollment keys; nil reports
+	// them unavailable.
+	EnrollmentKeys EnrollmentKeyManager
 	// Invitations invite people by email; nil answers 503.
 	Invitations               InvitationManager
 	PolicyApprovals           PolicyApprovalWorkflow
@@ -329,6 +332,7 @@ type ManagementHandler struct {
 	deviceLifecycle           DeviceLifecycleManager
 	memberLifecycle           MemberLifecycleManager
 	networkMembers            NetworkMemberManager
+	enrollmentKeys            EnrollmentKeyManager
 	invitations               InvitationManager
 	policyApprovals           PolicyApprovalWorkflow
 	policyApprovalCatalog     PolicyApprovalCatalog
@@ -404,6 +408,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		deviceLifecycle:           options.DeviceLifecycle,
 		memberLifecycle:           options.MemberLifecycle,
 		networkMembers:            options.NetworkMembers,
+		enrollmentKeys:            options.EnrollmentKeys,
 		invitations:               options.Invitations,
 		policyApprovals:           options.PolicyApprovals,
 		policyApprovalCatalog:     options.PolicyApprovalCatalog,
@@ -518,13 +523,15 @@ func (handler *ManagementHandler) serveHTTP(
 	deviceLifecyclePathValue, deviceLifecycleMatched := parseDeviceLifecyclePath(request)
 	memberLifecyclePathValue, memberLifecycleMatched := parseMemberLifecyclePath(request)
 	networkMemberPathValue, networkMemberMatched := parseNetworkMemberPath(request)
+	enrollmentKeyPathValue, enrollmentKeyMatched := parseEnrollmentKeyPath(request)
 	invitationPathValue, invitationMatched := parseInvitationPath(request)
 	if !deviceMatched && !policyMatched && !policySimulationMatched && !policyApprovalMatched &&
 		!accessGraphMatched && !accessGraphListMatched && !resourceMatched && !sharingMatched && !policyReadMatched && !workspaceRenameMatched &&
 		!workspaceRoleMatched && !workspaceCollectionMatched && !networkCollectionMatched && !sessionWorkspaceMatched &&
 		!shareTargetMatched && !aliasRangeMatched && !addressUsageMatched && !auditEventMatched &&
 		!auditExportMatched && !guardrailMatched && !interchangeMatched && !deviceGroupMatched && !identityCatalogMatched &&
-		!deviceLifecycleMatched && !memberLifecycleMatched && !networkMemberMatched && !invitationMatched {
+		!deviceLifecycleMatched && !memberLifecycleMatched && !networkMemberMatched && !invitationMatched &&
+		!enrollmentKeyMatched {
 		resultCode = "not_found"
 		writeManagementError(request.Context(), handler.logger, response, correlationID, managementError{
 			Status: http.StatusNotFound, Code: resultCode,
@@ -568,6 +575,8 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = memberLifecyclePathValue.operation()
 	} else if networkMemberMatched {
 		operation = networkMemberPathValue.operation()
+	} else if enrollmentKeyMatched {
+		operation = enrollmentKeyPathValue.operation()
 	} else if invitationMatched {
 		operation = invitationPathValue.operation()
 	} else if deviceMatched {
@@ -618,6 +627,8 @@ func (handler *ManagementHandler) serveHTTP(
 		allowedMethod = identityCatalogPathValue.allowedMethod()
 	} else if networkMemberMatched {
 		allowedMethod = networkMemberPathValue.allowedMethod()
+	} else if enrollmentKeyMatched {
+		allowedMethod = enrollmentKeyPathValue.allowedMethod()
 	} else if invitationMatched {
 		allowedMethod = invitationPathValue.allowedMethod()
 	}
@@ -759,6 +770,11 @@ func (handler *ManagementHandler) serveHTTP(
 	}
 	if invitationMatched {
 		resultCode = handler.handleInvitations(ctx, response, request, correlationID, invitationPathValue, session)
+		return
+	}
+	if enrollmentKeyMatched {
+		resultCode = handler.handleEnrollmentKeys(ctx, response, request, correlationID, enrollmentKeyPathValue,
+			session)
 		return
 	}
 	if policyMatched {

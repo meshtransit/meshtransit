@@ -41,6 +41,7 @@ const (
 	accessGraphExplainPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
 		"access-graph/actions/explain"
 	accessGraphListPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/access-graph"
+	enrollmentKeysPath  = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/enrollment-keys"
 )
 
 // ErrInvalidManagementProfile conceals unknown selection or compiled-contract drift.
@@ -153,7 +154,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		return nil, ErrInvalidManagementProfile
 	}
 	paths, err := managementObject(document["paths"])
-	if err != nil || len(paths) != 31 {
+	if err != nil || len(paths) != 34 {
 		return nil, ErrInvalidManagementProfile
 	}
 	if len(fragment) == 0 || len(fragment) > maximumManagementDocumentBytes {
@@ -262,6 +263,9 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		{policyApprovalApprovePath, "post", "approvePolicyApprovalRequest", true},
 		{accessGraphExplainPath, "post", "explainActivePolicy", true},
 		{accessGraphListPath, "get", "listAccessGraph", false},
+		{enrollmentKeysPath, "get", "listEnrollmentKeys", false},
+		{enrollmentKeysPath + "/actions/create", "post", "createEnrollmentKey", true},
+		{enrollmentKeysPath + "/{key_id}/actions/revoke", "post", "revokeEnrollmentKey", true},
 	}
 	consolePathItems := make(map[string]map[string]json.RawMessage, 7)
 	for _, specification := range operations {

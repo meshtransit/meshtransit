@@ -98,6 +98,7 @@ type privateIdentityPorts struct {
 	DeviceLifecycle     httpapi.DeviceLifecycleManager
 	MemberLifecycle     httpapi.MemberLifecycleManager
 	NetworkMembers      httpapi.NetworkMemberManager
+	EnrollmentKeys      httpapi.EnrollmentKeyManager
 	Invitations         httpapi.InvitationManager
 	// InvitationPreviews and InvitationAcceptor serve links and sign-in.
 	InvitationPreviews httpapi.InvitationPreviewer
@@ -223,6 +224,7 @@ func composePrivateIdentity(
 		DeviceLifecycle:       ports.DeviceLifecycle,
 		MemberLifecycle:       ports.MemberLifecycle,
 		NetworkMembers:        ports.NetworkMembers,
+		EnrollmentKeys:        ports.EnrollmentKeys,
 		Invitations:           ports.Invitations,
 		SessionWorkspaces:     ports.SessionWorkspaces,
 		ShareTargets:          ports.ShareTargets,

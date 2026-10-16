@@ -55,12 +55,15 @@ type Config struct {
 	ShutdownTimeout time.Duration
 	LogLevel        slog.Level
 	// DNSSuffix is the suffix Device and share names are built under.
-	DNSSuffix             dnsname.Suffix
-	Dependencies          DependencyConfig
-	Storage               *StorageConfig
-	API                   *APIConfig
-	Control               *ControlConfig
-	Enrollment            *EnrollmentConfig
+	DNSSuffix    dnsname.Suffix
+	Dependencies DependencyConfig
+	Storage      *StorageConfig
+	API          *APIConfig
+	Control      *ControlConfig
+	Enrollment   *EnrollmentConfig
+	// EnrollmentKeyDigest digests the enrollment keys the api role issues;
+	// nil when the deployment does not give the api role the keys.
+	EnrollmentKeyDigest   *CredentialDigestConfig
 	RevisionWorker        *RevisionWorkerConfig
 	PrivateEndpointWorker *PrivateEndpointWorkerConfig
 	DeviceAliasWorker     *DeviceAliasWorkerConfig
@@ -178,6 +181,7 @@ func Load(lookup LookupFunc) (Config, error) {
 	var enrollmentConfig *EnrollmentConfig
 	var revisionWorkerConfig *RevisionWorkerConfig
 	var identityConfig *IdentityConfig
+	var enrollmentKeyDigest *CredentialDigestConfig
 	if role == app.RoleAll || role == app.RoleAPI || role == app.RoleControl || role == app.RoleWorker {
 		loadedStorage, loadErr := loadStorageConfig(lookup, role)
 		if loadErr != nil {
@@ -217,6 +221,21 @@ func Load(lookup LookupFunc) (Config, error) {
 		}
 		if loadErr := validateAPIExternalSecretOwnership(loadedAPI, controlConfig, enrollmentConfig); loadErr != nil {
 			return Config{}, loadErr
+		}
+		if enrollmentConfig != nil {
+			enrollmentKeyDigest = &enrollmentConfig.CredentialDigest
+		} else {
+			digest, loadErr := loadEnrollmentKeyDigestConfig(lookup)
+			if loadErr != nil {
+				return Config{}, loadErr
+			}
+			if digest != nil {
+				if loadErr := validateAPIExternalSecretOwnership(loadedAPI, nil,
+					&EnrollmentConfig{CredentialDigest: *digest}); loadErr != nil {
+					return Config{}, loadErr
+				}
+			}
+			enrollmentKeyDigest = digest
 		}
 		apiConfig = &loadedAPI
 	}
@@ -303,6 +322,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		API:                     apiConfig,
 		Control:                 controlConfig,
 		Enrollment:              enrollmentConfig,
+		EnrollmentKeyDigest:     enrollmentKeyDigest,
 		RevisionWorker:          revisionWorkerConfig,
 		PrivateEndpointWorker:   privateEndpointWorkerConfig,
 		DeviceAliasWorker:       deviceAliasWorkerConfig,

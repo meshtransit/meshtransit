@@ -69,6 +69,8 @@ type privateIdentityFactoryDependencies struct {
 	// DNSSuffix names Devices and shares in Console responses
 	// (MESHTRANSIT_DNS_SUFFIX); the zero value is the default.
 	DNSSuffix dnsname.Suffix
+	// EnrollmentKeys issues enrollment keys; nil reports them unavailable.
+	EnrollmentKeys httpapi.EnrollmentKeyManager
 }
 
 // This owner closes only its HTTP clients. Admission/drain and borrowed pool/
@@ -410,7 +412,7 @@ func composePrivateIdentityFactory(
 		ClaimIDs: oidcauth.SystemClaimIDs{}, IssueMaterial: oidcauth.SystemIssueMaterial{},
 		Revocations: revocations, PolicyPublications: policies, PolicyCompilations: policyCompiler,
 		PolicyExplanations: policyExplainer, AccessGraphs: policyExplainer, PolicySimulations: policySimulator,
-		ActivePolicies: activePolicies, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations, AliasRanges: aliasRanges, AddressUsage: addressUsage, AuditHistory: auditHistory, AuditExports: auditExports, Guardrails: guardrails, Interchanges: interchanges, InterchangeTrust: interchangeTrust, DeviceGroups: deviceGroups, IdentityGroups: identityGroups, DeviceTags: deviceTags, DeviceLifecycle: deviceLifecycle, MemberLifecycle: memberLifecycle, NetworkMembers: networkMembers, Invitations: invitations, InvitationPreviews: invitations, InvitationAcceptor: invitationStore, AccountSignups: signups,
+		ActivePolicies: activePolicies, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations, AliasRanges: aliasRanges, AddressUsage: addressUsage, AuditHistory: auditHistory, AuditExports: auditExports, Guardrails: guardrails, Interchanges: interchanges, InterchangeTrust: interchangeTrust, DeviceGroups: deviceGroups, IdentityGroups: identityGroups, DeviceTags: deviceTags, DeviceLifecycle: deviceLifecycle, MemberLifecycle: memberLifecycle, NetworkMembers: networkMembers, EnrollmentKeys: dependencies.EnrollmentKeys, Invitations: invitations, InvitationPreviews: invitations, InvitationAcceptor: invitationStore, AccountSignups: signups,
 		SessionWorkspaces: sessionWorkspaces, ShareTargets: shareTargets,
 		PolicyApprovals: policyApprovals, PolicyApprovalCatalog: policyApprovalCatalog,
 		ResourceCreations: resources.creations, ResourceCatalog: resources.catalog, ResourceSharing: resources.sharing,
