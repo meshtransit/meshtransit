@@ -17,8 +17,8 @@ const inventoryCacheEntries = 4096
 type cachedInventory struct {
 	revision int64
 	readAt   time.Time // PostgreSQL transaction time of the read
-	// readLocal is this host's clock, with its monotonic reading, when the
-	// read observed readAt.
+	// readLocal is this host's clock, with its monotonic reading, taken
+	// before the read whose database time is readAt.
 	readLocal time.Time
 	expiresAt time.Time // earliest Device key expiry in the inventory
 	inventory appmapsession.NetworkInventory
@@ -236,8 +236,9 @@ const clockMargin = 2 * time.Second
 // databaseNow is the database clock's time now as this inventory sees it: its
 // read's PostgreSQL time plus the time elapsed since on this host's monotonic
 // clock, so skew between this host's wall clock and the database's does not
-// move it. The read's own duration only makes it later, the safe direction
-// for every deadline it is compared with.
+// move it. readLocal is taken before the read, so the estimate is never
+// earlier than the database's now: the safe direction for every deadline it
+// is compared with.
 func (cached cachedInventory) databaseNow() time.Time {
 	if cached.readLocal.IsZero() {
 		return cached.readAt

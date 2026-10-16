@@ -14,6 +14,9 @@ import (
 )
 
 type snapshotRecord struct {
+	// readLocal is this host's clock, with its monotonic reading, taken
+	// before the read whose database time is readAt.
+	readLocal         time.Time
 	numericNodeID     int64
 	numericOwnerID    int64
 	networkName       string
@@ -94,6 +97,7 @@ func (record snapshotRecord) snapshot(
 	snapshot, err := appmapsession.NewSnapshot(appmapsession.SnapshotParams{
 		Scope:             scope,
 		DatabaseReadAt:    record.readAt,
+		ReadAtLocal:       record.readLocal,
 		NetworkName:       networkName,
 		NetworkRevision:   record.networkRevision,
 		RecoveryEpoch:     recoveryEpoch,

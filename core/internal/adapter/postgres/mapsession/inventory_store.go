@@ -122,6 +122,9 @@ func (store *Store) readInventory(
 	defer func() {
 		store.observer.ObserveMapSession(OperationLoadInventory, time.Since(startedAt), resultErr)
 	}()
+	// This host's clock before the read: the read's database time is later,
+	// so freshness and deadlines measured from it come early, never late.
+	beginLocal := time.Now()
 	transaction, err := store.database.Begin(ctx)
 	if err != nil || transaction == nil {
 		if err == nil {
@@ -153,7 +156,7 @@ func (store *Store) readInventory(
 		&cached.revision, &policyRevision, &cached.readAt, &releaseActive); err != nil {
 		return cachedInventory{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("read inventory revision: %w", err))
 	}
-	cached.readLocal = time.Now()
+	cached.readLocal = beginLocal
 	if cached.revision <= 0 || policyRevision <= 0 || cached.readAt.IsZero() {
 		return cachedInventory{}, ErrSnapshotEvidence
 	}

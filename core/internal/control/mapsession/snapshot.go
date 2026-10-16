@@ -63,10 +63,11 @@ type SnapshotParams struct {
 	OmittedShares int
 	// DatabaseReadAt is the PostgreSQL clock's time of the read the snapshot
 	// comes from, and ReadAtLocal this host's clock (with its monotonic
-	// reading) when that read was observed; zero ReadAtLocal means now. The
+	// reading) taken before that read began; zero ReadAtLocal means now. The
 	// stream measures the key and projection deadlines, which the database
-	// clock set, from them instead of from this host's wall clock. A zero
-	// DatabaseReadAt falls back to this host's clock.
+	// clock set, from them instead of from this host's wall clock; taking
+	// ReadAtLocal before the read makes deadlines come early, never late. A
+	// zero DatabaseReadAt falls back to this host's clock.
 	DatabaseReadAt time.Time
 	ReadAtLocal    time.Time
 }

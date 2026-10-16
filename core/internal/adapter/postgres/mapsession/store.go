@@ -313,6 +313,9 @@ func (store *Store) loadSnapshot(
 	identity control.AuthenticatedNode,
 	shared bool,
 ) (read snapshotRead, resultErr error) {
+	// This host's clock before the read: the read's database time is later,
+	// so deadlines measured from it come early, never late.
+	beginLocal := time.Now()
 
 	transaction, err := store.database.Begin(ctx)
 	if err != nil || transaction == nil {
@@ -372,7 +375,7 @@ func (store *Store) loadSnapshot(
 		return snapshotRead{}, err
 	}
 
-	var record snapshotRecord
+	record := snapshotRecord{readLocal: beginLocal}
 	if err := transaction.QueryRow(ctx, loadSnapshotSQL, fingerprint[:], nodeKey[:]).Scan(
 		&record.numericNodeID,
 		&record.numericOwnerID,
