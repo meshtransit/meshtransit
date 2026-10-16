@@ -49,12 +49,6 @@ func (tun *fakeTUN) OpenTUN(addresses, routes string, mtu int) (int, error) {
 	return tun.fd, tun.err
 }
 
-func (tun *fakeTUN) last() (addresses, routes string, mtu int) {
-	tun.mu.Lock()
-	defer tun.mu.Unlock()
-	return tun.addresses, tun.routes, tun.mtu
-}
-
 type recordingLogs struct {
 	mu    sync.Mutex
 	lines []string

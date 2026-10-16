@@ -18,6 +18,14 @@ import (
 	"meshtransit.net/client/internal/netadmin"
 )
 
+// last reports the arguments of the latest OpenTUN call. Only the Unix tests
+// read them back, so it lives here to keep Windows lint clean.
+func (tun *fakeTUN) last() (addresses, routes string, mtu int) {
+	tun.mu.Lock()
+	defer tun.mu.Unlock()
+	return tun.addresses, tun.routes, tun.mtu
+}
+
 // fakeDevice is a TUN device whose packets come from a channel.
 type fakeDevice struct {
 	mtu, batch int

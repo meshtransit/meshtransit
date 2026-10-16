@@ -16,7 +16,7 @@ func renameNoReplace(root *os.Root, temporary, final string) error {
 		return fmt.Errorf("opening the identity directory: %w", err)
 	}
 	defer func() { _ = directory.Close() }()
-	descriptor := int(directory.Fd()) //nolint:gosec // a descriptor fits in an int
+	descriptor := int(directory.Fd()) // a descriptor fits in an int
 	err = unix.Renameat2(descriptor, temporary, descriptor, final, unix.RENAME_NOREPLACE)
 	if err != nil {
 		return &os.LinkError{Op: "renameat2", Old: temporary, New: final, Err: err}
