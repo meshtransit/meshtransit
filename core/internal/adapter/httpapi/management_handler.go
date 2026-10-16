@@ -653,6 +653,10 @@ func (handler *ManagementHandler) serveHTTP(
 			response.Header().Set("Allow", identityCatalogPathValue.methods.header())
 		} else if deviceGroupMatched {
 			response.Header().Set("Allow", deviceGroupPathValue.methods.header())
+		} else if guardrailMatched {
+			response.Header().Set("Allow", guardrailPathValue.methods.header())
+		} else if interchangeMatched {
+			response.Header().Set("Allow", interchangePathValue.methods.header())
 		} else {
 			response.Header().Set("Allow", allowedMethodOrGet(resourceMatched, allowedMethod))
 		}

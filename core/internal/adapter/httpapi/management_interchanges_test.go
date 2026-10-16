@@ -15,29 +15,35 @@ const testInterchangeWorkspace = "01890f00-0000-7000-8000-000000000103"
 func TestParseInterchangePath(t *testing.T) {
 	t.Parallel()
 	base := "/api/v1/workspaces/" + testInterchangeWorkspace + "/interchanges"
-	id := "01890f00-0000-7000-8000-000000000501"
-	for target, want := range map[string]string{
-		base:                                "",
-		base + "/actions/create":            "create",
-		base + "/" + id + "/actions/update": "update",
-		base + "/" + id + "/actions/delete": "delete",
+	item := base + "/01890f00-0000-7000-8000-000000000501"
+	for _, test := range []struct {
+		method, target, operation, allow string
+	}{
+		{http.MethodGet, base, interchangeListOperation, "GET, POST"},
+		{http.MethodPost, base, interchangeCreateOperation, "GET, POST"},
+		{http.MethodPatch, item, interchangeUpdateOperation, "PATCH, DELETE"},
+		{http.MethodDelete, item, interchangeDeleteOperation, "PATCH, DELETE"},
+		{http.MethodGet, item, "", "PATCH, DELETE"},
+		{http.MethodDelete, base, "", "GET, POST"},
 	} {
-		path, ok := parseInterchangePath(httptest.NewRequestWithContext(t.Context(), http.MethodPost, target, nil))
-		if !ok || path.action != want {
-			t.Errorf("%s: %+v %v", target, path, ok)
+		request := httptest.NewRequestWithContext(t.Context(), test.method, test.target, nil)
+		path, ok := parseInterchangePath(request)
+		admitted := test.operation != ""
+		if !ok || isInterchangeOperation(request) != admitted || path.methods.header() != test.allow ||
+			admitted && path.operation(test.method) != test.operation {
+			t.Errorf("%s %s: %+v matched %t", test.method, test.target, path, ok)
 		}
 	}
 	for _, target := range []string{
-		base + "/actions/remove", base + "/not-an-id/actions/update", base + "?page=2",
-		"/api/v1/workspaces/not-a-workspace/interchanges", base + "/" + id,
+		base + "/actions/create", item + "/actions/update", item + "/actions/delete", base + "/not-an-id",
+		base + "?page=2", "/api/v1/workspaces/not-a-workspace/interchanges",
 	} {
-		if _, ok := parseInterchangePath(httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)); ok {
+		if _, ok := parseInterchangePath(httptest.NewRequestWithContext(t.Context(), http.MethodPost, target, nil)); ok {
 			t.Errorf("%s: matched", target)
 		}
 	}
-	if isInterchangeOperation(httptest.NewRequestWithContext(t.Context(), http.MethodGet, base+"/actions/create", nil)) ||
-		!isInterchangeRead(httptest.NewRequestWithContext(t.Context(), http.MethodGet, base, nil)) {
-		t.Fatal("methods are not checked")
+	if !isInterchangeRead(httptest.NewRequestWithContext(t.Context(), http.MethodGet, base, nil)) {
+		t.Fatal("the list is not a read")
 	}
 }
 

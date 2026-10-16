@@ -72,9 +72,9 @@ func (stub *stubGuardrails) Delete(context.Context, accountsession.Session, work
 			Networks: []network.ID{networkID}, Direction: guardrail.DirectionOutgoing}})
 }
 
-func serveGuardrail(t *testing.T, stub *stubGuardrails, target, body string, ifMatch string) *httptest.ResponseRecorder {
+func serveGuardrail(t *testing.T, stub *stubGuardrails, method, target, body string, ifMatch string) *httptest.ResponseRecorder {
 	t.Helper()
-	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost,
+	request := httptest.NewRequestWithContext(t.Context(), method,
 		"/api/v1/workspaces/"+testGuardrailWorkspace+"/guardrails"+target, strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	if ifMatch != "" {
@@ -94,33 +94,37 @@ func serveGuardrail(t *testing.T, stub *stubGuardrails, target, body string, ifM
 	return recorder
 }
 
-func TestParseGuardrailPathPreview(t *testing.T) {
+func TestParseGuardrailPath(t *testing.T) {
 	t.Parallel()
 	base := "/api/v1/workspaces/" + testGuardrailWorkspace + "/guardrails"
-	for target, want := range map[string]string{
-		base: "", base + "/actions/create": "create", base + "/actions/preview": "preview",
-		base + "/" + testGuardrailID + "/actions/update": "update",
+	item := base + "/" + testGuardrailID
+	for _, test := range []struct {
+		method, target, operation, allow string
+	}{
+		{http.MethodGet, base, guardrailListOperation, "GET, POST"},
+		{http.MethodPost, base, guardrailCreateOperation, "GET, POST"},
+		{http.MethodPost, base + "/actions/preview", guardrailPreviewOperation, "POST"},
+		{http.MethodPatch, item, guardrailUpdateOperation, "PATCH, DELETE"},
+		{http.MethodDelete, item, guardrailDeleteOperation, "PATCH, DELETE"},
+		{http.MethodGet, base + "/actions/preview", "", "POST"},
+		{http.MethodPut, item, "", "PATCH, DELETE"},
 	} {
-		path, ok := parseGuardrailPath(httptest.NewRequestWithContext(t.Context(), http.MethodPost, target, nil))
-		if !ok || path.action != want {
-			t.Errorf("%s: %+v %v", target, path, ok)
+		request := httptest.NewRequestWithContext(t.Context(), test.method, test.target, nil)
+		path, ok := parseGuardrailPath(request)
+		admitted := test.operation != ""
+		if !ok || isGuardrailOperation(request) != admitted || path.methods.header() != test.allow ||
+			admitted && path.operation(test.method) != test.operation {
+			t.Errorf("%s %s: %+v matched %t admitted %t", test.method, test.target, path, ok, isGuardrailOperation(request))
 		}
 	}
-	for _, target := range []string{base + "/actions/previews", base + "/" + testGuardrailID + "/actions/preview"} {
+	for _, target := range []string{
+		base + "/actions/create", base + "/actions/previews", item + "/actions/update", item + "/actions/delete",
+		item + "/actions/preview", base + "/not-an-id", base + "?x=1",
+	} {
 		if _, ok := parseGuardrailPath(httptest.NewRequestWithContext(t.Context(), http.MethodPost, target, nil)); ok {
 			t.Errorf("%s: matched", target)
 		}
 	}
-	preview := httptest.NewRequestWithContext(t.Context(), http.MethodGet, base+"/actions/preview", nil)
-	if isGuardrailOperation(preview) || parsedOperation(t, base+"/actions/preview") != guardrailPreviewOperation {
-		t.Fatal("preview must be a POST operation of its own")
-	}
-}
-
-func parsedOperation(t *testing.T, target string) string {
-	t.Helper()
-	path, _ := parseGuardrailPath(httptest.NewRequestWithContext(t.Context(), http.MethodPost, target, nil))
-	return path.operation(http.MethodPost)
 }
 
 func TestGuardrailPreviewResponse(t *testing.T) {
@@ -138,7 +142,7 @@ func TestGuardrailPreviewResponse(t *testing.T) {
 	stub := &stubGuardrails{impact: guardrail.Impact{Mode: guardrail.ModeEnforce, Affected: contracts,
 		Hash: guardrail.ImpactHash{1, 2, 3}}}
 	update := strings.Replace(testGuardrailBody, `{"kind"`, `{"guardrail_id":"`+testGuardrailID+`","expected_version":2,"kind"`, 1)
-	recorder := serveGuardrail(t, stub, "/actions/preview", update, "")
+	recorder := serveGuardrail(t, stub, http.MethodPost, "/actions/preview", update, "")
 	if recorder.Code != http.StatusOK || recorder.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("status %d: %s", recorder.Code, recorder.Body.String())
 	}
@@ -171,7 +175,7 @@ func TestGuardrailPreviewResponse(t *testing.T) {
 	}
 	// Nothing affected is an empty list, not null.
 	empty := &stubGuardrails{impact: guardrail.Impact{Mode: guardrail.ModeAudit, Affected: []guardrail.ShareContract{}}}
-	if recorder := serveGuardrail(t, empty, "/actions/preview", testGuardrailBody, ""); recorder.Code != http.StatusOK ||
+	if recorder := serveGuardrail(t, empty, http.MethodPost, "/actions/preview", testGuardrailBody, ""); recorder.Code != http.StatusOK ||
 		!strings.Contains(recorder.Body.String(), `"affected":[]`) || !strings.Contains(recorder.Body.String(), `"truncated":false`) {
 		t.Fatalf("empty preview = %s", recorder.Body.String())
 	}
@@ -216,26 +220,29 @@ func TestGuardrailSaveCarriesTheImpactHash(t *testing.T) {
 	hash := strings.Repeat("0f", 32)
 	body := strings.Replace(testGuardrailBody, `{"kind"`, `{"impact_hash":"`+hash+`","kind"`, 1)
 	stub := &stubGuardrails{}
-	if recorder := serveGuardrail(t, stub, "/actions/create", body, ""); recorder.Code != http.StatusCreated ||
+	if recorder := serveGuardrail(t, stub, http.MethodPost, "", body, ""); recorder.Code != http.StatusCreated ||
 		stub.hash.String() != hash {
 		t.Fatalf("create: %d, hash %s", recorder.Code, stub.hash)
 	}
 	stub = &stubGuardrails{}
-	if recorder := serveGuardrail(t, stub, "/"+testGuardrailID+"/actions/update", body, `"1"`); recorder.Code != http.StatusOK ||
+	if recorder := serveGuardrail(t, stub, http.MethodPatch, "/"+testGuardrailID, body, `"1"`); recorder.Code != http.StatusOK ||
 		stub.hash.String() != hash {
 		t.Fatalf("update: %d, hash %s", recorder.Code, stub.hash)
 	}
 	// A missing or stale hash comes back as a 409 the Console can act on.
 	stale := &stubGuardrails{err: guardrail.ErrImpactChanged}
-	for target, ifMatch := range map[string]string{"/actions/create": "", "/" + testGuardrailID + "/actions/update": `"1"`} {
-		recorder := serveGuardrail(t, stale, target, testGuardrailBody, ifMatch)
+	for _, test := range []struct{ method, target, ifMatch string }{
+		{http.MethodPost, "", ""}, {http.MethodPatch, "/" + testGuardrailID, `"1"`},
+	} {
+		target := test.method + " " + test.target
+		recorder := serveGuardrail(t, stale, test.method, test.target, testGuardrailBody, test.ifMatch)
 		if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), `"guardrail_impact_changed"`) {
 			t.Fatalf("%s: %d %s", target, recorder.Code, recorder.Body.String())
 		}
 	}
 	// Deleting only restores shares: no body, no hash.
 	deletion := &stubGuardrails{}
-	if recorder := serveGuardrail(t, deletion, "/"+testGuardrailID+"/actions/delete", "", `"1"`); recorder.Code != http.StatusOK ||
+	if recorder := serveGuardrail(t, deletion, http.MethodDelete, "/"+testGuardrailID, "", `"1"`); recorder.Code != http.StatusOK ||
 		!deletion.deleted {
 		t.Fatalf("delete: %d %s", recorder.Code, recorder.Body.String())
 	}

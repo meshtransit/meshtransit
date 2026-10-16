@@ -2556,9 +2556,7 @@
             "description": "Unavailable"
           }
         }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/guardrails/actions/create": {
+      },
       "post": {
         "operationId": "createWorkspaceGuardrail",
         "summary": "Add a guardrail",
@@ -3304,295 +3302,8 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_id}/guardrails/{guardrail_id}/actions/delete": {
-      "post": {
-        "operationId": "deleteWorkspaceGuardrail",
-        "summary": "Delete a guardrail",
-        "description": "Requires guardrail.weaken. Deletes the guardrail at the version in If-Match; its record stays in the audit trail. Shares the guardrail cut come back; no preview is needed. Deleting an enforced guardrail wakes the maps of at most 1,024 Networks at once; the others follow at the next map reconcile interval.",
-        "security": [
-          {
-            "accountSessionCookie": [],
-            "sessionCSRF": []
-          }
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/ConsoleOrigin"
-          },
-          {
-            "$ref": "#/components/parameters/ConsoleSessionChannel"
-          },
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "guardrail_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "$ref": "#/components/parameters/ConsoleSessionProof"
-          },
-          {
-            "name": "If-Match",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^\"[1-9][0-9]*\"$"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "maxProperties": 0
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "The deleted guardrail",
-            "headers": {
-              "ETag": {
-                "schema": {
-                  "type": "string",
-                  "pattern": "^\"[1-9][0-9]*\"$"
-                }
-              },
-              "Cache-Control": {
-                "schema": {
-                  "type": "string",
-                  "const": "no-store"
-                }
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "required": [
-                    "data",
-                    "correlation_id"
-                  ],
-                  "properties": {
-                    "data": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "required": [
-                        "guardrail",
-                        "deleted"
-                      ],
-                      "properties": {
-                        "guardrail": {
-                          "type": "object",
-                          "additionalProperties": false,
-                          "required": [
-                            "guardrail_id",
-                            "kind",
-                            "name",
-                            "description",
-                            "mode",
-                            "params",
-                            "version"
-                          ],
-                          "properties": {
-                            "guardrail_id": {
-                              "type": "string",
-                              "format": "uuid"
-                            },
-                            "kind": {
-                              "type": "string",
-                              "enum": [
-                                "network_isolation",
-                                "network_sharing",
-                                "external_sharing"
-                              ]
-                            },
-                            "name": {
-                              "type": "string",
-                              "minLength": 1,
-                              "maxLength": 80
-                            },
-                            "description": {
-                              "type": "string",
-                              "maxLength": 280
-                            },
-                            "mode": {
-                              "type": "string",
-                              "enum": [
-                                "audit",
-                                "enforce"
-                              ],
-                              "description": "audit records findings without blocking; enforce blocks"
-                            },
-                            "params": {
-                              "oneOf": [
-                                {
-                                  "title": "network_isolation",
-                                  "type": "object",
-                                  "additionalProperties": false,
-                                  "required": [
-                                    "from_networks",
-                                    "to_networks",
-                                    "both_directions"
-                                  ],
-                                  "properties": {
-                                    "from_networks": {
-                                      "type": "array",
-                                      "maxItems": 64,
-                                      "uniqueItems": true,
-                                      "items": {
-                                        "type": "string",
-                                        "format": "uuid"
-                                      },
-                                      "minItems": 1
-                                    },
-                                    "to_networks": {
-                                      "type": "array",
-                                      "maxItems": 64,
-                                      "uniqueItems": true,
-                                      "items": {
-                                        "type": "string",
-                                        "format": "uuid"
-                                      },
-                                      "minItems": 1
-                                    },
-                                    "both_directions": {
-                                      "type": "boolean"
-                                    }
-                                  }
-                                },
-                                {
-                                  "title": "network_sharing",
-                                  "type": "object",
-                                  "additionalProperties": false,
-                                  "required": [
-                                    "networks",
-                                    "direction"
-                                  ],
-                                  "properties": {
-                                    "networks": {
-                                      "type": "array",
-                                      "maxItems": 64,
-                                      "uniqueItems": true,
-                                      "items": {
-                                        "type": "string",
-                                        "format": "uuid"
-                                      },
-                                      "minItems": 1
-                                    },
-                                    "direction": {
-                                      "type": "string",
-                                      "enum": [
-                                        "outgoing",
-                                        "incoming",
-                                        "both"
-                                      ]
-                                    }
-                                  }
-                                },
-                                {
-                                  "title": "external_sharing",
-                                  "type": "object",
-                                  "additionalProperties": false,
-                                  "required": [
-                                    "direction",
-                                    "networks",
-                                    "allowed_workspaces"
-                                  ],
-                                  "properties": {
-                                    "direction": {
-                                      "type": "string",
-                                      "enum": [
-                                        "outgoing",
-                                        "incoming",
-                                        "both"
-                                      ]
-                                    },
-                                    "networks": {
-                                      "type": "array",
-                                      "maxItems": 64,
-                                      "uniqueItems": true,
-                                      "items": {
-                                        "type": "string",
-                                        "format": "uuid"
-                                      },
-                                      "description": "Empty means every Network of the Workspace"
-                                    },
-                                    "allowed_workspaces": {
-                                      "type": "array",
-                                      "maxItems": 64,
-                                      "uniqueItems": true,
-                                      "items": {
-                                        "type": "string",
-                                        "format": "uuid"
-                                      },
-                                      "description": "Partner Workspaces still allowed"
-                                    }
-                                  }
-                                }
-                              ]
-                            },
-                            "version": {
-                              "type": "integer",
-                              "minimum": 1
-                            }
-                          }
-                        },
-                        "deleted": {
-                          "type": "boolean"
-                        }
-                      }
-                    },
-                    "correlation_id": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "permission_denied"
-          },
-          "404": {
-            "description": "guardrail_not_found"
-          },
-          "412": {
-            "description": "version_conflict"
-          },
-          "428": {
-            "description": "precondition_required"
-          },
-          "429": {
-            "description": "Rate limited"
-          },
-          "503": {
-            "description": "Unavailable"
-          }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/guardrails/{guardrail_id}/actions/update": {
-      "post": {
+    "/api/v1/workspaces/{workspace_id}/guardrails/{guardrail_id}": {
+      "patch": {
         "operationId": "updateWorkspaceGuardrail",
         "summary": "Change a guardrail",
         "description": "Replaces name, description, mode and parameters at the version in If-Match. Deleting, switching from enforce to audit, or letting through anything it used to block needs guardrail.weaken; adding or narrowing needs guardrail.manage. The kind never changes. A result in enforce mode needs the impact_hash of a preview; switching to audit mode or loosening restores the shares it no longer blocks. Above 20,000 active shares a result in enforce mode is refused with guardrail_impact_too_large, even when it loosens; switch the guardrail to audit mode or delete it instead. A share changed concurrently is retried by Core, then answered with version_conflict (412).",
@@ -4020,6 +3731,279 @@
           },
           "422": {
             "description": "guardrail_network_unknown, guardrail_impact_too_large"
+          },
+          "428": {
+            "description": "precondition_required"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Unavailable"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteWorkspaceGuardrail",
+        "summary": "Delete a guardrail",
+        "description": "Requires guardrail.weaken. Deletes the guardrail at the version in If-Match; its record stays in the audit trail. Shares the guardrail cut come back; no preview is needed. Deleting an enforced guardrail wakes the maps of at most 1,024 Networks at once; the others follow at the next map reconcile interval.",
+        "security": [
+          {
+            "accountSessionCookie": [],
+            "sessionCSRF": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "guardrail_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionProof"
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\"[1-9][0-9]*\"$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The deleted guardrail",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "guardrail",
+                        "deleted"
+                      ],
+                      "properties": {
+                        "guardrail": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "guardrail_id",
+                            "kind",
+                            "name",
+                            "description",
+                            "mode",
+                            "params",
+                            "version"
+                          ],
+                          "properties": {
+                            "guardrail_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "network_isolation",
+                                "network_sharing",
+                                "external_sharing"
+                              ]
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 80
+                            },
+                            "description": {
+                              "type": "string",
+                              "maxLength": 280
+                            },
+                            "mode": {
+                              "type": "string",
+                              "enum": [
+                                "audit",
+                                "enforce"
+                              ],
+                              "description": "audit records findings without blocking; enforce blocks"
+                            },
+                            "params": {
+                              "oneOf": [
+                                {
+                                  "title": "network_isolation",
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "from_networks",
+                                    "to_networks",
+                                    "both_directions"
+                                  ],
+                                  "properties": {
+                                    "from_networks": {
+                                      "type": "array",
+                                      "maxItems": 64,
+                                      "uniqueItems": true,
+                                      "items": {
+                                        "type": "string",
+                                        "format": "uuid"
+                                      },
+                                      "minItems": 1
+                                    },
+                                    "to_networks": {
+                                      "type": "array",
+                                      "maxItems": 64,
+                                      "uniqueItems": true,
+                                      "items": {
+                                        "type": "string",
+                                        "format": "uuid"
+                                      },
+                                      "minItems": 1
+                                    },
+                                    "both_directions": {
+                                      "type": "boolean"
+                                    }
+                                  }
+                                },
+                                {
+                                  "title": "network_sharing",
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "networks",
+                                    "direction"
+                                  ],
+                                  "properties": {
+                                    "networks": {
+                                      "type": "array",
+                                      "maxItems": 64,
+                                      "uniqueItems": true,
+                                      "items": {
+                                        "type": "string",
+                                        "format": "uuid"
+                                      },
+                                      "minItems": 1
+                                    },
+                                    "direction": {
+                                      "type": "string",
+                                      "enum": [
+                                        "outgoing",
+                                        "incoming",
+                                        "both"
+                                      ]
+                                    }
+                                  }
+                                },
+                                {
+                                  "title": "external_sharing",
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "direction",
+                                    "networks",
+                                    "allowed_workspaces"
+                                  ],
+                                  "properties": {
+                                    "direction": {
+                                      "type": "string",
+                                      "enum": [
+                                        "outgoing",
+                                        "incoming",
+                                        "both"
+                                      ]
+                                    },
+                                    "networks": {
+                                      "type": "array",
+                                      "maxItems": 64,
+                                      "uniqueItems": true,
+                                      "items": {
+                                        "type": "string",
+                                        "format": "uuid"
+                                      },
+                                      "description": "Empty means every Network of the Workspace"
+                                    },
+                                    "allowed_workspaces": {
+                                      "type": "array",
+                                      "maxItems": 64,
+                                      "uniqueItems": true,
+                                      "items": {
+                                        "type": "string",
+                                        "format": "uuid"
+                                      },
+                                      "description": "Partner Workspaces still allowed"
+                                    }
+                                  }
+                                }
+                              ]
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            }
+                          }
+                        },
+                        "deleted": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "404": {
+            "description": "guardrail_not_found"
+          },
+          "412": {
+            "description": "version_conflict"
           },
           "428": {
             "description": "precondition_required"

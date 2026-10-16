@@ -48,13 +48,19 @@ type InterchangeRelayTrust struct {
 type interchangePath struct {
 	workspaceID   workspace.ID
 	interchangeID publicid.ID
-	action        string // "" to list, "create", "update" or "delete"
+	// methods are the methods the path accepts; action is what the request's
+	// method does there: "" to list, "create", "update" or "delete", and ""
+	// when the path does not accept the method.
+	methods restMethods
+	action  string
 }
 
-// parseInterchangePath matches
-// GET /api/v1/workspaces/{ws}/interchanges,
-// POST /api/v1/workspaces/{ws}/interchanges/actions/create and
-// POST /api/v1/workspaces/{ws}/interchanges/{id}/actions/{update|delete}.
+// parseInterchangePath matches, under /api/v1/workspaces/{ws}:
+//
+//	GET|POST     interchanges       list, create
+//	PATCH|DELETE interchanges/{id}  update, delete
+//
+// A path matched with a method it does not accept carries no action, for a 405.
 func parseInterchangePath(request *http.Request) (interchangePath, bool) {
 	if request == nil || request.URL == nil || request.URL.RawPath != "" || request.URL.RawQuery != "" {
 		return interchangePath{}, false
@@ -68,31 +74,29 @@ func parseInterchangePath(request *http.Request) (interchangePath, bool) {
 	if err != nil || workspaceID.String() != segments[3] {
 		return interchangePath{}, false
 	}
+	path := interchangePath{workspaceID: workspaceID}
+	var actions map[string]string
 	switch len(segments) {
 	case 5:
-		return interchangePath{workspaceID: workspaceID}, true
-	case 7:
-		if segments[5] != "actions" || segments[6] != "create" {
-			return interchangePath{}, false
-		}
-		return interchangePath{workspaceID: workspaceID, action: "create"}, true
-	case 8:
+		path.methods, actions = collectionMethods, map[string]string{http.MethodPost: "create"}
+	case 6:
 		id, err := publicid.Parse(segments[5])
-		if err != nil || id.String() != segments[5] || segments[6] != "actions" ||
-			(segments[7] != "update" && segments[7] != "delete") {
+		if err != nil || id.String() != segments[5] {
 			return interchangePath{}, false
 		}
-		return interchangePath{workspaceID: workspaceID, interchangeID: id, action: segments[7]}, true
+		path.interchangeID, path.methods = id, itemMethods
+		actions = map[string]string{http.MethodPatch: "update", http.MethodDelete: "delete"}
 	default:
 		return interchangePath{}, false
 	}
+	if path.methods.allows(request.Method) {
+		path.action = actions[request.Method]
+	}
+	return path, true
 }
 
-func (path interchangePath) allowedMethod(string) string {
-	if path.action == "" {
-		return http.MethodGet
-	}
-	return http.MethodPost
+func (path interchangePath) allowedMethod(method string) string {
+	return path.methods.allowedMethod(method)
 }
 
 func (path interchangePath) operation(string) string {
@@ -108,10 +112,10 @@ func (path interchangePath) operation(string) string {
 	}
 }
 
-// isInterchangeOperation admits only the method each path allows.
+// isInterchangeOperation admits only the methods each path accepts.
 func isInterchangeOperation(request *http.Request) bool {
 	path, ok := parseInterchangePath(request)
-	return ok && request.Method == path.allowedMethod(request.Method)
+	return ok && path.methods.allows(request.Method)
 }
 
 // isInterchangeRead admits the exact, query-free list.

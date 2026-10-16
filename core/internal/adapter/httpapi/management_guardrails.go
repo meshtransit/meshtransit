@@ -38,13 +38,20 @@ type GuardrailManager interface {
 type guardrailPath struct {
 	workspaceID workspace.ID
 	guardrailID publicid.ID
-	action      string // "" to list, "create", "preview", "update" or "delete"
+	// methods are the methods the path accepts; action is what the request's
+	// method does there: "" to list, "create", "preview", "update" or
+	// "delete", and "" when the path does not accept the method.
+	methods restMethods
+	action  string
 }
 
-// parseGuardrailPath matches
-// GET /api/v1/workspaces/{ws}/guardrails,
-// POST /api/v1/workspaces/{ws}/guardrails/actions/{create|preview} and
-// POST /api/v1/workspaces/{ws}/guardrails/{id}/actions/{update|delete}.
+// parseGuardrailPath matches, under /api/v1/workspaces/{ws}:
+//
+//	GET|POST     guardrails                  list, create
+//	POST         guardrails/actions/preview  preview a candidate
+//	PATCH|DELETE guardrails/{id}             update, delete
+//
+// A path matched with a method it does not accept carries no action, for a 405.
 func parseGuardrailPath(request *http.Request) (guardrailPath, bool) {
 	if request == nil || request.URL == nil || request.URL.RawPath != "" || request.URL.RawQuery != "" {
 		return guardrailPath{}, false
@@ -58,31 +65,31 @@ func parseGuardrailPath(request *http.Request) (guardrailPath, bool) {
 	if err != nil || workspaceID.String() != segments[3] {
 		return guardrailPath{}, false
 	}
-	switch len(segments) {
-	case 5:
-		return guardrailPath{workspaceID: workspaceID}, true
-	case 7:
-		if segments[5] != "actions" || (segments[6] != "create" && segments[6] != "preview") {
-			return guardrailPath{}, false
-		}
-		return guardrailPath{workspaceID: workspaceID, action: segments[6]}, true
-	case 8:
+	path := guardrailPath{workspaceID: workspaceID}
+	var actions map[string]string
+	switch {
+	case len(segments) == 5:
+		path.methods, actions = collectionMethods, map[string]string{http.MethodPost: "create"}
+	case len(segments) == 7 && segments[5] == "actions" && segments[6] == "preview":
+		path.methods, actions = restMethods{http.MethodPost}, map[string]string{http.MethodPost: "preview"}
+	case len(segments) == 6:
 		id, err := publicid.Parse(segments[5])
-		if err != nil || id.String() != segments[5] || segments[6] != "actions" ||
-			(segments[7] != "update" && segments[7] != "delete") {
+		if err != nil || id.String() != segments[5] {
 			return guardrailPath{}, false
 		}
-		return guardrailPath{workspaceID: workspaceID, guardrailID: id, action: segments[7]}, true
+		path.guardrailID, path.methods = id, itemMethods
+		actions = map[string]string{http.MethodPatch: "update", http.MethodDelete: "delete"}
 	default:
 		return guardrailPath{}, false
 	}
+	if path.methods.allows(request.Method) {
+		path.action = actions[request.Method]
+	}
+	return path, true
 }
 
-func (path guardrailPath) allowedMethod(string) string {
-	if path.action == "" {
-		return http.MethodGet
-	}
-	return http.MethodPost
+func (path guardrailPath) allowedMethod(method string) string {
+	return path.methods.allowedMethod(method)
 }
 
 func (path guardrailPath) operation(string) string {
@@ -100,10 +107,10 @@ func (path guardrailPath) operation(string) string {
 	}
 }
 
-// isGuardrailOperation admits only the method each path allows.
+// isGuardrailOperation admits only the methods each path accepts.
 func isGuardrailOperation(request *http.Request) bool {
 	path, ok := parseGuardrailPath(request)
-	return ok && request.Method == path.allowedMethod(request.Method)
+	return ok && path.methods.allows(request.Method)
 }
 
 // isGuardrailRead admits the exact, query-free list.
