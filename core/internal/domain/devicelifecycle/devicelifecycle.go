@@ -86,7 +86,6 @@ type Change struct {
 	Hostname      node.Hostname
 	Reason        string
 	CorrelationID publicid.ID
-	EvaluatedAt   time.Time
 }
 
 // State is a Device's lifecycle document.
@@ -119,7 +118,7 @@ func ValidReason(reason string) bool {
 // IsValid reports a complete change; every action but rename needs a reason.
 func (change Change) IsValid() bool {
 	if !change.Session.IsValid() || !change.Scope.IsValid() || !change.DeviceID.IsValid() ||
-		change.ExpectedVersion < 1 || !change.CorrelationID.IsValid() || change.EvaluatedAt.IsZero() {
+		change.ExpectedVersion < 1 || !change.CorrelationID.IsValid() {
 		return false
 	}
 	if change.Action != ActionRename && !ValidReason(change.Reason) {

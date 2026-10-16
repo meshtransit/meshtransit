@@ -10,12 +10,13 @@ import (
 	"meshtransit.net/core/internal/domain/publicid"
 )
 
-// Store applies one change; PostgreSQL authorizes it.
+// Store applies one change; PostgreSQL authorizes it on the database clock.
 type Store interface {
 	Change(ctx context.Context, change Change) (Result, error)
 }
 
-// Clock supplies the current time.
+// Clock supplies this host's time, used only to refuse early a session that
+// has already ended; PostgreSQL decides on the database clock.
 type Clock interface{ Now() time.Time }
 
 // Service validates lifecycle changes before PostgreSQL authorizes them.
@@ -32,7 +33,7 @@ func NewService(store Store, clock Clock) (*Service, error) {
 	return &Service{store: store, clock: clock}, nil
 }
 
-// Request names a change before the service stamps its time.
+// Request names one lifecycle change.
 type Request struct {
 	Scope           network.Scope
 	DeviceID        node.ID
@@ -56,7 +57,7 @@ func (service *Service) Change(ctx context.Context, session accountsession.Sessi
 	change := Change{
 		Session: session, Scope: request.Scope, DeviceID: request.DeviceID, Action: request.Action,
 		ExpectedVersion: request.ExpectedVersion, NewOwner: request.NewOwner, Hostname: request.Hostname,
-		Reason: request.Reason, CorrelationID: request.CorrelationID, EvaluatedAt: now,
+		Reason: request.Reason, CorrelationID: request.CorrelationID,
 	}
 	if !change.IsValid() {
 		return Result{}, ErrInvalid

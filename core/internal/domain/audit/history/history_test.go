@@ -20,15 +20,28 @@ type fixedClock struct{ now time.Time }
 
 func (clock fixedClock) Now() time.Time { return clock.now }
 
+// stubStore fills the default window from its database time and refuses an
+// incomplete window, as the PostgreSQL store does.
 type stubStore struct {
-	query history.Query
-	page  history.Page
-	err   error
+	databaseTime time.Time
+	query        history.Query
+	page         history.Page
+	err          error
 }
 
 func (store *stubStore) List(_ context.Context, _ accountsession.Session, query history.Query) (history.Page, error) {
+	at := store.databaseTime
+	if at.IsZero() {
+		at = time.Date(2026, 10, 7, 5, 0, 0, 0, time.UTC)
+	}
+	query = query.WithDefaultWindow(at)
 	store.query = query
-	return store.page, store.err
+	if !query.IsValid() {
+		return history.Page{}, history.ErrInvalid
+	}
+	page := store.page
+	page.Since, page.Until, page.ReadAt = query.Since, query.Until, at
+	return page, store.err
 }
 
 func newID(t *testing.T) publicid.ID {
@@ -99,7 +112,10 @@ func TestListAppliesDefaultsAndRechecksSeals(t *testing.T) {
 	good, tampered, legacy := sealedRecord(t), sealedRecord(t), sealedRecord(t)
 	tampered.Action = "workspace.created"
 	legacy.Integrity = audit.RecordIntegrity{Status: audit.IntegrityLegacyUnsealed}
-	store := &stubStore{page: history.Page{Records: []audit.Record{good, tampered, legacy}}}
+	// The database clock runs behind this host's: the default window ends at
+	// the database's time, never the host's.
+	databaseTime := now.Add(-2 * time.Minute)
+	store := &stubStore{databaseTime: databaseTime, page: history.Page{Records: []audit.Record{good, tampered, legacy}}}
 	service, err := history.NewService(store, fixedClock{now: now})
 	if err != nil {
 		t.Fatal(err)
@@ -109,9 +125,11 @@ func TestListAppliesDefaultsAndRechecksSeals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
-	if !store.query.Until.Equal(now) || !store.query.Since.Equal(now.Add(-history.DefaultWindow)) ||
-		store.query.PageSize != history.DefaultPageSize {
-		t.Fatalf("store query = %+v, want default window and page size", store.query)
+	if !store.query.Until.Equal(databaseTime) || !store.query.Since.Equal(databaseTime.Add(-history.DefaultWindow)) ||
+		store.query.PageSize != history.DefaultPageSize || !page.Until.Equal(databaseTime) ||
+		!page.Since.Equal(databaseTime.Add(-history.DefaultWindow)) {
+		t.Fatalf("store query = %+v, page window %s..%s, want the database's default window and page size",
+			store.query, page.Since, page.Until)
 	}
 	got := []string{page.Records[0].Integrity.Status, page.Records[1].Integrity.Status, page.Records[2].Integrity.Status}
 	want := []string{audit.IntegritySealed, audit.IntegritySealMismatch, audit.IntegrityLegacyUnsealed}
@@ -134,6 +152,12 @@ func TestListRejectsInvalidQueries(t *testing.T) {
 		"no workspace":    func(q *history.Query) { q.WorkspaceID = workspace.ID{} },
 		"reversed window": func(q *history.Query) { q.Since = now.Add(time.Hour) },
 		"window too long": func(q *history.Query) { q.Since = now.Add(-history.MaximumWindow - time.Hour) },
+		"reversed full window": func(q *history.Query) {
+			q.Since, q.Until = now.Add(time.Hour), now
+		},
+		"full window too long": func(q *history.Query) {
+			q.Since, q.Until = now.Add(-history.MaximumWindow-time.Hour), now
+		},
 		"page too large":  func(q *history.Query) { q.PageSize = history.MaximumPageSize + 1 },
 		"bad kind":        func(q *history.Query) { q.TargetKinds = []string{"Share Offer"} },
 		"bad action":      func(q *history.Query) { q.Action = "share offer" },
@@ -157,5 +181,55 @@ func TestListRejectsInvalidQueries(t *testing.T) {
 	expired := testSession(t, now.Add(-3*time.Hour))
 	if _, err := service.List(context.Background(), expired, base); !errors.Is(err, history.ErrForbidden) {
 		t.Errorf("List(expired session) error = %v, want ErrForbidden", err)
+	}
+}
+
+// stubExportStore fills the default window from the time on the database
+// clock of each chunk's read, which advances between chunks.
+type stubExportStore struct {
+	databaseTime time.Time
+	queries      []history.ExportQuery
+}
+
+func (store *stubExportStore) ExportChunk(_ context.Context, _ accountsession.Session,
+	query history.ExportQuery, after *history.Cursor, _ int) (history.Page, error) {
+	at := store.databaseTime.Add(time.Duration(len(store.queries)) * time.Second)
+	query = query.WithDefaultWindow(at)
+	store.queries = append(store.queries, query)
+	if !query.IsValid() {
+		return history.Page{}, history.ErrInvalid
+	}
+	page := history.Page{Records: []audit.Record{}, Actors: map[string]string{}, Since: query.Since,
+		Until: query.Until, ReadAt: at}
+	if after == nil {
+		page.Next = &history.Cursor{OccurredAt: query.Since.Add(time.Hour), EventID: publicid.ID{1}}
+	}
+	return page, nil
+}
+
+func TestExportFixesTheDefaultWindowOnTheDatabaseClock(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 7, 5, 0, 0, 0, time.UTC)
+	databaseTime := now.Add(3 * time.Minute)
+	store := &stubExportStore{databaseTime: databaseTime}
+	exporter, err := history.NewExporter(store, fixedClock{now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	export, err := exporter.Export(context.Background(), testSession(t, now),
+		history.ExportQuery{WorkspaceID: workspace.ID(newID(t))})
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	want := history.ExportQuery{WorkspaceID: export.Query.WorkspaceID,
+		Since: databaseTime.Add(-history.DefaultWindow), Until: databaseTime}
+	if len(store.queries) != 2 || store.queries[0] != want || store.queries[1] != want ||
+		export.Query != want || !export.GeneratedAt.Equal(databaseTime) {
+		t.Fatalf("export query %+v at %s; chunk queries %+v; want %+v at %s",
+			export.Query, export.GeneratedAt, store.queries, want, databaseTime)
+	}
+	reversed := history.ExportQuery{WorkspaceID: export.Query.WorkspaceID, Since: databaseTime.Add(time.Hour)}
+	if _, err := exporter.Export(context.Background(), testSession(t, now), reversed); !errors.Is(err, history.ErrInvalid) {
+		t.Fatalf("Export(since after the database's present) error = %v, want ErrInvalid", err)
 	}
 }

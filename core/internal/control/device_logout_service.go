@@ -3,7 +3,6 @@ package control
 import (
 	"context"
 	"errors"
-	"time"
 
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
@@ -27,9 +26,10 @@ type DeviceLogout struct {
 }
 
 // DeviceLogoutStore revokes the active Device whose current keys the node
-// proved, records evidence and advances the Network revision atomically.
+// proved, records evidence and advances the Network revision atomically, on
+// the database clock.
 type DeviceLogoutStore interface {
-	LogoutDevice(ctx context.Context, identity AuthenticatedNode, at time.Time) (DeviceLogout, error)
+	LogoutDevice(ctx context.Context, identity AuthenticatedNode) (DeviceLogout, error)
 }
 
 // DeviceLogoutService lets a node deauthorize its own Device (MTCP Logout).
@@ -37,7 +37,6 @@ type DeviceLogoutStore interface {
 // current node key; no account session is involved.
 type DeviceLogoutService struct {
 	store DeviceLogoutStore
-	now   func() time.Time
 }
 
 // NewDeviceLogoutService validates its store.
@@ -45,7 +44,7 @@ func NewDeviceLogoutService(store DeviceLogoutStore) (*DeviceLogoutService, erro
 	if store == nil {
 		return nil, ErrInvalidDeviceLogoutService
 	}
-	return &DeviceLogoutService{store: store, now: time.Now}, nil
+	return &DeviceLogoutService{store: store}, nil
 }
 
 // Logout revokes the Device bound to machine and nodeKey.
@@ -58,7 +57,7 @@ func (service *DeviceLogoutService) Logout(ctx context.Context, machine Authenti
 	if err != nil {
 		return DeviceLogout{}, ErrDeviceLogoutNotFound
 	}
-	logout, err := service.store.LogoutDevice(ctx, identity, service.now())
+	logout, err := service.store.LogoutDevice(ctx, identity)
 	if err != nil {
 		return DeviceLogout{}, err
 	}

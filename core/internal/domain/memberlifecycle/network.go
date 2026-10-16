@@ -51,17 +51,16 @@ type NetworkMemberPage struct {
 
 // NetworkMemberQuery asks for one page after a principal ID.
 type NetworkMemberQuery struct {
-	Session     accountsession.Session
-	Scope       network.Scope
-	After       publicid.ID
-	Limit       int
-	EvaluatedAt time.Time
+	Session accountsession.Session
+	Scope   network.Scope
+	After   publicid.ID
+	Limit   int
 }
 
 // IsValid reports a complete, bounded query.
 func (query NetworkMemberQuery) IsValid() bool {
 	return query.Session.IsValid() && query.Scope.IsValid() && query.Limit >= 1 &&
-		query.Limit <= MaximumNetworkMemberPage && !query.EvaluatedAt.IsZero()
+		query.Limit <= MaximumNetworkMemberPage
 }
 
 // NetworkAddition adds Workspace members to one Network.
@@ -70,13 +69,12 @@ type NetworkAddition struct {
 	Scope         network.Scope
 	MemberIDs     []publicid.ID
 	CorrelationID publicid.ID
-	EvaluatedAt   time.Time
 }
 
 // IsValid reports a complete addition naming each member once.
 func (addition NetworkAddition) IsValid() bool {
 	if !addition.Session.IsValid() || !addition.Scope.IsValid() || !addition.CorrelationID.IsValid() ||
-		addition.EvaluatedAt.IsZero() || len(addition.MemberIDs) == 0 ||
+		len(addition.MemberIDs) == 0 ||
 		len(addition.MemberIDs) > MaximumNetworkAdditions {
 		return false
 	}
@@ -106,14 +104,13 @@ type NetworkRemoval struct {
 	Reason        string
 	Devices       []DevicePlan
 	CorrelationID publicid.ID
-	EvaluatedAt   time.Time
 }
 
 // IsValid reports a complete removal with a reason and a bounded plan that
 // names each Device once and never hands one to the member.
 func (removal NetworkRemoval) IsValid() bool {
 	if !removal.Session.IsValid() || !removal.Scope.IsValid() || !removal.MemberID.IsValid() ||
-		!ValidReason(removal.Reason) || !removal.CorrelationID.IsValid() || removal.EvaluatedAt.IsZero() ||
+		!ValidReason(removal.Reason) || !removal.CorrelationID.IsValid() ||
 		len(removal.Devices) > MaximumPlanDevices {
 		return false
 	}

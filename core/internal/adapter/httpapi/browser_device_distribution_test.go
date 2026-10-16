@@ -23,7 +23,7 @@ type distributionTestReader struct {
 }
 
 func (reader *distributionTestReader) ReadDistribution(_ context.Context, _ accountsession.Session,
-	_ network.Scope, _ node.ID, _ int, _ time.Time,
+	_ network.Scope, _ node.ID, _ int,
 ) (distribution.Target, error) {
 	reader.reads++
 	return reader.target, reader.err

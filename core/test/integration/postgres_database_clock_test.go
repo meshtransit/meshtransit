@@ -186,3 +186,35 @@ LIMIT 1`, devicePublicID).Scan(&onDatabaseClock); err != nil {
 		t.Fatalf("Device %s newest Node key times are not the database clock's", devicePublicID)
 	}
 }
+
+// assertInvitationExpiryOnDatabaseClock checks that the invitation version
+// that rotated its link expires it lifetime after that transaction's
+// database time, to the second. A link expiry from a MeshCore host clock
+// would follow that host's time instead.
+func assertInvitationExpiryOnDatabaseClock(
+	ctx context.Context,
+	t *testing.T,
+	admin *pgx.Conn,
+	invitationPublicID string,
+	rotatedVersion int64,
+	lifetime time.Duration,
+) {
+	t.Helper()
+	var onDatabaseClock bool
+	var expiresAt, writtenAt time.Time
+	if err := admin.QueryRow(ctx, `SELECT
+    invitation.expires_at = pg_catalog.date_trunc('second', written.occurred_at + $3::INTERVAL),
+    invitation.expires_at, written.occurred_at
+FROM mesh.workspace_invitation AS invitation
+JOIN mesh_audit.authority_mutation AS written
+  ON written.aggregate_kind = 'workspace_invitation' AND written.row_public_id = invitation.public_id
+ AND written.after_version = $2
+WHERE invitation.public_id = $1::UUID`, invitationPublicID, rotatedVersion, lifetime).Scan(
+		&onDatabaseClock, &expiresAt, &writtenAt); err != nil {
+		t.Fatalf("read invitation %s database clock evidence: %v", invitationPublicID, err)
+	}
+	if !onDatabaseClock {
+		t.Fatalf("invitation %s expires_at %s is not %s after its version %d database time %s",
+			invitationPublicID, expiresAt.UTC(), lifetime, rotatedVersion, writtenAt.UTC())
+	}
+}

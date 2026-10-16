@@ -49,14 +49,13 @@ type HistoryResult struct {
 	Devices       []Evidence
 }
 
-// HistoryReader authorizes and reads evidence at an instant under device.read.
+// HistoryReader authorizes and reads evidence at an instant under
+// device.read, on the database clock: a zero at reads the database's present,
+// and an at after it is refused with ErrInvalidRequest.
 type HistoryReader interface {
 	ReadEnforcementHistory(ctx context.Context, session accountsession.Session, scope network.Scope, at time.Time,
-		after node.ID, limit int, evaluatedAt time.Time) (HistoryResult, error)
+		after node.ID, limit int) (HistoryResult, error)
 }
-
-// Clock provides the current authority-evaluation instant.
-type Clock interface{ Now() time.Time }
 
 // HistoryPage is one ordered page of evidence in effect at At.
 type HistoryPage struct {
@@ -70,38 +69,37 @@ type HistoryPage struct {
 // HistoryService reads enforcement evidence at an instant.
 type HistoryService struct {
 	reader HistoryReader
-	clock  Clock
 }
 
 // NewHistoryService validates its dependencies.
-func NewHistoryService(reader HistoryReader, clock Clock) (*HistoryService, error) {
-	if nilPort(reader) || nilPort(clock) {
+func NewHistoryService(reader HistoryReader) (*HistoryService, error) {
+	if nilPort(reader) {
 		return nil, ErrInvalidRequest
 	}
-	return &HistoryService{reader: reader, clock: clock}, nil
+	return &HistoryService{reader: reader}, nil
 }
 
 // Read returns one page of evidence in effect at at; a zero at reads the
-// present. Instants in the future are refused.
+// present. Instants in the future are refused. Present and future are the
+// database clock's.
 func (service *HistoryService) Read(ctx context.Context, session accountsession.Session, scope network.Scope,
 	at time.Time, after node.ID, limit int) (HistoryPage, error) {
 	if service == nil || ctx == nil || !session.IsValid() || !scope.IsValid() ||
 		limit < 1 || limit > MaximumHistoryPageSize || (after != node.ID{} && !after.IsValid()) {
 		return HistoryPage{}, ErrInvalidRequest
 	}
-	now := service.clock.Now().UTC().Truncate(time.Microsecond)
-	if at.IsZero() {
-		at = now
+	if !at.IsZero() {
+		at = at.UTC().Truncate(time.Microsecond)
 	}
-	at = at.UTC().Truncate(time.Microsecond)
-	if at.After(now) {
-		return HistoryPage{}, ErrInvalidRequest
-	}
-	result, err := service.reader.ReadEnforcementHistory(ctx, session, scope, at, after, limit+1, now)
+	result, err := service.reader.ReadEnforcementHistory(ctx, session, scope, at, after, limit+1)
 	if err != nil {
 		return HistoryPage{}, err
 	}
-	if !validHistory(result, scope, at, after, limit+1) {
+	if at.IsZero() {
+		// The reader read the database's present.
+		at = result.At
+	}
+	if at.IsZero() || !validHistory(result, scope, at, after, limit+1) {
 		return HistoryPage{}, ErrInvalidResult
 	}
 	page := HistoryPage{Scope: scope, At: at, RecordedSince: result.RecordedSince, Devices: result.Devices}

@@ -25,7 +25,7 @@ func TestAccountSessionStoreReadsDeploymentCapabilities(t *testing.T) {
 		t.Fatalf("newAccountSessionStore() error = %v", err)
 	}
 	session := accountSessionManagementScopeSession(t, now)
-	result, err := store.ReadDeploymentCapabilities(t.Context(), session, now)
+	result, err := store.ReadDeploymentCapabilities(t.Context(), session)
 	if err != nil {
 		t.Fatalf("ReadDeploymentCapabilities() error = %v", err)
 	}
@@ -34,7 +34,8 @@ func TestAccountSessionStoreReadsDeploymentCapabilities(t *testing.T) {
 		t.Fatalf("ReadDeploymentCapabilities() result = %+v", result)
 	}
 	if transaction.commits != 1 || transaction.rollbacks != 0 || len(transaction.arguments) != 11 ||
-		transaction.arguments[0] != session.ID().String() || transaction.arguments[10] != now {
+		transaction.arguments[0] != session.ID().String() ||
+		transaction.arguments[10] != accountSessionTestDatabaseTime || transaction.timeReads != 1 {
 		t.Fatalf("transaction commit/rollback/arguments = %d/%d/%v", transaction.commits, transaction.rollbacks, transaction.arguments)
 	}
 }
@@ -55,7 +56,6 @@ func TestAccountSessionStoreDeploymentCapabilitiesConcealsStaleAuthority(t *test
 	_, err = store.ReadDeploymentCapabilities(
 		t.Context(),
 		accountSessionManagementScopeSession(t, now),
-		now,
 	)
 	if !errors.Is(err, sessioncontext.ErrCapabilitiesUnauthenticated) {
 		t.Fatalf("ReadDeploymentCapabilities() error = %v, want ErrCapabilitiesUnauthenticated", err)

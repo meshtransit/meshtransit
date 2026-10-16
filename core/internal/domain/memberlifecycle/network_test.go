@@ -85,7 +85,7 @@ func TestNetworkServiceBoundsListing(t *testing.T) {
 			if !errors.Is(err, test.want) {
 				t.Fatalf("List = %v, want %v", err, test.want)
 			}
-			if test.want == nil && (len(store.queries) != 1 || !store.queries[0].EvaluatedAt.Equal(testNow)) {
+			if test.want == nil && len(store.queries) != 1 {
 				t.Fatalf("store saw %+v", store.queries)
 			}
 		})
@@ -126,7 +126,7 @@ func TestNetworkServiceValidatesAdditions(t *testing.T) {
 				}
 				return
 			}
-			if len(store.additions) != 1 || !store.additions[0].EvaluatedAt.Equal(testNow) {
+			if len(store.additions) != 1 {
 				t.Fatalf("store saw %+v", store.additions)
 			}
 			// The service owns its copy of the members.

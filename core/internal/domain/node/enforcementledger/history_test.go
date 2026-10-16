@@ -15,11 +15,8 @@ import (
 	"meshtransit.net/core/internal/domain/workspace"
 )
 
+// historyNow is the database clock's present in these tests.
 var historyNow = time.Date(2026, time.October, 9, 16, 30, 0, 0, time.UTC)
-
-type historyClock struct{}
-
-func (historyClock) Now() time.Time { return historyNow }
 
 type fakeHistoryReader struct {
 	devices []Evidence
@@ -28,9 +25,17 @@ type fakeHistoryReader struct {
 	at      time.Time
 }
 
+// ReadEnforcementHistory resolves the present and refuses the future on the
+// database clock, as the PostgreSQL store does.
 func (reader *fakeHistoryReader) ReadEnforcementHistory(_ context.Context, _ accountsession.Session,
-	scope network.Scope, at time.Time, _ node.ID, limit int, _ time.Time) (HistoryResult, error) {
+	scope network.Scope, at time.Time, _ node.ID, limit int) (HistoryResult, error) {
 	reader.limit, reader.at = limit, at
+	if at.IsZero() {
+		at = historyNow
+	}
+	if at.After(historyNow) {
+		return HistoryResult{}, ErrInvalidRequest
+	}
 	return HistoryResult{Scope: scope, At: at, RecordedSince: reader.since, Devices: reader.devices}, nil
 }
 
@@ -73,13 +78,14 @@ func TestHistoryServicePagesAndValidates(t *testing.T) {
 	reader := &fakeHistoryReader{since: from, devices: []Evidence{
 		evidenceFor(t, 1, StateEnforced, from), evidenceFor(t, 2, StateMismatch, from), evidenceFor(t, 3, StateEnforced, from),
 	}}
-	service, err := NewHistoryService(reader, historyClock{})
+	service, err := NewHistoryService(reader)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A zero instant asks the reader for the database's present.
 	page, err := service.Read(t.Context(), testSession(t), scope, time.Time{}, node.ID{}, 2)
-	if err != nil || reader.limit != 3 || !reader.at.Equal(historyNow) || len(page.Devices) != 2 ||
-		page.Next != page.Devices[1].DeviceID {
+	if err != nil || reader.limit != 3 || !reader.at.IsZero() || !page.At.Equal(historyNow) ||
+		len(page.Devices) != 2 || page.Next != page.Devices[1].DeviceID {
 		t.Fatalf("page = %+v, %v (limit %d)", page, err, reader.limit)
 	}
 	if _, err := service.Read(t.Context(), testSession(t), scope, historyNow.Add(time.Minute), node.ID{}, 2); !errors.Is(err, ErrInvalidRequest) {

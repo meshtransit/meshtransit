@@ -155,7 +155,8 @@ type Store interface {
 	Revoke(context.Context, RevokeCommand) (RevokeResult, error)
 }
 
-// Clock supplies the application admission instant.
+// Clock supplies this host's time, used only to refuse early a session that
+// has already ended; PostgreSQL decides on the database clock.
 type Clock interface{ Now() time.Time }
 
 // Service validates requests and durable receipts.
@@ -214,9 +215,7 @@ func (service *Service) Assign(ctx context.Context, command AssignCommand) (Assi
 	if err := service.admit(ctx, command.Session); err != nil {
 		return AssignResult{}, err
 	}
-	if !command.ExpiresAt.IsZero() && !command.ExpiresAt.After(service.clock.Now().UTC()) {
-		return AssignResult{}, ErrInvalid
-	}
+	// PostgreSQL refuses an expiry that is not after its own clock's time.
 	result, err := service.store.Assign(ctx, command)
 	if err != nil {
 		return AssignResult{}, err

@@ -44,8 +44,8 @@ func TestServiceListsValidatedManagementScopes(t *testing.T) {
 	if !page.Items()[0].IsValid() {
 		t.Fatal("Page.Items() exposed mutable storage")
 	}
-	if reader.limit != 2 || !reader.evaluatedAt.Equal(now) {
-		t.Fatalf("reader limit/time = %d/%v", reader.limit, reader.evaluatedAt)
+	if reader.limit != 2 {
+		t.Fatalf("reader limit = %d", reader.limit)
 	}
 }
 
@@ -204,10 +204,9 @@ func mustLoginWorkspace(t *testing.T, session accountsession.Session) workspace.
 }
 
 type scopeReader struct {
-	result      sessioncontext.ReadResult
-	err         error
-	limit       int
-	evaluatedAt time.Time
+	result sessioncontext.ReadResult
+	err    error
+	limit  int
 }
 
 func (reader *scopeReader) ReadManagementScopes(
@@ -215,9 +214,8 @@ func (reader *scopeReader) ReadManagementScopes(
 	_ accountsession.Session,
 	_ network.ID,
 	limit int,
-	evaluatedAt time.Time,
 ) (sessioncontext.ReadResult, error) {
-	reader.limit, reader.evaluatedAt = limit, evaluatedAt
+	reader.limit = limit
 	return reader.result, reader.err
 }
 

@@ -15,12 +15,12 @@ import (
 
 // Store applies one change or lists a Workspace's invitations; PostgreSQL
 // authorizes both. PreviewInvitation answers only a pending, unexpired
-// invitation for the digest.
+// invitation for the digest. The store evaluates each on the database clock
+// and sets a rotated link's expiry from it.
 type Store interface {
 	Change(ctx context.Context, change Change) (ChangeResult, error)
-	List(ctx context.Context, session accountsession.Session, workspaceID workspace.ID, now time.Time) (
-		[]Invitation, error)
-	PreviewInvitation(ctx context.Context, digest [32]byte, now time.Time) (Preview, error)
+	List(ctx context.Context, session accountsession.Session, workspaceID workspace.ID) ([]Invitation, error)
+	PreviewInvitation(ctx context.Context, digest [32]byte) (Preview, error)
 }
 
 // Preview is what the holder of a link sees before signing in.
@@ -38,7 +38,7 @@ func (service *Service) Preview(ctx context.Context, token Token) (Preview, erro
 	if ctx == nil || service == nil || !token.IsValid() {
 		return Preview{}, ErrNotFound
 	}
-	preview, err := service.store.PreviewInvitation(ctx, token.Digest(), service.clock.Now().UTC())
+	preview, err := service.store.PreviewInvitation(ctx, token.Digest())
 	if errors.Is(err, ErrInvalid) {
 		return Preview{}, ErrNotFound
 	}
@@ -50,7 +50,8 @@ type Mailer interface {
 	Send(ctx context.Context, mail Mail) error
 }
 
-// Clock supplies the current time.
+// Clock supplies this host's time, used only to refuse early a session that
+// has already ended; PostgreSQL decides on the database clock.
 type Clock interface{ Now() time.Time }
 
 // Options compose a service. Mailer is optional: without one, invitations
@@ -114,12 +115,14 @@ type Sent struct {
 	Link       string
 }
 
-func (service *Service) now(session accountsession.Session) (time.Time, error) {
+// admit refuses a session that has already ended on this host's clock. It
+// can only deny: the store authorizes the session on the database clock.
+func (service *Service) admit(session accountsession.Session) error {
 	now := service.clock.Now().UTC()
 	if now.IsZero() || !session.IsActiveAt(now) {
-		return time.Time{}, ErrForbidden
+		return ErrForbidden
 	}
-	return now, nil
+	return nil
 }
 
 // Create invites one address and emails the link.
@@ -128,8 +131,7 @@ func (service *Service) Create(ctx context.Context, session accountsession.Sessi
 	if ctx == nil || service == nil {
 		return Sent{}, ErrInvalid
 	}
-	now, err := service.now(session)
-	if err != nil {
+	if err := service.admit(session); err != nil {
 		return Sent{}, err
 	}
 	email, ok := NormalizeEmail(request.Email)
@@ -142,7 +144,7 @@ func (service *Service) Create(ctx context.Context, session accountsession.Sessi
 	}
 	return service.rotate(ctx, Change{
 		Session: session, WorkspaceID: request.WorkspaceID, InvitationID: id, Action: ActionCreate, Email: email,
-		Role: request.Role, CorrelationID: request.CorrelationID, EvaluatedAt: now,
+		Role: request.Role, CorrelationID: request.CorrelationID,
 	})
 }
 
@@ -152,14 +154,12 @@ func (service *Service) Resend(ctx context.Context, session accountsession.Sessi
 	if ctx == nil || service == nil {
 		return Sent{}, ErrInvalid
 	}
-	now, err := service.now(session)
-	if err != nil {
+	if err := service.admit(session); err != nil {
 		return Sent{}, err
 	}
 	return service.rotate(ctx, Change{
 		Session: session, WorkspaceID: request.WorkspaceID, InvitationID: request.InvitationID,
 		Action: ActionResend, ExpectedVersion: request.ExpectedVersion, CorrelationID: request.CorrelationID,
-		EvaluatedAt: now,
 	})
 }
 
@@ -169,14 +169,12 @@ func (service *Service) Revoke(ctx context.Context, session accountsession.Sessi
 	if ctx == nil || service == nil {
 		return Invitation{}, ErrInvalid
 	}
-	now, err := service.now(session)
-	if err != nil {
+	if err := service.admit(session); err != nil {
 		return Invitation{}, err
 	}
 	change := Change{
 		Session: session, WorkspaceID: request.WorkspaceID, InvitationID: request.InvitationID,
 		Action: ActionRevoke, ExpectedVersion: request.ExpectedVersion, CorrelationID: request.CorrelationID,
-		EvaluatedAt: now,
 	}
 	if !change.IsValid() {
 		return Invitation{}, ErrInvalid
@@ -194,11 +192,10 @@ func (service *Service) List(ctx context.Context, session accountsession.Session
 	if ctx == nil || service == nil || !workspaceID.IsValid() {
 		return nil, ErrInvalid
 	}
-	now, err := service.now(session)
-	if err != nil {
+	if err := service.admit(session); err != nil {
 		return nil, err
 	}
-	return service.store.List(ctx, session, workspaceID, now)
+	return service.store.List(ctx, session, workspaceID)
 }
 
 // rotate commits a fresh token digest, then sends the link and records how
@@ -210,7 +207,7 @@ func (service *Service) rotate(ctx context.Context, change Change) (Sent, error)
 		return Sent{}, err
 	}
 	digest := token.Digest()
-	change.TokenDigest, change.ExpiresAt = &digest, expiresAt(change.EvaluatedAt)
+	change.TokenDigest = &digest
 	if !change.IsValid() {
 		return Sent{}, ErrInvalid
 	}
@@ -234,7 +231,6 @@ func (service *Service) rotate(ctx context.Context, change Change) (Sent, error)
 	recorded, err := service.store.Change(ctx, Change{
 		Session: change.Session, WorkspaceID: change.WorkspaceID, InvitationID: result.Invitation.ID,
 		Action: outcome, ExpectedVersion: result.Invitation.Version, CorrelationID: change.CorrelationID,
-		EvaluatedAt: change.EvaluatedAt,
 	})
 	if err != nil {
 		// The invitation and its link stand; only the delivery record is late.

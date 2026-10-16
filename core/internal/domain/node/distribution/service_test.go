@@ -30,7 +30,7 @@ type fakeReader struct {
 }
 
 func (reader *fakeReader) ReadDistribution(_ context.Context, _ accountsession.Session, scope network.Scope,
-	after node.ID, limit int, _ time.Time) (Target, error) {
+	after node.ID, limit int) (Target, error) {
 	reader.callCount++
 	reader.gotScope, reader.gotAfter, reader.gotLimit = scope, after, limit
 	return reader.target, reader.err

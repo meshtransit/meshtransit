@@ -37,8 +37,8 @@ func TestCapabilityServiceProjectsValidatedSelfHostedBaseline(t *testing.T) {
 		capabilities.CloudBilling() || capabilities.PlatformOperations() || capabilities.Revision() != 7 {
 		t.Fatalf("Read() capabilities = %+v", capabilities)
 	}
-	if !reader.evaluatedAt.Equal(now) || reader.session.ID() != session.ID() {
-		t.Fatal("Read() did not bind the exact Session and evaluation time")
+	if reader.session.ID() != session.ID() {
+		t.Fatal("Read() did not bind the exact Session")
 	}
 }
 
@@ -155,17 +155,15 @@ func TestCapabilityServiceCloudWithoutEntitlementIsUnavailable(t *testing.T) {
 }
 
 type capabilityReader struct {
-	result      sessioncontext.CapabilityReadResult
-	err         error
-	session     accountsession.Session
-	evaluatedAt time.Time
+	result  sessioncontext.CapabilityReadResult
+	err     error
+	session accountsession.Session
 }
 
 func (reader *capabilityReader) ReadDeploymentCapabilities(
 	_ context.Context,
 	session accountsession.Session,
-	evaluatedAt time.Time,
 ) (sessioncontext.CapabilityReadResult, error) {
-	reader.session, reader.evaluatedAt = session, evaluatedAt
+	reader.session = session
 	return reader.result, reader.err
 }

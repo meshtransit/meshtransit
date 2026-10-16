@@ -43,11 +43,11 @@ func NewDeviceLogoutStore(pool *Pool, options AccountSessionOptions) (*DeviceLog
 	return &DeviceLogoutStore{database: pool.workspaceRenameDatabase, options: options}, nil
 }
 
-// LogoutDevice implements control.DeviceLogoutStore.
-func (store *DeviceLogoutStore) LogoutDevice(ctx context.Context, identity control.AuthenticatedNode,
-	at time.Time) (control.DeviceLogout, error) {
-	if ctx == nil || store == nil || store.database == nil || !validAccountSessionOptions(store.options) ||
-		at.IsZero() {
+// LogoutDevice implements control.DeviceLogoutStore. The logout is evaluated
+// and stamped on the database clock.
+func (store *DeviceLogoutStore) LogoutDevice(ctx context.Context, identity control.AuthenticatedNode) (
+	control.DeviceLogout, error) {
+	if ctx == nil || store == nil || store.database == nil || !validAccountSessionOptions(store.options) {
 		return control.DeviceLogout{}, control.ErrInvalidDeviceLogoutService
 	}
 	changeID, err := publicid.New()
@@ -56,7 +56,7 @@ func (store *DeviceLogoutStore) LogoutDevice(ctx context.Context, identity contr
 	}
 	fingerprint, nodeKey := identity.MachineFingerprint(), identity.NodeKey()
 	var logout control.DeviceLogout
-	err = store.transact(ctx, func(tx accountSessionTransaction) error {
+	err = store.transact(ctx, func(tx accountSessionTransaction, now time.Time) error {
 		var workspaceID, networkID string
 		if err := tx.QueryRow(ctx, resolveLogoutScopeSQL, fingerprint[:], nodeKey[:]).Scan(&workspaceID,
 			&networkID); err != nil {
@@ -73,7 +73,7 @@ func (store *DeviceLogoutStore) LogoutDevice(ctx context.Context, identity contr
 		}
 		var encoded string
 		if err := tx.QueryRow(ctx, logoutDeviceSQL, fingerprint[:], nodeKey[:], changeID.String(),
-			at).Scan(&encoded); err != nil {
+			now).Scan(&encoded); err != nil {
 			return deviceLogoutDatabaseError(err)
 		}
 		logout, err = appendDeviceLogoutEvidence(ctx, tx, scope, changeID, encoded)
@@ -85,8 +85,10 @@ func (store *DeviceLogoutStore) LogoutDevice(ctx context.Context, identity contr
 	return logout, nil
 }
 
+// transact runs one transaction; run receives its time on the database
+// clock, which every time it passes to SQL uses.
 func (store *DeviceLogoutStore) transact(ctx context.Context,
-	run func(tx accountSessionTransaction) error) (resultErr error) {
+	run func(tx accountSessionTransaction, now time.Time) error) (resultErr error) {
 	tx, err := store.database.Begin(ctx)
 	if err != nil || tx == nil {
 		return errors.Join(control.ErrDeviceLogoutUnavailable, err)
@@ -101,7 +103,11 @@ func (store *DeviceLogoutStore) transact(ctx context.Context,
 		postgresTimeout(store.options.StatementTimeout), postgresTimeout(store.options.IdleTimeout)); err != nil {
 		return errors.Join(control.ErrDeviceLogoutUnavailable, err)
 	}
-	if err := run(tx); err != nil {
+	now, err := readTransactionTime(ctx, tx.QueryRow)
+	if err != nil {
+		return errors.Join(control.ErrDeviceLogoutUnavailable, err)
+	}
+	if err := run(tx, now); err != nil {
 		return err
 	}
 	committed = true

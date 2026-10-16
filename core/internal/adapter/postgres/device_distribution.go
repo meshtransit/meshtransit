@@ -40,17 +40,18 @@ func NewDeviceDistributionStore(pool *Pool, options AccountSessionOptions) (*Dev
 	return &DeviceDistributionStore{database: pool.resourceAuthorityDatabase, options: options, metrics: pool.metrics}, nil
 }
 
-// ReadDistribution loads one exact-scope page after current device.read checks.
+// ReadDistribution loads one exact-scope page after current device.read checks
+// on the database clock.
 func (store *DeviceDistributionStore) ReadDistribution(ctx context.Context, session accountsession.Session,
-	scope network.Scope, after node.ID, limit int, evaluatedAt time.Time,
+	scope network.Scope, after node.ID, limit int,
 ) (distribution.Target, error) {
 	return retryReadConflict(ctx, func() (distribution.Target, error) {
-		return store.readOnce(ctx, session, scope, after, limit, evaluatedAt)
+		return store.readOnce(ctx, session, scope, after, limit)
 	})
 }
 
 func (store *DeviceDistributionStore) readOnce(ctx context.Context, session accountsession.Session,
-	scope network.Scope, after node.ID, limit int, evaluatedAt time.Time,
+	scope network.Scope, after node.ID, limit int,
 ) (_ distribution.Target, resultErr error) {
 	startedAt := time.Now()
 	defer func() {
@@ -60,7 +61,7 @@ func (store *DeviceDistributionStore) readOnce(ctx context.Context, session acco
 	}()
 	if ctx == nil || store == nil || store.database == nil || !validAccountSessionOptions(store.options) ||
 		!session.IsValid() || !scope.IsValid() || (!after.IsValid() && after != (node.ID{})) ||
-		limit < 1 || limit > distribution.MaximumPageSize+1 || evaluatedAt.IsZero() {
+		limit < 1 || limit > distribution.MaximumPageSize+1 {
 		return distribution.Target{}, distribution.ErrInvalidRequest
 	}
 	// The permission resolver takes FOR SHARE row locks, which need a
@@ -78,6 +79,10 @@ func (store *DeviceDistributionStore) readOnce(ctx context.Context, session acco
 	if err := transaction.Exec(ctx, configureAccountSessionReadTransactionSQL,
 		postgresTimeout(store.options.StatementTimeout), postgresTimeout(store.options.IdleTimeout),
 	); err != nil {
+		return distribution.Target{}, errors.Join(distribution.ErrUnavailable, err)
+	}
+	evaluatedAt, err := readTransactionTime(ctx, transaction.QueryRow)
+	if err != nil {
 		return distribution.Target{}, errors.Join(distribution.ErrUnavailable, err)
 	}
 	var afterValue any

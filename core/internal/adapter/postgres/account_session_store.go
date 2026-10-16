@@ -243,13 +243,13 @@ func touchResolvedAccountSession(
 	return refreshed, nil
 }
 
-// ReadManagementScopes returns one fresh login-Workspace policy-approval projection.
+// ReadManagementScopes returns one fresh login-Workspace policy-approval
+// projection, evaluated on the database clock.
 func (store *AccountSessionStore) ReadManagementScopes(
 	ctx context.Context,
 	session accountsession.Session,
 	after network.ID,
 	limit int,
-	evaluatedAt time.Time,
 ) (_ sessioncontext.ReadResult, resultErr error) {
 	startedAt := time.Now()
 	defer func() {
@@ -259,7 +259,7 @@ func (store *AccountSessionStore) ReadManagementScopes(
 	if ctx == nil || store == nil || store.database == nil ||
 		!validAccountSessionOptions(store.options) || !session.IsValid() || !hasWorkspace ||
 		(!after.IsValid() && after != (network.ID{})) || limit < 1 ||
-		limit > sessioncontext.MaximumPageSize+1 || evaluatedAt.IsZero() {
+		limit > sessioncontext.MaximumPageSize+1 {
 		return sessioncontext.ReadResult{}, sessioncontext.ErrInvalidRequest
 	}
 	transaction, err := store.database.Begin(ctx)
@@ -281,6 +281,10 @@ func (store *AccountSessionStore) ReadManagementScopes(
 		postgresTimeout(store.options.StatementTimeout),
 		postgresTimeout(store.options.IdleTimeout),
 	); err != nil {
+		return sessioncontext.ReadResult{}, errors.Join(sessioncontext.ErrUnavailable, err)
+	}
+	evaluatedAt, err := readTransactionTime(ctx, transaction.QueryRow)
+	if err != nil {
 		return sessioncontext.ReadResult{}, errors.Join(sessioncontext.ErrUnavailable, err)
 	}
 	var afterValue any
@@ -326,11 +330,11 @@ func (store *AccountSessionStore) ReadManagementScopes(
 	return result, nil
 }
 
-// ReadDeploymentCapabilities returns one fresh non-secret Deployment projection.
+// ReadDeploymentCapabilities returns one fresh non-secret Deployment
+// projection, evaluated on the database clock.
 func (store *AccountSessionStore) ReadDeploymentCapabilities(
 	ctx context.Context,
 	session accountsession.Session,
-	evaluatedAt time.Time,
 ) (_ sessioncontext.CapabilityReadResult, resultErr error) {
 	startedAt := time.Now()
 	defer func() {
@@ -338,7 +342,7 @@ func (store *AccountSessionStore) ReadDeploymentCapabilities(
 	}()
 	workspaceID, hasWorkspace := session.LoginWorkspaceID()
 	if ctx == nil || store == nil || store.database == nil ||
-		!validAccountSessionOptions(store.options) || !session.IsValid() || !hasWorkspace || evaluatedAt.IsZero() {
+		!validAccountSessionOptions(store.options) || !session.IsValid() || !hasWorkspace {
 		return sessioncontext.CapabilityReadResult{}, sessioncontext.ErrInvalidCapabilityRequest
 	}
 	transaction, err := store.database.Begin(ctx)
@@ -360,6 +364,10 @@ func (store *AccountSessionStore) ReadDeploymentCapabilities(
 		postgresTimeout(store.options.StatementTimeout),
 		postgresTimeout(store.options.IdleTimeout),
 	); err != nil {
+		return sessioncontext.CapabilityReadResult{}, errors.Join(sessioncontext.ErrCapabilitiesUnavailable, err)
+	}
+	evaluatedAt, err := readTransactionTime(ctx, transaction.QueryRow)
+	if err != nil {
 		return sessioncontext.CapabilityReadResult{}, errors.Join(sessioncontext.ErrCapabilitiesUnavailable, err)
 	}
 	var encoded *string

@@ -115,7 +115,7 @@ func TestServiceStampsAndValidatesChanges(t *testing.T) {
 			if !errors.Is(err, test.want) {
 				t.Fatalf("Change() error = %v, want %v", err, test.want)
 			}
-			if test.want == nil && (len(store.changes) != 1 || !store.changes[0].EvaluatedAt.Equal(testNow)) {
+			if test.want == nil && len(store.changes) != 1 {
 				t.Fatalf("store changes = %+v", store.changes)
 			}
 		})
@@ -188,7 +188,7 @@ func TestServiceValidatesRemovalPlans(t *testing.T) {
 			if !errors.Is(err, test.want) {
 				t.Fatalf("Remove() error = %v, want %v", err, test.want)
 			}
-			if test.want == nil && (len(store.removals) != 1 || !store.removals[0].EvaluatedAt.Equal(testNow) ||
+			if test.want == nil && (len(store.removals) != 1 ||
 				len(store.removals[0].Devices) != len(test.devices)) {
 				t.Fatalf("store removals = %+v", store.removals)
 			}

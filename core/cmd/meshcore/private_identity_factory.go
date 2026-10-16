@@ -350,7 +350,7 @@ func composePrivateIdentityFactory(
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
-	enforcementHistory, err := enforcementledger.NewHistoryService(enforcementStore, clock)
+	enforcementHistory, err := enforcementledger.NewHistoryService(enforcementStore)
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}

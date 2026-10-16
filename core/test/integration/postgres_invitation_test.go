@@ -64,6 +64,8 @@ func assertPostgreSQLInvitations(ctx context.Context, t *testing.T, admin *pgx.C
 	if stored := invitationDigest(ctx, t, admin, sent.Invitation.ID.String()); string(stored) != string(digest[:]) {
 		t.Fatal("the table must hold the token digest")
 	}
+	// The create committed version 1; recording the delivery outcome came after.
+	assertInvitationExpiryOnDatabaseClock(ctx, t, admin, sent.Invitation.ID.String(), 1, invitation.Lifetime)
 	if _, err := create(owner, "invitee@example.test", ""); !errors.Is(err, invitation.ErrAlreadyInvited) {
 		t.Fatalf("second pending invitation: %v", err)
 	}
@@ -86,6 +88,10 @@ func assertPostgreSQLInvitations(ctx context.Context, t *testing.T, admin *pgx.C
 	if stored := invitationDigest(ctx, t, admin, sent.Invitation.ID.String()); string(stored) == string(digest[:]) {
 		t.Fatal("resend must rotate the digest")
 	}
+	// The resend committed the version after the one it expected; recording
+	// its delivery outcome came after.
+	assertInvitationExpiryOnDatabaseClock(ctx, t, admin, sent.Invitation.ID.String(), sent.Invitation.Version+1,
+		invitation.Lifetime)
 	revoked, err := service.Revoke(ctx, owner, invitation.ActionRequest{
 		WorkspaceID: workspaceID, InvitationID: sent.Invitation.ID, ExpectedVersion: resent.Invitation.Version,
 		CorrelationID: newCorrelationID(t),
@@ -152,7 +158,7 @@ VALUES ($1::UUID, 1, 101, 'newcomer.k@example.test', 'auditor', $2, now() + INTE
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	preview, err := invitations.PreviewInvitation(ctx, digest, time.Now())
+	preview, err := invitations.PreviewInvitation(ctx, digest)
 	if err != nil || preview.Email != "newcomer.k@example.test" || preview.Role != "auditor" || preview.WorkspaceName == "" {
 		t.Fatalf("preview = %+v, %v", preview, err)
 	}

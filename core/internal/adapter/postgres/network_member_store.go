@@ -49,8 +49,10 @@ func NewNetworkMemberStore(pool *Pool, options AccountSessionOptions) (*NetworkM
 }
 
 // transact runs one exact-Network transaction and commits only when run asks.
+// run receives the transaction's time on the database clock, which every
+// time it passes to SQL uses.
 func (store *NetworkMemberStore) transact(ctx context.Context, scope network.Scope,
-	run func(tx accountSessionTransaction) (bool, error)) (resultErr error) {
+	run func(tx accountSessionTransaction, now time.Time) (bool, error)) (resultErr error) {
 	if ctx == nil || store == nil || store.database == nil || !validAccountSessionOptions(store.options) {
 		return memberlifecycle.ErrInvalid
 	}
@@ -76,7 +78,11 @@ func (store *NetworkMemberStore) transact(ctx context.Context, scope network.Sco
 	if workspaceInternal <= 0 || networkInternal <= 0 {
 		return memberlifecycle.ErrForbidden
 	}
-	commit, err := run(tx)
+	now, err := readTransactionTime(ctx, tx.QueryRow)
+	if err != nil {
+		return errors.Join(memberlifecycle.ErrUnavailable, err)
+	}
+	commit, err := run(tx, now)
 	if err != nil || !commit {
 		return err
 	}
@@ -173,11 +179,11 @@ func (store *NetworkMemberStore) ListNetworkMembers(ctx context.Context, query m
 		after = query.After.String()
 	}
 	var page memberlifecycle.NetworkMemberPage
-	err := store.transact(ctx, query.Scope, func(tx accountSessionTransaction) (bool, error) {
+	err := store.transact(ctx, query.Scope, func(tx accountSessionTransaction, now time.Time) (bool, error) {
 		var encoded string
 		if err := tx.QueryRow(ctx, listNetworkMembersSQL, append(sessionQueryArguments(query.Session),
 			query.Scope.WorkspaceID().String(), query.Scope.NetworkID().String(), after, query.Limit,
-			query.EvaluatedAt)...).Scan(&encoded); err != nil {
+			now)...).Scan(&encoded); err != nil {
 			return false, memberLifecycleDatabaseError(err)
 		}
 		var envelope networkMemberEnvelope
@@ -279,11 +285,11 @@ func (store *NetworkMemberStore) AddNetworkMembers(ctx context.Context, addition
 	}
 	scope := addition.Scope
 	var result memberlifecycle.NetworkAdditionResult
-	err = store.transact(ctx, scope, func(tx accountSessionTransaction) (bool, error) {
+	err = store.transact(ctx, scope, func(tx accountSessionTransaction, now time.Time) (bool, error) {
 		var encoded string
 		if err := tx.QueryRow(ctx, addNetworkMembersSQL, append(sessionQueryArguments(addition.Session),
 			scope.WorkspaceID().String(), scope.NetworkID().String(), members, changeID.String(),
-			addition.EvaluatedAt)...).Scan(&encoded); err != nil {
+			now)...).Scan(&encoded); err != nil {
 			return false, memberLifecycleDatabaseError(err)
 		}
 		var record networkAdditionRecord
@@ -436,11 +442,11 @@ func (store *NetworkMemberStore) RemoveNetworkMember(ctx context.Context, remova
 	}
 	scope := removal.Scope
 	var result memberlifecycle.NetworkRemovalResult
-	err = store.transact(ctx, scope, func(tx accountSessionTransaction) (bool, error) {
+	err = store.transact(ctx, scope, func(tx accountSessionTransaction, now time.Time) (bool, error) {
 		var encoded string
 		if err := tx.QueryRow(ctx, removeNetworkMemberSQL, append(sessionQueryArguments(removal.Session),
 			scope.WorkspaceID().String(), scope.NetworkID().String(), removal.MemberID.String(), string(plan),
-			changeID.String(), removal.EvaluatedAt)...).Scan(&encoded); err != nil {
+			changeID.String(), now)...).Scan(&encoded); err != nil {
 			return false, memberLifecycleDatabaseError(err)
 		}
 		var record networkRemovalRecord

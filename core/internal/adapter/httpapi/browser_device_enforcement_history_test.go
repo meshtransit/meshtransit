@@ -22,12 +22,20 @@ type enforcementHistoryTestReader struct {
 	err    error
 	reads  int
 	at     time.Time
+	// present is the database clock's time; the store refuses a later instant.
+	present time.Time
 }
 
 func (reader *enforcementHistoryTestReader) ReadEnforcementHistory(_ context.Context, _ accountsession.Session,
-	scope network.Scope, at time.Time, _ node.ID, _ int, _ time.Time) (enforcementledger.HistoryResult, error) {
+	scope network.Scope, at time.Time, _ node.ID, _ int) (enforcementledger.HistoryResult, error) {
 	reader.reads++
 	reader.at = at
+	if at.IsZero() {
+		at = reader.present
+	}
+	if at.After(reader.present) {
+		return enforcementledger.HistoryResult{}, enforcementledger.ErrInvalidRequest
+	}
 	result := reader.result
 	result.Scope, result.At = scope, at
 	return result, reader.err
@@ -51,7 +59,7 @@ func TestBrowserEnforcementHistoryReadsEvidenceAtAnInstant(t *testing.T) {
 	device, _ := node.ParseID("01890f00-0000-7000-8000-000000000301")
 	delivered, enforced := policydigest.Digest{0xa}, policydigest.Digest{0xb}
 	validFrom := at.Add(-time.Minute)
-	reader := &enforcementHistoryTestReader{result: enforcementledger.HistoryResult{
+	reader := &enforcementHistoryTestReader{present: fixture.Now().UTC(), result: enforcementledger.HistoryResult{
 		RecordedSince: validFrom,
 		Devices: []enforcementledger.Evidence{{
 			DeviceID: device, Hostname: "poc-02-1", State: enforcementledger.StateMismatch, NetworkRevision: 10,
@@ -61,7 +69,7 @@ func TestBrowserEnforcementHistoryReadsEvidenceAtAnInstant(t *testing.T) {
 			ValidTo: at.Add(time.Minute),
 		}},
 	}}
-	service, err := enforcementledger.NewHistoryService(reader, fixture)
+	service, err := enforcementledger.NewHistoryService(reader)
 	if err != nil {
 		t.Fatal(err)
 	}

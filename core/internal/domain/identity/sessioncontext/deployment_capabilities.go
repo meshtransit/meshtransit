@@ -3,7 +3,6 @@ package sessioncontext
 import (
 	"context"
 	"errors"
-	"time"
 
 	"meshtransit.net/core/internal/domain/deployment"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
@@ -84,12 +83,12 @@ type CapabilityReadResult struct {
 	Entitlement  *EntitlementEvidence
 }
 
-// CapabilityReader loads one fresh capability projection from durable authority.
+// CapabilityReader loads one fresh capability projection from durable
+// authority, evaluated on the database clock.
 type CapabilityReader interface {
 	ReadDeploymentCapabilities(
 		context.Context,
 		accountsession.Session,
-		time.Time,
 	) (CapabilityReadResult, error)
 }
 
@@ -199,7 +198,7 @@ func (service *CapabilityService) Read(
 	if now.IsZero() || !session.IsActiveAt(now) {
 		return DeploymentCapabilities{}, ErrCapabilitiesUnauthenticated
 	}
-	result, err := service.reader.ReadDeploymentCapabilities(ctx, session, now)
+	result, err := service.reader.ReadDeploymentCapabilities(ctx, session)
 	if err != nil {
 		return DeploymentCapabilities{}, err
 	}

@@ -146,14 +146,14 @@ type invitationPreviewDocument struct {
 	ExpiresAt     time.Time `json:"expires_at"`
 }
 
-// PreviewInvitation reads a pending, unexpired invitation by token digest.
-func (store *InvitationStore) PreviewInvitation(ctx context.Context, digest [32]byte, now time.Time) (
-	invitation.Preview, error) {
-	if digest == [32]byte{} || now.IsZero() {
+// PreviewInvitation reads a pending invitation by token digest, unexpired on
+// the database clock.
+func (store *InvitationStore) PreviewInvitation(ctx context.Context, digest [32]byte) (invitation.Preview, error) {
+	if digest == [32]byte{} {
 		return invitation.Preview{}, invitation.ErrInvalid
 	}
 	var preview invitation.Preview
-	err := store.transact(ctx, func(tx accountSessionTransaction) (bool, error) {
+	err := store.transactAt(ctx, func(tx accountSessionTransaction, now time.Time) (bool, error) {
 		var encoded string
 		if err := tx.QueryRow(ctx, previewWorkspaceInvitationSQL, digest[:], now).Scan(&encoded); err != nil {
 			return false, invitationDatabaseError(err)

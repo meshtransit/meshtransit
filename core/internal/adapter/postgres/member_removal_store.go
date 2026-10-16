@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"meshtransit.net/core/internal/domain/memberlifecycle"
 	"meshtransit.net/core/internal/domain/network"
@@ -154,11 +155,11 @@ func (store *MemberLifecycleStore) Remove(ctx context.Context, removal memberlif
 		return memberlifecycle.RemovalResult{}, memberlifecycle.ErrUnavailable
 	}
 	var result memberlifecycle.RemovalResult
-	err = store.transact(ctx, func(tx accountSessionTransaction) (bool, error) {
+	err = store.transact(ctx, func(tx accountSessionTransaction, now time.Time) (bool, error) {
 		var encoded string
 		if err := tx.QueryRow(ctx, removeWorkspaceMemberSQL, append(sessionQueryArguments(removal.Session),
 			removal.WorkspaceID.String(), removal.MemberID.String(), string(plan), changeID.String(),
-			removal.EvaluatedAt)...).Scan(&encoded); err != nil {
+			now)...).Scan(&encoded); err != nil {
 			return false, memberLifecycleDatabaseError(err)
 		}
 		var record memberRemovalRecord

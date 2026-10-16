@@ -9,13 +9,15 @@ import (
 	"meshtransit.net/core/internal/domain/workspace"
 )
 
-// Store applies one change or removal; PostgreSQL authorizes it.
+// Store applies one change or removal; PostgreSQL authorizes it on the
+// database clock.
 type Store interface {
 	Change(ctx context.Context, change Change) (Result, error)
 	Remove(ctx context.Context, removal Removal) (RemovalResult, error)
 }
 
-// Clock supplies the current time.
+// Clock supplies this host's time, used only to refuse early a session that
+// has already ended; PostgreSQL decides on the database clock.
 type Clock interface{ Now() time.Time }
 
 // Service validates member changes before PostgreSQL authorizes them.
@@ -32,7 +34,7 @@ func NewService(store Store, clock Clock) (*Service, error) {
 	return &Service{store: store, clock: clock}, nil
 }
 
-// Request names a change before the service stamps its time.
+// Request names one member change.
 type Request struct {
 	WorkspaceID   workspace.ID
 	MemberID      publicid.ID
@@ -52,7 +54,7 @@ func (service *Service) Change(ctx context.Context, session accountsession.Sessi
 	}
 	change := Change{
 		Session: session, WorkspaceID: request.WorkspaceID, MemberID: request.MemberID, Action: request.Action,
-		Reason: request.Reason, CorrelationID: request.CorrelationID, EvaluatedAt: now,
+		Reason: request.Reason, CorrelationID: request.CorrelationID,
 	}
 	if !change.IsValid() {
 		return Result{}, ErrInvalid
@@ -60,7 +62,7 @@ func (service *Service) Change(ctx context.Context, session accountsession.Sessi
 	return service.store.Change(ctx, change)
 }
 
-// RemovalRequest names a removal before the service stamps its time.
+// RemovalRequest names one member removal.
 type RemovalRequest struct {
 	WorkspaceID   workspace.ID
 	MemberID      publicid.ID
@@ -81,7 +83,7 @@ func (service *Service) Remove(ctx context.Context, session accountsession.Sessi
 	}
 	removal := Removal{
 		Session: session, WorkspaceID: request.WorkspaceID, MemberID: request.MemberID, Reason: request.Reason,
-		Devices: append([]DevicePlan(nil), request.Devices...), CorrelationID: request.CorrelationID, EvaluatedAt: now,
+		Devices: append([]DevicePlan(nil), request.Devices...), CorrelationID: request.CorrelationID,
 	}
 	if !removal.IsValid() {
 		return RemovalResult{}, ErrInvalid

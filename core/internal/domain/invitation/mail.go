@@ -75,5 +75,6 @@ func render(invitation Invitation, workspaceName, link string) (Mail, error) {
 	return Mail{To: invitation.Email, Subject: subject, Text: text.String(), HTML: html.String()}, nil
 }
 
-// expiresAt is when a link sent now stops working.
-func expiresAt(now time.Time) time.Time { return now.Add(Lifetime).UTC().Truncate(time.Second) }
+// LinkExpiresAt is when a link sent at now stops working. The store calls it
+// with its transaction's time on the database clock.
+func LinkExpiresAt(now time.Time) time.Time { return now.Add(Lifetime).UTC().Truncate(time.Second) }

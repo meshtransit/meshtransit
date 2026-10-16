@@ -82,7 +82,8 @@ func ParseCursor(token string) (Cursor, error) {
 }
 
 // Query selects one page of a Workspace's history. Zero values mean no
-// filter; a zero Since/Until takes the default window ending now.
+// filter; a zero Until is the read's time on the database clock and a zero
+// Since is Until minus DefaultWindow (WithDefaultWindow).
 type Query struct {
 	WorkspaceID   workspace.ID
 	NetworkID     network.ID
@@ -102,8 +103,44 @@ type Query struct {
 
 // IsValid reports a complete query with every default applied.
 func (query Query) IsValid() bool {
-	if !query.WorkspaceID.IsValid() || query.Since.IsZero() || query.Until.IsZero() ||
-		!query.Since.Before(query.Until) || query.Until.Sub(query.Since) > MaximumWindow || query.PageSize < 1 || query.PageSize > MaximumPageSize ||
+	return validWindow(query.Since, query.Until) && query.validFilter()
+}
+
+// IsValidRequest reports a query that is complete once WithDefaultWindow
+// fills a zero Since or Until from the database clock.
+func (query Query) IsValidRequest() bool {
+	return validRequestWindow(query.Since, query.Until) && query.validFilter()
+}
+
+// WithDefaultWindow fills a zero Until with now, the read's time on the
+// database clock, and a zero Since with Until minus DefaultWindow.
+func (query Query) WithDefaultWindow(now time.Time) Query {
+	query.Since, query.Until = defaultWindow(query.Since, query.Until, now)
+	return query
+}
+
+func defaultWindow(since, until, now time.Time) (time.Time, time.Time) {
+	if until.IsZero() {
+		until = now
+	}
+	if since.IsZero() {
+		since = until.Add(-DefaultWindow)
+	}
+	return since.UTC(), until.UTC()
+}
+
+func validWindow(since, until time.Time) bool {
+	return !since.IsZero() && !until.IsZero() && since.Before(until) && until.Sub(since) <= MaximumWindow
+}
+
+// validRequestWindow checks what can be checked before the database clock
+// fills the window: a full window, or none, or one end.
+func validRequestWindow(since, until time.Time) bool {
+	return since.IsZero() || until.IsZero() || validWindow(since, until)
+}
+
+func (query Query) validFilter() bool {
+	if !query.WorkspaceID.IsValid() || query.PageSize < 1 || query.PageSize > MaximumPageSize ||
 		len(query.TargetKinds) > MaximumTargetKinds {
 		return false
 	}
@@ -140,23 +177,34 @@ func (query Query) IsValid() bool {
 }
 
 // Page is one page of records, newest first. Actors names the principals
-// in the page who are or were members of the Workspace.
+// in the page who are or were members of the Workspace. Since and Until are
+// the window read, with its defaults filled; ReadAt is the read's time on the
+// database clock.
 type Page struct {
 	Records []audit.Record
 	Actors  map[string]string
 	Next    *Cursor
 	Since   time.Time
 	Until   time.Time
+	ReadAt  time.Time
 }
 
-// Store reads one authorized page.
+// Store reads one authorized page on the database clock, filling the
+// query's default window from it.
 type Store interface {
 	List(context.Context, accountsession.Session, Query) (Page, error)
 }
 
-// Clock supplies the current time.
+// Clock supplies this host's time, used only to refuse early a session that
+// has already ended; the store authorizes on the database clock.
 type Clock interface {
 	Now() time.Time
+}
+
+// validReadWindow checks the window a store read against the one asked for.
+func validReadWindow(page Page, since, until time.Time) bool {
+	return validWindow(page.Since, page.Until) && !page.ReadAt.IsZero() &&
+		(since.IsZero() || page.Since.Equal(since)) && (until.IsZero() || page.Until.Equal(until))
 }
 
 // Service validates queries and rechecks returned seals.
@@ -183,25 +231,19 @@ func (service *Service) List(ctx context.Context, session accountsession.Session
 	if now.IsZero() || !session.IsActiveAt(now) {
 		return Page{}, ErrForbidden
 	}
-	if query.Until.IsZero() {
-		query.Until = now
-	}
-	if query.Since.IsZero() {
-		query.Since = query.Until.Add(-DefaultWindow)
-	}
 	if query.PageSize == 0 {
 		query.PageSize = DefaultPageSize
 	}
 	query.Since, query.Until = query.Since.UTC(), query.Until.UTC()
 	query.TargetKinds = append([]string(nil), query.TargetKinds...)
-	if !query.IsValid() {
+	if !query.IsValidRequest() {
 		return Page{}, ErrInvalid
 	}
 	page, err := service.store.List(ctx, session, query)
 	if err != nil {
 		return Page{}, err
 	}
-	if len(page.Records) > query.PageSize {
+	if len(page.Records) > query.PageSize || !validReadWindow(page, query.Since, query.Until) {
 		return Page{}, ErrInvalid
 	}
 	records := make([]audit.Record, len(page.Records))
@@ -211,7 +253,7 @@ func (service *Service) List(ctx context.Context, session accountsession.Session
 		}
 		records[index] = record
 	}
-	page.Records, page.Since, page.Until = records, query.Since, query.Until
+	page.Records = records
 	return page, nil
 }
 
@@ -258,7 +300,8 @@ const (
 var ErrExportTooLarge = errors.New("audit history: export too large")
 
 // ExportQuery selects whole streams of a Workspace, or of one Network, in a
-// time window. A zero window takes the default ending now.
+// time window. A zero Until is the first chunk's time on the database clock
+// and a zero Since is Until minus DefaultWindow.
 type ExportQuery struct {
 	WorkspaceID workspace.ID
 	NetworkID   network.ID
@@ -268,13 +311,29 @@ type ExportQuery struct {
 
 // IsValid reports a complete export query with defaults applied.
 func (query ExportQuery) IsValid() bool {
-	return query.WorkspaceID.IsValid() && !query.Since.IsZero() && !query.Until.IsZero() &&
-		query.Since.Before(query.Until) && query.Until.Sub(query.Since) <= MaximumWindow &&
-		(query.NetworkID == (network.ID{}) || query.NetworkID.IsValid())
+	return validWindow(query.Since, query.Until) && query.validScope()
+}
+
+// IsValidRequest reports an export query that is complete once
+// WithDefaultWindow fills a zero Since or Until from the database clock.
+func (query ExportQuery) IsValidRequest() bool {
+	return validRequestWindow(query.Since, query.Until) && query.validScope()
+}
+
+// WithDefaultWindow fills a zero Until with now, the read's time on the
+// database clock, and a zero Since with Until minus DefaultWindow.
+func (query ExportQuery) WithDefaultWindow(now time.Time) ExportQuery {
+	query.Since, query.Until = defaultWindow(query.Since, query.Until, now)
+	return query
+}
+
+func (query ExportQuery) validScope() bool {
+	return query.WorkspaceID.IsValid() && (query.NetworkID == (network.ID{}) || query.NetworkID.IsValid())
 }
 
 // Export is every record in the window, oldest first, as stored. Seals are
 // left for the reader to verify; Export does not mark mismatches.
+// GeneratedAt is the first chunk's time on the database clock.
 type Export struct {
 	Query       ExportQuery
 	Records     []audit.Record
@@ -282,7 +341,8 @@ type Export struct {
 	GeneratedAt time.Time
 }
 
-// ExportStore reads one authorized chunk oldest first.
+// ExportStore reads one authorized chunk oldest first on the database clock,
+// filling the query's default window from it.
 type ExportStore interface {
 	ExportChunk(ctx context.Context, session accountsession.Session, query ExportQuery,
 		after *Cursor, limit int) (Page, error)
@@ -312,17 +372,11 @@ func (exporter *Exporter) Export(ctx context.Context, session accountsession.Ses
 	if now.IsZero() || !session.IsActiveAt(now) {
 		return Export{}, ErrForbidden
 	}
-	if query.Until.IsZero() {
-		query.Until = now
-	}
-	if query.Since.IsZero() {
-		query.Since = query.Until.Add(-DefaultWindow)
-	}
 	query.Since, query.Until = query.Since.UTC(), query.Until.UTC()
-	if !query.IsValid() {
+	if !query.IsValidRequest() {
 		return Export{}, ErrInvalid
 	}
-	result := Export{Query: query, Records: []audit.Record{}, Actors: map[string]string{}, GeneratedAt: now}
+	result := Export{Records: []audit.Record{}, Actors: map[string]string{}}
 	var after *Cursor
 	size := 0
 	for {
@@ -330,8 +384,14 @@ func (exporter *Exporter) Export(ctx context.Context, session accountsession.Ses
 		if err != nil {
 			return Export{}, err
 		}
-		if len(page.Records) > ExportChunkSize {
+		if len(page.Records) > ExportChunkSize || !validReadWindow(page, query.Since, query.Until) {
 			return Export{}, ErrInvalid
+		}
+		if result.GeneratedAt.IsZero() {
+			// The first chunk fixes the window on the database clock; every
+			// later chunk reads exactly that window.
+			query.Since, query.Until = page.Since, page.Until
+			result.Query, result.GeneratedAt = query, page.ReadAt
 		}
 		for _, record := range page.Records {
 			size += 2*len(record.PayloadCanonical) + 1024

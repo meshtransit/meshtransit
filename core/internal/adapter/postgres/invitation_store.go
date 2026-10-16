@@ -72,6 +72,19 @@ func (store *InvitationStore) transact(ctx context.Context,
 	return nil
 }
 
+// transactAt runs transact with the transaction's time on the database
+// clock, which every time the unit of work passes to SQL uses.
+func (store *InvitationStore) transactAt(ctx context.Context,
+	run func(tx accountSessionTransaction, now time.Time) (bool, error)) error {
+	return store.transact(ctx, func(tx accountSessionTransaction) (bool, error) {
+		now, err := readTransactionTime(ctx, tx.QueryRow)
+		if err != nil {
+			return false, errors.Join(invitation.ErrUnavailable, err)
+		}
+		return run(tx, now)
+	})
+}
+
 func invitationDatabaseError(err error) error {
 	var pgError *pgconn.PgError
 	if errors.As(err, &pgError) {
@@ -172,7 +185,9 @@ var invitationAction = map[invitation.Action]string{
 }
 
 // Change authorizes member.invite, applies the change and commits it with
-// its evidence. The evidence names the invitation, never the address.
+// its evidence. The evidence names the invitation, never the address. It
+// evaluates on the database clock, and a rotated link expires Lifetime after
+// the transaction's database time.
 func (store *InvitationStore) Change(ctx context.Context, change invitation.Change) (invitation.ChangeResult, error) {
 	if !change.IsValid() {
 		return invitation.ChangeResult{}, invitation.ErrInvalid
@@ -181,7 +196,7 @@ func (store *InvitationStore) Change(ctx context.Context, change invitation.Chan
 	if err != nil {
 		return invitation.ChangeResult{}, invitation.ErrUnavailable
 	}
-	var email, role, digest, expires, expected any
+	var email, role, digest, expected any
 	if change.Email != "" {
 		email = change.Email
 	}
@@ -191,17 +206,20 @@ func (store *InvitationStore) Change(ctx context.Context, change invitation.Chan
 	if change.TokenDigest != nil {
 		value := *change.TokenDigest
 		digest = value[:]
-		expires = change.ExpiresAt
 	}
 	if change.ExpectedVersion > 0 {
 		expected = change.ExpectedVersion
 	}
 	var result invitation.ChangeResult
-	err = store.transact(ctx, func(tx accountSessionTransaction) (bool, error) {
+	err = store.transactAt(ctx, func(tx accountSessionTransaction, now time.Time) (bool, error) {
+		var expires any
+		if digest != nil {
+			expires = invitation.LinkExpiresAt(now)
+		}
 		var encoded string
 		if err := tx.QueryRow(ctx, changeWorkspaceInvitationSQL, append(sessionQueryArguments(change.Session),
 			change.WorkspaceID.String(), change.InvitationID.String(), string(change.Action), email, role, digest,
-			expires, expected, changeID.String(), change.EvaluatedAt)...).Scan(&encoded); err != nil {
+			expires, expected, changeID.String(), now)...).Scan(&encoded); err != nil {
 			return false, invitationDatabaseError(err)
 		}
 		var record invitationChangeRecord
@@ -263,14 +281,15 @@ func (store *InvitationStore) Change(ctx context.Context, change invitation.Chan
 	return result, nil
 }
 
-// List reads the Workspace's invitations (member.invite).
-func (store *InvitationStore) List(ctx context.Context, session accountsession.Session, workspaceID workspace.ID,
-	now time.Time) ([]invitation.Invitation, error) {
-	if !session.IsValid() || !workspaceID.IsValid() || now.IsZero() {
+// List reads the Workspace's invitations (member.invite) on the database
+// clock.
+func (store *InvitationStore) List(ctx context.Context, session accountsession.Session, workspaceID workspace.ID) (
+	[]invitation.Invitation, error) {
+	if !session.IsValid() || !workspaceID.IsValid() {
 		return nil, invitation.ErrInvalid
 	}
 	var listed []invitation.Invitation
-	err := store.transact(ctx, func(tx accountSessionTransaction) (bool, error) {
+	err := store.transactAt(ctx, func(tx accountSessionTransaction, now time.Time) (bool, error) {
 		var encoded string
 		if err := tx.QueryRow(ctx, listWorkspaceInvitationsSQL, append(sessionQueryArguments(session),
 			workspaceID.String(), now)...).Scan(&encoded); err != nil {

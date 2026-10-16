@@ -153,14 +153,14 @@ type ReadResult struct {
 	Scopes               []ManagementScope
 }
 
-// Reader loads one fresh login-Workspace projection from durable authority.
+// Reader loads one fresh login-Workspace projection from durable authority,
+// evaluated on the database clock.
 type Reader interface {
 	ReadManagementScopes(
 		context.Context,
 		accountsession.Session,
 		network.ID,
 		int,
-		time.Time,
 	) (ReadResult, error)
 }
 
@@ -204,7 +204,8 @@ func (page Page) Items() []ManagementScope {
 // Next returns the next Network cursor when another page exists.
 func (page Page) Next() (network.ID, bool) { return page.next, page.next.IsValid() }
 
-// Clock supplies one authority-evaluation instant.
+// Clock supplies this host's time, used only to refuse early a session that
+// has already ended; the reader evaluates authority on the database clock.
 type Clock interface {
 	Now() time.Time
 }
@@ -243,7 +244,7 @@ func (service *Service) List(
 	if now.IsZero() || !session.IsActiveAt(now) {
 		return Page{}, ErrUnauthenticated
 	}
-	result, err := service.reader.ReadManagementScopes(ctx, session, after, limit+1, now)
+	result, err := service.reader.ReadManagementScopes(ctx, session, after, limit+1)
 	if err != nil {
 		return Page{}, err
 	}

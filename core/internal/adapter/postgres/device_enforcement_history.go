@@ -41,17 +41,19 @@ func NewDeviceEnforcementHistoryStore(pool *Pool, options AccountSessionOptions)
 		metrics: pool.metrics}, nil
 }
 
-// ReadEnforcementHistory loads one exact-scope page after current device.read checks.
+// ReadEnforcementHistory loads one exact-scope page after current device.read
+// checks on the database clock. A zero at reads the transaction's database
+// time; an at after it is refused.
 func (store *DeviceEnforcementHistoryStore) ReadEnforcementHistory(ctx context.Context,
 	session accountsession.Session, scope network.Scope, at time.Time, after node.ID, limit int,
-	evaluatedAt time.Time) (enforcementledger.HistoryResult, error) {
+) (enforcementledger.HistoryResult, error) {
 	return retryReadConflict(ctx, func() (enforcementledger.HistoryResult, error) {
-		return store.readOnce(ctx, session, scope, at, after, limit, evaluatedAt)
+		return store.readOnce(ctx, session, scope, at, after, limit)
 	})
 }
 
 func (store *DeviceEnforcementHistoryStore) readOnce(ctx context.Context, session accountsession.Session,
-	scope network.Scope, at time.Time, after node.ID, limit int, evaluatedAt time.Time,
+	scope network.Scope, at time.Time, after node.ID, limit int,
 ) (_ enforcementledger.HistoryResult, resultErr error) {
 	startedAt := time.Now()
 	defer func() {
@@ -60,8 +62,8 @@ func (store *DeviceEnforcementHistoryStore) readOnce(ctx context.Context, sessio
 		}
 	}()
 	if ctx == nil || store == nil || store.database == nil || !validAccountSessionOptions(store.options) ||
-		!session.IsValid() || !scope.IsValid() || (!after.IsValid() && after != (node.ID{})) || at.IsZero() ||
-		limit < 1 || limit > enforcementledger.MaximumHistoryPageSize+1 || evaluatedAt.IsZero() {
+		!session.IsValid() || !scope.IsValid() || (!after.IsValid() && after != (node.ID{})) ||
+		limit < 1 || limit > enforcementledger.MaximumHistoryPageSize+1 {
 		return enforcementledger.HistoryResult{}, enforcementledger.ErrInvalidRequest
 	}
 	// The permission resolver takes FOR SHARE row locks, which need a
@@ -80,6 +82,17 @@ func (store *DeviceEnforcementHistoryStore) readOnce(ctx context.Context, sessio
 		postgresTimeout(store.options.StatementTimeout), postgresTimeout(store.options.IdleTimeout),
 	); err != nil {
 		return enforcementledger.HistoryResult{}, errors.Join(enforcementledger.ErrUnavailable, err)
+	}
+	evaluatedAt, err := readTransactionTime(ctx, transaction.QueryRow)
+	if err != nil {
+		return enforcementledger.HistoryResult{}, errors.Join(enforcementledger.ErrUnavailable, err)
+	}
+	if at.IsZero() {
+		at = evaluatedAt
+	}
+	// PostgreSQL rejects an instant after its own evaluation time.
+	if at.After(evaluatedAt) {
+		return enforcementledger.HistoryResult{}, enforcementledger.ErrInvalidRequest
 	}
 	var afterValue any
 	if after.IsValid() {

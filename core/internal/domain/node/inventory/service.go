@@ -177,12 +177,14 @@ type ReadResult struct {
 	WorkspaceCode, NetworkCode identity.DisplayCode
 }
 
-// Reader authorizes and reads one snapshot from durable authority.
+// Reader authorizes and reads one snapshot from durable authority on the
+// database clock.
 type Reader interface {
-	ReadDevices(context.Context, accountsession.Session, network.Scope, node.ID, int, time.Time) (ReadResult, error)
+	ReadDevices(context.Context, accountsession.Session, network.Scope, node.ID, int) (ReadResult, error)
 }
 
-// Clock provides the current authority-evaluation instant.
+// Clock supplies this host's time, used only to refuse early a session that
+// has already ended; the reader authorizes on the database clock.
 type Clock interface{ Now() time.Time }
 
 // Service validates scoped, revision-bound inventory evidence.
@@ -239,7 +241,7 @@ func (service *Service) List(ctx context.Context, session accountsession.Session
 	if now.IsZero() || !session.IsActiveAt(now) {
 		return Page{}, ErrForbidden
 	}
-	result, err := service.reader.ReadDevices(ctx, session, scope, cursor.After, limit+1, now)
+	result, err := service.reader.ReadDevices(ctx, session, scope, cursor.After, limit+1)
 	if err != nil {
 		return Page{}, err
 	}

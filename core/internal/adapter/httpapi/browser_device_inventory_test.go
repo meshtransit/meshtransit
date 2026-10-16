@@ -22,7 +22,7 @@ type inventoryTestReader struct {
 }
 
 func (reader *inventoryTestReader) ReadDevices(_ context.Context, _ accountsession.Session,
-	_ network.Scope, _ node.ID, _ int, _ time.Time,
+	_ network.Scope, _ node.ID, _ int,
 ) (inventory.ReadResult, error) {
 	reader.reads++
 	return inventory.ReadResult{Scope: reader.scope, Revision: 5, Devices: reader.devices,

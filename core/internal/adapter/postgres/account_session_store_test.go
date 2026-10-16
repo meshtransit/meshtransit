@@ -171,12 +171,18 @@ func (database *fakeAccountSessionDatabase) BeginActivity(
 	return database.Begin(ctx)
 }
 
+// accountSessionTestDatabaseTime is the database clock's time every fake
+// account session transaction reports, unless the test sets its own.
+var accountSessionTestDatabaseTime = time.Date(2026, 10, 1, 9, 30, 0, 123000, time.UTC)
+
 type fakeAccountSessionTransaction struct {
-	row       fakeAccountSessionRow
-	rows      []fakeAccountSessionRow
-	arguments []any
-	commits   int
-	rollbacks int
+	row          fakeAccountSessionRow
+	rows         []fakeAccountSessionRow
+	arguments    []any
+	commits      int
+	rollbacks    int
+	databaseTime time.Time
+	timeReads    int
 }
 
 func (*fakeAccountSessionTransaction) Exec(context.Context, string, ...any) error {
@@ -189,8 +195,13 @@ func (transaction *fakeAccountSessionTransaction) QueryRow(
 	arguments ...any,
 ) accountSessionRow {
 	if query == transactionTimeSQL {
-		// Every unit of work reads its time on the database clock.
-		return fakeAccountSessionRow{values: []any{time.Now().UTC()}}
+		// A store reads its unit of work's time on the database clock.
+		transaction.timeReads++
+		at := transaction.databaseTime
+		if at.IsZero() {
+			at = accountSessionTestDatabaseTime
+		}
+		return fakeAccountSessionRow{values: []any{at}}
 	}
 	transaction.arguments = arguments
 	if len(transaction.rows) > 0 {

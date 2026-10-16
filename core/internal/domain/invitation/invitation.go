@@ -132,7 +132,9 @@ func NormalizeEmail(text string) (string, bool) {
 	return strings.ToLower(trimmed), true
 }
 
-// Change is one validated change for the store.
+// Change is one validated change for the store. A create or resend carries
+// a new token digest; the store sets its expiry to LinkExpiresAt of the
+// transaction's time on the database clock.
 type Change struct {
 	Session         accountsession.Session
 	WorkspaceID     workspace.ID
@@ -141,10 +143,8 @@ type Change struct {
 	Email           string
 	Role            string
 	TokenDigest     *[32]byte
-	ExpiresAt       time.Time
 	ExpectedVersion int64
 	CorrelationID   publicid.ID
-	EvaluatedAt     time.Time
 }
 
 // ChangeResult is an invitation after one change.
@@ -157,11 +157,11 @@ type ChangeResult struct {
 // IsValid reports a complete change for its action.
 func (change Change) IsValid() bool {
 	if !change.Session.IsValid() || !change.WorkspaceID.IsValid() || !change.InvitationID.IsValid() ||
-		!change.CorrelationID.IsValid() || change.EvaluatedAt.IsZero() {
+		!change.CorrelationID.IsValid() {
 		return false
 	}
 	rotating := change.Action == ActionCreate || change.Action == ActionResend
-	if rotating != (change.TokenDigest != nil && !change.ExpiresAt.IsZero()) {
+	if rotating != (change.TokenDigest != nil) {
 		return false
 	}
 	switch change.Action {

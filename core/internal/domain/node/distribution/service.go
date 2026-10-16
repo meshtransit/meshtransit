@@ -120,9 +120,10 @@ type Target struct {
 	Devices         []TargetDevice
 }
 
-// Reader authorizes and reads the durable side under device.read.
+// Reader authorizes and reads the durable side under device.read on the
+// database clock.
 type Reader interface {
-	ReadDistribution(context.Context, accountsession.Session, network.Scope, node.ID, int, time.Time) (Target, error)
+	ReadDistribution(context.Context, accountsession.Session, network.Scope, node.ID, int) (Target, error)
 }
 
 // ObservationLoader returns one observation per requested Device, in order.
@@ -130,7 +131,9 @@ type ObservationLoader interface {
 	LoadObservations(context.Context, []node.ID) ([]Observation, error)
 }
 
-// Clock provides the current authority-evaluation instant.
+// Clock supplies this host's time to age delivery records, which MeshCore
+// hosts stamp on their own clocks; durable authority is evaluated on the
+// database clock.
 type Clock interface{ Now() time.Time }
 
 // Device is one row of the distribution report.
@@ -178,7 +181,7 @@ func (service *Service) Read(ctx context.Context, session accountsession.Session
 		limit < 1 || limit > MaximumPageSize || (after != node.ID{} && !after.IsValid()) {
 		return Page{}, ErrInvalidRequest
 	}
-	target, err := service.reader.ReadDistribution(ctx, session, scope, after, limit+1, service.clock.Now())
+	target, err := service.reader.ReadDistribution(ctx, session, scope, after, limit+1)
 	if err != nil {
 		return Page{}, err
 	}

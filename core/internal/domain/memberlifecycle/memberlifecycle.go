@@ -65,7 +65,6 @@ type Change struct {
 	Action        Action
 	Reason        string
 	CorrelationID publicid.ID
-	EvaluatedAt   time.Time
 }
 
 // Member is a membership document.
@@ -111,5 +110,5 @@ func (change Change) IsValid() bool {
 	return change.Session.IsValid() && change.WorkspaceID.IsValid() && change.MemberID.IsValid() &&
 		(change.Action == ActionSuspend || change.Action == ActionResume || change.Action == ActionRevokeSessions) &&
 		ValidReason(change.Reason) &&
-		change.CorrelationID.IsValid() && !change.EvaluatedAt.IsZero()
+		change.CorrelationID.IsValid()
 }

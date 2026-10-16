@@ -2,7 +2,6 @@ package memberlifecycle
 
 import (
 	"errors"
-	"time"
 
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
@@ -61,14 +60,13 @@ type Removal struct {
 	Reason        string
 	Devices       []DevicePlan
 	CorrelationID publicid.ID
-	EvaluatedAt   time.Time
 }
 
 // IsValid reports a complete removal with a reason and a bounded plan that
 // names each Device once.
 func (removal Removal) IsValid() bool {
 	if !removal.Session.IsValid() || !removal.WorkspaceID.IsValid() || !removal.MemberID.IsValid() ||
-		!ValidReason(removal.Reason) || !removal.CorrelationID.IsValid() || removal.EvaluatedAt.IsZero() ||
+		!ValidReason(removal.Reason) || !removal.CorrelationID.IsValid() ||
 		len(removal.Devices) > MaximumPlanDevices {
 		return false
 	}

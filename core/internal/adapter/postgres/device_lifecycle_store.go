@@ -39,8 +39,10 @@ func NewDeviceLifecycleStore(pool *Pool, options AccountSessionOptions) (*Device
 }
 
 // transact runs one exact-Network transaction and commits only when run asks.
+// run receives the transaction's time on the database clock, which every
+// time it passes to SQL uses.
 func (store *DeviceLifecycleStore) transact(ctx context.Context, scope network.Scope,
-	run func(tx accountSessionTransaction) (bool, error)) (resultErr error) {
+	run func(tx accountSessionTransaction, now time.Time) (bool, error)) (resultErr error) {
 	if ctx == nil || store == nil || store.database == nil || !validAccountSessionOptions(store.options) {
 		return devicelifecycle.ErrInvalid
 	}
@@ -66,7 +68,11 @@ func (store *DeviceLifecycleStore) transact(ctx context.Context, scope network.S
 	if workspaceInternal <= 0 || networkInternal <= 0 {
 		return devicelifecycle.ErrForbidden
 	}
-	commit, err := run(tx)
+	now, err := readTransactionTime(ctx, tx.QueryRow)
+	if err != nil {
+		return errors.Join(devicelifecycle.ErrUnavailable, err)
+	}
+	commit, err := run(tx, now)
 	if err != nil || !commit {
 		return err
 	}
@@ -185,12 +191,12 @@ func (store *DeviceLifecycleStore) Change(ctx context.Context, change devicelife
 	}
 	scope := change.Scope
 	var result devicelifecycle.Result
-	err = store.transact(ctx, scope, func(tx accountSessionTransaction) (bool, error) {
+	err = store.transact(ctx, scope, func(tx accountSessionTransaction, now time.Time) (bool, error) {
 		var encoded string
 		if err := tx.QueryRow(ctx, changeDeviceLifecycleSQL, append(sessionQueryArguments(change.Session),
 			scope.WorkspaceID().String(), scope.NetworkID().String(), change.DeviceID.String(),
 			string(change.Action), change.ExpectedVersion, newOwner, hostname, changeID.String(),
-			change.EvaluatedAt)...).Scan(&encoded); err != nil {
+			now)...).Scan(&encoded); err != nil {
 			return false, deviceLifecycleDatabaseError(err)
 		}
 		var record struct {

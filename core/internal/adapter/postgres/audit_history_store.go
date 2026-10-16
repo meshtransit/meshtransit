@@ -50,23 +50,37 @@ func NewAuditHistoryStore(pool *Pool, options AccountSessionOptions) (*AuditHist
 	return &AuditHistoryStore{database: pool.workspaceRenameDatabase, options: options}, nil
 }
 
+// auditHistoryRead is one audit read whose default window is filled from the
+// transaction's time on the database clock.
+type auditHistoryRead func(now time.Time) (sql string, args []any, since, until time.Time, err error)
+
 // List authorizes audit.read in PostgreSQL and returns one page, newest first.
+// A zero Until is the read's database time and a zero Since is Until minus
+// the default window.
 func (store *AuditHistoryStore) List(ctx context.Context, session accountsession.Session,
 	query history.Query) (history.Page, error) {
 	if ctx == nil || store == nil || store.database == nil || !validAccountSessionOptions(store.options) ||
-		!session.IsValid() || !query.IsValid() {
+		!session.IsValid() || !query.IsValidRequest() {
 		return history.Page{}, history.ErrInvalid
 	}
-	return store.read(ctx, query.WorkspaceID.String(), query.NetworkID, listWorkspaceAuditEventsSQL,
-		auditHistoryArguments(session, query), query.PageSize)
+	return store.read(ctx, query.WorkspaceID.String(), query.NetworkID, query.PageSize,
+		func(now time.Time) (string, []any, time.Time, time.Time, error) {
+			resolved := query.WithDefaultWindow(now)
+			if !resolved.IsValid() {
+				return "", nil, time.Time{}, time.Time{}, history.ErrInvalid
+			}
+			return listWorkspaceAuditEventsSQL, auditHistoryArguments(session, resolved), resolved.Since,
+				resolved.Until, nil
+		})
 }
 
 // ExportChunk authorizes audit.export and returns up to limit records after
-// the cursor, oldest first.
+// the cursor, oldest first. A zero Until is the read's database time and a
+// zero Since is Until minus the default window.
 func (store *AuditHistoryStore) ExportChunk(ctx context.Context, session accountsession.Session,
 	query history.ExportQuery, after *history.Cursor, limit int) (history.Page, error) {
 	if ctx == nil || store == nil || store.database == nil || !validAccountSessionOptions(store.options) ||
-		!session.IsValid() || !query.IsValid() || limit < 1 || limit > history.ExportChunkSize ||
+		!session.IsValid() || !query.IsValidRequest() || limit < 1 || limit > history.ExportChunkSize ||
 		(after != nil && (after.OccurredAt.IsZero() || !after.EventID.IsValid())) {
 		return history.Page{}, history.ErrInvalid
 	}
@@ -76,15 +90,24 @@ func (store *AuditHistoryStore) ExportChunk(ctx context.Context, session account
 		at, id := after.OccurredAt, after.EventID.String()
 		cursorAt, cursorID = &at, &id
 	}
-	args := append(sessionQueryArguments(session), query.WorkspaceID.String(),
-		optionalUUIDText(publicid.ID(query.NetworkID)), query.Since, query.Until, cursorAt, cursorID, limit)
-	return store.read(ctx, query.WorkspaceID.String(), query.NetworkID, exportWorkspaceAuditEventsSQL, args, limit)
+	return store.read(ctx, query.WorkspaceID.String(), query.NetworkID, limit,
+		func(now time.Time) (string, []any, time.Time, time.Time, error) {
+			resolved := query.WithDefaultWindow(now)
+			if !resolved.IsValid() {
+				return "", nil, time.Time{}, time.Time{}, history.ErrInvalid
+			}
+			args := append(sessionQueryArguments(session), resolved.WorkspaceID.String(),
+				optionalUUIDText(publicid.ID(resolved.NetworkID)), resolved.Since, resolved.Until, cursorAt,
+				cursorID, limit)
+			return exportWorkspaceAuditEventsSQL, args, resolved.Since, resolved.Until, nil
+		})
 }
 
 // read runs one audit read in a short transaction. A Network filter binds
-// that exact Network scope first, so Network-bound roles can read it.
-func (store *AuditHistoryStore) read(ctx context.Context, workspaceID string, networkID network.ID,
-	sql string, args []any, limit int) (_ history.Page, resultErr error) {
+// that exact Network scope first, so Network-bound roles can read it. The
+// read's window defaults come from the transaction's database time.
+func (store *AuditHistoryStore) read(ctx context.Context, workspaceID string, networkID network.ID, limit int,
+	prepare auditHistoryRead) (_ history.Page, resultErr error) {
 	tx, err := store.database.Begin(ctx)
 	if err != nil || tx == nil {
 		return history.Page{}, errors.Join(history.ErrUnavailable, err)
@@ -104,6 +127,14 @@ func (store *AuditHistoryStore) read(ctx context.Context, workspaceID string, ne
 			return history.Page{}, history.ErrForbidden
 		}
 	}
+	now, err := readTransactionTime(ctx, tx.QueryRow)
+	if err != nil {
+		return history.Page{}, errors.Join(history.ErrUnavailable, err)
+	}
+	sql, args, since, until, err := prepare(now)
+	if err != nil {
+		return history.Page{}, err
+	}
 	var encoded *string
 	if err := tx.QueryRow(ctx, sql, args...).Scan(&encoded); err != nil {
 		return history.Page{}, auditHistoryError(err)
@@ -111,7 +142,12 @@ func (store *AuditHistoryStore) read(ctx context.Context, workspaceID string, ne
 	if encoded == nil {
 		return history.Page{}, history.ErrForbidden
 	}
-	return decodeAuditHistoryPage([]byte(*encoded), limit)
+	page, err := decodeAuditHistoryPage([]byte(*encoded), limit)
+	if err != nil {
+		return history.Page{}, err
+	}
+	page.Since, page.Until, page.ReadAt = since, until, now
+	return page, nil
 }
 
 func auditHistoryArguments(session accountsession.Session, query history.Query) []any {

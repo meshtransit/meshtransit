@@ -43,9 +43,10 @@ func NewMemberLifecycleStore(pool *Pool, options AccountSessionOptions) (*Member
 }
 
 // transact runs one transaction and commits only when run asks; the SQL entry
-// point enters the Workspace scope itself.
+// point enters the Workspace scope itself. run receives the transaction's
+// time on the database clock, which every time it passes to SQL uses.
 func (store *MemberLifecycleStore) transact(ctx context.Context,
-	run func(tx accountSessionTransaction) (bool, error)) (resultErr error) {
+	run func(tx accountSessionTransaction, now time.Time) (bool, error)) (resultErr error) {
 	if ctx == nil || store == nil || store.database == nil || !validAccountSessionOptions(store.options) {
 		return memberlifecycle.ErrInvalid
 	}
@@ -63,7 +64,11 @@ func (store *MemberLifecycleStore) transact(ctx context.Context,
 		postgresTimeout(store.options.StatementTimeout), postgresTimeout(store.options.IdleTimeout)); err != nil {
 		return errors.Join(memberlifecycle.ErrUnavailable, err)
 	}
-	commit, err := run(tx)
+	now, err := readTransactionTime(ctx, tx.QueryRow)
+	if err != nil {
+		return errors.Join(memberlifecycle.ErrUnavailable, err)
+	}
+	commit, err := run(tx, now)
 	if err != nil || !commit {
 		return err
 	}
@@ -228,11 +233,11 @@ func (store *MemberLifecycleStore) Change(ctx context.Context, change memberlife
 		return memberlifecycle.Result{}, memberlifecycle.ErrUnavailable
 	}
 	var result memberlifecycle.Result
-	err = store.transact(ctx, func(tx accountSessionTransaction) (bool, error) {
+	err = store.transact(ctx, func(tx accountSessionTransaction, now time.Time) (bool, error) {
 		var encoded string
 		if err := tx.QueryRow(ctx, changeWorkspaceMemberSQL, append(sessionQueryArguments(change.Session),
 			change.WorkspaceID.String(), change.MemberID.String(), string(change.Action), changeID.String(),
-			change.EvaluatedAt)...).Scan(&encoded); err != nil {
+			now)...).Scan(&encoded); err != nil {
 			return false, memberLifecycleDatabaseError(err)
 		}
 		var record memberLifecycleRecord
@@ -312,11 +317,11 @@ func (store *MemberLifecycleStore) revokeSessions(ctx context.Context, change me
 		return memberlifecycle.Result{}, memberlifecycle.ErrUnavailable
 	}
 	var result memberlifecycle.Result
-	err = store.transact(ctx, func(tx accountSessionTransaction) (bool, error) {
+	err = store.transact(ctx, func(tx accountSessionTransaction, now time.Time) (bool, error) {
 		var encoded string
 		if err := tx.QueryRow(ctx, revokeWorkspaceMemberSessionsSQL, append(sessionQueryArguments(change.Session),
 			change.WorkspaceID.String(), change.MemberID.String(), changeID.String(),
-			change.EvaluatedAt)...).Scan(&encoded); err != nil {
+			now)...).Scan(&encoded); err != nil {
 			return false, memberLifecycleDatabaseError(err)
 		}
 		var record memberSessionsRecord

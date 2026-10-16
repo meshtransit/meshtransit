@@ -33,7 +33,7 @@ func TestAccountSessionStoreReadsManagementScopes(t *testing.T) {
 		t.Fatalf("newAccountSessionStore() error = %v", err)
 	}
 	session := accountSessionManagementScopeSession(t, now)
-	result, err := store.ReadManagementScopes(t.Context(), session, network.ID{}, 51, now)
+	result, err := store.ReadManagementScopes(t.Context(), session, network.ID{}, 51)
 	if err != nil {
 		t.Fatalf("ReadManagementScopes() error = %v", err)
 	}
@@ -44,6 +44,7 @@ func TestAccountSessionStoreReadsManagementScopes(t *testing.T) {
 	}
 	if transaction.commits != 1 || transaction.rollbacks != 0 ||
 		len(transaction.arguments) != 13 || transaction.arguments[9] != result.WorkspaceID.String() ||
+		transaction.arguments[10] != accountSessionTestDatabaseTime || transaction.timeReads != 1 ||
 		transaction.arguments[11] != nil || transaction.arguments[12] != 51 {
 		t.Fatalf(
 			"transaction commit/rollback/arguments = %d/%d/%v",
@@ -70,7 +71,7 @@ func TestAccountSessionStoreManagementScopesConcealsStaleAuthority(t *testing.T)
 		t.Fatalf("newAccountSessionStore() error = %v", err)
 	}
 	_, err = store.ReadManagementScopes(
-		t.Context(), accountSessionManagementScopeSession(t, now), network.ID{}, 50, now,
+		t.Context(), accountSessionManagementScopeSession(t, now), network.ID{}, 50,
 	)
 	if !errors.Is(err, sessioncontext.ErrUnauthenticated) {
 		t.Fatalf("ReadManagementScopes() error = %v, want ErrUnauthenticated", err)

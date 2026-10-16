@@ -40,18 +40,19 @@ func NewConsoleDeviceInventoryStore(pool *Pool, options AccountSessionOptions) (
 	return &ConsoleDeviceInventoryStore{database: pool.resourceAuthorityDatabase, options: options, metrics: pool.metrics}, nil
 }
 
-// ReadDevices loads a bounded exact-scope page after current device.read checks,
-// rerun on a fresh snapshot when a concurrent change holds the revision row.
+// ReadDevices loads a bounded exact-scope page after current device.read checks
+// on the database clock, rerun on a fresh snapshot when a concurrent change
+// holds the revision row.
 func (store *ConsoleDeviceInventoryStore) ReadDevices(ctx context.Context, session accountsession.Session,
-	scope network.Scope, after node.ID, limit int, evaluatedAt time.Time,
+	scope network.Scope, after node.ID, limit int,
 ) (inventory.ReadResult, error) {
 	return retryReadConflict(ctx, func() (inventory.ReadResult, error) {
-		return store.readDevicesOnce(ctx, session, scope, after, limit, evaluatedAt)
+		return store.readDevicesOnce(ctx, session, scope, after, limit)
 	})
 }
 
 func (store *ConsoleDeviceInventoryStore) readDevicesOnce(ctx context.Context, session accountsession.Session,
-	scope network.Scope, after node.ID, limit int, evaluatedAt time.Time,
+	scope network.Scope, after node.ID, limit int,
 ) (_ inventory.ReadResult, resultErr error) {
 	startedAt := time.Now()
 	defer func() {
@@ -61,7 +62,7 @@ func (store *ConsoleDeviceInventoryStore) readDevicesOnce(ctx context.Context, s
 	}()
 	if ctx == nil || store == nil || store.database == nil || !validAccountSessionOptions(store.options) ||
 		!session.IsValid() || !scope.IsValid() || (!after.IsValid() && after != (node.ID{})) ||
-		limit < 1 || limit > inventory.MaximumPageSize+1 || evaluatedAt.IsZero() {
+		limit < 1 || limit > inventory.MaximumPageSize+1 {
 		return inventory.ReadResult{}, inventory.ErrInvalidRequest
 	}
 	// RBAC and revision FOR SHARE locks require a read-write transaction; the
@@ -84,6 +85,10 @@ func (store *ConsoleDeviceInventoryStore) readDevicesOnce(ctx context.Context, s
 	if err := transaction.Exec(ctx, `SELECT pg_catalog.set_config('lock_timeout', $1, TRUE)`,
 		postgresTimeout(store.options.StatementTimeout),
 	); err != nil {
+		return inventory.ReadResult{}, errors.Join(inventory.ErrUnavailable, err)
+	}
+	evaluatedAt, err := readTransactionTime(ctx, transaction.QueryRow)
+	if err != nil {
 		return inventory.ReadResult{}, errors.Join(inventory.ErrUnavailable, err)
 	}
 	var afterValue any

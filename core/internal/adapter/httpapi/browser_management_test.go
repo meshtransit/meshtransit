@@ -1284,7 +1284,6 @@ type browserManagementCapabilityReader struct {
 func (reader browserManagementCapabilityReader) ReadDeploymentCapabilities(
 	context.Context,
 	accountsession.Session,
-	time.Time,
 ) (sessioncontext.CapabilityReadResult, error) {
 	reader.fixture.capabilityReads++
 	return reader.result, nil
@@ -1297,7 +1296,6 @@ func (reader browserManagementScopeReader) ReadManagementScopes(
 	accountsession.Session,
 	network.ID,
 	int,
-	time.Time,
 ) (sessioncontext.ReadResult, error) {
 	return reader.result, nil
 }

@@ -214,7 +214,7 @@ func assertPostgreSQLDeviceLifecycle(ctx context.Context, t *testing.T, admin *p
 	if err != nil {
 		t.Fatal(err)
 	}
-	page, err := inventoryStore.ReadDevices(ctx, owner, scope, node.ID{}, 100, time.Now())
+	page, err := inventoryStore.ReadDevices(ctx, owner, scope, node.ID{}, 100)
 	if err != nil {
 		t.Fatalf("read inventory: %v", err)
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/publicid"
@@ -16,8 +15,8 @@ type deviceLogoutStoreFixture struct {
 	err      error
 }
 
-func (store *deviceLogoutStoreFixture) LogoutDevice(_ context.Context, identity AuthenticatedNode,
-	_ time.Time) (DeviceLogout, error) {
+func (store *deviceLogoutStoreFixture) LogoutDevice(_ context.Context, identity AuthenticatedNode) (
+	DeviceLogout, error) {
 	store.identity = identity
 	return store.logout, store.err
 }
