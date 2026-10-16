@@ -64,11 +64,9 @@ type resourceSharingMutationRevisions struct {
 func (store *ResourceSharingStore) CreateOffer(
 	ctx context.Context,
 	command sharing.CreateOffer,
-	evaluatedAt time.Time,
+
 ) (_ sharing.MutationResult, resultErr error) {
 	if ctx == nil || store == nil || store.database == nil || !command.IsValid() ||
-		evaluatedAt.IsZero() || !command.ExpiresAt().After(evaluatedAt) ||
-		(command.ExpiresAt().After(evaluatedAt.Add(30*24*time.Hour)) && !sharing.HasNoExpiry(command.ExpiresAt())) ||
 		!validResourceSharingOptions(store.options) {
 		return sharing.MutationResult{}, sharing.ErrInvalidManagementRequest
 	}
@@ -92,7 +90,7 @@ func (store *ResourceSharingStore) CreateOffer(
 	if err != nil {
 		return sharing.MutationResult{}, err
 	}
-	transaction, err := store.begin(ctx)
+	transaction, evaluatedAt, err := store.beginAt(ctx)
 	if err != nil {
 		return sharing.MutationResult{}, err
 	}
@@ -102,6 +100,11 @@ func (store *ResourceSharingStore) CreateOffer(
 			resultErr = errors.Join(resultErr, rollbackResourceSharing(transaction))
 		}
 	}()
+	// The offer's deadline is judged on the database clock, as SQL does.
+	if !command.ExpiresAt().After(evaluatedAt) ||
+		(command.ExpiresAt().After(evaluatedAt.Add(30*24*time.Hour)) && !sharing.HasNoExpiry(command.ExpiresAt())) {
+		return sharing.MutationResult{}, sharing.ErrInvalidManagementRequest
+	}
 	localState, err := setResourceSharingScope(ctx, transaction, command.ProviderScope())
 	if err != nil {
 		return sharing.MutationResult{}, err
@@ -263,10 +266,10 @@ func (store *ResourceSharingStore) CreateOffer(
 func (store *ResourceSharingStore) DecideOffer(
 	ctx context.Context,
 	command sharing.DecideOffer,
-	evaluatedAt time.Time,
+
 ) (_ sharing.MutationResult, resultErr error) {
 	if ctx == nil || store == nil || store.database == nil || !command.IsValid() ||
-		evaluatedAt.IsZero() || !validResourceSharingOptions(store.options) {
+		!validResourceSharingOptions(store.options) {
 		return sharing.MutationResult{}, sharing.ErrInvalidManagementRequest
 	}
 	localScope := command.ConsumerScope()
@@ -292,7 +295,7 @@ func (store *ResourceSharingStore) DecideOffer(
 	if err != nil {
 		return sharing.MutationResult{}, err
 	}
-	transaction, err := store.begin(ctx)
+	transaction, evaluatedAt, err := store.beginAt(ctx)
 	if err != nil {
 		return sharing.MutationResult{}, err
 	}
@@ -507,10 +510,10 @@ func (store *ResourceSharingStore) DecideOffer(
 func (store *ResourceSharingStore) ActivateContract(
 	ctx context.Context,
 	command sharing.ActivateContract,
-	evaluatedAt time.Time,
+
 ) (_ sharing.MutationResult, resultErr error) {
 	if ctx == nil || store == nil || store.database == nil || !command.IsValid() ||
-		evaluatedAt.IsZero() || !validResourceSharingOptions(store.options) {
+		!validResourceSharingOptions(store.options) {
 		return sharing.MutationResult{}, sharing.ErrInvalidManagementRequest
 	}
 	provider, providerHead, err := store.resolveResourceSharingPreflight(ctx, command.ProviderScope())
@@ -537,7 +540,7 @@ func (store *ResourceSharingStore) ActivateContract(
 	if err != nil {
 		return sharing.MutationResult{}, err
 	}
-	transaction, err := store.begin(ctx)
+	transaction, evaluatedAt, err := store.beginAt(ctx)
 	if err != nil {
 		return sharing.MutationResult{}, err
 	}
@@ -697,10 +700,10 @@ func (store *ResourceSharingStore) ActivateContract(
 func (store *ResourceSharingStore) RevokeContract(
 	ctx context.Context,
 	command sharing.RevokeContract,
-	evaluatedAt time.Time,
+
 ) (_ sharing.MutationResult, resultErr error) {
 	if ctx == nil || store == nil || store.database == nil || !command.IsValid() ||
-		evaluatedAt.IsZero() || !validResourceSharingOptions(store.options) {
+		!validResourceSharingOptions(store.options) {
 		return sharing.MutationResult{}, sharing.ErrInvalidManagementRequest
 	}
 	provider, providerHead, err := store.resolveResourceSharingPreflight(ctx, command.ProviderScope())
@@ -719,7 +722,7 @@ func (store *ResourceSharingStore) RevokeContract(
 	if err != nil {
 		return sharing.MutationResult{}, err
 	}
-	transaction, err := store.begin(ctx)
+	transaction, evaluatedAt, err := store.beginAt(ctx)
 	if err != nil {
 		return sharing.MutationResult{}, err
 	}

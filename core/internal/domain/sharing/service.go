@@ -13,13 +13,13 @@ import (
 // Implementations must authorize against current PostgreSQL authority and commit
 // lifecycle mutation, audit evidence, outbox evidence, and idempotency together.
 type Repository interface {
-	GetContract(context.Context, accountsession.Session, network.Scope, ContractID, time.Time) (ContractSnapshot, error)
-	CreateOffer(context.Context, CreateOffer, time.Time) (MutationResult, error)
-	DecideOffer(context.Context, DecideOffer, time.Time) (MutationResult, error)
-	ActivateContract(context.Context, ActivateContract, time.Time) (MutationResult, error)
-	RevokeContract(context.Context, RevokeContract, time.Time) (MutationResult, error)
+	GetContract(context.Context, accountsession.Session, network.Scope, ContractID) (ContractSnapshot, error)
+	CreateOffer(context.Context, CreateOffer) (MutationResult, error)
+	DecideOffer(context.Context, DecideOffer) (MutationResult, error)
+	ActivateContract(context.Context, ActivateContract) (MutationResult, error)
+	RevokeContract(context.Context, RevokeContract) (MutationResult, error)
 	GetOffer(
-		context.Context, accountsession.Session, network.Scope, OfferID, time.Time,
+		context.Context, accountsession.Session, network.Scope, OfferID,
 	) (OfferSnapshot, error)
 	ListOffers(
 		context.Context,
@@ -29,7 +29,6 @@ type Repository interface {
 		OfferState,
 		int,
 		PageCursor,
-		time.Time,
 	) (OfferPage, error)
 }
 
@@ -39,15 +38,14 @@ func (service *Service) ActivateContract(
 	ctx context.Context,
 	command ActivateContract,
 ) (MutationResult, error) {
-	if ctx == nil || service == nil || service.repository == nil || service.clock == nil ||
+	if ctx == nil || service == nil || service.repository == nil ||
 		!command.IsValid() {
 		return MutationResult{}, ErrInvalidManagementRequest
 	}
-	evaluatedAt, err := service.evaluatedAt(ctx)
-	if err != nil {
+	if err := live(ctx); err != nil {
 		return MutationResult{}, err
 	}
-	result, err := service.repository.ActivateContract(ctx, command, evaluatedAt)
+	result, err := service.repository.ActivateContract(ctx, command)
 	if err != nil {
 		return MutationResult{}, err
 	}
@@ -57,21 +55,28 @@ func (service *Service) ActivateContract(
 	return result, nil
 }
 
-// Clock supplies the security evaluation instant.
-type Clock interface{ Now() time.Time }
-
-// Service validates the Resource Sharing application boundary around one authority repository.
+// Service validates the Resource Sharing application boundary around one
+// authority repository. The repository decides every evaluation and
+// persisted time on the database clock.
 type Service struct {
 	repository Repository
-	clock      Clock
+}
+
+// live refuses a request whose context already ended before it reaches the
+// repository.
+func live(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return errors.Join(ErrUnavailable, err)
+	}
+	return nil
 }
 
 // NewService rejects incomplete application dependencies.
-func NewService(repository Repository, clock Clock) (*Service, error) {
-	if repository == nil || clock == nil {
+func NewService(repository Repository) (*Service, error) {
+	if repository == nil {
 		return nil, ErrUnavailable
 	}
-	return &Service{repository: repository, clock: clock}, nil
+	return &Service{repository: repository}, nil
 }
 
 // CreateOffer commits one provider-bounded export and targeted offer.
@@ -79,15 +84,14 @@ func (service *Service) CreateOffer(
 	ctx context.Context,
 	command CreateOffer,
 ) (MutationResult, error) {
-	if ctx == nil || service == nil || service.repository == nil || service.clock == nil ||
+	if ctx == nil || service == nil || service.repository == nil ||
 		!command.IsValid() {
 		return MutationResult{}, ErrInvalidManagementRequest
 	}
-	evaluatedAt, err := service.evaluatedAt(ctx)
-	if err != nil {
+	if err := live(ctx); err != nil {
 		return MutationResult{}, err
 	}
-	result, err := service.repository.CreateOffer(ctx, command, evaluatedAt)
+	result, err := service.repository.CreateOffer(ctx, command)
 	if err != nil {
 		return MutationResult{}, err
 	}
@@ -102,15 +106,14 @@ func (service *Service) DecideOffer(
 	ctx context.Context,
 	command DecideOffer,
 ) (MutationResult, error) {
-	if ctx == nil || service == nil || service.repository == nil || service.clock == nil ||
+	if ctx == nil || service == nil || service.repository == nil ||
 		!command.IsValid() {
 		return MutationResult{}, ErrInvalidManagementRequest
 	}
-	evaluatedAt, err := service.evaluatedAt(ctx)
-	if err != nil {
+	if err := live(ctx); err != nil {
 		return MutationResult{}, err
 	}
-	result, err := service.repository.DecideOffer(ctx, command, evaluatedAt)
+	result, err := service.repository.DecideOffer(ctx, command)
 	if err != nil {
 		return MutationResult{}, err
 	}
@@ -125,15 +128,14 @@ func (service *Service) RevokeContract(
 	ctx context.Context,
 	command RevokeContract,
 ) (MutationResult, error) {
-	if ctx == nil || service == nil || service.repository == nil || service.clock == nil ||
+	if ctx == nil || service == nil || service.repository == nil ||
 		!command.IsValid() {
 		return MutationResult{}, ErrInvalidManagementRequest
 	}
-	evaluatedAt, err := service.evaluatedAt(ctx)
-	if err != nil {
+	if err := live(ctx); err != nil {
 		return MutationResult{}, err
 	}
-	result, err := service.repository.RevokeContract(ctx, command, evaluatedAt)
+	result, err := service.repository.RevokeContract(ctx, command)
 	if err != nil {
 		return MutationResult{}, err
 	}
@@ -150,15 +152,14 @@ func (service *Service) GetOffer(
 	scope network.Scope,
 	id OfferID,
 ) (OfferSnapshot, error) {
-	if ctx == nil || service == nil || service.repository == nil || service.clock == nil ||
+	if ctx == nil || service == nil || service.repository == nil ||
 		!session.IsValid() || !scope.IsValid() || !id.IsValid() {
 		return OfferSnapshot{}, ErrInvalidManagementRequest
 	}
-	evaluatedAt, err := service.evaluatedAt(ctx)
-	if err != nil {
+	if err := live(ctx); err != nil {
 		return OfferSnapshot{}, err
 	}
-	snapshot, err := service.repository.GetOffer(ctx, session, scope, id, evaluatedAt)
+	snapshot, err := service.repository.GetOffer(ctx, session, scope, id)
 	if err != nil {
 		return OfferSnapshot{}, err
 	}
@@ -178,19 +179,18 @@ func (service *Service) ListOffers(
 	limit int,
 	cursor PageCursor,
 ) (OfferPage, error) {
-	if ctx == nil || service == nil || service.repository == nil || service.clock == nil ||
+	if ctx == nil || service == nil || service.repository == nil ||
 		!session.IsValid() || !scope.IsValid() || !direction.IsValid() ||
 		(state != OfferStateUnknown && !validManagementOfferState(state)) ||
 		limit < 1 || limit > MaximumManagementPageSize ||
 		(cursor != (PageCursor{}) && !cursor.IsValid()) {
 		return OfferPage{}, ErrInvalidManagementRequest
 	}
-	evaluatedAt, err := service.evaluatedAt(ctx)
-	if err != nil {
+	if err := live(ctx); err != nil {
 		return OfferPage{}, err
 	}
 	page, err := service.repository.ListOffers(
-		ctx, session, scope, direction, state, limit, cursor, evaluatedAt,
+		ctx, session, scope, direction, state, limit, cursor,
 	)
 	if err != nil {
 		return OfferPage{}, err
@@ -199,17 +199,6 @@ func (service *Service) ListOffers(
 		return OfferPage{}, ErrUnavailable
 	}
 	return page, nil
-}
-
-func (service *Service) evaluatedAt(ctx context.Context) (time.Time, error) {
-	if err := ctx.Err(); err != nil {
-		return time.Time{}, errors.Join(ErrUnavailable, err)
-	}
-	evaluatedAt := service.clock.Now().UTC()
-	if evaluatedAt.IsZero() {
-		return time.Time{}, ErrUnavailable
-	}
-	return evaluatedAt, nil
 }
 
 func createOfferResultMatches(result MutationResult, command CreateOffer) bool {
@@ -317,23 +306,16 @@ func validManagementOfferState(state OfferState) bool {
 		state == OfferStateRejected || state == OfferStateExpired || state == OfferStateRevoked
 }
 
-// SystemClock supplies the current UTC time.
-type SystemClock struct{}
-
-// Now reads wall time.
-func (SystemClock) Now() time.Time { return time.Now().UTC() }
-
 // GetContract returns current consumer-local evidence after fresh share.read admission.
 func (service *Service) GetContract(ctx context.Context, session accountsession.Session, scope network.Scope, id ContractID) (ContractSnapshot, error) {
-	if ctx == nil || service == nil || service.repository == nil || service.clock == nil ||
+	if ctx == nil || service == nil || service.repository == nil ||
 		!session.IsValid() || !scope.IsValid() || !id.IsValid() {
 		return ContractSnapshot{}, ErrInvalidManagementRequest
 	}
-	evaluatedAt, err := service.evaluatedAt(ctx)
-	if err != nil {
+	if err := live(ctx); err != nil {
 		return ContractSnapshot{}, err
 	}
-	snapshot, err := service.repository.GetContract(ctx, session, scope, id, evaluatedAt)
+	snapshot, err := service.repository.GetContract(ctx, session, scope, id)
 	if err != nil {
 		return ContractSnapshot{}, err
 	}

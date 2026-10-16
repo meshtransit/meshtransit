@@ -8,7 +8,6 @@ import (
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/resource"
 	"meshtransit.net/core/internal/domain/sharing"
-	"time"
 )
 
 // Consumer-only RLS and exact joins retain historical names without granting access.
@@ -25,12 +24,12 @@ WHERE imported.workspace_id=mesh_ops.current_workspace_id()
  AND contract.public_id=$1::UUID AND imported.public_id=$2::UUID`
 
 // GetContract reads one repeatable, freshly authorized consumer-local snapshot.
-func (store *ResourceSharingStore) GetContract(ctx context.Context, session accountsession.Session, scope network.Scope, id sharing.ContractID, evaluatedAt time.Time) (_ sharing.ContractSnapshot, resultErr error) {
+func (store *ResourceSharingStore) GetContract(ctx context.Context, session accountsession.Session, scope network.Scope, id sharing.ContractID) (_ sharing.ContractSnapshot, resultErr error) {
 	if ctx == nil || store == nil || store.database == nil || !session.IsValid() ||
-		!scope.IsValid() || !id.IsValid() || evaluatedAt.IsZero() || !validResourceSharingOptions(store.options) {
+		!scope.IsValid() || !id.IsValid() || !validResourceSharingOptions(store.options) {
 		return sharing.ContractSnapshot{}, sharing.ErrInvalidManagementRequest
 	}
-	transaction, err := store.begin(ctx)
+	transaction, evaluatedAt, err := store.beginAt(ctx)
 	if err != nil {
 		return sharing.ContractSnapshot{}, err
 	}

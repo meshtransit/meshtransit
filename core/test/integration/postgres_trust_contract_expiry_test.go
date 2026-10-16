@@ -44,25 +44,24 @@ func assertTrustContractExpiryReleasesAccessName(
 	if err != nil {
 		t.Fatal(err)
 	}
-	start := integrationDatabaseNow(ctx, t, admin)
-	expiresAt := start.Add(30 * time.Microsecond)
+	// Every share time is on the database clock: the share expires shortly
+	// after its activation, and the test waits for the database to pass it.
+	expiresAt := integrationDatabaseNow(ctx, t, admin).Add(2 * time.Second)
 	first := createLabeledShare(ctx, t, store, session, providerScope, consumerScope, resourceID,
-		maximumTraffic, reason, importedName, start, expiresAt, 240)
+		maximumTraffic, reason, importedName, expiresAt, 240)
 	firstName := first.accessName
-	if now := integrationDatabaseNow(ctx, t, admin); !now.After(expiresAt) {
-		t.Fatalf("database clock %s is not past expiry %s", now, expiresAt)
-	}
+	waitForDatabaseClock(ctx, t, admin, expiresAt)
 	assertImportedResourceAccessName(ctx, t, admin, first.contract.ImportedResourceID(), firstName, "reserved", 1)
 
 	// Before finalization the expired name still blocks the next share.
 	again := integrationDatabaseNow(ctx, t, admin)
 	second := createLabeledOffer(ctx, t, store, session, providerScope, consumerScope, resourceID,
-		maximumTraffic, reason, again, again.Add(time.Hour), 243)
+		maximumTraffic, reason, again.Add(time.Hour), 243)
 	if second.offer.AccessName() != firstName {
 		t.Fatalf("relabeled offer name = %s, want %s", second.offer.AccessName(), firstName)
 	}
 	if _, err := store.DecideOffer(ctx, acceptLabeledOffer(t, session, providerScope, consumerScope,
-		second, importedName, reason, 244), again.Add(time.Millisecond)); !errors.Is(err, sharing.ErrConflict) {
+		second, importedName, reason, 244)); !errors.Is(err, sharing.ErrConflict) {
 		t.Fatalf("accept over an unfinalized expired share: error = %v, want conflict", err)
 	}
 
@@ -101,9 +100,8 @@ func assertTrustContractExpiryReleasesAccessName(
 	assertExpiryEntryPointsAreWorkerOnly(ctx, t, admin, installation, first.contract.ID())
 
 	// The same offer now reserves the same name for a new Imported Resource.
-	retry := integrationDatabaseNow(ctx, t, admin)
 	accepted, err := store.DecideOffer(ctx, acceptLabeledOffer(t, session, providerScope, consumerScope,
-		second, importedName, reason, 245), retry)
+		second, importedName, reason, 245))
 	if err != nil {
 		t.Fatalf("accept after expiry finalization: %v", err)
 	}
@@ -125,6 +123,14 @@ type labeledShare struct {
 	accessName sharing.AccessName
 }
 
+// waitForDatabaseClock returns once the database clock has passed at.
+func waitForDatabaseClock(ctx context.Context, t *testing.T, admin *pgx.Conn, at time.Time) {
+	t.Helper()
+	if _, err := admin.Exec(ctx, `SELECT pg_catalog.pg_sleep_until($1::TIMESTAMPTZ + INTERVAL '1 millisecond')`, at); err != nil {
+		t.Fatalf("wait for the database clock: %v", err)
+	}
+}
+
 func integrationDatabaseNow(ctx context.Context, t *testing.T, admin *pgx.Conn) time.Time {
 	t.Helper()
 	var now time.Time
@@ -143,7 +149,7 @@ func createLabeledOffer(
 	resourceID resource.ID,
 	maximumTraffic sharing.TrafficSet,
 	reason sharing.AuditReason,
-	at, expiresAt time.Time,
+	expiresAt time.Time,
 	proofMarker byte,
 ) labeledOffer {
 	t.Helper()
@@ -160,7 +166,7 @@ func createLabeledOffer(
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := store.CreateOffer(ctx, command, at)
+	created, err := store.CreateOffer(ctx, command)
 	if err != nil {
 		t.Fatalf("create labeled Share Offer: %v", err)
 	}
@@ -195,8 +201,8 @@ func acceptLabeledOffer(
 	return decision
 }
 
-// createLabeledShare offers, accepts and activates at injected times, so the
-// alias model provisions its Private Endpoint and Federation Alias.
+// createLabeledShare offers, accepts and activates, so the alias model
+// provisions its Private Endpoint and Federation Alias.
 func createLabeledShare(
 	ctx context.Context,
 	t *testing.T,
@@ -207,14 +213,14 @@ func createLabeledShare(
 	maximumTraffic sharing.TrafficSet,
 	reason sharing.AuditReason,
 	importedName resource.DisplayName,
-	at, expiresAt time.Time,
+	expiresAt time.Time,
 	proofMarker byte,
 ) labeledShare {
 	t.Helper()
 	offer := createLabeledOffer(ctx, t, store, session, providerScope, consumerScope, resourceID,
-		maximumTraffic, reason, at, expiresAt, proofMarker)
+		maximumTraffic, reason, expiresAt, proofMarker)
 	accepted, err := store.DecideOffer(ctx, acceptLabeledOffer(t, session, providerScope, consumerScope,
-		offer, importedName, reason, proofMarker+1), at.Add(10*time.Microsecond))
+		offer, importedName, reason, proofMarker+1))
 	if err != nil {
 		t.Fatalf("accept labeled Share Offer: %v", err)
 	}
@@ -230,7 +236,7 @@ func createLabeledShare(
 	if err != nil {
 		t.Fatal(err)
 	}
-	activated, err := store.ActivateContract(ctx, activation, at.Add(20*time.Microsecond))
+	activated, err := store.ActivateContract(ctx, activation)
 	if err != nil {
 		t.Fatalf("activate labeled share: %v", err)
 	}

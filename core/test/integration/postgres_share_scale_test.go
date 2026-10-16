@@ -530,7 +530,7 @@ func createShareScaleShares(ctx context.Context, t *testing.T, pool *postgresada
 	resources []resource.ID,
 ) []sharing.Contract {
 	t.Helper()
-	service, err := sharing.NewService(newIntegrationResourceSharingStore(t, pool), sharing.SystemClock{})
+	service, err := sharing.NewService(newIntegrationResourceSharingStore(t, pool))
 	if err != nil {
 		t.Fatal(err)
 	}

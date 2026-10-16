@@ -22,8 +22,8 @@ func TestServiceCreatesExactOfferAndPreservesRepositoryError(t *testing.T) {
 	repository := &sharingRepositoryFixture{createResult: result}
 	service := sharingServiceFixture(t, repository)
 	got, err := service.CreateOffer(context.Background(), command)
-	if err != nil || !got.IsValid() || repository.createAt != sharingServiceNow() {
-		t.Fatalf("CreateOffer() = %+v, %v; evaluated_at=%v", got, err, repository.createAt)
+	if err != nil || !got.IsValid() || !repository.createCalled {
+		t.Fatalf("CreateOffer() = %+v, %v; reached repository=%v", got, err, repository.createCalled)
 	}
 
 	repository.createErr = ErrConflict
@@ -131,7 +131,7 @@ func TestServiceStopsBeforeRepositoryOnCancelledContext(t *testing.T) {
 	if _, err := service.CreateOffer(ctx, command); !errors.Is(err, context.Canceled) {
 		t.Fatalf("CreateOffer() error = %v, want context cancellation", err)
 	}
-	if !repository.createAt.IsZero() {
+	if repository.createCalled {
 		t.Fatal("cancelled request reached repository")
 	}
 }
@@ -139,32 +139,30 @@ func TestServiceStopsBeforeRepositoryOnCancelledContext(t *testing.T) {
 type sharingRepositoryFixture struct {
 	contractResult ContractSnapshot
 	contractErr    error
-	contractAt     time.Time
+	contractCalled bool
 	createResult   MutationResult
 	createErr      error
-	createAt       time.Time
+	createCalled   bool
 	listResult     OfferPage
 }
 
 func (fixture *sharingRepositoryFixture) CreateOffer(
 	_ context.Context,
 	_ CreateOffer,
-	evaluatedAt time.Time,
 ) (MutationResult, error) {
-	fixture.createAt = evaluatedAt
+	fixture.createCalled = true
 	return fixture.createResult, fixture.createErr
 }
 
 func (*sharingRepositoryFixture) DecideOffer(
 	context.Context,
 	DecideOffer,
-	time.Time,
 ) (MutationResult, error) {
 	return MutationResult{}, ErrUnavailable
 }
 
 func (*sharingRepositoryFixture) ActivateContract(
-	context.Context, ActivateContract, time.Time,
+	context.Context, ActivateContract,
 ) (MutationResult, error) {
 	return MutationResult{}, ErrUnavailable
 }
@@ -172,7 +170,6 @@ func (*sharingRepositoryFixture) ActivateContract(
 func (*sharingRepositoryFixture) RevokeContract(
 	context.Context,
 	RevokeContract,
-	time.Time,
 ) (MutationResult, error) {
 	return MutationResult{}, ErrUnavailable
 }
@@ -182,7 +179,6 @@ func (*sharingRepositoryFixture) GetOffer(
 	accountsession.Session,
 	network.Scope,
 	OfferID,
-	time.Time,
 ) (OfferSnapshot, error) {
 	return OfferSnapshot{}, ErrUnavailable
 }
@@ -195,18 +191,13 @@ func (fixture *sharingRepositoryFixture) ListOffers(
 	_ OfferState,
 	_ int,
 	_ PageCursor,
-	_ time.Time,
 ) (OfferPage, error) {
 	return fixture.listResult, nil
 }
 
-type sharingClockFixture struct{ now time.Time }
-
-func (fixture sharingClockFixture) Now() time.Time { return fixture.now }
-
 func sharingServiceFixture(t *testing.T, repository Repository) *Service {
 	t.Helper()
-	service, err := NewService(repository, sharingClockFixture{now: sharingServiceNow()})
+	service, err := NewService(repository)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,8 +264,8 @@ func sharingServiceNow() time.Time {
 	return time.Date(2026, time.September, 29, 1, 0, 0, 0, time.UTC)
 }
 
-func (fixture *sharingRepositoryFixture) GetContract(_ context.Context, _ accountsession.Session, _ network.Scope, _ ContractID, evaluatedAt time.Time) (ContractSnapshot, error) {
-	fixture.contractAt = evaluatedAt
+func (fixture *sharingRepositoryFixture) GetContract(_ context.Context, _ accountsession.Session, _ network.Scope, _ ContractID) (ContractSnapshot, error) {
+	fixture.contractCalled = true
 	return fixture.contractResult, fixture.contractErr
 }
 
@@ -314,7 +305,7 @@ func TestGetContractRejectsMismatchedRepositoryEvidence(t *testing.T) {
 			repository := &sharingRepositoryFixture{contractResult: test.result}
 			service := sharingServiceFixture(t, repository)
 			result, err := service.GetContract(context.Background(), sharingSessionFixture(t), test.scope, test.id)
-			if !errors.Is(err, test.want) || repository.contractAt != sharingServiceNow() {
+			if !errors.Is(err, test.want) || !repository.contractCalled {
 				t.Fatal("contract result or evaluation instant", err)
 			}
 			if test.want == nil && result.Contract().ID() != contract.ID() {
@@ -326,7 +317,7 @@ func TestGetContractRejectsMismatchedRepositoryEvidence(t *testing.T) {
 	service := sharingServiceFixture(t, repository)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := service.GetContract(ctx, sharingSessionFixture(t), contract.ConsumerScope(), contract.ID()); !errors.Is(err, context.Canceled) || !repository.contractAt.IsZero() {
+	if _, err := service.GetContract(ctx, sharingSessionFixture(t), contract.ConsumerScope(), contract.ID()); !errors.Is(err, context.Canceled) || repository.contractCalled {
 		t.Fatal("cancelled read reached authority repository", err)
 	}
 }

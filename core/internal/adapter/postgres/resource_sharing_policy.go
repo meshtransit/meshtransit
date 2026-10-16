@@ -85,8 +85,7 @@ func (store *ResourceSharingStore) ResolveImportedPolicyDestinations(
 	if err != nil {
 		return nil, err
 	}
-	evaluatedAt := time.Now().UTC()
-	transaction, err := store.begin(ctx)
+	transaction, evaluatedAt, err := store.beginAt(ctx)
 	if err != nil {
 		return nil, err
 	}

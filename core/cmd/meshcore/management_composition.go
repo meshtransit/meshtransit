@@ -377,7 +377,7 @@ func composeManagementAPIWithKeys(
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)
 	}
-	resourceSharing, err := sharing.NewService(resourceSharingStore, sharing.SystemClock{})
+	resourceSharing, err := sharing.NewService(resourceSharingStore)
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)
 	}

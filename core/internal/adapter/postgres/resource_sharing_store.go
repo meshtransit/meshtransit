@@ -61,14 +61,14 @@ func (store *ResourceSharingStore) GetOffer(
 	session accountsession.Session,
 	scope network.Scope,
 	id sharing.OfferID,
-	evaluatedAt time.Time,
+
 ) (_ sharing.OfferSnapshot, resultErr error) {
 	if ctx == nil || store == nil || store.database == nil || !session.IsValid() ||
-		!scope.IsValid() || !id.IsValid() || evaluatedAt.IsZero() ||
+		!scope.IsValid() || !id.IsValid() ||
 		!validResourceSharingOptions(store.options) {
 		return sharing.OfferSnapshot{}, sharing.ErrInvalidManagementRequest
 	}
-	transaction, err := store.begin(ctx)
+	transaction, evaluatedAt, err := store.beginAt(ctx)
 	if err != nil {
 		return sharing.OfferSnapshot{}, err
 	}
@@ -106,11 +106,11 @@ func (store *ResourceSharingStore) ListOffers(
 	state sharing.OfferState,
 	limit int,
 	cursor sharing.PageCursor,
-	evaluatedAt time.Time,
+
 ) (_ sharing.OfferPage, resultErr error) {
 	if ctx == nil || store == nil || store.database == nil || !session.IsValid() ||
 		!scope.IsValid() || !direction.IsValid() || limit < 1 ||
-		limit > sharing.MaximumManagementPageSize || evaluatedAt.IsZero() ||
+		limit > sharing.MaximumManagementPageSize ||
 		(cursor != (sharing.PageCursor{}) && !cursor.IsValid()) ||
 		!validResourceSharingOptions(store.options) {
 		return sharing.OfferPage{}, sharing.ErrInvalidManagementRequest
@@ -119,7 +119,7 @@ func (store *ResourceSharingStore) ListOffers(
 	if !validState {
 		return sharing.OfferPage{}, sharing.ErrInvalidManagementRequest
 	}
-	transaction, err := store.begin(ctx)
+	transaction, evaluatedAt, err := store.beginAt(ctx)
 	if err != nil {
 		return sharing.OfferPage{}, err
 	}
@@ -202,6 +202,24 @@ func (store *ResourceSharingStore) begin(
 		return nil, resourceSharingDatabaseError(ctx, err)
 	}
 	return transaction, nil
+}
+
+// beginAt begins a unit of work and reads its time on the database clock,
+// which every authorization, expiry check and persisted time in it uses.
+func (store *ResourceSharingStore) beginAt(
+	ctx context.Context,
+) (resourceAuthorityDatabaseTransaction, time.Time, error) {
+	transaction, err := store.begin(ctx)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	evaluatedAt, err := readTransactionTime(ctx, transaction.QueryRow)
+	if err != nil {
+		return nil, time.Time{}, errors.Join(
+			resourceSharingDatabaseError(ctx, err), rollbackResourceSharing(transaction),
+		)
+	}
+	return transaction, evaluatedAt, nil
 }
 
 type resourceSharingNetworkState struct {

@@ -48,7 +48,7 @@ func newPrivateIdentityResourceServices(pool *postgresadapter.Pool, options post
 	if err != nil {
 		return invalid, errInvalidPrivateIdentityComposition
 	}
-	resourceSharing, err := sharing.NewService(imports, sharing.SystemClock{})
+	resourceSharing, err := sharing.NewService(imports)
 	if err != nil {
 		return invalid, errInvalidPrivateIdentityComposition
 	}

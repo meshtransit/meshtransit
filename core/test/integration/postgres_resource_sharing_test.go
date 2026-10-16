@@ -54,7 +54,7 @@ func assertPostgreSQLResourceSharing(
 ) {
 	t.Helper()
 	store := newIntegrationResourceSharingStore(t, runtimePool)
-	service, err := sharing.NewService(store, sharing.SystemClock{})
+	service, err := sharing.NewService(store)
 	if err != nil {
 		t.Fatalf("sharing.NewService() error = %v", err)
 	}
@@ -195,6 +195,9 @@ func assertPostgreSQLResourceSharing(
 		activeContract.Version() != contract.Version()+1 || activated.ImportedResourceVersion() != 2 {
 		t.Fatalf("Resource Sharing activate result = %+v", activated)
 	}
+	assertStampedByDatabaseClock(ctx, t, admin, "trust_contract", activeContract.ID().String())
+	assertStampedByDatabaseClock(ctx, t, admin, "imported_resource", activeContract.ImportedResourceID().String())
+	assertStampedByDatabaseClock(ctx, t, admin, "share_offer", activeContract.OfferID().String())
 	assertSameWorkspaceAliasEndpoint(ctx, t, admin, activeContract.ImportedResourceID(), "provisioning", 1, "reserved")
 	assertCurrentConsumerContractRead(ctx, t, service, session, activeContract, accessName, 2)
 	replayedActivation, err := service.ActivateContract(ctx, activateCommand)
@@ -236,10 +239,14 @@ func assertPostgreSQLResourceSharing(
 	if err != nil {
 		t.Fatalf("sharing.NewRevokeContract() error = %v", err)
 	}
+	// A previous binary whose host clock ran ahead activated this share;
+	// revoking it on the database clock keeps updated_at in order.
+	aheadUpdatedAt := stampShareAheadOfDatabase(ctx, t, admin, activeContract.ID().String(), 30*time.Second)
 	revoked, err := service.RevokeContract(ctx, revokeCommand)
 	if err != nil {
 		t.Fatalf("Resource Sharing RevokeContract() error = %v", err)
 	}
+	assertShareUpdatedAtKeptOrder(ctx, t, admin, activeContract.ID().String(), aheadUpdatedAt)
 	revokedContract, hasContract := revoked.Contract()
 	if !hasContract || revokedContract.State() != sharing.ContractStateRevoked ||
 		revokedContract.Version() != activeContract.Version()+1 ||
@@ -304,7 +311,6 @@ func assertPostgreSQLResourceSharing(
 		t.Fatalf("cross-Workspace Resource Sharing list error = %v, want forbidden", err)
 	}
 	assertCommittedResourceSharingEvidence(ctx, t, admin, createdOffer.Offer().ID(), contract.ID())
-	// Runs before the cleanup below, which future-dates sharing rows.
 	assertTrustContractExpiryReleasesAccessName(
 		ctx, t, admin, store, workerPool, session, providerScope, consumerScope, resourceID, maximumTraffic, reason,
 	)
@@ -350,8 +356,9 @@ func assertExpiredUnprovisionedContractCleanup(
 	reason sharing.AuditReason,
 ) {
 	t.Helper()
-	base := time.Now().UTC()
-	firstExpiry := base.Add(2 * time.Minute)
+	// The share expires shortly after it is accepted; the cleanup then waits
+	// on the database clock, which decides every share time.
+	firstExpiry := integrationDatabaseNow(ctx, t, admin).Add(2 * time.Second)
 	firstCommand, err := sharing.NewCreateOffer(sharing.CreateOfferParams{
 		ProviderScope: providerScope, ConsumerScope: consumerScope,
 		ResourceID: resourceID, MaximumTraffic: maximumTraffic,
@@ -361,7 +368,7 @@ func assertExpiredUnprovisionedContractCleanup(
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstCreated, err := store.CreateOffer(ctx, firstCommand, base)
+	firstCreated, err := store.CreateOffer(ctx, firstCommand)
 	if err != nil {
 		t.Fatalf("create expiring unprovisioned Share Offer: %v", err)
 	}
@@ -386,7 +393,7 @@ func assertExpiredUnprovisionedContractCleanup(
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstAccepted, err := store.DecideOffer(ctx, firstDecision, base.Add(time.Second))
+	firstAccepted, err := store.DecideOffer(ctx, firstDecision)
 	if err != nil {
 		t.Fatalf("accept expiring unprovisioned Share Offer: %v", err)
 	}
@@ -403,11 +410,8 @@ func assertExpiredUnprovisionedContractCleanup(
 	if err != nil {
 		t.Fatal(err)
 	}
-	revoked, err := store.RevokeContract(
-		ctx,
-		firstRevoke,
-		firstContract.ExpiresAt().Add(time.Nanosecond),
-	)
+	waitForDatabaseClock(ctx, t, admin, firstContract.ExpiresAt())
+	revoked, err := store.RevokeContract(ctx, firstRevoke)
 	if err != nil {
 		t.Fatalf("clean expired unprovisioned Trust Contract: %v", err)
 	}
@@ -419,7 +423,7 @@ func assertExpiredUnprovisionedContractCleanup(
 		ctx, t, admin, firstContract.ImportedResourceID(), accessName, "withdrawn", 2,
 	)
 
-	secondAt := firstContract.ExpiresAt().Add(time.Second)
+	secondAt := integrationDatabaseNow(ctx, t, admin)
 	secondCommand, err := sharing.NewCreateOffer(sharing.CreateOfferParams{
 		ProviderScope: providerScope, ConsumerScope: consumerScope,
 		ResourceID: resourceID, MaximumTraffic: maximumTraffic,
@@ -429,7 +433,7 @@ func assertExpiredUnprovisionedContractCleanup(
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondCreated, err := store.CreateOffer(ctx, secondCommand, secondAt)
+	secondCreated, err := store.CreateOffer(ctx, secondCommand)
 	if err != nil {
 		t.Fatalf("create replacement Share Offer: %v", err)
 	}
@@ -448,7 +452,7 @@ func assertExpiredUnprovisionedContractCleanup(
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondAccepted, err := store.DecideOffer(ctx, secondDecision, secondAt.Add(time.Second))
+	secondAccepted, err := store.DecideOffer(ctx, secondDecision)
 	if err != nil {
 		t.Fatalf("reuse withdrawn access name: %v", err)
 	}
@@ -633,14 +637,13 @@ func assertCrossWorkspaceResourceSharingConsent(
 		t.Fatalf("consumer activated against the provider's enforced guardrail: %v", err)
 	}
 	providerRail = setProviderShareGuardrail(ctx, t, admin, runtimePool, providerRail, guardrail.ModeAudit)
-	// The activating MeshCore runs ahead of the database host, so the Private
-	// Endpoint is created after the database clock's now.
-	aheadService, err := sharing.NewService(newIntegrationResourceSharingStore(t, runtimePool),
-		integrationAheadClock{ahead: integrationActivationClockAhead})
+	// Another MeshCore replica activates: whatever its host clock, the share's
+	// times come from the database clock.
+	replicaService, err := sharing.NewService(newIntegrationResourceSharingStore(t, runtimePool))
 	if err != nil {
 		t.Fatalf("sharing.NewService() error = %v", err)
 	}
-	activated, err := aheadService.ActivateContract(ctx, activateCommand)
+	activated, err := replicaService.ActivateContract(ctx, activateCommand)
 	if err != nil {
 		t.Fatalf("activate cross-Workspace Trust Contract: %v", err)
 	}
@@ -651,6 +654,8 @@ func assertCrossWorkspaceResourceSharingConsent(
 		activeContract.ScopeRelation() != sharing.ScopeRelationCrossWorkspace {
 		t.Fatalf("cross-Workspace active contract = %+v", activated)
 	}
+	assertStampedByDatabaseClock(ctx, t, admin, "trust_contract", activeContract.ID().String())
+	assertStampedByDatabaseClock(ctx, t, admin, "imported_resource", activeContract.ImportedResourceID().String())
 	assertPrivateEndpointProvisioning(
 		ctx, t, admin, activeContract.ImportedResourceID(), "provisioning", 1,
 		// The same-Workspace share of this provider Device still retains
@@ -2291,22 +2296,15 @@ WHERE workspace_id = 103`).Scan(&value); err != nil {
 	return rail
 }
 
-// integrationActivationClockAhead is how far the activating MeshCore's clock
-// runs ahead of the database host in the cross-Workspace share flow.
-const integrationActivationClockAhead = time.Second
-
-// integrationAheadClock is a MeshCore clock ahead of the database host's.
-type integrationAheadClock struct{ ahead time.Duration }
-
-func (clock integrationAheadClock) Now() time.Time { return time.Now().UTC().Add(clock.ahead) }
-
-// assertPrivateEndpointAwaitsDatabaseClock qualifies schema 168: a Private
-// Endpoint created by a MeshCore clock ahead of the database is neither a
-// publication candidate nor readable for publication until the database
-// clock reaches its creation, which the confirmation requires of the
-// snapshot. Each refusal is asserted only when the database clock was still
-// behind after the call, so a stalled host cannot fail it; the wait then
-// sleeps on the database clock.
+// assertPrivateEndpointAwaitsDatabaseClock first checks that this binary
+// creates a Private Endpoint on the database clock: never after the
+// database's now. It then qualifies schema 168 for a previous binary, which
+// stamped the creation with its own clock: an endpoint created ahead of the
+// database is neither a publication candidate nor readable for publication
+// until the database clock reaches its creation, which the confirmation
+// requires of the snapshot. The administrator moves the creation 30 seconds
+// ahead, bypassing the evidence triggers only for this fault injection, and
+// moves it back afterwards.
 func assertPrivateEndpointAwaitsDatabaseClock(
 	ctx context.Context,
 	t *testing.T,
@@ -2321,9 +2319,28 @@ func assertPrivateEndpointAwaitsDatabaseClock(
 		endpointID.String()).Scan(&createdAt); err != nil {
 		t.Fatalf("read Private Endpoint creation: %v", err)
 	}
-	if !createdAt.After(integrationDatabaseNow(ctx, t, admin)) {
-		t.Fatal("Private Endpoint creation is not ahead of the database clock")
+	if createdAt.After(integrationDatabaseNow(ctx, t, admin)) {
+		t.Fatalf("Private Endpoint created at %s, after the database clock", createdAt)
 	}
+	const previousBinaryLead = 30 * time.Second
+	shift := func(by time.Duration) {
+		t.Helper()
+		if _, err := admin.Exec(ctx, `SET session_replication_role = replica`); err != nil {
+			t.Fatalf("enable Private Endpoint clock fault injection: %v", err)
+		}
+		_, err := admin.Exec(ctx, `UPDATE mesh.private_endpoint
+SET created_at = created_at + $2::INTERVAL, updated_at = updated_at + $2::INTERVAL
+WHERE public_id = $1::UUID`, endpointID.String(), by)
+		if _, resetErr := admin.Exec(context.WithoutCancel(ctx), `SET session_replication_role = origin`); resetErr != nil {
+			t.Fatalf("disable Private Endpoint clock fault injection: %v", resetErr)
+		}
+		if err != nil {
+			t.Fatalf("move Private Endpoint creation by %s: %v", by, err)
+		}
+	}
+	shift(previousBinaryLead)
+	defer shift(-previousBinaryLead)
+	createdAt = createdAt.Add(previousBinaryLead)
 	candidates, err := store.ListPublicationCandidates(ctx, deploymentID, 128)
 	if err != nil {
 		t.Fatalf("list early publication candidates: %v", err)
@@ -2344,8 +2361,5 @@ func assertPrivateEndpointAwaitsDatabaseClock(
 		}
 	case !errors.As(err, &databaseError) || databaseError.Code != "40001":
 		t.Fatalf("early publication snapshot error = %v, want SQLSTATE 40001", err)
-	}
-	if _, err := admin.Exec(ctx, `SELECT pg_catalog.pg_sleep_until($1::TIMESTAMPTZ)`, createdAt); err != nil {
-		t.Fatalf("wait for the database clock: %v", err)
 	}
 }
