@@ -407,7 +407,7 @@
       "post": {
         "operationId": "revokeEnrollmentKey",
         "summary": "Revoke an enrollment key",
-        "description": "Requires enrollment_credential.revoke. The key can no longer enroll a Device. The Device it already enrolled is not affected. Recorded as enrollment_key.revoked.",
+        "description": "Requires enrollment_credential.revoke. Only a usable key can be revoked; it can then no longer enroll a Device. A key that already enrolled its Device is refused with enrollment_key_used: that Device is managed instead. Recorded as enrollment_key.revoked.",
         "security": [
           {
             "accountSessionBearer": []

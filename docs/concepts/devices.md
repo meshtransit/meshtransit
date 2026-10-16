@@ -49,15 +49,19 @@ A key:
 - has the form `mtc1.<key id>.<secret>`, with a 256-bit random secret. The
   secret appears once, in the response that creates the key; Core stores
   only an HMAC digest of it;
-- can be revoked (`POST …/enrollment-keys/{key}/actions/revoke`,
-  `enrollment_credential.revoke`); revocation is final;
+- can be revoked while it is still usable
+  (`POST …/enrollment-keys/{key}/actions/revoke`,
+  `enrollment_credential.revoke`); revocation is final. Once a key has
+  enrolled its Device it is no longer managed as a key: revoking it is
+  refused with `409 enrollment_key_used`, and that Device's access is ended
+  from the Device instead;
 - is listed (`GET …/enrollment-keys`, at most 200, every usable key first)
   with its state (`active`, `used`, `expired`, `revoked`), the Device lifetime
   chosen and the Device it enrolled, never with its secret.
 
 A Network has at most 100 usable keys. The Device a key enrolls belongs to
 the person who created the key and is an ordinary Device from then on: the
-key expiring or being revoked does not affect it. Creating, using and
+key expiring does not affect it. Creating, using and
 revoking a key are each recorded in the Network's activity log, with the
 lifetimes chosen.
 

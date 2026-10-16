@@ -99,6 +99,8 @@ func enrollmentKeyDatabaseError(err error) error {
 			return enrollmentkey.ErrNotFound
 		case "MTE01":
 			return enrollmentkey.ErrNotActive
+		case "MTE03":
+			return enrollmentkey.ErrUsed
 		case "MTE02":
 			return enrollmentkey.ErrLimitReached
 		case "22023", "22P02", "23514":

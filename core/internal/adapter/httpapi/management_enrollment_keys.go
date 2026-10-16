@@ -275,6 +275,9 @@ func classifyEnrollmentKeyError(err error) managementError {
 	case errors.Is(err, enrollmentkey.ErrNotActive):
 		return managementError{Status: http.StatusConflict, Code: "enrollment_key_revoked",
 			Message: "The enrollment key is already revoked"}
+	case errors.Is(err, enrollmentkey.ErrUsed):
+		return managementError{Status: http.StatusConflict, Code: "enrollment_key_used",
+			Message: "The key already enrolled its Device. Remove the Device to end its access."}
 	case errors.Is(err, enrollmentkey.ErrLimitReached):
 		return managementError{Status: http.StatusConflict, Code: "enrollment_key_limit",
 			Message: "The Network already has 100 usable enrollment keys. Revoke one first."}

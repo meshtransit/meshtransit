@@ -11,7 +11,9 @@ merge (2026-10-09) are kept below.
   chooses how long the key can be used (5 minutes to 30 days, 24 hours by
   default) and how long the Device lives (1 hour to 180 days, or never). The
   Device belongs to the key's creator and is not affected when the key
-  expires or is revoked. Each creation and revocation is recorded in the
+  expires. Only a usable key can be revoked; a key that already enrolled its
+  Device is refused (`409 enrollment_key_used`), and that Device is managed
+  instead (schema 176). Each creation and revocation is recorded in the
   Network's activity log, and each registration records the Device lifetime
   it got. Schema 175; the `api` role reads `MESHTRANSIT_ENROLLMENT_DIGEST_*`
   to issue keys.

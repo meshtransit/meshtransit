@@ -160,6 +160,7 @@ func TestEnrollmentKeyHTTPBoundary(t *testing.T) {
 		{"revoke", http.MethodPost, revoke, `{}`, nil, 200, 1, `"state":"revoked"`, enrollmentKeyTestToken},
 		{"revoke again", http.MethodPost, revoke, `{}`, enrollmentkey.ErrNotActive, 409, 1,
 			"enrollment_key_revoked", ""},
+		{"revoke used", http.MethodPost, revoke, `{}`, enrollmentkey.ErrUsed, 409, 1, "enrollment_key_used", ""},
 		{"revoke unknown", http.MethodPost, revoke, `{}`, enrollmentkey.ErrNotFound, 404, 1,
 			"enrollment_key_not_found", ""},
 		{"revoke with a body", http.MethodPost, revoke, `{"reason":"x"}`, nil, 400, 0, "invalid_request", ""},
@@ -235,6 +236,7 @@ func TestClassifyEnrollmentKeyError(t *testing.T) {
 		enrollmentkey.ErrNotFound:      "enrollment_key_not_found",
 		enrollmentkey.ErrNotActive:     "enrollment_key_revoked",
 		enrollmentkey.ErrLimitReached:  "enrollment_key_limit",
+		enrollmentkey.ErrUsed:          "enrollment_key_used",
 		enrollmentkey.ErrInvalid:       "invalid_request",
 		errors.New("database is down"): "temporarily_unavailable",
 	} {

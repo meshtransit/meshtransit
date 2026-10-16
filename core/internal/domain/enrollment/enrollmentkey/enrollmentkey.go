@@ -34,6 +34,9 @@ var (
 	ErrNotFound = errors.New("enrollment key: not found")
 	// ErrNotActive reports a key that is already spent, expired or revoked.
 	ErrNotActive = errors.New("enrollment key: not active")
+	// ErrUsed reports a key that already enrolled its Device: the Device is
+	// managed from then on, not the key.
+	ErrUsed = errors.New("enrollment key: used")
 	// ErrLimitReached reports a Network with MaximumActiveKeys usable keys.
 	ErrLimitReached = errors.New("enrollment key: too many usable keys")
 	// ErrUnavailable reports a dependency failure.

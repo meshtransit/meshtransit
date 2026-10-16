@@ -22,7 +22,8 @@ import (
 // assertEnrollmentKeyUse follows keys the production store issued: one
 // enrolls a Device that lives exactly the fixed lifetime it chose and
 // belongs to its creator; the list then shows it used with that Device,
-// also when the use was a resume; revoking it leaves the Device active; an
+// also when the use was a resume; it can no longer be revoked (the Device
+// is managed instead) and the Device stays active; an
 // expired key lists as expired; a credential of another profile cannot be
 // revoked as a key; and a Network holds at most 100 usable keys, all of
 // which the list shows first.
@@ -62,10 +63,11 @@ WHERE credential.id = used.enrollment_credential_id AND credential.public_id = $
 		args: []any{issued.Key().ID().String()}}})
 	assertListedKey(ctx, t, service, issuer, scope, issued.Key().ID(), enrollmentkey.StateUsed, result.NodeID())
 
-	if revoked, err := service.Revoke(ctx, issuer, scope, issued.Key().ID(), newCorrelationID(t)); err != nil ||
-		revoked.State() != enrollmentkey.StateRevoked {
-		t.Fatalf("revoke the spent key = %+v, %v", revoked, err)
+	if _, err := service.Revoke(ctx, issuer, scope, issued.Key().ID(), newCorrelationID(t)); !errors.Is(err,
+		enrollmentkey.ErrUsed) {
+		t.Fatalf("revoked a spent key: %v", err)
 	}
+	assertListedKey(ctx, t, service, issuer, scope, issued.Key().ID(), enrollmentkey.StateUsed, result.NodeID())
 	var state string
 	if err := admin.QueryRow(ctx, `SELECT state FROM mesh.device WHERE public_id = $1::UUID`,
 		result.NodeID().String()).Scan(&state); err != nil || state != "active" {
