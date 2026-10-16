@@ -22,14 +22,16 @@ type browserIntentRepositoryFake struct {
 	state     enrollment.BrowserIntentFollowup
 	found     bool
 	issuedURL string
+	lifetime  time.Duration
 }
 
 func (fake *browserIntentRepositoryFake) Issue(
 	_ context.Context, deploymentID deployment.ID, epoch int64,
 	identity node.RegistrationIdentity, hostname node.Hostname,
 	intentID enrollment.BrowserIntentID, nonce enrollment.BrowserIntentNonce,
-	_ time.Time,
+	lifetime time.Duration,
 ) (enrollment.BrowserIntentToken, error) {
+	fake.lifetime = lifetime
 	fake.issued++
 	fake.identity, fake.hostname = identity, hostname
 	token, _, _, err := fake.keys.Issue(deploymentID, epoch, intentID, nonce)
@@ -97,6 +99,10 @@ func TestBrowserRegistrationServiceBindsIssueAndPoll(t *testing.T) {
 	if err != nil || fake.issued != 1 || !strings.HasPrefix(issued,
 		"https://console.example.test/register/v1/") {
 		t.Fatalf("issue = (%q, %v), calls=%d", issued, err, fake.issued)
+	}
+	// The repository starts the lifetime on the database clock.
+	if fake.lifetime != 10*time.Minute {
+		t.Fatalf("issued lifetime = %s, want 10m", fake.lifetime)
 	}
 	polled, err := service.RegisterBrowser(t.Context(), machine, nodeKey, hostname, issued)
 	if err != nil || polled != issued || fake.read != 1 || fake.issued != 1 {

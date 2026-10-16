@@ -84,12 +84,12 @@ func (store *BrowserIntentStore) Issue(
 	hostname node.Hostname,
 	proposedID enrollment.BrowserIntentID,
 	proposedNonce enrollment.BrowserIntentNonce,
-	expiresAt time.Time,
+	lifetime time.Duration,
 ) (_ enrollment.BrowserIntentToken, resultErr error) {
 	if ctx == nil || store == nil || store.database == nil || store.keys == nil ||
 		!validAccountSessionOptions(store.options) || !deploymentID.IsValid() ||
 		recoveryEpoch <= 0 || !identity.IsValid() || !hostname.IsValid() ||
-		!proposedID.IsValid() || expiresAt.IsZero() {
+		!proposedID.IsValid() || lifetime <= 0 {
 		return enrollment.BrowserIntentToken{}, ErrInvalidBrowserIntentIssue
 	}
 	proposedToken, proposedDigest, proposedKeyID, err := store.keys.Issue(
@@ -113,6 +113,12 @@ func (store *BrowserIntentStore) Issue(
 		postgresTimeout(store.options.IdleTimeout)); err != nil {
 		return enrollment.BrowserIntentToken{}, errors.Join(ErrBrowserIntentIssueUnavailable, err)
 	}
+	// The intent's lifetime starts at the database clock's time.
+	issuedAt, err := readTransactionTime(ctx, transaction.QueryRow)
+	if err != nil {
+		return enrollment.BrowserIntentToken{}, errors.Join(ErrBrowserIntentIssueUnavailable, err)
+	}
+	expiresAt := issuedAt.Add(lifetime)
 	machineKey := identity.MachineKey().Bytes()
 	fingerprint := identity.MachineKey().Fingerprint()
 	nodeKey := identity.NodeKey().Bytes()
@@ -140,7 +146,7 @@ func (store *BrowserIntentStore) Issue(
 	intentID, err := enrollment.ParseBrowserIntentID(issuedID)
 	if err != nil || issuedEpoch != recoveryEpoch ||
 		(state != "pending" && state != "approved") ||
-		!issuedExpiry.After(time.Now()) || len(issuedNonce) != 32 ||
+		!issuedExpiry.After(issuedAt) || len(issuedNonce) != 32 ||
 		len(issuedDigest) != 32 {
 		return enrollment.BrowserIntentToken{}, ErrBrowserIntentIssueEvidence
 	}
@@ -225,6 +231,11 @@ func (store *BrowserIntentStore) ReadFollowup(
 		postgresTimeout(store.options.IdleTimeout)); err != nil {
 		return enrollment.BrowserIntentFollowup{}, false, errors.Join(ErrBrowserIntentIssueUnavailable, err)
 	}
+	// Expiry is judged on the database clock.
+	evaluatedAt, err := readTransactionTime(ctx, transaction.QueryRow)
+	if err != nil {
+		return enrollment.BrowserIntentFollowup{}, false, errors.Join(ErrBrowserIntentIssueUnavailable, err)
+	}
 	machineKey := identity.MachineKey().Bytes()
 	fingerprint := identity.MachineKey().Fingerprint()
 	nodeKey := identity.NodeKey().Bytes()
@@ -247,7 +258,7 @@ func (store *BrowserIntentStore) ReadFollowup(
 		return enrollment.BrowserIntentFollowup{}, false, errors.Join(ErrBrowserIntentIssueUnavailable, err)
 	}
 	intentID, err := enrollment.ParseBrowserIntentID(intentPublicID)
-	if err != nil || !expiresAt.After(time.Now()) {
+	if err != nil || !expiresAt.After(evaluatedAt) {
 		return enrollment.BrowserIntentFollowup{}, false, ErrBrowserIntentIssueEvidence
 	}
 	var registrationID enrollment.RegistrationID
@@ -311,6 +322,11 @@ func (store *BrowserIntentStore) ReadLanding(
 		postgresTimeout(store.options.IdleTimeout)); err != nil {
 		return enrollment.BrowserIntentLanding{}, false, errors.Join(ErrBrowserIntentIssueUnavailable, err)
 	}
+	// Expiry is judged on the database clock.
+	evaluatedAt, err := readTransactionTime(ctx, transaction.QueryRow)
+	if err != nil {
+		return enrollment.BrowserIntentLanding{}, false, errors.Join(ErrBrowserIntentIssueUnavailable, err)
+	}
 	sessionBytes := sessionDigest.Bytes()
 	tokenBytes := tokenDigest.Bytes()
 	var intentPublicID, state, hostname string
@@ -336,7 +352,7 @@ func (store *BrowserIntentStore) ReadLanding(
 	landing := enrollment.BrowserIntentLanding{
 		IntentID: intentID, State: state, Hostname: hostname, ExpiresAt: expiresAt,
 	}
-	if !landing.IsValid() || !expiresAt.After(time.Now()) {
+	if !landing.IsValid() || !expiresAt.After(evaluatedAt) {
 		return enrollment.BrowserIntentLanding{}, false, ErrBrowserIntentIssueEvidence
 	}
 	if err := transaction.Commit(ctx); err != nil {

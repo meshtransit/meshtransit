@@ -284,7 +284,7 @@ func assertPostgreSQLBrowserHandover(
 		t.Fatal(err)
 	}
 	token, err := intents.Issue(ctx, deploymentID, epoch, identity, hostname, intentID, nonce,
-		time.Now().Add(5*time.Minute))
+		5*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

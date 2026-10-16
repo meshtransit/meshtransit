@@ -185,9 +185,13 @@ func (*fakeAccountSessionTransaction) Exec(context.Context, string, ...any) erro
 
 func (transaction *fakeAccountSessionTransaction) QueryRow(
 	_ context.Context,
-	_ string,
+	query string,
 	arguments ...any,
 ) accountSessionRow {
+	if query == transactionTimeSQL {
+		// Every unit of work reads its time on the database clock.
+		return fakeAccountSessionRow{values: []any{time.Now().UTC()}}
+	}
 	transaction.arguments = arguments
 	if len(transaction.rows) > 0 {
 		row := transaction.rows[0]

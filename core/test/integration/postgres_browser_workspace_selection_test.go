@@ -163,7 +163,7 @@ WHERE workspace_id=102 AND network_id=202`).Scan(&revision); err != nil {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := intents.Issue(ctx, deploymentID, epoch, identity, hostname, intentID, nonce, time.Now().Add(5*time.Minute))
+	token, err := intents.Issue(ctx, deploymentID, epoch, identity, hostname, intentID, nonce, 5*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

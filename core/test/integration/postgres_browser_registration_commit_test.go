@@ -143,7 +143,7 @@ WHERE session.public_id=$1::UUID`, integrationManagementSessionPublicID).Scan(
 		t.Fatal(err)
 	}
 	token, err := intentStore.Issue(ctx, deploymentID, recoveryEpoch, identity,
-		hostname, intentID, nonce, time.Now().Add(5*time.Minute))
+		hostname, intentID, nonce, 5*time.Minute)
 	if err != nil {
 		t.Fatalf("commit browser URL issuance with audit/outbox: %v", err)
 	}
@@ -458,7 +458,7 @@ WHERE public_id=$1::UUID`, created.NodeID().String()); err != nil {
 				t.Fatal(err)
 			}
 			token, err := intents.Issue(ctx, deploymentID, epoch, scenario.identity,
-				hostname, intentID, nonce, time.Now().Add(5*time.Minute))
+				hostname, intentID, nonce, 5*time.Minute)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -564,7 +564,7 @@ WHERE pending_registration_public_id=$1::UUID`, abandonedID).Scan(&abandonedInte
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := intents.Issue(ctx, deploymentID, epoch, identity, hostname, intentID, nonce, time.Now().Add(5*time.Minute))
+	token, err := intents.Issue(ctx, deploymentID, epoch, identity, hostname, intentID, nonce, 5*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

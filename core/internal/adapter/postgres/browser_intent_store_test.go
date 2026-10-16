@@ -97,7 +97,7 @@ func TestBrowserIntentStoreReissuesPersistedTokenAfterRetry(t *testing.T) {
 		{id: retryID, nonce: retryNonce},
 	} {
 		got, err := store.Issue(t.Context(), deploymentID, 1, identity,
-			hostname, proposal.id, proposal.nonce, time.Now().Add(5*time.Minute))
+			hostname, proposal.id, proposal.nonce, 5*time.Minute)
 		if err != nil || got.Encoded() != want.Encoded() {
 			t.Fatalf("retry changed browser URL token: got=%q err=%v", got.Encoded(), err)
 		}
@@ -119,7 +119,7 @@ func TestBrowserIntentStoreReissuesPersistedTokenAfterRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = badStore.Issue(t.Context(), deploymentID, 1, identity,
-		hostname, retryID, retryNonce, time.Now().Add(5*time.Minute))
+		hostname, retryID, retryNonce, 5*time.Minute)
 	if !errors.Is(err, ErrBrowserIntentIssueEvidence) || badTransaction.commits != 0 ||
 		badTransaction.rollbacks != 1 {
 		t.Fatalf("corrupt persisted digest accepted: err=%v commit/rollback=%d/%d",

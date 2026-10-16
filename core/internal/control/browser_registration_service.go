@@ -29,7 +29,7 @@ var (
 type BrowserIntentRepository interface {
 	Issue(context.Context, deployment.ID, int64, node.RegistrationIdentity,
 		node.Hostname, enrollment.BrowserIntentID, enrollment.BrowserIntentNonce,
-		time.Time) (enrollment.BrowserIntentToken, error)
+		time.Duration) (enrollment.BrowserIntentToken, error)
 	ReadFollowup(context.Context, deployment.ID, int64, node.RegistrationIdentity,
 		node.Hostname, string) (enrollment.BrowserIntentFollowup, bool, error)
 }
@@ -98,7 +98,8 @@ func (service *BrowserRegistrationService) RegisterBrowser(
 		if err != nil {
 			return "", errors.Join(ErrBrowserRegistrationUnavailable, err)
 		}
-		if !found || !state.IsValid() || !state.ExpiresAt.After(time.Now()) {
+		// The repository judged the intent's expiry on the database clock.
+		if !found || !state.IsValid() {
 			return "", ErrInvalidBrowserRegistration
 		}
 		return followupURL, nil
@@ -116,7 +117,7 @@ func (service *BrowserRegistrationService) RegisterBrowser(
 		return "", errors.Join(ErrBrowserRegistrationUnavailable, err)
 	}
 	token, err := service.intents.Issue(ctx, service.deploymentID, service.epoch,
-		identity, hostname, intentID, nonce, time.Now().Add(service.ttl))
+		identity, hostname, intentID, nonce, service.ttl)
 	if err != nil {
 		return "", errors.Join(ErrBrowserRegistrationUnavailable, err)
 	}

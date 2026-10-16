@@ -3,7 +3,6 @@ package control
 import (
 	"context"
 	"errors"
-	"time"
 
 	"meshtransit.net/core/internal/domain/deployment"
 	"meshtransit.net/core/internal/domain/enrollment"
@@ -88,7 +87,8 @@ func (service *BrowserChoiceService) Read(
 	if !found {
 		return BrowserChoicePage{}, false, nil
 	}
-	if !landing.IsValid() || !landing.ExpiresAt.After(time.Now()) {
+	// The repository judged the intent's expiry on the database clock.
+	if !landing.IsValid() {
 		return BrowserChoicePage{}, false, ErrBrowserChoiceUnavailable
 	}
 	choices, found, err := service.networks.ReadBrowserEnrollmentNetworks(ctx,

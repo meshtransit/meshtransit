@@ -76,7 +76,7 @@ func (release browserHostnameRelease) tryRegister(seed byte, hostname node.Hostn
 		release.t.Fatal(err)
 	}
 	token, err := release.intents.Issue(release.ctx, release.deployment, release.epoch, identity,
-		hostname, intentID, nonce, time.Now().Add(5*time.Minute))
+		hostname, intentID, nonce, 5*time.Minute)
 	if err != nil {
 		release.t.Fatal(err)
 	}

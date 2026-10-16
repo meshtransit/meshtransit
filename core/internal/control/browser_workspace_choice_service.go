@@ -3,7 +3,6 @@ package control
 import (
 	"context"
 	"errors"
-	"time"
 
 	"meshtransit.net/core/internal/domain/deployment"
 	"meshtransit.net/core/internal/domain/enrollment"
@@ -132,7 +131,8 @@ func (service *BrowserWorkspaceChoiceService) readLanding(ctx context.Context,
 	if !found {
 		return enrollment.BrowserIntentLanding{}, false, nil
 	}
-	if !landing.IsValid() || !landing.ExpiresAt.After(time.Now()) {
+	// The repository judged the intent's expiry on the database clock.
+	if !landing.IsValid() {
 		return enrollment.BrowserIntentLanding{}, false, ErrBrowserChoiceUnavailable
 	}
 	return landing, true, nil
