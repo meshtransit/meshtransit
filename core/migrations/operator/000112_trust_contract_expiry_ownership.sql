@@ -1,3 +1,4 @@
+-- operator-step: rollout=before
 BEGIN;
 
 ALTER FUNCTION mesh_ops.list_expired_trust_contracts_v1(UUID, TIMESTAMPTZ, UUID, INTEGER)

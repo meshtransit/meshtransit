@@ -1,3 +1,4 @@
+-- operator-step: rollout=after
 BEGIN;
 ALTER FUNCTION mesh_ops.read_compiled_imported_policy_evidence_internal_v1(BIGINT)
 OWNER TO mesh_share_writer;

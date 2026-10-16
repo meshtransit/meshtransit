@@ -1,3 +1,4 @@
+-- operator-step: rollout=after
 BEGIN;
 ALTER FUNCTION mesh_ops.revoke_resource_share_v6(
     BIGINT, BIGINT, BIGINT, BIGINT,

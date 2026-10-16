@@ -1,3 +1,4 @@
+-- operator-step: rollout=before
 BEGIN;
 -- Accepting a share: decide v6 refuses a second live share of one Device into
 -- one Network (MT013) after v5's checks.

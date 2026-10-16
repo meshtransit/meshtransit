@@ -1,3 +1,4 @@
+-- operator-step: rollout=after
 BEGIN;
 -- The alias worker: load v3 and prepare v4 readmit a consumer Device whose
 -- share was withdrawn once it is authorized again (schema 170). The worker

@@ -1,3 +1,4 @@
+-- operator-step: rollout=after
 BEGIN;
 ALTER FUNCTION mesh_ops.activate_resource_share_v3(
     BIGINT, BIGINT, BIGINT, BIGINT, UUID, BIGINT, BIGINT, BIGINT, UUID, UUID, TIMESTAMPTZ

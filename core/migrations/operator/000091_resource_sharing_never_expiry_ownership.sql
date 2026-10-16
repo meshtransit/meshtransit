@@ -1,3 +1,4 @@
+-- operator-step: rollout=after
 BEGIN;
 
 ALTER FUNCTION mesh_ops.create_resource_share_offer_v2(

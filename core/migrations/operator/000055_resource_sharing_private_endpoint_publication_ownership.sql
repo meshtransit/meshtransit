@@ -1,3 +1,4 @@
+-- operator-step: rollout=after
 BEGIN;
 
 ALTER FUNCTION mesh_ops.assert_private_endpoint_scope_internal_v1(

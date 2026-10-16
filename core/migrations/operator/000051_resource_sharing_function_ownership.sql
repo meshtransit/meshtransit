@@ -1,3 +1,4 @@
+-- operator-step: rollout=before
 BEGIN;
 
 ALTER FUNCTION mesh_ops.set_share_scope_v1(BIGINT, BIGINT, BIGINT, BIGINT)

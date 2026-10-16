@@ -1,3 +1,4 @@
+-- operator-step: rollout=after
 BEGIN;
 ALTER FUNCTION mesh_ops.load_device_alias_map_edges_v3(BYTEA,BYTEA,INTEGER) OWNER TO mesh_device_alias_map_reader;
 GRANT EXECUTE ON FUNCTION mesh_ops.load_device_alias_map_edges_v3(BYTEA,BYTEA,INTEGER) TO mesh_runtime;

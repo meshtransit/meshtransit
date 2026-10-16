@@ -1,3 +1,4 @@
+-- operator-step: rollout=before
 BEGIN;
 ALTER FUNCTION mesh_ops.load_device_alias_map_edges_v7(BYTEA,BYTEA,INTEGER) OWNER TO mesh_device_alias_map_reader;
 REVOKE ALL ON FUNCTION mesh_ops.load_device_alias_map_edges_v7(BYTEA,BYTEA,INTEGER) FROM PUBLIC,mesh_migrator,mesh_worker,mesh_observer,mesh_audit_writer,mesh_share_writer,mesh_direct_map_reader;

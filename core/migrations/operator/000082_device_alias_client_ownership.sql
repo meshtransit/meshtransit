@@ -1,3 +1,4 @@
+-- operator-step: rollout=after
 BEGIN;
 ALTER FUNCTION mesh_ops.observe_device_alias_version_v1(BYTEA, BYTEA, INTEGER)
     OWNER TO mesh_device_alias_observer;

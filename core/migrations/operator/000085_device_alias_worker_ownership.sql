@@ -1,3 +1,4 @@
+-- operator-step: rollout=after
 BEGIN;
 ALTER FUNCTION mesh_ops.save_device_alias_worker_context_v1() OWNER TO mesh_device_alias_writer;
 ALTER FUNCTION mesh_ops.restore_device_alias_worker_context_v1(JSONB) OWNER TO mesh_device_alias_writer;

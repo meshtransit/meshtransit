@@ -1,3 +1,4 @@
+-- operator-step: rollout=before
 BEGIN;
 
 ALTER FUNCTION mesh_ops.resolve_imported_policy_destinations_v2(

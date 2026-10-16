@@ -66,7 +66,9 @@ type OperatorStep struct {
 	Checksum string
 	// AfterRollout marks a step that must not run while a replica of the
 	// previous release is left: it revokes a function version the previous
-	// release calls, or a previous worker would undo its effect.
+	// release calls, or a previous worker would undo its effect. An
+	// ownership file declares it on its first line,
+	// "-- operator-step: rollout=before" or "…=after".
 	AfterRollout bool
 	Effects      []OperatorEffect
 }
@@ -80,33 +82,12 @@ type OperatorRequirement struct {
 
 var (
 	// ErrInvalidOperatorStep reports an operator file the catalog cannot
-	// classify or whose statements it does not recognise.
+	// classify, whose text it does not accept or whose roles fall outside
+	// the allowlist.
 	ErrInvalidOperatorStep = errors.New("invalid operator step")
 
 	operatorStepName = regexp.MustCompile(`^([0-9]{6})_[a-z0-9_]+_(role|ownership)\.sql$`)
-	operatorLineNote = regexp.MustCompile(`--[^\n]*`)
-	operatorNote     = regexp.MustCompile(`(?s)/\*.*?\*/`)
-	operatorBegin    = regexp.MustCompile(`(?is)^\s*BEGIN\s*;`)
-	operatorCommit   = regexp.MustCompile(`(?is)COMMIT\s*;\s*$`)
-	operatorRoleDo   = regexp.MustCompile(`(?is)^\s*DO\s+\$(\w*)\$\s*BEGIN\s+IF\s+NOT\s+EXISTS\s*\(\s*SELECT\s+FROM\s+` +
-		`pg_catalog\.pg_roles\s+WHERE\s+rolname\s*=\s*'([a-z_][a-z0-9_]*)'\s*\)\s+THEN\s+CREATE\s+ROLE\s+([a-z_][a-z0-9_]*)\s+` +
-		`NOLOGIN\s+NOSUPERUSER\s+NOCREATEDB\s+NOCREATEROLE\s+NOREPLICATION\s+NOBYPASSRLS\s*;` +
-		`\s*ELSE\s+ALTER\s+ROLE\s+([a-z_][a-z0-9_]*)\s+NOLOGIN\s+NOSUPERUSER\s+NOCREATEDB\s+NOCREATEROLE\s+NOREPLICATION\s+NOBYPASSRLS\s*;` +
-		`\s*END\s+IF\s*;\s*END\s+\$(\w*)\$\s*;\s*$`)
-	operatorAlterOwner = regexp.MustCompile(`(?is)^ALTER\s+FUNCTION\s+(.+?)\s+OWNER\s+TO\s+([a-z_][a-z0-9_]*)$`)
-	operatorGrant      = regexp.MustCompile(`(?is)^GRANT\s+EXECUTE\s+ON\s+FUNCTION\s+(.+)\s+TO\s+([a-z_][a-z0-9_,\s]*)$`)
-	operatorRevoke     = regexp.MustCompile(`(?is)^REVOKE\s+(?:ALL(?:\s+PRIVILEGES)?|EXECUTE)\s+ON\s+FUNCTION\s+(.+)\s+FROM\s+([a-z_][a-z0-9_,\s]*)$`)
-	operatorFunction   = regexp.MustCompile(`(?is)^\s*(mesh_ops\.[a-z_][a-z0-9_]*)\s*\(([^()]*)\)\s*(?:,|$)`)
-	operatorRole       = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 )
-
-// afterRolloutVersions lists the ownership steps that wait for the rollout
-// (see OperatorStep.AfterRollout). Steps 53 to 93 revoke the previous
-// version of a function; 170 and 171 change what a previous alias worker
-// would undo.
-func afterRolloutVersion(version int64) bool {
-	return version >= 53 && version <= 93 || version == 170 || version == 171
-}
 
 // OperatorSteps returns every embedded operator step, ordered by migration
 // and, within one migration, the role step first. Each call returns a copy.
@@ -151,6 +132,9 @@ func readOperatorSteps() ([]OperatorStep, error) {
 		}
 		return strings.Compare(left.Name, right.Name)
 	})
+	if err := validateOperatorRoles(steps); err != nil {
+		return nil, err
+	}
 	return steps, nil
 }
 
@@ -168,7 +152,7 @@ func readOperatorStep(file string) (OperatorStep, error) {
 		return OperatorStep{}, errors.Join(ErrInvalidOperatorStep, err)
 	}
 	kind := OperatorStepKind(match[2])
-	effects, err := parseOperatorStepEffects(kind, string(text))
+	parsed, err := parseOperatorStep(kind, string(text))
 	if err != nil {
 		return OperatorStep{}, fmt.Errorf("%s: %w", file, err)
 	}
@@ -179,133 +163,17 @@ func readOperatorStep(file string) (OperatorStep, error) {
 		Kind:         kind,
 		SQL:          string(text),
 		Checksum:     hex.EncodeToString(sum[:]),
-		AfterRollout: kind == OperatorStepOwnership && afterRolloutVersion(version),
-		Effects:      effects,
+		AfterRollout: parsed.AfterRollout,
+		Effects:      parsed.Effects,
 	}, nil
 }
 
-// Body returns the statements the command runs inside its own transaction:
-// an ownership step without its BEGIN and COMMIT, a role step as it is.
+// Body returns the statements the command runs inside its own transaction,
+// rebuilt from the effects the parser read and never the file's text: one
+// statement per effect for an ownership step, the canonical block for a role
+// step. What the catalog checks is therefore exactly what runs.
 func (step OperatorStep) Body() string {
-	if step.Kind != OperatorStepOwnership {
-		return step.SQL
-	}
-	body := operatorBegin.ReplaceAllString(step.SQL, "")
-	return operatorCommit.ReplaceAllString(body, "")
-}
-
-// parseOperatorStepEffects reads the facts a step establishes and refuses
-// any statement other than the few an operator step may hold.
-func parseOperatorStepEffects(kind OperatorStepKind, text string) ([]OperatorEffect, error) {
-	stripped := operatorLineNote.ReplaceAllString(operatorNote.ReplaceAllString(text, " "), " ")
-	if kind == OperatorStepRole {
-		match := operatorRoleDo.FindStringSubmatch(stripped)
-		if match == nil || match[1] != match[5] || match[2] != match[3] || match[2] != match[4] {
-			return nil, fmt.Errorf("%w: a role step is one DO block creating or resetting one NOLOGIN role", ErrInvalidOperatorStep)
-		}
-		return []OperatorEffect{{Kind: OperatorEffectRole, Role: match[2]}}, nil
-	}
-	if kind != OperatorStepOwnership {
-		return nil, fmt.Errorf("%w: kind %q", ErrInvalidOperatorStep, kind)
-	}
-	if !operatorBegin.MatchString(text) || !operatorCommit.MatchString(text) {
-		return nil, fmt.Errorf("%w: an ownership step starts with BEGIN; and ends with COMMIT;", ErrInvalidOperatorStep)
-	}
-	statements := strings.Split(stripped, ";")
-	effects := []OperatorEffect{}
-	body := statements[:0]
-	for _, statement := range statements {
-		if statement = strings.Join(strings.Fields(statement), " "); statement != "" {
-			body = append(body, statement)
-		}
-	}
-	if len(body) < 3 || !strings.EqualFold(body[0], "BEGIN") || !strings.EqualFold(body[len(body)-1], "COMMIT") {
-		return nil, fmt.Errorf("%w: an ownership step is BEGIN, its statements, COMMIT", ErrInvalidOperatorStep)
-	}
-	for _, statement := range body[1 : len(body)-1] {
-		parsed, err := parseOperatorStatement(statement)
-		if err != nil {
-			return nil, err
-		}
-		effects = append(effects, parsed...)
-	}
-	return effects, nil
-}
-
-func parseOperatorStatement(statement string) ([]OperatorEffect, error) {
-	if match := operatorAlterOwner.FindStringSubmatch(statement); match != nil {
-		functions, ok := operatorFunctions(match[1])
-		if !ok || len(functions) != 1 {
-			return nil, fmt.Errorf("%w: unrecognised function: %s", ErrInvalidOperatorStep, statement)
-		}
-		return []OperatorEffect{{Kind: OperatorEffectOwner, Function: functions[0], Role: match[2]}}, nil
-	}
-	kind := OperatorEffectExecute
-	match := operatorGrant.FindStringSubmatch(statement)
-	if match == nil {
-		kind = OperatorEffectNoExecute
-		match = operatorRevoke.FindStringSubmatch(statement)
-	}
-	if match == nil || strings.Contains(strings.ToUpper(match[1]), " IN SCHEMA ") {
-		return nil, fmt.Errorf("%w: only ALTER FUNCTION … OWNER TO, GRANT EXECUTE and REVOKE on listed functions: %s",
-			ErrInvalidOperatorStep, statement)
-	}
-	functions, ok := operatorFunctions(match[1])
-	roles, rolesOK := operatorRoles(match[2], kind == OperatorEffectNoExecute)
-	if !ok || !rolesOK {
-		return nil, fmt.Errorf("%w: unrecognised function or role list: %s", ErrInvalidOperatorStep, statement)
-	}
-	effects := make([]OperatorEffect, 0, len(functions)*len(roles))
-	for _, function := range functions {
-		for _, role := range roles {
-			effects = append(effects, OperatorEffect{Kind: kind, Function: function, Role: role})
-		}
-	}
-	return effects, nil
-}
-
-// operatorFunctions reads "mesh_ops.f(T, T), mesh_ops.g(T)" into normalized
-// signatures. Argument names are not allowed: the signature is resolved with
-// to_regprocedure.
-func operatorFunctions(list string) ([]string, bool) {
-	functions := []string{}
-	for rest := strings.TrimSpace(list); rest != ""; {
-		match := operatorFunction.FindStringSubmatchIndex(rest)
-		if match == nil {
-			return nil, false
-		}
-		arguments := []string{}
-		if text := strings.TrimSpace(rest[match[4]:match[5]]); text != "" {
-			for _, argument := range strings.Split(text, ",") {
-				argument = strings.ToUpper(strings.Join(strings.Fields(argument), " "))
-				if argument == "" {
-					return nil, false
-				}
-				arguments = append(arguments, argument)
-			}
-		}
-		functions = append(functions, strings.ToLower(rest[match[2]:match[3]])+"("+strings.Join(arguments, ",")+")")
-		rest = strings.TrimSpace(rest[match[1]:])
-	}
-	return functions, len(functions) != 0
-}
-
-func operatorRoles(list string, allowPublic bool) ([]string, bool) {
-	roles := []string{}
-	for _, role := range strings.Split(list, ",") {
-		role = strings.TrimSpace(role)
-		if strings.EqualFold(role, "PUBLIC") {
-			if !allowPublic {
-				return nil, false
-			}
-			role = "public"
-		}
-		if !operatorRole.MatchString(role) {
-			return nil, false
-		}
-		roles = append(roles, role)
-	}
-	return roles, len(roles) != 0
+	return renderOperatorEffects(step.Kind, step.Effects)
 }
 
 // OperatorRequirements returns what must hold once steps ran in order: for

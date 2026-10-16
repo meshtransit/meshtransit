@@ -1,3 +1,4 @@
+-- operator-step: rollout=after
 BEGIN;
 
 -- Activation: every Device share takes the alias endpoint. Close the earlier

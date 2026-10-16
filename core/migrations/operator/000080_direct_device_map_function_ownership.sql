@@ -1,3 +1,4 @@
+-- operator-step: rollout=after
 BEGIN;
 ALTER FUNCTION mesh_ops.load_direct_share_map_edges_v1(BYTEA, BYTEA, INTEGER)
     OWNER TO mesh_direct_map_reader;

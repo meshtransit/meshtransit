@@ -1,3 +1,4 @@
+-- operator-step: rollout=after
 BEGIN;
 -- The alias worker: load v4 and prepare v5 give a resumed provider Device the
 -- endpoint's own Resource aliases back (schema 171). The worker uses them only
