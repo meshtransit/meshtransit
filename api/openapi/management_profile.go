@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"strings"
 )
 
 // ManagementProfile selects a server-owned source document, never client negotiation.
@@ -25,23 +26,7 @@ const (
 	consoleSessionLogoutAllPath        = "/auth/v1/session/logout-all"
 	consoleSessionManagementScopesPath = "/auth/v1/session/management-scopes"
 	consoleDeploymentCapabilitiesPath  = "/v1/system/capabilities"
-	deviceRevokePath                   = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
-		"devices/{device_id}/actions/revoke"
-	policyPublishPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
-		"policy/actions/publish"
-	policyReadPath     = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/policy"
-	policySimulatePath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
-		"policy/actions/simulate"
-	policyApprovalRequestPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
-		"policy/approval-requests"
-	policyApprovalItemPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
-		"policy/approval-requests/{approval_request_id}"
-	policyApprovalApprovePath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
-		"policy/approval-requests/{approval_request_id}/actions/approve"
-	accessGraphExplainPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
-		"access-graph/actions/explain"
-	accessGraphListPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/access-graph"
-	enrollmentKeysPath  = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/enrollment-keys"
+	consoleProfileFormat               = "meshtransit-management-auth-profile/v2"
 )
 
 // ErrInvalidManagementProfile conceals unknown selection or compiled-contract drift.
@@ -55,71 +40,17 @@ var managementV1Contract string
 //go:embed management_console_private_v1.profile.json
 var consolePrivateProfile string
 
+// consoleManagementProfile adds the Console's cookie-only operations to the
+// bearer document and names the bearer operations the Console also uses.
 type consoleManagementProfile struct {
-	ID                      ManagementProfile          `json:"id"`
-	Format                  string                     `json:"format"`
-	Description             string                     `json:"description"`
-	SecuritySchemes         map[string]json.RawMessage `json:"securitySchemes"`
-	Parameters              map[string]json.RawMessage `json:"parameters"`
-	Schemas                 map[string]json.RawMessage `json:"schemas"`
-	Prepare                 json.RawMessage            `json:"prepare"`
-	Logout                  json.RawMessage            `json:"logout"`
-	LogoutAll               json.RawMessage            `json:"logoutAll"`
-	ManagementScopes        json.RawMessage            `json:"managementScopes"`
-	DeploymentCapabilities  json.RawMessage            `json:"deploymentCapabilities"`
-	DeviceInventory         json.RawMessage            `json:"deviceInventory"`
-	WorkspaceRename         json.RawMessage            `json:"workspaceRename"`
-	WorkspaceMembers        json.RawMessage            `json:"workspaceMembers"`
-	WorkspaceRoleAssign     json.RawMessage            `json:"workspaceRoleAssign"`
-	WorkspaceRoleRevoke     json.RawMessage            `json:"workspaceRoleRevoke"`
-	WorkspaceCreate         json.RawMessage            `json:"workspaceCreate"`
-	NetworkCreate           json.RawMessage            `json:"networkCreate"`
-	SessionWorkspaces       json.RawMessage            `json:"sessionWorkspaces"`
-	SessionWorkspaceSwitch  json.RawMessage            `json:"sessionWorkspaceSwitch"`
-	ShareTargetResolve      json.RawMessage            `json:"shareTargetResolve"`
-	NetworkAliasRanges      json.RawMessage            `json:"networkAliasRanges"`
-	NetworkAliasRangeEdit   json.RawMessage            `json:"networkAliasRangeUpdate"`
-	WorkspaceAuditEvents    json.RawMessage            `json:"workspaceAuditEvents"`
-	WorkspaceAuditExport    json.RawMessage            `json:"workspaceAuditExport"`
-	WorkspaceGuardrails     json.RawMessage            `json:"workspaceGuardrails"`
-	GuardrailCreate         json.RawMessage            `json:"workspaceGuardrailCreate"`
-	GuardrailPreview        json.RawMessage            `json:"workspaceGuardrailPreview"`
-	GuardrailUpdate         json.RawMessage            `json:"workspaceGuardrailUpdate"`
-	GuardrailDelete         json.RawMessage            `json:"workspaceGuardrailDelete"`
-	DeviceGroups            json.RawMessage            `json:"networkDeviceGroups"`
-	DeviceGroupCreate       json.RawMessage            `json:"networkDeviceGroupCreate"`
-	DeviceGroupMembers      json.RawMessage            `json:"networkDeviceGroupMembers"`
-	DeviceGroupUpdate       json.RawMessage            `json:"networkDeviceGroupUpdate"`
-	DeviceGroupDelete       json.RawMessage            `json:"networkDeviceGroupDelete"`
-	DeviceGroupMembership   json.RawMessage            `json:"networkDeviceGroupChangeMembers"`
-	IdentityGroups          json.RawMessage            `json:"workspaceIdentityGroups"`
-	IdentityGroupCreate     json.RawMessage            `json:"workspaceIdentityGroupCreate"`
-	IdentityGroupMembers    json.RawMessage            `json:"workspaceIdentityGroupMembers"`
-	IdentityGroupUpdate     json.RawMessage            `json:"workspaceIdentityGroupUpdate"`
-	IdentityGroupDelete     json.RawMessage            `json:"workspaceIdentityGroupDelete"`
-	IdentityGroupMembership json.RawMessage            `json:"workspaceIdentityGroupChangeMembers"`
-	DeviceTags              json.RawMessage            `json:"workspaceDeviceTags"`
-	DeviceTagCreate         json.RawMessage            `json:"workspaceDeviceTagCreate"`
-	DeviceTagUpdate         json.RawMessage            `json:"workspaceDeviceTagUpdate"`
-	DeviceTagDelete         json.RawMessage            `json:"workspaceDeviceTagDelete"`
-	NetworkDeviceTags       json.RawMessage            `json:"networkDeviceTags"`
-	NetworkDeviceTagOptions json.RawMessage            `json:"networkDeviceTagOptions"`
-	NetworkDeviceSuspend    json.RawMessage            `json:"networkDeviceSuspend"`
-	NetworkDeviceResume     json.RawMessage            `json:"networkDeviceResume"`
-	NetworkDeviceTransfer   json.RawMessage            `json:"networkDeviceTransfer"`
-	NetworkDeviceRename     json.RawMessage            `json:"networkDeviceRename"`
-	WorkspaceMemberSuspend  json.RawMessage            `json:"workspaceMemberSuspend"`
-	WorkspaceMemberResume   json.RawMessage            `json:"workspaceMemberResume"`
-	WorkspaceMemberSessions json.RawMessage            `json:"workspaceMemberRevokeSessions"`
-	WorkspaceMemberRemove   json.RawMessage            `json:"workspaceMemberRemove"`
-	NetworkMembers          json.RawMessage            `json:"networkMembers"`
-	NetworkMemberAdd        json.RawMessage            `json:"networkMemberAdd"`
-	NetworkMemberRemove     json.RawMessage            `json:"networkMemberRemove"`
-	WorkspaceInvitations    json.RawMessage            `json:"workspaceInvitations"`
-	InvitationCreate        json.RawMessage            `json:"workspaceInvitationCreate"`
-	InvitationResend        json.RawMessage            `json:"workspaceInvitationResend"`
-	InvitationRevoke        json.RawMessage            `json:"workspaceInvitationRevoke"`
-	NetworkDeviceTagChange  json.RawMessage            `json:"networkDeviceChangeTags"`
+	ID               ManagementProfile                     `json:"id"`
+	Format           string                                `json:"format"`
+	Description      string                                `json:"description"`
+	SecuritySchemes  map[string]json.RawMessage            `json:"securitySchemes"`
+	Parameters       map[string]json.RawMessage            `json:"parameters"`
+	Schemas          map[string]json.RawMessage            `json:"schemas"`
+	BearerOperations []string                              `json:"bearerOperations"`
+	Paths            map[string]map[string]json.RawMessage `json:"paths"`
 }
 
 // ManagementDocument returns independently owned deterministic OpenAPI bytes.
@@ -141,149 +72,51 @@ func ManagementDocument(profile ManagementProfile) ([]byte, error) {
 	}
 }
 
+// consoleMethods are the HTTP methods a Console operation may use.
+var consoleMethods = map[string]bool{"get": true, "post": true, "put": true, "patch": true, "delete": true}
+
 func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
-	if len(base) == 0 || len(base) > maximumManagementDocumentBytes {
+	if len(base) == 0 || len(base) > maximumManagementDocumentBytes ||
+		len(fragment) == 0 || len(fragment) > maximumManagementDocumentBytes {
 		return nil, ErrInvalidManagementProfile
 	}
 	document, err := managementObject([]byte(base))
-	if err != nil {
-		return nil, ErrInvalidManagementProfile
-	}
-	validVersion := string(document["openapi"]) == `"3.1.0"`
-	if !validVersion || document["security"] != nil {
-		return nil, ErrInvalidManagementProfile
-	}
-	paths, err := managementObject(document["paths"])
-	if err != nil || len(paths) != 34 {
-		return nil, ErrInvalidManagementProfile
-	}
-	if len(fragment) == 0 || len(fragment) > maximumManagementDocumentBytes {
+	if err != nil || string(document["openapi"]) != `"3.1.0"` || document["security"] != nil {
 		return nil, ErrInvalidManagementProfile
 	}
 	var profile consoleManagementProfile
 	if err := json.Unmarshal([]byte(fragment), &profile); err != nil {
 		return nil, ErrInvalidManagementProfile
 	}
-	validIdentity := profile.ID == ManagementProfileConsoleCookiePrivateV1 &&
-		profile.Format == "meshtransit-management-auth-profile/v1"
-	validTransport := len(profile.SecuritySchemes) == 2 && len(profile.Parameters) == 3
-	validShape := len(profile.Schemas) == 5 && len(profile.Prepare) > 0 && len(profile.Logout) > 0 &&
-		consoleCookieOperation(profile.LogoutAll, "post", "logoutAllConsoleSessions", true) &&
-		len(profile.ManagementScopes) > 0 && len(profile.DeploymentCapabilities) > 0 &&
-		len(profile.DeviceInventory) > 0 && consoleWorkspaceRenameOperation(profile.WorkspaceRename) &&
-		consoleCookieOperation(profile.WorkspaceMembers, "get", "listWorkspaceMembers", false) &&
-		consoleCookieOperation(profile.WorkspaceRoleAssign, "post", "assignWorkspaceRole", true) &&
-		consoleCookieOperation(profile.WorkspaceRoleRevoke, "post", "revokeWorkspaceRole", true) &&
-		consoleCookieOperation(profile.WorkspaceCreate, "post", "createWorkspace", true) &&
-		consoleCookieOperation(profile.NetworkCreate, "post", "createNetwork", true) &&
-		consoleCookieOperation(profile.SessionWorkspaces, "get", "listSessionWorkspaces", false) &&
-		consoleCookieOperation(profile.SessionWorkspaceSwitch, "post", "switchSessionWorkspace", true) &&
-		consoleCookieOperation(profile.ShareTargetResolve, "get", "resolveShareTarget", false) &&
-		consoleCookieOperation(profile.NetworkAliasRanges, "get", "getNetworkAliasRanges", false) &&
-		consoleCookieOperation(profile.NetworkAliasRangeEdit, "post", "updateNetworkAliasRanges", true) &&
-		consoleCookieOperation(profile.WorkspaceAuditEvents, "get", "listWorkspaceAuditEvents", false) &&
-		consoleCookieOperation(profile.WorkspaceAuditExport, "get", "exportWorkspaceAuditEvents", false) &&
-		consoleCookieOperation(profile.WorkspaceGuardrails, "get", "listWorkspaceGuardrails", false) &&
-		consoleCookieOperation(profile.GuardrailCreate, "post", "createWorkspaceGuardrail", true) &&
-		consoleCookieOperation(profile.GuardrailPreview, "post", "previewWorkspaceGuardrail", true) &&
-		consoleCookieOperation(profile.GuardrailUpdate, "post", "updateWorkspaceGuardrail", true) &&
-		consoleCookieOperation(profile.GuardrailDelete, "post", "deleteWorkspaceGuardrail", true) &&
-		consoleCookieOperation(profile.DeviceGroups, "get", "listNetworkDeviceGroups", false) &&
-		consoleCookieOperation(profile.DeviceGroupCreate, "post", "createNetworkDeviceGroup", true) &&
-		consoleCookieOperation(profile.DeviceGroupMembers, "get", "listNetworkDeviceGroupMembers", false) &&
-		consoleCookieOperation(profile.DeviceGroupUpdate, "post", "updateNetworkDeviceGroup", true) &&
-		consoleCookieOperation(profile.DeviceGroupDelete, "post", "deleteNetworkDeviceGroup", true) &&
-		consoleCookieOperation(profile.DeviceGroupMembership, "post", "changeNetworkDeviceGroupMembers", true) &&
-		consoleCookieOperation(profile.IdentityGroups, "get", "listWorkspaceIdentityGroups", false) &&
-		consoleCookieOperation(profile.IdentityGroupCreate, "post", "createWorkspaceIdentityGroup", true) &&
-		consoleCookieOperation(profile.IdentityGroupMembers, "get", "listWorkspaceIdentityGroupMembers", false) &&
-		consoleCookieOperation(profile.IdentityGroupUpdate, "post", "updateWorkspaceIdentityGroup", true) &&
-		consoleCookieOperation(profile.IdentityGroupDelete, "post", "deleteWorkspaceIdentityGroup", true) &&
-		consoleCookieOperation(profile.IdentityGroupMembership, "post", "changeWorkspaceIdentityGroupMembers", true) &&
-		consoleCookieOperation(profile.DeviceTags, "get", "listWorkspaceDeviceTags", false) &&
-		consoleCookieOperation(profile.DeviceTagCreate, "post", "createWorkspaceDeviceTag", true) &&
-		consoleCookieOperation(profile.DeviceTagUpdate, "post", "updateWorkspaceDeviceTag", true) &&
-		consoleCookieOperation(profile.DeviceTagDelete, "post", "deleteWorkspaceDeviceTag", true) &&
-		consoleCookieOperation(profile.NetworkDeviceTags, "get", "listNetworkDeviceTags", false) &&
-		consoleCookieOperation(profile.NetworkDeviceTagOptions, "get", "listNetworkTagOptions", false) &&
-		consoleCookieOperation(profile.NetworkDeviceSuspend, "post", "suspendNetworkDevice", true) &&
-		consoleCookieOperation(profile.NetworkDeviceResume, "post", "resumeNetworkDevice", true) &&
-		consoleCookieOperation(profile.NetworkDeviceTransfer, "post", "transferNetworkDevice", true) &&
-		consoleCookieOperation(profile.NetworkDeviceRename, "post", "renameNetworkDevice", true) &&
-		consoleCookieOperation(profile.WorkspaceMemberSuspend, "post", "suspendWorkspaceMember", true) &&
-		consoleCookieOperation(profile.WorkspaceMemberResume, "post", "resumeWorkspaceMember", true) &&
-		consoleCookieOperation(profile.WorkspaceMemberSessions, "post", "revokeWorkspaceMemberSessions", true) &&
-		consoleCookieOperation(profile.WorkspaceMemberRemove, "post", "removeWorkspaceMember", true) &&
-		consoleCookieOperation(profile.NetworkMembers, "get", "listNetworkMembers", false) &&
-		consoleCookieOperation(profile.NetworkMemberAdd, "post", "addNetworkMembers", true) &&
-		consoleCookieOperation(profile.NetworkMemberRemove, "post", "removeNetworkMember", true) &&
-		consoleCookieOperation(profile.WorkspaceInvitations, "get", "listWorkspaceInvitations", false) &&
-		consoleCookieOperation(profile.InvitationCreate, "post", "createWorkspaceInvitation", true) &&
-		consoleCookieOperation(profile.InvitationResend, "post", "resendWorkspaceInvitation", true) &&
-		consoleCookieOperation(profile.InvitationRevoke, "post", "revokeWorkspaceInvitation", true) &&
-		consoleCookieOperation(profile.NetworkDeviceTagChange, "post", "changeNetworkDeviceTags", true)
-	if !validIdentity || !validTransport || !validShape {
-		return nil, ErrInvalidManagementProfile
-	}
-	if !consoleManagementScopeOperation(profile.ManagementScopes) {
-		return nil, ErrInvalidManagementProfile
-	}
-	if !consoleDeploymentCapabilitiesOperation(profile.DeploymentCapabilities) {
-		return nil, ErrInvalidManagementProfile
-	}
-	if !consoleDeviceInventoryOperation(profile.DeviceInventory) {
+	if profile.ID != ManagementProfileConsoleCookiePrivateV1 || profile.Format != consoleProfileFormat ||
+		len(profile.SecuritySchemes) != 2 || len(profile.Parameters) != 3 || len(profile.Paths) == 0 {
 		return nil, ErrInvalidManagementProfile
 	}
 	components, err := managementObject(document["components"])
 	if err != nil || !managementBearerScheme(components["securitySchemes"]) {
 		return nil, ErrInvalidManagementProfile
 	}
-	type consoleOperation struct {
-		path, method, operationID string
-		mutation                  bool
+	consolePaths, err := consoleBearerOperations(document["paths"], profile.BearerOperations)
+	if err != nil {
+		return nil, ErrInvalidManagementProfile
 	}
-	operations := []consoleOperation{
-		{"/api/v1/workspaces/{workspace_id}/networks/{network_id}/trust-contracts/{trust_contract_id}", "get", "getTrustContract", false},
-		{"/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources", "get", "listResources", false},
-		{"/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources", "post", "createResource", true},
-		{"/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources/{resource_id}", "get", "getResource", false},
-		{"/api/v1/workspaces/{workspace_id}/networks/{network_id}/share-offers", "get", "listShareOffers", false},
-		{"/api/v1/workspaces/{workspace_id}/networks/{network_id}/share-offers", "post", "createShareOffer", true},
-		{"/api/v1/workspaces/{workspace_id}/networks/{network_id}/share-offers/{share_offer_id}", "get", "getShareOffer", false},
-		{"/api/v1/workspaces/{workspace_id}/networks/{network_id}/share-offers/{share_offer_id}/actions/{share_offer_action}", "post", "decideShareOffer", true},
-		{"/api/v1/workspaces/{workspace_id}/networks/{network_id}/trust-contracts/{trust_contract_id}/actions/revoke", "post", "revokeTrustContract", true},
-		{"/api/v1/workspaces/{workspace_id}/networks/{network_id}/trust-contracts/{trust_contract_id}/actions/activate", "post", "activateTrustContract", true},
-		{deviceRevokePath, "post", "revokeDevice", true},
-		{policyPublishPath, "post", "publishPolicy", true},
-		{policySimulatePath, "post", "simulatePolicy", true},
-		{policyReadPath, "get", "getActivePolicy", false},
-		{policyApprovalRequestPath, "get", "listPolicyApprovalRequests", false},
-		{policyApprovalRequestPath, "post", "requestPolicyApproval", true},
-		{policyApprovalItemPath, "get", "getPolicyApprovalRequest", false},
-		{policyApprovalApprovePath, "post", "approvePolicyApprovalRequest", true},
-		{accessGraphExplainPath, "post", "explainActivePolicy", true},
-		{accessGraphListPath, "get", "listAccessGraph", false},
-		{enrollmentKeysPath, "get", "listEnrollmentKeys", false},
-		{enrollmentKeysPath + "/actions/create", "post", "createEnrollmentKey", true},
-		{enrollmentKeysPath + "/{key_id}/actions/revoke", "post", "revokeEnrollmentKey", true},
-	}
-	consolePathItems := make(map[string]map[string]json.RawMessage, 7)
-	for _, specification := range operations {
-		operation, err := consoleManagementOperation(
-			paths[specification.path], specification.method, specification.operationID, specification.mutation,
-		)
-		if err != nil {
+	for path, item := range profile.Paths {
+		if len(item) == 0 {
 			return nil, ErrInvalidManagementProfile
 		}
-		item := consolePathItems[specification.path]
-		if item == nil {
-			item = make(map[string]json.RawMessage, 2)
-			consolePathItems[specification.path] = item
+		for method, operation := range item {
+			if !consoleMethods[method] || consolePaths[path][method] != nil ||
+				!consoleProfileOperation(path, method, operation) {
+				return nil, ErrInvalidManagementProfile
+			}
+			if consolePaths[path] == nil {
+				consolePaths[path] = make(map[string]json.RawMessage, len(item))
+			}
+			consolePaths[path][method] = operation
 		}
-		if item[specification.method] != nil {
-			return nil, ErrInvalidManagementProfile
-		}
-		item[specification.method] = operation
+	}
+	if !uniqueOperationIDs(consolePaths) {
+		return nil, ErrInvalidManagementProfile
 	}
 	for section, additions := range map[string]map[string]json.RawMessage{
 		"parameters": profile.Parameters, "schemas": profile.Schemas,
@@ -298,107 +131,27 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 			}
 			existing[name] = value
 		}
-		components[section], err = json.Marshal(existing)
-		if err != nil {
+		if components[section], err = json.Marshal(existing); err != nil {
 			return nil, ErrInvalidManagementProfile
 		}
 	}
-	components["securitySchemes"], err = json.Marshal(profile.SecuritySchemes)
-	if err != nil {
+	if components["securitySchemes"], err = json.Marshal(profile.SecuritySchemes); err != nil {
 		return nil, ErrInvalidManagementProfile
 	}
-	consolePaths := make(map[string]json.RawMessage, len(consolePathItems)+4)
-	for path, item := range consolePathItems {
-		consolePaths[path], err = json.Marshal(item)
-		if err != nil {
-			return nil, ErrInvalidManagementProfile
-		}
-	}
-	consolePaths["/api/v1/workspaces/{workspace_id}/actions/rename"] = profile.WorkspaceRename
-	consolePaths["/api/v1/workspaces"] = profile.WorkspaceCreate
-	consolePaths["/api/v1/workspaces/{workspace_id}/networks"] = profile.NetworkCreate
-	consolePaths["/auth/v1/session/workspaces"] = profile.SessionWorkspaces
-	consolePaths["/auth/v1/session/workspace"] = profile.SessionWorkspaceSwitch
-	consolePaths["/api/v1/workspaces/{workspace_id}/networks/{network_id}/share-targets/{network_display_code}"] = profile.ShareTargetResolve
-	consolePaths["/api/v1/workspaces/{workspace_id}/members"] = profile.WorkspaceMembers
-	consolePaths["/api/v1/workspaces/{workspace_id}/networks/{network_id}/alias-ranges"] = profile.NetworkAliasRanges
-	consolePaths["/api/v1/workspaces/{workspace_id}/networks/{network_id}/alias-ranges/actions/update"] = profile.NetworkAliasRangeEdit
-	consolePaths["/api/v1/workspaces/{workspace_id}/audit-events"] = profile.WorkspaceAuditEvents
-	consolePaths["/api/v1/workspaces/{workspace_id}/audit-events/export"] = profile.WorkspaceAuditExport
-	consolePaths["/api/v1/workspaces/{workspace_id}/guardrails"] = profile.WorkspaceGuardrails
-	consolePaths["/api/v1/workspaces/{workspace_id}/guardrails/actions/create"] = profile.GuardrailCreate
-	consolePaths["/api/v1/workspaces/{workspace_id}/guardrails/actions/preview"] = profile.GuardrailPreview
-	consolePaths["/api/v1/workspaces/{workspace_id}/guardrails/{guardrail_id}/actions/update"] = profile.GuardrailUpdate
-	consolePaths["/api/v1/workspaces/{workspace_id}/guardrails/{guardrail_id}/actions/delete"] = profile.GuardrailDelete
-	deviceGroups := "/api/v1/workspaces/{workspace_id}/networks/{network_id}/device-groups"
-	consolePaths[deviceGroups] = profile.DeviceGroups
-	consolePaths[deviceGroups+"/actions/create"] = profile.DeviceGroupCreate
-	consolePaths[deviceGroups+"/{group_id}/members"] = profile.DeviceGroupMembers
-	consolePaths[deviceGroups+"/{group_id}/actions/update"] = profile.DeviceGroupUpdate
-	consolePaths[deviceGroups+"/{group_id}/actions/delete"] = profile.DeviceGroupDelete
-	consolePaths[deviceGroups+"/{group_id}/actions/change-members"] = profile.DeviceGroupMembership
-	identityGroups := "/api/v1/workspaces/{workspace_id}/identity-groups"
-	consolePaths[identityGroups] = profile.IdentityGroups
-	consolePaths[identityGroups+"/actions/create"] = profile.IdentityGroupCreate
-	consolePaths[identityGroups+"/{group_id}/members"] = profile.IdentityGroupMembers
-	consolePaths[identityGroups+"/{group_id}/actions/update"] = profile.IdentityGroupUpdate
-	consolePaths[identityGroups+"/{group_id}/actions/delete"] = profile.IdentityGroupDelete
-	consolePaths[identityGroups+"/{group_id}/actions/change-members"] = profile.IdentityGroupMembership
-	deviceTags := "/api/v1/workspaces/{workspace_id}/device-tags"
-	consolePaths[deviceTags] = profile.DeviceTags
-	consolePaths[deviceTags+"/actions/create"] = profile.DeviceTagCreate
-	consolePaths[deviceTags+"/{tag_id}/actions/update"] = profile.DeviceTagUpdate
-	consolePaths[deviceTags+"/{tag_id}/actions/delete"] = profile.DeviceTagDelete
-	consolePaths["/api/v1/workspaces/{workspace_id}/networks/{network_id}/device-tags"] = profile.NetworkDeviceTags
-	consolePaths["/api/v1/workspaces/{workspace_id}/networks/{network_id}/device-tags/options"] =
-		profile.NetworkDeviceTagOptions
-	consolePaths["/api/v1/workspaces/{workspace_id}/networks/{network_id}/devices/{device_id}/actions/change-tags"] =
-		profile.NetworkDeviceTagChange
-	deviceActions := "/api/v1/workspaces/{workspace_id}/networks/{network_id}/devices/{device_id}/actions/"
-	consolePaths[deviceActions+"suspend"] = profile.NetworkDeviceSuspend
-	consolePaths[deviceActions+"resume"] = profile.NetworkDeviceResume
-	consolePaths[deviceActions+"transfer"] = profile.NetworkDeviceTransfer
-	consolePaths[deviceActions+"rename"] = profile.NetworkDeviceRename
-	memberActions := "/api/v1/workspaces/{workspace_id}/members/{principal_id}/actions/"
-	consolePaths[memberActions+"suspend"] = profile.WorkspaceMemberSuspend
-	consolePaths[memberActions+"resume"] = profile.WorkspaceMemberResume
-	consolePaths[memberActions+"revoke-sessions"] = profile.WorkspaceMemberSessions
-	consolePaths[memberActions+"remove"] = profile.WorkspaceMemberRemove
-	networkMembers := "/api/v1/workspaces/{workspace_id}/networks/{network_id}/members"
-	consolePaths[networkMembers] = profile.NetworkMembers
-	consolePaths[networkMembers+"/actions/add"] = profile.NetworkMemberAdd
-	consolePaths[networkMembers+"/{principal_id}/actions/remove"] = profile.NetworkMemberRemove
-	invitations := "/api/v1/workspaces/{workspace_id}/invitations"
-	consolePaths[invitations] = profile.WorkspaceInvitations
-	consolePaths[invitations+"/actions/create"] = profile.InvitationCreate
-	consolePaths[invitations+"/{invitation_id}/actions/resend"] = profile.InvitationResend
-	consolePaths[invitations+"/{invitation_id}/actions/revoke"] = profile.InvitationRevoke
-	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments"] = profile.WorkspaceRoleAssign
-	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments/{assignment_id}/actions/revoke"] = profile.WorkspaceRoleRevoke
-	consolePaths[consoleSessionPreparePath] = profile.Prepare
-	consolePaths[consoleSessionLogoutPath] = profile.Logout
-	consolePaths[consoleSessionLogoutAllPath] = profile.LogoutAll
-	consolePaths[consoleSessionManagementScopesPath] = profile.ManagementScopes
-	consolePaths[consoleDeploymentCapabilitiesPath] = profile.DeploymentCapabilities
-	consolePaths["/api/v1/workspaces/{workspace_id}/networks/{network_id}/devices"] = profile.DeviceInventory
-	document["paths"], err = json.Marshal(consolePaths)
-	if err != nil {
+	if document["paths"], err = json.Marshal(consolePaths); err != nil {
 		return nil, ErrInvalidManagementProfile
 	}
-	document["components"], err = json.Marshal(components)
-	if err != nil {
+	if document["components"], err = json.Marshal(components); err != nil {
 		return nil, ErrInvalidManagementProfile
 	}
 	info, err := managementObject(document["info"])
 	if err != nil {
 		return nil, ErrInvalidManagementProfile
 	}
-	info["description"], err = json.Marshal(profile.Description)
-	if err != nil {
+	if info["description"], err = json.Marshal(profile.Description); err != nil {
 		return nil, ErrInvalidManagementProfile
 	}
-	document["info"], err = json.Marshal(info)
-	if err != nil {
+	if document["info"], err = json.Marshal(info); err != nil {
 		return nil, ErrInvalidManagementProfile
 	}
 	document["servers"] = json.RawMessage(`[{"url":"https://console.example.test"}]`)
@@ -411,37 +164,67 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	return body, nil
 }
 
-func consoleManagementOperation(
-	item json.RawMessage,
-	method string,
-	operationID string,
-	mutation bool,
-) (json.RawMessage, error) {
-	methods, err := managementObject(item)
-	if err != nil || len(methods) < 1 || len(methods) > 2 {
+// consoleBearerOperations copies each named bearer operation, exactly once,
+// onto cookie authentication.
+func consoleBearerOperations(body json.RawMessage, operationIDs []string) (map[string]map[string]json.RawMessage, error) {
+	paths, err := managementObject(body)
+	if err != nil || len(operationIDs) == 0 {
 		return nil, ErrInvalidManagementProfile
 	}
-	if method != "get" && method != "post" {
+	wanted := make(map[string]bool, len(operationIDs))
+	for _, id := range operationIDs {
+		if id == "" || wanted[id] {
+			return nil, ErrInvalidManagementProfile
+		}
+		wanted[id] = true
+	}
+	result := make(map[string]map[string]json.RawMessage)
+	for path, raw := range paths {
+		item, err := managementObject(raw)
+		if err != nil {
+			return nil, ErrInvalidManagementProfile
+		}
+		for method, rawOperation := range item {
+			if !consoleMethods[method] {
+				continue
+			}
+			var header struct {
+				OperationID string `json:"operationId"`
+			}
+			if json.Unmarshal(rawOperation, &header) != nil || !wanted[header.OperationID] {
+				continue
+			}
+			operation, err := consoleManagementOperation(rawOperation, method != "get")
+			if err != nil {
+				return nil, ErrInvalidManagementProfile
+			}
+			delete(wanted, header.OperationID)
+			if result[path] == nil {
+				result[path] = make(map[string]json.RawMessage, len(item))
+			}
+			result[path][method] = operation
+		}
+	}
+	if len(wanted) != 0 {
 		return nil, ErrInvalidManagementProfile
 	}
-	operation, err := managementObject(methods[method])
+	return result, nil
+}
+
+// consoleManagementOperation moves one bearer operation onto the Console's
+// cookie, adding the CSRF proof for mutations.
+func consoleManagementOperation(item json.RawMessage, mutation bool) (json.RawMessage, error) {
+	operation, err := managementObject(item)
 	if err != nil {
 		return nil, ErrInvalidManagementProfile
 	}
-	var currentID string
 	var security []map[string][]string
-	if err := json.Unmarshal(operation["operationId"], &currentID); err != nil || currentID != operationID {
-		return nil, ErrInvalidManagementProfile
-	}
-	if err := json.Unmarshal(operation["security"], &security); err != nil || len(security) != 1 {
-		return nil, ErrInvalidManagementProfile
-	}
-	if len(security[0]) != 1 {
+	if err := json.Unmarshal(operation["security"], &security); err != nil || len(security) != 1 ||
+		len(security[0]) != 1 {
 		return nil, ErrInvalidManagementProfile
 	}
 	scopes, present := security[0]["accountSessionBearer"]
-	validScopes := scopes != nil && len(scopes) == 0
-	if !present || !validScopes {
+	if !present || scopes == nil || len(scopes) != 0 {
 		return nil, ErrInvalidManagementProfile
 	}
 	var parameters []json.RawMessage
@@ -455,8 +238,7 @@ func consoleManagementOperation(
 	for _, name := range parametersToAdd {
 		parameters = append(parameters, json.RawMessage(`{"$ref":"#/components/parameters/`+name+`"}`))
 	}
-	operation["parameters"], err = json.Marshal(parameters)
-	if err != nil {
+	if operation["parameters"], err = json.Marshal(parameters); err != nil {
 		return nil, ErrInvalidManagementProfile
 	}
 	operation["security"] = json.RawMessage(`[{"accountSessionCookie":[]}]`)
@@ -464,6 +246,83 @@ func consoleManagementOperation(
 		operation["security"] = json.RawMessage(`[{"accountSessionCookie":[],"sessionCSRF":[]}]`)
 	}
 	return json.Marshal(operation)
+}
+
+// consoleProfileOperation checks one cookie-only operation: a read carries the
+// cookie and no body; a change also carries the CSRF proof, and a body unless
+// it deletes. Proof preparation is the one change without a proof.
+func consoleProfileOperation(path, method string, item json.RawMessage) bool {
+	operation, err := managementObject(item)
+	if err != nil {
+		return false
+	}
+	var id string
+	if json.Unmarshal(operation["operationId"], &id) != nil || id == "" {
+		return false
+	}
+	preparation := path == consoleSessionPreparePath && method == "post"
+	mutation := method != "get"
+	proof := mutation && !preparation
+	if (operation["requestBody"] != nil) != (mutation && method != "delete") {
+		return false
+	}
+	schemes := []string{"accountSessionCookie"}
+	if proof {
+		schemes = append(schemes, "sessionCSRF")
+	}
+	var security []map[string][]string
+	if json.Unmarshal(operation["security"], &security) != nil || len(security) != 1 ||
+		len(security[0]) != len(schemes) {
+		return false
+	}
+	for _, name := range schemes {
+		scopes, present := security[0][name]
+		if !present || scopes == nil || len(scopes) != 0 {
+			return false
+		}
+	}
+	var parameters []struct {
+		Reference string `json:"$ref"`
+	}
+	if json.Unmarshal(operation["parameters"], &parameters) != nil {
+		return false
+	}
+	required := map[string]bool{"ConsoleOrigin": false, "ConsoleSessionChannel": false, "ConsoleSessionProof": !proof}
+	for _, parameter := range parameters {
+		name, local := strings.CutPrefix(parameter.Reference, "#/components/parameters/")
+		if !local {
+			continue
+		}
+		if seen, known := required[name]; known {
+			if seen {
+				return false
+			}
+			required[name] = true
+		}
+	}
+	for _, seen := range required {
+		if !seen {
+			return false
+		}
+	}
+	return true
+}
+
+// uniqueOperationIDs reports whether no two operations share an ID.
+func uniqueOperationIDs(paths map[string]map[string]json.RawMessage) bool {
+	seen := make(map[string]bool)
+	for _, item := range paths {
+		for _, raw := range item {
+			var header struct {
+				OperationID string `json:"operationId"`
+			}
+			if json.Unmarshal(raw, &header) != nil || header.OperationID == "" || seen[header.OperationID] {
+				return false
+			}
+			seen[header.OperationID] = true
+		}
+	}
+	return true
 }
 
 func managementObject(body []byte) (map[string]json.RawMessage, error) {
@@ -490,148 +349,4 @@ func managementBearerScheme(body json.RawMessage) bool {
 		return false
 	}
 	return scheme.Type == "http" && scheme.Scheme == "bearer"
-}
-
-func consoleManagementScopeOperation(item json.RawMessage) bool {
-	methods, err := managementObject(item)
-	if err != nil || len(methods) != 1 {
-		return false
-	}
-	operation, err := managementObject(methods["get"])
-	if err != nil || operation["requestBody"] != nil {
-		return false
-	}
-	var operationID string
-	if err := json.Unmarshal(operation["operationId"], &operationID); err != nil ||
-		operationID != "listConsoleManagementScopes" {
-		return false
-	}
-	var security []map[string][]string
-	if err := json.Unmarshal(operation["security"], &security); err != nil || len(security) != 1 ||
-		len(security[0]) != 1 {
-		return false
-	}
-	scopes, present := security[0]["accountSessionCookie"]
-	if !present || scopes == nil || len(scopes) != 0 {
-		return false
-	}
-	var parameters []json.RawMessage
-	return json.Unmarshal(operation["parameters"], &parameters) == nil && len(parameters) == 4
-}
-
-func consoleDeploymentCapabilitiesOperation(item json.RawMessage) bool {
-	methods, err := managementObject(item)
-	if err != nil || len(methods) != 1 {
-		return false
-	}
-	operation, err := managementObject(methods["get"])
-	if err != nil || operation["requestBody"] != nil {
-		return false
-	}
-	var operationID string
-	if err := json.Unmarshal(operation["operationId"], &operationID); err != nil ||
-		operationID != "getConsoleDeploymentCapabilities" {
-		return false
-	}
-	var security []map[string][]string
-	if err := json.Unmarshal(operation["security"], &security); err != nil || len(security) != 1 ||
-		len(security[0]) != 1 {
-		return false
-	}
-	scopes, present := security[0]["accountSessionCookie"]
-	if !present || scopes == nil || len(scopes) != 0 {
-		return false
-	}
-	var parameters []json.RawMessage
-	return json.Unmarshal(operation["parameters"], &parameters) == nil && len(parameters) == 2
-}
-
-func consoleDeviceInventoryOperation(item json.RawMessage) bool {
-	methods, err := managementObject(item)
-	if err != nil || len(methods) != 1 {
-		return false
-	}
-	operation, err := managementObject(methods["get"])
-	if err != nil || operation["requestBody"] != nil {
-		return false
-	}
-	var operationID string
-	if json.Unmarshal(operation["operationId"], &operationID) != nil || operationID != "listConsoleDevices" {
-		return false
-	}
-	var security []map[string][]string
-	if json.Unmarshal(operation["security"], &security) != nil || len(security) != 1 || len(security[0]) != 1 {
-		return false
-	}
-	scopes, present := security[0]["accountSessionCookie"]
-	if !present || scopes == nil || len(scopes) != 0 {
-		return false
-	}
-	var parameters []json.RawMessage
-	return json.Unmarshal(operation["parameters"], &parameters) == nil && len(parameters) == 6
-}
-
-// consoleCookieOperation checks one single-method Console operation: its ID,
-// cookie authentication, and CSRF proof plus a request body for mutations.
-func consoleCookieOperation(item json.RawMessage, method, operationID string, mutation bool) bool {
-	methods, err := managementObject(item)
-	if err != nil || len(methods) != 1 {
-		return false
-	}
-	operation, err := managementObject(methods[method])
-	if err != nil || (operation["requestBody"] != nil) != mutation {
-		return false
-	}
-	var id string
-	if json.Unmarshal(operation["operationId"], &id) != nil || id != operationID {
-		return false
-	}
-	schemes := []string{"accountSessionCookie"}
-	if mutation {
-		schemes = append(schemes, "sessionCSRF")
-	}
-	var security []map[string][]string
-	if json.Unmarshal(operation["security"], &security) != nil || len(security) != 1 || len(security[0]) != len(schemes) {
-		return false
-	}
-	for _, name := range schemes {
-		scopes, present := security[0][name]
-		if !present || scopes == nil || len(scopes) != 0 {
-			return false
-		}
-	}
-	return true
-}
-
-func consoleWorkspaceRenameOperation(item json.RawMessage) bool {
-	methods, err := managementObject(item)
-	if err != nil || len(methods) != 1 {
-		return false
-	}
-	operation, err := managementObject(methods["post"])
-	if err != nil || string(operation["operationId"]) != `"renameWorkspace"` || operation["requestBody"] == nil {
-		return false
-	}
-	var security []map[string][]string
-	if json.Unmarshal(operation["security"], &security) != nil || len(security) != 1 || len(security[0]) != 2 {
-		return false
-	}
-	for _, name := range []string{"accountSessionCookie", "sessionCSRF"} {
-		scopes, present := security[0][name]
-		if !present || scopes == nil || len(scopes) != 0 {
-			return false
-		}
-	}
-	var parameters []struct {
-		Reference string `json:"$ref"`
-	}
-	if json.Unmarshal(operation["parameters"], &parameters) != nil || len(parameters) != 5 {
-		return false
-	}
-	for index, name := range []string{"WorkspaceID", "IfMatch", "ConsoleOrigin", "ConsoleSessionChannel", "ConsoleSessionProof"} {
-		if parameters[index].Reference != "#/components/parameters/"+name {
-			return false
-		}
-	}
-	return true
 }
