@@ -507,11 +507,17 @@ func (browser *BrowserManagement) endSession(
 	return nil
 }
 
+// browserManagementMethods are the methods the cookie path accepts: reads,
+// and changes that each need a CSRF proof.
+var browserManagementMethods = map[string]bool{
+	http.MethodGet: true, http.MethodPost: true, http.MethodPut: true, http.MethodPatch: true,
+	http.MethodDelete: true,
+}
+
 func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	target, transport := request.URL, request.TLS
 	validTransport := transport != nil && transport.HandshakeComplete && transport.Version >= tls.VersionTLS12
-	if target == nil || !validTransport || request.Host != browser.host ||
-		(request.Method != http.MethodGet && request.Method != http.MethodPost) {
+	if target == nil || !validTransport || request.Host != browser.host || !browserManagementMethods[request.Method] {
 		return false
 	}
 	if len(target.Path) > 512 || !canonicalCallbackPath(target.Path) || !boundedLoginHeaders(request.Header) {
@@ -578,6 +584,11 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 		if nilContinuationDependency(request.Body) || invalidBodyTransport {
 			return false
 		}
+		// A DELETE names its target in the path and carries nothing else.
+		if _, typed := request.Header["Content-Type"]; request.Method == http.MethodDelete &&
+			(request.ContentLength != 0 || typed) {
+			return false
+		}
 	}
 	maximumBody := int64(maximumManagementBodyBytes)
 	_, policy := parsePolicyPublishPath(request)
@@ -598,7 +609,7 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	}
 	invalidIntent := singleHeader(request.Header, "Origin") != browser.origin ||
 		singleHeader(request.Header, "X-Meshtransit-Session") != "v1"
-	invalidContentType := request.Method == http.MethodPost &&
+	invalidContentType := request.Method != http.MethodGet && request.Method != http.MethodDelete &&
 		!validJSONContentType(singleHeader(request.Header, "Content-Type"))
 	if invalidIntent || invalidContentType {
 		return false

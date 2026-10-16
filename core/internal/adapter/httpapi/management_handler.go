@@ -624,7 +624,7 @@ func (handler *ManagementHandler) serveHTTP(
 	} else if deviceGroupMatched {
 		allowedMethod = deviceGroupPathValue.allowedMethod()
 	} else if identityCatalogMatched {
-		allowedMethod = identityCatalogPathValue.allowedMethod()
+		allowedMethod = identityCatalogPathValue.methods.allowedMethod(request.Method)
 	} else if networkMemberMatched {
 		allowedMethod = networkMemberPathValue.allowedMethod()
 	} else if enrollmentKeyMatched {
@@ -649,6 +649,8 @@ func (handler *ManagementHandler) serveHTTP(
 			response.Header().Set("Allow", http.MethodPost)
 		} else if sharingMatched {
 			response.Header().Set("Allow", http.MethodGet)
+		} else if identityCatalogMatched {
+			response.Header().Set("Allow", identityCatalogPathValue.methods.header())
 		} else {
 			response.Header().Set("Allow", allowedMethodOrGet(resourceMatched, allowedMethod))
 		}

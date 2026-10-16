@@ -66,11 +66,14 @@ type identityCatalogPath struct {
 	groupID     identitygroup.ID
 	tagID       devicetag.ID
 	deviceID    node.ID
-	// action is "" to list, "members", "create", "update", "delete",
-	// "change-members" or "change-tags".
-	action string
-	after  publicid.ID
-	limit  int
+	// methods are the methods the path accepts; action is what the request's
+	// method does there: "" to list, "members", "create", "update",
+	// "delete", "change-members" or "change-tags", and "" when the path does
+	// not accept the method.
+	methods restMethods
+	action  string
+	after   publicid.ID
+	limit   int
 }
 
 func canonicalPublicID(text string) (publicid.ID, bool) {
@@ -80,15 +83,17 @@ func canonicalPublicID(text string) (publicid.ID, bool) {
 
 // parseIdentityCatalogPath matches, under /api/v1/workspaces/{ws}:
 //
-//	GET  identity-groups                       POST identity-groups/actions/create
-//	GET  identity-groups/{id}/members[?after=&limit=]
-//	POST identity-groups/{id}/actions/{update|delete|change-members}
-//	GET  device-tags                           POST device-tags/actions/create
-//	POST device-tags/{id}/actions/{update|delete}
-//	GET  networks/{net}/device-tags
-//	POST networks/{net}/devices/{device}/actions/change-tags
+//	GET|POST     identity-groups               list, create
+//	PATCH|DELETE identity-groups/{id}          update, delete
+//	GET|PATCH    identity-groups/{id}/members  page[?after=&limit=], change
+//	GET|POST     device-tags                   list, create
+//	PATCH|DELETE device-tags/{id}              update, delete
+//	GET          networks/{net}/device-tags    the Network's Device tags
+//	GET          networks/{net}/assignable-device-tags
+//	PATCH        networks/{net}/devices/{device}/tags
 //
-// Only the member page takes a query, and only after and limit once each.
+// A path matched with a method it does not accept carries no action, for a
+// 405. Only the member page takes a query, and only after and limit once each.
 func parseIdentityCatalogPath(request *http.Request) (identityCatalogPath, bool) {
 	if request == nil || request.URL == nil || request.URL.RawPath != "" {
 		return identityCatalogPath{}, false
@@ -106,16 +111,16 @@ func parseIdentityCatalogPath(request *http.Request) (identityCatalogPath, bool)
 	switch rest[0] {
 	case "identity-groups":
 		path.kind = identityCatalogGroups
-		if !path.matchCatalog(rest[1:], true) {
+		if !path.matchCatalog(rest[1:], request.Method, true) {
 			return identityCatalogPath{}, false
 		}
 	case "device-tags":
 		path.kind = identityCatalogTags
-		if !path.matchCatalog(rest[1:], false) {
+		if !path.matchCatalog(rest[1:], request.Method, false) {
 			return identityCatalogPath{}, false
 		}
 	case "networks":
-		if !path.matchNetwork(rest[1:]) {
+		if !path.matchNetwork(rest[1:], request.Method) {
 			return identityCatalogPath{}, false
 		}
 	default:
@@ -127,20 +132,26 @@ func parseIdentityCatalogPath(request *http.Request) (identityCatalogPath, bool)
 	return path.withPage(request.URL.RawQuery)
 }
 
-func (path *identityCatalogPath) matchCatalog(rest []string, groups bool) bool {
+// matchCatalog reads a groups or tags path; the method picks the action.
+func (path *identityCatalogPath) matchCatalog(rest []string, method string, groups bool) bool {
+	var actions map[string]string
 	switch {
 	case len(rest) == 0:
-		return true
-	case len(rest) == 2 && rest[0] == "actions" && rest[1] == "create":
-		path.action = "create"
-		return true
+		path.methods, actions = collectionMethods, map[string]string{http.MethodPost: "create"}
+	case len(rest) == 1:
+		path.methods = itemMethods
+		actions = map[string]string{http.MethodPatch: "update", http.MethodDelete: "delete"}
 	case groups && len(rest) == 2 && rest[1] == "members":
-		path.action = "members"
-	case len(rest) == 3 && rest[1] == "actions" &&
-		(rest[2] == "update" || rest[2] == "delete" || (groups && rest[2] == "change-members")):
-		path.action = rest[2]
+		path.methods = restMethods{http.MethodGet, http.MethodPatch}
+		actions = map[string]string{http.MethodGet: "members", http.MethodPatch: "change-members"}
 	default:
 		return false
+	}
+	if path.methods.allows(method) {
+		path.action = actions[method]
+	}
+	if len(rest) == 0 {
+		return true
 	}
 	id, ok := canonicalPublicID(rest[0])
 	if !ok {
@@ -154,7 +165,7 @@ func (path *identityCatalogPath) matchCatalog(rest []string, groups bool) bool {
 	return true
 }
 
-func (path *identityCatalogPath) matchNetwork(rest []string) bool {
+func (path *identityCatalogPath) matchNetwork(rest []string, method string) bool {
 	if len(rest) < 2 {
 		return false
 	}
@@ -169,17 +180,20 @@ func (path *identityCatalogPath) matchNetwork(rest []string) bool {
 	path.scope = scope
 	switch {
 	case len(rest) == 2 && rest[1] == "device-tags":
-		path.kind = identityCatalogNetworkTags
+		path.kind, path.methods = identityCatalogNetworkTags, readMethods
 		return true
-	case len(rest) == 3 && rest[1] == "device-tags" && rest[2] == "options":
-		path.kind = identityCatalogTagOptions
+	case len(rest) == 2 && rest[1] == "assignable-device-tags":
+		path.kind, path.methods = identityCatalogTagOptions, readMethods
 		return true
-	case len(rest) == 5 && rest[1] == "devices" && rest[3] == "actions" && rest[4] == "change-tags":
+	case len(rest) == 4 && rest[1] == "devices" && rest[3] == "tags":
 		device, ok := canonicalPublicID(rest[2])
 		if !ok {
 			return false
 		}
-		path.kind, path.deviceID, path.action = identityCatalogDeviceTags, node.ID(device), "change-tags"
+		path.kind, path.deviceID, path.methods = identityCatalogDeviceTags, node.ID(device), restMethods{http.MethodPatch}
+		if path.methods.allows(method) {
+			path.action = "change-tags"
+		}
 		return true
 	default:
 		return false
@@ -217,13 +231,6 @@ func (path identityCatalogPath) withPage(rawQuery string) (identityCatalogPath, 
 	return path, true
 }
 
-func (path identityCatalogPath) allowedMethod() string {
-	if path.action == "" || path.action == "members" {
-		return http.MethodGet
-	}
-	return http.MethodPost
-}
-
 func (path identityCatalogPath) operation() string {
 	switch path.kind {
 	case identityCatalogGroups:
@@ -251,16 +258,15 @@ func (path identityCatalogPath) operation() string {
 	}
 }
 
-// isIdentityCatalogOperation admits only the method each path allows.
+// isIdentityCatalogOperation admits only the methods each path accepts.
 func isIdentityCatalogOperation(request *http.Request) bool {
 	path, ok := parseIdentityCatalogPath(request)
-	return ok && request.Method == path.allowedMethod()
+	return ok && path.methods.allows(request.Method)
 }
 
 // isIdentityCatalogRead admits the catalog reads and the bounded member page.
 func isIdentityCatalogRead(request *http.Request) bool {
-	path, ok := parseIdentityCatalogPath(request)
-	return ok && request.Method == http.MethodGet && path.allowedMethod() == http.MethodGet
+	return request != nil && request.Method == http.MethodGet && isIdentityCatalogOperation(request)
 }
 
 func (handler *ManagementHandler) handleIdentityCatalog(ctx context.Context, response http.ResponseWriter,

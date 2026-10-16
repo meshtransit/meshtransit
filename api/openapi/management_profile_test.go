@@ -65,12 +65,15 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 		t.Fatal("private document retained deployment topology")
 	}
 	basePaths, paths := profileMap(t, base, "paths"), profileMap(t, console, "paths")
-	// The private document adds only Console session routes, the two
-	// receiving-Network alias range routes, the Workspace audit history and
-	// export, the five Workspace guardrail routes and the three Network member
-	// routes. The three enrollment key routes are shared with the bearer API.
-	if len(basePaths) != 34 || len(paths) != 78 {
-		t.Fatal("private profile introduced another product resource API")
+	// The private document holds 23 bearer operations moved onto the cookie
+	// and 58 cookie-only Console operations; another count means an API was
+	// added or dropped without review.
+	operations := 0
+	for _, item := range paths {
+		operations += len(item.(map[string]any))
+	}
+	if len(basePaths) != 34 || operations != 81 {
+		t.Fatal("private profile introduced another product resource API", len(basePaths), operations)
 	}
 	for path, raw := range paths {
 		if !strings.Contains(path, "/resources") && !strings.Contains(path, "/share-offers") && !strings.Contains(path, "/trust-contracts") {
