@@ -283,7 +283,7 @@ func TestRuntimeLimitsAuthenticatedPingResponses(t *testing.T) {
 func TestRoundTargetsAreRoundRobinAndIncludeLearned(t *testing.T) {
 	t.Parallel()
 
-	runtime, _, _, local, _, snapshot, generation := testRuntime(t)
+	runtime, transport, _, local, _, snapshot, generation := testRuntime(t)
 	node := func(id uint64, nodeByte byte, endpoints ...string) networkmap.Node {
 		peer := networkmap.Node{
 			ID: id, PublicKey: testNodeKeyText(nodeByte), DiscoveryKey: MapDiscoveryKey(testIdentity(t).Public()),
@@ -300,17 +300,27 @@ func TestRoundTargetsAreRoundRobinAndIncludeLearned(t *testing.T) {
 	offline.OnlineKnown, offline.Online = true, false
 	snapshot.Peers = []networkmap.Node{first, second, offline}
 	_ = local
-	if _, _, err := runtime.Activate(snapshot, generation); err != nil {
+	want := []netip.AddrPort{first.Endpoints[0], second.Endpoints[0], first.Endpoints[1], second.Endpoints[1]}
+	_, scheduled, err := runtime.Activate(snapshot, generation)
+	if err != nil {
 		t.Fatal(err)
 	}
-	want := []probeTarget{
-		{peerID: 2, endpoint: first.Endpoints[0]},
-		{peerID: 3, endpoint: second.Endpoints[0]},
-		{peerID: 2, endpoint: first.Endpoints[1]},
-		{peerID: 3, endpoint: second.Endpoints[1]},
+	if scheduled != len(want) {
+		t.Fatalf("Activate() scheduled %d targets, want %d", scheduled, len(want))
 	}
-	if targets := runtime.roundTargets(); !slices.Equal(targets, want) {
-		t.Fatalf("roundTargets() = %#v, want %#v", targets, want)
+	// The round Activate schedules runs in the background and the next one
+	// recomputes targets as it goes, so read the order from what was sent.
+	for range want {
+		waitForRuntimeAttempt(t, transport)
+	}
+	sends := transport.sentSnapshot()
+	if len(sends) < len(want) {
+		t.Fatalf("sent %d probes, want %d", len(sends), len(want))
+	}
+	for index, endpoint := range want {
+		if sends[index].destination != endpoint {
+			t.Fatalf("probe %d went to %v, want %v (round-robin across peers)", index, sends[index].destination, endpoint)
+		}
 	}
 	learned := netip.MustParseAddrPort("198.51.100.77:5000")
 	if !runtime.registry.LearnPeerReflexive(2, learned, time.Now()) {
