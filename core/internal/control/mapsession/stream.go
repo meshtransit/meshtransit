@@ -184,7 +184,7 @@ func (service *StreamService) Serve(
 	if err != nil {
 		return errors.Join(ErrStreamUnavailable, err)
 	}
-	if !snapshot.KeyExpiry().After(time.Now()) {
+	if snapshot.deadlinePassed(snapshot.KeyExpiry()) {
 		return ErrAuthorizationExpired
 	}
 	if !service.admit(snapshot.NodeID()) {
@@ -196,7 +196,7 @@ func (service *StreamService) Serve(
 		return err
 	}
 	defer watch.close()
-	if !snapshot.KeyExpiry().After(time.Now()) {
+	if snapshot.deadlinePassed(snapshot.KeyExpiry()) {
 		return ErrAuthorizationExpired
 	}
 	snapshot, _ = service.grantRelayAccess(ctx, Snapshot{}, snapshot)
@@ -289,7 +289,7 @@ func (service *StreamService) run(
 	defer keepAlive.Stop()
 	reconcile := time.NewTicker(service.options.ReconcileInterval)
 	defer reconcile.Stop()
-	authorityExpiry := time.NewTimer(time.Until(initial.KeyExpiry()))
+	authorityExpiry := time.NewTimer(initial.untilDeadline(initial.KeyExpiry()))
 	defer authorityExpiry.Stop()
 	expiry := initial.KeyExpiry()
 	projectionExpiry := time.NewTimer(time.Hour)
@@ -382,7 +382,7 @@ func (service *StreamService) run(
 				default:
 				}
 			}
-			authorityExpiry.Reset(time.Until(expiry))
+			authorityExpiry.Reset(current.untilDeadline(expiry))
 		}
 		scopes := append([]network.Scope{current.Scope()}, current.SharingScopes()...)
 		if !slices.Equal(scopes, watch.scopes) {
@@ -399,7 +399,7 @@ func (service *StreamService) run(
 		}
 		var projectionDeadline <-chan time.Time
 		if deadline := current.ProjectionExpiry(); deadline.Before(current.KeyExpiry()) {
-			projectionExpiry.Reset(time.Until(deadline))
+			projectionExpiry.Reset(current.untilDeadline(deadline))
 			projectionDeadline = projectionExpiry.C
 		} else {
 			projectionExpiry.Stop()
@@ -528,7 +528,7 @@ func (service *StreamService) refreshAt(
 	if err != nil {
 		cause := errors.Join(ErrStreamUnavailable, err)
 		if errors.Is(err, ErrUnauthorized) || len(current.directDeviceProjections) != 0 ||
-			!current.ProjectionExpiry().After(time.Now()) {
+			current.deadlinePassed(current.ProjectionExpiry()) {
 			return Snapshot{}, withdrawAuthority(ctx, sink, current, cause)
 		}
 		return Snapshot{}, cause
@@ -733,7 +733,7 @@ func (service *StreamService) reopenSnapshot(
 	operationCtx, cancel := context.WithTimeout(ctx, service.options.SnapshotTimeout)
 	defer cancel()
 	snapshot, err := refresher.Refresh(operationCtx, machine, request, current, minRevision)
-	if err == nil && len(snapshot.directDeviceProjections) != 0 && !snapshot.ProjectionExpiry().After(time.Now()) {
+	if err == nil && len(snapshot.directDeviceProjections) != 0 && snapshot.deadlinePassed(snapshot.ProjectionExpiry()) {
 		return Snapshot{}, ErrStreamDiscontinuity
 	}
 	return snapshot, err
@@ -752,7 +752,7 @@ func (service *StreamService) openSnapshot(
 		open = reopener.Reopen
 	}
 	snapshot, err := open(operationCtx, machine, request)
-	if err == nil && len(snapshot.directDeviceProjections) != 0 && !snapshot.ProjectionExpiry().After(time.Now()) {
+	if err == nil && len(snapshot.directDeviceProjections) != 0 && snapshot.deadlinePassed(snapshot.ProjectionExpiry()) {
 		return Snapshot{}, ErrStreamDiscontinuity
 	}
 	return snapshot, err

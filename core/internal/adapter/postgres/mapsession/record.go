@@ -93,6 +93,7 @@ func (record snapshotRecord) snapshot(
 	workspaceCode, networkCode := optionalDisplayCodes(record.workspaceCode, record.networkCode)
 	snapshot, err := appmapsession.NewSnapshot(appmapsession.SnapshotParams{
 		Scope:             scope,
+		DatabaseReadAt:    record.readAt,
 		NetworkName:       networkName,
 		NetworkRevision:   record.networkRevision,
 		RecoveryEpoch:     recoveryEpoch,

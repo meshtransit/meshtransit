@@ -15,8 +15,11 @@ const inventoryCacheEntries = 4096
 
 // cachedInventory is one Network's inventory as read at one revision.
 type cachedInventory struct {
-	revision  int64
-	readAt    time.Time // PostgreSQL transaction time of the read
+	revision int64
+	readAt   time.Time // PostgreSQL transaction time of the read
+	// readLocal is this host's clock, with its monotonic reading, when the
+	// read observed readAt.
+	readLocal time.Time
 	expiresAt time.Time // earliest Device key expiry in the inventory
 	inventory appmapsession.NetworkInventory
 	policy    appmapsession.NetworkPolicy // at the policy revision of the read
@@ -226,30 +229,43 @@ func keepIdentical(previous, loaded cachedInventory) cachedInventory {
 	return loaded
 }
 
-// clockMargin keeps a derived map clear of a deadline across the clock skew
-// between this replica and PostgreSQL.
+// clockMargin keeps a derived map clear of a deadline across the time a map
+// takes to build and reach its node.
 const clockMargin = 2 * time.Second
 
-// freshAt reports whether the inventory, read at PostgreSQL time readAt,
-// still describes the Network at local time now: read within maxAge and
-// before any listed Device or membership lapses (less the clock margin).
-func (cached cachedInventory) freshAt(now time.Time, maxAge time.Duration) bool {
+// databaseNow is the database clock's time now as this inventory sees it: its
+// read's PostgreSQL time plus the time elapsed since on this host's monotonic
+// clock, so skew between this host's wall clock and the database's does not
+// move it. The read's own duration only makes it later, the safe direction
+// for every deadline it is compared with.
+func (cached cachedInventory) databaseNow() time.Time {
+	if cached.readLocal.IsZero() {
+		return cached.readAt
+	}
+	return cached.readAt.Add(time.Since(cached.readLocal))
+}
+
+// fresh reports whether the inventory still describes the Network: read
+// within maxAge and before any listed Device or membership lapses (less the
+// clock margin), both measured on the database clock.
+func (cached cachedInventory) fresh(maxAge time.Duration) bool {
+	now := cached.databaseNow()
 	age := now.Sub(cached.readAt)
 	return cached.inventory.IsValid() && age <= maxAge && age >= -maxAge &&
 		(cached.expiresAt.IsZero() || now.Add(clockMargin).Before(cached.expiresAt))
 }
 
 // latest returns scope's newest inventory of at least minRevision that is
-// fresh at local time now, reading it at most once across concurrent
-// callers. found is false when even a new read does not reach minRevision.
+// still fresh on the database clock, reading it at most once across
+// concurrent callers. found is false when even a new read does not reach
+// minRevision.
 func (cache *inventoryCache) latest(
 	ctx context.Context,
 	scope network.Scope,
 	minRevision int64,
-	now time.Time,
 	read inventoryReader,
 ) (cachedInventory, bool, error) {
 	return cache.fetch(ctx, scope, func(cached cachedInventory) bool {
-		return cached.revision >= minRevision && cached.freshAt(now, cache.maxAge)
+		return cached.revision >= minRevision && cached.fresh(cache.maxAge)
 	}, read)
 }

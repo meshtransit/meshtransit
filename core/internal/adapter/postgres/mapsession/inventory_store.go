@@ -153,6 +153,7 @@ func (store *Store) readInventory(
 		&cached.revision, &policyRevision, &cached.readAt, &releaseActive); err != nil {
 		return cachedInventory{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("read inventory revision: %w", err))
 	}
+	cached.readLocal = time.Now()
 	if cached.revision <= 0 || policyRevision <= 0 || cached.readAt.IsZero() {
 		return cachedInventory{}, ErrSnapshotEvidence
 	}

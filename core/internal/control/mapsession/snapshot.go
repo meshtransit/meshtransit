@@ -61,10 +61,20 @@ type SnapshotParams struct {
 	// OmittedShares is a lower bound on the shares a store left out of the
 	// snapshot to stay within its bounds; such a map reports itself limited.
 	OmittedShares int
+	// DatabaseReadAt is the PostgreSQL clock's time of the read the snapshot
+	// comes from, and ReadAtLocal this host's clock (with its monotonic
+	// reading) when that read was observed; zero ReadAtLocal means now. The
+	// stream measures the key and projection deadlines, which the database
+	// clock set, from them instead of from this host's wall clock. A zero
+	// DatabaseReadAt falls back to this host's clock.
+	DatabaseReadAt time.Time
+	ReadAtLocal    time.Time
 }
 
 // Snapshot is immutable authorization evidence for the first response of a map session.
 type Snapshot struct {
+	databaseReadAt          time.Time
+	readAtLocal             time.Time
 	scope                   network.Scope
 	networkName             network.DisplayName
 	networkRevision         int64
@@ -139,7 +149,13 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 	if !validSnapshotConnectivity(params, candidates, authorized) {
 		return Snapshot{}, ErrInvalidSnapshot
 	}
+	readAtLocal := params.ReadAtLocal
+	if readAtLocal.IsZero() {
+		readAtLocal = time.Now()
+	}
 	return Snapshot{
+		databaseReadAt:          params.DatabaseReadAt.UTC(),
+		readAtLocal:             readAtLocal,
 		scope:                   params.Scope,
 		networkName:             params.NetworkName,
 		networkRevision:         params.NetworkRevision,
@@ -474,4 +490,21 @@ func validSnapshotAddresses(addresses []netip.Prefix) bool {
 		seenIPv6 = true
 	}
 	return true
+}
+
+// untilDeadline returns how long until deadline on the database clock: the
+// deadline's distance from the snapshot's database read time, less the time
+// elapsed since that read on this host's monotonic clock. Skew between this
+// host's wall clock and the database's does not change it. Without a
+// database read time it falls back to this host's clock.
+func (snapshot Snapshot) untilDeadline(deadline time.Time) time.Duration {
+	if snapshot.databaseReadAt.IsZero() || snapshot.readAtLocal.IsZero() {
+		return time.Until(deadline)
+	}
+	return deadline.Sub(snapshot.databaseReadAt) - time.Since(snapshot.readAtLocal)
+}
+
+// deadlinePassed reports whether deadline has passed on the database clock.
+func (snapshot Snapshot) deadlinePassed(deadline time.Time) bool {
+	return snapshot.untilDeadline(deadline) <= 0
 }

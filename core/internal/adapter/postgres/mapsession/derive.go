@@ -3,7 +3,6 @@ package mapsession
 import (
 	"context"
 	"errors"
-	"time"
 
 	appmapsession "meshtransit.net/core/internal/control/mapsession"
 )
@@ -31,7 +30,7 @@ func (store *Store) Derive(
 	}
 	scope := current.Scope()
 	wanted := max(minRevision, current.NetworkRevision())
-	cached, found, err := store.inventories.latest(ctx, scope, wanted, time.Now(),
+	cached, found, err := store.inventories.latest(ctx, scope, wanted,
 		func(readCtx context.Context, previous cachedInventory) (cachedInventory, error) {
 			store.stats.reads.Add(1)
 			return store.readInventory(readCtx, scope, scope.WorkspaceID().String(), scope.NetworkID().String(), previous)
@@ -80,6 +79,8 @@ func (store *Store) Derive(
 		Addresses:         self.Addresses(),
 		CreatedAt:         self.CreatedAt(),
 		KeyExpiry:         self.KeyExpiry(),
+		DatabaseReadAt:    cached.readAt,
+		ReadAtLocal:       cached.readLocal,
 		Inventory:         cached.inventory,
 		PacketPolicy:      packetPolicy,
 		RelayDirectory:    store.relayDirectory(scope.NetworkID()),
@@ -103,8 +104,7 @@ func (store *Store) Unchanged(ctx context.Context, current appmapsession.Snapsho
 		return false, nil
 	}
 	scope := current.Scope()
-	now := time.Now()
-	cached, found, err := store.inventories.latest(ctx, scope, current.NetworkRevision(), now,
+	cached, found, err := store.inventories.latest(ctx, scope, current.NetworkRevision(),
 		func(readCtx context.Context, previous cachedInventory) (cachedInventory, error) {
 			store.stats.reads.Add(1)
 			return store.readInventory(readCtx, scope, scope.WorkspaceID().String(), scope.NetworkID().String(), previous)
@@ -122,7 +122,7 @@ func (store *Store) Unchanged(ctx context.Context, current appmapsession.Snapsho
 		cached.policy.Revision() == current.PacketPolicy().Revision() && current.SharesInventory(cached.inventory) &&
 		cached.networkName == current.NetworkName() && cached.recoveryEpoch == current.RecoveryEpoch() &&
 		sameDisplayCodes(cached, current) &&
-		(changesAt.IsZero() || now.Add(clockMargin).Before(changesAt)) &&
+		(changesAt.IsZero() || cached.databaseNow().Add(clockMargin).Before(changesAt)) &&
 		directory.Revision() == current.RelayDirectory().Revision() &&
 		directory.Fingerprint() == current.RelayDirectory().Fingerprint()
 	if unchanged {
