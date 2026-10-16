@@ -84,9 +84,9 @@ func TestOperatorStepsMarkThoseThatWaitForTheRollout(t *testing.T) {
 	}
 }
 
-// A step that runs before the rollout ends may take EXECUTE away from the
-// runtime, worker or migrator role only on a function its own migration
-// creates for the first time; anything else the previous release may call.
+// A step that runs before the rollout ends may take EXECUTE away from PUBLIC
+// or an application role only on a function its own migration creates for
+// the first time; anything else the previous release may call.
 func TestOperatorStepsBeforeTheRolloutRevokeOnlyNewFunctions(t *testing.T) {
 	t.Parallel()
 	steps, err := OperatorSteps()
@@ -97,27 +97,10 @@ func TestOperatorStepsBeforeTheRolloutRevokeOnlyNewFunctions(t *testing.T) {
 		if step.Kind != OperatorStepOwnership || step.AfterRollout {
 			continue
 		}
-		created := firstCreatedBy(t, step.Name[:6])
-		for _, effect := range step.Effects {
-			if effect.Kind != OperatorEffectNoExecute ||
-				effect.Role != "mesh_runtime" && effect.Role != "mesh_worker" && effect.Role != "mesh_migrator" {
-				continue
-			}
-			if !created[strings.ToLower(effect.Function)] && !createdIgnoringCase(created, effect.Function) {
-				t.Errorf("%s: rollout=before but revokes %s from %s, which migration %s does not create; mark it rollout=after",
-					step.Name, effect.Function, effect.Role, step.Name[:6])
-			}
+		for _, problem := range protectedRevokeProblems(step.Effects, firstCreatedBy(t, step.Name[:6])) {
+			t.Errorf("%s: rollout=before but %s; mark it rollout=after", step.Name, problem)
 		}
 	}
-}
-
-func createdIgnoringCase(created map[string]bool, function string) bool {
-	for signature := range created {
-		if strings.EqualFold(signature, function) {
-			return true
-		}
-	}
-	return false
 }
 
 // The command runs the statements rebuilt from what the parser read, never
@@ -221,15 +204,23 @@ func TestOperatorCatalogRefusesRolesOutsideTheAllowlist(t *testing.T) {
 		return append(slices.Clone(steps), OperatorStep{Name: "000999_x_role", Version: 999, Kind: OperatorStepRole,
 			Effects: []OperatorEffect{{Kind: OperatorEffectRole, Role: name}}})
 	}
+	ownerOf := func(function, role string) []OperatorStep {
+		return append(slices.Clone(steps), OperatorStep{Name: "000999_x_ownership", Version: 999, Kind: OperatorStepOwnership,
+			Effects: []OperatorEffect{{Kind: OperatorEffectOwner, Function: function, Role: role}}})
+	}
 	for name, candidate := range map[string][]OperatorStep{
-		"owner superuser":        owner("postgres"),
-		"owner runtime":          owner("mesh_runtime"),
-		"owner unknown mesh":     owner("mesh_unknown"),
-		"grant to other":         grant(OperatorEffectExecute, "postgres"),
-		"grant to public":        grant(OperatorEffectExecute, "public"),
-		"revoke from other":      grant(OperatorEffectNoExecute, "app_user"),
-		"role step for runtime":  role("mesh_runtime"),
-		"role step for migrator": role("mesh_migrator"),
+		"share function to audit writer": ownerOf("mesh_ops.revoke_resource_share_v7(UUID)", "mesh_audit_writer"),
+		"share function to alias writer": ownerOf("mesh_ops.decide_resource_share_offer_v7(UUID)", "mesh_device_alias_writer"),
+		"alias function to share writer": ownerOf("mesh_ops.prepare_device_alias_change_v6(UUID)", "mesh_share_writer"),
+		"unknown family":                 ownerOf("mesh_ops.brand_new_v1(UUID)", "mesh_share_writer"),
+		"owner superuser":                owner("postgres"),
+		"owner runtime":                  owner("mesh_runtime"),
+		"owner unknown mesh":             owner("mesh_unknown"),
+		"grant to other":                 grant(OperatorEffectExecute, "postgres"),
+		"grant to public":                grant(OperatorEffectExecute, "public"),
+		"revoke from other":              grant(OperatorEffectNoExecute, "app_user"),
+		"role step for runtime":          role("mesh_runtime"),
+		"role step for migrator":         role("mesh_migrator"),
 	} {
 		if err := validateOperatorRoles(candidate); err == nil {
 			t.Errorf("%s: accepted", name)

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -18,13 +19,7 @@ const lastContractWindow = "000093"
 var (
 	sqlLineComment  = regexp.MustCompile(`--[^\n]*`)
 	sqlBlockComment = regexp.MustCompile(`(?s)/\*.*?\*/`)
-	// REVOKE {ALL [PRIVILEGES] | EXECUTE} ON FUNCTION f(args)[, g(args)...] FROM roles
-	revokeFunctions = regexp.MustCompile(`(?is)^REVOKE\s+(?:ALL(?:\s+PRIVILEGES)?|EXECUTE)\s+ON\s+FUNCTION\s+(.+)\s+FROM\s+(.+)$`)
-	functionTarget  = regexp.MustCompile(`(?is)^\s*([a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*)\s*\(([^()]*)\)\s*(?:,|$)`)
 	createFunction  = regexp.MustCompile(`(?is)CREATE\s+(OR\s+REPLACE\s+)?FUNCTION\s+([a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*)\s*\(`)
-	applicationRole = regexp.MustCompile(`(?i)(^|[\s,"])mesh_(runtime|worker)([\s,"]|$)`)
-	forbiddenInStep = regexp.MustCompile(`(?i)\bALL\s+(FUNCTIONS|ROUTINES|PROCEDURES)\s+IN\s+SCHEMA\b|\bDEFAULT\s+PRIVILEGES\b|` +
-		`\bON\s+(ROUTINE|PROCEDURE)\b|^\s*DO\b|\bEXECUTE\s+format\b|\bREVOKE\b.*\bGRANTED\s+BY\b`)
 	// A role step is exactly this block, for an owner role that never logs in.
 	roleStep = regexp.MustCompile(`(?is)^\s*DO\s+\$(\w*)\$\s*BEGIN\s+IF\s+NOT\s+EXISTS\s*\(\s*SELECT\s+FROM\s+` +
 		`pg_catalog\.pg_roles\s+WHERE\s+rolname\s*=\s*'([a-z_][a-z0-9_]*)'\s*\)\s+THEN\s+CREATE\s+ROLE\s+([a-z_][a-z0-9_]*)\s+([A-Z ]+?)\s*;` +
@@ -33,29 +28,25 @@ var (
 
 const operatorRoleAttributes = "NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
 
-// An operator step after the closed windows may take a function away from the
-// runtime or worker role only if its own migration creates that function
-// (name and argument types) for the first time: a new function is kept
-// least-privilege, an older one stays for rollback.
+// An operator step after the closed windows may take a function away from
+// PUBLIC or an application role (runtime, worker, observer, migrator) only if
+// its own migration creates that function (name and argument types) for the
+// first time: a new function is kept least-privilege, an older one stays for
+// rollback. The check reads the effects the catalog parsed, which are the
+// statements the command runs.
 func TestOperatorStepsKeepPreviousVersionsForRollback(t *testing.T) {
 	t.Parallel()
-	steps, err := filepath.Glob(filepath.Join("operator", "*.sql"))
-	if err != nil || len(steps) == 0 {
-		t.Fatalf("operator steps: %v, %d found", err, len(steps))
+	steps, err := OperatorSteps()
+	if err != nil {
+		t.Fatal(err)
 	}
 	for _, step := range steps {
-		name := filepath.Base(step)
-		if !strings.HasSuffix(name, "_ownership.sql") && !strings.HasSuffix(name, "_role.sql") {
-			t.Errorf("%s: operator steps are …_ownership.sql or …_role.sql", name)
+		number := step.Name[:6]
+		if number <= lastContractWindow || step.Kind != OperatorStepOwnership {
 			continue
 		}
-		number := name[:6]
-		if number <= lastContractWindow || strings.HasSuffix(name, "_role.sql") {
-			continue
-		}
-		created := firstCreatedBy(t, number)
-		for _, problem := range operatorStepProblems(readSQL(t, step), created) {
-			t.Errorf("%s: %s", name, problem)
+		for _, problem := range protectedRevokeProblems(step.Effects, firstCreatedBy(t, number)) {
+			t.Errorf("%s: %s", step.Name, problem)
 		}
 	}
 }
@@ -80,10 +71,12 @@ func TestOperatorLintRefusesEvasions(t *testing.T) {
 	created := map[string]bool{"mesh_ops.new_v2(UUID,TEXT)": true}
 	for name, step := range map[string]string{
 		"execute":         "REVOKE EXECUTE ON FUNCTION mesh_ops.old_v1(UUID) FROM mesh_runtime;",
-		"all privileges":  "REVOKE ALL PRIVILEGES ON FUNCTION mesh_ops.old_v1(UUID) FROM PUBLIC, mesh_worker;",
+		"all privileges":  "REVOKE ALL PRIVILEGES ON FUNCTION mesh_ops.old_v1(UUID) FROM PUBLIC, mesh_share_writer;",
 		"second function": "REVOKE ALL ON FUNCTION mesh_ops.new_v2(UUID, TEXT), mesh_ops.old_v1(UUID) FROM mesh_runtime;",
 		"quoted role":     `REVOKE ALL ON FUNCTION mesh_ops.old_v1(UUID) FROM "mesh_runtime";`,
 		"other overload":  "REVOKE ALL ON FUNCTION mesh_ops.new_v2(UUID) FROM mesh_runtime;",
+		"observer":        "REVOKE ALL ON FUNCTION mesh_ops.old_v1(UUID) FROM mesh_observer;",
+		"migrator":        "REVOKE ALL ON FUNCTION mesh_ops.old_v1(UUID) FROM mesh_migrator;",
 		"schema-wide":     "REVOKE ALL ON ALL FUNCTIONS IN SCHEMA mesh_ops FROM mesh_runtime;",
 		"routine":         "REVOKE ALL ON ROUTINE mesh_ops.old_v1(UUID) FROM mesh_runtime;",
 		"do block":        "DO $$ BEGIN EXECUTE 'REVOKE ALL ON FUNCTION mesh_ops.old_v1(UUID) FROM mesh_runtime'; END $$;",
@@ -91,14 +84,14 @@ func TestOperatorLintRefusesEvasions(t *testing.T) {
 		"hidden by comment": "-- REVOKE ALL ON FUNCTION mesh_ops.new_v2(UUID,TEXT) FROM mesh_runtime\n" +
 			"REVOKE ALL ON FUNCTION mesh_ops.old_v1(UUID) FROM mesh_runtime;",
 	} {
-		if len(operatorStepProblems(step, created)) == 0 {
+		if len(protectedRevokeTextProblems(step, created)) == 0 {
 			t.Errorf("%s: accepted %q", name, step)
 		}
 	}
-	allowed := "REVOKE ALL ON FUNCTION mesh_ops.new_v2(p UUID, q TEXT) FROM PUBLIC, mesh_worker;\n" +
+	allowed := "REVOKE ALL ON FUNCTION mesh_ops.new_v2(UUID, TEXT) FROM PUBLIC, mesh_worker, mesh_observer;\n" +
 		"-- REVOKE ALL ON FUNCTION mesh_ops.old_v1(UUID) FROM mesh_runtime;\n" +
-		"REVOKE ALL ON FUNCTION mesh_ops.old_v1(UUID) FROM mesh_observer;\n"
-	if problems := operatorStepProblems(allowed, created); len(problems) != 0 {
+		"REVOKE ALL ON FUNCTION mesh_ops.old_v1(UUID) FROM mesh_share_writer;\n"
+	if problems := protectedRevokeTextProblems(allowed, created); len(problems) != 0 {
 		t.Errorf("refused a valid step: %v", problems)
 	}
 	for name, step := range map[string]string{
@@ -116,59 +109,34 @@ func TestOperatorLintRefusesEvasions(t *testing.T) {
 	}
 }
 
-// operatorStepProblems lists every statement of an ownership step that could
-// take a function, other than one in created, away from an application role.
-func operatorStepProblems(step string, created map[string]bool) []string {
+// protectedOperatorRoles may lose EXECUTE only on a function the step's own
+// migration creates.
+var protectedOperatorRoles = []string{"public", "mesh_runtime", "mesh_worker", "mesh_observer", "mesh_migrator"}
+
+// protectedRevokeProblems lists each parsed revoke that takes a function,
+// other than one in created, away from PUBLIC or an application role.
+func protectedRevokeProblems(effects []OperatorEffect, created map[string]bool) []string {
 	problems := []string{}
-	for _, statement := range strings.Split(stripSQLComments(step), ";") {
-		statement = strings.TrimSpace(statement)
-		if statement == "" {
+	for _, effect := range effects {
+		if effect.Kind != OperatorEffectNoExecute || !slices.Contains(protectedOperatorRoles, effect.Role) ||
+			created[effect.Function] {
 			continue
 		}
-		if forbiddenInStep.MatchString(statement) {
-			problems = append(problems, "uses a schema-wide, default, dynamic or block form: "+statement)
-			continue
-		}
-		if !regexp.MustCompile(`(?i)^REVOKE\b`).MatchString(statement) {
-			continue
-		}
-		match := revokeFunctions.FindStringSubmatch(statement)
-		if match == nil {
-			if applicationRole.MatchString(statement) {
-				problems = append(problems, "unrecognised revoke from an application role: "+statement)
-			}
-			continue
-		}
-		if !applicationRole.MatchString(match[2]) {
-			continue
-		}
-		targets, ok := revokeTargets(match[1])
-		if !ok {
-			problems = append(problems, "unrecognised function list: "+statement)
-			continue
-		}
-		for _, target := range targets {
-			if !created[target] {
-				problems = append(problems, "revokes "+target+" from an application role, but its migration does not "+
-					"create it: keep the previous version executable until a later release contracts it")
-			}
-		}
+		problems = append(problems, "revokes "+effect.Function+" from "+effect.Role+", but its migration does not "+
+			"create it: keep the previous version executable until a later release contracts it")
 	}
 	return problems
 }
 
-func revokeTargets(list string) ([]string, bool) {
-	targets := []string{}
-	for rest := strings.TrimSpace(list); rest != ""; {
-		match := functionTarget.FindStringSubmatchIndex(rest)
-		if match == nil {
-			return nil, false
-		}
-		name := strings.ToLower(rest[match[2]:match[3]])
-		targets = append(targets, signature(name, argumentTypes(rest[match[4]:match[5]], false)))
-		rest = strings.TrimSpace(rest[match[1]:])
+// protectedRevokeTextProblems parses statements as an ownership step does;
+// text the parser refuses is a problem too.
+func protectedRevokeTextProblems(statements string, created map[string]bool) []string {
+	parsed, err := parseOperatorStep(OperatorStepOwnership,
+		"-- operator-step: rollout=before\nBEGIN;\n"+statements+"\nCOMMIT;\n")
+	if err != nil {
+		return []string{err.Error()}
 	}
-	return targets, len(targets) != 0
+	return protectedRevokeProblems(parsed.Effects, created)
 }
 
 func roleStepProblem(step string) string {
