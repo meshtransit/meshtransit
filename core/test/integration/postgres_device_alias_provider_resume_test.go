@@ -111,12 +111,16 @@ func assertAliasWorkerRestoresResumedProvider(ctx context.Context, t *testing.T,
 }
 
 // assertAliasWorkerKeepsGoneProviderOut: a share whose provider Device was
-// suspended does not come back when the share was revoked, the Device was
-// deleted or the Resource no longer targets it, whatever the client claims.
+// suspended does not come back when the share was revoked or expired, the
+// Device was deleted or the Resource no longer targets it, whatever the
+// client claims.
 func assertAliasWorkerKeepsGoneProviderOut(ctx context.Context, t *testing.T, tx pgx.Tx, deploymentID, endpointID, consumerID string, provider, consumer aliasMapIdentity) {
 	t.Helper()
 	for _, test := range []struct{ name, statement string }{
 		{"revoked share", `UPDATE mesh.trust_contract SET state='revoked',ended_at=clock_timestamp(),version=version+1,updated_at=clock_timestamp()
+  WHERE id=(SELECT trust_contract_id FROM mesh.private_endpoint WHERE public_id=$1::UUID) AND $2::UUID IS NOT NULL`},
+		{"expired share", `UPDATE mesh.trust_contract SET state='expired',expires_at=clock_timestamp()-INTERVAL '1 millisecond',ended_at=clock_timestamp(),
+  version=version+1,updated_at=clock_timestamp()
   WHERE id=(SELECT trust_contract_id FROM mesh.private_endpoint WHERE public_id=$1::UUID) AND $2::UUID IS NOT NULL`},
 		{"deleted provider", `UPDATE mesh.device SET state='deleted',suspended_reason=NULL,deleted_at=clock_timestamp(),version=version+1,updated_at=clock_timestamp()
   WHERE public_id=$2::UUID AND $1::UUID IS NOT NULL`},

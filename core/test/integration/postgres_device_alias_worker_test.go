@@ -158,6 +158,8 @@ func assertDeviceAliasGuardedWorker(ctx context.Context, t *testing.T, tx pgx.Tx
 							assertAliasWorkerReadmitsResumedConsumer(ctx, t, tx, deploymentID, endpointID, consumerID, provider, consumer)
 							assertAliasWorkerRestoresResumedProvider(ctx, t, tx, deploymentID, endpointID, consumerID, provider, consumer)
 							assertAliasWorkerKeepsGoneProviderOut(ctx, t, tx, deploymentID, endpointID, consumerID, provider, consumer)
+							assertAliasWorkerKeepsResourceAliasAcrossKeyRotation(ctx, t, tx, deploymentID, endpointID, consumerID, provider, consumer)
+							assertAliasResourceAddressKeptForItsSlot(ctx, t, tx, deploymentID, endpointID, consumerID, provider)
 						}
 					}
 				}
