@@ -17,6 +17,7 @@ import (
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node/inventory"
 	"meshtransit.net/core/internal/domain/publicid"
 )
 
@@ -214,7 +215,7 @@ func assertPostgreSQLDeviceLifecycle(ctx context.Context, t *testing.T, admin *p
 	if err != nil {
 		t.Fatal(err)
 	}
-	page, err := inventoryStore.ReadDevices(ctx, owner, scope, node.ID{}, 100)
+	page, err := inventoryStore.ReadDevices(ctx, owner, scope, inventory.Query{Limit: 100})
 	if err != nil {
 		t.Fatalf("read inventory: %v", err)
 	}

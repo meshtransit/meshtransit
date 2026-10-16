@@ -4,6 +4,7 @@ package inventory
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"meshtransit.net/core/internal/domain/identity"
@@ -25,8 +26,8 @@ var (
 	ErrForbidden = errors.New("device inventory: forbidden")
 	// ErrUnavailable reports a failed durable dependency.
 	ErrUnavailable = errors.New("device inventory: unavailable")
-	// ErrRevisionChanged requires a new first page after inventory changes.
-	ErrRevisionChanged = errors.New("device inventory: revision changed")
+	// ErrNotFound reports a Device the scope does not hold.
+	ErrNotFound = errors.New("device inventory: not found")
 )
 
 // Device contains durable registration metadata, never ephemeral presence.
@@ -159,14 +160,60 @@ func (device Device) IsValid() bool {
 		device.expiresAt.After(device.createdAt)
 }
 
-// Cursor pins a public Device identity to the inventory revision.
+// StateFilter selects Devices by whether they can connect now.
+type StateFilter string
+
+const (
+	// StateAll keeps every Device.
+	StateAll StateFilter = ""
+	// StateActive keeps active Devices that have not expired.
+	StateActive StateFilter = "active"
+	// StateInactive keeps suspended, expired and removed Devices.
+	StateInactive StateFilter = "inactive"
+)
+
+// MaximumNamePrefix bounds a name search to the longest hostname.
+const MaximumNamePrefix = 253
+
+// Cursor continues a list after the last Device of a page, in name order.
 type Cursor struct {
-	After    node.ID
-	Revision int64
+	AfterHostname string
+	After         node.ID
 }
 
-// IsValid reports whether the cursor pins an exact inventory revision.
-func (cursor Cursor) IsValid() bool { return cursor.After.IsValid() && cursor.Revision > 0 }
+// IsValid reports whether the cursor names a Device to continue after.
+func (cursor Cursor) IsValid() bool { return cursor.After.IsValid() && cursor.AfterHostname != "" }
+
+// Query selects one page of a Network's Devices in name order.
+type Query struct {
+	// NamePrefix keeps Devices whose name starts with it; "" keeps all.
+	NamePrefix string
+	State      StateFilter
+	Limit      int
+	Cursor     Cursor
+}
+
+// IsValid reports a known filter, a page of 1 to MaximumPageSize and a
+// name prefix written the way hostnames are: lower-case [a-z0-9.-].
+func (query Query) IsValid() bool {
+	if query.Limit < 1 || query.Limit > MaximumPageSize || len(query.NamePrefix) > MaximumNamePrefix ||
+		(query.Cursor != (Cursor{}) && !query.Cursor.IsValid()) {
+		return false
+	}
+	switch query.State {
+	case StateAll, StateActive, StateInactive:
+	default:
+		return false
+	}
+	for index := range len(query.NamePrefix) {
+		character := query.NamePrefix[index]
+		lower, digit := character >= 'a' && character <= 'z', character >= '0' && character <= '9'
+		if !lower && !digit && character != '-' && character != '.' {
+			return false
+		}
+	}
+	return true
+}
 
 // ReadResult is untrusted storage evidence, validated before disclosure.
 type ReadResult struct {
@@ -177,11 +224,43 @@ type ReadResult struct {
 	WorkspaceCode, NetworkCode identity.DisplayCode
 }
 
-// Reader authorizes and reads one snapshot from durable authority on the
-// database clock.
-type Reader interface {
-	ReadDevices(context.Context, accountsession.Session, network.Scope, node.ID, int) (ReadResult, error)
+// Enrollment says how a Device joined: by a browser sign-in, or by an
+// enrollment key someone created.
+type Enrollment struct {
+	ByKey          bool
+	KeyID          publicid.ID
+	KeyDescription string
+	KeyCreatedBy   Member
 }
+
+// Tag is one tag a Device carries.
+type Tag struct {
+	ID   publicid.ID
+	Name string
+}
+
+// Record is one Device of the scope with how it was enrolled.
+type Record struct {
+	Scope      network.Scope
+	Device     Device
+	Enrollment Enrollment
+	// Tags are the Device's tags by name.
+	Tags []Tag
+	// Found is false when the scope holds no such Device.
+	Found                      bool
+	WorkspaceCode, NetworkCode identity.DisplayCode
+}
+
+// Reader authorizes and reads from durable authority on the database clock.
+// ReadDevices returns up to query.Limit Devices.
+type Reader interface {
+	ReadDevices(context.Context, accountsession.Session, network.Scope, Query) (ReadResult, error)
+	ReadDevice(context.Context, accountsession.Session, network.Scope, node.ID) (Record, error)
+	ReadDeviceNames(context.Context, accountsession.Session, network.Scope, []node.ID) (map[node.ID]string, error)
+}
+
+// MaximumNames bounds one name lookup, a page of peers.
+const MaximumNames = MaximumPageSize
 
 // Clock supplies this host's time, used only to refuse early a session that
 // has already ended; the reader authorizes on the database clock.
@@ -229,19 +308,19 @@ func (page Page) Devices() []Device { return append([]Device(nil), page.devices.
 func (page Page) Next() (Cursor, bool) { return page.next, page.next.IsValid() }
 
 // List independently requires exact-scope device.read in durable storage.
-func (service *Service) List(ctx context.Context, session accountsession.Session,
-	scope network.Scope, limit int, cursor Cursor,
+func (service *Service) List(ctx context.Context, session accountsession.Session, scope network.Scope,
+	query Query,
 ) (Page, error) {
 	if ctx == nil || service == nil || service.reader == nil || service.clock == nil ||
-		!session.IsValid() || !scope.IsValid() || limit < 1 || limit > MaximumPageSize ||
-		(cursor != (Cursor{}) && !cursor.IsValid()) {
+		!session.IsValid() || !scope.IsValid() || !query.IsValid() {
 		return Page{}, ErrInvalidRequest
 	}
-	now := service.clock.Now().UTC()
-	if now.IsZero() || !session.IsActiveAt(now) {
-		return Page{}, ErrForbidden
+	if err := service.requireActive(session); err != nil {
+		return Page{}, err
 	}
-	result, err := service.reader.ReadDevices(ctx, session, scope, cursor.After, limit+1)
+	limit := query.Limit
+	query.Limit = limit + 1
+	result, err := service.reader.ReadDevices(ctx, session, scope, query)
 	if err != nil {
 		return Page{}, err
 	}
@@ -249,20 +328,99 @@ func (service *Service) List(ctx context.Context, session accountsession.Session
 		!result.WorkspaceCode.IsValid() || !result.NetworkCode.IsValid() {
 		return Page{}, ErrInvalidResult
 	}
-	if cursor.IsValid() && cursor.Revision != result.Revision {
-		return Page{}, ErrRevisionChanged
-	}
-	for index, device := range result.Devices {
-		if !device.IsValid() || (cursor.After.IsValid() && device.ID().String() <= cursor.After.String()) ||
-			(index > 0 && result.Devices[index-1].ID().String() >= device.ID().String()) {
+	previous := query.Cursor
+	for _, device := range result.Devices {
+		if !device.IsValid() || !strings.HasPrefix(device.Hostname(), query.NamePrefix) ||
+			previous.IsValid() && !nameOrderAfter(device, previous) {
 			return Page{}, ErrInvalidResult
 		}
+		previous = Cursor{AfterHostname: device.Hostname(), After: device.ID()}
 	}
 	page := Page{scope: scope, revision: result.Revision, devices: append([]Device(nil), result.Devices...),
 		workspaceCode: result.WorkspaceCode, networkCode: result.NetworkCode}
 	if len(page.devices) > limit {
 		page.devices = page.devices[:limit]
-		page.next = Cursor{After: page.devices[limit-1].ID(), Revision: page.revision}
+		last := page.devices[limit-1]
+		page.next = Cursor{AfterHostname: last.Hostname(), After: last.ID()}
 	}
 	return page, nil
+}
+
+// Get reads one Device of the scope and how it was enrolled.
+func (service *Service) Get(ctx context.Context, session accountsession.Session, scope network.Scope,
+	id node.ID,
+) (Record, error) {
+	if ctx == nil || service == nil || service.reader == nil || service.clock == nil ||
+		!session.IsValid() || !scope.IsValid() || !id.IsValid() {
+		return Record{}, ErrInvalidRequest
+	}
+	if err := service.requireActive(session); err != nil {
+		return Record{}, err
+	}
+	record, err := service.reader.ReadDevice(ctx, session, scope, id)
+	if err != nil {
+		return Record{}, err
+	}
+	if record.Scope != scope || !record.WorkspaceCode.IsValid() || !record.NetworkCode.IsValid() {
+		return Record{}, ErrInvalidResult
+	}
+	if !record.Found {
+		return Record{}, ErrNotFound
+	}
+	if !record.Device.IsValid() || record.Device.ID() != id ||
+		record.Enrollment.ByKey && !record.Enrollment.KeyID.IsValid() {
+		return Record{}, ErrInvalidResult
+	}
+	return record, nil
+}
+
+// Names returns the hostnames of the scope's Devices among ids, to name the
+// peers a Device reports; IDs of other Networks are left out.
+func (service *Service) Names(ctx context.Context, session accountsession.Session, scope network.Scope,
+	ids []node.ID,
+) (map[node.ID]string, error) {
+	if ctx == nil || service == nil || service.reader == nil || service.clock == nil ||
+		!session.IsValid() || !scope.IsValid() || len(ids) > MaximumNames {
+		return nil, ErrInvalidRequest
+	}
+	asked := make(map[node.ID]bool, len(ids))
+	for _, id := range ids {
+		if !id.IsValid() {
+			return nil, ErrInvalidRequest
+		}
+		asked[id] = true
+	}
+	if len(ids) == 0 {
+		return map[node.ID]string{}, nil
+	}
+	if err := service.requireActive(session); err != nil {
+		return nil, err
+	}
+	names, err := service.reader.ReadDeviceNames(ctx, session, scope, ids)
+	if err != nil {
+		return nil, err
+	}
+	for id, name := range names {
+		if !asked[id] || name == "" {
+			return nil, ErrInvalidResult
+		}
+	}
+	return names, nil
+}
+
+func (service *Service) requireActive(session accountsession.Session) error {
+	now := service.clock.Now().UTC()
+	if now.IsZero() || !session.IsActiveAt(now) {
+		return ErrForbidden
+	}
+	return nil
+}
+
+// nameOrderAfter reports whether device comes after cursor in byte order of
+// (hostname, public ID), the order storage returns.
+func nameOrderAfter(device Device, cursor Cursor) bool {
+	if device.Hostname() != cursor.AfterHostname {
+		return device.Hostname() > cursor.AfterHostname
+	}
+	return device.ID().String() > cursor.After.String()
 }

@@ -70,7 +70,7 @@ func (loader *fakeObservations) LoadObservations(_ context.Context, ids []node.I
 	loader.mu.Lock()
 	defer loader.mu.Unlock()
 	loader.calls++
-	if len(ids) > distribution.MaximumPageSize {
+	if len(ids) > distribution.MaximumObservationBatch {
 		return nil, errors.New("batch too large")
 	}
 	result := make([]distribution.Observation, len(ids))

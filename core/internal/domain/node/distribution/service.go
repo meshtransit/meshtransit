@@ -13,8 +13,8 @@ import (
 	"meshtransit.net/core/internal/domain/node"
 )
 
-// MaximumPageSize bounds each authenticated distribution page.
-const MaximumPageSize = 100
+// MaximumObservationBatch bounds the Devices one delivery record load reads.
+const MaximumObservationBatch = 100
 
 var (
 	// ErrInvalidRequest reports invalid input before any read.
@@ -25,6 +25,9 @@ var (
 	ErrForbidden = errors.New("device distribution: forbidden")
 	// ErrUnavailable reports a failed durable dependency.
 	ErrUnavailable = errors.New("device distribution: unavailable")
+	// ErrNotFound reports a Device the scope does not hold as active or
+	// suspended: removed and expired Devices receive no policy.
+	ErrNotFound = errors.New("device distribution: not found")
 )
 
 // Status is how a Device stands against the Network's current revision.
@@ -111,8 +114,8 @@ type TargetDevice struct {
 	State    string
 }
 
-// Target is the durable side of one page: the current revisions and the
-// active or suspended Devices, ordered by public ID.
+// Target is the durable side of one Device's report: the current revisions
+// and the Device when it is active or suspended.
 type Target struct {
 	Scope           network.Scope
 	NetworkRevision int64
@@ -123,7 +126,7 @@ type Target struct {
 // Reader authorizes and reads the durable side under device.read on the
 // database clock.
 type Reader interface {
-	ReadDistribution(context.Context, accountsession.Session, network.Scope, node.ID, int) (Target, error)
+	ReadTarget(context.Context, accountsession.Session, network.Scope, node.ID) (Target, error)
 }
 
 // ObservationLoader returns one observation per requested Device, in order.
@@ -146,17 +149,15 @@ type Device struct {
 	Observation Observation
 }
 
-// Page is one ordered page of the report.
-type Page struct {
+// Report is one Device's standing against the Network's current revisions.
+type Report struct {
 	Scope           network.Scope
 	NetworkRevision int64
 	PolicyRevision  int64
 	// ObservationsAvailable is false when delivery records could not be read;
-	// every Device then reports StatusUnknown.
+	// the Device then reports StatusUnknown.
 	ObservationsAvailable bool
-	Devices               []Device
-	// Next is the public ID to continue after, or the zero ID on the last page.
-	Next node.ID
+	Device                Device
 }
 
 // Service joins durable intent with recorded delivery.
@@ -174,53 +175,36 @@ func NewService(reader Reader, observations ObservationLoader, clock Clock) (*Se
 	return &Service{reader: reader, observations: observations, clock: clock}, nil
 }
 
-// Read returns one page. after is the zero ID for the first page.
-func (service *Service) Read(ctx context.Context, session accountsession.Session, scope network.Scope,
-	after node.ID, limit int) (Page, error) {
-	if service == nil || ctx == nil || !session.IsValid() || !scope.IsValid() ||
-		limit < 1 || limit > MaximumPageSize || (after != node.ID{} && !after.IsValid()) {
-		return Page{}, ErrInvalidRequest
+// ReadDevice reports one Device of the scope.
+func (service *Service) ReadDevice(ctx context.Context, session accountsession.Session, scope network.Scope,
+	id node.ID) (Report, error) {
+	if service == nil || ctx == nil || !session.IsValid() || !scope.IsValid() || !id.IsValid() {
+		return Report{}, ErrInvalidRequest
 	}
-	target, err := service.reader.ReadDistribution(ctx, session, scope, after, limit+1)
+	target, err := service.reader.ReadTarget(ctx, session, scope, id)
 	if err != nil {
-		return Page{}, err
+		return Report{}, err
 	}
-	if !validTarget(target, scope, after, limit+1) {
-		return Page{}, ErrInvalidResult
+	if !validTarget(target, scope, id) {
+		return Report{}, ErrInvalidResult
 	}
-	page := Page{Scope: scope, NetworkRevision: target.NetworkRevision, PolicyRevision: target.PolicyRevision}
-	devices := target.Devices
-	if len(devices) > limit {
-		devices = devices[:limit]
-		page.Next = devices[limit-1].ID
+	if len(target.Devices) == 0 {
+		return Report{}, ErrNotFound
 	}
-	page.Devices = make([]Device, len(devices))
-	ids := make([]node.ID, len(devices))
-	for index, device := range devices {
-		ids[index] = device.ID
-		page.Devices[index] = Device{ID: device.ID, Hostname: device.Hostname, State: device.State,
-			Status: StatusUnknown, Enforcement: EnforcementUnknown}
+	held := target.Devices[0]
+	report := Report{Scope: scope, NetworkRevision: target.NetworkRevision, PolicyRevision: target.PolicyRevision,
+		Device: Device{ID: held.ID, Hostname: held.Hostname, State: held.State, Status: StatusUnknown,
+			Enforcement: EnforcementUnknown}}
+	observations, err := service.observations.LoadObservations(ctx, []node.ID{id})
+	if err != nil || len(observations) != 1 || !observations[0].IsValid() {
+		// Delivery records are operational; the durable answer still stands.
+		return report, nil
 	}
-	if len(ids) == 0 {
-		page.ObservationsAvailable = true
-		return page, nil
-	}
-	observations, err := service.observations.LoadObservations(ctx, ids)
-	if err != nil || len(observations) != len(ids) {
-		// Delivery records are operational; the durable list still answers.
-		return page, nil
-	}
-	now := service.clock.Now()
-	for index, observation := range observations {
-		if !observation.IsValid() {
-			return page, nil
-		}
-		page.Devices[index].Observation = observation
-		page.Devices[index].Status = Classify(target.NetworkRevision, observation)
-		page.Devices[index].Enforcement = ClassifyEnforcement(observation, now)
-	}
-	page.ObservationsAvailable = true
-	return page, nil
+	report.Device.Observation = observations[0]
+	report.Device.Status = Classify(target.NetworkRevision, observations[0])
+	report.Device.Enforcement = ClassifyEnforcement(observations[0], service.clock.Now())
+	report.ObservationsAvailable = true
+	return report, nil
 }
 
 // Classify compares one observation with the current Network revision.
@@ -237,19 +221,14 @@ func Classify(networkRevision int64, observation Observation) Status {
 	}
 }
 
-func validTarget(target Target, scope network.Scope, after node.ID, limit int) bool {
-	if target.Scope != scope || target.NetworkRevision < 1 || target.PolicyRevision < 0 ||
-		len(target.Devices) > limit {
+func validTarget(target Target, scope network.Scope, id node.ID) bool {
+	if target.Scope != scope || target.NetworkRevision < 1 || target.PolicyRevision < 0 || len(target.Devices) > 1 {
 		return false
 	}
-	previous := after
 	for _, device := range target.Devices {
-		validState := device.State == "active" || device.State == "suspended"
-		if !device.ID.IsValid() || device.Hostname == "" || !validState ||
-			(previous != node.ID{} && device.ID.String() <= previous.String()) {
+		if device.ID != id || device.Hostname == "" || (device.State != "active" && device.State != "suspended") {
 			return false
 		}
-		previous = device.ID
 	}
 	return true
 }

@@ -23,16 +23,15 @@ func (fixedClock) Now() time.Time { return testNow }
 type fakeReader struct {
 	target    Target
 	err       error
-	gotAfter  node.ID
-	gotLimit  int
+	gotID     node.ID
 	gotScope  network.Scope
 	callCount int
 }
 
-func (reader *fakeReader) ReadDistribution(_ context.Context, _ accountsession.Session, scope network.Scope,
-	after node.ID, limit int) (Target, error) {
+func (reader *fakeReader) ReadTarget(_ context.Context, _ accountsession.Session, scope network.Scope,
+	id node.ID) (Target, error) {
 	reader.callCount++
-	reader.gotScope, reader.gotAfter, reader.gotLimit = scope, after, limit
+	reader.gotScope, reader.gotID = scope, id
 	return reader.target, reader.err
 }
 
@@ -121,39 +120,36 @@ func TestClassify(t *testing.T) {
 	}
 }
 
-func TestServiceJoinsIntentWithDeliveriesAndPages(t *testing.T) {
+func TestServiceJoinsIntentWithDelivery(t *testing.T) {
 	t.Parallel()
 	scope := testScope(t)
-	first, second, third := testDeviceID(t, "301"), testDeviceID(t, "302"), testDeviceID(t, "303")
-	reader := &fakeReader{target: Target{Scope: scope, NetworkRevision: 7, PolicyRevision: 3, Devices: []TargetDevice{
-		{ID: first, Hostname: "poc-01", State: "active"},
-		{ID: second, Hostname: "poc-02", State: "active"},
-		{ID: third, Hostname: "poc-03", State: "suspended"},
-	}}}
-	observations := fakeObservations{byID: map[node.ID]Observation{first: known(7, true), second: known(5, false)}}
-	service, err := NewService(reader, observations, fixedClock{})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	page, err := service.Read(t.Context(), testSession(t), scope, node.ID{}, 2)
-	if err != nil {
-		t.Fatalf("Read() error = %v", err)
-	}
-	if reader.gotLimit != 3 || reader.gotScope != scope {
-		t.Fatalf("reader asked for limit %d scope %+v", reader.gotLimit, reader.gotScope)
-	}
-	if page.NetworkRevision != 7 || page.PolicyRevision != 3 || !page.ObservationsAvailable ||
-		len(page.Devices) != 2 || page.Next != second {
-		t.Fatalf("page = %+v", page)
-	}
-	if page.Devices[0].Status != StatusInSync || page.Devices[1].Status != StatusOffline ||
-		page.Devices[1].Observation.NetworkRevision != 5 {
-		t.Fatalf("statuses = %+v", page.Devices)
+	device := testDeviceID(t, "301")
+	for _, test := range []struct {
+		name        string
+		observation Observation
+		want        Status
+	}{
+		{"current", known(7, true), StatusInSync},
+		{"behind", known(5, true), StatusBehind},
+		{"offline", known(5, false), StatusOffline},
+		{"never", Observation{}, StatusNeverConnected},
+	} {
+		reader := &fakeReader{target: Target{Scope: scope, NetworkRevision: 7, PolicyRevision: 3,
+			Devices: []TargetDevice{{ID: device, Hostname: "poc-01", State: "active"}}}}
+		observations := fakeObservations{byID: map[node.ID]Observation{device: test.observation}}
+		service, err := NewService(reader, observations, fixedClock{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		report, err := service.ReadDevice(t.Context(), testSession(t), scope, device)
+		if err != nil || reader.gotID != device || reader.gotScope != scope || report.NetworkRevision != 7 ||
+			report.PolicyRevision != 3 || !report.ObservationsAvailable || report.Device.Status != test.want {
+			t.Fatalf("%s: ReadDevice() = %+v, %v", test.name, report, err)
+		}
 	}
 }
 
-func TestServiceStillListsDevicesWhenDeliveriesAreUnavailable(t *testing.T) {
+func TestServiceStillReportsWhenDeliveriesAreUnavailable(t *testing.T) {
 	t.Parallel()
 	scope := testScope(t)
 	device := testDeviceID(t, "301")
@@ -161,11 +157,9 @@ func TestServiceStillListsDevicesWhenDeliveriesAreUnavailable(t *testing.T) {
 		{ID: device, Hostname: "poc-01", State: "active"},
 	}}}
 	service, _ := NewService(reader, fakeObservations{err: errors.New("redis down")}, fixedClock{})
-
-	page, err := service.Read(t.Context(), testSession(t), scope, node.ID{}, 10)
-	if err != nil || page.ObservationsAvailable || len(page.Devices) != 1 ||
-		page.Devices[0].Status != StatusUnknown || page.Next != (node.ID{}) {
-		t.Fatalf("Read() = %+v, %v", page, err)
+	report, err := service.ReadDevice(t.Context(), testSession(t), scope, device)
+	if err != nil || report.ObservationsAvailable || report.Device.Status != StatusUnknown {
+		t.Fatalf("ReadDevice() = %+v, %v", report, err)
 	}
 }
 
@@ -175,28 +169,28 @@ func TestServiceRejectsBadInputAndEvidence(t *testing.T) {
 	session := testSession(t)
 	device := testDeviceID(t, "301")
 	service, _ := NewService(&fakeReader{}, fakeObservations{}, fixedClock{})
-	for _, limit := range []int{0, MaximumPageSize + 1} {
-		if _, err := service.Read(t.Context(), session, scope, node.ID{}, limit); !errors.Is(err, ErrInvalidRequest) {
-			t.Fatalf("limit %d error = %v", limit, err)
-		}
+	if _, err := service.ReadDevice(t.Context(), session, scope, node.ID{}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("zero Device error = %v", err)
 	}
-
 	for name, target := range map[string]Target{
-		"foreign scope":     {Scope: network.Scope{}, NetworkRevision: 1},
-		"no revision":       {Scope: scope},
-		"expired device":    {Scope: scope, NetworkRevision: 1, Devices: []TargetDevice{{ID: device, Hostname: "a", State: "expired"}}},
-		"unordered devices": {Scope: scope, NetworkRevision: 1, Devices: []TargetDevice{{ID: device, Hostname: "a", State: "active"}, {ID: device, Hostname: "b", State: "active"}}},
+		"foreign scope":  {Scope: network.Scope{}, NetworkRevision: 1},
+		"no revision":    {Scope: scope},
+		"expired device": {Scope: scope, NetworkRevision: 1, Devices: []TargetDevice{{ID: device, Hostname: "a", State: "expired"}}},
+		"another device": {Scope: scope, NetworkRevision: 1, Devices: []TargetDevice{{ID: testDeviceID(t, "302"), Hostname: "a", State: "active"}}},
+		"two devices": {Scope: scope, NetworkRevision: 1, Devices: []TargetDevice{
+			{ID: device, Hostname: "a", State: "active"}, {ID: device, Hostname: "a", State: "active"}}},
 	} {
-		reader := &fakeReader{target: target}
-		service, _ := NewService(reader, fakeObservations{}, fixedClock{})
-		if _, err := service.Read(t.Context(), session, scope, node.ID{}, 5); !errors.Is(err, ErrInvalidResult) {
+		service, _ := NewService(&fakeReader{target: target}, fakeObservations{}, fixedClock{})
+		if _, err := service.ReadDevice(t.Context(), session, scope, device); !errors.Is(err, ErrInvalidResult) {
 			t.Fatalf("%s: error = %v, want ErrInvalidResult", name, err)
 		}
 	}
-
-	forbidden := &fakeReader{err: ErrForbidden}
-	service, _ = NewService(forbidden, fakeObservations{}, fixedClock{})
-	if _, err := service.Read(t.Context(), session, scope, node.ID{}, 5); !errors.Is(err, ErrForbidden) {
+	service, _ = NewService(&fakeReader{target: Target{Scope: scope, NetworkRevision: 1}}, fakeObservations{}, fixedClock{})
+	if _, err := service.ReadDevice(t.Context(), session, scope, device); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("removed Device error = %v", err)
+	}
+	service, _ = NewService(&fakeReader{err: ErrForbidden}, fakeObservations{}, fixedClock{})
+	if _, err := service.ReadDevice(t.Context(), session, scope, device); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("forbidden error = %v", err)
 	}
 }

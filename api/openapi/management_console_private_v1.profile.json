@@ -313,136 +313,751 @@
               "type": "array",
               "maxItems": 100,
               "items": {
+                "$ref": "#/components/schemas/ConsoleDevice"
+              }
+            }
+          }
+        },
+        "correlation_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "next_page_token": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      }
+    },
+    "ConsoleDevice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "hostname",
+        "state",
+        "is_ephemeral",
+        "version",
+        "created_at",
+        "updated_at",
+        "expires_at",
+        "ownership",
+        "owner",
+        "suspended_reason",
+        "handover_to",
+        "dns_name"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "hostname": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "active",
+            "expired",
+            "suspended",
+            "revoked",
+            "deleted"
+          ]
+        },
+        "is_ephemeral": {
+          "type": "boolean"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "ownership": {
+          "type": "string",
+          "enum": [
+            "member",
+            "workspace"
+          ],
+          "description": "A member Device expires per profile and joins its owner's user groups; a Workspace Device never expires and survives staff changes."
+        },
+        "owner": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "principal_id",
+            "display_name"
+          ],
+          "properties": {
+            "principal_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "display_name": {
+              "type": "string",
+              "maxLength": 255
+            }
+          },
+          "description": "The owning member; null for a Workspace Device."
+        },
+        "suspended_reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "admin",
+            "handover",
+            "member",
+            null
+          ],
+          "description": "admin: suspended by an administrator; handover: transferred to a member who has not yet signed in on the Device."
+        },
+        "handover_to": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "principal_id",
+            "display_name"
+          ],
+          "properties": {
+            "principal_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "display_name": {
+              "type": "string",
+              "maxLength": 255
+            }
+          },
+          "description": "The member a handover waits for."
+        },
+        "dns_name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 253,
+          "description": "The Device's DNS name <label>.<workspace code>.<network code>.<suffix>, unique in the Network; null for a Device that holds no name (revoked or deleted). The suffix is the deployment's (default mesh.internal)."
+        }
+      }
+    },
+    "ConsoleDeviceRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data",
+        "correlation_id"
+      ],
+      "properties": {
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "workspace_id",
+            "network_id",
+            "device",
+            "enrollment",
+            "tags"
+          ],
+          "properties": {
+            "workspace_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "network_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "device": {
+              "$ref": "#/components/schemas/ConsoleDevice"
+            },
+            "enrollment": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind"
+              ],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "browser",
+                    "key"
+                  ]
+                },
+                "key_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
+                "description": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 128
+                },
+                "created_by": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "principal_id",
+                        "display_name"
+                      ],
+                      "properties": {
+                        "principal_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "display_name": {
+                          "type": "string",
+                          "maxLength": 255
+                        }
+                      }
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            "tags": {
+              "type": "array",
+              "maxItems": 64,
+              "items": {
                 "type": "object",
                 "additionalProperties": false,
                 "required": [
                   "id",
-                  "hostname",
-                  "state",
-                  "is_ephemeral",
-                  "version",
-                  "created_at",
-                  "updated_at",
-                  "expires_at",
-                  "ownership",
-                  "owner",
-                  "suspended_reason",
-                  "handover_to",
-                  "dns_name"
+                  "name"
                 ],
                 "properties": {
                   "id": {
                     "type": "string",
                     "format": "uuid"
                   },
-                  "hostname": {
+                  "name": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 253
+                    "maxLength": 48
+                  }
+                }
+              }
+            }
+          }
+        },
+        "correlation_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ConsoleDeviceStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data",
+        "correlation_id"
+      ],
+      "properties": {
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "workspace_id",
+            "network_id",
+            "network_revision",
+            "policy_revision",
+            "observations_available",
+            "device"
+          ],
+          "properties": {
+            "workspace_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "network_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "network_revision": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "policy_revision": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "observations_available": {
+              "type": "boolean"
+            },
+            "device": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "hostname",
+                "state",
+                "status",
+                "online",
+                "delivered_network_revision",
+                "delivered_policy_revision",
+                "delivered_at",
+                "last_seen_at",
+                "enforcement"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "hostname": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "active",
+                    "suspended"
+                  ]
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "in_sync",
+                    "behind",
+                    "offline",
+                    "never_connected",
+                    "unknown"
+                  ]
+                },
+                "online": {
+                  "type": "boolean"
+                },
+                "delivered_network_revision": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "delivered_policy_revision": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "delivered_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "last_seen_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "enforcement": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "status",
+                    "delivered_digest",
+                    "delivered_grants",
+                    "enforced_digest",
+                    "enforced_grants",
+                    "applied_at",
+                    "reported_at"
+                  ],
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "enforced",
+                        "applying",
+                        "mismatch",
+                        "not_reported",
+                        "unknown"
+                      ]
+                    },
+                    "delivered_digest": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "delivered_grants": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "enforced_digest": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "enforced_grants": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "applied_at": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "date-time"
+                    },
+                    "reported_at": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "date-time"
+                    }
+                  }
+                },
+                "paths": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "reported_at",
+                    "interval_seconds",
+                    "reported_peers",
+                    "direct",
+                    "relays",
+                    "unknown",
+                    "limited"
+                  ],
+                  "properties": {
+                    "reported_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "interval_seconds": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "reported_peers": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 256
+                    },
+                    "direct": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "relays": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "relay_region",
+                          "relay_code",
+                          "peers"
+                        ],
+                        "properties": {
+                          "relay_region": {
+                            "type": [
+                              "integer",
+                              "null"
+                            ]
+                          },
+                          "relay_code": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "peers": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      }
+                    },
+                    "unknown": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "limited": {
+                      "type": "boolean",
+                      "description": "The report holds only the Device's 256 busiest peers."
+                    }
+                  }
+                },
+                "connectivity": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "reported_at",
+                    "nat",
+                    "ipv6_global",
+                    "ipv6_stun",
+                    "port_mapping"
+                  ],
+                  "properties": {
+                    "reported_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "nat": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "mapping",
+                            "filtering",
+                            "allocation",
+                            "sequential_step",
+                            "observed_at"
+                          ],
+                          "properties": {
+                            "mapping": {
+                              "type": "string"
+                            },
+                            "filtering": {
+                              "type": "string"
+                            },
+                            "allocation": {
+                              "type": "string"
+                            },
+                            "sequential_step": {
+                              "type": "integer"
+                            },
+                            "observed_at": {
+                              "type": [
+                                "string",
+                                "null"
+                              ],
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "ipv6_global": {
+                      "type": "boolean"
+                    },
+                    "ipv6_stun": {
+                      "type": "boolean"
+                    },
+                    "port_mapping": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "protocol",
+                            "state",
+                            "expires_at"
+                          ],
+                          "properties": {
+                            "protocol": {
+                              "type": "string"
+                            },
+                            "state": {
+                              "type": "string"
+                            },
+                            "expires_at": {
+                              "type": [
+                                "string",
+                                "null"
+                              ],
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "peer_limit": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "sent",
+                    "authorized"
+                  ],
+                  "properties": {
+                    "sent": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "authorized": {
+                      "type": "integer",
+                      "minimum": 2
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "correlation_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ConsoleDevicePeerPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data",
+        "correlation_id"
+      ],
+      "properties": {
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "device_id",
+            "reported_at",
+            "interval_seconds",
+            "reported_peers",
+            "limited",
+            "peers"
+          ],
+          "properties": {
+            "device_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "reported_at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "interval_seconds": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "reported_peers": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 256
+            },
+            "limited": {
+              "type": "boolean"
+            },
+            "peers": {
+              "type": "array",
+              "maxItems": 100,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "peer_id",
+                  "name",
+                  "external",
+                  "path",
+                  "relay_region",
+                  "relay_code",
+                  "relay_reason",
+                  "direct_bytes",
+                  "relay_bytes"
+                ],
+                "properties": {
+                  "peer_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "uuid"
                   },
-                  "state": {
-                    "type": "string",
-                    "enum": [
-                      "active",
-                      "expired",
-                      "suspended",
-                      "revoked",
-                      "deleted"
-                    ]
+                  "name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "The peer's hostname; null for a shared Device of another Network."
                   },
-                  "is_ephemeral": {
+                  "external": {
                     "type": "boolean"
                   },
-                  "version": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 9007199254740991
-                  },
-                  "created_at": {
-                    "type": "string",
-                    "format": "date-time"
-                  },
-                  "updated_at": {
-                    "type": "string",
-                    "format": "date-time"
-                  },
-                  "expires_at": {
-                    "type": "string",
-                    "format": "date-time"
-                  },
-                  "ownership": {
+                  "path": {
                     "type": "string",
                     "enum": [
-                      "member",
-                      "workspace"
-                    ],
-                    "description": "A member Device expires per profile and joins its owner's user groups; a Workspace Device never expires and survives staff changes."
+                      "direct",
+                      "relay",
+                      "unknown"
+                    ]
                   },
-                  "owner": {
+                  "relay_region": {
                     "type": [
-                      "object",
+                      "integer",
                       "null"
-                    ],
-                    "additionalProperties": false,
-                    "required": [
-                      "principal_id",
-                      "display_name"
-                    ],
-                    "properties": {
-                      "principal_id": {
-                        "type": "string",
-                        "format": "uuid"
-                      },
-                      "display_name": {
-                        "type": "string",
-                        "maxLength": 255
-                      }
-                    },
-                    "description": "The owning member; null for a Workspace Device."
+                    ]
                   },
-                  "suspended_reason": {
+                  "relay_code": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "relay_reason": {
                     "type": [
                       "string",
                       "null"
                     ],
                     "enum": [
-                      "admin",
-                      "handover",
-                      "member",
+                      "bootstrap",
+                      "no_candidates",
+                      "no_response",
                       null
-                    ],
-                    "description": "admin: suspended by an administrator; handover: transferred to a member who has not yet signed in on the Device."
+                    ]
                   },
-                  "handover_to": {
-                    "type": [
-                      "object",
-                      "null"
-                    ],
-                    "additionalProperties": false,
-                    "required": [
-                      "principal_id",
-                      "display_name"
-                    ],
-                    "properties": {
-                      "principal_id": {
-                        "type": "string",
-                        "format": "uuid"
-                      },
-                      "display_name": {
-                        "type": "string",
-                        "maxLength": 255
-                      }
-                    },
-                    "description": "The member a handover waits for."
+                  "direct_bytes": {
+                    "type": "integer",
+                    "minimum": 0
                   },
-                  "dns_name": {
-                    "type": [
-                      "string",
-                      "null"
-                    ],
-                    "minLength": 1,
-                    "maxLength": 253,
-                    "description": "The Device's DNS name <label>.<workspace code>.<network code>.<suffix>, unique in the Network; null for a Device that holds no name (revoked or deleted). The suffix is the deployment's (default mesh.internal)."
+                  "relay_bytes": {
+                    "type": "integer",
+                    "minimum": 0
                   }
                 }
               }
@@ -9058,7 +9673,7 @@
       "get": {
         "operationId": "listConsoleDevices",
         "summary": "Read exact-Network durable Device inventory",
-        "description": "Fresh Session and exact device.read Role Binding are mandatory on every page. UUIDv7 keyset pagination binds both scope IDs and inventory revision; a changed revision rejects continuation. Registration state is not online presence or packet authority. No keys, credentials, endpoints or provider claims are disclosed.",
+        "description": "Fresh Session and exact device.read Role Binding are mandatory on every page. Devices come in byte order of (hostname, ID), removed ones included; q keeps names that start with it, state keeps Devices that can connect now (active) or cannot (inactive). The page token carries the search it continues. Registration state is not online presence or packet authority. No keys, credentials, endpoints or provider claims are disclosed.",
         "security": [
           {
             "accountSessionCookie": []
@@ -9090,13 +9705,35 @@
             }
           },
           {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 253,
+              "pattern": "^[a-z0-9.-]+$"
+            },
+            "description": "A name prefix, written like a hostname."
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "inactive"
+              ]
+            }
+          },
+          {
             "name": "page_size",
             "in": "query",
             "schema": {
               "type": "integer",
               "minimum": 1,
               "maximum": 100,
-              "default": 50
+              "default": 10
             }
           },
           {
@@ -9105,7 +9742,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 512
+              "maxLength": 1024
             }
           }
         ],
@@ -9131,9 +9768,6 @@
           "403": {
             "description": "Generic missing or unauthorized scope."
           },
-          "409": {
-            "description": "Inventory changed. Read a new first page."
-          },
           "default": {
             "description": "Bounded authentication, request, budget or availability failure."
           }
@@ -9141,6 +9775,80 @@
       }
     },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/devices/{device_id}": {
+      "get": {
+        "operationId": "getConsoleDevice",
+        "summary": "Read one Device of the Network",
+        "description": "Requires device.read. The Device, how it was enrolled (a browser sign-in, or an enrollment key with its creator) and its tags. A Device of another Network answers 404 as if it did not exist.",
+        "security": [
+          {
+            "accountSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read one Device of the Network",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsoleDeviceRecord"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Generic missing or unauthorized scope."
+          },
+          "404": {
+            "description": "device_not_found"
+          },
+          "default": {
+            "description": "Bounded authentication, request, budget or availability failure."
+          }
+        }
+      },
       "patch": {
         "operationId": "renameNetworkDevice",
         "summary": "Rename a Device",
@@ -10086,6 +10794,192 @@
           },
           "422": {
             "description": "owner_not_eligible"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/devices/{device_id}/peers": {
+      "get": {
+        "operationId": "listConsoleDevicePeers",
+        "summary": "Read the peers one Device reported",
+        "description": "Requires device.read. A page of the peers in the Device's latest path report (at most its 256 busiest), with how each is reached. Peers of the same Network carry their name; a shared Device of another Network carries neither ID nor name. A page token belongs to one report; a newer report answers 409.",
+        "security": [
+          {
+            "accountSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "direct",
+                "relay",
+                "unknown"
+              ]
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 10
+            }
+          },
+          {
+            "name": "page_token",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read the peers one Device reported",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsoleDevicePeerPage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Generic missing or unauthorized scope."
+          },
+          "404": {
+            "description": "device_not_connectable"
+          },
+          "409": {
+            "description": "device_paths_changed"
+          },
+          "default": {
+            "description": "Bounded authentication, request, budget or availability failure."
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/devices/{device_id}/status": {
+      "get": {
+        "operationId": "getConsoleDeviceStatus",
+        "summary": "Read one Device's delivery status",
+        "description": "Requires device.read. Whether the Device runs the Network's current rules, its enforcement report, NAT and a count of how it reaches its peers. Only active and suspended Devices have a status.",
+        "security": [
+          {
+            "accountSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read one Device's delivery status",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsoleDeviceStatus"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Generic missing or unauthorized scope."
+          },
+          "404": {
+            "description": "device_not_connectable"
+          },
+          "default": {
+            "description": "Bounded authentication, request, budget or availability failure."
           }
         }
       }

@@ -13,7 +13,6 @@ import (
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	"meshtransit.net/core/internal/domain/accessgraph/simulation"
 	"meshtransit.net/core/internal/domain/network"
-	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/node/inventory"
 	"meshtransit.net/core/internal/domain/workspace"
 )
@@ -32,7 +31,7 @@ func assertPostgreSQLConsoleDeviceInventory(ctx context.Context, t *testing.T,
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ReadDevices(ctx, session, scope, node.ID{}, 2); !errors.Is(err, inventory.ErrForbidden) {
+	if _, err := store.ReadDevices(ctx, session, scope, inventory.Query{Limit: 2}); !errors.Is(err, inventory.ErrForbidden) {
 		t.Fatal("policy approval permission disclosed Device inventory", err)
 	}
 	policyStore, err := postgresadapter.NewActivePolicyStore(runtimePool, postgresadapter.PolicySimulationOptions{

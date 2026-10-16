@@ -53,8 +53,8 @@ func TestBrowserEnforcementHistoryReadsEvidenceAtAnInstant(t *testing.T) {
 	if _, ok := parseEnforcementHistoryPath(request); !ok {
 		t.Fatal("valid exact scope rejected")
 	}
-	if _, distributionMatched := parseDeviceDistributionPath(request); distributionMatched {
-		t.Fatal("enforcement history matched the distribution route")
+	if _, detailMatched := parseDeviceDetailPath(request); detailMatched {
+		t.Fatal("enforcement history matched a Device detail route")
 	}
 	device, _ := node.ParseID("01890f00-0000-7000-8000-000000000301")
 	delivered, enforced := policydigest.Digest{0xa}, policydigest.Digest{0xb}

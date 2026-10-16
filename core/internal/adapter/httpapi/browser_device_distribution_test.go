@@ -2,8 +2,8 @@ package httpapi
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -13,6 +13,7 @@ import (
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/node/distribution"
+	"meshtransit.net/core/internal/domain/node/inventory"
 	"meshtransit.net/shared/policydigest"
 )
 
@@ -22,8 +23,8 @@ type distributionTestReader struct {
 	reads  int
 }
 
-func (reader *distributionTestReader) ReadDistribution(_ context.Context, _ accountsession.Session,
-	_ network.Scope, _ node.ID, _ int,
+func (reader *distributionTestReader) ReadTarget(_ context.Context, _ accountsession.Session,
+	_ network.Scope, _ node.ID,
 ) (distribution.Target, error) {
 	reader.reads++
 	return reader.target, reader.err
@@ -36,28 +37,25 @@ func (loader distributionTestObservations) LoadObservations(_ context.Context, i
 	return loader.observations[:len(ids)], nil
 }
 
-func deviceDistributionTestPath() string {
-	return deviceInventoryTestPath() + "/distribution"
+const distributionTestDevice = "01890f00-0000-7000-8000-000000000301"
+
+func deviceDetailTestPath(kind string) string {
+	return deviceInventoryTestPath() + "/" + distributionTestDevice + "/" + kind
 }
 
-func TestBrowserDeviceDistributionReportsStatusPerDevice(t *testing.T) {
-	t.Parallel()
+// distributionTestBrowser serves one active Device whose report reaches a
+// Device of the Network directly, another through the sgp relay, and a
+// shared Device of another Network directly.
+func distributionTestBrowser(t *testing.T, reportedAt time.Time) (*BrowserManagement, *distributionTestReader) {
+	t.Helper()
 	options, fixture := browserManagementTestOptions(t)
-	request := browserManagementReadRequest(t, deviceDistributionTestPath()+"?page_size=1")
-	scope, ok := parseDeviceDistributionPath(request)
-	if !ok {
-		t.Fatal("valid exact scope rejected")
-	}
-	if _, inventoryMatched := parseDeviceInventoryPath(request); inventoryMatched {
-		t.Fatal("distribution path matched the inventory route")
-	}
-	first, _ := node.ParseID("01890f00-0000-7000-8000-000000000301")
-	second, _ := node.ParseID("01890f00-0000-7000-8000-000000000302")
+	scope, _ := parseDeviceInventoryPath(browserManagementReadRequest(t, deviceInventoryTestPath()))
+	device, _ := node.ParseID(distributionTestDevice)
+	direct, _ := node.ParseID("01890f00-0000-7000-8000-000000000302")
+	relayed, _ := node.ParseID("01890f00-0000-7000-8000-000000000303")
+	shared, _ := node.ParseID("01890f00-0000-7000-8000-000000000304")
 	reader := &distributionTestReader{target: distribution.Target{Scope: scope, NetworkRevision: 7, PolicyRevision: 3,
-		Devices: []distribution.TargetDevice{
-			{ID: first, Hostname: "poc-01", State: "active"},
-			{ID: second, Hostname: "poc-02", State: "active"},
-		}}}
+		Devices: []distribution.TargetDevice{{ID: device, Hostname: "poc-01", State: "active"}}}}
 	delivered := time.Date(2026, time.October, 8, 12, 0, 0, 0, time.UTC)
 	digest, grants, err := policydigest.Compute(nil)
 	if err != nil {
@@ -68,142 +66,157 @@ func TestBrowserDeviceDistributionReportsStatusPerDevice(t *testing.T) {
 		Known: true, SessionGeneration: 1, NetworkRevision: 7, PolicyRevision: 3,
 		DeliveredAt: delivered, SeenAt: delivered.Add(time.Minute), Online: true,
 		Filter: filter, Enforced: filter, AppliedAt: delivered, ReportedAt: delivered.Add(time.Second),
+		Paths: &distribution.PathReport{ReportedAt: reportedAt, Interval: time.Minute, Peers: []distribution.PeerPath{
+			{PeerID: direct, Kind: distribution.PathDirect, DirectBytes: 90},
+			{PeerID: relayed, Kind: distribution.PathRelay, RelayRegion: 1, RelayCode: "sgp",
+				RelayReason: distribution.RelayNoResponse, RelayBytes: 30},
+			{PeerID: shared, External: true, Kind: distribution.PathDirect, DirectBytes: 10},
+		}},
 	}}}
 	service, err := distribution.NewService(reader, observations, fixture)
 	if err != nil {
 		t.Fatal(err)
 	}
-	options.Distribution = service
+	names := &inventoryTestReader{scope: scope, names: map[node.ID]string{direct: "web-01", relayed: "db-01"}}
+	devices, err := inventory.NewService(names, fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options.Distribution, options.Inventory = service, devices
 	browser, err := NewBrowserManagement(options)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return browser, reader
+}
+
+func serveDistributionTest(t *testing.T, browser *BrowserManagement, target string) *continuationStatusRecorder {
+	t.Helper()
 	response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
-	if err := browser.Handle(response, request); err != nil {
-		t.Fatal(err)
+	if err := browser.Handle(response, browserManagementReadRequest(t, target)); err != nil {
+		t.Fatalf("%s: %v", target, err)
 	}
-	if response.Code != http.StatusOK || reader.reads != 1 || fixture.auth != 1 || fixture.budgets != 2 ||
-		response.Header().Get("Cache-Control") != "no-store" || response.Header().Get("Set-Cookie") != "" {
-		t.Fatal("distribution bypassed the private read contract", response.Code)
+	return response
+}
+
+func TestBrowserDeviceStatusReportsOneDevice(t *testing.T) {
+	t.Parallel()
+	browser, reader := distributionTestBrowser(t, time.UnixMilli(1_800_000_000_000))
+	response := serveDistributionTest(t, browser, deviceDetailTestPath("status"))
+	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("status = %d: %s", response.Code, response.Body)
 	}
-	var envelope deviceDistributionEnvelope
+	var envelope deviceStatusEnvelope
 	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
 		t.Fatal(err)
 	}
-	data := envelope.Data
-	if data.NetworkRevision != 7 || data.PolicyRevision != 3 || !data.ObservationsAvailable ||
-		len(data.Devices) != 1 || data.Devices[0].Status != "in_sync" || !data.Devices[0].Online ||
-		data.Devices[0].DeliveredNetworkRevision == nil || *data.Devices[0].DeliveredNetworkRevision != 7 ||
-		envelope.NextPageToken == "" {
-		t.Fatalf("distribution page = %+v next=%q", data, envelope.NextPageToken)
+	device, paths := envelope.Data.Device, envelope.Data.Device.Paths
+	if envelope.Data.NetworkRevision != 7 || device.Status != "in_sync" || device.Enforcement.Status != "enforced" ||
+		paths == nil || paths.ReportedPeers != 3 || paths.Direct != 2 || paths.Unknown != 0 || paths.Limited ||
+		len(paths.Relays) != 1 || paths.Relays[0].Peers != 1 || *paths.Relays[0].RelayCode != "sgp" {
+		t.Fatalf("status = %s", response.Body)
 	}
-	enforcement := data.Devices[0].Enforcement
-	if enforcement.Status != "enforced" || enforcement.DeliveredDigest == nil ||
-		*enforcement.DeliveredDigest != digest.String() || enforcement.EnforcedDigest == nil ||
-		*enforcement.EnforcedDigest != digest.String() || enforcement.ReportedAt == nil {
-		t.Fatalf("enforcement = %+v", enforcement)
+	if strings.Contains(response.Body.String(), "01890f00-0000-7000-8000-000000000302") {
+		t.Fatal("the status lists peers; they are read page by page")
 	}
-
+	reader.target.Devices = nil
+	if response := serveDistributionTest(t, browser, deviceDetailTestPath("status")); response.Code != http.StatusNotFound ||
+		!strings.Contains(response.Body.String(), "device_not_connectable") {
+		t.Fatalf("removed Device = %d %s", response.Code, response.Body)
+	}
 	reader.err = distribution.ErrForbidden
-	response = &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
-	if err := browser.Handle(response, request); err != nil {
-		t.Fatal(err)
-	}
-	if response.Code != http.StatusForbidden || strings.Contains(response.Body.String(), "poc-01") {
-		t.Fatal("denied read disclosed distribution")
+	if response := serveDistributionTest(t, browser, deviceDetailTestPath("status")); response.Code != http.StatusForbidden {
+		t.Fatalf("denied read = %d", response.Code)
 	}
 }
 
-func TestBrowserDeviceDistributionRejectsTransportAndForeignCursor(t *testing.T) {
+func TestBrowserDevicePeersPageTheReport(t *testing.T) {
 	t.Parallel()
-	options, fixture := browserManagementTestOptions(t)
-	request := browserManagementReadRequest(t, deviceDistributionTestPath())
-	scope, _ := parseDeviceDistributionPath(request)
-	reader := &distributionTestReader{target: distribution.Target{Scope: scope, NetworkRevision: 1}}
-	service, err := distribution.NewService(reader, distributionTestObservations{}, fixture)
-	if err != nil {
-		t.Fatal(err)
-	}
-	options.Distribution = service
-	browser, err := NewBrowserManagement(options)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, mutate := range []func(*http.Request){
-		func(request *http.Request) { request.Method = http.MethodPost },
-		func(request *http.Request) { request.Header.Set("Authorization", "Bearer injected") },
-		func(request *http.Request) { request.Header.Set("Origin", "https://foreign.example") },
-	} {
-		request := browserManagementReadRequest(t, deviceDistributionTestPath())
-		mutate(request)
-		response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
-		if !errors.Is(browser.Handle(response, request), ErrInvalidBrowserManagement) || reader.reads != 0 {
-			t.Fatal("invalid transport reached distribution")
-		}
-	}
-	id, _ := node.ParseID("01890f00-0000-7000-8000-000000000901")
-	token, err := encodeDeviceDistributionPageToken(scope, id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if limit, after, err := parseDeviceDistributionQuery("page_token="+token, scope); err != nil || after != id ||
-		limit != 50 {
-		t.Fatalf("own cursor = %d %v %v", limit, after, err)
-	}
-	otherRequest := browserManagementReadRequest(t,
-		strings.Replace(deviceDistributionTestPath(), "000000000201", "000000000202", 1))
-	otherScope, _ := parseDeviceDistributionPath(otherRequest)
-	if _, _, err := parseDeviceDistributionQuery("page_token="+token, otherScope); err == nil {
-		t.Fatal("cross-Network cursor accepted")
-	}
-	for _, query := range []string{"page_size=01", "page_size=101", "page_size=1&page_size=2", "status=all", "page_token="} {
-		if _, _, err := parseDeviceDistributionQuery(query, scope); err == nil {
-			t.Fatal("invalid distribution query accepted", query)
-		}
-	}
-	// Without the dependency the route is not served at all.
-	options.Distribution = nil
-	plain, err := NewBrowserManagement(options)
-	if err != nil {
-		t.Fatal(err)
-	}
-	response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
-	if !errors.Is(plain.Handle(response, browserManagementReadRequest(t, deviceDistributionTestPath())),
-		ErrInvalidBrowserManagement) {
-		t.Fatal("distribution served without its dependency")
-	}
-}
-
-func TestDevicePathsItemHidesExternalPeers(t *testing.T) {
-	t.Parallel()
-	local, err := node.ParseID("01890f90-0000-7000-8000-0000000000c1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	shared, err := node.ParseID("01890f90-0000-7000-8000-0000000000c2")
-	if err != nil {
-		t.Fatal(err)
-	}
 	reportedAt := time.UnixMilli(1_800_000_000_000)
-	item := newDevicePathsItem(&distribution.PathReport{ReportedAt: reportedAt, Interval: time.Minute,
-		Peers: []distribution.PeerPath{
-			{PeerID: local, Kind: distribution.PathRelay, RelayRegion: 1, RelayCode: "sgp",
-				RelayReason: distribution.RelayNoResponse, RelayBytes: 30},
-			{PeerID: shared, External: true, Kind: distribution.PathDirect, DirectBytes: 90},
-		}})
+	browser, _ := distributionTestBrowser(t, reportedAt)
+	var first devicePeersEnvelope
+	response := serveDistributionTest(t, browser, deviceDetailTestPath("peers")+"?page_size=2")
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &first) != nil {
+		t.Fatalf("first page = %d %s", response.Code, response.Body)
+	}
+	peers := first.Data.Peers
+	if first.Data.ReportedPeers != 3 || len(peers) != 2 || first.NextPageToken == "" ||
+		peers[0].Name == nil || *peers[0].Name != "web-01" || peers[1].Name == nil || *peers[1].Name != "db-01" ||
+		*peers[1].RelayCode != "sgp" {
+		t.Fatalf("first page = %s", response.Body)
+	}
+	var second devicePeersEnvelope
+	response = serveDistributionTest(t, browser, deviceDetailTestPath("peers")+"?page_size=2&page_token="+
+		first.NextPageToken)
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &second) != nil ||
+		len(second.Data.Peers) != 1 || !second.Data.Peers[0].External || second.Data.Peers[0].PeerID != nil ||
+		second.Data.Peers[0].Name != nil || second.NextPageToken != "" {
+		t.Fatalf("second page = %s", response.Body)
+	}
+	var relayed devicePeersEnvelope
+	response = serveDistributionTest(t, browser, deviceDetailTestPath("peers")+"?path=relay")
+	if json.Unmarshal(response.Body.Bytes(), &relayed) != nil || len(relayed.Data.Peers) != 1 ||
+		*relayed.Data.Peers[0].Name != "db-01" {
+		t.Fatalf("relayed peers = %s", response.Body)
+	}
+
+	newer, _ := distributionTestBrowser(t, reportedAt.Add(time.Minute))
+	if response := serveDistributionTest(t, newer, deviceDetailTestPath("peers")+"?page_size=2&page_token="+
+		first.NextPageToken); response.Code != http.StatusConflict ||
+		!strings.Contains(response.Body.String(), "device_paths_changed") {
+		t.Fatalf("a token of an older report = %d %s", response.Code, response.Body)
+	}
+}
+
+func TestDeviceDetailPathsAndPeerQueries(t *testing.T) {
+	t.Parallel()
+	device, _ := node.ParseID(distributionTestDevice)
+	for target, valid := range map[string]bool{
+		deviceDetailTestPath("status"):                     true,
+		deviceDetailTestPath("peers"):                      true,
+		deviceDetailTestPath("peers") + "?path=x":          true,
+		deviceDetailTestPath("status") + "?x=1":            false,
+		deviceDetailTestPath("tags"):                       false,
+		deviceInventoryTestPath() + "/distribution":        false,
+		deviceInventoryTestPath() + "/not-a-device/status": false,
+	} {
+		if _, ok := parseDeviceDetailPath(browserManagementReadRequest(t, target)); ok != valid {
+			t.Errorf("%s: matched %t", target, ok)
+		}
+	}
+	for _, query := range []string{
+		"path=sideways", "page_size=0", "page_size=101", "page_size=01", "path=direct&path=relay", "page_token=x",
+		"other=1",
+	} {
+		if _, err := parseDevicePeerQuery(query, device); err == nil {
+			t.Errorf("%s accepted", query)
+		}
+	}
+	token := base64.RawURLEncoding.EncodeToString([]byte(`{"v":1,"device_id":"01890f00-0000-7000-8000-000000000302",` +
+		`"path":"","offset":2,"reported_at":"2027-01-15T08:00:00Z"}`))
+	if _, err := parseDevicePeerQuery("page_token="+token, device); err == nil {
+		t.Fatal("a token of another Device was accepted")
+	}
+	if !isBrowserManagementOperation(browserManagementReadRequest(t, deviceDetailTestPath("peers")+"?page_size=2")) {
+		t.Fatal("the peer page is not routed to browser management")
+	}
+}
+
+func TestDevicePeerItemHidesExternalPeers(t *testing.T) {
+	t.Parallel()
+	shared, _ := node.ParseID("01890f90-0000-7000-8000-0000000000c2")
+	item := newDevicePathPeerItem(distribution.PeerPath{PeerID: shared, External: true, Kind: distribution.PathDirect,
+		DirectBytes: 90}, map[node.ID]string{shared: "secret-name"})
 	encoded, err := json.Marshal(item)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"reported_at":"` + reportedAt.UTC().Format(time.RFC3339Nano) + `","interval_seconds":60,"peers":[` +
-		`{"peer_id":"01890f90-0000-7000-8000-0000000000c1","external":false,"path":"relay","relay_region":1,` +
-		`"relay_code":"sgp","relay_reason":"no_response","direct_bytes":0,"relay_bytes":30},` +
-		`{"peer_id":null,"external":true,"path":"direct","relay_region":null,"relay_code":null,"relay_reason":null,` +
-		`"direct_bytes":90,"relay_bytes":0}]}`
+	want := `{"peer_id":null,"name":null,"external":true,"path":"direct","relay_region":null,"relay_code":null,` +
+		`"relay_reason":null,"direct_bytes":90,"relay_bytes":0}`
 	if string(encoded) != want {
-		t.Fatalf("paths JSON\n got %s\nwant %s", encoded, want)
+		t.Fatalf("peer JSON\n got %s\nwant %s", encoded, want)
 	}
-	if newDevicePathsItem(nil) != nil {
+	if newDevicePathSummary(nil) != nil {
 		t.Fatal("no report must leave paths out")
 	}
 }

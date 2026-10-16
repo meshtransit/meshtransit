@@ -15,10 +15,12 @@ import (
 	"meshtransit.net/core/internal/domain/workspace"
 )
 
-const readDeviceDistributionSQL = `SELECT mesh_ops.read_device_distribution_v1(
+// readDeviceDistributionSQL reads the current revisions and one Device
+// (schema 177).
+const readDeviceDistributionSQL = `SELECT mesh_ops.read_device_distribution_target_v1(
     $1::UUID, $2::UUID, $3::UUID, $4::UUID,
     $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
-    $10::UUID, $11::UUID, $12::TIMESTAMPTZ, $13::UUID, $14::INTEGER
+    $10::UUID, $11::UUID, $12::TIMESTAMPTZ, $13::UUID
 )::TEXT`
 
 // DeviceDistributionStore reads the durable side of policy distribution
@@ -40,18 +42,18 @@ func NewDeviceDistributionStore(pool *Pool, options AccountSessionOptions) (*Dev
 	return &DeviceDistributionStore{database: pool.resourceAuthorityDatabase, options: options, metrics: pool.metrics}, nil
 }
 
-// ReadDistribution loads one exact-scope page after current device.read checks
-// on the database clock.
-func (store *DeviceDistributionStore) ReadDistribution(ctx context.Context, session accountsession.Session,
-	scope network.Scope, after node.ID, limit int,
+// ReadTarget loads the current revisions and one Device of the scope after
+// current device.read checks on the database clock.
+func (store *DeviceDistributionStore) ReadTarget(ctx context.Context, session accountsession.Session,
+	scope network.Scope, id node.ID,
 ) (distribution.Target, error) {
 	return retryReadConflict(ctx, func() (distribution.Target, error) {
-		return store.readOnce(ctx, session, scope, after, limit)
+		return store.readOnce(ctx, session, scope, id)
 	})
 }
 
 func (store *DeviceDistributionStore) readOnce(ctx context.Context, session accountsession.Session,
-	scope network.Scope, after node.ID, limit int,
+	scope network.Scope, id node.ID,
 ) (_ distribution.Target, resultErr error) {
 	startedAt := time.Now()
 	defer func() {
@@ -60,8 +62,7 @@ func (store *DeviceDistributionStore) readOnce(ctx context.Context, session acco
 		}
 	}()
 	if ctx == nil || store == nil || store.database == nil || !validAccountSessionOptions(store.options) ||
-		!session.IsValid() || !scope.IsValid() || (!after.IsValid() && after != (node.ID{})) ||
-		limit < 1 || limit > distribution.MaximumPageSize+1 {
+		!session.IsValid() || !scope.IsValid() || !id.IsValid() {
 		return distribution.Target{}, distribution.ErrInvalidRequest
 	}
 	// The permission resolver takes FOR SHARE row locks, which need a
@@ -85,16 +86,12 @@ func (store *DeviceDistributionStore) readOnce(ctx context.Context, session acco
 	if err != nil {
 		return distribution.Target{}, errors.Join(distribution.ErrUnavailable, err)
 	}
-	var afterValue any
-	if after.IsValid() {
-		afterValue = after.String()
-	}
 	var encoded *string
 	err = transaction.QueryRow(ctx, readDeviceDistributionSQL,
 		session.ID().String(), session.DeploymentID().String(), session.PrincipalID().String(),
 		session.IdentitySubjectID().String(), session.Version(), session.PrincipalAuthorityGeneration(),
 		session.AccountSessionGeneration(), session.ProviderGeneration(), session.DeploymentRecoveryEpoch(),
-		scope.WorkspaceID().String(), scope.NetworkID().String(), evaluatedAt, afterValue, limit,
+		scope.WorkspaceID().String(), scope.NetworkID().String(), evaluatedAt, id.String(),
 	).Scan(&encoded)
 	if err != nil {
 		return distribution.Target{}, errors.Join(distribution.ErrUnavailable, err)
@@ -134,8 +131,7 @@ func decodeDeviceDistribution(encoded string) (distribution.Target, error) {
 	var record deviceDistributionRecord
 	decoder := json.NewDecoder(strings.NewReader(encoded))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&record) != nil || record.Devices == nil ||
-		len(record.Devices) > distribution.MaximumPageSize+1 {
+	if decoder.Decode(&record) != nil || record.Devices == nil || len(record.Devices) > 1 {
 		return distribution.Target{}, distribution.ErrInvalidResult
 	}
 	var extra any

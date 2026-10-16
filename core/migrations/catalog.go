@@ -543,6 +543,7 @@ func Catalog() []Migration {
 		newMigration(174, "Policy release rule fingerprints", policyReleaseRuleFingerprintsSQL),
 		newMigration(175, "Enrollment keys", enrollmentKeysSQL),
 		newMigration(176, "Used enrollment keys are managed through their Device", enrollmentKeyUsedRevokeSQL),
+		newMigration(177, "Devices listed by name and read one at a time", deviceInventorySearchSQL),
 	}
 }
 
@@ -850,3 +851,6 @@ var enrollmentKeysSQL string
 
 //go:embed 000176_enrollment_key_used_revoke.up.sql
 var enrollmentKeyUsedRevokeSQL string
+
+//go:embed 000177_device_inventory_search.up.sql
+var deviceInventorySearchSQL string

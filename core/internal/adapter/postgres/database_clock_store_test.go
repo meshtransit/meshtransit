@@ -13,6 +13,7 @@ import (
 	"meshtransit.net/core/internal/domain/memberlifecycle"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/node/enforcementledger"
+	"meshtransit.net/core/internal/domain/node/inventory"
 	"meshtransit.net/core/internal/domain/publicid"
 )
 
@@ -273,12 +274,25 @@ func TestConsoleDeviceReadsPassTheirDatabaseTime(t *testing.T) {
 	}{
 		{"inventory", readConsoleDeviceInventorySQL, func(database resourceAuthorityDatabase) error {
 			_, err := (&ConsoleDeviceInventoryStore{database: database, options: clockStoreOptions}).ReadDevices(
-				t.Context(), session, scope, node.ID{}, 2)
+				t.Context(), session, scope, inventory.Query{Limit: 2})
+			return err
+		}},
+		{"names", readConsoleDeviceNamesSQL, func(database resourceAuthorityDatabase) error {
+			device, _ := node.ParseID("01890f00-0000-7000-8000-000000000901")
+			_, err := (&ConsoleDeviceInventoryStore{database: database, options: clockStoreOptions}).ReadDeviceNames(
+				t.Context(), session, scope, []node.ID{device})
+			return err
+		}},
+		{"device", readConsoleDeviceSQL, func(database resourceAuthorityDatabase) error {
+			device, _ := node.ParseID("01890f00-0000-7000-8000-000000000901")
+			_, err := (&ConsoleDeviceInventoryStore{database: database, options: clockStoreOptions}).ReadDevice(
+				t.Context(), session, scope, device)
 			return err
 		}},
 		{"distribution", readDeviceDistributionSQL, func(database resourceAuthorityDatabase) error {
-			_, err := (&DeviceDistributionStore{database: database, options: clockStoreOptions}).ReadDistribution(
-				t.Context(), session, scope, node.ID{}, 2)
+			device, _ := node.ParseID("01890f00-0000-7000-8000-000000000901")
+			_, err := (&DeviceDistributionStore{database: database, options: clockStoreOptions}).ReadTarget(
+				t.Context(), session, scope, device)
 			return err
 		}},
 		{"enforcement history", readDeviceEnforcementHistorySQL, func(database resourceAuthorityDatabase) error {

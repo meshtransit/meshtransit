@@ -26,7 +26,7 @@ const (
 	// answer "what does it still run"; every record or touch renews it.
 	deliveryTTL = 30 * 24 * time.Hour
 	// maximumDeliveryLoad bounds one read to one distribution page.
-	maximumDeliveryLoad = distribution.MaximumPageSize
+	maximumDeliveryLoad = distribution.MaximumObservationBatch
 	deliveryFieldCount  = 15
 	presenceField       = deliveryFieldCount - 1
 )

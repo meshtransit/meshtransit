@@ -20,10 +20,16 @@ import (
 	"meshtransit.net/core/internal/platform/ratelimit"
 )
 
-// SessionDeviceInventory requires current exact-scope device.read for every page.
+// SessionDeviceInventory requires current exact-scope device.read for every
+// page and every Device read.
 type SessionDeviceInventory interface {
-	List(context.Context, accountsession.Session, network.Scope, int, inventory.Cursor) (inventory.Page, error)
+	List(context.Context, accountsession.Session, network.Scope, inventory.Query) (inventory.Page, error)
+	Get(context.Context, accountsession.Session, network.Scope, node.ID) (inventory.Record, error)
+	Names(context.Context, accountsession.Session, network.Scope, []node.ID) (map[node.ID]string, error)
 }
+
+// defaultDeviceInventoryPage is the Console's page of ten rows.
+const defaultDeviceInventoryPage = 10
 
 func parseDeviceInventoryPath(request *http.Request) (network.Scope, bool) {
 	if request == nil || request.URL == nil || request.Method != http.MethodGet {
@@ -41,64 +47,95 @@ func parseDeviceInventoryPath(request *http.Request) (network.Scope, bool) {
 		workspaceID.String() == parts[4] && networkID.String() == parts[6]
 }
 
-type deviceInventoryPageToken struct {
-	Version     int    `json:"v"`
-	WorkspaceID string `json:"workspace_id"`
-	NetworkID   string `json:"network_id"`
-	After       string `json:"after"`
-	Revision    int64  `json:"inventory_revision"`
+// parseDeviceItemPath matches GET /api/v1/workspaces/{ws}/networks/{net}/devices/{device}
+// with no query.
+func parseDeviceItemPath(request *http.Request) (network.Scope, node.ID, bool) {
+	if request == nil || request.URL == nil || request.Method != http.MethodGet || request.URL.RawQuery != "" {
+		return network.Scope{}, node.ID{}, false
+	}
+	parts := strings.Split(request.URL.Path, "/")
+	if len(parts) != 9 || parts[0] != "" || parts[1] != "api" || parts[2] != "v1" ||
+		parts[3] != "workspaces" || parts[5] != "networks" || parts[7] != "devices" {
+		return network.Scope{}, node.ID{}, false
+	}
+	workspaceID, workspaceErr := workspace.ParseID(parts[4])
+	networkID, networkErr := network.ParseID(parts[6])
+	deviceID, deviceErr := node.ParseID(parts[8])
+	scope, err := network.NewScope(workspaceID, networkID)
+	return scope, deviceID, workspaceErr == nil && networkErr == nil && deviceErr == nil && err == nil &&
+		workspaceID.String() == parts[4] && networkID.String() == parts[6] && deviceID.String() == parts[8]
 }
 
-func encodeDeviceInventoryPageToken(scope network.Scope, cursor inventory.Cursor) (string, error) {
+// deviceInventoryPageToken continues a page in name order. It carries the
+// filters it was issued for, so a token cannot continue another search.
+type deviceInventoryPageToken struct {
+	Version       int    `json:"v"`
+	WorkspaceID   string `json:"workspace_id"`
+	NetworkID     string `json:"network_id"`
+	NamePrefix    string `json:"q"`
+	State         string `json:"state"`
+	AfterHostname string `json:"after_hostname"`
+	After         string `json:"after"`
+}
+
+func encodeDeviceInventoryPageToken(scope network.Scope, query inventory.Query, cursor inventory.Cursor) (string, error) {
 	if !scope.IsValid() || !cursor.IsValid() {
 		return "", inventory.ErrInvalidRequest
 	}
-	payload, err := json.Marshal(deviceInventoryPageToken{Version: 1,
+	payload, err := json.Marshal(deviceInventoryPageToken{Version: 2,
 		WorkspaceID: scope.WorkspaceID().String(), NetworkID: scope.NetworkID().String(),
-		After: cursor.After.String(), Revision: cursor.Revision})
+		NamePrefix: query.NamePrefix, State: string(query.State),
+		AfterHostname: cursor.AfterHostname, After: cursor.After.String()})
 	return base64.RawURLEncoding.EncodeToString(payload), err
 }
 
-func parseDeviceInventoryQuery(raw string, scope network.Scope) (int, inventory.Cursor, error) {
+// parseDeviceInventoryQuery reads page_size (1-100, 10 by default),
+// page_token, q (a name prefix) and state (active or inactive), each once.
+func parseDeviceInventoryQuery(raw string, scope network.Scope) (inventory.Query, error) {
 	values, err := url.ParseQuery(raw)
 	if err != nil || !scope.IsValid() {
-		return 0, inventory.Cursor{}, inventory.ErrInvalidRequest
+		return inventory.Query{}, inventory.ErrInvalidRequest
 	}
 	for key, entries := range values {
-		if (key != "page_size" && key != "page_token") || len(entries) != 1 || entries[0] == "" {
-			return 0, inventory.Cursor{}, inventory.ErrInvalidRequest
+		known := key == "page_size" || key == "page_token" || key == "q" || key == "state"
+		if !known || len(entries) != 1 || entries[0] == "" {
+			return inventory.Query{}, inventory.ErrInvalidRequest
 		}
 	}
-	limit := 50
+	query := inventory.Query{Limit: defaultDeviceInventoryPage, NamePrefix: values.Get("q"),
+		State: inventory.StateFilter(values.Get("state"))}
 	if value := values.Get("page_size"); value != "" {
-		limit, err = strconv.Atoi(value)
-		if err != nil || limit < 1 || limit > inventory.MaximumPageSize || strconv.Itoa(limit) != value {
-			return 0, inventory.Cursor{}, inventory.ErrInvalidRequest
+		query.Limit, err = strconv.Atoi(value)
+		if err != nil || strconv.Itoa(query.Limit) != value {
+			return inventory.Query{}, inventory.ErrInvalidRequest
 		}
 	}
-	cursor := inventory.Cursor{}
 	if encoded := values.Get("page_token"); encoded != "" {
-		if len(encoded) > 512 {
-			return 0, cursor, inventory.ErrInvalidRequest
+		if len(encoded) > 1024 {
+			return inventory.Query{}, inventory.ErrInvalidRequest
 		}
 		payload, err := base64.RawURLEncoding.DecodeString(encoded)
 		if err != nil || base64.RawURLEncoding.EncodeToString(payload) != encoded {
-			return 0, cursor, inventory.ErrInvalidRequest
+			return inventory.Query{}, inventory.ErrInvalidRequest
 		}
 		var wire deviceInventoryPageToken
 		decoder := json.NewDecoder(strings.NewReader(string(payload)))
 		decoder.DisallowUnknownFields()
-		if decoder.Decode(&wire) != nil || ensureJSONEnd(decoder) != nil || wire.Version != 1 ||
-			wire.WorkspaceID != scope.WorkspaceID().String() || wire.NetworkID != scope.NetworkID().String() {
-			return 0, cursor, inventory.ErrInvalidRequest
+		if decoder.Decode(&wire) != nil || ensureJSONEnd(decoder) != nil || wire.Version != 2 ||
+			wire.WorkspaceID != scope.WorkspaceID().String() || wire.NetworkID != scope.NetworkID().String() ||
+			wire.NamePrefix != query.NamePrefix || wire.State != string(query.State) {
+			return inventory.Query{}, inventory.ErrInvalidRequest
 		}
 		id, err := node.ParseID(wire.After)
-		cursor = inventory.Cursor{After: id, Revision: wire.Revision}
-		if err != nil || !cursor.IsValid() {
-			return 0, cursor, inventory.ErrInvalidRequest
+		query.Cursor = inventory.Cursor{AfterHostname: wire.AfterHostname, After: id}
+		if err != nil || id.String() != wire.After || !query.Cursor.IsValid() {
+			return inventory.Query{}, inventory.ErrInvalidRequest
 		}
 	}
-	return limit, cursor, nil
+	if !query.IsValid() {
+		return inventory.Query{}, inventory.ErrInvalidRequest
+	}
+	return query, nil
 }
 
 type deviceInventoryItem struct {
@@ -166,58 +203,74 @@ type deviceInventoryEnvelope struct {
 	CorrelationID string              `json:"correlation_id"`
 }
 
-func (browser *BrowserManagement) readDeviceInventory(ctx context.Context, response *browserManagementResponse,
-	request *http.Request, admission *browserManagementAdmission, scope network.Scope,
-) error {
+// beginDeviceRead budgets, authenticates and prepares the response of one
+// Device inventory read; ok is false when it already answered.
+func (browser *BrowserManagement) beginDeviceRead(ctx context.Context, response *browserManagementResponse,
+	request *http.Request, admission *browserManagementAdmission,
+) (session accountsession.Session, fail func(managementError), correlation string, ok bool, err error) {
 	correlationID, err := browser.management.correlationIDs.NewID()
 	if err != nil || !correlationID.IsValid() {
-		return ErrBrowserManagementUnavailable
+		return accountsession.Session{}, nil, "", false, ErrBrowserManagementUnavailable
 	}
 	setManagementSecurityHeaders(response.header, correlationID)
-	fail := func(value managementError) {
+	fail = func(value managementError) {
 		writeManagementError(ctx, browser.management.logger, response, correlationID, value)
 	}
 	address, err := browser.management.clientIPs.Resolve(request)
 	if err != nil {
 		fail(*invalidManagementRequest())
-		return nil
+		return accountsession.Session{}, nil, "", false, nil
 	}
 	if limitErr := browser.management.enforceAdmittedRateLimit(ctx, admission, continuationBudget{
 		response: response, kind: ratelimit.SubjectSource, raw: address.String(), policy: browser.management.sourcePolicy,
 	}); limitErr != nil {
 		fail(*limitErr)
-		return nil
+		return accountsession.Session{}, nil, "", false, nil
 	}
-	session, err := admission.authenticate(ctx, request)
+	session, err = admission.authenticate(ctx, request)
 	if err != nil {
 		fail(classifyAuthenticationError(err))
-		return nil
+		return accountsession.Session{}, nil, "", false, nil
 	}
 	if limitErr := browser.management.enforceAdmittedRateLimit(ctx, admission, continuationBudget{
 		response: response, kind: ratelimit.SubjectAccountSession, raw: session.ID().String(), policy: browser.management.sessionPolicy,
 	}); limitErr != nil {
 		fail(*limitErr)
-		return nil
+		return accountsession.Session{}, nil, "", false, nil
 	}
-	limit, cursor, err := parseDeviceInventoryQuery(request.URL.RawQuery, scope)
+	return session, fail, correlationID.String(), true, nil
+}
+
+func classifyDeviceInventoryError(err error) managementError {
+	switch {
+	case errors.Is(err, inventory.ErrForbidden):
+		return managementError{Status: http.StatusForbidden, Code: "device_inventory_forbidden", Message: "Device inventory is unavailable for this scope"}
+	case errors.Is(err, inventory.ErrNotFound):
+		return managementError{Status: http.StatusNotFound, Code: "device_not_found", Message: "The Device is not in this Network"}
+	case errors.Is(err, inventory.ErrInvalidRequest):
+		return *invalidManagementRequest()
+	case errors.Is(err, inventory.ErrUnavailable), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return managementError{Status: http.StatusServiceUnavailable, Code: "device_inventory_unavailable", Message: "Device inventory is temporarily unavailable", Retryable: true}
+	default:
+		return internalManagementError()
+	}
+}
+
+func (browser *BrowserManagement) readDeviceInventory(ctx context.Context, response *browserManagementResponse,
+	request *http.Request, admission *browserManagementAdmission, scope network.Scope,
+) error {
+	session, fail, correlationID, ok, err := browser.beginDeviceRead(ctx, response, request, admission)
+	if !ok {
+		return err
+	}
+	query, err := parseDeviceInventoryQuery(request.URL.RawQuery, scope)
 	if err != nil {
 		fail(*invalidManagementRequest())
 		return nil
 	}
-	page, err := browser.inventory.List(ctx, session, scope, limit, cursor)
+	page, err := browser.inventory.List(ctx, session, scope, query)
 	if err != nil {
-		value := internalManagementError()
-		switch {
-		case errors.Is(err, inventory.ErrForbidden):
-			value = managementError{Status: http.StatusForbidden, Code: "device_inventory_forbidden", Message: "Device inventory is unavailable for this scope"}
-		case errors.Is(err, inventory.ErrRevisionChanged):
-			value = managementError{Status: http.StatusConflict, Code: "inventory_revision_changed", Message: "Device inventory changed; refresh the list"}
-		case errors.Is(err, inventory.ErrInvalidRequest):
-			value = *invalidManagementRequest()
-		case errors.Is(err, inventory.ErrUnavailable), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-			value = managementError{Status: http.StatusServiceUnavailable, Code: "device_inventory_unavailable", Message: "Device inventory is temporarily unavailable", Retryable: true}
-		}
-		fail(value)
+		fail(classifyDeviceInventoryError(err))
 		return nil
 	}
 	if page.Scope() != scope || page.Revision() < 1 {
@@ -231,18 +284,82 @@ func (browser *BrowserManagement) readDeviceInventory(ctx context.Context, respo
 		return nil
 	}
 	data := deviceInventoryData{WorkspaceID: scope.WorkspaceID().String(), NetworkID: scope.NetworkID().String(),
-		Revision: page.Revision(), Devices: make([]deviceInventoryItem, 0, limit)}
+		Revision: page.Revision(), Devices: make([]deviceInventoryItem, 0, query.Limit)}
 	for _, device := range page.Devices() {
 		data.Devices = append(data.Devices, newDeviceInventoryItem(device, zone))
 	}
 	next := ""
 	if cursor, ok := page.Next(); ok {
-		next, err = encodeDeviceInventoryPageToken(scope, cursor)
+		next, err = encodeDeviceInventoryPageToken(scope, query, cursor)
 		if err != nil {
 			return ErrBrowserManagementUnavailable
 		}
 	}
 	writeManagementJSON(ctx, browser.management.logger, response, http.StatusOK,
-		deviceInventoryEnvelope{Data: data, NextPageToken: next, CorrelationID: correlationID.String()})
+		deviceInventoryEnvelope{Data: data, NextPageToken: next, CorrelationID: correlationID})
+	return nil
+}
+
+type deviceEnrollmentBody struct {
+	// Kind is "browser" or "key".
+	Kind        string                 `json:"kind"`
+	KeyID       *string                `json:"key_id"`
+	Description *string                `json:"description"`
+	CreatedBy   *deviceInventoryMember `json:"created_by"`
+}
+
+type deviceTagRefBody struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type deviceRecordEnvelope struct {
+	Data struct {
+		WorkspaceID string               `json:"workspace_id"`
+		NetworkID   string               `json:"network_id"`
+		Device      deviceInventoryItem  `json:"device"`
+		Enrollment  deviceEnrollmentBody `json:"enrollment"`
+		Tags        []deviceTagRefBody   `json:"tags"`
+	} `json:"data"`
+	CorrelationID string `json:"correlation_id"`
+}
+
+func newDeviceEnrollmentBody(enrollment inventory.Enrollment) deviceEnrollmentBody {
+	if !enrollment.ByKey {
+		return deviceEnrollmentBody{Kind: "browser"}
+	}
+	keyID, description := enrollment.KeyID.String(), enrollment.KeyDescription
+	return deviceEnrollmentBody{Kind: "key", KeyID: &keyID, Description: &description,
+		CreatedBy: newDeviceInventoryMember(enrollment.KeyCreatedBy)}
+}
+
+// readDevice answers one Device of the scope and how it was enrolled.
+func (browser *BrowserManagement) readDevice(ctx context.Context, response *browserManagementResponse,
+	request *http.Request, admission *browserManagementAdmission, scope network.Scope, id node.ID,
+) error {
+	session, fail, correlationID, ok, err := browser.beginDeviceRead(ctx, response, request, admission)
+	if !ok {
+		return err
+	}
+	record, err := browser.inventory.Get(ctx, session, scope, id)
+	if err != nil {
+		fail(classifyDeviceInventoryError(err))
+		return nil
+	}
+	zone, err := dnsname.NewZone(record.WorkspaceCode, record.NetworkCode, browser.management.dnsSuffix)
+	if err != nil || record.Scope != scope {
+		fail(internalManagementError())
+		return nil
+	}
+	var envelope deviceRecordEnvelope
+	envelope.Data.WorkspaceID, envelope.Data.NetworkID = scope.WorkspaceID().String(), scope.NetworkID().String()
+	envelope.Data.Device = newDeviceInventoryItem(record.Device, zone)
+	envelope.Data.Enrollment = newDeviceEnrollmentBody(record.Enrollment)
+	envelope.Data.Tags = make([]deviceTagRefBody, len(record.Tags))
+	for index, tag := range record.Tags {
+		envelope.Data.Tags[index] = deviceTagRefBody{ID: tag.ID.String(), Name: tag.Name}
+	}
+	envelope.CorrelationID = correlationID
+	writeManagementJSON(ctx, browser.management.logger, response, http.StatusOK, envelope)
 	return nil
 }

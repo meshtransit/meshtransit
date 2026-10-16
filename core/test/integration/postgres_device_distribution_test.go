@@ -35,7 +35,8 @@ func assertPostgreSQLDeviceDistribution(ctx context.Context, t *testing.T,
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ReadDistribution(ctx, session, scope, node.ID{}, 2); !errors.Is(err, distribution.ErrForbidden) {
+	device, _ := node.ParseID("01890f00-0000-7000-8000-000000000301")
+	if _, err := store.ReadTarget(ctx, session, scope, device); !errors.Is(err, distribution.ErrForbidden) {
 		t.Fatal("policy approval permission disclosed distribution", err)
 	}
 	transaction, err := admin.Begin(ctx)

@@ -31,7 +31,7 @@ const (
 	// DevicePageSize bounds one Device read.
 	DevicePageSize = 500
 	// observationBatch matches the delivery record loader's bound.
-	observationBatch = distribution.MaximumPageSize
+	observationBatch = distribution.MaximumObservationBatch
 	// PruneBatchSize bounds the rows one retention call removes.
 	PruneBatchSize = 1000
 	// maximumPrunePasses bounds the retention calls of one maintenance round.

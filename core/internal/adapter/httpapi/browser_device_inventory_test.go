@@ -12,21 +12,45 @@ import (
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/node/inventory"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 type inventoryTestReader struct {
 	scope   network.Scope
 	devices []inventory.Device
+	record  inventory.Record
+	names   map[node.ID]string
+	query   inventory.Query
 	err     error
 	reads   int
 }
 
 func (reader *inventoryTestReader) ReadDevices(_ context.Context, _ accountsession.Session,
-	_ network.Scope, _ node.ID, _ int,
+	_ network.Scope, query inventory.Query,
 ) (inventory.ReadResult, error) {
 	reader.reads++
+	reader.query = query
 	return inventory.ReadResult{Scope: reader.scope, Revision: 5, Devices: reader.devices,
 		WorkspaceCode: "000000000101", NetworkCode: "000000000201"}, reader.err
+}
+
+func (reader *inventoryTestReader) ReadDevice(context.Context, accountsession.Session, network.Scope,
+	node.ID,
+) (inventory.Record, error) {
+	reader.reads++
+	return reader.record, reader.err
+}
+
+func (reader *inventoryTestReader) ReadDeviceNames(_ context.Context, _ accountsession.Session, _ network.Scope,
+	ids []node.ID,
+) (map[node.ID]string, error) {
+	names := map[node.ID]string{}
+	for _, id := range ids {
+		if name, known := reader.names[id]; known {
+			names[id] = name
+		}
+	}
+	return names, reader.err
 }
 
 func deviceInventoryTestPath() string {
@@ -102,28 +126,94 @@ func TestBrowserDeviceInventoryRejectsPrivateTransportAndScopeCursor(t *testing.
 		}
 	}
 	id, _ := node.ParseID("01890f00-0000-7000-8000-000000000901")
-	token, err := encodeDeviceInventoryPageToken(scope, inventory.Cursor{After: id, Revision: 5})
+	search := inventory.Query{Limit: 10, NamePrefix: "lap", State: inventory.StateActive}
+	cursor := inventory.Cursor{AfterHostname: "laptop.example", After: id}
+	token, err := encodeDeviceInventoryPageToken(scope, search, cursor)
 	if err != nil {
 		t.Fatal(err)
+	}
+	next, err := parseDeviceInventoryQuery("q=lap&state=active&page_token="+token, scope)
+	if err != nil || next.Cursor != cursor || next.Limit != 10 {
+		t.Fatalf("the token does not continue its own search: %+v, %v", next, err)
 	}
 	otherRequest := browserManagementReadRequest(t, strings.Replace(deviceInventoryTestPath(), "000000000201", "000000000202", 1))
 	otherScope, _ := parseDeviceInventoryPath(otherRequest)
-	if _, _, err := parseDeviceInventoryQuery("page_token="+token, otherScope); err == nil {
-		t.Fatal("cross-Network cursor accepted")
+	for name, test := range map[string]struct {
+		query string
+		scope network.Scope
+	}{
+		"another Network":   {"q=lap&state=active&page_token=" + token, otherScope},
+		"another name":      {"q=lapt&state=active&page_token=" + token, scope},
+		"another state":     {"q=lap&page_token=" + token, scope},
+		"token, no filters": {"page_token=" + token, scope},
+	} {
+		if _, err := parseDeviceInventoryQuery(test.query, test.scope); err == nil {
+			t.Errorf("%s: a token continued another search", name)
+		}
 	}
-	staleToken, err := encodeDeviceInventoryPageToken(scope, inventory.Cursor{After: id, Revision: 4})
+	for _, query := range []string{
+		"page_size=01", "page_size=101", "page_size=1&page_size=2", "device.read=true", "page_token=",
+		"q=Laptop", "q=lap%25", "q=lap_", "state=online", "state=", "q=lap&q=web",
+	} {
+		if _, err := parseDeviceInventoryQuery(query, scope); err == nil {
+			t.Fatal("invalid inventory query accepted", query)
+		}
+	}
+	if query, err := parseDeviceInventoryQuery("", scope); err != nil || query.Limit != 10 {
+		t.Fatalf("default page = %+v, %v", query, err)
+	}
+}
+
+func TestBrowserDeviceReadAnswersOneDevice(t *testing.T) {
+	t.Parallel()
+	options, fixture := browserManagementTestOptions(t)
+	path := deviceInventoryTestPath() + "/01890f00-0000-7000-8000-000000000901"
+	request := browserManagementReadRequest(t, path)
+	scope, id, ok := parseDeviceItemPath(request)
+	if !ok || id.String() != "01890f00-0000-7000-8000-000000000901" {
+		t.Fatal("valid Device path rejected")
+	}
+	keyID, _ := publicid.Parse("01890f00-0000-7000-8000-000000000a01")
+	creator, _ := publicid.Parse("01890f00-0000-7000-8000-000000000011")
+	reader := &inventoryTestReader{record: inventory.Record{Scope: scope, Device: inventoryTestDevice(t), Found: true,
+		WorkspaceCode: "000000000101", NetworkCode: "000000000201",
+		Enrollment: inventory.Enrollment{ByKey: true, KeyID: keyID, KeyDescription: "router",
+			KeyCreatedBy: inventory.Member{PrincipalID: creator, DisplayName: "Trang"}}}}
+	service, err := inventory.NewService(reader, fixture)
 	if err != nil {
 		t.Fatal(err)
 	}
-	staleRequest := browserManagementReadRequest(t, deviceInventoryTestPath()+"?page_token="+staleToken)
-	staleResponse := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
-	if err := browser.Handle(staleResponse, staleRequest); err != nil || staleResponse.Code != http.StatusConflict {
-		t.Fatal("stale inventory revision was disclosed", err, staleResponse.Code)
+	options.Inventory = service
+	browser, err := NewBrowserManagement(options)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, query := range []string{"page_size=01", "page_size=101", "page_size=1&page_size=2", "device.read=true", "page_token="} {
-		if _, _, err := parseDeviceInventoryQuery(query, scope); err == nil {
-			t.Fatal("invalid inventory query accepted", query)
+	response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+	if err := browser.Handle(response, request); err != nil {
+		t.Fatal(err)
+	}
+	body := response.Body.String()
+	if response.Code != http.StatusOK || reader.reads != 1 || response.Header().Get("Cache-Control") != "no-store" ||
+		!strings.Contains(body, `"dns_name":"laptop.000000000101.000000000201.mesh.internal"`) ||
+		!strings.Contains(body, `"enrollment":{"kind":"key","key_id":"01890f00-0000-7000-8000-000000000a01",`+
+			`"description":"router","created_by":{"principal_id":"01890f00-0000-7000-8000-000000000011",`+
+			`"display_name":"Trang"}}`) {
+		t.Fatalf("Device read = %d: %s", response.Code, body)
+	}
+	reader.record = inventory.Record{Scope: scope, WorkspaceCode: "000000000101", NetworkCode: "000000000201"}
+	response = &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+	if err := browser.Handle(response, request); err != nil || response.Code != http.StatusNotFound ||
+		!strings.Contains(response.Body.String(), "device_not_found") {
+		t.Fatalf("missing Device = %d %s, %v", response.Code, response.Body, err)
+	}
+	for _, target := range []string{path + "?x=1", path + "/", deviceInventoryTestPath() + "/not-a-device"} {
+		request := browserManagementReadRequest(t, target)
+		if _, _, ok := parseDeviceItemPath(request); ok {
+			t.Errorf("%s matched", target)
 		}
+	}
+	if !isBrowserManagementOperation(request) {
+		t.Fatal("the Device read is not routed to browser management")
 	}
 }
 

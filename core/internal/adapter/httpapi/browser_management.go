@@ -275,8 +275,11 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	managementScopes := request.URL.Path == AccountSessionManagementScopesPath && request.Method == http.MethodGet
 	inventoryScope, inventoryMatched := parseDeviceInventoryPath(request)
 	inventoryRead := inventoryMatched && !nilContinuationDependency(browser.inventory)
-	distributionScope, distributionMatched := parseDeviceDistributionPath(request)
-	distributionRead := distributionMatched && !nilContinuationDependency(browser.distribution)
+	deviceScope, deviceID, deviceMatched := parseDeviceItemPath(request)
+	deviceRead := deviceMatched && !nilContinuationDependency(browser.inventory)
+	detail, detailMatched := parseDeviceDetailPath(request)
+	distributionRead := detailMatched && !nilContinuationDependency(browser.distribution) &&
+		!nilContinuationDependency(browser.inventory)
 	historyScope, historyMatched := parseAccessGraphHistoryPath(request)
 	historyRead := historyMatched && !nilContinuationDependency(browser.history)
 	enforcementScope, enforcementMatched := parseEnforcementHistoryPath(request)
@@ -301,7 +304,7 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		isMemberLifecycleOperation(request) || isNetworkMemberOperation(request) || isEnrollmentKeyOperation(request) ||
 		isInvitationOperation(request)
 	resourceSharing, _ := browserResourceSharingOperation(request)
-	if !prepare && !logout && !managementScopes && !inventoryRead && !distributionRead && !historyRead &&
+	if !prepare && !logout && !managementScopes && !inventoryRead && !deviceRead && !distributionRead && !historyRead &&
 		!enforcementRead &&
 		!deploymentCapabilities && !device && !policy && !simulation &&
 		!approval && !accessGraph && !accessGraphList && !policyRead && !workspaceRename && !workspaceRoles && !resourceSharing {
@@ -358,8 +361,12 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		if err := browser.readDeviceInventory(ctx, candidate, request, admission, inventoryScope); err != nil {
 			return err
 		}
+	} else if deviceRead {
+		if err := browser.readDevice(ctx, candidate, request, admission, deviceScope, deviceID); err != nil {
+			return err
+		}
 	} else if distributionRead {
-		if err := browser.readDeviceDistribution(ctx, candidate, request, admission, distributionScope); err != nil {
+		if err := browser.readDeviceDetail(ctx, candidate, request, admission, detail); err != nil {
 			return err
 		}
 	} else if historyRead {
@@ -536,8 +543,11 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	managementScopeRead := request.Method == http.MethodGet && target.Path == AccountSessionManagementScopesPath
 	_, inventoryMatched := parseDeviceInventoryPath(request)
 	inventoryRead := inventoryMatched && !nilContinuationDependency(browser.inventory)
-	_, distributionMatched := parseDeviceDistributionPath(request)
-	distributionRead := distributionMatched && !nilContinuationDependency(browser.distribution)
+	_, _, deviceMatched := parseDeviceItemPath(request)
+	deviceRead := deviceMatched && !nilContinuationDependency(browser.inventory)
+	_, detailMatched := parseDeviceDetailPath(request)
+	distributionRead := detailMatched && !nilContinuationDependency(browser.distribution) &&
+		!nilContinuationDependency(browser.inventory)
 	_, historyMatched := parseAccessGraphHistoryPath(request)
 	historyRead := historyMatched && !nilContinuationDependency(browser.history)
 	_, enforcementMatched := parseEnforcementHistoryPath(request)
@@ -557,7 +567,7 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 			isInvitationRead(request))
 	auditRead := isAuditEventListRead(request) || isAuditEventExportRead(request) || isDeviceGroupRead(request) ||
 		isIdentityCatalogRead(request) || isNetworkMemberRead(request) || isEnrollmentKeyRead(request)
-	safeRead := approvalRead || managementScopeRead || inventoryRead || distributionRead || historyRead ||
+	safeRead := approvalRead || managementScopeRead || inventoryRead || deviceRead || distributionRead || historyRead ||
 		enforcementRead ||
 		deploymentCapabilityRead ||
 		policyRead ||

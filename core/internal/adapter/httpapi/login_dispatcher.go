@@ -241,7 +241,8 @@ func isBrowserManagementOperation(request *http.Request) bool {
 	}
 	_, device := parseDeviceRevokePath(request)
 	_, inventory := parseDeviceInventoryPath(request)
-	_, distribution := parseDeviceDistributionPath(request)
+	_, _, deviceItem := parseDeviceItemPath(request)
+	_, distribution := parseDeviceDetailPath(request)
 	_, history := parseAccessGraphHistoryPath(request)
 	_, enforcement := parseEnforcementHistoryPath(request)
 	_, activePolicy := parseActivePolicyPath(request)
@@ -260,7 +261,8 @@ func isBrowserManagementOperation(request *http.Request) bool {
 			approval && (approvalPath.kind == policyApprovalPathCollection || approvalPath.isAction())
 	}
 	_, accessGraphList := parseAccessGraphListPath(request)
-	return request.Method == http.MethodGet && (activePolicy || accessGraphList || inventory || distribution || history ||
+	return request.Method == http.MethodGet && (activePolicy || accessGraphList || inventory || deviceItem ||
+		distribution || history ||
 		enforcement ||
 		managementScopes || deploymentCapabilities ||
 		approval && (approvalPath.kind == policyApprovalPathCollection || approvalPath.kind == policyApprovalPathItem))
@@ -295,7 +297,7 @@ func (dispatcher *LoginDispatcher) validRequest(response http.ResponseWriter, re
 		approvalPath.kind == policyApprovalPathCollection
 	managementScopes := target.Path == AccountSessionManagementScopesPath && request.Method == http.MethodGet
 	_, inventoryRead := parseDeviceInventoryPath(request)
-	_, distributionRead := parseDeviceDistributionPath(request)
+	distributionRead := isDevicePeerRead(request)
 	_, historyRead := parseAccessGraphHistoryPath(request)
 	_, enforcementRead := parseEnforcementHistoryPath(request)
 	deploymentCapabilities := target.Path == DeploymentCapabilitiesPath && request.Method == http.MethodGet &&
