@@ -96,8 +96,12 @@ const setDeviceRevocationChangeSQL = `SELECT pg_catalog.set_config(
     TRUE
 )`
 
+// revokeDeviceSQL ends an active, suspended or expired Device; a removed
+// Device keeps no suspension reason or pending handover.
 const revokeDeviceSQL = `UPDATE mesh.device AS device
 SET state = 'revoked',
+    suspended_reason = NULL,
+    handover_principal_id = NULL,
     session_generation = device.session_generation + 1,
     version = device.version + 1,
     updated_at = $7::TIMESTAMPTZ
@@ -107,7 +111,7 @@ WHERE device.id = $1::BIGINT
   AND device.public_id = $4::UUID
   AND device.version = $5::BIGINT
   AND device.session_generation = $6::BIGINT
-  AND device.state = 'active'
+  AND device.state IN ('active', 'suspended', 'expired')
 RETURNING device.version, device.session_generation`
 
 // quarantineRevokedDeviceLeasesSQL moves the revoked Device's active leases

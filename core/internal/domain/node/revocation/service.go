@@ -214,7 +214,7 @@ func validateResolution(command Command, resolution Resolution, attempt Attempt)
 	if resolution.DeviceState() == DeviceStateRevoked {
 		return ErrAlreadyRevoked
 	}
-	if resolution.DeviceState() != DeviceStateActive ||
+	if !resolution.DeviceState().revocable() ||
 		resolution.MachineKeyState() != KeyStateActive ||
 		resolution.NodeKeyState() != KeyStateActive ||
 		attempt.OccurredAt().Before(resolution.MachineKeyValidFrom()) ||

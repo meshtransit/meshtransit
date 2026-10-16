@@ -153,7 +153,7 @@ needs an `Idempotency-Key`. Each action writes an
 | `rename` | `device.manage` | New name, locked |
 | `transfer` to the Workspace | `device.transfer` | Becomes Workspace-owned, never expires |
 | `transfer` to a member | `device.transfer` | Suspended until the new member signs in on it (below). The member must be active in the Workspace and the Network; an administrator's suspension must be resumed first |
-| `revoke` | `device.manage` | Removes an active Device: keys revoked, addresses quarantined |
+| `revoke` | `device.manage` | Removes an active, suspended or expired Device: keys revoked, suspension and pending handover cleared, addresses quarantined, its shares ended |
 
 These permissions come with the `admin` and `it_admin` roles and with
 ownership of the Workspace. A node can also remove its own Device: `meshctl

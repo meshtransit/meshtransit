@@ -5,6 +5,10 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: `POST …/devices/{device}/actions/revoke` removes a suspended or
+  expired Device too, as removing a member already did; the suspension and
+  any pending handover are cleared. Before, the request failed with a
+  generic error.
 - Core: removing a provider Device ends its shares. A trigger queues the open
   contracts of a Device that becomes revoked or deleted; the worker that
   finalizes expiry also moves them to `invalidated`, frees the consumer

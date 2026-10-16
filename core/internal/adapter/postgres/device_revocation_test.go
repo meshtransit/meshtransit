@@ -338,3 +338,19 @@ func TestDeviceRevocationTransactionDecidesOnlyOnItsDatabaseTime(t *testing.T) {
 		t.Fatalf("Resolve(attempt at another clock's time) error = %v, want ErrDeviceRevocationState", err)
 	}
 }
+
+func TestDeviceRevocationStateMapsEveryStoredState(t *testing.T) {
+	t.Parallel()
+	for value, want := range map[string]revocation.DeviceState{
+		"active": revocation.DeviceStateActive, "suspended": revocation.DeviceStateSuspended,
+		"expired": revocation.DeviceStateExpired, "revoked": revocation.DeviceStateRevoked,
+		"deleted": revocation.DeviceStateDeleted,
+	} {
+		if got, err := deviceRevocationState(value); err != nil || got != want {
+			t.Errorf("deviceRevocationState(%q) = %v, %v; want %v", value, got, err, want)
+		}
+	}
+	if _, err := deviceRevocationState("paused"); !errors.Is(err, ErrDeviceRevocationEvidence) {
+		t.Fatalf("unknown state: %v", err)
+	}
+}

@@ -192,16 +192,25 @@ const (
 	DeviceStateUnknown DeviceState = iota
 	// DeviceStateActive may transition to terminal revocation.
 	DeviceStateActive
-	// DeviceStateExpired is terminal for this operation.
+	// DeviceStateExpired may be revoked: its access already ended, removal
+	// makes that final and quarantines its addresses.
 	DeviceStateExpired
 	// DeviceStateRevoked is terminal and fail closed.
 	DeviceStateRevoked
 	// DeviceStateDeleted is terminal and cannot be revived by revocation.
 	DeviceStateDeleted
+	// DeviceStateSuspended may be revoked; removal ends the suspension.
+	// It comes last so the values above keep their semantic-hash bytes.
+	DeviceStateSuspended
 )
 
 func (state DeviceState) isValid() bool {
-	return state >= DeviceStateActive && state <= DeviceStateDeleted
+	return state >= DeviceStateActive && state <= DeviceStateSuspended
+}
+
+// revocable reports the states removal may end.
+func (state DeviceState) revocable() bool {
+	return state == DeviceStateActive || state == DeviceStateSuspended || state == DeviceStateExpired
 }
 
 // KeyState is the durable current key-epoch lifecycle read under lock.
@@ -536,7 +545,7 @@ func (change Change) IsValid() bool {
 		change.resolution.nodeID == change.command.nodeID &&
 		change.resolution.authorization.AccountSessionID() == change.command.accountSession.ID() &&
 		change.resolution.deviceVersion == change.command.expectedVersion &&
-		change.resolution.deviceState == DeviceStateActive &&
+		change.resolution.deviceState.revocable() &&
 		change.resolution.machineKeyState == KeyStateActive &&
 		change.resolution.nodeKeyState == KeyStateActive &&
 		!change.attempt.occurredAt.Before(change.resolution.machineKeyValidFrom) &&

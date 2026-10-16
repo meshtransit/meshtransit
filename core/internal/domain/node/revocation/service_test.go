@@ -47,6 +47,35 @@ func TestServiceRevokesActiveDevice(t *testing.T) {
 	}
 }
 
+// A suspended or expired Device can still be removed: removal is the one
+// change that ends either state for good.
+func TestServiceRevokesSuspendedAndExpiredDevices(t *testing.T) {
+	t.Parallel()
+	for name, state := range map[string]revocation.DeviceState{
+		"suspended": revocation.DeviceStateSuspended,
+		"expired":   revocation.DeviceStateExpired,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			command := revocationCommandFixture(t)
+			params := openRevocationResolutionParamsFixture(t, command)
+			params.DeviceState = state
+			resolution, err := revocation.NewOpenResolution(params)
+			if err != nil {
+				t.Fatalf("NewOpenResolution() error = %v", err)
+			}
+			transaction := &fakeRevocationTransaction{resolution: resolution}
+			service := newRevocationServiceFixture(t, &fakeRevocationTransactions{
+				transactions: []*fakeRevocationTransaction{transaction},
+			}, &fakeCommittedRevocationResolver{}, fixedRevocationMutationIDs(t))
+			result, err := service.Revoke(context.Background(), command)
+			if err != nil || !result.IsValid() || !transaction.committed || transaction.applyCalls != 1 {
+				t.Fatalf("Revoke(%s) = %+v, %v; transaction %+v", name, result, err, transaction)
+			}
+		})
+	}
+}
+
 func TestServiceRejectsAccountSessionExpiredAtDatabaseTime(t *testing.T) {
 	t.Parallel()
 
@@ -664,4 +693,18 @@ func fixedRevocationMutationIDs(t *testing.T) revocation.MutationIDs {
 
 func revocationDecisionTime() time.Time {
 	return time.Date(2026, time.September, 15, 12, 0, 0, 0, time.UTC)
+}
+
+// The Device state byte is part of the before and after semantic hashes:
+// existing values must never move.
+func TestDeviceStateValuesStayStable(t *testing.T) {
+	t.Parallel()
+	for state, want := range map[revocation.DeviceState]uint8{
+		revocation.DeviceStateActive: 1, revocation.DeviceStateExpired: 2, revocation.DeviceStateRevoked: 3,
+		revocation.DeviceStateDeleted: 4, revocation.DeviceStateSuspended: 5,
+	} {
+		if uint8(state) != want {
+			t.Errorf("state %d, want %d", state, want)
+		}
+	}
 }

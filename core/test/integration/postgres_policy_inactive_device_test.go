@@ -87,10 +87,11 @@ func assertPostgreSQLPolicyInactiveDevice(ctx context.Context, t *testing.T, adm
 	publish(kept...)
 	assertActiveCompiledRuleCounts(ctx, t, admin, 3, 1)
 	assertActiveResourceDestinationCounts(ctx, t, admin, 1, 1)
-	suspendIntegrationDevice(ctx, t, admin, runtimePool, owner, scope, leaving, devicelifecycle.ActionResume)
 
-	// Revoked: the rules the active release holds keep publishing next to an edit.
+	// Revoked while suspended, as the Console offers: the rules the active
+	// release holds keep publishing next to an edit.
 	revokeIntegrationFixtureDevice(ctx, t, admin, runtimePool, leaving)
+	assertRevokedDeviceLeftSuspension(ctx, t, admin, leaving)
 	assertDeviceRemovalEndsShare(ctx, t, admin, workerPool, leavingShare)
 	unrelated := rule(compilation.RuleIntentParams{SourceNodeID: staying, DestinationDeviceGroupID: group})
 	kept = append(kept, unrelated)
@@ -256,5 +257,20 @@ WHERE release.workspace_id = 103 AND release.network_id = 203 AND release.state 
 	if devices != deviceRules || groups != groupRules {
 		t.Fatalf("active release compiles %d Device and %d group rules, want %d and %d",
 			devices, groups, deviceRules, groupRules)
+	}
+}
+
+// assertRevokedDeviceLeftSuspension checks a Device revoked while suspended
+// keeps no suspension reason or handover, as the schema requires of a
+// Device that is not suspended.
+func assertRevokedDeviceLeftSuspension(ctx context.Context, t *testing.T, admin *pgx.Conn, device node.ID) {
+	t.Helper()
+	var reason, handover *string
+	if err := admin.QueryRow(ctx, `SELECT suspended_reason, handover_principal_id::TEXT FROM mesh.device
+WHERE public_id = $1::UUID`, device.String()).Scan(&reason, &handover); err != nil {
+		t.Fatal(err)
+	}
+	if reason != nil || handover != nil {
+		t.Fatalf("revoked Device keeps suspension %v and handover %v", reason, handover)
 	}
 }

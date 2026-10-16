@@ -164,6 +164,8 @@ func deviceRevocationState(value string) (revocation.DeviceState, error) {
 		return revocation.DeviceStateActive, nil
 	case "expired":
 		return revocation.DeviceStateExpired, nil
+	case "suspended":
+		return revocation.DeviceStateSuspended, nil
 	case "revoked":
 		return revocation.DeviceStateRevoked, nil
 	case "deleted":
