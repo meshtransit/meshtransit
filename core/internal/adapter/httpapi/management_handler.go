@@ -622,7 +622,7 @@ func (handler *ManagementHandler) serveHTTP(
 	} else if interchangeMatched {
 		allowedMethod = interchangePathValue.allowedMethod(request.Method)
 	} else if deviceGroupMatched {
-		allowedMethod = deviceGroupPathValue.allowedMethod()
+		allowedMethod = deviceGroupPathValue.methods.allowedMethod(request.Method)
 	} else if identityCatalogMatched {
 		allowedMethod = identityCatalogPathValue.methods.allowedMethod(request.Method)
 	} else if networkMemberMatched {
@@ -651,6 +651,8 @@ func (handler *ManagementHandler) serveHTTP(
 			response.Header().Set("Allow", http.MethodGet)
 		} else if identityCatalogMatched {
 			response.Header().Set("Allow", identityCatalogPathValue.methods.header())
+		} else if deviceGroupMatched {
+			response.Header().Set("Allow", deviceGroupPathValue.methods.header())
 		} else {
 			response.Header().Set("Allow", allowedMethodOrGet(resourceMatched, allowedMethod))
 		}

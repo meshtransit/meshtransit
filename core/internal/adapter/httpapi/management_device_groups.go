@@ -49,17 +49,23 @@ type DeviceGroupManager interface {
 type deviceGroupPath struct {
 	scope   network.Scope
 	groupID devicegroup.ID
-	// action is "" to list, "members", "create", "update", "delete" or "change-members".
-	action string
-	after  node.ID
-	limit  int
+	// methods are the methods the path accepts; action is what the request's
+	// method does there: "" to list, "members", "create", "update", "delete"
+	// or "change-members", and "" when the path does not accept the method.
+	methods restMethods
+	action  string
+	after   node.ID
+	limit   int
 }
 
 // parseDeviceGroupPath matches, under /api/v1/workspaces/{ws}/networks/{net}:
-// GET device-groups, POST device-groups/actions/create,
-// GET device-groups/{id}/members[?after=&limit=] and
-// POST device-groups/{id}/actions/{update|delete|change-members}.
-// Only the member page takes a query, and only those two keys once each.
+//
+//	GET|POST     device-groups               list, create
+//	PATCH|DELETE device-groups/{id}          update, delete
+//	GET|PATCH    device-groups/{id}/members  page[?after=&limit=], change
+//
+// A path matched with a method it does not accept carries no action, for a
+// 405. Only the member page takes a query, and only those two keys once each.
 func parseDeviceGroupPath(request *http.Request) (deviceGroupPath, bool) {
 	if request == nil || request.URL == nil || request.URL.RawPath != "" {
 		return deviceGroupPath{}, false
@@ -83,19 +89,23 @@ func parseDeviceGroupPath(request *http.Request) (deviceGroupPath, bool) {
 	}
 	path := deviceGroupPath{scope: scope}
 	rest := segments[7:]
+	var actions map[string]string
 	switch {
 	case len(rest) == 0:
-	case len(rest) == 2 && rest[0] == "actions" && rest[1] == "create":
-		path.action = "create"
+		path.methods, actions = collectionMethods, map[string]string{http.MethodPost: "create"}
+	case len(rest) == 1:
+		path.methods = itemMethods
+		actions = map[string]string{http.MethodPatch: "update", http.MethodDelete: "delete"}
 	case len(rest) == 2 && rest[1] == "members":
-		path.action = "members"
-	case len(rest) == 3 && rest[1] == "actions" &&
-		(rest[2] == "update" || rest[2] == "delete" || rest[2] == "change-members"):
-		path.action = rest[2]
+		path.methods = restMethods{http.MethodGet, http.MethodPatch}
+		actions = map[string]string{http.MethodGet: "members", http.MethodPatch: "change-members"}
 	default:
 		return deviceGroupPath{}, false
 	}
-	if path.action != "" && path.action != "create" {
+	if path.methods.allows(request.Method) {
+		path.action = actions[request.Method]
+	}
+	if len(rest) > 0 {
 		id, err := devicegroup.ParseID(rest[0])
 		if err != nil || id.String() != rest[0] {
 			return deviceGroupPath{}, false
@@ -139,13 +149,6 @@ func (path deviceGroupPath) withPage(rawQuery string) (deviceGroupPath, bool) {
 	return path, true
 }
 
-func (path deviceGroupPath) allowedMethod() string {
-	if path.action == "" || path.action == "members" {
-		return http.MethodGet
-	}
-	return http.MethodPost
-}
-
 func (path deviceGroupPath) operation() string {
 	switch path.action {
 	case "":
@@ -163,16 +166,15 @@ func (path deviceGroupPath) operation() string {
 	}
 }
 
-// isDeviceGroupOperation admits only the method each path allows.
+// isDeviceGroupOperation admits only the methods each path accepts.
 func isDeviceGroupOperation(request *http.Request) bool {
 	path, ok := parseDeviceGroupPath(request)
-	return ok && request.Method == path.allowedMethod()
+	return ok && path.methods.allows(request.Method)
 }
 
 // isDeviceGroupRead admits the list and the bounded member page.
 func isDeviceGroupRead(request *http.Request) bool {
-	path, ok := parseDeviceGroupPath(request)
-	return ok && request.Method == http.MethodGet && path.allowedMethod() == http.MethodGet
+	return request != nil && request.Method == http.MethodGet && isDeviceGroupOperation(request)
 }
 
 type deviceGroupBody struct {

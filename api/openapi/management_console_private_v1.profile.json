@@ -7942,9 +7942,7 @@
             "description": "Unavailable"
           }
         }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/device-groups/actions/create": {
+      },
       "post": {
         "operationId": "createNetworkDeviceGroup",
         "summary": "Create an empty Device Group",
@@ -8129,435 +8127,8 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/device-groups/{group_id}/actions/change-members": {
-      "post": {
-        "operationId": "changeNetworkDeviceGroupMembers",
-        "summary": "Add and remove Device Group members",
-        "description": "Requires device_group.members.manage. Adds and removes at most 150 Devices each, at the version in If-Match. Added Devices must be active Devices of this Network. When the set changes the Network revision advances and maps rebuild; access_affecting reports whether active rules select the group. A change that would give one Device more than 10,000 rule edges is refused (409 device_policy_edge_limit).",
-        "security": [
-          {
-            "accountSessionCookie": [],
-            "sessionCSRF": []
-          }
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/ConsoleOrigin"
-          },
-          {
-            "$ref": "#/components/parameters/ConsoleSessionChannel"
-          },
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "network_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "group_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "$ref": "#/components/parameters/ConsoleSessionProof"
-          },
-          {
-            "name": "If-Match",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^\"[1-9][0-9]*\"$"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "add",
-                  "remove"
-                ],
-                "properties": {
-                  "add": {
-                    "type": "array",
-                    "maxItems": 150,
-                    "uniqueItems": true,
-                    "items": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  },
-                  "remove": {
-                    "type": "array",
-                    "maxItems": 150,
-                    "uniqueItems": true,
-                    "items": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "The group after the change",
-            "headers": {
-              "ETag": {
-                "schema": {
-                  "type": "string",
-                  "pattern": "^\"[1-9][0-9]*\"$"
-                }
-              },
-              "Cache-Control": {
-                "schema": {
-                  "type": "string",
-                  "const": "no-store"
-                }
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "required": [
-                    "data",
-                    "correlation_id"
-                  ],
-                  "properties": {
-                    "data": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "required": [
-                        "group",
-                        "added",
-                        "removed",
-                        "access_affecting"
-                      ],
-                      "properties": {
-                        "group": {
-                          "type": "object",
-                          "additionalProperties": false,
-                          "required": [
-                            "group_id",
-                            "name",
-                            "description",
-                            "member_count",
-                            "rule_count",
-                            "version",
-                            "created_at",
-                            "updated_at"
-                          ],
-                          "properties": {
-                            "group_id": {
-                              "type": "string",
-                              "format": "uuid"
-                            },
-                            "name": {
-                              "type": "string",
-                              "minLength": 1,
-                              "maxLength": 64
-                            },
-                            "description": {
-                              "type": "string",
-                              "maxLength": 280
-                            },
-                            "member_count": {
-                              "type": "integer",
-                              "minimum": 0,
-                              "maximum": 5000
-                            },
-                            "rule_count": {
-                              "type": "integer",
-                              "minimum": 0,
-                              "description": "Rules of the active policy that select this group"
-                            },
-                            "version": {
-                              "type": "integer",
-                              "minimum": 1
-                            },
-                            "created_at": {
-                              "type": "string",
-                              "format": "date-time"
-                            },
-                            "updated_at": {
-                              "type": "string",
-                              "format": "date-time"
-                            }
-                          }
-                        },
-                        "added": {
-                          "type": "integer",
-                          "minimum": 0
-                        },
-                        "removed": {
-                          "type": "integer",
-                          "minimum": 0
-                        },
-                        "access_affecting": {
-                          "type": "boolean"
-                        }
-                      }
-                    },
-                    "correlation_id": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "invalid_request"
-          },
-          "403": {
-            "description": "permission_denied"
-          },
-          "404": {
-            "description": "device_group_not_found"
-          },
-          "409": {
-            "description": "conflict"
-          },
-          "412": {
-            "description": "version_conflict"
-          },
-          "422": {
-            "description": "device_not_eligible"
-          },
-          "428": {
-            "description": "precondition_required"
-          },
-          "429": {
-            "description": "Rate limited"
-          },
-          "503": {
-            "description": "Unavailable"
-          }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/device-groups/{group_id}/actions/delete": {
-      "post": {
-        "operationId": "deleteNetworkDeviceGroup",
-        "summary": "Delete a Device Group",
-        "description": "Requires device_group.manage. A group the active policy still selects cannot be deleted (409 device_group_in_use).",
-        "security": [
-          {
-            "accountSessionCookie": [],
-            "sessionCSRF": []
-          }
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/ConsoleOrigin"
-          },
-          {
-            "$ref": "#/components/parameters/ConsoleSessionChannel"
-          },
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "network_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "group_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "$ref": "#/components/parameters/ConsoleSessionProof"
-          },
-          {
-            "name": "If-Match",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^\"[1-9][0-9]*\"$"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "maxProperties": 0
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "The deleted group",
-            "headers": {
-              "ETag": {
-                "schema": {
-                  "type": "string",
-                  "pattern": "^\"[1-9][0-9]*\"$"
-                }
-              },
-              "Cache-Control": {
-                "schema": {
-                  "type": "string",
-                  "const": "no-store"
-                }
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "required": [
-                    "data",
-                    "correlation_id"
-                  ],
-                  "properties": {
-                    "data": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "required": [
-                        "group",
-                        "deleted"
-                      ],
-                      "properties": {
-                        "group": {
-                          "type": "object",
-                          "additionalProperties": false,
-                          "required": [
-                            "group_id",
-                            "name",
-                            "description",
-                            "member_count",
-                            "rule_count",
-                            "version",
-                            "created_at",
-                            "updated_at"
-                          ],
-                          "properties": {
-                            "group_id": {
-                              "type": "string",
-                              "format": "uuid"
-                            },
-                            "name": {
-                              "type": "string",
-                              "minLength": 1,
-                              "maxLength": 64
-                            },
-                            "description": {
-                              "type": "string",
-                              "maxLength": 280
-                            },
-                            "member_count": {
-                              "type": "integer",
-                              "minimum": 0,
-                              "maximum": 5000
-                            },
-                            "rule_count": {
-                              "type": "integer",
-                              "minimum": 0,
-                              "description": "Rules of the active policy that select this group"
-                            },
-                            "version": {
-                              "type": "integer",
-                              "minimum": 1
-                            },
-                            "created_at": {
-                              "type": "string",
-                              "format": "date-time"
-                            },
-                            "updated_at": {
-                              "type": "string",
-                              "format": "date-time"
-                            }
-                          }
-                        },
-                        "deleted": {
-                          "type": "boolean"
-                        }
-                      }
-                    },
-                    "correlation_id": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "permission_denied"
-          },
-          "404": {
-            "description": "device_group_not_found"
-          },
-          "409": {
-            "description": "conflict"
-          },
-          "412": {
-            "description": "version_conflict"
-          },
-          "428": {
-            "description": "precondition_required"
-          },
-          "429": {
-            "description": "Rate limited"
-          },
-          "503": {
-            "description": "Unavailable"
-          }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/device-groups/{group_id}/actions/update": {
-      "post": {
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/device-groups/{group_id}": {
+      "patch": {
         "operationId": "updateNetworkDeviceGroup",
         "summary": "Rename a Device Group",
         "description": "Requires device_group.manage. Changes name and description at the version in If-Match; members and rules are unchanged.",
@@ -8743,6 +8314,186 @@
           },
           "400": {
             "description": "invalid_request"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "404": {
+            "description": "device_group_not_found"
+          },
+          "409": {
+            "description": "conflict"
+          },
+          "412": {
+            "description": "version_conflict"
+          },
+          "428": {
+            "description": "precondition_required"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Unavailable"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteNetworkDeviceGroup",
+        "summary": "Delete a Device Group",
+        "description": "Requires device_group.manage. A group the active policy still selects cannot be deleted (409 device_group_in_use).",
+        "security": [
+          {
+            "accountSessionCookie": [],
+            "sessionCSRF": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionProof"
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\"[1-9][0-9]*\"$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The deleted group",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "group",
+                        "deleted"
+                      ],
+                      "properties": {
+                        "group": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "group_id",
+                            "name",
+                            "description",
+                            "member_count",
+                            "rule_count",
+                            "version",
+                            "created_at",
+                            "updated_at"
+                          ],
+                          "properties": {
+                            "group_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64
+                            },
+                            "description": {
+                              "type": "string",
+                              "maxLength": 280
+                            },
+                            "member_count": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 5000
+                            },
+                            "rule_count": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "description": "Rules of the active policy that select this group"
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updated_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "deleted": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
           },
           "403": {
             "description": "permission_denied"
@@ -8969,6 +8720,237 @@
           },
           "404": {
             "description": "device_group_not_found"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Unavailable"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "changeNetworkDeviceGroupMembers",
+        "summary": "Add and remove Device Group members",
+        "description": "Requires device_group.members.manage. Adds and removes at most 150 Devices each, at the version in If-Match. Added Devices must be active Devices of this Network. When the set changes the Network revision advances and maps rebuild; access_affecting reports whether active rules select the group. A change that would give one Device more than 10,000 rule edges is refused (409 device_policy_edge_limit).",
+        "security": [
+          {
+            "accountSessionCookie": [],
+            "sessionCSRF": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionProof"
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\"[1-9][0-9]*\"$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "add",
+                  "remove"
+                ],
+                "properties": {
+                  "add": {
+                    "type": "array",
+                    "maxItems": 150,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  },
+                  "remove": {
+                    "type": "array",
+                    "maxItems": 150,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The group after the change",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "group",
+                        "added",
+                        "removed",
+                        "access_affecting"
+                      ],
+                      "properties": {
+                        "group": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "group_id",
+                            "name",
+                            "description",
+                            "member_count",
+                            "rule_count",
+                            "version",
+                            "created_at",
+                            "updated_at"
+                          ],
+                          "properties": {
+                            "group_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64
+                            },
+                            "description": {
+                              "type": "string",
+                              "maxLength": 280
+                            },
+                            "member_count": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 5000
+                            },
+                            "rule_count": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "description": "Rules of the active policy that select this group"
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updated_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "added": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "removed": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "access_affecting": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "404": {
+            "description": "device_group_not_found"
+          },
+          "409": {
+            "description": "conflict"
+          },
+          "412": {
+            "description": "version_conflict"
+          },
+          "422": {
+            "description": "device_not_eligible"
+          },
+          "428": {
+            "description": "precondition_required"
           },
           "429": {
             "description": "Rate limited"
