@@ -17,7 +17,13 @@ func TestInventoryMeasuresNowOnTheDatabaseClock(t *testing.T) {
 	if elapsed := now.Sub(readAt); elapsed < 3*time.Second || elapsed > time.Minute {
 		t.Fatalf("databaseNow() = read time + %s, want about 3s", elapsed)
 	}
-	if got := (cachedInventory{readAt: readAt}).databaseNow(); !got.Equal(readAt) {
-		t.Fatalf("databaseNow() without a local read time = %s, want the read time", got)
+	// Without a local read time the inventory still ages: the later of the
+	// read time and the host's now.
+	if got := (cachedInventory{readAt: readAt}).databaseNow(); !got.After(readAt) {
+		t.Fatalf("databaseNow() without a local read time = %s, want after the read time", got)
+	}
+	future := time.Now().Add(time.Hour)
+	if got := (cachedInventory{readAt: future}).databaseNow(); !got.Equal(future) {
+		t.Fatalf("databaseNow() without a local read time = %s, want the later read time", got)
 	}
 }

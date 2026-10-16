@@ -23,27 +23,23 @@ END;
 $function$;
 REVOKE ALL ON FUNCTION mesh_ops.keep_updated_at_order_v2() FROM PUBLIC;
 
-DROP TRIGGER resource_export_clock_order ON mesh.resource_export;
-CREATE TRIGGER resource_export_clock_order BEFORE UPDATE ON mesh.resource_export
+-- CREATE OR REPLACE keeps each trigger's name, so its firing order is unchanged,
+-- and takes SHARE ROW EXCLUSIVE rather than the ACCESS EXCLUSIVE a drop needs:
+-- reads continue while the migration runs.
+
+CREATE OR REPLACE TRIGGER resource_export_clock_order BEFORE UPDATE ON mesh.resource_export
     FOR EACH ROW EXECUTE FUNCTION mesh_ops.keep_updated_at_order_v2();
-DROP TRIGGER share_offer_clock_order ON mesh.share_offer;
-CREATE TRIGGER share_offer_clock_order BEFORE UPDATE ON mesh.share_offer
+CREATE OR REPLACE TRIGGER share_offer_clock_order BEFORE UPDATE ON mesh.share_offer
     FOR EACH ROW EXECUTE FUNCTION mesh_ops.keep_updated_at_order_v2();
-DROP TRIGGER trust_contract_clock_order ON mesh.trust_contract;
-CREATE TRIGGER trust_contract_clock_order BEFORE UPDATE ON mesh.trust_contract
+CREATE OR REPLACE TRIGGER trust_contract_clock_order BEFORE UPDATE ON mesh.trust_contract
     FOR EACH ROW EXECUTE FUNCTION mesh_ops.keep_updated_at_order_v2();
-DROP TRIGGER imported_resource_clock_order ON mesh.imported_resource;
-CREATE TRIGGER imported_resource_clock_order BEFORE UPDATE ON mesh.imported_resource
+CREATE OR REPLACE TRIGGER imported_resource_clock_order BEFORE UPDATE ON mesh.imported_resource
     FOR EACH ROW EXECUTE FUNCTION mesh_ops.keep_updated_at_order_v2();
-DROP TRIGGER imported_resource_access_name_clock_order ON mesh.imported_resource_access_name;
-CREATE TRIGGER imported_resource_access_name_clock_order BEFORE UPDATE ON mesh.imported_resource_access_name
+CREATE OR REPLACE TRIGGER imported_resource_access_name_clock_order BEFORE UPDATE ON mesh.imported_resource_access_name
     FOR EACH ROW EXECUTE FUNCTION mesh_ops.keep_updated_at_order_v2();
-DROP TRIGGER imported_resource_dns_publication_clock_order ON mesh.imported_resource_dns_publication;
-CREATE TRIGGER imported_resource_dns_publication_clock_order BEFORE UPDATE ON mesh.imported_resource_dns_publication
+CREATE OR REPLACE TRIGGER imported_resource_dns_publication_clock_order BEFORE UPDATE ON mesh.imported_resource_dns_publication
     FOR EACH ROW EXECUTE FUNCTION mesh_ops.keep_updated_at_order_v2();
-DROP TRIGGER private_endpoint_clock_order ON mesh.private_endpoint;
-CREATE TRIGGER private_endpoint_clock_order BEFORE UPDATE ON mesh.private_endpoint
+CREATE OR REPLACE TRIGGER private_endpoint_clock_order BEFORE UPDATE ON mesh.private_endpoint
     FOR EACH ROW EXECUTE FUNCTION mesh_ops.keep_updated_at_order_v2();
-DROP TRIGGER federation_alias_lease_clock_order ON mesh.federation_alias_lease;
-CREATE TRIGGER federation_alias_lease_clock_order BEFORE UPDATE ON mesh.federation_alias_lease
+CREATE OR REPLACE TRIGGER federation_alias_lease_clock_order BEFORE UPDATE ON mesh.federation_alias_lease
     FOR EACH ROW EXECUTE FUNCTION mesh_ops.keep_updated_at_order_v2();

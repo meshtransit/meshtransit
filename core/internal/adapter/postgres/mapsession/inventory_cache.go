@@ -241,6 +241,11 @@ const clockMargin = 2 * time.Second
 // is compared with.
 func (cached cachedInventory) databaseNow() time.Time {
 	if cached.readLocal.IsZero() {
+		// Without a local instant the read cannot age on the monotonic
+		// clock; the later of the two keeps every deadline early.
+		if now := time.Now(); now.After(cached.readAt) {
+			return now
+		}
 		return cached.readAt
 	}
 	return cached.readAt.Add(time.Since(cached.readLocal))

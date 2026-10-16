@@ -5040,16 +5040,17 @@ func TestSharingUpdatedAtOrderLog(t *testing.T) {
 	}
 	for _, table := range tables {
 		trigger := table + "_clock_order"
-		want := "DROP TRIGGER " + trigger + " ON mesh." + table + ";\nCREATE TRIGGER " + trigger +
+		want := "\nCREATE OR REPLACE TRIGGER " + trigger +
 			" BEFORE UPDATE ON mesh." + table + "\n    FOR EACH ROW EXECUTE FUNCTION mesh_ops.keep_updated_at_order_v2();"
 		if !strings.Contains(migration.SQL, want) {
 			t.Errorf("schema 173 must contain %q", want)
 		}
 	}
-	if strings.Count(migration.SQL, "CREATE TRIGGER ") != len(tables) || strings.Count(migration.SQL, "DROP ") != len(tables) {
+	if strings.Count(migration.SQL, "CREATE OR REPLACE TRIGGER ") != len(tables) ||
+		strings.Count(migration.SQL, "CREATE TRIGGER ") != 0 || strings.Contains(migration.SQL, "DROP ") {
 		t.Error("schema 173 must re-point exactly the schema 172 triggers")
 	}
-	for _, forbidden := range []string{"CREATE OR REPLACE", "BYPASSRLS", "OWNER TO", "GRANT ", "ALTER TABLE",
+	for _, forbidden := range []string{"CREATE OR REPLACE FUNCTION", "BYPASSRLS", "OWNER TO", "GRANT ", "ALTER TABLE",
 		"DROP FUNCTION", "DISABLE ROW LEVEL SECURITY", "NO FORCE ROW LEVEL SECURITY"} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 173 must not contain %q", forbidden)
