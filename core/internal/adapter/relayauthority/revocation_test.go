@@ -19,7 +19,7 @@ type mutableRevocations struct {
 	revoked Revoked
 }
 
-func (m *mutableRevocations) RelayRevocations(context.Context, time.Time) (Revoked, error) {
+func (m *mutableRevocations) RelayRevocations(context.Context, time.Duration) (Revoked, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return Revoked{NodeKeys: append([][32]byte(nil), m.revoked.NodeKeys...),
@@ -202,5 +202,32 @@ func TestLongPollSlotsArePerSource(t *testing.T) {
 	if w := serve(h, http.MethodGet, StatePath+"?wait=1", "192.0.2.2:1000", held); w.Code != http.StatusNotModified ||
 		time.Since(start) < 900*time.Millisecond {
 		t.Fatalf("another source was not held: %d after %v", w.Code, time.Since(start))
+	}
+}
+
+// TestPublisherReachesBackFromTheWindowStart checks that each read reaches
+// back from the window start by this host's elapsed time: the database
+// applies that duration to its own clock, so skew between the two clocks
+// changes nothing.
+func TestPublisherReachesBackFromTheWindowStart(t *testing.T) {
+	t.Parallel()
+
+	current := signer(t, 1)
+	m := testMap(t)
+	var lookback time.Duration
+	c := newClock(t0.Add(3 * time.Second))
+	p := newPublisher(t, c, Options{Signer: current, Map: &m, Revocations: revocations{lookback: &lookback}})
+	if err := p.refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if lookback != 3*time.Second+RevocationWindow {
+		t.Fatalf("refresh lookback = %v, want 3s + %v", lookback, RevocationWindow)
+	}
+	c.advance(2 * time.Second)
+	if err := p.checkRevocations(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if lookback != 5*time.Second+RevocationWindow {
+		t.Fatalf("check lookback = %v, want 5s + %v", lookback, RevocationWindow)
 	}
 }

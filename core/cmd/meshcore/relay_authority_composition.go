@@ -103,8 +103,8 @@ type relayRevocationSource struct {
 	store *postgres.RelayRevocationStore
 }
 
-func (source relayRevocationSource) RelayRevocations(ctx context.Context, since time.Time) (relayauthority.Revoked, error) {
-	revoked, err := source.store.ReadRelayRevocations(ctx, since)
+func (source relayRevocationSource) RelayRevocations(ctx context.Context, lookback time.Duration) (relayauthority.Revoked, error) {
+	revoked, err := source.store.ReadRelayRevocations(ctx, lookback)
 	if err != nil {
 		return relayauthority.Revoked{}, err
 	}

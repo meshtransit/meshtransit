@@ -52,9 +52,11 @@ type Revoked struct {
 	TrustContracts [][16]byte
 }
 
-// RevocationSource lists what ended at or after since.
+// RevocationSource lists what ended within lookback before the database
+// clock's now. Revocation times are the database clock's, so only a
+// duration crosses from this host's clock.
 type RevocationSource interface {
-	RelayRevocations(ctx context.Context, since time.Time) (Revoked, error)
+	RelayRevocations(ctx context.Context, lookback time.Duration) (Revoked, error)
 }
 
 // Options configures a Publisher.
@@ -257,8 +259,8 @@ func (p *Publisher) refresh(ctx context.Context) error {
 }
 
 // buildState assembles the relay state issued at issued, revoking what ended
-// since window minus RevocationWindow. It returns a key of the revocations
-// for change detection.
+// since window minus RevocationWindow, measured on the database clock. It
+// returns a key of the revocations for change detection.
 func (p *Publisher) buildState(ctx context.Context, issued, window time.Time) (mtrp.RelayState, string, error) {
 	state := mtrp.RelayState{
 		Sequence:    issued.UnixMilli(),
@@ -268,7 +270,11 @@ func (p *Publisher) buildState(ctx context.Context, issued, window time.Time) (m
 		SigningKeys: p.trustedKeys(window),
 	}
 	if p.opts.Revocations != nil {
-		revoked, err := p.opts.Revocations.RelayRevocations(ctx, window.Add(-RevocationWindow))
+		// The window started this long ago on this host's clock; reaching back
+		// that long, plus the ticket lifetime, on the database clock covers the
+		// same revocations whatever the skew between the two clocks.
+		lookback := max(p.opts.Now().Sub(window), 0) + RevocationWindow
+		revoked, err := p.opts.Revocations.RelayRevocations(ctx, lookback)
 		if err != nil {
 			p.opts.Metrics.refreshes.WithLabelValues("revocations_failed").Inc()
 			return mtrp.RelayState{}, "", err

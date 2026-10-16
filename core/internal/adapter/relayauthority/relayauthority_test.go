@@ -132,13 +132,13 @@ func openState(t *testing.T, doc *document, keys ...key.SigningPublic) mtrp.Rela
 }
 
 type revocations struct {
-	revoked Revoked
-	since   *time.Time
+	revoked  Revoked
+	lookback *time.Duration
 }
 
-func (r revocations) RelayRevocations(_ context.Context, since time.Time) (Revoked, error) {
-	if r.since != nil {
-		*r.since = since
+func (r revocations) RelayRevocations(_ context.Context, lookback time.Duration) (Revoked, error) {
+	if r.lookback != nil {
+		*r.lookback = lookback
 	}
 	return r.revoked, nil
 }
@@ -152,10 +152,10 @@ func TestPublisherSignsStateAndMap(t *testing.T) {
 	drained := key.RelayPublic{0x5e}
 	revokedNode := [32]byte{1}
 	contract := [16]byte{0x0c}
-	var since time.Time
+	var lookback time.Duration
 	p := newPublisher(t, c, Options{
 		Signer: current, Next: &next, Map: &m, Drain: []key.RelayPublic{drained},
-		Revocations: revocations{revoked: Revoked{NodeKeys: [][32]byte{revokedNode}, TrustContracts: [][16]byte{contract}}, since: &since},
+		Revocations: revocations{revoked: Revoked{NodeKeys: [][32]byte{revokedNode}, TrustContracts: [][16]byte{contract}}, lookback: &lookback},
 	})
 	if err := p.refresh(t.Context()); err != nil {
 		t.Fatal(err)
@@ -173,8 +173,10 @@ func TestPublisherSignsStateAndMap(t *testing.T) {
 		len(s.Zones) != 1 || s.Zones[0] != mtrp.ZoneRevocationHash(mtrp.Zone{Kind: mtrp.ZoneTrustContract, ID: contract}) {
 		t.Fatal("drain or revocations not published")
 	}
-	if !since.Equal(t0.Add(-RevocationWindow)) {
-		t.Fatalf("revocation window starts at %v", since)
+	// The window starts now on this host's clock: the source reaches back
+	// the revocation window from the database clock's now.
+	if lookback != RevocationWindow {
+		t.Fatalf("revocation lookback = %v, want %v", lookback, RevocationWindow)
 	}
 	if _, _, err := mtrp.OpenDocument(p.state.Load().body, mtrp.DocumentRelayState, mtrp.NewStaticKeys(next.Public())); err == nil {
 		t.Fatal("state verified with the next key, which must not sign")
@@ -277,7 +279,7 @@ func TestPublisherKeepsDocumentsWhenRevocationsFail(t *testing.T) {
 
 type failingSource struct{ fail atomic.Bool }
 
-func (f *failingSource) RelayRevocations(context.Context, time.Time) (Revoked, error) {
+func (f *failingSource) RelayRevocations(context.Context, time.Duration) (Revoked, error) {
 	if f.fail.Load() {
 		return Revoked{}, errors.New("database unavailable")
 	}

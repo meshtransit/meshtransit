@@ -25,13 +25,15 @@ func assertPostgreSQLRelayRevocations(ctx context.Context, t *testing.T, admin *
 	if err := admin.QueryRow(ctx, `SELECT pg_catalog.now()`).Scan(&now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ReadRelayRevocations(ctx, now.Add(-2*time.Hour)); err == nil {
+	if _, err := store.ReadRelayRevocations(ctx, 2*time.Hour); err == nil {
 		t.Fatal("a window longer than one hour was accepted")
 	}
 	// Fixtures earlier in the run ended key epochs and contracts; widen the
-	// view to everything that ended in the last hour.
-	since := now.Add(-59 * time.Minute)
-	revoked, err := store.ReadRelayRevocations(ctx, since)
+	// view to almost an hour back from the store's own database time, which
+	// is after now, so it covers everything that ended since this check's
+	// window start.
+	since := now.Add(-58 * time.Minute)
+	revoked, err := store.ReadRelayRevocations(ctx, 59*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

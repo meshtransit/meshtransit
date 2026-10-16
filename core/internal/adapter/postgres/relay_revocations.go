@@ -44,9 +44,14 @@ func NewRelayRevocationStore(pool *Pool) (*RelayRevocationStore, error) {
 	return &RelayRevocationStore{database: pool.resourceAuthorityDatabase, metrics: pool.metrics}, nil
 }
 
-// ReadRelayRevocations returns what ended at or after since.
-func (store *RelayRevocationStore) ReadRelayRevocations(ctx context.Context, since time.Time) (_ RelayRevocations, resultErr error) {
-	if store == nil || store.database == nil || ctx == nil {
+// maxRelayRevocationLookback is the furthest back relay_revocations_v1 reads.
+const maxRelayRevocationLookback = time.Hour
+
+// ReadRelayRevocations returns what ended within lookback before the
+// database clock's now: revocation times are the database clock's.
+func (store *RelayRevocationStore) ReadRelayRevocations(ctx context.Context, lookback time.Duration) (_ RelayRevocations, resultErr error) {
+	if store == nil || store.database == nil || ctx == nil ||
+		lookback <= 0 || lookback > maxRelayRevocationLookback {
 		return RelayRevocations{}, ErrRelayRevocations
 	}
 	startedAt := time.Now()
@@ -60,6 +65,11 @@ func (store *RelayRevocationStore) ReadRelayRevocations(ctx context.Context, sin
 		return RelayRevocations{}, errors.Join(ErrRelayRevocations, err)
 	}
 	defer func() { _ = transaction.Rollback(context.WithoutCancel(ctx)) }()
+	now, err := readTransactionTime(ctx, transaction.QueryRow)
+	if err != nil {
+		return RelayRevocations{}, errors.Join(ErrRelayRevocations, err)
+	}
+	since := now.Add(-lookback)
 	var encoded string
 	if err := transaction.QueryRow(ctx, readRelayRevocationsSQL, since).Scan(&encoded); err != nil {
 		return RelayRevocations{}, errors.Join(ErrRelayRevocations, err)
