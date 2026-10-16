@@ -105,7 +105,7 @@ the runtime user, `worker` uses the worker user, `all` both.
 
 ### Migrations and bootstrap
 
-Read only by `meshcore migrate status|up`, `meshcore bootstrap check|apply`
+Read only by `meshcore migrate status|up|verify`, `meshcore bootstrap check|apply`
 and `meshcore account`;
 they never fall back to the runtime credentials.
 
@@ -124,6 +124,24 @@ they never fall back to the runtime credentials.
 
 `bootstrap` also loads the configuration of `MESHTRANSIT_ROLE`, which must be
 `api` (or `all`) with the Console login.
+
+### Operator steps
+
+Read only by `meshcore migrate operator status|apply`; they never fall back
+to the migrator's or the runtime's settings. The user is the database
+operator, normally a superuser, never a MeshTransit role
+([deployment](deployment.md#migrations-and-operator-steps)).
+
+| Variable | Default | Allowed | Meaning |
+|---|---|---|---|
+| `MESHTRANSIT_OPERATOR_POSTGRES_ADDRESS` | required | address | Database endpoint |
+| `MESHTRANSIT_OPERATOR_POSTGRES_DATABASE` | required | name | Database |
+| `MESHTRANSIT_OPERATOR_POSTGRES_USER` | required | name | Operator role |
+| `MESHTRANSIT_OPERATOR_POSTGRES_PASSWORD_FILE` | required | path | Its password |
+| `MESHTRANSIT_OPERATOR_POSTGRES_CA_FILE` | required | path | CA bundle |
+| `MESHTRANSIT_OPERATOR_CONNECT_TIMEOUT` | `5s` | 100ms–30s | |
+| `MESHTRANSIT_OPERATOR_LOCK_TIMEOUT` | `5s` | 100ms–30s, below the statement timeout | |
+| `MESHTRANSIT_OPERATOR_STATEMENT_TIMEOUT` | `30s` | 1s–10m | |
 
 ## Redis
 

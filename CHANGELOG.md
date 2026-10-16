@@ -5,6 +5,29 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: `meshcore migrate operator apply` runs the operator SQL steps from the
+  binary instead of by hand with `psql`. It connects with its own
+  `MESHTRANSIT_OPERATOR_*` settings as a superuser or `CREATEROLE` role, and
+  refuses the migrator, runtime, worker and owner roles. It runs, in order
+  and in one transaction under the migration lock, every step that does not
+  hold (and the later steps again), never a step whose migration is not
+  applied (`--through N` refuses one), and the steps of migrations 53 to 93,
+  170 and 171 only with `--after-rollout`; it then checks that every step
+  holds and rolls back otherwise. `--dry-run` rolls back always, and
+  `meshcore migrate operator status` lists every step. A step holds when its
+  roles, function owners and `EXECUTE` grants are in place, so steps applied
+  by hand count too; nothing new is stored. `meshcore migrate verify` (with
+  the migrator's settings) reports the schema state and exactly which role,
+  owner or grant of which step is missing, and exits with status 3 while a
+  migration or a step is pending.
+- Core: a pending operator step is now visible. Readiness stays up, since
+  some steps must wait until a rollout ends, but each check logs the pending
+  steps when they change and exports
+  `meshtransit_postgres_operator_steps_pending`; the policy publication,
+  Imported Resource, share decision, alias worker and map reader paths
+  export the function version they selected in
+  `meshtransit_postgres_function_version` and log a warning naming the
+  operator step while it is below the newest.
 - Core schema 172 and Core: every time Core persists, or compares with
   persisted state, now comes from the PostgreSQL clock: share, Resource,
   policy approval and publication, Device registration, revocation and

@@ -18,7 +18,11 @@ Every Core process serves its operator listener
 | `GET /scale/v1/sessions` | On `control`: session counts for an autoscaler (KEDA's metrics API) |
 
 Readiness checks every dependency every 10 seconds; PostgreSQL readiness
-includes the [schema check](upgrades.md#the-rules-that-make-it-safe). In an
+includes the [schema check](upgrades.md#the-rules-that-make-it-safe). A
+pending operator step does not lower readiness, since some steps must wait
+until a rollout ends; at most once a minute the check reads the operator
+steps, logs the pending ones when they change and counts them in
+`meshtransit_postgres_operator_steps_pending` (-1 while that read fails). In an
 `all` process, losing the identity broker or the Console login lowers only
 `/ready/login`; `/ready` stays up for the other work. The operator listener
 belongs on a private network.
@@ -43,6 +47,7 @@ Names are stable; labels carry outcome names only, never identifiers.
 | Endpoints | `meshtransit_endpoint_announcements_total{outcome}` (`announced`, `deferred`, `unchanged`, `flushed`) |
 | PostgreSQL | `meshtransit_postgres_operations_total{pool_role,operation,result}`, `…_operation_duration_seconds`, `meshtransit_postgres_pool_connections{pool_role,state}`, `…_pool_connections_max`, `…_pool_acquires_total{pool_role,result}` |
 | Clocks | `meshtransit_postgres_clock_skew_seconds` (this host's clock minus the database's; positive when the host runs ahead), `…_clock_skew_round_trip_seconds`, `…_clock_skew_sampled_timestamp_seconds`, `…_clock_skew_samples_total{result}` ([clocks](#clocks)) |
+| Operator steps | `meshtransit_postgres_operator_steps_pending{pool_role}` (operator steps of applied migrations that do not hold, read with readiness at most once a minute; -1 when the read fails), `meshtransit_postgres_function_version{pool_role,path}` (the function version the last call of `policy_publication`, `imported_policy_destinations`, `share_decision`, `device_alias_worker`, `alias_map_edges` or `sharing_dependencies` selected; below the newest while its operator step is pending) |
 | Redis | `meshtransit_redis_commands_total{operation,result}`, `…_command_duration_seconds`, `meshtransit_redis_pool_connections{state}`, `…_pool_pending_requests`, `…_pool_timeouts_total`, `meshtransit_redis_subscriptions_active` |
 | Wakeups | `meshtransit_revision_feed_*`, `meshtransit_connectivity_feed_*`: subscriber connected, watchers, wakeups, fan-out, reconnects |
 | Revision worker | `meshtransit_revision_worker_ready_backlog_events`, `…_oldest_ready_event_age_seconds`, `…_delivery_attempts_total{result}` |
@@ -79,6 +84,7 @@ Go runtime and process metrics are included.
 | Revisions not delivered | `meshtransit_revision_worker_oldest_ready_event_age_seconds > 60` |
 | PostgreSQL | error rate of `meshtransit_postgres_operations_total` > 0; p99 duration > 1 s; pool acquired / max > 0.9 |
 | Clock skew | `abs(meshtransit_postgres_clock_skew_seconds) > 1` for 10 m; `time() - meshtransit_postgres_clock_skew_sampled_timestamp_seconds > 300` (no recent sample) |
+| Operator step forgotten | `max(meshtransit_postgres_operator_steps_pending) > 0` for 24 h (a step pending during a rollout is expected); `< 0` for 1 h means the check cannot read the steps |
 | Redis | error rate > 0; p99 > 0.5 s; `…_pool_pending_requests > 0`; timeouts |
 | A worker job stopped | `meshtransit_<job>_worker_running != 1` for an enabled job |
 | Enforcement mismatch | rate of `meshtransit_enforcement_ledger_worker_audited_total` > 0 (Devices not enforcing what they were sent) |

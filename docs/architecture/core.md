@@ -90,7 +90,9 @@ checksums match its catalog, and refuses to run otherwise. An applied
 migration is therefore never edited, not even its comments. A migration must
 keep the previous release working on the new schema, so a rollback is a
 binary rollback. Ownership changes that need an operator run separately from
-`core/migrations/operator/`. An operator step may take only a function its own
+`core/migrations/operator/`, embedded in the binary, with
+`meshcore migrate operator apply`; `meshcore migrate verify` checks that the
+roles, owners and grants each step sets hold. An operator step may take only a function its own
 migration creates for the first time away from `mesh_runtime` or
 `mesh_worker`; the previous version stays executable until a later release
 removes it. A test checks the operator steps for this. The steps of migrations 53 to 93 predate this rule and do

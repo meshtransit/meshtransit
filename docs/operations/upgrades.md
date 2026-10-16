@@ -23,13 +23,20 @@ How to move a deployment to a new Core or relay release, and back.
 
 `meshcore migrate status` prints the schema version, the newest version the
 binary knows and the state (`uninitialized`, `pending` or `clean`) as JSON.
+`meshcore migrate verify` prints the same and, for every operator step of the
+applied migrations, whether it holds and, when it does not, exactly which
+role, owner or grant is missing; it exits with status 3 while a migration or
+an operator step is pending
+([deployment](deployment.md#migrations-and-operator-steps)).
 
 ## Upgrading Core
 
 1. **Read the release notes** for operator steps and feature gates.
 2. **Back up** the database.
-3. **Create new roles:** run any new `…_role.sql` operator file before the
-   migration of the same number.
+3. **Create new roles:** run `meshcore migrate operator apply` with the
+   operator's settings before the migration. It runs every `…_role.sql`
+   step that does not hold, and leaves the ownership steps of migrations not
+   applied yet for later.
 4. **Migrate:** run `meshcore migrate up` with the new binary and the
    migrator's settings. All pending migrations apply in one transaction (the
    statement timeout, 30 s by default, applies to each statement); it takes an
@@ -38,15 +45,27 @@ binary knows and the state (`uninitialized`, `pending` or `clean`) as JSON.
    has finished.
 5. **Roll out** the new binary, role by role. Any order works, since old and
    new binaries run on the new schema.
-6. **Run the new `…_ownership.sql` operator files**, as a database superuser,
-   once no replica of the previous release is left: those of migrations 53 to
-   93 revoke the previous version of a function, which the previous binary
-   still calls ([deployment](deployment.md#migrations-and-operator-steps)).
-   Later ones keep previous versions executable. Run the schema 170 file
-   once no worker of the previous release is left too: a previous worker
-   withdraws again a consumer Device the new one readmitted. The same holds
-   for the schema 171 file: a previous worker cannot add consumer Devices to
-   a share whose shared Device was readmitted.
+6. **Run the operator steps:** `meshcore migrate operator apply` right after
+   the migration runs the new ownership steps that are safe with the previous
+   release still running. Once no replica of the previous release is left,
+   run `meshcore migrate operator apply --after-rollout` for the steps that
+   wait for it: those of migrations 53 to 93 revoke the previous version of a
+   function, which the previous binary still calls; with the schema 170 step a
+   previous worker withdraws again a consumer Device the new one readmitted;
+   with the schema 171 step a previous worker cannot add consumer Devices to a
+   share whose shared Device was readmitted. Later steps keep previous
+   versions executable. Then `meshcore migrate verify` must exit 0
+   ([deployment](deployment.md#migrations-and-operator-steps)).
+
+Until its step runs, the new release keeps using the previous version of the
+functions the step grants (for example, at most 256 Imported Resources per
+policy, or no check that a Device is shared once into a Network). Core stays
+ready meanwhile: a step that waits for the rollout is pending during every
+rollout. Each Core process reports the pending steps in its log and in
+`meshtransit_postgres_operator_steps_pending`, and the function version each
+path uses in `meshtransit_postgres_function_version`
+([monitoring](monitoring.md#core-metrics)); a step still pending long after
+the rollout means step 6 was missed.
 
 During the rollout:
 
@@ -60,8 +79,9 @@ During the rollout:
 - Once the new replicas run, rebalancing (on by default) evens out sessions
   within a few intervals.
 
-A Helm hook or a job can run step 3 before the rollout; the migrator's
-credentials should be available to that job only.
+A Helm hook or a job can run steps 3 and 4 before the rollout, and another
+one step 6 after it; the operator's and the migrator's credentials should be
+available to those jobs only.
 
 ## Rolling back
 

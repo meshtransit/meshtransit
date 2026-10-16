@@ -4,6 +4,9 @@ Schema version alone does not establish the serving function profile. Migrations
 create the functions, while operator scripts transfer ownership to dedicated
 NOLOGIN/NOBYPASSRLS roles and grant only supported entry points. The PostgreSQL
 integration fixture runs those scripts explicitly. Deployment must do the same.
+`meshcore migrate operator apply` runs them from the binary, and
+`meshcore migrate verify` reports any step whose roles, owners or grants do
+not hold ([deployment](../../operations/deployment.md#migrations-and-operator-steps)).
 
 Before enabling sharing, run `scripts/qualification/check-device-sharing-database.sql`
 as the database operator with `psql -X -v ON_ERROR_STOP=1 -f`. This gate reads only

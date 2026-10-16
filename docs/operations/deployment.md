@@ -91,33 +91,72 @@ drops a pool whose server became read-only.
 
 ### Migrations and operator steps
 
-1. Run `meshcore migrate up` with the migrator's settings (`MESHTRANSIT_MIGRATION_*`).
+1. As the database operator, run `meshcore migrate operator apply` with the
+   operator's settings (`MESHTRANSIT_OPERATOR_*`,
+   [configuration](configuration.md#operator-steps)). On a new database it
+   creates the NOLOGIN roles of the `…_role.sql` steps. A fresh install that
+   created every role above already has them.
+2. Run `meshcore migrate up` with the migrator's settings (`MESHTRANSIT_MIGRATION_*`).
    It applies every pending migration in one transaction, under an advisory
    lock, so concurrent runs serialize. Core refuses to start on a schema
    older than its binary, so run this before starting a new release. See
    [upgrades](upgrades.md).
-2. As a database superuser, run the **operator SQL** in
-   `core/migrations/operator/` (in the source tree; it is not in the image), in
-   file order:
-   - `…_role.sql` creates a NOLOGIN role and must run **before** the migration
-     of the same number. It creates the role only if it is missing, and resets
-     the attributes of an existing one to NOLOGIN and no other privilege, so it
-     is safe to run again. A fresh install that created every role above
-     already has them.
-   - `…_ownership.sql` moves the new functions to their owner role and grants
-     `EXECUTE` to the runtime or worker role; run it **after** its migration.
-     Those of migrations 53 to 93 also revoke the previous version of a
-     function, so on an upgrade across them run them only once no older Core
-     replica is left ([upgrades](upgrades.md)); later ones keep previous
-     versions executable.
+3. Run `meshcore migrate operator apply --after-rollout` (on a fresh install
+   no previous release runs), then `meshcore migrate verify`, which must exit 0.
 
-   Core has no command for this step yet. `core/scripts/qualification/`
-   has `check-device-sharing-database.sql`, which checks the result for the
-   sharing functions.
+The operator steps are the SQL files in `core/migrations/operator/`, embedded
+in the binary; the command runs only those, never a file from disk:
+
+- `…_role.sql` creates a NOLOGIN role and must run **before** the migration
+  of the same number. It creates the role only if it is missing, and resets
+  the attributes of an existing one to NOLOGIN and no other privilege, so it
+  is safe to run again.
+- `…_ownership.sql` moves the new functions to their owner role and grants
+  `EXECUTE` to the runtime or worker role; it runs **after** its migration.
+  Those of migrations 53 to 93, 170 and 171 wait until no replica of the
+  previous release is left ([upgrades](upgrades.md)); later ones keep previous
+  versions executable.
+
+`meshcore migrate operator apply`:
+
+- connects as the operator, normally a superuser, and is refused as the
+  migrator, the runtime or worker role, any role the steps manage, or a role
+  that is neither a superuser nor `CREATEROLE` (a `CREATEROLE` role passes
+  the check, but PostgreSQL lets it hand a function over only if it may act
+  as both the migrator and the owner role; otherwise the step fails and
+  nothing is applied);
+- takes the migration lock, so it never runs during `meshcore migrate up`,
+  and refuses a schema whose migration state is not clean;
+- runs, in file order and in one transaction, every step that does not hold
+  and, after the earliest such step, the steps after it again (each is
+  idempotent), so a later step stays the last word;
+- leaves a step whose migration is not applied, and with `--through N`
+  refuses one up to migration `N`;
+- leaves a step that waits for the rollout, and every ownership step after it, unless
+  `--after-rollout` says no replica of the previous release is left;
+- checks afterwards that every step it ran holds and that no step that held
+  before stopped holding, and otherwise rolls everything back;
+- with `--dry-run`, does all of this and rolls back.
+
+It prints JSON: the steps it ran (`applied`), those it ran again
+(`replayed`), those it left with the reason (`awaiting_migration`,
+`after_rollout`, `after_earlier_step`, `beyond_through`) and those still
+pending. `meshcore migrate operator status` lists every step and what is
+missing, without changing anything; it needs the operator's settings too,
+while `meshcore migrate verify` gives the same report with the migrator's. A step holds when PostgreSQL shows what
+its file sets: the role and its attributes, the owner of each function, and
+which roles hold `EXECUTE` on it; nothing else records that a step ran, so
+steps applied by hand count as well.
+
+Without the command, run the files with `psql -X -v ON_ERROR_STOP=1 -f` as a
+database superuser, in file order, at the same points (a `…_role.sql` file
+before its migration, an `…_ownership.sql` file after it), then check with
+`meshcore migrate verify`.
 
 Some features use the functions these steps grant, and fall back to earlier,
 smaller limits without them (for example sharing; see the
 [Device sharing deployment gate](../core/design/device-sharing-deployment-gate.md)).
+`meshtransit_postgres_function_version` shows the version each path uses.
 
 ## Redis
 
