@@ -144,10 +144,18 @@ func (store *AccountSessionStore) Resolve(
 			ErrAccountSessionEvidence,
 		)
 	}
-	if accountsession.IsActivity(ctx) && shouldTouchAccountSession(session, time.Now().UTC()) {
-		session, err = touchResolvedAccountSession(ctx, transaction, session, digest)
+	if accountsession.IsActivity(ctx) {
+		// Whether the session is due for renewal is judged on the database
+		// clock, which stamped its deadlines.
+		now, err := readTransactionTime(ctx, transaction.QueryRow)
 		if err != nil {
 			return accountsession.Session{}, false, errors.Join(ErrResolveAccountSession, err)
+		}
+		if shouldTouchAccountSession(session, now) {
+			session, err = touchResolvedAccountSession(ctx, transaction, session, digest)
+			if err != nil {
+				return accountsession.Session{}, false, errors.Join(ErrResolveAccountSession, err)
+			}
 		}
 	}
 	if err := transaction.Commit(ctx); err != nil {

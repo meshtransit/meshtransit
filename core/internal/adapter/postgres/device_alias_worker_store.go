@@ -153,7 +153,12 @@ func (store *DeviceAliasWorkerStore) Change(ctx context.Context, intent deviceal
 	if err := transaction.QueryRow(ctx, prepareQuery, prepareArgs...).Scan(&encoded); err != nil {
 		return false, errors.Join(ErrDeviceAliasChange, err)
 	}
-	proof, err := decodeDeviceAliasChangeProof(encoded, intent, ids[5])
+	// The deadline SQL computed is judged on the database clock.
+	evaluatedAt, err := readTransactionTime(ctx, transaction.QueryRow)
+	if err != nil {
+		return false, errors.Join(ErrDeviceAliasChange, err)
+	}
+	proof, err := decodeDeviceAliasChangeProof(encoded, intent, ids[5], evaluatedAt)
 	if err != nil {
 		return false, errors.Join(ErrDeviceAliasChange, err)
 	}
@@ -213,7 +218,9 @@ type deviceAliasEvidence struct {
 	EventHash       string `json:"event_hash,omitempty"`
 }
 
-func decodeDeviceAliasChangeProof(encoded []byte, intent devicealias.ChangeIntent, change publicid.ID) (deviceAliasChangeProof, error) {
+func decodeDeviceAliasChangeProof(
+	encoded []byte, intent devicealias.ChangeIntent, change publicid.ID, evaluatedAt time.Time,
+) (deviceAliasChangeProof, error) {
 	if len(encoded) == 0 || len(encoded) > 65536 {
 		return deviceAliasChangeProof{}, ErrDeviceAliasChange
 	}
@@ -239,7 +246,7 @@ func decodeDeviceAliasChangeProof(encoded []byte, intent devicealias.ChangeInten
 		return proof, nil
 	}
 	transaction, err := strconv.ParseInt(proof.TransactionID, 10, 64)
-	if err != nil || transaction <= 0 || proof.ChangeID != change.String() || proof.EndpointID != intent.EndpointID.String() || len(proof.Events) != 2 || proof.AggregateVersion <= 0 || !proof.Deadline.After(time.Now()) {
+	if err != nil || transaction <= 0 || proof.ChangeID != change.String() || proof.EndpointID != intent.EndpointID.String() || len(proof.Events) != 2 || proof.AggregateVersion <= 0 || !proof.Deadline.After(evaluatedAt) {
 		return deviceAliasChangeProof{}, ErrDeviceAliasChange
 	}
 	wantKind := "device_alias_lease"

@@ -118,6 +118,12 @@ type aliasWorkerTestTransaction struct {
 
 func (transaction *aliasWorkerTestTransaction) QueryRow(ctx context.Context, query string, args ...any) outboxRow {
 	switch query {
+	case transactionTimeSQL:
+		// Every unit of work reads its time on the database clock.
+		return fakeOutboxRow{scan: func(values ...any) error {
+			*values[0].(*time.Time) = time.Now().UTC()
+			return nil
+		}}
 	case deviceAliasWorkerVersionSQL:
 		return fakeOutboxRow{scan: func(values ...any) error {
 			*values[0].(*int) = max(transaction.version, 2)
