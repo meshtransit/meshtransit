@@ -41,7 +41,6 @@ type Service struct {
 	committed    CommittedResultResolver
 	nodeIDs      NodeIDGenerator
 	mutationIDs  MutationIDGenerator
-	clock        Clock
 	retry        RetryWaiter
 }
 
@@ -49,7 +48,7 @@ type Service struct {
 func NewService(options Options, dependencies Dependencies) (*Service, error) {
 	if dependencies.Transactions == nil || dependencies.CommittedResults == nil ||
 		dependencies.NodeIDs == nil ||
-		dependencies.MutationIDs == nil || dependencies.Clock == nil || dependencies.Retry == nil ||
+		dependencies.MutationIDs == nil || dependencies.Retry == nil ||
 		options.MaxAttempts <= 0 || options.MaxAttempts > maxRegistrationAttempts ||
 		options.RollbackTimeout <= 0 || options.RollbackTimeout > 5*time.Second {
 		return nil, ErrInvalidService
@@ -60,27 +59,22 @@ func NewService(options Options, dependencies Dependencies) (*Service, error) {
 		committed:    dependencies.CommittedResults,
 		nodeIDs:      dependencies.NodeIDs,
 		mutationIDs:  dependencies.MutationIDs,
-		clock:        dependencies.Clock,
 		retry:        dependencies.Retry,
 	}, nil
 }
 
 // Register creates or resumes one logical Node. Retry replays the entire
-// transaction with the same decision time and application-generated IDs.
+// transaction with the same application-generated IDs; each attempt decides
+// on its own transaction's database time.
 func (service *Service) Register(ctx context.Context, command Command) (Result, error) {
 	if ctx == nil || service == nil || service.transactions == nil || service.committed == nil ||
 		service.nodeIDs == nil ||
-		service.mutationIDs == nil || service.clock == nil || service.retry == nil || !command.IsValid() {
+		service.mutationIDs == nil || service.retry == nil || !command.IsValid() {
 		return Result{}, ErrInvalidCommand
 	}
 	if err := ctx.Err(); err != nil {
 		return Result{}, errors.Join(ErrRegistrationFailed, err)
 	}
-	now := service.clock.Now().UTC()
-	if now.IsZero() {
-		return Result{}, ErrInvalidService
-	}
-
 	var generatedNodeID node.ID
 	var generatedMutationIDs MutationIDs
 	var lastErr error
@@ -88,7 +82,6 @@ func (service *Service) Register(ctx context.Context, command Command) (Result, 
 		result, err := service.attempt(
 			ctx,
 			command,
-			now,
 			&generatedNodeID,
 			&generatedMutationIDs,
 		)
@@ -124,7 +117,6 @@ func (service *Service) Register(ctx context.Context, command Command) (Result, 
 func (service *Service) attempt(
 	ctx context.Context,
 	command Command,
-	now time.Time,
 	generatedNodeID *node.ID,
 	generatedMutationIDs *MutationIDs,
 ) (result Result, resultErr error) {
@@ -157,6 +149,12 @@ func (service *Service) attempt(
 		}
 	}()
 
+	// Credential and registration validity, the Device's expiry and every
+	// persisted time are the database clock's.
+	now := transaction.DecisionTime()
+	if now.IsZero() {
+		return Result{}, ErrInvalidService
+	}
 	resolution, err := transaction.Resolve(ctx, command)
 	if err != nil {
 		return Result{}, fmt.Errorf("resolve registration under lock: %w", err)

@@ -74,9 +74,6 @@ func TestExponentialBackoffHonorsCancellationAndEntropyFailure(t *testing.T) {
 func TestRuntimeDefaultsProduceValidValues(t *testing.T) {
 	t.Parallel()
 
-	if now := (SystemClock{}).Now(); now.IsZero() || now.Location() != time.UTC {
-		t.Fatalf("SystemClock.Now() = %v, want non-zero UTC", now)
-	}
 	nodeID, err := (PublicNodeIDGenerator{}).NewNodeID()
 	if err != nil {
 		t.Fatalf("PublicNodeIDGenerator.NewNodeID() error = %v", err)

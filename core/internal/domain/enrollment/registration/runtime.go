@@ -18,12 +18,6 @@ const maxRetryDelay = time.Minute
 // ErrInvalidBackoff reports an unsafe retry delay or retry ordinal.
 var ErrInvalidBackoff = errors.New("registration: invalid retry backoff")
 
-// SystemClock reads the process wall clock without retaining mutable state.
-type SystemClock struct{}
-
-// Now returns the current UTC time.
-func (SystemClock) Now() time.Time { return time.Now().UTC() }
-
 // PublicNodeIDGenerator creates UUIDv7 Node IDs from OS entropy.
 type PublicNodeIDGenerator struct{}
 

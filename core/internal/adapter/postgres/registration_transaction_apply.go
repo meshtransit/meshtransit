@@ -25,7 +25,9 @@ func (transaction *registrationTransaction) Apply(
 	}
 	transaction.mu.Lock()
 	defer transaction.mu.Unlock()
+	// The change decides on this transaction's database time only.
 	if transaction.database == nil || transaction.state != registrationTransactionResolved ||
+		!change.OccurredAt().Equal(transaction.decisionAt) ||
 		!transaction.changeMatchesLockedState(change) {
 		return registration.Result{}, ErrRegistrationTransactionState
 	}

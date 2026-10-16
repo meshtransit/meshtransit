@@ -216,7 +216,7 @@ func registerAddressTestNode(
 		t.Fatalf("registration %d Resolve() error = %v", index, err)
 	}
 	nodeID := fmt.Sprintf("01890f20-0000-7000-8000-0000000076%02d", index)
-	change := quarantineRegistrationChange(t, command, resolution, nodeID, index)
+	change := quarantineRegistrationChange(t, command, resolution, nodeID, index, transaction.DecisionTime())
 	if _, err := transaction.Apply(ctx, change); err != nil {
 		t.Fatalf("registration %d Apply() error = %v", index, err)
 	}
@@ -233,9 +233,9 @@ func quarantineRegistrationChange(
 	resolution registrationapp.Resolution,
 	nodeValue string,
 	index byte,
+	occurredAt time.Time,
 ) registrationapp.Change {
 	t.Helper()
-	occurredAt := time.Now().UTC()
 	credential, err := resolution.Credential().Consume(occurredAt, command.RecoveryEpoch)
 	if err != nil {
 		t.Fatalf("consume registration %d credential: %v", index, err)

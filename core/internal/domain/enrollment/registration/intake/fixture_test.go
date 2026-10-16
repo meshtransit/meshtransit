@@ -145,11 +145,8 @@ func (generator *fixedEvidenceIDs) NewEvidenceIDs() (intake.EvidenceIDs, error) 
 	return generator.ids, generator.err
 }
 
-type fixedClock struct {
-	now time.Time
-}
-
-func (clock fixedClock) Now() time.Time { return clock.now }
+// DecisionTime stands in for the database clock's time of the transaction.
+func (*fakeTransaction) DecisionTime() time.Time { return intakeTime }
 
 type noWait struct{}
 
@@ -173,7 +170,6 @@ func newService(
 			PreparedIntents:  transactions,
 			CredentialProofs: verifier,
 			EvidenceIDs:      ids,
-			Clock:            fixedClock{now: intakeTime},
 			Retry:            noWait{},
 		},
 	)

@@ -106,6 +106,13 @@ func (transaction *fakeRegistrationDatabaseTransaction) QueryRow(
 ) registrationRow {
 	transaction.mu.Lock()
 	defer transaction.mu.Unlock()
+	if query == transactionTimeSQL {
+		// Every unit of work reads its time on the database clock.
+		return registrationTestRow{scan: func(destinations ...any) error {
+			*destinations[0].(*time.Time) = time.Date(2026, 9, 13, 2, 0, 0, 0, time.UTC)
+			return nil
+		}}
+	}
 	transaction.record(query, arguments)
 	queued := transaction.rows[query]
 	if len(queued) == 0 {

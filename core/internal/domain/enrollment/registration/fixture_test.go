@@ -113,11 +113,8 @@ func (generator *fixedMutationIDs) NewMutationIDs() (registration.MutationIDs, e
 	return generator.ids, generator.err
 }
 
-type fixedClock struct {
-	now time.Time
-}
-
-func (clock fixedClock) Now() time.Time { return clock.now }
+// DecisionTime stands in for the database clock's time of the transaction.
+func (*fakeTransaction) DecisionTime() time.Time { return fixtureTime }
 
 type recordedRetry struct {
 	calls []int
@@ -161,7 +158,6 @@ func mustServiceWithMutationIDs(
 			CommittedResults: queue,
 			NodeIDs:          ids,
 			MutationIDs:      mutationIDs,
-			Clock:            fixedClock{now: fixtureTime},
 			Retry:            retry,
 		},
 	)

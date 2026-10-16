@@ -147,8 +147,14 @@ func (transactions *RegistrationTransactions) Begin(
 		return nil, errors.Join(ErrBeginRegistrationTransaction, ErrRegistrationEvidence)
 	}
 
+	decisionAt, err := readTransactionTime(ctx, databaseTransaction.QueryRow)
+	if err != nil {
+		return nil, errors.Join(ErrBeginRegistrationTransaction, classifyRegistrationDatabaseError(ctx, err))
+	}
+
 	owned = true
 	return &registrationTransaction{
+		decisionAt:          decisionAt,
 		database:            databaseTransaction,
 		scope:               scope,
 		workspaceInternalID: workspaceInternalID,

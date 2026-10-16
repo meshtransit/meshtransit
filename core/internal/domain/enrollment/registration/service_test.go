@@ -401,13 +401,11 @@ func TestNewServiceAndCommandValidation(t *testing.T) {
 	ids := &fixedNodeIDs{}
 	mutationIDs := &fixedMutationIDs{}
 	retry := &recordedRetry{}
-	clock := fixedClock{now: fixtureTime}
 	validDependencies := registration.Dependencies{
 		Transactions:     queue,
 		CommittedResults: queue,
 		NodeIDs:          ids,
 		MutationIDs:      mutationIDs,
-		Clock:            clock,
 		Retry:            retry,
 	}
 
@@ -420,42 +418,35 @@ func TestNewServiceAndCommandValidation(t *testing.T) {
 			name:    "missing transactions",
 			options: validOptions,
 			dependencies: registration.Dependencies{
-				CommittedResults: queue, NodeIDs: ids, MutationIDs: mutationIDs, Clock: clock, Retry: retry,
+				CommittedResults: queue, NodeIDs: ids, MutationIDs: mutationIDs, Retry: retry,
 			},
 		},
 		{
 			name:    "missing committed results",
 			options: validOptions,
 			dependencies: registration.Dependencies{
-				Transactions: queue, NodeIDs: ids, MutationIDs: mutationIDs, Clock: clock, Retry: retry,
+				Transactions: queue, NodeIDs: ids, MutationIDs: mutationIDs, Retry: retry,
 			},
 		},
 		{
 			name:    "missing Node IDs",
 			options: validOptions,
 			dependencies: registration.Dependencies{
-				Transactions: queue, CommittedResults: queue, MutationIDs: mutationIDs, Clock: clock, Retry: retry,
+				Transactions: queue, CommittedResults: queue, MutationIDs: mutationIDs, Retry: retry,
 			},
 		},
 		{
 			name:    "missing mutation IDs",
 			options: validOptions,
 			dependencies: registration.Dependencies{
-				Transactions: queue, CommittedResults: queue, NodeIDs: ids, Clock: clock, Retry: retry,
-			},
-		},
-		{
-			name:    "missing clock",
-			options: validOptions,
-			dependencies: registration.Dependencies{
-				Transactions: queue, CommittedResults: queue, NodeIDs: ids, MutationIDs: mutationIDs, Retry: retry,
+				Transactions: queue, CommittedResults: queue, NodeIDs: ids, Retry: retry,
 			},
 		},
 		{
 			name:    "missing retry",
 			options: validOptions,
 			dependencies: registration.Dependencies{
-				Transactions: queue, CommittedResults: queue, NodeIDs: ids, MutationIDs: mutationIDs, Clock: clock,
+				Transactions: queue, CommittedResults: queue, NodeIDs: ids, MutationIDs: mutationIDs,
 			},
 		},
 		{name: "zero attempts", options: registration.Options{RollbackTimeout: time.Second}, dependencies: validDependencies},

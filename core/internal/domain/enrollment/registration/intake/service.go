@@ -49,7 +49,6 @@ type Service struct {
 	prepared     PreparedIntentResolver
 	verifier     CredentialVerifier
 	evidenceIDs  EvidenceIDGenerator
-	clock        Clock
 	retry        RetryWaiter
 }
 
@@ -57,7 +56,7 @@ type Service struct {
 func NewService(options Options, dependencies Dependencies) (*Service, error) {
 	missingDependency := dependencies.Transactions == nil || dependencies.PreparedIntents == nil ||
 		dependencies.CredentialProofs == nil || dependencies.EvidenceIDs == nil ||
-		dependencies.Clock == nil || dependencies.Retry == nil
+		dependencies.Retry == nil
 	unsafeBounds := options.MaxAttempts <= 0 || options.MaxAttempts > maxAttempts ||
 		options.RollbackTimeout <= 0 || options.RollbackTimeout > 5*time.Second ||
 		options.PendingTTL <= 0 || options.PendingTTL > maxPendingTTL
@@ -70,7 +69,6 @@ func NewService(options Options, dependencies Dependencies) (*Service, error) {
 		prepared:     dependencies.PreparedIntents,
 		verifier:     dependencies.CredentialProofs,
 		evidenceIDs:  dependencies.EvidenceIDs,
-		clock:        dependencies.Clock,
 		retry:        dependencies.Retry,
 	}, nil
 }
@@ -79,16 +77,12 @@ func NewService(options Options, dependencies Dependencies) (*Service, error) {
 // creates or replays one semantic registration intent.
 func (service *Service) Prepare(ctx context.Context, request Request) (registration.Command, error) {
 	if ctx == nil || service == nil || service.transactions == nil || service.prepared == nil ||
-		service.verifier == nil || service.evidenceIDs == nil || service.clock == nil ||
+		service.verifier == nil || service.evidenceIDs == nil ||
 		service.retry == nil || !request.IsValid() {
 		return registration.Command{}, ErrInvalidRequest
 	}
 	if err := ctx.Err(); err != nil {
 		return registration.Command{}, errors.Join(ErrPrepareFailed, err)
-	}
-	now := service.clock.Now().UTC()
-	if now.IsZero() {
-		return registration.Command{}, ErrInvalidService
 	}
 	lookup := Lookup{
 		RegistrationID:     request.RegistrationID,
@@ -103,7 +97,7 @@ func (service *Service) Prepare(ctx context.Context, request Request) (registrat
 	var evidenceIDs EvidenceIDs
 	var lastErr error
 	for attempt := 1; attempt <= service.options.MaxAttempts; attempt++ {
-		command, err := service.attempt(ctx, request, lookup, now, &evidenceIDs)
+		command, err := service.attempt(ctx, request, lookup, &evidenceIDs)
 		if err == nil {
 			return command, nil
 		}
@@ -138,7 +132,6 @@ func (service *Service) attempt(
 	ctx context.Context,
 	request Request,
 	lookup Lookup,
-	now time.Time,
 	evidenceIDs *EvidenceIDs,
 ) (command registration.Command, resultErr error) {
 	transaction, err := service.transactions.Begin(ctx, lookup)
@@ -174,6 +167,12 @@ func (service *Service) attempt(
 		}
 	}()
 
+	// Credential validity, the pending intent's lifetime and every persisted
+	// time are the database clock's.
+	now := transaction.DecisionTime()
+	if now.IsZero() {
+		return registration.Command{}, ErrInvalidService
+	}
 	resolution, err := transaction.Resolve(ctx, lookup)
 	if err != nil {
 		if errors.Is(err, ErrCredentialRejected) {

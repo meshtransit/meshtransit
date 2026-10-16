@@ -65,7 +65,7 @@ WHERE workspace_id = 101 AND network_id = 201`).Scan(
 	if err != nil {
 		t.Fatalf("RegistrationTransaction.Resolve() error = %v", err)
 	}
-	change := registrationTransactionChange(t, command, resolution)
+	change := registrationTransactionChange(t, command, resolution, transaction.DecisionTime())
 	result, err := transaction.Apply(ctx, change)
 	if err != nil {
 		t.Fatalf("RegistrationTransaction.Apply() error = %v", err)
@@ -242,9 +242,9 @@ func registrationTransactionChange(
 	t *testing.T,
 	command registrationapp.Command,
 	resolution registrationapp.Resolution,
+	occurredAt time.Time,
 ) registrationapp.Change {
 	t.Helper()
-	occurredAt := time.Now().UTC()
 	credential, err := resolution.Credential().Consume(occurredAt, command.RecoveryEpoch)
 	if err != nil {
 		t.Fatalf("consume integration registration credential: %v", err)

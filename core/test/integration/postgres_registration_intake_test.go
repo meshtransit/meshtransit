@@ -65,7 +65,6 @@ func assertPostgreSQLRegistrationIntake(
 			PreparedIntents:  transactions,
 			CredentialProofs: fixture.keyring,
 			EvidenceIDs:      evidenceIDs,
-			Clock:            integrationIntakeClock{},
 			Retry:            integrationIntakeRetry{},
 		},
 	)
@@ -97,6 +96,7 @@ func assertPostgreSQLRegistrationIntake(
 		command.Scope.NetworkID().String() != firstNetworkPublicID || command.RecoveryEpoch != 1 {
 		t.Fatalf("Prepare() returned non-server-derived authority: %+v", command)
 	}
+	assertStampedByDatabaseClock(ctx, t, adminConnection, "pending_registration", command.RegistrationID.String())
 	replayed, err := service.Prepare(ctx, fixture.request)
 	if err != nil {
 		t.Fatalf("Prepare(replay) error = %v", err)
@@ -431,10 +431,6 @@ func (generator *integrationIntakeEvidenceIDs) NewEvidenceIDs() (appintake.Evide
 	generator.calls++
 	return generator.ids, nil
 }
-
-type integrationIntakeClock struct{}
-
-func (integrationIntakeClock) Now() time.Time { return time.Now().UTC() }
 
 type integrationIntakeRetry struct{}
 

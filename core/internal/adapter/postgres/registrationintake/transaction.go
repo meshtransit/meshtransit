@@ -25,6 +25,7 @@ const (
 type transaction struct {
 	mu sync.Mutex
 
+	decisionAt          time.Time
 	database            databaseTransaction
 	lookup              appintake.Lookup
 	deploymentID        deployment.ID
@@ -36,6 +37,9 @@ type transaction struct {
 	state               transactionState
 	locked              lockedState
 }
+
+// DecisionTime is this transaction's time on the database clock.
+func (transaction *transaction) DecisionTime() time.Time { return transaction.decisionAt }
 
 var _ appintake.Transaction = (*transaction)(nil)
 

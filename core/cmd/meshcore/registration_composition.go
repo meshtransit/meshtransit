@@ -154,7 +154,6 @@ func newRegistrationIntakeService(
 			PreparedIntents:  store,
 			CredentialProofs: verifier,
 			EvidenceIDs:      intake.PublicEvidenceIDGenerator{},
-			Clock:            registration.SystemClock{},
 			Retry:            retry,
 		},
 	)
@@ -189,7 +188,6 @@ func newRegistrationMutationService(
 			CommittedResults: committedResults,
 			NodeIDs:          registration.PublicNodeIDGenerator{},
 			MutationIDs:      registration.PublicMutationIDGenerator{},
-			Clock:            registration.SystemClock{},
 			Retry:            retry,
 		},
 	)

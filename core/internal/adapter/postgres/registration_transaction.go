@@ -24,6 +24,7 @@ const (
 type registrationTransaction struct {
 	mu sync.Mutex
 
+	decisionAt          time.Time
 	database            registrationDatabaseTransaction
 	scope               network.Scope
 	workspaceInternalID int64
@@ -33,6 +34,9 @@ type registrationTransaction struct {
 	state               registrationTransactionState
 	locked              registrationLockedState
 }
+
+// DecisionTime is this transaction's time on the database clock.
+func (transaction *registrationTransaction) DecisionTime() time.Time { return transaction.decisionAt }
 
 var _ registration.Transaction = (*registrationTransaction)(nil)
 

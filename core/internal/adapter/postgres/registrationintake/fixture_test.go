@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"meshtransit.net/core/internal/adapter/postgres/dbclock"
 	"meshtransit.net/core/internal/domain/deployment"
 	"meshtransit.net/core/internal/domain/enrollment"
 	"meshtransit.net/core/internal/domain/enrollment/registration"
@@ -112,6 +113,13 @@ func (transaction *fakeDatabaseTransaction) QueryRow(
 ) databaseRow {
 	transaction.mu.Lock()
 	defer transaction.mu.Unlock()
+	if query == dbclock.TransactionTimeSQL {
+		// Every unit of work reads its time on the database clock.
+		return testRow{scan: func(destinations ...any) error {
+			*destinations[0].(*time.Time) = testNow
+			return nil
+		}}
+	}
 	transaction.record(query, arguments)
 	queued := transaction.rows[query]
 	if len(queued) == 0 {

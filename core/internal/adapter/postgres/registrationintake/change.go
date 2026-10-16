@@ -38,6 +38,10 @@ func (transaction *transaction) Apply(
 
 func (transaction *transaction) changeMatchesResolution(change appintake.Change) bool {
 	command := change.Command()
+	// The change decides on this transaction's database time only.
+	if !change.OccurredAt().Equal(transaction.decisionAt) {
+		return false
+	}
 	if command.Scope != transaction.scope || command.RegistrationID != transaction.lookup.RegistrationID ||
 		command.CredentialID != transaction.lookup.CredentialID ||
 		command.Identity.MachineKey().Fingerprint() != transaction.lookup.MachineFingerprint ||

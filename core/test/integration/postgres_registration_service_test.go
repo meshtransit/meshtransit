@@ -68,6 +68,7 @@ func assertPostgreSQLRegistrationServiceConcurrency(
 			beforeNetworkRevision+1,
 		)
 	}
+	assertStampedByDatabaseClock(ctx, t, adminConnection, "device", results[0].NodeID().String())
 	assertConcurrentRegistrationEvidence(
 		ctx,
 		t,
@@ -164,7 +165,6 @@ func newIntegrationRegistrationService(
 			CommittedResults: replayStore,
 			NodeIDs:          registrationapp.PublicNodeIDGenerator{},
 			MutationIDs:      registrationapp.PublicMutationIDGenerator{},
-			Clock:            registrationapp.SystemClock{},
 			Retry:            retry,
 		},
 	)

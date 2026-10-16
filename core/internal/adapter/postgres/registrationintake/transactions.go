@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"meshtransit.net/core/internal/adapter/postgres/dbclock"
 	"meshtransit.net/core/internal/domain/deployment"
 	appintake "meshtransit.net/core/internal/domain/enrollment/registration/intake"
 	"meshtransit.net/core/internal/domain/network"
@@ -134,8 +135,14 @@ func (transactions *Transactions) Begin(
 		return nil, errors.Join(ErrBeginTransaction, ErrEvidence)
 	}
 
+	decisionAt, err := dbclock.Read(ctx, databaseTransaction.QueryRow)
+	if err != nil {
+		return nil, errors.Join(ErrBeginTransaction, classifyDatabaseError(ctx, err))
+	}
+
 	owned = true
 	return &transaction{
+		decisionAt:          decisionAt,
 		database:            databaseTransaction,
 		lookup:              lookup,
 		deploymentID:        resolved.deploymentID,

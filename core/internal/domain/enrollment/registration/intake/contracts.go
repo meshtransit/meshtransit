@@ -17,6 +17,9 @@ type Transactions interface {
 // Transaction resolves server authority under lock and applies at most one
 // pending-intent mutation. The application owns commit and rollback decisions.
 type Transaction interface {
+	// DecisionTime is the database clock's time for this transaction: every
+	// evaluation and persisted time of the attempt uses it.
+	DecisionTime() time.Time
 	Resolve(context.Context, Lookup) (Resolution, error)
 	Apply(context.Context, Change) error
 	Commit(context.Context) error
@@ -43,11 +46,6 @@ type EvidenceIDGenerator interface {
 	NewEvidenceIDs() (EvidenceIDs, error)
 }
 
-// Clock supplies one stable decision time for a replayable operation.
-type Clock interface {
-	Now() time.Time
-}
-
 // RetryWaiter applies bounded backoff between complete transaction attempts.
 type RetryWaiter interface {
 	Wait(context.Context, int) error
@@ -60,6 +58,5 @@ type Dependencies struct {
 	PreparedIntents  PreparedIntentResolver
 	CredentialProofs CredentialVerifier
 	EvidenceIDs      EvidenceIDGenerator
-	Clock            Clock
 	Retry            RetryWaiter
 }
