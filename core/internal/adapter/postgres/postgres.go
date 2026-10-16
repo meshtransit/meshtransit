@@ -60,14 +60,15 @@ type Options struct {
 	// Logger, when set, reports the function versions the pool's paths
 	// select and the operator steps its readiness check finds pending.
 	Logger *slog.Logger
-	// OperatorStepCheckInterval bounds how often a readiness check also
-	// reads the operator steps; zero means defaultOperatorStepCheckInterval.
+	// OperatorStepCheckInterval bounds how often the pool reads the
+	// operator steps in the background; zero means
+	// defaultOperatorStepCheckInterval.
 	OperatorStepCheckInterval time.Duration
 }
 
 const (
 	defaultOperatorStepCheckInterval = time.Minute
-	// operatorStepCheckTimeout caps the step probe within a readiness check.
+	// operatorStepCheckTimeout caps one background read of the steps.
 	operatorStepCheckTimeout = 2 * time.Second
 )
 
@@ -78,12 +79,8 @@ type Pool struct {
 	checkWritable func(context.Context) error
 	checkSchema   func(context.Context) error
 	databaseClock func(context.Context) (time.Time, error)
-	// checkOperatorSteps names pending operator steps; it never fails Check.
-	checkOperatorSteps func(context.Context) ([]string, error)
-	// operatorStepInterval spaces probes; zero probes on every check.
-	operatorStepInterval            time.Duration
-	operatorStepMu                  sync.Mutex
-	operatorStepCheckedAt           time.Time
+	// stepMonitor reads the operator steps off the readiness path.
+	stepMonitor                     *operatorStepMonitor
 	outboxDatabase                  outboxDatabase
 	registrationReplayDatabase      registrationReplayDatabase
 	registrationTransactionDatabase registrationTransactionDatabase
@@ -137,6 +134,12 @@ func Open(ctx context.Context, options Options) (*Pool, error) {
 		return snapshotPostgresPoolStats(pool.Stat())
 	})
 	metrics.logger = options.Logger
+	stepMonitor := newOperatorStepMonitor(func(ctx context.Context) ([]string, error) {
+		return checkOperatorSteps(ctx, func(ctx context.Context, query string, arguments ...any) migrationRow {
+			return pool.QueryRow(ctx, query, arguments...)
+		})
+	}, metrics, operatorStepInterval(options.OperatorStepCheckInterval))
+	stepMonitor.start()
 	return &Pool{
 		role: options.Role,
 		ping: pool.Ping,
@@ -184,16 +187,11 @@ func Open(ctx context.Context, options Options) (*Pool, error) {
 			err = pool.QueryRow(ctx, databaseClockSQL).Scan(&at)
 			return at, err
 		},
-		operatorStepInterval: operatorStepInterval(options.OperatorStepCheckInterval),
-		checkOperatorSteps: func(ctx context.Context) ([]string, error) {
-			return checkOperatorSteps(ctx, func(ctx context.Context, query string, arguments ...any) migrationRow {
-				return pool.QueryRow(ctx, query, arguments...)
-			})
-		},
-		metrics:  metrics,
-		acquired: func() int32 { return pool.Stat().AcquiredConns() },
-		reset:    pool.Reset,
-		close:    pool.Close,
+		metrics:     metrics,
+		stepMonitor: stepMonitor,
+		acquired:    func() int32 { return pool.Stat().AcquiredConns() },
+		reset:       pool.Reset,
+		close:       pool.Close,
 	}, nil
 }
 
@@ -229,16 +227,9 @@ func (pool *Pool) Check(ctx context.Context) error {
 		return fmt.Errorf("check postgres schema: %w", err)
 	}
 	// A pending operator step leaves the pool ready: during a rollout some
-	// steps must wait until no previous replica is left. It is reported
-	// instead (metric, log, meshcore migrate verify).
-	if pool.checkOperatorSteps != nil && pool.operatorStepsDue(time.Now()) {
-		probeContext, cancel := context.WithTimeout(ctx, operatorStepCheckTimeout)
-		startedAt = time.Now()
-		pending, stepErr := pool.checkOperatorSteps(probeContext)
-		cancel()
-		pool.metrics.observeOperation(postgresOperationOperatorStepCheck, time.Since(startedAt), stepErr)
-		pool.metrics.observeOperatorSteps(ctx, pending, stepErr)
-	}
+	// steps must wait until no previous replica is left. The check only
+	// wakes the background read, which reports them (metric, log).
+	pool.stepMonitor.wake()
 	return nil
 }
 
@@ -269,19 +260,6 @@ func operatorStepInterval(configured time.Duration) time.Duration {
 	return configured
 }
 
-// operatorStepsDue reports whether this check should also read the
-// operator steps: the catalog query grows with every step.
-func (pool *Pool) operatorStepsDue(now time.Time) bool {
-	pool.operatorStepMu.Lock()
-	defer pool.operatorStepMu.Unlock()
-	if pool.operatorStepInterval > 0 && !pool.operatorStepCheckedAt.IsZero() &&
-		now.Sub(pool.operatorStepCheckedAt) < pool.operatorStepInterval {
-		return false
-	}
-	pool.operatorStepCheckedAt = now
-	return true
-}
-
 // Shutdown releases an idle pool without starting an unbounded cleanup
 // goroutine. The application must join every pool consumer before calling it.
 func (pool *Pool) Shutdown(ctx context.Context) error {
@@ -296,6 +274,10 @@ func (pool *Pool) Shutdown(ctx context.Context) error {
 	defer pool.closeMu.Unlock()
 	if pool.closed {
 		return nil
+	}
+	// The step monitor may hold a connection: cancel and join it first.
+	if err := pool.stepMonitor.stop(ctx); err != nil {
+		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err

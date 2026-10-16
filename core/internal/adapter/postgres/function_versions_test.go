@@ -47,30 +47,21 @@ func TestDeviceAliasWorkerReportsTheSelectedFunctionVersion(t *testing.T) {
 }
 
 // A pending operator step never closes readiness: during a rollout it is
-// expected. The pool exposes the count and logs which steps are pending.
-func TestPoolCheckReportsPendingOperatorStepsWithoutFailing(t *testing.T) {
+// expected. The monitor exposes the count and logs which steps are pending.
+func TestOperatorStepMonitorReportsPendingStepsAndFailures(t *testing.T) {
 	t.Parallel()
 	var logs bytes.Buffer
 	metrics := newPostgresPoolMetrics(PoolRoleRuntime, func() postgresPoolStats { return postgresPoolStats{} })
 	metrics.logger = slog.New(slog.NewJSONHandler(&logs, nil))
 	pending := []string{"000170_device_alias_consumer_readmission_ownership"}
 	var probeErr error
-	pool := &Pool{
-		role:               PoolRoleRuntime,
-		ping:               func(context.Context) error { return nil },
-		checkWritable:      func(context.Context) error { return nil },
-		checkSchema:        func(context.Context) error { return nil },
-		checkOperatorSteps: func(context.Context) ([]string, error) { return pending, probeErr },
-		reset:              func() {},
-		metrics:            metrics,
-	}
-	if err := pool.Check(t.Context()); err != nil {
-		t.Fatalf("Check() = %v with a pending step", err)
-	}
+	monitor := newOperatorStepMonitor(func(context.Context) ([]string, error) { return pending, probeErr }, metrics, 0)
+	pool := &Pool{role: PoolRoleRuntime, metrics: metrics}
 	collector, err := NewMetricsCollector(pool)
 	if err != nil {
 		t.Fatal(err)
 	}
+	monitor.probe(t.Context())
 	if body := gatherPostgresMetrics(t, collector); !strings.Contains(body,
 		`meshtransit_postgres_operator_steps_pending{pool_role="runtime"} 1`) {
 		t.Fatalf("metrics:\n%s", body)
@@ -79,21 +70,70 @@ func TestPoolCheckReportsPendingOperatorStepsWithoutFailing(t *testing.T) {
 		t.Fatalf("logs = %s", logs.String())
 	}
 	logs.Reset()
-	if err := pool.Check(t.Context()); err != nil || logs.Len() != 0 {
-		t.Fatalf("unchanged pending set logged again: %v %s", err, logs.String())
+	monitor.probe(t.Context())
+	if logs.Len() != 0 {
+		t.Fatalf("unchanged pending set logged again: %s", logs.String())
 	}
 	probeErr = errors.New("synthetic catalog read failure")
-	if err := pool.Check(t.Context()); err != nil {
-		t.Fatalf("Check() = %v when the step probe failed", err)
+	monitor.probe(t.Context())
+	if body := gatherPostgresMetrics(t, collector); !strings.Contains(body,
+		`meshtransit_postgres_operator_steps_pending{pool_role="runtime"} -1`) {
+		t.Fatalf("metrics after a failed read:\n%s", body)
 	}
 	pending, probeErr = nil, nil
-	if err := pool.Check(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+	monitor.probe(t.Context())
 	if body := gatherPostgresMetrics(t, collector); !strings.Contains(body,
 		`meshtransit_postgres_operator_steps_pending{pool_role="runtime"} 0`) ||
 		!strings.Contains(body, `meshtransit_postgres_operations_total{operation="operator_step_check",pool_role="runtime",result="error"} 1`) {
 		t.Fatalf("metrics:\n%s", body)
+	}
+}
+
+// The step read runs in its own goroutine: a readiness check only wakes it,
+// never waits for it, and shutdown cancels a read in flight and joins it, so
+// no pool connection stays held.
+func TestOperatorStepMonitorRunsOffTheCheckPathAndStopsOnShutdown(t *testing.T) {
+	t.Parallel()
+	started := make(chan struct{}, 1)
+	canceled := make(chan struct{})
+	probe := func(ctx context.Context) ([]string, error) {
+		started <- struct{}{}
+		<-ctx.Done()
+		close(canceled)
+		return nil, ctx.Err()
+	}
+	metrics := newPostgresPoolMetrics(PoolRoleRuntime, func() postgresPoolStats { return postgresPoolStats{} })
+	monitor := newOperatorStepMonitor(probe, metrics, time.Minute)
+	monitor.start()
+	pool := &Pool{
+		role:          PoolRoleRuntime,
+		ping:          func(context.Context) error { return nil },
+		checkWritable: func(context.Context) error { return nil },
+		checkSchema:   func(context.Context) error { return nil },
+		reset:         func() {},
+		acquired:      func() int32 { return 0 },
+		close:         func() {},
+		metrics:       metrics,
+		stepMonitor:   monitor,
+	}
+	if err := pool.Check(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the check did not wake the step read")
+	}
+	if err := pool.Check(t.Context()); err != nil {
+		t.Fatal("a check waited for the step read", err)
+	}
+	if err := pool.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-canceled:
+	default:
+		t.Fatal("shutdown returned before the step read was canceled")
 	}
 }
 
@@ -114,17 +154,16 @@ func TestFunctionPathsNameCatalogSteps(t *testing.T) {
 	}
 }
 
-func TestPoolReadsOperatorStepsAtMostOncePerInterval(t *testing.T) {
+func TestOperatorStepMonitorReadsAtMostOncePerInterval(t *testing.T) {
 	t.Parallel()
-	pool := &Pool{operatorStepInterval: time.Minute}
+	monitor := newOperatorStepMonitor(nil, nil, time.Minute)
 	start := time.Unix(1000, 0)
-	if !pool.operatorStepsDue(start) || pool.operatorStepsDue(start.Add(59*time.Second)) ||
-		!pool.operatorStepsDue(start.Add(time.Minute)) {
-		t.Fatal("operator step probe not spaced by its interval")
+	if !monitor.due(start) || monitor.due(start.Add(59*time.Second)) || !monitor.due(start.Add(time.Minute)) {
+		t.Fatal("operator step read not spaced by its interval")
 	}
-	every := &Pool{}
-	first := every.operatorStepsDue(start)
-	if second := every.operatorStepsDue(start); !first || !second {
-		t.Fatal("a zero interval must probe on every check")
+	every := newOperatorStepMonitor(nil, nil, 0)
+	first := every.due(start)
+	if second := every.due(start); !first || !second {
+		t.Fatal("a zero interval must read on every wake")
 	}
 }
