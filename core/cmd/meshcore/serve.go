@@ -108,6 +108,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 	additionalMetrics := make([]prometheus.Collector, 0, 6)
 	var scaleHandler http.Handler // control role only: the autoscaler's session total
 	var storagePools postgresPools
+	var storageServices []app.OwnedService
 	var redisClient *redisadapter.Client
 	if processConfig.Storage != nil {
 		storagePools, err = openPostgresPools(
@@ -132,6 +133,13 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			return 1
 		}
 		additionalMetrics = append(additionalMetrics, postgresMetrics)
+		clockSkew, composeErr := composeClockSkewObserver(storagePools, logger)
+		if composeErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "clock_skew_composition_failure")
+			return 1
+		}
+		additionalMetrics = append(additionalMetrics, clockSkew)
+		storageServices = append(storageServices, app.OwnedService{Name: "postgres-clock-skew-observer", Service: clockSkew})
 
 		redisClient, err = redisadapter.Open(ctx, redisadapter.Options{
 			Address:        processConfig.Storage.Redis.Address,
@@ -613,7 +621,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		logger.ErrorContext(ctx, "startup failed", "error_code", "invalid_health_server", "error", err)
 		return 1
 	}
-	services := make([]app.OwnedService, 0, len(roleServices)+2)
+	services := make([]app.OwnedService, 0, len(storageServices)+len(roleServices)+2)
 	services = append(services, app.OwnedService{Name: "health", Service: healthServer})
 	if processConfig.ProfileAddress != "" {
 		profiler, profileErr := profile.NewServer(processConfig.ProfileAddress)
@@ -623,6 +631,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		}
 		services = append(services, app.OwnedService{Name: "profile", Service: profiler})
 	}
+	services = append(services, storageServices...)
 	services = append(services, roleServices...)
 	application, err := app.New(
 		app.Options{

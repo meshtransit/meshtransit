@@ -14,6 +14,7 @@ const (
 	postgresOperationPing                      postgresOperation = "ping"
 	postgresOperationWritableCheck             postgresOperation = "writable_check"
 	postgresOperationSchemaCheck               postgresOperation = "schema_check"
+	postgresOperationClockSample               postgresOperation = "clock_sample"
 	postgresOperationRegistrationReplay        postgresOperation = "registration_replay"
 	postgresOperationRegistrationBegin         postgresOperation = "registration_begin"
 	postgresOperationRegistrationResolve       postgresOperation = "registration_resolve"
@@ -123,6 +124,7 @@ var (
 		postgresOperationPing,
 		postgresOperationWritableCheck,
 		postgresOperationSchemaCheck,
+		postgresOperationClockSample,
 		postgresOperationRegistrationReplay,
 		postgresOperationRegistrationBegin,
 		postgresOperationRegistrationResolve,
@@ -437,7 +439,7 @@ func (metrics *postgresPoolMetrics) observeOperation(
 
 func (operation postgresOperation) validForRole(role PoolRole) bool {
 	if operation == postgresOperationPing || operation == postgresOperationWritableCheck ||
-		operation == postgresOperationSchemaCheck {
+		operation == postgresOperationSchemaCheck || operation == postgresOperationClockSample {
 		return role.valid()
 	}
 	if role == PoolRoleRuntime {

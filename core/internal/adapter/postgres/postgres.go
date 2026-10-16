@@ -64,6 +64,7 @@ type Pool struct {
 	ping                            func(context.Context) error
 	checkWritable                   func(context.Context) error
 	checkSchema                     func(context.Context) error
+	databaseClock                   func(context.Context) (time.Time, error)
 	outboxDatabase                  outboxDatabase
 	registrationReplayDatabase      registrationReplayDatabase
 	registrationTransactionDatabase registrationTransactionDatabase
@@ -159,6 +160,10 @@ func Open(ctx context.Context, options Options) (*Pool, error) {
 		checkSchema: func(ctx context.Context) error {
 			return checkRuntimeSchemaCompatibility(ctx, pool, options.User)
 		},
+		databaseClock: func(ctx context.Context) (at time.Time, err error) {
+			err = pool.QueryRow(ctx, databaseClockSQL).Scan(&at)
+			return at, err
+		},
 		metrics:  metrics,
 		acquired: func() int32 { return pool.Stat().AcquiredConns() },
 		reset:    pool.Reset,
@@ -198,6 +203,26 @@ func (pool *Pool) Check(ctx context.Context) error {
 		return fmt.Errorf("check postgres schema: %w", err)
 	}
 	return nil
+}
+
+// databaseClockSQL reads the database clock now, not at the start of a
+// transaction, so the read is as close to the round trip as possible.
+const databaseClockSQL = `SELECT pg_catalog.clock_timestamp()`
+
+// DatabaseClock reads the database's clock_timestamp() in one round trip. It
+// serves clock skew observation only: persisted times and comparisons with
+// persisted state are decided by SQL on the database clock itself.
+func (pool *Pool) DatabaseClock(ctx context.Context) (time.Time, error) {
+	if ctx == nil || pool == nil || pool.databaseClock == nil {
+		return time.Time{}, ErrInvalidOptions
+	}
+	startedAt := time.Now()
+	at, err := pool.databaseClock(ctx)
+	pool.metrics.observeOperation(postgresOperationClockSample, time.Since(startedAt), err)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("read postgres clock: %w", err)
+	}
+	return at.UTC(), nil
 }
 
 // Shutdown releases an idle pool without starting an unbounded cleanup
