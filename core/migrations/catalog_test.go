@@ -12,8 +12,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 172 {
-		t.Fatalf("len(Catalog()) = %d, want 172", len(catalog))
+	if len(catalog) != 173 {
+		t.Fatalf("len(Catalog()) = %d, want 173", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1608,8 +1608,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 172 {
-		t.Fatalf("LatestVersion() = %d, want 172", LatestVersion())
+	if LatestVersion() != 173 {
+		t.Fatalf("LatestVersion() = %d, want 173", LatestVersion())
 	}
 }
 
@@ -4995,6 +4995,64 @@ func TestSharingUpdatedAtOrder(t *testing.T) {
 		"TO mesh_runtime", "DROP ", "ALTER TABLE", "DISABLE ROW LEVEL SECURITY", "NO FORCE ROW LEVEL SECURITY"} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 172 must not contain %q", forbidden)
+		}
+	}
+}
+
+// Schema 173 is schema 172's order keeper that also logs each raise to the
+// server log; the same triggers move to it and v1 stays.
+func TestSharingUpdatedAtOrderLog(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 173 {
+		t.Fatalf("len(Catalog()) = %d, want schema 173", len(catalog))
+	}
+	migration := catalog[172]
+	if migration.Version != 173 {
+		t.Fatalf("migration 173 = %+v", migration)
+	}
+	function := func(sql, name string) string {
+		start := strings.Index(sql, "CREATE FUNCTION mesh_ops."+name+"(")
+		if start < 0 {
+			t.Fatalf("no %s", name)
+		}
+		stop := strings.Index(sql[start:], "$function$;")
+		if stop < 0 {
+			t.Fatalf("no end of %s", name)
+		}
+		return sql[start : start+stop+len("$function$;")]
+	}
+	previous := strings.ReplaceAll(function(catalog[171].SQL, "keep_updated_at_order_v1"), "_v1(", "_v2(")
+	logLine := "        RAISE LOG 'kept updated_at in order on %: version % was % behind version %',\n" +
+		"            TG_TABLE_NAME, NEW.version, OLD.updated_at - NEW.updated_at, OLD.version;\n"
+	want := strings.Replace(previous, "    IF NEW.updated_at < OLD.updated_at THEN\n",
+		"    IF NEW.updated_at < OLD.updated_at THEN\n"+logLine, 1)
+	if function(migration.SQL, "keep_updated_at_order_v2") != want {
+		t.Error("keep v2 must be v1 that logs the raise")
+	}
+	if !strings.Contains(migration.SQL, "REVOKE ALL ON FUNCTION mesh_ops.keep_updated_at_order_v2() FROM PUBLIC;") {
+		t.Error("schema 173 must revoke v2 from PUBLIC")
+	}
+	tables := []string{
+		"resource_export", "share_offer", "trust_contract", "imported_resource",
+		"imported_resource_access_name", "imported_resource_dns_publication",
+		"private_endpoint", "federation_alias_lease",
+	}
+	for _, table := range tables {
+		trigger := table + "_clock_order"
+		want := "DROP TRIGGER " + trigger + " ON mesh." + table + ";\nCREATE TRIGGER " + trigger +
+			" BEFORE UPDATE ON mesh." + table + "\n    FOR EACH ROW EXECUTE FUNCTION mesh_ops.keep_updated_at_order_v2();"
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 173 must contain %q", want)
+		}
+	}
+	if strings.Count(migration.SQL, "CREATE TRIGGER ") != len(tables) || strings.Count(migration.SQL, "DROP ") != len(tables) {
+		t.Error("schema 173 must re-point exactly the schema 172 triggers")
+	}
+	for _, forbidden := range []string{"CREATE OR REPLACE", "BYPASSRLS", "OWNER TO", "GRANT ", "ALTER TABLE",
+		"DROP FUNCTION", "DISABLE ROW LEVEL SECURITY", "NO FORCE ROW LEVEL SECURITY"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 173 must not contain %q", forbidden)
 		}
 	}
 }

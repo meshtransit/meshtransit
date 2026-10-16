@@ -539,6 +539,7 @@ func Catalog() []Migration {
 		newMigration(170, "Device alias consumer readmission", deviceAliasConsumerReadmissionSQL),
 		newMigration(171, "Device alias provider readmission", deviceAliasProviderReadmissionSQL),
 		newMigration(172, "Sharing updated_at order", sharingUpdatedAtOrderSQL),
+		newMigration(173, "Sharing updated_at order log", sharingUpdatedAtOrderLogSQL),
 	}
 }
 
@@ -834,3 +835,6 @@ var deviceAliasProviderReadmissionSQL string
 
 //go:embed 000172_sharing_updated_at_order.up.sql
 var sharingUpdatedAtOrderSQL string
+
+//go:embed 000173_sharing_updated_at_order_log.up.sql
+var sharingUpdatedAtOrderLogSQL string
