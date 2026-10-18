@@ -23,7 +23,18 @@ every 2 seconds and completes the registration on the same session.
 
 Browser sign-in works only in a Network that has an active enrollment profile
 with interactive sign-in enabled. Every new Network gets one, "Interactive
-login": persistent Devices that expire after 30 days.
+login", which creates persistent Devices.
+
+A Device that signs in lives 180 days unless the Network chooses otherwise.
+Network settings in the Console (or `GET` and `PATCH
+/api/v1/workspaces/{workspace}/networks/{network}/device-lifetime`, under
+`network.read` and `network.update`) set it to 1 hour to 180 days, or to
+never expire. A change applies from the next sign-in: a Device already
+registered keeps its expiry until its user signs in again, which renews it
+with the Network's current lifetime. Each change is audited as
+`network.device_lifetime.updated`. Devices enrolled with a key follow the
+key's lifetime instead. A Network whose interactive profile was created
+by other means keeps that profile's own lifetime until it chooses one.
 
 A person can register at most 20 new Devices by browser sign-in per Network
 in 24 hours, revoked ones included; signing in again on an existing Device

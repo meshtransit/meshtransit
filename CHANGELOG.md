@@ -5,6 +5,14 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: each Network chooses how long a Device that signs in through the
+  browser lives: 1 hour to 180 days, or never expires. Without a choice it
+  lives 180 days instead of 30. `GET` and `PATCH …/networks/{network}/device-lifetime`
+  (`network.read`, `network.update`, `If-Match`) read and set it, and each
+  change is audited as `network.device_lifetime.updated`. The choice applies
+  from the next sign-in; Devices already registered keep their expiry until
+  their user signs in again. Schema 179 adds two empty columns, no operator
+  step. The Console shows it under Network settings.
 - Core: `POST …/devices/{device}/actions/revoke` removes a suspended or
   expired Device too, as removing a member already did; the suspension and
   any pending handover are cleared. Before, the request failed with a

@@ -37,6 +37,8 @@ func TestRESTPathsAnswerWrongMethodsWithAllow(t *testing.T) {
 		{http.MethodDelete, net + "/members", "GET, POST"},
 		{http.MethodPatch, net + "/enrollment-keys", "GET, POST"},
 		{http.MethodPost, net + "/alias-ranges", "GET, PATCH"},
+		{http.MethodPost, net + "/device-lifetime", "GET, PATCH"},
+		{http.MethodPut, net + "/device-lifetime", "GET, PATCH"},
 		{http.MethodPost, net + "/devices/" + id, "PATCH"},
 		{http.MethodPost, net + "/devices/" + id + "/tags", "PATCH"},
 		{http.MethodGet, net + "/devices/" + id + "/actions/suspend", "POST"},

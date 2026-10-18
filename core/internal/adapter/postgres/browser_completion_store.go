@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"time"
@@ -31,6 +32,13 @@ FROM mesh_ops.lock_browser_registration_completion_authority_v2(
     $1::UUID, $2::BIGINT, $3::BYTEA, $4::BYTEA,
     $5::BYTEA, $6::BYTEA, $7::TEXT
 )`
+
+// readBrowserProfileLifetimeSQL reads the Device lifetime the Network chose
+// (schema 179) for the profile the completion authority returned.
+const readBrowserProfileLifetimeSQL = `SELECT profile.name_key, profile.node_lifetime_seconds,
+    profile.device_lifetime_seconds, profile.device_never_expires
+FROM mesh.enrollment_profile AS profile
+WHERE profile.id = $1::BIGINT`
 
 const insertBrowserCompletionDeviceSQL = `INSERT INTO mesh.device (
     public_id, workspace_id, network_id, enrollment_profile_id,
@@ -355,9 +363,9 @@ func completeApprovedBrowserRegistration(
 	if err := tx.QueryRow(ctx, browserCompletionTimeSQL).Scan(&occurredAt); err != nil || occurredAt.IsZero() {
 		return registration.Result{}, errors.Join(ErrRegistrationEvidence, err)
 	}
-	expiresAt := occurredAt.Add(time.Duration(authority.lifetimeSeconds) * time.Second)
-	if !expiresAt.After(occurredAt) {
-		return registration.Result{}, ErrRegistrationEvidence
+	expiresAt, err := browserDeviceExpiresAt(ctx, tx, authority.profileInternalID, occurredAt)
+	if err != nil {
+		return registration.Result{}, err
 	}
 	if _, err := tx.Exec(ctx, setRegistrationChangeSQL, ids.change.String()); err != nil {
 		return registration.Result{}, err
@@ -550,4 +558,31 @@ func checkNewDeviceLimit(ctx context.Context, tx registrationDatabaseTransaction
 		return registration.ErrNewDeviceLimit
 	}
 	return nil
+}
+
+// browserDeviceExpiresAt returns when a Device that signs in now expires:
+// never, the Network's chosen lifetime, or the profile's default.
+func browserDeviceExpiresAt(ctx context.Context, tx registrationDatabaseTransaction, profileInternalID int64,
+	occurredAt time.Time) (time.Time, error) {
+	var nameKey string
+	var legacySeconds int64
+	var chosen sql.NullInt64
+	var never bool
+	if err := tx.QueryRow(ctx, readBrowserProfileLifetimeSQL, profileInternalID).Scan(
+		&nameKey, &legacySeconds, &chosen, &never); err != nil {
+		return time.Time{}, errors.Join(ErrRegistrationEvidence, err)
+	}
+	lifetime, neverExpires, err := enrollment.ProfileDeviceLifetime(nameKey, legacySeconds,
+		nullableSeconds(chosen), never)
+	if err != nil {
+		return time.Time{}, ErrRegistrationEvidence
+	}
+	if neverExpires {
+		return enrollment.DeviceNeverExpiresAt, nil
+	}
+	expiresAt := occurredAt.Add(lifetime)
+	if !expiresAt.After(occurredAt) {
+		return time.Time{}, ErrRegistrationEvidence
+	}
+	return expiresAt, nil
 }

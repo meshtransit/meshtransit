@@ -86,6 +86,7 @@ type privateIdentityPorts struct {
 	WorkspaceCreations  httpapi.WorkspaceCreator
 	NetworkCreations    httpapi.NetworkCreator
 	AliasRanges         httpapi.NetworkAliasRanges
+	DeviceLifetimes     httpapi.NetworkDeviceLifetimes
 	AddressUsage        httpapi.NetworkAddressUsage
 	AuditHistory        httpapi.AuditHistoryReader
 	AuditExports        httpapi.AuditExporter
@@ -212,6 +213,7 @@ func composePrivateIdentity(
 		WorkspaceCreations:    ports.WorkspaceCreations,
 		NetworkCreations:      ports.NetworkCreations,
 		AliasRanges:           ports.AliasRanges,
+		DeviceLifetimes:       ports.DeviceLifetimes,
 		AddressUsage:          ports.AddressUsage,
 		AuditHistory:          ports.AuditHistory,
 		AuditExports:          ports.AuditExports,

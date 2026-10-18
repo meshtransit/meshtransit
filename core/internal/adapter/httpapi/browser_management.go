@@ -298,7 +298,7 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	workspaceRoles := isWorkspaceRoleOperation(request) ||
 		isWorkspaceCollectionPath(request) && request.Method == http.MethodPost ||
 		isNetworkCollectionPost(request) || isSessionWorkspaceOperation(request) || isShareTargetRead(request) ||
-		isNetworkAliasRangeOperation(request) || isNetworkAddressUsageRead(request) || isAuditEventListRead(request) ||
+		isNetworkAliasRangeOperation(request) || isNetworkDeviceLifetimeOperation(request) || isNetworkAddressUsageRead(request) || isAuditEventListRead(request) ||
 		isAuditEventExportRead(request) || isGuardrailOperation(request) || isInterchangeOperation(request) || isDeviceGroupOperation(request) ||
 		isIdentityCatalogOperation(request) || isDeviceLifecycleOperation(request) ||
 		isMemberLifecycleOperation(request) || isNetworkMemberOperation(request) || isEnrollmentKeyOperation(request) ||
@@ -561,7 +561,7 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	// Member directory and switchable Workspaces are exact, query-free reads.
 	directoryRead := request.Method == http.MethodGet &&
 		(isWorkspaceRoleOperation(request) || isSessionWorkspaceOperation(request) || isShareTargetRead(request) ||
-			isNetworkAliasRangeRead(request) || isNetworkAddressUsageRead(request) || isGuardrailRead(request) ||
+			isNetworkAliasRangeRead(request) || isNetworkDeviceLifetimeRead(request) || isNetworkAddressUsageRead(request) || isGuardrailRead(request) ||
 			isInterchangeRead(request) ||
 			isInvitationRead(request))
 	auditRead := isAuditEventListRead(request) || isAuditEventExportRead(request) || isDeviceGroupRead(request) ||

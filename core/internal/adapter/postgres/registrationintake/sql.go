@@ -66,6 +66,7 @@ const loadDigestSQL = `SELECT
 FROM mesh.enrollment_credential AS credential
 WHERE credential.public_id = $1::UUID`
 
+// lockProfileSQL also reads the Device lifetime the Network chose (schema 179).
 const lockProfileSQL = `SELECT
     profile.id,
     profile.public_id::TEXT,
@@ -74,7 +75,10 @@ const lockProfileSQL = `SELECT
     profile.credential_use_policy,
     profile.credential_max_uses,
     profile.state,
-    profile.version
+    profile.version,
+    profile.name_key,
+    profile.device_lifetime_seconds,
+    profile.device_never_expires
 FROM mesh.enrollment_profile AS profile
 WHERE profile.id = $1::BIGINT
 FOR UPDATE`

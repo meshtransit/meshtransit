@@ -101,3 +101,64 @@ func TestCredentialRejectsAnInvalidDeviceLifetime(t *testing.T) {
 		t.Fatalf("NewCredential() with a one-minute Device lifetime error = %v, want ErrInvalidCredential", err)
 	}
 }
+
+func TestProfileDeviceLifetimeResolvesStoredChoice(t *testing.T) {
+	t.Parallel()
+
+	const legacy = int64(30 * 24 * 60 * 60)
+	day := int64(24 * 60 * 60)
+	for name, test := range map[string]struct {
+		nameKey   string
+		chosen    *int64
+		never     bool
+		lifetime  time.Duration
+		wantNever bool
+		valid     bool
+	}{
+		"interactive default is 180 days": {nameKey: "interactive-login", lifetime: 180 * 24 * time.Hour, valid: true},
+		"other profile keeps its own":     {nameKey: "qualification", lifetime: 30 * 24 * time.Hour, valid: true},
+		"chosen seconds win":              {nameKey: "interactive-login", chosen: &day, lifetime: 24 * time.Hour, valid: true},
+		"never expires":                   {nameKey: "interactive-login", never: true, lifetime: 180 * 24 * time.Hour, wantNever: true, valid: true},
+		"never and seconds conflict":      {nameKey: "interactive-login", chosen: &day, never: true},
+		"chosen below one hour":           {nameKey: "interactive-login", chosen: ptr(int64(59))},
+		"chosen above 180 days":           {nameKey: "interactive-login", chosen: ptr(181 * day)},
+		"chosen overflows":                {nameKey: "interactive-login", chosen: ptr(int64(1 << 62))},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			lifetime, never, err := enrollment.ProfileDeviceLifetime(test.nameKey, legacy, test.chosen, test.never)
+			if test.valid != (err == nil) {
+				t.Fatalf("ProfileDeviceLifetime() error = %v, want valid=%v", err, test.valid)
+			}
+			if err != nil {
+				if !errors.Is(err, enrollment.ErrInvalidDeviceLifetime) {
+					t.Fatalf("error = %v, want ErrInvalidDeviceLifetime", err)
+				}
+				return
+			}
+			if lifetime != test.lifetime || never != test.wantNever {
+				t.Fatalf("ProfileDeviceLifetime() = %v/%v, want %v/%v", lifetime, never, test.lifetime, test.wantNever)
+			}
+		})
+	}
+	if _, _, err := enrollment.ProfileDeviceLifetime("interactive-login", 0, nil, false); err == nil {
+		t.Fatal("a profile without a legacy lifetime resolved")
+	}
+}
+
+func TestNeverExpiringProfileGivesDevicesNoExpiry(t *testing.T) {
+	t.Parallel()
+
+	params := validProfileParams(t, enrollment.NewUnlimitedUseLimit())
+	params.NeverExpires = true
+	profile, err := enrollment.NewProfile(params)
+	if err != nil {
+		t.Fatalf("NewProfile() error = %v", err)
+	}
+	expiresAt, err := profile.DeviceExpiresAt(testTime())
+	if err != nil || !expiresAt.Equal(enrollment.DeviceNeverExpiresAt) || !profile.NeverExpires() {
+		t.Fatalf("DeviceExpiresAt() = %v, %v", expiresAt, err)
+	}
+}
+
+func ptr[T any](value T) *T { return &value }

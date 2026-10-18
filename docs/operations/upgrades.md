@@ -170,6 +170,16 @@ operator step:
   unchanged: the order trigger only ever raises an `updated_at` to the one
   before it.
 
+- **A Network chooses how long signed-in Devices live** (schema 179 and the
+  binary). The migration only adds two empty columns to the enrollment
+  profile; no row changes and no operator step is needed. The new binary
+  gives a Device that signs in 180 days unless the Network chose another
+  lifetime. While binaries from before schema 179 run, they keep giving the
+  profile's previous lifetime (30 days for "Interactive login"): they read
+  only the old column, which a choice made through the new API mirrors,
+  never as more than 180 days, so they never grant a longer life. After a
+  rollback the previous binary runs on schema 179 unchanged.
+
 ## Relays
 
 Replace relay nodes one at a time. On `SIGTERM` a relay stops admitting

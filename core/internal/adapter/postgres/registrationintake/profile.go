@@ -19,6 +19,9 @@ type profileRecord struct {
 	maximumUses         sql.NullInt64
 	state               string
 	version             int64
+	nameKey             string
+	chosenSeconds       sql.NullInt64
+	neverExpires        bool
 }
 
 func (transaction *transaction) lockProfile(
@@ -35,6 +38,9 @@ func (transaction *transaction) lockProfile(
 		&record.maximumUses,
 		&record.state,
 		&record.version,
+		&record.nameKey,
+		&record.chosenSeconds,
+		&record.neverExpires,
 	); err != nil {
 		return profileRecord{}, fmt.Errorf("lock enrollment profile: %w", err)
 	}
@@ -62,11 +68,21 @@ func (record profileRecord) domainValue(scope network.Scope) (enrollment.Profile
 	if err != nil {
 		return enrollment.Profile{}, err
 	}
+	var chosen *int64
+	if record.chosenSeconds.Valid {
+		chosen = &record.chosenSeconds.Int64
+	}
+	lifetime, never, err := enrollment.ProfileDeviceLifetime(record.nameKey, record.nodeLifetimeSeconds,
+		chosen, record.neverExpires)
+	if err != nil {
+		return enrollment.Profile{}, ErrEvidence
+	}
 	profile, err := enrollment.NewProfile(enrollment.ProfileParams{
 		ID:                 profileID,
 		Scope:              scope,
 		State:              state,
-		NodeLifetime:       time.Duration(record.nodeLifetimeSeconds) * time.Second,
+		NodeLifetime:       lifetime,
+		NeverExpires:       never,
 		EphemeralMode:      ephemeralMode,
 		CredentialUseLimit: limit,
 	})

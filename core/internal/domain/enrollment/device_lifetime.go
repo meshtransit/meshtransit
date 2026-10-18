@@ -14,6 +14,46 @@ const (
 	MaximumDeviceLifetime = 180 * 24 * time.Hour
 )
 
+// InteractiveProfileNameKey names the enrollment profile every Network gets
+// for browser sign-in.
+const InteractiveProfileNameKey = "interactive-login"
+
+// DefaultInteractiveDeviceLifetime is how long a signed-in Device lives
+// while its Network has chosen no lifetime.
+const DefaultInteractiveDeviceLifetime = MaximumDeviceLifetime
+
+// ProfileDeviceLifetime resolves the lifetime an enrollment profile gives
+// the Devices it creates from its stored columns: never expires, else the
+// chosen seconds, else DefaultInteractiveDeviceLifetime for the interactive
+// profile, else the profile's legacy node lifetime. The returned duration
+// is positive even when never is true, so older readers stay bounded.
+func ProfileDeviceLifetime(nameKey string, legacySeconds int64, chosenSeconds *int64,
+	neverExpires bool) (lifetime time.Duration, never bool, err error) {
+	const maximumSeconds = int64((1<<63 - 1) / time.Second)
+	if legacySeconds <= 0 || legacySeconds > maximumSeconds {
+		return 0, false, ErrInvalidDeviceLifetime
+	}
+	switch {
+	case neverExpires && chosenSeconds != nil:
+		return 0, false, ErrInvalidDeviceLifetime
+	case neverExpires:
+		return MaximumDeviceLifetime, true, nil
+	case chosenSeconds != nil:
+		if *chosenSeconds <= 0 || *chosenSeconds > maximumSeconds {
+			return 0, false, ErrInvalidDeviceLifetime
+		}
+		chosen, err := NewDeviceLifetime(time.Duration(*chosenSeconds) * time.Second)
+		if err != nil {
+			return 0, false, err
+		}
+		return chosen.Duration(), false, nil
+	case nameKey == InteractiveProfileNameKey:
+		return DefaultInteractiveDeviceLifetime, false, nil
+	default:
+		return time.Duration(legacySeconds) * time.Second, false, nil
+	}
+}
+
 // DeviceNeverExpiresAt is the expiry of a Device that never expires; it
 // equals mesh_ops.device_never_expires_v1().
 var DeviceNeverExpiresAt = time.Date(2200, 1, 1, 0, 0, 0, 0, time.UTC)

@@ -8254,6 +8254,305 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/device-lifetime": {
+      "get": {
+        "operationId": "getNetworkDeviceLifetime",
+        "summary": "Read how long Devices that sign in to this Network live",
+        "description": "Requires network.read. Returns the lifetime of Devices that sign in through the browser: seconds, or never_expires. While the Network has chosen nothing, default is true and Devices live 180 days. Devices registered with an enrollment key follow the key, not this setting.",
+        "security": [
+          {
+            "accountSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current Device lifetime",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "network_id",
+                        "version",
+                        "device_lifetime_seconds",
+                        "never_expires",
+                        "default"
+                      ],
+                      "properties": {
+                        "network_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "version": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "device_lifetime_seconds": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 1,
+                          "description": "How long a Device that signs in lives, in seconds; null when it never expires"
+                        },
+                        "never_expires": {
+                          "type": "boolean",
+                          "description": "Devices that sign in never expire"
+                        },
+                        "default": {
+                          "type": "boolean",
+                          "description": "The Network has chosen nothing; Devices live 180 days"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "409": {
+            "description": "sign_in_unavailable: nobody can sign in to this Network"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Unavailable"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateNetworkDeviceLifetime",
+        "summary": "Choose how long Devices that sign in to this Network live",
+        "description": "Requires network.update. Send exactly one of device_lifetime_seconds (3600 to 15552000, one hour to 180 days) and never_expires: true. The choice applies from the next sign-in; a Device already registered keeps its expiry until its user signs in again. Maps do not change.",
+        "security": [
+          {
+            "accountSessionCookie": [],
+            "sessionCSRF": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionProof"
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\"[1-9][0-9]*\"$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "minProperties": 1,
+                "maxProperties": 1,
+                "properties": {
+                  "device_lifetime_seconds": {
+                    "type": "integer",
+                    "minimum": 3600,
+                    "maximum": 15552000,
+                    "description": "A fixed lifetime in whole seconds"
+                  },
+                  "never_expires": {
+                    "type": "boolean",
+                    "const": true,
+                    "description": "Devices that sign in never expire"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Committed Device lifetime",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "network_id",
+                        "version",
+                        "device_lifetime_seconds",
+                        "never_expires",
+                        "default",
+                        "changed"
+                      ],
+                      "properties": {
+                        "network_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "version": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "device_lifetime_seconds": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 1,
+                          "description": "How long a Device that signs in lives, in seconds; null when it never expires"
+                        },
+                        "never_expires": {
+                          "type": "boolean",
+                          "description": "Devices that sign in never expire"
+                        },
+                        "default": {
+                          "type": "boolean",
+                          "description": "The Network has chosen nothing; Devices live 180 days"
+                        },
+                        "changed": {
+                          "type": "boolean",
+                          "description": "False when the request matched the current choice and nothing was written"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "409": {
+            "description": "sign_in_unavailable: nobody can sign in to this Network"
+          },
+          "412": {
+            "description": "version_conflict"
+          },
+          "428": {
+            "description": "precondition_required"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Unavailable or uncertain outcome"
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/assignable-device-tags": {
       "get": {
         "operationId": "listNetworkTagOptions",

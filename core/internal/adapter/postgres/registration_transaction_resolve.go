@@ -202,6 +202,9 @@ func (transaction *registrationTransaction) lockProfile(
 		&record.maximumUses,
 		&record.state,
 		&record.version,
+		&record.nameKey,
+		&record.chosenSeconds,
+		&record.neverExpires,
 	); err != nil {
 		return fmt.Errorf("lock enrollment profile: %w", err)
 	}

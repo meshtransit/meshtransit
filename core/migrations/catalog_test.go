@@ -12,8 +12,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 178 {
-		t.Fatalf("len(Catalog()) = %d, want 178", len(catalog))
+	if len(catalog) != 179 {
+		t.Fatalf("len(Catalog()) = %d, want 179", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1608,8 +1608,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 178 {
-		t.Fatalf("LatestVersion() = %d, want 178", LatestVersion())
+	if LatestVersion() != 179 {
+		t.Fatalf("LatestVersion() = %d, want 179", LatestVersion())
 	}
 }
 
@@ -5089,5 +5089,47 @@ func TestPolicyReleaseRuleFingerprints(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "clock_timestamp") || strings.Contains(migration.SQL, "TIMESTAMPTZ,") {
 		t.Error("schema 174 must take no time from the caller and use the transaction clock")
+	}
+}
+
+// Schema 179 adds the Network's Device lifetime to its interactive profile
+// without rewriting any row, behind two definer functions only the runtime
+// role runs.
+func TestNetworkDeviceLifetime(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 179 {
+		t.Fatalf("len(Catalog()) = %d, want schema 179", len(catalog))
+	}
+	migration := catalog[178]
+	if migration.Version != 179 {
+		t.Fatalf("migration 179 = %+v", migration)
+	}
+	for _, want := range []string{
+		"ADD COLUMN device_lifetime_seconds BIGINT,",
+		"ADD COLUMN device_never_expires BOOLEAN NOT NULL DEFAULT FALSE,",
+		"device_lifetime_seconds BETWEEN 3600 AND 15552000",
+		"NOT (device_never_expires AND device_lifetime_seconds IS NOT NULL)",
+		"'network.read', p_evaluated_at",
+		"'network.update', p_evaluated_at",
+		"node_lifetime_seconds = v_mirror,",
+		"updated_at = pg_catalog.transaction_timestamp()",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_network_device_lifetime_v1(",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.set_network_device_lifetime_v1(",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 179 lacks %q", want)
+		}
+	}
+	if count := strings.Count(migration.SQL, "SECURITY DEFINER\nSET search_path = pg_catalog\n"); count != 2 {
+		t.Errorf("schema 179 has %d definer functions pinned to pg_catalog, want 2", count)
+	}
+	// No row is rewritten, so no authority evidence is owed, and no time
+	// other than the database's is used.
+	for _, forbidden := range []string{"\nUPDATE ", "\nINSERT ", "clock_timestamp", "GREATEST", "OWNER TO", "BYPASSRLS",
+		"TO mesh_worker", "TO mesh_observer", "DISABLE TRIGGER", "DROP "} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 179 must not contain %q", forbidden)
+		}
 	}
 }

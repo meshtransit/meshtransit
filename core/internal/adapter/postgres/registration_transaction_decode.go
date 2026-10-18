@@ -101,6 +101,9 @@ type registrationProfileRecord struct {
 	maximumUses         sql.NullInt64
 	state               string
 	version             int64
+	nameKey             string
+	chosenSeconds       sql.NullInt64
+	neverExpires        bool
 }
 
 func (record registrationProfileRecord) domainValue(scope network.Scope) (enrollment.Profile, error) {
@@ -124,11 +127,17 @@ func (record registrationProfileRecord) domainValue(scope network.Scope) (enroll
 	if err != nil {
 		return enrollment.Profile{}, err
 	}
+	lifetime, never, err := enrollment.ProfileDeviceLifetime(record.nameKey, record.nodeLifetimeSeconds,
+		nullableSeconds(record.chosenSeconds), record.neverExpires)
+	if err != nil {
+		return enrollment.Profile{}, ErrRegistrationEvidence
+	}
 	profile, err := enrollment.NewProfile(enrollment.ProfileParams{
 		ID:                 profileID,
 		Scope:              scope,
 		State:              state,
-		NodeLifetime:       time.Duration(record.nodeLifetimeSeconds) * time.Second,
+		NodeLifetime:       lifetime,
+		NeverExpires:       never,
 		EphemeralMode:      ephemeralMode,
 		CredentialUseLimit: useLimit,
 	})
@@ -369,4 +378,13 @@ func registrationEvidenceError(operation string, err error) error {
 
 func (locked registrationLockedState) profileInternalID() int64 {
 	return locked.profile.internalID
+}
+
+// nullableSeconds returns a stored optional count of seconds.
+func nullableSeconds(value sql.NullInt64) *int64 {
+	if !value.Valid {
+		return nil
+	}
+	seconds := value.Int64
+	return &seconds
 }

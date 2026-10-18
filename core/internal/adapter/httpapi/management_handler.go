@@ -248,6 +248,8 @@ type ManagementHandlerOptions struct {
 	NetworkCreations   NetworkCreator
 	// AliasRanges reads and sets receiving-Network alias ranges; nil answers 503.
 	AliasRanges NetworkAliasRanges
+	// DeviceLifetimes reads and sets how long signed-in Devices live; nil answers 503.
+	DeviceLifetimes NetworkDeviceLifetimes
 	// AddressUsage reads how full a Network's address ranges are; nil answers 503.
 	AddressUsage NetworkAddressUsage
 	// AuditHistory lists Workspace audit history; nil answers 503.
@@ -320,6 +322,7 @@ type ManagementHandler struct {
 	shareTargets              ShareTargetResolver
 	networkCreations          NetworkCreator
 	aliasRanges               NetworkAliasRanges
+	deviceLifetimes           NetworkDeviceLifetimes
 	addressUsage              NetworkAddressUsage
 	auditHistory              AuditHistoryReader
 	auditExports              AuditExporter
@@ -396,6 +399,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		shareTargets:              options.ShareTargets,
 		networkCreations:          options.NetworkCreations,
 		aliasRanges:               options.AliasRanges,
+		deviceLifetimes:           options.DeviceLifetimes,
 		addressUsage:              options.AddressUsage,
 		auditHistory:              options.AuditHistory,
 		auditExports:              options.AuditExports,
@@ -513,6 +517,7 @@ func (handler *ManagementHandler) serveHTTP(
 	sessionWorkspaceMethod, sessionWorkspaceMatched := sessionWorkspaceRoute(request)
 	shareTargetPath, shareTargetMatched := parseShareTargetPath(request)
 	aliasRangePath, aliasRangeMatched := parseNetworkAliasRangePath(request)
+	deviceLifetimePath, deviceLifetimeMatched := parseNetworkDeviceLifetimePath(request)
 	addressUsageScope, addressUsageMatched := parseNetworkAddressUsagePath(request)
 	auditEventPath, auditEventMatched := parseAuditEventListPath(request)
 	auditExportPath, auditExportMatched := parseAuditEventExportPath(request)
@@ -528,7 +533,7 @@ func (handler *ManagementHandler) serveHTTP(
 	if !deviceMatched && !policyMatched && !policySimulationMatched && !policyApprovalMatched &&
 		!accessGraphMatched && !accessGraphListMatched && !resourceMatched && !sharingMatched && !policyReadMatched && !workspaceRenameMatched &&
 		!workspaceRoleMatched && !workspaceCollectionMatched && !networkCollectionMatched && !sessionWorkspaceMatched &&
-		!shareTargetMatched && !aliasRangeMatched && !addressUsageMatched && !auditEventMatched &&
+		!shareTargetMatched && !aliasRangeMatched && !deviceLifetimeMatched && !addressUsageMatched && !auditEventMatched &&
 		!auditExportMatched && !guardrailMatched && !interchangeMatched && !deviceGroupMatched && !identityCatalogMatched &&
 		!deviceLifecycleMatched && !memberLifecycleMatched && !networkMemberMatched && !invitationMatched &&
 		!enrollmentKeyMatched {
@@ -555,6 +560,8 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = shareTargetResolveOperation
 	} else if aliasRangeMatched {
 		operation = aliasRangePath.operation()
+	} else if deviceLifetimeMatched {
+		operation = deviceLifetimePath.operation()
 	} else if addressUsageMatched {
 		operation = networkAddressUsageReadOperation
 	} else if auditEventMatched {
@@ -615,6 +622,8 @@ func (handler *ManagementHandler) serveHTTP(
 		allowedMethod = http.MethodGet
 	} else if aliasRangeMatched {
 		allowedMethod = aliasRangePath.allowedMethod(request.Method)
+	} else if deviceLifetimeMatched {
+		allowedMethod = deviceLifetimePath.allowedMethod(request.Method)
 	} else if addressUsageMatched {
 		allowedMethod = http.MethodGet
 	} else if guardrailMatched {
@@ -673,6 +682,8 @@ func (handler *ManagementHandler) serveHTTP(
 			response.Header().Set("Allow", workspaceRenameMethods.header())
 		} else if aliasRangeMatched {
 			response.Header().Set("Allow", aliasRangeMethods.header())
+		} else if deviceLifetimeMatched {
+			response.Header().Set("Allow", deviceLifetimeMethods.header())
 		} else {
 			response.Header().Set("Allow", allowedMethodOrGet(resourceMatched, allowedMethod))
 		}
@@ -746,6 +757,11 @@ func (handler *ManagementHandler) serveHTTP(
 	}
 	if aliasRangeMatched {
 		resultCode = handler.handleNetworkAliasRanges(ctx, response, request, correlationID, aliasRangePath, session)
+		return
+	}
+	if deviceLifetimeMatched {
+		resultCode = handler.handleNetworkDeviceLifetime(ctx, response, request, correlationID, deviceLifetimePath,
+			session)
 		return
 	}
 	if addressUsageMatched {

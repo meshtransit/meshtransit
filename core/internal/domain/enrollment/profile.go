@@ -44,10 +44,12 @@ const (
 
 // ProfileParams contains the registration-relevant durable profile fields.
 type ProfileParams struct {
-	ID                 ProfileID
-	Scope              network.Scope
-	State              ProfileState
-	NodeLifetime       time.Duration
+	ID           ProfileID
+	Scope        network.Scope
+	State        ProfileState
+	NodeLifetime time.Duration
+	// NeverExpires gives every Device the profile creates no expiry.
+	NeverExpires       bool
 	EphemeralMode      EphemeralMode
 	CredentialUseLimit UseLimit
 }
@@ -58,6 +60,7 @@ type Profile struct {
 	scope              network.Scope
 	state              ProfileState
 	nodeLifetime       time.Duration
+	neverExpires       bool
 	ephemeralMode      EphemeralMode
 	credentialUseLimit UseLimit
 }
@@ -69,6 +72,7 @@ func NewProfile(params ProfileParams) (Profile, error) {
 		scope:              params.Scope,
 		state:              params.State,
 		nodeLifetime:       params.NodeLifetime,
+		neverExpires:       params.NeverExpires,
 		ephemeralMode:      params.EphemeralMode,
 		credentialUseLimit: params.CredentialUseLimit,
 	}
@@ -89,6 +93,9 @@ func (profile Profile) State() ProfileState { return profile.state }
 
 // NodeLifetime returns the lifetime granted to a newly created Device.
 func (profile Profile) NodeLifetime() time.Duration { return profile.nodeLifetime }
+
+// NeverExpires reports whether the Devices the profile creates never expire.
+func (profile Profile) NeverExpires() bool { return profile.neverExpires }
 
 // IsEphemeral reports whether the profile creates ephemeral Devices.
 func (profile Profile) IsEphemeral() bool { return profile.ephemeralMode == EphemeralModeEphemeral }
@@ -122,13 +129,16 @@ func (profile Profile) ValidateCredential(credential Credential) error {
 	return nil
 }
 
-// DeviceExpiresAt applies the profile's bounded lifetime to a registration time.
+// DeviceExpiresAt applies the profile's lifetime to a registration time.
 func (profile Profile) DeviceExpiresAt(registeredAt time.Time) (time.Time, error) {
 	if !profile.IsValid() || registeredAt.IsZero() {
 		return time.Time{}, ErrInvalidProfile
 	}
 	if profile.state != ProfileStateActive {
 		return time.Time{}, ErrProfileInactive
+	}
+	if profile.neverExpires {
+		return DeviceNeverExpiresAt, nil
 	}
 	expiresAt := registeredAt.UTC().Add(profile.nodeLifetime)
 	if !expiresAt.After(registeredAt) {
