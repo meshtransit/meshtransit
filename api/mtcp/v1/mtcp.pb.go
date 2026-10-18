@@ -305,6 +305,110 @@ func (AliasGrant_Role) EnumDescriptor() ([]byte, []int) {
 	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{25, 0}
 }
 
+type SiteRoute_Status int32
+
+const (
+	SiteRoute_STATUS_UNSPECIFIED SiteRoute_Status = 0
+	SiteRoute_SERVED             SiteRoute_Status = 1
+	SiteRoute_UNSERVED           SiteRoute_Status = 2
+	SiteRoute_CONFLICT           SiteRoute_Status = 3
+	SiteRoute_CAPACITY           SiteRoute_Status = 4
+)
+
+// Enum value maps for SiteRoute_Status.
+var (
+	SiteRoute_Status_name = map[int32]string{
+		0: "STATUS_UNSPECIFIED",
+		1: "SERVED",
+		2: "UNSERVED",
+		3: "CONFLICT",
+		4: "CAPACITY",
+	}
+	SiteRoute_Status_value = map[string]int32{
+		"STATUS_UNSPECIFIED": 0,
+		"SERVED":             1,
+		"UNSERVED":           2,
+		"CONFLICT":           3,
+		"CAPACITY":           4,
+	}
+)
+
+func (x SiteRoute_Status) Enum() *SiteRoute_Status {
+	p := new(SiteRoute_Status)
+	*p = x
+	return p
+}
+
+func (x SiteRoute_Status) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (SiteRoute_Status) Descriptor() protoreflect.EnumDescriptor {
+	return file_mtcp_v1_mtcp_proto_enumTypes[5].Descriptor()
+}
+
+func (SiteRoute_Status) Type() protoreflect.EnumType {
+	return &file_mtcp_v1_mtcp_proto_enumTypes[5]
+}
+
+func (x SiteRoute_Status) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use SiteRoute_Status.Descriptor instead.
+func (SiteRoute_Status) EnumDescriptor() ([]byte, []int) {
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{32, 0}
+}
+
+type RouteProbe_Kind int32
+
+const (
+	RouteProbe_KIND_UNSPECIFIED RouteProbe_Kind = 0
+	RouteProbe_ICMP             RouteProbe_Kind = 1
+	RouteProbe_TCP              RouteProbe_Kind = 2
+)
+
+// Enum value maps for RouteProbe_Kind.
+var (
+	RouteProbe_Kind_name = map[int32]string{
+		0: "KIND_UNSPECIFIED",
+		1: "ICMP",
+		2: "TCP",
+	}
+	RouteProbe_Kind_value = map[string]int32{
+		"KIND_UNSPECIFIED": 0,
+		"ICMP":             1,
+		"TCP":              2,
+	}
+)
+
+func (x RouteProbe_Kind) Enum() *RouteProbe_Kind {
+	p := new(RouteProbe_Kind)
+	*p = x
+	return p
+}
+
+func (x RouteProbe_Kind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (RouteProbe_Kind) Descriptor() protoreflect.EnumDescriptor {
+	return file_mtcp_v1_mtcp_proto_enumTypes[6].Descriptor()
+}
+
+func (RouteProbe_Kind) Type() protoreflect.EnumType {
+	return &file_mtcp_v1_mtcp_proto_enumTypes[6]
+}
+
+func (x RouteProbe_Kind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use RouteProbe_Kind.Descriptor instead.
+func (RouteProbe_Kind) EnumDescriptor() ([]byte, []int) {
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{35, 0}
+}
+
 type DnsRecord_Type int32
 
 const (
@@ -338,11 +442,11 @@ func (x DnsRecord_Type) String() string {
 }
 
 func (DnsRecord_Type) Descriptor() protoreflect.EnumDescriptor {
-	return file_mtcp_v1_mtcp_proto_enumTypes[5].Descriptor()
+	return file_mtcp_v1_mtcp_proto_enumTypes[7].Descriptor()
 }
 
 func (DnsRecord_Type) Type() protoreflect.EnumType {
-	return &file_mtcp_v1_mtcp_proto_enumTypes[5]
+	return &file_mtcp_v1_mtcp_proto_enumTypes[7]
 }
 
 func (x DnsRecord_Type) Number() protoreflect.EnumNumber {
@@ -351,7 +455,7 @@ func (x DnsRecord_Type) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use DnsRecord_Type.Descriptor instead.
 func (DnsRecord_Type) EnumDescriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{32, 0}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{37, 0}
 }
 
 type HealthReport_Component_Name int32
@@ -393,11 +497,11 @@ func (x HealthReport_Component_Name) String() string {
 }
 
 func (HealthReport_Component_Name) Descriptor() protoreflect.EnumDescriptor {
-	return file_mtcp_v1_mtcp_proto_enumTypes[6].Descriptor()
+	return file_mtcp_v1_mtcp_proto_enumTypes[8].Descriptor()
 }
 
 func (HealthReport_Component_Name) Type() protoreflect.EnumType {
-	return &file_mtcp_v1_mtcp_proto_enumTypes[6]
+	return &file_mtcp_v1_mtcp_proto_enumTypes[8]
 }
 
 func (x HealthReport_Component_Name) Number() protoreflect.EnumNumber {
@@ -406,7 +510,7 @@ func (x HealthReport_Component_Name) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use HealthReport_Component_Name.Descriptor instead.
 func (HealthReport_Component_Name) EnumDescriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{40, 0, 0}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{45, 0, 0}
 }
 
 type HealthReport_Component_State int32
@@ -445,11 +549,11 @@ func (x HealthReport_Component_State) String() string {
 }
 
 func (HealthReport_Component_State) Descriptor() protoreflect.EnumDescriptor {
-	return file_mtcp_v1_mtcp_proto_enumTypes[7].Descriptor()
+	return file_mtcp_v1_mtcp_proto_enumTypes[9].Descriptor()
 }
 
 func (HealthReport_Component_State) Type() protoreflect.EnumType {
-	return &file_mtcp_v1_mtcp_proto_enumTypes[7]
+	return &file_mtcp_v1_mtcp_proto_enumTypes[9]
 }
 
 func (x HealthReport_Component_State) Number() protoreflect.EnumNumber {
@@ -458,7 +562,7 @@ func (x HealthReport_Component_State) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use HealthReport_Component_State.Descriptor instead.
 func (HealthReport_Component_State) EnumDescriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{40, 0, 1}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{45, 0, 1}
 }
 
 type PeerPathStats_RelayReason int32
@@ -497,11 +601,11 @@ func (x PeerPathStats_RelayReason) String() string {
 }
 
 func (PeerPathStats_RelayReason) Descriptor() protoreflect.EnumDescriptor {
-	return file_mtcp_v1_mtcp_proto_enumTypes[8].Descriptor()
+	return file_mtcp_v1_mtcp_proto_enumTypes[10].Descriptor()
 }
 
 func (PeerPathStats_RelayReason) Type() protoreflect.EnumType {
-	return &file_mtcp_v1_mtcp_proto_enumTypes[8]
+	return &file_mtcp_v1_mtcp_proto_enumTypes[10]
 }
 
 func (x PeerPathStats_RelayReason) Number() protoreflect.EnumNumber {
@@ -510,7 +614,7 @@ func (x PeerPathStats_RelayReason) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use PeerPathStats_RelayReason.Descriptor instead.
 func (PeerPathStats_RelayReason) EnumDescriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{43, 0}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{48, 0}
 }
 
 type PeerPathStats_Technique int32
@@ -555,11 +659,11 @@ func (x PeerPathStats_Technique) String() string {
 }
 
 func (PeerPathStats_Technique) Descriptor() protoreflect.EnumDescriptor {
-	return file_mtcp_v1_mtcp_proto_enumTypes[9].Descriptor()
+	return file_mtcp_v1_mtcp_proto_enumTypes[11].Descriptor()
 }
 
 func (PeerPathStats_Technique) Type() protoreflect.EnumType {
-	return &file_mtcp_v1_mtcp_proto_enumTypes[9]
+	return &file_mtcp_v1_mtcp_proto_enumTypes[11]
 }
 
 func (x PeerPathStats_Technique) Number() protoreflect.EnumNumber {
@@ -568,7 +672,7 @@ func (x PeerPathStats_Technique) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use PeerPathStats_Technique.Descriptor instead.
 func (PeerPathStats_Technique) EnumDescriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{43, 1}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{48, 1}
 }
 
 type Lifecycle_State int32
@@ -619,11 +723,11 @@ func (x Lifecycle_State) String() string {
 }
 
 func (Lifecycle_State) Descriptor() protoreflect.EnumDescriptor {
-	return file_mtcp_v1_mtcp_proto_enumTypes[10].Descriptor()
+	return file_mtcp_v1_mtcp_proto_enumTypes[12].Descriptor()
 }
 
 func (Lifecycle_State) Type() protoreflect.EnumType {
-	return &file_mtcp_v1_mtcp_proto_enumTypes[10]
+	return &file_mtcp_v1_mtcp_proto_enumTypes[12]
 }
 
 func (x Lifecycle_State) Number() protoreflect.EnumNumber {
@@ -632,7 +736,7 @@ func (x Lifecycle_State) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use Lifecycle_State.Descriptor instead.
 func (Lifecycle_State) EnumDescriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{45, 0}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{50, 0}
 }
 
 type Notice_Severity int32
@@ -668,11 +772,11 @@ func (x Notice_Severity) String() string {
 }
 
 func (Notice_Severity) Descriptor() protoreflect.EnumDescriptor {
-	return file_mtcp_v1_mtcp_proto_enumTypes[11].Descriptor()
+	return file_mtcp_v1_mtcp_proto_enumTypes[13].Descriptor()
 }
 
 func (Notice_Severity) Type() protoreflect.EnumType {
-	return &file_mtcp_v1_mtcp_proto_enumTypes[11]
+	return &file_mtcp_v1_mtcp_proto_enumTypes[13]
 }
 
 func (x Notice_Severity) Number() protoreflect.EnumNumber {
@@ -681,7 +785,7 @@ func (x Notice_Severity) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use Notice_Severity.Descriptor instead.
 func (Notice_Severity) EnumDescriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{47, 0}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{52, 0}
 }
 
 type ClientHello struct {
@@ -1604,6 +1708,8 @@ type MapSnapshot struct {
 	Dns              *DnsConfig             `protobuf:"bytes,6,opt,name=dns,proto3" json:"dns,omitempty"`
 	RelayMap         []byte                 `protobuf:"bytes,7,opt,name=relay_map,json=relayMap,proto3" json:"relay_map,omitempty"`
 	Settings         *Settings              `protobuf:"bytes,8,opt,name=settings,proto3" json:"settings,omitempty"`
+	Routes           *RouteConfig           `protobuf:"bytes,9,opt,name=routes,proto3" json:"routes,omitempty"`
+	Served           *ServedRoutes          `protobuf:"bytes,10,opt,name=served,proto3" json:"served,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -1694,6 +1800,20 @@ func (x *MapSnapshot) GetSettings() *Settings {
 	return nil
 }
 
+func (x *MapSnapshot) GetRoutes() *RouteConfig {
+	if x != nil {
+		return x.Routes
+	}
+	return nil
+}
+
+func (x *MapSnapshot) GetServed() *ServedRoutes {
+	if x != nil {
+		return x.Served
+	}
+	return nil
+}
+
 type MapDelta struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	View             *View                  `protobuf:"bytes,1,opt,name=view,proto3" json:"view,omitempty"`
@@ -1706,6 +1826,8 @@ type MapDelta struct {
 	Dns              *DnsConfig             `protobuf:"bytes,8,opt,name=dns,proto3" json:"dns,omitempty"`
 	RelayMap         []byte                 `protobuf:"bytes,9,opt,name=relay_map,json=relayMap,proto3" json:"relay_map,omitempty"`
 	Settings         *Settings              `protobuf:"bytes,10,opt,name=settings,proto3" json:"settings,omitempty"`
+	Routes           *RouteConfig           `protobuf:"bytes,11,opt,name=routes,proto3" json:"routes,omitempty"`
+	Served           *ServedRoutes          `protobuf:"bytes,12,opt,name=served,proto3" json:"served,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -1806,6 +1928,20 @@ func (x *MapDelta) GetRelayMap() []byte {
 func (x *MapDelta) GetSettings() *Settings {
 	if x != nil {
 		return x.Settings
+	}
+	return nil
+}
+
+func (x *MapDelta) GetRoutes() *RouteConfig {
+	if x != nil {
+		return x.Routes
+	}
+	return nil
+}
+
+func (x *MapDelta) GetServed() *ServedRoutes {
+	if x != nil {
+		return x.Served
 	}
 	return nil
 }
@@ -2814,6 +2950,306 @@ func (x *PortRange) GetLast() uint32 {
 	return 0
 }
 
+type RouteConfig struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Sites         []*SiteRoute           `protobuf:"bytes,1,rep,name=sites,proto3" json:"sites,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RouteConfig) Reset() {
+	*x = RouteConfig{}
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RouteConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RouteConfig) ProtoMessage() {}
+
+func (x *RouteConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RouteConfig.ProtoReflect.Descriptor instead.
+func (*RouteConfig) Descriptor() ([]byte, []int) {
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *RouteConfig) GetSites() []*SiteRoute {
+	if x != nil {
+		return x.Sites
+	}
+	return nil
+}
+
+type SiteRoute struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SiteRef       string                 `protobuf:"bytes,1,opt,name=site_ref,json=siteRef,proto3" json:"site_ref,omitempty"`
+	Prefixes      []*Prefix              `protobuf:"bytes,2,rep,name=prefixes,proto3" json:"prefixes,omitempty"`
+	Candidates    []string               `protobuf:"bytes,3,rep,name=candidates,proto3" json:"candidates,omitempty"`
+	Primary       string                 `protobuf:"bytes,4,opt,name=primary,proto3" json:"primary,omitempty"`
+	Generation    uint64                 `protobuf:"varint,5,opt,name=generation,proto3" json:"generation,omitempty"`
+	Status        SiteRoute_Status       `protobuf:"varint,6,opt,name=status,proto3,enum=meshtransit.mtcp.v1.SiteRoute_Status" json:"status,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SiteRoute) Reset() {
+	*x = SiteRoute{}
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SiteRoute) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SiteRoute) ProtoMessage() {}
+
+func (x *SiteRoute) ProtoReflect() protoreflect.Message {
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SiteRoute.ProtoReflect.Descriptor instead.
+func (*SiteRoute) Descriptor() ([]byte, []int) {
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *SiteRoute) GetSiteRef() string {
+	if x != nil {
+		return x.SiteRef
+	}
+	return ""
+}
+
+func (x *SiteRoute) GetPrefixes() []*Prefix {
+	if x != nil {
+		return x.Prefixes
+	}
+	return nil
+}
+
+func (x *SiteRoute) GetCandidates() []string {
+	if x != nil {
+		return x.Candidates
+	}
+	return nil
+}
+
+func (x *SiteRoute) GetPrimary() string {
+	if x != nil {
+		return x.Primary
+	}
+	return ""
+}
+
+func (x *SiteRoute) GetGeneration() uint64 {
+	if x != nil {
+		return x.Generation
+	}
+	return 0
+}
+
+func (x *SiteRoute) GetStatus() SiteRoute_Status {
+	if x != nil {
+		return x.Status
+	}
+	return SiteRoute_STATUS_UNSPECIFIED
+}
+
+type ServedRoutes struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Sites         []*ServedSite          `protobuf:"bytes,1,rep,name=sites,proto3" json:"sites,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ServedRoutes) Reset() {
+	*x = ServedRoutes{}
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ServedRoutes) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ServedRoutes) ProtoMessage() {}
+
+func (x *ServedRoutes) ProtoReflect() protoreflect.Message {
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ServedRoutes.ProtoReflect.Descriptor instead.
+func (*ServedRoutes) Descriptor() ([]byte, []int) {
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *ServedRoutes) GetSites() []*ServedSite {
+	if x != nil {
+		return x.Sites
+	}
+	return nil
+}
+
+type ServedSite struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SiteRef       string                 `protobuf:"bytes,1,opt,name=site_ref,json=siteRef,proto3" json:"site_ref,omitempty"`
+	Prefixes      []*Prefix              `protobuf:"bytes,2,rep,name=prefixes,proto3" json:"prefixes,omitempty"`
+	Masquerade    bool                   `protobuf:"varint,3,opt,name=masquerade,proto3" json:"masquerade,omitempty"`
+	Probes        []*RouteProbe          `protobuf:"bytes,4,rep,name=probes,proto3" json:"probes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ServedSite) Reset() {
+	*x = ServedSite{}
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ServedSite) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ServedSite) ProtoMessage() {}
+
+func (x *ServedSite) ProtoReflect() protoreflect.Message {
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ServedSite.ProtoReflect.Descriptor instead.
+func (*ServedSite) Descriptor() ([]byte, []int) {
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *ServedSite) GetSiteRef() string {
+	if x != nil {
+		return x.SiteRef
+	}
+	return ""
+}
+
+func (x *ServedSite) GetPrefixes() []*Prefix {
+	if x != nil {
+		return x.Prefixes
+	}
+	return nil
+}
+
+func (x *ServedSite) GetMasquerade() bool {
+	if x != nil {
+		return x.Masquerade
+	}
+	return false
+}
+
+func (x *ServedSite) GetProbes() []*RouteProbe {
+	if x != nil {
+		return x.Probes
+	}
+	return nil
+}
+
+type RouteProbe struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ip            []byte                 `protobuf:"bytes,1,opt,name=ip,proto3" json:"ip,omitempty"`
+	Kind          RouteProbe_Kind        `protobuf:"varint,2,opt,name=kind,proto3,enum=meshtransit.mtcp.v1.RouteProbe_Kind" json:"kind,omitempty"`
+	Port          uint32                 `protobuf:"varint,3,opt,name=port,proto3" json:"port,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RouteProbe) Reset() {
+	*x = RouteProbe{}
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RouteProbe) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RouteProbe) ProtoMessage() {}
+
+func (x *RouteProbe) ProtoReflect() protoreflect.Message {
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RouteProbe.ProtoReflect.Descriptor instead.
+func (*RouteProbe) Descriptor() ([]byte, []int) {
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *RouteProbe) GetIp() []byte {
+	if x != nil {
+		return x.Ip
+	}
+	return nil
+}
+
+func (x *RouteProbe) GetKind() RouteProbe_Kind {
+	if x != nil {
+		return x.Kind
+	}
+	return RouteProbe_KIND_UNSPECIFIED
+}
+
+func (x *RouteProbe) GetPort() uint32 {
+	if x != nil {
+		return x.Port
+	}
+	return 0
+}
+
 type DnsConfig struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Records       []*DnsRecord           `protobuf:"bytes,1,rep,name=records,proto3" json:"records,omitempty"`
@@ -2826,7 +3262,7 @@ type DnsConfig struct {
 
 func (x *DnsConfig) Reset() {
 	*x = DnsConfig{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[31]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2838,7 +3274,7 @@ func (x *DnsConfig) String() string {
 func (*DnsConfig) ProtoMessage() {}
 
 func (x *DnsConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[31]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2851,7 +3287,7 @@ func (x *DnsConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DnsConfig.ProtoReflect.Descriptor instead.
 func (*DnsConfig) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{31}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *DnsConfig) GetRecords() []*DnsRecord {
@@ -2893,7 +3329,7 @@ type DnsRecord struct {
 
 func (x *DnsRecord) Reset() {
 	*x = DnsRecord{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[32]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2905,7 +3341,7 @@ func (x *DnsRecord) String() string {
 func (*DnsRecord) ProtoMessage() {}
 
 func (x *DnsRecord) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[32]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2918,7 +3354,7 @@ func (x *DnsRecord) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DnsRecord.ProtoReflect.Descriptor instead.
 func (*DnsRecord) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{32}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *DnsRecord) GetName() string {
@@ -2952,7 +3388,7 @@ type Resolver struct {
 
 func (x *Resolver) Reset() {
 	*x = Resolver{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[33]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2964,7 +3400,7 @@ func (x *Resolver) String() string {
 func (*Resolver) ProtoMessage() {}
 
 func (x *Resolver) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[33]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2977,7 +3413,7 @@ func (x *Resolver) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Resolver.ProtoReflect.Descriptor instead.
 func (*Resolver) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{33}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *Resolver) GetIp() []byte {
@@ -3004,7 +3440,7 @@ type DnsRoute struct {
 
 func (x *DnsRoute) Reset() {
 	*x = DnsRoute{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[34]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3016,7 +3452,7 @@ func (x *DnsRoute) String() string {
 func (*DnsRoute) ProtoMessage() {}
 
 func (x *DnsRoute) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[34]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3029,7 +3465,7 @@ func (x *DnsRoute) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DnsRoute.ProtoReflect.Descriptor instead.
 func (*DnsRoute) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{34}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *DnsRoute) GetSuffix() string {
@@ -3057,7 +3493,7 @@ type Settings struct {
 
 func (x *Settings) Reset() {
 	*x = Settings{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[35]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3069,7 +3505,7 @@ func (x *Settings) String() string {
 func (*Settings) ProtoMessage() {}
 
 func (x *Settings) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[35]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3082,7 +3518,7 @@ func (x *Settings) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Settings.ProtoReflect.Descriptor instead.
 func (*Settings) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{35}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *Settings) GetEndpointReportS() uint32 {
@@ -3123,7 +3559,7 @@ type EndpointReport struct {
 
 func (x *EndpointReport) Reset() {
 	*x = EndpointReport{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[36]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3135,7 +3571,7 @@ func (x *EndpointReport) String() string {
 func (*EndpointReport) ProtoMessage() {}
 
 func (x *EndpointReport) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[36]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3148,7 +3584,7 @@ func (x *EndpointReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EndpointReport.ProtoReflect.Descriptor instead.
 func (*EndpointReport) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{36}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *EndpointReport) GetDiscoKey() []byte {
@@ -3225,7 +3661,7 @@ type PortMapping struct {
 
 func (x *PortMapping) Reset() {
 	*x = PortMapping{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[37]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3237,7 +3673,7 @@ func (x *PortMapping) String() string {
 func (*PortMapping) ProtoMessage() {}
 
 func (x *PortMapping) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[37]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3250,7 +3686,7 @@ func (x *PortMapping) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PortMapping.ProtoReflect.Descriptor instead.
 func (*PortMapping) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{37}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *PortMapping) GetProtocol() uint32 {
@@ -3289,7 +3725,7 @@ type Hostinfo struct {
 
 func (x *Hostinfo) Reset() {
 	*x = Hostinfo{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[38]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3301,7 +3737,7 @@ func (x *Hostinfo) String() string {
 func (*Hostinfo) ProtoMessage() {}
 
 func (x *Hostinfo) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[38]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3314,7 +3750,7 @@ func (x *Hostinfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Hostinfo.ProtoReflect.Descriptor instead.
 func (*Hostinfo) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{38}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *Hostinfo) GetHostname() string {
@@ -3375,7 +3811,7 @@ type HostinfoReport struct {
 
 func (x *HostinfoReport) Reset() {
 	*x = HostinfoReport{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[39]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3387,7 +3823,7 @@ func (x *HostinfoReport) String() string {
 func (*HostinfoReport) ProtoMessage() {}
 
 func (x *HostinfoReport) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[39]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3400,7 +3836,7 @@ func (x *HostinfoReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HostinfoReport.ProtoReflect.Descriptor instead.
 func (*HostinfoReport) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{39}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *HostinfoReport) GetHostinfo() *Hostinfo {
@@ -3419,7 +3855,7 @@ type HealthReport struct {
 
 func (x *HealthReport) Reset() {
 	*x = HealthReport{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[40]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3431,7 +3867,7 @@ func (x *HealthReport) String() string {
 func (*HealthReport) ProtoMessage() {}
 
 func (x *HealthReport) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[40]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3444,7 +3880,7 @@ func (x *HealthReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthReport.ProtoReflect.Descriptor instead.
 func (*HealthReport) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{40}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *HealthReport) GetComponents() []*HealthReport_Component {
@@ -3460,13 +3896,15 @@ type EnforcementReport struct {
 	Digest        []byte                 `protobuf:"bytes,2,opt,name=digest,proto3" json:"digest,omitempty"`
 	Grants        uint32                 `protobuf:"varint,3,opt,name=grants,proto3" json:"grants,omitempty"`
 	AppliedMs     int64                  `protobuf:"varint,4,opt,name=applied_ms,json=appliedMs,proto3" json:"applied_ms,omitempty"`
+	RouteDigest   []byte                 `protobuf:"bytes,5,opt,name=route_digest,json=routeDigest,proto3" json:"route_digest,omitempty"`
+	RouteEntries  uint32                 `protobuf:"varint,6,opt,name=route_entries,json=routeEntries,proto3" json:"route_entries,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *EnforcementReport) Reset() {
 	*x = EnforcementReport{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[41]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3478,7 +3916,7 @@ func (x *EnforcementReport) String() string {
 func (*EnforcementReport) ProtoMessage() {}
 
 func (x *EnforcementReport) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[41]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3491,7 +3929,7 @@ func (x *EnforcementReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnforcementReport.ProtoReflect.Descriptor instead.
 func (*EnforcementReport) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{41}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *EnforcementReport) GetView() *View {
@@ -3522,6 +3960,20 @@ func (x *EnforcementReport) GetAppliedMs() int64 {
 	return 0
 }
 
+func (x *EnforcementReport) GetRouteDigest() []byte {
+	if x != nil {
+		return x.RouteDigest
+	}
+	return nil
+}
+
+func (x *EnforcementReport) GetRouteEntries() uint32 {
+	if x != nil {
+		return x.RouteEntries
+	}
+	return 0
+}
+
 type PathStatsReport struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	IntervalStartMs int64                  `protobuf:"varint,1,opt,name=interval_start_ms,json=intervalStartMs,proto3" json:"interval_start_ms,omitempty"`
@@ -3533,7 +3985,7 @@ type PathStatsReport struct {
 
 func (x *PathStatsReport) Reset() {
 	*x = PathStatsReport{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[42]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3545,7 +3997,7 @@ func (x *PathStatsReport) String() string {
 func (*PathStatsReport) ProtoMessage() {}
 
 func (x *PathStatsReport) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[42]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3558,7 +4010,7 @@ func (x *PathStatsReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PathStatsReport.ProtoReflect.Descriptor instead.
 func (*PathStatsReport) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{42}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *PathStatsReport) GetIntervalStartMs() int64 {
@@ -3603,7 +4055,7 @@ type PeerPathStats struct {
 
 func (x *PeerPathStats) Reset() {
 	*x = PeerPathStats{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[43]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3615,7 +4067,7 @@ func (x *PeerPathStats) String() string {
 func (*PeerPathStats) ProtoMessage() {}
 
 func (x *PeerPathStats) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[43]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3628,7 +4080,7 @@ func (x *PeerPathStats) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PeerPathStats.ProtoReflect.Descriptor instead.
 func (*PeerPathStats) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{43}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *PeerPathStats) GetDeviceId() string {
@@ -3734,7 +4186,7 @@ type RelayTicket struct {
 
 func (x *RelayTicket) Reset() {
 	*x = RelayTicket{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[44]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3746,7 +4198,7 @@ func (x *RelayTicket) String() string {
 func (*RelayTicket) ProtoMessage() {}
 
 func (x *RelayTicket) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[44]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3759,7 +4211,7 @@ func (x *RelayTicket) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RelayTicket.ProtoReflect.Descriptor instead.
 func (*RelayTicket) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{44}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *RelayTicket) GetTicket() []byte {
@@ -3802,7 +4254,7 @@ type Lifecycle struct {
 
 func (x *Lifecycle) Reset() {
 	*x = Lifecycle{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[45]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3814,7 +4266,7 @@ func (x *Lifecycle) String() string {
 func (*Lifecycle) ProtoMessage() {}
 
 func (x *Lifecycle) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[45]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3827,7 +4279,7 @@ func (x *Lifecycle) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Lifecycle.ProtoReflect.Descriptor instead.
 func (*Lifecycle) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{45}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *Lifecycle) GetState() Lifecycle_State {
@@ -3869,7 +4321,7 @@ type KeyUpdate struct {
 
 func (x *KeyUpdate) Reset() {
 	*x = KeyUpdate{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[46]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3881,7 +4333,7 @@ func (x *KeyUpdate) String() string {
 func (*KeyUpdate) ProtoMessage() {}
 
 func (x *KeyUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[46]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3894,7 +4346,7 @@ func (x *KeyUpdate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KeyUpdate.ProtoReflect.Descriptor instead.
 func (*KeyUpdate) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{46}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *KeyUpdate) GetControlKeys() []*KeyUpdate_ControlKey {
@@ -3929,7 +4381,7 @@ type Notice struct {
 
 func (x *Notice) Reset() {
 	*x = Notice{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[47]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3941,7 +4393,7 @@ func (x *Notice) String() string {
 func (*Notice) ProtoMessage() {}
 
 func (x *Notice) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[47]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3954,7 +4406,7 @@ func (x *Notice) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Notice.ProtoReflect.Descriptor instead.
 func (*Notice) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{47}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *Notice) GetSeverity() Notice_Severity {
@@ -3992,7 +4444,7 @@ type RegisterRequest_Auth struct {
 
 func (x *RegisterRequest_Auth) Reset() {
 	*x = RegisterRequest_Auth{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[48]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4004,7 +4456,7 @@ func (x *RegisterRequest_Auth) String() string {
 func (*RegisterRequest_Auth) ProtoMessage() {}
 
 func (x *RegisterRequest_Auth) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[48]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4085,7 +4537,7 @@ type RegisterRequest_Interactive struct {
 
 func (x *RegisterRequest_Interactive) Reset() {
 	*x = RegisterRequest_Interactive{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[49]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4097,7 +4549,7 @@ func (x *RegisterRequest_Interactive) String() string {
 func (*RegisterRequest_Interactive) ProtoMessage() {}
 
 func (x *RegisterRequest_Interactive) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[49]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4128,7 +4580,7 @@ type RegisterRequest_Resume struct {
 
 func (x *RegisterRequest_Resume) Reset() {
 	*x = RegisterRequest_Resume{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[50]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4140,7 +4592,7 @@ func (x *RegisterRequest_Resume) String() string {
 func (*RegisterRequest_Resume) ProtoMessage() {}
 
 func (x *RegisterRequest_Resume) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[50]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4168,7 +4620,7 @@ type RegisterResponse_Authorized struct {
 
 func (x *RegisterResponse_Authorized) Reset() {
 	*x = RegisterResponse_Authorized{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[51]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4180,7 +4632,7 @@ func (x *RegisterResponse_Authorized) String() string {
 func (*RegisterResponse_Authorized) ProtoMessage() {}
 
 func (x *RegisterResponse_Authorized) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[51]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4235,7 +4687,7 @@ type RegisterResponse_Pending struct {
 
 func (x *RegisterResponse_Pending) Reset() {
 	*x = RegisterResponse_Pending{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[52]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4247,7 +4699,7 @@ func (x *RegisterResponse_Pending) String() string {
 func (*RegisterResponse_Pending) ProtoMessage() {}
 
 func (x *RegisterResponse_Pending) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[52]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4294,7 +4746,7 @@ type RegisterResponse_Rejected struct {
 
 func (x *RegisterResponse_Rejected) Reset() {
 	*x = RegisterResponse_Rejected{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[53]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4306,7 +4758,7 @@ func (x *RegisterResponse_Rejected) String() string {
 func (*RegisterResponse_Rejected) ProtoMessage() {}
 
 func (x *RegisterResponse_Rejected) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[53]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4347,7 +4799,7 @@ type HealthReport_Component struct {
 
 func (x *HealthReport_Component) Reset() {
 	*x = HealthReport_Component{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[54]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4359,7 +4811,7 @@ func (x *HealthReport_Component) String() string {
 func (*HealthReport_Component) ProtoMessage() {}
 
 func (x *HealthReport_Component) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[54]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4372,7 +4824,7 @@ func (x *HealthReport_Component) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthReport_Component.ProtoReflect.Descriptor instead.
 func (*HealthReport_Component) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{40, 0}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{45, 0}
 }
 
 func (x *HealthReport_Component) GetName() HealthReport_Component_Name {
@@ -4406,7 +4858,7 @@ type KeyUpdate_ControlKey struct {
 
 func (x *KeyUpdate_ControlKey) Reset() {
 	*x = KeyUpdate_ControlKey{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[55]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4418,7 +4870,7 @@ func (x *KeyUpdate_ControlKey) String() string {
 func (*KeyUpdate_ControlKey) ProtoMessage() {}
 
 func (x *KeyUpdate_ControlKey) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[55]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4431,7 +4883,7 @@ func (x *KeyUpdate_ControlKey) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KeyUpdate_ControlKey.ProtoReflect.Descriptor instead.
 func (*KeyUpdate_ControlKey) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{46, 0}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{51, 0}
 }
 
 func (x *KeyUpdate_ControlKey) GetKey() []byte {
@@ -4459,7 +4911,7 @@ type KeyUpdate_SigningKey struct {
 
 func (x *KeyUpdate_SigningKey) Reset() {
 	*x = KeyUpdate_SigningKey{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[56]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4471,7 +4923,7 @@ func (x *KeyUpdate_SigningKey) String() string {
 func (*KeyUpdate_SigningKey) ProtoMessage() {}
 
 func (x *KeyUpdate_SigningKey) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[56]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4484,7 +4936,7 @@ func (x *KeyUpdate_SigningKey) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KeyUpdate_SigningKey.ProtoReflect.Descriptor instead.
 func (*KeyUpdate_SigningKey) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{46, 1}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{51, 1}
 }
 
 func (x *KeyUpdate_SigningKey) GetKeyId() []byte {
@@ -4627,7 +5079,7 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\x0fNetworkRevision\x12\x1d\n" +
 	"\n" +
 	"network_id\x18\x01 \x01(\tR\tnetworkId\x12\x1a\n" +
-	"\brevision\x18\x02 \x01(\x04R\brevision\"\xc5\x03\n" +
+	"\brevision\x18\x02 \x01(\x04R\brevision\"\xba\x04\n" +
 	"\vMapSnapshot\x12-\n" +
 	"\x04view\x18\x01 \x01(\v2\x19.meshtransit.mtcp.v1.ViewR\x04view\x12Q\n" +
 	"\x11network_revisions\x18\x02 \x03(\v2$.meshtransit.mtcp.v1.NetworkRevisionR\x10networkRevisions\x12/\n" +
@@ -4636,7 +5088,10 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\rpacket_filter\x18\x05 \x01(\v2!.meshtransit.mtcp.v1.PacketFilterR\fpacketFilter\x120\n" +
 	"\x03dns\x18\x06 \x01(\v2\x1e.meshtransit.mtcp.v1.DnsConfigR\x03dns\x12\x1b\n" +
 	"\trelay_map\x18\a \x01(\fR\brelayMap\x129\n" +
-	"\bsettings\x18\b \x01(\v2\x1d.meshtransit.mtcp.v1.SettingsR\bsettings\"\xb5\x04\n" +
+	"\bsettings\x18\b \x01(\v2\x1d.meshtransit.mtcp.v1.SettingsR\bsettings\x128\n" +
+	"\x06routes\x18\t \x01(\v2 .meshtransit.mtcp.v1.RouteConfigR\x06routes\x129\n" +
+	"\x06served\x18\n" +
+	" \x01(\v2!.meshtransit.mtcp.v1.ServedRoutesR\x06served\"\xaa\x05\n" +
 	"\bMapDelta\x12-\n" +
 	"\x04view\x18\x01 \x01(\v2\x19.meshtransit.mtcp.v1.ViewR\x04view\x12Q\n" +
 	"\x11network_revisions\x18\x02 \x03(\v2$.meshtransit.mtcp.v1.NetworkRevisionR\x10networkRevisions\x12/\n" +
@@ -4648,7 +5103,9 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\x03dns\x18\b \x01(\v2\x1e.meshtransit.mtcp.v1.DnsConfigR\x03dns\x12\x1b\n" +
 	"\trelay_map\x18\t \x01(\fR\brelayMap\x129\n" +
 	"\bsettings\x18\n" +
-	" \x01(\v2\x1d.meshtransit.mtcp.v1.SettingsR\bsettings\"7\n" +
+	" \x01(\v2\x1d.meshtransit.mtcp.v1.SettingsR\bsettings\x128\n" +
+	"\x06routes\x18\v \x01(\v2 .meshtransit.mtcp.v1.RouteConfigR\x06routes\x129\n" +
+	"\x06served\x18\f \x01(\v2!.meshtransit.mtcp.v1.ServedRoutesR\x06served\"7\n" +
 	"\x06MapAck\x12-\n" +
 	"\x04view\x18\x01 \x01(\v2\x19.meshtransit.mtcp.v1.ViewR\x04view\":\n" +
 	"\tMapResync\x12-\n" +
@@ -4754,7 +5211,46 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\x05ports\x18\x02 \x03(\v2\x1e.meshtransit.mtcp.v1.PortRangeR\x05ports\"5\n" +
 	"\tPortRange\x12\x14\n" +
 	"\x05first\x18\x01 \x01(\rR\x05first\x12\x12\n" +
-	"\x04last\x18\x02 \x01(\rR\x04last\"\xe0\x01\n" +
+	"\x04last\x18\x02 \x01(\rR\x04last\"C\n" +
+	"\vRouteConfig\x124\n" +
+	"\x05sites\x18\x01 \x03(\v2\x1e.meshtransit.mtcp.v1.SiteRouteR\x05sites\"\xd0\x02\n" +
+	"\tSiteRoute\x12\x19\n" +
+	"\bsite_ref\x18\x01 \x01(\tR\asiteRef\x127\n" +
+	"\bprefixes\x18\x02 \x03(\v2\x1b.meshtransit.mtcp.v1.PrefixR\bprefixes\x12\x1e\n" +
+	"\n" +
+	"candidates\x18\x03 \x03(\tR\n" +
+	"candidates\x12\x18\n" +
+	"\aprimary\x18\x04 \x01(\tR\aprimary\x12\x1e\n" +
+	"\n" +
+	"generation\x18\x05 \x01(\x04R\n" +
+	"generation\x12=\n" +
+	"\x06status\x18\x06 \x01(\x0e2%.meshtransit.mtcp.v1.SiteRoute.StatusR\x06status\"V\n" +
+	"\x06Status\x12\x16\n" +
+	"\x12STATUS_UNSPECIFIED\x10\x00\x12\n" +
+	"\n" +
+	"\x06SERVED\x10\x01\x12\f\n" +
+	"\bUNSERVED\x10\x02\x12\f\n" +
+	"\bCONFLICT\x10\x03\x12\f\n" +
+	"\bCAPACITY\x10\x04\"E\n" +
+	"\fServedRoutes\x125\n" +
+	"\x05sites\x18\x01 \x03(\v2\x1f.meshtransit.mtcp.v1.ServedSiteR\x05sites\"\xb9\x01\n" +
+	"\n" +
+	"ServedSite\x12\x19\n" +
+	"\bsite_ref\x18\x01 \x01(\tR\asiteRef\x127\n" +
+	"\bprefixes\x18\x02 \x03(\v2\x1b.meshtransit.mtcp.v1.PrefixR\bprefixes\x12\x1e\n" +
+	"\n" +
+	"masquerade\x18\x03 \x01(\bR\n" +
+	"masquerade\x127\n" +
+	"\x06probes\x18\x04 \x03(\v2\x1f.meshtransit.mtcp.v1.RouteProbeR\x06probes\"\x9b\x01\n" +
+	"\n" +
+	"RouteProbe\x12\x0e\n" +
+	"\x02ip\x18\x01 \x01(\fR\x02ip\x128\n" +
+	"\x04kind\x18\x02 \x01(\x0e2$.meshtransit.mtcp.v1.RouteProbe.KindR\x04kind\x12\x12\n" +
+	"\x04port\x18\x03 \x01(\rR\x04port\"/\n" +
+	"\x04Kind\x12\x14\n" +
+	"\x10KIND_UNSPECIFIED\x10\x00\x12\b\n" +
+	"\x04ICMP\x10\x01\x12\a\n" +
+	"\x03TCP\x10\x02\"\xe0\x01\n" +
 	"\tDnsConfig\x128\n" +
 	"\arecords\x18\x01 \x03(\v2\x1e.meshtransit.mtcp.v1.DnsRecordR\arecords\x12;\n" +
 	"\tresolvers\x18\x02 \x03(\v2\x1d.meshtransit.mtcp.v1.ResolverR\tresolvers\x12%\n" +
@@ -4827,13 +5323,15 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\x02OK\x10\x01\x12\f\n" +
 	"\bDEGRADED\x10\x02\x12\n" +
 	"\n" +
-	"\x06FAILED\x10\x03\"\x91\x01\n" +
+	"\x06FAILED\x10\x03\"\xd9\x01\n" +
 	"\x11EnforcementReport\x12-\n" +
 	"\x04view\x18\x01 \x01(\v2\x19.meshtransit.mtcp.v1.ViewR\x04view\x12\x16\n" +
 	"\x06digest\x18\x02 \x01(\fR\x06digest\x12\x16\n" +
 	"\x06grants\x18\x03 \x01(\rR\x06grants\x12\x1d\n" +
 	"\n" +
-	"applied_ms\x18\x04 \x01(\x03R\tappliedMs\"\x96\x01\n" +
+	"applied_ms\x18\x04 \x01(\x03R\tappliedMs\x12!\n" +
+	"\froute_digest\x18\x05 \x01(\fR\vrouteDigest\x12#\n" +
+	"\rroute_entries\x18\x06 \x01(\rR\frouteEntries\"\x96\x01\n" +
 	"\x0fPathStatsReport\x12*\n" +
 	"\x11interval_start_ms\x18\x01 \x01(\x03R\x0fintervalStartMs\x12\x1d\n" +
 	"\n" +
@@ -4926,151 +5424,169 @@ func file_mtcp_v1_mtcp_proto_rawDescGZIP() []byte {
 	return file_mtcp_v1_mtcp_proto_rawDescData
 }
 
-var file_mtcp_v1_mtcp_proto_enumTypes = make([]protoimpl.EnumInfo, 12)
-var file_mtcp_v1_mtcp_proto_msgTypes = make([]protoimpl.MessageInfo, 57)
+var file_mtcp_v1_mtcp_proto_enumTypes = make([]protoimpl.EnumInfo, 14)
+var file_mtcp_v1_mtcp_proto_msgTypes = make([]protoimpl.MessageInfo, 62)
 var file_mtcp_v1_mtcp_proto_goTypes = []any{
 	(ServerHello_Reject)(0),             // 0: meshtransit.mtcp.v1.ServerHello.Reject
 	(Error_Code)(0),                     // 1: meshtransit.mtcp.v1.Error.Code
 	(RegisterResponse_Rejected_Code)(0), // 2: meshtransit.mtcp.v1.RegisterResponse.Rejected.Code
 	(Endpoint_Kind)(0),                  // 3: meshtransit.mtcp.v1.Endpoint.Kind
 	(AliasGrant_Role)(0),                // 4: meshtransit.mtcp.v1.AliasGrant.Role
-	(DnsRecord_Type)(0),                 // 5: meshtransit.mtcp.v1.DnsRecord.Type
-	(HealthReport_Component_Name)(0),    // 6: meshtransit.mtcp.v1.HealthReport.Component.Name
-	(HealthReport_Component_State)(0),   // 7: meshtransit.mtcp.v1.HealthReport.Component.State
-	(PeerPathStats_RelayReason)(0),      // 8: meshtransit.mtcp.v1.PeerPathStats.RelayReason
-	(PeerPathStats_Technique)(0),        // 9: meshtransit.mtcp.v1.PeerPathStats.Technique
-	(Lifecycle_State)(0),                // 10: meshtransit.mtcp.v1.Lifecycle.State
-	(Notice_Severity)(0),                // 11: meshtransit.mtcp.v1.Notice.Severity
-	(*ClientHello)(nil),                 // 12: meshtransit.mtcp.v1.ClientHello
-	(*ClientInfo)(nil),                  // 13: meshtransit.mtcp.v1.ClientInfo
-	(*ServerHello)(nil),                 // 14: meshtransit.mtcp.v1.ServerHello
-	(*Limits)(nil),                      // 15: meshtransit.mtcp.v1.Limits
-	(*Error)(nil),                       // 16: meshtransit.mtcp.v1.Error
-	(*Ping)(nil),                        // 17: meshtransit.mtcp.v1.Ping
-	(*Pong)(nil),                        // 18: meshtransit.mtcp.v1.Pong
-	(*RegisterRequest)(nil),             // 19: meshtransit.mtcp.v1.RegisterRequest
-	(*RegisterResponse)(nil),            // 20: meshtransit.mtcp.v1.RegisterResponse
-	(*RotateNodeKey)(nil),               // 21: meshtransit.mtcp.v1.RotateNodeKey
-	(*RotateNodeKeyResponse)(nil),       // 22: meshtransit.mtcp.v1.RotateNodeKeyResponse
-	(*Logout)(nil),                      // 23: meshtransit.mtcp.v1.Logout
-	(*View)(nil),                        // 24: meshtransit.mtcp.v1.View
-	(*NetworkRevision)(nil),             // 25: meshtransit.mtcp.v1.NetworkRevision
-	(*MapSnapshot)(nil),                 // 26: meshtransit.mtcp.v1.MapSnapshot
-	(*MapDelta)(nil),                    // 27: meshtransit.mtcp.v1.MapDelta
-	(*MapAck)(nil),                      // 28: meshtransit.mtcp.v1.MapAck
-	(*MapResync)(nil),                   // 29: meshtransit.mtcp.v1.MapResync
-	(*Device)(nil),                      // 30: meshtransit.mtcp.v1.Device
-	(*PeerPatch)(nil),                   // 31: meshtransit.mtcp.v1.PeerPatch
-	(*EndpointList)(nil),                // 32: meshtransit.mtcp.v1.EndpointList
-	(*Owner)(nil),                       // 33: meshtransit.mtcp.v1.Owner
-	(*Prefix)(nil),                      // 34: meshtransit.mtcp.v1.Prefix
-	(*Endpoint)(nil),                    // 35: meshtransit.mtcp.v1.Endpoint
-	(*NatInfo)(nil),                     // 36: meshtransit.mtcp.v1.NatInfo
-	(*AliasGrant)(nil),                  // 37: meshtransit.mtcp.v1.AliasGrant
-	(*AliasService)(nil),                // 38: meshtransit.mtcp.v1.AliasService
-	(*PacketFilter)(nil),                // 39: meshtransit.mtcp.v1.PacketFilter
-	(*FilterRule)(nil),                  // 40: meshtransit.mtcp.v1.FilterRule
-	(*Destination)(nil),                 // 41: meshtransit.mtcp.v1.Destination
-	(*PortRange)(nil),                   // 42: meshtransit.mtcp.v1.PortRange
-	(*DnsConfig)(nil),                   // 43: meshtransit.mtcp.v1.DnsConfig
-	(*DnsRecord)(nil),                   // 44: meshtransit.mtcp.v1.DnsRecord
-	(*Resolver)(nil),                    // 45: meshtransit.mtcp.v1.Resolver
-	(*DnsRoute)(nil),                    // 46: meshtransit.mtcp.v1.DnsRoute
-	(*Settings)(nil),                    // 47: meshtransit.mtcp.v1.Settings
-	(*EndpointReport)(nil),              // 48: meshtransit.mtcp.v1.EndpointReport
-	(*PortMapping)(nil),                 // 49: meshtransit.mtcp.v1.PortMapping
-	(*Hostinfo)(nil),                    // 50: meshtransit.mtcp.v1.Hostinfo
-	(*HostinfoReport)(nil),              // 51: meshtransit.mtcp.v1.HostinfoReport
-	(*HealthReport)(nil),                // 52: meshtransit.mtcp.v1.HealthReport
-	(*EnforcementReport)(nil),           // 53: meshtransit.mtcp.v1.EnforcementReport
-	(*PathStatsReport)(nil),             // 54: meshtransit.mtcp.v1.PathStatsReport
-	(*PeerPathStats)(nil),               // 55: meshtransit.mtcp.v1.PeerPathStats
-	(*RelayTicket)(nil),                 // 56: meshtransit.mtcp.v1.RelayTicket
-	(*Lifecycle)(nil),                   // 57: meshtransit.mtcp.v1.Lifecycle
-	(*KeyUpdate)(nil),                   // 58: meshtransit.mtcp.v1.KeyUpdate
-	(*Notice)(nil),                      // 59: meshtransit.mtcp.v1.Notice
-	(*RegisterRequest_Auth)(nil),        // 60: meshtransit.mtcp.v1.RegisterRequest.Auth
-	(*RegisterRequest_Interactive)(nil), // 61: meshtransit.mtcp.v1.RegisterRequest.Interactive
-	(*RegisterRequest_Resume)(nil),      // 62: meshtransit.mtcp.v1.RegisterRequest.Resume
-	(*RegisterResponse_Authorized)(nil), // 63: meshtransit.mtcp.v1.RegisterResponse.Authorized
-	(*RegisterResponse_Pending)(nil),    // 64: meshtransit.mtcp.v1.RegisterResponse.Pending
-	(*RegisterResponse_Rejected)(nil),   // 65: meshtransit.mtcp.v1.RegisterResponse.Rejected
-	(*HealthReport_Component)(nil),      // 66: meshtransit.mtcp.v1.HealthReport.Component
-	(*KeyUpdate_ControlKey)(nil),        // 67: meshtransit.mtcp.v1.KeyUpdate.ControlKey
-	(*KeyUpdate_SigningKey)(nil),        // 68: meshtransit.mtcp.v1.KeyUpdate.SigningKey
+	(SiteRoute_Status)(0),               // 5: meshtransit.mtcp.v1.SiteRoute.Status
+	(RouteProbe_Kind)(0),                // 6: meshtransit.mtcp.v1.RouteProbe.Kind
+	(DnsRecord_Type)(0),                 // 7: meshtransit.mtcp.v1.DnsRecord.Type
+	(HealthReport_Component_Name)(0),    // 8: meshtransit.mtcp.v1.HealthReport.Component.Name
+	(HealthReport_Component_State)(0),   // 9: meshtransit.mtcp.v1.HealthReport.Component.State
+	(PeerPathStats_RelayReason)(0),      // 10: meshtransit.mtcp.v1.PeerPathStats.RelayReason
+	(PeerPathStats_Technique)(0),        // 11: meshtransit.mtcp.v1.PeerPathStats.Technique
+	(Lifecycle_State)(0),                // 12: meshtransit.mtcp.v1.Lifecycle.State
+	(Notice_Severity)(0),                // 13: meshtransit.mtcp.v1.Notice.Severity
+	(*ClientHello)(nil),                 // 14: meshtransit.mtcp.v1.ClientHello
+	(*ClientInfo)(nil),                  // 15: meshtransit.mtcp.v1.ClientInfo
+	(*ServerHello)(nil),                 // 16: meshtransit.mtcp.v1.ServerHello
+	(*Limits)(nil),                      // 17: meshtransit.mtcp.v1.Limits
+	(*Error)(nil),                       // 18: meshtransit.mtcp.v1.Error
+	(*Ping)(nil),                        // 19: meshtransit.mtcp.v1.Ping
+	(*Pong)(nil),                        // 20: meshtransit.mtcp.v1.Pong
+	(*RegisterRequest)(nil),             // 21: meshtransit.mtcp.v1.RegisterRequest
+	(*RegisterResponse)(nil),            // 22: meshtransit.mtcp.v1.RegisterResponse
+	(*RotateNodeKey)(nil),               // 23: meshtransit.mtcp.v1.RotateNodeKey
+	(*RotateNodeKeyResponse)(nil),       // 24: meshtransit.mtcp.v1.RotateNodeKeyResponse
+	(*Logout)(nil),                      // 25: meshtransit.mtcp.v1.Logout
+	(*View)(nil),                        // 26: meshtransit.mtcp.v1.View
+	(*NetworkRevision)(nil),             // 27: meshtransit.mtcp.v1.NetworkRevision
+	(*MapSnapshot)(nil),                 // 28: meshtransit.mtcp.v1.MapSnapshot
+	(*MapDelta)(nil),                    // 29: meshtransit.mtcp.v1.MapDelta
+	(*MapAck)(nil),                      // 30: meshtransit.mtcp.v1.MapAck
+	(*MapResync)(nil),                   // 31: meshtransit.mtcp.v1.MapResync
+	(*Device)(nil),                      // 32: meshtransit.mtcp.v1.Device
+	(*PeerPatch)(nil),                   // 33: meshtransit.mtcp.v1.PeerPatch
+	(*EndpointList)(nil),                // 34: meshtransit.mtcp.v1.EndpointList
+	(*Owner)(nil),                       // 35: meshtransit.mtcp.v1.Owner
+	(*Prefix)(nil),                      // 36: meshtransit.mtcp.v1.Prefix
+	(*Endpoint)(nil),                    // 37: meshtransit.mtcp.v1.Endpoint
+	(*NatInfo)(nil),                     // 38: meshtransit.mtcp.v1.NatInfo
+	(*AliasGrant)(nil),                  // 39: meshtransit.mtcp.v1.AliasGrant
+	(*AliasService)(nil),                // 40: meshtransit.mtcp.v1.AliasService
+	(*PacketFilter)(nil),                // 41: meshtransit.mtcp.v1.PacketFilter
+	(*FilterRule)(nil),                  // 42: meshtransit.mtcp.v1.FilterRule
+	(*Destination)(nil),                 // 43: meshtransit.mtcp.v1.Destination
+	(*PortRange)(nil),                   // 44: meshtransit.mtcp.v1.PortRange
+	(*RouteConfig)(nil),                 // 45: meshtransit.mtcp.v1.RouteConfig
+	(*SiteRoute)(nil),                   // 46: meshtransit.mtcp.v1.SiteRoute
+	(*ServedRoutes)(nil),                // 47: meshtransit.mtcp.v1.ServedRoutes
+	(*ServedSite)(nil),                  // 48: meshtransit.mtcp.v1.ServedSite
+	(*RouteProbe)(nil),                  // 49: meshtransit.mtcp.v1.RouteProbe
+	(*DnsConfig)(nil),                   // 50: meshtransit.mtcp.v1.DnsConfig
+	(*DnsRecord)(nil),                   // 51: meshtransit.mtcp.v1.DnsRecord
+	(*Resolver)(nil),                    // 52: meshtransit.mtcp.v1.Resolver
+	(*DnsRoute)(nil),                    // 53: meshtransit.mtcp.v1.DnsRoute
+	(*Settings)(nil),                    // 54: meshtransit.mtcp.v1.Settings
+	(*EndpointReport)(nil),              // 55: meshtransit.mtcp.v1.EndpointReport
+	(*PortMapping)(nil),                 // 56: meshtransit.mtcp.v1.PortMapping
+	(*Hostinfo)(nil),                    // 57: meshtransit.mtcp.v1.Hostinfo
+	(*HostinfoReport)(nil),              // 58: meshtransit.mtcp.v1.HostinfoReport
+	(*HealthReport)(nil),                // 59: meshtransit.mtcp.v1.HealthReport
+	(*EnforcementReport)(nil),           // 60: meshtransit.mtcp.v1.EnforcementReport
+	(*PathStatsReport)(nil),             // 61: meshtransit.mtcp.v1.PathStatsReport
+	(*PeerPathStats)(nil),               // 62: meshtransit.mtcp.v1.PeerPathStats
+	(*RelayTicket)(nil),                 // 63: meshtransit.mtcp.v1.RelayTicket
+	(*Lifecycle)(nil),                   // 64: meshtransit.mtcp.v1.Lifecycle
+	(*KeyUpdate)(nil),                   // 65: meshtransit.mtcp.v1.KeyUpdate
+	(*Notice)(nil),                      // 66: meshtransit.mtcp.v1.Notice
+	(*RegisterRequest_Auth)(nil),        // 67: meshtransit.mtcp.v1.RegisterRequest.Auth
+	(*RegisterRequest_Interactive)(nil), // 68: meshtransit.mtcp.v1.RegisterRequest.Interactive
+	(*RegisterRequest_Resume)(nil),      // 69: meshtransit.mtcp.v1.RegisterRequest.Resume
+	(*RegisterResponse_Authorized)(nil), // 70: meshtransit.mtcp.v1.RegisterResponse.Authorized
+	(*RegisterResponse_Pending)(nil),    // 71: meshtransit.mtcp.v1.RegisterResponse.Pending
+	(*RegisterResponse_Rejected)(nil),   // 72: meshtransit.mtcp.v1.RegisterResponse.Rejected
+	(*HealthReport_Component)(nil),      // 73: meshtransit.mtcp.v1.HealthReport.Component
+	(*KeyUpdate_ControlKey)(nil),        // 74: meshtransit.mtcp.v1.KeyUpdate.ControlKey
+	(*KeyUpdate_SigningKey)(nil),        // 75: meshtransit.mtcp.v1.KeyUpdate.SigningKey
 }
 var file_mtcp_v1_mtcp_proto_depIdxs = []int32{
-	13, // 0: meshtransit.mtcp.v1.ClientHello.client:type_name -> meshtransit.mtcp.v1.ClientInfo
-	15, // 1: meshtransit.mtcp.v1.ServerHello.limits:type_name -> meshtransit.mtcp.v1.Limits
+	15, // 0: meshtransit.mtcp.v1.ClientHello.client:type_name -> meshtransit.mtcp.v1.ClientInfo
+	17, // 1: meshtransit.mtcp.v1.ServerHello.limits:type_name -> meshtransit.mtcp.v1.Limits
 	0,  // 2: meshtransit.mtcp.v1.ServerHello.reject:type_name -> meshtransit.mtcp.v1.ServerHello.Reject
 	1,  // 3: meshtransit.mtcp.v1.Error.code:type_name -> meshtransit.mtcp.v1.Error.Code
-	50, // 4: meshtransit.mtcp.v1.RegisterRequest.hostinfo:type_name -> meshtransit.mtcp.v1.Hostinfo
-	60, // 5: meshtransit.mtcp.v1.RegisterRequest.auth:type_name -> meshtransit.mtcp.v1.RegisterRequest.Auth
-	63, // 6: meshtransit.mtcp.v1.RegisterResponse.authorized:type_name -> meshtransit.mtcp.v1.RegisterResponse.Authorized
-	64, // 7: meshtransit.mtcp.v1.RegisterResponse.pending:type_name -> meshtransit.mtcp.v1.RegisterResponse.Pending
-	65, // 8: meshtransit.mtcp.v1.RegisterResponse.rejected:type_name -> meshtransit.mtcp.v1.RegisterResponse.Rejected
-	24, // 9: meshtransit.mtcp.v1.MapSnapshot.view:type_name -> meshtransit.mtcp.v1.View
-	25, // 10: meshtransit.mtcp.v1.MapSnapshot.network_revisions:type_name -> meshtransit.mtcp.v1.NetworkRevision
-	30, // 11: meshtransit.mtcp.v1.MapSnapshot.self:type_name -> meshtransit.mtcp.v1.Device
-	30, // 12: meshtransit.mtcp.v1.MapSnapshot.peers:type_name -> meshtransit.mtcp.v1.Device
-	39, // 13: meshtransit.mtcp.v1.MapSnapshot.packet_filter:type_name -> meshtransit.mtcp.v1.PacketFilter
-	43, // 14: meshtransit.mtcp.v1.MapSnapshot.dns:type_name -> meshtransit.mtcp.v1.DnsConfig
-	47, // 15: meshtransit.mtcp.v1.MapSnapshot.settings:type_name -> meshtransit.mtcp.v1.Settings
-	24, // 16: meshtransit.mtcp.v1.MapDelta.view:type_name -> meshtransit.mtcp.v1.View
-	25, // 17: meshtransit.mtcp.v1.MapDelta.network_revisions:type_name -> meshtransit.mtcp.v1.NetworkRevision
-	30, // 18: meshtransit.mtcp.v1.MapDelta.self:type_name -> meshtransit.mtcp.v1.Device
-	30, // 19: meshtransit.mtcp.v1.MapDelta.peers_upsert:type_name -> meshtransit.mtcp.v1.Device
-	31, // 20: meshtransit.mtcp.v1.MapDelta.peer_patches:type_name -> meshtransit.mtcp.v1.PeerPatch
-	39, // 21: meshtransit.mtcp.v1.MapDelta.packet_filter:type_name -> meshtransit.mtcp.v1.PacketFilter
-	43, // 22: meshtransit.mtcp.v1.MapDelta.dns:type_name -> meshtransit.mtcp.v1.DnsConfig
-	47, // 23: meshtransit.mtcp.v1.MapDelta.settings:type_name -> meshtransit.mtcp.v1.Settings
-	24, // 24: meshtransit.mtcp.v1.MapAck.view:type_name -> meshtransit.mtcp.v1.View
-	24, // 25: meshtransit.mtcp.v1.MapResync.view:type_name -> meshtransit.mtcp.v1.View
-	34, // 26: meshtransit.mtcp.v1.Device.allowed_prefixes:type_name -> meshtransit.mtcp.v1.Prefix
-	35, // 27: meshtransit.mtcp.v1.Device.endpoints:type_name -> meshtransit.mtcp.v1.Endpoint
-	36, // 28: meshtransit.mtcp.v1.Device.nat:type_name -> meshtransit.mtcp.v1.NatInfo
-	33, // 29: meshtransit.mtcp.v1.Device.owner:type_name -> meshtransit.mtcp.v1.Owner
-	37, // 30: meshtransit.mtcp.v1.Device.alias:type_name -> meshtransit.mtcp.v1.AliasGrant
-	32, // 31: meshtransit.mtcp.v1.PeerPatch.endpoints:type_name -> meshtransit.mtcp.v1.EndpointList
-	36, // 32: meshtransit.mtcp.v1.PeerPatch.nat:type_name -> meshtransit.mtcp.v1.NatInfo
-	35, // 33: meshtransit.mtcp.v1.EndpointList.items:type_name -> meshtransit.mtcp.v1.Endpoint
-	3,  // 34: meshtransit.mtcp.v1.Endpoint.kind:type_name -> meshtransit.mtcp.v1.Endpoint.Kind
-	4,  // 35: meshtransit.mtcp.v1.AliasGrant.role:type_name -> meshtransit.mtcp.v1.AliasGrant.Role
-	38, // 36: meshtransit.mtcp.v1.AliasGrant.services:type_name -> meshtransit.mtcp.v1.AliasService
-	40, // 37: meshtransit.mtcp.v1.PacketFilter.rules:type_name -> meshtransit.mtcp.v1.FilterRule
-	34, // 38: meshtransit.mtcp.v1.FilterRule.sources:type_name -> meshtransit.mtcp.v1.Prefix
-	41, // 39: meshtransit.mtcp.v1.FilterRule.destinations:type_name -> meshtransit.mtcp.v1.Destination
-	34, // 40: meshtransit.mtcp.v1.Destination.prefix:type_name -> meshtransit.mtcp.v1.Prefix
-	42, // 41: meshtransit.mtcp.v1.Destination.ports:type_name -> meshtransit.mtcp.v1.PortRange
-	44, // 42: meshtransit.mtcp.v1.DnsConfig.records:type_name -> meshtransit.mtcp.v1.DnsRecord
-	45, // 43: meshtransit.mtcp.v1.DnsConfig.resolvers:type_name -> meshtransit.mtcp.v1.Resolver
-	46, // 44: meshtransit.mtcp.v1.DnsConfig.routes:type_name -> meshtransit.mtcp.v1.DnsRoute
-	5,  // 45: meshtransit.mtcp.v1.DnsRecord.type:type_name -> meshtransit.mtcp.v1.DnsRecord.Type
-	45, // 46: meshtransit.mtcp.v1.DnsRoute.resolvers:type_name -> meshtransit.mtcp.v1.Resolver
-	35, // 47: meshtransit.mtcp.v1.EndpointReport.endpoints:type_name -> meshtransit.mtcp.v1.Endpoint
-	36, // 48: meshtransit.mtcp.v1.EndpointReport.nat:type_name -> meshtransit.mtcp.v1.NatInfo
-	49, // 49: meshtransit.mtcp.v1.EndpointReport.port_mapping:type_name -> meshtransit.mtcp.v1.PortMapping
-	34, // 50: meshtransit.mtcp.v1.Hostinfo.advertised_prefixes:type_name -> meshtransit.mtcp.v1.Prefix
-	50, // 51: meshtransit.mtcp.v1.HostinfoReport.hostinfo:type_name -> meshtransit.mtcp.v1.Hostinfo
-	66, // 52: meshtransit.mtcp.v1.HealthReport.components:type_name -> meshtransit.mtcp.v1.HealthReport.Component
-	24, // 53: meshtransit.mtcp.v1.EnforcementReport.view:type_name -> meshtransit.mtcp.v1.View
-	55, // 54: meshtransit.mtcp.v1.PathStatsReport.peers:type_name -> meshtransit.mtcp.v1.PeerPathStats
-	9,  // 55: meshtransit.mtcp.v1.PeerPathStats.technique:type_name -> meshtransit.mtcp.v1.PeerPathStats.Technique
-	8,  // 56: meshtransit.mtcp.v1.PeerPathStats.relay_reason:type_name -> meshtransit.mtcp.v1.PeerPathStats.RelayReason
-	10, // 57: meshtransit.mtcp.v1.Lifecycle.state:type_name -> meshtransit.mtcp.v1.Lifecycle.State
-	67, // 58: meshtransit.mtcp.v1.KeyUpdate.control_keys:type_name -> meshtransit.mtcp.v1.KeyUpdate.ControlKey
-	68, // 59: meshtransit.mtcp.v1.KeyUpdate.signing_keys:type_name -> meshtransit.mtcp.v1.KeyUpdate.SigningKey
-	11, // 60: meshtransit.mtcp.v1.Notice.severity:type_name -> meshtransit.mtcp.v1.Notice.Severity
-	61, // 61: meshtransit.mtcp.v1.RegisterRequest.Auth.interactive:type_name -> meshtransit.mtcp.v1.RegisterRequest.Interactive
-	62, // 62: meshtransit.mtcp.v1.RegisterRequest.Auth.resume:type_name -> meshtransit.mtcp.v1.RegisterRequest.Resume
-	2,  // 63: meshtransit.mtcp.v1.RegisterResponse.Rejected.code:type_name -> meshtransit.mtcp.v1.RegisterResponse.Rejected.Code
-	6,  // 64: meshtransit.mtcp.v1.HealthReport.Component.name:type_name -> meshtransit.mtcp.v1.HealthReport.Component.Name
-	7,  // 65: meshtransit.mtcp.v1.HealthReport.Component.state:type_name -> meshtransit.mtcp.v1.HealthReport.Component.State
-	66, // [66:66] is the sub-list for method output_type
-	66, // [66:66] is the sub-list for method input_type
-	66, // [66:66] is the sub-list for extension type_name
-	66, // [66:66] is the sub-list for extension extendee
-	0,  // [0:66] is the sub-list for field type_name
+	57, // 4: meshtransit.mtcp.v1.RegisterRequest.hostinfo:type_name -> meshtransit.mtcp.v1.Hostinfo
+	67, // 5: meshtransit.mtcp.v1.RegisterRequest.auth:type_name -> meshtransit.mtcp.v1.RegisterRequest.Auth
+	70, // 6: meshtransit.mtcp.v1.RegisterResponse.authorized:type_name -> meshtransit.mtcp.v1.RegisterResponse.Authorized
+	71, // 7: meshtransit.mtcp.v1.RegisterResponse.pending:type_name -> meshtransit.mtcp.v1.RegisterResponse.Pending
+	72, // 8: meshtransit.mtcp.v1.RegisterResponse.rejected:type_name -> meshtransit.mtcp.v1.RegisterResponse.Rejected
+	26, // 9: meshtransit.mtcp.v1.MapSnapshot.view:type_name -> meshtransit.mtcp.v1.View
+	27, // 10: meshtransit.mtcp.v1.MapSnapshot.network_revisions:type_name -> meshtransit.mtcp.v1.NetworkRevision
+	32, // 11: meshtransit.mtcp.v1.MapSnapshot.self:type_name -> meshtransit.mtcp.v1.Device
+	32, // 12: meshtransit.mtcp.v1.MapSnapshot.peers:type_name -> meshtransit.mtcp.v1.Device
+	41, // 13: meshtransit.mtcp.v1.MapSnapshot.packet_filter:type_name -> meshtransit.mtcp.v1.PacketFilter
+	50, // 14: meshtransit.mtcp.v1.MapSnapshot.dns:type_name -> meshtransit.mtcp.v1.DnsConfig
+	54, // 15: meshtransit.mtcp.v1.MapSnapshot.settings:type_name -> meshtransit.mtcp.v1.Settings
+	45, // 16: meshtransit.mtcp.v1.MapSnapshot.routes:type_name -> meshtransit.mtcp.v1.RouteConfig
+	47, // 17: meshtransit.mtcp.v1.MapSnapshot.served:type_name -> meshtransit.mtcp.v1.ServedRoutes
+	26, // 18: meshtransit.mtcp.v1.MapDelta.view:type_name -> meshtransit.mtcp.v1.View
+	27, // 19: meshtransit.mtcp.v1.MapDelta.network_revisions:type_name -> meshtransit.mtcp.v1.NetworkRevision
+	32, // 20: meshtransit.mtcp.v1.MapDelta.self:type_name -> meshtransit.mtcp.v1.Device
+	32, // 21: meshtransit.mtcp.v1.MapDelta.peers_upsert:type_name -> meshtransit.mtcp.v1.Device
+	33, // 22: meshtransit.mtcp.v1.MapDelta.peer_patches:type_name -> meshtransit.mtcp.v1.PeerPatch
+	41, // 23: meshtransit.mtcp.v1.MapDelta.packet_filter:type_name -> meshtransit.mtcp.v1.PacketFilter
+	50, // 24: meshtransit.mtcp.v1.MapDelta.dns:type_name -> meshtransit.mtcp.v1.DnsConfig
+	54, // 25: meshtransit.mtcp.v1.MapDelta.settings:type_name -> meshtransit.mtcp.v1.Settings
+	45, // 26: meshtransit.mtcp.v1.MapDelta.routes:type_name -> meshtransit.mtcp.v1.RouteConfig
+	47, // 27: meshtransit.mtcp.v1.MapDelta.served:type_name -> meshtransit.mtcp.v1.ServedRoutes
+	26, // 28: meshtransit.mtcp.v1.MapAck.view:type_name -> meshtransit.mtcp.v1.View
+	26, // 29: meshtransit.mtcp.v1.MapResync.view:type_name -> meshtransit.mtcp.v1.View
+	36, // 30: meshtransit.mtcp.v1.Device.allowed_prefixes:type_name -> meshtransit.mtcp.v1.Prefix
+	37, // 31: meshtransit.mtcp.v1.Device.endpoints:type_name -> meshtransit.mtcp.v1.Endpoint
+	38, // 32: meshtransit.mtcp.v1.Device.nat:type_name -> meshtransit.mtcp.v1.NatInfo
+	35, // 33: meshtransit.mtcp.v1.Device.owner:type_name -> meshtransit.mtcp.v1.Owner
+	39, // 34: meshtransit.mtcp.v1.Device.alias:type_name -> meshtransit.mtcp.v1.AliasGrant
+	34, // 35: meshtransit.mtcp.v1.PeerPatch.endpoints:type_name -> meshtransit.mtcp.v1.EndpointList
+	38, // 36: meshtransit.mtcp.v1.PeerPatch.nat:type_name -> meshtransit.mtcp.v1.NatInfo
+	37, // 37: meshtransit.mtcp.v1.EndpointList.items:type_name -> meshtransit.mtcp.v1.Endpoint
+	3,  // 38: meshtransit.mtcp.v1.Endpoint.kind:type_name -> meshtransit.mtcp.v1.Endpoint.Kind
+	4,  // 39: meshtransit.mtcp.v1.AliasGrant.role:type_name -> meshtransit.mtcp.v1.AliasGrant.Role
+	40, // 40: meshtransit.mtcp.v1.AliasGrant.services:type_name -> meshtransit.mtcp.v1.AliasService
+	42, // 41: meshtransit.mtcp.v1.PacketFilter.rules:type_name -> meshtransit.mtcp.v1.FilterRule
+	36, // 42: meshtransit.mtcp.v1.FilterRule.sources:type_name -> meshtransit.mtcp.v1.Prefix
+	43, // 43: meshtransit.mtcp.v1.FilterRule.destinations:type_name -> meshtransit.mtcp.v1.Destination
+	36, // 44: meshtransit.mtcp.v1.Destination.prefix:type_name -> meshtransit.mtcp.v1.Prefix
+	44, // 45: meshtransit.mtcp.v1.Destination.ports:type_name -> meshtransit.mtcp.v1.PortRange
+	46, // 46: meshtransit.mtcp.v1.RouteConfig.sites:type_name -> meshtransit.mtcp.v1.SiteRoute
+	36, // 47: meshtransit.mtcp.v1.SiteRoute.prefixes:type_name -> meshtransit.mtcp.v1.Prefix
+	5,  // 48: meshtransit.mtcp.v1.SiteRoute.status:type_name -> meshtransit.mtcp.v1.SiteRoute.Status
+	48, // 49: meshtransit.mtcp.v1.ServedRoutes.sites:type_name -> meshtransit.mtcp.v1.ServedSite
+	36, // 50: meshtransit.mtcp.v1.ServedSite.prefixes:type_name -> meshtransit.mtcp.v1.Prefix
+	49, // 51: meshtransit.mtcp.v1.ServedSite.probes:type_name -> meshtransit.mtcp.v1.RouteProbe
+	6,  // 52: meshtransit.mtcp.v1.RouteProbe.kind:type_name -> meshtransit.mtcp.v1.RouteProbe.Kind
+	51, // 53: meshtransit.mtcp.v1.DnsConfig.records:type_name -> meshtransit.mtcp.v1.DnsRecord
+	52, // 54: meshtransit.mtcp.v1.DnsConfig.resolvers:type_name -> meshtransit.mtcp.v1.Resolver
+	53, // 55: meshtransit.mtcp.v1.DnsConfig.routes:type_name -> meshtransit.mtcp.v1.DnsRoute
+	7,  // 56: meshtransit.mtcp.v1.DnsRecord.type:type_name -> meshtransit.mtcp.v1.DnsRecord.Type
+	52, // 57: meshtransit.mtcp.v1.DnsRoute.resolvers:type_name -> meshtransit.mtcp.v1.Resolver
+	37, // 58: meshtransit.mtcp.v1.EndpointReport.endpoints:type_name -> meshtransit.mtcp.v1.Endpoint
+	38, // 59: meshtransit.mtcp.v1.EndpointReport.nat:type_name -> meshtransit.mtcp.v1.NatInfo
+	56, // 60: meshtransit.mtcp.v1.EndpointReport.port_mapping:type_name -> meshtransit.mtcp.v1.PortMapping
+	36, // 61: meshtransit.mtcp.v1.Hostinfo.advertised_prefixes:type_name -> meshtransit.mtcp.v1.Prefix
+	57, // 62: meshtransit.mtcp.v1.HostinfoReport.hostinfo:type_name -> meshtransit.mtcp.v1.Hostinfo
+	73, // 63: meshtransit.mtcp.v1.HealthReport.components:type_name -> meshtransit.mtcp.v1.HealthReport.Component
+	26, // 64: meshtransit.mtcp.v1.EnforcementReport.view:type_name -> meshtransit.mtcp.v1.View
+	62, // 65: meshtransit.mtcp.v1.PathStatsReport.peers:type_name -> meshtransit.mtcp.v1.PeerPathStats
+	11, // 66: meshtransit.mtcp.v1.PeerPathStats.technique:type_name -> meshtransit.mtcp.v1.PeerPathStats.Technique
+	10, // 67: meshtransit.mtcp.v1.PeerPathStats.relay_reason:type_name -> meshtransit.mtcp.v1.PeerPathStats.RelayReason
+	12, // 68: meshtransit.mtcp.v1.Lifecycle.state:type_name -> meshtransit.mtcp.v1.Lifecycle.State
+	74, // 69: meshtransit.mtcp.v1.KeyUpdate.control_keys:type_name -> meshtransit.mtcp.v1.KeyUpdate.ControlKey
+	75, // 70: meshtransit.mtcp.v1.KeyUpdate.signing_keys:type_name -> meshtransit.mtcp.v1.KeyUpdate.SigningKey
+	13, // 71: meshtransit.mtcp.v1.Notice.severity:type_name -> meshtransit.mtcp.v1.Notice.Severity
+	68, // 72: meshtransit.mtcp.v1.RegisterRequest.Auth.interactive:type_name -> meshtransit.mtcp.v1.RegisterRequest.Interactive
+	69, // 73: meshtransit.mtcp.v1.RegisterRequest.Auth.resume:type_name -> meshtransit.mtcp.v1.RegisterRequest.Resume
+	2,  // 74: meshtransit.mtcp.v1.RegisterResponse.Rejected.code:type_name -> meshtransit.mtcp.v1.RegisterResponse.Rejected.Code
+	8,  // 75: meshtransit.mtcp.v1.HealthReport.Component.name:type_name -> meshtransit.mtcp.v1.HealthReport.Component.Name
+	9,  // 76: meshtransit.mtcp.v1.HealthReport.Component.state:type_name -> meshtransit.mtcp.v1.HealthReport.Component.State
+	77, // [77:77] is the sub-list for method output_type
+	77, // [77:77] is the sub-list for method input_type
+	77, // [77:77] is the sub-list for extension type_name
+	77, // [77:77] is the sub-list for extension extendee
+	0,  // [0:77] is the sub-list for field type_name
 }
 
 func init() { file_mtcp_v1_mtcp_proto_init() }
@@ -5085,7 +5601,7 @@ func file_mtcp_v1_mtcp_proto_init() {
 	}
 	file_mtcp_v1_mtcp_proto_msgTypes[18].OneofWrappers = []any{}
 	file_mtcp_v1_mtcp_proto_msgTypes[19].OneofWrappers = []any{}
-	file_mtcp_v1_mtcp_proto_msgTypes[48].OneofWrappers = []any{
+	file_mtcp_v1_mtcp_proto_msgTypes[53].OneofWrappers = []any{
 		(*RegisterRequest_Auth_EnrollmentKey)(nil),
 		(*RegisterRequest_Auth_Interactive)(nil),
 		(*RegisterRequest_Auth_Resume)(nil),
@@ -5095,8 +5611,8 @@ func file_mtcp_v1_mtcp_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_mtcp_v1_mtcp_proto_rawDesc), len(file_mtcp_v1_mtcp_proto_rawDesc)),
-			NumEnums:      12,
-			NumMessages:   57,
+			NumEnums:      14,
+			NumMessages:   62,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

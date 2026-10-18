@@ -177,6 +177,8 @@ message MapSnapshot {
   DnsConfig dns = 6;
   bytes relay_map = 7; // signed relay map (MTRP v1 §8)
   Settings settings = 8;
+  RouteConfig routes = 9; // routes.subnet.v1: subnet routes this node may use
+  ServedRoutes served = 10; // router.subnet.v1: subnets this node forwards to
 }
 
 message MapDelta {
@@ -190,6 +192,8 @@ message MapDelta {
   DnsConfig dns = 8; // replaces DNS when set
   bytes relay_map = 9; // replaces the relay map when non-empty
   Settings settings = 10; // replaces settings when set
+  RouteConfig routes = 11; // replaces routes when set; set and empty clears them
+  ServedRoutes served = 12; // replaces served routes when set; set and empty clears them
 }
 
 message MapAck {
@@ -313,6 +317,55 @@ message PortRange {
   uint32 last = 2;
 }
 
+// ---- Subnet routes (section 7.6) ----
+
+message RouteConfig {
+  repeated SiteRoute sites = 1; // sorted by site_ref
+}
+
+// SiteRoute is one Site this node may reach: the prefixes its policy grants
+// and the routers that forward to them.
+message SiteRoute {
+  string site_ref = 1; // opaque, stable for the Site, 1 to 64 bytes of UTF-8
+  repeated Prefix prefixes = 2; // canonical, sorted, 1 to 1,024
+  repeated string candidates = 3; // router device_ids; static priority order, changed only on router assignment
+  string primary = 4; // the router Core chose, one of candidates; empty when none
+  uint64 generation = 5; // per Site; increases whenever primary changes, never goes back
+  Status status = 6;
+
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    SERVED = 1; // forward through primary
+    UNSERVED = 2; // granted, but no router can serve now
+    CONFLICT = 3; // overlaps another granted Site
+    CAPACITY = 4; // the routers' maps cannot hold this node
+  }
+}
+
+message ServedRoutes {
+  repeated ServedSite sites = 1; // sorted by site_ref
+}
+
+// ServedSite is one Site this node forwards to as a router.
+message ServedSite {
+  string site_ref = 1;
+  repeated Prefix prefixes = 2;
+  bool masquerade = 3; // translate mesh sources to the router's own address
+  repeated RouteProbe probes = 4;
+}
+
+message RouteProbe {
+  bytes ip = 1; // inside the Site's prefixes
+  Kind kind = 2;
+  uint32 port = 3; // TCP only
+
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    ICMP = 1;
+    TCP = 2;
+  }
+}
+
 message DnsConfig {
   repeated DnsRecord records = 1;
   repeated Resolver resolvers = 2;
@@ -381,7 +434,7 @@ message Hostinfo {
   string client_version = 4;
   string arch = 5;
   string device_model = 6;
-  repeated Prefix advertised_prefixes = 7; // subnet or exit routes offered
+  repeated Prefix advertised_prefixes = 7; // subnets this node offers to forward, at most 256 (section 8.2)
 }
 
 message HostinfoReport {
@@ -420,6 +473,8 @@ message EnforcementReport {
   bytes digest = 2; // 32 bytes
   uint32 grants = 3;
   int64 applied_ms = 4;
+  bytes route_digest = 5; // 32 bytes: route digest v1 of the served routes forwarded into; empty without router.subnet.v1
+  uint32 route_entries = 6;
 }
 
 message PathStatsReport {

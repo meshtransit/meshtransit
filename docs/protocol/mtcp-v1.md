@@ -439,6 +439,8 @@ later) map.
 | `dns` | DNS configuration |
 | `relay_map` | Signed relay map bytes (MTRP v1 §8), verified by the node |
 | `settings` | Report intervals and the path statistics switch |
+| `routes` | Subnet routes the node may use (7.6); only with `routes.subnet.v1` |
+| `served` | Subnets the node forwards to as a router (7.6); only with `router.subnet.v1` |
 
 `MapDelta` carries only what changed:
 
@@ -452,6 +454,8 @@ later) map.
 | `dns` | Replaces the whole DNS configuration when present |
 | `relay_map` | Replaces the relay map when present |
 | `settings` | Replaces settings when present |
+| `routes` | Replaces all routes when present; present and empty removes them |
+| `served` | Replaces all served routes when present; present and empty removes them |
 
 A `device_id` appears at most once across `peers_upsert`, `peers_remove` and
 `peer_patches` in one delta. A patch for an unknown peer, or an upsert and a
@@ -466,7 +470,7 @@ removal of the same ID, makes the delta invalid (the node resyncs).
 | `display_name` | For UI only |
 | `node_key`, `disco_key` | Current keys |
 | `addresses` | Device addresses (one IPv4 /32 and/or one IPv6 /128) |
-| `allowed_prefixes` | Prefixes routed to this peer (its addresses plus approved subnet routes) |
+| `allowed_prefixes` | Exactly the peer's own `addresses`, as /32 and /128 host prefixes; a node refuses a map with anything else. Subnet routes never appear here: the node derives them from `routes` (7.6) |
 | `endpoints` | Candidate UDP endpoints with their kind (disco v2 endpoint kinds) |
 | `nat` | The peer's last NAT classification (nat-classification §1) |
 | `home_relay` | Relay region ID the peer is reachable through |
@@ -495,7 +499,8 @@ the suffix accordingly.
 deny. Each rule has `sources` (prefixes, at most 1024), `destinations`
 (prefix plus port ranges) and `protocols` (IANA numbers; empty means TCP, UDP
 and ICMP). At most 10,000 rules. Rules are node-reduced: they mention only
-traffic this node can receive.
+traffic this node can receive. For a router that includes traffic to the
+subnets it serves (7.6): their rules name those prefixes as destinations.
 
 **DNS** (`DnsConfig`): `records` (name, A/AAAA, value) for Device names and
 imported shares, `resolvers` (IP and optional DoH/DoT URL), `search_domains`,
@@ -524,7 +529,133 @@ peers.
 ### 7.5 Withdrawal
 
 Core never signals revocation with an empty map. It sends `Lifecycle`
-(section 10); the node then removes peers, filter and DNS itself.
+(section 10); the node then removes peers, filter, DNS and routes itself
+(7.6).
+
+### 7.6 Subnet routes
+
+A **Site** is one address space behind the mesh, such as an office LAN or a
+VPC, inside one Network. Routers are Devices that forward traffic from the
+mesh into a Site. Core decides which routers serve a Site and which nodes may
+use it. Core sends `routes` only to nodes that list `routes.subnet.v1` and
+`served` only to nodes that list `router.subnet.v1`; a node that receives a
+field it did not list ignores it.
+
+**Order.** Sites are sorted by `site_ref` bytewise. Prefixes are sorted IPv4
+before IPv6, then by address bytes, then by prefix length.
+
+**Clearing.** `routes` and `served` are message fields: in a delta, a present
+field replaces the whole value and a present, empty one removes everything;
+an absent one leaves the value unchanged. Core MUST send a present, empty
+message to clear. A snapshot without the field means none.
+
+#### Consumer routes
+
+`routes` (`RouteConfig`) is a list of `SiteRoute`:
+
+| Field | Meaning |
+|---|---|
+| `site_ref` | Opaque, stable reference of the Site: 1–64 bytes of UTF-8 |
+| `prefixes` | The part of the Site this node's rules grant: the intersection of the destinations of its active rules with the Site's prefixes, canonical and sorted. At least 1, at most 1,024 |
+| `candidates` | The Site's routers as `device_id`s, in priority order. The order changes only when routers are assigned or reprioritized, never with their health. At most 32 |
+| `primary` | The router Core chose, one of `candidates`; empty when none |
+| `generation` | Per Site; increases each time `primary` changes and never goes back, also across Core replicas and restarts |
+| `status` | `SERVED`: forward through `primary`. `UNSERVED`: no router can serve now. `CONFLICT`: the Site overlaps another Site granted to this node. `CAPACITY`: the routers' maps cannot hold this node |
+
+Core:
+
+- sends `routes` only to nodes that also list `map.large1`;
+- sends a Site to a node only while an active policy rule lets the node
+  reach part of it, and never a Site the node serves as a router;
+- includes every candidate as a peer of the map (peer limits never remove
+  one); at most 256 distinct routers appear across all Sites of one map;
+- sends two Sites whose prefixes overlap only with both marked `CONFLICT`.
+
+**Local bounds.** Using routes is a local choice: a node installs none until
+its user enables them, and its local configuration may narrow them further.
+Whatever Core sends, a node never installs a route prefix that:
+
+- is shorter than IPv4 /8 or IPv6 /32 (this excludes a default route split
+  into halves);
+- overlaps the overlay frame (`100.64.0.0/10`, `198.18.0.0/15`, `fd00::/8`),
+  loopback, link-local, multicast or unspecified addresses;
+- is a public range, unless the user also enabled public routes. Only
+  `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` and `fc00::/7` are private;
+  every other range, reserved ones included, counts as public. With the
+  overlay frame above, private IPv6 Sites lie in `fc00::/8`;
+- overlaps a network the node is directly attached to, or a more specific
+  route the node already has.
+
+**Own traffic.** A node's own sockets (control, relays, STUN, port mapping,
+disco and WireGuard, DNS upstreams) never use route prefixes: the node binds
+them to its physical network with its platform's mechanism, and a node that
+cannot do so on its platform does not install routes at all. The system
+resolvers the node learned from its physical network are excluded from route
+prefixes as single-address routes over that network.
+
+These bounds limit what a compromised Core can redirect; they cannot stop it
+from naming any peer as `primary` for a prefix the node accepts. The router's
+packet filter, not the consumer, enforces who reaches the Site. A prefix the
+node refuses, and a Site that leaves `routes`, follows the node's other
+routes: traffic to a revoked Site may then reach a local network that uses
+the same addresses. This is accepted: the node treats the prefix as if it
+had never been granted.
+
+**Forwarding.** For each prefix it installs, a node:
+
+- routes the prefix toward the mesh, whatever the status, and removes the
+  route only when the Site leaves `routes`. Traffic to an installed prefix
+  never falls back to the node's other routes. A prefix the node refused is
+  not installed and follows the node's other routes, as if never granted;
+- sends the Site's traffic to `primary` only while the status is `SERVED`
+  and `primary` is a peer of the map (otherwise the Site is handled as
+  `UNSERVED`). For any other status it answers with ICMP destination
+  unreachable, at most 10 per second per Site in all, and drops the rest;
+- routes a prefix to exactly one peer at a time. A route prefix never
+  widens what a peer may send: `allowed_prefixes` stays its own addresses.
+
+#### Served routes
+
+`served` (`ServedRoutes`) is a list of `ServedSite`: `site_ref` (as above),
+`prefixes` (canonical, sorted, at least 1, at most 1,024), `masquerade`
+(translate mesh sources to the router's own address on the way into the
+Site) and `probes` (at most 4 addresses inside the Site's prefixes that the
+router checks: `ICMP` with port 0, or `TCP` with a port of 1–65535).
+
+A router forwards into the intersection of `served` and the prefixes its own
+local configuration offers (8.2): for each served prefix inside an offered
+prefix, the served prefix; for each offered prefix inside a served prefix,
+the offered one. Core cannot make a node a router. It
+forwards only traffic its packet filter admits, only into those prefixes,
+and lets traffic from the Site into the mesh only as replies to flows its
+packet filter admitted. Its route digest (8.4) covers that intersection.
+
+#### Validity and withdrawal
+
+A node refuses a map as malformed when `routes` or `served`:
+
+- lists a `site_ref` twice, out of order, empty, longer than 64 bytes or not
+  UTF-8;
+- carries a prefix that is not canonical (host bits set, an IPv4-mapped
+  IPv6 address, an address of other than 4 or 16 bytes, more bits than the
+  family has), a default route, a prefix listed twice or out of order, or
+  more prefixes than the limits of section 14;
+- in `routes`: has duplicate `candidates`, more than 32, the node itself as
+  a candidate, a `primary` outside `candidates`, `SERVED` with an empty
+  `primary`, or an unknown status;
+- in `served`: has prefixes that overlap within or across Sites, a probe
+  outside its Site's prefixes, of unknown kind, with a wrong port, or more
+  than 4 probes.
+
+Overlap between Sites in `routes` is not malformed: the node handles those
+Sites as `CONFLICT`.
+
+When it receives `Lifecycle` (section 10), a node removes its routes and a
+router stops forwarding into every Site. When its session only ends (the
+network or Core is unreachable), a node keeps its last `routes` and `served`
+as it keeps the rest of its map, until a new map or `Lifecycle` arrives; the
+key deadlines it checks on every packet still apply. A Core restart or
+rolling update therefore never interrupts a Site.
 
 ## 8. Node reports
 
@@ -623,10 +754,14 @@ address (that is a `PORT_MAPPED` endpoint).
 ### 8.2 Hostinfo
 
 `HostinfoReport`: hostname, OS and version, client version, architecture,
-optionally the device model, and the routes the node offers
-(`advertised_prefixes`: subnets, or `0.0.0.0/0` and `::/0` to offer an exit
-node). Offered routes take effect only after approval in Core; approved ones
-appear in the node's and its peers' `allowed_prefixes`. Sent after registration and on change. Core uses
+optionally the device model, and the subnets the node's local configuration
+offers to forward (`advertised_prefixes`, at most 256 canonical prefixes; a
+report with more is refused as invalid).
+Offering grants nothing: a Device serves a Site only after an administrator
+makes it the Site's router, and only within prefixes it offers (7.6). Core
+ignores an entry that is not canonical or is a default route, and counts it
+in a metric; earlier clients that offered `0.0.0.0/0` or `::/0` for an exit
+node offer nothing that way any more. Sent after registration and on change. Core uses
 the hostname only to propose a Device name; it never trusts it for identity.
 
 ### 8.3 Health and path statistics
@@ -666,7 +801,14 @@ Flow logs keep their separate HTTPS endpoint; they are not part of MTCP v1.
 `EnforcementReport{view, digest, grants, applied_ms}`: the
 [policy digest](policy-digest-v1.md) of the rules the node's packet filter
 enforces after applying the map at `view`, how many grants they cover, and
-when it installed them. Sent after each change of the installed rules, once
+when it installed them. With `router.subnet.v1` it also carries
+`route_digest` and `route_entries`: the [route digest](route-digest-v1.md) of
+the served routes the node forwards into, and how many entries it covers.
+`route_digest` is always 32 bytes, also for an empty set; Core treats any
+other length as a malformed report.
+Routes a node uses as a consumer are not reported: using them is a local
+choice, and the router enforces access.
+Sent after each change of the installed rules or routes, once
 more 30 s later, and every 5 min while unchanged; at most one per second.
 Core compares it with the digest of the filter it sent at that view and shows
 the Device as enforced, applying (within 60 s) or mismatch. The report is
@@ -761,6 +903,8 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `stats.path1` | Node sends `PathStatsReport` |
 | `nat.report1` | Node sends NAT classification in `EndpointReport` |
 | `map.large1` | Node applies maps of up to 10,000 peers; without it Core sends at most 256 |
+| `routes.subnet.v1` | Node applies `routes` (7.6) |
+| `router.subnet.v1` | Node can forward into Sites: it applies `served` (7.6) and reports `route_digest` (8.4) |
 | `relay.zones2` | Node hands relays MTT2 tickets and their ZONES (MTRP §5.4, §6.1). Core offers it only once every relay accepts them |
 
 Unknown names are ignored. Core sends a feature only when both sides list it.
@@ -786,6 +930,8 @@ Unknown names are ignored. Core sends a feature only when both sides list it.
 | Lifetime of a session that receives no map snapshot | 15 minutes by default, configurable; longer than a browser approval (6.2), then the session closes |
 | Outbound messages per session | No send queue: one message is written at a time. Each record must be written within 10 s, and each whole message within 30 s plus its size at 64 KiB/s, at most 10 minutes; otherwise Core closes the session and the node reconnects |
 | Unacknowledged map messages | 8 (7.2) |
+| Subnet routes in one map (7.6) | 1,024 Sites in `routes` and in `served`; 1,024 prefixes per Site; 4,096 prefixes in all `routes`, and 4,096 in all `served`; 32 candidates per Site and 256 distinct routers in all; 4 probes per served Site |
+| `advertised_prefixes` in `HostinfoReport` (8.2) | 256 |
 | Reports | per type, section 8 |
 
 Core performs the X25519 operations of a handshake only after the source IP
