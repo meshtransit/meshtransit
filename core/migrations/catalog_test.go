@@ -13,8 +13,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 187 {
-		t.Fatalf("len(Catalog()) = %d, want 187", len(catalog))
+	if len(catalog) != 188 {
+		t.Fatalf("len(Catalog()) = %d, want 188", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1609,8 +1609,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 187 {
-		t.Fatalf("LatestVersion() = %d, want 187", LatestVersion())
+	if LatestVersion() != 188 {
+		t.Fatalf("LatestVersion() = %d, want 188", LatestVersion())
 	}
 }
 
@@ -5457,6 +5457,34 @@ func TestSchema187AddressPoolFrame(t *testing.T) {
 	} {
 		if !strings.Contains(migration.SQL, want) {
 			t.Errorf("schema 187 lacks %q", want)
+		}
+	}
+}
+
+// Schema 188 adds Network Sites, their routers and route advertisements.
+func TestSchema188NetworkSites(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 188 {
+		t.Fatalf("len(Catalog()) = %d, want schema 188", len(catalog))
+	}
+	migration := catalog[187]
+	if migration.Version != 188 {
+		t.Fatalf("migration 188 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE TABLE mesh.network_site (",
+		"CREATE TABLE mesh.network_site_router (",
+		"CREATE TABLE mesh.device_route_advertisement (",
+		"p_permission NOT IN ('route.read', 'route.approve', 'route.withdraw')",
+		"CREATE FUNCTION mesh_ops.list_sites_v1(",
+		"CREATE FUNCTION mesh_ops.change_site_v1(",
+		"CREATE FUNCTION mesh_ops.change_site_router_v1(",
+		"capture_authority_mutation('network_site', 'public_id')",
+		"ERRCODE = 'MTS05'",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 188 lacks %q", want)
 		}
 	}
 }

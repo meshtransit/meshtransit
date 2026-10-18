@@ -13293,6 +13293,2010 @@
           }
         }
       }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/sites": {
+      "get": {
+        "operationId": "listNetworkSites",
+        "summary": "List the Network's Sites",
+        "description": "Requires route.read on the Network. A Site is an address space behind the mesh, such as an office LAN or a VPC; routers forward into it. Pages in name order.",
+        "security": [
+          {
+            "accountSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The last Site of the previous page (next_after)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 10
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Active Sites",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "sites",
+                        "can_manage",
+                        "can_delete"
+                      ],
+                      "properties": {
+                        "sites": {
+                          "type": "array",
+                          "maxItems": 100,
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "site_id",
+                              "name",
+                              "prefixes",
+                              "masquerade",
+                              "failback",
+                              "probes",
+                              "routers",
+                              "version",
+                              "created_at",
+                              "updated_at"
+                            ],
+                            "properties": {
+                              "site_id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "name": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              },
+                              "prefixes": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 1024,
+                                "items": {
+                                  "type": "string",
+                                  "minLength": 9,
+                                  "maxLength": 43,
+                                  "description": "Canonical CIDR"
+                                }
+                              },
+                              "masquerade": {
+                                "type": "boolean"
+                              },
+                              "failback": {
+                                "type": "boolean"
+                              },
+                              "probes": {
+                                "type": "array",
+                                "maxItems": 4,
+                                "items": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "address",
+                                    "kind",
+                                    "port"
+                                  ],
+                                  "properties": {
+                                    "address": {
+                                      "type": "string",
+                                      "minLength": 7,
+                                      "maxLength": 39
+                                    },
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "icmp",
+                                        "tcp"
+                                      ]
+                                    },
+                                    "port": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 65535
+                                    }
+                                  }
+                                }
+                              },
+                              "routers": {
+                                "type": "array",
+                                "maxItems": 32,
+                                "items": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "device_id",
+                                    "device_name",
+                                    "priority",
+                                    "state",
+                                    "eligible",
+                                    "added_at"
+                                  ],
+                                  "properties": {
+                                    "device_id": {
+                                      "type": "string",
+                                      "format": "uuid"
+                                    },
+                                    "device_name": {
+                                      "type": "string"
+                                    },
+                                    "priority": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 999
+                                    },
+                                    "state": {
+                                      "type": "string",
+                                      "enum": [
+                                        "active",
+                                        "draining"
+                                      ]
+                                    },
+                                    "eligible": {
+                                      "type": "boolean",
+                                      "description": "False while the Device is not active, not owned by the Workspace, or does not offer the Site's prefixes"
+                                    },
+                                    "added_at": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    }
+                                  }
+                                }
+                              },
+                              "version": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "created_at": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "updated_at": {
+                                "type": "string",
+                                "format": "date-time"
+                              }
+                            }
+                          }
+                        },
+                        "can_manage": {
+                          "type": "boolean"
+                        },
+                        "can_delete": {
+                          "type": "boolean",
+                          "description": "Holds route.withdraw: may delete Sites and remove routers"
+                        },
+                        "next_after": {
+                          "type": "string",
+                          "format": "uuid",
+                          "description": "Present when more Sites follow"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createNetworkSite",
+        "summary": "Create a Site",
+        "description": "Requires route.approve. The Site starts without routers.",
+        "security": [
+          {
+            "accountSessionCookie": [],
+            "sessionCSRF": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionProof"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "prefixes",
+                  "masquerade",
+                  "failback",
+                  "probes"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "description": "Unique in the Network, ignoring case; no leading or trailing spaces"
+                  },
+                  "prefixes": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 1024,
+                    "items": {
+                      "type": "string",
+                      "minLength": 9,
+                      "maxLength": 43,
+                      "description": "Canonical CIDR"
+                    },
+                    "description": "IPv4 /8 to /32 or IPv6 /32 to /128, not overlapping each other, the mesh ranges, special ranges or addresses clients use"
+                  },
+                  "masquerade": {
+                    "type": "boolean",
+                    "description": "Translate mesh sources to the router's own address"
+                  },
+                  "failback": {
+                    "type": "boolean"
+                  },
+                  "probes": {
+                    "type": "array",
+                    "maxItems": 4,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "address",
+                        "kind",
+                        "port"
+                      ],
+                      "properties": {
+                        "address": {
+                          "type": "string",
+                          "minLength": 7,
+                          "maxLength": 39
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "icmp",
+                            "tcp"
+                          ]
+                        },
+                        "port": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 65535
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The new Site",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "site",
+                        "deleted"
+                      ],
+                      "properties": {
+                        "site": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "site_id",
+                            "name",
+                            "prefixes",
+                            "masquerade",
+                            "failback",
+                            "probes",
+                            "routers",
+                            "version",
+                            "created_at",
+                            "updated_at"
+                          ],
+                          "properties": {
+                            "site_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64
+                            },
+                            "prefixes": {
+                              "type": "array",
+                              "minItems": 1,
+                              "maxItems": 1024,
+                              "items": {
+                                "type": "string",
+                                "minLength": 9,
+                                "maxLength": 43,
+                                "description": "Canonical CIDR"
+                              }
+                            },
+                            "masquerade": {
+                              "type": "boolean"
+                            },
+                            "failback": {
+                              "type": "boolean"
+                            },
+                            "probes": {
+                              "type": "array",
+                              "maxItems": 4,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "address",
+                                  "kind",
+                                  "port"
+                                ],
+                                "properties": {
+                                  "address": {
+                                    "type": "string",
+                                    "minLength": 7,
+                                    "maxLength": 39
+                                  },
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "icmp",
+                                      "tcp"
+                                    ]
+                                  },
+                                  "port": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 65535
+                                  }
+                                }
+                              }
+                            },
+                            "routers": {
+                              "type": "array",
+                              "maxItems": 32,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "device_id",
+                                  "device_name",
+                                  "priority",
+                                  "state",
+                                  "eligible",
+                                  "added_at"
+                                ],
+                                "properties": {
+                                  "device_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "device_name": {
+                                    "type": "string"
+                                  },
+                                  "priority": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 999
+                                  },
+                                  "state": {
+                                    "type": "string",
+                                    "enum": [
+                                      "active",
+                                      "draining"
+                                    ]
+                                  },
+                                  "eligible": {
+                                    "type": "boolean",
+                                    "description": "False while the Device is not active, not owned by the Workspace, or does not offer the Site's prefixes"
+                                  },
+                                  "added_at": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              }
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updated_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "deleted": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "409": {
+            "description": "site_name_taken, site_limit or site_prefix_limit"
+          },
+          "422": {
+            "description": "site_prefix_invalid"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/sites/{site_id}": {
+      "get": {
+        "operationId": "readNetworkSite",
+        "summary": "Read one Site",
+        "description": "Requires route.read on the Network. A Site is an address space behind the mesh, such as an office LAN or a VPC; routers forward into it.",
+        "security": [
+          {
+            "accountSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The Site",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "site",
+                        "can_manage",
+                        "can_delete"
+                      ],
+                      "properties": {
+                        "site": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "site_id",
+                            "name",
+                            "prefixes",
+                            "masquerade",
+                            "failback",
+                            "probes",
+                            "routers",
+                            "version",
+                            "created_at",
+                            "updated_at"
+                          ],
+                          "properties": {
+                            "site_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64
+                            },
+                            "prefixes": {
+                              "type": "array",
+                              "minItems": 1,
+                              "maxItems": 1024,
+                              "items": {
+                                "type": "string",
+                                "minLength": 9,
+                                "maxLength": 43,
+                                "description": "Canonical CIDR"
+                              }
+                            },
+                            "masquerade": {
+                              "type": "boolean"
+                            },
+                            "failback": {
+                              "type": "boolean"
+                            },
+                            "probes": {
+                              "type": "array",
+                              "maxItems": 4,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "address",
+                                  "kind",
+                                  "port"
+                                ],
+                                "properties": {
+                                  "address": {
+                                    "type": "string",
+                                    "minLength": 7,
+                                    "maxLength": 39
+                                  },
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "icmp",
+                                      "tcp"
+                                    ]
+                                  },
+                                  "port": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 65535
+                                  }
+                                }
+                              }
+                            },
+                            "routers": {
+                              "type": "array",
+                              "maxItems": 32,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "device_id",
+                                  "device_name",
+                                  "priority",
+                                  "state",
+                                  "eligible",
+                                  "added_at"
+                                ],
+                                "properties": {
+                                  "device_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "device_name": {
+                                    "type": "string"
+                                  },
+                                  "priority": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 999
+                                  },
+                                  "state": {
+                                    "type": "string",
+                                    "enum": [
+                                      "active",
+                                      "draining"
+                                    ]
+                                  },
+                                  "eligible": {
+                                    "type": "boolean",
+                                    "description": "False while the Device is not active, not owned by the Workspace, or does not offer the Site's prefixes"
+                                  },
+                                  "added_at": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              }
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updated_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "can_manage": {
+                          "type": "boolean"
+                        },
+                        "can_delete": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "404": {
+            "description": "site_not_found"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateNetworkSite",
+        "summary": "Change a Site",
+        "description": "Requires route.approve. Replaces the whole definition at the version in If-Match; routers are unchanged.",
+        "security": [
+          {
+            "accountSessionCookie": [],
+            "sessionCSRF": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionProof"
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\"[1-9][0-9]*\"$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "prefixes",
+                  "masquerade",
+                  "failback",
+                  "probes"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "description": "Unique in the Network, ignoring case; no leading or trailing spaces"
+                  },
+                  "prefixes": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 1024,
+                    "items": {
+                      "type": "string",
+                      "minLength": 9,
+                      "maxLength": 43,
+                      "description": "Canonical CIDR"
+                    },
+                    "description": "IPv4 /8 to /32 or IPv6 /32 to /128, not overlapping each other, the mesh ranges, special ranges or addresses clients use"
+                  },
+                  "masquerade": {
+                    "type": "boolean",
+                    "description": "Translate mesh sources to the router's own address"
+                  },
+                  "failback": {
+                    "type": "boolean"
+                  },
+                  "probes": {
+                    "type": "array",
+                    "maxItems": 4,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "address",
+                        "kind",
+                        "port"
+                      ],
+                      "properties": {
+                        "address": {
+                          "type": "string",
+                          "minLength": 7,
+                          "maxLength": 39
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "icmp",
+                            "tcp"
+                          ]
+                        },
+                        "port": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 65535
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The changed Site",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "site",
+                        "deleted"
+                      ],
+                      "properties": {
+                        "site": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "site_id",
+                            "name",
+                            "prefixes",
+                            "masquerade",
+                            "failback",
+                            "probes",
+                            "routers",
+                            "version",
+                            "created_at",
+                            "updated_at"
+                          ],
+                          "properties": {
+                            "site_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64
+                            },
+                            "prefixes": {
+                              "type": "array",
+                              "minItems": 1,
+                              "maxItems": 1024,
+                              "items": {
+                                "type": "string",
+                                "minLength": 9,
+                                "maxLength": 43,
+                                "description": "Canonical CIDR"
+                              }
+                            },
+                            "masquerade": {
+                              "type": "boolean"
+                            },
+                            "failback": {
+                              "type": "boolean"
+                            },
+                            "probes": {
+                              "type": "array",
+                              "maxItems": 4,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "address",
+                                  "kind",
+                                  "port"
+                                ],
+                                "properties": {
+                                  "address": {
+                                    "type": "string",
+                                    "minLength": 7,
+                                    "maxLength": 39
+                                  },
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "icmp",
+                                      "tcp"
+                                    ]
+                                  },
+                                  "port": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 65535
+                                  }
+                                }
+                              }
+                            },
+                            "routers": {
+                              "type": "array",
+                              "maxItems": 32,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "device_id",
+                                  "device_name",
+                                  "priority",
+                                  "state",
+                                  "eligible",
+                                  "added_at"
+                                ],
+                                "properties": {
+                                  "device_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "device_name": {
+                                    "type": "string"
+                                  },
+                                  "priority": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 999
+                                  },
+                                  "state": {
+                                    "type": "string",
+                                    "enum": [
+                                      "active",
+                                      "draining"
+                                    ]
+                                  },
+                                  "eligible": {
+                                    "type": "boolean",
+                                    "description": "False while the Device is not active, not owned by the Workspace, or does not offer the Site's prefixes"
+                                  },
+                                  "added_at": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              }
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updated_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "deleted": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "404": {
+            "description": "site_not_found"
+          },
+          "409": {
+            "description": "site_name_taken or site_prefix_limit"
+          },
+          "412": {
+            "description": "version_conflict"
+          },
+          "422": {
+            "description": "site_prefix_invalid"
+          },
+          "428": {
+            "description": "precondition_required"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteNetworkSite",
+        "summary": "Delete a Site",
+        "description": "Requires route.withdraw. Removes its routers too.",
+        "security": [
+          {
+            "accountSessionCookie": [],
+            "sessionCSRF": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionProof"
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\"[1-9][0-9]*\"$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The deleted Site",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "site",
+                        "deleted"
+                      ],
+                      "properties": {
+                        "site": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "site_id",
+                            "name",
+                            "prefixes",
+                            "masquerade",
+                            "failback",
+                            "probes",
+                            "routers",
+                            "version",
+                            "created_at",
+                            "updated_at"
+                          ],
+                          "properties": {
+                            "site_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64
+                            },
+                            "prefixes": {
+                              "type": "array",
+                              "minItems": 1,
+                              "maxItems": 1024,
+                              "items": {
+                                "type": "string",
+                                "minLength": 9,
+                                "maxLength": 43,
+                                "description": "Canonical CIDR"
+                              }
+                            },
+                            "masquerade": {
+                              "type": "boolean"
+                            },
+                            "failback": {
+                              "type": "boolean"
+                            },
+                            "probes": {
+                              "type": "array",
+                              "maxItems": 4,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "address",
+                                  "kind",
+                                  "port"
+                                ],
+                                "properties": {
+                                  "address": {
+                                    "type": "string",
+                                    "minLength": 7,
+                                    "maxLength": 39
+                                  },
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "icmp",
+                                      "tcp"
+                                    ]
+                                  },
+                                  "port": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 65535
+                                  }
+                                }
+                              }
+                            },
+                            "routers": {
+                              "type": "array",
+                              "maxItems": 32,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "device_id",
+                                  "device_name",
+                                  "priority",
+                                  "state",
+                                  "eligible",
+                                  "added_at"
+                                ],
+                                "properties": {
+                                  "device_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "device_name": {
+                                    "type": "string"
+                                  },
+                                  "priority": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 999
+                                  },
+                                  "state": {
+                                    "type": "string",
+                                    "enum": [
+                                      "active",
+                                      "draining"
+                                    ]
+                                  },
+                                  "eligible": {
+                                    "type": "boolean",
+                                    "description": "False while the Device is not active, not owned by the Workspace, or does not offer the Site's prefixes"
+                                  },
+                                  "added_at": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              }
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updated_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "deleted": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "404": {
+            "description": "site_not_found"
+          },
+          "412": {
+            "description": "version_conflict"
+          },
+          "428": {
+            "description": "precondition_required"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/sites/{site_id}/routers/{device_id}": {
+      "put": {
+        "operationId": "putNetworkSiteRouter",
+        "summary": "Make a Device a router of a Site, or change it",
+        "description": "Requires route.approve. A new router must be an active Device of the Network owned by the Workspace whose own configuration offers every prefix of the Site. If-Match carries the Site's version.",
+        "security": [
+          {
+            "accountSessionCookie": [],
+            "sessionCSRF": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionProof"
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\"[1-9][0-9]*\"$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "priority",
+                  "state"
+                ],
+                "properties": {
+                  "priority": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 999,
+                    "description": "A smaller number is preferred"
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "draining"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The Site with the router",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "site",
+                        "deleted"
+                      ],
+                      "properties": {
+                        "site": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "site_id",
+                            "name",
+                            "prefixes",
+                            "masquerade",
+                            "failback",
+                            "probes",
+                            "routers",
+                            "version",
+                            "created_at",
+                            "updated_at"
+                          ],
+                          "properties": {
+                            "site_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64
+                            },
+                            "prefixes": {
+                              "type": "array",
+                              "minItems": 1,
+                              "maxItems": 1024,
+                              "items": {
+                                "type": "string",
+                                "minLength": 9,
+                                "maxLength": 43,
+                                "description": "Canonical CIDR"
+                              }
+                            },
+                            "masquerade": {
+                              "type": "boolean"
+                            },
+                            "failback": {
+                              "type": "boolean"
+                            },
+                            "probes": {
+                              "type": "array",
+                              "maxItems": 4,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "address",
+                                  "kind",
+                                  "port"
+                                ],
+                                "properties": {
+                                  "address": {
+                                    "type": "string",
+                                    "minLength": 7,
+                                    "maxLength": 39
+                                  },
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "icmp",
+                                      "tcp"
+                                    ]
+                                  },
+                                  "port": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 65535
+                                  }
+                                }
+                              }
+                            },
+                            "routers": {
+                              "type": "array",
+                              "maxItems": 32,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "device_id",
+                                  "device_name",
+                                  "priority",
+                                  "state",
+                                  "eligible",
+                                  "added_at"
+                                ],
+                                "properties": {
+                                  "device_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "device_name": {
+                                    "type": "string"
+                                  },
+                                  "priority": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 999
+                                  },
+                                  "state": {
+                                    "type": "string",
+                                    "enum": [
+                                      "active",
+                                      "draining"
+                                    ]
+                                  },
+                                  "eligible": {
+                                    "type": "boolean",
+                                    "description": "False while the Device is not active, not owned by the Workspace, or does not offer the Site's prefixes"
+                                  },
+                                  "added_at": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              }
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updated_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "deleted": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "404": {
+            "description": "site_not_found"
+          },
+          "409": {
+            "description": "site_router_limit, router_not_eligible or router_not_advertising"
+          },
+          "412": {
+            "description": "version_conflict"
+          },
+          "428": {
+            "description": "precondition_required"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteNetworkSiteRouter",
+        "summary": "Remove a router from a Site",
+        "description": "Requires route.withdraw. If-Match carries the Site's version.",
+        "security": [
+          {
+            "accountSessionCookie": [],
+            "sessionCSRF": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionProof"
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\"[1-9][0-9]*\"$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The Site without the router",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "site",
+                        "deleted"
+                      ],
+                      "properties": {
+                        "site": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "site_id",
+                            "name",
+                            "prefixes",
+                            "masquerade",
+                            "failback",
+                            "probes",
+                            "routers",
+                            "version",
+                            "created_at",
+                            "updated_at"
+                          ],
+                          "properties": {
+                            "site_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64
+                            },
+                            "prefixes": {
+                              "type": "array",
+                              "minItems": 1,
+                              "maxItems": 1024,
+                              "items": {
+                                "type": "string",
+                                "minLength": 9,
+                                "maxLength": 43,
+                                "description": "Canonical CIDR"
+                              }
+                            },
+                            "masquerade": {
+                              "type": "boolean"
+                            },
+                            "failback": {
+                              "type": "boolean"
+                            },
+                            "probes": {
+                              "type": "array",
+                              "maxItems": 4,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "address",
+                                  "kind",
+                                  "port"
+                                ],
+                                "properties": {
+                                  "address": {
+                                    "type": "string",
+                                    "minLength": 7,
+                                    "maxLength": 39
+                                  },
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "icmp",
+                                      "tcp"
+                                    ]
+                                  },
+                                  "port": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 65535
+                                  }
+                                }
+                              }
+                            },
+                            "routers": {
+                              "type": "array",
+                              "maxItems": 32,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "device_id",
+                                  "device_name",
+                                  "priority",
+                                  "state",
+                                  "eligible",
+                                  "added_at"
+                                ],
+                                "properties": {
+                                  "device_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "device_name": {
+                                    "type": "string"
+                                  },
+                                  "priority": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 999
+                                  },
+                                  "state": {
+                                    "type": "string",
+                                    "enum": [
+                                      "active",
+                                      "draining"
+                                    ]
+                                  },
+                                  "eligible": {
+                                    "type": "boolean",
+                                    "description": "False while the Device is not active, not owned by the Workspace, or does not offer the Site's prefixes"
+                                  },
+                                  "added_at": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              }
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updated_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "deleted": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "404": {
+            "description": "site_not_found"
+          },
+          "412": {
+            "description": "version_conflict"
+          },
+          "428": {
+            "description": "precondition_required"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      }
     }
   }
 }

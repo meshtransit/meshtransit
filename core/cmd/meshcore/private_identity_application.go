@@ -94,6 +94,7 @@ type privateIdentityPorts struct {
 	Interchanges        httpapi.InterchangeManager
 	InterchangeTrust    httpapi.InterchangeRelayTrust
 	DeviceGroups        httpapi.DeviceGroupManager
+	Sites               httpapi.SiteManager
 	IdentityGroups      httpapi.IdentityGroupManager
 	DeviceTags          httpapi.DeviceTagManager
 	DeviceLifecycle     httpapi.DeviceLifecycleManager
@@ -221,6 +222,7 @@ func composePrivateIdentity(
 		Interchanges:          ports.Interchanges,
 		InterchangeTrust:      ports.InterchangeTrust,
 		DeviceGroups:          ports.DeviceGroups,
+		Sites:                 ports.Sites,
 		IdentityGroups:        ports.IdentityGroups,
 		DeviceTags:            ports.DeviceTags,
 		DeviceLifecycle:       ports.DeviceLifecycle,

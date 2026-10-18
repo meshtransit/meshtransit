@@ -554,6 +554,7 @@ func Catalog() []Migration {
 		newMigration(185, "Removing a Device retires its Resource", resourceDeviceRemovalSQL),
 		newMigration(186, "Deleting a Resource supersedes its Device target", resourceDeleteSupersedesTargetSQL),
 		newMigration(187, "Overlay and alias pools stay inside the client overlay frame", addressPoolFrameSQL),
+		newMigration(188, "Network Sites and their routers", networkSitesSQL),
 	}
 }
 
@@ -894,3 +895,6 @@ var resourceDeleteSupersedesTargetSQL string
 
 //go:embed 000187_address_pool_frame.up.sql
 var addressPoolFrameSQL string
+
+//go:embed 000188_network_sites.up.sql
+var networkSitesSQL string

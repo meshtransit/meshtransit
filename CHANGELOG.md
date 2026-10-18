@@ -5,6 +5,16 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: Network Sites, the first part of subnet routers. A Site is an address
+  space behind the mesh (an office LAN, a VPC) with its prefixes, source
+  translation and probe addresses; a Device of the Network can be its router.
+  `GET|POST /api/v1/workspaces/{workspace}/networks/{network}/sites`,
+  `GET|PATCH|DELETE …/sites/{site}` and `PUT|DELETE …/sites/{site}/routers/{device}`
+  use the existing `route.read`, `route.approve` and `route.withdraw`
+  permissions. A router must be an active, Workspace-owned Device whose own
+  configuration offers the Site's prefixes; a Site has at most one router
+  until high availability. Nothing is routed yet: maps and clients follow.
+  Schema 188, no operator step.
 - Client: a map change no longer drops established connections. The packet
   filter keeps every tracked flow the new map still authorizes and ends only
   those whose peer identity, key lifetime, alias grant or admitting rule
