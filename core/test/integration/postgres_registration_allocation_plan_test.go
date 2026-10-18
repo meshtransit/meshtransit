@@ -20,11 +20,13 @@ import (
 // touch whatever the Network's size: a floor row, an index probe, a few
 // hostname probes. allocationWindowRows bounds one full lease window (256
 // leases, each with a probe of its Device), still far below the 2,000 leases
-// of the prefix a scan of it would read.
+// of the prefix a scan of it would read. The slack covers the few leases the
+// executor reads and probes before the reclaimable filter drops them: one
+// such lease already costs four rows past an exact window.
 const (
 	allocationRows       = 64
 	allocationWindow     = 256
-	allocationWindowRows = 4 * allocationWindow
+	allocationWindowRows = 4*allocationWindow + allocationRows
 )
 
 // assertRegistrationAllocationPlansScale proves schema 157: under the
