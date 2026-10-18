@@ -507,9 +507,10 @@ func runStatus(
 	if len(status.SelfAddresses) > 0 {
 		selfAddresses = strings.Join(status.SelfAddresses, ", ")
 	}
+	deviceExpiry := formatDeviceExpiry(status.DeviceExpiry, status.DeviceExpiresAt, time.Now())
 	_, _ = fmt.Fprintf(
 		stdout,
-		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nNetwork changes: %s\nRuntime recovery: %s\nRuntime: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\nNetwork: %s\nSelf addresses: %s\nPeers: %d\nPeer paths: %s\nPath transitions: %s\nPath probes: %s\nRelay: %s\nNAT: %s\nPort mapping: %s\nCloud: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
+		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nNetwork changes: %s\nRuntime recovery: %s\nRuntime: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\nNetwork: %s\nSelf addresses: %s\nDevice expiry: %s\nPeers: %d\nPeer paths: %s\nPath transitions: %s\nPath probes: %s\nRelay: %s\nNAT: %s\nPort mapping: %s\nCloud: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
 		status.Daemon.Version,
 		status.State,
 		status.DataPlane,
@@ -525,6 +526,7 @@ func runStatus(
 		status.NetmapRevision,
 		networkName,
 		selfAddresses,
+		deviceExpiry,
 		status.PeerCount,
 		formatPathStatus(status.PeerPaths),
 		formatPathTransitionStatus(status.PeerPaths),

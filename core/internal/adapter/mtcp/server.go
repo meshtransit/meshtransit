@@ -161,11 +161,42 @@ func NewServer(options Options) (*Server, error) {
 	options.Metrics.controlKeysExpire(options.Keys)
 	rate := handshakeLimit(options.HandshakeRate, defaultHandshakeRate)
 	burst := handshakeLimit(options.HandshakeBurst, defaultHandshakeBurst)
-	return &Server{options: options, keys: keys,
+	server := &Server{options: options, keys: keys,
 		admission: newAdmission(rate, burst,
 			positiveOr(options.UnauthenticatedPerSource, defaultUnauthenticated(rate, burst)), options.Now),
 		recent: newTimestampCache(), byMachine: make(map[key.MachinePublic]*Session),
-		live: make(map[*Session]struct{})}, nil
+		live: make(map[*Session]struct{})}
+	options.Metrics.countExpiringDevices(server.expiringDevices)
+	return server, nil
+}
+
+// Expiry windows of the expiring-Device gauge; the client warns at the same.
+const (
+	deviceExpirySoonWindow     = 14 * 24 * time.Hour
+	deviceExpiryImminentWindow = 24 * time.Hour
+)
+
+// expiringDevices counts live sessions whose Device expires within 14 days
+// and within one day and has not expired yet. The lock is held only for a
+// read of each session's last expiry.
+func (server *Server) expiringDevices() (within14d, within1d int) {
+	now := server.options.Now()
+	soon := now.Add(deviceExpirySoonWindow).UnixMilli()
+	imminent := now.Add(deviceExpiryImminentWindow).UnixMilli()
+	current := now.UnixMilli()
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	for session := range server.live {
+		expiry := session.deviceKeyExpiry.Load()
+		if expiry <= current || expiry > soon {
+			continue
+		}
+		within14d++
+		if expiry <= imminent {
+			within1d++
+		}
+	}
+	return within14d, within1d
 }
 
 // Handles reports whether the server owns a request path.

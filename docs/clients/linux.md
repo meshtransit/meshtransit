@@ -103,7 +103,7 @@ registered, `meshd` keeps its control session by itself, across restarts.
 
 | Command | Shows |
 |---|---|
-| `meshctl status` | State, control session, registration, addresses, peers and paths, DNS, NAT, relays |
+| `meshctl status` | State, control session, registration, addresses, when the Device expires, peers and paths, DNS, NAT, relays |
 | `meshctl netcheck` | NAT type and public address; exits 1 unless the classification is ready |
 | `meshctl doctor control` | Core's control key fingerprint and transport, without registering |
 | `journalctl -u meshd -u meshnetd -u meshcred` | Logs (JSON) |

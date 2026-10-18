@@ -27,6 +27,8 @@ type Status struct {
 	NetmapRevision     uint64                 `json:"netmap_revision"`
 	NetworkName        string                 `json:"network_name,omitempty"`
 	SelfAddresses      []string               `json:"self_addresses,omitempty"`
+	DeviceExpiresAt    string                 `json:"device_expires_at,omitempty"`
+	DeviceExpiry       string                 `json:"device_expiry,omitempty"`
 	PeerCount          int                    `json:"peer_count"`
 	PolicyRuleCount    int                    `json:"policy_rule_count"`
 	PeerPaths          PathStatus             `json:"paths"`

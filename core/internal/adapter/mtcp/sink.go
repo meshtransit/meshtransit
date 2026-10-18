@@ -281,6 +281,7 @@ func (sink *mapSink) names(snapshot mapsession.Snapshot) (mapsession.DNSView, er
 
 func (sink *mapSink) adoptLocked(snapshot mapsession.Snapshot, grant grantParts) {
 	sink.current, sink.hasCurrent = snapshot, true
+	sink.session.deviceKeyExpiry.Store(snapshot.KeyExpiry().UnixMilli())
 	clear(sink.peerIDs)
 	for _, peer := range snapshot.AuthorizedPeers() {
 		sink.peerIDs[peer.NumericNodeID()] = peer.NodeID().String()

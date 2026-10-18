@@ -47,6 +47,9 @@ type Session struct {
 	// established is when the session was registered with the server
 	// (Unix nanoseconds); rebalancing leaves young sessions alone.
 	established atomic.Int64
+	// deviceKeyExpiry is the served Device's key expiry (Unix ms) in the
+	// last map sent; zero before one. It feeds the expiring-Device gauge.
+	deviceKeyExpiry atomic.Int64
 
 	ctx    context.Context
 	cancel context.CancelCauseFunc

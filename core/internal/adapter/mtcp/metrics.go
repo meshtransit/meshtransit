@@ -2,6 +2,7 @@ package mtcp
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -21,6 +22,7 @@ type Metrics struct {
 	keyExpiry  prometheus.Gauge
 	limits     *prometheus.CounterVec
 	mapNames   *prometheus.CounterVec
+	expiring   *deviceExpiryCollector
 }
 
 // The closed set of ways a map's names were degraded (mapsession.DNSView).
@@ -59,6 +61,12 @@ var handshakeResults = []string{
 // NewMetrics constructs unregistered collectors.
 func NewMetrics() *Metrics {
 	metrics := &Metrics{
+		// Alert: sum(meshtransit_mtcp_sessions_device_expiring{within="1d"}) > 0
+		expiring: &deviceExpiryCollector{desc: prometheus.NewDesc(
+			"meshtransit_mtcp_sessions_device_expiring",
+			"Sessions on this replica whose Device expires within the window (14d or 1d) and has not yet; "+
+				"a Device that never expires is not counted.",
+			[]string{"within"}, nil)},
 		// Dashboard: sum by (result) (rate(meshtransit_mtcp_handshakes_total[5m]))
 		handshakes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "meshtransit_mtcp_handshakes_total",
@@ -132,7 +140,8 @@ func NewMetrics() *Metrics {
 // Collectors returns the collectors to register.
 func (metrics *Metrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{metrics.handshakes, metrics.sessions, metrics.messages, metrics.streamEnds,
-		metrics.sheds, metrics.unproven, metrics.forwarding, metrics.keyExpiry, metrics.limits, metrics.mapNames}
+		metrics.sheds, metrics.unproven, metrics.forwarding, metrics.keyExpiry, metrics.limits, metrics.mapNames,
+		metrics.expiring}
 }
 
 // streamEnded counts a map stream end; a nil Metrics counts nothing.
@@ -187,4 +196,39 @@ func (metrics *Metrics) sent(t sharedmtcp.MessageType) {
 
 func (metrics *Metrics) received(t sharedmtcp.MessageType) {
 	metrics.messages.WithLabelValues("received", fmt.Sprintf("%#02x", uint8(t))).Inc()
+}
+
+// deviceExpiryCollector counts, at scrape time, the sessions whose Device
+// expires soon. count is bound by the Server; until then it reports zero.
+type deviceExpiryCollector struct {
+	desc  *prometheus.Desc
+	mu    sync.Mutex
+	count func() (within14d, within1d int)
+}
+
+func (collector *deviceExpiryCollector) Describe(descriptions chan<- *prometheus.Desc) {
+	descriptions <- collector.desc
+}
+
+func (collector *deviceExpiryCollector) Collect(metrics chan<- prometheus.Metric) {
+	collector.mu.Lock()
+	count := collector.count
+	collector.mu.Unlock()
+	var within14d, within1d int
+	if count != nil {
+		within14d, within1d = count()
+	}
+	metrics <- prometheus.MustNewConstMetric(collector.desc, prometheus.GaugeValue, float64(within14d), "14d")
+	metrics <- prometheus.MustNewConstMetric(collector.desc, prometheus.GaugeValue, float64(within1d), "1d")
+}
+
+// countExpiringDevices binds the count the gauge reports; a nil Metrics
+// binds nothing.
+func (metrics *Metrics) countExpiringDevices(count func() (within14d, within1d int)) {
+	if metrics == nil || metrics.expiring == nil {
+		return
+	}
+	metrics.expiring.mu.Lock()
+	metrics.expiring.count = count
+	metrics.expiring.mu.Unlock()
 }

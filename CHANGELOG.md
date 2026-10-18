@@ -5,6 +5,12 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Client and Core: a Device warns before it expires. `meshctl status` shows
+  a `Device expiry` line (and `device_expires_at`, `device_expiry` in
+  `--json`) that reminds the person to sign in again from 14 days before and
+  urgently on the last day; the mobile status JSON carries the same two
+  fields. Core exports `meshtransit_mtcp_sessions_device_expiring{within}`
+  for the connected Devices expiring within 14 days and within one day.
 - Core: each Network chooses how long a Device that signs in through the
   browser lives: 1 hour to 180 days, or never expires. Without a choice it
   lives 180 days instead of 30. `GET` and `PATCH …/networks/{network}/device-lifetime`

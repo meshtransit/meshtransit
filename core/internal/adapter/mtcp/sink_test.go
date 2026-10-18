@@ -139,6 +139,10 @@ func TestSinkSnapshotProvesTheSessionsDevice(t *testing.T) {
 	if !session.proven.Load() || released != 1 {
 		t.Fatalf("proven = %t, source released %d times; want true, once", session.proven.Load(), released)
 	}
+	// The served Device's expiry feeds the expiring-Device gauge.
+	if got, want := session.deviceKeyExpiry.Load(), streamFixture(t, 8).KeyExpiry().UnixMilli(); got != want {
+		t.Fatalf("session Device expiry = %d, want %d", got, want)
+	}
 }
 
 func TestSinkSendsKeysFirstThenSnapshotAndDeltas(t *testing.T) {

@@ -459,6 +459,8 @@ func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request)
 		NetmapRevision:     status.NetmapRevision,
 		NetworkName:        status.NetworkName,
 		SelfAddresses:      status.SelfAddresses,
+		DeviceExpiresAt:    deviceExpiresAt(status),
+		DeviceExpiry:       status.DeviceExpiry,
 		PeerCount:          status.PeerCount,
 		PolicyRuleCount:    status.PolicyRuleCount,
 		PeerPaths:          mapPathStatus(status.PeerPaths),
@@ -923,4 +925,13 @@ func ensureRequestEOF(decoder *json.Decoder) error {
 	}
 
 	return err
+}
+
+// deviceExpiresAt is the wire form of the Device's expiry; empty while it is
+// unknown or the Device never expires.
+func deviceExpiresAt(status daemon.Status) string {
+	if status.DeviceExpiresAt.IsZero() || status.DeviceExpiry == daemon.DeviceExpiryNever {
+		return ""
+	}
+	return status.DeviceExpiresAt.UTC().Format(time.RFC3339)
 }

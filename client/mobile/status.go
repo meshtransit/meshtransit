@@ -3,6 +3,7 @@ package mobile
 import (
 	"encoding/json"
 	"slices"
+	"time"
 
 	"meshtransit.net/client/internal/daemon"
 )
@@ -21,17 +22,23 @@ type status struct {
 	DNS           string `json:"dns"`
 	ControlTrust  string `json:"controlTrust"`
 	// ControlKey is the fingerprint of the pinned Core key, once trusted.
-	ControlKey     string     `json:"controlFingerprint,omitempty"`
-	Registration   string     `json:"registration"`
-	ControlSession string     `json:"controlSession"`
-	ProfileID      string     `json:"profileId,omitempty"`
-	ProfileCount   int        `json:"profileCount"`
-	NetworkName    string     `json:"networkName,omitempty"`
-	NetmapRevision uint64     `json:"netmapRevision"`
-	SelfAddresses  []string   `json:"selfAddresses"`
-	PeerCount      int        `json:"peerCount"`
-	Paths          pathCounts `json:"paths"`
-	Version        string     `json:"version"`
+	ControlKey     string   `json:"controlFingerprint,omitempty"`
+	Registration   string   `json:"registration"`
+	ControlSession string   `json:"controlSession"`
+	ProfileID      string   `json:"profileId,omitempty"`
+	ProfileCount   int      `json:"profileCount"`
+	NetworkName    string   `json:"networkName,omitempty"`
+	NetmapRevision uint64   `json:"netmapRevision"`
+	SelfAddresses  []string `json:"selfAddresses"`
+	// DeviceExpiresAt is the Device's expiry (RFC 3339); omitted before a
+	// map arrives and for a Device that never expires.
+	DeviceExpiresAt string `json:"deviceExpiresAt,omitempty"`
+	// DeviceExpiry is unknown, never, ok, soon (14 days or less), imminent
+	// (a day or less) or expired.
+	DeviceExpiry string     `json:"deviceExpiry"`
+	PeerCount    int        `json:"peerCount"`
+	Paths        pathCounts `json:"paths"`
+	Version      string     `json:"version"`
 }
 
 // pathCounts counts the current map's peers by packet path.
@@ -48,21 +55,23 @@ func newStatus(running bool, current daemon.Status) status {
 		addresses = []string{}
 	}
 	return status{
-		SchemaVersion:  statusSchemaVersion,
-		Running:        running,
-		State:          current.State,
-		DataPlane:      current.DataPlane,
-		DNS:            current.DNS,
-		ControlTrust:   current.ControlTrust,
-		ControlKey:     current.ControlFingerprint,
-		Registration:   current.Registration,
-		ControlSession: current.ControlSession,
-		ProfileID:      current.ActiveProfileID,
-		ProfileCount:   current.ProfileCount,
-		NetworkName:    current.NetworkName,
-		NetmapRevision: current.NetmapRevision,
-		SelfAddresses:  addresses,
-		PeerCount:      current.PeerCount,
+		SchemaVersion:   statusSchemaVersion,
+		Running:         running,
+		State:           current.State,
+		DataPlane:       current.DataPlane,
+		DNS:             current.DNS,
+		ControlTrust:    current.ControlTrust,
+		ControlKey:      current.ControlFingerprint,
+		Registration:    current.Registration,
+		ControlSession:  current.ControlSession,
+		ProfileID:       current.ActiveProfileID,
+		ProfileCount:    current.ProfileCount,
+		NetworkName:     current.NetworkName,
+		NetmapRevision:  current.NetmapRevision,
+		SelfAddresses:   addresses,
+		DeviceExpiresAt: deviceExpiresAt(current),
+		DeviceExpiry:    deviceExpiry(current),
+		PeerCount:       current.PeerCount,
 		Paths: pathCounts{
 			Direct:  current.PeerPaths.DirectCount,
 			Relay:   current.PeerPaths.RelayCount,
@@ -78,4 +87,18 @@ func (value status) marshal() (string, error) {
 		return "", err
 	}
 	return string(encoded), nil
+}
+
+func deviceExpiresAt(current daemon.Status) string {
+	if current.DeviceExpiresAt.IsZero() || current.DeviceExpiry == daemon.DeviceExpiryNever {
+		return ""
+	}
+	return current.DeviceExpiresAt.UTC().Format(time.RFC3339)
+}
+
+func deviceExpiry(current daemon.Status) string {
+	if current.DeviceExpiry == "" {
+		return daemon.DeviceExpiryUnknown
+	}
+	return current.DeviceExpiry
 }

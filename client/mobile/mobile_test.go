@@ -114,8 +114,21 @@ func TestStatusJSONModel(t *testing.T) {
 	addresses, isList := decoded["selfAddresses"].([]any)
 	if decoded["schemaVersion"] != float64(statusSchemaVersion) || decoded["running"] != true ||
 		decoded["networkName"] != "Lab" || paths["direct"] != float64(2) || paths["relay"] != float64(1) ||
-		!isList || len(addresses) != 0 {
+		!isList || len(addresses) != 0 || decoded["deviceExpiry"] != "unknown" ||
+		decoded["deviceExpiresAt"] != nil {
 		t.Fatalf("status JSON = %s", encoded)
+	}
+	expiry := time.Date(2026, time.November, 1, 10, 0, 0, 0, time.UTC)
+	soon, err := newStatus(true, daemon.Status{DeviceExpiresAt: expiry, DeviceExpiry: daemon.DeviceExpirySoon}).marshal()
+	if err != nil || !strings.Contains(soon, `"deviceExpiresAt":"2026-11-01T10:00:00Z","deviceExpiry":"soon"`) {
+		t.Fatalf("expiring status JSON = %s, %v", soon, err)
+	}
+	never, err := newStatus(true, daemon.Status{
+		DeviceExpiresAt: time.Date(2200, 1, 1, 0, 0, 0, 0, time.UTC),
+		DeviceExpiry:    daemon.DeviceExpiryNever,
+	}).marshal()
+	if err != nil || strings.Contains(never, "deviceExpiresAt") || !strings.Contains(never, `"deviceExpiry":"never"`) {
+		t.Fatalf("never-expiring status JSON = %s, %v", never, err)
 	}
 }
 

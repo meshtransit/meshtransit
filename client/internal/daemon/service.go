@@ -146,17 +146,22 @@ type Status struct {
 	NetmapRevision     uint64
 	NetworkName        string
 	SelfAddresses      []string
-	PeerCount          int
-	PolicyRuleCount    int
-	PeerPaths          dataplane.PeerPathSnapshot
-	PathProbes         PathProbeStatus
-	Relay              relay.HealthSnapshot
-	NetworkChanges     NetworkChangeStatus
-	RuntimeRecovery    RuntimeRecoveryStatus
-	Runtime            runtimehealth.Snapshot
-	NAT                NATStatus
-	PortMapping        PortMappingStatus
-	Cloud              CloudStatus
+	// DeviceExpiresAt is the Device's key expiry in the current map; zero
+	// before a map arrives.
+	DeviceExpiresAt time.Time
+	// DeviceExpiry classifies DeviceExpiresAt (DeviceExpiryState).
+	DeviceExpiry    string
+	PeerCount       int
+	PolicyRuleCount int
+	PeerPaths       dataplane.PeerPathSnapshot
+	PathProbes      PathProbeStatus
+	Relay           relay.HealthSnapshot
+	NetworkChanges  NetworkChangeStatus
+	RuntimeRecovery RuntimeRecoveryStatus
+	Runtime         runtimehealth.Snapshot
+	NAT             NATStatus
+	PortMapping     PortMappingStatus
+	Cloud           CloudStatus
 }
 
 // NetworkChangeStatus contains process-local aggregate network-event counters.
@@ -390,6 +395,7 @@ type syncStatus struct {
 	revision        uint64
 	networkName     string
 	selfAddresses   []string
+	selfKeyExpiry   time.Time
 	peerCount       int
 	policyRuleCount int
 	dataPlane       string
@@ -993,6 +999,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 						revision:        snapshot.Revision,
 						networkName:     snapshot.NetworkName,
 						selfAddresses:   selfAddresses,
+						selfKeyExpiry:   snapshot.Self.KeyExpiry,
 						peerCount:       len(snapshot.Peers),
 						policyRuleCount: len(snapshot.Policy),
 						dataPlane:       dataPlaneState,
@@ -2029,6 +2036,8 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		NetmapRevision:     syncState.revision,
 		NetworkName:        syncState.networkName,
 		SelfAddresses:      append([]string(nil), syncState.selfAddresses...),
+		DeviceExpiresAt:    deviceExpiryOf(registration, syncState),
+		DeviceExpiry:       DeviceExpiryState(deviceExpiryOf(registration, syncState), s.clock()),
 		PeerCount:          syncState.peerCount,
 		PolicyRuleCount:    syncState.policyRuleCount,
 		PeerPaths:          peerPaths,
@@ -2604,6 +2613,14 @@ func (s *Service) signalControlSync() {
 func (s *Service) setSyncStatus(status syncStatus) {
 	status.selfAddresses = append([]string(nil), status.selfAddresses...)
 	s.syncMu.Lock()
+	// The Device's expiry outlives a reconnect or a stream Core ended
+	// because it expired: only a map of the same profile replaces it, so the
+	// warning stays visible when it matters most. Stopping, logging out or an
+	// unregistered profile (as on the way to a new registration) drop it.
+	if status.selfKeyExpiry.IsZero() && status.profileID != "" && status.profileID == s.syncState.profileID &&
+		status.state != ControlSessionInactive && status.state != ControlSessionDown {
+		status.selfKeyExpiry = s.syncState.selfKeyExpiry
+	}
 	s.syncState = status
 	s.syncMu.Unlock()
 }

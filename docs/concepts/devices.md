@@ -36,6 +36,14 @@ with the Network's current lifetime. Each change is audited as
 key's lifetime instead. A Network whose interactive profile was created
 by other means keeps that profile's own lifetime until it chooses one.
 
+A Device warns before it expires. From 14 days before, `meshctl status`
+(the `Device expiry` line and `device_expiry` in `--json`), the Android app
+and the Console's Device list and page say it expires soon; on the last day
+the warning becomes urgent. Signing in again renews a Device that signed in
+through the browser; a Device enrolled with a key needs a new key. The gauge
+`meshtransit_mtcp_sessions_device_expiring{within="14d"|"1d"}` counts the
+connected Devices that close to expiry.
+
 A person can register at most 20 new Devices by browser sign-in per Network
 in 24 hours, revoked ones included; signing in again on an existing Device
 does not count.
