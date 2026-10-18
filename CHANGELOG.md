@@ -5,6 +5,12 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: `POST …/devices/{device}/actions/extend` (`device.manage`,
+  `If-Match`, `duration_seconds` 3600–604800 and a reason) gives a member's
+  Device that expired or expires within a day a short extension from now, so
+  it reconnects until its user signs in again. Each extension is audited as
+  `device.expiry_extended`. Schema 180 adds the function, no operator step.
+  The Console offers it as Extend access on the Device page.
 - Client and Core: a Device warns before it expires. `meshctl status` shows
   a `Device expiry` line (and `device_expires_at`, `device_expiry` in
   `--json`) that reminds the person to sign in again from 14 days before and

@@ -546,6 +546,7 @@ func Catalog() []Migration {
 		newMigration(177, "Devices listed by name and read one at a time", deviceInventorySearchSQL),
 		newMigration(178, "Shares end when their provider Device is removed", trustContractDeviceRemovalSQL),
 		newMigration(179, "Each Network chooses how long signed-in Devices live", networkDeviceLifetimeSQL),
+		newMigration(180, "An administrator briefly extends an expired Device", deviceExpiryExtensionSQL),
 	}
 }
 
@@ -862,3 +863,6 @@ var trustContractDeviceRemovalSQL string
 
 //go:embed 000179_network_device_lifetime.up.sql
 var networkDeviceLifetimeSQL string
+
+//go:embed 000180_device_expiry_extension.up.sql
+var deviceExpiryExtensionSQL string

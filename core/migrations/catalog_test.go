@@ -12,8 +12,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 179 {
-		t.Fatalf("len(Catalog()) = %d, want 179", len(catalog))
+	if len(catalog) != 180 {
+		t.Fatalf("len(Catalog()) = %d, want 180", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1608,8 +1608,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 179 {
-		t.Fatalf("LatestVersion() = %d, want 179", LatestVersion())
+	if LatestVersion() != 180 {
+		t.Fatalf("LatestVersion() = %d, want 180", LatestVersion())
 	}
 }
 
@@ -5130,6 +5130,43 @@ func TestNetworkDeviceLifetime(t *testing.T) {
 		"TO mesh_worker", "TO mesh_observer", "DISABLE TRIGGER", "DROP "} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 179 must not contain %q", forbidden)
+		}
+	}
+}
+
+// Schema 180 lets device.manage extend an expired member Device within fixed
+// bounds, on the database clock, through one definer function.
+func TestDeviceExpiryExtension(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 180 {
+		t.Fatalf("len(Catalog()) = %d, want schema 180", len(catalog))
+	}
+	migration := catalog[179]
+	if migration.Version != 180 {
+		t.Fatalf("migration 180 = %+v", migration)
+	}
+	for _, want := range []string{
+		"p_extension_seconds NOT BETWEEN 3600 AND 604800",
+		"'device.manage', p_evaluated_at",
+		"v_device.ownership <> 'member'",
+		"v_device.expires_at > v_now + INTERVAL '1 day'",
+		"v_expires_at <= v_device.expires_at",
+		"v_now TIMESTAMPTZ := pg_catalog.transaction_timestamp();",
+		"inventory_revision = revision.inventory_revision + 1,",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.extend_device_v1(",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 180 lacks %q", want)
+		}
+	}
+	if count := strings.Count(migration.SQL, "SECURITY DEFINER\nSET search_path = pg_catalog\n"); count != 1 {
+		t.Errorf("schema 180 has %d definer functions pinned to pg_catalog, want 1", count)
+	}
+	for _, forbidden := range []string{"clock_timestamp", "GREATEST", "OWNER TO", "ALTER TABLE", "TO mesh_worker",
+		"TO mesh_observer", "DROP "} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 180 must not contain %q", forbidden)
 		}
 	}
 }

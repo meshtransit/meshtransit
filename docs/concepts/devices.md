@@ -173,6 +173,7 @@ needs an `Idempotency-Key`. Each action writes an
 | `transfer` to the Workspace | `device.transfer` | Becomes Workspace-owned, never expires |
 | `transfer` to a member | `device.transfer` | Suspended until the new member signs in on it (below). The member must be active in the Workspace and the Network; an administrator's suspension must be resumed first |
 | `revoke` | `device.manage` | Removes an active, suspended or expired Device: keys revoked, suspension and pending handover cleared, addresses quarantined, its shares ended |
+| `extend` | `device.manage` | A member's Device that expired or expires within a day gets 1 hour to 7 days from now (below) |
 
 These permissions come with the `admin` and `it_admin` roles and with
 ownership of the Workspace. A node can also remove its own Device: `meshctl
@@ -190,6 +191,16 @@ administrator's revoke and needs only the node's current keys.
   by signing in again from the browser on the same machine, with the same
   profile and keys and the same owner; the new expiry comes from the
   profile. A Workspace-owned Device never expires.
+- **Extension.** When its user cannot sign in again right away, an
+  administrator can extend an expired member Device with `extend`, a
+  `duration_seconds` of 3600 to 604800 (whole minutes) and a reason. The
+  Device must be active or suspended and expired or expiring within a day;
+  the new expiry is counted from now and must be later than the old one. The
+  Device keeps its keys, addresses, owner and state: an active one is back
+  in its peers' maps, a suspended one stays suspended. Its node may need
+  `meshctl up` to reconnect. The extension is audited as
+  `device.expiry_extended`. It is a bridge, not a renewal: the Device still
+  expires at the new time unless its user signs in again.
 - **Handover.** The Device stays suspended until the new member signs in on
   it through the browser; that person then owns it and its expiry restarts.
 - **Node key rotation.** A node can replace its node key at most 4 times an

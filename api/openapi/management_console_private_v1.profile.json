@@ -10385,6 +10385,246 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/devices/{device_id}/actions/extend": {
+      "post": {
+        "operationId": "extendNetworkDevice",
+        "summary": "Extend an expired Device for a short while",
+        "description": "Requires device.manage. Only a Device owned by a member, active or suspended, that does not already never expire and that expired or expires within a day can be extended. The new expiry is the duration from now and must be later than the old one; it lasts until the Device signs in again or is enrolled with a new key.",
+        "security": [
+          {
+            "accountSessionCookie": [],
+            "sessionCSRF": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionProof"
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\"[1-9][0-9]*\"$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "duration_seconds",
+                  "reason"
+                ],
+                "properties": {
+                  "duration_seconds": {
+                    "type": "integer",
+                    "minimum": 3600,
+                    "maximum": 604800,
+                    "multipleOf": 60
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The Device after the change",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "device",
+                        "network_revision"
+                      ],
+                      "properties": {
+                        "device": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "device_id",
+                            "hostname",
+                            "state",
+                            "ownership",
+                            "owner_principal_id",
+                            "suspended_reason",
+                            "handover_principal_id",
+                            "expires_at",
+                            "version"
+                          ],
+                          "properties": {
+                            "device_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "hostname": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253
+                            },
+                            "state": {
+                              "type": "string",
+                              "enum": [
+                                "active",
+                                "suspended"
+                              ]
+                            },
+                            "ownership": {
+                              "type": "string",
+                              "enum": [
+                                "member",
+                                "workspace"
+                              ]
+                            },
+                            "owner_principal_id": {
+                              "type": [
+                                "string",
+                                "null"
+                              ],
+                              "format": "uuid"
+                            },
+                            "suspended_reason": {
+                              "type": [
+                                "string",
+                                "null"
+                              ],
+                              "enum": [
+                                "admin",
+                                "handover",
+                                "member",
+                                null
+                              ]
+                            },
+                            "handover_principal_id": {
+                              "type": [
+                                "string",
+                                "null"
+                              ],
+                              "format": "uuid"
+                            },
+                            "expires_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            }
+                          }
+                        },
+                        "network_revision": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "404": {
+            "description": "not_found"
+          },
+          "409": {
+            "description": "conflict"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Unavailable"
+          },
+          "412": {
+            "description": "version_conflict"
+          },
+          "428": {
+            "description": "precondition_required"
+          },
+          "422": {
+            "description": "owner_not_eligible"
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/devices/{device_id}/actions/resume": {
       "post": {
         "operationId": "resumeNetworkDevice",

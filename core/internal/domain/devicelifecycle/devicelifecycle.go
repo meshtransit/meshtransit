@@ -1,6 +1,7 @@
 // Package devicelifecycle changes who owns a Device and whether it may
 // connect: suspend and resume it, transfer it to the Workspace or to another
-// member (who must then sign in on it), and rename it. PostgreSQL authorizes
+// member (who must then sign in on it), rename it, and briefly extend one that
+// expired. PostgreSQL authorizes
 // every change and records it with audit evidence.
 package devicelifecycle
 
@@ -49,6 +50,20 @@ const (
 	ActionTransferWorkspace Action = "transfer_workspace"
 	ActionTransferMember    Action = "transfer_member"
 	ActionRename            Action = "rename"
+	// ActionExtend gives a member Device that expired, or expires within
+	// ExtensionWindow, a short extension so it reconnects until its user signs
+	// in again or a new key enrolls it.
+	ActionExtend Action = "extend"
+)
+
+// Extension bounds; PostgreSQL enforces the same.
+const (
+	// MinimumExtension and MaximumExtension bound how long an extension lasts
+	// from the moment it is given.
+	MinimumExtension = time.Hour
+	MaximumExtension = 7 * 24 * time.Hour
+	// ExtensionWindow is how close to expiry a Device must be to be extended.
+	ExtensionWindow = 24 * time.Hour
 )
 
 // Ownership is who owns a Device.
@@ -83,7 +98,9 @@ type Change struct {
 	// NewOwner is the member a transfer_member change hands the Device to.
 	NewOwner publicid.ID
 	// Hostname is the new name of a rename.
-	Hostname      node.Hostname
+	Hostname node.Hostname
+	// Extension is how long an extend change lasts, in whole minutes.
+	Extension     time.Duration
 	Reason        string
 	CorrelationID publicid.ID
 }
@@ -127,6 +144,9 @@ func (change Change) IsValid() bool {
 	if change.Action == ActionRename && change.Reason != "" && !ValidReason(change.Reason) {
 		return false
 	}
+	if (change.Action == ActionExtend) != (change.Extension != 0) {
+		return false
+	}
 	switch change.Action {
 	case ActionSuspend, ActionResume, ActionTransferWorkspace:
 		return change.NewOwner == (publicid.ID{}) && change.Hostname == (node.Hostname{})
@@ -134,6 +154,10 @@ func (change Change) IsValid() bool {
 		return change.NewOwner.IsValid() && change.Hostname == (node.Hostname{})
 	case ActionRename:
 		return change.NewOwner == (publicid.ID{}) && change.Hostname.IsValid()
+	case ActionExtend:
+		return change.NewOwner == (publicid.ID{}) && change.Hostname == (node.Hostname{}) &&
+			change.Extension >= MinimumExtension && change.Extension <= MaximumExtension &&
+			change.Extension%time.Minute == 0
 	default:
 		return false
 	}

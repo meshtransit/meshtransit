@@ -30,12 +30,12 @@ type deviceLifecyclePath struct {
 }
 
 // deviceLifecycleActions are the actions a path may name.
-var deviceLifecycleActions = map[string]bool{"suspend": true, "resume": true, "transfer": true}
+var deviceLifecycleActions = map[string]bool{"suspend": true, "resume": true, "transfer": true, "extend": true}
 
 // parseDeviceLifecyclePath matches, with no query,
 //
 //	PATCH /api/v1/workspaces/{ws}/networks/{net}/devices/{device}  rename
-//	POST  /api/v1/workspaces/{ws}/networks/{net}/devices/{device}/actions/{suspend|resume|transfer}
+//	POST  /api/v1/workspaces/{ws}/networks/{net}/devices/{device}/actions/{suspend|resume|transfer|extend}
 //
 // A path matched with a method it does not accept carries no action, for a 405.
 func parseDeviceLifecyclePath(request *http.Request) (deviceLifecyclePath, bool) {
@@ -129,13 +129,15 @@ func (handler *ManagementHandler) handleDeviceLifecycle(ctx context.Context, res
 //	suspend, resume  {"reason"}
 //	transfer         {"to": "workspace"|"member", "principal_id" (member only), "reason"}
 //	rename           {"hostname", "reason" (optional)}
+//	extend           {"duration_seconds", "reason"}
 func parseDeviceLifecycleBody(response http.ResponseWriter, request *http.Request,
 	path deviceLifecyclePath) (devicelifecycle.Request, bool) {
 	var body struct {
-		Reason      *string `json:"reason"`
-		To          *string `json:"to"`
-		PrincipalID *string `json:"principal_id"`
-		Hostname    *string `json:"hostname"`
+		Reason          *string `json:"reason"`
+		To              *string `json:"to"`
+		PrincipalID     *string `json:"principal_id"`
+		Hostname        *string `json:"hostname"`
+		DurationSeconds *int64  `json:"duration_seconds"`
 	}
 	if !readDeviceGroupBody(response, request, &body) {
 		return devicelifecycle.Request{}, false
@@ -150,9 +152,19 @@ func parseDeviceLifecycleBody(response http.ResponseWriter, request *http.Reques
 		if path.action == "resume" {
 			lifecycle.Action = devicelifecycle.ActionResume
 		}
-		return lifecycle, body.Reason != nil && body.To == nil && body.PrincipalID == nil && body.Hostname == nil
+		return lifecycle, body.Reason != nil && body.To == nil && body.PrincipalID == nil && body.Hostname == nil &&
+			body.DurationSeconds == nil
+	case "extend":
+		if body.Reason == nil || body.DurationSeconds == nil || body.To != nil || body.PrincipalID != nil ||
+			body.Hostname != nil || *body.DurationSeconds <= 0 ||
+			*body.DurationSeconds > int64(devicelifecycle.MaximumExtension/time.Second) {
+			return devicelifecycle.Request{}, false
+		}
+		lifecycle.Action = devicelifecycle.ActionExtend
+		lifecycle.Extension = time.Duration(*body.DurationSeconds) * time.Second
+		return lifecycle, true
 	case "transfer":
-		if body.Reason == nil || body.To == nil || body.Hostname != nil {
+		if body.Reason == nil || body.To == nil || body.Hostname != nil || body.DurationSeconds != nil {
 			return devicelifecycle.Request{}, false
 		}
 		switch *body.To {
@@ -170,7 +182,7 @@ func parseDeviceLifecycleBody(response http.ResponseWriter, request *http.Reques
 			return devicelifecycle.Request{}, false
 		}
 	default:
-		if body.Hostname == nil || body.To != nil || body.PrincipalID != nil {
+		if body.Hostname == nil || body.To != nil || body.PrincipalID != nil || body.DurationSeconds != nil {
 			return devicelifecycle.Request{}, false
 		}
 		hostname, err := node.ParseHostname(*body.Hostname)

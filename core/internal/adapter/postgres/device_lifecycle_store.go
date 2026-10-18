@@ -19,6 +19,11 @@ import (
 const changeDeviceLifecycleSQL = `SELECT mesh_ops.change_device_lifecycle_v1(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::UUID,$13::TEXT,$14::BIGINT,$15::UUID,$16::TEXT,$17::UUID,$18::TIMESTAMPTZ)::TEXT`
 
+// extendDeviceSQL gives an expired member Device a short extension (schema
+// 180); it returns the same document as change_device_lifecycle_v1.
+const extendDeviceSQL = `SELECT mesh_ops.extend_device_v1(` + sessionArguments + `,
+ $10::UUID,$11::UUID,$12::UUID,$13::BIGINT,$14::BIGINT,$15::UUID,$16::TIMESTAMPTZ)::TEXT`
+
 // DeviceLifecycleStore suspends, resumes, transfers and renames Devices
 // through the runtime pool, committing each change with evidence on the
 // Device's Network stream and the revision wakeup that rebuilds its maps.
@@ -169,6 +174,7 @@ var deviceLifecycleAction = map[devicelifecycle.Action]string{
 	devicelifecycle.ActionTransferWorkspace: "device.ownership_transferred",
 	devicelifecycle.ActionTransferMember:    "device.handover_started",
 	devicelifecycle.ActionRename:            "device.renamed",
+	devicelifecycle.ActionExtend:            "device.expiry_extended",
 }
 
 // Change authorizes and applies one lifecycle change.
@@ -193,10 +199,15 @@ func (store *DeviceLifecycleStore) Change(ctx context.Context, change devicelife
 	var result devicelifecycle.Result
 	err = store.transact(ctx, scope, func(tx accountSessionTransaction, now time.Time) (bool, error) {
 		var encoded string
-		if err := tx.QueryRow(ctx, changeDeviceLifecycleSQL, append(sessionQueryArguments(change.Session),
+		query, args := changeDeviceLifecycleSQL, append(sessionQueryArguments(change.Session),
 			scope.WorkspaceID().String(), scope.NetworkID().String(), change.DeviceID.String(),
-			string(change.Action), change.ExpectedVersion, newOwner, hostname, changeID.String(),
-			now)...).Scan(&encoded); err != nil {
+			string(change.Action), change.ExpectedVersion, newOwner, hostname, changeID.String(), now)
+		if change.Action == devicelifecycle.ActionExtend {
+			query, args = extendDeviceSQL, append(sessionQueryArguments(change.Session),
+				scope.WorkspaceID().String(), scope.NetworkID().String(), change.DeviceID.String(),
+				change.ExpectedVersion, int64(change.Extension/time.Second), changeID.String(), now)
+		}
+		if err := tx.QueryRow(ctx, query, args...).Scan(&encoded); err != nil {
 			return false, deviceLifecycleDatabaseError(err)
 		}
 		var record struct {

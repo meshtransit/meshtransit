@@ -41,6 +41,7 @@ type Request struct {
 	ExpectedVersion int64
 	NewOwner        publicid.ID
 	Hostname        node.Hostname
+	Extension       time.Duration
 	Reason          string
 	CorrelationID   publicid.ID
 }
@@ -57,7 +58,7 @@ func (service *Service) Change(ctx context.Context, session accountsession.Sessi
 	change := Change{
 		Session: session, Scope: request.Scope, DeviceID: request.DeviceID, Action: request.Action,
 		ExpectedVersion: request.ExpectedVersion, NewOwner: request.NewOwner, Hostname: request.Hostname,
-		Reason: request.Reason, CorrelationID: request.CorrelationID,
+		Extension: request.Extension, Reason: request.Reason, CorrelationID: request.CorrelationID,
 	}
 	if !change.IsValid() {
 		return Result{}, ErrInvalid

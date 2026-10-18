@@ -119,3 +119,36 @@ func TestServiceValidatesEachAction(t *testing.T) {
 		t.Fatalf("store saw %d changes", len(store.changes))
 	}
 }
+
+func TestExtendChangeBounds(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name      string
+		action    devicelifecycle.Action
+		extension time.Duration
+		valid     bool
+	}{
+		{"one hour", devicelifecycle.ActionExtend, time.Hour, true},
+		{"seven days", devicelifecycle.ActionExtend, 7 * 24 * time.Hour, true},
+		{"too short", devicelifecycle.ActionExtend, 59 * time.Minute, false},
+		{"too long", devicelifecycle.ActionExtend, 7*24*time.Hour + time.Minute, false},
+		{"not whole minutes", devicelifecycle.ActionExtend, time.Hour + time.Second, false},
+		{"missing", devicelifecycle.ActionExtend, 0, false},
+		{"suspend with an extension", devicelifecycle.ActionSuspend, time.Hour, false},
+	} {
+		store := &recordingStore{}
+		service, err := devicelifecycle.NewService(store, fixedClock{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := baseRequest(t)
+		request.Action, request.Extension = test.action, test.extension
+		_, err = service.Change(context.Background(), testSession(t), request)
+		if (err == nil) != test.valid || (!test.valid && !errors.Is(err, devicelifecycle.ErrInvalid)) {
+			t.Errorf("%s: Change() error = %v, want valid=%v", test.name, err, test.valid)
+		}
+		if test.valid && (len(store.changes) != 1 || store.changes[0].Extension != test.extension) {
+			t.Errorf("%s: store saw %+v", test.name, store.changes)
+		}
+	}
+}

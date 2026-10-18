@@ -167,6 +167,8 @@ func assertPostgreSQLDeviceLifecycle(ctx context.Context, t *testing.T, admin *p
 		t.Fatalf("cancel handover = %+v, %v", cancelled, err)
 	}
 
+	assertDeviceExtension(ctx, t, admin, lifecycle, scope, owner, member)
+
 	// To the Workspace: owned by its service principal and never expiring.
 	if row := readIntegrationDevice(ctx, t, admin, device); row.ownership != "workspace" {
 		if _, err := change(owner, devicelifecycle.Request{Action: devicelifecycle.ActionTransferWorkspace,
@@ -182,6 +184,11 @@ func assertPostgreSQLDeviceLifecycle(ctx context.Context, t *testing.T, admin *p
 	if _, err := change(owner, devicelifecycle.Request{Action: devicelifecycle.ActionTransferWorkspace,
 		Reason: "Again"}); !errors.Is(err, devicelifecycle.ErrWrongState) {
 		t.Fatalf("transferred a Workspace Device to the Workspace: %v", err)
+	}
+	// Schema 180: a Workspace Device never expires, so it is never extended.
+	if _, err := change(owner, devicelifecycle.Request{Action: devicelifecycle.ActionExtend,
+		Extension: time.Hour, Reason: "Server"}); !errors.Is(err, devicelifecycle.ErrWrongState) {
+		t.Fatalf("extended a Workspace Device: %v", err)
 	}
 
 	// Rename: unique in the Network, locked against client logins.
@@ -424,4 +431,110 @@ WHERE device.public_id = $1::UUID`, device.String()).Scan(&label)
 		t.Fatal(err)
 	}
 	return label
+}
+
+// assertDeviceExtension qualifies schema 180: device.manage extends a member
+// Device only once it expired or expires within a day, by one hour to seven
+// days from the database clock, moving its expiry later, with one audit event
+// and one Network revision.
+func assertDeviceExtension(ctx context.Context, t *testing.T, admin *pgx.Conn, lifecycle *devicelifecycle.Service,
+	scope network.Scope, owner, member accountsession.Session) {
+	t.Helper()
+	var text string
+	if err := admin.QueryRow(ctx, `SELECT public_id::TEXT FROM mesh.device
+WHERE workspace_id = 103 AND network_id = 203 AND state = 'active' AND deleted_at IS NULL
+  AND ownership = 'member' AND expires_at < '2200-01-01'
+ORDER BY expires_at DESC, public_id LIMIT 1`).Scan(&text); err != nil {
+		t.Fatalf("find a member Device to extend: %v", err)
+	}
+	device, err := node.ParseID(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func(action devicelifecycle.Action, extension time.Duration) devicelifecycle.Request {
+		return devicelifecycle.Request{Scope: scope, DeviceID: device,
+			Action: action, Extension: extension, Reason: "Owner is travelling",
+			ExpectedVersion: readIntegrationDevice(ctx, t, admin, device).version, CorrelationID: newCorrelationID(t)}
+	}
+	extend := func(session accountsession.Session, extension time.Duration) (devicelifecycle.Result, error) {
+		return lifecycle.Change(ctx, session, request(devicelifecycle.ActionExtend, extension))
+	}
+	expireIntegrationDevice(ctx, t, admin, device)
+	if _, err := extend(member, time.Hour); !errors.Is(err, devicelifecycle.ErrForbidden) {
+		t.Fatalf("a member without device.manage extended a Device: %v", err)
+	}
+	stale := request(devicelifecycle.ActionExtend, time.Hour)
+	stale.ExpectedVersion--
+	if _, err := lifecycle.Change(ctx, owner, stale); !errors.Is(err, devicelifecycle.ErrVersionConflict) {
+		t.Fatalf("stale extension: %v", err)
+	}
+	if extended, err := extend(owner, time.Hour); err != nil || extended.After.ExpiresAt.Before(time.Now()) {
+		t.Fatalf("extend an expired Device by an hour = %+v, %v", extended, err)
+	}
+	networkBefore, _ := fixtureNetworkRevisions(ctx, t, admin)
+	extended, err := extend(owner, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("extend an expired Device: %v", err)
+	}
+	var now time.Time
+	if err := admin.QueryRow(ctx, `SELECT pg_catalog.now()`).Scan(&now); err != nil {
+		t.Fatal(err)
+	}
+	if remaining := extended.After.ExpiresAt.Sub(now); remaining < 23*time.Hour || remaining > 24*time.Hour {
+		t.Fatalf("extended expiry %v is %v from now, want about a day", extended.After.ExpiresAt, remaining)
+	}
+	if networkAfter, _ := fixtureNetworkRevisions(ctx, t, admin); networkAfter != networkBefore+1 ||
+		countDeviceAudit(ctx, t, admin, device, "device.expiry_extended") != 2 {
+		t.Fatal("an extension must advance the Network once with one audit event")
+	}
+	// A shorter extension would move the expiry earlier.
+	if _, err := extend(owner, time.Hour); !errors.Is(err, devicelifecycle.ErrWrongState) {
+		t.Fatalf("an extension moved the expiry earlier: %v", err)
+	}
+	// A suspended Device is extended but stays suspended.
+	if _, err := lifecycle.Change(ctx, owner, request(devicelifecycle.ActionSuspend, 0)); err != nil {
+		t.Fatalf("suspend the extended Device: %v", err)
+	}
+	week, err := extend(owner, 7*24*time.Hour)
+	if err != nil || week.After.State != "suspended" || week.After.SuspendedReason != devicelifecycle.SuspendedByAdmin {
+		t.Fatalf("extend a suspended Device = %+v, %v", week, err)
+	}
+	if _, err := lifecycle.Change(ctx, owner, request(devicelifecycle.ActionResume, 0)); err != nil {
+		t.Fatalf("resume the extended Device: %v", err)
+	}
+	// Seven days from expiry it is outside the one-day window.
+	if _, err := extend(owner, 7*24*time.Hour); !errors.Is(err, devicelifecycle.ErrWrongState) {
+		t.Fatalf("extended a Device far from expiry: %v", err)
+	}
+}
+
+// expireIntegrationDevice ends a Device's life an hour ago, with the
+// evidence the audit trigger requires.
+func expireIntegrationDevice(ctx context.Context, t *testing.T, admin *pgx.Conn, device node.ID) {
+	t.Helper()
+	version := readIntegrationDevice(ctx, t, admin, device).version
+	networkRevision, _ := fixtureNetworkRevisions(ctx, t, admin)
+	commitAuditedAuthorityFixture(ctx, t, admin, authorityEvidenceFixture{
+		changePublicID: "01890f01-0000-7000-8000-000000001801",
+		eventPublicID:  "01890f02-0000-7000-8000-000000001801",
+		outboxPublicID: "01890f03-0000-7000-8000-000000001801",
+		streamID:       203, aggregateKind: "device", aggregatePublicID: device.String(),
+		aggregateVersion: version + 1, networkRevision: networkRevision + 1,
+		actorPrincipalPublicID: "01890f00-0000-7000-8000-000000000011",
+		action:                 "device.expiry.fixture", permission: "system.bootstrap",
+		outboxEventClass: "device.expiry.fixture",
+	}, func(tx pgx.Tx) {
+		if _, err := tx.Exec(ctx, `UPDATE mesh.device
+SET expires_at = pg_catalog.now() - INTERVAL '1 hour', version = version + 1, updated_at = pg_catalog.now()
+WHERE public_id = $1::UUID`, device.String()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, `SELECT * FROM mesh_ops.set_network_scope(
+'01890f00-0000-7000-8000-000000000103'::UUID,'01890f00-0000-7000-8000-000000000203'::UUID)`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, `SELECT * FROM mesh_ops.advance_network_inventory_revision()`); err != nil {
+			t.Fatal(err)
+		}
+	})
 }
