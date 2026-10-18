@@ -5,6 +5,12 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Console: removing a member flags each of their Devices that looks like a
+  server or a shared machine (enrolled with a key, never expires, or tagged)
+  and sets it to move to the Workspace instead of being revoked. It checks
+  the first 20 Devices, within 8 seconds, and stops early on a rate limit; a
+  Device it could not check is marked Not checked and revoking it needs a
+  confirmation.
 - Core: `POST …/devices/{device}/actions/extend` (`device.manage`,
   `If-Match`, `duration_seconds` 3600–604800 and a reason) gives a member's
   Device that expired or expires within a day a short extension from now, so

@@ -221,7 +221,12 @@ administrator's revoke and needs only the node's current keys.
 - **Removing a member** applies a plan for their Devices, up to 250 entries:
   transfer to the Workspace, hand over to another member, or revoke. Devices
   the plan does not name are revoked. Their enrollment keys are revoked and
-  their roles and group memberships end.
+  their roles and group memberships end. The Console checks up to 20 of
+  their Devices and flags each one that looks like a server or a shared
+  machine (enrolled with a key, set never to expire, or tagged); it proposes
+  moving those to the Workspace, so they stay connected, and revoking the
+  others. A Device it could not check is marked so, and revoking it needs a
+  confirmation.
 - **Removing a member from one Network** applies the same kind of plan to
   their Devices in that Network only; a handover goes to another member of
   that Network. Their enrollment keys and roles for that Network end, and a
