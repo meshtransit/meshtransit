@@ -65,6 +65,58 @@ WHERE aggregate.public_id = $2::UUID`, kind, publicID).Scan(&created, &updated);
 	}
 }
 
+// assertNoCallerClockNow checks schema 181: no SQL function takes a later
+// clock or the caller's evaluation time as now, so a caller's clock cannot
+// move validity checks or stamps forward.
+func assertNoCallerClockNow(ctx context.Context, t *testing.T, admin *pgx.Conn) {
+	t.Helper()
+	rows, err := admin.Query(ctx, `SELECT namespace.nspname || '.' || function.proname
+FROM pg_catalog.pg_proc AS function
+JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = function.pronamespace
+WHERE namespace.nspname IN ('mesh', 'mesh_ops', 'mesh_audit')
+  AND function.prosrc ~* 'GREATEST\s*\(\s*(pg_catalog\.)?clock_timestamp\(\)\s*,\s*p_evaluated_at'
+ORDER BY 1`)
+	if err != nil {
+		t.Fatalf("read functions: %v", err)
+	}
+	names, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatalf("read functions: %v", err)
+	}
+	if len(names) != 0 {
+		t.Fatalf("functions still take the caller's clock as now: %v", names)
+	}
+	// Nor does any function schema 181 replaced read the caller's time
+	// beyond checking that it was sent.
+	rows, err = admin.Query(ctx, `SELECT function.proname
+FROM pg_catalog.pg_proc AS function
+JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = function.pronamespace
+WHERE namespace.nspname = 'mesh_ops' AND function.proname = ANY($1::TEXT[])
+  AND pg_catalog.regexp_count(function.prosrc, 'p_evaluated_at') <>
+      pg_catalog.regexp_count(function.prosrc, 'p_evaluated_at IS NULL')`, databaseClockNowFunctions)
+	if err != nil {
+		t.Fatalf("read replaced functions: %v", err)
+	}
+	leftovers, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatalf("read replaced functions: %v", err)
+	}
+	if len(leftovers) != 0 {
+		t.Fatalf("functions still read the caller's time: %v", leftovers)
+	}
+}
+
+// databaseClockNowFunctions are the functions schema 181 moved onto the
+// transaction time.
+var databaseClockNowFunctions = []string{
+	"add_network_members_v1", "change_device_group_members_v1", "change_device_group_v1",
+	"change_device_lifecycle_v1", "change_device_tag_v1", "change_device_tags_v1",
+	"change_identity_group_members_v1", "change_identity_group_v1", "change_workspace_invitation_v1",
+	"change_workspace_member_v1", "list_workspace_invitations_v1", "logout_device_v1",
+	"preview_workspace_invitation_v1", "remove_network_member_v1", "remove_workspace_member_v1",
+	"revoke_workspace_member_sessions_v1", "set_network_alias_ranges_v1",
+}
+
 // stampShareAheadOfDatabase stands in for a previous binary whose host clock
 // ran ahead of the database: it moves updated_at of a share's contract,
 // Imported Resource and Private Endpoint ahead, bypassing the evidence

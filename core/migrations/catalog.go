@@ -547,6 +547,7 @@ func Catalog() []Migration {
 		newMigration(178, "Shares end when their provider Device is removed", trustContractDeviceRemovalSQL),
 		newMigration(179, "Each Network chooses how long signed-in Devices live", networkDeviceLifetimeSQL),
 		newMigration(180, "An administrator briefly extends an expired Device", deviceExpiryExtensionSQL),
+		newMigration(181, "SQL functions take the database clock as now", databaseClockNowSQL),
 	}
 }
 
@@ -866,3 +867,6 @@ var networkDeviceLifetimeSQL string
 
 //go:embed 000180_device_expiry_extension.up.sql
 var deviceExpiryExtensionSQL string
+
+//go:embed 000181_database_clock_now.up.sql
+var databaseClockNowSQL string

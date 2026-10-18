@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -12,8 +13,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 180 {
-		t.Fatalf("len(Catalog()) = %d, want 180", len(catalog))
+	if len(catalog) != 181 {
+		t.Fatalf("len(Catalog()) = %d, want 181", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1608,8 +1609,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 180 {
-		t.Fatalf("LatestVersion() = %d, want 180", LatestVersion())
+	if LatestVersion() != 181 {
+		t.Fatalf("LatestVersion() = %d, want 181", LatestVersion())
 	}
 }
 
@@ -5169,4 +5170,64 @@ func TestDeviceExpiryExtension(t *testing.T) {
 			t.Errorf("schema 180 must not contain %q", forbidden)
 		}
 	}
+}
+
+// Schema 181 replaces the 17 functions that took GREATEST(clock_timestamp(),
+// p_evaluated_at) as now: each uses transaction_timestamp() for now and for
+// its permission check, keeps its signature, and changes nothing else.
+func TestDatabaseClockNow(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 181 {
+		t.Fatalf("len(Catalog()) = %d, want schema 181", len(catalog))
+	}
+	migration := catalog[180]
+	if migration.Version != 181 {
+		t.Fatalf("migration 181 = %+v", migration)
+	}
+	functions := databaseClockNowFunctions
+	if count := strings.Count(migration.SQL, "CREATE OR REPLACE FUNCTION mesh_ops."); count != len(functions) {
+		t.Errorf("schema 181 replaces %d functions, want %d", count, len(functions))
+	}
+	for _, block := range strings.Split(migration.SQL, "CREATE OR REPLACE FUNCTION mesh_ops.")[1:] {
+		name, _, _ := strings.Cut(block, "(")
+		if !slices.Contains(functions, name) {
+			t.Errorf("schema 181 replaces unexpected %s", name)
+		}
+		if !strings.Contains(block, "pg_catalog.transaction_timestamp()") ||
+			!strings.Contains(block, "SET search_path TO 'pg_catalog'") || !strings.Contains(block, "SECURITY DEFINER") {
+			t.Errorf("schema 181 %s is not a pinned definer on the transaction time", name)
+		}
+	}
+	// A stamp on an existing row never goes below that row's own times.
+	if count := strings.Count(migration.SQL, "ended_at = GREATEST(v_now, session.issued_at)"); count != 3 {
+		t.Errorf("schema 181 clamps %d session ends to issued_at, want 3", count)
+	}
+	// The parameter remains only in each signature and its null check.
+	for _, line := range strings.Split(migration.SQL, "\n") {
+		if strings.Contains(line, "p_evaluated_at") && !strings.Contains(line, "p_evaluated_at timestamp with time zone") &&
+			!strings.Contains(line, "p_evaluated_at IS NULL") && !strings.HasPrefix(line, "--") {
+			t.Errorf("schema 181 still uses the caller's time: %q", strings.TrimSpace(line))
+		}
+	}
+	for _, forbidden := range []string{"GREATEST(pg_catalog.clock_timestamp(), p_evaluated_at)", "OWNER TO",
+		"ALTER TABLE", "DROP ", "GRANT ", "REVOKE "} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 181 must not contain %q", forbidden)
+		}
+	}
+	if count := strings.Count(migration.SQL, "SET search_path TO 'pg_catalog'"); count != len(functions) {
+		t.Errorf("schema 181 pins %d functions to pg_catalog, want %d", count, len(functions))
+	}
+}
+
+// databaseClockNowFunctions are the functions schema 181 moves onto the
+// transaction time.
+var databaseClockNowFunctions = []string{
+	"add_network_members_v1", "change_device_group_members_v1", "change_device_group_v1",
+	"change_device_lifecycle_v1", "change_device_tag_v1", "change_device_tags_v1",
+	"change_identity_group_members_v1", "change_identity_group_v1", "change_workspace_invitation_v1",
+	"change_workspace_member_v1", "list_workspace_invitations_v1", "logout_device_v1",
+	"preview_workspace_invitation_v1", "remove_network_member_v1", "remove_workspace_member_v1",
+	"revoke_workspace_member_sessions_v1", "set_network_alias_ranges_v1",
 }

@@ -216,6 +216,9 @@ func assertPostgreSQLDeviceLifecycle(ctx context.Context, t *testing.T, admin *p
 	if label := deviceDNSLabel(ctx, t, admin, device); label != "lifecycle-server" {
 		t.Fatalf("renamed Device DNS label = %q, want lifecycle-server", label)
 	}
+	// Schema 181: the rename is stamped with its transaction's time.
+	assertUpdatedByDatabaseClock(ctx, t, admin, "device", device.String())
+	assertNoCallerClockNow(ctx, t, admin)
 
 	inventoryStore, err := postgresadapter.NewConsoleDeviceInventoryStore(runtimePool,
 		postgresadapter.AccountSessionOptions{StatementTimeout: 3 * time.Second, IdleTimeout: 5 * time.Second})

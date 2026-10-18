@@ -5,6 +5,15 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: 17 SQL functions (member and Network member changes, Device
+  lifecycle and logout, Device and user groups, tags, invitations, alias
+  ranges, session revocation) took the later of the database clock and the
+  caller's evaluation time as now. They now use the database time at which
+  the transaction started, the instant MeshCore already sends, for both their
+  checks and their stamps, so no caller clock can move validity or recorded
+  times forward. A stamp on an existing row never goes below that row's own
+  times. Schema 181 replaces the functions with the same signatures, no
+  operator step.
 - Console: removing a member flags each of their Devices that looks like a
   server or a shared machine (enrolled with a key, never expires, or tagged)
   and sets it to move to the Workspace instead of being revoked. It checks
