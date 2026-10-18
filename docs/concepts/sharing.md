@@ -141,6 +141,20 @@ be shared on: a consumer cannot offer it to a third Network.
   records `trust_contract.invalidated` with reason `provider_device_removed`
   in both Networks. A suspended or expired Device keeps its shares, since it
   can come back.
+- Removing a Device also retires its Device Resource once nothing uses it:
+  no open share, no rule of an active policy release in either Network, and
+  no current Resource Group naming it. The same worker process moves the
+  Resource to `deleted` and its Device target to `superseded`, records
+  `resource.retired` with reason `device_removed`, and the Resource's name
+  and the hostname can be shared again, for example by the same machine
+  enrolled anew. Until then it waits and is looked at again every five
+  minutes: remove the rule or the group member and it is retired soon after.
+  A share whose Private Endpoint is still being withdrawn counts as open. An
+  export or an undecided offer of a retired Resource stays as it is, and
+  accepting it fails.
+- Creating a Resource whose name another current Resource of the Network
+  holds answers `409 resource_name_taken`; one for a Device that already has
+  a Resource answers `409 device_resource_exists`.
 
 Every decision is recorded in both Networks' audit streams; the other side's
 record names the relation but not the acting side's reason or session

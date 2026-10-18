@@ -35,6 +35,12 @@ var (
 	ErrInvalidResult = errors.New("resource authority: invalid result")
 	// ErrConflict reports a stale subsystem or member version.
 	ErrConflict = errors.New("resource authority: stale revision")
+	// ErrNameTaken reports that another current Resource of the Network has
+	// the name.
+	ErrNameTaken = errors.New("resource authority: name taken")
+	// ErrDeviceResourceExists reports that the Device already has a current
+	// Resource.
+	ErrDeviceResourceExists = errors.New("resource authority: Device already has a Resource")
 	// ErrForbidden hides which session or permission check failed.
 	ErrForbidden = errors.New("resource authority: forbidden")
 	// ErrIntentConflict reports idempotency-key reuse with different semantics.

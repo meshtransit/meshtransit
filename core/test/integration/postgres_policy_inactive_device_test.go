@@ -93,6 +93,8 @@ func assertPostgreSQLPolicyInactiveDevice(ctx context.Context, t *testing.T, adm
 	revokeIntegrationFixtureDevice(ctx, t, admin, runtimePool, leaving)
 	assertRevokedDeviceLeftSuspension(ctx, t, admin, leaving)
 	assertDeviceRemovalEndsShare(ctx, t, admin, workerPool, leavingShare)
+	// Schema 185: its Resource is queued but kept while rules and groups use it.
+	assertResourceRetirementDeferred(ctx, t, admin, workerPool, resourceID, "named by active rules")
 	unrelated := rule(compilation.RuleIntentParams{SourceNodeID: staying, DestinationDeviceGroupID: group})
 	kept = append(kept, unrelated)
 	publish(kept...)
@@ -172,6 +174,9 @@ func assertPostgreSQLPolicyInactiveDevice(ctx context.Context, t *testing.T, adm
 	assertActiveCompiledRuleCounts(ctx, t, admin, 0, 1)
 	assertActiveResourceDestinationCounts(ctx, t, admin, 0, 0)
 	publish()
+	assertResourceRetirementDeferred(ctx, t, admin, workerPool, resourceID, "member of Resource Groups")
+	deleteInactiveDeviceResourceGroups(ctx, t, admin, runtimePool, owner, scope, resourceGroupID, otherResourceGroupID)
+	assertResourceRetired(ctx, t, admin, workerPool, resourceID)
 	for _, deviceGroup := range deviceGroups {
 		if _, err := groups.Delete(ctx, owner, scope, deviceGroup.ID, deviceGroup.Version,
 			newCorrelationID(t)); err != nil {

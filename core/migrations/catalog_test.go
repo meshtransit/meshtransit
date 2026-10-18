@@ -13,8 +13,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 184 {
-		t.Fatalf("len(Catalog()) = %d, want 184", len(catalog))
+	if len(catalog) != 185 {
+		t.Fatalf("len(Catalog()) = %d, want 185", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1609,8 +1609,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 184 {
-		t.Fatalf("LatestVersion() = %d, want 184", LatestVersion())
+	if LatestVersion() != 185 {
+		t.Fatalf("LatestVersion() = %d, want 185", LatestVersion())
 	}
 }
 
@@ -5357,6 +5357,45 @@ func TestResolverWorkspaceFirst(t *testing.T) {
 	for _, forbidden := range []string{"OWNER TO", "ALTER TABLE", "DROP ", "GRANT ", "REVOKE "} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 184 must not contain %q", forbidden)
+		}
+	}
+}
+
+// Schema 185 queues the Resource of a removed Device and lets only the
+// worker role retire it once nothing uses it.
+func TestResourceDeviceRemoval(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 185 {
+		t.Fatalf("len(Catalog()) = %d, want schema 185", len(catalog))
+	}
+	migration := catalog[184]
+	if migration.Version != 185 {
+		t.Fatalf("migration 185 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE TABLE mesh_ops.resource_device_removal",
+		"ALTER TABLE mesh_ops.resource_device_removal FORCE ROW LEVEL SECURITY;",
+		"WHEN (NEW.state IN ('revoked', 'deleted') AND OLD.state NOT IN ('revoked', 'deleted'))",
+		"FOR UPDATE SKIP LOCKED;",
+		"IF mesh_ops.resource_retirement_blocked_internal_v1(v_resource.id) THEN",
+		"AND release.state = 'active'",
+		"AND resource_group.active_definition_version = definition.definition_version",
+		"SET state = 'superseded'",
+		"'resource.retired',",
+		"'system.reconcile',",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.list_resource_device_removals_v1(UUID, TIMESTAMPTZ, UUID, INTEGER) TO mesh_worker;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.prepare_resource_device_removal_v1(UUID, UUID, UUID) TO mesh_worker;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.finalize_resource_device_removal_v1(UUID, UUID, UUID, JSONB) TO mesh_worker;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 185 lacks %q", want)
+		}
+	}
+	for _, forbidden := range []string{"TO mesh_runtime", "OWNER TO", "DROP ", "clock_timestamp",
+		"GREATEST(pg_catalog.clock_timestamp(), p_evaluated_at)"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 185 must not contain %q", forbidden)
 		}
 	}
 }

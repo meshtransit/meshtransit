@@ -1416,6 +1416,10 @@ func classifyResourceAuthorityError(err error) managementError {
 		return managementError{Status: http.StatusGatewayTimeout, Code: "request_timeout", Message: "the request deadline expired", Retryable: true}
 	case errors.Is(err, authority.ErrForbidden):
 		return managementError{Status: http.StatusForbidden, Code: "forbidden", Message: "the request is not authorized"}
+	case errors.Is(err, authority.ErrNameTaken):
+		return managementError{Status: http.StatusConflict, Code: "resource_name_taken", Message: "another Resource of this Network has this name"}
+	case errors.Is(err, authority.ErrDeviceResourceExists):
+		return managementError{Status: http.StatusConflict, Code: "device_resource_exists", Message: "this Device already has a Resource"}
 	case errors.Is(err, authority.ErrConflict):
 		return managementError{Status: http.StatusPreconditionFailed, Code: "precondition_failed", Message: "the collection revision precondition is stale"}
 	case errors.Is(err, authority.ErrIntentConflict):

@@ -5,6 +5,18 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: removing a Device retires its Device Resource once nothing uses it
+  (no open share, no rule of an active policy release in its Network or, to
+  the shared Device, in a receiving Network, no current Resource Group); one
+  still in use is looked at again every five minutes. The worker that ends shares of removed Devices now also runs a
+  Resource retirement worker (`meshtransit_resource_retirement_worker_*`),
+  which deletes the Resource, supersedes its Device target and records
+  `resource.retired`, so the name and the hostname can be shared again.
+  Schema 185 adds the queue, a trigger on Device removal, the worker entry
+  points and queues the Resources of Devices already removed; no operator
+  step. Creating a Resource with a taken name now answers
+  `409 resource_name_taken`, and one for a Device that already has a Resource
+  `409 device_resource_exists`, instead of a misleading 412.
 - Core: a request by a member arriving while an administrator removed or
   suspended them, or ended their sessions, could deadlock (40P01): the
   permission check held the member's session row and waited for the

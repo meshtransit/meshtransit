@@ -551,6 +551,7 @@ func Catalog() []Migration {
 		newMigration(182, "Workspace changes no longer block foreign key checks", workspaceNoKeyUpdateSQL),
 		newMigration(183, "Workspace changes lock the Workspace before checking permission", workspaceLockBeforeAuthorizeSQL),
 		newMigration(184, "Permission checks lock the Workspace before the session", resolverWorkspaceFirstSQL),
+		newMigration(185, "Removing a Device retires its Resource", resourceDeviceRemovalSQL),
 	}
 }
 
@@ -882,3 +883,6 @@ var workspaceLockBeforeAuthorizeSQL string
 
 //go:embed 000184_resolver_workspace_first.up.sql
 var resolverWorkspaceFirstSQL string
+
+//go:embed 000185_resource_device_removal.up.sql
+var resourceDeviceRemovalSQL string

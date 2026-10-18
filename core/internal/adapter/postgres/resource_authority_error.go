@@ -21,7 +21,15 @@ func classifyResourceAuthorityDatabaseError(ctx context.Context, err error) erro
 		return err
 	}
 	switch postgresError.Code {
-	case "MT001", "23505":
+	case "23505":
+		switch postgresError.ConstraintName {
+		case "resource_network_name_current_uidx":
+			return errors.Join(authority.ErrNameTaken, err)
+		case "resource_device_target_active_device_uidx":
+			return errors.Join(authority.ErrDeviceResourceExists, err)
+		}
+		return errors.Join(authority.ErrConflict, err)
+	case "MT001":
 		return errors.Join(authority.ErrConflict, err)
 	case "MT002":
 		return errors.Join(
