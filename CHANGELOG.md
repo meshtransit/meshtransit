@@ -5,6 +5,15 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: a request by a member arriving while an administrator removed or
+  suspended them, or ended their sessions, could deadlock (40P01): the
+  permission check held the member's session row and waited for the
+  Workspace, which the change held while it waited to end that session. The
+  permission resolvers (`resolve_workspace_permission_v1`,
+  `resolve_network_permission_v1` and `_v2`) now lock the Workspace before
+  the session, so the
+  request waits and then finds its session ended. Schema 184 replaces the
+  three resolvers with the same signatures, no operator step.
 - Core: creating a user group or a tag, and changing an invitation, read the
   Workspace row FOR SHARE in the permission check and then asked for FOR NO
   KEY UPDATE, so two such changes in one Workspace could deadlock (40P01).

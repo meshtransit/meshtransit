@@ -225,7 +225,12 @@ func assertPostgreSQLDeviceLifecycle(ctx context.Context, t *testing.T, admin *p
 	if err != nil {
 		t.Fatal(err)
 	}
-	page, err := inventoryStore.ReadDevices(ctx, owner, scope, inventory.Query{Limit: 100})
+	// Schema 184: the Network permission check waits for a member change
+	// without holding the session.
+	page, err := runWhileWorkspaceChanging(ctx, t, admin, "read_console_devices_v4", owner.ID().String(),
+		func() (inventory.ReadResult, error) {
+			return inventoryStore.ReadDevices(ctx, owner, scope, inventory.Query{Limit: 100})
+		})
 	if err != nil {
 		t.Fatalf("read inventory: %v", err)
 	}

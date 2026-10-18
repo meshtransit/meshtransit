@@ -97,3 +97,64 @@ func waitForFunctionBlockedBy(ctx context.Context, t *testing.T, admin *pgx.Conn
 		}
 	}
 }
+
+// runWhileWorkspaceChanging qualifies schema 184. A member change holds the
+// Workspace row FOR NO KEY UPDATE while run executes the SQL function named
+// function for the Account Session sessionID, whose permission check then
+// waits for that row. The member change next writes the caller's session
+// row, as a removal or suspension ends its sessions. If the permission check
+// had locked the session row before waiting for the Workspace, each would
+// wait for the other: a deadlock. The write must get the session row within
+// a timeout shorter than deadlock detection, and run then completes.
+func runWhileWorkspaceChanging[R any](ctx context.Context, t *testing.T, admin *pgx.Conn, function, sessionID string,
+	run func() (R, error),
+) (R, error) {
+	t.Helper()
+	change, err := pgx.ConnectConfig(ctx, admin.Config().Copy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+		defer cancel()
+		if err := change.Close(cleanupCtx); err != nil {
+			t.Errorf("close member change connection: %v", err)
+		}
+	}()
+	held, err := change.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackIntegrationTransaction(ctx, t, held)
+	if _, err := held.Exec(ctx, `SELECT 1 FROM mesh.workspace WHERE id = 103 FOR NO KEY UPDATE`); err != nil {
+		t.Fatalf("lock the Workspace: %v", err)
+	}
+	type outcome struct {
+		result R
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		result, err := run()
+		done <- outcome{result: result, err: err}
+	}()
+	waitForFunctionBlockedBy(ctx, t, admin, function, change.PgConn().PID())
+	if _, err := held.Exec(ctx, `SET LOCAL lock_timeout = '500ms'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := held.Exec(ctx, `SELECT 1 FROM mesh.account_session WHERE public_id = $1::UUID FOR NO KEY UPDATE`,
+		sessionID); err != nil {
+		t.Fatalf("%s holds its session while it waits for the Workspace: %v", function, err)
+	}
+	if err := held.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case finished := <-done:
+		return finished.result, finished.err
+	case <-time.After(30 * time.Second):
+		t.Fatalf("%s did not finish after the Workspace was released", function)
+		var zero R
+		return zero, nil
+	}
+}

@@ -13,8 +13,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 183 {
-		t.Fatalf("len(Catalog()) = %d, want 183", len(catalog))
+	if len(catalog) != 184 {
+		t.Fatalf("len(Catalog()) = %d, want 184", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1609,8 +1609,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 183 {
-		t.Fatalf("LatestVersion() = %d, want 183", LatestVersion())
+	if LatestVersion() != 184 {
+		t.Fatalf("LatestVersion() = %d, want 184", LatestVersion())
 	}
 }
 
@@ -5322,6 +5322,41 @@ func TestWorkspaceLockBeforeAuthorize(t *testing.T) {
 		"GREATEST(pg_catalog.clock_timestamp(), p_evaluated_at)"} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 183 must not contain %q", forbidden)
+		}
+	}
+}
+
+// Schema 184 makes the three permission resolvers lock the Workspace row
+// before the statement that locks the caller's session.
+func TestResolverWorkspaceFirst(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 184 {
+		t.Fatalf("len(Catalog()) = %d, want schema 184", len(catalog))
+	}
+	migration := catalog[183]
+	if migration.Version != 184 {
+		t.Fatalf("migration 184 = %+v", migration)
+	}
+	resolvers := []string{"resolve_network_permission_v1", "resolve_network_permission_v2", "resolve_workspace_permission_v1"}
+	blocks := strings.Split(migration.SQL, "CREATE OR REPLACE FUNCTION mesh_ops.")[1:]
+	if len(blocks) != len(resolvers) {
+		t.Fatalf("schema 184 replaces %d functions, want %d", len(blocks), len(resolvers))
+	}
+	const lock = "PERFORM 1 FROM mesh.workspace AS workspace\n    WHERE workspace.public_id = p_workspace_public_id\n    FOR SHARE;"
+	for _, block := range blocks {
+		name, _, _ := strings.Cut(block, "(")
+		if !slices.Contains(resolvers, name) {
+			t.Errorf("schema 184 replaces unexpected %s", name)
+		}
+		lockAt, sessionAt := strings.Index(block, lock), strings.Index(block, "FROM mesh.account_session AS session")
+		if strings.Count(block, lock) != 1 || lockAt < 0 || sessionAt < 0 || lockAt > sessionAt {
+			t.Errorf("schema 184 %s does not lock the Workspace once, before the session", name)
+		}
+	}
+	for _, forbidden := range []string{"OWNER TO", "ALTER TABLE", "DROP ", "GRANT ", "REVOKE "} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 184 must not contain %q", forbidden)
 		}
 	}
 }

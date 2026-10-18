@@ -96,7 +96,9 @@ mesh.principal AS principal WHERE device.public_id = $1::UUID AND principal.publ
 	}
 
 	// Identity Groups.
-	listing, err := groups.List(ctx, owner, workspaceID)
+	// Schema 184: read while a member change holds the Workspace.
+	listing, err := runWhileWorkspaceChanging(ctx, t, admin, "list_identity_groups_v1", owner.ID().String(),
+		func() (identitygroup.Listing, error) { return groups.List(ctx, owner, workspaceID) })
 	if err != nil || len(listing.Groups) != 0 || !listing.CanManage {
 		t.Fatalf("owner groups = %+v, error = %v", listing, err)
 	}
