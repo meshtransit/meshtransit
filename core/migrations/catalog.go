@@ -552,6 +552,7 @@ func Catalog() []Migration {
 		newMigration(183, "Workspace changes lock the Workspace before checking permission", workspaceLockBeforeAuthorizeSQL),
 		newMigration(184, "Permission checks lock the Workspace before the session", resolverWorkspaceFirstSQL),
 		newMigration(185, "Removing a Device retires its Resource", resourceDeviceRemovalSQL),
+		newMigration(186, "Deleting a Resource supersedes its Device target", resourceDeleteSupersedesTargetSQL),
 	}
 }
 
@@ -886,3 +887,6 @@ var resolverWorkspaceFirstSQL string
 
 //go:embed 000185_resource_device_removal.up.sql
 var resourceDeviceRemovalSQL string
+
+//go:embed 000186_resource_delete_supersedes_target.up.sql
+var resourceDeleteSupersedesTargetSQL string

@@ -153,8 +153,10 @@ be shared on: a consumer cannot offer it to a third Network.
   export or an undecided offer of a retired Resource stays as it is, and
   accepting it fails.
 - Creating a Resource whose name another current Resource of the Network
-  holds answers `409 resource_name_taken`; one for a Device that already has
-  a Resource answers `409 device_resource_exists`.
+  holds answers `409 resource_name_taken`, one for a Device that already has
+  a Resource `409 device_resource_exists`, and a Resource Group whose name is
+  taken `409 resource_group_name_taken`. Deleting a Resource frees its Device
+  for a new one.
 
 Every decision is recorded in both Networks' audit streams; the other side's
 record names the relation but not the acting side's reason or session

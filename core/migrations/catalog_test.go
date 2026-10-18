@@ -13,8 +13,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 185 {
-		t.Fatalf("len(Catalog()) = %d, want 185", len(catalog))
+	if len(catalog) != 186 {
+		t.Fatalf("len(Catalog()) = %d, want 186", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1609,8 +1609,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 185 {
-		t.Fatalf("LatestVersion() = %d, want 185", LatestVersion())
+	if LatestVersion() != 186 {
+		t.Fatalf("LatestVersion() = %d, want 186", LatestVersion())
 	}
 }
 
@@ -5396,6 +5396,43 @@ func TestResourceDeviceRemoval(t *testing.T) {
 		"GREATEST(pg_catalog.clock_timestamp(), p_evaluated_at)"} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 185 must not contain %q", forbidden)
+		}
+	}
+}
+
+// Schema 186 supersedes the Device target of a Resource deleted by hand and
+// lets the retirement worker tell a Resource in use apart.
+func TestResourceDeleteSupersedesTarget(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 186 {
+		t.Fatalf("len(Catalog()) = %d, want schema 186", len(catalog))
+	}
+	migration := catalog[185]
+	if migration.Version != 186 {
+		t.Fatalf("migration 186 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE OR REPLACE FUNCTION mesh_ops.transition_resource_lifecycle_v1(",
+		"IF p_target_state = 'deleted' THEN\n        UPDATE mesh.resource_device_target AS target\n        SET state = 'superseded'",
+		"CREATE OR REPLACE FUNCTION mesh_ops.prepare_resource_device_removal_v1(",
+		`v_blocked CONSTANT JSONB := '{"changed":false,"blocked":true,"events":[]}'::JSONB;`,
+		"CREATE OR REPLACE FUNCTION mesh_ops.read_resource_v2(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.list_resources_v1(",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 186 lacks %q", want)
+		}
+	}
+	if count := strings.Count(migration.SQL, "AND (target.state = 'active' OR resource.state = 'deleted')"); count != 2 {
+		t.Errorf("schema 186 lets %d readers return deleted Resources, want 2", count)
+	}
+	if count := strings.Count(migration.SQL, "RETURN v_blocked;"); count != 2 {
+		t.Errorf("schema 186 answers blocked %d times, want 2", count)
+	}
+	for _, forbidden := range []string{"OWNER TO", "DROP ", "GRANT ", "REVOKE ", "ALTER TABLE"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 186 must not contain %q", forbidden)
 		}
 	}
 }

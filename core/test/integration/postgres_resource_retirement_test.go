@@ -4,7 +4,9 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -88,8 +90,8 @@ func assertResourceRetirementDeferred(ctx context.Context, t *testing.T, admin *
 		t.Fatalf("%s: the Resource of a revoked Device was not queued", why)
 	}
 	retired, err := store.Retire(ctx, installation, id)
-	if err != nil || retired {
-		t.Fatalf("%s: Retire() = %v, %v, want deferred", why, retired, err)
+	if !errors.Is(err, retirement.ErrInUse) || retired {
+		t.Fatalf("%s: Retire() = %v, %v, want ErrInUse", why, retired, err)
 	}
 	if resourceState, targetState := resourceRetirementState(ctx, t, admin, id); resourceState != "active" ||
 		targetState != "active" || !resourceRetirementQueued(ctx, t, admin, id) {
@@ -125,6 +127,7 @@ func assertResourceRetired(ctx context.Context, t *testing.T, admin *pgx.Conn,
 		t.Fatal(err)
 	}
 	installation := resourceRetirementInstallation(ctx, t, admin, id)
+	assertResourceRetirementSkipsLockedResource(ctx, t, admin, store, installation, id)
 	beforeNetwork, beforeInventory := resourceRetirementRevisions(ctx, t, admin, id)
 	retired, err := store.Retire(ctx, installation, id)
 	if err != nil || !retired {
@@ -176,6 +179,41 @@ SELECT
 		t.Fatal("repeated retirement advanced the Network")
 	}
 	assertResourceRetirementWorkerOnly(ctx, t, admin, installation, id)
+}
+
+// assertResourceRetirementSkipsLockedResource checks a Resource a concurrent
+// writer holds is left for a later sweep, without waiting or failing.
+func assertResourceRetirementSkipsLockedResource(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	store *postgresadapter.ResourceRetirementStore, installation deployment.ID, id resource.ID,
+) {
+	t.Helper()
+	writer, err := pgx.ConnectConfig(ctx, admin.Config().Copy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+		defer cancel()
+		if err := writer.Close(cleanupCtx); err != nil {
+			t.Errorf("close Resource writer: %v", err)
+		}
+	}()
+	held, err := writer.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackIntegrationTransaction(ctx, t, held)
+	if _, err := held.Exec(ctx, `SELECT 1 FROM mesh.resource WHERE public_id = $1::UUID FOR UPDATE`, id.String()); err != nil {
+		t.Fatalf("hold the Resource: %v", err)
+	}
+	retired, err := store.Retire(ctx, installation, id)
+	if err != nil || retired {
+		t.Fatalf("Retire() of a held Resource = %v, %v, want skipped", retired, err)
+	}
+	if resourceState, _ := resourceRetirementState(ctx, t, admin, id); resourceState != "active" ||
+		!resourceRetirementQueued(ctx, t, admin, id) {
+		t.Fatalf("a held Resource was changed to %s or dropped from the queue", resourceState)
+	}
 }
 
 func resourceRetirementRevisions(ctx context.Context, t *testing.T, admin *pgx.Conn, id resource.ID) (int64, int64) {

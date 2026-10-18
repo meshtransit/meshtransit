@@ -5,6 +5,15 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: deleting a Resource now supersedes its Device target, so the Device
+  can get a new Resource; before, it answered `device_resource_exists` for
+  good. A deleted Resource is still returned by GET and by
+  `list?state=deleted`. Creating a Resource Group whose name is taken answers
+  `409 resource_group_name_taken` instead of a 412. The Resource retirement
+  worker counts Resources still in use apart from failures
+  (`meshtransit_resource_retirement_worker_blocked_total`). Schema 186, no
+  operator step; during the rollout an old worker logs a deferred retirement
+  for a Resource in use and retries it.
 - Core: removing a Device retires its Device Resource once nothing uses it
   (no open share, no rule of an active policy release in its Network or, to
   the shared Device, in a receiving Network, no current Resource Group); one

@@ -87,6 +87,10 @@ func TestDecodeResourceRetirementProof(t *testing.T) {
 	if proof, err := decodeResourceRetirementProof([]byte(`{"changed":false,"events":[]}`), id, change); err != nil || proof.Changed {
 		t.Fatalf("unchanged proof = %+v, %v", proof, err)
 	}
+	if proof, err := decodeResourceRetirementProof([]byte(`{"changed":false,"blocked":true,"events":[]}`), id, change); err != nil ||
+		proof.Changed || !proof.Blocked {
+		t.Fatalf("blocked proof = %+v, %v", proof, err)
+	}
 	for _, test := range []struct {
 		name    string
 		mutate  func(map[string]any)
@@ -105,6 +109,7 @@ func TestDecodeResourceRetirementProof(t *testing.T) {
 			p["event"].(map[string]any)["previous_hash"] = "ab"
 		}, wantErr: true},
 		{name: "unknown key", mutate: func(p map[string]any) { p["device"] = "x" }, wantErr: true},
+		{name: "changed and blocked", mutate: func(p map[string]any) { p["blocked"] = true }, wantErr: true},
 	} {
 		proof, err := decodeResourceRetirementProof(retirementProofJSON(t, test.mutate), id, change)
 		if (err != nil) != test.wantErr {

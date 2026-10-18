@@ -20,6 +20,8 @@ func TestResourceAuthorityErrorNamesConflicts(t *testing.T) {
 			status: http.StatusConflict, code: "resource_name_taken"},
 		{name: "Device has a Resource", err: errors.Join(authority.ErrMutationFailed, authority.ErrDeviceResourceExists),
 			status: http.StatusConflict, code: "device_resource_exists"},
+		{name: "group name taken", err: errors.Join(authority.ErrMutationFailed, authority.ErrGroupNameTaken),
+			status: http.StatusConflict, code: "resource_group_name_taken"},
 		{name: "stale revision", err: errors.Join(authority.ErrMutationFailed, authority.ErrConflict),
 			status: http.StatusPreconditionFailed, code: "precondition_failed"},
 	} {

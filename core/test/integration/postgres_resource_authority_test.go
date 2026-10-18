@@ -563,6 +563,17 @@ func assertResourceLifecycles(
 	if err != nil || deletedResource.State() != resource.StateDeleted || deletedResource.Version() != 4 {
 		t.Fatalf("deleted Resource result = %+v, error = %v", deletedResource, err)
 	}
+	// Schema 186: deleting it frees its Device for a new Resource.
+	var activeTargets int
+	if err := adminConnection.QueryRow(ctx, `SELECT pg_catalog.count(*) FROM mesh.resource_device_target AS target
+JOIN mesh.resource AS deleted ON deleted.id = target.resource_id
+WHERE deleted.public_id = $1::UUID AND target.state = 'active'`, deviceResult.ResourceID().String()).Scan(&activeTargets); err != nil {
+		t.Fatalf("read deleted Resource targets: %v", err)
+	}
+	if activeTargets != 0 {
+		t.Fatalf("deleted Resource keeps %d active Device targets", activeTargets)
+	}
+	assertDeletedResourceReadable(ctx, t, runtimePool, session, homeScope, deviceResult.ResourceID())
 
 	resurrectResource, err := authority.NewResourceLifecycleCommand(
 		authority.LifecycleResumeResource, homeScope, deviceResult.ResourceID(), 4,
@@ -716,6 +727,39 @@ func assertResourceCatalogReads(
 	if _, err := service.GetResource(ctx, session, otherScope, resourceID); !errors.Is(err, catalog.ErrNotFound) {
 		t.Fatalf("cross-scope GetResource() error = %v, want ErrNotFound", err)
 	}
+}
+
+// assertDeletedResourceReadable checks a deleted Resource, whose target is
+// superseded since schema 186, is still returned by GET and by the list of
+// deleted Resources.
+func assertDeletedResourceReadable(ctx context.Context, t *testing.T, runtimePool *postgresadapter.Pool,
+	session accountsession.Session, scope network.Scope, id resource.ID,
+) {
+	t.Helper()
+	store, err := postgresadapter.NewResourceCatalogStore(runtimePool, postgresadapter.ResourceCatalogOptions{
+		StatementTimeout: 5 * time.Second, LockTimeout: 2 * time.Second, IdleTimeout: 10 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := catalog.NewService(catalog.Dependencies{Transactions: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := service.GetResource(ctx, session, scope, id)
+	if err != nil || value.State() != resource.StateDeleted {
+		t.Fatalf("GetResource() of a deleted Resource = %+v, %v", value, err)
+	}
+	page, err := service.ListResources(ctx, session, scope, resource.StateDeleted, 100, catalog.PageCursor{})
+	if err != nil {
+		t.Fatalf("ListResources(deleted) error = %v", err)
+	}
+	for _, item := range page.Items {
+		if item.ID() == id {
+			return
+		}
+	}
+	t.Fatal("deleted Resource is missing from the list of deleted Resources")
 }
 
 func newIntegrationResourceAuthorityService(

@@ -41,6 +41,9 @@ var (
 	// ErrDeviceResourceExists reports that the Device already has a current
 	// Resource.
 	ErrDeviceResourceExists = errors.New("resource authority: Device already has a Resource")
+	// ErrGroupNameTaken reports that another current Resource Group of the
+	// Network has the name.
+	ErrGroupNameTaken = errors.New("resource authority: Resource Group name taken")
 	// ErrForbidden hides which session or permission check failed.
 	ErrForbidden = errors.New("resource authority: forbidden")
 	// ErrIntentConflict reports idempotency-key reuse with different semantics.

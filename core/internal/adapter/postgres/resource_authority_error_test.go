@@ -20,6 +20,8 @@ func TestResourceAuthorityDatabaseErrorNamesUniqueViolations(t *testing.T) {
 			want: authority.ErrNameTaken, not: authority.ErrConflict},
 		{name: "Device has a Resource", code: "23505", constraint: "resource_device_target_active_device_uidx",
 			want: authority.ErrDeviceResourceExists, not: authority.ErrConflict},
+		{name: "group name taken", code: "23505", constraint: "resource_group_network_name_current_uidx",
+			want: authority.ErrGroupNameTaken, not: authority.ErrConflict},
 		{name: "other unique violation", code: "23505", constraint: "resource_public_id_key",
 			want: authority.ErrConflict, not: authority.ErrNameTaken},
 		{name: "stale revision", code: "MT001", want: authority.ErrConflict, not: authority.ErrNameTaken},

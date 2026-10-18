@@ -92,6 +92,8 @@ func assertPostgreSQLPolicyInactiveDevice(ctx context.Context, t *testing.T, adm
 	// release holds keep publishing next to an edit.
 	revokeIntegrationFixtureDevice(ctx, t, admin, runtimePool, leaving)
 	assertRevokedDeviceLeftSuspension(ctx, t, admin, leaving)
+	// Schema 185: its Resource waits while the share is still open.
+	assertResourceRetirementDeferred(ctx, t, admin, workerPool, resourceID, "shared")
 	assertDeviceRemovalEndsShare(ctx, t, admin, workerPool, leavingShare)
 	// Schema 185: its Resource is queued but kept while rules and groups use it.
 	assertResourceRetirementDeferred(ctx, t, admin, workerPool, resourceID, "named by active rules")

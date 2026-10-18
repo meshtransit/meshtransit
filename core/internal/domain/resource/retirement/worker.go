@@ -50,14 +50,14 @@ type Worker struct {
 	cancel  context.CancelFunc
 	done    chan error
 
-	running                                    atomic.Bool
-	passes, discoveryErrors, retired, deferred atomic.Uint64
+	running                                             atomic.Bool
+	passes, discoveryErrors, retired, deferred, blocked atomic.Uint64
 }
 
 // Measurements exposes bounded, identifier-free process measurements.
 type Measurements struct {
-	Running                                    bool
-	Passes, DiscoveryErrors, Retired, Deferred uint64
+	Running                                             bool
+	Passes, DiscoveryErrors, Retired, Deferred, Blocked uint64
 }
 
 // New constructs a stopped worker without I/O.
@@ -137,7 +137,7 @@ func (worker *Worker) Snapshot() Measurements {
 	}
 	return Measurements{
 		Running: worker.running.Load(), Passes: worker.passes.Load(), DiscoveryErrors: worker.discoveryErrors.Load(),
-		Retired: worker.retired.Load(), Deferred: worker.deferred.Load(),
+		Retired: worker.retired.Load(), Deferred: worker.deferred.Load(), Blocked: worker.blocked.Load(),
 	}
 }
 
@@ -181,6 +181,10 @@ func (worker *Worker) sweep(ctx context.Context, after Cursor) Cursor {
 		operationCtx, stop := context.WithTimeout(ctx, worker.options.OperationTimeout)
 		retired, err := worker.retirer.Retire(operationCtx, worker.options.DeploymentID, candidate.ResourceID)
 		stop()
+		if errors.Is(err, ErrInUse) {
+			worker.blocked.Add(1)
+			continue
+		}
 		if err != nil {
 			worker.deferred.Add(1)
 			failures = true

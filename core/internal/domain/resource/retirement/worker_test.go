@@ -245,3 +245,24 @@ func TestWorkerLifecycle(t *testing.T) {
 		t.Fatal("stopped worker reports running")
 	}
 }
+
+func TestSweepCountsResourcesInUseApart(t *testing.T) {
+	t.Parallel()
+	options := testOptions(t, 2)
+	base := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	inUse := Candidate{ResourceID: mustResource(t, "01890f00-0000-7000-8000-000000000010"), At: base}
+	list := listFunc(func(context.Context, deployment.ID, Cursor, int) (Page, error) {
+		return Page{Items: []Candidate{inUse}, Done: true}, nil
+	})
+	retire := retireFunc(func(context.Context, deployment.ID, resource.ID) (bool, error) {
+		return false, ErrInUse
+	})
+	worker, err := New(options, list, retire, discardLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker.sweep(t.Context(), Cursor{})
+	if got := worker.Snapshot(); got.Blocked != 1 || got.Deferred != 0 || got.Retired != 0 {
+		t.Fatalf("Snapshot() = %+v, want one blocked", got)
+	}
+}

@@ -226,11 +226,16 @@ func (store *ResourceRetirementStore) Retire(ctx context.Context, installation d
 		return false, errors.Join(ErrResourceRetirement, ErrResourceRetirementCommitUnknown, err)
 	}
 	committed = true
+	if proof.Blocked {
+		// Committed: the queue row now waits before it is offered again.
+		return false, retirement.ErrInUse
+	}
 	return proof.Changed, nil
 }
 
 type resourceRetirementProof struct {
 	Changed          bool                        `json:"changed"`
+	Blocked          bool                        `json:"blocked"`
 	TransactionID    string                      `json:"transaction_id"`
 	ChangeID         string                      `json:"change_id"`
 	ResourceID       string                      `json:"resource_id"`
@@ -275,6 +280,9 @@ func decodeResourceRetirementProof(encoded []byte, id resource.ID, change public
 			return resourceRetirementProof{}, ErrResourceRetirement
 		}
 		return proof, nil
+	}
+	if proof.Blocked {
+		return resourceRetirementProof{}, ErrResourceRetirement
 	}
 	transaction, err := strconv.ParseInt(proof.TransactionID, 10, 64)
 	if err != nil || transaction <= 0 || proof.ChangeID != change.String() || proof.ResourceID != id.String() ||

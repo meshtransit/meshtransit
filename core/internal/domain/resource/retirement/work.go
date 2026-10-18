@@ -9,6 +9,7 @@ package retirement
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"meshtransit.net/core/internal/domain/deployment"
@@ -81,9 +82,13 @@ type Candidates interface {
 	List(ctx context.Context, installation deployment.ID, after Cursor, limit int) (Page, error)
 }
 
+// ErrInUse reports a Resource that waits because something still uses it: an
+// open share, an active rule or a current Resource Group. It is retried later.
+var ErrInUse = errors.New("resource retirement: Resource still in use")
+
 // Retirer retires one Resource in its own bounded transaction. It returns
-// false when the Resource is already gone, its Device was not removed, a
-// concurrent writer holds it, or a share of it is still open.
+// false when the Resource is already gone, its Device was not removed or a
+// concurrent writer holds it, and ErrInUse when it must wait.
 type Retirer interface {
 	Retire(ctx context.Context, installation deployment.ID, id resource.ID) (bool, error)
 }

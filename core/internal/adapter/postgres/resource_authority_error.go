@@ -27,6 +27,8 @@ func classifyResourceAuthorityDatabaseError(ctx context.Context, err error) erro
 			return errors.Join(authority.ErrNameTaken, err)
 		case "resource_device_target_active_device_uidx":
 			return errors.Join(authority.ErrDeviceResourceExists, err)
+		case "resource_group_network_name_current_uidx":
+			return errors.Join(authority.ErrGroupNameTaken, err)
 		}
 		return errors.Join(authority.ErrConflict, err)
 	case "MT001":
