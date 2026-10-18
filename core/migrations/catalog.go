@@ -548,6 +548,7 @@ func Catalog() []Migration {
 		newMigration(179, "Each Network chooses how long signed-in Devices live", networkDeviceLifetimeSQL),
 		newMigration(180, "An administrator briefly extends an expired Device", deviceExpiryExtensionSQL),
 		newMigration(181, "SQL functions take the database clock as now", databaseClockNowSQL),
+		newMigration(182, "Workspace changes no longer block foreign key checks", workspaceNoKeyUpdateSQL),
 	}
 }
 
@@ -870,3 +871,6 @@ var deviceExpiryExtensionSQL string
 
 //go:embed 000181_database_clock_now.up.sql
 var databaseClockNowSQL string
+
+//go:embed 000182_workspace_no_key_update.up.sql
+var workspaceNoKeyUpdateSQL string

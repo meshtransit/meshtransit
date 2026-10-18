@@ -5,6 +5,14 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: removing a member from a Workspace or a Network could deadlock
+  (40P01) with a share or registration that held the Network revision and
+  then wrote a row referencing the Workspace, such as its audit event. The
+  16 functions that serialize Workspace changes now lock the Workspace row
+  FOR NO KEY UPDATE instead of FOR UPDATE, so foreign key checks no longer
+  wait for them; they stay serialized with each other and with sign-in.
+  Schema 182 replaces the functions with the same signatures, no operator
+  step.
 - Core: 17 SQL functions (member and Network member changes, Device
   lifecycle and logout, Device and user groups, tags, invitations, alias
   ranges, session revocation) took the later of the database clock and the

@@ -13,8 +13,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 181 {
-		t.Fatalf("len(Catalog()) = %d, want 181", len(catalog))
+	if len(catalog) != 182 {
+		t.Fatalf("len(Catalog()) = %d, want 182", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1609,8 +1609,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 181 {
-		t.Fatalf("LatestVersion() = %d, want 181", LatestVersion())
+	if LatestVersion() != 182 {
+		t.Fatalf("LatestVersion() = %d, want 182", LatestVersion())
 	}
 }
 
@@ -5230,4 +5230,48 @@ var databaseClockNowFunctions = []string{
 	"change_workspace_member_v1", "list_workspace_invitations_v1", "logout_device_v1",
 	"preview_workspace_invitation_v1", "remove_network_member_v1", "remove_workspace_member_v1",
 	"revoke_workspace_member_sessions_v1", "set_network_alias_ranges_v1",
+}
+
+// Schema 182 locks the Workspace row FOR NO KEY UPDATE in the 16 functions
+// that locked it FOR UPDATE, and changes nothing else.
+func TestWorkspaceNoKeyUpdate(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 182 {
+		t.Fatalf("len(Catalog()) = %d, want schema 182", len(catalog))
+	}
+	migration := catalog[181]
+	if migration.Version != 182 {
+		t.Fatalf("migration 182 = %+v", migration)
+	}
+	functions := []string{
+		"accept_workspace_invitation_v1", "add_network_members_v1", "assign_workspace_role_v1",
+		"change_device_tag_v1", "change_identity_group_v1", "change_workspace_guardrail_v1",
+		"change_workspace_invitation_v1", "change_workspace_member_v1", "change_workspace_private_interchange_v1",
+		"create_network_v1", "create_network_v2", "remove_network_member_v1", "remove_workspace_member_v1",
+		"rename_owned_workspace_v1", "revoke_workspace_member_sessions_v1", "revoke_workspace_role_v1",
+	}
+	workspaceLock := regexp.MustCompile(`FROM\s+mesh\.workspace\s+AS\s+\w+[^;]*?FOR\s+(NO KEY )?UPDATE`)
+	blocks := strings.Split(migration.SQL, "CREATE OR REPLACE FUNCTION mesh_ops.")[1:]
+	if len(blocks) != len(functions) {
+		t.Fatalf("schema 182 replaces %d functions, want %d", len(blocks), len(functions))
+	}
+	for _, block := range blocks {
+		name, _, _ := strings.Cut(block, "(")
+		if !slices.Contains(functions, name) {
+			t.Errorf("schema 182 replaces unexpected %s", name)
+		}
+		locks := workspaceLock.FindAllStringSubmatch(block, -1)
+		if len(locks) != 1 || locks[0][1] != "NO KEY " {
+			t.Errorf("schema 182 %s locks its Workspace %v, want once FOR NO KEY UPDATE", name, locks)
+		}
+		if !strings.Contains(block, "SECURITY DEFINER") || !strings.Contains(block, "SET search_path TO") {
+			t.Errorf("schema 182 %s is not a pinned definer", name)
+		}
+	}
+	for _, forbidden := range []string{"OWNER TO", "ALTER TABLE", "DROP ", "GRANT ", "REVOKE ", "GREATEST(pg_catalog.clock_timestamp(), p_evaluated_at)"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 182 must not contain %q", forbidden)
+		}
+	}
 }

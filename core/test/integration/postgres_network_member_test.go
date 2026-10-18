@@ -303,10 +303,18 @@ func assertNetworkMemberRemoval(ctx context.Context, t *testing.T, admin *pgx.Co
 	}
 
 	networkBefore, _ := fixtureNetworkRevisions(ctx, t, admin)
-	removed, err := fixture.remove(ctx, t, owner, networkJoinerID,
-		memberlifecycle.DevicePlan{DeviceID: moved, Action: memberlifecycle.DeviceTransferWorkspace},
-		memberlifecycle.DevicePlan{DeviceID: handed, Action: memberlifecycle.DeviceTransferMember,
-			NewOwnerID: mustIntegrationPublicID(t, confirmerID)})
+	// Schema 182: the removal runs while a share holds the Network revision.
+	removed, err := removeWhileNetworkRevisionHeld(ctx, t, admin, func() (memberlifecycle.NetworkRemovalResult, error) {
+		return fixture.service.Remove(ctx, owner, memberlifecycle.NetworkRemovalRequest{
+			Scope: fixture.scope, MemberID: mustIntegrationPublicID(t, networkJoinerID), Reason: "Integration check",
+			Devices: []memberlifecycle.DevicePlan{
+				{DeviceID: moved, Action: memberlifecycle.DeviceTransferWorkspace},
+				{DeviceID: handed, Action: memberlifecycle.DeviceTransferMember,
+					NewOwnerID: mustIntegrationPublicID(t, confirmerID)},
+			},
+			CorrelationID: newCorrelationID(t),
+		})
+	})
 	if err != nil || removed.After.State != "revoked" || len(removed.Devices) != 3 ||
 		removed.HandoversCancelled != 1 || removed.KeysRevoked != 1 || removed.RolesRevoked != 1 ||
 		removed.Network.NetworkID != fixture.scope.NetworkID() {
@@ -342,6 +350,117 @@ func assertNetworkMemberRemoval(ctx context.Context, t *testing.T, admin *pgx.Co
 	}
 	if _, err := fixture.remove(ctx, t, owner, networkJoinerID); !errors.Is(err, memberlifecycle.ErrNotFound) {
 		t.Fatalf("removed a removed member: %v", err)
+	}
+}
+
+// removeWhileNetworkRevisionHeld qualifies schema 182. Another transaction,
+// standing in for a share, holds the Network revision while the removal
+// runs; once the removal holds the Workspace and waits for the revision, that
+// transaction takes the Workspace FOR KEY SHARE, as the foreign key check of
+// its audit event does. With the Workspace locked FOR UPDATE it would wait
+// for the removal, which waits for it: a deadlock. It must get the lock at
+// once, within a timeout shorter than deadlock detection, and the removal
+// then completes. Nothing is written; the request is built before it runs.
+func removeWhileNetworkRevisionHeld(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	remove func() (memberlifecycle.NetworkRemovalResult, error),
+) (memberlifecycle.NetworkRemovalResult, error) {
+	t.Helper()
+	share, err := pgx.ConnectConfig(ctx, admin.Config().Copy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+		defer cancel()
+		if err := share.Close(cleanupCtx); err != nil {
+			t.Errorf("close share connection: %v", err)
+		}
+	}()
+	held, err := share.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackIntegrationTransaction(ctx, t, held)
+	if _, err := held.Exec(ctx, `SELECT 1 FROM mesh_ops.network_revision
+WHERE workspace_id = 103 AND network_id = 203 FOR UPDATE`); err != nil {
+		t.Fatalf("hold the Network revision: %v", err)
+	}
+	type outcome struct {
+		result memberlifecycle.NetworkRemovalResult
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		result, err := remove()
+		done <- outcome{result: result, err: err}
+	}()
+	waitForRemovalOnRevision(ctx, t, admin, share.PgConn().PID())
+	assertNoWorkspaceForUpdate(ctx, t, admin)
+	// Below the default one-second deadlock_timeout, so a regression fails
+	// here as a lock timeout instead of a deadlock the removal might retry.
+	if _, err := held.Exec(ctx, `SET LOCAL lock_timeout = '500ms'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := held.Exec(ctx, `SELECT 1 FROM mesh.workspace WHERE id = 103 FOR KEY SHARE`); err != nil {
+		t.Fatalf("a foreign key check waited for the removal holding the Workspace: %v", err)
+	}
+	if err := held.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case finished := <-done:
+		return finished.result, finished.err
+	case <-time.After(30 * time.Second):
+		t.Fatal("the removal did not finish after the Network revision was released")
+		return memberlifecycle.NetworkRemovalResult{}, nil
+	}
+}
+
+// assertNoWorkspaceForUpdate checks that no SQL function locks a Workspace
+// row FOR UPDATE, which foreign key checks would wait for.
+func assertNoWorkspaceForUpdate(ctx context.Context, t *testing.T, admin *pgx.Conn) {
+	t.Helper()
+	rows, err := admin.Query(ctx, `SELECT function.proname
+FROM pg_catalog.pg_proc AS function
+JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = function.pronamespace
+WHERE namespace.nspname IN ('mesh', 'mesh_ops', 'mesh_audit')
+  AND function.prosrc ~* 'FROM\s+mesh\.workspace\s+AS\s+\w+[^;]*?FOR\s+UPDATE'
+ORDER BY 1`)
+	if err != nil {
+		t.Fatalf("read functions: %v", err)
+	}
+	names, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatalf("read functions: %v", err)
+	}
+	if len(names) != 0 {
+		t.Fatalf("functions still lock the Workspace FOR UPDATE: %v", names)
+	}
+}
+
+// waitForRemovalOnRevision waits until a backend running the removal function
+// is blocked by the transaction holding the Network revision.
+func waitForRemovalOnRevision(ctx context.Context, t *testing.T, admin *pgx.Conn, holder uint32) {
+	t.Helper()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.After(10 * time.Second)
+	for {
+		var waiting bool
+		if err := admin.QueryRow(ctx, `SELECT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_stat_activity
+    WHERE wait_event_type = 'Lock' AND query LIKE '%remove_network_member_v1%'
+      AND $1::BIGINT = ANY (pg_catalog.pg_blocking_pids(pid)::BIGINT[]))`, int64(holder)).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			return
+		}
+		select {
+		case <-ticker.C:
+		case <-deadline:
+			t.Fatal("the removal never waited for the Network revision")
+		}
 	}
 }
 
