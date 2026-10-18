@@ -13,8 +13,8 @@ func TestValidateAndClone(t *testing.T) {
 	snapshot := validSnapshot()
 	snapshot.Peers[0].AllowedIPs = append(
 		snapshot.Peers[0].AllowedIPs,
-		netip.MustParsePrefix("0.0.0.0/0"),
-		netip.MustParsePrefix("::/0"),
+		netip.MustParsePrefix("100.64.1.0/24"),
+		netip.MustParsePrefix("fd00:1::/64"),
 	)
 	validated, err := ValidateAndClone(snapshot, time.Now())
 	if err != nil {
@@ -69,6 +69,34 @@ func TestValidateAndClone_RejectsUnsafeSnapshots(t *testing.T) {
 			name: "explicitly expired self",
 			mutate: func(snapshot *Snapshot) {
 				snapshot.Self.Expired = true
+			},
+		},
+		{
+			name: "peer address outside the overlay frame",
+			mutate: func(snapshot *Snapshot) {
+				lan := netip.MustParsePrefix("192.168.1.20/32")
+				snapshot.Peers[0].Addresses = []netip.Prefix{lan}
+				snapshot.Peers[0].AllowedIPs = []netip.Prefix{lan}
+			},
+		},
+		{
+			name: "peer allowed prefix outside the overlay frame",
+			mutate: func(snapshot *Snapshot) {
+				snapshot.Peers[0].AllowedIPs = append(snapshot.Peers[0].AllowedIPs, netip.MustParsePrefix("0.0.0.0/0"))
+			},
+		},
+		{
+			name: "peer allowed prefix wider than the overlay frame",
+			mutate: func(snapshot *Snapshot) {
+				snapshot.Peers[0].AllowedIPs = append(snapshot.Peers[0].AllowedIPs, netip.MustParsePrefix("100.0.0.0/8"))
+			},
+		},
+		{
+			name: "self address outside the overlay frame",
+			mutate: func(snapshot *Snapshot) {
+				public := netip.MustParsePrefix("203.0.113.7/32")
+				snapshot.Self.Addresses = []netip.Prefix{public}
+				snapshot.Self.AllowedIPs = []netip.Prefix{public}
 			},
 		},
 		{

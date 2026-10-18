@@ -9,6 +9,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"meshtransit.net/client/internal/overlayframe"
 )
 
 const (
@@ -251,6 +253,11 @@ func validateNode(node Node, self bool, now time.Time) error {
 	for _, prefix := range node.AllowedIPs {
 		if !validPrefix(prefix) {
 			return fmt.Errorf("allowed prefix %q is invalid", prefix)
+		}
+		// Addresses are allowed prefixes, so this bounds them too: a map can
+		// never route a LAN, a public range or the default route to a peer.
+		if !overlayframe.Contains(prefix) {
+			return fmt.Errorf("allowed prefix %q is outside the overlay frame", prefix)
 		}
 	}
 	seenEndpoints := make(map[netip.AddrPort]struct{}, len(node.Endpoints))

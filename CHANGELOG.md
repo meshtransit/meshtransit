@@ -5,6 +5,16 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Client: a map change no longer drops established connections. The packet
+  filter keeps every tracked flow the new map still authorizes and ends only
+  those whose peer identity, key lifetime, alias grant or admitting rule
+  changed; before, any peer joining or leaving reset replies of every open
+  TCP connection. The flow table holds 32,768 flows (was 4,096).
+- Client: a map whose addresses or allowed prefixes leave the overlay frame
+  (`100.64.0.0/10`, `198.18.0.0/15`, `fd00::/8`) is refused, and on Android
+  `meshd` refuses such addresses and routes before they reach the platform
+  VPN interface. Core never sends them; this bounds a compromised control
+  plane.
 - Core: deleting a Resource now supersedes its Device target, so the Device
   can get a new Resource; before, it answered `device_resource_exists` for
   good. A deleted Resource is still returned by GET and by

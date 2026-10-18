@@ -262,10 +262,17 @@ func TestPolicyFilterAllowsReplyToOutboundFlow(t *testing.T) {
 	if !filter.Allow(PacketInbound, inboundReply) {
 		t.Fatal("unchanged map unexpectedly removed tracked flow")
 	}
+	// The peer's filter authorizes a flow this node opened, so a local rule
+	// change keeps it; a new key at the peer's address does not.
 	snapshot.Policy = testPolicySnapshot().Policy
 	filter.UpdateNetwork(snapshot)
+	if !filter.Allow(PacketInbound, inboundReply) {
+		t.Fatal("local rule change dropped a flow the peer authorizes")
+	}
+	snapshot.Peers[0].PublicKey = "nodekey:replaced"
+	filter.UpdateNetwork(snapshot)
 	if filter.Allow(PacketInbound, inboundReply) {
-		t.Fatal("policy update retained stale flow authorization")
+		t.Fatal("flow survived a new key at the peer address")
 	}
 }
 

@@ -188,11 +188,11 @@ func TestPlatformTUNChangesRoutesWithoutANewDevice(t *testing.T) {
 		read <- err
 	}()
 	<-fixture.device(0).reading
-	wider := append([]netip.Prefix{netip.MustParsePrefix("10.20.0.0/16")}, testRoutes...)
+	wider := append([]netip.Prefix{netip.MustParsePrefix("198.18.0.0/15")}, testRoutes...)
 	if err := opener.ConfigureTUNRoutes(t.Context(), netadmin.TUNConfig{Addresses: testAddresses, Routes: wider}); err != nil {
 		t.Fatalf("ConfigureTUNRoutes() error = %v", err)
 	}
-	if _, routes, _ := fixture.provider.last(); routes != "10.20.0.0/16,100.64.0.0/10" {
+	if _, routes, _ := fixture.provider.last(); routes != "100.64.0.0/10,198.18.0.0/15" {
 		t.Fatalf("platform got routes %q", routes)
 	}
 	if !fixture.device(0).isClosed() {
@@ -243,6 +243,21 @@ func TestPlatformTUNFailsClosed(t *testing.T) {
 		"no addresses":      {ctx: t.Context(), tun: &fakeTUN{}},
 		"context cancelled": {ctx: canceled, tun: &fakeTUN{}, config: netadmin.TUNConfig{Addresses: testAddresses}},
 		"not a TUN":         {ctx: t.Context(), adopt: errors.New("not a tun")},
+		"LAN route": {ctx: t.Context(), tun: &fakeTUN{}, config: netadmin.TUNConfig{
+			Addresses: testAddresses, Routes: []netip.Prefix{netip.MustParsePrefix("192.168.1.0/24")},
+		}},
+		"default route": {ctx: t.Context(), tun: &fakeTUN{}, config: netadmin.TUNConfig{
+			Addresses: testAddresses, Routes: []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")},
+		}},
+		"route wider than the frame": {ctx: t.Context(), tun: &fakeTUN{}, config: netadmin.TUNConfig{
+			Addresses: testAddresses, Routes: []netip.Prefix{netip.MustParsePrefix("100.0.0.0/8")},
+		}},
+		"public address": {ctx: t.Context(), tun: &fakeTUN{}, config: netadmin.TUNConfig{
+			Addresses: []netip.Prefix{netip.MustParsePrefix("203.0.113.7/32")},
+		}},
+		"address that is not a host": {ctx: t.Context(), tun: &fakeTUN{}, config: netadmin.TUNConfig{
+			Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.0.0/24")},
+		}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -423,5 +438,27 @@ func TestPlatformTUNKeepsItsInterfaceWhenPeersComeAndGo(t *testing.T) {
 	}
 	if fixture.device(0).isClosed() {
 		t.Fatal("a peer joining in the same block rebuilt the interface")
+	}
+}
+
+// A route change outside the overlay frame never reaches the platform: the
+// open interface keeps its routes and the data plane rebuilds.
+func TestPlatformTUNRefusesRouteChangesOutsideTheFrame(t *testing.T) {
+	t.Parallel()
+	fixture, opener := newPlatformFixture(t)
+	opened, err := opener.OpenTUN(t.Context(), netadmin.TUNConfig{Addresses: testAddresses, Routes: testRoutes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = opened.Device.Close() })
+	lan := append([]netip.Prefix{netip.MustParsePrefix("10.20.0.0/16")}, testRoutes...)
+	if err := opener.ConfigureTUNRoutes(t.Context(), netadmin.TUNConfig{Addresses: testAddresses, Routes: lan}); !errors.Is(err, errNoTUN) {
+		t.Fatalf("ConfigureTUNRoutes() error = %v, want errNoTUN", err)
+	}
+	if _, routes, _ := fixture.provider.last(); routes != "100.64.0.0/10" {
+		t.Fatalf("platform got routes %q", routes)
+	}
+	if fixture.device(0).isClosed() {
+		t.Fatal("a refused change closed the open interface")
 	}
 }

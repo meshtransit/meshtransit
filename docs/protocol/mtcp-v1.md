@@ -49,11 +49,14 @@ of the trust model.
                           "fingerprint": "<32 hex>"}]}
 ```
 
-- A node fetches it **only at enrollment**, when it has no pinned key for this
-  control host, and pins every listed key. The response is at most 4 KiB.
-- After enrollment the node never trusts this endpoint again for that profile.
-  Key changes arrive inside an authenticated session (section 11). A node that
-  loses every pinned key must be re-enrolled by the user.
+- A node takes keys from it **only at enrollment**, when it has no pinned key
+  for this control host, and pins every listed key. The response is at most 4 KiB.
+- After enrollment the node never takes a key from this endpoint again for
+  that profile. It may read the document to check that a pinned key, or a
+  next key announced inside a session, is listed; a key the node does not
+  already hold is never taken from it. Key changes arrive
+  inside an authenticated session (section 11). A node that loses every
+  pinned key must be re-enrolled by the user.
 - The control key fingerprint is the first 16 bytes of
   `BLAKE2s-256("meshtransit/mtcp-control-fp/v1" || 0x00 || key)`, written as
   32 lowercase hex characters. Enrollment commands and links that Core

@@ -49,10 +49,12 @@ func aliasPacketGrants(snapshot networkmap.Snapshot) map[netip.Addr]aliasPacketG
 }
 
 func equalAliasPacketGrants(first, second map[netip.Addr]aliasPacketGrant) bool {
-	return maps.EqualFunc(first, second, func(left, right aliasPacketGrant) bool {
-		return left.peerID == right.peerID && left.canonical == right.canonical && left.local == right.local &&
-			networkmap.EqualAlias(&left.binding, &right.binding)
-	})
+	return maps.EqualFunc(first, second, equalAliasPacketGrant)
+}
+
+func equalAliasPacketGrant(left, right aliasPacketGrant) bool {
+	return left.peerID == right.peerID && left.canonical == right.canonical && left.local == right.local &&
+		networkmap.EqualAlias(&left.binding, &right.binding)
 }
 
 // ProcessPacket filters and translates under the same authority lock. WireGuard

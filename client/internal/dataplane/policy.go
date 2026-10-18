@@ -13,11 +13,14 @@ import (
 )
 
 const (
-	defaultMaximumTrackedFlows = 4096
-	tcpFlowTimeout             = 5 * time.Minute
-	tcpClosingTimeout          = 10 * time.Second
-	udpFlowTimeout             = 30 * time.Second
-	icmpFlowTimeout            = 10 * time.Second
+	defaultMaximumTrackedFlows = 32768
+	// fullPurgeInterval bounds the scan for expired flows while the table is
+	// full, so a burst of new flows cannot turn every packet into a full scan.
+	fullPurgeInterval = time.Second
+	tcpFlowTimeout    = 5 * time.Minute
+	tcpClosingTimeout = 10 * time.Second
+	udpFlowTimeout    = 30 * time.Second
+	icmpFlowTimeout   = 10 * time.Second
 )
 
 type compiledRule struct {
@@ -40,6 +43,10 @@ type flowKey struct {
 type flowState struct {
 	expiresAt time.Time
 	isClosing bool
+	// admittedByLocalRules marks a flow whose reverse direction local rules
+	// allowed when it began, such as a local server's UDP reply: the remote
+	// may have opened the exchange, so a rule change ends it.
+	admittedByLocalRules bool
 }
 
 // policyFilter enforces the node-specific inbound policy and keeps a bounded
@@ -55,6 +62,7 @@ type policyFilter struct {
 	flows         map[flowKey]flowState
 	clock         func() time.Time
 	maximumFlows  int
+	lastFullPurge time.Time
 	aliases       map[netip.Addr]aliasPacketGrant
 	suspended     bool
 	// enforced is the digest of rules, recomputed whenever they change.
@@ -84,9 +92,10 @@ func newPolicyFilter() *policyFilter {
 	}
 }
 
-// UpdateNetwork replaces all policy state and drops connection tracking from
-// the previous map generation. A removed grant can therefore never survive a
-// policy update through stale flow state.
+// UpdateNetwork replaces all policy state and keeps only the tracked flows the
+// new map still authorizes (retainFlowsLocked). A removed grant can therefore
+// never survive a policy update through stale flow state, while a map change
+// that does not touch a flow's authority leaves the flow running.
 func (f *policyFilter) UpdateNetwork(snapshot networkmap.Snapshot) {
 	if f == nil {
 		return
@@ -148,13 +157,14 @@ func (f *policyFilter) UpdateNetwork(snapshot networkmap.Snapshot) {
 		maps.EqualFunc(f.peers, peers, func(first, second packetAuthority) bool { return first.equal(second) }) &&
 		slices.EqualFunc(f.rules, rules, equalCompiledRule) && equalAliasPacketGrants(f.aliases, aliases)
 	rulesChanged := !slices.EqualFunc(f.rules, rules, equalCompiledRule)
+	previous := flowAuthority{self: f.self, selfAuthority: f.selfAuthority, peers: f.peers, aliases: f.aliases}
 	f.self = self
 	f.selfAuthority = selfAuthority
 	f.peers = peers
 	f.rules = rules
 	f.aliases = aliases
 	if !isUnchanged {
-		f.flows = map[flowKey]flowState{}
+		f.retainFlowsLocked(previous, rulesChanged)
 	}
 	if rulesChanged || f.enforced.Digest.IsZero() {
 		f.enforced = enforcedPolicyOf(rules, f.clock)
@@ -260,13 +270,89 @@ func (f *policyFilter) trackOutbound(header packetmeta.Header, now time.Time) {
 	if !startsTrackableFlow(header) {
 		return
 	}
-	if len(f.flows) >= f.maximumFlows {
+	if elapsed := now.Sub(f.lastFullPurge); len(f.flows) >= f.maximumFlows && (elapsed < 0 || elapsed >= fullPurgeInterval) {
+		f.lastFullPurge = now
 		f.purgeExpired(now)
 	}
 	if len(f.flows) >= f.maximumFlows {
 		return
 	}
 	f.refreshFlow(key, header, now)
+	// Only UDP can start a flow with a reply: a TCP SYN-ACK and an ICMP echo
+	// reply never start one, so those flows are always opened here.
+	if state, exists := f.flows[key]; exists && header.Protocol == packetmeta.ProtocolUDP {
+		state.admittedByLocalRules = rulesAllow(f.rules, reversedHeader(header))
+		f.flows[key] = state
+	}
+}
+
+// reversedHeader is the packet header of the opposite direction of a flow.
+func reversedHeader(header packetmeta.Header) packetmeta.Header {
+	header.Source, header.Destination = header.Destination, header.Source
+	header.SourcePort, header.DestinationPort = header.DestinationPort, header.SourcePort
+	return header
+}
+
+// flowAuthority is the part of the previous map a tracked flow depended on.
+type flowAuthority struct {
+	self          map[netip.Addr]struct{}
+	selfAuthority packetAuthority
+	peers         map[netip.Addr]packetAuthority
+	aliases       map[netip.Addr]aliasPacketGrant
+}
+
+// retainFlowsLocked drops every tracked flow whose authority the new map
+// changed and keeps the rest, so an unrelated peer joining, leaving or
+// rotating its key no longer breaks established connections.
+//
+// A flow this node opened is authorized by the remote node's filter, so it
+// survives local rule changes and depends only on both ends keeping their
+// identity and staying usable. A flow local rules admitted (a shared-Device
+// provider flow, or a local server's reply) ends on any rule change. Alias
+// flows also require the exact same alias grant.
+func (f *policyFilter) retainFlowsLocked(previous flowAuthority, rulesChanged bool) {
+	now := time.Time{}
+	if f.clock != nil {
+		now = f.clock().UTC()
+	}
+	if !maps.Equal(previous.self, f.self) || !previous.selfAuthority.sameIdentity(f.selfAuthority) ||
+		!previous.selfAuthority.usableAt(now) || !f.selfAuthority.usableAt(now) {
+		f.flows = map[flowKey]flowState{}
+		return
+	}
+	for key, state := range f.flows {
+		if !f.flowStillAuthorized(previous, key, state, rulesChanged, now) {
+			delete(f.flows, key)
+		}
+	}
+}
+
+func (f *policyFilter) flowStillAuthorized(previous flowAuthority, key flowKey, state flowState,
+	rulesChanged bool, now time.Time,
+) bool {
+	if !state.expiresAt.After(now) {
+		return false
+	}
+	remote, openedHere := key.destination.address, true
+	if !containsAddress(f.self, key.source.address) {
+		if !containsAddress(f.self, key.destination.address) {
+			return false
+		}
+		remote, openedHere = key.source.address, false
+	}
+	if rulesChanged && (!openedHere || state.admittedByLocalRules) {
+		return false
+	}
+	before, existed := previous.peers[remote]
+	after, exists := f.peers[remote]
+	// A flow whose peer lapsed before this update stays dead even when the new
+	// map extends the same key: renewed authority starts with new flows.
+	if !existed || !exists || !before.sameIdentity(after) || !before.usableAt(now) || !after.usableAt(now) {
+		return false
+	}
+	oldGrant, wasAliased := previous.aliases[remote]
+	newGrant, isAliased := f.aliases[remote]
+	return wasAliased == isAliased && (!isAliased || equalAliasPacketGrant(oldGrant, newGrant))
 }
 
 func (f *policyFilter) isTrackedReply(header packetmeta.Header, now time.Time) bool {
@@ -307,8 +393,9 @@ func (f *policyFilter) refreshFlow(key flowKey, header packetmeta.Header, now ti
 		timeout = tcpClosingTimeout
 	}
 	f.flows[key] = flowState{
-		expiresAt: now.Add(timeout),
-		isClosing: isClosing,
+		expiresAt:            now.Add(timeout),
+		isClosing:            isClosing,
+		admittedByLocalRules: f.flows[key].admittedByLocalRules,
 	}
 }
 
@@ -492,6 +579,12 @@ func authorityFor(value networkmap.Node) packetAuthority {
 
 func (authority packetAuthority) usableAt(now time.Time) bool {
 	return !authority.expired && (authority.expiresAt.IsZero() || now.Before(authority.expiresAt))
+}
+
+// sameIdentity reports whether both values name the same node and key. A
+// changed deadline alone keeps the identity: usableAt checks it per packet.
+func (authority packetAuthority) sameIdentity(other packetAuthority) bool {
+	return authority.nodeID == other.nodeID && authority.publicKey == other.publicKey
 }
 
 func (authority packetAuthority) equal(other packetAuthority) bool {

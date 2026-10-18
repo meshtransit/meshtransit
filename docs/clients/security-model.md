@@ -129,14 +129,26 @@ Packet payloads are never collected.
   (100,000 in a map; WireGuard and path selection track up to 10,000),
   addresses, routes, endpoints, rules and relay topology, and rejects
   duplicate addresses, malformed keys, an unexpected self key, an expired or
-  unauthorized self, and endpoints the endpoint policy refuses.
+  unauthorized self, endpoints the endpoint policy refuses, and any address
+  or allowed prefix outside the overlay frame (`100.64.0.0/10`,
+  `198.18.0.0/15`, `fd00::/8`). A map can therefore never route a LAN, a
+  public range or the default route to a peer.
+- On Android, where no helper exists, `meshd` checks the same frame before it
+  hands addresses and routes to the platform VPN interface.
 - The packet filter is deny-by-default and node-reduced. It checks address
   ownership in both directions, allows inbound traffic only as the rules say
   plus replies to flows the node opened (a bounded, expiring flow table), and
   drops malformed and fragmented packets.
 - Every packet is checked against the self and peer key deadlines before any
-  rule or flow state, so a silent control stream cannot extend access. A
-  change of identity, key, deadline or policy clears the flow table.
+  rule or flow state, so a silent control stream cannot extend access.
+- A map update keeps only the flows it still authorizes. A flow ends when its
+  peer's address moves to another node or key, when either end's key lapsed,
+  when this node's addresses or key change, or when its alias grant changes.
+  A flow that local rules admitted (a reply from a local server, or a
+  shared-Device provider flow) also ends on any rule change. A flow this node
+  opened survives local rule changes, because the remote node's filter
+  authorizes it. Other peers joining, leaving or rotating keys leave
+  established connections running.
 - [Device alias](../protocol/device-alias-v1.md) packets are accepted only for
   the exact alias, direction and service of a valid, unexpired grant bound to
   both nodes' keys; raw destinations, spoofed sources, reverse initiation and
@@ -154,7 +166,8 @@ Packet payloads are never collected.
   carry default or subnet routes, commands, paths or keys. Every prefix must
   lie in the frame (`100.64.0.0/10`, `198.18.0.0/15`, `fd00::/8`).
 - Route changes add before they remove and roll back on failure. `meshd`
-  checks the helper's result against the signed map before using the tunnel.
+  checks the helper's result against the validated map before using the
+  tunnel.
 - On Linux it runs with only `CAP_NET_ADMIN` and `CAP_CHOWN` and calls one
   root-owned `resolvectl` without a shell. The local API and the helper use
   separate runtime directories, so neither group can replace the other's

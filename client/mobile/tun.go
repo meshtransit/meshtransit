@@ -15,6 +15,7 @@ import (
 
 	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/client/internal/netadmin"
+	"meshtransit.net/client/internal/overlayframe"
 )
 
 // tunName names the platform TUN in status and logs; the platform owns the
@@ -110,6 +111,9 @@ func (opener *platformTUN) openDevice(ctx context.Context, addresses, routes []n
 	if len(addresses) == 0 {
 		return nil, fmt.Errorf("%w: no addresses", errNoTUN)
 	}
+	if err := validateOverlayConfig(addresses, routes); err != nil {
+		return nil, err
+	}
 	fd, err := opener.provider.OpenTUN(joinPrefixes(addresses), joinPrefixes(routes), opener.mtu)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", errNoTUN, err)
@@ -137,4 +141,22 @@ func joinPrefixes(prefixes []netip.Prefix) string {
 		values = append(values, prefix.String())
 	}
 	return strings.Join(values, ",")
+}
+
+// validateOverlayConfig keeps the platform VPN interface inside the overlay
+// frame, as the desktop helper does: host addresses and routes of the overlay
+// and alias ranges only. A map that asks for a LAN, a public range or the
+// default route never reaches VpnService.
+func validateOverlayConfig(addresses, routes []netip.Prefix) error {
+	for _, prefix := range addresses {
+		if prefix.Bits() != prefix.Addr().BitLen() || !overlayframe.Contains(prefix) {
+			return fmt.Errorf("%w: %s is not an overlay host address", errNoTUN, prefix)
+		}
+	}
+	for _, prefix := range routes {
+		if prefix != prefix.Masked() || !overlayframe.Contains(prefix) {
+			return fmt.Errorf("%w: %s is not an overlay route", errNoTUN, prefix)
+		}
+	}
+	return nil
 }
