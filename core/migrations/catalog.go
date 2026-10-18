@@ -553,6 +553,7 @@ func Catalog() []Migration {
 		newMigration(184, "Permission checks lock the Workspace before the session", resolverWorkspaceFirstSQL),
 		newMigration(185, "Removing a Device retires its Resource", resourceDeviceRemovalSQL),
 		newMigration(186, "Deleting a Resource supersedes its Device target", resourceDeleteSupersedesTargetSQL),
+		newMigration(187, "Overlay and alias pools stay inside the client overlay frame", addressPoolFrameSQL),
 	}
 }
 
@@ -890,3 +891,6 @@ var resourceDeviceRemovalSQL string
 
 //go:embed 000186_resource_delete_supersedes_target.up.sql
 var resourceDeleteSupersedesTargetSQL string
+
+//go:embed 000187_address_pool_frame.up.sql
+var addressPoolFrameSQL string

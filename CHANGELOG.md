@@ -15,6 +15,11 @@ merge (2026-10-09) are kept below.
   `meshd` refuses such addresses and routes before they reach the platform
   VPN interface. Core never sends them; this bounds a compromised control
   plane.
+- Core: the Device alias pool tool accepts pools only inside `198.18.0.0/15`
+  and `fd00::/8`, and the database refuses any overlay or alias pool outside
+  the client overlay frame (schema 187). Adding the constraint checks
+  existing pools: the migration stops on a deployment that has one outside the
+  frame, which clients would refuse anyway; move that pool first.
 - Core: deleting a Resource now supersedes its Device target, so the Device
   can get a new Resource; before, it answered `device_resource_exists` for
   good. A deleted Resource is still returned by GET and by

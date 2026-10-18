@@ -460,7 +460,8 @@ func seedShareScaleAliasPools(ctx context.Context, t *testing.T, admin *pgx.Conn
               AND purpose IN ('federation_resource_alias', 'federation_consumer_alias')`, realmID); err != nil {
 			t.Fatalf("retire the fixture alias pools: %v", err)
 		}
-		// Alias pools must not overlap Node overlay or Workspace service pools.
+		// Alias pools must not overlap Node overlay or Workspace service pools,
+		// and stay inside the client overlay frame (schema 187).
 		free := func(candidates ...string) string {
 			for _, candidate := range candidates {
 				var overlaps bool
@@ -476,8 +477,8 @@ func seedShareScaleAliasPools(ctx context.Context, t *testing.T, admin *pgx.Conn
 			return ""
 		}
 		pools := []struct{ purpose, prefix string }{
-			{"federation_resource_alias", free("198.18.0.0/16", "10.200.0.0/16", "172.30.0.0/16")},
-			{"federation_consumer_alias", free("198.19.0.0/16", "10.201.0.0/16", "172.31.0.0/16")},
+			{"federation_resource_alias", free("198.18.0.0/16")},
+			{"federation_consumer_alias", free("198.19.0.0/16")},
 		}
 		if dualStack {
 			// Activation prefers an IPv6 Resource Alias when a pool offers one.

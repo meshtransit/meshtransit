@@ -114,8 +114,9 @@ func parseOptions(deployment, actor, resource4, consumer4, resource6, consumer6 
 	return options{deploymentID: deploymentID, actorID: actorID, pools: pools}, nil
 }
 
-// parsePoolPrefix applies the same bounds and unsafe-range exclusions as the
-// database allocator, so a configuration that passes here can be allocated.
+// parsePoolPrefix applies the same bounds, frame and unsafe-range exclusions
+// as the database (address_pool_frame_check, schema 187), so a configuration
+// that passes here can be allocated.
 func parsePoolPrefix(value string, family int) (netip.Prefix, error) {
 	prefix, err := netip.ParsePrefix(value)
 	if err != nil || prefix != prefix.Masked() {
@@ -127,6 +128,15 @@ func parsePoolPrefix(value string, family int) (netip.Prefix, error) {
 		return netip.Prefix{}, errors.New("must be an IPv4 prefix between /8 and /30")
 	case family == 6 && (!address.Is6() || address.Is4In6() || prefix.Bits() < 67 || prefix.Bits() > 126):
 		return netip.Prefix{}, errors.New("must be an IPv6 prefix between /67 and /126")
+	}
+	// Clients refuse any map address outside their fixed overlay frame, so an
+	// alias outside it would make every map that carries it invalid.
+	frame := netip.MustParsePrefix("198.18.0.0/15")
+	if family == 6 {
+		frame = netip.MustParsePrefix("fd00::/8")
+	}
+	if prefix.Bits() < frame.Bits() || !frame.Contains(address) {
+		return netip.Prefix{}, fmt.Errorf("must lie inside %s, the clients' alias frame", frame)
 	}
 	for _, unsafe := range []string{
 		"0.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4", "240.0.0.0/4",

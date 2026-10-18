@@ -13,8 +13,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 186 {
-		t.Fatalf("len(Catalog()) = %d, want 186", len(catalog))
+	if len(catalog) != 187 {
+		t.Fatalf("len(Catalog()) = %d, want 187", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1609,8 +1609,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 186 {
-		t.Fatalf("LatestVersion() = %d, want 186", LatestVersion())
+	if LatestVersion() != 187 {
+		t.Fatalf("LatestVersion() = %d, want 187", LatestVersion())
 	}
 }
 
@@ -5433,6 +5433,30 @@ func TestResourceDeleteSupersedesTarget(t *testing.T) {
 	for _, forbidden := range []string{"OWNER TO", "DROP ", "GRANT ", "REVOKE ", "ALTER TABLE"} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 186 must not contain %q", forbidden)
+		}
+	}
+}
+
+// Schema 187 keeps overlay and alias pools inside the client overlay frame.
+func TestSchema187AddressPoolFrame(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 187 {
+		t.Fatalf("len(Catalog()) = %d, want schema 187", len(catalog))
+	}
+	migration := catalog[186]
+	if migration.Version != 187 {
+		t.Fatalf("migration 187 = %+v", migration)
+	}
+	for _, want := range []string{
+		"ADD CONSTRAINT address_pool_frame_check",
+		"purpose = 'workspace_service'",
+		"prefix <<= '100.64.0.0/10'::CIDR",
+		"prefix <<= '198.18.0.0/15'::CIDR",
+		"prefix <<= 'fd00::/8'::CIDR",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 187 lacks %q", want)
 		}
 	}
 }

@@ -36,6 +36,11 @@ func TestParseOptionsRejectsUnsafePools(t *testing.T) {
 		{"multicast", 1, "224.1.0.0/16"},
 		{"link-local IPv6", 2, "fe80::/96"},
 		{"overlapping roles", 1, "198.18.128.0/17"},
+		{"IPv4 outside the alias frame", 0, "10.99.0.0/16"},
+		{"IPv4 documentation range", 1, "192.0.2.0/24"},
+		{"IPv4 next to the alias frame", 1, "198.20.0.0/16"},
+		{"IPv6 outside the overlay frame", 2, "2001:db8::/96"},
+		{"IPv6 fc00 half of ULA", 3, "fc00::/96"},
 		{"empty", 3, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {

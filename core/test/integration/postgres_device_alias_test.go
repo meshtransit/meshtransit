@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"reflect"
 	"testing"
 	"time"
@@ -32,6 +33,7 @@ func assertPostgreSQLDeviceAliasReservation(
 ) {
 	t.Helper()
 	seedDeviceAliasAuthority(ctx, t, admin)
+	assertAddressPoolFrame(ctx, t, admin)
 	var endpointID, providerID string
 	if err := admin.QueryRow(ctx, `SELECT endpoint.public_id::TEXT, device.public_id::TEXT
         FROM mesh.private_endpoint AS endpoint
@@ -481,4 +483,26 @@ func seedDeviceAliasAuthority(ctx context.Context, t *testing.T, admin *pgx.Conn
 			}
 		}
 	})
+}
+
+// assertAddressPoolFrame checks schema 187: an overlay or alias pool outside
+// the client overlay frame is refused, whoever writes it.
+func assertAddressPoolFrame(ctx context.Context, t *testing.T, admin *pgx.Conn) {
+	t.Helper()
+	for _, prefix := range []string{"10.99.0.0/16", "198.20.0.0/16", "100.0.0.0/8", "2001:db8::/96", "fc00::/96"} {
+		tx, err := admin.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		family := 4
+		if netip.MustParsePrefix(prefix).Addr().Is6() {
+			family = 6
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO mesh.address_pool (public_id,deployment_id,address_realm_id,purpose,prefix,family,state)
+            VALUES ('01890fa0-0000-7000-8000-000000002390',1,399,'federation_resource_alias',$1::CIDR,$2,'quarantined')`, prefix, family)
+		if rollbackErr := tx.Rollback(ctx); rollbackErr != nil {
+			t.Fatal(rollbackErr)
+		}
+		assertPostgreSQLConstraint(t, err, "address_pool_frame_check")
+	}
 }

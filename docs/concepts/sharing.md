@@ -202,8 +202,10 @@ Sharing with aliases needs, on the deployment:
 - the operator step and checks of the
   [Device sharing deployment gate](../core/design/device-sharing-deployment-gate.md);
 - the alias pools, created once with `core/tools/operator/devicealiaspools`.
-  Place them in `198.18.0.0/15` (IPv4) and under `fd00::/8` (IPv6): the client
-  installs routes only there, although the tool does not enforce it;
+  The tool accepts them only in `198.18.0.0/15` (IPv4) and under `fd00::/8`
+  (IPv6), because clients refuse any map address outside their overlay frame.
+  The database refuses any overlay or alias pool outside that frame, so a
+  pool created by other means cannot break every map that carries it;
 - `MESHTRANSIT_DEVICE_ALIASES_ENABLED=true` on the control role;
 - the Device alias worker (`MESHTRANSIT_DEVICE_ALIAS_WORKER_ENABLED`, with
   `MESHTRANSIT_DEVICE_ALIAS_DEPLOYMENT_PUBLIC_ID`) and the contract expiry
