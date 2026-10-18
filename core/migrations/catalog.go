@@ -549,6 +549,7 @@ func Catalog() []Migration {
 		newMigration(180, "An administrator briefly extends an expired Device", deviceExpiryExtensionSQL),
 		newMigration(181, "SQL functions take the database clock as now", databaseClockNowSQL),
 		newMigration(182, "Workspace changes no longer block foreign key checks", workspaceNoKeyUpdateSQL),
+		newMigration(183, "Workspace changes lock the Workspace before checking permission", workspaceLockBeforeAuthorizeSQL),
 	}
 }
 
@@ -874,3 +875,6 @@ var databaseClockNowSQL string
 
 //go:embed 000182_workspace_no_key_update.up.sql
 var workspaceNoKeyUpdateSQL string
+
+//go:embed 000183_workspace_lock_before_authorize.up.sql
+var workspaceLockBeforeAuthorizeSQL string

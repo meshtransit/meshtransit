@@ -103,8 +103,13 @@ mesh.principal AS principal WHERE device.public_id = $1::UUID AND principal.publ
 	if _, err := groups.List(ctx, member, workspaceID); !errors.Is(err, identitygroup.ErrForbidden) {
 		t.Fatalf("plain member listed groups: %v", err)
 	}
-	created, err := groups.Create(ctx, owner, workspaceID,
-		identitygroup.Definition{Name: "Engineering", Description: "Builds things"}, newCorrelationID(t))
+	// Schema 183: created while another Workspace change holds the row.
+	groupCorrelation := newCorrelationID(t)
+	created, err := runWhileWorkspaceShared(ctx, t, admin, "change_identity_group_v1",
+		func() (identitygroup.Result, error) {
+			return groups.Create(ctx, owner, workspaceID,
+				identitygroup.Definition{Name: "Engineering", Description: "Builds things"}, groupCorrelation)
+		})
 	if err != nil || created.Group.Version != 1 {
 		t.Fatalf("create group = %+v, error = %v", created, err)
 	}
@@ -144,10 +149,14 @@ mesh.principal AS principal WHERE device.public_id = $1::UUID AND principal.publ
 		newCorrelationID(t)); !errors.Is(err, devicetag.ErrInvalid) {
 		t.Fatalf("invalid tag name: %v", err)
 	}
-	tagCreated, err := tags.Create(ctx, owner, workspaceID, devicetag.Definition{
-		Name: "prod-db", Description: "Databases", OwnerGroups: []identitygroup.ID{group},
-		OwnerRoles: []string{"network_admin"},
-	}, newCorrelationID(t))
+	tagCorrelation := newCorrelationID(t)
+	tagCreated, err := runWhileWorkspaceShared(ctx, t, admin, "change_device_tag_v1",
+		func() (devicetag.Result, error) {
+			return tags.Create(ctx, owner, workspaceID, devicetag.Definition{
+				Name: "prod-db", Description: "Databases", OwnerGroups: []identitygroup.ID{group},
+				OwnerRoles: []string{"network_admin"},
+			}, tagCorrelation)
+		})
 	if err != nil || tagCreated.Tag.Version != 1 || len(tagCreated.Tag.OwnerGroups) != 1 {
 		t.Fatalf("create tag = %+v, error = %v", tagCreated, err)
 	}

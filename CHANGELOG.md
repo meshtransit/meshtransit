@@ -5,6 +5,13 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: creating a user group or a tag, and changing an invitation, read the
+  Workspace row FOR SHARE in the permission check and then asked for FOR NO
+  KEY UPDATE, so two such changes in one Workspace could deadlock (40P01).
+  They now lock the Workspace first, as member changes do; tag and group
+  updates and deletions are unchanged. A caller without the permission holds
+  the lock until its call is refused. Schema 183 replaces the three
+  functions with the same signatures, no operator step.
 - Core: removing a member from a Workspace or a Network could deadlock
   (40P01) with a share or registration that held the Network revision and
   then wrote a row referencing the Workspace, such as its audit event. The

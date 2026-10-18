@@ -394,7 +394,7 @@ WHERE workspace_id = 103 AND network_id = 203 FOR UPDATE`); err != nil {
 		result, err := remove()
 		done <- outcome{result: result, err: err}
 	}()
-	waitForRemovalOnRevision(ctx, t, admin, share.PgConn().PID())
+	waitForFunctionBlockedBy(ctx, t, admin, "remove_network_member_v1", share.PgConn().PID())
 	assertNoWorkspaceForUpdate(ctx, t, admin)
 	// Below the default one-second deadlock_timeout, so a regression fails
 	// here as a lock timeout instead of a deadlock the removal might retry.
@@ -435,32 +435,6 @@ ORDER BY 1`)
 	}
 	if len(names) != 0 {
 		t.Fatalf("functions still lock the Workspace FOR UPDATE: %v", names)
-	}
-}
-
-// waitForRemovalOnRevision waits until a backend running the removal function
-// is blocked by the transaction holding the Network revision.
-func waitForRemovalOnRevision(ctx context.Context, t *testing.T, admin *pgx.Conn, holder uint32) {
-	t.Helper()
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-	deadline := time.After(10 * time.Second)
-	for {
-		var waiting bool
-		if err := admin.QueryRow(ctx, `SELECT EXISTS (
-    SELECT 1 FROM pg_catalog.pg_stat_activity
-    WHERE wait_event_type = 'Lock' AND query LIKE '%remove_network_member_v1%'
-      AND $1::BIGINT = ANY (pg_catalog.pg_blocking_pids(pid)::BIGINT[]))`, int64(holder)).Scan(&waiting); err != nil {
-			t.Fatal(err)
-		}
-		if waiting {
-			return
-		}
-		select {
-		case <-ticker.C:
-		case <-deadline:
-			t.Fatal("the removal never waited for the Network revision")
-		}
 	}
 }
 

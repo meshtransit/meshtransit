@@ -13,8 +13,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 182 {
-		t.Fatalf("len(Catalog()) = %d, want 182", len(catalog))
+	if len(catalog) != 183 {
+		t.Fatalf("len(Catalog()) = %d, want 183", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1609,8 +1609,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 182 {
-		t.Fatalf("LatestVersion() = %d, want 182", LatestVersion())
+	if LatestVersion() != 183 {
+		t.Fatalf("LatestVersion() = %d, want 183", LatestVersion())
 	}
 }
 
@@ -5272,6 +5272,56 @@ func TestWorkspaceNoKeyUpdate(t *testing.T) {
 	for _, forbidden := range []string{"OWNER TO", "ALTER TABLE", "DROP ", "GRANT ", "REVOKE ", "GREATEST(pg_catalog.clock_timestamp(), p_evaluated_at)"} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 182 must not contain %q", forbidden)
+		}
+	}
+}
+
+// Schema 183 makes the three Workspace changes that checked permission
+// before locking their Workspace lock it first.
+func TestWorkspaceLockBeforeAuthorize(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 183 {
+		t.Fatalf("len(Catalog()) = %d, want schema 183", len(catalog))
+	}
+	migration := catalog[182]
+	if migration.Version != 183 {
+		t.Fatalf("migration 183 = %+v", migration)
+	}
+	blocks := strings.Split(migration.SQL, "CREATE OR REPLACE FUNCTION mesh_ops.")[1:]
+	authorizers := map[string]string{
+		"change_device_tag_v1":           "authorize_identity_catalog_internal_v1(",
+		"change_identity_group_v1":       "authorize_identity_catalog_internal_v1(",
+		"change_workspace_invitation_v1": "authorize_workspace_people_internal_v1(",
+	}
+	if len(blocks) != len(authorizers) {
+		t.Fatalf("schema 183 replaces %d functions, want %d", len(blocks), len(authorizers))
+	}
+	const lock = "PERFORM 1 FROM mesh.workspace AS workspace WHERE workspace.id = v_locked FOR NO KEY UPDATE;"
+	for _, block := range blocks {
+		name, _, _ := strings.Cut(block, "(")
+		authorizer, ok := authorizers[name]
+		if !ok {
+			t.Errorf("schema 183 replaces unexpected %s", name)
+			continue
+		}
+		lockAt, authorizeAt := strings.Index(block, lock), strings.Index(block, authorizer)
+		if strings.Count(block, "FOR NO KEY UPDATE") != 1 || lockAt < 0 || authorizeAt < 0 || lockAt > authorizeAt {
+			t.Errorf("schema 183 %s does not lock its Workspace once, before %s", name, authorizer)
+		}
+		if !strings.Contains(block, "mesh_ops.session_bound_to_workspace_v1(p_session_public_id, v_locked)") {
+			t.Errorf("schema 183 %s locks a Workspace its session is not bound to", name)
+		}
+		// A tag or group update or deletion still locks no Workspace row.
+		createOnly := strings.Contains(block, "IF p_operation = 'create' THEN\n        v_locked :=")
+		if (name != "change_workspace_invitation_v1") != createOnly {
+			t.Errorf("schema 183 %s locks its Workspace for the wrong operations", name)
+		}
+	}
+	for _, forbidden := range []string{"OWNER TO", "ALTER TABLE", "DROP ", "GRANT ", "REVOKE ",
+		"GREATEST(pg_catalog.clock_timestamp(), p_evaluated_at)"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 183 must not contain %q", forbidden)
 		}
 	}
 }
