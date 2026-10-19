@@ -210,7 +210,8 @@ WHERE target_kind = 'network_site' AND action = 'network_site.router_set' ORDER 
 	if err != nil || changed.Site.Routers[0].Priority != 5 || changed.Site.Routers[0].State != site.RouterDraining {
 		t.Fatalf("change router = %+v, error = %v", changed, err)
 	}
-	// A second, eligible router: refused only by the one-router limit.
+	// A second, eligible router of a masqueraded Site; masquerade cannot be
+	// turned off while it has two.
 	if row := readIntegrationDevice(ctx, t, admin, other); row.ownership != "workspace" {
 		if _, err := lifecycle.Change(ctx, owner, devicelifecycle.Request{Scope: scope, DeviceID: other,
 			Action: devicelifecycle.ActionTransferWorkspace, Reason: "Router",
@@ -222,8 +223,18 @@ WHERE target_kind = 'network_site' AND action = 'network_site.router_set' ORDER 
 		t.Fatal(err)
 	}
 	second := site.RouterAssignment{DeviceID: other, Priority: 1, State: site.RouterActive}
-	if _, err := service.PutRouter(ctx, owner, scope, id, 4, second, newCorrelationID(t)); !errors.Is(err, site.ErrRouterLimit) {
-		t.Fatalf("a second router: %v", err)
+	if paired, err := service.PutRouter(ctx, owner, scope, id, 4, second, newCorrelationID(t)); err != nil ||
+		len(paired.Site.Routers) != 2 || paired.Site.Routers[0].DeviceID != other {
+		t.Fatalf("a second router = %+v, error = %v", paired, err)
+	}
+	routed := hq
+	routed.Masquerade = false
+	if _, err := service.Update(ctx, owner, scope, id, 5, routed, newCorrelationID(t)); !errors.Is(err, site.ErrMasqueradeRequired) {
+		t.Fatalf("masquerade off with two routers: %v", err)
+	}
+	if single, err := service.RemoveRouter(ctx, owner, scope, id, 5, second, newCorrelationID(t)); err != nil ||
+		len(single.Site.Routers) != 1 {
+		t.Fatalf("remove the second router = %+v, error = %v", single, err)
 	}
 	// A narrower offer leaves the router listed but unable to serve.
 	if err := fixtureRouteOffer(ctx, admin, `UPDATE mesh.device_route_advertisement
@@ -235,15 +246,15 @@ WHERE device_id = (SELECT id FROM mesh.device WHERE public_id = $1::UUID)`, rout
 		listing.Sites[1].Routers[0].Eligible {
 		t.Fatalf("Sites after the offer narrowed = %+v, error = %v", listing, err)
 	}
-	removed, err := service.RemoveRouter(ctx, owner, scope, id, 4, assignment, newCorrelationID(t))
+	removed, err := service.RemoveRouter(ctx, owner, scope, id, 6, assignment, newCorrelationID(t))
 	if err != nil || len(removed.Site.Routers) != 0 {
 		t.Fatalf("remove router = %+v, error = %v", removed, err)
 	}
-	if _, err := service.RemoveRouter(ctx, owner, scope, id, 5, assignment, newCorrelationID(t)); !errors.Is(err, site.ErrNotFound) {
+	if _, err := service.RemoveRouter(ctx, owner, scope, id, 7, assignment, newCorrelationID(t)); !errors.Is(err, site.ErrNotFound) {
 		t.Fatalf("remove an absent router: %v", err)
 	}
-	if countSiteAudit(ctx, t, admin, "network_site.router_set") != 2 ||
-		countSiteAudit(ctx, t, admin, "network_site.router_removed") != 1 {
+	if countSiteAudit(ctx, t, admin, "network_site.router_set") != 3 ||
+		countSiteAudit(ctx, t, admin, "network_site.router_removed") != 2 {
 		t.Fatal("router changes were not audited once each")
 	}
 	// Deleting a Site removes its routers in the same change.
@@ -254,7 +265,7 @@ WHERE device_id = (SELECT id FROM mesh.device WHERE public_id = $1::UUID)`, rout
 	for _, target := range []struct {
 		id      site.ID
 		version int64
-	}{{id, 5}, {twin.Site.ID, 2}} {
+	}{{id, 7}, {twin.Site.ID, 2}} {
 		if deleted, err := service.Delete(ctx, owner, scope, target.id, target.version, newCorrelationID(t)); err != nil || !deleted.Deleted {
 			t.Fatalf("delete Site = %+v, error = %v", deleted, err)
 		}

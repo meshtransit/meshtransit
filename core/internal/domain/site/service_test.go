@@ -18,9 +18,10 @@ import (
 )
 
 type recordingStore struct {
-	calls  int
-	change site.Change
-	router site.RouterChange
+	calls   int
+	change  site.Change
+	router  site.RouterChange
+	reading site.Reading
 }
 
 func (store *recordingStore) List(context.Context, accountsession.Session, network.Scope, site.ID, int) (site.Listing, error) {
@@ -30,7 +31,7 @@ func (store *recordingStore) List(context.Context, accountsession.Session, netwo
 
 func (store *recordingStore) Read(context.Context, accountsession.Session, network.Scope, site.ID) (site.Reading, error) {
 	store.calls++
-	return site.Reading{}, nil
+	return store.reading, nil
 }
 
 func (store *recordingStore) Change(_ context.Context, change site.Change) (site.Result, error) {
@@ -98,6 +99,7 @@ func TestServiceValidatesBeforeTheStore(t *testing.T) {
 	siteID := site.ID(newID(t))
 	device := node.ID(newID(t))
 	assignment := site.RouterAssignment{DeviceID: device, Priority: 10, State: site.RouterActive}
+	store.reading = site.Reading{Site: site.Site{ID: siteID, Version: 3, Definition: definition}}
 	if _, err := service.PutRouter(ctx, session, scope, siteID, 3, assignment, newID(t)); err != nil {
 		t.Fatal(err)
 	}
@@ -122,6 +124,82 @@ func TestServiceValidatesBeforeTheStore(t *testing.T) {
 	}
 	if _, err := site.NewService(store, fixedClock{now}, site.SystemIDs{}, site.Config{}); !errors.Is(err, site.ErrInvalid) {
 		t.Fatalf("zero limits accepted: %v", err)
+	}
+}
+
+func TestServiceKeepsOneRouterWithoutMasquerade(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, time.October, 19, 10, 0, 0, 0, time.UTC)
+	session := activeSession(t, now)
+	login, _ := session.LoginWorkspaceID()
+	scope, _ := network.NewScope(login, network.ID(newID(t)))
+	siteID := site.ID(newID(t))
+	first, second := node.ID(newID(t)), node.ID(newID(t))
+	routed := site.Definition{Name: "VPC", Prefixes: []netip.Prefix{netip.MustParsePrefix("10.35.0.0/17")}}
+	masqueraded := routed
+	masqueraded.Masquerade = true
+	router := func(id node.ID) site.Router {
+		return site.Router{RouterAssignment: site.RouterAssignment{DeviceID: id, Priority: 10, State: site.RouterActive}}
+	}
+	put := func(id node.ID) site.RouterAssignment {
+		return site.RouterAssignment{DeviceID: id, Priority: 20, State: site.RouterActive}
+	}
+	for name, test := range map[string]struct {
+		stored  site.Site
+		change  func(*site.Service) error
+		wantErr error
+	}{
+		"a second router without masquerade": {
+			stored: site.Site{ID: siteID, Version: 4, Routers: []site.Router{router(first)}, Definition: routed},
+			change: func(service *site.Service) error {
+				_, err := service.PutRouter(t.Context(), session, scope, siteID, 4, put(second), newID(t))
+				return err
+			},
+			wantErr: site.ErrMasqueradeRequired,
+		},
+		"the one router changes its priority": {
+			stored: site.Site{ID: siteID, Version: 4, Routers: []site.Router{router(first)}, Definition: routed},
+			change: func(service *site.Service) error {
+				_, err := service.PutRouter(t.Context(), session, scope, siteID, 4, put(first), newID(t))
+				return err
+			},
+		},
+		"a second router with masquerade": {
+			stored: site.Site{ID: siteID, Version: 4, Routers: []site.Router{router(first)}, Definition: masqueraded},
+			change: func(service *site.Service) error {
+				_, err := service.PutRouter(t.Context(), session, scope, siteID, 4, put(second), newID(t))
+				return err
+			},
+		},
+		"masquerade turned off with two routers": {
+			stored: site.Site{ID: siteID, Version: 4, Routers: []site.Router{router(first), router(second)},
+				Definition: masqueraded},
+			change: func(service *site.Service) error {
+				_, err := service.Update(t.Context(), session, scope, siteID, 4, routed, newID(t))
+				return err
+			},
+			wantErr: site.ErrMasqueradeRequired,
+		},
+		"a decision on an older Site": {
+			stored: site.Site{ID: siteID, Version: 5, Routers: []site.Router{router(first)}, Definition: routed},
+			change: func(service *site.Service) error {
+				_, err := service.PutRouter(t.Context(), session, scope, siteID, 4, put(first), newID(t))
+				return err
+			},
+			wantErr: site.ErrVersionConflict,
+		},
+	} {
+		store := &recordingStore{reading: site.Reading{Site: test.stored}}
+		service, err := site.NewService(store, fixedClock{now}, site.SystemIDs{}, site.Config{Limits: site.DefaultLimits()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := test.change(service); !errors.Is(err, test.wantErr) {
+			t.Errorf("%s: error = %v, want %v", name, err, test.wantErr)
+		}
+		if wrote := store.router.Operation != "" || store.change.Operation != ""; wrote != (test.wantErr == nil) {
+			t.Errorf("%s: wrote = %t", name, wrote)
+		}
 	}
 }
 

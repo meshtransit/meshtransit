@@ -278,6 +278,16 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		}
 		additionalMetrics = append(additionalMetrics, workerMetrics)
 		roleServices = append(roleServices, app.OwnedService{Name: "enforcement-ledger-worker", Service: workerService})
+		if processConfig.SubnetRoutes {
+			electionService, electionMetrics, composeErr := composeSiteElectionWorker(
+				*processConfig.EnforcementLedgerWorker, storagePools.worker, redisClient, logger)
+			if composeErr != nil {
+				logger.ErrorContext(ctx, "startup failed", "error_code", "site_election_worker_composition_failure")
+				return 1
+			}
+			additionalMetrics = append(additionalMetrics, electionMetrics)
+			roleServices = append(roleServices, app.OwnedService{Name: "site-election-worker", Service: electionService})
+		}
 	}
 	var enrollmentKeys httpapi.EnrollmentKeyManager
 	if processConfig.API != nil {

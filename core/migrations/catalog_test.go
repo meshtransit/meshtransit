@@ -13,8 +13,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 192 {
-		t.Fatalf("len(Catalog()) = %d, want 192", len(catalog))
+	if len(catalog) != 193 {
+		t.Fatalf("len(Catalog()) = %d, want 193", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1609,8 +1609,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 192 {
-		t.Fatalf("LatestVersion() = %d, want 192", LatestVersion())
+	if LatestVersion() != 193 {
+		t.Fatalf("LatestVersion() = %d, want 193", LatestVersion())
 	}
 }
 
@@ -5588,5 +5588,32 @@ func TestSchema192ConsoleDeviceOffers(t *testing.T) {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 192 is read-only but contains %q", forbidden)
 		}
+	}
+}
+
+// Schema 193 lets the worker elect each Site's primary router.
+func TestSchema193SitePrimaryElection(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[192]
+	if migration.Version != 193 {
+		t.Fatalf("migration 193 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE TABLE mesh.site_primary (",
+		"capture_authority_mutation('site_primary', 'public_id')",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.list_site_elections_v1(UUID, UUID, INTEGER) TO mesh_worker;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.prepare_site_primary_v1(UUID, UUID, BIGINT, UUID, TEXT, UUID) TO mesh_worker;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.finalize_site_primary_v1(UUID, UUID, UUID, TEXT, JSONB) TO mesh_worker;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_map_network_sites_v2(INTEGER) TO mesh_runtime;",
+		"'site.primary_changed',",
+		"'system.reconcile',",
+		"'network.revision.advanced',",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 193 lacks %q", want)
+		}
+	}
+	if strings.Contains(migration.SQL, "GRANT EXECUTE ON FUNCTION mesh_ops.prepare_site_primary_v1(UUID, UUID, BIGINT, UUID, TEXT, UUID) TO mesh_runtime") {
+		t.Error("the runtime role may elect primaries")
 	}
 }

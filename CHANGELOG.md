@@ -5,6 +5,15 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: a Site has up to 32 routers, and Core elects its primary from their
+  health about every 10 seconds: a router that reports the Site failed, goes
+  silent for over 2 minutes, drains or can no longer serve is replaced in
+  priority order; a recovered router waits 30 seconds, and failback 5 minutes.
+  Silence proves nothing while Core cannot read health or many routers go
+  silent at once. Each change is audited as `site.primary_changed` and
+  advances the Network, and maps carry the elected router (schema 193). A
+  Site without masquerade keeps one router (409
+  `site_masquerade_requires_single_router`).
 - Core: a Device's status carries `router` for a subnet router: its route
   enforcement (the route digest it reports against the served routes it was
   delivered: enforced, applying, mismatch, not_reported, unknown) and its

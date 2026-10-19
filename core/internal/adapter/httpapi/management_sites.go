@@ -430,6 +430,9 @@ func classifySiteError(err error) managementError {
 	case errors.Is(err, site.ErrRouterLimit):
 		return managementError{Status: http.StatusConflict, Code: "site_router_limit",
 			Message: "The Site already has the most routers it can have"}
+	case errors.Is(err, site.ErrMasqueradeRequired):
+		return managementError{Status: http.StatusConflict, Code: "site_masquerade_requires_single_router",
+			Message: "A Site without masquerade can have one router only"}
 	case errors.Is(err, site.ErrRouterNotEligible):
 		return managementError{Status: http.StatusConflict, Code: "router_not_eligible",
 			Message: "Only an active Device owned by the Workspace in this Network can be a router"}

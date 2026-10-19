@@ -69,8 +69,9 @@ A rule allows one direction: a **source** may open connections to a
 
 A **Site** (`…/networks/{network}/sites`, managed with `route.approve` and
 `route.withdraw`) is an address space behind the mesh, such as an office LAN
-or a VPC, with its IPv4 and IPv6 prefixes and a router Device. A rule to a
-Site lets its source reach addresses of that Site through the router:
+or a VPC, with its IPv4 and IPv6 prefixes and one or more router Devices. A
+rule to a Site lets its source reach addresses of that Site through its
+primary router ([routers and failover](#routers-and-failover)):
 
 ```json
 {
@@ -113,6 +114,37 @@ Site lets its source reach addresses of that Site through the router:
 - The activity log reports them with `destination_kind` `site`. Simulation
   checks them but does not count their impact yet, and explain and the access
   graph do not include them yet.
+
+### Routers and failover
+
+A Site has up to 32 routers, each an active Workspace Device of the Network
+that offers all the Site's prefixes, with a priority (a smaller number is
+preferred) and a state, `active` or `draining`. Core elects one of them the
+Site's **primary**, and every node sends the Site's traffic through it:
+
+- Core judges each router about every 10 seconds from the health the router
+  reports: a router that reports the Site failed (such as
+  `forward_blocked`), stays silent for more than 2 minutes after it has
+  reported, is draining, or can no longer serve the Site (expired, moved out of
+  the Workspace, or no longer offering its prefixes) is replaced by the next
+  usable router in priority order. A router that never reported health, such
+  as an older client, counts as usable.
+- A router that failed must be healthy for 30 seconds before it is chosen
+  again. A Site with `failback` returns to a preferred router once it has been
+  usable for 5 minutes; without it, the primary stays until it fails.
+- When no router is usable, the Site keeps the best of the rest and its
+  current primary when it is as good as any; when every router fails the
+  Site's probes alike, the probe target, not the routers, is the likely
+  fault, and the primary is kept.
+- When Core cannot read router health, or many routers turn silent at once
+  (Core or its store is the likely fault), silence and health prove nothing
+  and the primary only changes when a router can no longer serve.
+- Each change is recorded as `site.primary_changed` with its reason
+  (`elected`, `failover`, `failback`, `degraded` or `none`) and advances the
+  Network's revision, so maps follow at once.
+- A Site without `masquerade` has one router: the network behind it sends
+  replies to a single router. Adding a second one, or turning masquerade off
+  while it has two, is refused (409 `site_masquerade_requires_single_router`).
 
 ## Changing policy
 
@@ -268,9 +300,8 @@ computed at.
 
 ## Not yet
 
-Exit nodes and connectors are not implemented. Subnet routes are partly
-implemented: Sites, their routers and rules to Sites are stored and published,
-but maps do not carry routes yet, so nodes still accept only routes to
-Devices' own addresses inside the overlay. The permissions
+Exit nodes and connectors are not implemented. Subnet routes reach Sites
+through Linux routers; nodes switch to another router when Core elects one,
+not yet on their own. The permissions
 `connector.*`, `policy.draft`, `policy.rollback` and
 `approval_policy.manage` exist in the catalog without an operation.

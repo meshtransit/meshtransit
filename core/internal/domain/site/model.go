@@ -18,9 +18,9 @@ const (
 	MaximumNameLength = 64
 	// MaximumPriority bounds a router priority; a smaller number is preferred.
 	MaximumPriority = 999
-	// RoutersSupported is how many routers a Site may have until high
-	// availability (R2) elects among several.
-	RoutersSupported = 1
+	// RoutersSupported is how many routers a Site may have; Core elects one
+	// primary among them.
+	RoutersSupported = MaximumRoutersPerSite
 )
 
 // ID identifies one Site.

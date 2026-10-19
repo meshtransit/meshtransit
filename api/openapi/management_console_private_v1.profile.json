@@ -14722,7 +14722,7 @@
             "description": "site_not_found"
           },
           "409": {
-            "description": "site_name_taken or site_prefix_limit"
+            "description": "site_name_taken, site_prefix_limit or site_masquerade_requires_single_router"
           },
           "412": {
             "description": "version_conflict"
@@ -15370,7 +15370,7 @@
             "description": "site_not_found"
           },
           "409": {
-            "description": "site_router_limit, router_not_eligible or router_not_advertising"
+            "description": "site_router_limit, site_masquerade_requires_single_router, router_not_eligible or router_not_advertising"
           },
           "412": {
             "description": "version_conflict"

@@ -49,6 +49,11 @@ type RouteSite struct {
 	Prefixes   []netip.Prefix
 	Masquerade bool
 	Probes     []RouteProbe
+	// Elected is true once Core elected the Site's primary (schema 193):
+	// then Primary is its Device (0: no router can serve), and before it the
+	// first active router by priority is.
+	Elected bool
+	Primary int64
 }
 
 // RouteRouter is one router row of an active Site, with the facts that
@@ -208,7 +213,7 @@ type routeIndex struct {
 type routeSiteEntry struct {
 	site    RouteSite
 	routers []RouteRouter // by priority, then Device
-	primary RouteRouter   // the first active router; zero Device: none
+	primary RouteRouter   // the elected or first active router; zero Device: none
 }
 
 // newRouteIndex validates and indexes one Network's routes. Rules naming an
@@ -254,12 +259,7 @@ func newRouteIndex(params NetworkPolicyParams, members func(SelectorKind, int64)
 		slices.SortFunc(entry.routers, func(first, second RouteRouter) int {
 			return cmp.Or(cmp.Compare(first.Priority, second.Priority), cmp.Compare(first.Device, second.Device))
 		})
-		for _, router := range entry.routers {
-			if router.Active {
-				entry.primary = router
-				break
-			}
-		}
+		entry.primary = siteRoutePrimary(entry.site, entry.routers)
 	}
 	for position, rule := range index.ruleList {
 		if !rule.ID.IsValid() || !rule.SourceKind.valid() || rule.SourceRef <= 0 || len(rule.Prefixes) == 0 {
@@ -610,6 +610,28 @@ func cloneServedSites(sites []ServedSite) []ServedSite {
 		cloned[index] = site
 	}
 	return cloned
+}
+
+// siteRoutePrimary is the elected router while it is an active router of the
+// Site, none when Core elected none, and otherwise the first active router
+// by priority: the election lags a router change by one sweep.
+func siteRoutePrimary(site RouteSite, routers []RouteRouter) RouteRouter {
+	if site.Elected {
+		if site.Primary == 0 {
+			return RouteRouter{}
+		}
+		for _, router := range routers {
+			if router.Device == site.Primary && router.Active {
+				return router
+			}
+		}
+	}
+	for _, router := range routers {
+		if router.Active {
+			return router
+		}
+	}
+	return RouteRouter{}
 }
 
 func cloneRouteSites(sites []RouteSite) []RouteSite {

@@ -27,6 +27,9 @@ var (
 	ErrSiteLimit = errors.New("site: Site limit reached")
 	// ErrRouterLimit reports a Site that already has the plan's routers.
 	ErrRouterLimit = errors.New("site: router limit reached")
+	// ErrMasqueradeRequired reports a second router of a Site without
+	// masquerade: the network behind it routes replies to one router only.
+	ErrMasqueradeRequired = errors.New("site: several routers need masquerade")
 	// ErrRouterNotEligible reports a Device that is not an active,
 	// Workspace-owned Device of the Network.
 	ErrRouterNotEligible = errors.New("site: Device cannot be a router")

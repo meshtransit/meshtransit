@@ -8,6 +8,7 @@ import (
 
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/publicid"
 )
 
@@ -209,6 +210,11 @@ func (service *Service) Update(ctx context.Context, session accountsession.Sessi
 	if !site.IsValid() || expectedVersion <= 0 || !correlationID.IsValid() {
 		return Result{}, ErrInvalid
 	}
+	if !definition.Masquerade {
+		if err := service.singleRouter(ctx, session, scope, site, expectedVersion, node.ID{}); err != nil {
+			return Result{}, err
+		}
+	}
 	return service.store.Change(ctx, Change{
 		Session: session, Scope: scope, Operation: OperationUpdate, SiteID: site,
 		ExpectedVersion: expectedVersion, Definition: definition.Canonical(), CorrelationID: correlationID,
@@ -243,6 +249,9 @@ func (service *Service) PutRouter(ctx context.Context, session accountsession.Se
 	if !site.IsValid() || expectedVersion <= 0 || !correlationID.IsValid() {
 		return Result{}, ErrInvalid
 	}
+	if err := service.singleRouter(ctx, session, scope, site, expectedVersion, assignment.DeviceID); err != nil {
+		return Result{}, err
+	}
 	rowID, err := service.ids.New()
 	if err != nil {
 		return Result{}, ErrUnavailable
@@ -267,6 +276,34 @@ func (service *Service) RemoveRouter(ctx context.Context, session accountsession
 		Session: session, Scope: scope, Operation: RouterDelete, SiteID: site, ExpectedVersion: expectedVersion,
 		Assignment: RouterAssignment{DeviceID: assignment.DeviceID}, CorrelationID: correlationID,
 	})
+}
+
+// singleRouter refuses a Site without masquerade more than one router,
+// counting device as one of them. It reads the Site at expectedVersion: the
+// change that follows writes at that version only, so the Site read is the
+// one changed.
+func (service *Service) singleRouter(ctx context.Context, session accountsession.Session, scope network.Scope,
+	site ID, expectedVersion int64, device node.ID) error {
+	reading, err := service.store.Read(ctx, session, scope, site)
+	if err != nil {
+		return err
+	}
+	if reading.Site.Version != expectedVersion {
+		return ErrVersionConflict
+	}
+	if reading.Site.Masquerade && device.IsValid() {
+		return nil
+	}
+	routers := len(reading.Site.Routers)
+	if device.IsValid() && !slices.ContainsFunc(reading.Site.Routers, func(router Router) bool {
+		return router.DeviceID == device
+	}) {
+		routers++
+	}
+	if routers > 1 {
+		return ErrMasqueradeRequired
+	}
+	return nil
 }
 
 // Eligible decides whether a stored router can serve its Site: an active

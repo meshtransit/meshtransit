@@ -23,6 +23,11 @@ const (
 	loadNetworkSitesSQL = `SELECT site_id, site_public_id::TEXT, prefixes, masquerade,
     probe_addresses, probe_kinds, probe_ports
 FROM mesh_ops.load_map_network_sites_v1($1::INTEGER)`
+	electionGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
+    pg_catalog.to_regprocedure('mesh_ops.load_map_network_sites_v2(integer)'), 'EXECUTE'), FALSE)`
+	loadElectedNetworkSitesSQL = `SELECT site_id, site_public_id::TEXT, prefixes, masquerade,
+    probe_addresses, probe_kinds, probe_ports, elected, COALESCE(primary_device_id, 0)
+FROM mesh_ops.load_map_network_sites_v2($1::INTEGER)`
 	loadNetworkSiteRoutersSQL = `SELECT site_id, device_id, device_public_id::TEXT, priority, router_state,
     workspace_owned, offered
 FROM mesh_ops.load_map_network_site_routers_v1($1::INTEGER)`
@@ -48,7 +53,11 @@ func readNetworkRoutes(ctx context.Context, transaction databaseTransaction, par
 	if !granted {
 		return nil
 	}
-	if params.Sites, err = readNetworkSites(ctx, transaction); err != nil {
+	elected, err := functionGranted(ctx, transaction, electionGrantedSQL)
+	if err != nil {
+		return errors.Join(ErrLoadSnapshot, fmt.Errorf("check elected route readers: %w", err))
+	}
+	if params.Sites, err = readNetworkSites(ctx, transaction, elected); err != nil {
 		return err
 	}
 	if len(params.Sites) == 0 {
@@ -65,8 +74,14 @@ func readNetworkRoutes(ctx context.Context, transaction databaseTransaction, par
 	return nil
 }
 
-func readNetworkSites(ctx context.Context, transaction databaseTransaction) ([]appmapsession.RouteSite, error) {
-	rows, err := transaction.Query(ctx, loadNetworkSitesSQL, maximumNetworkSites+1)
+// readNetworkSites reads the Sites with their elected primaries once schema
+// 193 is installed, and without before.
+func readNetworkSites(ctx context.Context, transaction databaseTransaction, elected bool) ([]appmapsession.RouteSite, error) {
+	query := loadNetworkSitesSQL
+	if elected {
+		query = loadElectedNetworkSitesSQL
+	}
+	rows, err := transaction.Query(ctx, query, maximumNetworkSites+1)
 	if err != nil || rows == nil {
 		return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("read network sites: %w", nonNil(err)))
 	}
@@ -80,11 +95,15 @@ func readNetworkSites(ctx context.Context, transaction databaseTransaction) ([]a
 		var addresses []netip.Prefix
 		var kinds []string
 		var ports []int32
-		if err := rows.Scan(&site.Site, &site.Ref, &site.Prefixes, &site.Masquerade, &addresses, &kinds,
-			&ports); err != nil {
+		targets := []any{&site.Site, &site.Ref, &site.Prefixes, &site.Masquerade, &addresses, &kinds, &ports}
+		if elected {
+			targets = append(targets, &site.Elected, &site.Primary)
+		}
+		if err := rows.Scan(targets...); err != nil {
 			return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("scan network site: %w", err))
 		}
-		if len(addresses) != len(kinds) || len(addresses) != len(ports) {
+		if len(addresses) != len(kinds) || len(addresses) != len(ports) || site.Primary < 0 ||
+			(!site.Elected && site.Primary != 0) {
 			return nil, ErrSnapshotEvidence
 		}
 		for index, address := range addresses {
