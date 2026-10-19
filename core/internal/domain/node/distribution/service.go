@@ -157,6 +157,11 @@ type Device struct {
 	Status      Status
 	Enforcement Enforcement
 	Observation Observation
+	// RouteEnforcement compares a router's reported route digest with the
+	// served routes it was delivered; RouteHealth is its current Site
+	// health, empty when it has none or it is older than RouteHealthStale.
+	RouteEnforcement Enforcement
+	RouteHealth      []SiteHealth
 }
 
 // Report is one Device's standing against the Network's current revisions.
@@ -204,7 +209,7 @@ func (service *Service) ReadDevice(ctx context.Context, session accountsession.S
 	held := target.Devices[0]
 	report := Report{Scope: scope, NetworkRevision: target.NetworkRevision, PolicyRevision: target.PolicyRevision,
 		Device: Device{ID: held.ID, Hostname: held.Hostname, State: held.State, Status: StatusUnknown,
-			Enforcement: EnforcementUnknown}}
+			Enforcement: EnforcementUnknown, RouteEnforcement: EnforcementUnknown}}
 	observations, err := service.observations.LoadObservations(ctx, []node.ID{id})
 	if err != nil || len(observations) != 1 || !observations[0].IsValid() {
 		// Delivery records are operational; the durable answer still stands.
@@ -212,7 +217,10 @@ func (service *Service) ReadDevice(ctx context.Context, session accountsession.S
 	}
 	report.Device.Observation = observations[0]
 	report.Device.Status = Classify(target.NetworkRevision, observations[0])
-	report.Device.Enforcement = ClassifyEnforcement(observations[0], service.clock.Now())
+	now := service.clock.Now()
+	report.Device.Enforcement = ClassifyEnforcement(observations[0], now)
+	report.Device.RouteEnforcement = ClassifyRouteEnforcement(observations[0], now)
+	report.Device.RouteHealth, _ = CurrentRouteHealth(observations[0], now)
 	report.ObservationsAvailable = true
 	return report, nil
 }

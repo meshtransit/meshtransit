@@ -21,6 +21,12 @@ type servedFilter struct {
 	entries int
 }
 
+// emptyRouteDigest is the route digest of serving nothing.
+var emptyRouteDigest = func() routedigest.Digest {
+	digest, _, _ := routedigest.Compute(nil)
+	return digest
+}()
+
 // SetServedInstalled records what the helper forwards into and the router's
 // own addresses, and the route digest of entries.
 func (f *policyFilter) SetServedInstalled(entries []routedigest.Entry, local []netip.Addr) {

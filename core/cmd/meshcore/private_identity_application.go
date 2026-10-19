@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"time"
 
+	"meshtransit.net/core/internal/domain/node/distribution"
+
 	"github.com/prometheus/client_golang/prometheus"
 
 	"meshtransit.net/api/openapi"
@@ -95,13 +97,15 @@ type privateIdentityPorts struct {
 	InterchangeTrust    httpapi.InterchangeRelayTrust
 	DeviceGroups        httpapi.DeviceGroupManager
 	Sites               httpapi.SiteManager
-	IdentityGroups      httpapi.IdentityGroupManager
-	DeviceTags          httpapi.DeviceTagManager
-	DeviceLifecycle     httpapi.DeviceLifecycleManager
-	MemberLifecycle     httpapi.MemberLifecycleManager
-	NetworkMembers      httpapi.NetworkMemberManager
-	EnrollmentKeys      httpapi.EnrollmentKeyManager
-	Invitations         httpapi.InvitationManager
+	// SiteRouterObservations reads routers' delivery records for one Site's read.
+	SiteRouterObservations distribution.ObservationLoader
+	IdentityGroups         httpapi.IdentityGroupManager
+	DeviceTags             httpapi.DeviceTagManager
+	DeviceLifecycle        httpapi.DeviceLifecycleManager
+	MemberLifecycle        httpapi.MemberLifecycleManager
+	NetworkMembers         httpapi.NetworkMemberManager
+	EnrollmentKeys         httpapi.EnrollmentKeyManager
+	Invitations            httpapi.InvitationManager
 	// InvitationPreviews and InvitationAcceptor serve links and sign-in.
 	InvitationPreviews httpapi.InvitationPreviewer
 	InvitationAcceptor oidcauth.InvitationAcceptor
@@ -204,37 +208,38 @@ func composePrivateIdentity(
 	managementOptions := options.Management
 	resources, err := httpapi.NewManagementHandler(httpapi.ManagementHandlerOptions{
 		Sessions: sessions, Revocations: ports.Revocations, PolicyPublications: ports.PolicyPublications,
-		PolicyCompilations:    ports.PolicyCompilations,
-		PolicyExplanations:    ports.PolicyExplanations,
-		AccessGraphs:          ports.AccessGraphs,
-		PolicySimulations:     ports.PolicySimulations,
-		ActivePolicies:        ports.ActivePolicies,
-		WorkspaceRenames:      ports.WorkspaceRenames,
-		WorkspaceRoles:        ports.WorkspaceRoles,
-		WorkspaceCreations:    ports.WorkspaceCreations,
-		NetworkCreations:      ports.NetworkCreations,
-		AliasRanges:           ports.AliasRanges,
-		DeviceLifetimes:       ports.DeviceLifetimes,
-		AddressUsage:          ports.AddressUsage,
-		AuditHistory:          ports.AuditHistory,
-		AuditExports:          ports.AuditExports,
-		Guardrails:            ports.Guardrails,
-		Interchanges:          ports.Interchanges,
-		InterchangeTrust:      ports.InterchangeTrust,
-		DeviceGroups:          ports.DeviceGroups,
-		Sites:                 ports.Sites,
-		IdentityGroups:        ports.IdentityGroups,
-		DeviceTags:            ports.DeviceTags,
-		DeviceLifecycle:       ports.DeviceLifecycle,
-		MemberLifecycle:       ports.MemberLifecycle,
-		NetworkMembers:        ports.NetworkMembers,
-		EnrollmentKeys:        ports.EnrollmentKeys,
-		Invitations:           ports.Invitations,
-		SessionWorkspaces:     ports.SessionWorkspaces,
-		ShareTargets:          ports.ShareTargets,
-		PolicyApprovals:       ports.PolicyApprovals,
-		PolicyApprovalCatalog: ports.PolicyApprovalCatalog,
-		ResourceCreations:     ports.ResourceCreations, ResourceCatalog: ports.ResourceCatalog,
+		PolicyCompilations:     ports.PolicyCompilations,
+		PolicyExplanations:     ports.PolicyExplanations,
+		AccessGraphs:           ports.AccessGraphs,
+		PolicySimulations:      ports.PolicySimulations,
+		ActivePolicies:         ports.ActivePolicies,
+		WorkspaceRenames:       ports.WorkspaceRenames,
+		WorkspaceRoles:         ports.WorkspaceRoles,
+		WorkspaceCreations:     ports.WorkspaceCreations,
+		NetworkCreations:       ports.NetworkCreations,
+		AliasRanges:            ports.AliasRanges,
+		DeviceLifetimes:        ports.DeviceLifetimes,
+		AddressUsage:           ports.AddressUsage,
+		AuditHistory:           ports.AuditHistory,
+		AuditExports:           ports.AuditExports,
+		Guardrails:             ports.Guardrails,
+		Interchanges:           ports.Interchanges,
+		InterchangeTrust:       ports.InterchangeTrust,
+		DeviceGroups:           ports.DeviceGroups,
+		Sites:                  ports.Sites,
+		SiteRouterObservations: ports.SiteRouterObservations,
+		IdentityGroups:         ports.IdentityGroups,
+		DeviceTags:             ports.DeviceTags,
+		DeviceLifecycle:        ports.DeviceLifecycle,
+		MemberLifecycle:        ports.MemberLifecycle,
+		NetworkMembers:         ports.NetworkMembers,
+		EnrollmentKeys:         ports.EnrollmentKeys,
+		Invitations:            ports.Invitations,
+		SessionWorkspaces:      ports.SessionWorkspaces,
+		ShareTargets:           ports.ShareTargets,
+		PolicyApprovals:        ports.PolicyApprovals,
+		PolicyApprovalCatalog:  ports.PolicyApprovalCatalog,
+		ResourceCreations:      ports.ResourceCreations, ResourceCatalog: ports.ResourceCatalog,
 		ResourceSharing: ports.ResourceSharing,
 		Idempotency:     keys.idempotency, RateLimitSubjects: keys.rateLimit, RateLimiter: ports.RateLimiter,
 		TrustedProxyPrefixes: profile.TrustedProxyPrefixes, SourceRateLimit: managementOptions.SourceRateLimit,

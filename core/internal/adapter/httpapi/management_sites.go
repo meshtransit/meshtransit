@@ -11,10 +11,12 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node/distribution"
 	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/domain/site"
 	"meshtransit.net/core/internal/domain/workspace"
@@ -178,6 +180,11 @@ type siteRouterBody struct {
 	State      string `json:"state"`
 	Eligible   bool   `json:"eligible"`
 	AddedAt    string `json:"added_at"`
+	// Health and RouteEnforcement come with one Site's read only: the
+	// router's own measure of this Site, absent when it reported none in the
+	// last 30 seconds, and whether it forwards into the routes it was sent.
+	Health           *siteRouterHealthBody `json:"health,omitempty"`
+	RouteEnforcement string                `json:"route_enforcement,omitempty"`
 }
 
 type siteBody struct {
@@ -349,6 +356,7 @@ func (handler *ManagementHandler) readSites(ctx context.Context, response http.R
 			CorrelationID string `json:"correlation_id"`
 		}
 		output.Data.Site, output.Data.CanManage = newSiteBody(reading.Site), reading.CanManage
+		handler.addRouterHealth(ctx, &output.Data.Site, reading.Site)
 		output.Data.CanDelete, output.CorrelationID = reading.CanDelete, correlationID.String()
 		response.Header().Set("ETag", strongVersionETag(reading.Site.Version))
 		writeManagementJSON(ctx, handler.logger, response, http.StatusOK, output)
@@ -442,5 +450,56 @@ func classifySiteError(err error) managementError {
 	default:
 		return managementError{Status: http.StatusServiceUnavailable, Code: "temporarily_unavailable",
 			Message: "The result is uncertain. Reload Sites before trying again.", Retryable: true}
+	}
+}
+
+// siteRouterObservationTimeout bounds reading a Site's routers' delivery
+// records.
+const siteRouterObservationTimeout = time.Second
+
+type siteRouterHealthBody struct {
+	// State is ok, degraded or failed; Code the router's reason.
+	State      string `json:"state"`
+	Code       string `json:"code"`
+	ReportedAt string `json:"reported_at"`
+}
+
+// addRouterHealth adds to one Site's read what its routers report: their
+// health of the Site and their route enforcement. Delivery records are
+// operational: when they cannot be read the Site is answered without them.
+func (handler *ManagementHandler) addRouterHealth(ctx context.Context, body *siteBody, stored site.Site) {
+	if handler.siteRouterObservations == nil || len(stored.Routers) == 0 {
+		return
+	}
+	ids := make([]node.ID, 0, len(stored.Routers))
+	for _, router := range stored.Routers {
+		ids = append(ids, router.DeviceID)
+	}
+	// Bounded, so a slow Redis delays a Site's read by at most a second.
+	loadCtx, cancel := context.WithTimeout(ctx, siteRouterObservationTimeout)
+	defer cancel()
+	observations, err := handler.siteRouterObservations.LoadObservations(loadCtx, ids)
+	if err != nil || len(observations) != len(ids) {
+		handler.logger.DebugContext(ctx, "site router delivery records unavailable", "error", err)
+		return
+	}
+	now := time.Now()
+	siteID := stored.ID.String()
+	for index := range body.Routers {
+		observation := observations[index]
+		if !observation.IsValid() {
+			continue
+		}
+		body.Routers[index].RouteEnforcement = string(distribution.ClassifyRouteEnforcement(observation, now))
+		health, current := distribution.CurrentRouteHealth(observation, now)
+		if !current {
+			continue
+		}
+		for _, entry := range health {
+			if entry.Ref == siteID {
+				body.Routers[index].Health = &siteRouterHealthBody{State: entry.State, Code: entry.Code,
+					ReportedAt: managementTime(observation.RouteHealthAt)}
+			}
+		}
 	}
 }

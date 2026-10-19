@@ -146,6 +146,59 @@ type deviceDistributionItem struct {
 	// PeerLimit is present when the Device's last map was cut to the peer
 	// limit: it carried Sent of the Authorized peers its policy allows.
 	PeerLimit *devicePeerLimitItem `json:"peer_limit,omitempty"`
+	// Router is present for a subnet router: whether it forwards into the
+	// served routes it was delivered, and its current Site health.
+	Router *deviceRouterItem `json:"router,omitempty"`
+}
+
+type deviceRouterItem struct {
+	// RouteEnforcement is enforced, applying, mismatch, not_reported or
+	// unknown, as for the packet filter, over the route digest.
+	RouteEnforcement     string  `json:"route_enforcement"`
+	DeliveredRouteDigest *string `json:"delivered_route_digest"`
+	DeliveredRoutes      *int    `json:"delivered_routes"`
+	EnforcedRouteDigest  *string `json:"enforced_route_digest"`
+	EnforcedRoutes       *int    `json:"enforced_routes"`
+	// Sites is the router's current health of each Site it serves; empty
+	// when it reported none in the last 30 seconds.
+	Sites []deviceSiteHealthItem `json:"sites"`
+	// HealthReportedAt is when Core received that health.
+	HealthReportedAt *time.Time `json:"health_reported_at"`
+}
+
+type deviceSiteHealthItem struct {
+	SiteID string `json:"site_id"`
+	State  string `json:"state"`
+	Code   string `json:"code"`
+}
+
+// newDeviceRouterItem describes a router; nil for a Device that was never
+// delivered served routes and reports no Site health.
+func newDeviceRouterItem(device distribution.Device) *deviceRouterItem {
+	observation := device.Observation
+	if !observation.Known || (observation.Routes.IsZero() && observation.RouteHealthAt.IsZero()) {
+		return nil
+	}
+	item := &deviceRouterItem{RouteEnforcement: string(device.RouteEnforcement), Sites: []deviceSiteHealthItem{}}
+	if item.RouteEnforcement == "" {
+		item.RouteEnforcement = string(distribution.EnforcementUnknown)
+	}
+	if routes := observation.Routes; !routes.IsZero() {
+		digest, entries := routes.Digest.String(), routes.Entries
+		item.DeliveredRouteDigest, item.DeliveredRoutes = &digest, &entries
+	}
+	if routes := observation.EnforcedRoutes; !routes.IsZero() {
+		digest, entries := routes.Digest.String(), routes.Entries
+		item.EnforcedRouteDigest, item.EnforcedRoutes = &digest, &entries
+	}
+	for _, site := range device.RouteHealth {
+		item.Sites = append(item.Sites, deviceSiteHealthItem{SiteID: site.Ref, State: site.State, Code: site.Code})
+	}
+	if len(device.RouteHealth) > 0 {
+		at := observation.RouteHealthAt.UTC()
+		item.HealthReportedAt = &at
+	}
+	return item
 }
 
 type devicePeerLimitItem struct {
@@ -348,6 +401,7 @@ func newDeviceDistributionItem(device distribution.Device) deviceDistributionIte
 		if limit := observation.PeerLimit; limit.IsValid() {
 			item.PeerLimit = &devicePeerLimitItem{Sent: limit.Sent, Authorized: limit.Authorized}
 		}
+		item.Router = newDeviceRouterItem(device)
 	}
 	return item
 }

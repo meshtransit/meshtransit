@@ -5,6 +5,13 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: a Device's status carries `router` for a subnet router: its route
+  enforcement (the route digest it reports against the served routes it was
+  delivered: enforced, applying, mismatch, not_reported, unknown) and its
+  current health of each Site; one Site's read gives each router's `health`
+  of the Site and `route_enforcement`.
+- Client: a router that serves nothing yet reports the empty set's route
+  digest, as route digest v1 requires, instead of 32 zero bytes.
 - MTCP: `RouteHealthReport` (0x35) and capability `router.health1`: a Linux
   subnet router sends Core the health of every Site it serves, on change and
   every 10 seconds. Core keeps it, only for the Sites it sent, with the

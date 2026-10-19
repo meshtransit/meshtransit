@@ -949,6 +949,104 @@
                       "minimum": 2
                     }
                   }
+                },
+                "router": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "route_enforcement",
+                    "delivered_route_digest",
+                    "delivered_routes",
+                    "enforced_route_digest",
+                    "enforced_routes",
+                    "sites",
+                    "health_reported_at"
+                  ],
+                  "properties": {
+                    "route_enforcement": {
+                      "type": "string",
+                      "enum": [
+                        "enforced",
+                        "applying",
+                        "mismatch",
+                        "not_reported",
+                        "unknown"
+                      ],
+                      "description": "Whether the router forwards into the served routes it was last delivered, compared by route digest v1, as enforcement compares the packet filter."
+                    },
+                    "delivered_route_digest": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^sha256:[0-9a-f]{64}$"
+                    },
+                    "delivered_routes": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 0,
+                      "maximum": 4096
+                    },
+                    "enforced_route_digest": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^sha256:[0-9a-f]{64}$"
+                    },
+                    "enforced_routes": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 0,
+                      "maximum": 4096
+                    },
+                    "sites": {
+                      "type": "array",
+                      "maxItems": 1024,
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "site_id",
+                          "state",
+                          "code"
+                        ],
+                        "properties": {
+                          "site_id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "ok",
+                              "degraded",
+                              "failed"
+                            ]
+                          },
+                          "code": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          }
+                        }
+                      },
+                      "description": "The router's own health of each Site it serves; empty when it reported none in the last 30 seconds."
+                    },
+                    "health_reported_at": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "date-time"
+                    }
+                  },
+                  "description": "Present for a subnet router: its route enforcement and current Site health."
                 }
               }
             }
@@ -13518,6 +13616,46 @@
                                     "added_at": {
                                       "type": "string",
                                       "format": "date-time"
+                                    },
+                                    "health": {
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "required": [
+                                        "state",
+                                        "code",
+                                        "reported_at"
+                                      ],
+                                      "properties": {
+                                        "state": {
+                                          "type": "string",
+                                          "enum": [
+                                            "ok",
+                                            "degraded",
+                                            "failed"
+                                          ]
+                                        },
+                                        "code": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 64
+                                        },
+                                        "reported_at": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        }
+                                      },
+                                      "description": "The router's own health of this Site; only on one Site's read, absent when it reported none in the last 30 seconds."
+                                    },
+                                    "route_enforcement": {
+                                      "type": "string",
+                                      "enum": [
+                                        "enforced",
+                                        "applying",
+                                        "mismatch",
+                                        "not_reported",
+                                        "unknown"
+                                      ],
+                                      "description": "Only on one Site's read: whether the router forwards into the served routes it was delivered."
                                     }
                                   }
                                 }
@@ -13840,6 +13978,46 @@
                                   "added_at": {
                                     "type": "string",
                                     "format": "date-time"
+                                  },
+                                  "health": {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "required": [
+                                      "state",
+                                      "code",
+                                      "reported_at"
+                                    ],
+                                    "properties": {
+                                      "state": {
+                                        "type": "string",
+                                        "enum": [
+                                          "ok",
+                                          "degraded",
+                                          "failed"
+                                        ]
+                                      },
+                                      "code": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 64
+                                      },
+                                      "reported_at": {
+                                        "type": "string",
+                                        "format": "date-time"
+                                      }
+                                    },
+                                    "description": "The router's own health of this Site; only on one Site's read, absent when it reported none in the last 30 seconds."
+                                  },
+                                  "route_enforcement": {
+                                    "type": "string",
+                                    "enum": [
+                                      "enforced",
+                                      "applying",
+                                      "mismatch",
+                                      "not_reported",
+                                      "unknown"
+                                    ],
+                                    "description": "Only on one Site's read: whether the router forwards into the served routes it was delivered."
                                   }
                                 }
                               }
@@ -14089,6 +14267,46 @@
                                   "added_at": {
                                     "type": "string",
                                     "format": "date-time"
+                                  },
+                                  "health": {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "required": [
+                                      "state",
+                                      "code",
+                                      "reported_at"
+                                    ],
+                                    "properties": {
+                                      "state": {
+                                        "type": "string",
+                                        "enum": [
+                                          "ok",
+                                          "degraded",
+                                          "failed"
+                                        ]
+                                      },
+                                      "code": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 64
+                                      },
+                                      "reported_at": {
+                                        "type": "string",
+                                        "format": "date-time"
+                                      }
+                                    },
+                                    "description": "The router's own health of this Site; only on one Site's read, absent when it reported none in the last 30 seconds."
+                                  },
+                                  "route_enforcement": {
+                                    "type": "string",
+                                    "enum": [
+                                      "enforced",
+                                      "applying",
+                                      "mismatch",
+                                      "not_reported",
+                                      "unknown"
+                                    ],
+                                    "description": "Only on one Site's read: whether the router forwards into the served routes it was delivered."
                                   }
                                 }
                               }
@@ -14422,6 +14640,46 @@
                                   "added_at": {
                                     "type": "string",
                                     "format": "date-time"
+                                  },
+                                  "health": {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "required": [
+                                      "state",
+                                      "code",
+                                      "reported_at"
+                                    ],
+                                    "properties": {
+                                      "state": {
+                                        "type": "string",
+                                        "enum": [
+                                          "ok",
+                                          "degraded",
+                                          "failed"
+                                        ]
+                                      },
+                                      "code": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 64
+                                      },
+                                      "reported_at": {
+                                        "type": "string",
+                                        "format": "date-time"
+                                      }
+                                    },
+                                    "description": "The router's own health of this Site; only on one Site's read, absent when it reported none in the last 30 seconds."
+                                  },
+                                  "route_enforcement": {
+                                    "type": "string",
+                                    "enum": [
+                                      "enforced",
+                                      "applying",
+                                      "mismatch",
+                                      "not_reported",
+                                      "unknown"
+                                    ],
+                                    "description": "Only on one Site's read: whether the router forwards into the served routes it was delivered."
                                   }
                                 }
                               }
@@ -14690,6 +14948,46 @@
                                   "added_at": {
                                     "type": "string",
                                     "format": "date-time"
+                                  },
+                                  "health": {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "required": [
+                                      "state",
+                                      "code",
+                                      "reported_at"
+                                    ],
+                                    "properties": {
+                                      "state": {
+                                        "type": "string",
+                                        "enum": [
+                                          "ok",
+                                          "degraded",
+                                          "failed"
+                                        ]
+                                      },
+                                      "code": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 64
+                                      },
+                                      "reported_at": {
+                                        "type": "string",
+                                        "format": "date-time"
+                                      }
+                                    },
+                                    "description": "The router's own health of this Site; only on one Site's read, absent when it reported none in the last 30 seconds."
+                                  },
+                                  "route_enforcement": {
+                                    "type": "string",
+                                    "enum": [
+                                      "enforced",
+                                      "applying",
+                                      "mismatch",
+                                      "not_reported",
+                                      "unknown"
+                                    ],
+                                    "description": "Only on one Site's read: whether the router forwards into the served routes it was delivered."
                                   }
                                 }
                               }
@@ -14990,6 +15288,46 @@
                                   "added_at": {
                                     "type": "string",
                                     "format": "date-time"
+                                  },
+                                  "health": {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "required": [
+                                      "state",
+                                      "code",
+                                      "reported_at"
+                                    ],
+                                    "properties": {
+                                      "state": {
+                                        "type": "string",
+                                        "enum": [
+                                          "ok",
+                                          "degraded",
+                                          "failed"
+                                        ]
+                                      },
+                                      "code": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 64
+                                      },
+                                      "reported_at": {
+                                        "type": "string",
+                                        "format": "date-time"
+                                      }
+                                    },
+                                    "description": "The router's own health of this Site; only on one Site's read, absent when it reported none in the last 30 seconds."
+                                  },
+                                  "route_enforcement": {
+                                    "type": "string",
+                                    "enum": [
+                                      "enforced",
+                                      "applying",
+                                      "mismatch",
+                                      "not_reported",
+                                      "unknown"
+                                    ],
+                                    "description": "Only on one Site's read: whether the router forwards into the served routes it was delivered."
                                   }
                                 }
                               }
@@ -15264,6 +15602,46 @@
                                   "added_at": {
                                     "type": "string",
                                     "format": "date-time"
+                                  },
+                                  "health": {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "required": [
+                                      "state",
+                                      "code",
+                                      "reported_at"
+                                    ],
+                                    "properties": {
+                                      "state": {
+                                        "type": "string",
+                                        "enum": [
+                                          "ok",
+                                          "degraded",
+                                          "failed"
+                                        ]
+                                      },
+                                      "code": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 64
+                                      },
+                                      "reported_at": {
+                                        "type": "string",
+                                        "format": "date-time"
+                                      }
+                                    },
+                                    "description": "The router's own health of this Site; only on one Site's read, absent when it reported none in the last 30 seconds."
+                                  },
+                                  "route_enforcement": {
+                                    "type": "string",
+                                    "enum": [
+                                      "enforced",
+                                      "applying",
+                                      "mismatch",
+                                      "not_reported",
+                                      "unknown"
+                                    ],
+                                    "description": "Only on one Site's read: whether the router forwards into the served routes it was delivered."
                                   }
                                 }
                               }

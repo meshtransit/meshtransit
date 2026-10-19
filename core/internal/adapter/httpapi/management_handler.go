@@ -21,6 +21,7 @@ import (
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node/distribution"
 	"meshtransit.net/core/internal/domain/node/revocation"
 	policyapproval "meshtransit.net/core/internal/domain/policy/approval"
 	policycatalog "meshtransit.net/core/internal/domain/policy/catalog"
@@ -266,6 +267,9 @@ type ManagementHandlerOptions struct {
 	DeviceGroups DeviceGroupManager
 	// Sites lists and changes Network Sites and their routers; nil answers 503.
 	Sites SiteManager
+	// SiteRouterObservations, when set, adds each router's health of the
+	// Site and its route enforcement to one Site's read.
+	SiteRouterObservations distribution.ObservationLoader
 	// IdentityGroups lists and changes Workspace Identity Groups; nil answers 503.
 	IdentityGroups IdentityGroupManager
 	// DeviceTags lists and changes the device tag catalog and Device tags; nil answers 503.
@@ -333,6 +337,7 @@ type ManagementHandler struct {
 	interchangeTrust          InterchangeRelayTrust
 	deviceGroups              DeviceGroupManager
 	sites                     SiteManager
+	siteRouterObservations    distribution.ObservationLoader
 	identityGroups            IdentityGroupManager
 	deviceTags                DeviceTagManager
 	deviceLifecycle           DeviceLifecycleManager
@@ -411,6 +416,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		interchangeTrust:          options.InterchangeTrust,
 		deviceGroups:              options.DeviceGroups,
 		sites:                     options.Sites,
+		siteRouterObservations:    options.SiteRouterObservations,
 		identityGroups:            options.IdentityGroups,
 		deviceTags:                options.DeviceTags,
 		deviceLifecycle:           options.DeviceLifecycle,

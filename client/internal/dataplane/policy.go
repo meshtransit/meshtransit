@@ -225,6 +225,11 @@ func (f *policyFilter) Enforced() (EnforcedPolicy, bool) {
 	defer f.mu.Unlock()
 	enforced := f.enforced
 	enforced.RouteDigest, enforced.RouteEntries = f.served.digest, f.served.entries
+	if enforced.RouteDigest.IsZero() {
+		// Nothing installed yet serves nothing: the empty set has a digest
+		// of its own (route-digest-v1 §3), never 32 zero bytes.
+		enforced.RouteDigest, enforced.RouteEntries = emptyRouteDigest, 0
+	}
 	return enforced, !enforced.Digest.IsZero()
 }
 

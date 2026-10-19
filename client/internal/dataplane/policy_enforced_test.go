@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"meshtransit.net/client/internal/networkmap"
+	"meshtransit.net/shared/routedigest"
 )
 
 func TestPolicyFilterDigestsTheRulesItEnforces(t *testing.T) {
@@ -52,5 +53,16 @@ func TestPolicyFilterDigestsTheRulesItEnforces(t *testing.T) {
 	empty, _, _ := networkmap.PolicyDigest(nil)
 	if closed, _ := filter.Enforced(); closed.Digest != empty {
 		t.Fatalf("fail-closed digest = %s, want the empty filter %s", closed.Digest, empty)
+	}
+}
+
+func TestEnforcedReportsTheEmptyRouteDigestBeforeAnyRouteIsServed(t *testing.T) {
+	t.Parallel()
+	filter := newPolicyFilter()
+	filter.UpdateNetwork(testPolicySnapshot())
+	enforced, known := filter.Enforced()
+	empty, _, _ := routedigest.Compute(nil)
+	if !known || enforced.RouteDigest != empty || enforced.RouteEntries != 0 {
+		t.Fatalf("Enforced() = %+v, %t; want the empty set's route digest", enforced, known)
 	}
 }
