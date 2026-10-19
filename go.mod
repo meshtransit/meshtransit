@@ -12,6 +12,7 @@ require (
 	github.com/dexidp/dex v0.0.0-20260303133905-11d2eeb52b42
 	github.com/flynn/noise v1.1.0
 	github.com/go-jose/go-jose/v4 v4.1.3
+	github.com/google/nftables v0.3.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/redis/go-redis/v9 v9.22.0
@@ -21,8 +22,11 @@ require (
 )
 
 require (
+	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.23 // indirect
+	github.com/mdlayher/netlink v1.7.3-0.20250113171957-fbb4dce95f42 // indirect
+	github.com/mdlayher/socket v0.5.0 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
 	golang.org/x/mobile v0.0.0-20260812174124-2f419b2fb945 // indirect

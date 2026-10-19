@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net/netip"
 	"net/url"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -72,7 +74,8 @@ func (c *Client) StreamNetmap(ctx context.Context, controlURL string, material c
 	streamCtx, cancel := context.WithCancel(ctx)
 	var forwarders sync.WaitGroup
 	forwarders.Go(func() {
-		reports.forward(streamCtx, options.EndpointUpdates, options.EnforcementReports, options.PathStats)
+		reports.forward(streamCtx, options.EndpointUpdates, options.EnforcementReports, options.PathStats,
+			options.AdvertisedRoutes)
 	})
 	defer func() {
 		cancel()
@@ -109,7 +112,9 @@ type reportBox struct {
 	endpoints   controlplane.EndpointUpdate
 	enforcement *controlplane.EnforcementReport
 	paths       *controlplane.PathStatsReport // sent once, then cleared
-	changed     chan struct{}
+	// advertised is the latest offer; nil until the host's settings are read.
+	advertised []netip.Prefix
+	changed    chan struct{}
 }
 
 func newReportBox(initial controlplane.EndpointUpdate) *reportBox {
@@ -118,6 +123,7 @@ func newReportBox(initial controlplane.EndpointUpdate) *reportBox {
 
 func (box *reportBox) forward(ctx context.Context, endpoints <-chan controlplane.EndpointUpdate,
 	enforcement <-chan controlplane.EnforcementReport, paths <-chan controlplane.PathStatsReport,
+	advertised <-chan []netip.Prefix,
 ) {
 	for {
 		select {
@@ -147,6 +153,14 @@ func (box *reportBox) forward(ctx context.Context, endpoints <-chan controlplane
 			box.mu.Lock()
 			box.paths = &report
 			box.mu.Unlock()
+		case offer, ok := <-advertised:
+			if !ok {
+				advertised = nil
+				continue
+			}
+			box.mu.Lock()
+			box.advertised = append([]netip.Prefix{}, offer...)
+			box.mu.Unlock()
 		}
 		select {
 		case box.changed <- struct{}{}:
@@ -159,6 +173,13 @@ func (box *reportBox) latest() (controlplane.EndpointUpdate, *controlplane.Enfor
 	box.mu.Lock()
 	defer box.mu.Unlock()
 	return box.endpoints, box.enforcement
+}
+
+// offer returns the latest offer, nil before the settings were read.
+func (box *reportBox) offer() []netip.Prefix {
+	box.mu.Lock()
+	defer box.mu.Unlock()
+	return slices.Clone(box.advertised)
 }
 
 // takePaths returns the pending path report, once.
@@ -284,6 +305,9 @@ func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, e
 	if stream.options.EnableSubnetRoutes {
 		capabilities = append(capabilities, "routes.subnet.v1")
 	}
+	if stream.options.EnableSubnetRouter {
+		capabilities = append(capabilities, "router.subnet.v1")
+	}
 	s, err := c.open(ctx, stream.origin, sessionOptions{
 		machine: stream.keys.machine, control: stream.keys.control,
 		nodeKey: nodePublic[:], capabilities: capabilities, version: stream.options.Version,
@@ -317,7 +341,9 @@ func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, e
 		s.close()
 		<-readerDone
 	}()
-	run := &sessionRun{stream: stream, s: s, state: newMapState(stream.options.EnableSubnetRoutes), controlTime: time.UnixMilli(s.reply.GetServerTimeMs())}
+	state := newMapState(stream.options.EnableSubnetRoutes)
+	state.takesServed = stream.options.EnableSubnetRouter
+	run := &sessionRun{stream: stream, s: s, state: state, controlTime: time.UnixMilli(s.reply.GetServerTimeMs())}
 	return run.loop(ctx, inbox)
 }
 
@@ -332,6 +358,8 @@ type sessionRun struct {
 	lastSent    time.Time // when the last EndpointReport left
 	sentReport  bool
 	enforced    *controlplane.EnforcementReport
+	// offered is the offer sent in this session; nil before the first.
+	offered []netip.Prefix
 	// unacked counts applied deltas not acknowledged yet, ackView is the
 	// latest applied view and ackTimer acknowledges it (mtcp-v1 §7.2).
 	unacked  int
@@ -565,11 +593,19 @@ func (run *sessionRun) sendReports(timer *time.Timer) error {
 			Digest: enforcement.Digest[:], Grants: uint32(max(enforcement.Grants, 0)), //nolint:gosec // G115: bounded by the rule limit
 			AppliedMs: enforcement.AppliedAt.UnixMilli(),
 		}
+		if run.stream.options.EnableSubnetRouter {
+			// Always 32 bytes, also for an empty set (mtcp-v1 §8.4).
+			report.RouteDigest = enforcement.RouteDigest[:]
+			report.RouteEntries = uint32(max(enforcement.RouteEntries, 0)) //nolint:gosec // G115: at most 4,096
+		}
 		if err := run.send(sharedmtcp.MessageEnforcementReport, report); err != nil {
 			return err
 		}
 		copied := *enforcement
 		run.enforced = &copied
+	}
+	if err := run.sendOffer(); err != nil {
+		return err
 	}
 	if run.supports("stats.path1") {
 		if paths := run.stream.reports.takePaths(); paths != nil {
@@ -578,6 +614,30 @@ func (run *sessionRun) sendReports(timer *time.Timer) error {
 			}
 		}
 	}
+	return nil
+}
+
+// sendOffer sends the subnets the host offers to forward (mtcp-v1 §8.2) once
+// per session and whenever they change, always the whole set.
+func (run *sessionRun) sendOffer() error {
+	if !run.stream.options.EnableSubnetRouter {
+		return nil
+	}
+	offer := run.stream.reports.offer()
+	if offer == nil || (run.offered != nil && slices.Equal(run.offered, offer)) {
+		return nil
+	}
+	hostinfo := &mtcpv1.Hostinfo{
+		Hostname: run.stream.options.Hostname, Os: runtime.GOOS, Arch: runtime.GOARCH,
+		ClientVersion: run.stream.options.Version,
+	}
+	for _, prefix := range offer {
+		hostinfo.AdvertisedPrefixes = append(hostinfo.AdvertisedPrefixes, sharedmtcp.AppendPrefix(prefix))
+	}
+	if err := run.send(sharedmtcp.MessageHostinfoReport, &mtcpv1.HostinfoReport{Hostinfo: hostinfo}); err != nil {
+		return err
+	}
+	run.offered = offer
 	return nil
 }
 

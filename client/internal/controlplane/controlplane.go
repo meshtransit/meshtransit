@@ -7,12 +7,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"time"
 
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/pathdiscovery"
 	"meshtransit.net/shared/disco"
 	"meshtransit.net/shared/policydigest"
+	"meshtransit.net/shared/routedigest"
 )
 
 var (
@@ -132,6 +134,14 @@ type NetmapOptions struct {
 	// EnableSubnetRoutes advertises that the node takes subnet routes
 	// (mtcp-v1 §7.6, routes.subnet.v1).
 	EnableSubnetRoutes bool
+	// EnableSubnetRouter advertises that the node can forward into Sites
+	// (mtcp-v1 §7.6, router.subnet.v1): it takes served routes and reports
+	// what it offers and serves.
+	EnableSubnetRouter bool
+	// AdvertisedRoutes, with EnableSubnetRouter, carries the subnets the
+	// host's local settings offer to forward; each set is sent to Core in a
+	// HostinfoReport, again in every new session.
+	AdvertisedRoutes   <-chan []netip.Prefix
 	Hostname           string
 	Version            string
 	PinnedFingerprint  string
@@ -239,6 +249,10 @@ type EnforcementReport struct {
 	Digest    policydigest.Digest
 	Grants    int
 	AppliedAt time.Time
+	// RouteDigest and RouteEntries cover the served routes the node
+	// forwards into (mtcp-v1 §8.4); sent only with router.subnet.v1.
+	RouteDigest  routedigest.Digest
+	RouteEntries int
 }
 
 // NetmapHandler consumes one fully validated, defensive network snapshot.

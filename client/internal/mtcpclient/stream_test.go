@@ -3,6 +3,7 @@ package mtcpclient
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -215,6 +216,62 @@ func TestStreamNetmapSendsEnforcementEvidence(t *testing.T) {
 	select {
 	case report := <-received:
 		if report.GetGrants() != 2 || report.GetDigest()[0] != 1 {
+			t.Fatalf("enforcement report %v", report)
+		}
+	default:
+		t.Fatal("no enforcement report reached Core")
+	}
+}
+
+func TestStreamNetmapRouterOffersAndReportsRouteDigest(t *testing.T) {
+	t.Parallel()
+	offers := make(chan *mtcpv1.HostinfoReport, 1)
+	reports := make(chan *mtcpv1.EnforcementReport, 1)
+	core := newStreamCore(t, func(core *streamCore, s *coreSession, _ int32) {
+		core.keyUpdate(s)
+		_ = s.send(sharedmtcp.MessageMapSnapshot, core.snapshot(1))
+		if offer, ok := core.expect(s, sharedmtcp.MessageHostinfoReport).(*mtcpv1.HostinfoReport); ok {
+			offers <- offer
+		}
+		if report, ok := core.expect(s, sharedmtcp.MessageEnforcementReport).(*mtcpv1.EnforcementReport); ok {
+			reports <- report
+		}
+		_ = s.send(sharedmtcp.MessageLifecycle, &mtcpv1.Lifecycle{State: mtcpv1.Lifecycle_REVOKED})
+		answerPings(s)
+	})
+	material, options := core.options(t)
+	advertised := make(chan []netip.Prefix, 1)
+	advertised <- []netip.Prefix{netip.MustParsePrefix("10.20.0.0/16")}
+	enforcement := make(chan controlplane.EnforcementReport, 1)
+	options.EnableSubnetRouter, options.AdvertisedRoutes, options.EnforcementReports = true, advertised, enforcement
+	err := core.client().StreamNetmap(t.Context(), core.origin(), material, options,
+		func(context.Context, networkmap.Snapshot) error {
+			enforcement <- controlplane.EnforcementReport{
+				Digest: policydigest.Digest{1}, RouteDigest: policydigest.Digest{2},
+				RouteEntries: 1, AppliedAt: time.Now(),
+			}
+			return nil
+		})
+	if !errors.Is(err, controlplane.ErrNetmapAuthorityRevoked) {
+		t.Fatalf("StreamNetmap = %v", err)
+	}
+	if !slices.ContainsFunc(core.hello, func(hello *mtcpv1.ClientHello) bool {
+		return slices.Contains(hello.GetCapabilities(), "router.subnet.v1")
+	}) {
+		t.Fatal("the map stream did not declare router.subnet.v1")
+	}
+	select {
+	case offer := <-offers:
+		prefixes := offer.GetHostinfo().GetAdvertisedPrefixes()
+		if len(prefixes) != 1 || prefixes[0].GetBits() != 16 {
+			t.Fatalf("offer = %v", offer)
+		}
+	default:
+		t.Fatal("no offer reached Core")
+	}
+	select {
+	case report := <-reports:
+		if len(report.GetRouteDigest()) != 32 || report.GetRouteDigest()[0] != 2 || report.GetRouteEntries() != 1 {
 			t.Fatalf("enforcement report %v", report)
 		}
 	default:

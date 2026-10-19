@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"path/filepath"
 	"slices"
 
 	"meshtransit.net/client/internal/routesettings"
@@ -26,6 +27,11 @@ type RoutedOptions struct {
 	// Priority is the policy rule priority at which every user but meshd
 	// looks up Table.
 	Priority int
+	// NftTable, when set, lets the host forward as a subnet router: the
+	// name of the helper's own inet nftables table. StatePath records the
+	// host forwarding settings the helper changed.
+	NftTable  string
+	StatePath string
 }
 
 // routedState is what the routed table holds: routes to the mesh
@@ -50,7 +56,24 @@ var errRoutedUnsupported = errors.New("netadmin: routed routes are not supported
 
 func validRoutedOptions(options RoutedOptions) bool {
 	return options.SettingsPath != "" && options.Table > 0 && options.Table < 1<<31 &&
-		(options.Table < 253 || options.Table > 255) && options.Priority > 0 && options.Priority < 32766
+		(options.Table < 253 || options.Table > 255) && options.Priority > 0 && options.Priority < 32766 &&
+		(options.NftTable == "" || (validNftTableName(options.NftTable) && filepath.IsAbs(options.StatePath)))
+}
+
+// validNftTableName accepts a short table name of letters, digits, '_' and
+// '-'.
+func validNftTableName(name string) bool {
+	if name == "" || len(name) > 32 {
+		return false
+	}
+	for _, character := range name {
+		allowed := character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || character == '_' ||
+			character == '-'
+		if !allowed {
+			return false
+		}
+	}
+	return true
 }
 
 // setRouted installs the routed routes the local settings admit and

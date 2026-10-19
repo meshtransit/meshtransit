@@ -107,6 +107,9 @@ func ValidateAndClone(snapshot Snapshot, now time.Time) (Snapshot, error) {
 			return Snapshot{}, fmt.Errorf("%w: dns: %w", ErrInvalid, err)
 		}
 	}
+	if err := validateServed(snapshot.Served); err != nil {
+		return Snapshot{}, fmt.Errorf("%w: served: %w", ErrInvalid, err)
+	}
 	if err := validateRoutes(snapshot.Routes, snapshot.Self.StableID); err != nil {
 		return Snapshot{}, fmt.Errorf("%w: routes: %w", ErrInvalid, err)
 	}
@@ -524,6 +527,7 @@ func cloneSnapshot(snapshot Snapshot) Snapshot {
 		cloned.Interchange = &interchange
 	}
 	cloned.Routes = cloneRoutes(snapshot.Routes)
+	cloned.Served = cloneServed(snapshot.Served)
 
 	return cloned
 }

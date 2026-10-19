@@ -158,7 +158,7 @@ Packet payloads are never collected.
 
 - `meshnetd` serves only the configured `meshd` user, verified with
   `SO_PEERCRED` (Linux, `SOCK_SEQPACKET`) or `LOCAL_PEERCRED` (macOS, framed
-  stream). Messages are at most 128 KiB, unknown fields and passed descriptors
+  stream). Messages are at most 192 KiB, unknown fields and passed descriptors
   are refused, and each operation has a deadline.
 - Its startup configuration fixes the interface names, MTU, allowed user,
   overlay frame and DNS endpoint. Requests can only open the tunnel, set its
@@ -170,7 +170,9 @@ Packet payloads are never collected.
   `/etc/meshtransit/routes.json` admit: never a default or very wide route,
   the frame, loopback, link-local or multicast, a public range without
   `accept-public`, more than 4,096 routes, or a network the host reaches
-  itself. A compromised `meshd` cannot widen any of these.
+  itself. A compromised `meshd` cannot widen any of these. As a router it
+  forwards only into the part of what is requested that root's settings
+  offer while router mode is on, and only through its own nftables table.
 - Route changes add before they remove and roll back on failure. `meshd`
   checks the helper's result against the validated map before using the
   tunnel.
@@ -259,8 +261,8 @@ a failed upload drops telemetry, never packets.
 - There is no replay or rollback protection of local state across restarts,
   and no session resume: every reconnect takes a full snapshot.
 - Node keys are not renewed automatically before they expire.
-- Subnet routes reach Sites from Linux only; macOS and Windows report them
-  unsupported, and no node can act as a router yet. Exit routes, capability
+- Subnet routes reach Sites, and subnet routers forward into them, from
+  Linux only; macOS and Windows report both unsupported. Exit routes, capability
   grants and fragment reassembly are not implemented; they fail closed.
 - Flow logs have no durable client queue, credential rotation, retention
   policy or tamper-evident storage.

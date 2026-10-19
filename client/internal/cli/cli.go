@@ -510,7 +510,7 @@ func runStatus(
 	deviceExpiry := formatDeviceExpiry(status.DeviceExpiry, status.DeviceExpiresAt, time.Now())
 	_, _ = fmt.Fprintf(
 		stdout,
-		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nNetwork changes: %s\nRuntime recovery: %s\nRuntime: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\nNetwork: %s\nSelf addresses: %s\nDevice expiry: %s\nPeers: %d\nPeer paths: %s\nSubnet routes: %s\nPath transitions: %s\nPath probes: %s\nRelay: %s\nNAT: %s\nPort mapping: %s\nCloud: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
+		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nNetwork changes: %s\nRuntime recovery: %s\nRuntime: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\nNetwork: %s\nSelf addresses: %s\nDevice expiry: %s\nPeers: %d\nPeer paths: %s\nSubnet routes: %s\nSubnet router: %s\nPath transitions: %s\nPath probes: %s\nRelay: %s\nNAT: %s\nPort mapping: %s\nCloud: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
 		status.Daemon.Version,
 		status.State,
 		status.DataPlane,
@@ -530,6 +530,7 @@ func runStatus(
 		status.PeerCount,
 		formatPathStatus(status.PeerPaths),
 		formatSubnetRouteStatus(status.SubnetRoutes),
+		formatSubnetRouterStatus(status.SubnetRouter),
 		formatPathTransitionStatus(status.PeerPaths),
 		formatPathProbeStatus(status.PathProbes),
 		formatRelayStatus(status.Relay),
@@ -610,25 +611,47 @@ func formatSubnetRouteStatus(status *localapi.SubnetRouteStatus) string {
 	if status.Error != "" {
 		summary += "; error: " + status.Error
 	}
-	if status.RefusedTotal > 0 {
-		refused := make([]string, 0, maximumListedRefusals)
-		for _, refusal := range status.Refused[:min(len(status.Refused), maximumListedRefusals)] {
-			refused = append(refused, refusal.Prefix+" "+refusal.Reason)
-		}
-		summary += fmt.Sprintf("; %d refused", status.RefusedTotal)
-		if len(refused) > 0 {
-			summary += " (" + strings.Join(refused, ", ")
-			if status.RefusedTotal > len(refused) {
-				summary += ", ..."
-			}
-			summary += ")"
-		}
-	}
+	summary += formatRefusals(status.RefusedTotal, status.Refused)
 	if status.UnreachableAnswered > 0 || status.UnreachableLimited > 0 {
 		summary += fmt.Sprintf("; %d unreachable answered, %d limited", status.UnreachableAnswered,
 			status.UnreachableLimited)
 	}
 	return summary
+}
+
+func formatSubnetRouterStatus(status *localapi.SubnetRouterStatus) string {
+	if status == nil || (status.Sites == 0 && status.Error == "") {
+		return "none"
+	}
+	summary := fmt.Sprintf("%d of %d prefixes in %d Sites served", status.Served, status.Requested, status.Sites)
+	if status.Health != "" && status.Health != "ok" {
+		summary += " [" + status.Health + "]"
+	}
+	if status.Error != "" {
+		summary += "; error: " + status.Error
+	}
+	summary += formatRefusals(status.RefusedTotal, status.Refused)
+	return summary
+}
+
+// formatRefusals lists the first refused routes and counts them all.
+func formatRefusals(total int, refusals []localapi.SubnetRouteRefusal) string {
+	if total == 0 {
+		return ""
+	}
+	listed := make([]string, 0, maximumListedRefusals)
+	for _, refusal := range refusals[:min(len(refusals), maximumListedRefusals)] {
+		listed = append(listed, refusal.Prefix+" "+refusal.Reason)
+	}
+	text := fmt.Sprintf("; %d refused", total)
+	if len(listed) > 0 {
+		text += " (" + strings.Join(listed, ", ")
+		if total > len(listed) {
+			text += ", ..."
+		}
+		text += ")"
+	}
+	return text
 }
 
 func formatNetworkChangeStatus(status localapi.NetworkChangeStatus) string {

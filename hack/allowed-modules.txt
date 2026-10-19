@@ -36,6 +36,8 @@ github.com/go-logr/logr
 github.com/go-logr/stdr
 github.com/go-sql-driver/mysql
 github.com/go-viper/mapstructure/v2
+github.com/google/go-cmp
+github.com/google/nftables
 github.com/google/s2a-go
 github.com/google/uuid
 github.com/googleapis/enterprise-certificate-proxy
@@ -62,6 +64,8 @@ github.com/mattermost/xml-roundtrip-validator
 github.com/mattn/go-colorable
 github.com/mattn/go-isatty
 github.com/mattn/go-sqlite3
+github.com/mdlayher/netlink
+github.com/mdlayher/socket
 github.com/mitchellh/copystructure
 github.com/mitchellh/mapstructure
 github.com/mitchellh/reflectwalk

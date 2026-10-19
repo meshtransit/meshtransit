@@ -33,6 +33,7 @@ type Status struct {
 	PolicyRuleCount    int                    `json:"policy_rule_count"`
 	PeerPaths          PathStatus             `json:"paths"`
 	SubnetRoutes       *SubnetRouteStatus     `json:"subnet_routes,omitempty"`
+	SubnetRouter       *SubnetRouterStatus    `json:"subnet_router,omitempty"`
 	PathProbes         *PathProbeStatus       `json:"path_probes,omitempty"`
 	Relay              RelayStatus            `json:"relay"`
 	NetworkChanges     NetworkChangeStatus    `json:"network_changes"`
@@ -172,6 +173,17 @@ type SubnetRouteStatus struct {
 	Error               string               `json:"error,omitempty"`
 	UnreachableAnswered uint64               `json:"unreachable_answered"`
 	UnreachableLimited  uint64               `json:"unreachable_limited"`
+}
+
+// SubnetRouterStatus is what the node forwards into as a router.
+type SubnetRouterStatus struct {
+	Sites        int                  `json:"sites"`
+	Requested    int                  `json:"requested"`
+	Served       int                  `json:"served"`
+	RefusedTotal int                  `json:"refused_total"`
+	Refused      []SubnetRouteRefusal `json:"refused,omitempty"`
+	Health       string               `json:"health"`
+	Error        string               `json:"error,omitempty"`
 }
 
 // SubnetRouteRefusal is one route the host refused, with its reason code.

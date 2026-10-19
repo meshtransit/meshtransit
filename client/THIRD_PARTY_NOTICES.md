@@ -1,11 +1,13 @@
 # Third-party notices: client
 
-`meshd` and `meshctl` contain only MeshTransit code and the modules below.
+`meshd`, `meshnetd` and `meshctl` contain only MeshTransit code and the modules below.
 
 | Module | Used for | License |
 | --- | --- | --- |
 | `golang.zx2c4.com/wireguard` | Linux encrypted data plane | MIT |
 | `github.com/vishvananda/netlink`, `github.com/vishvananda/netns` | Linux routes, addresses and namespaces | Apache-2.0 |
+| `github.com/google/nftables` | Linux subnet router packet rules (`meshnetd`) | Apache-2.0 |
+| `github.com/mdlayher/netlink`, `github.com/mdlayher/socket` | netlink sockets used by `github.com/google/nftables` | MIT |
 | `github.com/flynn/noise` | MTCP v1 Noise handshake | BSD-3-Clause |
 | `github.com/coder/websocket` | MTCP and relay WebSocket fallback | ISC |
 | `github.com/klauspost/compress` | MTCP message compression | BSD-3-Clause, parts Apache-2.0 |

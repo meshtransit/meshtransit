@@ -76,6 +76,11 @@ type Server struct {
 	hostRouting      hostRouting
 	activeRouted     routedState
 	requestedRouted  []netip.Prefix // nil until meshd asks
+	// servedConfigurer forwards into served prefixes; activeServed are those
+	// it forwards into, requestedServed what meshd last asked (nil before).
+	servedConfigurer servedConfigurer
+	activeServed     []routesettings.ServedEntry
+	requestedServed  *servedRequest
 	// loadSettings reads the route settings (routesettings.Load).
 	loadSettings func(string) (routesettings.Settings, error)
 	// mu serializes requests with background work (watchDNSLink on macOS).
@@ -281,6 +286,8 @@ func (s *Server) handle(ctx context.Context, rawConnection net.Conn) error {
 		return s.resetDNS(ctx, connection)
 	case operationSetRouted:
 		return s.setRouted(connection, validated.routed)
+	case operationSetServed:
+		return s.setServed(connection, validated.served)
 	default:
 		return errors.New("netadmin: validated request has an unknown operation")
 	}
@@ -323,6 +330,8 @@ func (s *Server) openTUN(connection *net.UnixConn, config TUNConfig) error {
 	s.hasActiveTUN = true
 	// A new interface carries no routed routes: the old one's left with it.
 	s.activeRouted, s.requestedRouted = routedState{}, nil
+	// Nor forwarding: meshd asks again for the new interface.
+	s.clearServed()
 
 	return writeResponse(connection, response{
 		Version:       protocolVersion,
@@ -367,6 +376,12 @@ func (s *Server) setTUN(connection *net.UnixConn, config TUNConfig) error {
 		return fmt.Errorf("netadmin: replacing tun routes: %w", err)
 	}
 	s.activeTUN = cloneTUNConfig(config)
+	// The router's own addresses may have changed: its rules follow.
+	if s.requestedServed != nil {
+		if _, _, err := s.applyServed(*s.requestedServed); err != nil {
+			s.logger.Warn("reapplying subnet forwarding after a tun change failed", "error", err)
+		}
+	}
 
 	return writeResponse(connection, response{Version: protocolVersion, OK: true}, nil)
 }

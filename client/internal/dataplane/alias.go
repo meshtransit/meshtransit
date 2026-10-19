@@ -80,7 +80,7 @@ func (f *policyFilter) ProcessPacket(direction PacketDirection, packet []byte) b
 	}
 	grant, aliased := f.aliases[address]
 	if !aliased {
-		return f.allowOrdinaryLocked(direction, header, now)
+		return f.allowOrdinaryLocked(direction, header, packet, now)
 	}
 	if !f.peerUsableAt(address, now) || !now.Before(grant.binding.ExpiresAt) {
 		return false

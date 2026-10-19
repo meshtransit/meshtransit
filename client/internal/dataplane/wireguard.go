@@ -291,8 +291,16 @@ type WireGuardEngine struct {
 	// lazyResponder reads initiations to this node's key; it is reused while
 	// the key is the same and cleared once its device is closed.
 	lazyResponder *wghandshake.Responder
-	// routed is what the helper installed of the map's subnet routes.
-	routed routedEngineState
+	// routed keeps the helper's subnet routes in step with the map;
+	// routedStatus is what it did with them.
+	routed       helperSync[[]netip.Prefix, netadmin.RoutedResult]
+	routedStatus SubnetRouteStatus
+	// served keeps the router's forwarding in step with the map; servedStatus
+	// is what the helper did with it.
+	served       helperSync[[]networkmap.ServedSite, netadmin.ServedResult]
+	servedStatus SubnetRouterStatus
+	// enforcementChanges signals enforced policy changes no map carried.
+	enforcementChanges chan struct{}
 }
 
 // NewWireGuard constructs the Linux encrypted packet engine.
@@ -412,6 +420,7 @@ func (e *WireGuardEngine) Apply(
 		return state, err
 	}
 	e.syncRoutedLocked(routed.allPrefixes())
+	e.syncServedLocked(snapshot.Served)
 	e.filter.resume()
 	return state, nil
 }
@@ -1401,6 +1410,7 @@ func (e *WireGuardEngine) closeLocked() error {
 		return nil
 	}
 	e.resetRoutedLocked()
+	e.resetServedLocked()
 	if e.device == nil {
 		e.forgetLazyPeers()
 		return nil

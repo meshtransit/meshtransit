@@ -39,6 +39,7 @@ type statusResponse struct {
 	PolicyRuleCount   int                   `json:"policy_rule_count"`
 	PeerPaths         pathStatus            `json:"paths"`
 	SubnetRoutes      subnetRouteStatus     `json:"subnet_routes"`
+	SubnetRouter      subnetRouterStatus    `json:"subnet_router"`
 	PathProbes        pathProbeStatus       `json:"path_probes"`
 	Relay             relayStatus           `json:"relay"`
 	NetworkChanges    networkChangeStatus   `json:"network_changes"`
@@ -105,6 +106,19 @@ type subnetRouteStatus struct {
 	Error               string               `json:"error,omitempty"`
 	UnreachableAnswered uint64               `json:"unreachable_answered"`
 	UnreachableLimited  uint64               `json:"unreachable_limited"`
+}
+
+// subnetRouterStatus is what the node forwards into as a router. Health is
+// prefix_not_advertised when Core asked for a subnet the host does not
+// offer, route_forwarding_failed when the helper failed, else ok.
+type subnetRouterStatus struct {
+	Sites        int                  `json:"sites"`
+	Requested    int                  `json:"requested"`
+	Served       int                  `json:"served"`
+	RefusedTotal int                  `json:"refused_total"`
+	Refused      []subnetRouteRefusal `json:"refused,omitempty"`
+	Health       string               `json:"health"`
+	Error        string               `json:"error,omitempty"`
 }
 
 type subnetRouteRefusal struct {

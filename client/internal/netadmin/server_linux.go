@@ -25,6 +25,15 @@ func NewServer(options ServerOptions) (*Server, error) {
 		if err := server.routedConfigurer.Clear(*server.routed, server.allowedUID); err != nil {
 			return nil, fmt.Errorf("netadmin: clearing subnet routes left by a previous run: %w", err)
 		}
+		if options.Routed.NftTable != "" {
+			server.servedConfigurer = newKernelServedConfigurer(*options.Routed)
+			// Nor forwarding, also after a crash: the state file restores
+			// the host settings it changed. A host that cannot forward
+			// still serves as a consumer, so a failure here is not fatal.
+			if err := server.servedConfigurer.Clear(); err != nil {
+				server.logger.Warn("clearing subnet forwarding left by a previous run failed", "error", err)
+			}
+		}
 	}
 	return server, nil
 }

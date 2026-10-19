@@ -33,6 +33,9 @@ ProtectKernelModules=yes
 ProtectKernelTunables=yes
 ProtectSystem=strict
 ReadWritePaths=/run/meshnetd
+# A subnet router turns forwarding on per interface (IPv6: host-wide);
+# every other kernel tunable stays read-only.
+ReadWritePaths=/proc/sys/net/ipv4/conf /proc/sys/net/ipv6/conf
 RestrictAddressFamilies=AF_UNIX AF_NETLINK
 RestrictNamespaces=yes
 RestrictRealtime=yes

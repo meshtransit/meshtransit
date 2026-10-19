@@ -5,6 +5,21 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Client (Linux): `meshd --enable-subnet-router` lets Core make the host a
+  router of the subnets it offers. `meshd` offers what
+  `/etc/meshtransit/routes.json` advertises while router mode is on;
+  `meshnetd` forwards only into the part of Core's served routes the host
+  offers, turns forwarding on only where needed (restoring it afterwards,
+  also after a crash) and installs one atomically replaced nftables table
+  (`inet meshtransit`, `--router-nft-table`): only served prefixes, Sites
+  answer but never open connections, the router's own addresses stay out
+  of reach, masquerade per Site (NAT66 for IPv6), MSS clamping. The packet
+  filter applies the Site rules and admits ICMP errors about tracked flows
+  (path MTU discovery); the enforcement report carries the route digest;
+  `meshctl status` shows a `Subnet router` line. The packaged `meshnetd`
+  unit may now write `/proc/sys/net/ipv{4,6}/conf`. New modules:
+  `github.com/google/nftables` (Apache-2.0) with `github.com/mdlayher/netlink`
+  and `github.com/mdlayher/socket` (MIT).
 - Client (Linux): `meshd --enable-subnet-routes` reaches the Sites Core
   grants. It asks `meshnetd` for every granted Site's prefixes (again every
   10 seconds), sends a served Site's traffic to its primary router, lets a

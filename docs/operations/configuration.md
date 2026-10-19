@@ -467,6 +467,8 @@ With `--tls`, exactly one certificate source is allowed.
 | `--enable-dns` | `false` | MeshTransit DNS |
 | `--enable-device-aliases` | `false` | Device alias v1; needs the data plane |
 | `--enable-subnet-routes` | `false` | Reach Sites through subnet routers (Linux); needs the data plane and `meshnetd --routed-table` |
+| `--enable-subnet-router` | `false` | Let Core make the host a router of the subnets it offers (Linux); needs the data plane |
+| `--routes-file` | `/etc/meshtransit/routes.json` | Root-owned subnet route settings `meshd` reads to offer subnets |
 | `--port-mapping` | `auto` | `auto` or `off` |
 | `--cloud-metadata` | `auto` | `auto` or `off` |
 | `--lazy-peers` | `auto` | `auto`, `off` or `always` |
@@ -485,5 +487,7 @@ The packages run `meshd` with `--enable-data-plane --enable-dns
 `--dns-address` (`192.0.2.53`) and `--dns-port` (1053), `--allow-prefix`
 (narrows `100.64.0.0/10`, `198.18.0.0/15`, `fd00::/8`); on Linux also
 `--interface` (`mesh0`), `--dns-interface` (`meshdns0`),
-`--resolvectl-path`, `--routed-table` (`0`, off; the package sets `5267`)
-and `--routed-priority` (`5400`); on macOS `--scutil-path`.
+`--resolvectl-path`, `--routed-table` (`0`, off; the package sets `5267`),
+`--routed-priority` (`5400`), `--router-nft-table` (`meshtransit`; empty
+forwards into no subnets) and `--router-state`
+(`/run/meshnetd/router-state.json`); on macOS `--scutil-path`.

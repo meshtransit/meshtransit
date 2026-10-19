@@ -23,6 +23,9 @@ type Snapshot struct {
 	// Routes are the Sites the node may reach (mtcp-v1 §7.6), sorted by
 	// reference; nil when the node does not take subnet routes.
 	Routes []SiteRoute
+	// Served are the Sites the node forwards to as a router (mtcp-v1 §7.6),
+	// sorted by reference; nil when the node is not a router.
+	Served []ServedSite
 }
 
 // Interchange is a verified relay grant: the ticket this node presents to

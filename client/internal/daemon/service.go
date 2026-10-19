@@ -28,6 +28,7 @@ import (
 	"meshtransit.net/client/internal/peerprobe"
 	"meshtransit.net/client/internal/profile"
 	"meshtransit.net/client/internal/relay"
+	"meshtransit.net/client/internal/routesettings"
 	"meshtransit.net/client/internal/runtimehealth"
 	"meshtransit.net/client/internal/version"
 )
@@ -155,6 +156,7 @@ type Status struct {
 	PolicyRuleCount int
 	PeerPaths       dataplane.PeerPathSnapshot
 	SubnetRoutes    dataplane.SubnetRouteStatus
+	SubnetRouter    dataplane.SubnetRouterStatus
 	PathProbes      PathProbeStatus
 	Relay           relay.HealthSnapshot
 	NetworkChanges  NetworkChangeStatus
@@ -290,6 +292,10 @@ type subnetRouteStatusDataPlane interface {
 	SubnetRoutes() dataplane.SubnetRouteStatus
 }
 
+type subnetRouterStatusDataPlane interface {
+	SubnetRouter() dataplane.SubnetRouterStatus
+}
+
 type peerProbeDataPlane interface {
 	pathdiscovery.DatagramTransport
 	SetPeerProbeHandler(pathdiscovery.DatagramHandler) error
@@ -362,6 +368,9 @@ type Service struct {
 	configuredCandidates pathdiscovery.Set
 	enableDeviceAliases  bool
 	enableSubnetRoutes   bool
+	enableSubnetRouter   bool
+	routeSettingsPath    string
+	loadRouteSettings    func(string) (routesettings.Settings, error)
 	clock                func() time.Time
 	runtimeRetryDelay    func(time.Duration) time.Duration
 	endpointRefreshDelay func() time.Duration
@@ -423,6 +432,10 @@ type Options struct {
 	EnableDeviceAliases bool
 	// EnableSubnetRoutes declares routes.subnet.v1 (mtcp-v1 §7.6).
 	EnableSubnetRoutes bool
+	// EnableSubnetRouter declares router.subnet.v1 and offers the subnets
+	// of the settings at RouteSettingsPath (mtcp-v1 §7.6, §8.2).
+	EnableSubnetRouter bool
+	RouteSettingsPath  string
 	Hostname           string
 	Clock              func() time.Time
 	DataPlane          DataPlaneController
@@ -461,8 +474,11 @@ func New(
 	if options.EnableDeviceAliases && options.DataPlane == nil {
 		return nil, errors.New("daemon: Device aliases require a packet engine")
 	}
-	if options.EnableSubnetRoutes && options.DataPlane == nil {
+	if (options.EnableSubnetRoutes || options.EnableSubnetRouter) && options.DataPlane == nil {
 		return nil, errors.New("daemon: subnet routes require a packet engine")
+	}
+	if options.EnableSubnetRouter && options.RouteSettingsPath == "" {
+		return nil, errors.New("daemon: a subnet router requires its route settings path")
 	}
 	if options.Clock == nil {
 		options.Clock = time.Now
@@ -506,6 +522,9 @@ func New(
 		configuredCandidates: configuredSet,
 		enableDeviceAliases:  options.EnableDeviceAliases,
 		enableSubnetRoutes:   options.EnableSubnetRoutes,
+		enableSubnetRouter:   options.EnableSubnetRouter,
+		routeSettingsPath:    options.RouteSettingsPath,
+		loadRouteSettings:    routesettings.Load,
 		clock:                options.Clock,
 		runtimeRetryDelay:    jitteredRuntimeRetryDelay,
 		endpointRefreshDelay: randomEndpointRefreshDelay,
@@ -828,8 +847,17 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		enforcedPolicy, reportsEnforcement := s.dataPlane.(enforcedPolicyDataPlane)
 		if reportsEnforcement {
 			enforcementReports = make(chan controlplane.EnforcementReport, 1)
+			if changing, ok := s.dataPlane.(enforcementChangesDataPlane); ok {
+				go republishEnforcement(streamCtx, changing.EnforcementChanges(), enforcedPolicy, enforcementReports)
+			}
 		}
 		nextControlKey, _ := record.NextControlKey()
+		var advertisedRoutes chan []netip.Prefix
+		if s.enableSubnetRouter {
+			advertisedRoutes = make(chan []netip.Prefix)
+			go watchRouteOffer(streamCtx, s.loadRouteSettings, s.routeSettingsPath, routeOfferPoll, s.logger,
+				advertisedRoutes)
+		}
 		go func() {
 			streamDone <- s.prober.StreamNetmap(
 				streamCtx,
@@ -838,6 +866,8 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				controlplane.NetmapOptions{
 					EnableDeviceAliases: s.enableDeviceAliases,
 					EnableSubnetRoutes:  s.enableSubnetRoutes,
+					EnableSubnetRouter:  s.enableSubnetRouter,
+					AdvertisedRoutes:    advertisedRoutes,
 					Hostname:            s.hostname,
 					Version:             "meshd/" + s.build.Version,
 					PinnedFingerprint:   record.ControlKeyFingerprint(),
@@ -2055,6 +2085,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		PolicyRuleCount:    syncState.policyRuleCount,
 		PeerPaths:          peerPaths,
 		SubnetRoutes:       subnetRoutes,
+		SubnetRouter:       s.subnetRouterStatus(),
 		PathProbes:         s.pathProbeStatus(),
 		Relay:              relayStatus,
 		NetworkChanges: NetworkChangeStatus{
@@ -2091,6 +2122,18 @@ func (s *Service) recordRuntimeRecovery() {
 	if s.runtimePending.Swap(false) {
 		s.runtimeRecoveries.Add(1)
 	}
+}
+
+func (s *Service) subnetRouterStatus() dataplane.SubnetRouterStatus {
+	if s == nil || s.dataPlane == nil {
+		return dataplane.SubnetRouterStatus{}
+	}
+	s.dataPlaneMu.Lock()
+	defer s.dataPlaneMu.Unlock()
+	if reporter, supported := s.dataPlane.(subnetRouterStatusDataPlane); supported {
+		return reporter.SubnetRouter()
+	}
+	return dataplane.SubnetRouterStatus{}
 }
 
 func (s *Service) dataPlaneStatus() (dataplane.PeerPathSnapshot, relay.HealthSnapshot, dataplane.SubnetRouteStatus) {
@@ -2783,12 +2826,36 @@ type enforcedPolicyDataPlane interface {
 	EnforcedPolicy() (dataplane.EnforcedPolicy, bool)
 }
 
+// enforcementChangesDataPlane signals enforced policy changes that no map
+// update carried, such as the route digest once the helper answered.
+type enforcementChangesDataPlane interface {
+	EnforcementChanges() <-chan struct{}
+}
+
+// republishEnforcement sends the enforced policy again after each change
+// signalled outside a map update, until ctx ends.
+func republishEnforcement(ctx context.Context, changes <-chan struct{}, enforced enforcedPolicyDataPlane,
+	reports chan controlplane.EnforcementReport,
+) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-changes:
+			if policy, known := enforced.EnforcedPolicy(); known {
+				publishEnforcement(reports, policy)
+			}
+		}
+	}
+}
+
 // publishEnforcement hands the latest enforced policy to the map session,
 // replacing a report that was not sent yet. Only the map callback sends.
 func publishEnforcement(reports chan controlplane.EnforcementReport, enforced dataplane.EnforcedPolicy) {
 	report := controlplane.EnforcementReport{
 		Digest: enforced.Digest, Grants: enforced.Grants,
-		AppliedAt: enforced.AppliedAt,
+		AppliedAt:   enforced.AppliedAt,
+		RouteDigest: enforced.RouteDigest, RouteEntries: enforced.RouteEntries,
 	}
 	select {
 	case reports <- report:

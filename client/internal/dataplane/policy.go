@@ -10,6 +10,7 @@ import (
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/packetmeta"
 	"meshtransit.net/shared/policydigest"
+	"meshtransit.net/shared/routedigest"
 )
 
 const (
@@ -74,6 +75,8 @@ type policyFilter struct {
 	// installed on the host. Only those reach a Site (mtcp-v1 §7.6).
 	routed          *routedTable
 	routedInstalled map[netip.Prefix]struct{}
+	// served holds what the node forwards into as a router (servedFilter).
+	served servedFilter
 	// unreachable limits and counts the answers to packets for a Site that
 	// cannot be reached.
 	unreachable *unreachableAnswerer
@@ -85,6 +88,10 @@ type EnforcedPolicy struct {
 	Digest    policydigest.Digest
 	Grants    int
 	AppliedAt time.Time
+	// RouteDigest covers the served routes the node forwards into, and
+	// RouteEntries counts them (mtcp-v1 §8.4).
+	RouteDigest  routedigest.Digest
+	RouteEntries int
 }
 
 func newPolicyFilter() *policyFilter {
@@ -212,7 +219,9 @@ func (f *policyFilter) Enforced() (EnforcedPolicy, bool) {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.enforced, !f.enforced.Digest.IsZero()
+	enforced := f.enforced
+	enforced.RouteDigest, enforced.RouteEntries = f.served.digest, f.served.entries
+	return enforced, !enforced.Digest.IsZero()
 }
 
 func (f *policyFilter) setDropLastRule(drop bool) {
@@ -248,14 +257,17 @@ func (f *policyFilter) Allow(direction PacketDirection, packet []byte) bool {
 	if _, aliased := f.aliases[address]; aliased {
 		return false // Alias traffic requires the atomic translation boundary.
 	}
-	return f.allowOrdinaryLocked(direction, header, now)
+	return f.allowOrdinaryLocked(direction, header, packet, now)
 }
 
-func (f *policyFilter) allowOrdinaryLocked(direction PacketDirection, header packetmeta.Header, now time.Time) bool {
+func (f *policyFilter) allowOrdinaryLocked(direction PacketDirection, header packetmeta.Header, packet []byte,
+	now time.Time,
+) bool {
 	switch direction {
 	case PacketOutbound:
 		if !containsAddress(f.self, header.Source) {
-			return false
+			// A router forwards a Site's answers to the mesh.
+			return f.servedOutboundLocked(header, now)
 		}
 		if !f.peerUsableAt(header.Destination, now) && !f.routedUsableAt(header.Destination, now) {
 			return false
@@ -265,7 +277,11 @@ func (f *policyFilter) allowOrdinaryLocked(direction PacketDirection, header pac
 		return true
 	case PacketInbound:
 		if !containsAddress(f.self, header.Destination) {
-			return false
+			// A router forwards what its rules admit into a Site.
+			return f.servedInboundLocked(header, now)
+		}
+		if f.isTrackedErrorLocked(header, packet, now) {
+			return true
 		}
 		if !f.peerUsableAt(header.Source, now) {
 			// A Site's hosts only answer flows this node opened: routes

@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"net/url"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -29,6 +30,10 @@ type Config struct {
 	// EnableSubnetRoutes takes the subnet routes Core grants (mtcp-v1
 	// §7.6); the host's own settings still decide what is installed.
 	EnableSubnetRoutes bool
+	// EnableSubnetRouter lets Core make the host a Site's router (mtcp-v1
+	// §7.6, Linux only); RouteSettingsFile holds what the host offers.
+	EnableSubnetRouter bool
+	RouteSettingsFile  string
 	// ControlProtocol is accepted for existing unit files: auto and mtcp
 	// both mean MTCP v1, the only control protocol.
 	ControlProtocol string
@@ -89,6 +94,11 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 	flags.BoolVar(&cfg.EnableSubnetRoutes, "enable-subnet-routes", false,
 		"take the subnet routes Core grants; the host's root-owned settings decide which are installed "+
 			"(requires --enable-data-plane)")
+	flags.BoolVar(&cfg.EnableSubnetRouter, "enable-subnet-router", false,
+		"let Core make this host a router of the Sites it offers; the host's root-owned settings decide what it "+
+			"offers and forwards (Linux, requires --enable-data-plane)")
+	flags.StringVar(&cfg.RouteSettingsFile, "routes-file", DefaultRouteSettingsPath,
+		"root-owned subnet route settings file, read to offer subnets as a router")
 	flags.StringVar(&cfg.ControlProtocol, "control-protocol", "auto",
 		"control protocol: auto or mtcp (both MTCP v1; kept for existing unit files)")
 	flags.StringVar(&cfg.PortMapping, "port-mapping", "auto",
@@ -240,6 +250,9 @@ func validate(cfg Config) error {
 	}
 	if cfg.EnableSubnetRoutes && !cfg.EnableDataPlane {
 		return errors.New("subnet routes require --enable-data-plane")
+	}
+	if cfg.EnableSubnetRouter && (!cfg.EnableDataPlane || runtime.GOOS != "linux") {
+		return errors.New("a subnet router requires --enable-data-plane on Linux")
 	}
 	switch cfg.ControlProtocol {
 	case "auto", "mtcp":

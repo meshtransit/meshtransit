@@ -83,6 +83,49 @@ the Sites its rules grant and handles them as
   `route_install_failed`) and the unreachable answers. The local API
   reports the same under `subnet_routes`.
 
+## Subnet routers
+
+With `--enable-subnet-router` (Linux only), Core can make the host a router
+of the Sites it offers ([mtcp-v1 §7.6](../protocol/mtcp-v1.md)):
+
+- `meshd` reads `/etc/meshtransit/routes.json` and offers Core the subnets
+  listed with `advertise` while `router-mode` is on, in a `HostinfoReport`
+  in every session and within 5 seconds of a change. Offering grants
+  nothing: an administrator still has to make the Device a Site's router.
+- `meshnetd` forwards only into what Core serves and the host offers: a
+  served prefix inside an offered one, or an offered prefix inside a served
+  one. Anything else is refused as `not_advertised`, everything while router
+  mode is off (`router_off`), and a prefix the host has no route to outside
+  the mesh as `no_route`. Core cannot make a host a router.
+- It turns IPv4 forwarding on only for the mesh interface and the
+  interfaces towards the Sites, and IPv6 forwarding (which Linux offers only
+  host-wide) only when a Site is IPv6, with `accept_ra=2` where router
+  advertisements configure an interface. It records the previous values
+  first and restores them when forwarding stops, also after a crash.
+- One nftables table, `inet meshtransit`, replaced atomically, lets the
+  mesh reach only the served prefixes (the router is no exit node), lets
+  Sites answer but never open connections into the mesh, keeps the mesh off
+  the router's own addresses outside it, translates mesh sources to the
+  router's address for Sites with masquerade (the default; IPv6 uses NAT66),
+  lowers the TCP MSS to fit the tunnel, and drops other forwarding on the
+  interfaces whose forwarding it turned on. It is checked every 5 seconds
+  and installed again when another tool removed it.
+- `meshd`'s packet filter applies the Site rules Core sends before a packet
+  reaches the kernel, and admits ICMP errors (such as "fragmentation
+  needed") about flows the node opened, so path MTU discovery works through
+  routers.
+- Its enforcement report carries the route digest of what it serves, so
+  Core can compare it with what it sent.
+- `meshctl status` shows a `Subnet router` line, and the local API reports
+  `subnet_router`, with health `prefix_not_advertised` or
+  `route_forwarding_failed`.
+
+Another firewall's `drop` on the same hook still wins over the router
+table's `accept`: with Docker, allow the mesh interface in the `DOCKER-USER`
+chain; with firewalld, put it in a zone that forwards. A consumer granted a
+subnet reaches the other Devices' addresses in it through the router, as
+those addresses: that is the grant, not a bypass of their own policy.
+
 On Windows a Wintun session cannot be handed to another process, so `meshd`
 is one LocalSystem service that applies the same checks in process.
 

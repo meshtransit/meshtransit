@@ -48,6 +48,9 @@ type mapState struct {
 	// takesRoutes: the node declared routes.subnet.v1; otherwise it ignores
 	// routes, as it ignores any field it did not ask for.
 	takesRoutes bool
+	served      *mtcpv1.ServedRoutes
+	// takesServed: the node declared router.subnet.v1.
+	takesServed bool
 	relayMap    []byte
 	revisions   []*mtcpv1.NetworkRevision
 
@@ -86,7 +89,7 @@ func (state *mapState) applySnapshot(snapshot *mtcpv1.MapSnapshot) error {
 	state.self, state.peers = snapshot.GetSelf(), peers
 	state.filter, state.dns = snapshot.GetPacketFilter(), snapshot.GetDns()
 	// A snapshot without routes means none (mtcp-v1 §7.6).
-	state.routes = snapshot.GetRoutes()
+	state.routes, state.served = snapshot.GetRoutes(), snapshot.GetServed()
 	state.relayMap = bytes.Clone(snapshot.GetRelayMap())
 	state.revisions = snapshot.GetNetworkRevisions()
 	return nil
@@ -139,6 +142,9 @@ func (state *mapState) applyDelta(delta *mtcpv1.MapDelta) error {
 	// clears them.
 	if delta.GetRoutes() != nil {
 		state.routes = delta.GetRoutes()
+	}
+	if delta.GetServed() != nil {
+		state.served = delta.GetServed()
 	}
 	if len(delta.GetRelayMap()) != 0 {
 		state.relayMap = bytes.Clone(delta.GetRelayMap())
@@ -262,6 +268,11 @@ func (state *mapState) build(input snapshotInput) (networkmap.Snapshot, error) {
 	}
 	if state.takesRoutes {
 		if snapshot.Routes, err = convertRoutes(state.routes); err != nil {
+			return networkmap.Snapshot{}, err
+		}
+	}
+	if state.takesServed {
+		if snapshot.Served, err = convertServed(state.served); err != nil {
 			return networkmap.Snapshot{}, err
 		}
 	}
@@ -589,6 +600,37 @@ func convertRoutes(config *mtcpv1.RouteConfig) ([]networkmap.SiteRoute, error) {
 		routes = append(routes, route)
 	}
 	return routes, nil
+}
+
+// convertServed reads the Sites the node forwards to (mtcp-v1 §7.6); as with
+// routes, prefixes must be canonical as sent and networkmap validates the
+// rest.
+func convertServed(config *mtcpv1.ServedRoutes) ([]networkmap.ServedSite, error) {
+	sites := config.GetSites()
+	served := make([]networkmap.ServedSite, 0, len(sites))
+	for _, site := range sites {
+		converted := networkmap.ServedSite{Ref: site.GetSiteRef(), Masquerade: site.GetMasquerade()}
+		for _, encoded := range site.GetPrefixes() {
+			prefix, err := exactPrefix(encoded)
+			if err != nil {
+				return nil, err
+			}
+			converted.Prefixes = append(converted.Prefixes, prefix)
+		}
+		for _, probe := range site.GetProbes() {
+			address, ok := netip.AddrFromSlice(probe.GetIp())
+			kind := probe.GetKind()
+			if !ok || address.Is4In6() || probe.GetPort() > 65535 ||
+				(kind != mtcpv1.RouteProbe_ICMP && kind != mtcpv1.RouteProbe_TCP) {
+				return nil, fmt.Errorf("%w: malformed route probe", controlplane.ErrNetmapInvalid)
+			}
+			converted.Probes = append(converted.Probes, networkmap.RouteProbe{
+				Address: address, TCP: kind == mtcpv1.RouteProbe_TCP, Port: uint16(probe.GetPort()), //nolint:gosec // G115: checked above
+			})
+		}
+		served = append(served, converted)
+	}
+	return served, nil
 }
 
 // exactPrefix reads a prefix that must already be canonical.

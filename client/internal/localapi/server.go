@@ -465,6 +465,7 @@ func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request)
 		PolicyRuleCount:    status.PolicyRuleCount,
 		PeerPaths:          mapPathStatus(status.PeerPaths),
 		SubnetRoutes:       mapSubnetRouteStatus(status.SubnetRoutes),
+		SubnetRouter:       mapSubnetRouterStatus(status.SubnetRouter),
 		PathProbes:         mapPathProbeStatus(status.PathProbes),
 		Relay:              mapRelayStatus(status.Relay),
 		NetworkChanges:     mapNetworkChangeStatus(status.NetworkChanges),
@@ -638,6 +639,23 @@ func mapSubnetRouteStatus(status dataplane.SubnetRouteStatus) subnetRouteStatus 
 		mapped.Health = "route_install_failed"
 	case status.LocalConflict:
 		mapped.Health = "route_conflict_local"
+	}
+	for _, refusal := range status.Refused {
+		mapped.Refused = append(mapped.Refused, subnetRouteRefusal{Prefix: refusal.Prefix.String(), Reason: refusal.Reason})
+	}
+	return mapped
+}
+
+func mapSubnetRouterStatus(status dataplane.SubnetRouterStatus) subnetRouterStatus {
+	mapped := subnetRouterStatus{
+		Sites: status.Sites, Requested: status.Requested, Served: status.Served, RefusedTotal: status.RefusedTotal,
+		Health: "ok", Error: status.Error,
+	}
+	switch {
+	case status.Error != "":
+		mapped.Health = "route_forwarding_failed"
+	case status.NotAdvertised:
+		mapped.Health = "prefix_not_advertised"
 	}
 	for _, refusal := range status.Refused {
 		mapped.Refused = append(mapped.Refused, subnetRouteRefusal{Prefix: refusal.Prefix.String(), Reason: refusal.Reason})

@@ -30,6 +30,7 @@ func (s *Server) watchRouteSettings(ctx context.Context) {
 			return
 		case <-ticker.C:
 		}
+		s.checkServedRules()
 		stamp := s.routedStamp()
 		if stamp == last {
 			continue
@@ -44,6 +45,14 @@ func (s *Server) watchRouteSettings(ctx context.Context) {
 				s.logger.Warn("applying changed route settings failed", "error", err)
 			} else {
 				s.logger.Info("route settings changed; subnet routes reapplied", "routes", len(s.activeRouted.Routes))
+			}
+		}
+		if s.hasActiveTUN && s.requestedServed != nil && s.servedConfigurer != nil {
+			if _, _, err := s.applyServed(*s.requestedServed); err != nil {
+				applied = false
+				s.logger.Warn("applying changed route settings to forwarding failed", "error", err)
+			} else {
+				s.logger.Info("route settings changed; subnet forwarding reapplied", "served", len(s.activeServed))
 			}
 		}
 		s.mu.Unlock()
@@ -61,6 +70,25 @@ func (s *Server) clearRouted() {
 		s.logger.Warn("clearing subnet routes failed", "error", err)
 	}
 	s.activeRouted, s.requestedRouted = routedState{}, nil
+	s.clearServed()
+}
+
+// checkServedRules installs the router rules again when another tool removed
+// them, such as a firewall reload flushing every table.
+func (s *Server) checkServedRules() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.servedConfigurer == nil || len(s.activeServed) == 0 || s.requestedServed == nil {
+		return
+	}
+	present, err := s.servedConfigurer.Present()
+	if err == nil && present {
+		return
+	}
+	s.logger.Warn("subnet router rules are missing; installing them again", "error", err)
+	if _, _, err := s.applyServed(*s.requestedServed); err != nil {
+		s.logger.Warn("installing subnet router rules again failed", "error", err)
+	}
 }
 
 // routedStamp identifies what the routes installed depend on: the settings

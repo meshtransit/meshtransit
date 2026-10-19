@@ -19,10 +19,11 @@ import (
 
 const (
 	protocolVersion = 5
-	// maxMessageBytes fits a large routed route set (about 6,000 IPv4 or
-	// 2,700 IPv6 prefixes) in one SEQPACKET message on Linux defaults; a
-	// larger request is refused before it is sent.
-	maxMessageBytes   = 128 << 10
+	// maxMessageBytes fits the largest route set, 4,096 IPv6 prefixes of
+	// the longest form, in one SEQPACKET message, below Linux's default
+	// socket send buffer (net.core.wmem_default, 208 KiB); a larger request
+	// is refused before it is sent.
+	maxMessageBytes   = 192 << 10
 	operationOpenTUN  = "open_tun"
 	operationSetTUN   = "set_tun_routes"
 	operationOpenDNS  = "open_dns"
@@ -32,6 +33,10 @@ const (
 	// (mtcp-v1 §7.6); the helper installs only those its local settings
 	// admit.
 	operationSetRouted = "set_routed_routes"
+	// operationSetServed replaces the subnets the node forwards into as a
+	// router (mtcp-v1 §7.6); the helper serves only what its local settings
+	// offer.
+	operationSetServed = "set_served_routes"
 	maxTUNAddresses    = 8
 	maxTUNRoutes       = 512
 	maxAllowedPools    = 16
@@ -104,6 +109,9 @@ type request struct {
 	SearchDomains   []string `json:"search_domains"`
 	RouteDomains    []string `json:"route_domains"`
 	DNSDefaultRoute bool     `json:"dns_default_route,omitempty"`
+	// Masquerade, with set_served_routes, has one flag per route: '1'
+	// translates its mesh sources to the router's address, '0' keeps them.
+	Masquerade string `json:"masquerade,omitempty"`
 }
 
 type response struct {
@@ -125,6 +133,17 @@ type response struct {
 // RoutedResult is what the helper did with requested subnet routes: those
 // installed and those its local settings refused.
 type RoutedResult struct {
+	Installed []netip.Prefix
+	// Refused lists up to 64 refused routes; RefusedTotal counts them all.
+	Refused      []routesettings.Refusal
+	RefusedTotal int
+}
+
+// ServedResult is what the helper forwards into of the requested served
+// routes, and those it refused.
+type ServedResult struct {
+	// Installed are the prefixes forwarded into: requested ones, or the
+	// parts of them the host's settings offer.
 	Installed []netip.Prefix
 	// Refused lists up to 64 refused routes; RefusedTotal counts them all.
 	Refused      []routesettings.Refusal
@@ -159,16 +178,28 @@ func decodeMessage(payload []byte, target any) error {
 	return nil
 }
 
+// servedRequest is what the router forwards into, as one request carries it.
+type servedRequest struct {
+	Prefixes []netip.Prefix
+	// Unmasqueraded are the prefixes, among Prefixes, whose Sites keep mesh
+	// sources (masquerade is on by default, design §6.4).
+	Unmasqueraded []netip.Prefix
+}
+
 type validatedRequest struct {
 	operation string
 	tun       TUNConfig
 	dns       DNSConfig
 	routed    []netip.Prefix
+	served    servedRequest
 }
 
 func validateRequest(value request) (validatedRequest, error) {
 	if value.Version != protocolVersion {
 		return validatedRequest{}, fmt.Errorf("%w: unsupported protocol version", ErrProtocol)
+	}
+	if value.Masquerade != "" && value.Operation != operationSetServed {
+		return validatedRequest{}, fmt.Errorf("%w: unexpected served route fields", ErrProtocol)
 	}
 
 	switch value.Operation {
@@ -186,6 +217,23 @@ func validateRequest(value request) (validatedRequest, error) {
 		}
 
 		return validatedRequest{operation: value.Operation, tun: config}, nil
+	case operationSetServed:
+		if value.Addresses != nil || value.Routes == nil || len(value.Routes) > routesettings.MaximumRoutes ||
+			len(value.Masquerade) != len(value.Routes) || strings.Trim(value.Masquerade, "01") != "" ||
+			hasDNSRequestFields(value) {
+			return validatedRequest{}, fmt.Errorf("%w: served route fields are invalid", ErrProtocol)
+		}
+		prefixes, err := parseRoutedRoutes(value.Routes)
+		if err != nil {
+			return validatedRequest{}, err
+		}
+		var unmasqueraded []netip.Prefix
+		for index, prefix := range prefixes {
+			if value.Masquerade[index] == '0' {
+				unmasqueraded = append(unmasqueraded, prefix)
+			}
+		}
+		return validatedRequest{operation: value.Operation, served: servedRequest{Prefixes: prefixes, Unmasqueraded: unmasqueraded}}, nil
 	case operationSetRouted:
 		if value.Addresses != nil || value.Routes == nil || len(value.Routes) > routesettings.MaximumRoutes ||
 			hasDNSRequestFields(value) {
@@ -233,7 +281,8 @@ func validateResponse(value response, operation string) error {
 	}
 	if value.OK {
 		if value.Code != "" || value.Message != "" ||
-			(operation != operationSetRouted && (value.Refused != nil || value.RefusedTotal != 0)) {
+			(operation != operationSetRouted && operation != operationSetServed &&
+				(value.Refused != nil || value.RefusedTotal != 0)) {
 			return fmt.Errorf("%w: malformed success response", ErrProtocol)
 		}
 		switch operation {
@@ -257,7 +306,7 @@ func validateResponse(value response, operation string) error {
 				value.Addresses != nil || value.Routes != nil || value.Refused != nil {
 				return fmt.Errorf("%w: malformed dns response", ErrProtocol)
 			}
-		case operationSetRouted:
+		case operationSetRouted, operationSetServed:
 			if value.InterfaceName != "" || value.Resolver != "" || value.MTU != 0 ||
 				value.Addresses != nil || value.Routes == nil || len(value.Refused) > maximumReportedRefusals ||
 				value.RefusedTotal < len(value.Refused) || value.RefusedTotal > routesettings.MaximumRoutes {

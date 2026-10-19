@@ -49,6 +49,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		"root-owned subnet route settings (meshnetd routes)")
 	routedTable := flags.Int("routed-table", 0,
 		"routing table for subnet routes, unique per helper on the host; 0 installs none")
+	routerTable := flags.String("router-nft-table", "meshtransit",
+		"nftables table this helper owns to forward as a subnet router; empty forwards into no subnets")
+	routerState := flags.String("router-state", "/run/meshnetd/router-state.json",
+		"where the helper records the host forwarding settings it changed, to restore them")
 	routedPriority := flags.Int("routed-priority", 5400,
 		"first of three policy rule priorities that keep meshd's sockets out of the routed table")
 	allowedPrefixes := prefixList{}
@@ -138,7 +142,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	var routed *netadmin.RoutedOptions
 	if *routedTable != 0 {
-		routed = &netadmin.RoutedOptions{SettingsPath: *routesFile, Table: *routedTable, Priority: *routedPriority}
+		routed = &netadmin.RoutedOptions{
+			SettingsPath: *routesFile, Table: *routedTable, Priority: *routedPriority,
+			NftTable: *routerTable, StatePath: *routerState,
+		}
 	}
 	server, err := netadmin.NewServer(netadmin.ServerOptions{
 		AllowedUID:      resolvedUID,

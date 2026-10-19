@@ -332,3 +332,64 @@ func (c *Client) SetRoutedRoutes(ctx context.Context, routes []netip.Prefix) (Ro
 	}
 	return result, nil
 }
+
+// SetServedRoutes replaces the subnets the host forwards into as a router
+// (mtcp-v1 §7.6). The helper serves only what its root-owned settings offer
+// and reports the rest as refused; unmasqueraded lists the requested
+// prefixes whose sources keep their mesh addresses.
+func (c *Client) SetServedRoutes(ctx context.Context, served, unmasqueraded []netip.Prefix) (ServedResult, error) {
+	if c == nil {
+		return ServedResult{}, errors.New("netadmin: client is not initialized")
+	}
+	sorted := slices.Clone(served)
+	slices.SortFunc(sorted, compareRoutedPrefixes)
+	sorted = slices.Compact(sorted)
+	plain := slices.Clone(unmasqueraded)
+	slices.SortFunc(plain, compareRoutedPrefixes)
+	plain = slices.Compact(plain)
+	if len(sorted) > routesettings.MaximumRoutes {
+		return ServedResult{}, fmt.Errorf("%w: more than %d served routes", ErrTUNConfig, routesettings.MaximumRoutes)
+	}
+	flags := make([]byte, len(sorted))
+	for index, prefix := range sorted {
+		flags[index] = '1'
+		if slices.Contains(plain, prefix) {
+			flags[index] = '0'
+		}
+	}
+	requestValue := request{
+		Version: protocolVersion, Operation: operationSetServed, Routes: prefixStrings(sorted),
+		Masquerade: string(flags),
+	}
+	if encoded, err := encodeMessage(requestValue); err != nil || len(encoded) > maxMessageBytes {
+		return ServedResult{}, fmt.Errorf("%w: served routes exceed the helper request bound", ErrTUNConfig)
+	}
+	value, descriptors, err := c.exchange(ctx, requestValue)
+	closeDescriptors(descriptors)
+	if err != nil {
+		return ServedResult{}, err
+	}
+	if len(descriptors) != 0 {
+		return ServedResult{}, fmt.Errorf("%w: served route response included descriptors", ErrProtocol)
+	}
+	result := ServedResult{Installed: make([]netip.Prefix, 0, len(value.Routes)), RefusedTotal: value.RefusedTotal}
+	for _, text := range value.Routes {
+		prefix, err := netip.ParsePrefix(text)
+		// Each one served is a requested prefix or part of one.
+		inside := err == nil && slices.ContainsFunc(sorted, func(requested netip.Prefix) bool {
+			return requested.Bits() <= prefix.Bits() && requested.Contains(prefix.Addr())
+		})
+		if !inside || prefix != prefix.Masked() {
+			return ServedResult{}, fmt.Errorf("%w: helper served an unrequested route", ErrProtocol)
+		}
+		result.Installed = append(result.Installed, prefix)
+	}
+	for _, refusal := range value.Refused {
+		prefix, err := netip.ParsePrefix(refusal.Prefix)
+		if err != nil || refusal.Reason == "" {
+			return ServedResult{}, fmt.Errorf("%w: malformed route refusal", ErrProtocol)
+		}
+		result.Refused = append(result.Refused, routesettings.Refusal{Prefix: prefix, Reason: refusal.Reason})
+	}
+	return result, nil
+}
