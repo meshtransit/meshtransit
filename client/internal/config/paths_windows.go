@@ -15,4 +15,7 @@ const (
 	DefaultStateDir = `C:\ProgramData\MeshTransit\state`
 	// DefaultIdentityKeyPath is the DPAPI-protected identity key.
 	DefaultIdentityKeyPath = `C:\ProgramData\MeshTransit\meshd.identity-key`
+	// DefaultRouteSettingsPath holds the host's subnet route settings, which
+	// only SYSTEM and administrators write (routesettings).
+	DefaultRouteSettingsPath = `C:\ProgramData\MeshTransit\routes.json`
 )

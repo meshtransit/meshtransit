@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"meshtransit.net/client/internal/routesettings"
 )
 
 const maxReceivedDescriptors = 4
@@ -286,4 +288,56 @@ func closeDescriptors(descriptors []int) {
 	for _, descriptor := range descriptors {
 		_ = unix.Close(descriptor)
 	}
+}
+
+// RoutedResult is what the helper did with requested subnet routes: those
+// installed and those its local settings refused.
+type RoutedResult struct {
+	Installed []netip.Prefix
+	// Refused lists up to 64 refused routes; RefusedTotal counts them all.
+	Refused      []routesettings.Refusal
+	RefusedTotal int
+}
+
+// SetRoutedRoutes replaces the subnet routes of the helper-owned data
+// interface (mtcp-v1 §7.6). The helper installs only what its root-owned
+// settings admit and reports the rest as refused.
+func (c *Client) SetRoutedRoutes(ctx context.Context, routes []netip.Prefix) (RoutedResult, error) {
+	if c == nil {
+		return RoutedResult{}, errors.New("netadmin: client is not initialized")
+	}
+	sorted := slices.Clone(routes)
+	slices.SortFunc(sorted, compareRoutedPrefixes)
+	sorted = slices.Compact(sorted)
+	if len(sorted) > routesettings.MaximumRoutes {
+		return RoutedResult{}, fmt.Errorf("%w: more than %d routed routes", ErrTUNConfig, routesettings.MaximumRoutes)
+	}
+	requestValue := request{Version: protocolVersion, Operation: operationSetRouted, Routes: prefixStrings(sorted)}
+	if encoded, err := encodeMessage(requestValue); err != nil || len(encoded) > maxMessageBytes {
+		return RoutedResult{}, fmt.Errorf("%w: routed routes exceed the helper request bound", ErrTUNConfig)
+	}
+	value, descriptors, err := c.exchange(ctx, requestValue)
+	closeDescriptors(descriptors)
+	if err != nil {
+		return RoutedResult{}, err
+	}
+	if len(descriptors) != 0 {
+		return RoutedResult{}, fmt.Errorf("%w: routed route response included descriptors", ErrProtocol)
+	}
+	result := RoutedResult{Installed: make([]netip.Prefix, 0, len(value.Routes)), RefusedTotal: value.RefusedTotal}
+	for _, text := range value.Routes {
+		prefix, err := netip.ParsePrefix(text)
+		if err != nil || !slices.Contains(sorted, prefix) {
+			return RoutedResult{}, fmt.Errorf("%w: helper installed an unrequested route", ErrProtocol)
+		}
+		result.Installed = append(result.Installed, prefix)
+	}
+	for _, refusal := range value.Refused {
+		prefix, err := netip.ParsePrefix(refusal.Prefix)
+		if err != nil || refusal.Reason == "" {
+			return RoutedResult{}, fmt.Errorf("%w: malformed route refusal", ErrProtocol)
+		}
+		result.Refused = append(result.Refused, routesettings.Refusal{Prefix: prefix, Reason: refusal.Reason})
+	}
+	return result, nil
 }

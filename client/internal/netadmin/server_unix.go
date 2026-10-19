@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"meshtransit.net/client/internal/peercred"
+	"meshtransit.net/client/internal/routesettings"
 )
 
 const (
@@ -50,7 +51,9 @@ type ServerOptions struct {
 	MTU             int
 	AllowedPrefixes []netip.Prefix
 	DNS             *DNSOptions
-	Logger          *slog.Logger
+	// Routed, when set, lets meshd install subnet routes (Linux).
+	Routed *RoutedOptions
+	Logger *slog.Logger
 }
 
 // Server validates one bounded operation from one configured meshd UID.
@@ -66,6 +69,14 @@ type Server struct {
 	activeTUN       TUNConfig
 	activeName      string
 	hasActiveTUN    bool
+	// routed and routedConfigurer install subnet routes; activeRouted are
+	// those installed on the current interface.
+	routed           *RoutedOptions
+	routedConfigurer routedConfigurer
+	activeRouted     []netip.Prefix
+	requestedRouted  []netip.Prefix // nil until meshd asks
+	// loadSettings reads the route settings (routesettings.Load).
+	loadSettings func(string) (routesettings.Settings, error)
 	// mu serializes requests with background work (watchDNSLink on macOS).
 	mu sync.Mutex
 	// background runs alongside Serve, until it returns.
@@ -129,7 +140,17 @@ func newServerWithDNS(
 		return nil, errors.New("netadmin: dns options are required")
 	}
 
+	if options.Routed != nil && !validRoutedOptions(*options.Routed) {
+		return nil, errors.New("netadmin: routed route options are invalid")
+	}
+	var routed *RoutedOptions
+	if options.Routed != nil {
+		copied := *options.Routed
+		routed = &copied
+	}
 	return &Server{
+		loadSettings:    routesettings.Load,
+		routed:          routed,
 		allowedUID:      options.AllowedUID,
 		interfaceName:   options.InterfaceName,
 		mtu:             options.MTU,
@@ -257,6 +278,8 @@ func (s *Server) handle(ctx context.Context, rawConnection net.Conn) error {
 		return s.setDNS(ctx, connection, validated.dns)
 	case operationResetDNS:
 		return s.resetDNS(ctx, connection)
+	case operationSetRouted:
+		return s.setRouted(connection, validated.routed)
 	default:
 		return errors.New("netadmin: validated request has an unknown operation")
 	}
@@ -297,6 +320,8 @@ func (s *Server) openTUN(connection *net.UnixConn, config TUNConfig) error {
 	s.activeTUN = cloneTUNConfig(config)
 	s.activeName = name
 	s.hasActiveTUN = true
+	// A new interface carries no routed routes: the old one's left with it.
+	s.activeRouted, s.requestedRouted = nil, nil
 
 	return writeResponse(connection, response{
 		Version:       protocolVersion,

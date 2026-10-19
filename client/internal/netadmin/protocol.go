@@ -13,22 +13,31 @@ import (
 	"strings"
 
 	"golang.zx2c4.com/wireguard/tun"
+
+	"meshtransit.net/client/internal/routesettings"
 )
 
 const (
-	protocolVersion   = 5
-	maxMessageBytes   = 32 << 10
+	protocolVersion = 5
+	// maxMessageBytes fits a large routed route set (about 6,000 IPv4 or
+	// 2,700 IPv6 prefixes) in one SEQPACKET message on Linux defaults; a
+	// larger request is refused before it is sent.
+	maxMessageBytes   = 128 << 10
 	operationOpenTUN  = "open_tun"
 	operationSetTUN   = "set_tun_routes"
 	operationOpenDNS  = "open_dns"
 	operationSetDNS   = "set_dns"
 	operationResetDNS = "reset_dns"
-	maxTUNAddresses   = 8
-	maxTUNRoutes      = 512
-	maxAllowedPools   = 16
-	maxDNSDomains     = 256
-	maxDNSDomainBytes = 16 << 10
-	interfaceNameSize = 16
+	// operationSetRouted replaces the subnet routes of the data interface
+	// (mtcp-v1 §7.6); the helper installs only those its local settings
+	// admit.
+	operationSetRouted = "set_routed_routes"
+	maxTUNAddresses    = 8
+	maxTUNRoutes       = 512
+	maxAllowedPools    = 16
+	maxDNSDomains      = 256
+	maxDNSDomainBytes  = 16 << 10
+	interfaceNameSize  = 16
 )
 
 var (
@@ -107,6 +116,21 @@ type response struct {
 	Addresses     []string `json:"addresses"`
 	Routes        []string `json:"routes"`
 	Resolver      string   `json:"resolver,omitempty"`
+	// Refused lists up to 64 routed routes the helper did not install, and
+	// RefusedTotal counts them all.
+	Refused      []routeRefusal `json:"refused,omitempty"`
+	RefusedTotal int            `json:"refused_total,omitempty"`
+}
+
+// maximumReportedRefusals bounds the refusals one response lists; the
+// response counts them all, and stays within maxMessageBytes.
+const maximumReportedRefusals = 64
+
+// routeRefusal is one routed route the helper refused, with a stable reason
+// code (routesettings).
+type routeRefusal struct {
+	Prefix string `json:"prefix"`
+	Reason string `json:"reason"`
 }
 
 func decodeMessage(payload []byte, target any) error {
@@ -130,6 +154,7 @@ type validatedRequest struct {
 	operation string
 	tun       TUNConfig
 	dns       DNSConfig
+	routed    []netip.Prefix
 }
 
 func validateRequest(value request) (validatedRequest, error) {
@@ -152,6 +177,16 @@ func validateRequest(value request) (validatedRequest, error) {
 		}
 
 		return validatedRequest{operation: value.Operation, tun: config}, nil
+	case operationSetRouted:
+		if value.Addresses != nil || value.Routes == nil || len(value.Routes) > routesettings.MaximumRoutes ||
+			hasDNSRequestFields(value) {
+			return validatedRequest{}, fmt.Errorf("%w: routed route fields are invalid", ErrProtocol)
+		}
+		routed, err := parseRoutedRoutes(value.Routes)
+		if err != nil {
+			return validatedRequest{}, err
+		}
+		return validatedRequest{operation: value.Operation, routed: routed}, nil
 	case operationOpenDNS, operationResetDNS:
 		if value.Addresses != nil || value.Routes != nil || hasDNSConfigFields(value) {
 			return validatedRequest{}, fmt.Errorf("%w: dns lifecycle fields are invalid", ErrProtocol)
@@ -188,7 +223,8 @@ func validateResponse(value response, operation string) error {
 		return fmt.Errorf("%w: unsupported protocol version", ErrProtocol)
 	}
 	if value.OK {
-		if value.Code != "" || value.Message != "" {
+		if value.Code != "" || value.Message != "" ||
+			(operation != operationSetRouted && (value.Refused != nil || value.RefusedTotal != 0)) {
 			return fmt.Errorf("%w: malformed success response", ErrProtocol)
 		}
 		switch operation {
@@ -209,8 +245,14 @@ func validateResponse(value response, operation string) error {
 			}
 		case operationSetDNS, operationResetDNS:
 			if value.InterfaceName != "" || value.Resolver != "" || value.MTU != 0 ||
-				value.Addresses != nil || value.Routes != nil {
+				value.Addresses != nil || value.Routes != nil || value.Refused != nil {
 				return fmt.Errorf("%w: malformed dns response", ErrProtocol)
+			}
+		case operationSetRouted:
+			if value.InterfaceName != "" || value.Resolver != "" || value.MTU != 0 ||
+				value.Addresses != nil || value.Routes == nil || len(value.Refused) > maximumReportedRefusals ||
+				value.RefusedTotal < len(value.Refused) || value.RefusedTotal > routesettings.MaximumRoutes {
+				return fmt.Errorf("%w: malformed routed route response", ErrProtocol)
 			}
 		default:
 			return fmt.Errorf("%w: unknown response operation", ErrProtocol)
@@ -219,7 +261,8 @@ func validateResponse(value response, operation string) error {
 		return nil
 	}
 	if value.Code == "" || value.Message == "" || value.InterfaceName != "" || value.MTU != 0 ||
-		len(value.Addresses) != 0 || len(value.Routes) != 0 || value.Resolver != "" {
+		len(value.Addresses) != 0 || len(value.Routes) != 0 || value.Resolver != "" || len(value.Refused) != 0 ||
+		value.RefusedTotal != 0 {
 		return fmt.Errorf("%w: malformed error response", ErrProtocol)
 	}
 
@@ -465,4 +508,29 @@ func prefixStrings(prefixes []netip.Prefix) []string {
 	}
 
 	return values
+}
+
+// parseRoutedRoutes reads routed routes: canonical prefixes, sorted IPv4
+// before IPv6 and by address and length, each listed once. Whether a route
+// may be installed is the helper's local decision (routesettings.Admit).
+func parseRoutedRoutes(values []string) ([]netip.Prefix, error) {
+	routed := make([]netip.Prefix, 0, len(values))
+	for index, value := range values {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil || prefix.String() != value || prefix != prefix.Masked() {
+			return nil, fmt.Errorf("%w: routed route %q is not canonical", ErrTUNConfig, value)
+		}
+		if index > 0 && compareRoutedPrefixes(routed[index-1], prefix) >= 0 {
+			return nil, fmt.Errorf("%w: routed routes must be sorted and unique", ErrTUNConfig)
+		}
+		routed = append(routed, prefix)
+	}
+	return routed, nil
+}
+
+func compareRoutedPrefixes(first, second netip.Prefix) int {
+	if order := first.Addr().Compare(second.Addr()); order != 0 {
+		return order
+	}
+	return first.Bits() - second.Bits()
 }

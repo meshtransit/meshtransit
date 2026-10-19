@@ -33,6 +33,9 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "routes" {
+		return runRoutes(args[1:], stdout, stderr)
+	}
 	flags := flag.NewFlagSet("meshnetd", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	socketPath := flags.String("socket", config.DefaultNetAdminSocketPath, "path to the privileged helper socket")
@@ -42,6 +45,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	dnsPort := flags.Uint64("dns-port", 1053, "unprivileged local dns service port")
 	platform := registerPlatformFlags(flags)
 	showVersion := flags.Bool("version", false, "print version and exit")
+	routesFile := flags.String("routes-file", config.DefaultRouteSettingsPath,
+		"root-owned subnet route settings (meshnetd routes)")
+	routedTable := flags.Int("routed-table", 0,
+		"routing table for subnet routes, unique per helper on the host; 0 installs none")
+	routedPriority := flags.Int("routed-priority", 5400,
+		"first of three policy rule priorities that keep meshd's sockets out of the routed table")
 	allowedPrefixes := prefixList{}
 	flags.Var(
 		&allowedPrefixes,
@@ -127,12 +136,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 		return 1
 	}
+	var routed *netadmin.RoutedOptions
+	if *routedTable != 0 {
+		routed = &netadmin.RoutedOptions{SettingsPath: *routesFile, Table: *routedTable, Priority: *routedPriority}
+	}
 	server, err := netadmin.NewServer(netadmin.ServerOptions{
 		AllowedUID:      resolvedUID,
 		InterfaceName:   platform.interfaceName(),
 		MTU:             *mtu,
 		AllowedPrefixes: allowedPrefixes,
 		DNS:             dnsOptions,
+		Routed:          routed,
 		Logger:          logger,
 	})
 	if err != nil {
@@ -172,6 +186,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		"interface", platform.interfaceName(),
 		"mtu", *mtu,
 		"dns_enabled", *enableDNS,
+		"routed_table", *routedTable,
 	)
 	if err := server.Serve(ctx, listener); err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error("meshnetd stopped unexpectedly", "error", err)

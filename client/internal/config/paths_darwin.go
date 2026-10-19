@@ -12,4 +12,7 @@ const (
 	// DefaultIdentityKeyPath is the owner-only identity key file of meshd,
 	// kept outside the state directory.
 	DefaultIdentityKeyPath = "/Library/Application Support/MeshTransit/meshd.identity-key"
+	// DefaultRouteSettingsPath holds the host's subnet route settings, which
+	// only root writes (routesettings).
+	DefaultRouteSettingsPath = "/Library/Application Support/MeshTransit/routes.json"
 )

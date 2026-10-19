@@ -11,4 +11,7 @@ const (
 	DefaultStateDir = "/var/lib/meshd"
 	// DefaultIdentityKeyPath is the systemd credential exposed to meshd.
 	DefaultIdentityKeyPath = "/run/credentials/meshd.service/meshd.identity-key"
+	// DefaultRouteSettingsPath holds the host's subnet route settings, which
+	// only root writes (routesettings).
+	DefaultRouteSettingsPath = "/etc/meshtransit/routes.json"
 )

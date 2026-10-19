@@ -2,9 +2,11 @@
 //
 // The client's sockets carry the mesh: the encrypted packet path, Control,
 // relays, NAT discovery and DNS upstreams. Their packets must never enter the
-// mesh TUN, or they would loop through the tunnel they carry. On desktop
-// systems the mesh routes never cover these destinations and there is
-// nothing to do. A mobile VPN routes the whole app through its TUN unless
+// mesh TUN, or they would loop through the tunnel they carry. Overlay routes
+// never cover these destinations; subnet routes may (mtcp-v1 §7.6). On
+// Linux meshnetd keeps them in their own table, which a policy rule never
+// lets meshd's user reach, so nothing is needed here. A mobile VPN routes the
+// whole app through its TUN unless
 // each socket is excluded (Android VpnService.protect): the embedding app
 // installs a Protector, and every socket the client opens to the network
 // calls it before the socket connects or sends.

@@ -30,6 +30,18 @@ narrow, validated requests from `meshd`:
   the overlay frame: `100.64.0.0/10`, `198.18.0.0/15` (Device aliases) and
   `fd00::/8`. `--allow-prefix` can narrow the frame, never widen it.
 - It returns the TUN file descriptor to `meshd`, which runs the data plane.
+- On Linux, with `--routed-table`, it can also install the subnet routes Core
+  grants ([mtcp-v1 §7.6](../protocol/mtcp-v1.md)), but only those the host's
+  own settings admit. Those settings live in `/etc/meshtransit/routes.json`,
+  which only root writes (`sudo meshnetd routes accept on`, `accept-public`,
+  `router-mode`, `advertise PREFIX…`, `withdraw PREFIX…`); everything is off
+  until root turns it on, and a change applies within seconds. Subnet routes
+  go in their own routing table, which one policy rule per address family
+  has every user but `meshd`'s look up (`not uidrange`): the node's own
+  sockets (Control, relays, WireGuard) follow the host's routing unchanged
+  and cannot enter the mesh they carry. Each helper on a host uses its own
+  table and rule priority (`--routed-table`, `--routed-priority`, default
+  5400), and removes what it installed when it stops or starts again.
 
 On Windows a Wintun session cannot be handed to another process, so `meshd`
 is one LocalSystem service that applies the same checks in process.

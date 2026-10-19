@@ -22,7 +22,7 @@ func TestKernelTUNCreatorIntegration(t *testing.T) {
 	if _, err := net.InterfaceByName(name); err == nil {
 		t.Fatalf("interface %q already exists", name)
 	}
-	file, err := (kernelTUNCreator{}).Open(
+	file, _, err := (kernelTUNCreator{}).Open(
 		name,
 		1280,
 		uint32(os.Geteuid()),

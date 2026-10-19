@@ -5,6 +5,17 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Client (Linux): `meshnetd` can install the subnet routes Core grants, in
+  their own routing table, with a policy rule that keeps `meshd`'s own
+  sockets out of it (the packaged unit uses `--routed-table=5267`). It
+  installs only what the host's root-owned settings admit:
+  `sudo meshnetd routes accept on` for private ranges, `accept-public on`
+  for public ones; never default or very wide routes, the overlay frame,
+  loopback, link-local, multicast or more than 4,096 routes. `advertise` and
+  `router-mode` record what the host offers to forward. Everything is off by
+  default and a change applies within seconds. `meshd` does not request
+  routes yet; do not turn `accept` on before it checks local network
+  conflicts (the next release).
 - Core: maps carry subnet routes (mtcp-v1 §7.6) when
   `MESHTRANSIT_SUBNET_ROUTES_ENABLED` is on and Core reads Network inventory
   once per revision (the default). A node that lists `routes.subnet.v1` and
