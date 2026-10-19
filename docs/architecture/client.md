@@ -122,9 +122,15 @@ of the Sites it offers ([mtcp-v1 §7.6](../protocol/mtcp-v1.md)):
 
 Another firewall's `drop` on the same hook still wins over the router
 table's `accept`: with Docker, allow the mesh interface in the `DOCKER-USER`
-chain; with firewalld, put it in a zone that forwards. A consumer granted a
-subnet reaches the other Devices' addresses in it through the router, as
-those addresses: that is the grant, not a bypass of their own policy.
+chain; with firewalld, put it in a zone that forwards. Firewalls in front
+of the Site's hosts, such as a cloud provider's security group or firewall
+that also filters private network traffic, must admit the router: with
+masquerade the hosts see every mesh connection, ping included, coming from
+the router's own address in the Site. Allow the ports and ICMP from that
+address, or the router's private range or tag, rather than from anywhere.
+A consumer granted a subnet reaches the other Devices' addresses in it
+through the router, as those addresses: that is the grant, not a bypass of
+their own policy.
 
 On Windows a Wintun session cannot be handed to another process, so `meshd`
 is one LocalSystem service that applies the same checks in process.
