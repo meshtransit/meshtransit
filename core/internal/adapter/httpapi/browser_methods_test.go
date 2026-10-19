@@ -48,3 +48,29 @@ func TestBrowserManagementAdmitsRESTMethods(t *testing.T) {
 		}
 	}
 }
+
+// A Site's router is set with PUT: the cookie path admits it there, with a
+// CSRF proof and a JSON body, and nowhere a route does not declare it.
+func TestBrowserManagementAdmitsPutOnlyWhereARouteTakesIt(t *testing.T) {
+	t.Parallel()
+	browser, _ := newBrowserManagementFixture(t)
+	network := "/api/v1/workspaces/" + managementWorkspaceID() + "/networks/01995d00-0000-7000-8000-000000000201"
+	router := network + "/sites/01995d00-0000-7000-8000-0000000002a1/routers/01995d00-0000-7000-8000-0000000002b1"
+	for _, test := range []struct {
+		name  string
+		path  string
+		valid bool
+	}{
+		{"site router", router, true},
+		{"site", network + "/sites/01995d00-0000-7000-8000-0000000002a1", false},
+		{"device tags", "/api/v1/workspaces/" + managementWorkspaceID() + "/device-tags", false},
+	} {
+		request := browserManagementRequest(t, test.path, `{"priority":10,"state":"active"}`)
+		request.Method = http.MethodPut
+		request.Header.Set("X-MeshTransit-CSRF", "proof")
+		request.Header.Set("If-Match", `"1"`)
+		if got := browser.validRequest(request); got != test.valid {
+			t.Errorf("%s: valid = %t, want %t", test.name, got, test.valid)
+		}
+	}
+}

@@ -515,15 +515,25 @@ func (browser *BrowserManagement) endSession(
 }
 
 // browserManagementMethods are the methods the cookie path accepts: reads,
-// and changes that each need a CSRF proof. No route replaces with PUT.
+// and changes that each need a CSRF proof. PUT is admitted only where a
+// route declares it (browserManagementMethod).
 var browserManagementMethods = map[string]bool{
 	http.MethodGet: true, http.MethodPost: true, http.MethodPatch: true, http.MethodDelete: true,
+}
+
+// browserManagementMethod admits the request's method: one of
+// browserManagementMethods, or PUT on a route that takes it, a Site's router.
+func browserManagementMethod(request *http.Request) bool {
+	if request.Method == http.MethodPut {
+		return isSiteOperation(request)
+	}
+	return browserManagementMethods[request.Method]
 }
 
 func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	target, transport := request.URL, request.TLS
 	validTransport := transport != nil && transport.HandshakeComplete && transport.Version >= tls.VersionTLS12
-	if target == nil || !validTransport || request.Host != browser.host || !browserManagementMethods[request.Method] {
+	if target == nil || !validTransport || request.Host != browser.host || !browserManagementMethod(request) {
 		return false
 	}
 	if len(target.Path) > 512 || !canonicalCallbackPath(target.Path) || !boundedLoginHeaders(request.Header) {
