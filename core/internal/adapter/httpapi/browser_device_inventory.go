@@ -155,6 +155,11 @@ type deviceInventoryItem struct {
 	// DNSName is <label>.<workspace code>.<network code>.<suffix>, null for
 	// a Device that holds no name (revoked).
 	DNSName *string `json:"dns_name"`
+	// AdvertisedPrefixes are the subnets the Device offers to forward as a
+	// router, canonical and sorted: the first 16 in a list, all on one
+	// Device's read. AdvertisedPrefixCount counts them all.
+	AdvertisedPrefixes    []string `json:"advertised_prefixes"`
+	AdvertisedPrefixCount int      `json:"advertised_prefix_count"`
 }
 
 type deviceInventoryMember struct {
@@ -178,6 +183,11 @@ func newDeviceInventoryItem(device inventory.Device, zone dnsname.Zone) deviceIn
 		HandoverTo: newDeviceInventoryMember(lifecycle.HandoverTo)}
 	if item.Ownership == "" {
 		item.Ownership = "member"
+	}
+	offer, count := device.Offer()
+	item.AdvertisedPrefixes, item.AdvertisedPrefixCount = make([]string, len(offer)), count
+	for index, prefix := range offer {
+		item.AdvertisedPrefixes[index] = prefix.String()
 	}
 	if lifecycle.SuspendedReason != "" {
 		reason := lifecycle.SuspendedReason

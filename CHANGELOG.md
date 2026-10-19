@@ -5,6 +5,10 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: the Console's Device list and Device read carry
+  `advertised_prefixes`, the subnets a Device offers to forward as a subnet
+  router (the first 16 in a list, all on one Device's read), and
+  `advertised_prefix_count` (schema 192). Offering still grants nothing.
 - Client (Linux): `meshd --enable-subnet-router` lets Core make the host a
   router of the subnets it offers. `meshd` offers what
   `/etc/meshtransit/routes.json` advertises while router mode is on;

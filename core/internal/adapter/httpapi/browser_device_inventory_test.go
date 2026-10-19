@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -86,6 +87,10 @@ func TestBrowserDeviceInventoryFreshReadAndDeniedRefresh(t *testing.T) {
 	}
 	if !strings.Contains(response.Body.String(), `"dns_name":"laptop.000000000101.000000000201.mesh.internal"`) {
 		t.Fatalf("inventory has no Device DNS name: %s", response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(),
+		`"advertised_prefixes":["10.40.0.0/16","2001:db8::/32"],"advertised_prefix_count":3`) {
+		t.Fatalf("inventory has no Device offer: %s", response.Body.String())
 	}
 	reader.err = inventory.ErrForbidden
 	response = &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
@@ -229,6 +234,10 @@ func inventoryTestDevice(t *testing.T) inventory.Device {
 	}
 	label, _ := node.ParseDNSLabel("laptop")
 	if device, err = device.WithDNSLabel(label); err != nil {
+		t.Fatal(err)
+	}
+	offer := []netip.Prefix{netip.MustParsePrefix("10.40.0.0/16"), netip.MustParsePrefix("2001:db8::/32")}
+	if device, err = device.WithOffer(offer, 3); err != nil {
 		t.Fatal(err)
 	}
 	return device

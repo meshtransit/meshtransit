@@ -4,6 +4,8 @@ package inventory
 import (
 	"context"
 	"errors"
+	"net/netip"
+	"slices"
 	"strings"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/site"
 )
 
 // MaximumPageSize bounds each authenticated inventory page.
@@ -40,6 +43,10 @@ type Device struct {
 	createdAt, updatedAt, expiresAt time.Time
 	lifecycle                       Lifecycle
 	dnsLabel                        node.DNSLabel
+	// offer holds the first prefixes of what the Device offers to forward
+	// (all of them on one Device's read); offerCount counts them all.
+	offer      []netip.Prefix
+	offerCount int
 }
 
 // Member names one member a Device belongs to or is handed over to.
@@ -125,6 +132,29 @@ func (device Device) WithDNSLabel(label node.DNSLabel) (Device, error) {
 // DNSLabel returns the Device's DNS label, if it holds one.
 func (device Device) DNSLabel() (node.DNSLabel, bool) {
 	return device.dnsLabel, device.dnsLabel.IsValid()
+}
+
+// WithOffer returns the Device with what it offers to forward as a subnet
+// router: listed, canonical and sorted as Core stores offers, the first of
+// count prefixes (all of them when len(listed) == count).
+func (device Device) WithOffer(listed []netip.Prefix, count int) (Device, error) {
+	if !device.IsValid() || count < len(listed) || count > site.MaximumOfferedPrefixes ||
+		(count > 0 && len(listed) == 0) || !slices.Equal(listed, site.CanonicalOffer(listed)) {
+		return Device{}, ErrInvalidResult
+	}
+	for _, prefix := range listed {
+		if !prefix.IsValid() || prefix != prefix.Masked() {
+			return Device{}, ErrInvalidResult
+		}
+	}
+	device.offer, device.offerCount = slices.Clone(listed), count
+	return device, nil
+}
+
+// Offer returns the listed prefixes the Device offers to forward and how
+// many it offers in all.
+func (device Device) Offer() ([]netip.Prefix, int) {
+	return slices.Clone(device.offer), device.offerCount
 }
 
 // ID returns the public Device identity.

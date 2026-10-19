@@ -17,11 +17,12 @@ const inventoryLifecycleDocument = `{"workspace_id":"01890f00-0000-7000-8000-000
  "owner":{"principal_id":"01890f00-0000-7000-8000-000000000011","display_name":"Alice"},
  "suspended_reason":"handover",
  "handover_to":{"principal_id":"01890f00-0000-7000-8000-000000000012","display_name":"Bao"},
- "dns_label":"alice-laptop"},
+ "dns_label":"alice-laptop","advertised_prefixes":[],"advertised_prefix_count":0},
 {"id":"01890f00-0000-7000-8000-000000000902","hostname":"db-1","state":"active",
  "is_ephemeral":false,"version":2,"created_at":"2026-10-01T08:00:00Z","updated_at":"2026-10-01T08:00:00Z",
  "expires_at":"2200-01-01T00:00:00Z","ownership":"workspace","owner":null,
- "suspended_reason":null,"handover_to":null,"dns_label":null}]}`
+ "suspended_reason":null,"handover_to":null,"dns_label":null,
+ "advertised_prefixes":["10.40.0.0/16","2001:db8::/32"],"advertised_prefix_count":20}]}`
 
 func TestDecodeConsoleDeviceInventoryLifecycle(t *testing.T) {
 	t.Parallel()
@@ -43,6 +44,12 @@ func TestDecodeConsoleDeviceInventoryLifecycle(t *testing.T) {
 	if _, ok := result.Devices[1].DNSLabel(); ok {
 		t.Fatal("a Device without a label decoded one")
 	}
+	if offer, count := result.Devices[1].Offer(); len(offer) != 2 || offer[1].String() != "2001:db8::/32" || count != 20 {
+		t.Fatalf("server offer = %v of %d", offer, count)
+	}
+	if offer, count := result.Devices[0].Offer(); len(offer) != 0 || count != 0 {
+		t.Fatalf("laptop offer = %v of %d", offer, count)
+	}
 	if result.WorkspaceCode != "000000000101" || result.NetworkCode != "000000000201" {
 		t.Fatalf("codes = %q %q", result.WorkspaceCode, result.NetworkCode)
 	}
@@ -58,6 +65,15 @@ func TestDecodeConsoleDeviceInventoryLifecycle(t *testing.T) {
 			`"ownership":"team"`, 1),
 		"invalid label": strings.Replace(inventoryLifecycleDocument, `"dns_label":"alice-laptop"`,
 			`"dns_label":"Alice_Laptop"`, 1),
+		"missing offer": strings.Replace(inventoryLifecycleDocument, `,"advertised_prefixes":[],"advertised_prefix_count":0`,
+			``, 1),
+		"offer with host bits": strings.Replace(inventoryLifecycleDocument, `"10.40.0.0/16"`, `"10.40.0.1/16"`, 1),
+		"offer out of order": strings.Replace(inventoryLifecycleDocument, `["10.40.0.0/16","2001:db8::/32"]`,
+			`["2001:db8::/32","10.40.0.0/16"]`, 1),
+		"count below listed": strings.Replace(inventoryLifecycleDocument, `"advertised_prefix_count":20`,
+			`"advertised_prefix_count":1`, 1),
+		"count above the bound": strings.Replace(inventoryLifecycleDocument, `"advertised_prefix_count":20`,
+			`"advertised_prefix_count":257`, 1),
 		"missing codes": strings.Replace(inventoryLifecycleDocument, `"workspace_code":"000000000101",`, ``, 1),
 	} {
 		if _, err := decodeConsoleDeviceInventory(broken); !errors.Is(err, inventory.ErrInvalidResult) {

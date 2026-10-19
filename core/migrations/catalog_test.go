@@ -13,8 +13,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 191 {
-		t.Fatalf("len(Catalog()) = %d, want 191", len(catalog))
+	if len(catalog) != 192 {
+		t.Fatalf("len(Catalog()) = %d, want 192", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1609,8 +1609,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 191 {
-		t.Fatalf("LatestVersion() = %d, want 191", LatestVersion())
+	if LatestVersion() != 192 {
+		t.Fatalf("LatestVersion() = %d, want 192", LatestVersion())
 	}
 }
 
@@ -5557,6 +5557,36 @@ func TestSchema191MapNetworkRoutes(t *testing.T) {
 	} {
 		if !strings.Contains(migration.SQL, want) {
 			t.Errorf("schema 191 lacks %q", want)
+		}
+	}
+}
+
+// Schema 192 lets the Console read what each Device offers to forward.
+func TestSchema192ConsoleDeviceOffers(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 192 {
+		t.Fatalf("len(Catalog()) = %d, want schema 192", len(catalog))
+	}
+	migration := catalog[191]
+	if migration.Version != 192 {
+		t.Fatalf("migration 192 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.console_device_item_internal_v2(p_device mesh.device, p_offer_limit INTEGER)",
+		"mesh_ops.console_device_item_internal_v2(page, 16)",
+		"mesh_ops.console_device_item_internal_v2(v_device, 256)",
+		"mesh_ops.authorize_console_device_read_internal_v1(",
+		"FROM PUBLIC, mesh_runtime, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;",
+		") TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 192 lacks %q", want)
+		}
+	}
+	for _, forbidden := range []string{"INSERT ", "UPDATE ", "DELETE ", "ALTER TABLE", "DROP "} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 192 is read-only but contains %q", forbidden)
 		}
 	}
 }

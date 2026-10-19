@@ -5,7 +5,9 @@ package integration
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
+	"slices"
 	"testing"
 	"time"
 
@@ -14,8 +16,10 @@ import (
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	"meshtransit.net/core/internal/control"
 	"meshtransit.net/core/internal/domain/devicelifecycle"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node/inventory"
 	"meshtransit.net/core/internal/domain/site"
 )
 
@@ -136,12 +140,65 @@ WHERE outbox.aggregate_kind = 'device_route_advertisement' ORDER BY outbox.id DE
 	step("drop the Site", true, "2001:db8::/32")
 	step("cover the Site again", true, "10.40.0.0/16")
 	step("offer more", false, "10.40.0.0/16", "172.16.0.0/24")
+	assertConsoleDeviceOffer(ctx, t, runtimePool, owner, scope, device, 2, "10.40.0.0/16", "172.16.0.0/24")
+	many := []string{"10.40.0.0/16"}
+	for third := range 19 {
+		many = append(many, fmt.Sprintf("172.16.%d.0/24", third))
+	}
+	// A host route and IPv6 come back as Go wrote them, after the 16 a list shows.
+	many = append(many, "192.168.1.1/32", "2001:db8::/48")
+	step("offer many", false, many...)
+	assertConsoleDeviceOffer(ctx, t, runtimePool, owner, scope, device, 22, many...)
 	step("offer nothing", true)
+	assertConsoleDeviceOffer(ctx, t, runtimePool, owner, scope, device, 0)
 	if stored() != "{}" {
 		t.Fatalf("an empty offer stored %q, want an empty row", stored())
 	}
 
 	if _, err := sites.Delete(ctx, owner, scope, created.Site.ID, 2, newCorrelationID(t)); err != nil {
 		t.Fatalf("delete the Site: %v", err)
+	}
+}
+
+// assertConsoleDeviceOffer reads device through the Console inventory store
+// (schema 192): the Device's own read lists every offered prefix, a list page
+// the first 16, and both count them all.
+func assertConsoleDeviceOffer(ctx context.Context, t *testing.T, runtimePool *postgresadapter.Pool,
+	owner accountsession.Session, scope network.Scope, device node.ID, count int, want ...string) {
+	t.Helper()
+	store, err := postgresadapter.NewConsoleDeviceInventoryStore(runtimePool,
+		postgresadapter.AccountSessionOptions{StatementTimeout: 3 * time.Second, IdleTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := inventory.NewService(store, integrationShiftedClock{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	texts := func(prefixes []netip.Prefix) []string {
+		out := make([]string, len(prefixes))
+		for index, prefix := range prefixes {
+			out[index] = prefix.String()
+		}
+		return out
+	}
+	record, err := service.Get(ctx, owner, scope, device)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listed, total := record.Device.Offer(); total != count || !slices.Equal(texts(listed), want) {
+		t.Fatalf("Device read offers %v of %d, want %v of %d", texts(listed), total, want, count)
+	}
+	page, err := service.List(ctx, owner, scope, inventory.Query{Limit: inventory.MaximumPageSize})
+	if err != nil {
+		t.Fatal(err)
+	}
+	index := slices.IndexFunc(page.Devices(), func(item inventory.Device) bool { return item.ID() == device })
+	if index < 0 {
+		t.Fatalf("the list does not hold Device %s", device)
+	}
+	listed, total := page.Devices()[index].Offer()
+	if total != count || !slices.Equal(texts(listed), want[:min(16, len(want))]) {
+		t.Fatalf("the list offers %v of %d, want the first 16 of %v", texts(listed), total, want)
 	}
 }

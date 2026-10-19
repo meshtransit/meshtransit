@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -21,15 +22,17 @@ import (
 )
 
 // readConsoleDeviceInventorySQL reads a page in name order with each
-// Device's DNS label and the scope's display codes (schema 177).
-const readConsoleDeviceInventorySQL = `SELECT mesh_ops.read_console_devices_v4(
+// Device's DNS label, the first 16 prefixes it offers and the scope's display
+// codes (schema 192).
+const readConsoleDeviceInventorySQL = `SELECT mesh_ops.read_console_devices_v5(
     $1::UUID, $2::UUID, $3::UUID, $4::UUID,
     $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
     $10::UUID, $11::UUID, $12::TIMESTAMPTZ, $13::TEXT, $14::TEXT, $15::TEXT, $16::UUID, $17::INTEGER
 )::TEXT`
 
-// readConsoleDeviceSQL reads one Device and how it was enrolled (schema 177).
-const readConsoleDeviceSQL = `SELECT mesh_ops.read_console_device_v1(
+// readConsoleDeviceSQL reads one Device with every prefix it offers and how
+// it was enrolled (schema 192).
+const readConsoleDeviceSQL = `SELECT mesh_ops.read_console_device_v2(
     $1::UUID, $2::UUID, $3::UUID, $4::UUID,
     $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
     $10::UUID, $11::UUID, $12::TIMESTAMPTZ, $13::UUID
@@ -274,6 +277,10 @@ type consoleDeviceInventoryEntry struct {
 	HandoverTo      *consoleDeviceInventoryMember `json:"handover_to"`
 	// Schema 169: null for a Device that holds no label (revoked).
 	DNSLabel *string `json:"dns_label"`
+	// Schema 192: the first prefixes the Device offers to forward and how
+	// many it offers.
+	AdvertisedPrefixes    []string `json:"advertised_prefixes"`
+	AdvertisedPrefixCount *int     `json:"advertised_prefix_count"`
 }
 
 type consoleDeviceInventoryMember struct {
@@ -356,6 +363,20 @@ func (item consoleDeviceInventoryEntry) parse() (inventory.Device, bool) {
 		lifecycle.SuspendedReason = *item.SuspendedReason
 	}
 	if device, deviceErr = device.WithLifecycle(lifecycle); deviceErr != nil {
+		return inventory.Device{}, false
+	}
+	if item.AdvertisedPrefixes == nil || item.AdvertisedPrefixCount == nil {
+		return inventory.Device{}, false
+	}
+	offer := make([]netip.Prefix, len(item.AdvertisedPrefixes))
+	for index, text := range item.AdvertisedPrefixes {
+		prefix, err := netip.ParsePrefix(text)
+		if err != nil {
+			return inventory.Device{}, false
+		}
+		offer[index] = prefix
+	}
+	if device, deviceErr = device.WithOffer(offer, *item.AdvertisedPrefixCount); deviceErr != nil {
 		return inventory.Device{}, false
 	}
 	if item.DNSLabel != nil {

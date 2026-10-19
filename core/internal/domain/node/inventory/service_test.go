@@ -3,6 +3,7 @@ package inventory_test
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -226,5 +227,39 @@ func TestNamesStaysBounded(t *testing.T) {
 	if _, err := service.Names(t.Context(), session, scope, make([]node.ID, inventory.MaximumNames+1)); !errors.Is(
 		err, inventory.ErrInvalidRequest) {
 		t.Fatalf("too many IDs: %v", err)
+	}
+}
+
+func TestDeviceOfferIsCanonicalAndBounded(t *testing.T) {
+	t.Parallel()
+	id, _ := node.ParseID("01890f00-0000-7000-8000-000000000901")
+	hostname, _ := node.ParseHostname("router-1")
+	created := time.Date(2026, time.October, 1, 8, 0, 0, 0, time.UTC)
+	device, err := inventory.NewDevice(id, hostname, "active", false, 1, created, created, created.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listed, count := device.Offer(); len(listed) != 0 || count != 0 {
+		t.Fatalf("a new Device offers %v of %d", listed, count)
+	}
+	v4, v6 := netip.MustParsePrefix("10.40.0.0/16"), netip.MustParsePrefix("2001:db8::/32")
+	offered, err := device.WithOffer([]netip.Prefix{v4, v6}, 2)
+	if listed, count := offered.Offer(); err != nil || len(listed) != 2 || count != 2 {
+		t.Fatalf("offer = %v of %d, %v", listed, count, err)
+	}
+	for name, test := range map[string]struct {
+		listed []netip.Prefix
+		count  int
+	}{
+		"out of order":      {[]netip.Prefix{v6, v4}, 2},
+		"duplicate":         {[]netip.Prefix{v4, v4}, 2},
+		"host bits":         {[]netip.Prefix{netip.MustParsePrefix("10.40.0.1/16")}, 1},
+		"count too small":   {[]netip.Prefix{v4, v6}, 1},
+		"count too large":   {[]netip.Prefix{v4}, 257},
+		"count none listed": {nil, 1},
+	} {
+		if _, err := device.WithOffer(test.listed, test.count); !errors.Is(err, inventory.ErrInvalidResult) {
+			t.Errorf("%s: error = %v, want ErrInvalidResult", name, err)
+		}
 	}
 }

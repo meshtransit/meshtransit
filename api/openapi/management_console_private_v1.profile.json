@@ -345,7 +345,9 @@
         "owner",
         "suspended_reason",
         "handover_to",
-        "dns_name"
+        "dns_name",
+        "advertised_prefixes",
+        "advertised_prefix_count"
       ],
       "properties": {
         "id": {
@@ -460,6 +462,23 @@
           "minLength": 1,
           "maxLength": 253,
           "description": "The Device's DNS name <label>.<workspace code>.<network code>.<suffix>, unique in the Network; null for a Device that holds no name (revoked or deleted). The suffix is the deployment's (default mesh.internal)."
+        },
+        "advertised_prefixes": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 9,
+            "maxLength": 43
+          },
+          "description": "Subnets the Device offers to forward as a subnet router, from its own route settings: canonical CIDRs, IPv4 before IPv6, then by address and length. A list holds the first 16; one Device's read holds all. Offering grants nothing: an administrator still makes the Device a Site's router."
+        },
+        "advertised_prefix_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 256,
+          "description": "How many subnets the Device offers in all."
         }
       }
     },
