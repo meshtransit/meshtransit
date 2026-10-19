@@ -5,6 +5,14 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- MTCP: `RouteSelectionReport` (0x36) and capability `routes.selection1`: a
+  node reports the router it uses for each Site it reaches (`PRIMARY`,
+  `LOCAL_FAILOVER` or `NONE`), on change and every 60 seconds. Core keeps it
+  with the Device's session and per Site in Redis
+  (`meshtransit:v1:site-selection:*`, which the Core ACL must allow): one
+  Site's read gives each router's `clients` and `local_failover_clients`, a
+  Device's status its `subnet_routes`. `meshctl status` names each Site's
+  router; the Console shows them on the Site and Device pages.
 - Client (Linux): a subnet router whose service stops tells Core first, with
   a last route health report of every Site it served failed as
   `going_away`, so Core elects another router within a second instead of

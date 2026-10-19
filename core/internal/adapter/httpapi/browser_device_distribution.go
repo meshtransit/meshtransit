@@ -149,6 +149,15 @@ type deviceDistributionItem struct {
 	// Router is present for a subnet router: whether it forwards into the
 	// served routes it was delivered, and its current Site health.
 	Router *deviceRouterItem `json:"router,omitempty"`
+	// SubnetRoutes is the router the Device uses for each Site it reaches,
+	// as it last reported (within three minutes).
+	SubnetRoutes []deviceSiteRouteItem `json:"subnet_routes,omitempty"`
+}
+
+type deviceSiteRouteItem struct {
+	SiteID   string  `json:"site_id"`
+	RouterID *string `json:"router_device_id"`
+	Via      string  `json:"via"`
 }
 
 type deviceRouterItem struct {
@@ -402,6 +411,14 @@ func newDeviceDistributionItem(device distribution.Device) deviceDistributionIte
 			item.PeerLimit = &devicePeerLimitItem{Sent: limit.Sent, Authorized: limit.Authorized}
 		}
 		item.Router = newDeviceRouterItem(device)
+		for _, site := range device.RouteSelection {
+			route := deviceSiteRouteItem{SiteID: site.Ref, Via: site.Via}
+			if site.Router != "" {
+				router := site.Router
+				route.RouterID = &router
+			}
+			item.SubnetRoutes = append(item.SubnetRoutes, route)
+		}
 	}
 	return item
 }

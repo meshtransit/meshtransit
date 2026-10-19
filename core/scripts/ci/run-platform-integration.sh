@@ -367,6 +367,7 @@ docker exec --detach --user redis "${redis_container}" redis-server \
 	"~meshtransit:v1:control:replicas" \
 	"~meshtransit:v1:endpoints:node:*" \
 	"~meshtransit:v1:delivery:node:*" \
+	"~meshtransit:v1:site-selection:*" \
 	"~meshtransit:v1:ratelimit:management:*" \
 	"&meshtransit:v1:wakeup:network_revision_advanced" \
 	"&meshtransit:v1:wakeup:connectivity_changed" \

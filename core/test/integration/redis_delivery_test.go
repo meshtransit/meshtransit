@@ -182,6 +182,36 @@ func assertRedisEnforcementRecords(ctx context.Context, t *testing.T, client *re
 		observation.RouteHealth != nil || !observation.RouteHealthAt.IsZero() {
 		t.Fatalf("a new session kept the previous report: %+v", observation)
 	}
+	// A node's Site routers are kept for its session and counted per Site;
+	// a Site it no longer reports drops out of that Site's count.
+	router, _ := node.ParseID("01890f00-0000-7000-8000-000000000402")
+	selection := mapsession.RouteSelection{NodeKey: integrationNodeKey, MachineFingerprint: integrationMachine,
+		ReportedAt: time.Now(), Sites: []mapsession.SiteSelection{
+			{Ref: "prod", Router: router, Reason: mapsession.RouteSelectionLocalFailover},
+			{Ref: "uat", Router: router, Reason: mapsession.RouteSelectionPrimary},
+		}}
+	if stored, err := client.RecordRouteSelection(ctx, selection); err != nil || !stored {
+		t.Fatalf("RecordRouteSelection() = %t, %v", stored, err)
+	}
+	if current, ok := distribution.CurrentRouteSelection(load(), time.Now()); !ok || len(current) != 2 ||
+		current[0] != (distribution.SiteRouter{Ref: "prod", Router: router.String(), Via: distribution.ViaLocalFailover}) {
+		t.Fatalf("route selection = %+v, %t", current, ok)
+	}
+	uses, err := client.CountSiteRouters(ctx, "uat", time.Now())
+	if err != nil || uses[router.String()] != (distribution.RouterUse{Clients: 1}) {
+		t.Fatalf("uat routers = %+v, %v", uses, err)
+	}
+	selection.Sites = selection.Sites[:1]
+	if stored, err := client.RecordRouteSelection(ctx, selection); err != nil || !stored {
+		t.Fatalf("RecordRouteSelection(fewer) = %t, %v", stored, err)
+	}
+	if uses, err := client.CountSiteRouters(ctx, "uat", time.Now()); err != nil || len(uses) != 0 {
+		t.Fatalf("uat routers after the node stopped reporting it = %+v, %v", uses, err)
+	}
+	if uses, err := client.CountSiteRouters(ctx, "prod", time.Now()); err != nil ||
+		uses[router.String()] != (distribution.RouterUse{Clients: 1, LocalFailover: 1}) {
+		t.Fatalf("prod routers = %+v, %v", uses, err)
+	}
 	health.ReportedAt = at.Add(3 * time.Second)
 	other := health
 	other.NodeKey = node.Key{0x77}

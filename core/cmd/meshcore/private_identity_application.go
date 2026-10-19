@@ -99,13 +99,15 @@ type privateIdentityPorts struct {
 	Sites               httpapi.SiteManager
 	// SiteRouterObservations reads routers' delivery records for one Site's read.
 	SiteRouterObservations distribution.ObservationLoader
-	IdentityGroups         httpapi.IdentityGroupManager
-	DeviceTags             httpapi.DeviceTagManager
-	DeviceLifecycle        httpapi.DeviceLifecycleManager
-	MemberLifecycle        httpapi.MemberLifecycleManager
-	NetworkMembers         httpapi.NetworkMemberManager
-	EnrollmentKeys         httpapi.EnrollmentKeyManager
-	Invitations            httpapi.InvitationManager
+	// SiteRouterUse counts the Devices using each router of a Site.
+	SiteRouterUse   httpapi.SiteRouterUseCounter
+	IdentityGroups  httpapi.IdentityGroupManager
+	DeviceTags      httpapi.DeviceTagManager
+	DeviceLifecycle httpapi.DeviceLifecycleManager
+	MemberLifecycle httpapi.MemberLifecycleManager
+	NetworkMembers  httpapi.NetworkMemberManager
+	EnrollmentKeys  httpapi.EnrollmentKeyManager
+	Invitations     httpapi.InvitationManager
 	// InvitationPreviews and InvitationAcceptor serve links and sign-in.
 	InvitationPreviews httpapi.InvitationPreviewer
 	InvitationAcceptor oidcauth.InvitationAcceptor
@@ -228,6 +230,7 @@ func composePrivateIdentity(
 		DeviceGroups:           ports.DeviceGroups,
 		Sites:                  ports.Sites,
 		SiteRouterObservations: ports.SiteRouterObservations,
+		SiteRouterUse:          ports.SiteRouterUse,
 		IdentityGroups:         ports.IdentityGroups,
 		DeviceTags:             ports.DeviceTags,
 		DeviceLifecycle:        ports.DeviceLifecycle,

@@ -580,3 +580,44 @@ func TestStreamNetmapTellsCoreARouterIsGoingAway(t *testing.T) {
 		}
 	}
 }
+
+func TestStreamNetmapReportsTheRouterOfEachSite(t *testing.T) {
+	t.Parallel()
+	reports := make(chan *mtcpv1.RouteSelectionReport, 1)
+	core := newStreamCore(t, func(core *streamCore, s *coreSession, _ int32) {
+		core.keyUpdate(s)
+		_ = s.send(sharedmtcp.MessageMapSnapshot, core.snapshot(1))
+		if report, ok := core.expect(s, sharedmtcp.MessageRouteSelectionReport).(*mtcpv1.RouteSelectionReport); ok {
+			reports <- report
+		}
+		_ = s.send(sharedmtcp.MessageLifecycle, &mtcpv1.Lifecycle{State: mtcpv1.Lifecycle_REVOKED})
+		answerPings(s)
+	})
+	core.extra = []string{"routes.subnet.v1", "routes.selection1"}
+	material, options := core.options(t)
+	selection := make(chan []controlplane.RouteSiteSelection, 1)
+	selection <- []controlplane.RouteSiteSelection{{
+		Ref: "prod", Router: "router-2",
+		Reason: controlplane.RouteSelectionLocalFailover,
+	}}
+	options.EnableSubnetRoutes, options.RouteSelection = true, selection
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	_ = core.client().StreamNetmap(ctx, core.origin(), material, options,
+		func(context.Context, networkmap.Snapshot) error { return nil })
+	if !slices.ContainsFunc(core.hello, func(hello *mtcpv1.ClientHello) bool {
+		return slices.Contains(hello.GetCapabilities(), "routes.selection1")
+	}) {
+		t.Fatal("the map stream did not declare routes.selection1")
+	}
+	select {
+	case report := <-reports:
+		sites := report.GetSites()
+		if len(sites) != 1 || sites[0].GetSiteRef() != "prod" || sites[0].GetRouter() != "router-2" ||
+			sites[0].GetReason() != mtcpv1.RouteSelectionReport_SiteSelection_LOCAL_FAILOVER {
+			t.Fatalf("selection report %v", report)
+		}
+	default:
+		t.Fatal("no route selection report reached Core")
+	}
+}

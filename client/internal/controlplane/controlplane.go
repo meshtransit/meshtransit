@@ -149,6 +149,11 @@ type NetmapOptions struct {
 	// served Site; each set is sent in a RouteHealthReport when Core takes
 	// it (router.health1), again every 10 seconds while not empty.
 	RouteHealth <-chan []RouteSiteHealth
+	// RouteSelection, with EnableSubnetRoutes, carries the router this node
+	// sends each Site's traffic to; each set is sent in a
+	// RouteSelectionReport when Core takes it (routes.selection1), again
+	// every 60 seconds while not empty.
+	RouteSelection <-chan []RouteSiteSelection
 	// AnnounceGoingAway, with EnableSubnetRouter, reports whether a router
 	// that stops (its context ends with ErrStopping) tells Core with a last
 	// RouteHealthReport; false while a restart is expected.
@@ -267,6 +272,28 @@ const (
 )
 
 // RouteSiteHealth is one served Site's health.
+// RouteSelectionReason is why a node sends a Site's traffic to a router
+// (mtcp-v1 §8.3).
+type RouteSelectionReason int
+
+const (
+	// RouteSelectionPrimary is the map's primary.
+	RouteSelectionPrimary RouteSelectionReason = iota + 1
+	// RouteSelectionLocalFailover is another candidate the node chose while
+	// the primary does not answer.
+	RouteSelectionLocalFailover
+	// RouteSelectionNone means the Site is not served: no router.
+	RouteSelectionNone
+)
+
+// RouteSiteSelection is the router a node uses for one Site; Router is
+// empty with RouteSelectionNone.
+type RouteSiteSelection struct {
+	Ref    string
+	Router string
+	Reason RouteSelectionReason
+}
+
 type RouteSiteHealth struct {
 	Ref   string
 	State RouteHealthState

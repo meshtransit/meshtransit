@@ -230,6 +230,17 @@ type siteRouterBody struct {
 	// last 30 seconds, and whether it forwards into the routes it was sent.
 	Health           *siteRouterHealthBody `json:"health,omitempty"`
 	RouteEnforcement string                `json:"route_enforcement,omitempty"`
+	// Clients and LocalFailoverClients, with one Site's read, count the
+	// Devices that reported using the router in the last three minutes, and
+	// those of them that chose it while the primary did not answer.
+	Clients              *int `json:"clients,omitempty"`
+	LocalFailoverClients *int `json:"local_failover_clients,omitempty"`
+}
+
+// SiteRouterUseCounter counts, per router of a Site, the Devices that report
+// using it.
+type SiteRouterUseCounter interface {
+	CountSiteRouters(ctx context.Context, siteRef string, now time.Time) (map[string]distribution.RouterUse, error)
 }
 
 // sitePrimaryBody is the router Core elected; DeviceID is null when no
@@ -437,6 +448,7 @@ func (handler *ManagementHandler) readSites(ctx context.Context, response http.R
 				Generation: primary.Generation, Reason: primary.Reason, ElectedAt: managementTime(primary.ElectedAt)}
 		}
 		handler.addRouterHealth(ctx, &output.Data.Site, reading.Site)
+		handler.addRouterUse(ctx, &output.Data.Site, reading.Site)
 		output.Data.CanDelete, output.CorrelationID = reading.CanDelete, correlationID.String()
 		response.Header().Set("ETag", strongVersionETag(reading.Site.Version))
 		writeManagementJSON(ctx, handler.logger, response, http.StatusOK, output)
@@ -614,4 +626,24 @@ func (handler *ManagementHandler) readSitePrimaryHistory(ctx context.Context, re
 	output.CorrelationID = correlationID.String()
 	writeManagementJSON(ctx, handler.logger, response, http.StatusOK, output)
 	return "success"
+}
+
+// addRouterUse adds how many Devices use each router of the Site; nothing
+// when the counts cannot be read within a second.
+func (handler *ManagementHandler) addRouterUse(ctx context.Context, body *siteBody, stored site.Site) {
+	if nilContinuationDependency(handler.siteRouterUse) || len(stored.Routers) == 0 {
+		return
+	}
+	loadCtx, cancel := context.WithTimeout(ctx, siteRouterObservationTimeout)
+	defer cancel()
+	uses, err := handler.siteRouterUse.CountSiteRouters(loadCtx, stored.ID.String(), time.Now())
+	if err != nil {
+		handler.logger.DebugContext(ctx, "site router use unavailable", "error", err)
+		return
+	}
+	for index := range body.Routers {
+		use := uses[body.Routers[index].DeviceID]
+		clients, local := use.Clients, use.LocalFailover
+		body.Routers[index].Clients, body.Routers[index].LocalFailoverClients = &clients, &local
+	}
 }

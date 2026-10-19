@@ -173,6 +173,15 @@ type SubnetRouteStatus struct {
 	Error               string               `json:"error,omitempty"`
 	UnreachableAnswered uint64               `json:"unreachable_answered"`
 	UnreachableLimited  uint64               `json:"unreachable_limited"`
+	Sites               []SubnetRouteSite    `json:"sites,omitempty"`
+}
+
+// SubnetRouteSite is the router one Site's traffic goes to.
+type SubnetRouteSite struct {
+	Site       string `json:"site"`
+	Router     string `json:"router,omitempty"`
+	RouterName string `json:"router_name,omitempty"`
+	Via        string `json:"via"`
 }
 
 // SubnetRouterStatus is what the node forwards into as a router.

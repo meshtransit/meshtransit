@@ -53,19 +53,20 @@ const (
 
 // The closed set of per-session limits (rate_budget.go).
 const (
-	limitInbound     = "inbound"
-	limitResync      = "resync"
-	limitEnforcement = "enforcement"
-	limitBrowser     = "browser"
-	limitIdentity    = "identity"
-	limitRouteOffer  = "route_offer"
-	limitRouteHealth = "route_health"
+	limitInbound        = "inbound"
+	limitResync         = "resync"
+	limitEnforcement    = "enforcement"
+	limitBrowser        = "browser"
+	limitIdentity       = "identity"
+	limitRouteOffer     = "route_offer"
+	limitRouteHealth    = "route_health"
+	limitRouteSelection = "route_selection"
 	// limitSendDeadline: a message was not sent by its send deadline.
 	limitSendDeadline = "send_deadline"
 )
 
 var sessionLimits = []string{limitInbound, limitResync, limitEnforcement, limitBrowser, limitIdentity,
-	limitRouteOffer, limitRouteHealth, limitSendDeadline}
+	limitRouteOffer, limitRouteHealth, limitRouteSelection, limitSendDeadline}
 
 // streamEndReasons is the closed set of map stream end causes.
 var streamEndReasons = []string{

@@ -41,7 +41,11 @@ const (
 	// routeHealthHeartbeat repeats a router's Site health while it serves
 	// any (mtcp-v1 §8.3); Core takes a set older than 30 s as unknown.
 	routeHealthHeartbeat = 10 * time.Second
-	discoKeyPrefix       = "discokey:"
+	// routeSelectionHeartbeat repeats a consumer's Site routers while it
+	// reaches any (mtcp-v1 §8.3); Core takes a set older than 3 minutes as
+	// unknown.
+	routeSelectionHeartbeat = time.Minute
+	discoKeyPrefix          = "discokey:"
 )
 
 // errSessionEnded reports a session that ended without a permanent cause;
@@ -78,7 +82,7 @@ func (c *Client) StreamNetmap(ctx context.Context, controlURL string, material c
 	var forwarders sync.WaitGroup
 	forwarders.Go(func() {
 		reports.forward(streamCtx, options.EndpointUpdates, options.EnforcementReports, options.PathStats,
-			options.AdvertisedRoutes, options.RouteHealth)
+			options.AdvertisedRoutes, options.RouteHealth, options.RouteSelection)
 	})
 	defer func() {
 		cancel()
@@ -119,7 +123,9 @@ type reportBox struct {
 	advertised []netip.Prefix
 	// routeHealth is the latest Site health; nil until it is measured.
 	routeHealth []controlplane.RouteSiteHealth
-	changed     chan struct{}
+	// routeSelection is the latest Site routers; nil until the first map.
+	routeSelection []controlplane.RouteSiteSelection
+	changed        chan struct{}
 }
 
 func newReportBox(initial controlplane.EndpointUpdate) *reportBox {
@@ -129,6 +135,7 @@ func newReportBox(initial controlplane.EndpointUpdate) *reportBox {
 func (box *reportBox) forward(ctx context.Context, endpoints <-chan controlplane.EndpointUpdate,
 	enforcement <-chan controlplane.EnforcementReport, paths <-chan controlplane.PathStatsReport,
 	advertised <-chan []netip.Prefix, routeHealth <-chan []controlplane.RouteSiteHealth,
+	routeSelection <-chan []controlplane.RouteSiteSelection,
 ) {
 	for {
 		select {
@@ -174,6 +181,14 @@ func (box *reportBox) forward(ctx context.Context, endpoints <-chan controlplane
 			box.mu.Lock()
 			box.routeHealth = append([]controlplane.RouteSiteHealth{}, health...)
 			box.mu.Unlock()
+		case selection, ok := <-routeSelection:
+			if !ok {
+				routeSelection = nil
+				continue
+			}
+			box.mu.Lock()
+			box.routeSelection = append([]controlplane.RouteSiteSelection{}, selection...)
+			box.mu.Unlock()
 		}
 		select {
 		case box.changed <- struct{}{}:
@@ -200,6 +215,13 @@ func (box *reportBox) health() []controlplane.RouteSiteHealth {
 	box.mu.Lock()
 	defer box.mu.Unlock()
 	return slices.Clone(box.routeHealth)
+}
+
+// selection returns the latest Site routers, nil before the first map.
+func (box *reportBox) selection() []controlplane.RouteSiteSelection {
+	box.mu.Lock()
+	defer box.mu.Unlock()
+	return slices.Clone(box.routeSelection)
 }
 
 // takePaths returns the pending path report, once.
@@ -323,7 +345,7 @@ func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, e
 		capabilities = append(capabilities, "device-alias.v1")
 	}
 	if stream.options.EnableSubnetRoutes {
-		capabilities = append(capabilities, "routes.subnet.v1")
+		capabilities = append(capabilities, "routes.subnet.v1", "routes.selection1")
 	}
 	if stream.options.EnableSubnetRouter {
 		capabilities = append(capabilities, "router.subnet.v1", "router.health1")
@@ -384,6 +406,10 @@ type sessionRun struct {
 	// when; nil before the first.
 	healthSent   []controlplane.RouteSiteHealth
 	healthSentAt time.Time
+	// selectionSent is the Site routers sent in this session and
+	// selectionSentAt when; nil before the first.
+	selectionSent   []controlplane.RouteSiteSelection
+	selectionSentAt time.Time
 	// unacked counts applied deltas not acknowledged yet, ackView is the
 	// latest applied view and ackTimer acknowledges it (mtcp-v1 §7.2).
 	unacked  int
@@ -407,6 +433,8 @@ func (run *sessionRun) loop(ctx context.Context, inbox <-chan incoming) (bool, t
 	defer heartbeat.Stop()
 	healthBeat := time.NewTicker(routeHealthHeartbeat)
 	defer healthBeat.Stop()
+	selectionBeat := time.NewTicker(routeSelectionHeartbeat)
+	defer selectionBeat.Stop()
 	endpointTimer := time.NewTimer(time.Hour)
 	endpointTimer.Stop()
 	defer endpointTimer.Stop()
@@ -445,6 +473,10 @@ func (run *sessionRun) loop(ctx context.Context, inbox <-chan incoming) (bool, t
 			}
 		case <-healthBeat.C:
 			if err := run.sendRouteHealth(); err != nil {
+				return run.mapped, 0, err
+			}
+		case <-selectionBeat.C:
+			if err := run.sendRouteSelection(); err != nil {
 				return run.mapped, 0, err
 			}
 		case <-keepalive.C:
@@ -645,6 +677,9 @@ func (run *sessionRun) sendReports(timer *time.Timer) error {
 	if err := run.sendRouteHealth(); err != nil {
 		return err
 	}
+	if err := run.sendRouteSelection(); err != nil {
+		return err
+	}
 	if run.supports("stats.path1") {
 		if paths := run.stream.reports.takePaths(); paths != nil {
 			if err := run.send(sharedmtcp.MessagePathStatsReport, pathStatsMessage(*paths)); err != nil {
@@ -724,6 +759,47 @@ func (run *sessionRun) sendGoingAway() {
 		})
 	}
 	_ = run.send(sharedmtcp.MessageRouteHealthReport, report)
+}
+
+// sendRouteSelection sends the router of each Site (mtcp-v1 §8.3) when it
+// changed, and again every routeSelectionHeartbeat while not empty.
+func (run *sessionRun) sendRouteSelection() error {
+	if !run.mapped || !run.stream.options.EnableSubnetRoutes || !run.supports("routes.selection1") {
+		return nil
+	}
+	selection := run.stream.reports.selection()
+	if selection == nil {
+		return nil
+	}
+	changed := run.selectionSent == nil || !slices.Equal(run.selectionSent, selection)
+	if !changed && (len(selection) == 0 || time.Since(run.selectionSentAt) < routeSelectionHeartbeat-time.Second) {
+		return nil
+	}
+	report := &mtcpv1.RouteSelectionReport{
+		Sites: make([]*mtcpv1.RouteSelectionReport_SiteSelection, 0, len(selection)),
+	}
+	for _, site := range selection {
+		report.Sites = append(report.Sites, &mtcpv1.RouteSelectionReport_SiteSelection{
+			SiteRef: site.Ref, Router: site.Router, Reason: routeSelectionReason(site.Reason),
+		})
+	}
+	if err := run.send(sharedmtcp.MessageRouteSelectionReport, report); err != nil {
+		return err
+	}
+	run.selectionSent, run.selectionSentAt = selection, time.Now()
+	return nil
+}
+
+func routeSelectionReason(reason controlplane.RouteSelectionReason) mtcpv1.RouteSelectionReport_SiteSelection_Reason {
+	switch reason {
+	case controlplane.RouteSelectionPrimary:
+		return mtcpv1.RouteSelectionReport_SiteSelection_PRIMARY
+	case controlplane.RouteSelectionLocalFailover:
+		return mtcpv1.RouteSelectionReport_SiteSelection_LOCAL_FAILOVER
+	case controlplane.RouteSelectionNone:
+		return mtcpv1.RouteSelectionReport_SiteSelection_NONE
+	}
+	return mtcpv1.RouteSelectionReport_SiteSelection_REASON_UNSPECIFIED
 }
 
 // goingAwayCode is the health code of a router that stops.

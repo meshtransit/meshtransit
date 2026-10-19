@@ -38,11 +38,12 @@ type fakeStreams struct {
 	snapshot mapsession.Snapshot
 	endFor   func(node.Key) error
 
-	mu       sync.Mutex
-	requests []mapsession.Request
-	reports  []mapsession.ClientEnforcement
-	health   [][]mapsession.SiteHealth
-	started  chan node.Key
+	mu        sync.Mutex
+	requests  []mapsession.Request
+	reports   []mapsession.ClientEnforcement
+	health    [][]mapsession.SiteHealth
+	selection [][]mapsession.SiteSelection
+	started   chan node.Key
 	// block, when set, holds the next ReportEnforcement until it is closed;
 	// entered is signalled when that call starts.
 	block   chan struct{}
@@ -65,6 +66,15 @@ func (streams *fakeStreams) Serve(ctx context.Context, _ control.AuthenticatedMa
 	}
 	<-ctx.Done()
 	return ctx.Err()
+}
+
+func (streams *fakeStreams) ReportRouteSelection(_ context.Context, _ control.AuthenticatedMachine, _ node.Key,
+	sites []mapsession.SiteSelection,
+) error {
+	streams.mu.Lock()
+	defer streams.mu.Unlock()
+	streams.selection = append(streams.selection, slices.Clone(sites))
+	return nil
 }
 
 func (streams *fakeStreams) ReportRouteHealth(_ context.Context, _ control.AuthenticatedMachine, _ node.Key,

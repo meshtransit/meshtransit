@@ -159,6 +159,11 @@ Site's **primary**, and every node sends the Site's traffic through it:
   the routers (one only reached through a relay is left to Core), and it
   goes back to Core's choice only once the Site carries no traffic for a
   minute, so a flow is not cut twice. Flows through the old router end.
+- Each node reports which router it uses for each Site, and why (Core's
+  primary, its own choice, or none), on change and every minute. One Site's
+  read gives each router's `clients` and `local_failover_clients` (Devices
+  that reported using it in the last three minutes), and a Device's status
+  its `subnet_routes`; `meshctl status` shows the same on the node.
 - A Site without `masquerade` has one router: the network behind it sends
   replies to a single router. Adding a second one, or turning masquerade off
   while it has two, is refused (409 `site_masquerade_requires_single_router`).

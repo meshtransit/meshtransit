@@ -1047,6 +1047,42 @@
                     }
                   },
                   "description": "Present for a subnet router: its route enforcement and current Site health."
+                },
+                "subnet_routes": {
+                  "type": "array",
+                  "maxItems": 1024,
+                  "description": "The router the Device sends each Site's traffic through, as it last reported (within three minutes)",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "site_id",
+                      "router_device_id",
+                      "via"
+                    ],
+                    "properties": {
+                      "site_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      },
+                      "router_device_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "format": "uuid"
+                      },
+                      "via": {
+                        "type": "string",
+                        "enum": [
+                          "primary",
+                          "local_failover",
+                          "none"
+                        ]
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -14307,6 +14343,16 @@
                                       "unknown"
                                     ],
                                     "description": "Only on one Site's read: whether the router forwards into the served routes it was delivered."
+                                  },
+                                  "clients": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "description": "Devices that reported sending this Site's traffic through the router in the last three minutes"
+                                  },
+                                  "local_failover_clients": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "description": "Of those, the Devices that chose the router themselves while the primary did not answer"
                                   }
                                 }
                               }

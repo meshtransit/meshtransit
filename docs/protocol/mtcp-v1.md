@@ -243,6 +243,7 @@ payload     bytes[...]
 | 0x33 | `PathStatsReport` | N→C | 256 KiB |
 | 0x34 | `EnforcementReport` | N→C | 1 KiB |
 | 0x35 | `RouteHealthReport` | N→C | 160 KiB |
+| 0x36 | `RouteSelectionReport` | N→C | 128 KiB |
 | 0x40 | `RelayTicket` | C→N | 256 KiB (4 KiB without `relay.zones2`) |
 | 0x50 | `Lifecycle` | C→N | 4 KiB |
 | 0x51 | `KeyUpdate` | C→N | 4 KiB |
@@ -798,6 +799,18 @@ identity.
   Device's current session, only for Sites of the `served` it sent, and
   treats a set without a report for 30 s as unknown, not failed. A malformed
   report, or one on a session without `router.health1`, is `INVALID`.
+- `RouteSelectionReport`: only on a session that negotiated
+  `routes.selection1`, the router the node sends each Site's traffic to, for
+  the Sites of its `routes`: `site_ref`, `router` (one of the Site's
+  `candidates`) and why, `PRIMARY` (the map's primary) or `LOCAL_FAILOVER`
+  (another candidate the node chose while the primary does not answer, 7.6),
+  or `NONE` with an empty `router` for a Site not served. At most 1,024 Sites,
+  sorted by `site_ref`, each once. The whole set is sent on change and every
+  60 s while the node reaches any Site, and once empty when it reaches none.
+  Core keeps the latest set for the Device's current session, only for Sites
+  of the `routes` it sent with a `router` among their `candidates`, and
+  treats a Site without a report for 3 minutes as unknown. A malformed
+  report, or one on a session without `routes.selection1`, is `INVALID`.
 - `PathStatsReport`: per peer, for the last interval (default 60 s): bytes and
   packets sent/received direct and relayed, the path technique (direct,
   peer-reflexive, prediction, birthday, relay), the relay region, smoothed RTT
@@ -935,6 +948,7 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `routes.subnet.v1` | Node applies `routes` (7.6) |
 | `router.subnet.v1` | Node can forward into Sites: it applies `served` (7.6) and reports `route_digest` (8.4) |
 | `router.health1` | Node sends `RouteHealthReport` (8.3); only with `router.subnet.v1` |
+| `routes.selection1` | Node sends `RouteSelectionReport` (8.3); only with `routes.subnet.v1` |
 | `relay.zones2` | Node hands relays MTT2 tickets and their ZONES (MTRP §5.4, §6.1). Core offers it only once every relay accepts them |
 
 Unknown names are ignored. Core sends a feature only when both sides list it.
@@ -956,6 +970,7 @@ Unknown names are ignored. Core sends a feature only when both sides list it.
 | `MapResync` per session (7.1) | 2 at once, then 1 per 5 s; over it fatal `Error{OVERLOADED, retry_after_ms}`, and the node gets a fresh snapshot when it reconnects |
 | `EnforcementReport` per session (8.4) | 4 at once, then 1 per second; over it the latest report is kept, replacing any kept before, and stored when the budget allows |
 | `RouteHealthReport` per session (8.3) | 2 at once, then 1 per 2 s; over it the latest report is kept, replacing any kept before, and stored when the budget allows |
+| `RouteSelectionReport` per session (8.3) | 2 at once, then 1 per 5 s; over it the latest report is kept, replacing any kept before, and stored when the budget allows |
 | Offers of `HostinfoReport` stored per session (8.2) | 4 at once, then 1 per 10 s; over it the latest offer is kept, replacing any kept before, and stored when the budget allows. An offer sent before the session serves a Device is stored once it does |
 | A Device's live presence lease moving to another Core replica | 10 per minute; past it the stream ends with `Lifecycle{RECONNECT, retry_after_ms}` until the minute is over. Two processes sharing one machine key are bounded to that rate, not stopped; a reconnect after a replica ended, a rolling update or a rebalance moves it once. A refused attempt still costs Core the snapshot and relay ticket it prepared, but not their delivery |
 | Everything a node sends, per session | 200 messages at once, then 50 per second, and 1 MiB of records at once, then 256 KiB per second; over either, fatal `Error{OVERLOADED, retry_after_ms}`. `MapAck` counts only as bytes: it answers map messages Core chose to send, and nodes that ack every message (7.2) must not reach the limit |

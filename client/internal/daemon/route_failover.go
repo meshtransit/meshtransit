@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/pathdiscovery"
@@ -341,4 +342,55 @@ func runRouteFailover(ctx context.Context, failover *routeFailover, read func() 
 			return
 		}
 	}
+}
+
+// RouteSiteView is the router this node sends one Site's traffic to, for
+// status.
+type RouteSiteView struct {
+	Ref        string
+	Router     string // a device ID; empty when the Site is not served
+	RouterName string
+	// Via is primary, local_failover or none.
+	Via string
+}
+
+// selections returns, for each Site of Core's last map, the router traffic
+// goes to and why: what the node reports to Core (mtcp-v1 §8.3) and shows in
+// status.
+func (failover *routeFailover) selections() ([]controlplane.RouteSiteSelection, []RouteSiteView) {
+	failover.mu.Lock()
+	defer failover.mu.Unlock()
+	names := make(map[string]string, len(failover.core.Peers))
+	for _, peer := range failover.core.Peers {
+		names[peer.StableID] = peer.Name
+	}
+	reports := make([]controlplane.RouteSiteSelection, 0, len(failover.core.Routes))
+	views := make([]RouteSiteView, 0, len(failover.core.Routes))
+	for _, route := range failover.core.Routes {
+		report := controlplane.RouteSiteSelection{Ref: route.Ref, Reason: controlplane.RouteSelectionNone}
+		view := RouteSiteView{Ref: route.Ref, Via: "none"}
+		if route.Status == networkmap.RouteServed && route.Primary != "" {
+			report.Router, report.Reason, view.Via = route.Primary, controlplane.RouteSelectionPrimary, "primary"
+			if site := failover.sites[route.Ref]; site != nil && site.chosen != "" {
+				report.Router, report.Reason, view.Via = site.chosen, controlplane.RouteSelectionLocalFailover,
+					"local_failover"
+			}
+			view.Router, view.RouterName = report.Router, names[report.Router]
+		}
+		reports = append(reports, report)
+		views = append(views, view)
+	}
+	return reports, views
+}
+
+func (s *Service) setRouteSites(views []RouteSiteView) {
+	s.routeSitesMu.Lock()
+	defer s.routeSitesMu.Unlock()
+	s.routeSites = slices.Clone(views)
+}
+
+func (s *Service) routeSitesSnapshot() []RouteSiteView {
+	s.routeSitesMu.Lock()
+	defer s.routeSitesMu.Unlock()
+	return slices.Clone(s.routeSites)
 }

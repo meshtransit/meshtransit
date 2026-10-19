@@ -76,6 +76,10 @@ type Observation struct {
 	// Core received it.
 	RouteHealth   []SiteHealth
 	RouteHealthAt time.Time
+	// RouteSelection is the router the node last reported using for each
+	// Site and RouteSelectionAt when Core received it.
+	RouteSelection   []SiteRouter
+	RouteSelectionAt time.Time
 }
 
 // PeerLimit is how many peers a limited map carried and how many the
@@ -100,7 +104,8 @@ func (observation Observation) IsValid() bool {
 			observation.AppliedAt.IsZero() && observation.ReportedAt.IsZero() && observation.Paths == nil &&
 			observation.Connectivity == nil && observation.PeerLimit.IsZero() &&
 			observation.Routes.IsZero() && observation.EnforcedRoutes.IsZero() &&
-			observation.RouteHealth == nil && observation.RouteHealthAt.IsZero()
+			observation.RouteHealth == nil && observation.RouteHealthAt.IsZero() &&
+			observation.RouteSelection == nil && observation.RouteSelectionAt.IsZero()
 	}
 	if !observation.PeerLimit.IsZero() && !observation.PeerLimit.IsValid() {
 		return false
@@ -162,6 +167,9 @@ type Device struct {
 	// health, empty when it has none or it is older than RouteHealthStale.
 	RouteEnforcement Enforcement
 	RouteHealth      []SiteHealth
+	// RouteSelection is the router the Device uses for each Site it
+	// reaches, empty when it reported none within RouteSelectionStale.
+	RouteSelection []SiteRouter
 }
 
 // Report is one Device's standing against the Network's current revisions.
@@ -221,6 +229,7 @@ func (service *Service) ReadDevice(ctx context.Context, session accountsession.S
 	report.Device.Enforcement = ClassifyEnforcement(observations[0], now)
 	report.Device.RouteEnforcement = ClassifyRouteEnforcement(observations[0], now)
 	report.Device.RouteHealth, _ = CurrentRouteHealth(observations[0], now)
+	report.Device.RouteSelection, _ = CurrentRouteSelection(observations[0], now)
 	report.ObservationsAvailable = true
 	return report, nil
 }

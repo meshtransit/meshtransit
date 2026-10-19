@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/pathdiscovery"
@@ -261,4 +262,35 @@ func TestRestartExpectedOnlyForAFreshMarker(t *testing.T) {
 		t.Fatal("a cleared marker still expects a restart")
 	}
 	clearRestartMarker(path, nil) // already gone: nothing to do
+}
+
+func TestRouteFailoverReportsEachSitesRouter(t *testing.T) {
+	t.Parallel()
+	h := newFailoverHarness(t)
+	core := failoverMap("router-1")
+	core.Peers[0].Name, core.Peers[1].Name = "router-1-prod", "router-2-prod"
+	core.Routes = append(core.Routes, networkmap.SiteRoute{
+		Ref:      "uat",
+		Prefixes: []netip.Prefix{netip.MustParsePrefix("10.36.0.0/16")}, Candidates: []string{"router-3"},
+		Generation: 1, Status: networkmap.RouteUnserved,
+	})
+	h.failover.effective(core)
+	reports, views := h.failover.selections()
+	if len(reports) != 2 || reports[0] != (controlplane.RouteSiteSelection{
+		Ref: "prod", Router: "router-1",
+		Reason: controlplane.RouteSelectionPrimary,
+	}) || reports[1].Reason != controlplane.RouteSelectionNone ||
+		reports[1].Router != "" || views[0].RouterName != "router-1-prod" || views[1].Via != "none" {
+		t.Fatalf("selections = %+v %+v", reports, views)
+	}
+	for second := 0; !h.step(false, 12, 13); second++ {
+		if second > 10 {
+			t.Fatal("never switched")
+		}
+	}
+	reports, views = h.failover.selections()
+	if reports[0].Router != "router-2" || reports[0].Reason != controlplane.RouteSelectionLocalFailover ||
+		views[0].Via != "local_failover" || views[0].RouterName != "router-2-prod" {
+		t.Fatalf("after a local switch = %+v %+v", reports, views)
+	}
 }

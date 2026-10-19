@@ -616,7 +616,26 @@ func formatSubnetRouteStatus(status *localapi.SubnetRouteStatus) string {
 		summary += fmt.Sprintf("; %d unreachable answered, %d limited", status.UnreachableAnswered,
 			status.UnreachableLimited)
 	}
+	for _, site := range status.Sites {
+		summary += "; Site " + site.Site + " " + formatRouteSite(site)
+	}
 	return summary
+}
+
+// formatRouteSite says which router a Site's traffic goes to and why.
+func formatRouteSite(site localapi.SubnetRouteSite) string {
+	router := site.RouterName
+	if router == "" {
+		router = site.Router
+	}
+	switch site.Via {
+	case "primary":
+		return "via " + router
+	case "local_failover":
+		return "via " + router + " (chosen here: the primary does not answer)"
+	default:
+		return "not served"
+	}
 }
 
 func formatSubnetRouterStatus(status *localapi.SubnetRouterStatus) string {

@@ -464,7 +464,7 @@ func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request)
 		PeerCount:          status.PeerCount,
 		PolicyRuleCount:    status.PolicyRuleCount,
 		PeerPaths:          mapPathStatus(status.PeerPaths),
-		SubnetRoutes:       mapSubnetRouteStatus(status.SubnetRoutes),
+		SubnetRoutes:       withRouteSites(mapSubnetRouteStatus(status.SubnetRoutes), status.RouteSites),
 		SubnetRouter:       mapSubnetRouterStatus(status.SubnetRouter),
 		PathProbes:         mapPathProbeStatus(status.PathProbes),
 		Relay:              mapRelayStatus(status.Relay),
@@ -626,6 +626,15 @@ func natAllocationName(a disco.Allocation) string {
 	default:
 		return "unknown"
 	}
+}
+
+func withRouteSites(mapped subnetRouteStatus, sites []daemon.RouteSiteView) subnetRouteStatus {
+	for _, site := range sites {
+		mapped.Sites = append(mapped.Sites, subnetRouteSite{
+			Site: site.Ref, Router: site.Router, RouterName: site.RouterName, Via: site.Via,
+		})
+	}
+	return mapped
 }
 
 func mapSubnetRouteStatus(status dataplane.SubnetRouteStatus) subnetRouteStatus {

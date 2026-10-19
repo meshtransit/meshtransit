@@ -62,10 +62,16 @@ type Client struct {
 	recordConnectivity func(ctx context.Context, key string, generation int64, encoded string, ttl time.Duration) (int64, error)
 	recordRouteHealth  func(ctx context.Context, key string, generation int64, encoded string, reportedAt int64,
 		ttl time.Duration, failed bool) (int64, error)
-	loadSession    loadSessionFunc
-	touchDelivery  touchDeliveryFunc
-	loadDeliveries loadDeliveriesFunc
-	replicaLoad    replicaLoadFunc
+	loadSession loadSessionFunc
+	// recordRouteSelection runs recordRouteSelectionScript; loadSiteSelection
+	// reads a Site's selection hash; pruneSiteSelection deletes its fields.
+	recordRouteSelection func(ctx context.Context, key string, generation int64, encoded string, reportedAt int64,
+		nodeID string) (int64, error)
+	loadSiteSelection  func(ctx context.Context, key string, limit int) (map[string]string, error)
+	pruneSiteSelection func(ctx context.Context, key string, fields []string) error
+	touchDelivery      touchDeliveryFunc
+	loadDeliveries     loadDeliveriesFunc
+	replicaLoad        replicaLoadFunc
 	// withdrawReplicaLoad removes one control replica's load field.
 	withdrawReplicaLoad func(ctx context.Context, key, replicaID string) error
 	metrics             *redisMetrics
@@ -242,6 +248,24 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 			return recordEnforcementScript.Run(recordCtx, client, []string{key}, record.generation,
 				record.digest, record.grants, record.appliedAt, record.reportedAt, ttl.Milliseconds(),
 				record.routeDigest, record.routeEntries).Int64()
+		},
+		recordRouteSelection: func(recordCtx context.Context, key string, generation int64, encoded string,
+			reportedAt int64, nodeID string) (int64, error) {
+			return recordRouteSelectionScript.Run(recordCtx, client, []string{key}, generation, encoded, reportedAt,
+				deliveryTTL.Milliseconds(), nodeID, siteSelectionPrefix, siteSelectionTTL.Milliseconds()).Int64()
+		},
+		loadSiteSelection: func(loadCtx context.Context, key string, limit int) (map[string]string, error) {
+			entries, err := client.HGetAll(loadCtx, key).Result()
+			if err != nil {
+				return nil, err
+			}
+			if len(entries) > limit {
+				return nil, errors.New("site selection is too large to count")
+			}
+			return entries, nil
+		},
+		pruneSiteSelection: func(pruneCtx context.Context, key string, fields []string) error {
+			return client.HDel(pruneCtx, key, fields...).Err()
 		},
 		recordRouteHealth: func(recordCtx context.Context, key string, generation int64, encoded string,
 			reportedAt int64, ttl time.Duration, failed bool) (int64, error) {

@@ -92,6 +92,8 @@ type Application struct {
 	routeOfferTimer func(time.Duration, func()) endpointTimer
 	// routeHealthTimer starts the route health pacing's timer.
 	routeHealthTimer func(time.Duration, func()) endpointTimer
+	// routeSelectionTimer starts the route selection pacing's timer.
+	routeSelectionTimer func(time.Duration, func()) endpointTimer
 }
 
 // NewApplication validates its dependencies.
@@ -118,7 +120,7 @@ func NewApplication(options ApplicationOptions) (*Application, error) {
 	}
 	return &Application{options: options, now: time.Now, poll: approvalPollInterval,
 		endpointTimer: realEndpointTimer, enforcementTimer: realEndpointTimer, routeOfferTimer: realEndpointTimer,
-		routeHealthTimer: realEndpointTimer}, nil
+		routeHealthTimer: realEndpointTimer, routeSelectionTimer: realEndpointTimer}, nil
 }
 
 // Open implements SessionHandler.
@@ -134,7 +136,10 @@ func (application *Application) Open(session *Session) Conversation {
 		resync:            newRateBudget(resyncBurst, resyncRate),
 		enforcementPacing: enforcementPacing{budget: newRateBudget(enforcementBurst, enforcementRate)},
 		routeOfferPacing:  routeOfferPacing{budget: newRateBudget(routeOfferBurst, routeOfferRate)},
-		routeHealthPacing: routeHealthPacing{budget: newRateBudget(routeHealthBurst, routeHealthRate)}}
+		routeHealthPacing: routeHealthPacing{budget: newRateBudget(routeHealthBurst, routeHealthRate)},
+		routeSelectionPacing: latestPacing[[]mapsession.SiteSelection]{
+			budget: newRateBudget(routeSelectionBurst, routeSelectionRate),
+		}}
 }
 
 type conversation struct {
@@ -157,6 +162,8 @@ type conversation struct {
 	routeOfferPacing routeOfferPacing
 	// routeHealthPacing paces RouteHealthReports.
 	routeHealthPacing routeHealthPacing
+	// routeSelectionPacing paces RouteSelectionReports.
+	routeSelectionPacing latestPacing[[]mapsession.SiteSelection]
 	// lastConnectivity is the connectivity last stored for this session.
 	// Only a store claimed by endpointPacing reads and writes it, without
 	// the lock: busy runs one store at a time, and claiming and finishing
@@ -202,6 +209,7 @@ func (conversation *conversation) Run(ctx context.Context) error {
 	defer conversation.stopEnforcementPacing()
 	defer conversation.stopRouteOfferPacing()
 	defer conversation.stopRouteHealthPacing()
+	defer conversation.stopRouteSelectionPacing()
 	for {
 		nodeKey, generation, streamCtx, cancel := conversation.startStream(ctx)
 		if nodeKey.IsValid() {
@@ -428,6 +436,8 @@ func (conversation *conversation) Receive(ctx context.Context, _ sharedmtcp.Mess
 		// Accepted; nothing reads it yet.
 	case *mtcpv1.RouteHealthReport:
 		return conversation.routeHealth(m)
+	case *mtcpv1.RouteSelectionReport:
+		return conversation.routeSelection(m)
 	case *mtcpv1.RegisterRequest:
 		if wait, ok := conversation.identity.spend(conversation.application.now(), 1); !ok {
 			conversation.application.options.Metrics.limited(limitIdentity)

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -112,8 +114,10 @@ func TestClientLoadsObservationsInOrder(t *testing.T) {
 				"4", "9", "3", "1759924800000", "1759924860000", testDigestText, "7",
 				testDigestText, "7", "1759924801000", "1759924802000", testPathsText, testConnectivityText,
 				"10000:80000", testDigestText, "3", testDigestText, "3",
-				`[["prod","failed","forward_blocked"]]`, "1759924803000", "1",
-				"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "0",
+				`[["prod","failed","forward_blocked"]]`, "1759924803000",
+				`[["prod","01890f00-0000-7000-8000-000000000402","local_failover"],["uat","","none"]]`, "1759924804000",
+				"1",
+				"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "0",
 			}, nil
 		},
 		metrics: newRedisMetrics(1, nil),
@@ -150,6 +154,11 @@ func TestClientLoadsObservationsInOrder(t *testing.T) {
 		first.RouteHealth[0] != (distribution.SiteHealth{Ref: "prod", State: "failed", Code: "forward_blocked"}) ||
 		first.RouteHealthAt.UnixMilli() != 1759924803000 {
 		t.Fatalf("first routes = %+v %+v %+v at %v", first.Routes, first.EnforcedRoutes, first.RouteHealth, first.RouteHealthAt)
+	}
+	if len(first.RouteSelection) != 2 || first.RouteSelectionAt.UnixMilli() != 1759924804000 ||
+		first.RouteSelection[0] != (distribution.SiteRouter{Ref: "prod", Router: "01890f00-0000-7000-8000-000000000402",
+			Via: distribution.ViaLocalFailover}) || first.RouteSelection[1].Via != distribution.ViaNone {
+		t.Fatalf("first selection = %+v at %v", first.RouteSelection, first.RouteSelectionAt)
 	}
 	if second.Known || second.Online {
 		t.Fatalf("second = %+v", second)
@@ -434,5 +443,66 @@ func TestDecodePeerLimitRejectsMalformedValues(t *testing.T) {
 		if _, err := decodePeerLimit(text); err == nil {
 			t.Errorf("decodePeerLimit(%q) accepted a malformed value", text)
 		}
+	}
+}
+
+func TestClientRecordsRouteSelectionAndCountsRouters(t *testing.T) {
+	t.Parallel()
+	nodeID := testDeliveryNode(t)
+	session := []any{nodeID.String(), "4", hex.EncodeToString(testMachine[:])}
+	router, _ := node.ParseID("01890f00-0000-7000-8000-000000000402")
+	var gotKey, gotEncoded, gotNode string
+	var gotGeneration int64
+	client := &Client{
+		loadSession: func(context.Context, string) ([]any, error) { return session, nil },
+		recordRouteSelection: func(_ context.Context, key string, generation int64, encoded string, _ int64,
+			nodeText string,
+		) (int64, error) {
+			gotKey, gotGeneration, gotEncoded, gotNode = key, generation, encoded, nodeText
+			return 1, nil
+		},
+		metrics: newRedisMetrics(1, nil),
+	}
+	selection := mapsession.RouteSelection{NodeKey: testNodeKey, MachineFingerprint: testMachine,
+		ReportedAt: time.UnixMilli(1759924803000), Sites: []mapsession.SiteSelection{
+			{Ref: "prod", Router: router, Reason: mapsession.RouteSelectionLocalFailover},
+			{Ref: "uat", Reason: mapsession.RouteSelectionNone},
+		}}
+	stored, err := client.RecordRouteSelection(t.Context(), selection)
+	if err != nil || !stored || gotKey != deliveryKeyForNode(nodeID) || gotGeneration != 4 || gotNode != nodeID.String() ||
+		gotEncoded != `[["prod","01890f00-0000-7000-8000-000000000402","local_failover"],["uat","","none"]]` {
+		t.Fatalf("RecordRouteSelection() = %t, %v; %s %d %s", stored, err, gotKey, gotGeneration, gotEncoded)
+	}
+	invalid := selection
+	invalid.Sites = []mapsession.SiteSelection{{Ref: "prod", Reason: mapsession.RouteSelectionPrimary}}
+	if _, err := client.RecordRouteSelection(t.Context(), invalid); !errors.Is(err, ErrInvalidOptions) {
+		t.Fatalf("a primary without a router = %v", err)
+	}
+
+	now := time.UnixMilli(1759924900000)
+	fresh, stale := strconv.FormatInt(now.Add(-time.Minute).UnixMilli(), 10), strconv.FormatInt(now.Add(-time.Hour).UnixMilli(), 10)
+	lingering := strconv.FormatInt(now.Add(-5*time.Minute).UnixMilli(), 10)
+	client.loadSiteSelection = func(_ context.Context, key string, _ int) (map[string]string, error) {
+		if key != siteSelectionPrefix+"prod" {
+			t.Fatalf("read %q", key)
+		}
+		return map[string]string{"n1": "r1|primary|" + fresh, "n2": "r1|primary|" + fresh,
+			"n3": "r2|local_failover|" + fresh, "n4": "r1|primary|" + stale, "n5": "|none|" + fresh,
+			"n6": "malformed", "n7": "r1|primary|" + lingering}, nil
+	}
+	var pruned []string
+	client.pruneSiteSelection = func(_ context.Context, _ string, fields []string) error {
+		pruned = fields
+		return nil
+	}
+	uses, err := client.CountSiteRouters(t.Context(), "prod", now)
+	if err != nil || len(uses) != 2 || uses["r1"] != (distribution.RouterUse{Clients: 2}) ||
+		uses["r2"] != (distribution.RouterUse{Clients: 1, LocalFailover: 1}) {
+		t.Fatalf("CountSiteRouters() = %+v, %v", uses, err)
+	}
+	// Entries past the prune age go; one only stale for counting stays.
+	slices.Sort(pruned)
+	if !slices.Equal(pruned, []string{"n4", "n6"}) {
+		t.Fatalf("pruned %v", pruned)
 	}
 }

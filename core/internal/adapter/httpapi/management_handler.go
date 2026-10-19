@@ -270,6 +270,9 @@ type ManagementHandlerOptions struct {
 	// SiteRouterObservations, when set, adds each router's health of the
 	// Site and its route enforcement to one Site's read.
 	SiteRouterObservations distribution.ObservationLoader
+	// SiteRouterUse, when set, adds how many Devices use each router to one
+	// Site's read (mtcp-v1 §8.3).
+	SiteRouterUse SiteRouterUseCounter
 	// IdentityGroups lists and changes Workspace Identity Groups; nil answers 503.
 	IdentityGroups IdentityGroupManager
 	// DeviceTags lists and changes the device tag catalog and Device tags; nil answers 503.
@@ -338,6 +341,7 @@ type ManagementHandler struct {
 	deviceGroups              DeviceGroupManager
 	sites                     SiteManager
 	siteRouterObservations    distribution.ObservationLoader
+	siteRouterUse             SiteRouterUseCounter
 	identityGroups            IdentityGroupManager
 	deviceTags                DeviceTagManager
 	deviceLifecycle           DeviceLifecycleManager
@@ -417,6 +421,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		deviceGroups:              options.DeviceGroups,
 		sites:                     options.Sites,
 		siteRouterObservations:    options.SiteRouterObservations,
+		siteRouterUse:             options.SiteRouterUse,
 		identityGroups:            options.IdentityGroups,
 		deviceTags:                options.DeviceTags,
 		deviceLifecycle:           options.DeviceLifecycle,

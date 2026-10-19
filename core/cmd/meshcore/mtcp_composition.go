@@ -29,7 +29,8 @@ var (
 // the others get at most 256 peers. relay.zones2: relay tickets for more than
 // 31 shares (MTT2), offered once every relay takes them. routes.subnet.v1 and
 // router.subnet.v1: subnet routes, when the deployment routes subnets;
-// router.health1: routers report their Sites' health with them.
+// router.health1: routers report their Sites' health with them;
+// routes.selection1: nodes report the router they use for each Site.
 func mtcpCapabilities(deviceAliases, relayZones, subnetRoutes bool) []string {
 	capabilities := []string{"map.zstd", "disco.v2", "relay.mtrp1", "dns.split", "stats.path1", "nat.report1", "map.large1"}
 	if deviceAliases {
@@ -39,7 +40,8 @@ func mtcpCapabilities(deviceAliases, relayZones, subnetRoutes bool) []string {
 		capabilities = append(capabilities, "relay.zones2")
 	}
 	if subnetRoutes {
-		capabilities = append(capabilities, "routes.subnet.v1", "router.subnet.v1", "router.health1")
+		capabilities = append(capabilities, "routes.subnet.v1", "router.subnet.v1", "router.health1",
+			"routes.selection1")
 	}
 	return capabilities
 }

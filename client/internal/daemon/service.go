@@ -156,6 +156,8 @@ type Status struct {
 	PolicyRuleCount int
 	PeerPaths       dataplane.PeerPathSnapshot
 	SubnetRoutes    dataplane.SubnetRouteStatus
+	// RouteSites is the router each Site's traffic goes to.
+	RouteSites      []RouteSiteView
 	SubnetRouter    dataplane.SubnetRouterStatus
 	PathProbes      PathProbeStatus
 	Relay           relay.HealthSnapshot
@@ -371,6 +373,9 @@ type Service struct {
 	enableSubnetRouter   bool
 	routeSettingsPath    string
 	restartMarkerPath    string
+	// routeSites is the router of each Site of the current session.
+	routeSitesMu         sync.Mutex
+	routeSites           []RouteSiteView
 	loadRouteSettings    func(string) (routesettings.Settings, error)
 	clock                func() time.Time
 	runtimeRetryDelay    func(time.Duration) time.Duration
@@ -740,8 +745,20 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		var probeRuntime *peerprobe.Runtime
 		var probeDataPlane peerProbeDataPlane
 		var pathController *pathEndpointController
-		// Local router choices of this session (design §6.3).
+		// Local router choices of this session (design §6.3), and the router
+		// of each Site reported to Core and shown in status.
 		failover := newRouteFailover(s.clock)
+		var routeSelection chan []controlplane.RouteSiteSelection
+		if s.enableSubnetRoutes {
+			routeSelection = make(chan []controlplane.RouteSiteSelection, 1)
+		}
+		publishRouteSelection := func() {
+			reports, views := failover.selections()
+			s.setRouteSites(views)
+			if routeSelection != nil {
+				offerLatest(routeSelection, reports)
+			}
+		}
 		if dataPlane, supported := s.dataPlane.(peerProbeDataPlane); supported {
 			probeDataPlane = dataPlane
 			var pathObserver peerprobe.PathObserver
@@ -830,6 +847,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 						return nil
 					}
 					_, err := s.dataPlane.Apply(failoverCtx, current, privateKey)
+					if err == nil {
+						publishRouteSelection()
+					}
 					s.dataPlaneMu.Unlock()
 					if err != nil && failoverCtx.Err() != nil {
 						return err // the session is ending: nothing to recover
@@ -854,6 +874,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			dnsRetries.stop()
 			// Before the private key is cleared: it applies maps with it.
 			stopFailover()
+			s.setRouteSites(nil)
 			stopPathStats()
 			s.setLocalEndpointSink(nil)
 			if probeRuntime != nil {
@@ -923,6 +944,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					EnableSubnetRouter:  s.enableSubnetRouter,
 					AdvertisedRoutes:    advertisedRoutes,
 					RouteHealth:         routeHealth,
+					RouteSelection:      routeSelection,
 					AnnounceGoingAway:   func() bool { return !restartExpected(s.restartMarkerPath, s.clock()) },
 					Hostname:            s.hostname,
 					Version:             "meshd/" + s.build.Version,
@@ -977,6 +999,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					if s.dataPlane != nil {
 						s.dataPlaneMu.Lock()
 						state, err := s.dataPlane.Apply(callbackCtx, failover.effective(snapshot), privateKey)
+						if err == nil {
+							publishRouteSelection()
+						}
 						if err == nil && reportsEnforcement {
 							if enforced, known := enforcedPolicy.EnforcedPolicy(); known {
 								publishEnforcement(enforcementReports, enforced)
@@ -2141,6 +2166,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		PolicyRuleCount:    syncState.policyRuleCount,
 		PeerPaths:          peerPaths,
 		SubnetRoutes:       subnetRoutes,
+		RouteSites:         s.routeSitesSnapshot(),
 		SubnetRouter:       s.subnetRouterStatus(),
 		PathProbes:         s.pathProbeStatus(),
 		Relay:              relayStatus,

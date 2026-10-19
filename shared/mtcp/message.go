@@ -34,6 +34,7 @@ const (
 	MessagePathStatsReport       MessageType = 0x33
 	MessageEnforcementReport     MessageType = 0x34
 	MessageRouteHealthReport     MessageType = 0x35
+	MessageRouteSelectionReport  MessageType = 0x36
 	MessageRelayTicket           MessageType = 0x40
 	MessageLifecycle             MessageType = 0x50
 	MessageKeyUpdate             MessageType = 0x51
@@ -90,10 +91,12 @@ var specs = map[MessageType]messageSpec{
 	MessageEnforcementReport:     {NodeToCore, kib, func() proto.Message { return &mtcpv1.EnforcementReport{} }},
 	// 1,024 Sites of a 64-byte reference and a 64-byte code each.
 	MessageRouteHealthReport: {NodeToCore, 160 * kib, func() proto.Message { return &mtcpv1.RouteHealthReport{} }},
-	MessageRelayTicket:       {CoreToNode, 256 * kib, func() proto.Message { return &mtcpv1.RelayTicket{} }}, // MTT2 zones: 17 bytes × 10,001
-	MessageLifecycle:         {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.Lifecycle{} }},
-	MessageKeyUpdate:         {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.KeyUpdate{} }},
-	MessageNotice:            {CoreToNode, 8 * kib, func() proto.Message { return &mtcpv1.Notice{} }},
+	// 1,024 Sites of a 64-byte reference and a 36-byte router each.
+	MessageRouteSelectionReport: {NodeToCore, 128 * kib, func() proto.Message { return &mtcpv1.RouteSelectionReport{} }},
+	MessageRelayTicket:          {CoreToNode, 256 * kib, func() proto.Message { return &mtcpv1.RelayTicket{} }}, // MTT2 zones: 17 bytes × 10,001
+	MessageLifecycle:            {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.Lifecycle{} }},
+	MessageKeyUpdate:            {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.KeyUpdate{} }},
+	MessageNotice:               {CoreToNode, 8 * kib, func() proto.Message { return &mtcpv1.Notice{} }},
 }
 
 // Limit returns the decoded size limit of a message type, or 0 if unknown.

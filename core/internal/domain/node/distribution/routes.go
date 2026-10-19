@@ -70,7 +70,7 @@ func CurrentRouteHealth(observation Observation, now time.Time) ([]SiteHealth, b
 }
 
 func validRoutes(observation Observation) bool {
-	if !observation.Routes.isValid() || !observation.EnforcedRoutes.isValid() {
+	if !observation.Routes.isValid() || !observation.EnforcedRoutes.isValid() || !validSelection(observation) {
 		return false
 	}
 	if observation.RouteHealthAt.IsZero() {
@@ -83,4 +83,53 @@ func validRoutes(observation Observation) bool {
 		}
 	}
 	return true
+}
+
+// RouteSelectionStale is how long a node's Site routers stay current without
+// a report: it reports every 60 seconds (mtcp-v1 §8.3).
+const RouteSelectionStale = 3 * time.Minute
+
+// How a node reaches a Site (mtcp-v1 §8.3).
+const (
+	ViaPrimary       = "primary"
+	ViaLocalFailover = "local_failover"
+	ViaNone          = "none"
+)
+
+// SiteRouter is the router a node reports using for one Site: a Device
+// public ID, empty with ViaNone.
+type SiteRouter struct {
+	Ref    string
+	Router string
+	Via    string
+}
+
+// CurrentRouteSelection returns the node's Site routers when reported within
+// RouteSelectionStale of now.
+func CurrentRouteSelection(observation Observation, now time.Time) ([]SiteRouter, bool) {
+	if !observation.Known || observation.RouteSelectionAt.IsZero() ||
+		now.Sub(observation.RouteSelectionAt) > RouteSelectionStale {
+		return nil, false
+	}
+	return append([]SiteRouter{}, observation.RouteSelection...), true
+}
+
+func validSelection(observation Observation) bool {
+	if observation.RouteSelectionAt.IsZero() {
+		return len(observation.RouteSelection) == 0
+	}
+	for _, site := range observation.RouteSelection {
+		known := site.Via == ViaPrimary || site.Via == ViaLocalFailover || site.Via == ViaNone
+		if site.Ref == "" || !known || (site.Via == ViaNone) != (site.Router == "") {
+			return false
+		}
+	}
+	return true
+}
+
+// RouterUse is how many nodes reported using a router for a Site, and how
+// many of them chose it themselves while the primary did not answer.
+type RouterUse struct {
+	Clients       int
+	LocalFailover int
 }

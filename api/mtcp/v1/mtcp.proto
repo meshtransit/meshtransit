@@ -486,6 +486,26 @@ message RouteHealthReport {
   }
 }
 
+// RouteSelectionReport is the router a consumer sends each Site's traffic
+// to (section 8.3): the whole set, on change and every 60 seconds while it
+// reaches any Site; empty once it reaches none.
+message RouteSelectionReport {
+  repeated SiteSelection sites = 1; // at most 1,024, sorted by site_ref, each once
+
+  message SiteSelection {
+    string site_ref = 1; // as in SiteRoute
+    string router = 2; // one of the Site's candidates; empty with NONE
+    Reason reason = 3;
+
+    enum Reason {
+      REASON_UNSPECIFIED = 0;
+      PRIMARY = 1; // the primary of the map
+      LOCAL_FAILOVER = 2; // another candidate this node chose while the primary does not answer
+      NONE = 3; // the Site is not served: no router
+    }
+  }
+}
+
 // EnforcementReport is the policy digest (docs/protocol/policy-digest-v1.md)
 // of the rules the packet filter enforces after applying the map at view.
 message EnforcementReport {

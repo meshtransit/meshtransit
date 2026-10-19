@@ -27,7 +27,7 @@ const (
 	deliveryTTL = 30 * 24 * time.Hour
 	// maximumDeliveryLoad bounds one read to one distribution page.
 	maximumDeliveryLoad = distribution.MaximumObservationBatch
-	deliveryFieldCount  = 21
+	deliveryFieldCount  = 23
 	presenceField       = deliveryFieldCount - 1
 )
 
@@ -73,7 +73,8 @@ redis.call('HSET', KEYS[1], 'generation', ARGV[1], 'network_revision', ARGV[2],
 if not same_generation then
     redis.call('HSET', KEYS[1], 'enforced_digest', '', 'enforced_grants', '',
         'applied_at', '', 'reported_at', '', 'paths', '', 'connectivity', '',
-        'enforced_route_digest', '', 'enforced_route_entries', '', 'route_health', '', 'route_health_at', '')
+        'enforced_route_digest', '', 'enforced_route_entries', '', 'route_health', '', 'route_health_at', '',
+        'route_selection', '', 'route_selection_at', '')
 end
 redis.call('PEXPIRE', KEYS[1], ARGV[5])
 redis.call('HSET', KEYS[2], 'node_id', ARGV[8], 'generation', ARGV[1], 'machine', ARGV[9])
@@ -139,7 +140,7 @@ redis.call('HSET', KEYS[1], 'seen_at', ARGV[2])
 redis.call('PEXPIRE', KEYS[1], ARGV[3])
 return 1
 `)
-	// KEYS alternate delivery and presence keys; each pair yields twenty
+	// KEYS alternate delivery and presence keys; each pair yields twenty-two
 	// fields (empty when absent) and whether a presence lease exists.
 	loadDeliveriesScript = redisclient.NewScript(`
 local result = {}
@@ -148,8 +149,8 @@ for index = 1, #KEYS, 2 do
         'policy_revision', 'delivered_at', 'seen_at', 'filter_digest', 'filter_grants',
         'enforced_digest', 'enforced_grants', 'applied_at', 'reported_at', 'paths', 'connectivity',
         'peer_limit', 'route_digest', 'route_entries', 'enforced_route_digest', 'enforced_route_entries',
-        'route_health', 'route_health_at')
-    for field = 1, 20 do
+        'route_health', 'route_health_at', 'route_selection', 'route_selection_at')
+    for field = 1, 22 do
         result[#result + 1] = fields[field] or ''
     end
     result[#result + 1] = tostring(redis.call('EXISTS', KEYS[index + 1]))
@@ -392,7 +393,7 @@ func decodeObservations(raw []any, count int) ([]distribution.Observation, error
 // enforced_digest, enforced_grants, applied_at, reported_at, paths,
 // connectivity, peer_limit, route_digest, route_entries,
 // enforced_route_digest, enforced_route_entries, route_health,
-// route_health_at, presence.
+// route_health_at, route_selection, route_selection_at, presence.
 func decodeObservation(fields []string) (distribution.Observation, error) {
 	online := fields[presenceField] == "1"
 	if fields[presenceField] != "0" && fields[presenceField] != "1" {
@@ -458,6 +459,14 @@ func decodeObservation(fields []string) (distribution.Observation, error) {
 	if err != nil {
 		return distribution.Observation{}, err
 	}
+	routeSelection, err := decodeRouteSelection(fields[20])
+	if err != nil {
+		return distribution.Observation{}, err
+	}
+	routeSelectionAt, err := decodeOptionalTime(fields[21])
+	if err != nil {
+		return distribution.Observation{}, err
+	}
 	observation := distribution.Observation{
 		Known:             true,
 		SessionGeneration: numbers[0],
@@ -477,6 +486,8 @@ func decodeObservation(fields []string) (distribution.Observation, error) {
 		EnforcedRoutes:    enforcedRoutes,
 		RouteHealth:       routeHealth,
 		RouteHealthAt:     routeHealthAt,
+		RouteSelection:    routeSelection,
+		RouteSelectionAt:  routeSelectionAt,
 	}
 	if !observation.IsValid() {
 		return distribution.Observation{}, errors.New("inconsistent delivery record")
