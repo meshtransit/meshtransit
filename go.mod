@@ -7,7 +7,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.47.1
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.7
 	github.com/aws/aws-sdk-go-v2/service/sesv2 v1.78.0
-	github.com/aws/smithy-go v1.28.1
+	github.com/aws/smithy-go v1.28.4
 	github.com/coder/websocket v1.8.15
 	github.com/dexidp/dex v0.0.0-20260303133905-11d2eeb52b42
 	github.com/flynn/noise v1.1.0
