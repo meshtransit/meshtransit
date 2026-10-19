@@ -5,6 +5,11 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Testing: `make e2e-subnet-router` (and a CI job) routes real traffic from a
+  consumer through a subnet router into a Site's LAN in network namespaces,
+  with the real helper and data plane, moves it to the other router when the
+  first dies, checks an unserved Site is refused at once, and measures
+  throughput and latency through the router.
 - MTCP: `RouteSelectionReport` (0x36) and capability `routes.selection1`: a
   node reports the router it uses for each Site it reaches (`PRIMARY`,
   `LOCAL_FAILOVER` or `NONE`), on change and every 60 seconds. Core keeps it

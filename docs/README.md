@@ -70,6 +70,9 @@ Installing and running the client on each platform:
 [Qualification](testing/qualification.md): the Linux node procedures for
 restarts, reboots, network changes, relay fallback, DNS and policy.
 
+[Subnet router end to end](testing/subnet-router-e2e.md): real traffic through
+a subnet router in network namespaces, failover and a benchmark.
+
 ## Core
 
 [Device sharing deployment gate](core/design/device-sharing-deployment-gate.md):

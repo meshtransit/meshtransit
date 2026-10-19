@@ -29,7 +29,7 @@ DEX_OLD_SOURCE ?=
 DEX_CURRENT_BINARY ?=
 DEX_CURRENT_BINARY_SHA256 ?=
 
-.PHONY: test-linux-client help build build-core build-client mobile-tools mobile-android mobile-ios package-deb package-deb-meshd package-deb-meshctl package-darwin package-windows lint-client lint-client-cross lint-relay build-relay natlab-matrix proto proto-check mtcp-crosscheck check-boundaries scan-secrets fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace qualification-dex-upgrade-restore verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
+.PHONY: test-linux-client e2e-subnet-router help build build-core build-client mobile-tools mobile-android mobile-ios package-deb package-deb-meshd package-deb-meshctl package-darwin package-windows lint-client lint-client-cross lint-relay build-relay natlab-matrix proto proto-check mtcp-crosscheck check-boundaries scan-secrets fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace qualification-dex-upgrade-restore verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
 	container-build container-build-multiarch container-push-multiarch container-push-relay-multiarch container-push-dexbroker-multiarch container-inspect container-smoke container-scan
 
 help:
@@ -127,6 +127,19 @@ test-linux-client:
 		-e GOFLAGS=-mod=readonly -e GOPROXY=off -e CGO_ENABLED=1 "$(LINUX_GO_IMAGE)" \
 		go test -timeout=$(TEST_TIMEOUT) -race -count=1 ./client/... ./shared/...
 
+# Subnet routing end to end on a real kernel (client/internal/e2e/subnetrouter):
+# network namespaces, the real helper and data plane, failover between two
+# routers, and throughput/latency through a router into
+# dist/subnet-router-bench.json. Needs Docker with privileged containers.
+e2e-subnet-router:
+	mkdir -p dist
+	docker run --rm --privileged -v "$(CURDIR):/src" -v "$$($(GO) env GOMODCACHE):/go/pkg/mod:ro" -w /src \
+		-e GOFLAGS=-mod=readonly -e GOPROXY=off "$(LINUX_GO_IMAGE)" sh -c '\
+		apt-get -qq -o Acquire::Retries=3 update >/dev/null && apt-get -qq -o Acquire::Retries=3 install -y iproute2 nftables >/dev/null && \
+		go test -c -tags e2e -o /tmp/subnetrouter.test ./client/internal/e2e/subnetrouter && \
+		chmod 755 /tmp/subnetrouter.test && \
+		MESHTRANSIT_E2E_BENCH=/src/dist/subnet-router-bench.json /tmp/subnetrouter.test -test.v -test.timeout 5m'
+
 integration-deps:
 	$(GO) test -timeout=$(INTEGRATION_TEST_TIMEOUT) -tags=integration -count=1 \
 		-run '^TestTLSAuthenticatedDependencies$$' ./core/test/integration
@@ -212,7 +225,7 @@ lint:
 	$(GOLANGCI_LINT) run ./core/... ./api/...
 
 lint-client:
-	$(GOLANGCI_LINT) run --config client/.golangci.yml ./client/... ./shared/... ./test/...
+	$(GOLANGCI_LINT) run --config client/.golangci.yml --build-tags e2e ./client/... ./shared/... ./test/...
 
 # Lints the client as LINT_GOOS/LINT_GOARCH sees it (build-tagged files such
 # as *_windows.go), for example: make lint-client-cross LINT_GOOS=windows.

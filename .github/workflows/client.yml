@@ -126,6 +126,37 @@ jobs:
       - name: Run client tests in the pinned Linux Go image
         run: make test-linux-client
 
+  subnet-router-e2e:
+    name: Subnet router end to end (make e2e-subnet-router)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      # The container runs with GOPROXY=off on a read-only module cache.
+      - name: Download modules
+        run: go mod download
+
+      - name: Route through a subnet router in network namespaces
+        run: make e2e-subnet-router
+
+      - name: Keep the throughput and latency measurement
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: subnet-router-bench
+          path: dist/subnet-router-bench.json
+          if-no-files-found: ignore
+
   cross-build:
     name: Build (${{ matrix.target }})
     runs-on: ubuntu-24.04
