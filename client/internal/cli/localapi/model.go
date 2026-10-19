@@ -32,6 +32,7 @@ type Status struct {
 	PeerCount          int                    `json:"peer_count"`
 	PolicyRuleCount    int                    `json:"policy_rule_count"`
 	PeerPaths          PathStatus             `json:"paths"`
+	SubnetRoutes       *SubnetRouteStatus     `json:"subnet_routes,omitempty"`
 	PathProbes         *PathProbeStatus       `json:"path_probes,omitempty"`
 	Relay              RelayStatus            `json:"relay"`
 	NetworkChanges     NetworkChangeStatus    `json:"network_changes"`
@@ -159,6 +160,24 @@ type RelayRegionStatus struct {
 	LastActivity        string `json:"last_activity,omitempty"`
 	LastSend            string `json:"last_send,omitempty"`
 	LastFailure         string `json:"last_failure,omitempty"`
+}
+
+// SubnetRouteStatus is what the node does with the map's subnet routes.
+type SubnetRouteStatus struct {
+	Requested           int                  `json:"requested"`
+	Installed           int                  `json:"installed"`
+	RefusedTotal        int                  `json:"refused_total"`
+	Refused             []SubnetRouteRefusal `json:"refused,omitempty"`
+	Health              string               `json:"health"`
+	Error               string               `json:"error,omitempty"`
+	UnreachableAnswered uint64               `json:"unreachable_answered"`
+	UnreachableLimited  uint64               `json:"unreachable_limited"`
+}
+
+// SubnetRouteRefusal is one route the host refused, with its reason code.
+type SubnetRouteRefusal struct {
+	Prefix string `json:"prefix"`
+	Reason string `json:"reason"`
 }
 
 // NetworkChangeStatus summarizes endpoint refreshes triggered by host network changes.

@@ -39,8 +39,11 @@ func TestChangeRouteSettings(t *testing.T) {
 		command  string
 		operands []string
 	}{
-		{"accept", []string{"yes"}}, {"advertise", nil}, {"advertise", []string{"10.20.0.1/16"}},
-		{"advertise", []string{"0.0.0.0/0"}}, {"enable", nil},
+		{"accept", []string{"yes"}},
+		{"advertise", nil},
+		{"advertise", []string{"10.20.0.1/16"}},
+		{"advertise", []string{"0.0.0.0/0"}},
+		{"enable", nil},
 	} {
 		if _, err := changeRouteSettings(settings, bad.command, bad.operands); err == nil {
 			t.Errorf("%s %v was accepted", bad.command, bad.operands)

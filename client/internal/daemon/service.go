@@ -154,6 +154,7 @@ type Status struct {
 	PeerCount       int
 	PolicyRuleCount int
 	PeerPaths       dataplane.PeerPathSnapshot
+	SubnetRoutes    dataplane.SubnetRouteStatus
 	PathProbes      PathProbeStatus
 	Relay           relay.HealthSnapshot
 	NetworkChanges  NetworkChangeStatus
@@ -285,6 +286,10 @@ type peerPathStatusDataPlane interface {
 	PeerPaths() dataplane.PeerPathSnapshot
 }
 
+type subnetRouteStatusDataPlane interface {
+	SubnetRoutes() dataplane.SubnetRouteStatus
+}
+
 type peerProbeDataPlane interface {
 	pathdiscovery.DatagramTransport
 	SetPeerProbeHandler(pathdiscovery.DatagramHandler) error
@@ -356,6 +361,7 @@ type Service struct {
 	hostname             string
 	configuredCandidates pathdiscovery.Set
 	enableDeviceAliases  bool
+	enableSubnetRoutes   bool
 	clock                func() time.Time
 	runtimeRetryDelay    func(time.Duration) time.Duration
 	endpointRefreshDelay func() time.Duration
@@ -415,13 +421,15 @@ type endpointRefreshRequest struct {
 // Options contains host facts and injectable time for the daemon use cases.
 type Options struct {
 	EnableDeviceAliases bool
-	Hostname            string
-	Clock               func() time.Time
-	DataPlane           DataPlaneController
-	DNS                 DNSController
-	Logger              *slog.Logger
-	AdvertiseEndpoints  []netip.AddrPort
-	NetworkChanges      <-chan struct{}
+	// EnableSubnetRoutes declares routes.subnet.v1 (mtcp-v1 §7.6).
+	EnableSubnetRoutes bool
+	Hostname           string
+	Clock              func() time.Time
+	DataPlane          DataPlaneController
+	DNS                DNSController
+	Logger             *slog.Logger
+	AdvertiseEndpoints []netip.AddrPort
+	NetworkChanges     <-chan struct{}
 	// PortMapper maps the WireGuard port on the local gateway; nil turns
 	// port mapping off.
 	PortMapper PortMapper
@@ -452,6 +460,9 @@ func New(
 	}
 	if options.EnableDeviceAliases && options.DataPlane == nil {
 		return nil, errors.New("daemon: Device aliases require a packet engine")
+	}
+	if options.EnableSubnetRoutes && options.DataPlane == nil {
+		return nil, errors.New("daemon: subnet routes require a packet engine")
 	}
 	if options.Clock == nil {
 		options.Clock = time.Now
@@ -494,6 +505,7 @@ func New(
 		hostname:             options.Hostname,
 		configuredCandidates: configuredSet,
 		enableDeviceAliases:  options.EnableDeviceAliases,
+		enableSubnetRoutes:   options.EnableSubnetRoutes,
 		clock:                options.Clock,
 		runtimeRetryDelay:    jitteredRuntimeRetryDelay,
 		endpointRefreshDelay: randomEndpointRefreshDelay,
@@ -825,6 +837,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				protocolMaterial,
 				controlplane.NetmapOptions{
 					EnableDeviceAliases: s.enableDeviceAliases,
+					EnableSubnetRoutes:  s.enableSubnetRoutes,
 					Hostname:            s.hostname,
 					Version:             "meshd/" + s.build.Version,
 					PinnedFingerprint:   record.ControlKeyFingerprint(),
@@ -2019,7 +2032,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	if syncState.state == ControlSessionSynchronized || syncState.state == ControlSessionReconnecting {
 		daemonState = StateOnline
 	}
-	peerPaths, relayStatus := s.dataPlaneStatus()
+	peerPaths, relayStatus, subnetRoutes := s.dataPlaneStatus()
 
 	return Status{
 		Build:              s.build,
@@ -2041,6 +2054,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		PeerCount:          syncState.peerCount,
 		PolicyRuleCount:    syncState.policyRuleCount,
 		PeerPaths:          peerPaths,
+		SubnetRoutes:       subnetRoutes,
 		PathProbes:         s.pathProbeStatus(),
 		Relay:              relayStatus,
 		NetworkChanges: NetworkChangeStatus{
@@ -2079,9 +2093,9 @@ func (s *Service) recordRuntimeRecovery() {
 	}
 }
 
-func (s *Service) dataPlaneStatus() (dataplane.PeerPathSnapshot, relay.HealthSnapshot) {
+func (s *Service) dataPlaneStatus() (dataplane.PeerPathSnapshot, relay.HealthSnapshot, dataplane.SubnetRouteStatus) {
 	if s == nil || s.dataPlane == nil {
-		return dataplane.PeerPathSnapshot{}, relay.HealthSnapshot{}
+		return dataplane.PeerPathSnapshot{}, relay.HealthSnapshot{}, dataplane.SubnetRouteStatus{}
 	}
 	s.dataPlaneMu.Lock()
 	defer s.dataPlaneMu.Unlock()
@@ -2095,8 +2109,12 @@ func (s *Service) dataPlaneStatus() (dataplane.PeerPathSnapshot, relay.HealthSna
 		relayStatus = reporter.RelayHealth()
 	}
 	relayStatus.Regions = append([]relay.RegionHealth(nil), relayStatus.Regions...)
+	subnetRoutes := dataplane.SubnetRouteStatus{}
+	if reporter, supported := s.dataPlane.(subnetRouteStatusDataPlane); supported {
+		subnetRoutes = reporter.SubnetRoutes()
+	}
 
-	return peerPaths, relayStatus
+	return peerPaths, relayStatus, subnetRoutes
 }
 
 // StartLogin registers the active profile with either an in-memory auth key or

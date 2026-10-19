@@ -37,15 +37,19 @@ var errMapGap = errors.New("mtcp: map delta does not follow the current view")
 // delta applied in order, the signing keys of its relay grant and its
 // relay ticket.
 type mapState struct {
-	ready     bool
-	epoch     uint64
-	seq       uint64
-	self      *mtcpv1.Device
-	peers     map[string]*mtcpv1.Device
-	filter    *mtcpv1.PacketFilter
-	dns       *mtcpv1.DnsConfig
-	relayMap  []byte
-	revisions []*mtcpv1.NetworkRevision
+	ready  bool
+	epoch  uint64
+	seq    uint64
+	self   *mtcpv1.Device
+	peers  map[string]*mtcpv1.Device
+	filter *mtcpv1.PacketFilter
+	dns    *mtcpv1.DnsConfig
+	routes *mtcpv1.RouteConfig
+	// takesRoutes: the node declared routes.subnet.v1; otherwise it ignores
+	// routes, as it ignores any field it did not ask for.
+	takesRoutes bool
+	relayMap    []byte
+	revisions   []*mtcpv1.NetworkRevision
 
 	signingKeys []mtrp.TrustedKey
 	ticket      []byte
@@ -55,7 +59,9 @@ type mapState struct {
 	fallbackTicket []byte
 }
 
-func newMapState() *mapState { return &mapState{peers: make(map[string]*mtcpv1.Device)} }
+func newMapState(takesRoutes bool) *mapState {
+	return &mapState{peers: make(map[string]*mtcpv1.Device), takesRoutes: takesRoutes}
+}
 
 // applySnapshot replaces the view.
 func (state *mapState) applySnapshot(snapshot *mtcpv1.MapSnapshot) error {
@@ -79,6 +85,8 @@ func (state *mapState) applySnapshot(snapshot *mtcpv1.MapSnapshot) error {
 	state.ready, state.epoch, state.seq = true, view.GetEpoch(), 1
 	state.self, state.peers = snapshot.GetSelf(), peers
 	state.filter, state.dns = snapshot.GetPacketFilter(), snapshot.GetDns()
+	// A snapshot without routes means none (mtcp-v1 §7.6).
+	state.routes = snapshot.GetRoutes()
 	state.relayMap = bytes.Clone(snapshot.GetRelayMap())
 	state.revisions = snapshot.GetNetworkRevisions()
 	return nil
@@ -126,6 +134,11 @@ func (state *mapState) applyDelta(delta *mtcpv1.MapDelta) error {
 	}
 	if delta.GetDns() != nil {
 		state.dns = delta.GetDns()
+	}
+	// A present routes message replaces them all; a present, empty one
+	// clears them.
+	if delta.GetRoutes() != nil {
+		state.routes = delta.GetRoutes()
 	}
 	if len(delta.GetRelayMap()) != 0 {
 		state.relayMap = bytes.Clone(delta.GetRelayMap())
@@ -246,6 +259,11 @@ func (state *mapState) build(input snapshotInput) (networkmap.Snapshot, error) {
 	snapshot := networkmap.Snapshot{
 		Revision: input.revision, ControlTime: input.controlTime, Self: self, Peers: peers, Policy: policy, DNS: dns,
 		Relays: map[int]networkmap.RelayRegion{},
+	}
+	if state.takesRoutes {
+		if snapshot.Routes, err = convertRoutes(state.routes); err != nil {
+			return networkmap.Snapshot{}, err
+		}
 	}
 	if interchange, regions, ok := state.interchange(input.now); ok {
 		snapshot.Interchange, snapshot.Relays = interchange, regions
@@ -536,4 +554,53 @@ func canonicalDNSName(raw string) (string, error) {
 		}
 	}
 	return strings.ToLower(trimmed), nil
+}
+
+// convertRoutes reads the Sites of routes (mtcp-v1 §7.6). Prefixes must be
+// canonical as sent: host bits or an IPv4-mapped address make the map
+// malformed rather than being masked. networkmap validates the rest.
+func convertRoutes(config *mtcpv1.RouteConfig) ([]networkmap.SiteRoute, error) {
+	sites := config.GetSites()
+	routes := make([]networkmap.SiteRoute, 0, len(sites))
+	for _, site := range sites {
+		route := networkmap.SiteRoute{
+			Ref: site.GetSiteRef(), Candidates: slices.Clone(site.GetCandidates()),
+			Primary: site.GetPrimary(), Generation: site.GetGeneration(),
+		}
+		switch site.GetStatus() {
+		case mtcpv1.SiteRoute_SERVED:
+			route.Status = networkmap.RouteServed
+		case mtcpv1.SiteRoute_UNSERVED:
+			route.Status = networkmap.RouteUnserved
+		case mtcpv1.SiteRoute_CONFLICT:
+			route.Status = networkmap.RouteConflict
+		case mtcpv1.SiteRoute_CAPACITY:
+			route.Status = networkmap.RouteCapacity
+		default:
+			return nil, fmt.Errorf("%w: unknown route status", controlplane.ErrNetmapInvalid)
+		}
+		for _, encoded := range site.GetPrefixes() {
+			prefix, err := exactPrefix(encoded)
+			if err != nil {
+				return nil, err
+			}
+			route.Prefixes = append(route.Prefixes, prefix)
+		}
+		routes = append(routes, route)
+	}
+	return routes, nil
+}
+
+// exactPrefix reads a prefix that must already be canonical.
+func exactPrefix(encoded *mtcpv1.Prefix) (netip.Prefix, error) {
+	raw := encoded.GetIp()
+	address, ok := netip.AddrFromSlice(raw)
+	if !ok || (len(raw) != 4 && len(raw) != 16) || address.Is4In6() || int(encoded.GetBits()) > address.BitLen() {
+		return netip.Prefix{}, fmt.Errorf("%w: malformed route prefix", controlplane.ErrNetmapInvalid)
+	}
+	prefix := netip.PrefixFrom(address, int(encoded.GetBits()))
+	if prefix != prefix.Masked() {
+		return netip.Prefix{}, fmt.Errorf("%w: route prefix has host bits", controlplane.ErrNetmapInvalid)
+	}
+	return prefix, nil
 }

@@ -137,7 +137,7 @@ func (r e2eRelay) dial(t *testing.T, node key.NodePublic, zones []mtrp.Zone) (*C
 
 // reaches reports whether from's packets reach to within the deadline; it
 // keeps sending, as WireGuard would, while the relay refuses the route.
-func reaches(t *testing.T, from *Client, to *Client, toNode key.NodePublic, within time.Duration) bool {
+func reaches(t *testing.T, from, to *Client, toNode key.NodePublic, within time.Duration) bool {
 	t.Helper()
 	got := make(chan bool, 1)
 	go func() {

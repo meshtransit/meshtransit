@@ -5,45 +5,222 @@ package netadmin
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
+	"slices"
 
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
+
+	"meshtransit.net/client/internal/routesettings"
 )
 
 type kernelRoutedConfigurer struct{}
 
 // ReplaceRouted installs desired in the routed table on the interface, with
-// the policy rule that keeps meshd out of it, removing current routes no
-// longer desired. With nothing desired it clears the table and removes the
+// the policy rule that keeps meshd out of it, and returns what is installed.
+// It compares desired with the kernel's table, not with current, so a route
+// removed behind the helper's back is installed again and anything else in
+// the table is removed. A route the kernel refuses is reported, not fatal:
+// the others stay. With nothing desired it clears the table and removes the
 // rule, also when the interface is already gone.
 func (configurer kernelRoutedConfigurer) ReplaceRouted(name string, options RoutedOptions, uid uint32,
-	current, desired []netip.Prefix) error {
-	if len(desired) == 0 {
-		return configurer.Clear(options, uid)
+	_, desired routedState,
+) (routedState, []routesettings.Refusal, error) {
+	if len(desired.Routes) == 0 {
+		return routedState{}, nil, configurer.Clear(options, uid)
 	}
 	link, err := netlink.LinkByName(name)
 	if err != nil {
-		return fmt.Errorf("finding tun link for routed routes: %w", err)
+		return routedState{}, nil, fmt.Errorf("finding tun link for routed routes: %w", err)
 	}
 	if link == nil || link.Attrs() == nil || link.Attrs().Index <= 0 || link.Type() != "tuntap" {
-		return errors.New("routed route target is invalid")
+		return routedState{}, nil, errors.New("routed route target is invalid")
 	}
+	index := link.Attrs().Index
 	// The rule comes first: meshd's sockets must never see the table.
 	if err := ensureRules(routedRules(options, uid)); err != nil {
-		return err
+		return routedState{}, nil, err
 	}
-	return applyRouteDiff(current, desired, func(prefix netip.Prefix, add bool) error {
-		route := &netlink.Route{LinkIndex: link.Attrs().Index, Dst: prefixIPNet(prefix), Table: options.Table,
-			Scope: netlink.SCOPE_LINK}
-		if add {
-			return netlink.RouteReplace(route)
+	installed, err := installedRouted(options.Table, index)
+	if err != nil {
+		return routedState{}, nil, err
+	}
+	throwRoute := func(prefix netip.Prefix) *netlink.Route {
+		return &netlink.Route{Dst: prefixIPNet(prefix), Table: options.Table, Type: unix.RTN_THROW}
+	}
+	tunRoute := func(prefix netip.Prefix) *netlink.Route {
+		return &netlink.Route{LinkIndex: index, Dst: prefixIPNet(prefix), Table: options.Table, Scope: netlink.SCOPE_LINK}
+	}
+	// Throws come before the routes that contain them and go after them, so
+	// a resolver never follows a route into the mesh; a route whose resolver
+	// could not be pinned is not installed.
+	throws, throwRefusals := addRoutes(installed.Throws, desired.Throws, throwRoute)
+	wanted, refused := withoutUnpinned(desired.Routes, throwRefusals)
+	// Stale routes go before new ones are added: a route replaced by another
+	// prefix leaves a gap of a few calls, but a failed add never has to undo
+	// a removal.
+	if err := removeRoutes(prefixDifference(installed.Routes, wanted), tunRoute); err != nil {
+		return routedState{}, nil, err
+	}
+	routes, routeRefusals := addRoutes(installed.Routes, wanted, tunRoute)
+	if err := removeRoutes(prefixDifference(installed.Throws, desired.Throws), throwRoute); err != nil {
+		return routedState{}, nil, err
+	}
+	return routedState{Routes: routes, Throws: throws}, append(refused, routeRefusals...), nil
+}
+
+// installedRouted reads the routed table: routes on the interface and throw
+// routes. Anything else there is removed: the table belongs to the helper.
+func installedRouted(table, linkIndex int) (routedState, error) {
+	var state routedState
+	for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
+		routes, err := netlink.RouteListFiltered(family, &netlink.Route{Table: table}, netlink.RT_FILTER_TABLE)
+		if familyUnsupported(err) {
+			continue
 		}
-		if err := netlink.RouteDel(route); err != nil && !errors.Is(err, unix.ESRCH) {
-			return err
+		if err != nil {
+			return routedState{}, fmt.Errorf("listing routed routes: %w", err)
 		}
-		return nil
-	})
+		for index := range routes {
+			route := &routes[index]
+			prefix, ok := netipPrefix(route.Dst)
+			switch {
+			case ok && route.Type == unix.RTN_THROW:
+				state.Throws = append(state.Throws, prefix)
+			case ok && route.Type == unix.RTN_UNICAST && route.LinkIndex == linkIndex:
+				state.Routes = append(state.Routes, prefix)
+			default:
+				if err := netlink.RouteDel(route); err != nil && !errors.Is(err, unix.ESRCH) {
+					return routedState{}, fmt.Errorf("removing stray routed route: %w", err)
+				}
+			}
+		}
+	}
+	return state, nil
+}
+
+// addRoutes installs each desired prefix not yet installed and returns the
+// desired ones now installed, sorted; those the kernel refuses are reported.
+func addRoutes(installed, desired []netip.Prefix, route func(netip.Prefix) *netlink.Route) (
+	[]netip.Prefix, []routesettings.Refusal,
+) {
+	kept := prefixIntersection(desired, installed)
+	var refused []routesettings.Refusal
+	for _, prefix := range prefixDifference(desired, installed) {
+		if err := netlink.RouteReplace(route(prefix)); err != nil {
+			reason := routesettings.ReasonInstallFailed
+			if familyUnsupported(err) {
+				reason = routesettings.ReasonFamilyUnavailable
+			}
+			refused = append(refused, routesettings.Refusal{Prefix: prefix, Reason: reason})
+			continue
+		}
+		kept = append(kept, prefix)
+	}
+	slices.SortFunc(kept, compareRoutedPrefixes)
+	return kept, refused
+}
+
+// withoutUnpinned drops each route containing a resolver whose pin the
+// kernel refused, with the pin's reason.
+func withoutUnpinned(routes []netip.Prefix, failedPins []routesettings.Refusal) ([]netip.Prefix, []routesettings.Refusal) {
+	if len(failedPins) == 0 {
+		return routes, nil
+	}
+	kept := make([]netip.Prefix, 0, len(routes))
+	var refused []routesettings.Refusal
+	for _, route := range routes {
+		index := slices.IndexFunc(failedPins, func(pin routesettings.Refusal) bool { return route.Contains(pin.Prefix.Addr()) })
+		if index >= 0 {
+			refused = append(refused, routesettings.Refusal{Prefix: route, Reason: failedPins[index].Reason})
+			continue
+		}
+		kept = append(kept, route)
+	}
+	return kept, refused
+}
+
+// prefixIntersection returns the prefixes of left also in right, in left's
+// order.
+func prefixIntersection(left, right []netip.Prefix) []netip.Prefix {
+	return prefixDifference(left, prefixDifference(left, right))
+}
+
+// removeRoutes removes prefixes; one already gone is removed.
+func removeRoutes(prefixes []netip.Prefix, route func(netip.Prefix) *netlink.Route) error {
+	for _, prefix := range prefixes {
+		if err := netlink.RouteDel(route(prefix)); err != nil && !errors.Is(err, unix.ESRCH) {
+			return fmt.Errorf("removing routed route: %w", err)
+		}
+	}
+	return nil
+}
+
+// maximumLocalRoutes bounds the host routes the checks compare against. A
+// host with more, such as one holding a full Internet table, is no
+// consumer the checks can keep safe cheaply: it installs no routes.
+const maximumLocalRoutes = 16384
+
+var errTooManyLocalRoutes = errors.New("too many local routes to check subnet routes against")
+
+// resolverFiles hold the system resolvers: the host's, and the upstream
+// servers systemd-resolved learned when it answers on a stub address.
+var resolverFiles = []string{"/etc/resolv.conf", "/run/systemd/resolve/resolv.conf"}
+
+type kernelHostRouting struct{}
+
+// LocalRoutes returns the main table's routes but default routes and those
+// on the mesh interface; scope link routes are attached networks.
+func (kernelHostRouting) LocalRoutes(meshInterface string) ([]localRoute, error) {
+	meshIndex := -1
+	if link, err := netlink.LinkByName(meshInterface); err == nil && link.Attrs() != nil {
+		meshIndex = link.Attrs().Index
+	}
+	var local []localRoute
+	tooMany := false
+	for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
+		// Iterated rather than listed: a host with a full Internet table
+		// stops at the bound instead of holding every route in memory.
+		err := netlink.RouteListFilteredIter(family, &netlink.Route{Table: unix.RT_TABLE_MAIN}, netlink.RT_FILTER_TABLE,
+			func(route netlink.Route) bool {
+				if route.Dst == nil || route.LinkIndex == meshIndex {
+					return true
+				}
+				prefix, ok := netipPrefix(route.Dst)
+				if !ok || prefix.Bits() == 0 || prefix.Addr().IsLinkLocalUnicast() || prefix.Addr().IsMulticast() {
+					return true
+				}
+				if len(local) == maximumLocalRoutes {
+					tooMany = true
+					return false
+				}
+				local = append(local, localRoute{Prefix: prefix, Connected: route.Scope == netlink.SCOPE_LINK})
+				return true
+			})
+		if tooMany {
+			return nil, errTooManyLocalRoutes
+		}
+		if familyUnsupported(err) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("listing local routes: %w", err)
+		}
+	}
+	return local, nil
+}
+
+// Resolvers returns the nameservers of the system resolver files.
+func (kernelHostRouting) Resolvers() []netip.Addr { return readResolvers(resolverFiles) }
+
+func netipPrefix(network *net.IPNet) (netip.Prefix, bool) {
+	address, ok := netip.AddrFromSlice(network.IP)
+	if !ok {
+		return netip.Prefix{}, false
+	}
+	bits, _ := network.Mask.Size()
+	return netip.PrefixFrom(address.Unmap(), bits).Masked(), true
 }
 
 // familyUnsupported reports an error a kernel without that address family

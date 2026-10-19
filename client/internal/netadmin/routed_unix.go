@@ -28,10 +28,21 @@ type RoutedOptions struct {
 	Priority int
 }
 
+// routedState is what the routed table holds: routes to the mesh
+// interface, and throw routes that send single hosts inside them (system
+// resolvers) back to the host's own routing.
+type routedState struct {
+	Routes []netip.Prefix
+	Throws []netip.Prefix
+}
+
 // routedConfigurer installs routed routes on the data interface and clears
 // what this helper installed, also what a previous run left.
 type routedConfigurer interface {
-	ReplaceRouted(name string, options RoutedOptions, uid uint32, current, desired []netip.Prefix) error
+	// ReplaceRouted returns what is installed and the routes the kernel
+	// refused; an error means the table's state is unknown.
+	ReplaceRouted(name string, options RoutedOptions, uid uint32, current, desired routedState) (
+		routedState, []routesettings.Refusal, error)
 	Clear(options RoutedOptions, uid uint32) error
 }
 
@@ -85,16 +96,35 @@ func (s *Server) applyRouted(requested []netip.Prefix) ([]netip.Prefix, []routes
 		settings = routesettings.Settings{}
 	}
 	accepted, refused := routesettings.Admit(settings, requested)
-	if err := s.routedConfigurer.ReplaceRouted(s.activeName, *s.routed, s.allowedUID, s.activeRouted,
-		accepted); err != nil {
+	desired := routedState{Routes: accepted}
+	if len(accepted) > 0 {
+		local, err := s.hostRouting.LocalRoutes(s.activeName)
+		if err != nil {
+			// The host's networks are unknown: no route may risk them.
+			s.logger.Warn("reading local routes failed; installing no subnet routes", "error", err)
+			for _, route := range accepted {
+				refused = append(refused, routesettings.Refusal{Prefix: route, Reason: routesettings.ReasonLocalConflict})
+			}
+			accepted = []netip.Prefix{}
+		} else {
+			var conflicts []routesettings.Refusal
+			accepted, conflicts = withoutLocalConflicts(accepted, local)
+			refused = append(refused, conflicts...)
+		}
+		desired = routedState{Routes: accepted, Throws: pinnedResolvers(accepted, s.hostRouting.Resolvers())}
+	}
+	installed, failed, err := s.routedConfigurer.ReplaceRouted(s.activeName, *s.routed, s.allowedUID,
+		s.activeRouted, desired)
+	if err != nil {
 		// What is installed is now unknown: clear it all, so the next try
 		// starts from an empty table instead of a stale view.
 		if clearErr := s.routedConfigurer.Clear(*s.routed, s.allowedUID); clearErr != nil {
 			err = errors.Join(err, clearErr)
 		}
-		s.activeRouted, s.requestedRouted = nil, slices.Clone(requested)
+		s.activeRouted, s.requestedRouted = routedState{}, slices.Clone(requested)
 		return nil, nil, fmt.Errorf("netadmin: replacing routed routes: %w", err)
 	}
-	s.activeRouted, s.requestedRouted = slices.Clone(accepted), slices.Clone(requested)
-	return accepted, refused, nil
+	s.activeRouted = routedState{Routes: slices.Clone(installed.Routes), Throws: slices.Clone(installed.Throws)}
+	s.requestedRouted = slices.Clone(requested)
+	return installed.Routes, append(refused, failed...), nil
 }

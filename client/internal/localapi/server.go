@@ -464,6 +464,7 @@ func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request)
 		PeerCount:          status.PeerCount,
 		PolicyRuleCount:    status.PolicyRuleCount,
 		PeerPaths:          mapPathStatus(status.PeerPaths),
+		SubnetRoutes:       mapSubnetRouteStatus(status.SubnetRoutes),
 		PathProbes:         mapPathProbeStatus(status.PathProbes),
 		Relay:              mapRelayStatus(status.Relay),
 		NetworkChanges:     mapNetworkChangeStatus(status.NetworkChanges),
@@ -624,6 +625,24 @@ func natAllocationName(a disco.Allocation) string {
 	default:
 		return "unknown"
 	}
+}
+
+func mapSubnetRouteStatus(status dataplane.SubnetRouteStatus) subnetRouteStatus {
+	mapped := subnetRouteStatus{
+		Requested: status.Requested, Installed: status.Installed, RefusedTotal: status.RefusedTotal,
+		Health: "ok", Error: status.Error,
+		UnreachableAnswered: status.UnreachableAnswered, UnreachableLimited: status.UnreachableLimited,
+	}
+	switch {
+	case status.Error != "":
+		mapped.Health = "route_install_failed"
+	case status.LocalConflict:
+		mapped.Health = "route_conflict_local"
+	}
+	for _, refusal := range status.Refused {
+		mapped.Refused = append(mapped.Refused, subnetRouteRefusal{Prefix: refusal.Prefix.String(), Reason: refusal.Reason})
+	}
+	return mapped
 }
 
 func mapNetworkChangeStatus(status daemon.NetworkChangeStatus) networkChangeStatus {

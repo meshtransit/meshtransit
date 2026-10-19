@@ -68,7 +68,8 @@ func runRoutes(args []string, stdout, stderr io.Writer) int {
 }
 
 func changeRouteSettings(settings routesettings.Settings, command string, operands []string) (
-	routesettings.Settings, error) {
+	routesettings.Settings, error,
+) {
 	switch command {
 	case "accept", "accept-public", "router-mode":
 		if len(operands) != 1 || (operands[0] != "on" && operands[0] != "off") {

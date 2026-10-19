@@ -19,6 +19,7 @@ func NewServer(options ServerOptions) (*Server, error) {
 	}
 	if options.Routed != nil {
 		server.routedConfigurer = kernelRoutedConfigurer{}
+		server.hostRouting = kernelHostRouting{}
 		server.background = server.watchRouteSettings
 		// A previous run may have left routes and its rule: start clean.
 		if err := server.routedConfigurer.Clear(*server.routed, server.allowedUID); err != nil {

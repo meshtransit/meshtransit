@@ -4,8 +4,11 @@ package netadmin
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
+	"slices"
 	"syscall"
 	"time"
 )
@@ -19,7 +22,7 @@ const routeSettingsPoll = 5 * time.Second
 func (s *Server) watchRouteSettings(ctx context.Context) {
 	ticker := time.NewTicker(routeSettingsPoll)
 	defer ticker.Stop()
-	last := settingsStamp(s.routed.SettingsPath)
+	last := s.routedStamp()
 	defer s.clearRouted()
 	for {
 		select {
@@ -27,7 +30,7 @@ func (s *Server) watchRouteSettings(ctx context.Context) {
 			return
 		case <-ticker.C:
 		}
-		stamp := settingsStamp(s.routed.SettingsPath)
+		stamp := s.routedStamp()
 		if stamp == last {
 			continue
 		}
@@ -40,7 +43,7 @@ func (s *Server) watchRouteSettings(ctx context.Context) {
 				applied = false
 				s.logger.Warn("applying changed route settings failed", "error", err)
 			} else {
-				s.logger.Info("route settings changed; subnet routes reapplied", "routes", len(s.activeRouted))
+				s.logger.Info("route settings changed; subnet routes reapplied", "routes", len(s.activeRouted.Routes))
 			}
 		}
 		s.mu.Unlock()
@@ -57,7 +60,30 @@ func (s *Server) clearRouted() {
 	if err := s.routedConfigurer.Clear(*s.routed, s.allowedUID); err != nil {
 		s.logger.Warn("clearing subnet routes failed", "error", err)
 	}
-	s.activeRouted, s.requestedRouted = nil, nil
+	s.activeRouted, s.requestedRouted = routedState{}, nil
+}
+
+// routedStamp identifies what the routes installed depend on: the settings
+// file, the host's own routes and its resolvers. A change of either, such
+// as a laptop joining another network, applies the last request again.
+func (s *Server) routedStamp() string {
+	s.mu.Lock()
+	name := s.activeName
+	s.mu.Unlock()
+	digest := sha256.New()
+	_, _ = fmt.Fprintf(digest, "settings %s\n", settingsStamp(s.routed.SettingsPath))
+	local, err := s.hostRouting.LocalRoutes(name)
+	if err != nil {
+		_, _ = fmt.Fprintf(digest, "local unknown\n")
+	}
+	slices.SortFunc(local, func(first, second localRoute) int { return compareRoutedPrefixes(first.Prefix, second.Prefix) })
+	for _, route := range local {
+		_, _ = fmt.Fprintf(digest, "local %s %t\n", route.Prefix, route.Connected)
+	}
+	for _, resolver := range s.hostRouting.Resolvers() {
+		_, _ = fmt.Fprintf(digest, "resolver %s\n", resolver)
+	}
+	return hex.EncodeToString(digest.Sum(nil))
 }
 
 // settingsStamp identifies one version of the settings file.

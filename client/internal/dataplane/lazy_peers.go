@@ -63,8 +63,10 @@ type lazyActivation struct {
 // lazyIndex maps packet addresses and keys to the peers of one applied map.
 // It is immutable once published.
 type lazyIndex struct {
-	byID      map[uint64]*lazyPeer
-	byAddr    map[netip.Addr]*lazyPeer
+	byID   map[uint64]*lazyPeer
+	byAddr map[netip.Addr]*lazyPeer
+	// byRoute finds the router a packet to a Site wakes.
+	byRoute   *prefixIndex[*lazyPeer]
 	byKey     map[[32]byte]*lazyPeer
 	responder *wghandshake.Responder
 }
@@ -196,6 +198,8 @@ func (l *lazyPeers) outbound(packet []byte) {
 	}
 	if peer := index.byAddr[destination]; peer != nil {
 		l.use(peer)
+	} else if _, router, found := index.byRoute.lookup(destination); found {
+		l.use(router)
 	}
 }
 
@@ -213,6 +217,8 @@ func (l *lazyPeers) inbound(packet []byte) {
 	}
 	if peer := index.byAddr[source]; peer != nil {
 		peer.lastActive.Store(l.now().UnixNano())
+	} else if _, router, found := index.byRoute.lookup(source); found {
+		router.lastActive.Store(l.now().UnixNano())
 	}
 }
 

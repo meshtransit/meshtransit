@@ -281,6 +281,9 @@ func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, e
 	if stream.options.EnableDeviceAliases {
 		capabilities = append(capabilities, "device-alias.v1")
 	}
+	if stream.options.EnableSubnetRoutes {
+		capabilities = append(capabilities, "routes.subnet.v1")
+	}
 	s, err := c.open(ctx, stream.origin, sessionOptions{
 		machine: stream.keys.machine, control: stream.keys.control,
 		nodeKey: nodePublic[:], capabilities: capabilities, version: stream.options.Version,
@@ -314,7 +317,7 @@ func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, e
 		s.close()
 		<-readerDone
 	}()
-	run := &sessionRun{stream: stream, s: s, state: newMapState(), controlTime: time.UnixMilli(s.reply.GetServerTimeMs())}
+	run := &sessionRun{stream: stream, s: s, state: newMapState(stream.options.EnableSubnetRoutes), controlTime: time.UnixMilli(s.reply.GetServerTimeMs())}
 	return run.loop(ctx, inbox)
 }
 

@@ -291,6 +291,8 @@ type WireGuardEngine struct {
 	// lazyResponder reads initiations to this node's key; it is reused while
 	// the key is the same and cleared once its device is closed.
 	lazyResponder *wghandshake.Responder
+	// routed is what the helper installed of the map's subnet routes.
+	routed routedEngineState
 }
 
 // NewWireGuard constructs the Linux encrypted packet engine.
@@ -401,11 +403,15 @@ func (e *WireGuardEngine) Apply(
 	}
 	e.filter.suspendFor(snapshot)
 	e.credentials.setGrant(snapshot.Interchange)
-	state, err := e.applySnapshot(ctx, snapshot, privateKey)
+	// Built once per map: the filter, WireGuard and the helper's routes must
+	// agree, and the build costs a lookup per mesh address.
+	routed := newRoutedTable(snapshot)
+	state, err := e.applySnapshot(ctx, snapshot, routed, privateKey)
 	if err != nil {
 		e.filter.UpdateNetwork(networkmap.Snapshot{})
 		return state, err
 	}
+	e.syncRoutedLocked(routed.allPrefixes())
 	e.filter.resume()
 	return state, nil
 }
@@ -413,6 +419,7 @@ func (e *WireGuardEngine) Apply(
 func (e *WireGuardEngine) applySnapshot(
 	ctx context.Context,
 	snapshot networkmap.Snapshot,
+	routed *routedTable,
 	privateKey NodePrivateKey,
 ) (State, error) {
 	if e == nil {
@@ -424,12 +431,12 @@ func (e *WireGuardEngine) applySnapshot(
 	if e.filter == nil {
 		return StateFailed, errors.New("dataplane: packet filter is not initialized")
 	}
-	e.filter.UpdateNetwork(snapshot)
+	e.filter.updateNetwork(snapshot, routed)
 	if e.observer != nil {
 		e.observer.UpdateNetwork(snapshot)
 	}
 
-	plan, err := buildWireGuardPlan(snapshot, privateKey, e.listenPort)
+	plan, err := buildRoutedWireGuardPlan(snapshot, routed, privateKey, e.listenPort)
 	if err != nil {
 		_ = e.closeLocked()
 
@@ -1393,6 +1400,7 @@ func (e *WireGuardEngine) closeLocked() error {
 	if e == nil {
 		return nil
 	}
+	e.resetRoutedLocked()
 	if e.device == nil {
 		e.forgetLazyPeers()
 		return nil
@@ -1447,6 +1455,15 @@ func buildWireGuardPlan(
 	privateKey NodePrivateKey,
 	listenPort uint16,
 ) (wireGuardPlan, error) {
+	return buildRoutedWireGuardPlan(snapshot, newRoutedTable(snapshot), privateKey, listenPort)
+}
+
+func buildRoutedWireGuardPlan(
+	snapshot networkmap.Snapshot,
+	routed *routedTable,
+	privateKey NodePrivateKey,
+	listenPort uint16,
+) (wireGuardPlan, error) {
 	if snapshot.Revision == 0 || snapshot.Self.ID == 0 {
 		return wireGuardPlan{}, errors.New("dataplane: snapshot identity is invalid")
 	}
@@ -1482,6 +1499,9 @@ func buildWireGuardPlan(
 		}
 	}
 	selectedSelfAddresses := append([]netip.Prefix{}, allSelfAddresses...)
+	// The primary router of each served Site also carries its prefixes; the
+	// packet filter admits them only once the helper installed them.
+	routedPrefixes := routed.servedPrefixes()
 	allRoutes := make([]netip.Prefix, 0, len(snapshot.Peers))
 	seenKeys := make(map[[32]byte]struct{}, len(snapshot.Peers))
 	seenIDs := map[uint64]struct{}{snapshot.Self.ID: {}}
@@ -1522,6 +1542,8 @@ func buildWireGuardPlan(
 		if len(allowedIPs) == 0 {
 			return wireGuardPlan{}, errors.New("dataplane: peer has no direct host route")
 		}
+		directRoutes := len(allowedIPs)
+		allowedIPs = append(allowedIPs, routedPrefixes[peer.ID]...)
 		if len(peer.Endpoints) > maxWireGuardPeerEndpoints {
 			return wireGuardPlan{}, errors.New("dataplane: peer endpoint count exceeds limit")
 		}
@@ -1554,7 +1576,7 @@ func buildWireGuardPlan(
 			authorizedEndpoints: authorizedEndpoints,
 			allowedIPs:          allowedIPs,
 		})
-		allRoutes = append(allRoutes, allowedIPs...)
+		allRoutes = append(allRoutes, allowedIPs[:directRoutes]...)
 	}
 	if len(allRoutes) > maxWireGuardAllowedIPs {
 		return wireGuardPlan{}, errors.New("dataplane: peer address count is outside the allowed range")

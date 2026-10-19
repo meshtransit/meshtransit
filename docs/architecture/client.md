@@ -42,6 +42,46 @@ narrow, validated requests from `meshd`:
   and cannot enter the mesh they carry. Each helper on a host uses its own
   table and rule priority (`--routed-table`, `--routed-priority`, default
   5400), and removes what it installed when it stops or starts again.
+- It never lets a subnet route take over a network the host reaches itself:
+  a route that overlaps an attached network, or an equal or more specific
+  route of the host's main table (another VPN, for example), is refused as
+  `local_conflict`. A system resolver inside an installed route keeps its
+  physical path through a host exception in the routed table. It checks
+  again whenever the host's routes or resolvers change, such as a laptop
+  joining another Wi-Fi network, and a host with more than 16,384 routes of
+  its own installs none. Each request is compared with the kernel's table,
+  so a route removed behind its back is installed again; a route the kernel
+  refuses is reported (`install_failed`, `family_unavailable` on a host
+  without IPv6) without affecting the others.
+
+## Subnet routes
+
+With `--enable-subnet-routes` (Linux only for now), `meshd` asks Core for
+the Sites its rules grant and handles them as
+[mtcp-v1 §7.6](../protocol/mtcp-v1.md) requires:
+
+- It asks `meshnetd` for every prefix of every granted Site, whatever its
+  status, so traffic to a Site never leaves by the default route. One worker
+  sends the requests in order, outside the data plane's lock, and only the
+  answer to the latest one decides what the packet filter admits. It asks
+  again every 10 seconds, so a restarted helper or a network change is
+  caught up without a new map, and retries a removal until it succeeds.
+- A Site prefix containing a mesh address of the node or of a peer is
+  ignored: a router never takes over a node's own address.
+- Only a `SERVED` Site's prefixes are given to its primary router's
+  WireGuard peer. The packet filter lets a packet reach a Site only when the
+  helper installed its prefix, the Site is served and the router is usable;
+  a Site's hosts can only answer flows this node opened, never open one.
+  Flows end when the helper removes the prefix or the Site gets another
+  router.
+- A packet for a Site that is not served (`UNSERVED`, `CONFLICT`,
+  `CAPACITY`, or overlapping another Site) is answered with an ICMP host
+  unreachable, at most 10 a second per Site, so applications fail at once.
+- With lazy peers, a packet to a Site installs its router on demand.
+- `meshctl status` shows a `Subnet routes` line: requested, installed and
+  refused routes with their reasons, the health (`route_conflict_local`,
+  `route_install_failed`) and the unreachable answers. The local API
+  reports the same under `subnet_routes`.
 
 On Windows a Wintun session cannot be handed to another process, so `meshd`
 is one LocalSystem service that applies the same checks in process.

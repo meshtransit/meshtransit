@@ -70,6 +70,13 @@ type policyFilter struct {
 	// dropLastRule makes the filter deliberately enforce one rule fewer
 	// than it was given, to demonstrate that Core detects the mismatch.
 	dropLastRule bool
+	// routed holds the map's Sites; routedInstalled the prefixes the helper
+	// installed on the host. Only those reach a Site (mtcp-v1 §7.6).
+	routed          *routedTable
+	routedInstalled map[netip.Prefix]struct{}
+	// unreachable limits and counts the answers to packets for a Site that
+	// cannot be reached.
+	unreachable *unreachableAnswerer
 }
 
 // EnforcedPolicy is the policy digest of the rules the packet filter
@@ -89,6 +96,7 @@ func newPolicyFilter() *policyFilter {
 		clock:        time.Now,
 		maximumFlows: defaultMaximumTrackedFlows,
 		aliases:      map[netip.Addr]aliasPacketGrant{},
+		unreachable:  newUnreachableAnswerer(time.Now),
 	}
 }
 
@@ -97,6 +105,11 @@ func newPolicyFilter() *policyFilter {
 // never survive a policy update through stale flow state, while a map change
 // that does not touch a flow's authority leaves the flow running.
 func (f *policyFilter) UpdateNetwork(snapshot networkmap.Snapshot) {
+	f.updateNetwork(snapshot, newRoutedTable(snapshot))
+}
+
+// updateNetwork is UpdateNetwork with the map's routed table already built.
+func (f *policyFilter) updateNetwork(snapshot networkmap.Snapshot, routed *routedTable) {
 	if f == nil {
 		return
 	}
@@ -150,19 +163,22 @@ func (f *policyFilter) UpdateNetwork(snapshot networkmap.Snapshot) {
 		peers = map[netip.Addr]packetAuthority{}
 		aliases = map[netip.Addr]aliasPacketGrant{}
 		rules = nil
+		routed = nil
 		snapshot = networkmap.Snapshot{}
 	}
 	selfAuthority := authorityFor(snapshot.Self)
 	isUnchanged := maps.Equal(f.self, self) && f.selfAuthority.equal(selfAuthority) &&
 		maps.EqualFunc(f.peers, peers, func(first, second packetAuthority) bool { return first.equal(second) }) &&
-		slices.EqualFunc(f.rules, rules, equalCompiledRule) && equalAliasPacketGrants(f.aliases, aliases)
+		slices.EqualFunc(f.rules, rules, equalCompiledRule) && equalAliasPacketGrants(f.aliases, aliases) &&
+		equalRoutedTables(f.routed, routed)
 	rulesChanged := !slices.EqualFunc(f.rules, rules, equalCompiledRule)
-	previous := flowAuthority{self: f.self, selfAuthority: f.selfAuthority, peers: f.peers, aliases: f.aliases}
+	previous := f.flowAuthorityLocked()
 	f.self = self
 	f.selfAuthority = selfAuthority
 	f.peers = peers
 	f.rules = rules
 	f.aliases = aliases
+	f.routed = routed
 	if !isUnchanged {
 		f.retainFlowsLocked(previous, rulesChanged)
 	}
@@ -238,15 +254,23 @@ func (f *policyFilter) Allow(direction PacketDirection, packet []byte) bool {
 func (f *policyFilter) allowOrdinaryLocked(direction PacketDirection, header packetmeta.Header, now time.Time) bool {
 	switch direction {
 	case PacketOutbound:
-		if !containsAddress(f.self, header.Source) || !f.peerUsableAt(header.Destination, now) {
+		if !containsAddress(f.self, header.Source) {
+			return false
+		}
+		if !f.peerUsableAt(header.Destination, now) && !f.routedUsableAt(header.Destination, now) {
 			return false
 		}
 		f.trackOutbound(header, now)
 
 		return true
 	case PacketInbound:
-		if !f.peerUsableAt(header.Source, now) || !containsAddress(f.self, header.Destination) {
+		if !containsAddress(f.self, header.Destination) {
 			return false
+		}
+		if !f.peerUsableAt(header.Source, now) {
+			// A Site's hosts only answer flows this node opened: routes
+			// grant reaching a Site, never being reached from it.
+			return f.routedUsableAt(header.Source, now) && f.isTrackedReply(header, now)
 		}
 		if f.isTrackedReply(header, now) {
 			return true
@@ -299,6 +323,9 @@ type flowAuthority struct {
 	selfAuthority packetAuthority
 	peers         map[netip.Addr]packetAuthority
 	aliases       map[netip.Addr]aliasPacketGrant
+	// routed and routedInstalled reach a Site's hosts through its primary.
+	routed          *routedTable
+	routedInstalled map[netip.Prefix]struct{}
 }
 
 // retainFlowsLocked drops every tracked flow whose authority the new map
@@ -343,8 +370,8 @@ func (f *policyFilter) flowStillAuthorized(previous flowAuthority, key flowKey, 
 	if rulesChanged && (!openedHere || state.admittedByLocalRules) {
 		return false
 	}
-	before, existed := previous.peers[remote]
-	after, exists := f.peers[remote]
+	before, existed := previous.remoteAuthority(remote)
+	after, exists := f.flowAuthorityLocked().remoteAuthority(remote)
 	// A flow whose peer lapsed before this update stays dead even when the new
 	// map extends the same key: renewed authority starts with new flows.
 	if !existed || !exists || !before.sameIdentity(after) || !before.usableAt(now) || !after.usableAt(now) {
@@ -595,4 +622,92 @@ func (authority packetAuthority) equal(other packetAuthority) bool {
 func (f *policyFilter) peerUsableAt(address netip.Addr, now time.Time) bool {
 	authority, found := f.peers[address]
 	return found && authority.usableAt(now)
+}
+
+// flowAuthorityLocked is what the filter's flows currently depend on.
+func (f *policyFilter) flowAuthorityLocked() flowAuthority {
+	return flowAuthority{
+		self: f.self, selfAuthority: f.selfAuthority, peers: f.peers, aliases: f.aliases,
+		routed: f.routed, routedInstalled: f.routedInstalled,
+	}
+}
+
+// remoteAuthority returns the node a remote address is reached through: the
+// peer itself, or the primary router of a served Site whose prefix the
+// helper installed.
+func (authority flowAuthority) remoteAuthority(address netip.Addr) (packetAuthority, bool) {
+	if peer, found := authority.peers[address]; found {
+		return peer, true
+	}
+	prefix, site, found := authority.routed.lookup(address)
+	if !found || !site.served {
+		return packetAuthority{}, false
+	}
+	if _, installed := authority.routedInstalled[prefix]; !installed {
+		return packetAuthority{}, false
+	}
+	return site.primary, true
+}
+
+func (f *policyFilter) routedUsableAt(address netip.Addr, now time.Time) bool {
+	if _, peer := f.peers[address]; peer {
+		return false
+	}
+	authority, found := f.flowAuthorityLocked().remoteAuthority(address)
+	return found && authority.usableAt(now)
+}
+
+// SetRoutedInstalled records the routed prefixes the helper installed; flows
+// to a prefix no longer installed end.
+func (f *policyFilter) SetRoutedInstalled(prefixes []netip.Prefix) {
+	if f == nil {
+		return
+	}
+	installed := make(map[netip.Prefix]struct{}, len(prefixes))
+	for _, prefix := range prefixes {
+		installed[prefix] = struct{}{}
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if maps.Equal(f.routedInstalled, installed) {
+		return
+	}
+	previous := f.flowAuthorityLocked()
+	f.routedInstalled = installed
+	f.retainFlowsLocked(previous, false)
+}
+
+// routedUnreachable reports the Site an outbound packet the filter denied
+// was for, when the helper installed its prefix but the Site cannot be
+// reached: the packet is answered unreachable rather than dropped silently
+// (mtcp-v1 §7.6).
+func (f *policyFilter) routedUnreachable(packet []byte) (string, bool) {
+	if f == nil || f.clock == nil {
+		return "", false
+	}
+	header, err := packetmeta.Parse(packet)
+	if err != nil {
+		return "", false
+	}
+	destination, source := header.Destination.Unmap(), header.Source.Unmap()
+	now := f.clock().UTC()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.suspended || !containsAddress(f.self, source) {
+		return "", false
+	}
+	if _, peer := f.peers[destination]; peer {
+		return "", false
+	}
+	prefix, site, found := f.routed.lookup(destination)
+	if !found {
+		return "", false
+	}
+	if _, installed := f.routedInstalled[prefix]; !installed {
+		return "", false
+	}
+	if site.served && site.primary.usableAt(now) {
+		return "", false // denied for another reason, such as a full flow table
+	}
+	return site.ref, true
 }

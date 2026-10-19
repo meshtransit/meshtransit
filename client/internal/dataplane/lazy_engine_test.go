@@ -779,3 +779,30 @@ func TestLazyEngineModes(t *testing.T) {
 		}
 	}
 }
+
+func TestLazyPeersWakeTheRouterOfASite(t *testing.T) {
+	t.Parallel()
+	installed := make(chan uint64, 1)
+	lazy := newLazyPeers(func(peer *lazyPeer) {
+		peer.installed.Store(true)
+		installed <- peer.id
+	}, func(time.Time) {}, time.Now)
+	router := &lazyPeer{id: 9}
+	routes := newPrefixIndex[*lazyPeer](1)
+	routes.add(netip.MustParsePrefix("10.20.0.0/16"), router)
+	lazy.index.Store(&lazyIndex{
+		byID: map[uint64]*lazyPeer{9: router}, byAddr: map[netip.Addr]*lazyPeer{}, byRoute: routes,
+	})
+	lazy.attach()
+	t.Cleanup(lazy.detach)
+	lazy.outbound(tuntest.Ping(netip.MustParseAddr("192.168.1.1"), netip.MustParseAddr("100.64.0.3")))
+	lazy.outbound(tuntest.Ping(netip.MustParseAddr("10.20.7.1"), netip.MustParseAddr("100.64.0.3")))
+	select {
+	case id := <-installed:
+		if id != 9 {
+			t.Fatalf("installed peer %d, want the Site's router", id)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("a packet to the Site did not wake its router")
+	}
+}

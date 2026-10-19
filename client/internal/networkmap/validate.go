@@ -107,6 +107,9 @@ func ValidateAndClone(snapshot Snapshot, now time.Time) (Snapshot, error) {
 			return Snapshot{}, fmt.Errorf("%w: dns: %w", ErrInvalid, err)
 		}
 	}
+	if err := validateRoutes(snapshot.Routes, snapshot.Self.StableID); err != nil {
+		return Snapshot{}, fmt.Errorf("%w: routes: %w", ErrInvalid, err)
+	}
 
 	return cloneSnapshot(snapshot), nil
 }
@@ -520,6 +523,7 @@ func cloneSnapshot(snapshot Snapshot) Snapshot {
 		interchange.FallbackTicket = append([]byte(nil), interchange.FallbackTicket...)
 		cloned.Interchange = &interchange
 	}
+	cloned.Routes = cloneRoutes(snapshot.Routes)
 
 	return cloned
 }

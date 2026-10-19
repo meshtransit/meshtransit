@@ -5,6 +5,16 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Client (Linux): `meshd --enable-subnet-routes` reaches the Sites Core
+  grants. It asks `meshnetd` for every granted Site's prefixes (again every
+  10 seconds), sends a served Site's traffic to its primary router, lets a
+  Site's hosts only answer flows the node opened, and answers traffic to a
+  Site that is not served with ICMP host unreachable (at most 10 a second per
+  Site) instead of letting it leave by the default route. Lazy peers install
+  a Site's router on demand. `meshctl status` and the local API
+  (`subnet_routes`) show installed and refused routes and the health
+  `route_conflict_local` or `route_install_failed`. The flag is off by
+  default; macOS and Windows report subnet routes unsupported.
 - Client (Linux): `meshnetd` can install the subnet routes Core grants, in
   their own routing table, with a policy rule that keeps `meshd`'s own
   sockets out of it (the packaged unit uses `--routed-table=5267`). It
@@ -13,9 +23,10 @@ merge (2026-10-09) are kept below.
   for public ones; never default or very wide routes, the overlay frame,
   loopback, link-local, multicast or more than 4,096 routes. `advertise` and
   `router-mode` record what the host offers to forward. Everything is off by
-  default and a change applies within seconds. `meshd` does not request
-  routes yet; do not turn `accept` on before it checks local network
-  conflicts (the next release).
+  default and a change applies within seconds. It refuses a route that
+  overlaps a network the host is attached to or reaches by an equal or more
+  specific route (`local_conflict`), keeps system resolvers inside a route
+  on their physical path, and checks again when the host's networks change.
 - Core: maps carry subnet routes (mtcp-v1 §7.6) when
   `MESHTRANSIT_SUBNET_ROUTES_ENABLED` is on and Core reads Network inventory
   once per revision (the default). A node that lists `routes.subnet.v1` and

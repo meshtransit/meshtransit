@@ -129,14 +129,17 @@ type NetmapOptions struct {
 	// EnableDeviceAliases explicitly advertises the qualified peer
 	// translation contract.
 	EnableDeviceAliases bool
-	Hostname            string
-	Version             string
-	PinnedFingerprint   string
-	PeerProbePublicKey  string
-	Candidates          pathdiscovery.Set
-	PreferredRelay      int
-	HasPreferredRelay   bool
-	EndpointUpdates     <-chan EndpointUpdate
+	// EnableSubnetRoutes advertises that the node takes subnet routes
+	// (mtcp-v1 §7.6, routes.subnet.v1).
+	EnableSubnetRoutes bool
+	Hostname           string
+	Version            string
+	PinnedFingerprint  string
+	PeerProbePublicKey string
+	Candidates         pathdiscovery.Set
+	PreferredRelay     int
+	HasPreferredRelay  bool
+	EndpointUpdates    <-chan EndpointUpdate
 	// EnforcementReports, when set, carries what the packet filter enforces;
 	// each report is sent to Core and repeated while it stays current.
 	EnforcementReports <-chan EnforcementReport

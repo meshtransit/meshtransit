@@ -466,6 +466,7 @@ With `--tls`, exactly one certificate source is allowed.
 | `--wireguard-listen-port` | `0` | UDP port |
 | `--enable-dns` | `false` | MeshTransit DNS |
 | `--enable-device-aliases` | `false` | Device alias v1; needs the data plane |
+| `--enable-subnet-routes` | `false` | Reach Sites through subnet routers (Linux); needs the data plane and `meshnetd --routed-table` |
 | `--port-mapping` | `auto` | `auto` or `off` |
 | `--cloud-metadata` | `auto` | `auto` or `off` |
 | `--lazy-peers` | `auto` | `auto`, `off` or `always` |
@@ -483,5 +484,6 @@ The packages run `meshd` with `--enable-data-plane --enable-dns
 (exactly one), `--socket`, `--mtu` (1280, 1280–9000), `--enable-dns`,
 `--dns-address` (`192.0.2.53`) and `--dns-port` (1053), `--allow-prefix`
 (narrows `100.64.0.0/10`, `198.18.0.0/15`, `fd00::/8`); on Linux also
-`--interface` (`mesh0`), `--dns-interface` (`meshdns0`) and
-`--resolvectl-path`; on macOS `--scutil-path`.
+`--interface` (`mesh0`), `--dns-interface` (`meshdns0`),
+`--resolvectl-path`, `--routed-table` (`0`, off; the package sets `5267`)
+and `--routed-priority` (`5400`); on macOS `--scutil-path`.

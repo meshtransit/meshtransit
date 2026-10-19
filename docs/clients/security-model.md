@@ -158,13 +158,19 @@ Packet payloads are never collected.
 
 - `meshnetd` serves only the configured `meshd` user, verified with
   `SO_PEERCRED` (Linux, `SOCK_SEQPACKET`) or `LOCAL_PEERCRED` (macOS, framed
-  stream). Messages are at most 32 KiB, unknown fields and passed descriptors
+  stream). Messages are at most 128 KiB, unknown fields and passed descriptors
   are refused, and each operation has a deadline.
 - Its startup configuration fixes the interface names, MTU, allowed user,
   overlay frame and DNS endpoint. Requests can only open the tunnel, set its
-  addresses and host routes, and set or reset MeshTransit DNS; they cannot
-  carry default or subnet routes, commands, paths or keys. Every prefix must
-  lie in the frame (`100.64.0.0/10`, `198.18.0.0/15`, `fd00::/8`).
+  addresses and host routes, set or reset MeshTransit DNS and, on Linux,
+  request subnet routes; they cannot carry default routes, commands, paths
+  or keys. Every tunnel prefix must lie in the frame (`100.64.0.0/10`,
+  `198.18.0.0/15`, `fd00::/8`). Subnet routes go only in the helper's own
+  table and only as far as root's settings in
+  `/etc/meshtransit/routes.json` admit: never a default or very wide route,
+  the frame, loopback, link-local or multicast, a public range without
+  `accept-public`, more than 4,096 routes, or a network the host reaches
+  itself. A compromised `meshd` cannot widen any of these.
 - Route changes add before they remove and roll back on failure. `meshd`
   checks the helper's result against the validated map before using the
   tunnel.
@@ -253,8 +259,9 @@ a failed upload drops telemetry, never packets.
 - There is no replay or rollback protection of local state across restarts,
   and no session resume: every reconnect takes a full snapshot.
 - Node keys are not renewed automatically before they expire.
-- Subnet and exit routes, capability grants and fragment reassembly are not
-  implemented; they fail closed.
+- Subnet routes reach Sites from Linux only; macOS and Windows report them
+  unsupported, and no node can act as a router yet. Exit routes, capability
+  grants and fragment reassembly are not implemented; they fail closed.
 - Flow logs have no durable client queue, credential rotation, retention
   policy or tamper-evident storage.
 - Fuzzing, long relay saturation runs and repeated policy matrices are not

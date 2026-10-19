@@ -65,7 +65,7 @@ func build(t *testing.T, state *mapState) networkmap.Snapshot {
 
 func TestMapStateBuildsTheProductSnapshot(t *testing.T) {
 	t.Parallel()
-	state := newMapState()
+	state := newMapState(false)
 	if err := state.applySnapshot(snapshotMessage(7)); err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func bytesHex(seed byte) string {
 
 func TestMapStateAppliesDeltasInOrder(t *testing.T) {
 	t.Parallel()
-	state := newMapState()
+	state := newMapState(false)
 	if err := state.applySnapshot(snapshotMessage(7)); err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestMapStateVerifiesTheRelayGrant(t *testing.T) {
 		Node: key.NodePublic{1}, Disco: disco, Deployment: [16]byte{1},
 		Zones: []mtrp.Zone{{Kind: mtrp.ZoneNetwork, ID: [16]byte{2}}},
 	}.Sign(signer)
-	state := newMapState()
+	state := newMapState(false)
 	message := snapshotMessage(1)
 	message.RelayMap = relayMap
 	if err := state.applySnapshot(message); err != nil {
@@ -283,7 +283,7 @@ func TestMapStateChecksMTT2Zones(t *testing.T) {
 		"truncated zones":    {Ticket: ticket, NotAfterMs: until, Zones: list[:len(list)-17]},
 		"MTT1 with zones":    {Ticket: mtt1, NotAfterMs: until, Zones: list},
 	} {
-		if err := newMapState().setTicket(message); !errors.Is(err, controlplane.ErrNetmapInvalid) {
+		if err := newMapState(false).setTicket(message); !errors.Is(err, controlplane.ErrNetmapInvalid) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
@@ -295,10 +295,10 @@ func TestMapStateChecksMTT2Zones(t *testing.T) {
 	otherNode.Node = key.NodePublic{9}
 	foreign, _ := otherNode.Sign(signer)
 	withForeign := &mtcpv1.RelayTicket{Ticket: ticket, NotAfterMs: until, Zones: list, FallbackTicket: foreign}
-	if err := newMapState().setTicket(withForeign); !errors.Is(err, controlplane.ErrNetmapInvalid) {
+	if err := newMapState(false).setTicket(withForeign); !errors.Is(err, controlplane.ErrNetmapInvalid) {
 		t.Errorf("a fallback for another node: %v", err)
 	}
-	state := newMapState()
+	state := newMapState(false)
 	withFallback := &mtcpv1.RelayTicket{Ticket: ticket, NotAfterMs: until, Zones: list, FallbackTicket: fallback}
 	if err := state.setTicket(withFallback); err != nil {
 		t.Fatal(err)
@@ -316,7 +316,7 @@ func TestMapStateChecksMTT2Zones(t *testing.T) {
 // drops only that endpoint.
 func TestMapStateDropsEndpointsANodeMustNotProbe(t *testing.T) {
 	t.Parallel()
-	state := newMapState()
+	state := newMapState(false)
 	if err := state.applySnapshot(snapshotMessage(7)); err != nil {
 		t.Fatal(err)
 	}

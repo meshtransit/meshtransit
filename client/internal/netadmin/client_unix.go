@@ -290,15 +290,6 @@ func closeDescriptors(descriptors []int) {
 	}
 }
 
-// RoutedResult is what the helper did with requested subnet routes: those
-// installed and those its local settings refused.
-type RoutedResult struct {
-	Installed []netip.Prefix
-	// Refused lists up to 64 refused routes; RefusedTotal counts them all.
-	Refused      []routesettings.Refusal
-	RefusedTotal int
-}
-
 // SetRoutedRoutes replaces the subnet routes of the helper-owned data
 // interface (mtcp-v1 §7.6). The helper installs only what its root-owned
 // settings admit and reports the rest as refused.

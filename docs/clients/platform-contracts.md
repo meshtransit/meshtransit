@@ -51,9 +51,11 @@ addresses, host routes, MTU and a packet I/O attachment. The adapter:
 4. returns a packet I/O handle bound to that generation;
 5. rolls back partial work and removes only what MeshTransit owns.
 
-Default routes, subnet routes, overlapping pools, arbitrary interface names,
-executable paths and unknown fields are refused until a separate reviewed
-contract adds them.
+Default routes, overlapping pools, arbitrary interface names, executable
+paths and unknown fields are refused until a separate reviewed contract adds
+them. Subnet routes use their own operation, on Linux only, which installs
+them in a separate routing table under root's local settings
+([Client](../architecture/client.md#subnet-routes)).
 
 | Platform | Boundary |
 |---|---|

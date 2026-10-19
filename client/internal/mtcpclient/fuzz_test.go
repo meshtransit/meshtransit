@@ -29,7 +29,7 @@ func FuzzMapState(f *testing.F) {
 		if proto.Unmarshal(encodedSnapshot, first) != nil {
 			return
 		}
-		state := newMapState()
+		state := newMapState(true)
 		if state.applySnapshot(first) != nil {
 			return
 		}

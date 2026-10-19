@@ -131,6 +131,7 @@ func runContext(parent context.Context, args []string, stdout, stderr io.Writer)
 		return 1
 	}
 	daemonOptions.EnableDeviceAliases = cfg.EnableDeviceAliases
+	daemonOptions.EnableSubnetRoutes = cfg.EnableSubnetRoutes
 	if cfg.EnableDataPlane {
 		engine, err := dataplane.NewWireGuardWithObserver(
 			opener,

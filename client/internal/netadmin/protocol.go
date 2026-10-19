@@ -122,6 +122,15 @@ type response struct {
 	RefusedTotal int            `json:"refused_total,omitempty"`
 }
 
+// RoutedResult is what the helper did with requested subnet routes: those
+// installed and those its local settings refused.
+type RoutedResult struct {
+	Installed []netip.Prefix
+	// Refused lists up to 64 refused routes; RefusedTotal counts them all.
+	Refused      []routesettings.Refusal
+	RefusedTotal int
+}
+
 // maximumReportedRefusals bounds the refusals one response lists; the
 // response counts them all, and stays within maxMessageBytes.
 const maximumReportedRefusals = 64

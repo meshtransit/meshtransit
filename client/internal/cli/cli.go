@@ -510,7 +510,7 @@ func runStatus(
 	deviceExpiry := formatDeviceExpiry(status.DeviceExpiry, status.DeviceExpiresAt, time.Now())
 	_, _ = fmt.Fprintf(
 		stdout,
-		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nNetwork changes: %s\nRuntime recovery: %s\nRuntime: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\nNetwork: %s\nSelf addresses: %s\nDevice expiry: %s\nPeers: %d\nPeer paths: %s\nPath transitions: %s\nPath probes: %s\nRelay: %s\nNAT: %s\nPort mapping: %s\nCloud: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
+		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nNetwork changes: %s\nRuntime recovery: %s\nRuntime: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\nNetwork: %s\nSelf addresses: %s\nDevice expiry: %s\nPeers: %d\nPeer paths: %s\nSubnet routes: %s\nPath transitions: %s\nPath probes: %s\nRelay: %s\nNAT: %s\nPort mapping: %s\nCloud: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
 		status.Daemon.Version,
 		status.State,
 		status.DataPlane,
@@ -529,6 +529,7 @@ func runStatus(
 		deviceExpiry,
 		status.PeerCount,
 		formatPathStatus(status.PeerPaths),
+		formatSubnetRouteStatus(status.SubnetRoutes),
 		formatPathTransitionStatus(status.PeerPaths),
 		formatPathProbeStatus(status.PathProbes),
 		formatRelayStatus(status.Relay),
@@ -593,6 +594,41 @@ func formatRuntimeRecoveryStatus(status *localapi.RuntimeRecoveryStatus) string 
 		status.Failures,
 		status.Recoveries,
 	)
+}
+
+// maximumListedRefusals bounds the refused routes status prints.
+const maximumListedRefusals = 5
+
+func formatSubnetRouteStatus(status *localapi.SubnetRouteStatus) string {
+	if status == nil || status.Requested == 0 {
+		return "none"
+	}
+	summary := fmt.Sprintf("%d of %d installed", status.Installed, status.Requested)
+	if status.Health != "" && status.Health != "ok" {
+		summary += " [" + status.Health + "]"
+	}
+	if status.Error != "" {
+		summary += "; error: " + status.Error
+	}
+	if status.RefusedTotal > 0 {
+		refused := make([]string, 0, maximumListedRefusals)
+		for _, refusal := range status.Refused[:min(len(status.Refused), maximumListedRefusals)] {
+			refused = append(refused, refusal.Prefix+" "+refusal.Reason)
+		}
+		summary += fmt.Sprintf("; %d refused", status.RefusedTotal)
+		if len(refused) > 0 {
+			summary += " (" + strings.Join(refused, ", ")
+			if status.RefusedTotal > len(refused) {
+				summary += ", ..."
+			}
+			summary += ")"
+		}
+	}
+	if status.UnreachableAnswered > 0 || status.UnreachableLimited > 0 {
+		summary += fmt.Sprintf("; %d unreachable answered, %d limited", status.UnreachableAnswered,
+			status.UnreachableLimited)
+	}
+	return summary
 }
 
 func formatNetworkChangeStatus(status localapi.NetworkChangeStatus) string {

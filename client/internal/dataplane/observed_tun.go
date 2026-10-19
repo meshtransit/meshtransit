@@ -44,6 +44,7 @@ func (d *observedTUN) Read(bufs [][]byte, sizes []int, offset int) (int, error) 
 				header, headerErr = packetmeta.Parse(packet)
 			}
 			if d.filter != nil && !d.filter.ProcessPacket(PacketOutbound, packet) {
+				d.answerUnreachable(packet, offset)
 				continue
 			}
 			if allowed != index {

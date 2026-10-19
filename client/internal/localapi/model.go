@@ -38,6 +38,7 @@ type statusResponse struct {
 	PeerCount         int                   `json:"peer_count"`
 	PolicyRuleCount   int                   `json:"policy_rule_count"`
 	PeerPaths         pathStatus            `json:"paths"`
+	SubnetRoutes      subnetRouteStatus     `json:"subnet_routes"`
 	PathProbes        pathProbeStatus       `json:"path_probes"`
 	Relay             relayStatus           `json:"relay"`
 	NetworkChanges    networkChangeStatus   `json:"network_changes"`
@@ -90,6 +91,25 @@ type netcheckResponse struct {
 	NAT         natStatus         `json:"nat"`
 	PortMapping portMappingStatus `json:"port_mapping"`
 	Cloud       cloudStatus       `json:"cloud"`
+}
+
+// subnetRouteStatus is what the node does with the map's subnet routes.
+// Health is route_conflict_local when a route overlapped a network the host
+// reaches itself, route_install_failed when the helper failed, else ok.
+type subnetRouteStatus struct {
+	Requested           int                  `json:"requested"`
+	Installed           int                  `json:"installed"`
+	RefusedTotal        int                  `json:"refused_total"`
+	Refused             []subnetRouteRefusal `json:"refused,omitempty"`
+	Health              string               `json:"health"`
+	Error               string               `json:"error,omitempty"`
+	UnreachableAnswered uint64               `json:"unreachable_answered"`
+	UnreachableLimited  uint64               `json:"unreachable_limited"`
+}
+
+type subnetRouteRefusal struct {
+	Prefix string `json:"prefix"`
+	Reason string `json:"reason"`
 }
 
 type networkChangeStatus struct {

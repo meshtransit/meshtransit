@@ -73,7 +73,8 @@ type Server struct {
 	// those installed on the current interface.
 	routed           *RoutedOptions
 	routedConfigurer routedConfigurer
-	activeRouted     []netip.Prefix
+	hostRouting      hostRouting
+	activeRouted     routedState
 	requestedRouted  []netip.Prefix // nil until meshd asks
 	// loadSettings reads the route settings (routesettings.Load).
 	loadSettings func(string) (routesettings.Settings, error)
@@ -321,7 +322,7 @@ func (s *Server) openTUN(connection *net.UnixConn, config TUNConfig) error {
 	s.activeName = name
 	s.hasActiveTUN = true
 	// A new interface carries no routed routes: the old one's left with it.
-	s.activeRouted, s.requestedRouted = nil, nil
+	s.activeRouted, s.requestedRouted = routedState{}, nil
 
 	return writeResponse(connection, response{
 		Version:       protocolVersion,

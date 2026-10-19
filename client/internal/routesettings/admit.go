@@ -19,8 +19,15 @@ const (
 	ReasonReserved  = "reserved_range"
 	ReasonPublic    = "public_range"
 	ReasonTooMany   = "too_many_routes"
-	minimumIPv4Bits = 8
-	minimumIPv6Bits = 32
+	// ReasonLocalConflict refuses a route that would take over a network
+	// the host is attached to or reaches by another path (rule 4).
+	ReasonLocalConflict = "local_conflict"
+	// ReasonInstallFailed refuses a route the kernel would not take;
+	// ReasonFamilyUnavailable one of an address family the host lacks.
+	ReasonInstallFailed     = "install_failed"
+	ReasonFamilyUnavailable = "family_unavailable"
+	minimumIPv4Bits         = 8
+	minimumIPv6Bits         = 32
 )
 
 // Refusal is one granted route the node does not install, and why.

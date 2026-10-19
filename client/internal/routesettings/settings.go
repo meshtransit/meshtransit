@@ -118,8 +118,10 @@ func Decode(encoded []byte) (Settings, error) {
 	if decoder.More() {
 		return Settings{}, fmt.Errorf("%w: trailing data", ErrInvalid)
 	}
-	settings := Settings{AcceptRoutes: value.AcceptRoutes, AcceptPublicRoutes: value.AcceptPublicRoutes,
-		RouterMode: value.RouterMode}
+	settings := Settings{
+		AcceptRoutes: value.AcceptRoutes, AcceptPublicRoutes: value.AcceptPublicRoutes,
+		RouterMode: value.RouterMode,
+	}
 	for _, text := range value.AdvertiseRoutes {
 		prefix, err := netip.ParsePrefix(text)
 		if err != nil {
@@ -139,8 +141,10 @@ func Encode(settings Settings) ([]byte, error) {
 		return nil, err
 	}
 	settings = settings.Canonical()
-	value := document{AcceptRoutes: settings.AcceptRoutes, AcceptPublicRoutes: settings.AcceptPublicRoutes,
-		RouterMode: settings.RouterMode, AdvertiseRoutes: make([]string, len(settings.AdvertiseRoutes))}
+	value := document{
+		AcceptRoutes: settings.AcceptRoutes, AcceptPublicRoutes: settings.AcceptPublicRoutes,
+		RouterMode: settings.RouterMode, AdvertiseRoutes: make([]string, len(settings.AdvertiseRoutes)),
+	}
 	for index, prefix := range settings.AdvertiseRoutes {
 		value.AdvertiseRoutes[index] = prefix.String()
 	}

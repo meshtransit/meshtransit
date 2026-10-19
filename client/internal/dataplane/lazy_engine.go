@@ -101,6 +101,7 @@ func (e *WireGuardEngine) restrictLazyPlan(
 	index := &lazyIndex{
 		byID:      make(map[uint64]*lazyPeer, len(plan.peers)),
 		byAddr:    make(map[netip.Addr]*lazyPeer, len(plan.peers)),
+		byRoute:   newPrefixIndex[*lazyPeer](0),
 		byKey:     make(map[[32]byte]*lazyPeer, len(plan.peers)),
 		responder: responder,
 	}
@@ -130,7 +131,11 @@ func (e *WireGuardEngine) restrictLazyPlan(
 		index.byID[peer.id] = tracked
 		index.byKey[peer.key] = tracked
 		for _, prefix := range peer.allowedIPs {
-			index.byAddr[prefix.Addr()] = tracked
+			if prefix.IsSingleIP() {
+				index.byAddr[prefix.Addr()] = tracked
+			} else {
+				index.byRoute.add(prefix, tracked)
+			}
 		}
 		planPeers[peer.id] = peer
 		if base, counted := e.lazyTrafficBase[peer.id]; counted {

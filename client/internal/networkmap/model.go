@@ -20,6 +20,9 @@ type Snapshot struct {
 	// Interchange is the node's relay grant; when present, Relays come from
 	// its signed relay map (MTRP v1 §9.1).
 	Interchange *Interchange
+	// Routes are the Sites the node may reach (mtcp-v1 §7.6), sorted by
+	// reference; nil when the node does not take subnet routes.
+	Routes []SiteRoute
 }
 
 // Interchange is a verified relay grant: the ticket this node presents to
