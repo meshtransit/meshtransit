@@ -13,8 +13,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 188 {
-		t.Fatalf("len(Catalog()) = %d, want 188", len(catalog))
+	if len(catalog) != 189 {
+		t.Fatalf("len(Catalog()) = %d, want 189", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1609,8 +1609,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 188 {
-		t.Fatalf("LatestVersion() = %d, want 188", LatestVersion())
+	if LatestVersion() != 189 {
+		t.Fatalf("LatestVersion() = %d, want 189", LatestVersion())
 	}
 }
 
@@ -5485,6 +5485,32 @@ func TestSchema188NetworkSites(t *testing.T) {
 	} {
 		if !strings.Contains(migration.SQL, want) {
 			t.Errorf("schema 188 lacks %q", want)
+		}
+	}
+}
+
+// Schema 189 stores Access Rules whose destination is a Site.
+func TestSchema189SiteRouteRules(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 189 {
+		t.Fatalf("len(Catalog()) = %d, want schema 189", len(catalog))
+	}
+	migration := catalog[188]
+	if migration.Version != 189 {
+		t.Fatalf("migration 189 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE TABLE mesh.compiled_policy_route_rule (",
+		"CREATE FUNCTION mesh_ops.attach_policy_route_rules_v1(",
+		"CREATE FUNCTION mesh_ops.release_route_overlap_internal_v1(",
+		"CREATE FUNCTION mesh_ops.read_policy_sites_v1(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.change_site_v1(",
+		"ERRCODE = 'MTS06'", "ERRCODE = 'MTS07'",
+		"capture_authority_mutation('compiled_policy_route_rule', 'public_id')",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 189 lacks %q", want)
 		}
 	}
 }

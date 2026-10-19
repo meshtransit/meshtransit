@@ -27,6 +27,9 @@ const maximumSiteDocumentBytes = 8 << 20
 const listSitesSQL = `SELECT mesh_ops.list_sites_v1(` + sessionArguments + `,$10::UUID,$11::UUID,
  NULLIF($12::TEXT,'')::UUID,$13::INTEGER)::TEXT`
 
+const readPolicySitesSQL = `SELECT mesh_ops.read_policy_sites_v1(` + sessionArguments + `,$10::UUID,$11::UUID,
+ $12::UUID[])::TEXT`
+
 const readSiteSQL = `SELECT mesh_ops.read_site_v1(` + sessionArguments + `,$10::UUID,$11::UUID,$12::UUID)::TEXT`
 
 const changeSiteSQL = `SELECT mesh_ops.change_site_v1(` + sessionArguments + `,
@@ -81,6 +84,10 @@ func siteDatabaseError(err error) error {
 			return site.ErrRouterNotEligible
 		case "MTS05":
 			return site.ErrRouterNotOffering
+		case "MTS06":
+			return site.ErrInUse
+		case "MTS08":
+			return site.ErrPrefixesInUse
 		case "22023", "22P02", "23514":
 			return site.ErrInvalid
 		}
@@ -290,6 +297,40 @@ func (store *SiteStore) Read(ctx context.Context, session accountsession.Session
 	}
 	return site.Reading{Site: stored, Abilities: site.Abilities{CanManage: envelope.CanManage,
 		CanDelete: envelope.CanDelete}}, nil
+}
+
+// ResolvePolicySites authorizes route.read and returns the active Sites of
+// the scope among ids, for the policy compiler. Unknown Sites are absent.
+func (store *SiteStore) ResolvePolicySites(ctx context.Context, session accountsession.Session,
+	scope network.Scope, ids []site.ID) ([]site.Site, error) {
+	if !session.IsValid() || !scope.IsValid() || len(ids) == 0 || len(ids) > site.MaximumSitesPerNetwork {
+		return nil, site.ErrInvalid
+	}
+	texts := make([]string, len(ids))
+	for index, id := range ids {
+		if !id.IsValid() {
+			return nil, site.ErrInvalid
+		}
+		texts[index] = id.String()
+	}
+	var envelope struct {
+		Sites []siteDocument `json:"sites"`
+	}
+	if err := store.read(ctx, session, scope, readPolicySitesSQL, &envelope, texts); err != nil {
+		return nil, err
+	}
+	if envelope.Sites == nil || len(envelope.Sites) > len(ids) {
+		return nil, site.ErrInvalid
+	}
+	sites := make([]site.Site, 0, len(envelope.Sites))
+	for _, document := range envelope.Sites {
+		stored, err := document.site(false)
+		if err != nil {
+			return nil, err
+		}
+		sites = append(sites, stored)
+	}
+	return sites, nil
 }
 
 // read runs one read function in its own transaction and decodes its result.

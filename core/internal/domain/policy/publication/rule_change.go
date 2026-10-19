@@ -52,6 +52,8 @@ const (
 	DestinationResourceGroup
 	// DestinationImportedResource is a consumer-local Imported Resource.
 	DestinationImportedResource
+	// DestinationSite is a Site with the prefixes the rule grants.
+	DestinationSite
 )
 
 // String returns the stable audit name of the kind.
@@ -69,13 +71,15 @@ func (kind DestinationKind) String() string {
 		return "resource_group"
 	case DestinationImportedResource:
 		return "imported_resource"
+	case DestinationSite:
+		return "site"
 	default:
 		return "unknown"
 	}
 }
 
 func (kind DestinationKind) isValid() bool {
-	return kind > DestinationUnknown && kind <= DestinationImportedResource
+	return kind > DestinationUnknown && kind <= DestinationSite
 }
 
 // RuleFingerprint identifies one Access Rule as written: its sources,
@@ -165,6 +169,21 @@ func FingerprintRules(candidate Candidate) (RuleFingerprintSet, error) {
 		traffic := ruleTrafficPart(source, rule.Protocol(), rule.DestinationPortRanges())
 		if err := add(rule.RuleID(), groupRuleDestinationKind(rule.Destination().Kind()),
 			rule.Destination().ID(), traffic); err != nil {
+			return RuleFingerprintSet{}, err
+		}
+	}
+	for _, rule := range candidate.RouteRules() {
+		kind := ruleSideToken(rule.Source().Kind())
+		if kind == "" {
+			return RuleFingerprintSet{}, ErrInvalidRuleFingerprints
+		}
+		prefixes := make([]string, 0, len(rule.Prefixes()))
+		for _, prefix := range rule.Prefixes() {
+			prefixes = append(prefixes, prefix.String())
+		}
+		source := kind + ":" + rule.Source().ID().String() + ">" + strings.Join(prefixes, ",")
+		traffic := ruleTrafficPart(source, rule.Protocol(), rule.DestinationPortRanges())
+		if err := add(rule.RuleID(), DestinationSite, publicid.ID(rule.SiteID()), traffic); err != nil {
 			return RuleFingerprintSet{}, err
 		}
 	}

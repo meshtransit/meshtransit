@@ -7,6 +7,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"net/netip"
 	"strings"
 
 	"meshtransit.net/core/internal/domain/devicegroup"
@@ -21,6 +22,7 @@ import (
 	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/domain/resource"
 	"meshtransit.net/core/internal/domain/sharing"
+	"meshtransit.net/core/internal/domain/site"
 	"meshtransit.net/core/internal/domain/workspace"
 )
 
@@ -44,6 +46,8 @@ type publishPolicyRuleRequest struct {
 	DestinationResourceID         string                          `json:"destination_resource_id"`
 	DestinationGroupID            string                          `json:"destination_resource_group_id"`
 	DestinationImportedResourceID string                          `json:"destination_imported_resource_id"`
+	DestinationSiteID             string                          `json:"destination_site_id"`
+	DestinationPrefixes           []string                        `json:"destination_prefixes"`
 	Protocol                      string                          `json:"protocol"`
 	DestinationPortRanges         []publishPolicyPortRangeRequest `json:"destination_port_ranges"`
 }
@@ -299,6 +303,23 @@ func decodePolicyRuleIntent(
 			return compilation.RuleIntent{}, err
 		}
 	}
+	var destinationSiteID site.ID
+	if input.DestinationSiteID != "" {
+		if destinationSiteID, err = site.ParseID(input.DestinationSiteID); err != nil {
+			return compilation.RuleIntent{}, err
+		}
+	}
+	if len(input.DestinationPrefixes) > site.MaximumPrefixesPerSite {
+		return compilation.RuleIntent{}, policy.ErrInvalidRule
+	}
+	destinationPrefixes := make([]netip.Prefix, 0, len(input.DestinationPrefixes))
+	for _, text := range input.DestinationPrefixes {
+		prefix, prefixErr := netip.ParsePrefix(text)
+		if prefixErr != nil || prefix.String() != text {
+			return compilation.RuleIntent{}, policy.ErrInvalidRule
+		}
+		destinationPrefixes = append(destinationPrefixes, prefix)
+	}
 	protocol := parsePolicyProtocol(input.Protocol)
 	if !protocol.IsValid() {
 		return compilation.RuleIntent{}, policy.ErrInvalidRule
@@ -322,7 +343,8 @@ func decodePolicyRuleIntent(
 		DestinationTagID:      destinationTagID,
 		DestinationResourceID: destinationResourceID, DestinationGroupID: destinationGroupID,
 		DestinationImportedResourceID: destinationImportedResourceID,
-		Protocol:                      protocol, DestinationPortRanges: portRanges,
+		DestinationSiteID:             destinationSiteID, DestinationPrefixes: destinationPrefixes,
+		Protocol: protocol, DestinationPortRanges: portRanges,
 	})
 }
 
@@ -378,6 +400,11 @@ func classifyPolicyPublicationError(err error) managementError {
 			Status: http.StatusConflict, Code: "device_policy_edge_limit",
 			Message: "a Device would reach more than 10,000 rule edges; narrow the rules or split the group",
 		}
+	case errors.Is(err, policypublication.ErrRouteOverlap):
+		return managementError{
+			Status: http.StatusConflict, Code: "route_overlap",
+			Message: "rules grant overlapping prefixes of two Sites; a Device could not tell which router to use",
+		}
 	case errors.Is(err, policypublication.ErrDeviceUnavailable):
 		return managementError{
 			Status: http.StatusConflict, Code: "device_unavailable",
@@ -415,6 +442,26 @@ func classifyPolicyCompilationError(err error) managementError {
 		return managementError{
 			Status: http.StatusForbidden, Code: "forbidden",
 			Message: "the request is not authorized",
+		}
+	case errors.Is(err, compilation.ErrRouteOverlap):
+		return managementError{
+			Status: http.StatusConflict, Code: "route_overlap",
+			Message: "rules grant overlapping prefixes of two Sites; a Device could not tell which router to use",
+		}
+	case errors.Is(err, compilation.ErrOutsideSite):
+		return managementError{
+			Status: http.StatusUnprocessableEntity, Code: "route_outside_site",
+			Message: "a rule names a prefix that is not inside its Site",
+		}
+	case errors.Is(err, compilation.ErrRoutePrefixLimit):
+		return managementError{
+			Status: http.StatusUnprocessableEntity, Code: "route_prefix_limit",
+			Message: "rules to Sites grant more than 16384 prefixes in all",
+		}
+	case errors.Is(err, compilation.ErrSiteRoutesDisabled):
+		return managementError{
+			Status: http.StatusConflict, Code: "subnet_routes_disabled",
+			Message: "this deployment does not route subnets yet",
 		}
 	case errors.Is(err, compilation.ErrResourceConflict):
 		return managementError{

@@ -426,9 +426,13 @@ func publishPolicyOverBrowserManagement(
 		t.Fatal(err)
 	}
 	capture := &integrationBrowserPolicyCapture{service: service}
+	compiler := newIntegrationPolicyCompiler(t, runtimePool)
+	if len(command.Candidate().RouteRules()) != 0 {
+		compiler = newIntegrationSitePolicyCompiler(t, runtimePool)
+	}
 	handler, err := httpapi.NewManagementHandler(httpapi.ManagementHandlerOptions{Sessions: sessions,
 		Revocations: newIntegrationDeviceRevocationService(t, runtimePool), PolicyPublications: capture,
-		PolicyCompilations: newIntegrationPolicyCompiler(t, runtimePool),
+		PolicyCompilations: compiler,
 		PolicyExplanations: newIntegrationPolicyExplainer(t, runtimePool),
 		PolicySimulations:  newIntegrationPolicySimulator(t, runtimePool),
 		Idempotency:        integrationDeviceRevocationDigester(t), RateLimitSubjects: digester,
@@ -462,6 +466,8 @@ func publishPolicyOverBrowserManagement(
 		DestinationDeviceTagID   string      `json:"destination_device_tag_id,omitempty"`
 		DestinationResourceID    string      `json:"destination_resource_id,omitempty"`
 		DestinationGroupID       string      `json:"destination_resource_group_id,omitempty"`
+		DestinationSiteID        string      `json:"destination_site_id,omitempty"`
+		DestinationPrefixes      []string    `json:"destination_prefixes,omitempty"`
 		Protocol                 string      `json:"protocol"`
 		DestinationPortRanges    []portRange `json:"destination_port_ranges"`
 	}
@@ -518,6 +524,24 @@ func publishPolicyOverBrowserManagement(
 			publication.SideDeviceTag: &input.DestinationDeviceTagID,
 		}
 		*sideTargets[grouped.Destination().Kind()] = grouped.Destination().ID().String()
+		rules = append(rules, input)
+	}
+	for _, routed := range command.Candidate().RouteRules() {
+		ranges := routed.DestinationPortRanges()
+		ports := make([]portRange, len(ranges))
+		for index, value := range ranges {
+			ports[index] = portRange{First: value.First(), Last: value.Last()}
+		}
+		input := rule{ID: routed.RuleID().String(), Protocol: routed.Protocol().String(), DestinationPortRanges: ports,
+			DestinationSiteID: routed.SiteID().String()}
+		sideTargets := map[publication.SideKind]*string{
+			publication.SideDevice: &input.SourceDeviceID, publication.SideDeviceGroup: &input.SourceDeviceGroupID,
+			publication.SideIdentityGroup: &input.SourceIdentityGroupID, publication.SideDeviceTag: &input.SourceDeviceTagID,
+		}
+		*sideTargets[routed.Source().Kind()] = routed.Source().ID().String()
+		for _, prefix := range routed.Prefixes() {
+			input.DestinationPrefixes = append(input.DestinationPrefixes, prefix.String())
+		}
 		rules = append(rules, input)
 	}
 	var approvalEvidenceID string
@@ -585,6 +609,22 @@ func newIntegrationPolicyCompiler(
 		t.Fatal(err)
 	}
 	compiler, err := compilation.NewService(resources, imported...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return compiler
+}
+
+// newIntegrationSitePolicyCompiler is the production compiler with subnet
+// routes turned on: rules may name Sites.
+func newIntegrationSitePolicyCompiler(t *testing.T, runtimePool *postgresadapter.Pool) *compilation.Service {
+	t.Helper()
+	sites, err := postgresadapter.NewSiteStore(runtimePool,
+		postgresadapter.AccountSessionOptions{StatementTimeout: 3 * time.Second, IdleTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, err := newIntegrationPolicyCompiler(t, runtimePool).WithSites(sites)
 	if err != nil {
 		t.Fatal(err)
 	}

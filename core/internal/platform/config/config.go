@@ -55,7 +55,9 @@ type Config struct {
 	ShutdownTimeout time.Duration
 	LogLevel        slog.Level
 	// DNSSuffix is the suffix Device and share names are built under.
-	DNSSuffix    dnsname.Suffix
+	DNSSuffix dnsname.Suffix
+	// SubnetRoutes lets Access Rules name Sites and maps carry routes.
+	SubnetRoutes bool
 	Dependencies DependencyConfig
 	Storage      *StorageConfig
 	API          *APIConfig
@@ -171,6 +173,10 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, err
 	}
 	dnsSuffix, err := loadDNSSuffix(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+	subnetRoutes, err := loadSubnetRoutes(lookup)
 	if err != nil {
 		return Config{}, err
 	}
@@ -317,6 +323,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		ShutdownTimeout:         shutdownTimeout,
 		LogLevel:                logLevel,
 		DNSSuffix:               dnsSuffix,
+		SubnetRoutes:            subnetRoutes,
 		Dependencies:            dependencyConfig,
 		Storage:                 storageConfig,
 		API:                     apiConfig,

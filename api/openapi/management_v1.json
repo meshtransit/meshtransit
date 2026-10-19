@@ -2414,8 +2414,18 @@
               "device_tag",
               "resource",
               "resource_group",
-              "imported_resource"
+              "imported_resource",
+              "site"
             ]
+          },
+          "destination_prefixes": {
+            "type": "array",
+            "maxItems": 1024,
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "description": "The prefixes a Site rule grants; present only when selector_kind is site."
           },
           "destination_selector_id": {
             "type": "string",
@@ -2608,12 +2618,13 @@
           }
         ],
         "oneOf": [
-          {"required": ["destination_device_id"], "not": {"anyOf": [{"required": ["destination_device_group_id"]}, {"required": ["destination_device_tag_id"]}, {"required": ["destination_resource_id"]}, {"required": ["destination_resource_group_id"]}, {"required": ["destination_imported_resource_id"]}]}},
-          {"required": ["destination_device_group_id"], "not": {"anyOf": [{"required": ["destination_device_id"]}, {"required": ["destination_device_tag_id"]}, {"required": ["destination_resource_id"]}, {"required": ["destination_resource_group_id"]}, {"required": ["destination_imported_resource_id"]}]}},
-          {"required": ["destination_device_tag_id"], "not": {"anyOf": [{"required": ["destination_device_id"]}, {"required": ["destination_device_group_id"]}, {"required": ["destination_resource_id"]}, {"required": ["destination_resource_group_id"]}, {"required": ["destination_imported_resource_id"]}]}},
-          {"required": ["destination_resource_id"], "not": {"anyOf": [{"required": ["destination_device_id"]}, {"required": ["destination_device_group_id"]}, {"required": ["destination_device_tag_id"]}, {"required": ["destination_resource_group_id"]}, {"required": ["destination_imported_resource_id"]}]}},
-          {"required": ["destination_resource_group_id"], "not": {"anyOf": [{"required": ["destination_device_id"]}, {"required": ["destination_device_group_id"]}, {"required": ["destination_device_tag_id"]}, {"required": ["destination_resource_id"]}, {"required": ["destination_imported_resource_id"]}]}},
-          {"required": ["destination_imported_resource_id"], "not": {"anyOf": [{"required": ["destination_device_id"]}, {"required": ["destination_device_group_id"]}, {"required": ["destination_device_tag_id"]}, {"required": ["destination_resource_id"]}, {"required": ["destination_resource_group_id"]}]}}
+          {"required": ["destination_device_id"], "not": {"anyOf": [{"required": ["destination_device_group_id"]}, {"required": ["destination_device_tag_id"]}, {"required": ["destination_resource_id"]}, {"required": ["destination_resource_group_id"]}, {"required": ["destination_imported_resource_id"]}, {"required": ["destination_site_id"]}]}},
+          {"required": ["destination_device_group_id"], "not": {"anyOf": [{"required": ["destination_device_id"]}, {"required": ["destination_device_tag_id"]}, {"required": ["destination_resource_id"]}, {"required": ["destination_resource_group_id"]}, {"required": ["destination_imported_resource_id"]}, {"required": ["destination_site_id"]}]}},
+          {"required": ["destination_device_tag_id"], "not": {"anyOf": [{"required": ["destination_device_id"]}, {"required": ["destination_device_group_id"]}, {"required": ["destination_resource_id"]}, {"required": ["destination_resource_group_id"]}, {"required": ["destination_imported_resource_id"]}, {"required": ["destination_site_id"]}]}},
+          {"required": ["destination_resource_id"], "not": {"anyOf": [{"required": ["destination_device_id"]}, {"required": ["destination_device_group_id"]}, {"required": ["destination_device_tag_id"]}, {"required": ["destination_resource_group_id"]}, {"required": ["destination_imported_resource_id"]}, {"required": ["destination_site_id"]}]}},
+          {"required": ["destination_resource_group_id"], "not": {"anyOf": [{"required": ["destination_device_id"]}, {"required": ["destination_device_group_id"]}, {"required": ["destination_device_tag_id"]}, {"required": ["destination_resource_id"]}, {"required": ["destination_imported_resource_id"]}, {"required": ["destination_site_id"]}]}},
+          {"required": ["destination_imported_resource_id"], "not": {"anyOf": [{"required": ["destination_device_id"]}, {"required": ["destination_device_group_id"]}, {"required": ["destination_device_tag_id"]}, {"required": ["destination_resource_id"]}, {"required": ["destination_resource_group_id"]}, {"required": ["destination_site_id"]}]}},
+          {"required": ["destination_site_id"], "not": {"anyOf": [{"required": ["destination_device_id"]}, {"required": ["destination_device_group_id"]}, {"required": ["destination_device_tag_id"]}, {"required": ["destination_resource_id"]}, {"required": ["destination_resource_group_id"]}, {"required": ["destination_imported_resource_id"]}]}}
         ],
         "properties": {
           "id": {
@@ -2651,6 +2662,20 @@
           },
           "destination_imported_resource_id": {
             "$ref": "#/components/schemas/PublicID"
+          },
+          "destination_site_id": {
+            "$ref": "#/components/schemas/PublicID",
+            "description": "A Site of the Network: the rule grants routes into it (needs subnet routes on the deployment)."
+          },
+          "destination_prefixes": {
+            "type": "array",
+            "maxItems": 1024,
+            "items": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 43
+            },
+            "description": "With destination_site_id only: the part of the Site the rule grants, as canonical CIDRs inside the Site; absent or empty for the whole Site."
           },
           "protocol": {
             "type": "string",

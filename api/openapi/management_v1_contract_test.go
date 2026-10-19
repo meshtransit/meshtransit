@@ -166,6 +166,7 @@ func TestManagementV1MutationContracts(t *testing.T) {
 	destinations := []string{
 		"destination_device_id", "destination_device_group_id", "destination_device_tag_id",
 		"destination_resource_id", "destination_resource_group_id", "destination_imported_resource_id",
+		"destination_site_id",
 	}
 	sources := []string{
 		"source_device_id", "source_device_group_id", "source_identity_group_id", "source_device_tag_id",

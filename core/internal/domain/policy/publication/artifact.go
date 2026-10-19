@@ -16,6 +16,7 @@ const (
 	policyHashDomainV3               = "meshtransit/policy-release/v3\x00"
 	policyHashDomainV4               = "meshtransit/policy-release/v4\x00"
 	policyHashDomainV5               = "meshtransit/policy-release/v5\x00"
+	policyHashDomainV6               = "meshtransit/policy-release/v6\x00"
 	resourceCompilerFormatV2         = 2
 	resourceGroupCompilerFormatV3    = 3
 	importedResourceCompilerFormatV4 = 4
@@ -55,6 +56,7 @@ type Candidate struct {
 	resourceGroupDestinations    []ResourceGroupDestination
 	importedResourceDestinations []ImportedResourceDestination
 	groupRules                   []GroupRule
+	routeRules                   []RouteRule
 }
 
 // NewCandidate validates and hashes one compiled policy artifact.
@@ -206,10 +208,36 @@ func (candidate Candidate) WithGroupRules(rules []GroupRule) (Candidate, error) 
 	return extended, nil
 }
 
+// WithRouteRules returns the candidate with Access Rules whose destination is
+// a Site. Each rule ID is unique and used by no other rule of the candidate,
+// rules of different Sites never overlap, and the candidate stays within
+// MaximumRules facts.
+func (candidate Candidate) WithRouteRules(rules []RouteRule) (Candidate, error) {
+	if !candidate.IsValid() || len(candidate.routeRules) > 0 {
+		return Candidate{}, ErrInvalidCandidate
+	}
+	if err := CheckRouteOverlap(rules); err != nil {
+		return Candidate{}, err
+	}
+	extended := candidate
+	extended.routeRules = cloneRouteRules(rules)
+	slices.SortFunc(extended.routeRules, compareRouteRules)
+	extended.semanticHash = hashCandidate(extended)
+	if !extended.IsValid() {
+		return Candidate{}, ErrInvalidCandidate
+	}
+	return extended, nil
+}
+
+// RouteRules returns caller-owned rules whose destination is a Site.
+func (candidate Candidate) RouteRules() []RouteRule { return cloneRouteRules(candidate.routeRules) }
+
 // ProjectionCount is how many stored rule facts the release holds: compiled
-// Device pairs, Imported Resource selectors and group rules, in that order.
+// Device pairs, Imported Resource selectors, group rules and route rules, in
+// that order.
 func (candidate Candidate) ProjectionCount() int {
-	return len(candidate.snapshot.Rules()) + len(candidate.importedResourceDestinations) + len(candidate.groupRules)
+	return len(candidate.snapshot.Rules()) + len(candidate.importedResourceDestinations) + len(candidate.groupRules) +
+		len(candidate.routeRules)
 }
 
 // GroupRules returns caller-owned rules that select Device Groups.
@@ -223,6 +251,7 @@ func (candidate Candidate) IsValid() bool {
 		validResourceGroupDestinations(candidate) &&
 		validImportedResourceDestinations(candidate) &&
 		validGroupRules(candidate) &&
+		validRouteRules(candidate) &&
 		candidate.semanticHash.IsValid() &&
 		candidate.semanticHash == hashCandidate(candidate)
 }
@@ -244,6 +273,40 @@ func validGroupRules(candidate Candidate) bool {
 	}
 	for index, rule := range candidate.groupRules {
 		if !rule.IsValid() || (index > 0 && compareGroupRules(candidate.groupRules[index-1], rule) >= 0) {
+			return false
+		}
+		if _, used := taken[rule.ruleID]; used {
+			return false
+		}
+	}
+	return true
+}
+
+func validRouteRules(candidate Candidate) bool {
+	if len(candidate.routeRules) == 0 {
+		return true
+	}
+	granted := 0
+	for _, rule := range candidate.routeRules {
+		granted += len(rule.prefixes)
+	}
+	if candidate.ProjectionCount() > policy.MaximumRules || granted > MaximumGrantedRoutePrefixes ||
+		CheckRouteOverlap(candidate.routeRules) != nil {
+		return false
+	}
+	snapshotRules := candidate.snapshot.Rules()
+	taken := make(map[policy.RuleID]struct{}, candidate.ProjectionCount())
+	for _, rule := range snapshotRules {
+		taken[rule.ID()] = struct{}{}
+	}
+	for _, destination := range candidate.importedResourceDestinations {
+		taken[destination.ruleID] = struct{}{}
+	}
+	for _, rule := range candidate.groupRules {
+		taken[rule.ruleID] = struct{}{}
+	}
+	for index, rule := range candidate.routeRules {
+		if !rule.IsValid() || (index > 0 && compareRouteRules(candidate.routeRules[index-1], rule) >= 0) {
 			return false
 		}
 		if _, used := taken[rule.ruleID]; used {
@@ -382,7 +445,9 @@ func validResourceGroupDestinations(candidate Candidate) bool {
 func hashCandidate(candidate Candidate) SemanticHash {
 	rules := candidate.snapshot.Rules()
 	domain := policyHashDomainV1
-	if len(candidate.groupRules) > 0 {
+	if len(candidate.routeRules) > 0 {
+		domain = policyHashDomainV6
+	} else if len(candidate.groupRules) > 0 {
 		domain = policyHashDomainV5
 	} else if len(candidate.importedResourceDestinations) > 0 {
 		domain = policyHashDomainV4
@@ -419,6 +484,9 @@ func hashCandidate(candidate Candidate) SemanticHash {
 			encoded = appendUint16(encoded, portRange.First())
 			encoded = appendUint16(encoded, portRange.Last())
 		}
+	}
+	if domain == policyHashDomainV6 {
+		encoded = append(encoded, presentSections(candidate))
 	}
 	if len(candidate.resourceDestinations) > 0 || len(candidate.resourceGroupDestinations) > 0 {
 		encoded = appendUint64(encoded, uint64(len(candidate.resourceDestinations)))
@@ -523,7 +591,55 @@ func hashCandidate(candidate Candidate) SemanticHash {
 			}
 		}
 	}
+	if len(candidate.routeRules) > 0 {
+		encoded = appendRouteRules(encoded, candidate.routeRules)
+	}
 	return SemanticHash(sha256.Sum256(encoded))
+}
+
+// presentSections tags which optional sections follow the Device pairs, so
+// that from v6 on no two candidates encode to the same bytes: each section
+// is then known to be there before its count is read.
+func presentSections(candidate Candidate) byte {
+	var present byte
+	for bit, there := range []bool{
+		len(candidate.resourceDestinations) > 0 || len(candidate.resourceGroupDestinations) > 0,
+		len(candidate.resourceGroupDestinations) > 0,
+		len(candidate.importedResourceDestinations) > 0,
+		len(candidate.groupRules) > 0,
+	} {
+		if there {
+			present |= 1 << bit
+		}
+	}
+	return present
+}
+
+// appendRouteRules encodes each route rule after a count: rule ID, source
+// side, Site ID, prefixes (family, address, length), protocol and ports.
+func appendRouteRules(encoded []byte, rules []RouteRule) []byte {
+	encoded = appendUint64(encoded, uint64(len(rules)))
+	for _, rule := range rules {
+		ruleID := publicid.ID(rule.ruleID).Bytes()
+		siteID := publicid.ID(rule.siteID).Bytes()
+		encoded = append(encoded, ruleID[:]...)
+		encoded = appendGroupRuleSide(encoded, rule.source)
+		encoded = append(encoded, siteID[:]...)
+		encoded = appendUint64(encoded, uint64(len(rule.prefixes)))
+		for _, prefix := range rule.prefixes {
+			address := prefix.Addr().AsSlice()
+			encoded = append(encoded, byte(len(address))) //nolint:gosec // G115: 4 or 16
+			encoded = append(encoded, address...)
+			encoded = append(encoded, byte(prefix.Bits())) //nolint:gosec // G115: at most 128
+		}
+		encoded = append(encoded, byte(rule.protocol))
+		encoded = appendUint64(encoded, uint64(len(rule.destinationPortRanges)))
+		for _, portRange := range rule.destinationPortRanges {
+			encoded = appendUint16(encoded, portRange.First())
+			encoded = appendUint16(encoded, portRange.Last())
+		}
+	}
+	return encoded
 }
 
 // appendGroupRuleSide tags a rule side with its kind (Device 1, Device

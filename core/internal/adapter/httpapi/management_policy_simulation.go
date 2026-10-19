@@ -528,6 +528,26 @@ func classifyPolicySimulationError(err error) managementError {
 			Status: http.StatusPreconditionFailed, Code: "precondition_failed",
 			Message: "the Policy revision or simulation inputs changed",
 		}
+	case errors.Is(err, compilation.ErrRouteOverlap):
+		return managementError{
+			Status: http.StatusConflict, Code: "route_overlap",
+			Message: "rules grant overlapping prefixes of two Sites; a Device could not tell which router to use",
+		}
+	case errors.Is(err, compilation.ErrOutsideSite):
+		return managementError{
+			Status: http.StatusUnprocessableEntity, Code: "route_outside_site",
+			Message: "a rule names a prefix that is not inside its Site",
+		}
+	case errors.Is(err, compilation.ErrRoutePrefixLimit):
+		return managementError{
+			Status: http.StatusUnprocessableEntity, Code: "route_prefix_limit",
+			Message: "rules to Sites grant more than 16384 prefixes in all",
+		}
+	case errors.Is(err, compilation.ErrSiteRoutesDisabled):
+		return managementError{
+			Status: http.StatusConflict, Code: "subnet_routes_disabled",
+			Message: "this deployment does not route subnets yet",
+		}
 	case errors.Is(err, compilation.ErrResourceConflict):
 		return managementError{
 			Status: http.StatusConflict, Code: "resource_conflict",

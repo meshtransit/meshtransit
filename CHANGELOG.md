@@ -5,6 +5,20 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: Access Rules can name a Site as destination (`destination_site_id`,
+  with optional `destination_prefixes` inside the Site), from a Device,
+  Device Group, Identity Group or Device Tag. Releases keep the granted
+  prefixes. Refused: rules to different Sites that grant overlapping prefixes
+  (`409 route_overlap`) and more than 16,384 granted prefixes in all (`422
+  route_prefix_limit`). While active rules use them, a Site cannot be deleted
+  (`409 site_in_use`) nor lose granted address space (`409
+  site_prefixes_in_use`), and the groups and tags they select count as in
+  use. `GET …/policy` returns them with `selector_kind` `site` and
+  `destination_prefixes`. Off unless `MESHTRANSIT_SUBNET_ROUTES_ENABLED=true`
+  on every role (`409 subnet_routes_disabled`). Maps do not carry routes yet.
+  Schema 189, no operator step; a Core before this release that republishes
+  a policy read from `GET …/policy` could not hold Site rules, so roll out
+  every role before turning the setting on.
 - Core: Network Sites, the first part of subnet routers. A Site is an address
   space behind the mesh (an office LAN, a VPC) with its prefixes, source
   translation and probe addresses; a Device of the Network can be its router.

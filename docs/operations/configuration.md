@@ -321,6 +321,7 @@ For `control` and `all`.
 | `MESHTRANSIT_CONTROL_MAP_SHARED_INVENTORY` | `true` | bool | One inventory read per Network, shared by its sessions |
 | `MESHTRANSIT_CONTROL_MAP_SHARED_CONNECTIVITY` | `true` | bool | One connectivity table per replica |
 | `MESHTRANSIT_DEVICE_ALIASES_ENABLED` | `false` | bool | Offer Device alias peers ([sharing](../concepts/sharing.md#turning-it-on)) |
+| `MESHTRANSIT_SUBNET_ROUTES_ENABLED` | `false` | bool | Accept Access Rules to Sites ([policy](../concepts/policy.md#rules-to-sites)). Set it the same on every role, only once every replica runs a Core that knows Site rules, and do not turn it off while the active policy holds them |
 
 ### Relays
 

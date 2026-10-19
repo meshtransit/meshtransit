@@ -2,6 +2,7 @@ package main
 
 import (
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/domain/policy/compilation"
 	"meshtransit.net/core/internal/domain/resource/authority"
 	"meshtransit.net/core/internal/domain/resource/catalog"
 	"meshtransit.net/core/internal/domain/sharing"
@@ -12,6 +13,9 @@ type privateIdentityResourceServices struct {
 	catalog   *catalog.Service
 	sharing   *sharing.Service
 	imports   *postgresadapter.ResourceSharingStore
+	// sites resolves Site destinations; nil when subnet routes are off, so
+	// rules naming a Site are refused.
+	sites compilation.SiteResolver
 }
 
 func newPrivateIdentityResourceServices(pool *postgresadapter.Pool, options postgresadapter.AuthTransactionOptions) (privateIdentityResourceServices, error) {

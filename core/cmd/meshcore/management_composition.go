@@ -52,12 +52,16 @@ type managementCompositionOptions struct {
 	DNSSuffix dnsname.Suffix
 	// EnrollmentKeys issues enrollment keys; nil reports them unavailable.
 	EnrollmentKeys httpapi.EnrollmentKeyManager
+	// SubnetRoutes lets Access Rules name Sites
+	// (MESHTRANSIT_SUBNET_ROUTES_ENABLED).
+	SubnetRoutes bool
 }
 
 func composeManagementAPI(
 	apiConfig config.APIConfig,
 	dnsSuffix dnsname.Suffix,
 	enrollmentKeys httpapi.EnrollmentKeyManager,
+	subnetRoutes bool,
 	runtimePool *postgresadapter.Pool,
 	rateLimiter httpapi.ManagementRateLimiter,
 	logger *slog.Logger,
@@ -81,7 +85,7 @@ func composeManagementAPI(
 		API: apiConfig, Keys: managementCompositionKeys{
 			sessions: keyring, idempotency: idempotencyDigester, rateLimit: rateLimitDigester,
 		},
-		DNSSuffix: dnsSuffix, EnrollmentKeys: enrollmentKeys,
+		DNSSuffix: dnsSuffix, EnrollmentKeys: enrollmentKeys, SubnetRoutes: subnetRoutes,
 	}, runtimePool, rateLimiter, logger)
 }
 
@@ -302,6 +306,17 @@ func composeManagementAPIWithKeys(
 	policyCompiler, err := compilation.NewService(resourceCatalog, resourceSharingStore)
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)
+	}
+	if options.SubnetRoutes {
+		siteStore, siteErr := postgresadapter.NewSiteStore(runtimePool, postgresadapter.AccountSessionOptions{
+			StatementTimeout: managementStatementTimeout, IdleTimeout: managementTransactionIdle,
+		})
+		if siteErr != nil {
+			return nil, nil, errors.Join(errInvalidManagementComposition, siteErr)
+		}
+		if policyCompiler, err = policyCompiler.WithSites(siteStore); err != nil {
+			return nil, nil, errors.Join(errInvalidManagementComposition, err)
+		}
 	}
 	accessGraphStore, err := postgresadapter.NewAccessGraphStore(
 		runtimePool,

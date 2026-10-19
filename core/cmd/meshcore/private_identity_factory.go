@@ -73,6 +73,9 @@ type privateIdentityFactoryDependencies struct {
 	DNSSuffix dnsname.Suffix
 	// EnrollmentKeys issues enrollment keys; nil reports them unavailable.
 	EnrollmentKeys httpapi.EnrollmentKeyManager
+	// SubnetRoutes lets Access Rules name Sites
+	// (MESHTRANSIT_SUBNET_ROUTES_ENABLED).
+	SubnetRoutes bool
 }
 
 // This owner closes only its HTTP clients. Admission/drain and borrowed pool/
@@ -382,6 +385,9 @@ func composePrivateIdentityFactory(
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
+	if dependencies.SubnetRoutes {
+		resources.sites = siteStore
+	}
 	revocations, policies, policyCompiler, policyExplainer, policySimulator,
 		policyApprovals, policyApprovalCatalog, err :=
 		privateIdentityManagementServices(
@@ -514,6 +520,11 @@ func privateIdentityManagementServices(
 	policyCompiler, err := compilation.NewService(resources.catalog, resources.imports)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition
+	}
+	if resources.sites != nil {
+		if policyCompiler, err = policyCompiler.WithSites(resources.sites); err != nil {
+			return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition
+		}
 	}
 	accessGraphStore, err := postgresadapter.NewAccessGraphStore(
 		pool,

@@ -429,6 +429,23 @@ func (transaction *policyPublicationTransaction) applyLocked(
 			return publication.Result{}, ErrPolicyPublicationEvidence
 		}
 	}
+	if routeRules, err := encodePolicyRouteRules(change); err != nil {
+		return publication.Result{}, err
+	} else if routeRules != nil {
+		var attachedCount int
+		if err := transaction.database.QueryRow(
+			ctx,
+			attachPolicyRouteRulesSQL,
+			change.MutationIDs().ReleaseID().String(),
+			change.OccurredAt(),
+			routeRules,
+		).Scan(&attachedCount); err != nil {
+			return publication.Result{}, fmt.Errorf("attach policy route rules: %w", err)
+		}
+		if attachedCount != len(command.Candidate().RouteRules()) {
+			return publication.Result{}, ErrPolicyPublicationEvidence
+		}
+	}
 	var recordedRules int
 	if err := transaction.database.QueryRow(
 		ctx,

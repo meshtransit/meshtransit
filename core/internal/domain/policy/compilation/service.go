@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"slices"
 	"strings"
 
@@ -15,6 +16,7 @@ import (
 	"meshtransit.net/core/internal/domain/resource"
 	"meshtransit.net/core/internal/domain/resource/catalog"
 	"meshtransit.net/core/internal/domain/sharing"
+	"meshtransit.net/core/internal/domain/site"
 )
 
 // DestinationResolver returns one snapshot-consistent active Resource and
@@ -39,10 +41,42 @@ type ImportedDestinationResolver interface {
 	) ([]sharing.PolicyDestination, error)
 }
 
+// SiteResolver returns the active Sites of the scope with the given IDs, as
+// the reader may see them. A missing Site is absent from the result.
+type SiteResolver interface {
+	ResolvePolicySites(context.Context, accountsession.Session, network.Scope, []site.ID) ([]site.Site, error)
+}
+
+var (
+	// ErrSiteRoutesDisabled reports a Site destination on a deployment that
+	// does not route subnets.
+	ErrSiteRoutesDisabled = errors.New("policy compilation: subnet routes are disabled")
+	// ErrRouteOverlap reports rules that grant overlapping prefixes of
+	// different Sites.
+	ErrRouteOverlap = publication.ErrRouteOverlap
+	// ErrOutsideSite reports a rule prefix that is not inside its Site.
+	ErrOutsideSite = errors.New("policy compilation: prefix outside the Site")
+	// ErrRoutePrefixLimit reports rules to Sites that grant more than
+	// publication.MaximumGrantedRoutePrefixes prefixes in all.
+	ErrRoutePrefixLimit = publication.ErrRoutePrefixLimit
+)
+
 // Service compiles typed Device, Resource, and Resource Group destinations.
 type Service struct {
 	destinations DestinationResolver
 	imported     ImportedDestinationResolver
+	sites        SiteResolver
+}
+
+// WithSites returns a compiler that also compiles Site destinations. Without
+// it, a rule whose destination is a Site is refused (ErrSiteRoutesDisabled).
+func (service *Service) WithSites(sites SiteResolver) (*Service, error) {
+	if service == nil || sites == nil {
+		return nil, ErrInvalidRequest
+	}
+	extended := *service
+	extended.sites = sites
+	return &extended, nil
 }
 
 // NewService validates and constructs a policy compiler.
@@ -178,6 +212,10 @@ func (service *Service) Compile(
 		}
 	}
 
+	routeRules, err := service.compileRouteRules(ctx, session, request)
+	if err != nil {
+		return publication.Candidate{}, err
+	}
 	rules := make([]policy.Rule, 0, len(request.rules))
 	destinations := make([]publication.ResourceDestination, 0, len(resourceIDs))
 	groupDestinations := make([]publication.ResourceGroupDestination, 0, len(groupIDs))
@@ -189,6 +227,9 @@ func (service *Service) Compile(
 	var groupRules []publication.GroupRule
 	for _, intent := range request.rules {
 		destinationNodeID := intent.destinationNodeID
+		if intent.destinationSiteID.IsValid() {
+			continue
+		}
 		if intent.SelectsDeviceGroup() {
 			rule, err := publication.NewGroupRule(publication.GroupRuleParams{
 				RuleID: intent.id, SourceNodeID: intent.sourceNodeID, SourceGroupID: intent.sourceGroupID,
@@ -298,14 +339,109 @@ func (service *Service) Compile(
 		return publication.Candidate{}, ErrInvalidRequest
 	}
 	candidate, err := candidateWithDestinations(snapshot, destinations, groupDestinations, importedDestinations)
-	if err != nil || len(groupRules) == 0 {
+	if err != nil {
 		return candidate, err
 	}
-	withGroups, err := candidate.WithGroupRules(groupRules)
+	if len(groupRules) > 0 {
+		if candidate, err = candidate.WithGroupRules(groupRules); err != nil {
+			return publication.Candidate{}, ErrInvalidRequest
+		}
+	}
+	if len(routeRules) == 0 {
+		return candidate, nil
+	}
+	withRoutes, err := candidate.WithRouteRules(routeRules)
+	if errors.Is(err, publication.ErrRouteOverlap) || errors.Is(err, publication.ErrRoutePrefixLimit) {
+		return publication.Candidate{}, err
+	}
 	if err != nil {
 		return publication.Candidate{}, ErrInvalidRequest
 	}
-	return withGroups, nil
+	return withRoutes, nil
+}
+
+// compileRouteRules resolves every Site destination in one read and turns
+// each such rule into a route rule granting the asked prefixes, each inside
+// the Site, or the whole Site.
+func (service *Service) compileRouteRules(ctx context.Context, session accountsession.Session,
+	request Request) ([]publication.RouteRule, error) {
+	var ids []site.ID
+	seen := make(map[site.ID]struct{})
+	for _, intent := range request.rules {
+		if id := intent.destinationSiteID; id.IsValid() {
+			if _, duplicate := seen[id]; !duplicate {
+				seen[id] = struct{}{}
+				ids = append(ids, id)
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if service.sites == nil {
+		return nil, ErrSiteRoutesDisabled
+	}
+	if len(ids) > site.MaximumSitesPerNetwork {
+		return nil, ErrInvalidRequest
+	}
+	sites, err := service.sites.ResolvePolicySites(ctx, session, request.scope, ids)
+	if err != nil {
+		return nil, classifySiteResolutionError(err)
+	}
+	resolved := make(map[site.ID]site.Site, len(sites))
+	for _, value := range sites {
+		if _, requested := seen[value.ID]; !requested {
+			return nil, ErrUnavailable
+		}
+		resolved[value.ID] = value
+	}
+	routeRules := make([]publication.RouteRule, 0, len(ids))
+	granted := 0
+	for _, intent := range request.rules {
+		if !intent.destinationSiteID.IsValid() {
+			continue
+		}
+		value, found := resolved[intent.destinationSiteID]
+		if !found {
+			return nil, ErrResourceConflict
+		}
+		prefixes := intent.destinationPrefixes
+		if len(prefixes) == 0 {
+			prefixes = value.Prefixes
+		}
+		// Stop before building more than a release may hold: a rule without
+		// prefixes grants its whole Site.
+		if granted += len(prefixes); granted > publication.MaximumGrantedRoutePrefixes {
+			return nil, ErrRoutePrefixLimit
+		}
+		for _, prefix := range prefixes {
+			if !prefix.IsValid() || prefix != prefix.Masked() || !site.Covers(value.Prefixes, []netip.Prefix{prefix}) {
+				return nil, ErrOutsideSite
+			}
+		}
+		rule, err := publication.NewRouteRule(publication.RouteRuleParams{
+			RuleID: intent.id, SourceNodeID: intent.sourceNodeID, SourceGroupID: intent.sourceGroupID,
+			SourceIdentityGroupID: intent.sourceIdentityGroupID, SourceTagID: intent.sourceTagID,
+			SiteID: value.ID, Prefixes: prefixes, Protocol: intent.protocol,
+			DestinationPortRanges: intent.destinationPortRanges,
+		})
+		if err != nil {
+			return nil, ErrInvalidRequest
+		}
+		routeRules = append(routeRules, rule)
+	}
+	return routeRules, nil
+}
+
+func classifySiteResolutionError(err error) error {
+	switch {
+	case errors.Is(err, site.ErrForbidden):
+		return ErrForbidden
+	case errors.Is(err, site.ErrInvalid), errors.Is(err, site.ErrNotFound):
+		return ErrResourceConflict
+	default:
+		return errors.Join(ErrUnavailable, err)
+	}
 }
 
 func candidateWithDestinations(

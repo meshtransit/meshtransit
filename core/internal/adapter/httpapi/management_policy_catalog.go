@@ -41,6 +41,10 @@ type activePolicyRule struct {
 	DestinationPortRanges []publishPolicyPortRangeRequest `json:"destination_port_ranges"`
 	SelectorKind          string                          `json:"selector_kind"`
 	DestinationSelectorID string                          `json:"destination_selector_id"`
+	// DestinationPrefixes is the part of a Site a rule grants. Only Site
+	// rules carry it, so clients that know no Site rules see the rows they
+	// always did.
+	DestinationPrefixes []string `json:"destination_prefixes,omitempty"`
 }
 
 func parseActivePolicyPath(request *http.Request) (policySimulationPath, bool) {
@@ -115,6 +119,13 @@ func activePolicyProjection(snapshot catalog.Snapshot) activePolicyData {
 		if rule.DestinationImportedResourceID().IsValid() {
 			kind, selector = "imported_resource", rule.DestinationImportedResourceID().String()
 		}
+		var prefixes []string
+		if rule.DestinationSiteID().IsValid() {
+			kind, selector = "site", rule.DestinationSiteID().String()
+			for _, prefix := range rule.DestinationPrefixes() {
+				prefixes = append(prefixes, prefix.String())
+			}
+		}
 		destination := ""
 		if item.DestinationNodeID.IsValid() {
 			destination = item.DestinationNodeID.String()
@@ -128,7 +139,7 @@ func activePolicyProjection(snapshot catalog.Snapshot) activePolicyData {
 		case rule.SourceTagID().IsValid():
 			sourceKind, sourceSelector, sourceDevice = "device_tag", rule.SourceTagID().String(), ""
 		}
-		data.Rules = append(data.Rules, activePolicyRule{ID: rule.ID().String(), SourceDeviceID: sourceDevice, SourceKind: sourceKind, SourceSelectorID: sourceSelector, DestinationDeviceID: destination, Protocol: rule.Protocol().String(), DestinationPortRanges: activePolicyPorts(rule.DestinationPortRanges()), SelectorKind: kind, DestinationSelectorID: selector})
+		data.Rules = append(data.Rules, activePolicyRule{ID: rule.ID().String(), SourceDeviceID: sourceDevice, SourceKind: sourceKind, SourceSelectorID: sourceSelector, DestinationDeviceID: destination, Protocol: rule.Protocol().String(), DestinationPortRanges: activePolicyPorts(rule.DestinationPortRanges()), SelectorKind: kind, DestinationSelectorID: selector, DestinationPrefixes: prefixes})
 	}
 	return data
 }

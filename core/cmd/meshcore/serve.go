@@ -306,7 +306,8 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			privateProfile,
 			privateIdentityFactoryDependencies{Runtime: storagePools.runtime, Redis: redisClient, Logger: logger,
 				Mailer: mailer, Signup: processConfig.Signup, Interchange: processConfig.Interchange,
-				DNSSuffix: processConfig.DNSSuffix, EnrollmentKeys: enrollmentKeys},
+				DNSSuffix: processConfig.DNSSuffix, EnrollmentKeys: enrollmentKeys,
+				SubnetRoutes: processConfig.SubnetRoutes},
 			browserRuntime...,
 		)
 		if composeErr != nil {
@@ -333,7 +334,8 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		if privateFactory != nil {
 			managementServer, managementMetrics, composeErr = composeManagementAPIWithKeys(
 				managementCompositionOptions{API: *processConfig.API, Keys: privateFactory.managementKeys,
-					DNSSuffix: processConfig.DNSSuffix, EnrollmentKeys: enrollmentKeys},
+					DNSSuffix: processConfig.DNSSuffix, EnrollmentKeys: enrollmentKeys,
+					SubnetRoutes: processConfig.SubnetRoutes},
 				storagePools.runtime,
 				redisClient,
 				logger,
@@ -343,6 +345,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 				*processConfig.API,
 				processConfig.DNSSuffix,
 				enrollmentKeys,
+				processConfig.SubnetRoutes,
 				storagePools.runtime,
 				redisClient,
 				logger,

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"meshtransit.net/core/internal/domain/policy/publication"
 	"meshtransit.net/core/internal/domain/resource"
 	"meshtransit.net/core/internal/domain/sharing"
+	"meshtransit.net/core/internal/domain/site"
 	"meshtransit.net/core/internal/domain/workspace"
 )
 
@@ -29,7 +31,7 @@ import (
 const configureActivePolicyReadTransactionSQL = configureResourceAuthoritySQL + `,
     pg_catalog.set_config('plan_cache_mode', 'force_generic_plan', TRUE)`
 
-const readActivePolicySQL = `SELECT mesh_ops.read_active_policy_v2(
+const readActivePolicySQL = `SELECT mesh_ops.read_active_policy_v3(
     $1::UUID, $2::UUID, $3::UUID, $4::UUID, $5::BIGINT,
     $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
     $10::UUID, $11::UUID, $12::TIMESTAMPTZ
@@ -126,14 +128,15 @@ type activePolicyWire struct {
 	Rules           []activePolicyRuleWire `json:"rules"`
 }
 type activePolicyRuleWire struct {
-	ID            string `json:"id"`
-	SourceID      string `json:"source_device_id"`
-	SourceKind    string `json:"source_kind"`
-	SourceSelect  string `json:"source_selector_id"`
-	DestinationID string `json:"destination_device_id"`
-	Protocol      string `json:"protocol"`
-	SelectorKind  string `json:"selector_kind"`
-	SelectorID    string `json:"destination_selector_id"`
+	ID            string   `json:"id"`
+	SourceID      string   `json:"source_device_id"`
+	SourceKind    string   `json:"source_kind"`
+	SourceSelect  string   `json:"source_selector_id"`
+	DestinationID string   `json:"destination_device_id"`
+	Protocol      string   `json:"protocol"`
+	SelectorKind  string   `json:"selector_kind"`
+	SelectorID    string   `json:"destination_selector_id"`
+	Prefixes      []string `json:"destination_prefixes"`
 	Ports         []struct {
 		First int `json:"first"`
 		Last  int `json:"last"`
@@ -252,7 +255,19 @@ func (row activePolicyRuleWire) parse(scope network.Scope) (catalog.Row, error) 
 		params.DestinationGroupID, err = resource.ParseGroupID(row.SelectorID)
 	case "imported_resource":
 		params.DestinationImportedResourceID, err = sharing.ParseImportedResourceID(row.SelectorID)
+	case "site":
+		params.DestinationSiteID, err = site.ParseID(row.SelectorID)
+		for _, text := range row.Prefixes {
+			prefix, prefixErr := netip.ParsePrefix(text)
+			if prefixErr != nil {
+				return catalog.Row{}, catalog.ErrInvalidSnapshot
+			}
+			params.DestinationPrefixes = append(params.DestinationPrefixes, prefix)
+		}
 	default:
+		return catalog.Row{}, catalog.ErrInvalidSnapshot
+	}
+	if row.SelectorKind != "site" && len(row.Prefixes) != 0 {
 		return catalog.Row{}, catalog.ErrInvalidSnapshot
 	}
 	if err != nil {

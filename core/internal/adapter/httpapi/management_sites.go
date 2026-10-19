@@ -428,6 +428,12 @@ func classifySiteError(err error) managementError {
 	case errors.Is(err, site.ErrRouterNotOffering):
 		return managementError{Status: http.StatusConflict, Code: "router_not_advertising",
 			Message: "The Device does not offer the Site's prefixes. Set them in its local configuration first."}
+	case errors.Is(err, site.ErrInUse):
+		return managementError{Status: http.StatusConflict, Code: "site_in_use",
+			Message: "Active rules name this Site. Change those rules first."}
+	case errors.Is(err, site.ErrPrefixesInUse):
+		return managementError{Status: http.StatusConflict, Code: "site_prefixes_in_use",
+			Message: "Active rules grant prefixes this change removes. Change those rules first."}
 	case errors.Is(err, site.ErrInvalidPrefix):
 		return managementError{Status: http.StatusUnprocessableEntity, Code: "site_prefix_invalid",
 			Message: "A prefix overlaps another, the mesh, a special range or an address clients use, or is too wide"}

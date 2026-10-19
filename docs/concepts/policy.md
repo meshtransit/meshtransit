@@ -13,7 +13,7 @@ A rule allows one direction: a **source** may open connections to a
 | Part | Choices |
 |---|---|
 | Source | one Device, Device Group, Identity Group or Device Tag |
-| Destination | one Device, Device Group, Device Tag, Resource, Resource Group or Imported Resource |
+| Destination | one Device, Device Group, Device Tag, Resource, Resource Group, Imported Resource or Site |
 | Protocol | `tcp` or `udp` with 1 to 64 destination port ranges (1–65535), or `icmp` with none |
 
 - Replies to an allowed connection are allowed; the destination cannot open
@@ -29,6 +29,8 @@ A rule allows one direction: a **source** may open connections to a
 - A rule from a Device to itself is refused.
 - An **Imported Resource** is a Device another Network shares with this one;
   the rule is further limited by the share's terms ([sharing](sharing.md)).
+- A **Site** is an address space behind a router Device; see
+  [rules to Sites](#rules-to-sites).
 
 ### When selectors are resolved
 
@@ -61,6 +63,56 @@ A rule allows one direction: a **source** may open connections to a
 | Device Groups | 200 per Network, 5,000 members each |
 | Identity Groups | 500 per Workspace, 10,000 members |
 | Device Tags | 200 per Workspace |
+| Prefixes granted by all rules to Sites in one policy | 16,384 |
+
+### Rules to Sites
+
+A **Site** (`…/networks/{network}/sites`, managed with `route.approve` and
+`route.withdraw`) is an address space behind the mesh, such as an office LAN
+or a VPC, with its IPv4 and IPv6 prefixes and a router Device. A rule to a
+Site lets its source reach addresses of that Site through the router:
+
+```json
+{
+  "id": "…",
+  "source_device_group_id": "…",
+  "destination_site_id": "…",
+  "destination_prefixes": ["10.20.5.0/24"],
+  "protocol": "tcp",
+  "destination_port_ranges": [{"first": 443, "last": 443}]
+}
+```
+
+- The source is a Device, Device Group, Identity Group or Device Tag, kept as
+  a selector like any group rule.
+- `destination_prefixes` is optional. Without it the rule grants the Site's
+  prefixes as they are at publication; with it, the listed prefixes, each
+  inside one of the Site's (otherwise 422 `route_outside_site`). The release
+  keeps the granted prefixes, and `GET …/policy` returns them on every Site
+  rule.
+- Growing a Site does not widen its rules: publish again to grant the new
+  prefixes. A Site change that drops address space active rules grant is
+  refused (409 `site_prefixes_in_use`), as is deleting a Device Group,
+  Identity Group or tag that such a rule selects (409, as for any rule);
+  change the rules first.
+- Rules to two different Sites must not grant overlapping prefixes, whatever
+  their sources (409 `route_overlap`): group memberships change without a new
+  publication, so any two such rules could reach the same Device, and it could
+  not tell which router a packet is for. Overlapping Sites themselves are
+  allowed, as long as rules grant disjoint parts.
+- A Site that rules of the active policy name cannot be deleted (409
+  `site_in_use`); publish a policy without them first.
+- All rules to Sites of one policy grant at most 16,384 prefixes, counting a
+  rule without `destination_prefixes` as all its Site's prefixes (422
+  `route_prefix_limit`).
+- Rules to Sites are refused with 409 `subnet_routes_disabled` while the
+  deployment has `MESHTRANSIT_SUBNET_ROUTES_ENABLED` off, its default
+  ([configuration](../operations/configuration.md)). Turning it off while the
+  active policy holds such rules makes every publication fail until they are
+  removed, so remove them first.
+- The activity log reports them with `destination_kind` `site`. Simulation
+  checks them but does not count their impact yet, and explain and the access
+  graph do not include them yet.
 
 ## Changing policy
 
@@ -140,8 +192,8 @@ database derives from the stored rules.
   release, so it counts as removed and later as added again.
 - `rules`: at most 20 of the changed rules (removed, then changed, then
   added, shared between the three), each with its ID, `destination_kind`
-  (`device`, `device_group`, `device_tag`, `resource`, `resource_group` or
-  `imported_resource`) and `destination_id`. An Imported Resource appears by
+  (`device`, `device_group`, `device_tag`, `resource`, `resource_group`,
+  `imported_resource` or `site`) and `destination_id`. An Imported Resource appears by
   its consumer-local ID. `truncated` is true when more rules changed, or
   when the list was shortened to keep the event within 16 KiB.
 - `baseline`:
@@ -216,7 +268,9 @@ computed at.
 
 ## Not yet
 
-Subnet routes, exit nodes and connectors are not implemented: nodes accept
-only routes to Devices' own addresses inside the overlay. The permissions
-`route.*`, `connector.*`, `policy.draft`, `policy.rollback` and
+Exit nodes and connectors are not implemented. Subnet routes are partly
+implemented: Sites, their routers and rules to Sites are stored and published,
+but maps do not carry routes yet, so nodes still accept only routes to
+Devices' own addresses inside the overlay. The permissions
+`connector.*`, `policy.draft`, `policy.rollback` and
 `approval_policy.manage` exist in the catalog without an operation.

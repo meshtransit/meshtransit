@@ -33,6 +33,11 @@ var (
 	// ErrRouterNotOffering reports a Device whose own configuration does not
 	// offer the Site's prefixes.
 	ErrRouterNotOffering = errors.New("site: Device does not offer the Site prefixes")
+	// ErrInUse reports a Site that rules of the active policy release name.
+	ErrInUse = errors.New("site: named by active rules")
+	// ErrPrefixesInUse reports a Site change that drops address space rules
+	// of the active policy release grant.
+	ErrPrefixesInUse = errors.New("site: prefixes granted by active rules")
 	// ErrUnavailable reports an unavailable or uncertain durable operation.
 	ErrUnavailable = errors.New("site: unavailable")
 )

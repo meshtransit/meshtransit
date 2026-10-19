@@ -3,6 +3,7 @@ package compilation
 
 import (
 	"errors"
+	"net/netip"
 	"slices"
 
 	"meshtransit.net/core/internal/domain/devicegroup"
@@ -13,6 +14,7 @@ import (
 	"meshtransit.net/core/internal/domain/policy"
 	"meshtransit.net/core/internal/domain/resource"
 	"meshtransit.net/core/internal/domain/sharing"
+	"meshtransit.net/core/internal/domain/site"
 )
 
 var (
@@ -43,8 +45,12 @@ type RuleIntentParams struct {
 	DestinationResourceID         resource.ID
 	DestinationGroupID            resource.GroupID
 	DestinationImportedResourceID sharing.ImportedResourceID
-	Protocol                      policy.Protocol
-	DestinationPortRanges         []policy.PortRange
+	// DestinationSiteID selects a Site; DestinationPrefixes narrows it to
+	// some of its prefixes (empty for the whole Site).
+	DestinationSiteID     site.ID
+	DestinationPrefixes   []netip.Prefix
+	Protocol              policy.Protocol
+	DestinationPortRanges []policy.PortRange
 }
 
 // RuleIntent is one immutable Access Rule with exactly one typed destination.
@@ -61,6 +67,8 @@ type RuleIntent struct {
 	destinationResourceID         resource.ID
 	destinationGroupID            resource.GroupID
 	destinationImportedResourceID sharing.ImportedResourceID
+	destinationSiteID             site.ID
+	destinationPrefixes           []netip.Prefix
 	protocol                      policy.Protocol
 	destinationPortRanges         []policy.PortRange
 }
@@ -78,6 +86,8 @@ func NewRuleIntent(params RuleIntentParams) (RuleIntent, error) {
 		destinationResourceID:         params.DestinationResourceID,
 		destinationGroupID:            params.DestinationGroupID,
 		destinationImportedResourceID: params.DestinationImportedResourceID,
+		destinationSiteID:             params.DestinationSiteID,
+		destinationPrefixes:           slices.Clone(params.DestinationPrefixes),
 		protocol:                      params.Protocol, destinationPortRanges: slices.Clone(params.DestinationPortRanges),
 	}
 	if !intent.IsValid() {
@@ -116,8 +126,11 @@ func (intent RuleIntent) DestinationTagID() devicetag.ID { return intent.destina
 
 // SelectsDeviceGroup reports whether either side is a group or a tag, so the
 // rule is resolved from membership, ownership and tags when maps are built
-// instead of compiled to Device pairs.
+// instead of compiled to Device pairs. A Site rule is a route rule instead.
 func (intent RuleIntent) SelectsDeviceGroup() bool {
+	if intent.destinationSiteID.IsValid() {
+		return false
+	}
 	return intent.sourceGroupID.IsValid() || intent.destinationDeviceGroupID.IsValid() ||
 		intent.sourceIdentityGroupID.IsValid() || intent.sourceTagID.IsValid() || intent.destinationTagID.IsValid()
 }
@@ -140,6 +153,15 @@ func (intent RuleIntent) DestinationImportedResourceID() sharing.ImportedResourc
 	return intent.destinationImportedResourceID
 }
 
+// DestinationSiteID returns the Site destination, when selected.
+func (intent RuleIntent) DestinationSiteID() site.ID { return intent.destinationSiteID }
+
+// DestinationPrefixes returns the caller-owned part of the Site the rule
+// asks for; empty means the whole Site.
+func (intent RuleIntent) DestinationPrefixes() []netip.Prefix {
+	return slices.Clone(intent.destinationPrefixes)
+}
+
 // Protocol returns the explicit packet protocol.
 func (intent RuleIntent) Protocol() policy.Protocol { return intent.protocol }
 
@@ -158,12 +180,21 @@ func (intent RuleIntent) IsValid() bool {
 	hasResource := intent.destinationResourceID.IsValid()
 	hasGroup := intent.destinationGroupID.IsValid()
 	hasImported := intent.destinationImportedResourceID.IsValid()
+	hasSite := intent.destinationSiteID.IsValid()
 	if !intent.id.IsValid() || !intent.scope.IsValid() ||
 		boolCount(intent.sourceNodeID.IsValid(), intent.sourceGroupID.IsValid(),
 			intent.sourceIdentityGroupID.IsValid(), intent.sourceTagID.IsValid()) != 1 ||
-		boolCount(hasDevice, hasDeviceGroup, hasTag, hasResource, hasGroup, hasImported) != 1 ||
-		!intent.protocol.IsValid() || intent.destinationPortRanges == nil {
+		boolCount(hasDevice, hasDeviceGroup, hasTag, hasResource, hasGroup, hasImported, hasSite) != 1 ||
+		!intent.protocol.IsValid() || intent.destinationPortRanges == nil ||
+		(!hasSite && len(intent.destinationPrefixes) > 0) ||
+		len(intent.destinationPrefixes) > site.MaximumPrefixesPerSite {
 		return false
+	}
+	if hasSite {
+		// Any source selector; the prefixes are checked against the Site
+		// when it is resolved.
+		_, valid := policy.CanonicalTraffic(intent.protocol, intent.destinationPortRanges)
+		return valid
 	}
 	if intent.SelectsDeviceGroup() {
 		if !hasDevice && !hasDeviceGroup && !hasTag {
