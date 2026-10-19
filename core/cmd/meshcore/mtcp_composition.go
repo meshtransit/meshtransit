@@ -48,6 +48,7 @@ type mtcpDependencies struct {
 	logout        mtcpadapter.DeviceLogout
 	paths         mtcpadapter.PathRecorder         // optional
 	connectivity  mtcpadapter.ConnectivityRecorder // optional
+	routeOffers   mtcpadapter.RouteOffers          // optional
 	browser       *browserControlServices
 	origin        string
 	guard         mtcpadapter.TimestampGuard
@@ -119,7 +120,8 @@ func composeMTCP(
 	applicationOptions := mtcpadapter.ApplicationOptions{
 		Streams: deps.streams, Endpoints: deps.sessions, Snapshots: deps.sessions, ControlKeys: keys,
 		Logger: logger, Registrations: deps.registrations, RegistrationIDs: intake.PublicRegistrationIDGenerator{},
-		Logout: deps.logout, Paths: deps.paths, Connectivity: deps.connectivity, Metrics: metrics,
+		Logout: deps.logout, Paths: deps.paths, Connectivity: deps.connectivity, RouteOffers: deps.routeOffers,
+		Metrics:                metrics,
 		DeniedEndpointPrefixes: controlConfig.MTCP.DeniedEndpointPrefixes(),
 		DNSSuffix:              deps.dnsSuffix,
 	}

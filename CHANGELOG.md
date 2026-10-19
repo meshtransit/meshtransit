@@ -5,6 +5,16 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: stores the subnets a Device offers to forward from its
+  `HostinfoReport` (`advertised_prefixes`), so it can be made a Site's
+  router. Entries no Site could use are ignored and counted
+  (`meshtransit_mtcp_route_offer_prefixes_dropped_total`); offers are stored
+  at most 4 at once, then 1 per 10 s per session, keeping the latest, and an
+  unchanged offer writes nothing (`meshtransit_mtcp_route_offers_total`).
+  Each change is recorded as `device.route_offer_changed`; one that changes
+  whether a router covers its Site also rebuilds the Network's maps. Schema
+  190, no operator step; run the migration before the new Core (a Core
+  without it logs a warning per report and stores nothing).
 - Core: Access Rules can name a Site as destination (`destination_site_id`,
   with optional `destination_prefixes` inside the Site), from a Device,
   Device Group, Identity Group or Device Tag. Releases keep the granted

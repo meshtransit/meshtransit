@@ -23,7 +23,18 @@ type Metrics struct {
 	limits     *prometheus.CounterVec
 	mapNames   *prometheus.CounterVec
 	expiring   *deviceExpiryCollector
+	// routeOffers counts stored offers by result; routeOfferDropped the
+	// offered prefixes ignored as unusable (mtcp-v1 §8.2).
+	routeOffers       *prometheus.CounterVec
+	routeOfferDropped prometheus.Counter
 }
+
+// The closed set of route offer store results.
+const (
+	routeOfferChanged   = "changed"
+	routeOfferUnchanged = "unchanged"
+	routeOfferFailed    = "failed"
+)
 
 // The closed set of ways a map's names were degraded (mapsession.DNSView).
 const (
@@ -40,12 +51,13 @@ const (
 	limitEnforcement = "enforcement"
 	limitBrowser     = "browser"
 	limitIdentity    = "identity"
+	limitRouteOffer  = "route_offer"
 	// limitSendDeadline: a message was not sent by its send deadline.
 	limitSendDeadline = "send_deadline"
 )
 
 var sessionLimits = []string{limitInbound, limitResync, limitEnforcement, limitBrowser, limitIdentity,
-	limitSendDeadline}
+	limitRouteOffer, limitSendDeadline}
 
 // streamEndReasons is the closed set of map stream end causes.
 var streamEndReasons = []string{
@@ -117,6 +129,16 @@ func NewMetrics() *Metrics {
 			Name: "meshtransit_mtcp_map_names_degraded_total",
 			Help: "Device names and DNS records left out of encoded maps, by bounded cause.",
 		}, []string{"reason"}),
+		// Watch: failed means routers may keep serving with an old offer;
+		// dropped prefixes are entries clients should not send.
+		routeOffers: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "meshtransit_mtcp_route_offers_total",
+			Help: "Subnet offers of HostinfoReports stored, by result (changed, unchanged, failed).",
+		}, []string{"result"}),
+		routeOfferDropped: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "meshtransit_mtcp_route_offer_prefixes_dropped_total",
+			Help: "Offered subnet prefixes ignored as malformed, not canonical or unusable for a Site.",
+		}),
 		keyExpiry: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "meshtransit_mtcp_control_key_not_after_timestamp_seconds",
 			Help: "Expiry of the latest control key this replica answers with (Unix seconds).",
@@ -134,6 +156,9 @@ func NewMetrics() *Metrics {
 	for _, reason := range []string{namesUnlabeled, namesDropped} {
 		metrics.mapNames.WithLabelValues(reason)
 	}
+	for _, result := range []string{routeOfferChanged, routeOfferUnchanged, routeOfferFailed} {
+		metrics.routeOffers.WithLabelValues(result)
+	}
 	return metrics
 }
 
@@ -141,7 +166,7 @@ func NewMetrics() *Metrics {
 func (metrics *Metrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{metrics.handshakes, metrics.sessions, metrics.messages, metrics.streamEnds,
 		metrics.sheds, metrics.unproven, metrics.forwarding, metrics.keyExpiry, metrics.limits, metrics.mapNames,
-		metrics.expiring}
+		metrics.expiring, metrics.routeOffers, metrics.routeOfferDropped}
 }
 
 // streamEnded counts a map stream end; a nil Metrics counts nothing.
@@ -189,6 +214,22 @@ func (metrics *Metrics) limited(limit string) {
 }
 
 func (metrics *Metrics) untrustedForwarding() { metrics.forwarding.Inc() }
+
+// routeOffer counts one stored offer; a nil Metrics counts nothing.
+func (metrics *Metrics) routeOffer(result string) {
+	if metrics == nil {
+		return
+	}
+	metrics.routeOffers.WithLabelValues(result).Inc()
+}
+
+// routeOfferPrefixesDropped counts ignored offered prefixes.
+func (metrics *Metrics) routeOfferPrefixesDropped(count int) {
+	if metrics == nil || count <= 0 {
+		return
+	}
+	metrics.routeOfferDropped.Add(float64(count))
+}
 
 func (metrics *Metrics) sent(t sharedmtcp.MessageType) {
 	metrics.messages.WithLabelValues("sent", fmt.Sprintf("%#02x", uint8(t))).Inc()

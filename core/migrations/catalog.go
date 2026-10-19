@@ -556,6 +556,7 @@ func Catalog() []Migration {
 		newMigration(187, "Overlay and alias pools stay inside the client overlay frame", addressPoolFrameSQL),
 		newMigration(188, "Network Sites and their routers", networkSitesSQL),
 		newMigration(189, "Access Rules whose destination is a Site", siteRouteRulesSQL),
+		newMigration(190, "Devices report the subnets they offer to forward", deviceRouteOfferSQL),
 	}
 }
 
@@ -902,3 +903,6 @@ var networkSitesSQL string
 
 //go:embed 000189_site_route_rules.up.sql
 var siteRouteRulesSQL string
+
+//go:embed 000190_device_route_offer.up.sql
+var deviceRouteOfferSQL string

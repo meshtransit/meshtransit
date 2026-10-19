@@ -170,11 +170,14 @@ func assertPostgreSQLSites(ctx context.Context, t *testing.T, admin *pgx.Conn, r
 	if _, err := service.PutRouter(ctx, owner, scope, id, 2, assignment, newCorrelationID(t)); !errors.Is(err, site.ErrRouterNotOffering) {
 		t.Fatalf("a router that offers nothing: %v", err)
 	}
+	// Offers come from nodes (schema 190); the fixture writes them directly,
+	// without the evidence a node's report records.
 	offer := func(device string, prefixes string) error {
-		_, err := admin.Exec(ctx, `INSERT INTO mesh.device_route_advertisement (device_id, workspace_id, network_id, prefixes, reported_at)
-SELECT id, workspace_id, network_id, $2::CIDR[], now() FROM mesh.device WHERE public_id = $1::UUID
-ON CONFLICT (device_id) DO UPDATE SET prefixes = EXCLUDED.prefixes, reported_at = EXCLUDED.reported_at`, device, prefixes)
-		return err
+		return fixtureRouteOffer(ctx, admin, `INSERT INTO mesh.device_route_advertisement
+    (device_id, workspace_id, network_id, public_id, prefixes, reported_at)
+SELECT id, workspace_id, network_id, public_id, $2::CIDR[], now() FROM mesh.device WHERE public_id = $1::UUID
+ON CONFLICT (device_id) DO UPDATE SET prefixes = EXCLUDED.prefixes, reported_at = EXCLUDED.reported_at,
+    version = mesh.device_route_advertisement.version + 1`, device, prefixes)
 	}
 	if err := offer(router.String(), "{0.0.0.0/0}"); err == nil {
 		t.Fatal("a Device offered the default route")
@@ -223,7 +226,8 @@ WHERE target_kind = 'network_site' AND action = 'network_site.router_set' ORDER 
 		t.Fatalf("a second router: %v", err)
 	}
 	// A narrower offer leaves the router listed but unable to serve.
-	if _, err := admin.Exec(ctx, `UPDATE mesh.device_route_advertisement SET prefixes = ARRAY['10.20.0.0/16']::CIDR[]
+	if err := fixtureRouteOffer(ctx, admin, `UPDATE mesh.device_route_advertisement
+SET prefixes = ARRAY['10.20.0.0/16']::CIDR[], version = version + 1
 WHERE device_id = (SELECT id FROM mesh.device WHERE public_id = $1::UUID)`, router.String()); err != nil {
 		t.Fatal(err)
 	}
@@ -262,9 +266,26 @@ WHERE device_id = (SELECT id FROM mesh.device WHERE public_id = $1::UUID)`, rout
 	if err := admin.QueryRow(ctx, `SELECT count(*) FROM mesh.network_site_router`).Scan(&leftover); err != nil || leftover != 0 {
 		t.Fatalf("routers left after deleting their Sites: %d, %v", leftover, err)
 	}
-	if _, err := admin.Exec(ctx, `DELETE FROM mesh.device_route_advertisement`); err != nil {
+	if err := fixtureRouteOffer(ctx, admin, `DELETE FROM mesh.device_route_advertisement`); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// fixtureRouteOffer runs one statement on route offers without the
+// authority evidence triggers, as a fixture.
+func fixtureRouteOffer(ctx context.Context, admin *pgx.Conn, statement string, arguments ...any) error {
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `RESET ROLE; SET LOCAL session_replication_role = replica`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, statement, arguments...); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func fixtureRouteRevision(ctx context.Context, t *testing.T, admin *pgx.Conn) int64 {

@@ -551,9 +551,17 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			logger.ErrorContext(ctx, "startup failed", "error_code", "mtcp_composition_failure", "error", logoutErr)
 			return 1
 		}
+		routeOffers, offerErr := postgresadapter.NewRouteOfferStore(storagePools.runtime, postgresadapter.AccountSessionOptions{
+			StatementTimeout: processConfig.Control.Map.StatementTimeout,
+			IdleTimeout:      processConfig.Control.Map.TransactionIdleLimit,
+		})
+		if offerErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "mtcp_composition_failure", "error", offerErr)
+			return 1
+		}
 		deps := mtcpDependencies{streams: mapStreamService, sessions: mapSessionService,
 			registrations: registrationService, logout: logout, paths: redisClient, connectivity: redisClient, guard: timestamps, logger: logger,
-			dnsSuffix: processConfig.DNSSuffix}
+			dnsSuffix: processConfig.DNSSuffix, routeOffers: routeOffers}
 		if len(browserControl) == 1 {
 			deps.browser, deps.origin = &browserControl[0], processConfig.BrowserRegistration.Origin
 		}

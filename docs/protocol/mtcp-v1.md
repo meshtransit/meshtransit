@@ -759,10 +759,15 @@ offers to forward (`advertised_prefixes`, at most 256 canonical prefixes; a
 report with more is refused as invalid).
 Offering grants nothing: a Device serves a Site only after an administrator
 makes it the Site's router, and only within prefixes it offers (7.6). Core
-ignores an entry that is not canonical or is a default route, and counts it
-in a metric; earlier clients that offered `0.0.0.0/0` or `::/0` for an exit
-node offer nothing that way any more. Sent after registration and on change. Core uses
-the hostname only to propose a Device name; it never trusts it for identity.
+ignores an entry that is malformed, not canonical, or one no Site could use
+(a default route, shorter than IPv4 /8 or IPv6 /32, IPv4-mapped, inside the
+overlay frame or a loopback, link-local, multicast or reserved range), and
+counts it in a metric; earlier clients that offered `0.0.0.0/0` or `::/0`
+for an exit node offer nothing that way any more. Sent after registration
+and on change, always with the whole set: Core keeps the latest offer of
+each Device, and a report that offers what is already stored writes nothing.
+Core uses the hostname only to propose a Device name; it never trusts it for
+identity.
 
 ### 8.3 Health and path statistics
 
@@ -925,6 +930,7 @@ Unknown names are ignored. Core sends a feature only when both sides list it.
 | Browser approvals issued or resumed per session (6.2) | 2 at once, then 1 per 10 s; over it `Error{OVERLOADED, retry_after_ms}`. A malformed resume handle is refused before it counts |
 | `MapResync` per session (7.1) | 2 at once, then 1 per 5 s; over it fatal `Error{OVERLOADED, retry_after_ms}`, and the node gets a fresh snapshot when it reconnects |
 | `EnforcementReport` per session (8.4) | 4 at once, then 1 per second; over it the latest report is kept, replacing any kept before, and stored when the budget allows |
+| Offers of `HostinfoReport` stored per session (8.2) | 4 at once, then 1 per 10 s; over it the latest offer is kept, replacing any kept before, and stored when the budget allows. An offer sent before the session serves a Device is stored once it does |
 | A Device's live presence lease moving to another Core replica | 10 per minute; past it the stream ends with `Lifecycle{RECONNECT, retry_after_ms}` until the minute is over. Two processes sharing one machine key are bounded to that rate, not stopped; a reconnect after a replica ended, a rolling update or a rebalance moves it once. A refused attempt still costs Core the snapshot and relay ticket it prepared, but not their delivery |
 | Everything a node sends, per session | 200 messages at once, then 50 per second, and 1 MiB of records at once, then 256 KiB per second; over either, fatal `Error{OVERLOADED, retry_after_ms}`. `MapAck` counts only as bytes: it answers map messages Core chose to send, and nodes that ack every message (7.2) must not reach the limit |
 | Lifetime of a session that receives no map snapshot | 15 minutes by default, configurable; longer than a browser approval (6.2), then the session closes |

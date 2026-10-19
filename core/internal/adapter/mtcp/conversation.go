@@ -62,6 +62,8 @@ type ApplicationOptions struct {
 	Logout          DeviceLogout
 	Paths           PathRecorder
 	Connectivity    ConnectivityRecorder
+	// RouteOffers, when set, stores the subnets Devices offer to forward.
+	RouteOffers RouteOffers
 	// ApprovalOrigin is the https origin of approval URLs; ApprovalTTL is
 	// how long an approval stays open.
 	ApprovalOrigin string
@@ -86,6 +88,8 @@ type Application struct {
 	// enforcementTimer starts the enforcement pacing's timer; tests
 	// replace it as they do endpointTimer.
 	enforcementTimer func(time.Duration, func()) endpointTimer
+	// routeOfferTimer starts the route offer pacing's timer.
+	routeOfferTimer func(time.Duration, func()) endpointTimer
 }
 
 // NewApplication validates its dependencies.
@@ -111,7 +115,7 @@ func NewApplication(options ApplicationOptions) (*Application, error) {
 		return nil, ErrInvalidServer
 	}
 	return &Application{options: options, now: time.Now, poll: approvalPollInterval,
-		endpointTimer: realEndpointTimer, enforcementTimer: realEndpointTimer}, nil
+		endpointTimer: realEndpointTimer, enforcementTimer: realEndpointTimer, routeOfferTimer: realEndpointTimer}, nil
 }
 
 // Open implements SessionHandler.
@@ -125,7 +129,8 @@ func (application *Application) Open(session *Session) Conversation {
 		wake: make(chan struct{}, 1), approvals: make(chan approval, 1),
 		identity: newRateBudget(identityBurst, identityRate), browser: newRateBudget(browserBurst, browserRate),
 		resync:            newRateBudget(resyncBurst, resyncRate),
-		enforcementPacing: enforcementPacing{budget: newRateBudget(enforcementBurst, enforcementRate)}}
+		enforcementPacing: enforcementPacing{budget: newRateBudget(enforcementBurst, enforcementRate)},
+		routeOfferPacing:  routeOfferPacing{budget: newRateBudget(routeOfferBurst, routeOfferRate)}}
 }
 
 type conversation struct {
@@ -144,6 +149,8 @@ type conversation struct {
 	resync   rateBudget
 	// enforcementPacing paces EnforcementReports.
 	enforcementPacing enforcementPacing
+	// routeOfferPacing paces the offers of HostinfoReports.
+	routeOfferPacing routeOfferPacing
 	// lastConnectivity is the connectivity last stored for this session.
 	// Only a store claimed by endpointPacing reads and writes it, without
 	// the lock: busy runs one store at a time, and claiming and finishing
@@ -187,6 +194,7 @@ func (conversation *conversation) Run(ctx context.Context) error {
 	defer conversation.stopApprovals()
 	defer conversation.stopEndpointPacing()
 	defer conversation.stopEnforcementPacing()
+	defer conversation.stopRouteOfferPacing()
 	for {
 		nodeKey, generation, streamCtx, cancel := conversation.startStream(ctx)
 		if nodeKey.IsValid() {
@@ -290,6 +298,11 @@ func (conversation *conversation) authorize(nodeKey node.Key, disco node.Discove
 	select {
 	case conversation.wake <- struct{}{}:
 	default:
+	}
+	conversation.forgetRouteOffer()
+	if nodeKey.IsValid() {
+		// An offer reported before the Device was known is stored now.
+		go conversation.flushRouteOffer()
 	}
 }
 
@@ -396,8 +409,10 @@ func (conversation *conversation) Receive(ctx context.Context, _ sharedmtcp.Mess
 		return conversation.endpoints(m)
 	case *mtcpv1.PathStatsReport:
 		return conversation.paths(ctx, m)
-	case *mtcpv1.HostinfoReport, *mtcpv1.HealthReport:
-		// Accepted; nothing reads them yet.
+	case *mtcpv1.HostinfoReport:
+		return conversation.hostinfo(m)
+	case *mtcpv1.HealthReport:
+		// Accepted; nothing reads it yet.
 	case *mtcpv1.RegisterRequest:
 		if wait, ok := conversation.identity.spend(conversation.application.now(), 1); !ok {
 			conversation.application.options.Metrics.limited(limitIdentity)

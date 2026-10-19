@@ -342,6 +342,9 @@ type conversationFixture struct {
 	timer         *fakeTimer
 	// enforcementTimer is the enforcement pacing's timer.
 	enforcementTimer *fakeTimer
+	// routeOfferTimer is the route offer pacing's timer.
+	routeOfferTimer *fakeTimer
+	routeOffers     *fakeRouteOffers
 }
 
 func newConversationFixture(t *testing.T, openedBy sharedmtcp.MessageType) *conversationFixture {
@@ -358,12 +361,13 @@ func newConversationFixture(t *testing.T, openedBy sharedmtcp.MessageType) *conv
 		endpoints: &fakeEndpoints{}, snapshots: &fakeSnapshots{current: map[node.Key]bool{}, snapshot: snapshot},
 		registrations: &fakeRegistrations{result: result}, browser: &fakeBrowser{result: result},
 		logout: &fakeLogout{}, paths: &fakePaths{}, connectivity: &fakeConnectivity{},
-		clock: time.Unix(1_800_000_000, 0)}
+		routeOffers: &fakeRouteOffers{}, clock: time.Unix(1_800_000_000, 0)}
 	application, err := NewApplication(ApplicationOptions{
 		Streams: f.streams, Endpoints: f.endpoints, Snapshots: f.snapshots,
 		ControlKeys: []ControlKey{{Private: controlKey, NotAfter: f.clock.Add(time.Hour)}},
 		Logger:      slog.New(slog.DiscardHandler), Registrations: f.registrations, RegistrationIDs: sequentialIDs{},
 		BrowserIssuer: f.browser, BrowserApproval: f.browser, Logout: f.logout, Paths: f.paths, Connectivity: f.connectivity,
+		RouteOffers:    f.routeOffers,
 		ApprovalOrigin: testApprovalOrigin,
 		ApprovalTTL:    10 * time.Minute,
 	})
@@ -376,6 +380,8 @@ func newConversationFixture(t *testing.T, openedBy sharedmtcp.MessageType) *conv
 	application.endpointTimer = f.timer.start
 	f.enforcementTimer = &fakeTimer{}
 	application.enforcementTimer = f.enforcementTimer.start
+	f.routeOfferTimer = &fakeTimer{}
+	application.routeOfferTimer = f.routeOfferTimer.start
 	f.talk, _ = application.Open(session).(*conversation)
 	return f
 }

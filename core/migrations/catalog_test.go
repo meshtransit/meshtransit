@@ -13,8 +13,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 189 {
-		t.Fatalf("len(Catalog()) = %d, want 189", len(catalog))
+	if len(catalog) != 190 {
+		t.Fatalf("len(Catalog()) = %d, want 190", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1609,8 +1609,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 189 {
-		t.Fatalf("LatestVersion() = %d, want 189", LatestVersion())
+	if LatestVersion() != 190 {
+		t.Fatalf("LatestVersion() = %d, want 190", LatestVersion())
 	}
 }
 
@@ -5511,6 +5511,29 @@ func TestSchema189SiteRouteRules(t *testing.T) {
 	} {
 		if !strings.Contains(migration.SQL, want) {
 			t.Errorf("schema 189 lacks %q", want)
+		}
+	}
+}
+
+// Schema 190 stores the subnets a Device offers to forward.
+func TestSchema190DeviceRouteOffer(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 190 {
+		t.Fatalf("len(Catalog()) = %d, want schema 190", len(catalog))
+	}
+	migration := catalog[189]
+	if migration.Version != 190 {
+		t.Fatalf("migration 190 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.report_device_route_offer_v1(",
+		"mesh_ops.advertised_prefixes_valid_internal_v1(p_prefixes)",
+		"mesh_ops.advance_site_revisions_internal_v1(v_workspace, v_network)",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.report_device_route_offer_v1(BYTEA, BYTEA, CIDR[], UUID) TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 190 lacks %q", want)
 		}
 	}
 }
