@@ -93,13 +93,21 @@ redis.call('PEXPIRE', KEYS[1], ARGV[6])
 return 1
 `)
 	// A router's Site health is stored only for the session generation that
-	// currently owns the delivery record.
+	// currently owns the delivery record. A report that newly holds a failed
+	// Site (ARGV[5] = '1' and other than the stored one) wakes the Site
+	// election worker on channel ARGV[6], in the same step. The wakeup is a
+	// hint: where the ACL does not allow the channel, the report is stored
+	// all the same and the worker finds the Site at its next pass.
 	recordRouteHealthScript = redisclient.NewScript(`
 if redis.call('HGET', KEYS[1], 'generation') ~= ARGV[1] then
     return 0
 end
+local previous = redis.call('HGET', KEYS[1], 'route_health')
 redis.call('HSET', KEYS[1], 'route_health', ARGV[2], 'route_health_at', ARGV[3])
 redis.call('PEXPIRE', KEYS[1], ARGV[4])
+if ARGV[5] == '1' and previous ~= ARGV[2] then
+    redis.pcall('PUBLISH', ARGV[6], ARGV[7])
+end
 return 1
 `)
 	// A path report is stored only for the session generation that

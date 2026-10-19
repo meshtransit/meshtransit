@@ -318,11 +318,12 @@ func TestClientRecordsRouteHealthForItsSession(t *testing.T) {
 	session := []any{nodeID.String(), "4", hex.EncodeToString(testMachine[:])}
 	var gotKey, gotEncoded string
 	var gotGeneration, gotAt int64
+	var gotFailed bool
 	client := &Client{
 		loadSession: func(context.Context, string) ([]any, error) { return session, nil },
 		recordRouteHealth: func(_ context.Context, key string, generation int64, encoded string, at int64,
-			_ time.Duration) (int64, error) {
-			gotKey, gotGeneration, gotEncoded, gotAt = key, generation, encoded, at
+			_ time.Duration, failed bool) (int64, error) {
+			gotKey, gotGeneration, gotEncoded, gotAt, gotFailed = key, generation, encoded, at, failed
 			return 1, nil
 		},
 		metrics: newRedisMetrics(1, nil),
@@ -334,13 +335,18 @@ func TestClientRecordsRouteHealthForItsSession(t *testing.T) {
 			{Ref: "uat", State: mapsession.RouteHealthOK, Code: "ok"},
 		}}
 	stored, err := client.RecordRouteHealth(t.Context(), health)
-	if err != nil || !stored || gotKey != deliveryKeyForNode(nodeID) || gotGeneration != 4 ||
+	if err != nil || !stored || gotKey != deliveryKeyForNode(nodeID) || gotGeneration != 4 || !gotFailed ||
 		gotAt != reported.UnixMilli() || gotEncoded != `[["prod","failed","forward_blocked"],["uat","ok","ok"]]` {
 		t.Fatalf("RecordRouteHealth() = %t, %v; %s %d %s", stored, err, gotKey, gotGeneration, gotEncoded)
 	}
 	decoded, err := decodeRouteHealth(gotEncoded)
 	if err != nil || len(decoded) != 2 || decoded[0] != (distribution.SiteHealth{Ref: "prod", State: "failed", Code: "forward_blocked"}) {
 		t.Fatalf("round trip = %+v, %v", decoded, err)
+	}
+	healthy := health
+	healthy.Sites = []mapsession.SiteHealth{{Ref: "prod", State: mapsession.RouteHealthOK, Code: "ok"}}
+	if stored, err := client.RecordRouteHealth(t.Context(), healthy); err != nil || !stored || gotFailed {
+		t.Fatalf("healthy report = %t, %v, failed %t", stored, err, gotFailed)
 	}
 	other := health
 	other.MachineFingerprint = [32]byte{0x55}

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strconv"
 	"time"
 
@@ -60,8 +61,11 @@ func (client *Client) recordRouteHealthForSession(ctx context.Context, health ma
 	if err != nil || !found || machine != hex.EncodeToString(health.MachineFingerprint[:]) {
 		return false, err
 	}
+	failed := slices.ContainsFunc(health.Sites, func(site mapsession.SiteHealth) bool {
+		return site.State == mapsession.RouteHealthFailed
+	})
 	result, err := client.recordRouteHealth(ctx, deliveryKeyForNode(nodeID), generation, encoded,
-		health.ReportedAt.UnixMilli(), deliveryTTL)
+		health.ReportedAt.UnixMilli(), deliveryTTL, failed)
 	if err == nil && result != 0 && result != 1 {
 		err = errors.New("unexpected route health record result")
 	}

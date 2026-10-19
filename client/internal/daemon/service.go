@@ -732,6 +732,8 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		var probeRuntime *peerprobe.Runtime
 		var probeDataPlane peerProbeDataPlane
 		var pathController *pathEndpointController
+		// Local router choices of this session (design §6.3).
+		failover := newRouteFailover(s.clock)
 		if dataPlane, supported := s.dataPlane.(peerProbeDataPlane); supported {
 			probeDataPlane = dataPlane
 			var pathObserver peerprobe.PathObserver
@@ -754,6 +756,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				}
 				pathObserver = pathController
 			}
+			pathObserver = routeFailoverObserver{next: pathObserver, failover: failover}
 			probeRuntime, err = peerprobe.NewRuntime(
 				streamCtx,
 				discoKey,
@@ -799,10 +802,50 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				<-pathDone
 			}
 		}
+		stopFailover := func() {}
+		if activityPlane, supported := s.dataPlane.(routedActivityDataPlane); supported {
+			failoverCtx, failoverCancel := context.WithCancel(streamCtx)
+			failoverDone := make(chan struct{})
+			go func() {
+				defer close(failoverDone)
+				runRouteFailover(failoverCtx, failover, func() []dataplane.RoutedActivity {
+					s.dataPlaneMu.Lock()
+					defer s.dataPlaneMu.Unlock()
+					return activityPlane.RoutedActivity()
+				}, func() error {
+					s.dataPlaneMu.Lock()
+					// Under the lock: the map callback applies maps under it too,
+					// so this is the newest map with the local choices.
+					current := failover.current()
+					if current.Revision == 0 {
+						s.dataPlaneMu.Unlock()
+						return nil
+					}
+					_, err := s.dataPlane.Apply(failoverCtx, current, privateKey)
+					s.dataPlaneMu.Unlock()
+					if err != nil && failoverCtx.Err() != nil {
+						return err // the session is ending: nothing to recover
+					}
+					if err != nil {
+						cancelStream(fmt.Errorf("%w: applying a local router choice: %w", errRuntimeRecovery, err))
+						return err
+					}
+					s.logger.Info("local router choices changed; Sites not listed follow Core",
+						"choices", failover.choices())
+					return nil
+				})
+			}()
+			stopFailover = func() {
+				failoverCancel()
+				<-failoverDone
+			}
+		}
 		dnsRetries := &dnsRetry{}
 		cleanupSession := func() error {
 			// Before the runtime resets DNS: no retry may apply it again.
 			dnsRetries.stop()
+			// Before the private key is cleared: it applies maps with it.
+			stopFailover()
 			stopPathStats()
 			s.setLocalEndpointSink(nil)
 			if probeRuntime != nil {
@@ -924,7 +967,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					var probeAttachErr error
 					if s.dataPlane != nil {
 						s.dataPlaneMu.Lock()
-						state, err := s.dataPlane.Apply(callbackCtx, snapshot, privateKey)
+						state, err := s.dataPlane.Apply(callbackCtx, failover.effective(snapshot), privateKey)
 						if err == nil && reportsEnforcement {
 							if enforced, known := enforcedPolicy.EnforcedPolicy(); known {
 								publishEnforcement(enforcementReports, enforced)

@@ -45,6 +45,9 @@ func NewSiteElectionWorkerMetricsCollector(worker *election.Worker) (prometheus.
 				func(m election.Measurements) uint64 { return m.Elections }),
 			counter("meshtransit_site_election_worker_write_errors_total", "Total failed primary records.",
 				func(m election.Measurements) uint64 { return m.WriteErrors }),
+			counter("meshtransit_site_election_worker_wakeups_total",
+				"Total hints that a router reported a failed Site, each running a pass within a second.",
+				func(m election.Measurements) uint64 { return m.Wakeups }),
 		},
 	}, nil
 }

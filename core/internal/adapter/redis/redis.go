@@ -61,7 +61,7 @@ type Client struct {
 	recordPaths        func(ctx context.Context, key string, generation int64, encoded string, ttl time.Duration) (int64, error)
 	recordConnectivity func(ctx context.Context, key string, generation int64, encoded string, ttl time.Duration) (int64, error)
 	recordRouteHealth  func(ctx context.Context, key string, generation int64, encoded string, reportedAt int64,
-		ttl time.Duration) (int64, error)
+		ttl time.Duration, failed bool) (int64, error)
 	loadSession    loadSessionFunc
 	touchDelivery  touchDeliveryFunc
 	loadDeliveries loadDeliveriesFunc
@@ -244,9 +244,13 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 				record.routeDigest, record.routeEntries).Int64()
 		},
 		recordRouteHealth: func(recordCtx context.Context, key string, generation int64, encoded string,
-			reportedAt int64, ttl time.Duration) (int64, error) {
+			reportedAt int64, ttl time.Duration, failed bool) (int64, error) {
+			flag := "0"
+			if failed {
+				flag = "1"
+			}
 			return recordRouteHealthScript.Run(recordCtx, client, []string{key}, generation, encoded, reportedAt,
-				ttl.Milliseconds()).Int64()
+				ttl.Milliseconds(), flag, siteHealthFailedChannel, siteHealthFailedPayload).Int64()
 		},
 		recordPaths: func(recordCtx context.Context, key string, generation int64, encoded string,
 			ttl time.Duration) (int64, error) {

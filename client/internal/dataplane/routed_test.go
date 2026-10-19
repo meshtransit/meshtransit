@@ -2,6 +2,9 @@ package dataplane
 
 import (
 	"context"
+	"crypto/ecdh"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -492,5 +495,102 @@ func TestWireGuardEngineStopsRetryingAWithdrawalThatKeepsFailing(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if len(opener.requested()) != sent {
 		t.Fatal("the worker kept sending after giving up")
+	}
+}
+
+func TestPolicyFilterRecordsWhatASiteAnswers(t *testing.T) {
+	t.Parallel()
+	filter := newPolicyFilter()
+	now := time.Date(2026, time.October, 19, 14, 0, 0, 0, time.UTC)
+	filter.clock = func() time.Time { return now }
+	snapshot := testRoutedSnapshot()
+	filter.UpdateNetwork(snapshot)
+	filter.SetRoutedInstalled([]netip.Prefix{netip.MustParsePrefix("10.20.0.0/16")})
+	self := [4]byte{100, 64, 0, 3}
+	toSite := testIPv4TransportPacket(self, [4]byte{10, 20, 0, 5}, 40000, 443, packetmeta.ProtocolTCP, 0x02)
+	reply := reverseTestPacket(toSite)
+	reply[33] = 0x12
+	if !filter.Allow(PacketOutbound, toSite) {
+		t.Fatal("the Site was not reachable")
+	}
+	sentAt := now
+	now = now.Add(time.Second)
+	if !filter.Allow(PacketOutbound, toSite) {
+		t.Fatal("the Site was not reachable again")
+	}
+	if got := filter.RoutedActivity(); len(got) != 1 || got[0].Ref != "site-a" || !got[0].WaitingSince.Equal(sentAt) ||
+		!got[0].LastSent.Equal(now) || !got[0].LastAnswered.IsZero() {
+		t.Fatalf("waiting activity = %+v", got)
+	}
+	now = now.Add(time.Second)
+	if !filter.Allow(PacketInbound, reply) {
+		t.Fatal("the reply was refused")
+	}
+	if got := filter.RoutedActivity(); len(got) != 1 || !got[0].WaitingSince.IsZero() || !got[0].LastAnswered.Equal(now) {
+		t.Fatalf("answered activity = %+v", got)
+	}
+	// Traffic to peers is no Site's; a Site gone from the map is forgotten.
+	snapshot.Routes = nil
+	filter.UpdateNetwork(snapshot)
+	if got := filter.RoutedActivity(); len(got) != 0 {
+		t.Fatalf("activity of a removed Site = %+v", got)
+	}
+}
+
+// A local router choice applies the same map revision with another primary:
+// the Site's prefixes move to that peer, and its flows end.
+func TestWireGuardEngineMovesASiteToAnotherPrimaryOfTheSameMap(t *testing.T) {
+	t.Parallel()
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	key, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	standby := snapshot.Peers[0]
+	standby.ID, standby.StableID = 3, "standby"
+	standby.PublicKey = "nodekey:" + hex.EncodeToString(key.PublicKey().Bytes())
+	standby.Addresses = []netip.Prefix{netip.MustParsePrefix("100.64.0.5/32")}
+	standby.AllowedIPs = standby.Addresses
+	snapshot.Peers[0].StableID = "router"
+	snapshot.Peers = append(snapshot.Peers, standby)
+	snapshot.Routes = []networkmap.SiteRoute{{
+		Ref: "site-a", Prefixes: []netip.Prefix{netip.MustParsePrefix("10.20.0.0/16")},
+		Candidates: []string{"router", "standby"}, Primary: "router", Generation: 1, Status: networkmap.RouteServed,
+	}}
+	device := &fakeWireGuardDevice{}
+	engine, err := newWireGuardEngine(&routedTUNOpener{}, 41641, &fakeWireGuardFactory{device: device}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = engine.Close() })
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the Site route", func() bool { return engine.SubnetRoutes().Installed == 1 })
+	carries := func(peer networkmap.Node) bool {
+		engine.mu.Lock()
+		defer engine.mu.Unlock()
+		state, found := engine.peers[peer.ID]
+		return found && slices.Contains(state.allowedIPs, netip.MustParsePrefix("10.20.0.0/16"))
+	}
+	if !carries(snapshot.Peers[0]) || carries(standby) {
+		t.Fatal("the primary does not carry the Site")
+	}
+	moved := snapshot
+	moved.Routes = slices.Clone(snapshot.Routes)
+	moved.Routes[0].Primary = "standby"
+	configured := len(device.configurations)
+	if _, err := engine.Apply(t.Context(), moved, privateKey); err != nil {
+		t.Fatal(err)
+	}
+	if carries(snapshot.Peers[0]) || !carries(standby) {
+		t.Fatal("the Site did not move to the chosen router")
+	}
+	if len(device.configurations) == configured ||
+		!strings.Contains(device.configurations[len(device.configurations)-1], "allowed_ip=10.20.0.0/16") {
+		t.Fatal("WireGuard was not told of the move")
+	}
+	if activity := engine.RoutedActivity(); len(activity) != 0 {
+		t.Fatalf("activity without traffic = %+v", activity)
 	}
 }

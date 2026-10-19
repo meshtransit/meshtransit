@@ -117,7 +117,7 @@ peers and packet filters always come from PostgreSQL.
 | `meshtransit:v1:delivery:node:<id>`, `…:delivery:node:session:<key>` | What each node was sent and reports enforcing, its NAT and port-mapping state, path statistics (30-day TTL) |
 | `meshtransit:v1:ratelimit:management:…` | Management API rate limits |
 | `meshtransit:v1:control:replicas` | Session count of every control replica |
-| `meshtransit:v1:wakeup:network_revision_advanced`, `…:connectivity_changed` | Pub/sub wakeups |
+| `meshtransit:v1:wakeup:network_revision_advanced`, `…:connectivity_changed`, `…:site_health_failed` | Pub/sub wakeups |
 
 Core connects with TLS as its own ACL user. That user needs only the key
 patterns above and the commands `GET`, `SET`, `DEL`, `EXISTS`, `PEXPIRE`,

@@ -26,6 +26,14 @@ const (
 	massSilenceShare       = 0.3
 	massSilenceWindow      = time.Minute
 	massSilenceFreeze      = 10 * time.Minute
+	// silenceConfirm is how long silence past its grace must last before it
+	// counts: one regular pass, whatever wakeups ran passes in between.
+	silenceConfirm = 10 * time.Second
+	// wakeInterval bounds the passes wakeups run.
+	wakeInterval = time.Second
+	// resubscribeAfter and resubscribeMax pace a lost wakeup subscription.
+	resubscribeAfter = time.Second
+	resubscribeMax   = 30 * time.Second
 )
 
 var (
@@ -91,6 +99,15 @@ type Clock interface{ Now() time.Time }
 type Options struct {
 	DeploymentID                   deployment.ID
 	PollInterval, OperationTimeout time.Duration
+	// Wakeups, when set, subscribes to hints that a router newly reports a
+	// failed Site: a pass then runs at once instead of at the next poll.
+	Wakeups func(context.Context) (WakeupSubscription, error)
+}
+
+// WakeupSubscription receives wakeup hints; Receive blocks until one comes.
+type WakeupSubscription interface {
+	Receive(ctx context.Context) error
+	Close() error
 }
 
 func (options Options) valid() bool {
@@ -114,7 +131,7 @@ type track struct {
 	failedAt     time.Time // the last failure seen; zero once recovered
 	healthySince time.Time // healthy since, after failedAt
 	usableSince  time.Time
-	silent       bool
+	silentAt     time.Time // when silence was first seen; zero while reporting
 	seen         time.Time
 }
 
@@ -137,14 +154,14 @@ type Worker struct {
 	silences    map[node.ID]time.Time // routers that turned silent, when
 	frozenUntil time.Time
 
-	running                                    atomic.Bool
-	passes, readErrors, elections, writeErrors atomic.Uint64
+	running                                             atomic.Bool
+	passes, readErrors, elections, writeErrors, wakeups atomic.Uint64
 }
 
 // Measurements are identifier-free process counters.
 type Measurements struct {
-	Running                                    bool
-	Passes, ReadErrors, Elections, WriteErrors uint64
+	Running                                             bool
+	Passes, ReadErrors, Elections, WriteErrors, Wakeups uint64
 }
 
 // New constructs a stopped worker without I/O.
@@ -228,23 +245,84 @@ func (worker *Worker) Snapshot() Measurements {
 	}
 	return Measurements{Running: worker.running.Load(), Passes: worker.passes.Load(),
 		ReadErrors: worker.readErrors.Load(), Elections: worker.elections.Load(),
-		WriteErrors: worker.writeErrors.Load()}
+		WriteErrors: worker.writeErrors.Load(), Wakeups: worker.wakeups.Load()}
 }
 
 func (worker *Worker) run(ctx context.Context) {
+	wake := make(chan struct{}, 1)
+	var listening sync.WaitGroup
+	if worker.options.Wakeups != nil {
+		listening.Go(func() { worker.listen(ctx, wake) })
+	}
+	defer listening.Wait()
 	timer := time.NewTimer(0)
 	defer timer.Stop()
+	var last time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-timer.C:
-			worker.Sweep(ctx)
-			if ctx.Err() != nil {
-				return
+		case <-wake:
+			worker.wakeups.Add(1)
+			if wait := wakeInterval - time.Since(last); wait > 0 {
+				// Too soon after a pass: run when the interval ends.
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(wait)
+				continue
 			}
-			timer.Reset(worker.options.PollInterval)
+		case <-timer.C:
 		}
+		worker.Sweep(ctx)
+		last = time.Now()
+		if ctx.Err() != nil {
+			return
+		}
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		timer.Reset(worker.options.PollInterval)
+	}
+}
+
+// listen forwards wakeup hints to wake until ctx ends, subscribing again
+// after a failure with a growing pause. A lost hint only delays a pass until
+// the next poll.
+func (worker *Worker) listen(ctx context.Context, wake chan<- struct{}) {
+	pause := resubscribeAfter
+	for ctx.Err() == nil {
+		subscription, err := worker.options.Wakeups(ctx)
+		if err == nil {
+			for {
+				if err = subscription.Receive(ctx); err != nil {
+					break
+				}
+				// Only a subscription that delivers resets the pause.
+				pause = resubscribeAfter
+				select {
+				case wake <- struct{}{}:
+				default:
+				}
+			}
+			_ = subscription.Close()
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		worker.logger.DebugContext(ctx, "Site election wakeups unavailable", "error", err)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(pause):
+		}
+		pause = min(2*pause, resubscribeMax)
 	}
 }
 
@@ -396,13 +474,15 @@ func (worker *Worker) health(remembered *track, key trackKey, observation distri
 		return StatusHoldDown, ""
 	}
 	if !observation.RouteHealthAt.IsZero() && now.Sub(observation.RouteHealthAt) > SilenceGrace {
-		// Silence counts from the next sweep on, once that sweep has seen
-		// how many routers turned silent with it.
-		if !remembered.silent {
-			remembered.silent = true
+		// Silence counts once it lasted silenceConfirm, so the sweeps in
+		// between have seen how many routers turned silent with it.
+		if remembered.silentAt.IsZero() {
+			remembered.silentAt = now
 			if _, counted := worker.silences[key.device]; !counted {
 				worker.silences[key.device] = now
 			}
+		}
+		if now.Sub(remembered.silentAt) < silenceConfirm {
 			return StatusUsable, ""
 		}
 		if now.Before(worker.frozenUntil) {
@@ -411,7 +491,7 @@ func (worker *Worker) health(remembered *track, key trackKey, observation distri
 		remembered.failedAt, remembered.healthySince = now, time.Time{}
 		return StatusFailed, "silent"
 	}
-	remembered.silent = false
+	remembered.silentAt = time.Time{}
 	reported, fresh := distribution.CurrentRouteHealth(observation, now)
 	state, code := "", ""
 	if fresh {

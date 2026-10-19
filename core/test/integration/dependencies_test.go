@@ -155,8 +155,8 @@ func TestTLSAuthenticatedDependencies(t *testing.T) {
 	for name, value := range map[string]string{
 		"successful ping":       `meshtransit_redis_commands_total{operation="ping",result="success"} 1`,
 		"successful publish":    `meshtransit_redis_commands_total{operation="publish",result="success"} 1`,
-		"successful subscribe":  `meshtransit_redis_commands_total{operation="subscribe",result="success"} 3`,
-		"successful receive":    `meshtransit_redis_commands_total{operation="receive",result="success"} 6`,
+		"successful subscribe":  `meshtransit_redis_commands_total{operation="subscribe",result="success"} 4`,
+		"successful receive":    `meshtransit_redis_commands_total{operation="receive",result="success"} 7`,
 		"presence acquisitions": `meshtransit_redis_commands_total{operation="presence_acquire",result="success"} 19`,
 		"presence renewals":     `meshtransit_redis_commands_total{operation="presence_renew",result="success"} 6`,
 		"presence releases":     `meshtransit_redis_commands_total{operation="presence_release",result="success"} 5`,

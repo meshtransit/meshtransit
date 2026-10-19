@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"time"
@@ -33,9 +34,12 @@ func composeSiteElectionWorker(settings config.EnforcementLedgerWorkerConfig, po
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidSiteElectionWorkerComposition, err)
 	}
+	wakeups := func(ctx context.Context) (election.WakeupSubscription, error) {
+		return redisClient.SubscribeSiteHealthFailed(ctx)
+	}
 	worker, err := election.New(election.Options{
 		DeploymentID: settings.DeploymentID, PollInterval: siteElectionPoll,
-		OperationTimeout: settings.OperationTimeout,
+		OperationTimeout: settings.OperationTimeout, Wakeups: wakeups,
 	}, store, store, redisClient, accountsession.SystemClock{}, logger)
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidSiteElectionWorkerComposition, err)

@@ -1,0 +1,344 @@
+package daemon
+
+import (
+	"context"
+	"slices"
+	"sync"
+	"time"
+
+	"meshtransit.net/client/internal/dataplane"
+	"meshtransit.net/client/internal/networkmap"
+	"meshtransit.net/client/internal/pathdiscovery"
+)
+
+// Local router failover (design §6.3): a consumer that sends to a Site and
+// hears nothing back, while its router stopped answering path probes and a
+// standby of the Site still answers, sends the Site's traffic through that
+// standby until Core elects again. Core's choice stays the rule; this only
+// covers the time Core needs to see a router die.
+const (
+	// failoverSuspectAfter is how long packets to a Site may go unanswered
+	// before its router is suspected.
+	failoverSuspectAfter = 5 * time.Second
+	// failoverAliveWithin is how recent a router's last path pong must be to
+	// count it alive: direct paths are probed about every 3 seconds.
+	failoverAliveWithin = 4 * time.Second
+	// failoverIdleAfter is how long a Site must carry no traffic before a
+	// local choice goes back to Core's, so a flow is not cut twice.
+	failoverIdleAfter = time.Minute
+	// failoverFollowWithin bounds how long a local choice outlives Core
+	// electing another router.
+	failoverFollowWithin = 5 * time.Minute
+	// failoverBackoff and failoverBackoffMax space the local switches of one
+	// Site; failoverStable resets the spacing.
+	failoverBackoff    = 10 * time.Second
+	failoverBackoffMax = 5 * time.Minute
+	failoverStable     = 10 * time.Minute
+	// failoverTick is how often Sites are judged.
+	failoverTick = time.Second
+)
+
+// failoverSite is what is remembered of one Site with a local choice or a
+// recent switch.
+type failoverSite struct {
+	// chosen is the router chosen locally (a StableID); empty: Core's.
+	chosen string
+	// coreAtChoice is Core's primary when chosen was made, and coreMovedAt
+	// when Core elected another since.
+	coreAtChoice string
+	coreMovedAt  time.Time
+	nextSwitch   time.Time
+	backoff      time.Duration
+	lastSwitch   time.Time
+}
+
+// routeFailover holds the local router choices of one control session. It
+// is safe for concurrent use.
+type routeFailover struct {
+	mu    sync.Mutex
+	clock func() time.Time
+	// pongs is each peer's last authenticated direct path proof.
+	pongs map[uint64]time.Time
+	sites map[string]*failoverSite
+	// core is the last map from Core, unchanged.
+	core networkmap.Snapshot
+}
+
+func newRouteFailover(clock func() time.Time) *routeFailover {
+	return &routeFailover{clock: clock, pongs: map[uint64]time.Time{}, sites: map[string]*failoverSite{}}
+}
+
+// routeFailoverObserver sends path proofs to the path controller and to the
+// failover, without blocking either.
+type routeFailoverObserver struct {
+	next interface {
+		ObservePath(pathdiscovery.PathObservation)
+	}
+	failover *routeFailover
+}
+
+func (observer routeFailoverObserver) ObservePath(observation pathdiscovery.PathObservation) {
+	if observer.next != nil {
+		observer.next.ObservePath(observation)
+	}
+	observer.failover.ObservePath(observation)
+}
+
+// ObservePath records that a peer answered on a direct path.
+func (failover *routeFailover) ObservePath(observation pathdiscovery.PathObservation) {
+	if failover == nil || observation.PeerID == 0 || observation.ObservedAt.IsZero() {
+		return
+	}
+	failover.mu.Lock()
+	defer failover.mu.Unlock()
+	if observation.ObservedAt.After(failover.pongs[observation.PeerID]) {
+		failover.pongs[observation.PeerID] = observation.ObservedAt
+	}
+}
+
+// effective records snapshot as Core's map and returns it with the local
+// choices applied. A choice ends when its router is no longer a candidate of
+// a served Site, or when Core elected it too.
+func (failover *routeFailover) effective(snapshot networkmap.Snapshot) networkmap.Snapshot {
+	if failover == nil {
+		return snapshot
+	}
+	failover.mu.Lock()
+	defer failover.mu.Unlock()
+	failover.core = snapshot
+	now := failover.clock()
+	peers := peerIDs(snapshot)
+	for ref, site := range failover.sites {
+		route, found := routeOf(snapshot, ref)
+		if !found {
+			delete(failover.sites, ref)
+			continue
+		}
+		if site.chosen == "" {
+			continue
+		}
+		_, peer := peers[site.chosen]
+		if route.Status != networkmap.RouteServed || !slices.Contains(route.Candidates, site.chosen) || !peer ||
+			route.Primary == site.chosen {
+			site.chosen = ""
+			continue
+		}
+		if route.Primary != site.coreAtChoice && site.coreMovedAt.IsZero() {
+			site.coreMovedAt = now
+		}
+	}
+	// Forget the proofs of peers the map no longer holds.
+	current := make(map[uint64]struct{}, len(peers))
+	for _, id := range peers {
+		current[id] = struct{}{}
+	}
+	for id := range failover.pongs {
+		if _, kept := current[id]; !kept {
+			delete(failover.pongs, id)
+		}
+	}
+	return failover.applyLocked()
+}
+
+// current returns Core's last map with the local choices applied.
+func (failover *routeFailover) current() networkmap.Snapshot {
+	failover.mu.Lock()
+	defer failover.mu.Unlock()
+	return failover.applyLocked()
+}
+
+func (failover *routeFailover) applyLocked() networkmap.Snapshot {
+	snapshot := failover.core
+	changed := false
+	for _, site := range failover.sites {
+		if site.chosen != "" {
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		return snapshot
+	}
+	routes := slices.Clone(snapshot.Routes)
+	for index := range routes {
+		if site := failover.sites[routes[index].Ref]; site != nil && site.chosen != "" {
+			routes[index].Primary = site.chosen
+		}
+	}
+	snapshot.Routes = routes
+	return snapshot
+}
+
+// judge looks at every served Site once and reports whether a local choice
+// changed, so the map must be applied again.
+func (failover *routeFailover) judge(activity []dataplane.RoutedActivity) bool {
+	if failover == nil {
+		return false
+	}
+	failover.mu.Lock()
+	defer failover.mu.Unlock()
+	now := failover.clock()
+	peers := peerIDs(failover.core)
+	// A router answers when its last pong is recent, and has stopped when
+	// it answered before and no longer does. One that never answered (only
+	// reached through a relay, or not probed yet) is neither: it is never
+	// left for silence the node cannot measure.
+	pongOf := func(stableID string) (time.Time, bool) {
+		id, found := peers[stableID]
+		if !found {
+			return time.Time{}, false
+		}
+		at, answered := failover.pongs[id]
+		return at, answered
+	}
+	alive := func(stableID string) bool {
+		at, answered := pongOf(stableID)
+		return answered && now.Sub(at) <= failoverAliveWithin
+	}
+	stopped := func(stableID string) bool {
+		at, answered := pongOf(stableID)
+		return answered && now.Sub(at) > failoverAliveWithin
+	}
+	changed := false
+	for _, route := range failover.core.Routes {
+		if route.Status != networkmap.RouteServed || route.Primary == "" {
+			continue
+		}
+		site := failover.sites[route.Ref]
+		seen := activityOf(activity, route.Ref)
+		idle := now.Sub(latest(seen.LastSent, seen.LastAnswered)) >= failoverIdleAfter
+		if site != nil && site.chosen != "" {
+			// Back to Core's choice once that does not cut a flow: Core
+			// elected another router, or its router answers again.
+			back := (!site.coreMovedAt.IsZero() && (idle || now.Sub(site.coreMovedAt) >= failoverFollowWithin)) ||
+				(site.coreMovedAt.IsZero() && idle && !stopped(route.Primary))
+			if back {
+				site.chosen, changed = "", true
+			}
+		}
+		active := route.Primary
+		if site != nil && site.chosen != "" {
+			active = site.chosen
+		}
+		// Waiting counts from the last switch at the earliest: what the old
+		// router left unanswered says nothing of the new one.
+		waiting := seen.WaitingSince
+		if site != nil && !waiting.IsZero() && site.lastSwitch.After(waiting) {
+			waiting = site.lastSwitch
+		}
+		suspected := !waiting.IsZero() && now.Sub(waiting) >= failoverSuspectAfter &&
+			now.Sub(seen.LastSent) < failoverSuspectAfter
+		if !suspected || len(route.Candidates) < 2 || !stopped(active) {
+			// A router that still answers keeps the Site: the host in the
+			// Site may be the one that does not.
+			continue
+		}
+		if site == nil {
+			site = &failoverSite{backoff: failoverBackoff}
+			failover.sites[route.Ref] = site
+		}
+		if now.Before(site.nextSwitch) {
+			continue
+		}
+		next := ""
+		for _, candidate := range route.Candidates {
+			if candidate != active && alive(candidate) {
+				next = candidate
+				break
+			}
+		}
+		if next == "" {
+			continue // none answers: wait for Core, or for one to answer
+		}
+		if !site.lastSwitch.IsZero() && now.Sub(site.lastSwitch) >= failoverStable {
+			site.backoff = failoverBackoff
+		}
+		site.chosen, site.coreAtChoice, site.coreMovedAt = next, route.Primary, time.Time{}
+		if next == route.Primary {
+			site.chosen = ""
+		}
+		site.lastSwitch, site.nextSwitch = now, now.Add(site.backoff)
+		site.backoff = min(2*site.backoff, failoverBackoffMax)
+		changed = true
+	}
+	return changed
+}
+
+// choices returns the Sites routed through a router of this node's choosing,
+// by reference, for status.
+func (failover *routeFailover) choices() map[string]string {
+	if failover == nil {
+		return nil
+	}
+	failover.mu.Lock()
+	defer failover.mu.Unlock()
+	chosen := map[string]string{}
+	for ref, site := range failover.sites {
+		if site.chosen != "" {
+			chosen[ref] = site.chosen
+		}
+	}
+	return chosen
+}
+
+func peerIDs(snapshot networkmap.Snapshot) map[string]uint64 {
+	ids := make(map[string]uint64, len(snapshot.Peers))
+	for _, peer := range snapshot.Peers {
+		ids[peer.StableID] = peer.ID
+	}
+	return ids
+}
+
+func routeOf(snapshot networkmap.Snapshot, ref string) (networkmap.SiteRoute, bool) {
+	for _, route := range snapshot.Routes {
+		if route.Ref == ref {
+			return route, true
+		}
+	}
+	return networkmap.SiteRoute{}, false
+}
+
+func activityOf(activity []dataplane.RoutedActivity, ref string) dataplane.RoutedActivity {
+	for _, site := range activity {
+		if site.Ref == ref {
+			return site
+		}
+	}
+	return dataplane.RoutedActivity{Ref: ref}
+}
+
+func latest(first, second time.Time) time.Time {
+	if first.After(second) {
+		return first
+	}
+	return second
+}
+
+// routedActivityDataPlane reports what this node sent to each Site and heard
+// back.
+type routedActivityDataPlane interface {
+	RoutedActivity() []dataplane.RoutedActivity
+}
+
+// runRouteFailover judges the session's Sites every failoverTick and, when a
+// local choice changed, has apply apply the map again (failover.current);
+// it stops at the first failure.
+func runRouteFailover(ctx context.Context, failover *routeFailover, read func() []dataplane.RoutedActivity,
+	apply func() error,
+) {
+	ticker := time.NewTicker(failoverTick)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		if !failover.judge(read()) {
+			continue
+		}
+		if err := apply(); err != nil {
+			return
+		}
+	}
+}

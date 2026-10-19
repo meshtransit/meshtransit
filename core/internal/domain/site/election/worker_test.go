@@ -318,3 +318,49 @@ func TestNewRejectsUnsafeConfiguration(t *testing.T) {
 	}
 	<-h.worker.Done()
 }
+
+type fakeWakeups struct {
+	hints chan struct{}
+}
+
+func (fake *fakeWakeups) Receive(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-fake.hints:
+		return nil
+	}
+}
+
+func (*fakeWakeups) Close() error { return nil }
+
+func TestWorkerRunsAPassWhenWokenUp(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, false)
+	hints := &fakeWakeups{hints: make(chan struct{}, 1)}
+	options := h.worker.options
+	options.PollInterval = time.Minute
+	options.Wakeups = func(context.Context) (WakeupSubscription, error) { return hints, nil }
+	worker, err := New(options, h.sites, h.sites, h.health, h.clock, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := worker.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = worker.Shutdown(context.Background())
+		<-worker.Done()
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for worker.Snapshot().Passes < 1 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	hints.hints <- struct{}{}
+	for worker.Snapshot().Passes < 2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := worker.Snapshot(); got.Passes != 2 || got.Wakeups != 1 {
+		t.Fatalf("after a wakeup: %+v", got)
+	}
+}

@@ -5,6 +5,16 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Client: a node whose packets to a Site go unanswered for 5 seconds, while
+  the Site's router stopped answering its direct path probes and another of
+  the Site's routers answers, routes the Site through that router until Core
+  elects again (backoff 10 s to 5 minutes; back to Core's choice once the
+  Site is idle a minute). Routers reached only through a relay are left to
+  Core.
+- Core: a router's report that newly holds a failed Site wakes the Site
+  election worker at once (Redis channel
+  `meshtransit:v1:wakeup:site_health_failed`, which the Core ACL must allow;
+  without it the worker elects at its next 10-second pass).
 - Core: one Site's read carries the primary router Core elected (`primary`:
   device, generation, reason, time), and `GET …/sites/{site}/primary-changes`
   pages its changes from the audit history, newest first (schema 194).

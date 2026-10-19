@@ -75,6 +75,9 @@ type policyFilter struct {
 	// installed on the host. Only those reach a Site (mtcp-v1 §7.6).
 	routed          *routedTable
 	routedInstalled map[netip.Prefix]struct{}
+	// routedActivity is what this node sent to each Site and heard back,
+	// by Site reference (RoutedActivity).
+	routedActivity map[string]*RoutedActivity
 	// served holds what the node forwards into as a router (servedFilter).
 	served servedFilter
 	// unreachable limits and counts the answers to packets for a Site that
@@ -190,6 +193,7 @@ func (f *policyFilter) updateNetwork(snapshot networkmap.Snapshot, routed *route
 	f.rules = rules
 	f.aliases = aliases
 	f.routed = routed
+	f.pruneRoutedActivityLocked()
 	if !isUnchanged {
 		f.retainFlowsLocked(previous, rulesChanged)
 	}
@@ -278,8 +282,11 @@ func (f *policyFilter) allowOrdinaryLocked(direction PacketDirection, header pac
 			// A router forwards a Site's answers to the mesh.
 			return f.servedOutboundLocked(header, now)
 		}
-		if !f.peerUsableAt(header.Destination, now) && !f.routedUsableAt(header.Destination, now) {
-			return false
+		if !f.peerUsableAt(header.Destination, now) {
+			if !f.routedUsableAt(header.Destination, now) {
+				return false
+			}
+			f.noteRoutedLocked(header.Destination, true, now)
 		}
 		f.trackOutbound(header, now)
 
@@ -295,7 +302,11 @@ func (f *policyFilter) allowOrdinaryLocked(direction PacketDirection, header pac
 		if !f.peerUsableAt(header.Source, now) {
 			// A Site's hosts only answer flows this node opened: routes
 			// grant reaching a Site, never being reached from it.
-			return f.routedUsableAt(header.Source, now) && f.isTrackedReply(header, now)
+			if !f.routedUsableAt(header.Source, now) || !f.isTrackedReply(header, now) {
+				return false
+			}
+			f.noteRoutedLocked(header.Source, false, now)
+			return true
 		}
 		if f.isTrackedReply(header, now) {
 			return true

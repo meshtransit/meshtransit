@@ -122,8 +122,8 @@ that offers all the Site's prefixes, with a priority (a smaller number is
 preferred) and a state, `active` or `draining`. Core elects one of them the
 Site's **primary**, and every node sends the Site's traffic through it:
 
-- Core judges each router about every 10 seconds from the health the router
-  reports: a router that reports the Site failed (such as
+- Core judges each router about every 10 seconds, and at once when a router
+  reports a Site failed, from the health the router reports: a router that reports the Site failed (such as
   `forward_blocked`), stays silent for more than 2 minutes after it has
   reported, is draining, or can no longer serve the Site (expired, moved out of
   the Workspace, or no longer offering its prefixes) is replaced by the next
@@ -148,6 +148,14 @@ Site's **primary**, and every node sends the Site's traffic through it:
   router by priority serves. `GET …/sites/{site}/primary-changes` lists the
   changes newest first, 10 per page by default (`limit` up to 50, `after` the
   `next_after` of the previous page), with `route.read`.
+- A node that sends to a Site and hears nothing back for 5 seconds, while
+  its router stopped answering its path probes and another router of the
+  Site still answers, sends the Site's traffic through that router until
+  Core elects again; a router that still answers keeps the Site, since the
+  host in the Site may be the one that does not. This needs a direct path to
+  the routers (one only reached through a relay is left to Core), and it
+  goes back to Core's choice only once the Site carries no traffic for a
+  minute, so a flow is not cut twice. Flows through the old router end.
 - A Site without `masquerade` has one router: the network behind it sends
   replies to a single router. Adding a second one, or turning masquerade off
   while it has two, is refused (409 `site_masquerade_requires_single_router`).
@@ -307,7 +315,6 @@ computed at.
 ## Not yet
 
 Exit nodes and connectors are not implemented. Subnet routes reach Sites
-through Linux routers; nodes switch to another router when Core elects one,
-not yet on their own. The permissions
+through Linux routers. The permissions
 `connector.*`, `policy.draft`, `policy.rollback` and
 `approval_policy.manage` exist in the catalog without an operation.

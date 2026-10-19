@@ -137,9 +137,29 @@ func assertRedisEnforcementRecords(ctx context.Context, t *testing.T, client *re
 		ReportedAt: at.Add(2 * time.Second), Sites: []mapsession.SiteHealth{
 			{Ref: "prod", State: mapsession.RouteHealthFailed, Code: "forward_blocked"},
 		}}
+	// A report that newly holds a failed Site wakes the Site election worker
+	// once; the same report again does not.
+	wakeups, err := client.SubscribeSiteHealthFailed(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = wakeups.Close() }()
 	if stored, err := client.RecordRouteHealth(ctx, health); err != nil || !stored {
 		t.Fatalf("RecordRouteHealth() = %t, %v", stored, err)
 	}
+	receiveCtx, cancelReceive := context.WithTimeout(ctx, 3*time.Second)
+	if err := wakeups.Receive(receiveCtx); err != nil {
+		t.Fatalf("no wakeup for a failed Site: %v", err)
+	}
+	cancelReceive()
+	if stored, err := client.RecordRouteHealth(ctx, health); err != nil || !stored {
+		t.Fatalf("repeated RecordRouteHealth() = %t, %v", stored, err)
+	}
+	quietCtx, cancelQuiet := context.WithTimeout(ctx, 300*time.Millisecond)
+	if err := wakeups.Receive(quietCtx); err == nil {
+		t.Fatal("an unchanged failed report woke the worker again")
+	}
+	cancelQuiet()
 	if current, ok := distribution.CurrentRouteHealth(load(), at.Add(3*time.Second)); !ok || len(current) != 1 ||
 		current[0] != (distribution.SiteHealth{Ref: "prod", State: "failed", Code: "forward_blocked"}) {
 		t.Fatalf("route health = %+v, %t", current, ok)

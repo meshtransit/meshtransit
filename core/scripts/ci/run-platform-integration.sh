@@ -369,7 +369,8 @@ docker exec --detach --user redis "${redis_container}" redis-server \
 	"~meshtransit:v1:delivery:node:*" \
 	"~meshtransit:v1:ratelimit:management:*" \
 	"&meshtransit:v1:wakeup:network_revision_advanced" \
-	"&meshtransit:v1:wakeup:connectivity_changed"
+	"&meshtransit:v1:wakeup:connectivity_changed" \
+	"&meshtransit:v1:wakeup:site_health_failed"
 
 for _ in $(seq 1 60); do
 	if docker exec "${redis_container}" redis-cli \
