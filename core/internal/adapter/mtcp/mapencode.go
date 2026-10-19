@@ -89,6 +89,7 @@ func encodeNamedSnapshot(snapshot mapsession.Snapshot, view *mtcpv1.View, aliase
 	return &mtcpv1.MapSnapshot{
 		View: view, NetworkRevisions: networkRevisions(snapshot), Self: self, Peers: peers,
 		PacketFilter: filter, Dns: encodeDNS(names), RelayMap: grant.relayMap, Settings: settings(),
+		Routes: encodeRoutes(snapshot.Routes()), Served: encodeServed(snapshot.Routes()),
 	}, nil
 }
 
@@ -351,6 +352,34 @@ func encodePacketFilter(snapshot mapsession.Snapshot) (*mtcpv1.PacketFilter, err
 			}
 			group.seen[address] = struct{}{}
 			group.sources = append(group.sources, netip.PrefixFrom(address, address.BitLen()))
+		}
+	}
+	// A router admits its consumers into the Sites it serves.
+	for _, rule := range snapshot.Routes().Inbound() {
+		destinations, protocols, err := routedDestinations(rule)
+		if err != nil {
+			return nil, err
+		}
+		groupKey := trafficKey(destinations, protocols)
+		group, exists := groups[groupKey]
+		if !exists {
+			group = &merged{destinations: destinations, protocols: protocols, seen: make(map[netip.Addr]struct{})}
+			groups[groupKey] = group
+			order = append(order, groupKey)
+		}
+		for _, sourceID := range rule.Sources {
+			candidate, ok := candidates[sourceID]
+			if !ok {
+				continue
+			}
+			for _, source := range candidate.Addresses() {
+				address := source.Addr().Unmap()
+				if _, duplicate := group.seen[address]; duplicate {
+					continue
+				}
+				group.seen[address] = struct{}{}
+				group.sources = append(group.sources, netip.PrefixFrom(address, address.BitLen()))
+			}
 		}
 	}
 	filter := &mtcpv1.PacketFilter{}

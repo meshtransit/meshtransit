@@ -2,6 +2,7 @@ package mtcp
 
 import (
 	"fmt"
+	mtcpv1 "meshtransit.net/api/mtcp/v1"
 	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -27,7 +28,13 @@ type Metrics struct {
 	// offered prefixes ignored as unusable (mtcp-v1 §8.2).
 	routeOffers       *prometheus.CounterVec
 	routeOfferDropped prometheus.Counter
+	// routes counts the Sites of routes sent to nodes by status, and those
+	// the bounds of one map left out (mtcp-v1 §7.6, §14).
+	routes *prometheus.CounterVec
 }
+
+// The closed set of route statuses and cut Sites counted when sent.
+var routeResults = []string{"served", "unserved", "conflict", "capacity", "omitted"}
 
 // The closed set of route offer store results.
 const (
@@ -139,6 +146,12 @@ func NewMetrics() *Metrics {
 			Name: "meshtransit_mtcp_route_offer_prefixes_dropped_total",
 			Help: "Offered subnet prefixes ignored as malformed, not canonical or unusable for a Site.",
 		}),
+		// Watch: conflict or capacity growing means policies or routers that
+		// cannot serve every consumer; omitted means a map hit its bounds.
+		routes: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "meshtransit_mtcp_map_route_sites_total",
+			Help: "Sites in subnet routes sent to nodes, by status, and Sites left out by a map's bounds.",
+		}, []string{"result"}),
 		keyExpiry: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "meshtransit_mtcp_control_key_not_after_timestamp_seconds",
 			Help: "Expiry of the latest control key this replica answers with (Unix seconds).",
@@ -159,6 +172,9 @@ func NewMetrics() *Metrics {
 	for _, result := range []string{routeOfferChanged, routeOfferUnchanged, routeOfferFailed} {
 		metrics.routeOffers.WithLabelValues(result)
 	}
+	for _, result := range routeResults {
+		metrics.routes.WithLabelValues(result)
+	}
 	return metrics
 }
 
@@ -166,7 +182,7 @@ func NewMetrics() *Metrics {
 func (metrics *Metrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{metrics.handshakes, metrics.sessions, metrics.messages, metrics.streamEnds,
 		metrics.sheds, metrics.unproven, metrics.forwarding, metrics.keyExpiry, metrics.limits, metrics.mapNames,
-		metrics.expiring, metrics.routeOffers, metrics.routeOfferDropped}
+		metrics.expiring, metrics.routeOffers, metrics.routeOfferDropped, metrics.routes}
 }
 
 // streamEnded counts a map stream end; a nil Metrics counts nothing.
@@ -221,6 +237,28 @@ func (metrics *Metrics) routeOffer(result string) {
 		return
 	}
 	metrics.routeOffers.WithLabelValues(result).Inc()
+}
+
+// routesSent counts the Sites of routes a node now holds, when they change.
+func (metrics *Metrics) routesSent(routes *mtcpv1.RouteConfig, omitted int) {
+	if metrics == nil {
+		return
+	}
+	for _, site := range routes.GetSites() {
+		result := "unserved"
+		switch site.GetStatus() {
+		case mtcpv1.SiteRoute_SERVED:
+			result = "served"
+		case mtcpv1.SiteRoute_CONFLICT:
+			result = "conflict"
+		case mtcpv1.SiteRoute_CAPACITY:
+			result = "capacity"
+		}
+		metrics.routes.WithLabelValues(result).Inc()
+	}
+	if omitted > 0 {
+		metrics.routes.WithLabelValues("omitted").Add(float64(omitted))
+	}
 }
 
 // routeOfferPrefixesDropped counts ignored offered prefixes.

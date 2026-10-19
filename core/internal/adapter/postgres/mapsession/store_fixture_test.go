@@ -291,8 +291,9 @@ type inventoryRevisionRow struct {
 func (row inventoryRevisionRow) Scan(destinations ...any) error {
 	*destinations[0].(*int64) = row.revision
 	*destinations[1].(*int64) = 5
-	*destinations[2].(*time.Time) = row.readAt
-	*destinations[3].(*bool) = true
+	*destinations[2].(*int64) = 1
+	*destinations[3].(*time.Time) = row.readAt
+	*destinations[4].(*bool) = true
 	return nil
 }
 

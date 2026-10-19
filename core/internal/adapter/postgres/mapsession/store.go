@@ -56,6 +56,12 @@ type Options struct {
 	// ShareStatementTimeout, when above StatementTimeout, bounds each share
 	// reader statement instead (a Device receiving up to 10000 shares).
 	ShareStatementTimeout time.Duration
+	// SubnetRoutes reads each Network's subnet routes with its shared
+	// policy (MESHTRANSIT_SUBNET_ROUTES_ENABLED); RoutePeerLimit is the peer
+	// limit a router's consumers are cut at, the map sessions' own. Maps
+	// read without the shared inventory carry no routes.
+	SubnetRoutes   bool
+	RoutePeerLimit int
 }
 
 // Store loads exact-scope snapshots in read-only repeatable-read transactions.
@@ -272,7 +278,8 @@ func (store *Store) withSharedInventory(ctx context.Context, read snapshotRead) 
 	if read.policyDeferred {
 		return store.withExpandedPolicy(cached, read)
 	}
-	snapshot, err := read.snapshot.WithInventory(inventory)
+	routes := cached.policy.RoutesFor(read.snapshot.NodeID(), read.readAt)
+	snapshot, err := read.snapshot.WithInventoryRoutes(inventory, read.snapshot.PacketPolicy(), routes)
 	if err != nil {
 		return appmapsession.Snapshot{}, false, errors.Join(ErrSnapshotEvidence, err)
 	}
@@ -297,7 +304,8 @@ func (store *Store) withExpandedPolicy(cached cachedInventory, read snapshotRead
 	if err != nil {
 		return appmapsession.Snapshot{}, false, errors.Join(ErrSnapshotEvidence, err)
 	}
-	completed, err := snapshot.WithInventoryPolicy(cached.inventory, expanded)
+	routes := cached.policy.RoutesFor(snapshot.NodeID(), read.readAt)
+	completed, err := snapshot.WithInventoryRoutes(cached.inventory, expanded, routes)
 	if err != nil {
 		return appmapsession.Snapshot{}, false, errors.Join(ErrSnapshotEvidence, err)
 	}
@@ -672,7 +680,9 @@ func validOptions(options Options) bool {
 		options.ShareStatementTimeout >= 0 && options.ShareStatementTimeout <= maximumStatementTimeout &&
 		(!options.SharedInventory || options.InventoryStatementTimeout >= time.Millisecond &&
 			options.InventoryStatementTimeout <= maximumStatementTimeout &&
-			options.InventoryMaxAge >= time.Second && options.InventoryMaxAge <= maximumInventoryMaxAge)
+			options.InventoryMaxAge >= time.Second && options.InventoryMaxAge <= maximumInventoryMaxAge) &&
+		(!options.SubnetRoutes || options.SharedInventory && options.RoutePeerLimit > 0 &&
+			options.RoutePeerLimit <= appmapsession.DefaultPeerLimit)
 }
 
 // relayDirectory returns the Network's relay directory.

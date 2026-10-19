@@ -368,6 +368,24 @@ func (snapshot Snapshot) WithInventory(inventory NetworkInventory) (Snapshot, er
 	return next, nil
 }
 
+// WithInventoryRoutes is WithInventoryPolicy that also sets the subnet routes
+// the same Network policy expands to for this Device.
+func (snapshot Snapshot) WithInventoryRoutes(inventory NetworkInventory, packetPolicy policy.Snapshot,
+	routes RouteView) (Snapshot, error) {
+	if !snapshot.valid || !inventory.IsValid() || !packetPolicy.IsValid() ||
+		packetPolicy.Revision() != snapshot.packetPolicy.Revision() {
+		return Snapshot{}, ErrInvalidSnapshot
+	}
+	params := snapshot.params()
+	params.PeerCandidates, params.Inventory, params.PacketPolicy, params.Routes = nil, inventory, packetPolicy, routes
+	next, err := NewSnapshot(params)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	next.relayGrant = snapshot.relayGrant
+	return next, nil
+}
+
 // WithInventoryPolicy is WithInventory that also replaces the packet policy
 // with one of the same revision: the policy the Network's policy, read with
 // the inventory, expands to for this Device.

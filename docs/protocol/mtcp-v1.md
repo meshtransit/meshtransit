@@ -564,11 +564,16 @@ message to clear. A snapshot without the field means none.
 
 Core:
 
-- sends `routes` only to nodes that also list `map.large1`;
+- sends `routes`, and `served`, only to nodes that also list `map.large1`:
+  a router's consumers are cut at the large map's peer limit;
 - sends a Site to a node only while an active policy rule lets the node
   reach part of it, and never a Site the node serves as a router;
-- includes every candidate as a peer of the map (peer limits never remove
-  one); at most 256 distinct routers appear across all Sites of one map;
+- includes every candidate that is a live Device of the Network as a peer
+  of the map (peer limits never remove one); a router keeps room for those,
+  so it admits at most its peer limit less 256 (or less half the limit, if
+  smaller) consumers, and a consumer beyond them gets `CAPACITY`; at most 256
+  distinct routers (or half the peer limit, if smaller) appear across all
+  Sites of one map;
 - sends two Sites whose prefixes overlap only with both marked `CONFLICT`.
 
 **Local bounds.** Using routes is a local choice: a node installs none until

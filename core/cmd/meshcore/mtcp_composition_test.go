@@ -116,9 +116,11 @@ func TestComposeMTCP(t *testing.T) {
 func TestMTCPCapabilities(t *testing.T) {
 	t.Parallel()
 
-	if slices.Contains(mtcpCapabilities(false, false), "device-alias.v1") ||
-		!slices.Contains(mtcpCapabilities(true, false), "device-alias.v1") || !slices.Contains(mtcpCapabilities(false, false), "map.zstd") ||
-		slices.Contains(mtcpCapabilities(true, false), "relay.zones2") || !slices.Contains(mtcpCapabilities(false, true), "relay.zones2") {
+	if slices.Contains(mtcpCapabilities(false, false, false), "device-alias.v1") ||
+		!slices.Contains(mtcpCapabilities(true, false, false), "device-alias.v1") || !slices.Contains(mtcpCapabilities(false, false, false), "map.zstd") ||
+		slices.Contains(mtcpCapabilities(true, false, false), "relay.zones2") || !slices.Contains(mtcpCapabilities(false, true, false), "relay.zones2") ||
+		slices.Contains(mtcpCapabilities(false, false, false), "routes.subnet.v1") ||
+		!slices.Contains(mtcpCapabilities(false, false, true), "router.subnet.v1") {
 		t.Fatal("capabilities do not follow the deployment")
 	}
 }

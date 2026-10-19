@@ -13,8 +13,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 190 {
-		t.Fatalf("len(Catalog()) = %d, want 190", len(catalog))
+	if len(catalog) != 191 {
+		t.Fatalf("len(Catalog()) = %d, want 191", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1609,8 +1609,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 190 {
-		t.Fatalf("LatestVersion() = %d, want 190", LatestVersion())
+	if LatestVersion() != 191 {
+		t.Fatalf("LatestVersion() = %d, want 191", LatestVersion())
 	}
 }
 
@@ -5534,6 +5534,29 @@ func TestSchema190DeviceRouteOffer(t *testing.T) {
 	} {
 		if !strings.Contains(migration.SQL, want) {
 			t.Errorf("schema 190 lacks %q", want)
+		}
+	}
+}
+
+// Schema 191 lets maps read a Network's subnet routes.
+func TestSchema191MapNetworkRoutes(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 191 {
+		t.Fatalf("len(Catalog()) = %d, want schema 191", len(catalog))
+	}
+	migration := catalog[190]
+	if migration.Version != 191 {
+		t.Fatalf("migration 191 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.load_map_network_sites_v1(p_limit INTEGER)",
+		"CREATE FUNCTION mesh_ops.load_map_network_site_routers_v1(p_limit INTEGER)",
+		"CREATE FUNCTION mesh_ops.load_map_network_route_rules_v1(p_policy_revision BIGINT, p_limit INTEGER)",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_map_network_route_rules_v1(BIGINT, INTEGER) TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 191 lacks %q", want)
 		}
 	}
 }

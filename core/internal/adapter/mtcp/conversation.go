@@ -258,6 +258,12 @@ func (conversation *conversation) serve(ctx context.Context, nodeKey node.Key) e
 	if conversation.session.Supports("relay.zones2") {
 		request = request.WithRelayZones()
 	}
+	if conversation.session.Supports("routes.subnet.v1") {
+		request = request.WithRoutes()
+	}
+	if conversation.session.Supports("router.subnet.v1") {
+		request = request.WithRouter()
+	}
 	return conversation.application.options.Streams.Serve(ctx, machine, request, conversation.sink)
 }
 

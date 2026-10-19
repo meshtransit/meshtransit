@@ -56,8 +56,15 @@ type SnapshotParams struct {
 	DirectDeviceProjections []DirectDeviceProjection
 	SharingDependencies     []network.Scope
 	PacketPolicy            policy.Snapshot
-	Connectivity            []Connectivity
-	RelayDirectory          relay.Directory
+	// Routes are the Device's subnet routes, expanded from its Network's
+	// policy with PacketPolicy; the zero value carries none.
+	Routes RouteView
+	// routeCapabilities carry the session's route capabilities through
+	// rebuilds (withRouteCapabilities).
+	routeCapabilities      RouteCapabilities
+	routeCapabilitiesKnown bool
+	Connectivity           []Connectivity
+	RelayDirectory         relay.Directory
 	// OmittedShares is a lower bound on the shares a store left out of the
 	// snapshot to stay within its bounds; such a map reports itself limited.
 	OmittedShares int
@@ -97,6 +104,7 @@ type Snapshot struct {
 	directDeviceProjections []DirectDeviceProjection
 	sharingDependencies     []network.Scope
 	packetPolicy            policy.Snapshot
+	routes                  RouteView
 	connectivity            []Connectivity
 	// sharedConnectivity, when set, replaces connectivity: a version of the
 	// replica's table for the Network, read through self and the authorized
@@ -119,7 +127,11 @@ type Snapshot struct {
 	// relayZones is set by the Service for a session that declared
 	// relay.zones2: its relay ticket may name every share.
 	relayZones bool
-	valid      bool
+	// routeCapabilities are the session's route capabilities, set by the
+	// Service (withRouteCapabilities).
+	routeCapabilities      RouteCapabilities
+	routeCapabilitiesKnown bool
+	valid                  bool
 }
 
 // NewSnapshot validates and copies one authoritative map snapshot.
@@ -178,6 +190,9 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 		directDeviceProjections: params.DirectDeviceProjections,
 		sharingDependencies:     params.SharingDependencies,
 		packetPolicy:            params.PacketPolicy,
+		routes:                  params.Routes,
+		routeCapabilities:       params.routeCapabilities,
+		routeCapabilitiesKnown:  params.routeCapabilitiesKnown,
 		connectivity:            params.Connectivity,
 		relayDirectory:          params.RelayDirectory,
 		authorized:              authorized,
@@ -219,6 +234,16 @@ func authorizedPeers(params SnapshotParams, candidates snapshotCandidates) []Pee
 	for _, peer := range peers {
 		seen[peer.NodeID()] = struct{}{}
 	}
+	// Routes add the routers of a consumer's Sites and a router's consumers.
+	for _, peerID := range params.Routes.Peers() {
+		if _, exists := seen[peerID]; exists {
+			continue
+		}
+		if candidate, found := candidates.lookup(peerID); found {
+			peers = append(peers, candidate)
+			seen[peerID] = struct{}{}
+		}
+	}
 	deadlines := make(map[node.ID]time.Time, len(params.DirectDeviceProjections))
 	for _, projection := range params.DirectDeviceProjections {
 		peer := projection.Peer()
@@ -242,6 +267,9 @@ func authorizedPeers(params SnapshotParams, candidates snapshotCandidates) []Pee
 
 // Scope returns the exact Workspace-qualified Network scope.
 func (snapshot Snapshot) Scope() network.Scope { return snapshot.scope }
+
+// Routes returns the Device's subnet routes (mtcp-v1 §7.6).
+func (snapshot Snapshot) Routes() RouteView { return snapshot.routes }
 
 // NetworkName returns the presentation-only name of the authorized Network.
 func (snapshot Snapshot) NetworkName() network.DisplayName { return snapshot.networkName }
@@ -417,6 +445,9 @@ func (snapshot Snapshot) params() SnapshotParams {
 		DirectDeviceProjections: slices.Clone(snapshot.directDeviceProjections),
 		SharingDependencies:     slices.Clone(snapshot.sharingDependencies),
 		PacketPolicy:            snapshot.packetPolicy,
+		Routes:                  snapshot.routes,
+		routeCapabilities:       snapshot.routeCapabilities,
+		routeCapabilitiesKnown:  snapshot.routeCapabilitiesKnown,
 		Connectivity:            slices.Clone(snapshot.connectivity),
 		RelayDirectory:          snapshot.relayDirectory,
 		OmittedShares:           snapshot.omittedShares,

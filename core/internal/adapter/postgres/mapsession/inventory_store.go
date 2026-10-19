@@ -15,7 +15,7 @@ import (
 // loadInventoryRevisionSQL reads the revision the inventory read belongs to
 // and the PostgreSQL time it is read at, in the installed exact scope.
 const loadInventoryRevisionSQL = `SELECT revision.network_revision, revision.policy_revision,
-    pg_catalog.transaction_timestamp(),
+    revision.route_revision, pg_catalog.transaction_timestamp(),
     EXISTS (
         SELECT 1 FROM mesh.policy_release AS release
         WHERE release.workspace_id = revision.workspace_id
@@ -150,10 +150,10 @@ func (store *Store) readInventory(
 	if workspaceInternalID <= 0 || networkInternalID <= 0 {
 		return cachedInventory{}, ErrSnapshotEvidence
 	}
-	var policyRevision int64
+	var policyRevision, routeRevision int64
 	var releaseActive bool
 	if err := transaction.QueryRow(ctx, loadInventoryRevisionSQL).Scan(
-		&cached.revision, &policyRevision, &cached.readAt, &releaseActive); err != nil {
+		&cached.revision, &policyRevision, &routeRevision, &cached.readAt, &releaseActive); err != nil {
 		return cachedInventory{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("read inventory revision: %w", err))
 	}
 	cached.readLocal = beginLocal
@@ -172,7 +172,11 @@ func (store *Store) readInventory(
 	if err := store.readInventoryDevices(ctx, transaction, scope, previous, &cached); err != nil {
 		return cachedInventory{}, err
 	}
-	cached.policy, err = readNetworkPolicy(ctx, transaction, scope, policyRevision, releaseActive)
+	routes := networkRoutes{}
+	if store.options.SubnetRoutes {
+		routes = networkRoutes{revision: routeRevision, peerLimit: store.options.RoutePeerLimit}
+	}
+	cached.policy, err = readNetworkPolicy(ctx, transaction, scope, policyRevision, releaseActive, routes)
 	if err != nil {
 		return cachedInventory{}, err
 	}
@@ -363,17 +367,32 @@ func (store *Store) readNetworkDevices(
 	return devices, nil
 }
 
+// networkRoutes says whether a policy read also reads subnet routes: at
+// route revision, cut at peerLimit; zero reads none.
+type networkRoutes struct {
+	revision  int64
+	peerLimit int
+}
+
 // readNetworkPolicy reads one Network's policy at selector level within the
-// inventory transaction, so both describe the same committed state.
+// inventory transaction, so both describe the same committed state, and its
+// subnet routes when routes asks for them.
 func readNetworkPolicy(
 	ctx context.Context,
 	transaction databaseTransaction,
 	scope network.Scope,
 	revision int64,
 	releaseActive bool,
+	routes networkRoutes,
 ) (appmapsession.NetworkPolicy, error) {
 	params := appmapsession.NetworkPolicyParams{Scope: scope, Revision: revision, ReleaseActive: releaseActive}
 	var err error
+	if routes.revision > 0 && routes.peerLimit > 0 {
+		params.RouteRevision, params.RoutePeerLimit = routes.revision, routes.peerLimit
+		if err := readNetworkRoutes(ctx, transaction, &params); err != nil {
+			return appmapsession.NetworkPolicy{}, err
+		}
+	}
 	if params.Rules, err = readNetworkPolicyRules(ctx, transaction, revision); err != nil {
 		return appmapsession.NetworkPolicy{}, err
 	}

@@ -26,6 +26,7 @@ func composeMapSession(
 	relayDirectory relay.Directory,
 	relayDirectories func(network.ID) (relay.Directory, error),
 	hub *mapsession.ConnectivityHub, // nil: each snapshot reads its peers' connectivity
+	subnetRoutes bool, // MESHTRANSIT_SUBNET_ROUTES_ENABLED
 ) (*mapsession.Service, prometheus.Collector, error) {
 	if runtimePool == nil || endpoints == nil || connectivity == nil || !relayDirectory.IsValid() {
 		return nil, nil, errInvalidMapSessionComposition
@@ -46,6 +47,10 @@ func composeMapSession(
 			InventoryStatementTimeout: mapConfig.InventoryStatementTimeout,
 			InventoryMaxAge:           mapConfig.ReconcileInterval,
 			ShareStatementTimeout:     mapConfig.ShareStatementTimeout,
+			// Routes come with the shared Network policy, cut at the
+			// sessions' own peer limit.
+			SubnetRoutes:   subnetRoutes && mapConfig.SharedInventory,
+			RoutePeerLimit: mapConfig.PeerLimit,
 		},
 	)
 	if err != nil {

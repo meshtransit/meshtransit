@@ -36,6 +36,7 @@ func streamSnapshotChanged(current, next Snapshot) bool {
 	return current.NetworkRevision() != next.NetworkRevision() ||
 		relayDirectoryChanged(current, next) ||
 		!equalDirectDeviceProjections(current.directDeviceProjections, next.directDeviceProjections) ||
+		!current.routes.Equal(next.routes) ||
 		!sameMapConnectivity(current, next)
 }
 

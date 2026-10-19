@@ -18,6 +18,8 @@ type Request struct {
 	deviceAliasVersion uint8
 	relayZones         bool
 	largeMap           bool
+	routes             bool
+	router             bool
 	endpointSet        node.EndpointSet
 	hasEndpointSet     bool
 	preferredRelay     int
@@ -120,3 +122,25 @@ func (request Request) WithRelayZones() Request {
 
 // RelayZones reports whether the session negotiated relay.zones2.
 func (request Request) RelayZones() bool { return request.relayZones }
+
+// WithRoutes records that the client takes subnet routes (MTCP
+// routes.subnet.v1). Routes reach only clients that also declared large
+// maps.
+func (request Request) WithRoutes() Request {
+	request.routes = true
+	return request
+}
+
+// Routes reports whether the client takes subnet routes on a large map.
+func (request Request) Routes() bool { return request.routes && request.largeMap }
+
+// WithRouter records that the client can route into Sites (MTCP
+// router.subnet.v1). It serves only on a large map: its consumers are cut
+// at the large map's peer limit.
+func (request Request) WithRouter() Request {
+	request.router = true
+	return request
+}
+
+// Router reports whether the client can route into Sites on a large map.
+func (request Request) Router() bool { return request.router && request.largeMap }

@@ -443,6 +443,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertPostgreSQLSites(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLSitePolicy(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLRouteOffers(ctx, t, adminConnection, runtimePool)
+	assertPostgreSQLSiteMaps(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLConsoleDeviceSearch(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLMemberSuspension(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLMemberRemoval(ctx, t, adminConnection, runtimePool)

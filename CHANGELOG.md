@@ -5,6 +5,23 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: maps carry subnet routes (mtcp-v1 §7.6) when
+  `MESHTRANSIT_SUBNET_ROUTES_ENABLED` is on and Core reads Network inventory
+  once per revision (the default). A node that lists `routes.subnet.v1` and
+  `map.large1` gets the Sites its rules grant, intersected with each Site's
+  current prefixes, with the Site's routers as candidates, the first active
+  one as primary, the route revision as generation and a status: `SERVED`,
+  `UNSERVED` (no router can serve: not live, not Workspace-owned or not
+  offering the Site), `CONFLICT` (two granted Sites overlap) or `CAPACITY`
+  (beyond the router's peer limit). Its routers are always peers of its
+  map. A router that lists `router.subnet.v1` and `map.large1` gets the
+  Sites it serves and a packet filter that admits its consumers into them,
+  covered by its policy digest. Nodes that list neither see no change.
+  `meshtransit_mtcp_map_route_sites_total` counts the Sites sent by status
+  and those a map's bounds left out. Schema 191, no operator step. Turn the
+  setting on only once every replica runs this Core: a node that reconnects
+  to a replica without it gets a map without routes and drops them until it
+  reconnects again.
 - Core: stores the subnets a Device offers to forward from its
   `HostinfoReport` (`advertised_prefixes`), so it can be made a Site's
   router. Entries no Site could use are ignored and counted

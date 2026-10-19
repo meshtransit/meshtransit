@@ -612,7 +612,9 @@ func (service *StreamService) deliver(
 	}
 	if relayDirectoryChanged(current, next) ||
 		(current.NetworkRevision() == next.NetworkRevision() &&
-			!equalDirectDeviceProjections(current.directDeviceProjections, next.directDeviceProjections)) {
+			(!equalDirectDeviceProjections(current.directDeviceProjections, next.directDeviceProjections) ||
+				// A membership or Device lapse moved routes without a revision.
+				!current.routes.Equal(next.routes))) {
 		if err := sink.SendSnapshot(ctx, next); err != nil {
 			return false, errors.Join(ErrStreamWrite, err)
 		}

@@ -60,6 +60,12 @@ func (store *Store) Derive(
 	if err != nil {
 		return appmapsession.Snapshot{}, false, errors.Join(ErrSnapshotEvidence, err)
 	}
+	// The session's capabilities filter routes before the build, so a
+	// refresh of a client without them never rebuilds the snapshot.
+	routes := cached.policy.RoutesFor(self.NodeID(), cached.readAt)
+	if capabilities, known := current.RouteCapabilities(); known {
+		routes = routes.ForCapabilities(capabilities)
+	}
 	selfLabel, _ := self.DNSLabel()
 	snapshot, err := appmapsession.NewSnapshot(appmapsession.SnapshotParams{
 		Scope:             scope,
@@ -83,6 +89,7 @@ func (store *Store) Derive(
 		ReadAtLocal:       cached.readLocal,
 		Inventory:         cached.inventory,
 		PacketPolicy:      packetPolicy,
+		Routes:            routes,
 		RelayDirectory:    store.relayDirectory(scope.NetworkID()),
 	})
 	if err != nil {

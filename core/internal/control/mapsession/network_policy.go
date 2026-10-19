@@ -66,6 +66,15 @@ type NetworkPolicyParams struct {
 	Rules         []NetworkPolicyRule
 	Members       []SelectorMember
 	Devices       []PolicyDevice
+	// Subnet routes (mtcp-v1 §7.6), when the deployment routes subnets:
+	// the active Sites, their routers, the active release's rules to Sites,
+	// the route revision consumers see as each Site's generation, and the
+	// peer limit a router's consumers are cut at. All empty: none.
+	RouteRevision  int64
+	RoutePeerLimit int
+	Sites          []RouteSite
+	RouteRouters   []RouteRouter
+	RouteRules     []RouteRule
 }
 
 // NetworkPolicy is one Network's packet policy at selector level, shared by
@@ -100,6 +109,8 @@ type networkPolicy struct {
 	// memberList and deviceList keep the evidence as read, for Equal.
 	memberList []SelectorMember
 	deviceList []PolicyDevice
+	// routes holds the Network's subnet routes; nil: none.
+	routes *routeIndex
 }
 
 // NewNetworkPolicy validates and indexes one Network's policy.
@@ -157,6 +168,18 @@ func NewNetworkPolicy(params NetworkPolicyParams) (NetworkPolicy, error) {
 			return NetworkPolicy{}, ErrInvalidNetworkPolicy
 		}
 	}
+	routes, ok := newRouteIndex(params, func(kind SelectorKind, ref int64) []int64 {
+		entries := inner.members[selectorKey{kind: kind, id: ref}]
+		devices := make([]int64, len(entries))
+		for index, entry := range entries {
+			devices[index] = entry.device
+		}
+		return devices
+	})
+	if !ok || (!params.ReleaseActive && len(params.RouteRules) != 0) {
+		return NetworkPolicy{}, ErrInvalidNetworkPolicy
+	}
+	inner.routes = routes
 	return NetworkPolicy{inner: inner}, nil
 }
 
@@ -191,7 +214,23 @@ func (networkPolicy NetworkPolicy) Equal(other NetworkPolicy) bool {
 		}) &&
 		slices.EqualFunc(left.deviceList, right.deviceList, func(first, second PolicyDevice) bool {
 			return first.Device == second.Device && first.NodeID == second.NodeID && first.ExpiresAt.Equal(second.ExpiresAt)
-		})
+		}) && left.routes.equal(right.routes)
+}
+
+// RoutesFor returns self's subnet routes at time now: the Sites it may reach
+// as a consumer and those it serves as a router (mtcp-v1 §7.6). Like For, it
+// is stable until ChangesAt. A Device the policy does not treat as live gets
+// none.
+func (networkPolicy NetworkPolicy) RoutesFor(self node.ID, now time.Time) RouteView {
+	inner := networkPolicy.inner
+	if inner == nil {
+		return RouteView{}
+	}
+	device, known := inner.byNode[self]
+	if !known {
+		return RouteView{}
+	}
+	return inner.routesFor(device, now)
 }
 
 // Revision returns the policy revision.

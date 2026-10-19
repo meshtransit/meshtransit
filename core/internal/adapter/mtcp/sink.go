@@ -2,6 +2,7 @@ package mtcp
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -51,8 +52,10 @@ type mapSink struct {
 	keyNonce   []byte
 	ticket     []byte
 	relayMap   []byte
-	dns        *mtcpv1.DnsConfig // the DNS configuration the node holds
-	authorized bool              // a registration awaits its RegisterResponse
+	dns        *mtcpv1.DnsConfig    // the DNS configuration the node holds
+	routes     *mtcpv1.RouteConfig  // the routes the node holds; nil: none
+	served     *mtcpv1.ServedRoutes // the Sites the node serves; nil: none
+	authorized bool                 // a registration awaits its RegisterResponse
 }
 
 func newMapSink(session *Session, aliases bool, controlKeys []ControlKey, now func() time.Time) *mapSink {
@@ -102,6 +105,10 @@ func (sink *mapSink) sendSnapshotLocked(_ context.Context, snapshot mapsession.S
 		return err
 	}
 	sink.dns = message.GetDns()
+	if !proto.Equal(sink.routes, message.GetRoutes()) || !proto.Equal(sink.served, message.GetServed()) {
+		sink.metrics.routesSent(message.GetRoutes(), snapshot.Routes().Omitted())
+	}
+	sink.routes, sink.served = message.GetRoutes(), message.GetServed()
 	// A map was authorized for this session: it serves a Device now.
 	sink.session.proveDevice()
 	sink.epoch, sink.seq, sink.acked = epoch, 1, 0
@@ -160,11 +167,26 @@ func (sink *mapSink) SendAuthorityDelta(ctx context.Context, delta mapsession.Au
 	if dns := encodeDNS(names); !proto.Equal(dns, sink.dns) {
 		message.Dns = dns
 	}
+	// So are routes; a present, empty message clears them (mtcp-v1 §7.6).
+	routes, served := encodeRoutes(snapshot.Routes()), encodeServed(snapshot.Routes())
+	if !proto.Equal(routes, sink.routes) {
+		message.Routes = cmp.Or(routes, &mtcpv1.RouteConfig{})
+	}
+	if !proto.Equal(served, sink.served) {
+		message.Served = cmp.Or(served, &mtcpv1.ServedRoutes{})
+	}
 	if err := sink.sendDeltaLocked(ctx, message, snapshot, grant); err != nil {
 		return err
 	}
 	if message.Dns != nil {
 		sink.dns = message.Dns
+	}
+	if message.Routes != nil {
+		sink.routes = routes
+		sink.metrics.routesSent(routes, snapshot.Routes().Omitted())
+	}
+	if message.Served != nil {
+		sink.served = served
 	}
 	return nil
 }

@@ -27,14 +27,18 @@ var (
 // grants are offered only where the deployment projects them. map.large1:
 // maps of up to the configured peer limit go only to clients that declare it;
 // the others get at most 256 peers. relay.zones2: relay tickets for more than
-// 31 shares (MTT2), offered once every relay takes them.
-func mtcpCapabilities(deviceAliases, relayZones bool) []string {
+// 31 shares (MTT2), offered once every relay takes them. routes.subnet.v1 and
+// router.subnet.v1: subnet routes, when the deployment routes subnets.
+func mtcpCapabilities(deviceAliases, relayZones, subnetRoutes bool) []string {
 	capabilities := []string{"map.zstd", "disco.v2", "relay.mtrp1", "dns.split", "stats.path1", "nat.report1", "map.large1"}
 	if deviceAliases {
 		capabilities = append(capabilities, "device-alias.v1")
 	}
 	if relayZones {
 		capabilities = append(capabilities, "relay.zones2")
+	}
+	if subnetRoutes {
+		capabilities = append(capabilities, "routes.subnet.v1", "router.subnet.v1")
 	}
 	return capabilities
 }
@@ -54,6 +58,7 @@ type mtcpDependencies struct {
 	guard         mtcpadapter.TimestampGuard
 	logger        *slog.Logger
 	relayZones    bool           // offer relay.zones2 (MESHTRANSIT_RELAY_TICKET_ZONES_V2)
+	subnetRoutes  bool           // offer subnet routes (MESHTRANSIT_SUBNET_ROUTES_ENABLED)
 	dnsSuffix     dnsname.Suffix // MESHTRANSIT_DNS_SUFFIX; zero: the default
 }
 
@@ -140,7 +145,7 @@ func composeMTCP(
 		ClientIPs:      clients,
 		Handler:        application,
 		Guard:          deps.guard,
-		Capabilities:   mtcpCapabilities(controlConfig.Map.EnableDeviceAliases, deps.relayZones),
+		Capabilities:   mtcpCapabilities(controlConfig.Map.EnableDeviceAliases, deps.relayZones, deps.subnetRoutes),
 		Logger:         logger,
 		Metrics:        metrics,
 		HandshakeRate:  controlConfig.MTCP.HandshakeRate,

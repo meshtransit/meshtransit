@@ -176,6 +176,9 @@ func (service *Service) Refresh(
 		derived.MachineKey().Fingerprint() != identity.MachineFingerprint() {
 		return Snapshot{}, ErrOpen
 	}
+	if derived, err = derived.withRouteCapabilities(request); err != nil {
+		return Snapshot{}, errors.Join(ErrOpen, err)
+	}
 	derived.peerLimit = service.options.sessionPeerLimit(request)
 	derived.relayZones = request.RelayZones()
 	return service.loadConnectivity(ctx, derived)
@@ -228,6 +231,9 @@ func (service *Service) open(
 	// the connectivity resync (ReconcileInterval).
 	if _, err := service.observeEndpoints(ctx, snapshot, request); err != nil {
 		return Snapshot{}, err
+	}
+	if snapshot, err = snapshot.withRouteCapabilities(request); err != nil {
+		return Snapshot{}, errors.Join(ErrOpen, err)
 	}
 	snapshot.peerLimit = service.options.sessionPeerLimit(request)
 	snapshot.relayZones = request.RelayZones()
