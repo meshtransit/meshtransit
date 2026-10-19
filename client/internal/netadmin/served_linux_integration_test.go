@@ -7,11 +7,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vishvananda/netlink"
 
+	"meshtransit.net/client/internal/overlayframe"
+	"meshtransit.net/client/internal/packetmeta"
 	"meshtransit.net/client/internal/routesettings"
 )
 
@@ -110,6 +114,27 @@ func TestKernelServedConfigurerIntegration(t *testing.T) {
 	if present, err := configurer.Present(); err != nil || !present {
 		t.Fatalf("Present() = %t, %v", present, err)
 	}
+	checkSelfTest(t, nft, configurer, file, tunLink.Attrs().Index)
+	// What a repair must fix is reported: forwarding turned off, a table
+	// another tool removed.
+	if problems := configurer.Problems(); len(problems) != 0 {
+		t.Fatalf("Problems() = %v", problems)
+	}
+	if err := writeSysctl("/proc/sys/net/ipv4/conf/"+lan+"/forwarding", "0"); err != nil {
+		t.Fatal(err)
+	}
+	if problems := configurer.Problems(); !slices.Equal(problems, []string{ProblemForwardingOff}) {
+		t.Fatalf("Problems() with forwarding off = %v", problems)
+	}
+	if output, err := exec.Command(nft, "delete", "table", "inet", "meshtransit_it").CombinedOutput(); err != nil {
+		t.Fatalf("nft delete: %v: %s", err, output)
+	}
+	if problems := configurer.Problems(); !slices.Equal(problems, []string{ProblemRulesMissing, ProblemForwardingOff}) {
+		t.Fatalf("Problems() without the table = %v", problems)
+	}
+	if count, maximum := configurer.Conntrack(); maximum != 0 && (count < 0 || count > maximum) {
+		t.Fatalf("Conntrack() = %d of %d", count, maximum)
+	}
 	// A setting something reset is set again by the next request.
 	if err := writeSysctl("/proc/sys/net/ipv4/conf/"+lan+"/forwarding", "0"); err != nil {
 		t.Fatal(err)
@@ -121,6 +146,23 @@ func TestKernelServedConfigurerIntegration(t *testing.T) {
 	if sysctl("net/ipv4/conf/"+lan+"/forwarding") != "1" {
 		t.Fatal("reset forwarding was not set again")
 	}
+	// A route an administrator added for a self-test address is neither
+	// replaced nor removed; the self-test reports it instead.
+	administrator := &netlink.Route{
+		LinkIndex: lanLink(t, lan), Dst: prefixIPNet(netip.PrefixFrom(overlayframe.SelfTestIPv4, 32)),
+		Scope: netlink.SCOPE_LINK, Priority: 50,
+	}
+	if err := netlink.RouteAdd(administrator); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = netlink.RouteDel(administrator) })
+	if _, _, err := configurer.ReplaceServed(name, []netip.Prefix{netip.MustParsePrefix("100.127.255.240/32")}, 1280,
+		served); err != nil {
+		t.Fatal(err)
+	}
+	if problems := configurer.Problems(); !slices.Contains(problems, ProblemSelfTestUnrouted) {
+		t.Fatalf("Problems() with an administrator's route = %v", problems)
+	}
 	// A helper that crashed leaves its state; the next one restores it.
 	restarted := kernelServedConfigurer{table: "meshtransit_it", statePath: state, sysctlRoot: "/proc/sys"}
 	if err := restarted.Clear(); err != nil {
@@ -131,6 +173,10 @@ func TestKernelServedConfigurerIntegration(t *testing.T) {
 	}
 	if present, err := configurer.Present(); err != nil || present {
 		t.Fatalf("Present() after Clear = %t, %v", present, err)
+	}
+	left, err := selfTestRoutesOf(selfTestRoutes(0)[0])
+	if err != nil || len(left) != 1 || left[0].Protocol == selfTestRouteProtocol || left[0].Priority != 50 {
+		t.Fatalf("after Clear the self-test address has routes %+v, %v; want only the administrator's", left, err)
 	}
 	if _, err := os.Stat(state); !os.IsNotExist(err) {
 		t.Fatalf("router state left behind: %v", err)
@@ -145,4 +191,67 @@ func TestKernelServedConfigurerIntegration(t *testing.T) {
 	if _, err := os.Stat(state + ".bad"); err != nil {
 		t.Fatalf("the damaged state was not set aside: %v", err)
 	}
+}
+
+// checkSelfTest sends self-test packets into the TUN: one the kernel
+// forwards towards the Site is counted, one another firewall drops in its
+// forward hook, as Docker's policy does, is not.
+func checkSelfTest(t *testing.T, nft string, configurer kernelServedConfigurer, tun *os.File, tunIndex int) {
+	t.Helper()
+	routes, err := netlink.RouteGet(overlayframe.SelfTestIPv4.AsSlice())
+	if err != nil || len(routes) == 0 || routes[0].LinkIndex != tunIndex {
+		t.Fatalf("the self-test address is not routed into the tun: %+v, %v", routes, err)
+	}
+	before, known := configurer.SelfTestPackets()
+	if !known {
+		t.Fatal("the self-test counter cannot be read")
+	}
+	send := func(sequence uint16) {
+		t.Helper()
+		packet := packetmeta.EchoRequest(overlayframe.SelfTestIPv4, netip.MustParseAddr("10.200.5.9"), 0x5e1f, sequence)
+		if _, err := tun.Write(packet); err != nil {
+			t.Fatal(err)
+		}
+	}
+	counted := func(want uint64) bool {
+		t.Helper()
+		deadline := time.Now().Add(time.Second)
+		for {
+			packets, _ := configurer.SelfTestPackets()
+			if packets == want || time.Now().After(deadline) {
+				return packets == want
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	send(1)
+	if !counted(before + 1) {
+		t.Fatal("a forwarded self-test packet was not counted")
+	}
+	for _, command := range [][]string{
+		{"add", "table", "ip", "blocker_it"},
+		{"add", "chain", "ip", "blocker_it", "forward", "{ type filter hook forward priority -10; policy drop; }"},
+	} {
+		if output, err := exec.Command(nft, command...).CombinedOutput(); err != nil {
+			t.Fatalf("nft %v: %v: %s", command, err, output)
+		}
+	}
+	t.Cleanup(func() { _ = exec.Command(nft, "delete", "table", "ip", "blocker_it").Run() })
+	send(2)
+	time.Sleep(300 * time.Millisecond)
+	if packets, _ := configurer.SelfTestPackets(); packets != before+1 {
+		t.Fatalf("a self-test packet another firewall dropped was counted: %d", packets)
+	}
+	if output, err := exec.Command(nft, "delete", "table", "ip", "blocker_it").CombinedOutput(); err != nil {
+		t.Fatalf("nft delete blocker: %v: %s", err, output)
+	}
+}
+
+func lanLink(t *testing.T, name string) int {
+	t.Helper()
+	link, err := netlink.LinkByName(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return link.Attrs().Index
 }

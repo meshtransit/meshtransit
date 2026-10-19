@@ -631,6 +631,18 @@ func formatSubnetRouterStatus(status *localapi.SubnetRouterStatus) string {
 		summary += "; error: " + status.Error
 	}
 	summary += formatRefusals(status.RefusedTotal, status.Refused)
+	var unhealthy []string
+	for _, site := range status.SiteHealth {
+		if site.State != "ok" {
+			unhealthy = append(unhealthy, site.Site+" "+site.State+" "+site.Code)
+		}
+	}
+	if len(unhealthy) > 0 {
+		summary += "; " + strings.Join(unhealthy[:min(len(unhealthy), maximumListedRefusals)], ", ")
+		if len(unhealthy) > maximumListedRefusals {
+			summary += ", ..."
+		}
+	}
 	return summary
 }
 

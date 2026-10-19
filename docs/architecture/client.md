@@ -116,9 +116,24 @@ of the Sites it offers ([mtcp-v1 §7.6](../protocol/mtcp-v1.md)):
   routers.
 - Its enforcement report carries the route digest of what it serves, so
   Core can compare it with what it sent.
+- Every 2 seconds the router measures each Site it serves. `meshnetd`
+  reports what it forwards into, what it could not repair (the table gone,
+  forwarding turned off) and connection tracking use. `meshd` sends each
+  Site's probes (an ICMP echo, or a TCP SYN it then resets) into the TUN
+  from the overlay frame's first address (`100.64.0.0`, or `fd00::`, which
+  no Device holds), so they cross the same forward path as consumers'
+  traffic; `meshnetd` routes the answers back into the TUN and counts the
+  probes that leave the router. A probe unanswered three rounds in a row
+  fails the Site: `forward_blocked` when the count shows it never left the
+  router (another firewall dropped it), `probe_failed` otherwise. Sites
+  without probes, or with masquerade off, cannot check their forward path
+  this way.
 - `meshctl status` shows a `Subnet router` line, and the local API reports
-  `subnet_router`, with health `prefix_not_advertised` or
-  `route_forwarding_failed`.
+  `subnet_router`, with each Site's health (`site_health`: `ok`, `degraded`
+  or `failed`, and a code: `forwarding_off`, `nft_rules_missing`,
+  `route_forwarding_failed`, `prefix_not_advertised`, `no_route`,
+  `forward_blocked`, `probe_failed`, `conntrack_high` above 80% of the
+  connection tracking table).
 
 Another firewall's `drop` on the same hook still wins over the router
 table's `accept`: with Docker, allow the mesh interface in the `DOCKER-USER`

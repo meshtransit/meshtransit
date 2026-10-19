@@ -32,3 +32,17 @@ func Contains(prefix netip.Prefix) bool {
 	}
 	return false
 }
+
+// SelfTestIPv4 and SelfTestIPv6 are the first addresses of the frame, which
+// no Device ever holds: Core leases from a prefix's first host on. A subnet
+// router sends the packets that check its own forwarding from them, and the
+// replies come back to it through the TUN.
+var (
+	SelfTestIPv4 = netip.MustParseAddr("100.64.0.0")
+	SelfTestIPv6 = netip.MustParseAddr("fd00::")
+)
+
+// IsSelfTest reports whether address is one of the self-test addresses.
+func IsSelfTest(address netip.Addr) bool {
+	return address == SelfTestIPv4 || address == SelfTestIPv6
+}

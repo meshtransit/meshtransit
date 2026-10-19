@@ -299,6 +299,8 @@ type WireGuardEngine struct {
 	// is what the helper did with it.
 	served       helperSync[[]networkmap.ServedSite, netadmin.ServedResult]
 	servedStatus SubnetRouterStatus
+	// routerHealth measures the served Sites while the node serves any.
+	routerHealth routerHealth
 	// enforcementChanges signals enforced policy changes no map carried.
 	enforcementChanges chan struct{}
 }

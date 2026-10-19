@@ -19,6 +19,17 @@ func (e *remoteError) Error() string {
 
 func (e *remoteError) Unwrap() error { return ErrRemote }
 
+// RemoteCode returns the code a helper rejected a request with, or "" when
+// err is no such rejection. An older helper refuses an operation it does not
+// know with "unsupported_request".
+func RemoteCode(err error) string {
+	var remote *remoteError
+	if errors.As(err, &remote) {
+		return remote.code
+	}
+	return ""
+}
+
 func encodeMessage(value any) ([]byte, error) {
 	payload, err := json.Marshal(value)
 	if err != nil {

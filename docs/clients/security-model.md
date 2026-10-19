@@ -173,6 +173,10 @@ Packet payloads are never collected.
   itself. A compromised `meshd` cannot widen any of these. As a router it
   forwards only into the part of what is requested that root's settings
   offer while router mode is on, and only through its own nftables table.
+  A router's health check reads that table, the forwarding settings it
+  needs and connection tracking use, and repairs only what it installed
+  itself; the helper sends no packets and keeps its address families
+  (`AF_UNIX`, `AF_NETLINK`).
 - Route changes add before they remove and roll back on failure. `meshd`
   checks the helper's result against the validated map before using the
   tunnel.

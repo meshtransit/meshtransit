@@ -873,3 +873,22 @@ func TestServer_UpAndLogoutWithoutADevice(t *testing.T) {
 		t.Fatalf("logout response = %#v, want not registered", logout)
 	}
 }
+
+func TestMapSubnetRouterStatusTakesTheWorstSite(t *testing.T) {
+	t.Parallel()
+	mapped := mapSubnetRouterStatus(dataplane.SubnetRouterStatus{Sites: 3, Health: []dataplane.SiteHealth{
+		{Ref: "a", State: dataplane.SiteHealthDegraded, Code: dataplane.SiteCodeConntrackHigh},
+		{Ref: "b", State: dataplane.SiteHealthFailed, Code: dataplane.SiteCodeProbeFailed},
+		{Ref: "c", State: dataplane.SiteHealthOK, Code: dataplane.SiteCodeOK},
+	}})
+	if mapped.Health != dataplane.SiteCodeProbeFailed || len(mapped.SiteHealth) != 3 ||
+		mapped.SiteHealth[1] != (subnetRouterSiteHealth{Site: "b", State: "failed", Code: "probe_failed"}) {
+		t.Fatalf("mapSubnetRouterStatus() = %+v", mapped)
+	}
+	degraded := mapSubnetRouterStatus(dataplane.SubnetRouterStatus{Sites: 1, Health: []dataplane.SiteHealth{
+		{Ref: "a", State: dataplane.SiteHealthDegraded, Code: dataplane.SiteCodeConntrackHigh},
+	}})
+	if degraded.Health != dataplane.SiteCodeConntrackHigh {
+		t.Fatalf("degraded = %+v", degraded)
+	}
+}

@@ -81,6 +81,12 @@ type Server struct {
 	servedConfigurer servedConfigurer
 	activeServed     []routesettings.ServedEntry
 	requestedServed  *servedRequest
+	// servedRefused are the requested prefixes the last apply did not serve;
+	// servedFailed means it could not install forwarding at all.
+	servedRefused []routesettings.Refusal
+	servedFailed  bool
+	// servedRepaired is when a health check last installed forwarding again.
+	servedRepaired time.Time
 	// loadSettings reads the route settings (routesettings.Load).
 	loadSettings func(string) (routesettings.Settings, error)
 	// mu serializes requests with background work (watchDNSLink on macOS).
@@ -288,6 +294,8 @@ func (s *Server) handle(ctx context.Context, rawConnection net.Conn) error {
 		return s.setRouted(connection, validated.routed)
 	case operationSetServed:
 		return s.setServed(connection, validated.served)
+	case operationCheckServed:
+		return s.checkServed(connection)
 	default:
 		return errors.New("netadmin: validated request has an unknown operation")
 	}

@@ -43,6 +43,10 @@ func (d *observedTUN) Read(bufs [][]byte, sizes []int, offset int) (int, error) 
 			if observesMetadata {
 				header, headerErr = packetmeta.Parse(packet)
 			}
+			// A router's self-test answers end here, before any rule.
+			if d.filter != nil && d.filter.selfTest.take(packet) {
+				continue
+			}
 			if d.filter != nil && !d.filter.ProcessPacket(PacketOutbound, packet) {
 				d.answerUnreachable(packet, offset)
 				continue

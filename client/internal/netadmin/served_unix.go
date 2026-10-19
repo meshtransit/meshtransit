@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
+	"time"
 
 	"meshtransit.net/client/internal/routesettings"
 )
@@ -20,10 +22,24 @@ type servedConfigurer interface {
 		[]routesettings.ServedEntry, []routesettings.Refusal, error)
 	// Present reports whether the rules are still installed.
 	Present() (bool, error)
+	// Problems reports what keeps the installed forwarding from working:
+	// ProblemRulesMissing, ProblemForwardingOff; none when nothing is
+	// installed.
+	Problems() []string
+	// SelfTestPackets counts the self-test packets that left towards a
+	// Site since the table was installed; false when it cannot be read.
+	SelfTestPackets() (uint64, bool)
+	// Conntrack returns the kernel's connection tracking use, 0 and 0 when
+	// it does not report it.
+	Conntrack() (count, maximum int)
 	Clear() error
 }
 
 var errServedUnsupported = errors.New("netadmin: subnet routers are not supported on this platform")
+
+// servedRepairInterval bounds how often a health check installs the router
+// again to repair it.
+const servedRepairInterval = 10 * time.Second
 
 // setServed forwards into the served prefixes the local settings admit and
 // reports those refused.
@@ -86,11 +102,56 @@ func (s *Server) applyServed(requested servedRequest) ([]routesettings.ServedEnt
 		if clearErr := s.servedConfigurer.Clear(); clearErr != nil {
 			err = errors.Join(err, clearErr)
 		}
-		s.activeServed, s.requestedServed = nil, &requested
+		s.activeServed, s.requestedServed, s.servedRefused, s.servedFailed = nil, &requested, nil, true
 		return nil, nil, fmt.Errorf("netadmin: replacing served routes: %w", err)
 	}
-	s.activeServed, s.requestedServed = installed, &requested
-	return installed, append(refused, failed...), nil
+	refused = append(refused, failed...)
+	s.activeServed, s.requestedServed, s.servedRefused, s.servedFailed = installed, &requested, refused, false
+	return installed, refused, nil
+}
+
+// checkServed reports the router's health (design §6.5). A missing table or
+// forwarding something turned off is repaired once first, so only what the
+// helper cannot fix is reported.
+func (s *Server) checkServed(connection *net.UnixConn) error {
+	if s.routed == nil || s.servedConfigurer == nil {
+		_ = writeResponse(connection, response{
+			Version: protocolVersion, Code: "served_routes_unavailable",
+			Message: "this helper does not forward into subnets",
+		}, nil)
+		return errServedUnsupported
+	}
+	value := response{Version: protocolVersion, OK: true, Routes: []string{}}
+	if s.hasActiveTUN && s.requestedServed != nil {
+		// At most one repair every servedRepairInterval, however often
+		// meshd asks.
+		broken := s.servedFailed || (len(s.activeServed) != 0 && len(s.servedConfigurer.Problems()) != 0)
+		if now := time.Now(); broken && now.Sub(s.servedRepaired) >= servedRepairInterval {
+			s.servedRepaired = now
+			if _, _, err := s.applyServed(*s.requestedServed); err != nil {
+				s.logger.Warn("repairing subnet forwarding failed", "error", err)
+			}
+		}
+		prefixes := make([]netip.Prefix, 0, len(s.activeServed))
+		for _, entry := range s.activeServed {
+			prefixes = append(prefixes, entry.Prefix)
+		}
+		value.Routes, value.RefusedTotal = prefixStrings(prefixes), len(s.servedRefused)
+		for _, refusal := range s.servedRefused[:min(len(s.servedRefused), maximumReportedRefusals)] {
+			value.Refused = append(value.Refused, routeRefusal{Prefix: refusal.Prefix.String(), Reason: refusal.Reason})
+		}
+		value.Problems = s.servedConfigurer.Problems()
+		if s.servedFailed {
+			value.Problems = append(value.Problems, ProblemInstallFailed)
+		}
+		slices.Sort(value.Problems)
+		value.Problems = slices.Compact(value.Problems)
+		if packets, known := s.servedConfigurer.SelfTestPackets(); known {
+			value.SelfTestPackets = &packets
+		}
+	}
+	value.ConntrackCount, value.ConntrackMax = s.servedConfigurer.Conntrack()
+	return writeResponse(connection, value, nil)
 }
 
 // clearServed stops forwarding, as when the TUN is replaced or the helper
@@ -102,5 +163,5 @@ func (s *Server) clearServed() {
 	if err := s.servedConfigurer.Clear(); err != nil {
 		s.logger.Warn("clearing subnet forwarding failed", "error", err)
 	}
-	s.activeServed, s.requestedServed = nil, nil
+	s.activeServed, s.requestedServed, s.servedRefused, s.servedFailed = nil, nil, nil, false
 }

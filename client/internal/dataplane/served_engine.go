@@ -32,6 +32,8 @@ type SubnetRouterStatus struct {
 	NotAdvertised bool
 	// Error is the last failure to forward, empty after a success.
 	Error string
+	// Health is each served Site's health, once measured (design §6.5).
+	Health []SiteHealth
 }
 
 // syncServedLocked records the Sites the map serves through this node and
@@ -125,7 +127,15 @@ func (e *WireGuardEngine) recordServedLocked(requested []networkmap.ServedSite, 
 			return refusal.Reason == routesettings.ReasonNotAdvertised || refusal.Reason == routesettings.ReasonRouterOff
 		})
 	}
+	// Health is measured on its own schedule; it keeps only Sites still
+	// served.
+	status.Health = slices.DeleteFunc(slices.Clone(previous.Health), func(health SiteHealth) bool {
+		return !slices.ContainsFunc(requested, func(site networkmap.ServedSite) bool { return site.Ref == health.Ref })
+	})
 	e.servedStatus = status
+	if len(result.Installed) != 0 {
+		e.startRouterHealthLocked()
+	}
 	var local []netip.Addr
 	if len(result.Installed) != 0 && e.hostAddresses != nil {
 		// The router's own addresses: unknown ones only mean the kernel's
@@ -193,5 +203,6 @@ func (e *WireGuardEngine) SubnetRouter() SubnetRouterStatus {
 	defer e.mu.Unlock()
 	status := e.servedStatus
 	status.Refused = slices.Clone(status.Refused)
+	status.Health = slices.Clone(status.Health)
 	return status
 }

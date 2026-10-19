@@ -77,6 +77,8 @@ func (f *officialWireGuardFactory) New(
 	if err != nil {
 		return nil, err
 	}
+	// Self-test packets go straight into the kernel: no peer sent them.
+	raw := tunDevice
 	if filter != nil || observer != nil || f.lazy != nil {
 		tunDevice = &observedTUN{
 			Device:   tunDevice,
@@ -84,6 +86,14 @@ func (f *officialWireGuardFactory) New(
 			observer: observer,
 			lazy:     f.lazy,
 		}
+	}
+	if filter != nil {
+		filter.selfTest.attach(func(packet []byte) error {
+			buffer := make([]byte, selfTestWriteOffset+len(packet))
+			copy(buffer[selfTestWriteOffset:], packet)
+			_, err := raw.Write([][]byte{buffer}, selfTestWriteOffset)
+			return err
+		})
 	}
 	logger := newDeviceLogger(f.logger, time.Now)
 	var relayPool *relay.Pool

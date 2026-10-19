@@ -80,6 +80,9 @@ type policyFilter struct {
 	// unreachable limits and counts the answers to packets for a Site that
 	// cannot be reached.
 	unreachable *unreachableAnswerer
+	// selfTest sends a subnet router's self-test packets and takes their
+	// answers before any rule (design §6.5.1).
+	selfTest *selfTester
 }
 
 // EnforcedPolicy is the policy digest of the rules the packet filter
@@ -104,6 +107,7 @@ func newPolicyFilter() *policyFilter {
 		maximumFlows: defaultMaximumTrackedFlows,
 		aliases:      map[netip.Addr]aliasPacketGrant{},
 		unreachable:  newUnreachableAnswerer(time.Now),
+		selfTest:     newSelfTester(),
 	}
 }
 

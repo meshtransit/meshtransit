@@ -22,6 +22,13 @@ type fakeServedConfigurer struct {
 	self    []netip.Prefix
 	cleared int
 	noRoute map[netip.Prefix]bool
+	// problems are reported until a repair clears them; repairs counts
+	// installs after the first.
+	problems []string
+	repairs  int
+	packets  uint64
+	// stuck are problems a repair does not clear.
+	stuck []string
 }
 
 func (f *fakeServedConfigurer) ReplaceServed(_ string, self []netip.Prefix, _ int, entries []routesettings.ServedEntry) (
@@ -38,9 +45,38 @@ func (f *fakeServedConfigurer) ReplaceServed(_ string, self []netip.Prefix, _ in
 		}
 		served = append(served, entry)
 	}
-	f.entries, f.self = served, slices.Clone(self)
+	if f.entries != nil {
+		f.repairs++
+	}
+	f.entries, f.self, f.problems = served, slices.Clone(self), slices.Clone(f.stuck)
 	return served, refused, nil
 }
+
+func (f *fakeServedConfigurer) set(problems, stuck []string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.problems, f.stuck = problems, stuck
+}
+
+func (f *fakeServedConfigurer) repaired() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.repairs
+}
+
+func (f *fakeServedConfigurer) Problems() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.problems)
+}
+
+func (f *fakeServedConfigurer) SelfTestPackets() (uint64, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.packets, f.entries != nil
+}
+
+func (f *fakeServedConfigurer) Conntrack() (int, int) { return 900, 1000 }
 
 func (f *fakeServedConfigurer) Present() (bool, error) { return true, nil }
 
@@ -133,6 +169,33 @@ func TestClientServerServesOnlyWhatTheHostOffers(t *testing.T) {
 	if entries := configurer.state(); len(entries) != 1 || !entries[0].Masquerade {
 		t.Fatalf("configured = %+v", entries)
 	}
+	// The check reports what is served and refused, and repairs what it
+	// can before reporting.
+	health, err := client.CheckServedRoutes(t.Context())
+	if err != nil || !slices.Equal(health.Installed, served.Installed) || health.RefusedTotal != 2 ||
+		len(health.Problems) != 0 || health.ConntrackCount != 900 || health.ConntrackMax != 1000 || !health.SelfTestKnown {
+		t.Fatalf("CheckServedRoutes() = %+v, %v", health, err)
+	}
+	configurer.set([]string{ProblemRulesMissing}, nil)
+	if health, err := client.CheckServedRoutes(t.Context()); err != nil || len(health.Problems) != 0 ||
+		configurer.repaired() != 1 {
+		t.Fatalf("a repaired table is reported: %+v, %v, repairs %d", health, err, configurer.repaired())
+	}
+	// Within servedRepairInterval of a repair, no other is made.
+	configurer.set([]string{ProblemForwardingOff}, nil)
+	if health, err := client.CheckServedRoutes(t.Context()); err != nil ||
+		!slices.Equal(health.Problems, []string{ProblemForwardingOff}) || configurer.repaired() != 1 {
+		t.Fatalf("a second repair within the interval: %+v, %v, repairs %d", health, err, configurer.repaired())
+	}
+	server.mu.Lock()
+	server.servedRepaired = time.Time{}
+	server.mu.Unlock()
+	configurer.set([]string{ProblemRulesMissing}, []string{ProblemForwardingOff, ProblemRulesMissing})
+	if health, err := client.CheckServedRoutes(t.Context()); err != nil ||
+		!slices.Equal(health.Problems, []string{ProblemForwardingOff, ProblemRulesMissing}) {
+		t.Fatalf("problems a repair cannot fix: %+v, %v", health, err)
+	}
+	configurer.set(nil, nil)
 	// Router mode off stops forwarding for what meshd last asked.
 	settingsMu.Lock()
 	settings.RouterMode = false
@@ -166,6 +229,37 @@ func TestValidateServedRequest(t *testing.T) {
 		if _, err := validateRequest(value); err == nil {
 			t.Errorf("%s: validateRequest() accepted %+v", name, value)
 		}
+	}
+	check := request{Version: protocolVersion, Operation: operationCheckServed}
+	if _, err := validateRequest(check); err != nil {
+		t.Errorf("validateRequest(check) error = %v", err)
+	}
+	for name, value := range map[string]request{
+		"check with routes":     {Version: protocolVersion, Operation: operationCheckServed, Routes: []string{}},
+		"check with masquerade": {Version: protocolVersion, Operation: operationCheckServed, Masquerade: "1"},
+	} {
+		if _, err := validateRequest(value); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+	for name, value := range map[string]response{
+		"unknown problem":    {Version: protocolVersion, OK: true, Routes: []string{}, Problems: []string{"melted"}},
+		"unsorted problems":  {Version: protocolVersion, OK: true, Routes: []string{}, Problems: []string{ProblemRulesMissing, ProblemForwardingOff}},
+		"negative conntrack": {Version: protocolVersion, OK: true, Routes: []string{}, ConntrackCount: -1},
+	} {
+		if err := validateResponse(value, operationCheckServed); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+	if err := validateResponse(response{
+		Version: protocolVersion, OK: true, Routes: []string{},
+		Problems: []string{ProblemForwardingOff},
+	}, operationSetServed); err == nil {
+		t.Error("health fields on a set_served_routes response were accepted")
+	}
+	if err := validateResponse(response{Version: protocolVersion, OK: true, Problems: []string{ProblemForwardingOff}},
+		operationSetTUN); err == nil {
+		t.Error("health fields on a tun response were accepted")
 	}
 	routed := request{
 		Version: protocolVersion, Operation: operationSetRouted, Routes: []string{},

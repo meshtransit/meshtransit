@@ -119,6 +119,14 @@ type subnetRouterStatus struct {
 	Refused      []subnetRouteRefusal `json:"refused,omitempty"`
 	Health       string               `json:"health"`
 	Error        string               `json:"error,omitempty"`
+	// SiteHealth is each served Site's measured health (design §6.5).
+	SiteHealth []subnetRouterSiteHealth `json:"site_health,omitempty"`
+}
+
+type subnetRouterSiteHealth struct {
+	Site  string `json:"site"`
+	State string `json:"state"`
+	Code  string `json:"code"`
 }
 
 type subnetRouteRefusal struct {

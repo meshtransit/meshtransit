@@ -39,3 +39,6 @@ func (c *Client) ConfigureDNS(_ context.Context, _ DNSConfig) error {
 func (c *Client) ResetDNS(_ context.Context) error {
 	return ErrUnsupported
 }
+
+// RemoteCode returns "": there is no helper to reject requests here.
+func RemoteCode(error) string { return "" }

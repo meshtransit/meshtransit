@@ -626,6 +626,10 @@ had never been granted.
 (translate mesh sources to the router's own address on the way into the
 Site) and `probes` (at most 4 addresses inside the Site's prefixes that the
 router checks: `ICMP` with port 0, or `TCP` with a port of 1–65535).
+A router sends its probes from the first address of the overlay frame,
+`100.64.0.0` or `fd00::`, through its own forward path; Core never assigns
+either address to a Device (it leases from a prefix's first host), and
+peers never carry it.
 
 A router forwards into the intersection of `served` and the prefixes its own
 local configuration offers (8.2): for each served prefix inside an offered

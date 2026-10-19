@@ -12,6 +12,8 @@ import (
 	"github.com/google/nftables"
 	"github.com/google/nftables/expr"
 	"golang.org/x/sys/unix"
+
+	"meshtransit.net/client/internal/overlayframe"
 )
 
 // servedRuleset is what the router table enforces (design §8.1, layer 2).
@@ -60,6 +62,7 @@ func replaceServedTable(ruleset servedRuleset) error {
 	if err != nil {
 		return err
 	}
+	conn.AddObj(&nftables.CounterObj{Table: table, Name: selfTestCounter})
 	forward := conn.AddChain(&nftables.Chain{
 		Name: "forward", Table: table, Type: nftables.ChainTypeFilter,
 		Hooknum: nftables.ChainHookForward, Priority: nftables.ChainPriorityFilter,
@@ -260,8 +263,37 @@ func inputRules(ruleset servedRuleset, sets servedSets) [][]expr.Any {
 	}
 }
 
+// selfTestCounter counts the router's self-test packets that passed every
+// forward hook (design §6.5.1): a packet the TUN took in but this counter
+// did not see was dropped on the way, as by another firewall.
+const selfTestCounter = "selftest"
+
+// readSelfTestCounter returns the packets the table's self-test counter saw.
+func readSelfTestCounter(name string) (uint64, error) {
+	conn, err := nftables.New()
+	if err != nil {
+		return 0, fmt.Errorf("opening nftables: %w", err)
+	}
+	table := &nftables.Table{Family: nftables.TableFamilyINet, Name: name}
+	object, err := conn.GetObject(&nftables.CounterObj{Table: table, Name: selfTestCounter})
+	if err != nil {
+		return 0, fmt.Errorf("reading the self-test counter: %w", err)
+	}
+	counter, ok := object.(*nftables.CounterObj)
+	if !ok {
+		return 0, errors.New("the self-test counter is not a counter")
+	}
+	return counter.Packets, nil
+}
+
 func postroutingRules(ruleset servedRuleset, sets servedSets) [][]expr.Any {
+	count := []expr.Any{&expr.Objref{Type: int(nftables.ObjTypeCounter), Name: selfTestCounter}}
 	return [][]expr.Any{
+		// Counted first, whatever translation follows.
+		join(interfaceIs(expr.MetaKeyIIFNAME, ruleset.Interface), family(unix.NFPROTO_IPV4),
+			sourceIs(12, overlayframe.SelfTestIPv4), count),
+		join(interfaceIs(expr.MetaKeyIIFNAME, ruleset.Interface), family(unix.NFPROTO_IPV6),
+			sourceIs(8, overlayframe.SelfTestIPv6), count),
 		join(interfaceIs(expr.MetaKeyIIFNAME, ruleset.Interface), family(unix.NFPROTO_IPV4),
 			addressIn(false, 16, 4, sets.masquerade4), []expr.Any{&expr.Masq{}}),
 		join(interfaceIs(expr.MetaKeyIIFNAME, ruleset.Interface), family(unix.NFPROTO_IPV6),
@@ -299,6 +331,15 @@ func addressIn(invert bool, offset, length uint32, set *nftables.Set) []expr.Any
 	return []expr.Any{
 		&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: offset, Len: length},
 		&expr.Lookup{SourceRegister: 1, SetName: set.Name, SetID: set.ID, Invert: invert},
+	}
+}
+
+// sourceIs matches the source address at offset in the network header.
+func sourceIs(offset uint32, address netip.Addr) []expr.Any {
+	data := address.AsSlice()
+	return []expr.Any{
+		&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: offset, Len: uint32(len(data))}, //nolint:gosec // G115: 4 or 16
+		&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: data},
 	}
 }
 

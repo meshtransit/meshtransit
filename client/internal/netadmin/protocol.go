@@ -37,12 +37,16 @@ const (
 	// router (mtcp-v1 §7.6); the helper serves only what its local settings
 	// offer.
 	operationSetServed = "set_served_routes"
-	maxTUNAddresses    = 8
-	maxTUNRoutes       = 512
-	maxAllowedPools    = 16
-	maxDNSDomains      = 256
-	maxDNSDomainBytes  = 16 << 10
-	interfaceNameSize  = 16
+	// operationCheckServed reports the router's health (design §6.5): what
+	// it forwards into, the host problems it could not repair, its
+	// connection tracking use and its self-test packet counter.
+	operationCheckServed = "check_served_routes"
+	maxTUNAddresses      = 8
+	maxTUNRoutes         = 512
+	maxAllowedPools      = 16
+	maxDNSDomains        = 256
+	maxDNSDomainBytes    = 16 << 10
+	interfaceNameSize    = 16
 )
 
 var (
@@ -128,6 +132,46 @@ type response struct {
 	// RefusedTotal counts them all.
 	Refused      []routeRefusal `json:"refused,omitempty"`
 	RefusedTotal int            `json:"refused_total,omitempty"`
+	// Problems, ConntrackCount, ConntrackMax and SelfTestPackets answer
+	// check_served_routes.
+	Problems        []string `json:"problems,omitempty"`
+	ConntrackCount  int      `json:"conntrack_count,omitempty"`
+	ConntrackMax    int      `json:"conntrack_max,omitempty"`
+	SelfTestPackets *uint64  `json:"self_test_packets,omitempty"`
+}
+
+// Router problems the helper reports when it could not repair them
+// (design §6.5).
+const (
+	// ProblemForwardingOff: the kernel does not forward on an interface
+	// the router needs.
+	ProblemForwardingOff = "forwarding_off"
+	// ProblemRulesMissing: the router table is gone and installing it
+	// again failed.
+	ProblemRulesMissing = "nft_rules_missing"
+	// ProblemInstallFailed: forwarding could not be installed at all.
+	ProblemInstallFailed = "install_failed"
+	// ProblemSelfTestUnrouted: the self-test addresses are not routed into
+	// the TUN, such as when an administrator routes them elsewhere; answers
+	// to self-tests would leave by another way, so they prove nothing.
+	ProblemSelfTestUnrouted = "self_test_unrouted"
+)
+
+var knownProblems = []string{ProblemForwardingOff, ProblemRulesMissing, ProblemInstallFailed, ProblemSelfTestUnrouted}
+
+// ServedHealth is the router's state as the helper sees it.
+type ServedHealth struct {
+	ServedResult
+	// Problems are the codes above, sorted.
+	Problems []string
+	// ConntrackCount and ConntrackMax are the kernel's connection tracking
+	// use; both are 0 when it does not report them.
+	ConntrackCount, ConntrackMax int
+	// SelfTestPackets counts the self-test packets that left the router
+	// towards a Site; SelfTestKnown is false while the table cannot be read.
+	// The count restarts whenever the table is installed again.
+	SelfTestPackets uint64
+	SelfTestKnown   bool
 }
 
 // RoutedResult is what the helper did with requested subnet routes: those
@@ -244,6 +288,11 @@ func validateRequest(value request) (validatedRequest, error) {
 			return validatedRequest{}, err
 		}
 		return validatedRequest{operation: value.Operation, routed: routed}, nil
+	case operationCheckServed:
+		if value.Addresses != nil || value.Routes != nil || hasDNSRequestFields(value) {
+			return validatedRequest{}, fmt.Errorf("%w: served route check fields are invalid", ErrProtocol)
+		}
+		return validatedRequest{operation: value.Operation}, nil
 	case operationOpenDNS, operationResetDNS:
 		if value.Addresses != nil || value.Routes != nil || hasDNSConfigFields(value) {
 			return validatedRequest{}, fmt.Errorf("%w: dns lifecycle fields are invalid", ErrProtocol)
@@ -279,10 +328,14 @@ func validateResponse(value response, operation string) error {
 	if value.Version != protocolVersion {
 		return fmt.Errorf("%w: unsupported protocol version", ErrProtocol)
 	}
+	listsRoutes := operation == operationSetRouted || operation == operationSetServed || operation == operationCheckServed
+	if operation != operationCheckServed && (value.Problems != nil || value.ConntrackCount != 0 ||
+		value.ConntrackMax != 0 || value.SelfTestPackets != nil) {
+		return fmt.Errorf("%w: unexpected router health fields", ErrProtocol)
+	}
 	if value.OK {
 		if value.Code != "" || value.Message != "" ||
-			(operation != operationSetRouted && operation != operationSetServed &&
-				(value.Refused != nil || value.RefusedTotal != 0)) {
+			(!listsRoutes && (value.Refused != nil || value.RefusedTotal != 0)) {
 			return fmt.Errorf("%w: malformed success response", ErrProtocol)
 		}
 		switch operation {
@@ -306,7 +359,10 @@ func validateResponse(value response, operation string) error {
 				value.Addresses != nil || value.Routes != nil || value.Refused != nil {
 				return fmt.Errorf("%w: malformed dns response", ErrProtocol)
 			}
-		case operationSetRouted, operationSetServed:
+		case operationSetRouted, operationSetServed, operationCheckServed:
+			if !validProblems(value.Problems) || value.ConntrackCount < 0 || value.ConntrackMax < 0 {
+				return fmt.Errorf("%w: malformed router health", ErrProtocol)
+			}
 			if value.InterfaceName != "" || value.Resolver != "" || value.MTU != 0 ||
 				value.Addresses != nil || value.Routes == nil || len(value.Refused) > maximumReportedRefusals ||
 				value.RefusedTotal < len(value.Refused) || value.RefusedTotal > routesettings.MaximumRoutes {
@@ -325,6 +381,13 @@ func validateResponse(value response, operation string) error {
 	}
 
 	return nil
+}
+
+// validProblems accepts known problem codes, each once, sorted.
+func validProblems(problems []string) bool {
+	return len(problems) <= len(knownProblems) && slices.IsSorted(problems) &&
+		len(slices.Compact(slices.Clone(problems))) == len(problems) &&
+		!slices.ContainsFunc(problems, func(problem string) bool { return !slices.Contains(knownProblems, problem) })
 }
 
 func hasDNSRequestFields(value request) bool {

@@ -36,3 +36,18 @@ func TestContains(t *testing.T) {
 		t.Error("Prefixes() exposed the frame")
 	}
 }
+
+func TestSelfTestAddressesAreTheFrameNetworkAddresses(t *testing.T) {
+	t.Parallel()
+	for _, address := range []netip.Addr{SelfTestIPv4, SelfTestIPv6} {
+		if !IsSelfTest(address) || !Contains(netip.PrefixFrom(address, address.BitLen())) {
+			t.Errorf("%s is not a self-test address inside the frame", address)
+		}
+	}
+	if Prefixes()[0].Addr() != SelfTestIPv4 || Prefixes()[2].Addr() != SelfTestIPv6 {
+		t.Error("the self-test addresses are not the first addresses of the frame")
+	}
+	if IsSelfTest(netip.MustParseAddr("100.64.0.1")) {
+		t.Error("a Device address counts as a self-test address")
+	}
+}

@@ -393,3 +393,42 @@ func (c *Client) SetServedRoutes(ctx context.Context, served, unmasqueraded []ne
 	}
 	return result, nil
 }
+
+// CheckServedRoutes reports the router's health as the helper sees it
+// (design §6.5): what it forwards into, the problems it could not repair,
+// connection tracking use and the self-test counter.
+func (c *Client) CheckServedRoutes(ctx context.Context) (ServedHealth, error) {
+	if c == nil {
+		return ServedHealth{}, errors.New("netadmin: client is not initialized")
+	}
+	value, descriptors, err := c.exchange(ctx, request{Version: protocolVersion, Operation: operationCheckServed})
+	closeDescriptors(descriptors)
+	if err != nil {
+		return ServedHealth{}, err
+	}
+	if len(descriptors) != 0 {
+		return ServedHealth{}, fmt.Errorf("%w: served route check included descriptors", ErrProtocol)
+	}
+	health := ServedHealth{
+		ServedResult: ServedResult{Installed: make([]netip.Prefix, 0, len(value.Routes)), RefusedTotal: value.RefusedTotal},
+		Problems:     slices.Clone(value.Problems), ConntrackCount: value.ConntrackCount, ConntrackMax: value.ConntrackMax,
+	}
+	for _, text := range value.Routes {
+		prefix, err := netip.ParsePrefix(text)
+		if err != nil || prefix != prefix.Masked() {
+			return ServedHealth{}, fmt.Errorf("%w: malformed served route", ErrProtocol)
+		}
+		health.Installed = append(health.Installed, prefix)
+	}
+	for _, refusal := range value.Refused {
+		prefix, err := netip.ParsePrefix(refusal.Prefix)
+		if err != nil || refusal.Reason == "" {
+			return ServedHealth{}, fmt.Errorf("%w: malformed route refusal", ErrProtocol)
+		}
+		health.Refused = append(health.Refused, routesettings.Refusal{Prefix: prefix, Reason: refusal.Reason})
+	}
+	if value.SelfTestPackets != nil {
+		health.SelfTestPackets, health.SelfTestKnown = *value.SelfTestPackets, true
+	}
+	return health, nil
+}

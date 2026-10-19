@@ -898,3 +898,19 @@ func TestFormatPathStatusReportsLazyPeers(t *testing.T) {
 		t.Fatalf("lazy status = %q, want %q", got, want)
 	}
 }
+
+func TestFormatSubnetRouterStatusListsUnhealthySites(t *testing.T) {
+	t.Parallel()
+	status := &localapi.SubnetRouterStatus{
+		Sites: 2, Requested: 2, Served: 2, Health: "forward_blocked",
+		SiteHealth: []localapi.SubnetRouterSiteHealth{
+			{Site: "prod", State: "failed", Code: "forward_blocked"},
+			{Site: "uat", State: "ok", Code: "ok"},
+		},
+	}
+	got := formatSubnetRouterStatus(status)
+	if !strings.Contains(got, "[forward_blocked]") || !strings.Contains(got, "prod failed forward_blocked") ||
+		strings.Contains(got, "uat") {
+		t.Fatalf("formatSubnetRouterStatus() = %q", got)
+	}
+}

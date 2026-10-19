@@ -651,11 +651,24 @@ func mapSubnetRouterStatus(status dataplane.SubnetRouterStatus) subnetRouterStat
 		Sites: status.Sites, Requested: status.Requested, Served: status.Served, RefusedTotal: status.RefusedTotal,
 		Health: "ok", Error: status.Error,
 	}
+	// The router's health is its worst Site's: a failed one, else a
+	// degraded one.
+	worst := ""
+	for _, site := range status.Health {
+		mapped.SiteHealth = append(mapped.SiteHealth, subnetRouterSiteHealth{Site: site.Ref, State: site.State, Code: site.Code})
+		if site.State == dataplane.SiteHealthFailed && (worst == "" || worst == dataplane.SiteCodeConntrackHigh) {
+			worst = site.Code
+		} else if site.State == dataplane.SiteHealthDegraded && worst == "" {
+			worst = site.Code
+		}
+	}
 	switch {
 	case status.Error != "":
 		mapped.Health = "route_forwarding_failed"
 	case status.NotAdvertised:
 		mapped.Health = "prefix_not_advertised"
+	case worst != "":
+		mapped.Health = worst
 	}
 	for _, refusal := range status.Refused {
 		mapped.Refused = append(mapped.Refused, subnetRouteRefusal{Prefix: refusal.Prefix.String(), Reason: refusal.Reason})

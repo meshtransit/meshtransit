@@ -213,3 +213,46 @@ func TestServedEntriesNameTheSiteOfEachPart(t *testing.T) {
 		t.Fatalf("servedEntries() = %v, want %v", got, want)
 	}
 }
+
+// checkingTUNOpener also answers the router health check.
+type checkingTUNOpener struct {
+	servedTUNOpener
+	problems []string
+}
+
+func (o *checkingTUNOpener) CheckServedRoutes(context.Context) (netadmin.ServedHealth, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	health := netadmin.ServedHealth{Problems: slices.Clone(o.problems)}
+	if len(o.requests) != 0 {
+		health.Installed = slices.Clone(o.requests[len(o.requests)-1])
+	}
+	return health, nil
+}
+
+func TestWireGuardEngineMeasuresServedSites(t *testing.T) {
+	t.Parallel()
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	snapshot.Served = []networkmap.ServedSite{
+		{Ref: "prod", Prefixes: []netip.Prefix{netip.MustParsePrefix("10.35.0.0/17")}, Masquerade: true},
+	}
+	opener := &checkingTUNOpener{problems: []string{netadmin.ProblemForwardingOff}}
+	engine, err := newWireGuardEngine(opener, 41641, &fakeWireGuardFactory{device: &fakeWireGuardDevice{}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = engine.Close() })
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the Site's health", func() bool {
+		health := engine.SubnetRouter().Health
+		return len(health) == 1 && health[0] == SiteHealth{Ref: "prod", State: SiteHealthFailed, Code: SiteCodeForwardingOff}
+	})
+	snapshot.Revision++
+	snapshot.Served = nil
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the health to clear", func() bool { return len(engine.SubnetRouter().Health) == 0 })
+}

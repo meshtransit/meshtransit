@@ -13,11 +13,13 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 
+	"meshtransit.net/client/internal/overlayframe"
 	"meshtransit.net/client/internal/routesettings"
 )
 
@@ -39,7 +41,18 @@ type kernelServedConfigurer struct {
 	// installed identifies the ruleset last installed, so a refresh that
 	// changes nothing leaves the table as it is.
 	installed string
+	// forwarding are the interfaces forwarding was last needed on, and
+	// hostIPv6 whether host-wide IPv6 forwarding was.
+	forwarding []string
+	hostIPv6   bool
+	// tunIndex is the TUN the self-test addresses are routed into.
+	tunIndex int
 }
+
+// selfTestRouteProtocol marks the helper's own self-test routes, so it
+// never replaces or removes a route an administrator added for the same
+// address (a private rtnetlink protocol value).
+const selfTestRouteProtocol = netlink.RouteProtocol(0xb4)
 
 // forwardingState holds the previous values of the host settings the helper
 // changed.
@@ -76,9 +89,14 @@ func (configurer *kernelServedConfigurer) ReplaceServed(name string, self []neti
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := configurer.forward(&state, append([]string{name}, egress...), ipv6); err != nil {
+	interfaces := append([]string{name}, egress...)
+	if err := configurer.forward(&state, interfaces, ipv6); err != nil {
 		return nil, nil, err
 	}
+	// Diagnostic only: a self-test route that cannot be installed never
+	// stops forwarding, Problems reports it.
+	routeSelfTest(link.Attrs().Index, ipv6)
+	configurer.tunIndex = link.Attrs().Index
 	ruleset := servedRuleset{
 		Table: configurer.table, Interface: name, Self: self, MTU: mtu,
 		GuardIPv6: state.IPv6Forwarding != "",
@@ -102,7 +120,140 @@ func (configurer *kernelServedConfigurer) ReplaceServed(name string, self []neti
 		}
 		configurer.installed = fingerprint
 	}
+	configurer.forwarding, configurer.hostIPv6 = interfaces, ipv6
 	return served, refused, nil
+}
+
+// selfTestRoutes are the host routes that bring answers to the self-test
+// addresses back into the TUN at index instead of out by the default route.
+func selfTestRoutes(index int) []*netlink.Route {
+	return []*netlink.Route{
+		{
+			LinkIndex: index, Dst: prefixIPNet(netip.PrefixFrom(overlayframe.SelfTestIPv4, 32)), Scope: netlink.SCOPE_LINK,
+			Protocol: selfTestRouteProtocol,
+		},
+		{
+			LinkIndex: index, Dst: prefixIPNet(netip.PrefixFrom(overlayframe.SelfTestIPv6, 128)), Scope: netlink.SCOPE_LINK,
+			Protocol: selfTestRouteProtocol,
+		},
+	}
+}
+
+// routeSelfTest routes the self-test addresses into the TUN at index, the
+// IPv6 one only while a Site is IPv6, unless another route for them exists.
+func routeSelfTest(index int, ipv6 bool) {
+	routes := selfTestRoutes(index)
+	ensureSelfTestRoute(routes[0])
+	if ipv6 {
+		ensureSelfTestRoute(routes[1])
+	} else {
+		removeSelfTestRoute(routes[1])
+	}
+}
+
+// selfTestRoutesOf lists the main table's routes to route's destination.
+func selfTestRoutesOf(route *netlink.Route) ([]netlink.Route, error) {
+	family := netlink.FAMILY_V4
+	if route.Dst.IP.To4() == nil {
+		family = netlink.FAMILY_V6
+	}
+	return netlink.RouteListFiltered(family, &netlink.Route{Dst: route.Dst, Table: unix.RT_TABLE_MAIN},
+		netlink.RT_FILTER_DST|netlink.RT_FILTER_TABLE)
+}
+
+// ensureSelfTestRoute installs route unless a route the helper does not own
+// exists for its destination.
+func ensureSelfTestRoute(route *netlink.Route) {
+	existing, err := selfTestRoutesOf(route)
+	if err != nil || slices.ContainsFunc(existing, func(other netlink.Route) bool {
+		return other.Protocol != selfTestRouteProtocol
+	}) {
+		return
+	}
+	_ = netlink.RouteReplace(route)
+}
+
+// removeSelfTestRoute deletes the helper's own routes to route's
+// destination, and no other.
+func removeSelfTestRoute(route *netlink.Route) {
+	existing, err := selfTestRoutesOf(route)
+	if err != nil {
+		return
+	}
+	for _, other := range existing {
+		if other.Protocol == selfTestRouteProtocol {
+			_ = netlink.RouteDel(&other)
+		}
+	}
+}
+
+// selfTestRouted reports whether the IPv4 self-test address, and the IPv6
+// one when a Site is IPv6, are routed into the TUN by the helper's routes.
+func (configurer *kernelServedConfigurer) selfTestRouted() bool {
+	routes := selfTestRoutes(configurer.tunIndex)
+	wanted := routes[:1]
+	if configurer.hostIPv6 {
+		wanted = routes
+	}
+	for _, route := range wanted {
+		existing, err := selfTestRoutesOf(route)
+		if err != nil || len(existing) != 1 || existing[0].Protocol != selfTestRouteProtocol ||
+			existing[0].LinkIndex != configurer.tunIndex {
+			return false
+		}
+	}
+	return true
+}
+
+// Problems reports a missing table and forwarding something turned off.
+func (configurer *kernelServedConfigurer) Problems() []string {
+	if configurer.installed == "" {
+		return nil
+	}
+	var problems []string
+	if present, err := configurer.Present(); err != nil || !present {
+		problems = append(problems, ProblemRulesMissing)
+	}
+	off := false
+	for _, name := range configurer.forwarding {
+		value, err := readSysctl(configurer.sysctl("net/ipv4/conf", name, "forwarding"))
+		if err == nil && value != "1" {
+			off = true
+		}
+	}
+	if configurer.hostIPv6 {
+		if value, err := readSysctl(configurer.sysctl("net/ipv6/conf", "all", "forwarding")); err == nil && value != "1" {
+			off = true
+		}
+	}
+	if off {
+		problems = append(problems, ProblemForwardingOff)
+	}
+	if !configurer.selfTestRouted() {
+		problems = append(problems, ProblemSelfTestUnrouted)
+	}
+	return problems
+}
+
+// SelfTestPackets reads the table's self-test counter.
+func (configurer *kernelServedConfigurer) SelfTestPackets() (uint64, bool) {
+	if configurer.installed == "" {
+		return 0, false
+	}
+	packets, err := readSelfTestCounter(configurer.table)
+	return packets, err == nil
+}
+
+// Conntrack reads the kernel's connection tracking use.
+func (configurer *kernelServedConfigurer) Conntrack() (int, int) {
+	count, countErr := readSysctl(filepath.Join(configurer.sysctlRoot, "net/netfilter/nf_conntrack_count"))
+	maximum, maximumErr := readSysctl(filepath.Join(configurer.sysctlRoot, "net/netfilter/nf_conntrack_max"))
+	used, usedErr := strconv.Atoi(count)
+	limit, limitErr := strconv.Atoi(maximum)
+	if errors.Join(countErr, maximumErr, usedErr, limitErr) != nil || used < 0 || limit <= 0 {
+		return 0, 0
+	}
+	return used, limit
 }
 
 // routableEntries keeps the entries the host routes outside the mesh, with
@@ -261,7 +412,10 @@ func (configurer *kernelServedConfigurer) Present() (bool, error) {
 // Clear removes the table and gives every setting the helper changed its
 // previous value back, also those a previous run left.
 func (configurer *kernelServedConfigurer) Clear() error {
-	configurer.installed = ""
+	configurer.installed, configurer.forwarding, configurer.hostIPv6, configurer.tunIndex = "", nil, false, 0
+	for _, route := range selfTestRoutes(0) {
+		removeSelfTestRoute(route)
+	}
 	err := deleteServedTable(configurer.table)
 	state, loadErr := configurer.loadState()
 	if loadErr != nil {

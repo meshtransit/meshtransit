@@ -5,6 +5,16 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Client (Linux): a subnet router measures each Site it serves every 2
+  seconds and shows it in `meshctl status` and the local API
+  (`subnet_router.site_health`): forwarding turned off, the router table
+  gone, a prefix no longer offered or routed, connection tracking above
+  80%, and the Site's probes, sent through the TUN from `100.64.0.0` /
+  `fd00::` so they cross the forward path. A probe that never left the router
+  is `forward_blocked` (such as Docker's or firewalld's forward policy), one
+  without an answer `probe_failed`. `meshnetd` gains a
+  `check_served_routes` operation, a self-test counter in its table and host
+  routes for the two addresses; it still sends no packets.
 - Core: the Console's Device list and Device read carry
   `advertised_prefixes`, the subnets a Device offers to forward as a subnet
   router (the first 16 in a list, all on one Device's read), and
