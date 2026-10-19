@@ -466,6 +466,26 @@ message HealthReport {
   }
 }
 
+// RouteHealthReport is a subnet router's health of each Site it serves
+// (section 8.3): the whole set, on change and every 10 seconds while it
+// serves any; empty once it serves none.
+message RouteHealthReport {
+  repeated SiteHealth sites = 1; // at most 1,024, sorted by site_ref, each once
+
+  message SiteHealth {
+    string site_ref = 1; // as in ServedSite
+    State state = 2;
+    string code = 3; // short machine-readable reason, ≤ 64 bytes
+
+    enum State {
+      STATE_UNSPECIFIED = 0;
+      OK = 1;
+      DEGRADED = 2; // a warning only
+      FAILED = 3;
+    }
+  }
+}
+
 // EnforcementReport is the policy digest (docs/protocol/policy-digest-v1.md)
 // of the rules the packet filter enforces after applying the map at view.
 message EnforcementReport {

@@ -41,6 +41,7 @@ type fakeStreams struct {
 	mu       sync.Mutex
 	requests []mapsession.Request
 	reports  []mapsession.ClientEnforcement
+	health   [][]mapsession.SiteHealth
 	started  chan node.Key
 	// block, when set, holds the next ReportEnforcement until it is closed;
 	// entered is signalled when that call starts.
@@ -64,6 +65,14 @@ func (streams *fakeStreams) Serve(ctx context.Context, _ control.AuthenticatedMa
 	}
 	<-ctx.Done()
 	return ctx.Err()
+}
+
+func (streams *fakeStreams) ReportRouteHealth(_ context.Context, _ control.AuthenticatedMachine, _ node.Key,
+	sites []mapsession.SiteHealth) error {
+	streams.mu.Lock()
+	defer streams.mu.Unlock()
+	streams.health = append(streams.health, slices.Clone(sites))
+	return nil
 }
 
 func (streams *fakeStreams) ReportEnforcement(_ context.Context, _ control.AuthenticatedMachine,
@@ -344,7 +353,9 @@ type conversationFixture struct {
 	enforcementTimer *fakeTimer
 	// routeOfferTimer is the route offer pacing's timer.
 	routeOfferTimer *fakeTimer
-	routeOffers     *fakeRouteOffers
+	// routeHealthTimer is the route health pacing's timer.
+	routeHealthTimer *fakeTimer
+	routeOffers      *fakeRouteOffers
 }
 
 func newConversationFixture(t *testing.T, openedBy sharedmtcp.MessageType) *conversationFixture {
@@ -382,6 +393,8 @@ func newConversationFixture(t *testing.T, openedBy sharedmtcp.MessageType) *conv
 	application.enforcementTimer = f.enforcementTimer.start
 	f.routeOfferTimer = &fakeTimer{}
 	application.routeOfferTimer = f.routeOfferTimer.start
+	f.routeHealthTimer = &fakeTimer{}
+	application.routeHealthTimer = f.routeHealthTimer.start
 	f.talk, _ = application.Open(session).(*conversation)
 	return f
 }

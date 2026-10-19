@@ -134,6 +134,9 @@ of the Sites it offers ([mtcp-v1 §7.6](../protocol/mtcp-v1.md)):
   `route_forwarding_failed`, `prefix_not_advertised`, `no_route`,
   `forward_blocked`, `probe_failed`, `conntrack_high` above 80% of the
   connection tracking table).
+- With `router.health1` the router also sends that health to Core in a
+  `RouteHealthReport` on change and every 10 seconds
+  ([mtcp-v1 §8.3](../protocol/mtcp-v1.md)).
 
 Another firewall's `drop` on the same hook still wins over the router
 table's `accept`: with Docker, allow the mesh interface in the `DOCKER-USER`

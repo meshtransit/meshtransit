@@ -279,6 +279,53 @@ func TestStreamNetmapRouterOffersAndReportsRouteDigest(t *testing.T) {
 	}
 }
 
+func TestStreamNetmapReportsRouteHealthWhereCoreTakesIt(t *testing.T) {
+	t.Parallel()
+	for _, takes := range []bool{true, false} {
+		reports := make(chan *mtcpv1.RouteHealthReport, 1)
+		core := newStreamCore(t, func(core *streamCore, s *coreSession, _ int32) {
+			core.keyUpdate(s)
+			_ = s.send(sharedmtcp.MessageMapSnapshot, core.snapshot(1))
+			if report, ok := core.expect(s, sharedmtcp.MessageRouteHealthReport).(*mtcpv1.RouteHealthReport); ok {
+				reports <- report
+			}
+			_ = s.send(sharedmtcp.MessageLifecycle, &mtcpv1.Lifecycle{State: mtcpv1.Lifecycle_REVOKED})
+			answerPings(s)
+		})
+		if takes {
+			core.extra = []string{"router.subnet.v1", "router.health1"}
+		}
+		material, options := core.options(t)
+		health := make(chan []controlplane.RouteSiteHealth, 1)
+		health <- []controlplane.RouteSiteHealth{{Ref: "prod", State: controlplane.RouteHealthFailed, Code: "forward_blocked"}}
+		options.EnableSubnetRouter, options.RouteHealth = true, health
+		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+		err := core.client().StreamNetmap(ctx, core.origin(), material, options,
+			func(context.Context, networkmap.Snapshot) error { return nil })
+		cancel()
+		if takes && !errors.Is(err, controlplane.ErrNetmapAuthorityRevoked) {
+			t.Fatalf("StreamNetmap = %v", err)
+		}
+		if !slices.ContainsFunc(core.hello, func(hello *mtcpv1.ClientHello) bool {
+			return slices.Contains(hello.GetCapabilities(), "router.health1")
+		}) {
+			t.Fatal("the map stream did not declare router.health1")
+		}
+		select {
+		case report := <-reports:
+			sites := report.GetSites()
+			if !takes || len(sites) != 1 || sites[0].GetSiteRef() != "prod" ||
+				sites[0].GetState() != mtcpv1.RouteHealthReport_SiteHealth_FAILED || sites[0].GetCode() != "forward_blocked" {
+				t.Fatalf("takes %t: route health report %v", takes, report)
+			}
+		default:
+			if takes {
+				t.Fatal("no route health report reached Core")
+			}
+		}
+	}
+}
+
 func TestStreamNetmapReconnectsAndEndsOnRevocation(t *testing.T) {
 	t.Parallel()
 	core := newStreamCore(t, func(core *streamCore, s *coreSession, index int32) {

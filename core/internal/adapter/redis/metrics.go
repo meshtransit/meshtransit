@@ -29,6 +29,7 @@ const (
 	redisCommandRecordEnforcement  redisCommand = "enforcement_record"
 	redisCommandRecordPaths        redisCommand = "paths_record"
 	redisCommandRecordConnectivity redisCommand = "connectivity_record"
+	redisCommandRecordRouteHealth  redisCommand = "route_health_record"
 	redisCommandReplicaLoad        redisCommand = "replica_load"
 )
 
@@ -51,6 +52,7 @@ var redisCommands = [...]redisCommand{
 	redisCommandRecordEnforcement,
 	redisCommandRecordPaths,
 	redisCommandRecordConnectivity,
+	redisCommandRecordRouteHealth,
 	redisCommandReplicaLoad,
 }
 

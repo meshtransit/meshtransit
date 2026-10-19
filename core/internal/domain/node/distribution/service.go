@@ -69,6 +69,13 @@ type Observation struct {
 	Connectivity *Connectivity
 	// PeerLimit is set when the last map was cut to a peer limit.
 	PeerLimit PeerLimit
+	// Routes is the route digest of the served routes last delivered to a
+	// router, EnforcedRoutes the one it reports.
+	Routes, EnforcedRoutes RouteSummary
+	// RouteHealth is the router's latest Site health and RouteHealthAt when
+	// Core received it.
+	RouteHealth   []SiteHealth
+	RouteHealthAt time.Time
 }
 
 // PeerLimit is how many peers a limited map carried and how many the
@@ -91,7 +98,9 @@ func (observation Observation) IsValid() bool {
 			observation.PolicyRevision == 0 && observation.DeliveredAt.IsZero() && observation.SeenAt.IsZero() &&
 			observation.Filter.IsZero() && observation.Enforced.IsZero() &&
 			observation.AppliedAt.IsZero() && observation.ReportedAt.IsZero() && observation.Paths == nil &&
-			observation.Connectivity == nil && observation.PeerLimit.IsZero()
+			observation.Connectivity == nil && observation.PeerLimit.IsZero() &&
+			observation.Routes.IsZero() && observation.EnforcedRoutes.IsZero() &&
+			observation.RouteHealth == nil && observation.RouteHealthAt.IsZero()
 	}
 	if !observation.PeerLimit.IsZero() && !observation.PeerLimit.IsValid() {
 		return false
@@ -104,7 +113,8 @@ func (observation Observation) IsValid() bool {
 	}
 	return observation.SessionGeneration > 0 && observation.NetworkRevision > 0 &&
 		observation.PolicyRevision >= 0 && !observation.DeliveredAt.IsZero() &&
-		!observation.SeenAt.Before(observation.DeliveredAt) && validEnforcement(observation)
+		!observation.SeenAt.Before(observation.DeliveredAt) && validEnforcement(observation) &&
+		validRoutes(observation)
 }
 
 // TargetDevice is a Device that should hold the current revision.

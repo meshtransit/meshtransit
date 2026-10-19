@@ -27,7 +27,7 @@ const (
 	deliveryTTL = 30 * 24 * time.Hour
 	// maximumDeliveryLoad bounds one read to one distribution page.
 	maximumDeliveryLoad = distribution.MaximumObservationBatch
-	deliveryFieldCount  = 15
+	deliveryFieldCount  = 21
 	presenceField       = deliveryFieldCount - 1
 )
 
@@ -68,10 +68,12 @@ if stored_generation ~= false then
 end
 redis.call('HSET', KEYS[1], 'generation', ARGV[1], 'network_revision', ARGV[2],
     'policy_revision', ARGV[3], 'delivered_at', ARGV[4], 'seen_at', ARGV[4],
-    'filter_digest', ARGV[6], 'filter_grants', ARGV[7], 'peer_limit', ARGV[10])
+    'filter_digest', ARGV[6], 'filter_grants', ARGV[7], 'peer_limit', ARGV[10],
+    'route_digest', ARGV[11], 'route_entries', ARGV[12])
 if not same_generation then
     redis.call('HSET', KEYS[1], 'enforced_digest', '', 'enforced_grants', '',
-        'applied_at', '', 'reported_at', '', 'paths', '', 'connectivity', '')
+        'applied_at', '', 'reported_at', '', 'paths', '', 'connectivity', '',
+        'enforced_route_digest', '', 'enforced_route_entries', '', 'route_health', '', 'route_health_at', '')
 end
 redis.call('PEXPIRE', KEYS[1], ARGV[5])
 redis.call('HSET', KEYS[2], 'node_id', ARGV[8], 'generation', ARGV[1], 'machine', ARGV[9])
@@ -85,8 +87,19 @@ if redis.call('HGET', KEYS[1], 'generation') ~= ARGV[1] then
     return 0
 end
 redis.call('HSET', KEYS[1], 'enforced_digest', ARGV[2], 'enforced_grants', ARGV[3],
-    'applied_at', ARGV[4], 'reported_at', ARGV[5])
+    'applied_at', ARGV[4], 'reported_at', ARGV[5],
+    'enforced_route_digest', ARGV[7], 'enforced_route_entries', ARGV[8])
 redis.call('PEXPIRE', KEYS[1], ARGV[6])
+return 1
+`)
+	// A router's Site health is stored only for the session generation that
+	// currently owns the delivery record.
+	recordRouteHealthScript = redisclient.NewScript(`
+if redis.call('HGET', KEYS[1], 'generation') ~= ARGV[1] then
+    return 0
+end
+redis.call('HSET', KEYS[1], 'route_health', ARGV[2], 'route_health_at', ARGV[3])
+redis.call('PEXPIRE', KEYS[1], ARGV[4])
 return 1
 `)
 	// A path report is stored only for the session generation that
@@ -118,7 +131,7 @@ redis.call('HSET', KEYS[1], 'seen_at', ARGV[2])
 redis.call('PEXPIRE', KEYS[1], ARGV[3])
 return 1
 `)
-	// KEYS alternate delivery and presence keys; each pair yields fourteen
+	// KEYS alternate delivery and presence keys; each pair yields twenty
 	// fields (empty when absent) and whether a presence lease exists.
 	loadDeliveriesScript = redisclient.NewScript(`
 local result = {}
@@ -126,8 +139,9 @@ for index = 1, #KEYS, 2 do
     local fields = redis.call('HMGET', KEYS[index], 'generation', 'network_revision',
         'policy_revision', 'delivered_at', 'seen_at', 'filter_digest', 'filter_grants',
         'enforced_digest', 'enforced_grants', 'applied_at', 'reported_at', 'paths', 'connectivity',
-        'peer_limit')
-    for field = 1, 14 do
+        'peer_limit', 'route_digest', 'route_entries', 'enforced_route_digest', 'enforced_route_entries',
+        'route_health', 'route_health_at')
+    for field = 1, 20 do
         result[#result + 1] = fields[field] or ''
     end
     result[#result + 1] = tostring(redis.call('EXISTS', KEYS[index + 1]))
@@ -148,6 +162,9 @@ type deliveryRecord struct {
 	filterDigest    string
 	filterGrants    string
 	peerLimit       string // "sent:authorized", empty when the map was not limited
+	// routeDigest and routeEntries describe a router's served routes;
+	// empty for a session that does not route.
+	routeDigest, routeEntries string
 }
 
 // enforcementRecord is one enforcement report as its script stores it.
@@ -157,6 +174,8 @@ type enforcementRecord struct {
 	grants     int64
 	appliedAt  int64
 	reportedAt int64
+	// routeDigest and routeEntries are empty without a route digest.
+	routeDigest, routeEntries string
 }
 
 type recordDeliveryFunc func(ctx context.Context, deliveryKey, sessionKey string, record deliveryRecord,
@@ -194,6 +213,10 @@ func (client *Client) RecordDelivery(ctx context.Context, delivery mapsession.De
 	if delivery.Filter.IsValid() {
 		record.filterDigest = delivery.Filter.Digest().String()
 		record.filterGrants = strconv.Itoa(delivery.Filter.Grants())
+	}
+	if delivery.Routes.IsValid() {
+		record.routeDigest = delivery.Routes.Digest().String()
+		record.routeEntries = strconv.Itoa(delivery.Routes.Entries())
 	}
 	if delivery.PeersAuthorized > delivery.PeersSent && delivery.PeersSent > 0 {
 		record.peerLimit = strconv.Itoa(delivery.PeersSent) + ":" + strconv.Itoa(delivery.PeersAuthorized)
@@ -241,13 +264,18 @@ func (client *Client) recordEnforcementForSession(ctx context.Context,
 	if machine != hex.EncodeToString(enforcement.MachineFingerprint[:]) {
 		return false, nil
 	}
-	result, err := client.recordEnforcement(ctx, deliveryKeyForNode(nodeID), enforcementRecord{
+	record := enforcementRecord{
 		generation: generation,
 		digest:     enforcement.Filter.Digest().String(),
 		grants:     int64(enforcement.Filter.Grants()),
 		appliedAt:  enforcement.AppliedAt.UnixMilli(),
 		reportedAt: enforcement.ReportedAt.UnixMilli(),
-	}, deliveryTTL)
+	}
+	if enforcement.Routes.IsValid() {
+		record.routeDigest = enforcement.Routes.Digest().String()
+		record.routeEntries = strconv.Itoa(enforcement.Routes.Entries())
+	}
+	result, err := client.recordEnforcement(ctx, deliveryKeyForNode(nodeID), record, deliveryTTL)
 	if err == nil && result != 0 && result != 1 {
 		err = errors.New("unexpected enforcement record result")
 	}
@@ -354,7 +382,9 @@ func decodeObservations(raw []any, count int) ([]distribution.Observation, error
 // decodeObservation reads, in order: generation, network_revision,
 // policy_revision, delivered_at, seen_at, filter_digest, filter_grants,
 // enforced_digest, enforced_grants, applied_at, reported_at, paths,
-// connectivity, peer_limit, presence.
+// connectivity, peer_limit, route_digest, route_entries,
+// enforced_route_digest, enforced_route_entries, route_health,
+// route_health_at, presence.
 func decodeObservation(fields []string) (distribution.Observation, error) {
 	online := fields[presenceField] == "1"
 	if fields[presenceField] != "0" && fields[presenceField] != "1" {
@@ -404,6 +434,22 @@ func decodeObservation(fields []string) (distribution.Observation, error) {
 	if err != nil {
 		return distribution.Observation{}, err
 	}
+	routes, err := decodeRouteSummary(fields[14], fields[15])
+	if err != nil {
+		return distribution.Observation{}, err
+	}
+	enforcedRoutes, err := decodeRouteSummary(fields[16], fields[17])
+	if err != nil {
+		return distribution.Observation{}, err
+	}
+	routeHealth, err := decodeRouteHealth(fields[18])
+	if err != nil {
+		return distribution.Observation{}, err
+	}
+	routeHealthAt, err := decodeOptionalTime(fields[19])
+	if err != nil {
+		return distribution.Observation{}, err
+	}
 	observation := distribution.Observation{
 		Known:             true,
 		SessionGeneration: numbers[0],
@@ -419,6 +465,10 @@ func decodeObservation(fields []string) (distribution.Observation, error) {
 		Paths:             paths,
 		Connectivity:      connectivity,
 		PeerLimit:         peerLimit,
+		Routes:            routes,
+		EnforcedRoutes:    enforcedRoutes,
+		RouteHealth:       routeHealth,
+		RouteHealthAt:     routeHealthAt,
 	}
 	if !observation.IsValid() {
 		return distribution.Observation{}, errors.New("inconsistent delivery record")

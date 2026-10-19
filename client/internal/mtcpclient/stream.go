@@ -38,6 +38,9 @@ const (
 	// enforcementHeartbeat keeps enforcement evidence fresh while nothing
 	// changes (mtcp-v1 §8.4).
 	enforcementHeartbeat = 5 * time.Minute
+	// routeHealthHeartbeat repeats a router's Site health while it serves
+	// any (mtcp-v1 §8.3); Core takes a set older than 30 s as unknown.
+	routeHealthHeartbeat = 10 * time.Second
 	discoKeyPrefix       = "discokey:"
 )
 
@@ -75,7 +78,7 @@ func (c *Client) StreamNetmap(ctx context.Context, controlURL string, material c
 	var forwarders sync.WaitGroup
 	forwarders.Go(func() {
 		reports.forward(streamCtx, options.EndpointUpdates, options.EnforcementReports, options.PathStats,
-			options.AdvertisedRoutes)
+			options.AdvertisedRoutes, options.RouteHealth)
 	})
 	defer func() {
 		cancel()
@@ -114,7 +117,9 @@ type reportBox struct {
 	paths       *controlplane.PathStatsReport // sent once, then cleared
 	// advertised is the latest offer; nil until the host's settings are read.
 	advertised []netip.Prefix
-	changed    chan struct{}
+	// routeHealth is the latest Site health; nil until it is measured.
+	routeHealth []controlplane.RouteSiteHealth
+	changed     chan struct{}
 }
 
 func newReportBox(initial controlplane.EndpointUpdate) *reportBox {
@@ -123,7 +128,7 @@ func newReportBox(initial controlplane.EndpointUpdate) *reportBox {
 
 func (box *reportBox) forward(ctx context.Context, endpoints <-chan controlplane.EndpointUpdate,
 	enforcement <-chan controlplane.EnforcementReport, paths <-chan controlplane.PathStatsReport,
-	advertised <-chan []netip.Prefix,
+	advertised <-chan []netip.Prefix, routeHealth <-chan []controlplane.RouteSiteHealth,
 ) {
 	for {
 		select {
@@ -161,6 +166,14 @@ func (box *reportBox) forward(ctx context.Context, endpoints <-chan controlplane
 			box.mu.Lock()
 			box.advertised = append([]netip.Prefix{}, offer...)
 			box.mu.Unlock()
+		case health, ok := <-routeHealth:
+			if !ok {
+				routeHealth = nil
+				continue
+			}
+			box.mu.Lock()
+			box.routeHealth = append([]controlplane.RouteSiteHealth{}, health...)
+			box.mu.Unlock()
 		}
 		select {
 		case box.changed <- struct{}{}:
@@ -180,6 +193,13 @@ func (box *reportBox) offer() []netip.Prefix {
 	box.mu.Lock()
 	defer box.mu.Unlock()
 	return slices.Clone(box.advertised)
+}
+
+// health returns the latest Site health, nil before it was measured.
+func (box *reportBox) health() []controlplane.RouteSiteHealth {
+	box.mu.Lock()
+	defer box.mu.Unlock()
+	return slices.Clone(box.routeHealth)
 }
 
 // takePaths returns the pending path report, once.
@@ -306,7 +326,7 @@ func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, e
 		capabilities = append(capabilities, "routes.subnet.v1")
 	}
 	if stream.options.EnableSubnetRouter {
-		capabilities = append(capabilities, "router.subnet.v1")
+		capabilities = append(capabilities, "router.subnet.v1", "router.health1")
 	}
 	s, err := c.open(ctx, stream.origin, sessionOptions{
 		machine: stream.keys.machine, control: stream.keys.control,
@@ -360,6 +380,10 @@ type sessionRun struct {
 	enforced    *controlplane.EnforcementReport
 	// offered is the offer sent in this session; nil before the first.
 	offered []netip.Prefix
+	// healthSent is the Site health sent in this session and healthSentAt
+	// when; nil before the first.
+	healthSent   []controlplane.RouteSiteHealth
+	healthSentAt time.Time
 	// unacked counts applied deltas not acknowledged yet, ackView is the
 	// latest applied view and ackTimer acknowledges it (mtcp-v1 §7.2).
 	unacked  int
@@ -381,6 +405,8 @@ func (run *sessionRun) loop(ctx context.Context, inbox <-chan incoming) (bool, t
 	defer keepalive.Stop()
 	heartbeat := time.NewTicker(enforcementHeartbeat)
 	defer heartbeat.Stop()
+	healthBeat := time.NewTicker(routeHealthHeartbeat)
+	defer healthBeat.Stop()
 	endpointTimer := time.NewTimer(time.Hour)
 	endpointTimer.Stop()
 	defer endpointTimer.Stop()
@@ -410,6 +436,10 @@ func (run *sessionRun) loop(ctx context.Context, inbox <-chan incoming) (bool, t
 		case <-heartbeat.C:
 			run.enforced = nil // resend the current evidence
 			if err := run.sendReports(endpointTimer); err != nil {
+				return run.mapped, 0, err
+			}
+		case <-healthBeat.C:
+			if err := run.sendRouteHealth(); err != nil {
 				return run.mapped, 0, err
 			}
 		case <-keepalive.C:
@@ -607,6 +637,9 @@ func (run *sessionRun) sendReports(timer *time.Timer) error {
 	if err := run.sendOffer(); err != nil {
 		return err
 	}
+	if err := run.sendRouteHealth(); err != nil {
+		return err
+	}
 	if run.supports("stats.path1") {
 		if paths := run.stream.reports.takePaths(); paths != nil {
 			if err := run.send(sharedmtcp.MessagePathStatsReport, pathStatsMessage(*paths)); err != nil {
@@ -639,6 +672,45 @@ func (run *sessionRun) sendOffer() error {
 	}
 	run.offered = offer
 	return nil
+}
+
+// sendRouteHealth sends the served Sites' health (mtcp-v1 §8.3) when it
+// changed, and again every routeHealthHeartbeat while not empty.
+func (run *sessionRun) sendRouteHealth() error {
+	if !run.mapped || !run.stream.options.EnableSubnetRouter || !run.supports("router.health1") {
+		return nil
+	}
+	health := run.stream.reports.health()
+	if health == nil {
+		return nil
+	}
+	changed := run.healthSent == nil || !slices.Equal(run.healthSent, health)
+	if !changed && (len(health) == 0 || time.Since(run.healthSentAt) < routeHealthHeartbeat-time.Second) {
+		return nil
+	}
+	report := &mtcpv1.RouteHealthReport{Sites: make([]*mtcpv1.RouteHealthReport_SiteHealth, 0, len(health))}
+	for _, site := range health {
+		report.Sites = append(report.Sites, &mtcpv1.RouteHealthReport_SiteHealth{
+			SiteRef: site.Ref, State: routeHealthState(site.State), Code: site.Code,
+		})
+	}
+	if err := run.send(sharedmtcp.MessageRouteHealthReport, report); err != nil {
+		return err
+	}
+	run.healthSent, run.healthSentAt = health, time.Now()
+	return nil
+}
+
+func routeHealthState(state controlplane.RouteHealthState) mtcpv1.RouteHealthReport_SiteHealth_State {
+	switch state {
+	case controlplane.RouteHealthOK:
+		return mtcpv1.RouteHealthReport_SiteHealth_OK
+	case controlplane.RouteHealthDegraded:
+		return mtcpv1.RouteHealthReport_SiteHealth_DEGRADED
+	case controlplane.RouteHealthFailed:
+		return mtcpv1.RouteHealthReport_SiteHealth_FAILED
+	}
+	return mtcpv1.RouteHealthReport_SiteHealth_STATE_UNSPECIFIED
 }
 
 func (run *sessionRun) supports(capability string) bool {

@@ -60,10 +60,12 @@ type Client struct {
 	recordEnforcement  recordEnforcementFunc
 	recordPaths        func(ctx context.Context, key string, generation int64, encoded string, ttl time.Duration) (int64, error)
 	recordConnectivity func(ctx context.Context, key string, generation int64, encoded string, ttl time.Duration) (int64, error)
-	loadSession        loadSessionFunc
-	touchDelivery      touchDeliveryFunc
-	loadDeliveries     loadDeliveriesFunc
-	replicaLoad        replicaLoadFunc
+	recordRouteHealth  func(ctx context.Context, key string, generation int64, encoded string, reportedAt int64,
+		ttl time.Duration) (int64, error)
+	loadSession    loadSessionFunc
+	touchDelivery  touchDeliveryFunc
+	loadDeliveries loadDeliveriesFunc
+	replicaLoad    replicaLoadFunc
 	// withdrawReplicaLoad removes one control replica's load field.
 	withdrawReplicaLoad func(ctx context.Context, key, replicaID string) error
 	metrics             *redisMetrics
@@ -226,7 +228,7 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 			return recordDeliveryScript.Run(recordCtx, client, []string{deliveryKey, sessionKey},
 				record.generation, record.networkRevision, record.policyRevision, record.deliveredAt,
 				ttl.Milliseconds(), record.filterDigest, record.filterGrants, record.nodeID, record.machine,
-				record.peerLimit).Int64()
+				record.peerLimit, record.routeDigest, record.routeEntries).Int64()
 		},
 		loadSession: func(loadCtx context.Context, key string) ([]any, error) {
 			return client.HMGet(loadCtx, key, "node_id", "generation", "machine").Result()
@@ -238,7 +240,13 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 			ttl time.Duration,
 		) (int64, error) {
 			return recordEnforcementScript.Run(recordCtx, client, []string{key}, record.generation,
-				record.digest, record.grants, record.appliedAt, record.reportedAt, ttl.Milliseconds()).Int64()
+				record.digest, record.grants, record.appliedAt, record.reportedAt, ttl.Milliseconds(),
+				record.routeDigest, record.routeEntries).Int64()
+		},
+		recordRouteHealth: func(recordCtx context.Context, key string, generation int64, encoded string,
+			reportedAt int64, ttl time.Duration) (int64, error) {
+			return recordRouteHealthScript.Run(recordCtx, client, []string{key}, generation, encoded, reportedAt,
+				ttl.Milliseconds()).Int64()
 		},
 		recordPaths: func(recordCtx context.Context, key string, generation int64, encoded string,
 			ttl time.Duration) (int64, error) {

@@ -242,6 +242,7 @@ payload     bytes[...]
 | 0x32 | `HealthReport` | N→C | 16 KiB |
 | 0x33 | `PathStatsReport` | N→C | 256 KiB |
 | 0x34 | `EnforcementReport` | N→C | 1 KiB |
+| 0x35 | `RouteHealthReport` | N→C | 160 KiB |
 | 0x40 | `RelayTicket` | C→N | 256 KiB (4 KiB without `relay.zones2`) |
 | 0x50 | `Lifecycle` | C→N | 4 KiB |
 | 0x51 | `KeyUpdate` | C→N | 4 KiB |
@@ -783,6 +784,17 @@ identity.
 - `HealthReport`: component states (data plane, DNS, relay sessions, clock
   skew) as enums plus short codes; no free-form logs. On change, at most once
   per 10 s.
+- `RouteHealthReport`: only on a session that negotiated `router.health1`, the
+  health of every Site it serves (7.6), as it measures it itself: `site_ref`,
+  a state (`OK`, `DEGRADED` as a warning only, `FAILED`) and a code of at most
+  64 bytes, such as `forwarding_off`, `nft_rules_missing`, `no_route`,
+  `prefix_not_advertised`, `forward_blocked`, `probe_failed` or
+  `conntrack_high`. At most 1,024 Sites, sorted by `site_ref`, each once. The
+  whole set is sent on change and every 10 s while the node serves any Site,
+  and once empty when it serves none. Core keeps the latest set for the
+  Device's current session, only for Sites of the `served` it sent, and
+  treats a set without a report for 30 s as unknown, not failed. A malformed
+  report, or one on a session without `router.health1`, is `INVALID`.
 - `PathStatsReport`: per peer, for the last interval (default 60 s): bytes and
   packets sent/received direct and relayed, the path technique (direct,
   peer-reflexive, prediction, birthday, relay), the relay region, smoothed RTT
@@ -919,6 +931,7 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `map.large1` | Node applies maps of up to 10,000 peers; without it Core sends at most 256 |
 | `routes.subnet.v1` | Node applies `routes` (7.6) |
 | `router.subnet.v1` | Node can forward into Sites: it applies `served` (7.6) and reports `route_digest` (8.4) |
+| `router.health1` | Node sends `RouteHealthReport` (8.3); only with `router.subnet.v1` |
 | `relay.zones2` | Node hands relays MTT2 tickets and their ZONES (MTRP §5.4, §6.1). Core offers it only once every relay accepts them |
 
 Unknown names are ignored. Core sends a feature only when both sides list it.
@@ -939,6 +952,7 @@ Unknown names are ignored. Core sends a feature only when both sides list it.
 | Browser approvals issued or resumed per session (6.2) | 2 at once, then 1 per 10 s; over it `Error{OVERLOADED, retry_after_ms}`. A malformed resume handle is refused before it counts |
 | `MapResync` per session (7.1) | 2 at once, then 1 per 5 s; over it fatal `Error{OVERLOADED, retry_after_ms}`, and the node gets a fresh snapshot when it reconnects |
 | `EnforcementReport` per session (8.4) | 4 at once, then 1 per second; over it the latest report is kept, replacing any kept before, and stored when the budget allows |
+| `RouteHealthReport` per session (8.3) | 2 at once, then 1 per 2 s; over it the latest report is kept, replacing any kept before, and stored when the budget allows |
 | Offers of `HostinfoReport` stored per session (8.2) | 4 at once, then 1 per 10 s; over it the latest offer is kept, replacing any kept before, and stored when the budget allows. An offer sent before the session serves a Device is stored once it does |
 | A Device's live presence lease moving to another Core replica | 10 per minute; past it the stream ends with `Lifecycle{RECONNECT, retry_after_ms}` until the minute is over. Two processes sharing one machine key are bounded to that rate, not stopped; a reconnect after a replica ended, a rolling update or a rebalance moves it once. A refused attempt still costs Core the snapshot and relay ticket it prepared, but not their delivery |
 | Everything a node sends, per session | 200 messages at once, then 50 per second, and 1 MiB of records at once, then 256 KiB per second; over either, fatal `Error{OVERLOADED, retry_after_ms}`. `MapAck` counts only as bytes: it answers map messages Core chose to send, and nodes that ack every message (7.2) must not reach the limit |

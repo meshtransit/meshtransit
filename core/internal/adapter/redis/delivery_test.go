@@ -63,6 +63,16 @@ func TestClientRecordsAndTouchesDeliveryUnderOneKey(t *testing.T) {
 		gotRecord.filterGrants != "" || gotRecord.peerLimit != "" {
 		t.Fatalf("record without filter = %+v, %v", gotRecord, err)
 	}
+	routes, err := mapsession.NewRouteDigest(filter.Digest(), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivery.Routes = routes
+	if err := client.RecordDelivery(t.Context(), delivery); err != nil || gotRecord.routeDigest != testDigestText ||
+		gotRecord.routeEntries != "2" {
+		t.Fatalf("record with routes = %+v, %v", gotRecord, err)
+	}
+	delivery.Routes = mapsession.RouteDigest{}
 	delivery.PeersSent, delivery.PeersAuthorized = 10_000, 80_000
 	if err := client.RecordDelivery(t.Context(), delivery); err != nil || gotRecord.peerLimit != "10000:80000" {
 		t.Fatalf("record with a peer limit = %+v, %v", gotRecord, err)
@@ -101,8 +111,9 @@ func TestClientLoadsObservationsInOrder(t *testing.T) {
 			return []any{
 				"4", "9", "3", "1759924800000", "1759924860000", testDigestText, "7",
 				testDigestText, "7", "1759924801000", "1759924802000", testPathsText, testConnectivityText,
-				"10000:80000", "1",
-				"", "", "", "", "", "", "", "", "", "", "", "", "", "", "0",
+				"10000:80000", testDigestText, "3", testDigestText, "3",
+				`[["prod","failed","forward_blocked"]]`, "1759924803000", "1",
+				"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "0",
 			}, nil
 		},
 		metrics: newRedisMetrics(1, nil),
@@ -134,8 +145,36 @@ func TestClientLoadsObservationsInOrder(t *testing.T) {
 	if first.PeerLimit != (distribution.PeerLimit{Sent: 10_000, Authorized: 80_000}) {
 		t.Fatalf("first peer limit = %+v", first.PeerLimit)
 	}
+	if first.Routes != (distribution.RouteSummary{Digest: first.Filter.Digest, Entries: 3}) ||
+		first.EnforcedRoutes != first.Routes || len(first.RouteHealth) != 1 ||
+		first.RouteHealth[0] != (distribution.SiteHealth{Ref: "prod", State: "failed", Code: "forward_blocked"}) ||
+		first.RouteHealthAt.UnixMilli() != 1759924803000 {
+		t.Fatalf("first routes = %+v %+v %+v at %v", first.Routes, first.EnforcedRoutes, first.RouteHealth, first.RouteHealthAt)
+	}
 	if second.Known || second.Online {
 		t.Fatalf("second = %+v", second)
+	}
+}
+
+func TestDecodeRoutesRefusesMalformedFields(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string][2]string{
+		"digest without entries": {testDigestText, ""},
+		"entries without digest": {"", "3"},
+		"bad digest":             {"sha256:00", "3"},
+		"too many entries":       {testDigestText, "4097"},
+	} {
+		if _, err := decodeRouteSummary(test[0], test[1]); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+	for _, text := range []string{"{", `[["a","b"]]`, `"x"`} {
+		if _, err := decodeRouteHealth(text); err == nil {
+			t.Errorf("route health %q was accepted", text)
+		}
+	}
+	if health, err := decodeRouteHealth(""); err != nil || health != nil {
+		t.Fatalf("empty route health = %v, %v", health, err)
 	}
 }
 
@@ -243,6 +282,12 @@ func TestClientRecordsEnforcementForItsSession(t *testing.T) {
 		gotKey != deliveryKeyForNode(nodeID) || gotRecord != want {
 		t.Fatalf("RecordEnforcement() = %t, %v; %s %+v", stored, err, gotKey, gotRecord)
 	}
+	withRoutes := enforcement
+	withRoutes.Routes, _ = mapsession.NewRouteDigest(enforcement.Filter.Digest(), 5)
+	if stored, err := client.RecordEnforcement(t.Context(), withRoutes); err != nil || !stored ||
+		gotRecord.routeDigest != testDigestText || gotRecord.routeEntries != "5" {
+		t.Fatalf("RecordEnforcement() with routes = %t, %v; %+v", stored, err, gotRecord)
+	}
 	result = 0
 	if stored, err := client.RecordEnforcement(t.Context(), enforcement); err != nil || stored {
 		t.Fatalf("stale session RecordEnforcement() = %t, %v", stored, err)
@@ -264,6 +309,49 @@ func TestClientRecordsEnforcementForItsSession(t *testing.T) {
 	}
 	if _, err := client.RecordEnforcement(t.Context(), mapsession.Enforcement{}); !errors.Is(err, ErrInvalidOptions) {
 		t.Fatalf("invalid RecordEnforcement() error = %v", err)
+	}
+}
+
+func TestClientRecordsRouteHealthForItsSession(t *testing.T) {
+	t.Parallel()
+	nodeID := testDeliveryNode(t)
+	session := []any{nodeID.String(), "4", hex.EncodeToString(testMachine[:])}
+	var gotKey, gotEncoded string
+	var gotGeneration, gotAt int64
+	client := &Client{
+		loadSession: func(context.Context, string) ([]any, error) { return session, nil },
+		recordRouteHealth: func(_ context.Context, key string, generation int64, encoded string, at int64,
+			_ time.Duration) (int64, error) {
+			gotKey, gotGeneration, gotEncoded, gotAt = key, generation, encoded, at
+			return 1, nil
+		},
+		metrics: newRedisMetrics(1, nil),
+	}
+	reported := time.UnixMilli(1759924803000)
+	health := mapsession.RouteHealth{NodeKey: testNodeKey, MachineFingerprint: testMachine, ReportedAt: reported,
+		Sites: []mapsession.SiteHealth{
+			{Ref: "prod", State: mapsession.RouteHealthFailed, Code: "forward_blocked"},
+			{Ref: "uat", State: mapsession.RouteHealthOK, Code: "ok"},
+		}}
+	stored, err := client.RecordRouteHealth(t.Context(), health)
+	if err != nil || !stored || gotKey != deliveryKeyForNode(nodeID) || gotGeneration != 4 ||
+		gotAt != reported.UnixMilli() || gotEncoded != `[["prod","failed","forward_blocked"],["uat","ok","ok"]]` {
+		t.Fatalf("RecordRouteHealth() = %t, %v; %s %d %s", stored, err, gotKey, gotGeneration, gotEncoded)
+	}
+	decoded, err := decodeRouteHealth(gotEncoded)
+	if err != nil || len(decoded) != 2 || decoded[0] != (distribution.SiteHealth{Ref: "prod", State: "failed", Code: "forward_blocked"}) {
+		t.Fatalf("round trip = %+v, %v", decoded, err)
+	}
+	other := health
+	other.MachineFingerprint = [32]byte{0x55}
+	gotKey = ""
+	if stored, err := client.RecordRouteHealth(t.Context(), other); err != nil || stored || gotKey != "" {
+		t.Fatalf("other machine = %t, %v, wrote %q", stored, err, gotKey)
+	}
+	invalid := health
+	invalid.Sites = []mapsession.SiteHealth{{Ref: "prod", State: mapsession.RouteHealthFailed}}
+	if _, err := client.RecordRouteHealth(t.Context(), invalid); !errors.Is(err, ErrInvalidOptions) {
+		t.Fatalf("invalid health = %v", err)
 	}
 }
 

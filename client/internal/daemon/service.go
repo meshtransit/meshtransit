@@ -853,10 +853,13 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		}
 		nextControlKey, _ := record.NextControlKey()
 		var advertisedRoutes chan []netip.Prefix
+		var routeHealth chan []controlplane.RouteSiteHealth
 		if s.enableSubnetRouter {
 			advertisedRoutes = make(chan []netip.Prefix)
 			go watchRouteOffer(streamCtx, s.loadRouteSettings, s.routeSettingsPath, routeOfferPoll, s.logger,
 				advertisedRoutes)
+			routeHealth = make(chan []controlplane.RouteSiteHealth)
+			go watchRouteHealth(streamCtx, s.subnetRouterStatus, routeHealthPoll, routeHealth)
 		}
 		go func() {
 			streamDone <- s.prober.StreamNetmap(
@@ -868,6 +871,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					EnableSubnetRoutes:  s.enableSubnetRoutes,
 					EnableSubnetRouter:  s.enableSubnetRouter,
 					AdvertisedRoutes:    advertisedRoutes,
+					RouteHealth:         routeHealth,
 					Hostname:            s.hostname,
 					Version:             "meshd/" + s.build.Version,
 					PinnedFingerprint:   record.ControlKeyFingerprint(),

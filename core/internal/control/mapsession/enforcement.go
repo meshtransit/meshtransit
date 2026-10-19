@@ -58,6 +58,9 @@ type ClientEnforcement struct {
 	NodeKey   node.Key
 	Filter    FilterDigest
 	AppliedAt time.Time
+	// Routes is the route digest of what a router serves; zero from a node
+	// that does not route.
+	Routes RouteDigest
 }
 
 // Enforcement is one enforcement report, bound to the authenticated node
@@ -66,6 +69,7 @@ type Enforcement struct {
 	NodeKey            node.Key
 	MachineFingerprint [32]byte
 	Filter             FilterDigest
+	Routes             RouteDigest
 	AppliedAt          time.Time
 	ReportedAt         time.Time
 }
@@ -131,7 +135,7 @@ func (service *StreamService) ReportEnforcement(
 	defer cancel()
 	stored, err := service.enforcement.RecordEnforcement(operationCtx, Enforcement{
 		NodeKey: identity.NodeKey(), MachineFingerprint: identity.MachineFingerprint(),
-		Filter: report.Filter, AppliedAt: appliedAt, ReportedAt: now,
+		Filter: report.Filter, Routes: report.Routes, AppliedAt: appliedAt, ReportedAt: now,
 	})
 	if err != nil {
 		return errors.Join(ErrEnforcementUnavailable, err)

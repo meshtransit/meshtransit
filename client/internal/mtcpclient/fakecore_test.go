@@ -38,6 +38,8 @@ type fakeCore struct {
 	serve      func(*coreSession)
 	hello      []*mtcpv1.ClientHello
 	modes      []string
+	// extra are capabilities offered beyond the default ones.
+	extra []string
 }
 
 // set changes the fake Core under its lock.
@@ -216,9 +218,12 @@ func (core *fakeCore) webSocket(response http.ResponseWriter, request *http.Requ
 }
 
 func (core *fakeCore) reply() *mtcpv1.ServerHello {
+	core.mu.Lock()
+	capabilities := append([]string{"map.zstd", "stats.path1"}, core.extra...)
+	core.mu.Unlock()
 	return &mtcpv1.ServerHello{
 		ProtocolVersion: 1, SessionId: make([]byte, 16), ServerTimeMs: time.Now().UnixMilli(),
-		Capabilities: []string{"map.zstd", "stats.path1"}, Limits: &mtcpv1.Limits{KeepaliveS: 25, IdleTimeoutS: 75, MaxUnackedMap: 8},
+		Capabilities: capabilities, Limits: &mtcpv1.Limits{KeepaliveS: 25, IdleTimeoutS: 75, MaxUnackedMap: 8},
 	}
 }
 

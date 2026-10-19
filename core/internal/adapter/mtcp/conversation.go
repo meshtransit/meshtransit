@@ -90,6 +90,8 @@ type Application struct {
 	enforcementTimer func(time.Duration, func()) endpointTimer
 	// routeOfferTimer starts the route offer pacing's timer.
 	routeOfferTimer func(time.Duration, func()) endpointTimer
+	// routeHealthTimer starts the route health pacing's timer.
+	routeHealthTimer func(time.Duration, func()) endpointTimer
 }
 
 // NewApplication validates its dependencies.
@@ -115,7 +117,8 @@ func NewApplication(options ApplicationOptions) (*Application, error) {
 		return nil, ErrInvalidServer
 	}
 	return &Application{options: options, now: time.Now, poll: approvalPollInterval,
-		endpointTimer: realEndpointTimer, enforcementTimer: realEndpointTimer, routeOfferTimer: realEndpointTimer}, nil
+		endpointTimer: realEndpointTimer, enforcementTimer: realEndpointTimer, routeOfferTimer: realEndpointTimer,
+		routeHealthTimer: realEndpointTimer}, nil
 }
 
 // Open implements SessionHandler.
@@ -130,7 +133,8 @@ func (application *Application) Open(session *Session) Conversation {
 		identity: newRateBudget(identityBurst, identityRate), browser: newRateBudget(browserBurst, browserRate),
 		resync:            newRateBudget(resyncBurst, resyncRate),
 		enforcementPacing: enforcementPacing{budget: newRateBudget(enforcementBurst, enforcementRate)},
-		routeOfferPacing:  routeOfferPacing{budget: newRateBudget(routeOfferBurst, routeOfferRate)}}
+		routeOfferPacing:  routeOfferPacing{budget: newRateBudget(routeOfferBurst, routeOfferRate)},
+		routeHealthPacing: routeHealthPacing{budget: newRateBudget(routeHealthBurst, routeHealthRate)}}
 }
 
 type conversation struct {
@@ -151,6 +155,8 @@ type conversation struct {
 	enforcementPacing enforcementPacing
 	// routeOfferPacing paces the offers of HostinfoReports.
 	routeOfferPacing routeOfferPacing
+	// routeHealthPacing paces RouteHealthReports.
+	routeHealthPacing routeHealthPacing
 	// lastConnectivity is the connectivity last stored for this session.
 	// Only a store claimed by endpointPacing reads and writes it, without
 	// the lock: busy runs one store at a time, and claiming and finishing
@@ -195,6 +201,7 @@ func (conversation *conversation) Run(ctx context.Context) error {
 	defer conversation.stopEndpointPacing()
 	defer conversation.stopEnforcementPacing()
 	defer conversation.stopRouteOfferPacing()
+	defer conversation.stopRouteHealthPacing()
 	for {
 		nodeKey, generation, streamCtx, cancel := conversation.startStream(ctx)
 		if nodeKey.IsValid() {
@@ -419,6 +426,8 @@ func (conversation *conversation) Receive(ctx context.Context, _ sharedmtcp.Mess
 		return conversation.hostinfo(m)
 	case *mtcpv1.HealthReport:
 		// Accepted; nothing reads it yet.
+	case *mtcpv1.RouteHealthReport:
+		return conversation.routeHealth(m)
 	case *mtcpv1.RegisterRequest:
 		if wait, ok := conversation.identity.spend(conversation.application.now(), 1); !ok {
 			conversation.application.options.Metrics.limited(limitIdentity)
@@ -452,12 +461,18 @@ func (conversation *conversation) enforcement(ctx context.Context, report *mtcpv
 	if err != nil {
 		return
 	}
+	// A router's route digest (mtcp-v1 §8.4); a malformed one is not
+	// stored, the policy digest still is.
+	var routes mapsession.RouteDigest
+	if len(report.GetRouteDigest()) == 32 {
+		routes, _ = mapsession.NewRouteDigest(policydigest.Digest(report.GetRouteDigest()), int(report.GetRouteEntries()))
+	}
 	machine, err := control.NewAuthenticatedMachine(node.MachineKey(conversation.session.Machine()))
 	if err != nil {
 		return
 	}
 	if err := conversation.application.options.Streams.ReportEnforcement(ctx, machine, mapsession.ClientEnforcement{
-		NodeKey: nodeKey, Filter: filter, AppliedAt: time.UnixMilli(report.GetAppliedMs()),
+		NodeKey: nodeKey, Filter: filter, AppliedAt: time.UnixMilli(report.GetAppliedMs()), Routes: routes,
 	}); err != nil {
 		conversation.application.options.Logger.DebugContext(ctx, "mtcp enforcement report not stored", "error", err)
 	}

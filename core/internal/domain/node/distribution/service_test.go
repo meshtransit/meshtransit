@@ -12,6 +12,7 @@ import (
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/workspace"
+	"meshtransit.net/shared/policydigest"
 )
 
 var testNow = time.Date(2026, time.October, 8, 12, 0, 0, 0, time.UTC)
@@ -192,5 +193,45 @@ func TestServiceRejectsBadInputAndEvidence(t *testing.T) {
 	service, _ = NewService(&fakeReader{err: ErrForbidden}, fakeObservations{}, fixedClock{})
 	if _, err := service.ReadDevice(t.Context(), session, scope, device); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("forbidden error = %v", err)
+	}
+}
+
+func TestClassifyRouteEnforcementAndCurrentHealth(t *testing.T) {
+	t.Parallel()
+	delivered := time.Date(2026, time.October, 19, 10, 0, 0, 0, time.UTC)
+	routes := RouteSummary{Digest: policydigest.Digest{1}, Entries: 2}
+	observation := Observation{Known: true, SessionGeneration: 1, NetworkRevision: 1, DeliveredAt: delivered,
+		SeenAt: delivered, Routes: routes}
+	if got := ClassifyRouteEnforcement(Observation{}, delivered); got != EnforcementUnknown {
+		t.Fatalf("unknown = %s", got)
+	}
+	if got := ClassifyRouteEnforcement(observation, delivered.Add(time.Second)); got != EnforcementApplying {
+		t.Fatalf("within grace = %s", got)
+	}
+	if got := ClassifyRouteEnforcement(observation, delivered.Add(2*time.Minute)); got != EnforcementNotReported {
+		t.Fatalf("no report = %s", got)
+	}
+	observation.EnforcedRoutes = routes
+	if got := ClassifyRouteEnforcement(observation, delivered.Add(2*time.Minute)); got != EnforcementEnforced {
+		t.Fatalf("same digest = %s", got)
+	}
+	observation.EnforcedRoutes = RouteSummary{Digest: policydigest.Digest{2}, Entries: 1}
+	if got := ClassifyRouteEnforcement(observation, delivered.Add(2*time.Minute)); got != EnforcementMismatch {
+		t.Fatalf("other digest = %s", got)
+	}
+	observation.RouteHealth = []SiteHealth{{Ref: "prod", State: SiteHealthFailed, Code: "probe_failed"}}
+	observation.RouteHealthAt = delivered
+	if !observation.IsValid() {
+		t.Fatal("an observation with route health is invalid")
+	}
+	if health, current := CurrentRouteHealth(observation, delivered.Add(10*time.Second)); !current || len(health) != 1 {
+		t.Fatalf("fresh health = %v, %t", health, current)
+	}
+	if _, current := CurrentRouteHealth(observation, delivered.Add(RouteHealthStale+time.Second)); current {
+		t.Fatal("stale health counts as current")
+	}
+	observation.RouteHealth[0].State = "melted"
+	if observation.IsValid() {
+		t.Fatal("an unknown health state is valid")
 	}
 }

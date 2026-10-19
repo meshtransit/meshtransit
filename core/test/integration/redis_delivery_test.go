@@ -92,15 +92,19 @@ func assertRedisEnforcementRecords(ctx context.Context, t *testing.T, client *re
 	if err != nil {
 		t.Fatal(err)
 	}
+	routes, err := mapsession.NewRouteDigest(digest, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := client.RecordDelivery(ctx, mapsession.Delivery{NodeID: nodeID, NodeKey: integrationNodeKey,
 		MachineFingerprint: integrationMachine, SessionGeneration: 4,
-		NetworkRevision: 2, PolicyRevision: 2, DeliveredAt: at, Filter: filter}); err != nil {
+		NetworkRevision: 2, PolicyRevision: 2, DeliveredAt: at, Filter: filter, Routes: routes}); err != nil {
 		t.Fatal(err)
 	}
 	report := func(machine [32]byte) bool {
 		t.Helper()
 		stored, err := client.RecordEnforcement(ctx, mapsession.Enforcement{NodeKey: integrationNodeKey,
-			MachineFingerprint: machine, Filter: filter, AppliedAt: at, ReportedAt: at.Add(time.Second)})
+			MachineFingerprint: machine, Filter: filter, Routes: routes, AppliedAt: at, ReportedAt: at.Add(time.Second)})
 		if err != nil {
 			t.Fatalf("RecordEnforcement() error = %v", err)
 		}
@@ -123,8 +127,22 @@ func assertRedisEnforcementRecords(ctx context.Context, t *testing.T, client *re
 	observation := load()
 	if observation.Filter.Digest != digest || observation.Enforced.Digest != digest ||
 		!observation.ReportedAt.Equal(at.Add(time.Second)) ||
-		distribution.ClassifyEnforcement(observation, at) != distribution.EnforcementEnforced {
+		distribution.ClassifyEnforcement(observation, at) != distribution.EnforcementEnforced ||
+		distribution.ClassifyRouteEnforcement(observation, at) != distribution.EnforcementEnforced ||
+		observation.Routes.Entries != 2 {
 		t.Fatalf("enforced observation = %+v", observation)
+	}
+	// A router's Site health is kept for its current session.
+	health := mapsession.RouteHealth{NodeKey: integrationNodeKey, MachineFingerprint: integrationMachine,
+		ReportedAt: at.Add(2 * time.Second), Sites: []mapsession.SiteHealth{
+			{Ref: "prod", State: mapsession.RouteHealthFailed, Code: "forward_blocked"},
+		}}
+	if stored, err := client.RecordRouteHealth(ctx, health); err != nil || !stored {
+		t.Fatalf("RecordRouteHealth() = %t, %v", stored, err)
+	}
+	if current, ok := distribution.CurrentRouteHealth(load(), at.Add(3*time.Second)); !ok || len(current) != 1 ||
+		current[0] != (distribution.SiteHealth{Ref: "prod", State: "failed", Code: "forward_blocked"}) {
+		t.Fatalf("route health = %+v, %t", current, ok)
 	}
 	if err := client.RecordDelivery(ctx, mapsession.Delivery{NodeID: nodeID, NodeKey: integrationNodeKey,
 		MachineFingerprint: integrationMachine, SessionGeneration: 4,
@@ -140,7 +158,14 @@ func assertRedisEnforcementRecords(ctx context.Context, t *testing.T, client *re
 		t.Fatal(err)
 	}
 	if observation := load(); !observation.Filter.IsZero() || !observation.Enforced.IsZero() ||
-		!observation.ReportedAt.IsZero() {
+		!observation.ReportedAt.IsZero() || !observation.Routes.IsZero() || !observation.EnforcedRoutes.IsZero() ||
+		observation.RouteHealth != nil || !observation.RouteHealthAt.IsZero() {
 		t.Fatalf("a new session kept the previous report: %+v", observation)
+	}
+	health.ReportedAt = at.Add(3 * time.Second)
+	other := health
+	other.NodeKey = node.Key{0x77}
+	if stored, err := client.RecordRouteHealth(ctx, other); err != nil || stored {
+		t.Fatalf("health of a node key without a session = %t, %v", stored, err)
 	}
 }

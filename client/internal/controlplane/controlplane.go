@@ -141,7 +141,11 @@ type NetmapOptions struct {
 	// AdvertisedRoutes, with EnableSubnetRouter, carries the subnets the
 	// host's local settings offer to forward; each set is sent to Core in a
 	// HostinfoReport, again in every new session.
-	AdvertisedRoutes   <-chan []netip.Prefix
+	AdvertisedRoutes <-chan []netip.Prefix
+	// RouteHealth, with EnableSubnetRouter, carries the health of every
+	// served Site; each set is sent in a RouteHealthReport when Core takes
+	// it (router.health1), again every 10 seconds while not empty.
+	RouteHealth        <-chan []RouteSiteHealth
 	Hostname           string
 	Version            string
 	PinnedFingerprint  string
@@ -241,6 +245,26 @@ type PortMappingState struct {
 	Protocol  string // pcp, nat-pmp, upnp or empty
 	State     string // off, idle, searching, mapped, double_nat, unavailable, failed
 	ExpiresAt time.Time
+}
+
+// RouteHealthState is a served Site's state as its router measures it
+// (mtcp-v1 §8.3).
+type RouteHealthState int
+
+// The states of mtcp-v1 §8.3.
+const (
+	RouteHealthOK RouteHealthState = iota + 1
+	// RouteHealthDegraded is a warning only.
+	RouteHealthDegraded
+	RouteHealthFailed
+)
+
+// RouteSiteHealth is one served Site's health.
+type RouteSiteHealth struct {
+	Ref   string
+	State RouteHealthState
+	// Code is a short reason, at most 64 bytes.
+	Code string
 }
 
 // EnforcementReport is the evidence of what the packet filter enforces

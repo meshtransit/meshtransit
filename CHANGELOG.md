@@ -5,6 +5,12 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- MTCP: `RouteHealthReport` (0x35) and capability `router.health1`: a Linux
+  subnet router sends Core the health of every Site it serves, on change and
+  every 10 seconds. Core keeps it, only for the Sites it sent, with the
+  Device's current map session in Redis, and also keeps the route digest of
+  the served routes it delivers next to the one the router reports, so a
+  router that serves something else can be told apart (Console views follow).
 - Client (Linux): a subnet router measures each Site it serves every 2
   seconds and shows it in `meshctl status` and the local API
   (`subnet_router.site_health`): forwarding turned off, the router table

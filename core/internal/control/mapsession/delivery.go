@@ -25,6 +25,9 @@ type Delivery struct {
 	PolicyRevision     int64
 	DeliveredAt        time.Time
 	Filter             FilterDigest
+	// Routes is the route digest of the served routes sent, for a session
+	// that can route.
+	Routes RouteDigest
 	// PeersSent and PeersAuthorized differ when a peer limit cut the map.
 	PeersSent       int
 	PeersAuthorized int
@@ -48,6 +51,7 @@ func deliveryOf(snapshot Snapshot, filter FilterDigest, at time.Time) Delivery {
 		PolicyRevision:     snapshot.PacketPolicy().Revision(),
 		DeliveredAt:        at.UTC(),
 		Filter:             filter,
+		Routes:             routeDigestOf(snapshot),
 	}
 	delivery.PeersSent, delivery.PeersAuthorized = snapshot.PeerLimit()
 	return delivery
