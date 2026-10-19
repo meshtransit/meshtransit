@@ -166,6 +166,13 @@ func (conversation *conversation) storeRouteHealths(kept *keptRouteHealth) {
 // storeRouteHealth stores one report made while kept.nodeKey was the
 // session's key; a failure waits for the router's next report.
 func (conversation *conversation) storeRouteHealth(kept *keptRouteHealth) {
+	conversation.storeRouteHealthWithin(conversation.session.ctx, kept)
+}
+
+// routeHealthLastStore bounds storing the report kept when a session ends.
+const routeHealthLastStore = 2 * time.Second
+
+func (conversation *conversation) storeRouteHealthWithin(ctx context.Context, kept *keptRouteHealth) {
 	streams, ok := conversation.application.options.Streams.(RouteHealthStreams)
 	if !ok || !kept.nodeKey.IsValid() || kept.nodeKey != conversation.currentKey() {
 		return
@@ -174,22 +181,30 @@ func (conversation *conversation) storeRouteHealth(kept *keptRouteHealth) {
 	if err != nil {
 		return
 	}
-	ctx := conversation.session.ctx
 	if err := streams.ReportRouteHealth(ctx, machine, kept.nodeKey, kept.sites); err != nil &&
 		!errors.Is(err, context.Canceled) {
 		conversation.application.options.Logger.DebugContext(ctx, "mtcp route health not stored", "error", err)
 	}
 }
 
-// stopRouteHealthPacing ends the pacing when the session ends, dropping a
-// kept report, and waits for a store already running.
+// stopRouteHealthPacing ends the pacing when the session ends: it waits for
+// a store already running, then stores a kept report once, whatever the
+// budget. That is a router's last word, such as going_away when it stops
+// (design §6.2): one store more per session at most.
 func (conversation *conversation) stopRouteHealthPacing() {
 	pacing := &conversation.routeHealthPacing
 	pacing.mu.Lock()
-	pacing.stopped, pacing.waiting = true, nil
+	pacing.stopped = true
+	kept := pacing.waiting
+	pacing.waiting = nil
 	if pacing.timer != nil {
 		pacing.timer.Stop()
 	}
 	pacing.mu.Unlock()
 	pacing.running.Wait()
+	if kept != nil {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(conversation.session.ctx), routeHealthLastStore)
+		defer cancel()
+		conversation.storeRouteHealthWithin(ctx, kept)
+	}
 }

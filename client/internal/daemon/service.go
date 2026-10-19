@@ -370,6 +370,7 @@ type Service struct {
 	enableSubnetRoutes   bool
 	enableSubnetRouter   bool
 	routeSettingsPath    string
+	restartMarkerPath    string
 	loadRouteSettings    func(string) (routesettings.Settings, error)
 	clock                func() time.Time
 	runtimeRetryDelay    func(time.Duration) time.Duration
@@ -436,6 +437,10 @@ type Options struct {
 	// of the settings at RouteSettingsPath (mtcp-v1 §7.6, §8.2).
 	EnableSubnetRouter bool
 	RouteSettingsPath  string
+	// RestartMarkerPath, when set, is the file a package upgrade writes just
+	// before it restarts meshd: a stopping router then does not tell Core it
+	// is going away, as it comes straight back.
+	RestartMarkerPath  string
 	Hostname           string
 	Clock              func() time.Time
 	DataPlane          DataPlaneController
@@ -524,6 +529,7 @@ func New(
 		enableSubnetRoutes:   options.EnableSubnetRoutes,
 		enableSubnetRouter:   options.EnableSubnetRouter,
 		routeSettingsPath:    options.RouteSettingsPath,
+		restartMarkerPath:    options.RestartMarkerPath,
 		loadRouteSettings:    routesettings.Load,
 		clock:                options.Clock,
 		runtimeRetryDelay:    jitteredRuntimeRetryDelay,
@@ -556,6 +562,8 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 	defer func() {
 		runErr = errors.Join(runErr, s.closeDNS(), s.stopDataPlane())
 	}()
+	// The restart the marker announced has happened: a later stop is real.
+	clearRestartMarker(s.restartMarkerPath, s.logger)
 
 	// Signals raised before the supervisor starts are already reflected in the
 	// persisted stores that the first loop iteration reads.
@@ -915,6 +923,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					EnableSubnetRouter:  s.enableSubnetRouter,
 					AdvertisedRoutes:    advertisedRoutes,
 					RouteHealth:         routeHealth,
+					AnnounceGoingAway:   func() bool { return !restartExpected(s.restartMarkerPath, s.clock()) },
 					Hostname:            s.hostname,
 					Version:             "meshd/" + s.build.Version,
 					PinnedFingerprint:   record.ControlKeyFingerprint(),

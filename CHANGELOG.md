@@ -5,6 +5,11 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Client (Linux): a subnet router whose service stops tells Core first, with
+  a last route health report of every Site it served failed as
+  `going_away`, so Core elects another router within a second instead of
+  after two minutes of silence. A package upgrade restarting meshd writes
+  `/run/meshd/restart-expected` first, and the router then stays primary.
 - Client: a node whose packets to a Site go unanswered for 5 seconds, while
   the Site's router stopped answering its direct path probes and another of
   the Site's routers answers, routes the Site through that router until Core

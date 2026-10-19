@@ -791,7 +791,10 @@ identity.
   `prefix_not_advertised`, `forward_blocked`, `probe_failed` or
   `conntrack_high`. At most 1,024 Sites, sorted by `site_ref`, each once. The
   whole set is sent on change and every 10 s while the node serves any Site,
-  and once empty when it serves none. Core keeps the latest set for the
+  and once empty when it serves none. A router whose service stops (not a
+  restart its package expects) sends a last set with every Site it served
+  `FAILED` as `going_away` before it closes the session, so Core elects
+  another router at once. Core keeps the latest set for the
   Device's current session, only for Sites of the `served` it sent, and
   treats a set without a report for 30 s as unknown, not failed. A malformed
   report, or one on a session without `router.health1`, is `INVALID`.

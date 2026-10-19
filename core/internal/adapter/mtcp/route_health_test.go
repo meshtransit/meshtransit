@@ -104,8 +104,15 @@ func TestConversationPacesRouteHealth(t *testing.T) {
 	if len(got) != routeHealthBurst+1 || got[len(got)-1][0].Code != "code_d" {
 		t.Fatalf("stored %v, want the latest report last", got)
 	}
-	f.talk.reportRouteHealth(report("late"))
+	// A report kept when the session ends, such as a router's going_away,
+	// is stored once then, whatever the budget; nothing after.
+	f.talk.reportRouteHealth(report("going_away"))
+	before := len(stored())
 	f.talk.stopRouteHealthPacing()
+	if got := stored(); len(got) != before+1 || got[len(got)-1][0].Code != "going_away" {
+		t.Fatalf("the last report was not stored when the session ended: %v", got)
+	}
+	f.talk.reportRouteHealth(report("late"))
 	f.advance(time.Minute)
 	f.routeHealthTimer.trigger()
 	if got := stored(); got[len(got)-1][0].Code == "late" {

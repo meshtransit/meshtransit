@@ -530,3 +530,53 @@ func TestStreamNetmapHandsCoresWaitToTheDaemon(t *testing.T) {
 		t.Fatalf("StreamNetmap = %v, wait %s; want paused with 7s", err, controlplane.RetryAfterOf(err))
 	}
 }
+
+func TestStreamNetmapTellsCoreARouterIsGoingAway(t *testing.T) {
+	t.Parallel()
+	for _, announce := range []bool{true, false} {
+		measured := make(chan struct{})
+		last := make(chan *mtcpv1.RouteHealthReport, 1)
+		core := newStreamCore(t, func(core *streamCore, s *coreSession, _ int32) {
+			core.keyUpdate(s)
+			_ = s.send(sharedmtcp.MessageMapSnapshot, core.snapshot(1))
+			if core.expect(s, sharedmtcp.MessageRouteHealthReport) == nil {
+				return
+			}
+			close(measured)
+			if report, ok := core.expect(s, sharedmtcp.MessageRouteHealthReport).(*mtcpv1.RouteHealthReport); ok {
+				last <- report
+			}
+		})
+		core.extra = []string{"router.subnet.v1", "router.health1"}
+		material, options := core.options(t)
+		health := make(chan []controlplane.RouteSiteHealth, 1)
+		health <- []controlplane.RouteSiteHealth{{Ref: "prod", State: controlplane.RouteHealthOK, Code: "ok"}}
+		options.EnableSubnetRouter, options.RouteHealth = true, health
+		options.AnnounceGoingAway = func() bool { return announce }
+		ctx, cancel := context.WithCancelCause(t.Context())
+		done := make(chan error, 1)
+		go func() {
+			done <- core.client().StreamNetmap(ctx, core.origin(), material, options,
+				func(context.Context, networkmap.Snapshot) error { return nil })
+		}()
+		select {
+		case <-measured:
+		case <-time.After(5 * time.Second):
+			t.Fatal("no route health report reached Core")
+		}
+		cancel(controlplane.ErrStopping)
+		<-done
+		select {
+		case report := <-last:
+			sites := report.GetSites()
+			if !announce || len(sites) != 1 || sites[0].GetSiteRef() != "prod" ||
+				sites[0].GetState() != mtcpv1.RouteHealthReport_SiteHealth_FAILED || sites[0].GetCode() != "going_away" {
+				t.Fatalf("announce %t: last report %v", announce, report)
+			}
+		case <-time.After(time.Second):
+			if announce {
+				t.Fatal("a stopping router did not say it is going away")
+			}
+		}
+	}
+}

@@ -9,12 +9,14 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
 
 	"meshtransit.net/client/internal/cloudaddr"
 	"meshtransit.net/client/internal/config"
+	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/daemon"
 	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/client/internal/flowlog"
@@ -134,6 +136,10 @@ func runContext(parent context.Context, args []string, stdout, stderr io.Writer)
 	daemonOptions.EnableSubnetRoutes = cfg.EnableSubnetRoutes
 	daemonOptions.EnableSubnetRouter = cfg.EnableSubnetRouter
 	daemonOptions.RouteSettingsPath = cfg.RouteSettingsFile
+	if runtime.GOOS == "linux" {
+		// Written by the package's postinst before it restarts meshd.
+		daemonOptions.RestartMarkerPath = "/run/meshd/restart-expected"
+	}
 	if cfg.EnableDataPlane {
 		engine, err := dataplane.NewWireGuardWithObserver(
 			opener,
@@ -243,7 +249,26 @@ func runContext(parent context.Context, args []string, stdout, stderr io.Writer)
 		}
 	}()
 
-	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
+	// A signal, or the service manager ending parent, stops the service:
+	// the context then ends with controlplane.ErrStopping, so a subnet router
+	// tells Core it is going away. Ending for another reason (a component
+	// stopped) is no announcement.
+	ctx, cancel := context.WithCancelCause(parent)
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		select {
+		case <-signals:
+			cancel(controlplane.ErrStopping)
+		case <-parent.Done():
+			cancel(controlplane.ErrStopping)
+		case <-ctx.Done():
+		}
+	}()
+	stop := func() {
+		signal.Stop(signals)
+		cancel(nil)
+	}
 	defer stop()
 	if err := notifier.Ready(ctx); err != nil {
 		logger.Error("reporting service readiness failed", "error", err)

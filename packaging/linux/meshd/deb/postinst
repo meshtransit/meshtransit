@@ -97,6 +97,11 @@ case "$1" in
                     meshd_expected_running=true
                 fi
             fi
+            if [ "${action}" = try-restart ] && [ -d /run/meshd ]; then
+                # meshd comes straight back: a subnet router that stops
+                # now does not tell Core it is going away.
+                : >/run/meshd/restart-expected 2>/dev/null || true
+            fi
             deb-systemd-invoke "${action}" meshnetd.service meshd.service >/dev/null
             wait_for_readiness_transition \
                 meshnetd.service "${meshnetd_expected_running}"

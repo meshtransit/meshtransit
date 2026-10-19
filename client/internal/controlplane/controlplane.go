@@ -18,6 +18,9 @@ import (
 )
 
 var (
+	// ErrStopping is the cause meshd's context ends with when the service
+	// stops: a subnet router then tells Core it is going away.
+	ErrStopping = errors.New("control: meshd is stopping")
 	// ErrInvalidFingerprint indicates a malformed operator-supplied control
 	// key fingerprint.
 	ErrInvalidFingerprint = errors.New("control: invalid control key fingerprint")
@@ -145,7 +148,11 @@ type NetmapOptions struct {
 	// RouteHealth, with EnableSubnetRouter, carries the health of every
 	// served Site; each set is sent in a RouteHealthReport when Core takes
 	// it (router.health1), again every 10 seconds while not empty.
-	RouteHealth        <-chan []RouteSiteHealth
+	RouteHealth <-chan []RouteSiteHealth
+	// AnnounceGoingAway, with EnableSubnetRouter, reports whether a router
+	// that stops (its context ends with ErrStopping) tells Core with a last
+	// RouteHealthReport; false while a restart is expected.
+	AnnounceGoingAway  func() bool
 	Hostname           string
 	Version            string
 	PinnedFingerprint  string

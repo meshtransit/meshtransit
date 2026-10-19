@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"net/netip"
+	"os"
 	"testing"
 	"time"
 
@@ -237,4 +238,27 @@ func TestRouteFailoverJudgesANewRouterFromItsOwnTime(t *testing.T) {
 			t.Fatalf("left router-2, which answers: %q", h.primary())
 		}
 	}
+}
+
+func TestRestartExpectedOnlyForAFreshMarker(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	path := t.TempDir() + "/restart-expected"
+	if restartExpected(path, now) || restartExpected("", now) {
+		t.Fatal("a missing marker expects a restart")
+	}
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !restartExpected(path, now) {
+		t.Fatal("a fresh marker does not expect a restart")
+	}
+	if restartExpected(path, now.Add(restartMarkerFresh+time.Second)) {
+		t.Fatal("an old marker still expects a restart")
+	}
+	clearRestartMarker(path, nil)
+	if restartExpected(path, now) {
+		t.Fatal("a cleared marker still expects a restart")
+	}
+	clearRestartMarker(path, nil) // already gone: nothing to do
 }

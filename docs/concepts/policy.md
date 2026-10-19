@@ -123,7 +123,10 @@ preferred) and a state, `active` or `draining`. Core elects one of them the
 Site's **primary**, and every node sends the Site's traffic through it:
 
 - Core judges each router about every 10 seconds, and at once when a router
-  reports a Site failed, from the health the router reports: a router that reports the Site failed (such as
+  reports a Site failed, from the health the router reports (a router whose
+  service stops reports its Sites failed as `going_away` first, so stopping
+  meshd on a router moves its Sites within a second or two; a package upgrade
+  that restarts meshd does not): a router that reports the Site failed (such as
   `forward_blocked`), stays silent for more than 2 minutes after it has
   reported, is draining, or can no longer serve the Site (expired, moved out of
   the Workspace, or no longer offering its prefixes) is replaced by the next

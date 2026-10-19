@@ -414,9 +414,14 @@ func (run *sessionRun) loop(ctx context.Context, inbox <-chan incoming) (bool, t
 	run.ackTimer.Stop()
 	defer run.ackTimer.Stop()
 	for {
+		// The end of ctx goes first: a stopping router announces it before
+		// handling anything else.
+		if ctx.Err() != nil {
+			return run.stopped(ctx)
+		}
 		select {
 		case <-ctx.Done():
-			return run.mapped, 0, ctx.Err()
+			return run.stopped(ctx)
 		case in := <-inbox:
 			if in.err != nil {
 				return run.mapped, 0, errors.Join(errSessionEnded, in.err)
@@ -699,6 +704,51 @@ func (run *sessionRun) sendRouteHealth() error {
 	}
 	run.healthSent, run.healthSentAt = health, time.Now()
 	return nil
+}
+
+// sendGoingAway tells Core that this router stops serving every Site it
+// served in this session: a last RouteHealthReport with each FAILED as
+// going_away (design §6.2), so Core elects another router at once instead of
+// waiting for its silence. Not while a restart is expected, and best effort:
+// the session ends either way.
+func (run *sessionRun) sendGoingAway() {
+	options := run.stream.options
+	if !run.mapped || !options.EnableSubnetRouter || !run.supports("router.health1") || len(run.healthSent) == 0 ||
+		options.AnnounceGoingAway == nil || !options.AnnounceGoingAway() {
+		return
+	}
+	report := &mtcpv1.RouteHealthReport{Sites: make([]*mtcpv1.RouteHealthReport_SiteHealth, 0, len(run.healthSent))}
+	for _, site := range run.healthSent {
+		report.Sites = append(report.Sites, &mtcpv1.RouteHealthReport_SiteHealth{
+			SiteRef: site.Ref, State: mtcpv1.RouteHealthReport_SiteHealth_FAILED, Code: goingAwayCode,
+		})
+	}
+	_ = run.send(sharedmtcp.MessageRouteHealthReport, report)
+}
+
+// goingAwayCode is the health code of a router that stops.
+const goingAwayCode = "going_away"
+
+// goingAwayWait bounds the last report's write: on a dead connection the
+// service must still stop well within its stop timeout. The session's close
+// ends a write still running.
+const goingAwayWait = 2 * time.Second
+
+// stopped ends the session once ctx ended, first telling Core when the
+// service stops.
+func (run *sessionRun) stopped(ctx context.Context) (bool, time.Duration, error) {
+	if errors.Is(context.Cause(ctx), controlplane.ErrStopping) {
+		sent := make(chan struct{})
+		go func() {
+			defer close(sent)
+			run.sendGoingAway()
+		}()
+		select {
+		case <-sent:
+		case <-time.After(goingAwayWait):
+		}
+	}
+	return run.mapped, 0, ctx.Err()
 }
 
 func routeHealthState(state controlplane.RouteHealthState) mtcpv1.RouteHealthReport_SiteHealth_State {
