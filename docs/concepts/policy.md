@@ -142,6 +142,12 @@ Site's **primary**, and every node sends the Site's traffic through it:
 - Each change is recorded as `site.primary_changed` with its reason
   (`elected`, `failover`, `failback`, `degraded` or `none`) and advances the
   Network's revision, so maps follow at once.
+- One Site's read (`GET …/sites/{site}`) carries `primary`: the elected
+  `device_id` (null when no router can serve), its `generation`, `reason` and
+  `elected_at`; it is absent before the first election, when the first active
+  router by priority serves. `GET …/sites/{site}/primary-changes` lists the
+  changes newest first, 10 per page by default (`limit` up to 50, `after` the
+  `next_after` of the previous page), with `route.read`.
 - A Site without `masquerade` has one router: the network behind it sends
   replies to a single router. Adding a second one, or turning masquerade off
   while it has two, is refused (409 `site_masquerade_requires_single_router`).

@@ -37,6 +37,11 @@ func TestParseSitePath(t *testing.T) {
 		{http.MethodGet, base + "/not-an-id", "", false},
 		{http.MethodPut, base + "/" + siteID + "/routers", "", false},
 		{http.MethodGet, base + "/" + siteID + "/members", "", false},
+		{http.MethodGet, base + "/" + siteID + "/primary-changes", sitePrimaryHistoryOperation, true},
+		{http.MethodGet, base + "/" + siteID + "/primary-changes?after=" + deviceID + "&limit=50", sitePrimaryHistoryOperation, true},
+		{http.MethodPost, base + "/" + siteID + "/primary-changes", "", true},
+		{http.MethodGet, base + "/" + siteID + "/primary-changes?limit=51", "", false},
+		{http.MethodGet, base + "/" + siteID + "/primary-changes?after=x", "", false},
 	} {
 		request := httptest.NewRequestWithContext(t.Context(), test.method, test.path, nil)
 		path, matched := parseSitePath(request)

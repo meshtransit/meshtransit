@@ -30,7 +30,10 @@ const listSitesSQL = `SELECT mesh_ops.list_sites_v1(` + sessionArguments + `,$10
 const readPolicySitesSQL = `SELECT mesh_ops.read_policy_sites_v1(` + sessionArguments + `,$10::UUID,$11::UUID,
  $12::UUID[])::TEXT`
 
-const readSiteSQL = `SELECT mesh_ops.read_site_v1(` + sessionArguments + `,$10::UUID,$11::UUID,$12::UUID)::TEXT`
+const readSiteSQL = `SELECT mesh_ops.read_site_v2(` + sessionArguments + `,$10::UUID,$11::UUID,$12::UUID)::TEXT`
+
+const listSitePrimaryChangesSQL = `SELECT mesh_ops.list_site_primary_changes_v1(` + sessionArguments +
+	`,$10::UUID,$11::UUID,$12::UUID,$13::UUID,$14::INTEGER)::TEXT`
 
 const changeSiteSQL = `SELECT mesh_ops.change_site_v1(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::TEXT,$13::UUID,$14::BIGINT,$15::TEXT,$16::CIDR[],$17::BOOLEAN,$18::BOOLEAN,
@@ -284,9 +287,10 @@ func (store *SiteStore) Read(ctx context.Context, session accountsession.Session
 		return site.Reading{}, site.ErrInvalid
 	}
 	var envelope struct {
-		Site      siteDocument `json:"site"`
-		CanManage bool         `json:"can_manage"`
-		CanDelete bool         `json:"can_delete"`
+		Site      siteDocument         `json:"site"`
+		Primary   *sitePrimaryDocument `json:"primary"`
+		CanManage bool                 `json:"can_manage"`
+		CanDelete bool                 `json:"can_delete"`
 	}
 	if err := store.read(ctx, session, scope, readSiteSQL, &envelope, id.String()); err != nil {
 		return site.Reading{}, err
@@ -295,8 +299,91 @@ func (store *SiteStore) Read(ctx context.Context, session accountsession.Session
 	if err != nil || stored.ID != id {
 		return site.Reading{}, site.ErrInvalid
 	}
-	return site.Reading{Site: stored, Abilities: site.Abilities{CanManage: envelope.CanManage,
-		CanDelete: envelope.CanDelete}}, nil
+	reading := site.Reading{Site: stored, Abilities: site.Abilities{CanManage: envelope.CanManage,
+		CanDelete: envelope.CanDelete}}
+	if envelope.Primary != nil {
+		primary, err := envelope.Primary.primary()
+		if err != nil {
+			return site.Reading{}, err
+		}
+		reading.Primary = &primary
+	}
+	return reading, nil
+}
+
+type sitePrimaryDocument struct {
+	DeviceID   *string   `json:"device_id"`
+	Generation int64     `json:"generation"`
+	Reason     string    `json:"reason"`
+	ElectedAt  time.Time `json:"elected_at"`
+}
+
+func (document sitePrimaryDocument) primary() (site.Primary, error) {
+	primary := site.Primary{Generation: document.Generation, Reason: document.Reason, ElectedAt: document.ElectedAt.UTC()}
+	if document.DeviceID != nil {
+		device, err := node.ParseID(*document.DeviceID)
+		if err != nil {
+			return site.Primary{}, site.ErrInvalid
+		}
+		primary.Device = device
+	}
+	if !primary.IsValid() {
+		return site.Primary{}, site.ErrInvalid
+	}
+	return primary, nil
+}
+
+type sitePrimaryChangeDocument struct {
+	EventID    string    `json:"event_id"`
+	OccurredAt time.Time `json:"occurred_at"`
+	DeviceID   *string   `json:"device_id"`
+	PreviousID *string   `json:"previous_device_id"`
+	Reason     string    `json:"reason"`
+	Generation int64     `json:"generation"`
+}
+
+// PrimaryChanges reads one page of a Site's primary changes from the audit
+// history, newest first.
+func (store *SiteStore) PrimaryChanges(ctx context.Context, session accountsession.Session, scope network.Scope,
+	id site.ID, after publicid.ID, limit int) (site.PrimaryHistory, error) {
+	if !session.IsValid() || !scope.IsValid() || !id.IsValid() || limit < 1 || limit > site.MaximumHistoryPage {
+		return site.PrimaryHistory{}, site.ErrInvalid
+	}
+	var afterText any
+	if after != (publicid.ID{}) {
+		afterText = after.String()
+	}
+	var envelope struct {
+		Changes []sitePrimaryChangeDocument `json:"changes"`
+		HasMore bool                        `json:"has_more"`
+	}
+	if err := store.read(ctx, session, scope, listSitePrimaryChangesSQL, &envelope, id.String(), afterText,
+		limit); err != nil {
+		return site.PrimaryHistory{}, err
+	}
+	if envelope.Changes == nil || len(envelope.Changes) > limit {
+		return site.PrimaryHistory{}, site.ErrInvalid
+	}
+	history := site.PrimaryHistory{HasMore: envelope.HasMore, Changes: make([]site.PrimaryChange, 0, len(envelope.Changes))}
+	optionalDevice := func(text *string) (node.ID, bool) {
+		if text == nil {
+			return node.ID{}, true
+		}
+		device, err := node.ParseID(*text)
+		return device, err == nil
+	}
+	for _, document := range envelope.Changes {
+		eventID, err := publicid.Parse(document.EventID)
+		device, deviceOK := optionalDevice(document.DeviceID)
+		previous, previousOK := optionalDevice(document.PreviousID)
+		change := site.PrimaryChange{EventID: eventID, OccurredAt: document.OccurredAt.UTC(), Device: device,
+			Previous: previous, Reason: document.Reason, Generation: document.Generation}
+		if err != nil || !deviceOK || !previousOK || !change.IsValid() {
+			return site.PrimaryHistory{}, site.ErrInvalid
+		}
+		history.Changes = append(history.Changes, change)
+	}
+	return history, nil
 }
 
 // ResolvePolicySites authorizes route.read and returns the active Sites of

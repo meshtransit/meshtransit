@@ -5,6 +5,12 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: one Site's read carries the primary router Core elected (`primary`:
+  device, generation, reason, time), and `GET …/sites/{site}/primary-changes`
+  pages its changes from the audit history, newest first (schema 194).
+  Console: the Site page marks the elected router primary instead of
+  guessing by priority, says why and when it was chosen, and lists the
+  primary changes 10 per page.
 - Core: a Site has up to 32 routers, and Core elects its primary from their
   health about every 10 seconds: a router that reports the Site failed, goes
   silent for over 2 minutes, drains or can no longer serve is replaced in

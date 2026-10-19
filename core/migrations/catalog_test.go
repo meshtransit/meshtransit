@@ -13,8 +13,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 193 {
-		t.Fatalf("len(Catalog()) = %d, want 193", len(catalog))
+	if len(catalog) != 194 {
+		t.Fatalf("len(Catalog()) = %d, want 194", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1609,8 +1609,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 193 {
-		t.Fatalf("LatestVersion() = %d, want 193", LatestVersion())
+	if LatestVersion() != 194 {
+		t.Fatalf("LatestVersion() = %d, want 194", LatestVersion())
 	}
 }
 
@@ -5615,5 +5615,28 @@ func TestSchema193SitePrimaryElection(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "GRANT EXECUTE ON FUNCTION mesh_ops.prepare_site_primary_v1(UUID, UUID, BIGINT, UUID, TEXT, UUID) TO mesh_runtime") {
 		t.Error("the runtime role may elect primaries")
+	}
+}
+
+// Schema 194 lets a Site's readers see its elected primary and history.
+func TestSchema194SitePrimaryReads(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[193]
+	if migration.Version != 194 {
+		t.Fatalf("migration 194 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.read_site_v2(",
+		"CREATE FUNCTION mesh_ops.list_site_primary_changes_v1(",
+		"p_workspace_public_id, p_network_public_id, 'route.read'",
+		"AND event.target_kind = 'site_primary' AND event.action = 'site.primary_changed'",
+		"p_limit NOT BETWEEN 1 AND 50",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 194 lacks %q", want)
+		}
+	}
+	if strings.Count(migration.SQL, ") TO mesh_runtime;") != 2 || strings.Contains(migration.SQL, "TO mesh_worker") {
+		t.Error("schema 194 grants other than the runtime role")
 	}
 }

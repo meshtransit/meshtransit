@@ -54,6 +54,8 @@ type Listing struct {
 // Reading is one Site and what the reader may do with it.
 type Reading struct {
 	Site Site
+	// Primary is the router Core elected; nil before the first election.
+	Primary *Primary
 	Abilities
 }
 
@@ -98,6 +100,8 @@ type Store interface {
 	Read(ctx context.Context, session accountsession.Session, scope network.Scope, site ID) (Reading, error)
 	Change(ctx context.Context, change Change) (Result, error)
 	ChangeRouter(ctx context.Context, change RouterChange) (Result, error)
+	PrimaryChanges(ctx context.Context, session accountsession.Session, scope network.Scope, site ID,
+		after publicid.ID, limit int) (PrimaryHistory, error)
 }
 
 // Clock supplies this host's time for the early session gate only.

@@ -560,6 +560,7 @@ func Catalog() []Migration {
 		newMigration(191, "Maps read a Network's subnet routes", mapNetworkRoutesSQL),
 		newMigration(192, "The Console reads what each Device offers to forward", consoleDeviceOffersSQL),
 		newMigration(193, "Core elects each Site's primary router", sitePrimaryElectionSQL),
+		newMigration(194, "A Site's read carries its elected primary and history", sitePrimaryReadsSQL),
 	}
 }
 
@@ -918,3 +919,6 @@ var consoleDeviceOffersSQL string
 
 //go:embed 000193_site_primary_election.up.sql
 var sitePrimaryElectionSQL string
+
+//go:embed 000194_site_primary_reads.up.sql
+var sitePrimaryReadsSQL string

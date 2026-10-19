@@ -23,6 +23,7 @@ import (
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/policy/compilation"
 	"meshtransit.net/core/internal/domain/policy/publication"
+	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/domain/site"
 	"meshtransit.net/core/internal/domain/site/election"
 )
@@ -303,6 +304,24 @@ SELECT
 	}
 	if events != 3 || systemActors != 3 || outbox != 3 {
 		t.Fatalf("election evidence: events %d, system %d, outbox %d", events, systemActors, outbox)
+	}
+	// Schema 194: the Site's read carries the elected primary, and its
+	// history pages newest first.
+	reading, err := sites.Read(ctx, owner, scope, siteID)
+	if err != nil || reading.Primary == nil || reading.Primary.Device != router || reading.Primary.Generation != 3 ||
+		reading.Primary.Reason != election.ReasonElected {
+		t.Fatalf("Site read primary = %+v, error %v", reading.Primary, err)
+	}
+	first, err := sites.PrimaryChanges(ctx, owner, scope, siteID, publicid.ID{}, 2)
+	if err != nil || len(first.Changes) != 2 || !first.HasMore || first.Changes[0].Device != router ||
+		first.Changes[0].Previous.IsValid() || first.Changes[0].Generation != 3 ||
+		first.Changes[1].Reason != election.ReasonNone || first.Changes[1].Previous != standby {
+		t.Fatalf("first history page = %+v, error %v", first, err)
+	}
+	rest, err := sites.PrimaryChanges(ctx, owner, scope, siteID, first.Changes[1].EventID, 2)
+	if err != nil || len(rest.Changes) != 1 || rest.HasMore || rest.Changes[0].Device != standby ||
+		rest.Changes[0].Reason != election.ReasonFailover || rest.Changes[0].Generation != 1 {
+		t.Fatalf("second history page = %+v, error %v", rest, err)
 	}
 	if _, err := sites.RemoveRouter(ctx, owner, scope, siteID, 3, site.RouterAssignment{DeviceID: standby},
 		newCorrelationID(t)); err != nil {

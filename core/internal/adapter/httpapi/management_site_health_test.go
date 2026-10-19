@@ -92,3 +92,14 @@ func TestDeviceRouterItem(t *testing.T) {
 		t.Fatalf("stale router item = %+v", item)
 	}
 }
+
+func TestSitePrimaryBodies(t *testing.T) {
+	t.Parallel()
+	if text := optionalDeviceText(node.ID{}); text != nil {
+		t.Fatalf("no Device = %q", *text)
+	}
+	device, _ := node.ParseID("01a15307-257a-74a0-a760-cba56b7804fe")
+	if text := optionalDeviceText(device); text == nil || *text != device.String() {
+		t.Fatalf("Device = %v", text)
+	}
+}

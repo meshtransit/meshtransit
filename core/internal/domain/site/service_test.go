@@ -22,6 +22,7 @@ type recordingStore struct {
 	change  site.Change
 	router  site.RouterChange
 	reading site.Reading
+	history site.PrimaryHistory
 }
 
 func (store *recordingStore) List(context.Context, accountsession.Session, network.Scope, site.ID, int) (site.Listing, error) {
@@ -38,6 +39,12 @@ func (store *recordingStore) Change(_ context.Context, change site.Change) (site
 	store.calls++
 	store.change = change
 	return site.Result{}, nil
+}
+
+func (store *recordingStore) PrimaryChanges(context.Context, accountsession.Session, network.Scope, site.ID,
+	publicid.ID, int) (site.PrimaryHistory, error) {
+	store.calls++
+	return store.history, nil
 }
 
 func (store *recordingStore) ChangeRouter(_ context.Context, change site.RouterChange) (site.Result, error) {
@@ -241,4 +248,40 @@ func activeSession(t *testing.T, now time.Time) accountsession.Session {
 		t.Fatal(err)
 	}
 	return session
+}
+
+func TestServiceReadsPrimaryHistory(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, time.October, 19, 10, 0, 0, 0, time.UTC)
+	session := activeSession(t, now)
+	login, _ := session.LoginWorkspaceID()
+	scope, _ := network.NewScope(login, network.ID(newID(t)))
+	siteID := site.ID(newID(t))
+	valid := site.PrimaryChange{EventID: newID(t), OccurredAt: now, Device: node.ID(newID(t)), Reason: "failover",
+		Generation: 2}
+	for name, test := range map[string]struct {
+		history site.PrimaryHistory
+		limit   int
+		wantErr error
+	}{
+		"a page":           {history: site.PrimaryHistory{Changes: []site.PrimaryChange{valid}}, limit: 10},
+		"too large a page": {limit: site.MaximumHistoryPage + 1, wantErr: site.ErrInvalid},
+		"an unknown reason": {history: site.PrimaryHistory{Changes: []site.PrimaryChange{{EventID: valid.EventID,
+			OccurredAt: now, Reason: "whim", Generation: 1}}}, limit: 10, wantErr: site.ErrInvalid},
+		"more than asked": {history: site.PrimaryHistory{Changes: []site.PrimaryChange{valid, valid}}, limit: 1,
+			wantErr: site.ErrInvalid},
+	} {
+		store := &recordingStore{history: test.history}
+		service, err := site.NewService(store, fixedClock{now}, site.SystemIDs{}, site.Config{Limits: site.DefaultLimits()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		history, err := service.PrimaryChanges(t.Context(), session, scope, siteID, publicid.ID{}, test.limit)
+		if !errors.Is(err, test.wantErr) || (err == nil && len(history.Changes) != 1) {
+			t.Errorf("%s: %+v, %v", name, history, err)
+		}
+	}
+	if (site.Primary{Generation: 1, Reason: "none", ElectedAt: now}).IsValid() != true {
+		t.Error("electing none is no valid primary")
+	}
 }

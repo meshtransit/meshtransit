@@ -23,14 +23,15 @@ import (
 )
 
 const (
-	siteListOperation         = "site_list"
-	siteReadOperation         = "site_read"
-	siteCreateOperation       = "site_create"
-	siteUpdateOperation       = "site_update"
-	siteDeleteOperation       = "site_delete"
-	siteRouterPutOperation    = "site_router_put"
-	siteRouterDeleteOperation = "site_router_delete"
-	maximumSiteBodyBytes      = 128 << 10
+	siteListOperation           = "site_list"
+	siteReadOperation           = "site_read"
+	siteCreateOperation         = "site_create"
+	siteUpdateOperation         = "site_update"
+	siteDeleteOperation         = "site_delete"
+	siteRouterPutOperation      = "site_router_put"
+	siteRouterDeleteOperation   = "site_router_delete"
+	sitePrimaryHistoryOperation = "site_primary_history"
+	maximumSiteBodyBytes        = 128 << 10
 )
 
 // SiteManager lists and changes the Sites of a Network and their routers.
@@ -45,6 +46,8 @@ type SiteManager interface {
 		publicid.ID) (site.Result, error)
 	RemoveRouter(context.Context, accountsession.Session, network.Scope, site.ID, int64, site.RouterAssignment,
 		publicid.ID) (site.Result, error)
+	PrimaryChanges(context.Context, accountsession.Session, network.Scope, site.ID, publicid.ID,
+		int) (site.PrimaryHistory, error)
 }
 
 type sitePath struct {
@@ -57,6 +60,8 @@ type sitePath struct {
 	operation string
 	after     site.ID
 	limit     int
+	// afterEvent pages the primary history.
+	afterEvent publicid.ID
 }
 
 // parseSitePath matches, under /api/v1/workspaces/{ws}/networks/{net}:
@@ -64,8 +69,10 @@ type sitePath struct {
 //	GET|POST         sites                        list, create
 //	GET|PATCH|DELETE sites/{site}                 read, update, delete
 //	PUT|DELETE       sites/{site}/routers/{device} set, remove a router
+//	GET              sites/{site}/primary-changes  the elected primary's history
 //
-// Only the list takes a query: after (a Site ID) and limit, once each.
+// Only the lists take a query: after (a Site or change ID) and limit, once
+// each.
 func parseSitePath(request *http.Request) (sitePath, bool) {
 	if request == nil || request.URL == nil || request.URL.RawPath != "" {
 		return sitePath{}, false
@@ -98,6 +105,9 @@ func parseSitePath(request *http.Request) (sitePath, bool) {
 		path.methods = restMethods{http.MethodGet, http.MethodPatch, http.MethodDelete}
 		operations = map[string]string{http.MethodGet: siteReadOperation, http.MethodPatch: siteUpdateOperation,
 			http.MethodDelete: siteDeleteOperation}
+	case len(rest) == 2 && rest[1] == "primary-changes":
+		path.methods = restMethods{http.MethodGet}
+		operations = map[string]string{http.MethodGet: sitePrimaryHistoryOperation}
 	case len(rest) == 3 && rest[1] == "routers":
 		device, err := node.ParseID(rest[2])
 		if err != nil || device.String() != rest[2] {
@@ -119,10 +129,45 @@ func parseSitePath(request *http.Request) (sitePath, bool) {
 	if path.methods.allows(request.Method) {
 		path.operation = operations[request.Method]
 	}
-	if path.operation != siteListOperation {
+	switch path.operation {
+	case siteListOperation:
+		return path.withPage(request.URL.RawQuery)
+	case sitePrimaryHistoryOperation:
+		return path.withHistoryPage(request.URL.RawQuery)
+	default:
 		return path, request.URL.RawQuery == ""
 	}
-	return path.withPage(request.URL.RawQuery)
+}
+
+func (path sitePath) withHistoryPage(rawQuery string) (sitePath, bool) {
+	path.limit = site.DefaultHistoryPage
+	if rawQuery == "" {
+		return path, true
+	}
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return sitePath{}, false
+	}
+	for key, items := range values {
+		if (key != "after" && key != "limit") || len(items) != 1 || items[0] == "" {
+			return sitePath{}, false
+		}
+	}
+	if value := values.Get("after"); value != "" {
+		after, err := publicid.Parse(value)
+		if err != nil || after.String() != value {
+			return sitePath{}, false
+		}
+		path.afterEvent = after
+	}
+	if value := values.Get("limit"); value != "" {
+		limit, err := strconv.Atoi(value)
+		if err != nil || strconv.Itoa(limit) != value || limit < 1 || limit > site.MaximumHistoryPage {
+			return sitePath{}, false
+		}
+		path.limit = limit
+	}
+	return path, true
 }
 
 func (path sitePath) withPage(rawQuery string) (sitePath, bool) {
@@ -187,6 +232,32 @@ type siteRouterBody struct {
 	RouteEnforcement string                `json:"route_enforcement,omitempty"`
 }
 
+// sitePrimaryBody is the router Core elected; DeviceID is null when no
+// router can serve.
+type sitePrimaryBody struct {
+	DeviceID   *string `json:"device_id"`
+	Generation int64   `json:"generation"`
+	Reason     string  `json:"reason"`
+	ElectedAt  string  `json:"elected_at"`
+}
+
+type sitePrimaryChangeBody struct {
+	EventID          string  `json:"event_id"`
+	OccurredAt       string  `json:"occurred_at"`
+	DeviceID         *string `json:"device_id"`
+	PreviousDeviceID *string `json:"previous_device_id"`
+	Reason           string  `json:"reason"`
+	Generation       int64   `json:"generation"`
+}
+
+func optionalDeviceText(device node.ID) *string {
+	if device == (node.ID{}) {
+		return nil
+	}
+	text := device.String()
+	return &text
+}
+
 type siteBody struct {
 	SiteID     string           `json:"site_id"`
 	Name       string           `json:"name"`
@@ -198,6 +269,9 @@ type siteBody struct {
 	Version    int64            `json:"version"`
 	CreatedAt  string           `json:"created_at"`
 	UpdatedAt  string           `json:"updated_at"`
+	// Primary comes with one Site's read only, absent before Core's first
+	// election.
+	Primary *sitePrimaryBody `json:"primary,omitempty"`
 }
 
 var routerStateNames = map[site.RouterState]string{site.RouterActive: "active", site.RouterDraining: "draining"}
@@ -303,6 +377,8 @@ func (handler *ManagementHandler) handleSites(ctx context.Context, response http
 	switch path.operation {
 	case siteListOperation, siteReadOperation:
 		return handler.readSites(ctx, response, correlationID, path, session, fail)
+	case sitePrimaryHistoryOperation:
+		return handler.readSitePrimaryHistory(ctx, response, correlationID, path, session, fail)
 	case siteCreateOperation:
 		definition, valid := parseSiteDefinition(response, request)
 		if !valid {
@@ -356,6 +432,10 @@ func (handler *ManagementHandler) readSites(ctx context.Context, response http.R
 			CorrelationID string `json:"correlation_id"`
 		}
 		output.Data.Site, output.Data.CanManage = newSiteBody(reading.Site), reading.CanManage
+		if primary := reading.Primary; primary != nil {
+			output.Data.Site.Primary = &sitePrimaryBody{DeviceID: optionalDeviceText(primary.Device),
+				Generation: primary.Generation, Reason: primary.Reason, ElectedAt: managementTime(primary.ElectedAt)}
+		}
 		handler.addRouterHealth(ctx, &output.Data.Site, reading.Site)
 		output.Data.CanDelete, output.CorrelationID = reading.CanDelete, correlationID.String()
 		response.Header().Set("ETag", strongVersionETag(reading.Site.Version))
@@ -505,4 +585,33 @@ func (handler *ManagementHandler) addRouterHealth(ctx context.Context, body *sit
 			}
 		}
 	}
+}
+
+func (handler *ManagementHandler) readSitePrimaryHistory(ctx context.Context, response http.ResponseWriter,
+	correlationID publicid.ID, path sitePath, session accountsession.Session, fail func(managementError) string) string {
+	history, err := handler.sites.PrimaryChanges(ctx, session, path.scope, path.siteID, path.afterEvent, path.limit)
+	if err != nil {
+		return fail(classifySiteError(err))
+	}
+	var output struct {
+		Data struct {
+			Changes []sitePrimaryChangeBody `json:"changes"`
+			Next    string                  `json:"next_after,omitempty"`
+		} `json:"data"`
+		CorrelationID string `json:"correlation_id"`
+	}
+	output.Data.Changes = make([]sitePrimaryChangeBody, 0, len(history.Changes))
+	for _, change := range history.Changes {
+		output.Data.Changes = append(output.Data.Changes, sitePrimaryChangeBody{
+			EventID: change.EventID.String(), OccurredAt: managementTime(change.OccurredAt),
+			DeviceID: optionalDeviceText(change.Device), PreviousDeviceID: optionalDeviceText(change.Previous),
+			Reason: change.Reason, Generation: change.Generation,
+		})
+	}
+	if history.HasMore && len(history.Changes) > 0 {
+		output.Data.Next = history.Changes[len(history.Changes)-1].EventID.String()
+	}
+	output.CorrelationID = correlationID.String()
+	writeManagementJSON(ctx, handler.logger, response, http.StatusOK, output)
+	return "success"
 }
