@@ -41,6 +41,7 @@ func TestComposeManagementAPIBuildsBoundedServer(t *testing.T) {
 		processConfig.DNSSuffix,
 		nil,
 		true,
+		true,
 		runtimePool,
 		managementCompositionRateLimiter{},
 		discardCompositionLogger(),

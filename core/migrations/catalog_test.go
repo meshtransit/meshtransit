@@ -15,8 +15,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 201 {
-		t.Fatalf("len(Catalog()) = %d, want 201", len(catalog))
+	if len(catalog) != 202 {
+		t.Fatalf("len(Catalog()) = %d, want 202", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1611,8 +1611,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 201 {
-		t.Fatalf("LatestVersion() = %d, want 201", LatestVersion())
+	if LatestVersion() != 202 {
+		t.Fatalf("LatestVersion() = %d, want 202", LatestVersion())
 	}
 }
 
@@ -5794,5 +5794,35 @@ func TestMigration201AddsExitPools(t *testing.T) {
 		if !strings.Contains(migration.SQL, "'"+prefix.String()+"'") {
 			t.Errorf("schema 201's Internet guard lacks %s", prefix)
 		}
+	}
+}
+
+func TestMigration202StoresExitRules(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[201]
+	if migration.Version != 202 {
+		t.Fatalf("migration 202 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE TABLE mesh.compiled_policy_exit_rule (",
+		"CREATE FUNCTION mesh_ops.attach_policy_exit_rules_v1(",
+		"FROM mesh.compiled_policy_route_rule AS route_rule",
+		"CREATE FUNCTION mesh_ops.read_policy_exit_pools_v1(",
+		"ERRCODE = 'MTX06'",
+		"CREATE FUNCTION mesh_ops.read_policy_simulation_baseline_v6(",
+		"CREATE FUNCTION mesh_ops.read_active_policy_v4(",
+		"'exit_pool'::TEXT AS selector_kind",
+		"FROM mesh.compiled_policy_exit_rule AS rule",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 202 lacks %q", want)
+		}
+	}
+	// The three rule counts, change_exit_pool_v1 and the Identity Group
+	// member change: nothing else is replaced.
+	if strings.Count(migration.SQL, "CREATE OR REPLACE FUNCTION mesh_ops.") != 5 ||
+		!strings.Contains(migration.SQL, "CREATE OR REPLACE FUNCTION mesh_ops.change_identity_group_members_v1") ||
+		strings.Count(migration.SQL, "AND rule.source_identity_group_id = v_group.id") != 3 {
+		t.Error("schema 202 replaces unexpected functions, or the member change misses a rule kind")
 	}
 }

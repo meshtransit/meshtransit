@@ -349,6 +349,9 @@ const (
 	UnsupportedCapabilityShareIntersection
 	// UnsupportedCapabilityRoutedServiceResources reports missing routed/service Resource semantics.
 	UnsupportedCapabilityRoutedServiceResources
+	// UnsupportedCapabilityExitRules reports rules to Exit Pools, whose
+	// Internet access the preview does not list yet.
+	UnsupportedCapabilityExitRules
 )
 
 // String returns the stable wire spelling.
@@ -366,6 +369,8 @@ func (capability UnsupportedCapability) String() string {
 		return "share_intersection"
 	case UnsupportedCapabilityRoutedServiceResources:
 		return "routed_service_resources"
+	case UnsupportedCapabilityExitRules:
+		return "exit_rules"
 	default:
 		return ""
 	}
@@ -373,7 +378,7 @@ func (capability UnsupportedCapability) String() string {
 
 func (capability UnsupportedCapability) isValid() bool {
 	return capability >= UnsupportedCapabilityPrincipalProjection &&
-		capability <= UnsupportedCapabilityRoutedServiceResources
+		capability <= UnsupportedCapabilityExitRules
 }
 
 // ImpactHash is the canonical digest of complete, untruncated simulation evidence.

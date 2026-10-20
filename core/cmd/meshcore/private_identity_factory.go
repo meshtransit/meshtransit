@@ -75,6 +75,9 @@ type privateIdentityFactoryDependencies struct {
 	DNSSuffix dnsname.Suffix
 	// EnrollmentKeys issues enrollment keys; nil reports them unavailable.
 	EnrollmentKeys httpapi.EnrollmentKeyManager
+	// ExitNodes lets Access Rules name Exit Pools
+	// (MESHTRANSIT_EXIT_NODES_ENABLED).
+	ExitNodes bool
 	// SubnetRoutes lets Access Rules name Sites
 	// (MESHTRANSIT_SUBNET_ROUTES_ENABLED).
 	SubnetRoutes bool
@@ -401,6 +404,9 @@ func composePrivateIdentityFactory(
 	if dependencies.SubnetRoutes {
 		resources.sites = siteStore
 	}
+	if dependencies.ExitNodes {
+		resources.exitPools = exitPoolStore
+	}
 	revocations, policies, policyCompiler, policyExplainer, policySimulator,
 		policyApprovals, policyApprovalCatalog, err :=
 		privateIdentityManagementServices(
@@ -536,6 +542,11 @@ func privateIdentityManagementServices(
 	}
 	if resources.sites != nil {
 		if policyCompiler, err = policyCompiler.WithSites(resources.sites); err != nil {
+			return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition
+		}
+	}
+	if resources.exitPools != nil {
+		if policyCompiler, err = policyCompiler.WithExitPools(resources.exitPools); err != nil {
 			return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition
 		}
 	}

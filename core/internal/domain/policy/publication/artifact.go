@@ -17,6 +17,7 @@ const (
 	policyHashDomainV4               = "meshtransit/policy-release/v4\x00"
 	policyHashDomainV5               = "meshtransit/policy-release/v5\x00"
 	policyHashDomainV6               = "meshtransit/policy-release/v6\x00"
+	policyHashDomainV7               = "meshtransit/policy-release/v7\x00"
 	resourceCompilerFormatV2         = 2
 	resourceGroupCompilerFormatV3    = 3
 	importedResourceCompilerFormatV4 = 4
@@ -57,6 +58,7 @@ type Candidate struct {
 	importedResourceDestinations []ImportedResourceDestination
 	groupRules                   []GroupRule
 	routeRules                   []RouteRule
+	exitRules                    []ExitRule
 }
 
 // NewCandidate validates and hashes one compiled policy artifact.
@@ -195,7 +197,10 @@ func (candidate Candidate) ImportedResourceDestinations() []ImportedResourceDest
 // Groups. Each rule ID is unique and used by no other rule of the candidate,
 // and the candidate stays within MaximumRules facts.
 func (candidate Candidate) WithGroupRules(rules []GroupRule) (Candidate, error) {
-	if !candidate.IsValid() || len(candidate.groupRules) > 0 {
+	// Group rules attach before route and exit rules, whose identities they
+	// would otherwise not be checked against.
+	if !candidate.IsValid() || len(candidate.groupRules) > 0 || len(candidate.routeRules) > 0 ||
+		len(candidate.exitRules) > 0 {
 		return Candidate{}, ErrInvalidCandidate
 	}
 	extended := candidate
@@ -213,7 +218,7 @@ func (candidate Candidate) WithGroupRules(rules []GroupRule) (Candidate, error) 
 // rules of different Sites never overlap, and the candidate stays within
 // MaximumRules facts.
 func (candidate Candidate) WithRouteRules(rules []RouteRule) (Candidate, error) {
-	if !candidate.IsValid() || len(candidate.routeRules) > 0 {
+	if !candidate.IsValid() || len(candidate.routeRules) > 0 || len(candidate.exitRules) > 0 {
 		return Candidate{}, ErrInvalidCandidate
 	}
 	if err := CheckRouteOverlap(rules); err != nil {
@@ -232,12 +237,33 @@ func (candidate Candidate) WithRouteRules(rules []RouteRule) (Candidate, error) 
 // RouteRules returns caller-owned rules whose destination is a Site.
 func (candidate Candidate) RouteRules() []RouteRule { return cloneRouteRules(candidate.routeRules) }
 
+// WithExitRules returns the candidate with Access Rules whose destination is
+// an Exit Pool, attached after any route rules. Each rule ID is unique and
+// used by no other rule of the candidate, and the candidate stays within
+// MaximumRules facts.
+func (candidate Candidate) WithExitRules(rules []ExitRule) (Candidate, error) {
+	if !candidate.IsValid() || len(candidate.exitRules) > 0 {
+		return Candidate{}, ErrInvalidCandidate
+	}
+	extended := candidate
+	extended.exitRules = cloneExitRules(rules)
+	slices.SortFunc(extended.exitRules, compareExitRules)
+	extended.semanticHash = hashCandidate(extended)
+	if !extended.IsValid() {
+		return Candidate{}, ErrInvalidCandidate
+	}
+	return extended, nil
+}
+
+// ExitRules returns caller-owned rules whose destination is an Exit Pool.
+func (candidate Candidate) ExitRules() []ExitRule { return cloneExitRules(candidate.exitRules) }
+
 // ProjectionCount is how many stored rule facts the release holds: compiled
-// Device pairs, Imported Resource selectors, group rules and route rules, in
-// that order.
+// Device pairs, Imported Resource selectors, group rules, route rules and
+// exit rules, in that order.
 func (candidate Candidate) ProjectionCount() int {
 	return len(candidate.snapshot.Rules()) + len(candidate.importedResourceDestinations) + len(candidate.groupRules) +
-		len(candidate.routeRules)
+		len(candidate.routeRules) + len(candidate.exitRules)
 }
 
 // GroupRules returns caller-owned rules that select Device Groups.
@@ -252,6 +278,7 @@ func (candidate Candidate) IsValid() bool {
 		validImportedResourceDestinations(candidate) &&
 		validGroupRules(candidate) &&
 		validRouteRules(candidate) &&
+		validExitRules(candidate) &&
 		candidate.semanticHash.IsValid() &&
 		candidate.semanticHash == hashCandidate(candidate)
 }
@@ -307,6 +334,37 @@ func validRouteRules(candidate Candidate) bool {
 	}
 	for index, rule := range candidate.routeRules {
 		if !rule.IsValid() || (index > 0 && compareRouteRules(candidate.routeRules[index-1], rule) >= 0) {
+			return false
+		}
+		if _, used := taken[rule.ruleID]; used {
+			return false
+		}
+	}
+	return true
+}
+
+func validExitRules(candidate Candidate) bool {
+	if len(candidate.exitRules) == 0 {
+		return true
+	}
+	if candidate.ProjectionCount() > policy.MaximumRules {
+		return false
+	}
+	taken := make(map[policy.RuleID]struct{}, candidate.ProjectionCount())
+	for _, rule := range candidate.snapshot.Rules() {
+		taken[rule.ID()] = struct{}{}
+	}
+	for _, destination := range candidate.importedResourceDestinations {
+		taken[destination.ruleID] = struct{}{}
+	}
+	for _, rule := range candidate.groupRules {
+		taken[rule.ruleID] = struct{}{}
+	}
+	for _, rule := range candidate.routeRules {
+		taken[rule.ruleID] = struct{}{}
+	}
+	for index, rule := range candidate.exitRules {
+		if !rule.IsValid() || (index > 0 && compareExitRules(candidate.exitRules[index-1], rule) >= 0) {
 			return false
 		}
 		if _, used := taken[rule.ruleID]; used {
@@ -445,7 +503,9 @@ func validResourceGroupDestinations(candidate Candidate) bool {
 func hashCandidate(candidate Candidate) SemanticHash {
 	rules := candidate.snapshot.Rules()
 	domain := policyHashDomainV1
-	if len(candidate.routeRules) > 0 {
+	if len(candidate.exitRules) > 0 {
+		domain = policyHashDomainV7
+	} else if len(candidate.routeRules) > 0 {
 		domain = policyHashDomainV6
 	} else if len(candidate.groupRules) > 0 {
 		domain = policyHashDomainV5
@@ -485,8 +545,16 @@ func hashCandidate(candidate Candidate) SemanticHash {
 			encoded = appendUint16(encoded, portRange.Last())
 		}
 	}
-	if domain == policyHashDomainV6 {
+	switch domain {
+	case policyHashDomainV6:
 		encoded = append(encoded, presentSections(candidate))
+	case policyHashDomainV7:
+		// v7 also tags route rules: an exit rule may come without them.
+		present := presentSections(candidate)
+		if len(candidate.routeRules) > 0 {
+			present |= 1 << 4
+		}
+		encoded = append(encoded, present)
 	}
 	if len(candidate.resourceDestinations) > 0 || len(candidate.resourceGroupDestinations) > 0 {
 		encoded = appendUint64(encoded, uint64(len(candidate.resourceDestinations)))
@@ -593,6 +661,9 @@ func hashCandidate(candidate Candidate) SemanticHash {
 	}
 	if len(candidate.routeRules) > 0 {
 		encoded = appendRouteRules(encoded, candidate.routeRules)
+	}
+	if len(candidate.exitRules) > 0 {
+		encoded = appendExitRules(encoded, candidate.exitRules)
 	}
 	return SemanticHash(sha256.Sum256(encoded))
 }

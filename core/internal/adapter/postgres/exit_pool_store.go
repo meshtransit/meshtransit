@@ -37,6 +37,9 @@ const changeExitNodeSQL = `SELECT mesh_ops.change_exit_node_v1(` + sessionArgume
  $10::UUID,$11::UUID,$12::TEXT,$13::UUID,$14::BIGINT,$15::UUID,$16::INTEGER,$17::TEXT,$18::INTEGER,
  $19::UUID,$20::UUID)::TEXT`
 
+const readPolicyExitPoolsSQL = `SELECT mesh_ops.read_policy_exit_pools_v1(` + sessionArguments +
+	`,$10::UUID,$11::UUID,$12::UUID[])::TEXT`
+
 const appendExitPoolEvidenceSQL = `SELECT mesh_audit.append_authority_evidence(
  $1::BIGINT,$2::UUID,$3::UUID,$4::BIGINT,$5::BYTEA,$6::BYTEA,
  'network_exit_pool',$7::UUID,$8::BIGINT,$9::BIGINT,$10::UUID,$11::TEXT,$12::TEXT,
@@ -279,6 +282,40 @@ func (store *ExitPoolStore) Read(ctx context.Context, session accountsession.Ses
 	}
 	return exitpool.Reading{Pool: stored, Abilities: exitpool.Abilities{CanManage: envelope.CanManage,
 		CanDelete: envelope.CanDelete}}, nil
+}
+
+// ResolvePolicyExitPools authorizes route.read and returns the active pools
+// of the scope among ids, for the policy compiler. Unknown pools are absent.
+func (store *ExitPoolStore) ResolvePolicyExitPools(ctx context.Context, session accountsession.Session,
+	scope network.Scope, ids []exitpool.ID) ([]exitpool.Pool, error) {
+	if !session.IsValid() || !scope.IsValid() || len(ids) == 0 || len(ids) > exitpool.MaximumPoolsPerNetwork {
+		return nil, exitpool.ErrInvalid
+	}
+	texts := make([]string, len(ids))
+	for index, id := range ids {
+		if !id.IsValid() {
+			return nil, exitpool.ErrInvalid
+		}
+		texts[index] = id.String()
+	}
+	var envelope struct {
+		Pools []exitPoolDocument `json:"pools"`
+	}
+	if err := store.read(ctx, session, scope, readPolicyExitPoolsSQL, &envelope, texts); err != nil {
+		return nil, err
+	}
+	if envelope.Pools == nil || len(envelope.Pools) > len(ids) {
+		return nil, exitpool.ErrInvalid
+	}
+	pools := make([]exitpool.Pool, 0, len(envelope.Pools))
+	for _, document := range envelope.Pools {
+		stored, err := document.pool(false)
+		if err != nil {
+			return nil, err
+		}
+		pools = append(pools, stored)
+	}
+	return pools, nil
 }
 
 // read runs one read function in its own transaction and decodes its result.

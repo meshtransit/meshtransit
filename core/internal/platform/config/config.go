@@ -60,7 +60,9 @@ type Config struct {
 	// SubnetRoutes lets Access Rules name Sites and maps carry routes.
 	SubnetRoutes bool
 	// SiteDenied are the addresses no Site may cover (MESHTRANSIT_SITE_DENIED_CIDRS).
-	SiteDenied   []netip.Prefix
+	SiteDenied []netip.Prefix
+	// ExitNodes lets Access Rules name Exit Pools (MESHTRANSIT_EXIT_NODES_ENABLED).
+	ExitNodes    bool
 	Dependencies DependencyConfig
 	Storage      *StorageConfig
 	API          *APIConfig
@@ -184,6 +186,10 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, err
 	}
 	siteDenied, err := loadSiteDenied(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+	exitNodes, err := loadExitNodes(lookup)
 	if err != nil {
 		return Config{}, err
 	}
@@ -332,6 +338,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		DNSSuffix:               dnsSuffix,
 		SubnetRoutes:            subnetRoutes,
 		SiteDenied:              siteDenied,
+		ExitNodes:               exitNodes,
 		Dependencies:            dependencyConfig,
 		Storage:                 storageConfig,
 		API:                     apiConfig,

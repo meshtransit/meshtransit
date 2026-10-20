@@ -54,6 +54,8 @@ const (
 	DestinationImportedResource
 	// DestinationSite is a Site with the prefixes the rule grants.
 	DestinationSite
+	// DestinationExitPool is the Internet through an Exit Pool.
+	DestinationExitPool
 )
 
 // String returns the stable audit name of the kind.
@@ -73,13 +75,15 @@ func (kind DestinationKind) String() string {
 		return "imported_resource"
 	case DestinationSite:
 		return "site"
+	case DestinationExitPool:
+		return "exit_pool"
 	default:
 		return "unknown"
 	}
 }
 
 func (kind DestinationKind) isValid() bool {
-	return kind > DestinationUnknown && kind <= DestinationSite
+	return kind > DestinationUnknown && kind <= DestinationExitPool
 }
 
 // RuleFingerprint identifies one Access Rule as written: its sources,
@@ -184,6 +188,17 @@ func FingerprintRules(candidate Candidate) (RuleFingerprintSet, error) {
 		source := kind + ":" + rule.Source().ID().String() + ">" + strings.Join(prefixes, ",")
 		traffic := ruleTrafficPart(source, rule.Protocol(), rule.DestinationPortRanges())
 		if err := add(rule.RuleID(), DestinationSite, publicid.ID(rule.SiteID()), traffic); err != nil {
+			return RuleFingerprintSet{}, err
+		}
+	}
+	for _, rule := range candidate.ExitRules() {
+		kind := ruleSideToken(rule.Source().Kind())
+		if kind == "" {
+			return RuleFingerprintSet{}, ErrInvalidRuleFingerprints
+		}
+		source := kind + ":" + rule.Source().ID().String()
+		traffic := ruleTrafficPart(source, rule.Protocol(), rule.DestinationPortRanges())
+		if err := add(rule.RuleID(), DestinationExitPool, publicid.ID(rule.PoolID()), traffic); err != nil {
 			return RuleFingerprintSet{}, err
 		}
 	}

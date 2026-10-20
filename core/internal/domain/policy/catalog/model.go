@@ -50,9 +50,10 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 		tag := row.Intent.DestinationTagID().IsValid()
 		imported := row.Intent.DestinationImportedResourceID().IsValid()
 		siteDestination := row.Intent.DestinationSiteID().IsValid()
+		exitDestination := row.Intent.DestinationExitPoolID().IsValid()
 		// A row names its compiled Device destination except when it selects
-		// an Imported Resource, a Device Group, a tag or a Site destination.
-		named := !imported && !deviceGroup && !tag && !siteDestination
+		// an Imported Resource, a Device Group, a tag, a Site or an Exit Pool.
+		named := !imported && !deviceGroup && !tag && !siteDestination && !exitDestination
 		if params.DeviceRulesOnly && !device && !deviceGroup && !tag ||
 			device && row.DestinationNodeID != row.Intent.DestinationNodeID() ||
 			!named && row.DestinationNodeID.IsValid() || named && !row.DestinationNodeID.IsValid() {

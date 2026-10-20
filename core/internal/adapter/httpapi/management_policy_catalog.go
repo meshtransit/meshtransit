@@ -126,6 +126,9 @@ func activePolicyProjection(snapshot catalog.Snapshot) activePolicyData {
 				prefixes = append(prefixes, prefix.String())
 			}
 		}
+		if rule.DestinationExitPoolID().IsValid() {
+			kind, selector = "exit_pool", rule.DestinationExitPoolID().String()
+		}
 		destination := ""
 		if item.DestinationNodeID.IsValid() {
 			destination = item.DestinationNodeID.String()

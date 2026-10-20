@@ -143,6 +143,7 @@ func integrationBrowserManagementRequest(
 type integrationBrowserPolicyCapture struct {
 	service *publication.Service
 	result  publication.Result
+	err     error
 	calls   int
 }
 
@@ -391,7 +392,7 @@ func (capture *integrationBrowserPolicyCapture) Publish(
 ) (publication.Result, error) {
 	capture.calls++
 	result, err := capture.service.Publish(ctx, command)
-	capture.result = result
+	capture.result, capture.err = result, err
 	return result, err
 }
 
@@ -429,6 +430,9 @@ func publishPolicyOverBrowserManagement(
 	compiler := newIntegrationPolicyCompiler(t, runtimePool)
 	if len(command.Candidate().RouteRules()) != 0 {
 		compiler = newIntegrationSitePolicyCompiler(t, runtimePool)
+	}
+	if len(command.Candidate().ExitRules()) != 0 {
+		compiler = newIntegrationExitPolicyCompiler(t, runtimePool)
 	}
 	handler, err := httpapi.NewManagementHandler(httpapi.ManagementHandlerOptions{Sessions: sessions,
 		Revocations: newIntegrationDeviceRevocationService(t, runtimePool), PolicyPublications: capture,
@@ -468,6 +472,7 @@ func publishPolicyOverBrowserManagement(
 		DestinationGroupID       string      `json:"destination_resource_group_id,omitempty"`
 		DestinationSiteID        string      `json:"destination_site_id,omitempty"`
 		DestinationPrefixes      []string    `json:"destination_prefixes,omitempty"`
+		DestinationExitPoolID    string      `json:"destination_exit_pool_id,omitempty"`
 		Protocol                 string      `json:"protocol"`
 		DestinationPortRanges    []portRange `json:"destination_port_ranges"`
 	}
@@ -544,6 +549,21 @@ func publishPolicyOverBrowserManagement(
 		}
 		rules = append(rules, input)
 	}
+	for _, exit := range command.Candidate().ExitRules() {
+		ranges := exit.DestinationPortRanges()
+		ports := make([]portRange, len(ranges))
+		for index, value := range ranges {
+			ports[index] = portRange{First: value.First(), Last: value.Last()}
+		}
+		input := rule{ID: exit.RuleID().String(), Protocol: exit.Protocol().String(), DestinationPortRanges: ports,
+			DestinationExitPoolID: exit.PoolID().String()}
+		sideTargets := map[publication.SideKind]*string{
+			publication.SideDevice: &input.SourceDeviceID, publication.SideDeviceGroup: &input.SourceDeviceGroupID,
+			publication.SideIdentityGroup: &input.SourceIdentityGroupID, publication.SideDeviceTag: &input.SourceDeviceTagID,
+		}
+		*sideTargets[exit.Source().Kind()] = exit.Source().ID().String()
+		rules = append(rules, input)
+	}
 	var approvalEvidenceID string
 	if command.HasApprovalEvidence() {
 		approvalEvidenceID = command.ApprovalEvidenceID().String()
@@ -574,11 +594,12 @@ func publishPolicyOverBrowserManagement(
 	if response.Code != http.StatusOK || response.statusWrites != 1 || capture.calls != 1 || !capture.result.IsValid() ||
 		response.Header().Get("Set-Cookie") != "" || request.Header.Get("Authorization") != "" {
 		t.Fatalf(
-			"cookie transport bypassed confirmed management policy authority: status=%d writes=%d calls=%d result_valid=%t body=%s",
+			"cookie transport bypassed confirmed management policy authority: status=%d writes=%d calls=%d result_valid=%t publish error=%v body=%s",
 			response.Code,
 			response.statusWrites,
 			capture.calls,
 			capture.result.IsValid(),
+			capture.err,
 			response.Body.String(),
 		)
 	}

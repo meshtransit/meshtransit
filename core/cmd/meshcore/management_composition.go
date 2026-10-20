@@ -55,13 +55,16 @@ type managementCompositionOptions struct {
 	// SubnetRoutes lets Access Rules name Sites
 	// (MESHTRANSIT_SUBNET_ROUTES_ENABLED).
 	SubnetRoutes bool
+	// ExitNodes lets Access Rules name Exit Pools
+	// (MESHTRANSIT_EXIT_NODES_ENABLED).
+	ExitNodes bool
 }
 
 func composeManagementAPI(
 	apiConfig config.APIConfig,
 	dnsSuffix dnsname.Suffix,
 	enrollmentKeys httpapi.EnrollmentKeyManager,
-	subnetRoutes bool,
+	subnetRoutes, exitNodes bool,
 	runtimePool *postgresadapter.Pool,
 	rateLimiter httpapi.ManagementRateLimiter,
 	logger *slog.Logger,
@@ -85,7 +88,7 @@ func composeManagementAPI(
 		API: apiConfig, Keys: managementCompositionKeys{
 			sessions: keyring, idempotency: idempotencyDigester, rateLimit: rateLimitDigester,
 		},
-		DNSSuffix: dnsSuffix, EnrollmentKeys: enrollmentKeys, SubnetRoutes: subnetRoutes,
+		DNSSuffix: dnsSuffix, EnrollmentKeys: enrollmentKeys, SubnetRoutes: subnetRoutes, ExitNodes: exitNodes,
 	}, runtimePool, rateLimiter, logger)
 }
 
@@ -315,6 +318,17 @@ func composeManagementAPIWithKeys(
 			return nil, nil, errors.Join(errInvalidManagementComposition, siteErr)
 		}
 		if policyCompiler, err = policyCompiler.WithSites(siteStore); err != nil {
+			return nil, nil, errors.Join(errInvalidManagementComposition, err)
+		}
+	}
+	if options.ExitNodes {
+		exitPoolStore, poolErr := postgresadapter.NewExitPoolStore(runtimePool, postgresadapter.AccountSessionOptions{
+			StatementTimeout: managementStatementTimeout, IdleTimeout: managementTransactionIdle,
+		})
+		if poolErr != nil {
+			return nil, nil, errors.Join(errInvalidManagementComposition, poolErr)
+		}
+		if policyCompiler, err = policyCompiler.WithExitPools(exitPoolStore); err != nil {
 			return nil, nil, errors.Join(errInvalidManagementComposition, err)
 		}
 	}

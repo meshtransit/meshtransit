@@ -17175,7 +17175,7 @@
       "delete": {
         "operationId": "deleteNetworkExitPool",
         "summary": "Delete an Exit Pool",
-        "description": "Requires route.withdraw. Removes its exit nodes too.",
+        "description": "Requires route.withdraw. Removes its exit nodes too. Refused while rules of the active policy name the pool.",
         "security": [
           {
             "accountSessionCookie": [],
@@ -17423,6 +17423,9 @@
           },
           "404": {
             "description": "exit_pool_not_found"
+          },
+          "409": {
+            "description": "exit_pool_in_use"
           },
           "412": {
             "description": "version_conflict"

@@ -130,7 +130,7 @@ func (store *PolicySimulationStore) readSimulationBaselineOnce(
 	var record policySimulationBaselineRecord
 	var releaseID *string
 	var compilerFormatVersion *int
-	var rules, groupRules, groupMembers, routeRules string
+	var rules, groupRules, groupMembers, routeRules, exitRules string
 	err = transaction.QueryRow(
 		ctx,
 		readPolicySimulationBaselineSQL,
@@ -164,6 +164,7 @@ func (store *PolicySimulationStore) readSimulationBaselineOnce(
 		&groupRules,
 		&groupMembers,
 		&routeRules,
+		&exitRules,
 	)
 	if err != nil {
 		return simulation.Baseline{}, policySimulationDatabaseError(ctx, err)
@@ -187,6 +188,10 @@ func (store *PolicySimulationStore) readSimulationBaselineOnce(
 	}
 	if err := json.Unmarshal([]byte(routeRules), &record.RouteRules); err != nil ||
 		len(record.RouteRules) > policy.MaximumRules {
+		return simulation.Baseline{}, simulation.ErrInvalidBaseline
+	}
+	if err := json.Unmarshal([]byte(exitRules), &record.ExitRules); err != nil ||
+		len(record.ExitRules) > policy.MaximumRules {
 		return simulation.Baseline{}, simulation.ErrInvalidBaseline
 	}
 	baseline, err = record.baseline(scope)
@@ -216,6 +221,7 @@ type policySimulationBaselineRecord struct {
 	Rules                 []policyPublicationRulePayload
 	GroupRules            []policyGroupRulePayload
 	RouteRules            []policyRouteRulePayload
+	ExitRules             []policyExitRulePayload
 	SelectorMembers       []struct {
 		Kind       string   `json:"kind"`
 		SelectorID string   `json:"selector_id"`
@@ -365,7 +371,8 @@ func (record policySimulationBaselineRecord) baseline(
 		}
 		candidate, candidateErr := publication.NewCandidate(snapshot, 1)
 		members, membersErr := record.selectorMembers()
-		if candidateErr != nil || membersErr != nil || len(record.GroupRules) != 0 || len(record.RouteRules) != 0 {
+		if candidateErr != nil || membersErr != nil || len(record.GroupRules) != 0 || len(record.RouteRules) != 0 ||
+			len(record.ExitRules) != 0 {
 			return simulation.Baseline{}, simulation.ErrInvalidBaseline
 		}
 		return simulation.NewBaseline(simulation.BaselineParams{
@@ -412,6 +419,15 @@ func (record policySimulationBaselineRecord) baseline(
 		}
 		if candidate, err = candidate.WithRouteRules(routeRules); err != nil {
 			return simulation.Baseline{}, fmt.Errorf("reconstruct route rules: %w", simulation.ErrInvalidBaseline)
+		}
+	}
+	if len(record.ExitRules) > 0 {
+		exitRules, exitErr := decodePolicyExitRules(record.ExitRules)
+		if exitErr != nil {
+			return simulation.Baseline{}, simulation.ErrInvalidBaseline
+		}
+		if candidate, err = candidate.WithExitRules(exitRules); err != nil {
+			return simulation.Baseline{}, fmt.Errorf("reconstruct exit rules: %w", simulation.ErrInvalidBaseline)
 		}
 	}
 	members, err := record.selectorMembers()

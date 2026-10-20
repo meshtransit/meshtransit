@@ -8,6 +8,7 @@ import (
 
 	"meshtransit.net/core/internal/domain/devicegroup"
 	"meshtransit.net/core/internal/domain/devicetag"
+	"meshtransit.net/core/internal/domain/exitpool"
 	"meshtransit.net/core/internal/domain/identitygroup"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
@@ -47,8 +48,10 @@ type RuleIntentParams struct {
 	DestinationImportedResourceID sharing.ImportedResourceID
 	// DestinationSiteID selects a Site; DestinationPrefixes narrows it to
 	// some of its prefixes (empty for the whole Site).
-	DestinationSiteID     site.ID
-	DestinationPrefixes   []netip.Prefix
+	DestinationSiteID   site.ID
+	DestinationPrefixes []netip.Prefix
+	// DestinationExitPoolID selects the Internet through an Exit Pool.
+	DestinationExitPoolID exitpool.ID
 	Protocol              policy.Protocol
 	DestinationPortRanges []policy.PortRange
 }
@@ -69,6 +72,7 @@ type RuleIntent struct {
 	destinationImportedResourceID sharing.ImportedResourceID
 	destinationSiteID             site.ID
 	destinationPrefixes           []netip.Prefix
+	destinationExitPoolID         exitpool.ID
 	protocol                      policy.Protocol
 	destinationPortRanges         []policy.PortRange
 }
@@ -88,6 +92,7 @@ func NewRuleIntent(params RuleIntentParams) (RuleIntent, error) {
 		destinationImportedResourceID: params.DestinationImportedResourceID,
 		destinationSiteID:             params.DestinationSiteID,
 		destinationPrefixes:           slices.Clone(params.DestinationPrefixes),
+		destinationExitPoolID:         params.DestinationExitPoolID,
 		protocol:                      params.Protocol, destinationPortRanges: slices.Clone(params.DestinationPortRanges),
 	}
 	if !intent.IsValid() {
@@ -126,9 +131,10 @@ func (intent RuleIntent) DestinationTagID() devicetag.ID { return intent.destina
 
 // SelectsDeviceGroup reports whether either side is a group or a tag, so the
 // rule is resolved from membership, ownership and tags when maps are built
-// instead of compiled to Device pairs. A Site rule is a route rule instead.
+// instead of compiled to Device pairs. A Site rule is a route rule instead,
+// and an Exit Pool rule an exit rule.
 func (intent RuleIntent) SelectsDeviceGroup() bool {
-	if intent.destinationSiteID.IsValid() {
+	if intent.destinationSiteID.IsValid() || intent.destinationExitPoolID.IsValid() {
 		return false
 	}
 	return intent.sourceGroupID.IsValid() || intent.destinationDeviceGroupID.IsValid() ||
@@ -162,6 +168,9 @@ func (intent RuleIntent) DestinationPrefixes() []netip.Prefix {
 	return slices.Clone(intent.destinationPrefixes)
 }
 
+// DestinationExitPoolID returns the Exit Pool destination, when selected.
+func (intent RuleIntent) DestinationExitPoolID() exitpool.ID { return intent.destinationExitPoolID }
+
 // Protocol returns the explicit packet protocol.
 func (intent RuleIntent) Protocol() policy.Protocol { return intent.protocol }
 
@@ -181,18 +190,20 @@ func (intent RuleIntent) IsValid() bool {
 	hasGroup := intent.destinationGroupID.IsValid()
 	hasImported := intent.destinationImportedResourceID.IsValid()
 	hasSite := intent.destinationSiteID.IsValid()
+	hasExitPool := intent.destinationExitPoolID.IsValid()
 	if !intent.id.IsValid() || !intent.scope.IsValid() ||
 		boolCount(intent.sourceNodeID.IsValid(), intent.sourceGroupID.IsValid(),
 			intent.sourceIdentityGroupID.IsValid(), intent.sourceTagID.IsValid()) != 1 ||
-		boolCount(hasDevice, hasDeviceGroup, hasTag, hasResource, hasGroup, hasImported, hasSite) != 1 ||
+		boolCount(hasDevice, hasDeviceGroup, hasTag, hasResource, hasGroup, hasImported, hasSite,
+			hasExitPool) != 1 ||
 		!intent.protocol.IsValid() || intent.destinationPortRanges == nil ||
 		(!hasSite && len(intent.destinationPrefixes) > 0) ||
 		len(intent.destinationPrefixes) > site.MaximumPrefixesPerSite {
 		return false
 	}
-	if hasSite {
-		// Any source selector; the prefixes are checked against the Site
-		// when it is resolved.
+	if hasSite || hasExitPool {
+		// Any source selector; a Site's prefixes are checked against the Site
+		// when it is resolved, and an Exit Pool takes none.
 		_, valid := policy.CanonicalTraffic(intent.protocol, intent.destinationPortRanges)
 		return valid
 	}

@@ -100,6 +100,11 @@ func newResult(baseline Baseline, proposed publication.Candidate) (Result, error
 			UnsupportedCapabilityRoutedServiceResources,
 		},
 	}
+	// Neither side's Internet access through Exit Pools is listed yet: say
+	// so, so a preview never reads as no impact.
+	if len(baseline.candidate.ExitRules())+len(proposed.ExitRules()) > 0 {
+		result.unsupported = append(result.unsupported, UnsupportedCapabilityExitRules)
+	}
 	result.addedImportedIntents, result.removedImportedIntents = importedIntentChanges(
 		baseline.candidate.ImportedResourceDestinations(), proposed.ImportedResourceDestinations(),
 	)

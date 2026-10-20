@@ -53,7 +53,9 @@ func encodePolicyRouteRules(change publication.Change) ([]byte, error) {
 	projectionIDs := change.MutationIDs().ProjectionIDs()
 	offset := len(candidate.Snapshot().Rules()) + len(candidate.ImportedResourceDestinations()) +
 		len(candidate.GroupRules())
-	if len(projectionIDs) != offset+len(routeRules) {
+	// Every projection of the release has an identity; this kind's follow
+	// the kinds before it.
+	if len(projectionIDs) != candidate.ProjectionCount() {
 		return nil, ErrPolicyPublicationEvidence
 	}
 	payload := make([]policyRouteRulePayload, len(routeRules))

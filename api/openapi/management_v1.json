@@ -2415,7 +2415,8 @@
               "resource",
               "resource_group",
               "imported_resource",
-              "site"
+              "site",
+              "exit_pool"
             ]
           },
           "destination_prefixes": {
@@ -2606,7 +2607,7 @@
           "protocol",
           "destination_port_ranges"
         ],
-        "description": "Exactly one source (a Device, Device Group, Identity Group or tag) and one destination. A selector source takes a Device, Device Group or tag destination only, an Identity Group is a source only, and a Device-to-Device rule names no selector.",
+        "description": "Exactly one source (a Device, Device Group, Identity Group or tag) and one destination. A selector source takes a Device, Device Group or tag destination only, an Identity Group is a source only, and a Device-to-Device rule names no selector. A Site or Exit Pool destination takes any source.",
         "allOf": [
           {
             "oneOf": [
@@ -2676,6 +2677,10 @@
               "maxLength": 43
             },
             "description": "With destination_site_id only: the part of the Site the rule grants, as canonical CIDRs inside the Site; absent or empty for the whole Site."
+          },
+          "destination_exit_pool_id": {
+            "$ref": "#/components/schemas/PublicID",
+            "description": "An Exit Pool of the Network: the rule grants the Internet through its exit nodes, on the rule's protocol and ports. Takes no destination_prefixes."
           },
           "protocol": {
             "type": "string",
@@ -3143,7 +3148,8 @@
                 "cross_scope_relationships",
                 "guardrail_evaluation",
                 "share_intersection",
-                "routed_service_resources"
+                "routed_service_resources",
+                "exit_rules"
               ]
             }
           },

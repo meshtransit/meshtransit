@@ -13,6 +13,7 @@ import (
 	"meshtransit.net/core/internal/domain/accessgraph/simulation"
 	"meshtransit.net/core/internal/domain/devicegroup"
 	"meshtransit.net/core/internal/domain/devicetag"
+	"meshtransit.net/core/internal/domain/exitpool"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/identitygroup"
 	"meshtransit.net/core/internal/domain/network"
@@ -31,7 +32,7 @@ import (
 const configureActivePolicyReadTransactionSQL = configureResourceAuthoritySQL + `,
     pg_catalog.set_config('plan_cache_mode', 'force_generic_plan', TRUE)`
 
-const readActivePolicySQL = `SELECT mesh_ops.read_active_policy_v3(
+const readActivePolicySQL = `SELECT mesh_ops.read_active_policy_v4(
     $1::UUID, $2::UUID, $3::UUID, $4::UUID, $5::BIGINT,
     $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
     $10::UUID, $11::UUID, $12::TIMESTAMPTZ
@@ -264,6 +265,8 @@ func (row activePolicyRuleWire) parse(scope network.Scope) (catalog.Row, error) 
 			}
 			params.DestinationPrefixes = append(params.DestinationPrefixes, prefix)
 		}
+	case "exit_pool":
+		params.DestinationExitPoolID, err = exitpool.ParseID(row.SelectorID)
 	default:
 		return catalog.Row{}, catalog.ErrInvalidSnapshot
 	}

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"meshtransit.net/core/internal/domain/exitpool"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
@@ -41,6 +42,12 @@ type ImportedDestinationResolver interface {
 	) ([]sharing.PolicyDestination, error)
 }
 
+// ExitPoolResolver returns the active Exit Pools of the scope with the given
+// IDs, as the reader may see them. A missing pool is absent from the result.
+type ExitPoolResolver interface {
+	ResolvePolicyExitPools(context.Context, accountsession.Session, network.Scope, []exitpool.ID) ([]exitpool.Pool, error)
+}
+
 // SiteResolver returns the active Sites of the scope with the given IDs, as
 // the reader may see them. A missing Site is absent from the result.
 type SiteResolver interface {
@@ -59,6 +66,9 @@ var (
 	// ErrRoutePrefixLimit reports rules to Sites that grant more than
 	// publication.MaximumGrantedRoutePrefixes prefixes in all.
 	ErrRoutePrefixLimit = publication.ErrRoutePrefixLimit
+	// ErrExitPoolsDisabled reports an Exit Pool destination on a compiler
+	// without Exit Pools.
+	ErrExitPoolsDisabled = errors.New("policy compilation: Exit Pools are disabled")
 )
 
 // Service compiles typed Device, Resource, and Resource Group destinations.
@@ -66,6 +76,19 @@ type Service struct {
 	destinations DestinationResolver
 	imported     ImportedDestinationResolver
 	sites        SiteResolver
+	exitPools    ExitPoolResolver
+}
+
+// WithExitPools returns a compiler that also compiles Exit Pool
+// destinations. Without it, a rule whose destination is an Exit Pool is
+// refused (ErrExitPoolsDisabled).
+func (service *Service) WithExitPools(pools ExitPoolResolver) (*Service, error) {
+	if service == nil || pools == nil {
+		return nil, ErrInvalidRequest
+	}
+	extended := *service
+	extended.exitPools = pools
+	return &extended, nil
 }
 
 // WithSites returns a compiler that also compiles Site destinations. Without
@@ -216,6 +239,10 @@ func (service *Service) Compile(
 	if err != nil {
 		return publication.Candidate{}, err
 	}
+	exitRules, err := service.compileExitRules(ctx, session, request)
+	if err != nil {
+		return publication.Candidate{}, err
+	}
 	rules := make([]policy.Rule, 0, len(request.rules))
 	destinations := make([]publication.ResourceDestination, 0, len(resourceIDs))
 	groupDestinations := make([]publication.ResourceGroupDestination, 0, len(groupIDs))
@@ -227,7 +254,7 @@ func (service *Service) Compile(
 	var groupRules []publication.GroupRule
 	for _, intent := range request.rules {
 		destinationNodeID := intent.destinationNodeID
-		if intent.destinationSiteID.IsValid() {
+		if intent.destinationSiteID.IsValid() || intent.destinationExitPoolID.IsValid() {
 			continue
 		}
 		if intent.SelectsDeviceGroup() {
@@ -347,17 +374,88 @@ func (service *Service) Compile(
 			return publication.Candidate{}, ErrInvalidRequest
 		}
 	}
-	if len(routeRules) == 0 {
-		return candidate, nil
+	if len(routeRules) > 0 {
+		candidate, err = candidate.WithRouteRules(routeRules)
+		if errors.Is(err, publication.ErrRouteOverlap) || errors.Is(err, publication.ErrRoutePrefixLimit) {
+			return publication.Candidate{}, err
+		}
+		if err != nil {
+			return publication.Candidate{}, ErrInvalidRequest
+		}
 	}
-	withRoutes, err := candidate.WithRouteRules(routeRules)
-	if errors.Is(err, publication.ErrRouteOverlap) || errors.Is(err, publication.ErrRoutePrefixLimit) {
-		return publication.Candidate{}, err
+	if len(exitRules) > 0 {
+		if candidate, err = candidate.WithExitRules(exitRules); err != nil {
+			return publication.Candidate{}, ErrInvalidRequest
+		}
 	}
+	return candidate, nil
+}
+
+// compileExitRules resolves every Exit Pool destination in one read and
+// turns each such rule into an exit rule.
+func (service *Service) compileExitRules(ctx context.Context, session accountsession.Session,
+	request Request) ([]publication.ExitRule, error) {
+	var ids []exitpool.ID
+	seen := make(map[exitpool.ID]struct{})
+	for _, intent := range request.rules {
+		if id := intent.destinationExitPoolID; id.IsValid() {
+			if _, duplicate := seen[id]; !duplicate {
+				seen[id] = struct{}{}
+				ids = append(ids, id)
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if service.exitPools == nil {
+		return nil, ErrExitPoolsDisabled
+	}
+	if len(ids) > exitpool.MaximumPoolsPerNetwork {
+		return nil, ErrInvalidRequest
+	}
+	pools, err := service.exitPools.ResolvePolicyExitPools(ctx, session, request.scope, ids)
 	if err != nil {
-		return publication.Candidate{}, ErrInvalidRequest
+		return nil, classifyExitPoolResolutionError(err)
 	}
-	return withRoutes, nil
+	resolved := make(map[exitpool.ID]struct{}, len(pools))
+	for _, pool := range pools {
+		if _, requested := seen[pool.ID]; !requested {
+			return nil, ErrUnavailable
+		}
+		resolved[pool.ID] = struct{}{}
+	}
+	exitRules := make([]publication.ExitRule, 0, len(ids))
+	for _, intent := range request.rules {
+		if !intent.destinationExitPoolID.IsValid() {
+			continue
+		}
+		if _, found := resolved[intent.destinationExitPoolID]; !found {
+			return nil, ErrResourceConflict
+		}
+		rule, err := publication.NewExitRule(publication.ExitRuleParams{
+			RuleID: intent.id, SourceNodeID: intent.sourceNodeID, SourceGroupID: intent.sourceGroupID,
+			SourceIdentityGroupID: intent.sourceIdentityGroupID, SourceTagID: intent.sourceTagID,
+			PoolID: intent.destinationExitPoolID, Protocol: intent.protocol,
+			DestinationPortRanges: intent.destinationPortRanges,
+		})
+		if err != nil {
+			return nil, ErrInvalidRequest
+		}
+		exitRules = append(exitRules, rule)
+	}
+	return exitRules, nil
+}
+
+func classifyExitPoolResolutionError(err error) error {
+	switch {
+	case errors.Is(err, exitpool.ErrForbidden):
+		return ErrForbidden
+	case errors.Is(err, exitpool.ErrInvalid), errors.Is(err, exitpool.ErrNotFound):
+		return ErrResourceConflict
+	default:
+		return errors.Join(ErrUnavailable, err)
+	}
 }
 
 // compileRouteRules resolves every Site destination in one read and turns

@@ -16,8 +16,9 @@ const readPolicySimulationBaselineSQL = `SELECT
     rules::TEXT,
     group_rules::TEXT,
     selector_members::TEXT,
-    route_rules::TEXT
-FROM mesh_ops.read_policy_simulation_baseline_v5(
+    route_rules::TEXT,
+    exit_rules::TEXT
+FROM mesh_ops.read_policy_simulation_baseline_v6(
     $1::UUID, $2::UUID, $3::UUID, $4::UUID,
     $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
     $10::UUID, $11::UUID, $12::TIMESTAMPTZ, $13::INTEGER

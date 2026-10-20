@@ -5,6 +5,17 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: an Access Rule may grant the Internet through an Exit Pool
+  (schema 202): `destination_exit_pool_id` names the pool, with any source
+  selector and the rule's protocol and ports, never addresses. The active
+  policy lists such rules with `selector_kind` `exit_pool`, republishing and
+  simulation keep them, and a pool, group, Identity Group or tag that active
+  rules name cannot be deleted (409 `exit_pool_in_use` for a pool). Releases
+  with exit rules hash under a new domain; earlier releases hash as before.
+  Explain, the Access Graph and maps do not show exit rules yet.
+- Core: a release holding both group rules and rules to Sites failed to
+  publish (its projection identities were checked per kind against the
+  wrong total); every kind is now checked against the whole release.
 - Core: Networks have Exit Pools (schema 201), groups of exit nodes that
   will forward other Devices' Internet traffic. A pool is its own entity,
   never a kind of Site: `…/networks/{network}/exit-pools` lists, creates,

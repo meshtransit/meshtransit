@@ -12,6 +12,7 @@ import (
 
 	"meshtransit.net/core/internal/domain/devicegroup"
 	"meshtransit.net/core/internal/domain/devicetag"
+	"meshtransit.net/core/internal/domain/exitpool"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/identitygroup"
 	"meshtransit.net/core/internal/domain/network"
@@ -48,6 +49,7 @@ type publishPolicyRuleRequest struct {
 	DestinationImportedResourceID string                          `json:"destination_imported_resource_id"`
 	DestinationSiteID             string                          `json:"destination_site_id"`
 	DestinationPrefixes           []string                        `json:"destination_prefixes"`
+	DestinationExitPoolID         string                          `json:"destination_exit_pool_id"`
 	Protocol                      string                          `json:"protocol"`
 	DestinationPortRanges         []publishPolicyPortRangeRequest `json:"destination_port_ranges"`
 }
@@ -309,6 +311,12 @@ func decodePolicyRuleIntent(
 			return compilation.RuleIntent{}, err
 		}
 	}
+	var destinationExitPoolID exitpool.ID
+	if input.DestinationExitPoolID != "" {
+		if destinationExitPoolID, err = exitpool.ParseID(input.DestinationExitPoolID); err != nil {
+			return compilation.RuleIntent{}, err
+		}
+	}
 	if len(input.DestinationPrefixes) > site.MaximumPrefixesPerSite {
 		return compilation.RuleIntent{}, policy.ErrInvalidRule
 	}
@@ -344,7 +352,8 @@ func decodePolicyRuleIntent(
 		DestinationResourceID: destinationResourceID, DestinationGroupID: destinationGroupID,
 		DestinationImportedResourceID: destinationImportedResourceID,
 		DestinationSiteID:             destinationSiteID, DestinationPrefixes: destinationPrefixes,
-		Protocol: protocol, DestinationPortRanges: portRanges,
+		DestinationExitPoolID: destinationExitPoolID,
+		Protocol:              protocol, DestinationPortRanges: portRanges,
 	})
 }
 
@@ -457,6 +466,11 @@ func classifyPolicyCompilationError(err error) managementError {
 		return managementError{
 			Status: http.StatusUnprocessableEntity, Code: "route_prefix_limit",
 			Message: "rules to Sites grant more than 16384 prefixes in all",
+		}
+	case errors.Is(err, compilation.ErrExitPoolsDisabled):
+		return managementError{
+			Status: http.StatusConflict, Code: "exit_pools_disabled",
+			Message: "this deployment does not offer Exit Pools",
 		}
 	case errors.Is(err, compilation.ErrSiteRoutesDisabled):
 		return managementError{

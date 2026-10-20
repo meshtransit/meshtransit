@@ -16,6 +16,8 @@ type privateIdentityResourceServices struct {
 	// sites resolves Site destinations; nil when subnet routes are off, so
 	// rules naming a Site are refused.
 	sites compilation.SiteResolver
+	// exitPools resolves Exit Pool destinations.
+	exitPools compilation.ExitPoolResolver
 }
 
 func newPrivateIdentityResourceServices(pool *postgresadapter.Pool, options postgresadapter.AuthTransactionOptions) (privateIdentityResourceServices, error) {

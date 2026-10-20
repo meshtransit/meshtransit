@@ -446,6 +446,23 @@ func (transaction *policyPublicationTransaction) applyLocked(
 			return publication.Result{}, ErrPolicyPublicationEvidence
 		}
 	}
+	if exitRules, err := encodePolicyExitRules(change); err != nil {
+		return publication.Result{}, err
+	} else if exitRules != nil {
+		var attachedCount int
+		if err := transaction.database.QueryRow(
+			ctx,
+			attachPolicyExitRulesSQL,
+			change.MutationIDs().ReleaseID().String(),
+			change.OccurredAt(),
+			exitRules,
+		).Scan(&attachedCount); err != nil {
+			return publication.Result{}, fmt.Errorf("attach policy exit rules: %w", err)
+		}
+		if attachedCount != len(command.Candidate().ExitRules()) {
+			return publication.Result{}, ErrPolicyPublicationEvidence
+		}
+	}
 	var recordedRules int
 	if err := transaction.database.QueryRow(
 		ctx,
