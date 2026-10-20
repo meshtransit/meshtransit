@@ -33,16 +33,17 @@ type fakeTUN struct {
 	mu        sync.Mutex
 	addresses string
 	routes    string
+	dns       string
 	mtu       int
 	fd        int
 	err       error
 	next      func() (int, error) // when set, gives each call's descriptor
 }
 
-func (tun *fakeTUN) OpenTUN(addresses, routes string, mtu int) (int, error) {
+func (tun *fakeTUN) OpenTUN(addresses, routes, dns string, mtu int) (int, error) {
 	tun.mu.Lock()
 	defer tun.mu.Unlock()
-	tun.addresses, tun.routes, tun.mtu = addresses, routes, mtu
+	tun.addresses, tun.routes, tun.dns, tun.mtu = addresses, routes, dns, mtu
 	if tun.next != nil {
 		return tun.next()
 	}

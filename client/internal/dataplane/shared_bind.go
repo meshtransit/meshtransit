@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"golang.zx2c4.com/wireguard/conn"
 
@@ -40,9 +41,14 @@ type sharedBind struct {
 	port       uint16
 	generation uint64
 	// physicalGeneration is the underlay.PhysicalGeneration the sockets
-	// were last bound for.
+	// were last bound for; physicalRetry, when not zero, the unix
+	// nanosecond after which a failed binding is tried again.
 	physicalGeneration atomic.Uint64
+	physicalRetry      atomic.Int64
 }
+
+// physicalRetryDelay spaces the attempts to bind a socket that failed.
+const physicalRetryDelay = time.Second
 
 // socketGenerationSource provides one monotonic namespace across every bind
 // created during a WireGuard engine's lifetime. Gaps are safe; reuse is not.
@@ -179,14 +185,24 @@ func (b *sharedBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 // networks changed since they were last bound (underlay.PhysicalGeneration):
 // a datagram never leaves by a binding that is out of date.
 func (b *sharedBind) followPhysical() {
-	if !underlay.FollowsRoutes || underlay.PhysicalGeneration() == b.physicalGeneration.Load() {
+	if !underlay.FollowsRoutes || !b.physicalStale() {
 		return
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.isOpen && underlay.PhysicalGeneration() != b.physicalGeneration.Load() {
+	if b.isOpen && b.physicalStale() {
 		_ = b.bindPhysicalLocked()
 	}
+}
+
+// physicalStale reports a binding out of date, or a failed one due for
+// another attempt.
+func (b *sharedBind) physicalStale() bool {
+	if underlay.PhysicalGeneration() != b.physicalGeneration.Load() {
+		return true
+	}
+	retry := b.physicalRetry.Load()
+	return retry != 0 && time.Now().UnixNano() >= retry
 }
 
 // bindPhysicalLocked keeps the sockets on the physical path while the host
@@ -197,6 +213,7 @@ func (b *sharedBind) followPhysical() {
 func (b *sharedBind) bindPhysicalLocked() error {
 	// Before reading the state: a change meanwhile binds them once more.
 	b.physicalGeneration.Store(underlay.PhysicalGeneration())
+	b.physicalRetry.Store(0)
 	bound := underlay.FollowsRoutes && underlay.ExitBound()
 	binder, ok := b.inner.(conn.BindSocketToInterface)
 	if !ok {
@@ -212,6 +229,9 @@ func (b *sharedBind) bindPhysicalLocked() error {
 		index6 = underlay.PhysicalIndex(netip.IPv6Unspecified())
 	}
 	if err := binder.BindSocketToInterface4(index4, bound && index4 == 0); err != nil && bound {
+		// Left unbound the socket would follow the exit routes: try again
+		// soon, from the next datagram on.
+		b.physicalRetry.Store(time.Now().Add(physicalRetryDelay).UnixNano())
 		return fmt.Errorf("dataplane: binding the IPv4 wireguard socket: %w", err)
 	}
 	// A host without IPv6 has no IPv6 socket to bind.

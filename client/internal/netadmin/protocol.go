@@ -203,6 +203,11 @@ type ExitRouteRequest struct {
 	// IPv6 sends IPv6 into the mesh too; otherwise IPv6 to the Internet is
 	// refused at once.
 	IPv6 bool
+	// DNS are the chosen exit node's DNS forwarder addresses, IPv4 then
+	// IPv6, zero when absent, for an in-process opener that sets the
+	// platform VPN's resolvers (Android). They never cross the helper
+	// socket: the desktop resolver follows the map itself.
+	DNS [2]netip.Addr `json:"-"`
 }
 
 // ExitRouting is whether the helper routes the host's Internet traffic into

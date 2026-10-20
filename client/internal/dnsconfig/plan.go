@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"meshtransit.net/client/internal/networkmap"
-	"meshtransit.net/client/internal/overlayframe"
 )
 
 var ErrInvalid = errors.New("dnsconfig: invalid plan")
@@ -69,29 +68,8 @@ func exitDNSOf(snapshot networkmap.Snapshot) *ExitDNS {
 		return nil
 	}
 	exit := &ExitDNS{Resolvers: []netip.AddrPort{}, IPv6: route.IPv6}
-	// The forwarder answers on the exit node's own mesh addresses only:
-	// Core's addresses are no reason to send names anywhere else.
-	var own []netip.Prefix
-	for _, peer := range snapshot.Peers {
-		if peer.StableID == route.Node && route.Node != "" {
-			own = peer.Addresses
-		}
-	}
-	for _, pool := range snapshot.Exits {
-		if pool.Ref != route.Pool || route.Node == "" {
-			continue
-		}
-		for _, candidate := range pool.Candidates {
-			if candidate.DeviceID != route.Node {
-				continue
-			}
-			for _, address := range []netip.Addr{candidate.DNS4, candidate.DNS6} {
-				if address.IsValid() && slices.Contains(own, netip.PrefixFrom(address, address.BitLen())) &&
-					overlayframe.Contains(netip.PrefixFrom(address, address.BitLen())) {
-					exit.Resolvers = append(exit.Resolvers, netip.AddrPortFrom(address, exitDNSPort))
-				}
-			}
-		}
+	for _, address := range snapshot.ExitResolvers() {
+		exit.Resolvers = append(exit.Resolvers, netip.AddrPortFrom(address, exitDNSPort))
 	}
 	return exit
 }

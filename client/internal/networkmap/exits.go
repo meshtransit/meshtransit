@@ -9,6 +9,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"meshtransit.net/client/internal/overlayframe"
 	"meshtransit.net/shared/internet"
 )
 
@@ -243,6 +244,42 @@ type ExitRoute struct {
 	// IPv6 is whether the exit node carries IPv6 too; otherwise the node's
 	// IPv6 Internet traffic is refused.
 	IPv6 bool
+}
+
+// ExitResolvers returns the addresses the chosen exit node's DNS forwarder
+// answers on: its DNS4 and DNS6 when each is one of the node's own mesh
+// addresses, inside the overlay frame; Core's addresses are no reason to
+// send names anywhere else (exit node design §7.2). None while no exit node
+// carries the traffic.
+func (s Snapshot) ExitResolvers() []netip.Addr {
+	route := s.ExitRoute
+	if route == nil || route.Node == "" {
+		return nil
+	}
+	var own []netip.Prefix
+	for _, peer := range s.Peers {
+		if peer.StableID == route.Node {
+			own = peer.Addresses
+		}
+	}
+	var resolvers []netip.Addr
+	for _, pool := range s.Exits {
+		if pool.Ref != route.Pool {
+			continue
+		}
+		for _, candidate := range pool.Candidates {
+			if candidate.DeviceID != route.Node {
+				continue
+			}
+			for _, address := range []netip.Addr{candidate.DNS4, candidate.DNS6} {
+				host := netip.PrefixFrom(address, address.BitLen())
+				if address.IsValid() && slices.Contains(own, host) && overlayframe.Contains(host) {
+					resolvers = append(resolvers, address)
+				}
+			}
+		}
+	}
+	return resolvers
 }
 
 // validateExitRoute requires a chosen exit node to be a candidate of a

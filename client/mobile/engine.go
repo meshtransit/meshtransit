@@ -165,6 +165,12 @@ func build(resolved Config, tun TunProvider, keys KeyStore, queue *asyncLog) (*E
 		// Core sends the Sites the rules grant; the device installs them
 		// only once the person accepts subnet routes (SetSubnetRoutes).
 		EnableSubnetRoutes: true,
+		// The device uses an Exit Pool once the person picks one
+		// (SetExitNode).
+		EnableExits:       true,
+		ExitPinsDir:       resolved.StateDir,
+		RouteSettingsPath: routeSettings,
+		LoadRouteSettings: loadRouteSettings,
 	})
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("mobile: create runtime: %w", err), closeStores(profiles, identities))

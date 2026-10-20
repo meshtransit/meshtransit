@@ -45,6 +45,7 @@ func SetExitBound(source ExitSource, on bool) {
 		}
 		if exitSources.CompareAndSwap(previous, next) {
 			if (previous != 0) != (next != 0) {
+				forgetPhysicalInterfaces()
 				physicalGeneration.Add(1)
 			}
 			return
@@ -58,7 +59,10 @@ func ExitBound() bool { return exitSources.Load() != 0 }
 
 // RebindPhysical asks sockets bound to the physical path to be bound again,
 // as after a change of the host's networks.
-func RebindPhysical() { physicalGeneration.Add(1) }
+func RebindPhysical() {
+	forgetPhysicalInterfaces()
+	physicalGeneration.Add(1)
+}
 
 // PhysicalGeneration changes whenever sockets bound to the physical path
 // must be bound again.

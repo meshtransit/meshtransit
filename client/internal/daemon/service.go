@@ -475,6 +475,10 @@ type Options struct {
 	// approved are kept; empty keeps them in memory.
 	ExitPinsDir       string
 	RouteSettingsPath string
+	// LoadRouteSettings reads RouteSettingsPath; nil uses routesettings.Load,
+	// which requires a file only root can change. A mobile app keeps its
+	// settings in storage private to it.
+	LoadRouteSettings func(string) (routesettings.Settings, error)
 	// RestartMarkerPath, when set, is the file a package upgrade writes just
 	// before it restarts meshd: a stopping router then does not tell Core it
 	// is going away, as it comes straight back.
@@ -526,6 +530,9 @@ func New(
 	}
 	if options.Clock == nil {
 		options.Clock = time.Now
+	}
+	if options.LoadRouteSettings == nil {
+		options.LoadRouteSettings = routesettings.Load
 	}
 	var pins *exitPins
 	if options.EnableExits {
@@ -581,7 +588,7 @@ func New(
 		exitPins:             pins,
 		routeSettingsPath:    options.RouteSettingsPath,
 		restartMarkerPath:    options.RestartMarkerPath,
-		loadRouteSettings:    routesettings.Load,
+		loadRouteSettings:    options.LoadRouteSettings,
 		clock:                options.Clock,
 		runtimeRetryDelay:    jitteredRuntimeRetryDelay,
 		endpointRefreshDelay: randomEndpointRefreshDelay,

@@ -2,6 +2,7 @@ package dataplane
 
 import (
 	"context"
+	"net/netip"
 
 	"meshtransit.net/client/internal/netadmin"
 	"meshtransit.net/client/internal/underlay"
@@ -33,10 +34,11 @@ type ExitRouteStatus struct {
 }
 
 // exitRouteDesired is what the helper is asked: to route the Internet into
-// the mesh, and IPv6 too.
+// the mesh, and IPv6 too; dns are the exit node's resolvers.
 type exitRouteDesired struct {
 	use  bool
 	ipv6 bool
+	dns  [2]netip.Addr
 }
 
 // syncExitRouteLocked has the helper route the Internet into the mesh while
@@ -49,7 +51,7 @@ func (e *WireGuardEngine) syncExitRouteLocked(routed *routedTable) {
 		Error: e.exitRouteStatus.Error,
 	}
 	if routed != nil && routed.exit != nil {
-		desired = exitRouteDesired{use: true, ipv6: routed.exit.ipv6}
+		desired = exitRouteDesired{use: true, ipv6: routed.exit.ipv6, dns: exitResolverPair(routed.exit.dns)}
 		status.Pool, status.IPv6 = routed.exit.pool, routed.exit.ipv6
 		if routed.exit.served {
 			status.Node = routed.exit.nodeRef
@@ -74,7 +76,9 @@ func (e *WireGuardEngine) syncExitRouteLocked(routed *routedTable) {
 		equal: func(first, second exitRouteDesired) bool { return first == second },
 		clone: func(desired exitRouteDesired) exitRouteDesired { return desired },
 		send: func(ctx context.Context, desired exitRouteDesired) (netadmin.ExitRouting, error) {
-			return setter.SetExitRoute(ctx, netadmin.ExitRouteRequest{Use: desired.use, IPv6: desired.ipv6})
+			return setter.SetExitRoute(ctx, netadmin.ExitRouteRequest{
+				Use: desired.use, IPv6: desired.ipv6, DNS: desired.dns,
+			})
 		},
 		record: e.recordExitRouteLocked,
 		giveUp: func(err error) {
@@ -83,6 +87,21 @@ func (e *WireGuardEngine) syncExitRouteLocked(routed *routedTable) {
 			}
 		},
 	})
+}
+
+// exitResolverPair keeps the first IPv4 and the first IPv6 resolver.
+func exitResolverPair(resolvers []netip.Addr) [2]netip.Addr {
+	var pair [2]netip.Addr
+	for _, address := range resolvers {
+		slot := 0
+		if address.Is6() {
+			slot = 1
+		}
+		if !pair[slot].IsValid() {
+			pair[slot] = address
+		}
+	}
+	return pair
 }
 
 // recordExitRouteLocked keeps what the helper did and lets Internet packets

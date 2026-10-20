@@ -27,6 +27,20 @@ func (tun *fakeTUN) last() (addresses, routes string, mtu int) {
 	return tun.addresses, tun.routes, tun.mtu
 }
 
+// routesValue and dnsValue report the routes and DNS servers of the
+// latest OpenTUN call.
+func (tun *fakeTUN) routesValue() string {
+	tun.mu.Lock()
+	defer tun.mu.Unlock()
+	return tun.routes
+}
+
+func (tun *fakeTUN) dnsValue() string {
+	tun.mu.Lock()
+	defer tun.mu.Unlock()
+	return tun.dns
+}
+
 // fakeDevice is a TUN device whose packets come from a channel.
 type fakeDevice struct {
 	mtu, batch int

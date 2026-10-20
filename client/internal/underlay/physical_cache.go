@@ -53,3 +53,11 @@ func (cache *physicalCache) lookup(destination netip.Addr, find func(netip.Addr)
 	cache.entries[destination] = physicalEntry{index: index, at: now}
 	return index, nil
 }
+
+// forgetPhysicalInterfaces drops every cached interface, as after a change
+// of the host's networks.
+func forgetPhysicalInterfaces() {
+	physicalInterfaces.mu.Lock()
+	defer physicalInterfaces.mu.Unlock()
+	clear(physicalInterfaces.entries)
+}

@@ -42,13 +42,16 @@ type WindowsTUNOpener struct {
 	exitRequest *netadmin.ExitRouteRequest
 	exitRouted  bool
 	exitRouting netadmin.ExitRouting
+	// killSwitchUnknown is whether a kill switch may be in place: an
+	// earlier run's at start, or one this run installed.
+	killSwitchUnknown bool
 }
 
 // NewWindowsTUNOpener returns an opener for the service's adapter that
 // installs the subnet routes routeSettings admits.
 func NewWindowsTUNOpener(routeSettings string) *WindowsTUNOpener {
 	setTunnelType.Do(func() { tun.WintunTunnelType = winadapter.Name })
-	opener := &WindowsTUNOpener{routeSettings: routeSettings}
+	opener := &WindowsTUNOpener{routeSettings: routeSettings, killSwitchUnknown: true}
 	opener.startExit()
 
 	return opener
@@ -89,9 +92,8 @@ func (o *WindowsTUNOpener) OpenTUN(_ context.Context, config netadmin.TUNConfig)
 	// with it. A kill switch in place follows the new adapter at once.
 	o.luid, o.overlay, o.routed, o.exitRouted = luid, slices.Clone(config.Routes), nil, false
 	o.addresses = slices.Clone(config.Addresses)
-	if o.exitRequest == nil || o.exitRequest.Use || o.exitRouting.Routing {
-		_, _ = o.applyExitLocked()
-	}
+	// The kill switch names the adapter: a new one needs it again.
+	_, _ = o.applyExitLocked()
 	o.mu.Unlock()
 
 	return netadmin.TUN{

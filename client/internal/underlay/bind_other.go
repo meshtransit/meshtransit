@@ -20,3 +20,6 @@ func bindPhysical(syscall.RawConn, netip.Addr) error {
 // PhysicalIndex is 0: the client's sockets do not follow the mesh routes
 // here.
 func PhysicalIndex(netip.Addr) uint32 { return 0 }
+
+// forgetPhysicalInterfaces has no cache to drop here.
+func forgetPhysicalInterfaces() {}

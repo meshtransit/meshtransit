@@ -27,6 +27,10 @@ var (
 	}
 )
 
+// transactionWait bounds how long a change waits for another transaction
+// of the filter engine: the service's adapter changes wait behind it.
+const transactionWait = 10_000 // milliseconds
+
 // filterKey is the key of the kill switch's filter at index, below
 // maximumRules.
 func filterKey(index int) windows.GUID {
@@ -118,7 +122,7 @@ func transact(operation func(engine uintptr) error) error {
 	name, description := display("MeshTransit", "MeshTransit exit kill switch")
 	session := fwpmSession0{
 		displayData:          fwpmDisplayData0{name: name, description: description},
-		txnWaitTimeoutInMSec: windows.INFINITE,
+		txnWaitTimeoutInMSec: transactionWait,
 	}
 	var engine uintptr
 	if err := fwpmEngineOpen0(&session, &engine); err != nil {

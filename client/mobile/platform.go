@@ -8,7 +8,8 @@ package mobile
 // TunProvider gives the engine a configured TUN device.
 //
 // OpenTUN must configure the platform VPN interface with exactly the given
-// addresses and routes (comma-separated CIDR prefixes) and MTU, and return a
+// addresses and routes (comma-separated CIDR prefixes), DNS servers
+// (comma-separated addresses, often none) and MTU, and return a
 // fresh file descriptor the platform gives up: the engine owns it from then
 // on and closes it. On Android that is ParcelFileDescriptor.detachFd() of
 // VpnService.Builder.establish(); on iOS a dup() of the packet flow's utun
@@ -16,7 +17,7 @@ package mobile
 // corrupts whichever file reuses that number. An error means no TUN; the
 // engine stays offline and retries on its own schedule.
 type TunProvider interface {
-	OpenTUN(addresses, routes string, mtu int) (int, error)
+	OpenTUN(addresses, routes, dns string, mtu int) (int, error)
 }
 
 // KeyStore holds the key that seals the Device's identity records on disk.

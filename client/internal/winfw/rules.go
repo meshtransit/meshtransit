@@ -17,6 +17,11 @@ import (
 	"slices"
 )
 
+var (
+	linkLocal4 = netip.MustParsePrefix("169.254.0.0/16")
+	linkLocal6 = netip.MustParsePrefix("fe80::/10")
+)
+
 // maximumLAN bounds the LAN prefixes a kill switch admits.
 const maximumLAN = 64
 
@@ -97,6 +102,11 @@ func Rules(config Config) []Rule {
 			Protocol: protocolICMPv6, ICMPType: icmpType, MatchICMP: true,
 		})
 	}
+	// Link-local addresses never leave the link: cloud metadata services
+	// (169.254.169.254) and IPv6 neighbours keep working.
+	rules = append(rules,
+		Rule{Name: "Permit link-local (IPv4)", Weight: weightSystem, Remote: []netip.Prefix{linkLocal4}},
+		Rule{Name: "Permit link-local (IPv6)", IPv6: true, Weight: weightSystem, Remote: []netip.Prefix{linkLocal6}})
 	lan4, lan6 := splitFamilies(config.LAN)
 	if len(lan4) > 0 {
 		rules = append(rules, Rule{Name: "Permit the LAN (IPv4)", Weight: weightLAN, Remote: lan4})

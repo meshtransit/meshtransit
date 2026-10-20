@@ -55,6 +55,8 @@ type platformTUN struct {
 	addresses []netip.Prefix
 	routes    []netip.Prefix
 	routed    []netip.Prefix
+	// exit is what the interface carries for an exit node (SetExitRoute).
+	exit mobileExit
 }
 
 func newPlatformTUN(provider TunProvider, mtu int, logger *slog.Logger, routeSettings string,
@@ -73,7 +75,12 @@ func (opener *platformTUN) OpenTUN(ctx context.Context, config netadmin.TUNConfi
 	opener.change.Lock()
 	defer opener.change.Unlock()
 	routes := stableRoutes(config.Routes)
-	device, err := opener.openDevice(ctx, config.Addresses, routes, nil)
+	opener.mu.Lock()
+	exit := opener.exit
+	opener.mu.Unlock()
+	// An exit route in use stays: the Internet never leaves outside the
+	// mesh while a new interface comes up.
+	device, err := opener.openDevice(ctx, config.Addresses, routes, nil, exit)
 	if err != nil {
 		return netadmin.TUN{}, err
 	}
@@ -103,7 +110,7 @@ func (opener *platformTUN) ConfigureTUNRoutes(ctx context.Context, config netadm
 	defer opener.change.Unlock()
 	routes := stableRoutes(config.Routes)
 	opener.mu.Lock()
-	current, unchanged, routed := opener.open, slices.Equal(opener.routes, routes), opener.routed
+	current, unchanged, routed, exit := opener.open, slices.Equal(opener.routes, routes), opener.routed, opener.exit
 	opener.mu.Unlock()
 	if current == nil || current.isClosed() {
 		return fmt.Errorf("%w: no open TUN to change", errNoTUN)
@@ -112,7 +119,7 @@ func (opener *platformTUN) ConfigureTUNRoutes(ctx context.Context, config netadm
 		return nil
 	}
 	if err := current.Replace(func() (tun.Device, error) {
-		return opener.openDevice(ctx, config.Addresses, routes, routed)
+		return opener.openDevice(ctx, config.Addresses, routes, routed, exit)
 	}); err != nil {
 		return err
 	}
@@ -126,9 +133,9 @@ func (opener *platformTUN) ConfigureTUNRoutes(ctx context.Context, config netadm
 
 // openDevice asks the platform for a configured interface and adopts its
 // descriptor.
-func (opener *platformTUN) openDevice(ctx context.Context, addresses, routes, routed []netip.Prefix) (
-	tun.Device, error,
-) {
+func (opener *platformTUN) openDevice(ctx context.Context, addresses, routes, routed []netip.Prefix,
+	exit mobileExit,
+) (tun.Device, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -141,13 +148,17 @@ func (opener *platformTUN) openDevice(ctx context.Context, addresses, routes, ro
 	if err := validateRoutedConfig(routed); err != nil {
 		return nil, err
 	}
+	if err := exit.validate(); err != nil {
+		return nil, err
+	}
 	interfaceRoutes := slices.Clone(routes)
-	for _, prefix := range routed {
+	for _, prefix := range slices.Concat(routed, exit.routes) {
 		if !slices.Contains(interfaceRoutes, prefix) {
 			interfaceRoutes = append(interfaceRoutes, prefix)
 		}
 	}
-	fd, err := opener.provider.OpenTUN(joinPrefixes(addresses), joinPrefixes(interfaceRoutes), opener.mtu)
+	fd, err := opener.provider.OpenTUN(joinPrefixes(addresses), joinPrefixes(interfaceRoutes),
+		joinAddresses(exit.dns), opener.mtu)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", errNoTUN, err)
 	}
@@ -173,6 +184,16 @@ func joinPrefixes(prefixes []netip.Prefix) string {
 	values := make([]string, 0, len(prefixes))
 	for _, prefix := range prefixes {
 		values = append(values, prefix.String())
+	}
+	return strings.Join(values, ",")
+}
+
+// joinAddresses writes addresses as the comma-separated list TunProvider
+// receives.
+func joinAddresses(addresses []netip.Addr) string {
+	values := make([]string, 0, len(addresses))
+	for _, address := range addresses {
+		values = append(values, address.String())
 	}
 	return strings.Join(values, ",")
 }

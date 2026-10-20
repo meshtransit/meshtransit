@@ -28,6 +28,9 @@ type routedExit struct {
 	nodeRef string
 	node    packetAuthority
 	ipv6    bool
+	// dns are the exit node's DNS forwarder addresses
+	// (networkmap.Snapshot.ExitResolvers).
+	dns []netip.Addr
 }
 
 // routedTable finds the Site of an address among the map's at most 4,096
@@ -56,6 +59,7 @@ func newRoutedTable(snapshot networkmap.Snapshot) *routedTable {
 		table.exit = &routedExit{pool: route.Pool, ipv6: route.IPv6}
 		if peer, found := peers[route.Node]; found && route.Node != "" {
 			table.exit.served, table.exit.nodeRef, table.exit.node = true, route.Node, authorityFor(peer)
+			table.exit.dns = snapshot.ExitResolvers()
 		}
 	}
 	if len(snapshot.Routes) == 0 {

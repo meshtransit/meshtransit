@@ -46,14 +46,15 @@ func (opener *platformTUN) SetRoutedRoutes(ctx context.Context, requested []neti
 		refused = append(refused, conflicts...)
 	}
 	opener.mu.Lock()
-	current, addresses, routes, installed := opener.open, opener.addresses, opener.routes, opener.routed
+	current, addresses, routes, installed, exit := opener.open, opener.addresses, opener.routes, opener.routed,
+		opener.exit
 	opener.mu.Unlock()
 	if current == nil || current.isClosed() {
 		return netadmin.RoutedResult{}, fmt.Errorf("%w: no open TUN for subnet routes", errNoTUN)
 	}
 	if !slices.Equal(installed, accepted) {
 		if err := current.Replace(func() (tun.Device, error) {
-			return opener.openDevice(ctx, addresses, routes, accepted)
+			return opener.openDevice(ctx, addresses, routes, accepted, exit)
 		}); err != nil {
 			return netadmin.RoutedResult{}, fmt.Errorf("mobile: changing subnet routes: %w", err)
 		}

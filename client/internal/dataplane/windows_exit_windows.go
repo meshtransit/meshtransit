@@ -67,6 +67,7 @@ func (o *WindowsTUNOpener) applyExitLocked() (netadmin.ExitRouting, error) {
 	// the kill switch cuts them off, whoever asked for it: meshd or root's
 	// settings.
 	underlay.SetExitBound(underlay.ExitHeld, true)
+	o.killSwitchUnknown = true
 	// The kill switch first: no route sends anything anywhere before the
 	// host is closed.
 	if err := winfw.Enable(config); err != nil {
@@ -91,7 +92,14 @@ func (o *WindowsTUNOpener) applyExitLocked() (netadmin.ExitRouting, error) {
 // switch; the service's sockets follow the host's routes again once both
 // are gone.
 func (o *WindowsTUNOpener) clearExitLocked() error {
-	err := errors.Join(o.setExitRoutesLocked(false), winfw.Disable())
+	err := o.setExitRoutesLocked(false)
+	if o.killSwitchUnknown {
+		if disableErr := winfw.Disable(); disableErr != nil {
+			err = errors.Join(err, disableErr)
+		} else {
+			o.killSwitchUnknown = false
+		}
+	}
 	if err == nil {
 		underlay.SetExitBound(underlay.ExitHeld, false)
 	}

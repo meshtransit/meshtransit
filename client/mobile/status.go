@@ -44,6 +44,34 @@ type status struct {
 	// Sites the router each one goes through.
 	SubnetRoutes subnetRoutes `json:"subnetRoutes"`
 	Sites        []siteRoute  `json:"sites"`
+	// Exit is the Exit Pool in use; absent when none is chosen.
+	Exit *exitStatus `json:"exit,omitempty"`
+}
+
+// exitStatus is the Exit Pool the device sends its Internet traffic
+// through.
+type exitStatus struct {
+	// Use is the app's setting (SetExitNode); Pool the pool's name, empty
+	// while Core grants none of that name.
+	Use  string `json:"use"`
+	Pool string `json:"pool,omitempty"`
+	// Node is the exit node's Device name, without the DNS suffix; empty
+	// while none carries the traffic, which is then dropped.
+	Node string `json:"node,omitempty"`
+	Via  string `json:"via"`
+	// Routing is whether the VPN interface carries the Internet.
+	Routing bool `json:"routing"`
+	// Pending are exit nodes, and PendingPool a pool, waiting for the
+	// person's approval (ApproveExitNodes takes their IDs).
+	Pending     []pendingExitNode `json:"pending,omitempty"`
+	PendingPool string            `json:"pendingPool,omitempty"`
+	Error       string            `json:"error,omitempty"`
+}
+
+// pendingExitNode is one exit node waiting for approval.
+type pendingExitNode struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // subnetRoutes counts the granted subnet routes on the VPN interface and
@@ -114,7 +142,28 @@ func newStatus(running bool, current daemon.Status) status {
 			Error: current.SubnetRoutes.Error,
 		},
 		Sites: siteRoutes(current.RouteSites),
+		Exit:  exitStatusOf(current),
 	}
+}
+
+func exitStatusOf(current daemon.Status) *exitStatus {
+	view := current.Exit
+	if view == nil {
+		return nil
+	}
+	node, _, _ := strings.Cut(view.ExitNodeName, ".")
+	exit := &exitStatus{
+		Use: view.Use, Pool: view.PoolName, Node: node, Via: view.Via, Routing: current.ExitRoute.Routing,
+		PendingPool: view.PendingPool, Error: current.ExitRoute.Error,
+	}
+	for index, id := range view.Pending {
+		name := ""
+		if index < len(view.PendingNames) {
+			name, _, _ = strings.Cut(view.PendingNames[index], ".")
+		}
+		exit.Pending = append(exit.Pending, pendingExitNode{ID: id, Name: name})
+	}
+	return exit
 }
 
 func siteRoutes(views []daemon.RouteSiteView) []siteRoute {
