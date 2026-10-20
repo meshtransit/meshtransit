@@ -68,7 +68,8 @@ func runRole(role string) int {
 func runNode(name, dir string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	// Shown only when a test fails.
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	settings := filepath.Join(dir, name+".routes.json")
 	local := routesettings.Settings{AcceptRoutes: true}
 	if name != consumer {

@@ -227,8 +227,29 @@ func (l *lab) waitThrough(router string, timeout time.Duration) time.Duration {
 		last = fmt.Sprintf("%q (%v)", seen, err)
 		time.Sleep(100 * time.Millisecond)
 	}
+	l.dump()
 	l.t.Fatalf("the LAN host never saw %s through %s; last %s", want, router, last)
 	return 0
+}
+
+// dump logs each namespace's addresses, routes, rules, forwarding settings
+// and nftables rules: what a failure on another kernel needs to be read.
+func (l *lab) dump() {
+	for _, name := range []string{consumer, routerA, routerB, "lan"} {
+		for _, command := range [][]string{
+			{"ip", "-br", "addr"},
+			{"ip", "route", "show", "table", "all"},
+			{"ip", "rule"},
+			{"sh", "-c", "grep -H . /proc/sys/net/ipv4/conf/*/forwarding /proc/sys/net/ipv4/conf/*/rp_filter"},
+			{"nft", "list", "ruleset"},
+			{"ip", "-s", "link", "show", "dev", "mesh0"},
+		} {
+			args := append([]string{"netns", "exec", l.ns(name)}, command...)
+			//nolint:gosec // the test's own namespaces and commands
+			output, err := exec.CommandContext(context.Background(), "ip", args...).CombinedOutput()
+			l.t.Logf("%s: %s (%v):\n%s", name, strings.Join(command, " "), err, output)
+		}
+	}
 }
 
 // up starts the LAN host, both routers and the consumer with primary.
