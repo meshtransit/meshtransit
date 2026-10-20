@@ -138,14 +138,18 @@ func (l *lab) ip(args ...string) {
 }
 
 // start runs the test binary in name's namespace in role.
-func (l *lab) start(name, role string) {
+func (l *lab) start(name, role string) { l.startIn(name, name, role) }
+
+// startIn runs the test binary in namespace's namespace in role, as child
+// name.
+func (l *lab) startIn(namespace, name, role string) {
 	l.t.Helper()
 	self, err := os.Executable()
 	if err != nil {
 		l.t.Fatal(err)
 	}
 	// Not bound to a context: stop ends it, with the signal the test chose.
-	cmd := exec.CommandContext(context.Background(), "ip", "netns", "exec", l.ns(name), self, //nolint:gosec // this test binary
+	cmd := exec.CommandContext(context.Background(), "ip", "netns", "exec", l.ns(namespace), self, //nolint:gosec // this test binary
 		"-test.run=^$")
 	cmd.Env = append(os.Environ(), envRole+"="+role, envNode+"="+name, envDir+"="+l.dir, envScenario+"="+l.scenario)
 	output := &lockedBuffer{}
@@ -221,13 +225,18 @@ func (l *lab) route(name, primary string) {
 
 // run runs role once in the consumer's namespace and returns its output.
 func (l *lab) run(role string, timeout time.Duration) (string, error) {
+	return l.runIn(consumer, role, timeout)
+}
+
+// runIn runs role once in name's namespace and returns its output.
+func (l *lab) runIn(name, role string, timeout time.Duration) (string, error) {
 	self, err := os.Executable()
 	if err != nil {
 		return "", err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "ip", "netns", "exec", l.ns(consumer), self, "-test.run=^$") //nolint:gosec // this test binary
+	cmd := exec.CommandContext(ctx, "ip", "netns", "exec", l.ns(name), self, "-test.run=^$") //nolint:gosec // this test binary
 	cmd.Env = append(os.Environ(), envRole+"="+role, envDir+"="+l.dir, envScenario+"="+l.scenario)
 	var output bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &output, &output

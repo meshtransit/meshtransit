@@ -111,7 +111,11 @@ func exitMarkInboundRules(ruleset exitKillSwitch) [][]expr.Any {
 		&expr.Ct{Register: 1, Key: expr.CtKeyDIRECTION},
 		&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{0}},
 	}
-	return append(rules, join(original, setCtMark(exitInboundMark)))
+	// The packet itself carries the mark too: the kernel's reverse path
+	// check of the first packet looks its source up with it
+	// (src_valid_mark), in the main table instead of the exit table, which
+	// holds nothing but unreachable while the TUN is gone.
+	return append(rules, join(original, setCtMark(exitInboundMark)), join(original, setMetaMark(exitInboundMark)))
 }
 
 // exitRerouteRules copy the inbound mark of a connection to the host's own

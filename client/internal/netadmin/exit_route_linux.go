@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -49,10 +50,20 @@ var exitLANMulticast = []netip.Prefix{netip.MustParsePrefix("224.0.0.0/24"), net
 type kernelExitRouteConfigurer struct {
 	options RoutedOptions
 	uid     uint32
+	// sysctlRoot is /proc/sys; validMarkBefore is net.ipv4.conf.all.
+	// src_valid_mark before the helper set it, empty when it did not.
+	sysctlRoot      string
+	validMarkBefore string
 }
 
+// validMarkSetting makes the reverse path check of packets from outside use
+// their mark, as wg-quick does: a connection opened from outside is checked
+// against the main table, never the exit table, so the host stays reachable
+// also while the TUN is gone and the exit table holds only unreachable.
+const validMarkSetting = "net/ipv4/conf/all/src_valid_mark"
+
 func newKernelExitRouteConfigurer(options RoutedOptions, uid uint32) *kernelExitRouteConfigurer {
-	return &kernelExitRouteConfigurer{options: options, uid: uid}
+	return &kernelExitRouteConfigurer{options: options, uid: uid, sysctlRoot: "/proc/sys"}
 }
 
 // exitSubnet is an attached subnet kept out of the mesh, and its interface.
@@ -203,6 +214,9 @@ func (configurer *kernelExitRouteConfigurer) Replace(name string, ipv6, allowLAN
 		ruleset.LAN = append(ruleset.LAN, exitLANMulticast...)
 	}
 	if err := replaceExitKillSwitch(ruleset); err != nil {
+		return err
+	}
+	if err := configurer.validateMarks(); err != nil {
 		return err
 	}
 	if err := replaceExitTable(configurer.options.ExitTable, host, lan, ipv6); err != nil {
@@ -398,6 +412,25 @@ func sameExitRule(installed, wanted netlink.Rule) bool {
 		installed.Invert == wanted.Invert && sameUIDs
 }
 
+// validateMarks turns src_valid_mark on, remembering what it was.
+func (configurer *kernelExitRouteConfigurer) validateMarks() error {
+	path := filepath.Join(configurer.sysctlRoot, validMarkSetting)
+	current, err := readSysctl(path)
+	if err != nil {
+		return err
+	}
+	if current == "1" {
+		return nil
+	}
+	if err := writeSysctl(path, "1"); err != nil {
+		return err
+	}
+	if configurer.validMarkBefore == "" {
+		configurer.validMarkBefore = current
+	}
+	return nil
+}
+
 // Present reports whether the kill switch is installed.
 func (configurer *kernelExitRouteConfigurer) Present() (bool, error) {
 	return servedTablePresent(configurer.options.ExitNftTable)
@@ -407,7 +440,14 @@ func (configurer *kernelExitRouteConfigurer) Present() (bool, error) {
 // and the table's routes, and the kill switch last, whatever a previous run
 // left: the priorities, table and nftables table are this helper's alone.
 func (configurer *kernelExitRouteConfigurer) Clear() error {
-	return clearExitRoute(configurer.options)
+	if err := clearExitRoute(configurer.options); err != nil {
+		return err
+	}
+	if configurer.validMarkBefore != "" {
+		restoreSysctl(filepath.Join(configurer.sysctlRoot, validMarkSetting), "1", configurer.validMarkBefore)
+		configurer.validMarkBefore = ""
+	}
+	return nil
 }
 
 func clearExitRoute(options RoutedOptions) error {

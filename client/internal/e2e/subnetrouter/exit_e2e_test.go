@@ -40,6 +40,9 @@ func newExitLab(t *testing.T) *lab {
 	l.attach("net", "net0", "bi", netHost.String()+"/24")
 	l.ip("-n", l.ns("net"), "route", "add", "default", "via", netGateway.String())
 	l.ip("-n", l.ns(consumer), "route", "add", "default", "via", "10.99.0.254")
+	// Loose reverse path checks, as Ubuntu sets them.
+	l.exec(l.ns(consumer), "sh", "-c",
+		"echo 2 > /proc/sys/net/ipv4/conf/all/rp_filter && echo 2 > /proc/sys/net/ipv4/conf/under0/rp_filter")
 	l.ip("-n", l.ns(consumer), "route", "add", "34.10.0.0/24", "via", "10.99.0.254")
 	l.exec(l.ns(consumer), "nft", "add", "table", "inet", "leak")
 	l.exec(l.ns(consumer), "nft", "add", "chain", "inet", "leak", "out",
@@ -109,8 +112,13 @@ func TestExitNodeE2E(t *testing.T) {
 	for _, name := range []string{exitA, exitB} {
 		l.route(name, "serve")
 	}
+	l.startIn(consumer, consumer+"-listen", "listen")
 	l.route(consumer, exitA)
 	t.Logf("through %s after %v", exitA, l.waitExit(exitA, 30*time.Second))
+	// Connections opened from outside keep working, as SSH to a server.
+	if seen, err := l.runIn(exitB, "dialconsumer", 5*time.Second); err != nil || seen != "consumer" {
+		t.Fatalf("a connection from outside failed while using an exit node: %q, %v", seen, err)
+	}
 
 	// The exit node's LAN is no Internet.
 	if seen, err := l.run("who", 5*time.Second); err == nil {
@@ -132,4 +140,17 @@ func TestExitNodeE2E(t *testing.T) {
 	}
 	l.route(consumer, exitB)
 	l.waitExit(exitB, 20*time.Second)
+
+	// meshd dies: its TUN goes, the kill switch stays. Nothing leaves for
+	// the Internet, and the host is still reachable from outside.
+	l.stop(consumer, syscall.SIGKILL)
+	if seen, err := l.run("whonet", 5*time.Second); err == nil {
+		t.Fatalf("the Internet answered after meshd died: %q", seen)
+	}
+	if leaked := l.leaked(); leaked != "0" {
+		t.Fatalf("%s packets left by the consumer's own network after meshd died", leaked)
+	}
+	if seen, err := l.runIn(exitB, "dialconsumer", 5*time.Second); err != nil || seen != "consumer" {
+		t.Fatalf("the host became unreachable after meshd died: %q, %v", seen, err)
+	}
 }

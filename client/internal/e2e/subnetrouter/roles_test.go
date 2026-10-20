@@ -49,6 +49,10 @@ func runRole(role string) int {
 		err = runLAN()
 	case "net":
 		err = runNet()
+	case "listen":
+		err = runListen()
+	case "dialconsumer":
+		err = runWhoAt(nodes[consumer].underlay)
 	case "whonet":
 		if err = dropToNobody(); err == nil {
 			err = runWhoAt(netHost)
@@ -177,6 +181,30 @@ func runNet() error {
 		}
 		host, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
 		_, _ = io.WriteString(conn, host+"\n")
+		_ = conn.Close()
+	}
+}
+
+// runListen serves who on the consumer's own network address: a service
+// of the host that others open connections to, as SSH on a server.
+func runListen() error {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
+	address := net.JoinHostPort(nodes[consumer].underlay.String(), strconv.Itoa(whoPort))
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", address)
+	if err != nil {
+		return err
+	}
+	go func() {
+		<-ctx.Done()
+		_ = listener.Close()
+	}()
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			return nil
+		}
+		_, _ = io.WriteString(conn, "consumer\n")
 		_ = conn.Close()
 	}
 }

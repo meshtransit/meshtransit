@@ -83,6 +83,10 @@ func TestKernelExitRouteConfigurerIntegration(t *testing.T) {
 		SettingsPath: "/etc/meshtransit/routes.json", Table: 5267, Priority: 5400,
 		ExitTable: 5291, ExitPriority: 5402, ExitNftTable: "meshtransit_kill_it",
 	}
+	validMarkBefore, err := readSysctl("/proc/sys/" + validMarkSetting)
+	if err != nil {
+		t.Fatal(err)
+	}
 	configurer := newKernelExitRouteConfigurer(options, meshdUID)
 	t.Cleanup(func() { _ = configurer.Clear() })
 	for range 2 { // installing twice changes nothing
@@ -206,6 +210,18 @@ func TestKernelExitRouteConfigurerIntegration(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
+	// The host stays reachable from outside: with loose reverse path
+	// checks, a marked packet from the LAN is checked against the main
+	// table, not the exit table that holds only unreachable now.
+	if err := writeSysctl("/proc/sys/net/ipv4/conf/"+lan+"/rp_filter", "2"); err != nil {
+		t.Fatal(err)
+	}
+	if value, _ := readSysctl("/proc/sys/" + validMarkSetting); value != "1" {
+		t.Errorf("src_valid_mark = %q while routing through the exit node", value)
+	}
+	if got := routeGet("192.168.77.2", "from", "192.168.77.50", "iif", lan, "mark", "0x20000000"); !strings.Contains(got, "local 192.168.77.2") {
+		t.Errorf("a connection from outside failed the reverse path check: %s", got)
+	}
 	if got := routeGet("8.8.8.8", "uid", "0"); strings.Contains(got, "dev "+lan) {
 		t.Errorf("without the TUN the Internet left by the LAN: %s", got)
 	}
@@ -217,5 +233,8 @@ func TestKernelExitRouteConfigurerIntegration(t *testing.T) {
 	}
 	if present, _ := configurer.Present(); present {
 		t.Error("Clear() left the kill switch")
+	}
+	if value, _ := readSysctl("/proc/sys/" + validMarkSetting); value != validMarkBefore {
+		t.Errorf("Clear() left src_valid_mark %q, was %q", value, validMarkBefore)
 	}
 }
