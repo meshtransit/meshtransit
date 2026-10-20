@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"net/netip"
 	"slices"
 	"sync"
 	"time"
@@ -347,7 +348,10 @@ func runRouteFailover(ctx context.Context, failover *routeFailover, read func() 
 // RouteSiteView is the router this node sends one Site's traffic to, for
 // status.
 type RouteSiteView struct {
-	Ref        string
+	Ref string
+	// Prefixes are the Site's prefixes the rules grant: the map names a
+	// Site only by its reference.
+	Prefixes   []netip.Prefix
 	Router     string // a device ID; empty when the Site is not served
 	RouterName string
 	// Via is primary, local_failover or none.
@@ -368,7 +372,7 @@ func (failover *routeFailover) selections() ([]controlplane.RouteSiteSelection, 
 	views := make([]RouteSiteView, 0, len(failover.core.Routes))
 	for _, route := range failover.core.Routes {
 		report := controlplane.RouteSiteSelection{Ref: route.Ref, Reason: controlplane.RouteSelectionNone}
-		view := RouteSiteView{Ref: route.Ref, Via: "none"}
+		view := RouteSiteView{Ref: route.Ref, Prefixes: slices.Clone(route.Prefixes), Via: "none"}
 		if route.Status == networkmap.RouteServed && route.Primary != "" {
 			report.Router, report.Reason, view.Via = route.Primary, controlplane.RouteSelectionPrimary, "primary"
 			if site := failover.sites[route.Ref]; site != nil && site.chosen != "" {

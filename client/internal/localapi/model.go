@@ -114,10 +114,11 @@ type subnetRouteStatus struct {
 // (Core's choice), local_failover (another router this node chose while
 // the primary does not answer) or none.
 type subnetRouteSite struct {
-	Site       string `json:"site"`
-	Router     string `json:"router,omitempty"`
-	RouterName string `json:"router_name,omitempty"`
-	Via        string `json:"via"`
+	Site       string   `json:"site"`
+	Prefixes   []string `json:"prefixes,omitempty"`
+	Router     string   `json:"router,omitempty"`
+	RouterName string   `json:"router_name,omitempty"`
+	Via        string   `json:"via"`
 }
 
 // subnetRouterStatus is what the node forwards into as a router. Health is

@@ -617,14 +617,19 @@ func formatSubnetRouteStatus(status *localapi.SubnetRouteStatus) string {
 			status.UnreachableLimited)
 	}
 	for _, site := range status.Sites {
-		summary += "; Site " + site.Site + " " + formatRouteSite(site)
+		name := site.Site
+		if len(site.Prefixes) > 0 {
+			name = strings.Join(site.Prefixes, ", ")
+		}
+		summary += "; Site " + name + " " + formatRouteSite(site)
 	}
 	return summary
 }
 
 // formatRouteSite says which router a Site's traffic goes to and why.
 func formatRouteSite(site localapi.SubnetRouteSite) string {
-	router := site.RouterName
+	// The Device's own name, without its Network's DNS suffix.
+	router, _, _ := strings.Cut(site.RouterName, ".")
 	if router == "" {
 		router = site.Router
 	}

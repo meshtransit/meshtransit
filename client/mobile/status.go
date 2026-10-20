@@ -3,6 +3,7 @@ package mobile
 import (
 	"encoding/json"
 	"slices"
+	"strings"
 	"time"
 
 	"meshtransit.net/client/internal/daemon"
@@ -60,7 +61,10 @@ type subnetRoutes struct {
 // siteRoute is one granted Site and the router its traffic goes to: via
 // primary (Core's choice), local_failover or none (not served).
 type siteRoute struct {
-	Site   string `json:"site"`
+	Site string `json:"site"`
+	// Prefixes are the Site's granted prefixes, which name it here.
+	Prefixes []string `json:"prefixes"`
+	// Router is the router's Device name, without the DNS suffix.
 	Router string `json:"router,omitempty"`
 	Via    string `json:"via"`
 }
@@ -114,7 +118,12 @@ func newStatus(running bool, current daemon.Status) status {
 func siteRoutes(views []daemon.RouteSiteView) []siteRoute {
 	sites := make([]siteRoute, 0, len(views))
 	for _, view := range views {
-		sites = append(sites, siteRoute{Site: view.Ref, Router: view.RouterName, Via: view.Via})
+		prefixes := make([]string, 0, len(view.Prefixes))
+		for _, prefix := range view.Prefixes {
+			prefixes = append(prefixes, prefix.String())
+		}
+		router, _, _ := strings.Cut(view.RouterName, ".")
+		sites = append(sites, siteRoute{Site: view.Ref, Prefixes: prefixes, Router: router, Via: view.Via})
 	}
 	return sites
 }

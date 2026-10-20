@@ -5,6 +5,9 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Client: status names each granted Site by its prefixes and its router by
+  the Device name without the DNS suffix (`meshctl status`, local API
+  `prefixes`, mobile status `prefixes`); the map carries no Site name.
 - Mobile library: the device reaches subnet routes once the app turns them
   on (`Engine.SetSubnetRoutes`, kept in the state directory, off by
   default). Admitted prefixes go on the VPN interface (a new interface when

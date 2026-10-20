@@ -630,8 +630,12 @@ func natAllocationName(a disco.Allocation) string {
 
 func withRouteSites(mapped subnetRouteStatus, sites []daemon.RouteSiteView) subnetRouteStatus {
 	for _, site := range sites {
+		prefixes := make([]string, 0, len(site.Prefixes))
+		for _, prefix := range site.Prefixes {
+			prefixes = append(prefixes, prefix.String())
+		}
 		mapped.Sites = append(mapped.Sites, subnetRouteSite{
-			Site: site.Ref, Router: site.Router, RouterName: site.RouterName, Via: site.Via,
+			Site: site.Ref, Prefixes: prefixes, Router: site.Router, RouterName: site.RouterName, Via: site.Via,
 		})
 	}
 	return mapped
