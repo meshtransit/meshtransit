@@ -184,8 +184,16 @@ func NewMetrics() *Metrics {
 func (metrics *Metrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{metrics.handshakes, metrics.sessions, metrics.messages, metrics.streamEnds,
 		metrics.sheds, metrics.unproven, metrics.forwarding, metrics.keyExpiry, metrics.limits, metrics.mapNames,
-		metrics.expiring, metrics.routeOffers, metrics.routeOfferDropped, metrics.routes}
+		metrics.expiring, metrics.routeOffers, metrics.routeOfferDropped, metrics.routes, routedFilterOmitted}
 }
+
+// routedFilterOmitted reports the routed traffic groups left out of router
+// filters (TD-CORE-64). Watch: any increase means a router has more
+// consumers than one filter holds; some Sites refuse them.
+var routedFilterOmitted = prometheus.NewCounterFunc(prometheus.CounterOpts{
+	Name: "meshtransit_mtcp_routed_filter_groups_omitted_total",
+	Help: "Routed traffic groups left out of a router's packet filter because it was full.",
+}, func() float64 { return float64(omittedRoutedFilterGroups.Load()) })
 
 // streamEnded counts a map stream end; a nil Metrics counts nothing.
 func (metrics *Metrics) streamEnded(reason string) {

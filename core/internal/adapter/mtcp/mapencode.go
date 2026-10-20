@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
 	"meshtransit.net/core/internal/control/mapsession"
@@ -354,13 +355,17 @@ func encodePacketFilter(snapshot mapsession.Snapshot) (*mtcpv1.PacketFilter, err
 			group.sources = append(group.sources, netip.PrefixFrom(address, address.BitLen()))
 		}
 	}
-	// A router admits its consumers into the Sites it serves.
+	// A router admits its consumers into the Sites it serves. Their rules
+	// come after this node's own and are kept whole per traffic group, so
+	// a router with more consumers than one filter holds keeps its own
+	// access and the Sites that fit, instead of failing its whole map.
+	direct := len(order)
 	for _, rule := range snapshot.Routes().Inbound() {
 		destinations, protocols, err := routedDestinations(rule)
 		if err != nil {
 			return nil, err
 		}
-		groupKey := trafficKey(destinations, protocols)
+		groupKey := "routed:" + trafficKey(destinations, protocols)
 		group, exists := groups[groupKey]
 		if !exists {
 			group = &merged{destinations: destinations, protocols: protocols, seen: make(map[netip.Addr]struct{})}
@@ -382,22 +387,50 @@ func encodePacketFilter(snapshot mapsession.Snapshot) (*mtcpv1.PacketFilter, err
 			}
 		}
 	}
-	filter := &mtcpv1.PacketFilter{}
-	for _, groupKey := range order {
+	grouped := make([][]*mtcpv1.FilterRule, len(order))
+	for index, groupKey := range order {
 		group := groups[groupKey]
 		for start := 0; start < len(group.sources); start += sharedmtcp.MaxFilterRuleSources {
 			rule := &mtcpv1.FilterRule{Destinations: group.destinations, Protocols: group.protocols}
 			for _, source := range group.sources[start:min(start+sharedmtcp.MaxFilterRuleSources, len(group.sources))] {
 				rule.Sources = append(rule.Sources, sharedmtcp.AppendPrefix(source))
 			}
-			filter.Rules = append(filter.Rules, rule)
+			grouped[index] = append(grouped[index], rule)
 		}
 	}
-	if len(filter.Rules) > sharedmtcp.MaxFilterRules {
-		return nil, ErrMapEncoding
+	rules, omitted, err := fitFilterGroups(grouped, direct, sharedmtcp.MaxFilterRules)
+	if err != nil {
+		return nil, err
 	}
-	return filter, nil
+	for range omitted {
+		omittedRoutedFilterGroups.Add(1)
+	}
+	return &mtcpv1.PacketFilter{Rules: rules}, nil
 }
+
+// fitFilterGroups concatenates the rules of each traffic group, in order,
+// under limit. The first direct groups are this node's own access and must
+// all fit; a later (routed) group that does not fit is left out whole and
+// counted.
+func fitFilterGroups(groups [][]*mtcpv1.FilterRule, direct, limit int) ([]*mtcpv1.FilterRule, int, error) {
+	var rules []*mtcpv1.FilterRule
+	omitted := 0
+	for index, group := range groups {
+		if len(rules)+len(group) > limit {
+			if index < direct {
+				return nil, 0, ErrMapEncoding
+			}
+			omitted++
+			continue
+		}
+		rules = append(rules, group...)
+	}
+	return rules, omitted, nil
+}
+
+// omittedRoutedFilterGroups counts routed traffic groups left out of a
+// router's filter for want of room (meshtransit_mtcp_routed_filter_groups_omitted_total).
+var omittedRoutedFilterGroups atomic.Uint64
 
 func encodeDestinations(addresses []netip.Prefix, rule mapsession.InboundPacketRule) ([]*mtcpv1.Destination,
 	[]uint32, error) {

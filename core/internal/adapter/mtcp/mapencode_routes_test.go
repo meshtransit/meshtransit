@@ -171,3 +171,22 @@ func TestEncodeSnapshotLeavesOutPrefixesHoldingDialedAddresses(t *testing.T) {
 		t.Fatalf("routable() = %v", kept)
 	}
 }
+
+func TestFitFilterGroupsLeavesOutRoutedGroupsThatDoNotFit(t *testing.T) {
+	t.Parallel()
+	rules := func(count int) []*mtcpv1.FilterRule {
+		out := make([]*mtcpv1.FilterRule, count)
+		for index := range out {
+			out[index] = &mtcpv1.FilterRule{Protocols: []uint32{uint32(index)}}
+		}
+		return out
+	}
+	// Two direct groups (3 rules), then routed groups of 4, 2 and 1.
+	fitted, omitted, err := fitFilterGroups([][]*mtcpv1.FilterRule{rules(2), rules(1), rules(4), rules(2), rules(1)}, 2, 6)
+	if err != nil || len(fitted) != 6 || omitted != 1 {
+		t.Fatalf("fitted %d rules, omitted %d, error %v; want 6, 1", len(fitted), omitted, err)
+	}
+	if _, _, err := fitFilterGroups([][]*mtcpv1.FilterRule{rules(5), rules(3)}, 2, 6); err == nil {
+		t.Fatal("direct groups over the limit were cut")
+	}
+}
