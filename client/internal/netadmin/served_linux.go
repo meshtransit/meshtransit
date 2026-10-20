@@ -281,6 +281,11 @@ func routableEntries(entries []routesettings.ServedEntry, meshIndex int) (
 		served = append(served, entry)
 		if entry.Prefix.Addr().Is4() {
 			egress = append(egress, out.Attrs().Name)
+			// A prefix the host routes in parts may leave by another
+			// interface at its end, which needs forwarding as well.
+			if name, ok := egressInterface(lastAddress(entry.Prefix), meshIndex); ok {
+				egress = append(egress, name)
+			}
 		} else {
 			ipv6 = true
 		}
@@ -516,4 +521,20 @@ func restoreSysctl(path, set, previous string) {
 // /proc/sys path element.
 func validSysctlInterface(name string) bool {
 	return name != "" && len(name) < 16 && name != "." && name != ".." && !strings.ContainsAny(name, "/\x00")
+}
+
+// egressInterface names the interface the host routes address out of, when
+// it is a real interface outside the mesh.
+func egressInterface(address netip.Addr, meshIndex int) (string, bool) {
+	routes, err := netlink.RouteGet(address.AsSlice())
+	if err != nil || len(routes) == 0 || routes[0].LinkIndex <= 0 || routes[0].LinkIndex == meshIndex ||
+		routes[0].Type == unix.RTN_LOCAL {
+		return "", false
+	}
+	out, err := netlink.LinkByIndex(routes[0].LinkIndex)
+	if err != nil || out.Attrs() == nil || !validSysctlInterface(out.Attrs().Name) ||
+		out.Attrs().Flags&net.FlagLoopback != 0 {
+		return "", false
+	}
+	return out.Attrs().Name, true
 }
