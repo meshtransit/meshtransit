@@ -23,3 +23,7 @@ func PhysicalIndex(netip.Addr) uint32 { return 0 }
 
 // forgetPhysicalInterfaces has no cache to drop here.
 func forgetPhysicalInterfaces() {}
+
+// DirectBlocked is false: nothing here routes the client's own sockets into
+// the mesh.
+func DirectBlocked() bool { return false }

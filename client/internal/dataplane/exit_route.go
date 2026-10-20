@@ -147,6 +147,9 @@ func (e *WireGuardEngine) resetExitRouteLocked() {
 	e.exitRoute.resetLocked()
 	e.exitRouteStatus = ExitRouteStatus{}
 	e.filter.SetExitRouted(false)
+	// The next device asks again; a kill switch the helper keeps is held
+	// by root's choice (underlay.ExitChosen).
+	e.followExitLocked(false)
 }
 
 // ExitRoute returns how the node sends its Internet traffic through an exit

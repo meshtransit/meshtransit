@@ -1,6 +1,7 @@
 package dataplane
 
 import (
+	"errors"
 	"net/netip"
 	"sync"
 	"testing"
@@ -62,7 +63,8 @@ func TestSharedBindFollowsTheExitRouteBeforeSending(t *testing.T) {
 	}
 
 	underlay.SetExitBound(underlay.ExitHeld, true)
-	if err := bind.Send([][]byte{{2}}, endpoint); err != nil {
+	if err := bind.Send([][]byte{{2}}, endpoint); err != nil &&
+		(!underlay.DirectBlocked() || !errors.Is(err, errDirectBlocked)) {
 		t.Fatal(err)
 	}
 	calls, index, blackhole := inner.state()

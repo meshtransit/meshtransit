@@ -18,6 +18,11 @@ import (
 	"meshtransit.net/client/internal/underlay"
 )
 
+// errDirectBlocked refuses a datagram on the client's own UDP socket while
+// it cannot carry the right source address (underlay.DirectBlocked): peers
+// are reached through the relays then.
+var errDirectBlocked = errors.New("dataplane: direct paths are off while the host routes the Internet into the mesh")
+
 // errRoutedDestination refuses a datagram to an address an installed subnet
 // route covers, where the client's own sockets follow the host's routes
 // (underlay.FollowsRoutes): it would enter the mesh it is carried by. The
@@ -272,6 +277,9 @@ func (b *sharedBind) Send(buffers [][]byte, endpoint conn.Endpoint) error {
 	}
 
 	b.followPhysical()
+	if underlay.DirectBlocked() {
+		return errDirectBlocked
+	}
 	if underlay.Routed(endpoint.DstIP()) {
 		// Into a subnet route the datagram would loop through the mesh.
 		return errRoutedDestination
@@ -347,6 +355,9 @@ func (b *sharedBind) SendDatagram(
 	}
 	if underlay.Routed(destination.Addr()) {
 		return pathdiscovery.Socket{}, errRoutedDestination
+	}
+	if underlay.DirectBlocked() {
+		return pathdiscovery.Socket{}, errDirectBlocked
 	}
 	b.followPhysical()
 

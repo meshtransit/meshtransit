@@ -123,3 +123,7 @@ func PhysicalIndex(destination netip.Addr) uint32 {
 	}
 	return index
 }
+
+// DirectBlocked is false: Windows sends a bound socket's datagrams with its
+// interface's address (strong host model).
+func DirectBlocked() bool { return false }
