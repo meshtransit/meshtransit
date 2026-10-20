@@ -203,14 +203,15 @@ func (c *darwinExitRouteConfigurer) load(rules string) error {
 // sockets, DHCP, neighbour discovery, link-local and the allowed LAN;
 // every other outbound packet is dropped, replies to connections opened
 // from outside too (they would follow the exit routes anyway). One family
-// per rule. Without a utun nothing goes into the mesh either.
+// per rule; "flags any" keeps connections opened before the anchor loaded.
+// Without a utun nothing goes into the mesh either.
 func pfExitRules(name string, uid uint32, lan []netip.Prefix) string {
 	var rules strings.Builder
-	rules.WriteString("pass out quick on lo0 all\n")
+	rules.WriteString("pass out quick on lo0 all flags any\n")
 	if name != "" {
-		rules.WriteString("pass out quick on " + name + " all\n")
+		rules.WriteString("pass out quick on " + name + " all flags any\n")
 	}
-	rules.WriteString("pass out quick proto { tcp udp } user " + strconv.FormatUint(uint64(uid), 10) + "\n")
+	rules.WriteString("pass out quick proto { tcp udp } user " + strconv.FormatUint(uint64(uid), 10) + " flags any\n")
 	rules.WriteString("pass out quick inet proto udp from any port 68 to any port 67\n")
 	rules.WriteString("pass out quick inet6 proto udp from any port 546 to any port 547\n")
 	rules.WriteString("pass out quick inet6 proto icmp6 icmp6-type { routersol neighbrsol neighbradv }\n")

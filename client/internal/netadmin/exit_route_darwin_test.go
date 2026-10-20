@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/netip"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,15 +16,25 @@ func TestPfExitRulesLetOutOnlyTheExceptions(t *testing.T) {
 	t.Parallel()
 	rules := pfExitRules("utun7", 270, []netip.Prefix{netip.MustParsePrefix("192.168.1.9/24")})
 	for _, want := range []string{
-		"pass out quick on lo0 all\n",
-		"pass out quick on utun7 all\n",
-		"pass out quick proto { tcp udp } user 270\n",
+		"pass out quick on lo0 all flags any\n",
+		"pass out quick on utun7 all flags any\n",
+		"pass out quick proto { tcp udp } user 270 flags any\n",
 		"pass out quick inet proto udp from any port 68 to any port 67\n",
 		"pass out quick inet to { 192.168.1.0/24 }\n",
 		"pass out quick inet6 to fe80::/10\n",
 	} {
 		if !strings.Contains(rules, want) {
 			t.Errorf("rules lack %q:\n%s", want, rules)
+		}
+	}
+	if pfctl, err := exec.LookPath("/sbin/pfctl"); err == nil {
+		// Parsing needs no privilege: the anchor must load as written.
+		file := filepath.Join(t.TempDir(), "rules.conf")
+		if err := os.WriteFile(file, []byte(rules), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if output, err := exec.CommandContext(t.Context(), pfctl, "-nf", file).CombinedOutput(); err != nil { //nolint:gosec // G204: test
+			t.Fatalf("pfctl rejects the rules: %v\n%s", err, output)
 		}
 	}
 	if !strings.HasSuffix(rules, "block drop out quick all\n") {
