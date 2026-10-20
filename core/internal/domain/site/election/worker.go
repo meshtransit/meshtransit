@@ -190,10 +190,10 @@ func (tally *Tally) add(candidates []Candidate) {
 		tally.Routers[candidate.Status]++
 		best = min(best, candidate.Status)
 	}
-	switch {
-	case best == StatusUsable:
+	switch best {
+	case StatusUsable:
 		tally.SitesServed++
-	case best == StatusIneligible:
+	case StatusIneligible:
 		tally.SitesUnserved++
 	default:
 		tally.SitesDegraded++
