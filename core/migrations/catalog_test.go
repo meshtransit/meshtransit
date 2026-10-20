@@ -13,8 +13,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 198 {
-		t.Fatalf("len(Catalog()) = %d, want 198", len(catalog))
+	if len(catalog) != 199 {
+		t.Fatalf("len(Catalog()) = %d, want 199", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1609,8 +1609,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 198 {
-		t.Fatalf("LatestVersion() = %d, want 198", LatestVersion())
+	if LatestVersion() != 199 {
+		t.Fatalf("LatestVersion() = %d, want 199", LatestVersion())
 	}
 }
 
@@ -5719,6 +5719,27 @@ func TestMigration198ListsSiteEdges(t *testing.T) {
 	} {
 		if !strings.Contains(migration.SQL, want) {
 			t.Errorf("schema 198 lacks %q", want)
+		}
+	}
+}
+
+func TestMigration199RecordsSiteEdges(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[198]
+	if migration.Version != 199 {
+		t.Fatalf("migration 199 = %+v", migration)
+	}
+	for _, want := range []string{
+		"ADD COLUMN destination_site_public_id UUID",
+		"CREATE FUNCTION mesh_ops.access_edges_internal_v2(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.record_access_edges_v1(",
+		"FROM mesh_ops.access_edges_internal_v2(v_workspace_id, v_network_id, v_policy_revision, v_now)",
+		"AND (p_include_sites OR edge.selector_kind <> 'site')",
+		"p_protocol, p_after_edge_key, p_limit, FALSE)",
+		"CREATE FUNCTION mesh_ops.read_access_graph_history_v2(",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 199 lacks %q", want)
 		}
 	}
 }

@@ -441,7 +441,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertPostgreSQLIdentityTagPolicy(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLDeviceLifecycle(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLSites(ctx, t, adminConnection, runtimePool)
-	assertPostgreSQLSitePolicy(ctx, t, adminConnection, runtimePool)
+	assertPostgreSQLSitePolicy(ctx, t, adminConnection, runtimePool, workerPool)
 	assertPostgreSQLRouteOffers(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLSiteMaps(ctx, t, adminConnection, runtimePool, workerPool)
 	assertPostgreSQLConsoleDeviceSearch(ctx, t, adminConnection, runtimePool)

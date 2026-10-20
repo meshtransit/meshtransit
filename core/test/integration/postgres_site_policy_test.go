@@ -12,6 +12,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	"meshtransit.net/core/internal/domain/accessgraph"
+	"meshtransit.net/core/internal/domain/accessgraph/ledger"
+	"meshtransit.net/core/internal/domain/deployment"
 	"meshtransit.net/core/internal/domain/devicegroup"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
@@ -28,7 +30,8 @@ import (
 // back, so republishing and simulating keep them; rules of two Sites with
 // overlapping prefixes are refused; a Site that active rules name cannot be
 // deleted until a release drops them.
-func assertPostgreSQLSitePolicy(ctx context.Context, t *testing.T, admin *pgx.Conn, runtimePool *postgresadapter.Pool) {
+func assertPostgreSQLSitePolicy(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	runtimePool, workerPool *postgresadapter.Pool) {
 	t.Helper()
 	sites := newIntegrationSiteService(t, runtimePool)
 	groups := newIntegrationDeviceGroupService(t, runtimePool)
@@ -108,6 +111,7 @@ JOIN mesh.policy_release AS release ON release.id = rule.policy_release_id WHERE
 
 	assertSiteExplanations(ctx, t, newIntegrationPolicyExplainer(t, runtimePool), owner, scope, member, hq)
 	assertSiteGraph(ctx, t, newIntegrationPolicyExplainer(t, runtimePool), owner, scope, member, hq, lab)
+	assertSiteLedger(ctx, t, admin, runtimePool, workerPool, owner, scope, member)
 
 	catalogStore, err := postgresadapter.NewActivePolicyStore(runtimePool, postgresadapter.PolicySimulationOptions{
 		StatementTimeout: 5 * time.Second, LockTimeout: time.Second, IdleTimeout: 10 * time.Second,
@@ -294,6 +298,57 @@ func assertSiteGraph(ctx context.Context, t *testing.T, graph *accessgraph.Servi
 	unfiltered, _ := list(node.ID{}, 2)
 	if all := siteEdges(unfiltered); len(all) != 2 || all[lab].RuleID() != edges[lab].RuleID() {
 		t.Fatalf("unfiltered Site edges = %+v", all)
+	}
+}
+
+// assertSiteLedger qualifies schema 199: the ledger records one edge per Site
+// the member is granted, history v2 returns them with the Site and prefixes,
+// and v1, which older Cores call, leaves them out.
+func assertSiteLedger(ctx context.Context, t *testing.T, admin *pgx.Conn, runtimePool, workerPool *postgresadapter.Pool,
+	owner accountsession.Session, scope network.Scope, member node.ID) {
+	t.Helper()
+	var installationText string
+	if err := admin.QueryRow(ctx, `SELECT installation_public_id::TEXT FROM mesh.deployment WHERE id = 1`).
+		Scan(&installationText); err != nil {
+		t.Fatal(err)
+	}
+	installation, err := deployment.ParseID(installationText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder, err := postgresadapter.NewAccessLedgerStore(workerPool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := recorder.Record(ctx, installation, scope); err != nil {
+		t.Fatalf("record the ledger with Site rules: %v", err)
+	}
+	reader, err := postgresadapter.NewAccessGraphHistoryStore(runtimePool,
+		postgresadapter.AccountSessionOptions{StatementTimeout: 3 * time.Second, IdleTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := reader.ReadHistory(ctx, owner, scope, ledger.Query{Source: member, Limit: 500})
+	if err != nil {
+		t.Fatalf("read history with Site edges: %v", err)
+	}
+	sites := 0
+	for _, edge := range result.Edges {
+		if edge.SelectorKind == ledger.SelectorSite {
+			sites++
+			if !edge.SiteID.IsValid() || len(edge.Prefixes) != 1 || edge.DestinationDeviceID.IsValid() {
+				t.Fatalf("Site edge = %+v", edge)
+			}
+		}
+	}
+	if sites != 2 {
+		t.Fatalf("history has %d Site edges of the member, want 2", sites)
+	}
+	var legacy int
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM mesh_ops.access_edge_history
+WHERE workspace_id = 103 AND network_id = 203 AND selector_kind = 'site' AND valid_to_revision IS NULL
+  AND source_device_public_id = $1::UUID`, member.String()).Scan(&legacy); err != nil || legacy != 2 {
+		t.Fatalf("open Site edges = %d, error = %v", legacy, err)
 	}
 }
 

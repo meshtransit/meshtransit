@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"net/netip"
 	"time"
 
 	"meshtransit.net/core/internal/domain/identity/accountsession"
@@ -12,6 +13,10 @@ import (
 	"meshtransit.net/core/internal/domain/policy"
 	"meshtransit.net/core/internal/domain/publicid"
 )
+
+// maximumSitePrefixes bounds the prefixes one Site edge names, as a Site
+// holds at most 1,024.
+const maximumSitePrefixes = 1024
 
 // MaximumPageSize bounds each authenticated history page.
 const MaximumPageSize = 500
@@ -54,6 +59,9 @@ const (
 	SelectorResource         = "resource"
 	SelectorResourceGroup    = "resource_group"
 	SelectorImportedResource = "imported_resource"
+	// SelectorSite is a rule to a Site: the edge names the Site and the
+	// prefixes the rule grants instead of a destination Device.
+	SelectorSite = "site"
 )
 
 // Edge is one source reaching one destination through one rule, valid from
@@ -75,6 +83,8 @@ type Edge struct {
 	SourceSelectorID        publicid.ID
 	DestinationSelectorKind string
 	DestinationSelectorID   publicid.ID
+	SiteID                  publicid.ID
+	Prefixes                []netip.Prefix
 	Protocol                policy.Protocol
 	Ports                   []policy.PortRange
 	ValidFromRevision       int64
@@ -217,9 +227,13 @@ func validEdge(edge Edge, query Query) bool {
 	local := edge.SelectorKind == SelectorDevice || edge.SelectorKind == SelectorResource ||
 		edge.SelectorKind == SelectorResourceGroup
 	imported := edge.SelectorKind == SelectorImportedResource
+	toSite := edge.SelectorKind == SelectorSite
 	shape := local && edge.DestinationDeviceID.IsValid() && edge.ImportedResourceID == (publicid.ID{}) ||
 		imported && edge.DestinationDeviceID == (node.ID{}) && edge.ImportedResourceID.IsValid() &&
-			edge.TrustContractID.IsValid()
+			edge.TrustContractID.IsValid() ||
+		toSite && edge.DestinationDeviceID == (node.ID{}) && edge.ImportedResourceID == (publicid.ID{}) &&
+			edge.SiteID.IsValid() && len(edge.Prefixes) > 0 && len(edge.Prefixes) <= maximumSitePrefixes
+	shape = shape && toSite == edge.SiteID.IsValid() && toSite == (len(edge.Prefixes) > 0)
 	open := edge.ValidToRevision == 0 && edge.ValidTo.IsZero()
 	closed := edge.ValidToRevision > edge.ValidFromRevision && edge.ValidTo.After(query.At)
 	inEffect := !edge.ValidFrom.After(query.At) && (open || closed) &&

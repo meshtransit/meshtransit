@@ -5,6 +5,11 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: the access ledger records rules to Sites (schema 199). Each Device a
+  rule grants a Site to is an edge with `selector_kind` `site`,
+  `destination_site_id` and `destination_prefixes`; the history read
+  (`read_access_graph_history_v2`) returns them, while v1 leaves them out for
+  older Cores. Existing edges keep their keys.
 - Core: the Access Graph lists the Devices each rule to a Site reaches
   (schema 198, `mesh_ops.read_access_graph_v3`): one `site` edge per Device
   with the prefixes the rule grants, to a `site` node, in the same projection

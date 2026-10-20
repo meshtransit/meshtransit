@@ -3,6 +3,7 @@ package ledger
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -199,5 +200,36 @@ func TestServiceReadsPresentPageWithContinuation(t *testing.T) {
 	}
 	if _, err := service.Read(t.Context(), session, scope, Query{Limit: MaximumPageSize + 1}); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("oversized page error = %v", err)
+	}
+}
+
+func TestValidResultChecksSiteEdges(t *testing.T) {
+	t.Parallel()
+	scope := testScope(t, "01890f00-0000-7000-8000-000000000201")
+	at := time.Date(2026, time.October, 8, 12, 0, 0, 0, time.UTC)
+	query := Query{At: at, Limit: 3}
+	siteEdge := func() Edge {
+		edge := edgeAt(t, 5, at.Add(-time.Minute))
+		edge.SelectorKind, edge.DestinationDeviceID = SelectorSite, node.ID{}
+		edge.SiteID = mustPublic(t, "01890f00-0000-7000-8000-000000000971")
+		edge.Prefixes = []netip.Prefix{netip.MustParsePrefix("10.35.0.0/17")}
+		return edge
+	}
+	if !validResult(Result{Scope: scope, At: at, RecordedSince: at, Edges: []Edge{siteEdge()}}, scope, query) {
+		t.Fatal("Site edge rejected")
+	}
+	for name, mutate := range map[string]func(*Edge){
+		"no Site":            func(edge *Edge) { edge.SiteID = publicid.ID{} },
+		"no prefixes":        func(edge *Edge) { edge.Prefixes = nil },
+		"destination Device": func(edge *Edge) { edge.DestinationDeviceID = mustNode(t, "01890f00-0000-7000-8000-000000000302") },
+		"Device kind": func(edge *Edge) {
+			edge.SelectorKind, edge.DestinationDeviceID = SelectorDevice, mustNode(t, "01890f00-0000-7000-8000-000000000302")
+		},
+	} {
+		edge := siteEdge()
+		mutate(&edge)
+		if validResult(Result{Scope: scope, At: at, RecordedSince: at, Edges: []Edge{edge}}, scope, query) {
+			t.Errorf("%s accepted", name)
+		}
 	}
 }

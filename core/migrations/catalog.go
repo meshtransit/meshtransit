@@ -565,6 +565,7 @@ func Catalog() []Migration {
 		newMigration(196, "Sites may use IPv6 unique local prefixes", siteUniqueLocalPrefixesSQL),
 		newMigration(197, "Explain answers for an address inside a Site", explainSiteAccessSQL),
 		newMigration(198, "The Access Graph lists the Devices rules to Sites reach", accessGraphSiteEdgesSQL),
+		newMigration(199, "The access edge ledger records rules to Sites", accessLedgerSiteEdgesSQL),
 	}
 }
 
@@ -938,3 +939,6 @@ var explainSiteAccessSQL string
 
 //go:embed 000198_access_graph_site_edges.up.sql
 var accessGraphSiteEdgesSQL string
+
+//go:embed 000199_access_ledger_site_edges.up.sql
+var accessLedgerSiteEdgesSQL string

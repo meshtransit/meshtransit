@@ -225,7 +225,8 @@ BEGIN
             scoped_workspace, scoped_network, v_release_id, v_device_id,
             v_device_groups, v_identity_groups, v_tags) AS edge
         JOIN mesh.compiled_policy_route_rule AS rule ON rule.id = edge.route_rule_id
-        JOIN mesh.network_site AS network_site ON network_site.id = rule.destination_site_id
+        JOIN mesh.network_site AS network_site
+          ON network_site.id = rule.destination_site_id AND network_site.state = 'active'
         JOIN mesh.device AS source
           ON source.workspace_id = scoped_workspace AND source.network_id = scoped_network
          AND source.id = edge.source_device_id

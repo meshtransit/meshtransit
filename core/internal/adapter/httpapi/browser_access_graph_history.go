@@ -205,6 +205,9 @@ type accessGraphHistoryEdgeItem struct {
 	ValidToRevision               *int64     `json:"valid_to_revision"`
 	ValidTo                       *time.Time `json:"valid_to"`
 	ExpiresAt                     *time.Time `json:"expires_at"`
+	// Set only on an edge to a Site.
+	DestinationSiteID   string   `json:"destination_site_id,omitempty"`
+	DestinationPrefixes []string `json:"destination_prefixes,omitempty"`
 }
 
 type accessGraphHistoryData struct {
@@ -261,6 +264,12 @@ func newAccessGraphHistoryEdgeItem(edge ledger.Edge) accessGraphHistoryEdgeItem 
 	if edge.ValidToRevision > 0 {
 		revision := edge.ValidToRevision
 		item.ValidToRevision = &revision
+	}
+	if edge.SiteID != (publicid.ID{}) {
+		item.DestinationSiteID = edge.SiteID.String()
+		for _, prefix := range edge.Prefixes {
+			item.DestinationPrefixes = append(item.DestinationPrefixes, prefix.String())
+		}
 	}
 	for _, portRange := range edge.Ports {
 		item.PortFirst = append(item.PortFirst, int(portRange.First()))
