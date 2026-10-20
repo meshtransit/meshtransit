@@ -9,8 +9,11 @@ import (
 	"math/big"
 	"net"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
+
+	"meshtransit.net/client/internal/underlay"
 )
 
 const (
@@ -35,6 +38,8 @@ var (
 	ErrQueueFull = errors.New("relay: send queue is full")
 	// ErrRegionLimit means the bounded active-region limit has been reached.
 	ErrRegionLimit = errors.New("relay: active region limit reached")
+	// errReconnect ends a connection Reconnect dropped.
+	errReconnect = errors.New("relay: reconnecting")
 )
 
 type sendRequest struct {
@@ -44,12 +49,14 @@ type sendRequest struct {
 }
 
 type regionWorker struct {
-	region      Region
-	generation  uint64
-	ctx         context.Context
-	cancel      context.CancelFunc
-	done        chan struct{}
-	send        chan sendRequest
+	region     Region
+	generation uint64
+	ctx        context.Context
+	cancel     context.CancelFunc
+	done       chan struct{}
+	send       chan sendRequest
+	// reconnect asks the worker to drop its connection and dial again.
+	reconnect   chan struct{}
 	queuedBytes int
 	busy        bool
 	lastUsed    time.Time
@@ -426,6 +433,23 @@ func (p *Pool) Stop() error {
 	return nil
 }
 
+// Reconnect drops every relay connection and dials it again at once, as
+// when the host's routes changed under connections that keep the path they
+// took (underlay.ReconnectOnExitChange).
+func (p *Pool) Reconnect() {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, worker := range p.workers {
+		select {
+		case worker.reconnect <- struct{}{}:
+		default:
+		}
+	}
+}
+
 // Close permanently stops the pool and clears its private relay authority.
 func (p *Pool) Close() error {
 	if p == nil {
@@ -527,6 +551,7 @@ func (p *Pool) startWorkerLocked(regionID int) (*regionWorker, error) {
 		cancel:     cancel,
 		done:       make(chan struct{}),
 		send:       make(chan sendRequest, sendQueueDepth),
+		reconnect:  make(chan struct{}, 1),
 		lastUsed:   p.clock(),
 		health:     RegionHealth{RegionID: regionID},
 	}
@@ -592,9 +617,15 @@ func (p *Pool) runWorker(worker *regionWorker) {
 		if err == nil {
 			p.markConnected(worker)
 			err = p.runConnection(worker, client)
+		} else {
+			underlay.ReportFailure("relay connection failed", "region "+strconv.Itoa(worker.region.ID), err)
 		}
 		if worker.ctx.Err() != nil || errors.Is(err, context.Canceled) {
 			return
+		}
+		if errors.Is(err, errReconnect) {
+			attempt = 0
+			continue // dial again at once
 		}
 		p.markFailure(worker)
 		attempt = nextRetryAttempt(attempt, p.clock().Sub(connectedAt))
@@ -641,6 +672,11 @@ func (p *Pool) runConnection(worker *regionWorker, client Client) error {
 			return err
 		case <-activity:
 			resetTimer(activityTimer, p.receiveSilence)
+		case <-worker.reconnect:
+			_ = client.Close()
+			<-receiveErr
+
+			return errReconnect
 		case <-activityTimer.C:
 			_ = client.Close()
 			<-receiveErr

@@ -2,6 +2,7 @@ package underlay
 
 import (
 	"net/netip"
+	"sync"
 	"sync/atomic"
 
 	"meshtransit.net/client/internal/overlayframe"
@@ -50,9 +51,49 @@ func SetExitBound(source ExitSource, on bool) {
 			if (previous != 0) != (next != 0) {
 				forgetPhysicalInterfaces()
 				physicalGeneration.Add(1)
+				reportExitBound(next)
+				runExitHooks()
 			}
 			return
 		}
+	}
+}
+
+var exitHooks struct {
+	sync.Mutex
+	next  int
+	hooks map[int]func()
+}
+
+// OnExitBoundChange runs hook, in a goroutine of its own, each time the
+// client's sockets start or stop keeping off the exit routes, and returns
+// what stops it. Where a connected socket keeps the route it took
+// (ReconnectOnExitChange), its owner reconnects then.
+func OnExitBoundChange(hook func()) (stop func()) {
+	exitHooks.Lock()
+	defer exitHooks.Unlock()
+	if exitHooks.hooks == nil {
+		exitHooks.hooks = map[int]func(){}
+	}
+	id := exitHooks.next
+	exitHooks.next++
+	exitHooks.hooks[id] = hook
+	return func() {
+		exitHooks.Lock()
+		defer exitHooks.Unlock()
+		delete(exitHooks.hooks, id)
+	}
+}
+
+func runExitHooks() {
+	exitHooks.Lock()
+	hooks := make([]func(), 0, len(exitHooks.hooks))
+	for _, hook := range exitHooks.hooks {
+		hooks = append(hooks, hook)
+	}
+	exitHooks.Unlock()
+	for _, hook := range hooks {
+		go hook()
 	}
 }
 

@@ -52,6 +52,9 @@ type sharedBind struct {
 	physicalRetry      atomic.Int64
 	// physicalBound is whether the sockets are bound to an interface now.
 	physicalBound bool
+	// stopReconnect stops redialing the relays when the exit binding
+	// changes (underlay.ReconnectOnExitChange).
+	stopReconnect func()
 }
 
 // physicalRetryDelay spaces the attempts to bind a socket that failed.
@@ -155,6 +158,12 @@ func (b *sharedBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 			return nil, 0, fmt.Errorf("dataplane: opening relay pool: %w", err)
 		}
 		receivers = append(receivers, b.receiveRelay)
+		if underlay.ReconnectOnExitChange && b.stopReconnect == nil {
+			// Relay connections made before the exit routes came keep the
+			// mesh source address they took: make them again.
+			relays := b.relay
+			b.stopReconnect = underlay.OnExitBoundChange(relays.Reconnect)
+		}
 	}
 	generation, err := b.generations.next()
 	if err != nil {
@@ -254,6 +263,10 @@ func (b *sharedBind) bindPhysicalLocked() error {
 func (b *sharedBind) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.stopReconnect != nil {
+		b.stopReconnect()
+		b.stopReconnect = nil
+	}
 	err := errors.Join(b.inner.Close(), b.closeRelay())
 	b.isOpen = false
 	b.port = 0

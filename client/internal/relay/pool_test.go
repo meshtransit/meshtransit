@@ -719,3 +719,41 @@ func receivePoolWithTimeout(pool *Pool, timeout time.Duration) (Packet, error) {
 		return Packet{}, errors.New("receive timed out")
 	}
 }
+
+// freshDialer hands out a new client per dial and counts the dials.
+type freshDialer struct{ calls chan int }
+
+func (d *freshDialer) Dial(ctx context.Context, _ Key, region Region) (Client, error) {
+	select {
+	case d.calls <- region.ID:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return newFakeClient(), nil
+}
+
+func TestPoolReconnectDialsAgainAtOnce(t *testing.T) {
+	t.Parallel()
+	dialer := &freshDialer{calls: make(chan int, 4)}
+	pool, err := New(t.Context(), testConfig(), dialer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pool.Close() })
+	// A failed connection waits an hour: only Reconnect dials again soon.
+	pool.retryDelay = func(int) time.Duration { return time.Hour }
+	if err := pool.Open(); err != nil {
+		t.Fatal(err)
+	}
+	wait := func(what string) {
+		t.Helper()
+		select {
+		case <-dialer.calls:
+		case <-time.After(time.Second):
+			t.Fatalf("no dial %s", what)
+		}
+	}
+	wait("at first")
+	pool.Reconnect()
+	wait("after Reconnect")
+}

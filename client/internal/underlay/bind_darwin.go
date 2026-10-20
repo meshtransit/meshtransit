@@ -51,6 +51,7 @@ func bindPhysical(raw syscall.RawConn, destination netip.Addr) error {
 	if bindErr != nil {
 		return fmt.Errorf("binding to interface %d (%s): %w", index, source, bindErr)
 	}
+	reportBound(destination.String(), index, source.String())
 	return nil
 }
 
@@ -127,8 +128,23 @@ func PhysicalIndex(destination netip.Addr) uint32 {
 	return uint32(index)
 }
 
+// ReconnectOnExitChange is true: a connected socket keeps the source
+// address it took when it connected, so connections made before the exit
+// routes came (or went) must be made again (OnExitBoundChange).
+const ReconnectOnExitChange = true
+
 // DirectBlocked reports that the packet path must send no datagram on its
 // own UDP socket: while the host routes the Internet into the mesh, macOS
 // gives that unconnected socket the utun's source address whatever
 // interface it is bound to, so its peers are reached through the relays.
 func DirectBlocked() bool { return ExitBound() }
+
+// reportBound notes, at most every 10 s, a socket kept on the physical
+// path: which destination, interface and source address.
+func reportBound(destination string, index int, source string) {
+	l := logger.Load()
+	if l == nil || !due("bound") {
+		return
+	}
+	l.Info("socket kept on the physical path", "destination", destination, "interface", index, "source", source)
+}
