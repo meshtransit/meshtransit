@@ -86,6 +86,49 @@ func (observer routeFailoverObserver) ObservePath(observation pathdiscovery.Path
 	observer.failover.ObservePath(observation)
 }
 
+// ObserveRelayPong passes on that a router answered a PING through the
+// relay (disco-v2 §3.2.1).
+func (observer routeFailoverObserver) ObserveRelayPong(peerID uint64, at time.Time) {
+	observer.failover.ObserveRelayPong(peerID, at)
+}
+
+// ObserveRelayPong records that a peer answered through the relay: it is
+// up, though no direct path to it is proven. It counts like a direct pong.
+func (failover *routeFailover) ObserveRelayPong(peerID uint64, at time.Time) {
+	if failover == nil || peerID == 0 || at.IsZero() {
+		return
+	}
+	failover.mu.Lock()
+	defer failover.mu.Unlock()
+	if at.After(failover.pongs[peerID]) {
+		failover.pongs[peerID] = at
+	}
+}
+
+// routerPeers returns the peers that route a Site this node is sent, the
+// ones to ping through the relay when no direct path to them is proven.
+func (failover *routeFailover) routerPeers() []uint64 {
+	if failover == nil {
+		return nil
+	}
+	failover.mu.Lock()
+	defer failover.mu.Unlock()
+	peers := peerIDs(failover.core)
+	var ids []uint64
+	for _, route := range failover.core.Routes {
+		if route.Status != networkmap.RouteServed || len(route.Candidates) < 2 {
+			continue // with one router there is nothing to fail over to
+		}
+		for _, candidate := range route.Candidates {
+			if id, found := peers[candidate]; found {
+				ids = append(ids, id)
+			}
+		}
+	}
+	slices.Sort(ids)
+	return slices.Compact(ids)
+}
+
 // ObservePath records that a peer answered on a direct path.
 func (failover *routeFailover) ObservePath(observation pathdiscovery.PathObservation) {
 	if failover == nil || observation.PeerID == 0 || observation.ObservedAt.IsZero() {
@@ -181,10 +224,11 @@ func (failover *routeFailover) judge(activity []dataplane.RoutedActivity) bool {
 	defer failover.mu.Unlock()
 	now := failover.clock()
 	peers := peerIDs(failover.core)
-	// A router answers when its last pong is recent, and has stopped when
-	// it answered before and no longer does. One that never answered (only
-	// reached through a relay, or not probed yet) is neither: it is never
-	// left for silence the node cannot measure.
+	// A router answers when its last pong (direct, or through the relay)
+	// is recent, and has stopped when it answered before and no longer does.
+	// One that never answered (not probed yet, or too old to answer relayed
+	// pings) is neither: it is never left for silence the node cannot
+	// measure.
 	pongOf := func(stableID string) (time.Time, bool) {
 		id, found := peers[stableID]
 		if !found {

@@ -65,6 +65,8 @@ func sampleMessages() map[string]Message {
 		"ping_padded": Ping{TxID: txid, Node: node, SentAt: 1760000000000, Padding: 64},
 		"pong_v4":     Pong{TxID: txid, Observed: netip.MustParseAddrPort("203.0.113.7:41641"), Echo: 1760000000000},
 		"pong_v6":     Pong{TxID: txid, Observed: netip.MustParseAddrPort("[2001:db8::7]:41641"), Echo: 1760000000000},
+		// Through the relay a Pong observes no source (disco-v2 §3.2).
+		"pong_relayed": Pong{TxID: txid, Echo: 1760000000000},
 		"call_me_maybe": CallMeMaybe{
 			Seq: 7, SentAt: 1760000000000,
 			NAT:   NATInfo{Mapping: MappingAddressAndPortDependent, Filtering: FilteringAddressAndPortDependent, Allocation: AllocationSequential},
@@ -218,7 +220,8 @@ func TestMarshalRejectsInvalidMessages(t *testing.T) {
 	tests := map[string]Message{
 		"nil":           nil,
 		"ping zero":     Ping{},
-		"pong no addr":  Pong{TxID: TxID{1}},
+		"pong no txid":  Pong{Observed: netip.MustParseAddrPort("192.0.2.1:5")},
+		"pong bad addr": Pong{TxID: TxID{1}, Observed: netip.MustParseAddrPort("224.0.0.1:5")},
 		"cmm too many":  CallMeMaybe{Endpoints: tooMany},
 		"cmm bad flag":  CallMeMaybe{Flags: 0x80},
 		"cmm multicast": CallMeMaybe{Endpoints: []Endpoint{{Kind: EndpointHost, Addr: netip.MustParseAddrPort("224.0.0.1:5")}}},
@@ -345,7 +348,7 @@ func buildVectors(t *testing.T) vectorFile {
 		MessageKey: hex.EncodeToString(k[:]),
 		Nonce:      hex.EncodeToString(bytes.Repeat([]byte{0x5a}, nonceSize)),
 	}
-	for _, name := range []string{"ping", "ping_padded", "pong_v4", "pong_v6", "call_me_maybe", "call_me_maybe_empty"} {
+	for _, name := range []string{"ping", "ping_padded", "pong_v4", "pong_v6", "pong_relayed", "call_me_maybe", "call_me_maybe_empty"} {
 		m := sampleMessages()[name]
 		plaintext, err := MarshalPlaintext(m)
 		if err != nil {

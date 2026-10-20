@@ -78,9 +78,12 @@ type Ping struct {
 
 // Pong answers a Ping on the path it came from.
 type Pong struct {
-	TxID     TxID
-	Observed netip.AddrPort // the Ping's source as seen by the responder
-	Echo     int64          // the Ping's SentAt
+	TxID TxID
+	// Observed is the Ping's source as seen by the responder; zero for a
+	// Pong through the relay, which observes no source (encoded as 18 zero
+	// bytes).
+	Observed netip.AddrPort
+	Echo     int64 // the Ping's SentAt
 }
 
 // CallMeMaybe asks a peer to ping the listed endpoints now.
@@ -171,9 +174,13 @@ func (p Pong) appendBody(dst []byte) ([]byte, error) {
 		return nil, ErrMalformed
 	}
 	dst = append(dst, p.TxID[:]...)
-	dst, err := appendEndpointAddr(dst, p.Observed)
-	if err != nil {
-		return nil, err
+	if p.Observed == (netip.AddrPort{}) {
+		dst = append(dst, make([]byte, endpointSize)...)
+	} else {
+		var err error
+		if dst, err = appendEndpointAddr(dst, p.Observed); err != nil {
+			return nil, err
+		}
 	}
 	dst, ok := wire.AppendMillis(dst, p.Echo)
 	if !ok {
@@ -261,11 +268,16 @@ func parsePong(b []byte) (Message, error) {
 	}
 	var p Pong
 	copy(p.TxID[:], b[:TxIDSize])
-	observed, err := parseEndpointAddr(b[TxIDSize : TxIDSize+endpointSize])
-	if err != nil || p.TxID.IsZero() {
+	if p.TxID.IsZero() {
 		return nil, ErrMalformed
 	}
-	p.Observed = observed
+	if observedBytes := b[TxIDSize : TxIDSize+endpointSize]; !allZero(observedBytes) {
+		observed, err := parseEndpointAddr(observedBytes)
+		if err != nil {
+			return nil, ErrMalformed
+		}
+		p.Observed = observed
+	}
 	echo, ok := wire.Millis(b[TxIDSize+endpointSize:])
 	if !ok {
 		return nil, ErrMalformed
@@ -335,4 +347,13 @@ func parseEndpointAddr(b []byte) (netip.AddrPort, error) {
 func validEndpoint(ap netip.AddrPort) bool {
 	a := ap.Addr()
 	return ap.IsValid() && ap.Port() != 0 && a.Zone() == "" && !a.IsUnspecified() && !a.IsMulticast()
+}
+
+func allZero(b []byte) bool {
+	for _, value := range b {
+		if value != 0 {
+			return false
+		}
+	}
+	return true
 }

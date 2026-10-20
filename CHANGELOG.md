@@ -5,6 +5,15 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Clients: local router failover also covers routers reached only through a
+  relay. A node pings the routers of a Site it routes through, through the
+  relay, every 2 seconds while no direct path to them is proven, and counts
+  their relayed PONG as an answer (disco v2 §3.2.1: a relayed PONG carries a
+  zero `observed`). Nodes answer relayed PINGs at most once a second per
+  peer; older nodes drop them.
+- Subnet routers turn IPv4 forwarding on for the interface each end of a Site
+  prefix leaves by, and stop their health checks as soon as the device
+  closes.
 - Core: `meshtransit_site_election_sites{state}` and
   `meshtransit_site_election_routers{state}` count Sites a router can serve,
   cannot serve now, or have no usable router, and routers by status, from the

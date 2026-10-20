@@ -46,12 +46,13 @@ const (
 // peer leaving the map, and forgets it only once it is back to a fresh
 // one's state, so nothing a peer or its Device does starts it afresh.
 type peerAllowance struct {
-	probes       map[netip.AddrPort]candidateProbes
-	budget       probeBudget
-	answeredPing time.Time
-	answeredCall time.Time
-	nodeKey      key.NodePublic
-	discoveryKey key.DiscoPublic
+	probes            map[netip.AddrPort]candidateProbes
+	budget            probeBudget
+	answeredPing      time.Time
+	answeredCall      time.Time
+	answeredRelayPing time.Time
+	nodeKey           key.NodePublic
+	discoveryKey      key.DiscoPublic
 }
 
 func newPeerAllowance() *peerAllowance {
@@ -262,14 +263,19 @@ type answerKind int
 const (
 	answerPing answerKind = iota + 1
 	answerCall
+	// answerRelayPing paces PONGs sent through the relay (disco-v2 §3.2.1).
+	answerRelayPing
 )
 
 // allowAnswer permits one answer of kind per spacing to the peer. It is
 // kept on the peer, so it is bounded by the map and survives its updates.
 func (p *peerChannel) allowAnswer(kind answerKind, spacing time.Duration, now time.Time) bool {
 	last := &p.allowance.answeredPing
-	if kind == answerCall {
+	switch kind {
+	case answerCall:
 		last = &p.allowance.answeredCall
+	case answerRelayPing:
+		last = &p.allowance.answeredRelayPing
 	}
 	if !last.IsZero() && now.Sub(*last) < spacing && !now.Before(*last) {
 		return false

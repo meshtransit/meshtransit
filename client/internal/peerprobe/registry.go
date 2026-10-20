@@ -136,6 +136,35 @@ func (c IncomingCallMeMaybe) PeerID() uint64 { return c.peerID }
 // Endpoints returns the advertised endpoints that may be probed.
 func (c IncomingCallMeMaybe) Endpoints() []netip.AddrPort { return slices.Clone(c.endpoints) }
 
+// IncomingRelayPing is an authenticated PING a relay delivered from a peer
+// (disco-v2 §3.2.1): a liveness check, never a path.
+type IncomingRelayPing struct {
+	id           disco.TxID
+	peerID       uint64
+	sentAt       int64
+	nodeKey      key.NodePublic
+	discoveryKey key.DiscoPublic
+}
+
+func (IncomingRelayPing) isIncomingMessage() {}
+
+// PeerID returns the control-authorized peer identity.
+func (p IncomingRelayPing) PeerID() uint64 { return p.peerID }
+
+// IncomingRelayPong is an authenticated PONG a relay delivered from a peer.
+type IncomingRelayPong struct {
+	id     disco.TxID
+	peerID uint64
+}
+
+func (IncomingRelayPong) isIncomingMessage() {}
+
+// PeerID returns the control-authorized peer identity.
+func (p IncomingRelayPong) PeerID() uint64 { return p.peerID }
+
+// ID returns the transaction the PONG answers.
+func (p IncomingRelayPong) ID() disco.TxID { return p.id }
+
 type learnedCandidate struct {
 	kind    disco.EndpointKind
 	expires time.Time
@@ -489,6 +518,10 @@ func (r *Registry) Open(
 			discoveryKey: peer.discoveryKey,
 		}, nil
 	case disco.Pong:
+		// Only a PONG through the relay omits the observed source.
+		if !message.Observed.IsValid() {
+			return nil, fmt.Errorf("%w: direct pong without source", ErrInvalidPacket)
+		}
 		return IncomingPong{reply: pathdiscovery.AuthenticatedProbeReply{
 			ID:                    pathdiscovery.ProbeID(message.TxID),
 			PeerID:                peer.peerID,
@@ -503,9 +536,10 @@ func (r *Registry) Open(
 	}
 }
 
-// OpenRelayed authenticates a packet that a relay delivered from peerNode.
-// Only CALL_ME_MAYBE is accepted this way, and only when the relay-attested
-// node key is the one paired with the packet's disco key in the map.
+// OpenRelayed authenticates a packet that a relay delivered from peerNode:
+// a CALL_ME_MAYBE, or a liveness PING or PONG (disco-v2 §3.2.1), and only
+// when the relay-attested node key is the one paired with the packet's disco
+// key in the map.
 func (r *Registry) OpenRelayed(
 	packet []byte,
 	peerNode key.NodePublic,
@@ -522,12 +556,78 @@ func (r *Registry) OpenRelayed(
 	if !key.Equal(peer.nodeKey, peerNode) {
 		return nil, fmt.Errorf("%w: relay source does not match sender", ErrInvalidPacket)
 	}
-	callMeMaybe, ok := message.(disco.CallMeMaybe)
-	if !ok {
+	switch message := message.(type) {
+	case disco.CallMeMaybe:
+		return r.acceptCallMeMaybe(peer, message, now)
+	case disco.Ping:
+		if !key.Equal(message.Node, peer.nodeKey) || message.Padding != 0 {
+			return nil, fmt.Errorf("%w: relayed ping", ErrInvalidPacket)
+		}
+		return IncomingRelayPing{
+			id: message.TxID, peerID: peer.peerID, sentAt: message.SentAt,
+			nodeKey: peer.nodeKey, discoveryKey: peer.discoveryKey,
+		}, nil
+	case disco.Pong:
+		if message.Observed.IsValid() {
+			return nil, fmt.Errorf("%w: relayed pong with a source", ErrInvalidPacket)
+		}
+		return IncomingRelayPong{id: message.TxID, peerID: peer.peerID}, nil
+	default:
 		return nil, fmt.Errorf("%w: unsupported relayed message", ErrInvalidPacket)
 	}
+}
 
-	return r.acceptCallMeMaybe(peer, callMeMaybe, now)
+// SealRelayPing authenticates a liveness PING to send to peerID through the
+// relay and returns the peer's node key, by which the relay routes it.
+func (r *Registry) SealRelayPing(peerID uint64, id disco.TxID, now time.Time) ([]byte, key.NodePublic, error) {
+	if r == nil {
+		return nil, key.NodePublic{}, ErrInactive
+	}
+	if id.IsZero() || peerID == 0 || now.IsZero() {
+		return nil, key.NodePublic{}, ErrInvalidProbe
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.closed || !r.generation.IsValid() {
+		return nil, key.NodePublic{}, ErrInactive
+	}
+	peer, exists := r.byID[peerID]
+	if !exists {
+		return nil, key.NodePublic{}, ErrUnknownPeer
+	}
+	packet, err := peer.wire.Seal(nil, disco.Ping{TxID: id, Node: r.localNodeKey, SentAt: now.UnixMilli()}, r.random)
+	if err != nil {
+		return nil, key.NodePublic{}, fmt.Errorf("peerprobe: sealing relay ping: %w", err)
+	}
+	return packet, peer.nodeKey, nil
+}
+
+// SealRelayPong answers a relayed PING through the relay; the PONG names no
+// observed source.
+func (r *Registry) SealRelayPong(ping IncomingRelayPing) ([]byte, key.NodePublic, error) {
+	if r == nil {
+		return nil, key.NodePublic{}, ErrInactive
+	}
+	if ping.id.IsZero() || ping.peerID == 0 || ping.nodeKey.IsZero() || ping.discoveryKey.IsZero() {
+		return nil, key.NodePublic{}, ErrInvalidProbe
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.closed || !r.generation.IsValid() {
+		return nil, key.NodePublic{}, ErrInactive
+	}
+	peer, exists := r.byID[ping.peerID]
+	if !exists {
+		return nil, key.NodePublic{}, ErrUnknownPeer
+	}
+	if ping.nodeKey != peer.nodeKey || ping.discoveryKey != peer.discoveryKey {
+		return nil, key.NodePublic{}, ErrInvalidProbe
+	}
+	packet, err := peer.wire.Seal(nil, disco.Pong{TxID: ping.id, Echo: ping.sentAt}, r.random)
+	if err != nil {
+		return nil, key.NodePublic{}, fmt.Errorf("peerprobe: sealing relay pong: %w", err)
+	}
+	return packet, peer.nodeKey, nil
 }
 
 func (r *Registry) open(packet []byte, generation pathdiscovery.ProbeGeneration) (*peerChannel, disco.Message, error) {

@@ -114,6 +114,9 @@ type Runtime struct {
 	callSeq        uint64
 	callSent       map[uint64]time.Time
 
+	relayMu sync.Mutex
+	relay   relayLiveness
+
 	datagrams chan receivedDatagram
 	slots     chan struct{}
 	schedules chan probeBatch
@@ -187,6 +190,7 @@ func newRuntime(
 		bursts:    make(chan probeBatch, maxBurstQueue),
 		reflexive: make(map[netip.AddrPort]time.Time),
 		callSent:  make(map[uint64]time.Time),
+		relay:     relayLiveness{sent: map[uint64]time.Time{}, pending: map[disco.TxID]relayPing{}},
 		done:      workerCtx.Done(),
 
 		scheduleLimit:     maxScheduledProbes,
@@ -197,6 +201,7 @@ func newRuntime(
 	runtime.workers.Go(func() { runtime.runScheduler(workerCtx) })
 	runtime.workers.Go(func() { runtime.runBursts(workerCtx) })
 	runtime.workers.Go(func() { runtime.runCallMeMaybe(workerCtx) })
+	runtime.workers.Go(func() { runtime.runRelayLiveness(workerCtx) })
 
 	return runtime, nil
 }
@@ -475,8 +480,16 @@ func (r *Runtime) processDatagram(datagram receivedDatagram) {
 	now := r.clock()
 	if datagram.relayed {
 		message, err := r.registry.OpenRelayed(datagram.packet, datagram.peer, generation, now)
-		if call, ok := message.(IncomingCallMeMaybe); ok && err == nil {
-			r.answerCallMeMaybe(generation, call)
+		if err != nil {
+			return
+		}
+		switch message := message.(type) {
+		case IncomingCallMeMaybe:
+			r.answerCallMeMaybe(generation, message)
+		case IncomingRelayPing:
+			r.answerRelayPing(message, now)
+		case IncomingRelayPong:
+			r.acceptRelayPong(message, now)
 		}
 		return
 	}

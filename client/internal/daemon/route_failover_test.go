@@ -294,3 +294,41 @@ func TestRouteFailoverReportsEachSitesRouter(t *testing.T) {
 		t.Fatalf("after a local switch = %+v %+v", reports, views)
 	}
 }
+
+func TestRouteFailoverCountsRelayPongsAsAnswers(t *testing.T) {
+	t.Parallel()
+	clock := &failoverClock{now: time.Date(2026, time.October, 20, 9, 0, 0, 0, time.UTC)}
+	failover := newRouteFailover(clock.Now)
+	failover.effective(failoverMap("router-1"))
+	if peers := failover.routerPeers(); len(peers) != 3 || peers[0] != 11 || peers[2] != 13 {
+		t.Fatalf("router peers = %v", peers)
+	}
+	observer := routeFailoverObserver{failover: failover}
+	activity := dataplane.RoutedActivity{Ref: "prod"}
+	relayed := func(ids ...uint64) {
+		for _, id := range ids {
+			observer.ObserveRelayPong(id, clock.now)
+		}
+	}
+	relayed(11, 12, 13) // every router reached only through the relay
+	switched := false
+	for second := 1; second <= 10 && !switched; second++ {
+		clock.now = clock.now.Add(time.Second)
+		relayed(12)
+		activity.LastSent = clock.now
+		if activity.WaitingSince.IsZero() {
+			activity.WaitingSince = clock.now
+		}
+		switched = failover.judge([]dataplane.RoutedActivity{activity})
+	}
+	if !switched || failover.current().Routes[0].Primary != "router-2" {
+		t.Fatalf("relay-only routers did not fail over: %v", failover.choices())
+	}
+
+	single := failoverMap("router-1")
+	single.Routes[0].Candidates = []string{"router-1"}
+	failover.effective(single)
+	if peers := failover.routerPeers(); len(peers) != 0 {
+		t.Fatalf("a Site with one router is pinged: %v", peers)
+	}
+}

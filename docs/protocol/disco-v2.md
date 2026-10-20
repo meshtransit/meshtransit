@@ -56,7 +56,7 @@ body     bytes[...]
 | Type | Name | Direction | Transport |
 |---|---|---|---|
 | 0x01 | PING | any | direct UDP or relay |
-| 0x02 | PONG | reply to PING | same path as the PING |
+| 0x02 | PONG | reply to PING | same path as the PING (relay: §3.2.1) |
 | 0x03 | CALL_ME_MAYBE | any | relay (or MTCP) |
 | 0x10–0x1F | reserved for peer relay and port prediction | | |
 
@@ -91,6 +91,24 @@ expired (5 s).
 `observed` tells the receiver how the peer sees it: a per-peer reflexive
 address. Implementations SHOULD feed it into their own candidate set and NAT
 classification (it reveals endpoint-dependent mappings that STUN cannot see).
+
+A PONG through the relay observes no source: its `observed` is 18 zero bytes,
+which the receiver ignores. A PONG that arrives directly with a zero
+`observed` is dropped, and so is one through the relay with a non-zero
+`observed`.
+
+### 3.2.1 Liveness through the relay
+
+A PING through the relay and its PONG prove only that the peer is up and
+reachable through the relay; they never establish or select a direct path,
+and never add a candidate. A node MAY send them to a peer it needs to know is
+alive while it has no proven direct path to it, such as the routers of a Site
+it routes through (subnet router failover), at most once every 2 seconds per
+peer. The relay-attested node key MUST be the one paired with the sender's
+disco key in the map. A node answers a relayed PING with a relayed PONG at
+most once per second per peer; a PONG is accepted only if it matches a PING
+sent to that peer through the relay in the last 5 seconds. Nodes that predate
+this section drop relayed PINGs, so their peers simply see no answer.
 
 ### 3.3 CALL_ME_MAYBE (0x03)
 

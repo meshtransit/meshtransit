@@ -156,10 +156,11 @@ Site's **primary**, and every node sends the Site's traffic through it:
   its router stopped answering its path probes and another router of the
   Site still answers, sends the Site's traffic through that router until
   Core elects again; a router that still answers keeps the Site, since the
-  host in the Site may be the one that does not. This needs a direct path to
-  the routers (one only reached through a relay is left to Core), and it
-  goes back to Core's choice only once the Site carries no traffic for a
-  minute, so a flow is not cut twice. Flows through the old router end.
+  host in the Site may be the one that does not. A router reached only
+  through a relay is pinged through the relay every 2 seconds
+  ([disco v2 §3.2.1](../protocol/disco-v2.md)); a router too old to answer
+  such pings is left to Core. The node goes back to Core's choice only once
+  the Site carries no traffic for a minute, so a flow is not cut twice. Flows through the old router end.
 - Each node reports which router it uses for each Site, and why (Core's
   primary, its own choice, or none), on change and every minute. One Site's
   read gives each router's `clients` and `local_failover_clients` (Devices

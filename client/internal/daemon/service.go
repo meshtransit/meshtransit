@@ -1007,6 +1007,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 						state, err := s.dataPlane.Apply(callbackCtx, failover.effective(snapshot), privateKey)
 						if err == nil {
 							publishRouteSelection()
+							// Routers reached only through the relay still prove
+							// they are up, for local failover.
+							probeRuntime.SetRelayLiveness(failover.routerPeers())
 						}
 						if err == nil && reportsEnforcement {
 							if enforced, known := enforcedPolicy.EnforcedPolicy(); known {
