@@ -157,7 +157,7 @@ Site's **primary**, and every node sends the Site's traffic through it:
   Site still answers, sends the Site's traffic through that router until
   Core elects again; a router that still answers keeps the Site, since the
   host in the Site may be the one that does not. A router reached only
-  through a relay is pinged through the relay every 2 seconds
+  through a relay is pinged through the relay every second
   ([disco v2 §3.2.1](../protocol/disco-v2.md)); a router too old to answer
   such pings is left to Core. The node goes back to Core's choice only once
   the Site carries no traffic for a minute, so a flow is not cut twice. Flows through the old router end.

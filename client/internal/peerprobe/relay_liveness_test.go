@@ -147,7 +147,7 @@ func TestRuntimePingsRouterThroughRelayAndReportsPong(t *testing.T) {
 		}
 		break
 	}
-	if _, _, ok := nextRelayed[disco.Ping](t, transport, wire, 2500*time.Millisecond); ok {
+	if _, _, ok := nextRelayed[disco.Ping](t, transport, wire, 1500*time.Millisecond); ok {
 		t.Fatal("pinged through the relay a peer with a proven direct path")
 	}
 	if recorder.count(peerID) != 1 {

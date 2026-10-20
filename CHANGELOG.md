@@ -7,7 +7,7 @@ merge (2026-10-09) are kept below.
 
 - Clients: local router failover also covers routers reached only through a
   relay. A node pings the routers of a Site it routes through, through the
-  relay, every 2 seconds while no direct path to them is proven, and counts
+  relay, every second while no direct path to them is proven, and counts
   their relayed PONG as an answer (disco v2 §3.2.1: a relayed PONG carries a
   zero `observed`). Nodes answer relayed PINGs at most once a second per
   peer; older nodes drop them.

@@ -274,6 +274,7 @@ func (r *Runtime) deactivateLocked() int {
 // invalidateProbesLocked ends the active generation's probes and ping window
 // without touching the registry's channel set.
 func (r *Runtime) invalidateProbesLocked() int {
+	r.forgetRelayPings()
 	r.stateMu.Lock()
 	r.active = pathdiscovery.ProbeGeneration{}
 	r.stateMu.Unlock()

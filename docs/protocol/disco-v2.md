@@ -103,8 +103,12 @@ A PING through the relay and its PONG prove only that the peer is up and
 reachable through the relay; they never establish or select a direct path,
 and never add a candidate. A node MAY send them to a peer it needs to know is
 alive while it has no proven direct path to it, such as the routers of a Site
-it routes through (subnet router failover), at most once every 2 seconds per
-peer. The relay-attested node key MUST be the one paired with the sender's
+it routes through (subnet router failover), at most once a second per peer,
+and not while a direct PONG from it is less than 2 seconds old. A PONG proves
+the peer was up when its PING left; a receiver credits it with that time, not
+its arrival, so a relay that holds it back cannot make a dead peer look
+fresh. Without a direct path the peer's traffic goes through the relay too, so
+the PONG also proves that path. The relay-attested node key MUST be the one paired with the sender's
 disco key in the map. A node answers a relayed PING with a relayed PONG at
 most once per second per peer; a PONG is accepted only if it matches a PING
 sent to that peer through the relay in the last 5 seconds. Nodes that predate

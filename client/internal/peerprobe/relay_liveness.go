@@ -17,9 +17,13 @@ const (
 	// maxRelayLivenessPeers bounds the peers pinged through the relay.
 	maxRelayLivenessPeers = 64
 	// relayLivenessTick is how often due peers are pinged; each peer at most
-	// every relayLivenessSpacing.
-	relayLivenessTick    = time.Second
-	relayLivenessSpacing = 2 * time.Second
+	// every relayLivenessSpacing, so one lost PING or PONG still leaves a
+	// fresh answer within the 4 s route failover allows.
+	relayLivenessTick    = 500 * time.Millisecond
+	relayLivenessSpacing = time.Second
+	// directProvenWithin is how recent a direct pong must be to skip the
+	// relay PING: half the 4 s route failover allows.
+	directProvenWithin = 2 * time.Second
 	// relayPongWithin is how long a relayed PING waits for its PONG.
 	relayPongWithin = 5 * time.Second
 	// relayPingAnswerSpacing paces the PONGs this node sends one peer.
@@ -34,6 +38,7 @@ type RelayLivenessObserver interface {
 
 type relayPing struct {
 	peerID   uint64
+	sentAt   time.Time
 	deadline time.Time
 }
 
@@ -102,7 +107,7 @@ func (r *Runtime) sendRelayPings(relayed pathdiscovery.RelayDatagramTransport) {
 		if last, sent := r.relay.sent[peerID]; sent && now.Sub(last) < relayLivenessSpacing {
 			continue
 		}
-		if r.registry.RecentPong(peerID, now, directTrust) {
+		if r.registry.RecentPong(peerID, now, directProvenWithin) {
 			continue
 		}
 		due = append(due, peerID)
@@ -120,11 +125,19 @@ func (r *Runtime) sendRelayPings(relayed pathdiscovery.RelayDatagramTransport) {
 		r.relayMu.Lock()
 		r.relay.sent[peerID] = now
 		if len(r.relay.pending) < 4*maxRelayLivenessPeers {
-			r.relay.pending[id] = relayPing{peerID: peerID, deadline: now.Add(relayPongWithin)}
+			r.relay.pending[id] = relayPing{peerID: peerID, sentAt: now, deadline: now.Add(relayPongWithin)}
 		}
 		r.relayMu.Unlock()
 		_ = relayed.SendRelayDatagram(packet, node)
 	}
+}
+
+// forgetRelayPings drops the PINGs in flight when the peers change:
+// a PONG must answer the generation it was sent in. relayMu must not be held.
+func (r *Runtime) forgetRelayPings() {
+	r.relayMu.Lock()
+	clear(r.relay.pending)
+	r.relayMu.Unlock()
 }
 
 // answerRelayPing sends a PONG through the relay, at most one per peer per
@@ -154,7 +167,9 @@ func (r *Runtime) acceptRelayPong(pong IncomingRelayPong, now time.Time) {
 	if !matched {
 		return
 	}
+	// The peer answered some time after the PING left: credit that time, so
+	// a relay that holds a PONG back cannot make a dead peer look fresh.
 	if observer, ok := r.observer.(RelayLivenessObserver); ok {
-		observer.ObserveRelayPong(pong.PeerID(), now)
+		observer.ObserveRelayPong(pong.PeerID(), ping.sentAt)
 	}
 }
