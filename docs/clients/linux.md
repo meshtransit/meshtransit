@@ -70,6 +70,26 @@ a router, add `--enable-subnet-router` to `MESHD_FLAGS` and, as root, run
 `meshnetd routes router-mode on` and `meshnetd routes advertise PREFIX`. How
 the routes are kept safe is in [Client](../architecture/client.md).
 
+## Exit node
+
+A Linux machine forwards other Devices' Internet traffic for the Exit Pool
+Core assigns it to only when both the deployment and root allow it: add
+`--enable-exit-node` to `MESHD_FLAGS`, and as root run
+`meshnetd routes exit-mode on`. Core's limits only narrow the machine's own:
+
+```bash
+sudo /usr/libexec/meshtransit/meshnetd routes exit-mode on
+sudo /usr/libexec/meshtransit/meshnetd routes exit-conntrack-max 8192   # connections per consumer
+sudo /usr/libexec/meshtransit/meshnetd routes exit-max-consumers 64
+sudo /usr/libexec/meshtransit/meshnetd routes exit-smtp on              # TCP 25, off by default
+```
+
+The exit node forwards only to the Internet: never to private, shared,
+link-local (cloud metadata) or other special ranges, the mesh, its own
+addresses, the subnets it is attached to or its gateways, whatever Core
+sends. Every source is translated to the machine's own address. `routes
+exit-mode off` stops forwarding within seconds.
+
 ## Install, upgrade, roll back
 
 ```bash

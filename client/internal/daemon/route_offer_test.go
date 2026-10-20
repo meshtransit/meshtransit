@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/routesettings"
 )
 
@@ -19,16 +20,18 @@ func TestOfferedRoutesFollowRouterMode(t *testing.T) {
 		settings routesettings.Settings
 		err      error
 		want     []netip.Prefix
+		exit     bool
 	}{
-		{"router", routesettings.Settings{RouterMode: true, AdvertiseRoutes: advertised}, nil, advertised},
-		{"router mode off", routesettings.Settings{AdvertiseRoutes: advertised}, nil, []netip.Prefix{}},
-		{"unsafe file", routesettings.Settings{}, routesettings.ErrUnsafeFile, []netip.Prefix{}},
+		{"router", routesettings.Settings{RouterMode: true, AdvertiseRoutes: advertised}, nil, advertised, false},
+		{"router mode off", routesettings.Settings{AdvertiseRoutes: advertised}, nil, []netip.Prefix{}, false},
+		{"exit node", routesettings.Settings{ExitMode: true}, nil, []netip.Prefix{}, true},
+		{"unsafe file", routesettings.Settings{ExitMode: true}, routesettings.ErrUnsafeFile, []netip.Prefix{}, false},
 	}
 	for _, test := range tests {
 		load := func(string) (routesettings.Settings, error) { return test.settings, test.err }
 		got := offeredRoutes(load, "/etc/meshtransit/routes.json", nil)
-		if got == nil || !slices.Equal(got, test.want) {
-			t.Errorf("%s: offeredRoutes() = %v, want %v", test.name, got, test.want)
+		if got.Prefixes == nil || !slices.Equal(got.Prefixes, test.want) || got.Exit != test.exit {
+			t.Errorf("%s: offeredRoutes() = %v, want %v and exit %t", test.name, got, test.want, test.exit)
 		}
 	}
 }
@@ -44,9 +47,9 @@ func TestWatchRouteOfferSendsOnlyChanges(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	offers := make(chan []netip.Prefix)
+	offers := make(chan controlplane.HostOffer)
 	go watchRouteOffer(ctx, load, "routes.json", time.Millisecond, nil, offers)
-	if first := <-offers; len(first) != 1 {
+	if first := <-offers; len(first.Prefixes) != 1 {
 		t.Fatalf("first offer = %v", first)
 	}
 	select {
@@ -59,7 +62,7 @@ func TestWatchRouteOfferSendsOnlyChanges(t *testing.T) {
 	mu.Unlock()
 	select {
 	case changed := <-offers:
-		if changed == nil || len(changed) != 0 {
+		if changed.Prefixes == nil || len(changed.Prefixes) != 0 {
 			t.Fatalf("offer after router mode off = %v", changed)
 		}
 	case <-time.After(time.Second):

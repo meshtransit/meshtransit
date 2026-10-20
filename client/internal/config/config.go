@@ -33,7 +33,10 @@ type Config struct {
 	// EnableSubnetRouter lets Core make the host a Site's router (mtcp-v1
 	// §7.6, Linux only); RouteSettingsFile holds what the host offers.
 	EnableSubnetRouter bool
-	RouteSettingsFile  string
+	// EnableExitNode lets Core make the host an exit node of an Exit Pool
+	// (mtcp-v1 §7.7, Linux only) while its settings turn exit mode on.
+	EnableExitNode    bool
+	RouteSettingsFile string
 	// ControlProtocol is accepted for existing unit files: auto and mtcp
 	// both mean MTCP v1, the only control protocol.
 	ControlProtocol string
@@ -97,6 +100,9 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 	flags.BoolVar(&cfg.EnableSubnetRouter, "enable-subnet-router", false,
 		"let Core make this host a router of the Sites it offers; the host's root-owned settings decide what it "+
 			"offers and forwards (Linux, requires --enable-data-plane)")
+	flags.BoolVar(&cfg.EnableExitNode, "enable-exit-node", false,
+		"let Core make this host an exit node; the host's root-owned settings decide whether it offers to be one "+
+			"and its limits (Linux, requires --enable-data-plane)")
 	flags.StringVar(&cfg.RouteSettingsFile, "routes-file", DefaultRouteSettingsPath,
 		"root-owned subnet route settings file, read to offer subnets as a router")
 	flags.StringVar(&cfg.ControlProtocol, "control-protocol", "auto",
@@ -253,6 +259,9 @@ func validate(cfg Config) error {
 	}
 	if cfg.EnableSubnetRouter && (!cfg.EnableDataPlane || runtime.GOOS != "linux") {
 		return errors.New("a subnet router requires --enable-data-plane on Linux")
+	}
+	if cfg.EnableExitNode && (!cfg.EnableDataPlane || runtime.GOOS != "linux") {
+		return errors.New("an exit node requires --enable-data-plane on Linux")
 	}
 	switch cfg.ControlProtocol {
 	case "auto", "mtcp":

@@ -34,9 +34,30 @@ type servedRuleset struct {
 	// forwarding is kept to traffic to and from the TUN.
 	Guarded   []string
 	GuardIPv6 bool
+	// Exit, when set, also forwards consumers' traffic to the Internet as
+	// an exit node (exit node design §4.3, layer 2).
+	Exit *exitRuleset
 }
 
+// exitRuleset is what the table enforces of an exit node: never forward to
+// what is not the Internet, translate every source to the exit node's own
+// address, refuse SMTP unless allowed, and bound each consumer's
+// connections.
+type exitRuleset struct {
+	// NotInternet are the fixed ranges and those the host learned.
+	NotInternet          []netip.Prefix
+	ConntrackPerConsumer int
+	SMTP                 bool
+}
+
+// exitConsumerSetSize bounds the consumers an exit node's kernel counts:
+// well above the most a host may allow (routesettings.MaximumExitConsumers),
+// as elements stay until the table is installed again.
+const exitConsumerSetSize = 65535
+
 const (
+	// smtpPort is TCP port 25, which consumers may not open by default.
+	smtpPort        = 25
 	ipv4HeaderBytes = 20
 	ipv6HeaderBytes = 40
 	tcpHeaderBytes  = 20
@@ -134,6 +155,8 @@ func servedTablePresent(name string) (bool, error) {
 
 type servedSets struct {
 	served4, served6, masquerade4, masquerade6, self4, self6 *nftables.Set
+	// The exit node's sets, nil when it is none.
+	notInternet4, notInternet6, consumers4, consumers6 *nftables.Set
 }
 
 func addServedSets(conn *nftables.Conn, table *nftables.Table, ruleset servedRuleset) (servedSets, error) {
@@ -158,6 +181,44 @@ func addServedSets(conn *nftables.Conn, table *nftables.Table, ruleset servedRul
 		created := &nftables.Set{Table: table, Name: set.name, KeyType: keyType, Interval: true}
 		if err := conn.AddSet(created, intervalElements(set.prefixes, set.ipv4)); err != nil {
 			return servedSets{}, fmt.Errorf("adding router set %s: %w", set.name, err)
+		}
+		*set.target = created
+	}
+	if ruleset.Exit == nil {
+		return sets, nil
+	}
+	for _, set := range []struct {
+		target **nftables.Set
+		name   string
+		ipv4   bool
+	}{
+		{&sets.notInternet4, "notinternet4", true},
+		{&sets.notInternet6, "notinternet6", false},
+	} {
+		keyType := nftables.TypeIP6Addr
+		if set.ipv4 {
+			keyType = nftables.TypeIPAddr
+		}
+		created := &nftables.Set{Table: table, Name: set.name, KeyType: keyType, Interval: true}
+		if err := conn.AddSet(created, intervalElements(ruleset.Exit.NotInternet, set.ipv4)); err != nil {
+			return servedSets{}, fmt.Errorf("adding exit set %s: %w", set.name, err)
+		}
+		*set.target = created
+	}
+	// One element per consumer address, counting its connections.
+	for _, set := range []struct {
+		target **nftables.Set
+		name   string
+		key    nftables.SetDatatype
+	}{
+		{&sets.consumers4, "consumers4", nftables.TypeIPAddr},
+		{&sets.consumers6, "consumers6", nftables.TypeIP6Addr},
+	} {
+		created := &nftables.Set{
+			Table: table, Name: set.name, KeyType: set.key, Dynamic: true, Size: exitConsumerSetSize,
+		}
+		if err := conn.AddSet(created, nil); err != nil {
+			return servedSets{}, fmt.Errorf("adding exit set %s: %w", set.name, err)
 		}
 		*set.target = created
 	}
@@ -234,12 +295,15 @@ func forwardRules(ruleset servedRuleset, sets servedSets) [][]expr.Any {
 			addressIn(false, 16, 4, sets.served4), verdict(expr.VerdictAccept)),
 		join(interfaceIs(expr.MetaKeyIIFNAME, ruleset.Interface), family(unix.NFPROTO_IPV6),
 			addressIn(false, 24, 16, sets.served6), verdict(expr.VerdictAccept)),
+	}
+	rules = append(rules, exitForwardRules(ruleset, sets)...)
+	rules = append(rules, [][]expr.Any{
 		join(interfaceIs(expr.MetaKeyIIFNAME, ruleset.Interface), verdict(expr.VerdictDrop)),
 		// Into the mesh: only replies. A Site cannot open connections into
 		// the mesh.
 		join(interfaceIs(expr.MetaKeyOIFNAME, ruleset.Interface), established, verdict(expr.VerdictAccept)),
 		join(interfaceIs(expr.MetaKeyOIFNAME, ruleset.Interface), verdict(expr.VerdictDrop)),
-	}
+	}...)
 	// Forwarding the helper turned on serves the mesh only: the host does
 	// not start routing between its other networks.
 	for _, name := range ruleset.Guarded {
@@ -249,6 +313,67 @@ func forwardRules(ruleset servedRuleset, sets servedSets) [][]expr.Any {
 		rules = append(rules, join(family(unix.NFPROTO_IPV6), verdict(expr.VerdictDrop)))
 	}
 	return rules
+}
+
+// exitForwardRules forward new traffic from the mesh to the Internet,
+// after the served prefixes were accepted: never to what is not the
+// Internet, never to TCP port 25 unless allowed, and never beyond each
+// consumer's connection limit. The self-test address is no consumer. Layer
+// 1 (meshd) has already checked the pool's rules.
+func exitForwardRules(ruleset servedRuleset, sets servedSets) [][]expr.Any {
+	if ruleset.Exit == nil {
+		return nil
+	}
+	fromMesh := interfaceIs(expr.MetaKeyIIFNAME, ruleset.Interface)
+	newConnection := ctState(expr.CtStateBitNEW)
+	limit := uint32(max(ruleset.Exit.ConntrackPerConsumer, 1)) //nolint:gosec // G115: bounded by the settings
+	rules := [][]expr.Any{
+		join(fromMesh, family(unix.NFPROTO_IPV4), addressIn(false, 16, 4, sets.notInternet4), verdict(expr.VerdictDrop)),
+		join(fromMesh, family(unix.NFPROTO_IPV6), addressIn(false, 24, 16, sets.notInternet6), verdict(expr.VerdictDrop)),
+	}
+	if !ruleset.Exit.SMTP {
+		port := make([]byte, 2)
+		binary.BigEndian.PutUint16(port, smtpPort)
+		rules = append(rules, join(fromMesh, []expr.Any{
+			&expr.Meta{Key: expr.MetaKeyL4PROTO, Register: 1},
+			&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{unix.IPPROTO_TCP}},
+			&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseTransportHeader, Offset: 2, Len: 2},
+			&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: port},
+		}, verdict(expr.VerdictDrop)))
+	}
+	for _, consumers := range []struct {
+		protocol       byte
+		offset, length uint32
+		selfTest       netip.Addr
+		set            *nftables.Set
+	}{
+		{unix.NFPROTO_IPV4, 12, 4, overlayframe.SelfTestIPv4, sets.consumers4},
+		{unix.NFPROTO_IPV6, 8, 16, overlayframe.SelfTestIPv6, sets.consumers6},
+	} {
+		rules = append(rules, join(fromMesh, family(consumers.protocol), newConnection,
+			sourceIsNot(consumers.offset, consumers.selfTest), []expr.Any{
+				&expr.Payload{
+					DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: consumers.offset,
+					Len: consumers.length,
+				},
+				&expr.Dynset{
+					SrcRegKey: 1, SetName: consumers.set.Name, SetID: consumers.set.ID,
+					Operation: unix.NFT_DYNSET_OP_ADD,
+					Exprs:     []expr.Any{&expr.Connlimit{Count: limit, Flags: expr.NFT_CONNLIMIT_F_INV}},
+				},
+			}, verdict(expr.VerdictDrop)))
+		// A consumer the full set could not take is not counted: dropped,
+		// never let through unbounded.
+		rules = append(rules, join(fromMesh, family(consumers.protocol), newConnection,
+			sourceIsNot(consumers.offset, consumers.selfTest), []expr.Any{
+				&expr.Payload{
+					DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: consumers.offset,
+					Len: consumers.length,
+				},
+				&expr.Lookup{SourceRegister: 1, SetName: consumers.set.Name, SetID: consumers.set.ID, Invert: true},
+			}, verdict(expr.VerdictDrop)))
+	}
+	return append(rules, join(fromMesh, verdict(expr.VerdictAccept)))
 }
 
 // inputRules keep the mesh off the router's own non-overlay addresses: a
@@ -288,7 +413,7 @@ func readSelfTestCounter(name string) (uint64, error) {
 
 func postroutingRules(ruleset servedRuleset, sets servedSets) [][]expr.Any {
 	count := []expr.Any{&expr.Objref{Type: int(nftables.ObjTypeCounter), Name: selfTestCounter}}
-	return [][]expr.Any{
+	return append([][]expr.Any{
 		// Counted first, whatever translation follows.
 		join(interfaceIs(expr.MetaKeyIIFNAME, ruleset.Interface), family(unix.NFPROTO_IPV4),
 			sourceIs(12, overlayframe.SelfTestIPv4), count),
@@ -298,6 +423,20 @@ func postroutingRules(ruleset servedRuleset, sets servedSets) [][]expr.Any {
 			addressIn(false, 16, 4, sets.masquerade4), []expr.Any{&expr.Masq{}}),
 		join(interfaceIs(expr.MetaKeyIIFNAME, ruleset.Interface), family(unix.NFPROTO_IPV6),
 			addressIn(false, 24, 16, sets.masquerade6), []expr.Any{&expr.Masq{}}),
+	}, exitPostroutingRules(ruleset, sets)...)
+}
+
+// exitPostroutingRules translate every source an exit node forwards to the
+// Internet to its own address: there is no option to keep mesh sources.
+func exitPostroutingRules(ruleset servedRuleset, sets servedSets) [][]expr.Any {
+	if ruleset.Exit == nil {
+		return nil
+	}
+	return [][]expr.Any{
+		join(interfaceIs(expr.MetaKeyIIFNAME, ruleset.Interface), family(unix.NFPROTO_IPV4),
+			addressIn(true, 16, 4, sets.served4), []expr.Any{&expr.Masq{}}),
+		join(interfaceIs(expr.MetaKeyIIFNAME, ruleset.Interface), family(unix.NFPROTO_IPV6),
+			addressIn(true, 24, 16, sets.served6), []expr.Any{&expr.Masq{}}),
 	}
 }
 
@@ -331,6 +470,15 @@ func addressIn(invert bool, offset, length uint32, set *nftables.Set) []expr.Any
 	return []expr.Any{
 		&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: offset, Len: length},
 		&expr.Lookup{SourceRegister: 1, SetName: set.Name, SetID: set.ID, Invert: invert},
+	}
+}
+
+// sourceIsNot matches a source address at offset other than address.
+func sourceIsNot(offset uint32, address netip.Addr) []expr.Any {
+	data := address.AsSlice()
+	return []expr.Any{
+		&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: offset, Len: uint32(len(data))}, //nolint:gosec // G115: 4 or 16
+		&expr.Cmp{Op: expr.CmpOpNeq, Register: 1, Data: data},
 	}
 }
 

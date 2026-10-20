@@ -47,8 +47,8 @@ func (s *Server) watchRouteSettings(ctx context.Context) {
 				s.logger.Info("route settings changed; subnet routes reapplied", "routes", len(s.activeRouted.Routes))
 			}
 		}
-		if s.hasActiveTUN && s.requestedServed != nil && s.servedConfigurer != nil {
-			if _, _, err := s.applyServed(*s.requestedServed); err != nil {
+		if s.hasActiveTUN && s.forwarding() && s.servedConfigurer != nil {
+			if _, _, err := s.applyForwarding(s.forwardingRequest()); err != nil {
 				applied = false
 				s.logger.Warn("applying changed route settings to forwarding failed", "error", err)
 			} else {
@@ -78,7 +78,7 @@ func (s *Server) clearRouted() {
 func (s *Server) checkServedRules() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.servedConfigurer == nil || len(s.activeServed) == 0 || s.requestedServed == nil {
+	if s.servedConfigurer == nil || (len(s.activeServed) == 0 && !s.activeExit.Serving) || !s.forwarding() {
 		return
 	}
 	present, err := s.servedConfigurer.Present()
@@ -86,20 +86,25 @@ func (s *Server) checkServedRules() {
 		return
 	}
 	s.logger.Warn("subnet router rules are missing; installing them again", "error", err)
-	if _, _, err := s.applyServed(*s.requestedServed); err != nil {
+	if _, _, err := s.applyForwarding(s.forwardingRequest()); err != nil {
 		s.logger.Warn("installing subnet router rules again failed", "error", err)
 	}
 }
 
 // routedStamp identifies what the routes installed depend on: the settings
-// file, the host's own routes and its resolvers. A change of either, such
+// file, the host's own routes and its resolvers, and for an exit node its
+// addresses and gateways. A change of either, such
 // as a laptop joining another network, applies the last request again.
 func (s *Server) routedStamp() string {
 	s.mu.Lock()
-	name := s.activeName
+	name, exit := s.activeName, s.requestedExit != nil
 	s.mu.Unlock()
 	digest := sha256.New()
 	_, _ = fmt.Fprintf(digest, "settings %s\n", settingsStamp(s.routed.SettingsPath))
+	if exit {
+		// An exit node's rules also follow its addresses and gateways.
+		_, _ = fmt.Fprintf(digest, "exit %s\n", exitStamp(name))
+	}
 	local, err := s.hostRouting.LocalRoutes(name)
 	if err != nil {
 		_, _ = fmt.Fprintf(digest, "local unknown\n")

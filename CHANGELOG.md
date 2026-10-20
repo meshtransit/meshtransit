@@ -5,6 +5,18 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Clients: Linux exit nodes, first part (exit node design E2). With
+  `--enable-exit-node` meshd declares `router.exit.v1`, reports
+  `exit_offered` from the root-owned `exit_mode`, and serves the Exit Pool
+  in its map: meshnetd (`set_served_exit`, helper protocol 6) forwards only
+  while exit mode is on, within Core's limits narrowed by the host's
+  (`exit-conntrack-max`, `exit-max-consumers`, `exit-smtp`). Its nftables
+  table drops what is not the Internet (the shared set plus the host's own
+  addresses, attached subnets and gateways) before any accept, refuses TCP 25
+  unless both allow it, bounds each consumer's connections (`ct count`) and
+  translates every source; meshd's filter admits only the pool's rules to the
+  Internet, never to the exit node's own addresses or the Sites it serves.
+  Egress probes, exit health, the DNS forwarder and consumers come next.
 - Core: Explain, the Access Graph and the access ledger know Exit Pools
   (schemas 206–208). An Internet address no Site holds is explained through
   the first pool whose rules grant the Internet to the source

@@ -21,6 +21,7 @@ import (
 
 	"meshtransit.net/client/internal/overlayframe"
 	"meshtransit.net/client/internal/routesettings"
+	"meshtransit.net/shared/internet"
 )
 
 // ReasonNoRoute refuses a served prefix the host has no route to outside
@@ -67,11 +68,12 @@ func newKernelServedConfigurer(options RoutedOptions) *kernelServedConfigurer {
 }
 
 // ReplaceServed forwards into entries and returns those it serves; one the
-// host has no route to outside the mesh is refused.
+// host has no route to outside the mesh is refused. With exit it also
+// forwards to the Internet by the host's default routes as an exit node.
 func (configurer *kernelServedConfigurer) ReplaceServed(name string, self []netip.Prefix, mtu int,
-	entries []routesettings.ServedEntry,
+	entries []routesettings.ServedEntry, exit *exitForwarding,
 ) ([]routesettings.ServedEntry, []routesettings.Refusal, error) {
-	if len(entries) == 0 {
+	if len(entries) == 0 && exit == nil {
 		return nil, nil, configurer.Clear()
 	}
 	link, err := netlink.LinkByName(name)
@@ -82,8 +84,28 @@ func (configurer *kernelServedConfigurer) ReplaceServed(name string, self []neti
 		return nil, nil, errors.New("served route interface is invalid")
 	}
 	served, refused, egress, ipv6 := routableEntries(entries, link.Attrs().Index)
-	if len(served) == 0 {
+	if len(served) == 0 && exit == nil {
 		return nil, refused, configurer.Clear()
+	}
+	var exitRules *exitRuleset
+	if exit != nil {
+		exitEgress, exitIPv6 := defaultEgress(link.Attrs().Index)
+		egress = append(egress, exitEgress...)
+		slices.Sort(egress)
+		egress = slices.Compact(egress)
+		ipv6 = ipv6 || exitIPv6
+		// What the host cannot learn of itself, it cannot leave out: an
+		// exit node that cannot read its own networks forwards nothing.
+		learned, err := learnedNotInternet(link.Attrs().Index)
+		if err != nil {
+			return nil, nil, fmt.Errorf("learning the exit node's own networks: %w", err)
+		}
+		exitRules = &exitRuleset{
+			NotInternet:          append(append(internet.NotInternet(), exit.Excluded...), learned...),
+			ConntrackPerConsumer: exit.ConntrackPerConsumer, SMTP: exit.SMTP,
+		}
+		slices.SortFunc(exitRules.NotInternet, compareRoutedPrefixes)
+		exitRules.NotInternet = slices.Compact(exitRules.NotInternet)
 	}
 	state, err := configurer.loadState()
 	if err != nil {
@@ -99,7 +121,7 @@ func (configurer *kernelServedConfigurer) ReplaceServed(name string, self []neti
 	configurer.tunIndex = link.Attrs().Index
 	ruleset := servedRuleset{
 		Table: configurer.table, Interface: name, Self: self, MTU: mtu,
-		GuardIPv6: state.IPv6Forwarding != "",
+		GuardIPv6: state.IPv6Forwarding != "", Exit: exitRules,
 	}
 	for _, entry := range served {
 		ruleset.Served = append(ruleset.Served, entry.Prefix)
@@ -112,7 +134,13 @@ func (configurer *kernelServedConfigurer) ReplaceServed(name string, self []neti
 			ruleset.Guarded = append(ruleset.Guarded, guarded)
 		}
 	}
-	fingerprint := fmt.Sprintf("%+v", ruleset)
+	// The exit rules by value: a pointer would print as an address.
+	plain := ruleset
+	plain.Exit = nil
+	fingerprint := fmt.Sprintf("%+v", plain)
+	if ruleset.Exit != nil {
+		fingerprint += fmt.Sprintf(" exit %+v", *ruleset.Exit)
+	}
 	if present, err := configurer.Present(); err != nil || !present || fingerprint != configurer.installed {
 		configurer.installed = ""
 		if err := replaceServedTable(ruleset); err != nil {
@@ -122,6 +150,132 @@ func (configurer *kernelServedConfigurer) ReplaceServed(name string, self []neti
 	}
 	configurer.forwarding, configurer.hostIPv6 = interfaces, ipv6
 	return served, refused, nil
+}
+
+// defaultEgress returns the interfaces the host's default routes leave by,
+// outside the mesh, and whether it has an IPv6 default route: an exit node
+// forwards to the Internet through them, and the kernel picks among them per
+// destination.
+func defaultEgress(meshIndex int) ([]string, bool) {
+	var names []string
+	ipv6 := false
+	for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
+		routes, err := netlink.RouteListFiltered(family, &netlink.Route{Table: unix.RT_TABLE_MAIN},
+			netlink.RT_FILTER_TABLE)
+		if err != nil {
+			continue
+		}
+		for _, route := range routes {
+			if route.Dst != nil && !isDefaultRoute(route.Dst) {
+				continue
+			}
+			for _, index := range routeLinks(route) {
+				if index <= 0 || index == meshIndex {
+					continue
+				}
+				link, err := netlink.LinkByIndex(index)
+				if err != nil || link.Attrs() == nil || !validSysctlInterface(link.Attrs().Name) ||
+					link.Attrs().Flags&net.FlagLoopback != 0 {
+					continue
+				}
+				if family == netlink.FAMILY_V6 {
+					ipv6 = true
+					continue
+				}
+				names = append(names, link.Attrs().Name)
+			}
+		}
+	}
+	slices.Sort(names)
+	return slices.Compact(names), ipv6
+}
+
+func isDefaultRoute(destination *net.IPNet) bool {
+	ones, _ := destination.Mask.Size()
+	return ones == 0
+}
+
+// routeLinks returns the interfaces a route leaves by: its own, or each of
+// its next hops.
+func routeLinks(route netlink.Route) []int {
+	if len(route.MultiPath) == 0 {
+		return []int{route.LinkIndex}
+	}
+	links := make([]int, 0, len(route.MultiPath))
+	for _, hop := range route.MultiPath {
+		links = append(links, hop.LinkIndex)
+	}
+	return links
+}
+
+// learnedNotInternet returns what an exit node learns on its own is no
+// Internet (exit node design §4.1): every address of every interface but
+// the mesh's, the subnets they are attached to, even public ones, and the
+// gateways of the main table. They are read again at each apply, which the
+// helper repeats when the host's addresses or routes change (exitStamp). A
+// read that fails fails the apply: nothing is forwarded on a partial set.
+func learnedNotInternet(meshIndex int) ([]netip.Prefix, error) {
+	var learned []netip.Prefix
+	addresses, err := netlink.AddrList(nil, netlink.FAMILY_ALL)
+	if err != nil {
+		return nil, fmt.Errorf("listing addresses: %w", err)
+	}
+	for _, address := range addresses {
+		if address.LinkIndex == meshIndex || address.IPNet == nil {
+			continue
+		}
+		ip, ok := netip.AddrFromSlice(address.IP)
+		if !ok {
+			return nil, errors.New("an interface address is malformed")
+		}
+		ip = ip.Unmap()
+		ones, bits := address.Mask.Size()
+		subnet, err := ip.Prefix(ones)
+		if bits == 0 || bits != ip.BitLen() || err != nil {
+			return nil, errors.New("an interface prefix is malformed")
+		}
+		learned = append(learned, netip.PrefixFrom(ip, ip.BitLen()), subnet)
+	}
+	for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
+		routes, err := netlink.RouteListFiltered(family, &netlink.Route{Table: unix.RT_TABLE_MAIN},
+			netlink.RT_FILTER_TABLE)
+		if err != nil {
+			return nil, fmt.Errorf("listing routes: %w", err)
+		}
+		for _, route := range routes {
+			for _, gateway := range append([]net.IP{route.Gw}, multipathGateways(route)...) {
+				if ip, ok := netip.AddrFromSlice(gateway); ok {
+					ip = ip.Unmap()
+					learned = append(learned, netip.PrefixFrom(ip, ip.BitLen()))
+				}
+			}
+		}
+	}
+	return learned, nil
+}
+
+// exitStamp identifies what an exit node's rules depend on besides its
+// settings: its addresses, routes and gateways, so a change applies the last
+// request again. Empty when they cannot be read, which also changes it.
+func exitStamp(name string) string {
+	meshIndex := 0
+	if link, err := netlink.LinkByName(name); err == nil && link.Attrs() != nil {
+		meshIndex = link.Attrs().Index
+	}
+	learned, err := learnedNotInternet(meshIndex)
+	if err != nil {
+		return "unknown"
+	}
+	egress, ipv6 := defaultEgress(meshIndex)
+	return fmt.Sprintf("%v %v %t", learned, egress, ipv6)
+}
+
+func multipathGateways(route netlink.Route) []net.IP {
+	gateways := make([]net.IP, 0, len(route.MultiPath))
+	for _, hop := range route.MultiPath {
+		gateways = append(gateways, hop.Gw)
+	}
+	return gateways
 }
 
 // selfTestRoutes are the host routes that bring answers to the self-test

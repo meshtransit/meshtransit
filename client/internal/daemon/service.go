@@ -377,6 +377,7 @@ type Service struct {
 	enableDeviceAliases  bool
 	enableSubnetRoutes   bool
 	enableSubnetRouter   bool
+	enableExitNode       bool
 	routeSettingsPath    string
 	restartMarkerPath    string
 	// routeSites is the router of each Site of the current session.
@@ -447,7 +448,11 @@ type Options struct {
 	// EnableSubnetRouter declares router.subnet.v1 and offers the subnets
 	// of the settings at RouteSettingsPath (mtcp-v1 §7.6, §8.2).
 	EnableSubnetRouter bool
-	RouteSettingsPath  string
+	// EnableExitNode declares router.exit.v1 and offers to be an exit node
+	// while the settings at RouteSettingsPath turn exit mode on (mtcp-v1
+	// §7.7).
+	EnableExitNode    bool
+	RouteSettingsPath string
 	// RestartMarkerPath, when set, is the file a package upgrade writes just
 	// before it restarts meshd: a stopping router then does not tell Core it
 	// is going away, as it comes straight back.
@@ -490,11 +495,12 @@ func New(
 	if options.EnableDeviceAliases && options.DataPlane == nil {
 		return nil, errors.New("daemon: Device aliases require a packet engine")
 	}
-	if (options.EnableSubnetRoutes || options.EnableSubnetRouter) && options.DataPlane == nil {
-		return nil, errors.New("daemon: subnet routes require a packet engine")
+	if (options.EnableSubnetRoutes || options.EnableSubnetRouter || options.EnableExitNode) &&
+		options.DataPlane == nil {
+		return nil, errors.New("daemon: subnet routes and exit nodes require a packet engine")
 	}
-	if options.EnableSubnetRouter && options.RouteSettingsPath == "" {
-		return nil, errors.New("daemon: a subnet router requires its route settings path")
+	if (options.EnableSubnetRouter || options.EnableExitNode) && options.RouteSettingsPath == "" {
+		return nil, errors.New("daemon: a subnet router or exit node requires its route settings path")
 	}
 	if options.Clock == nil {
 		options.Clock = time.Now
@@ -539,6 +545,7 @@ func New(
 		enableDeviceAliases:  options.EnableDeviceAliases,
 		enableSubnetRoutes:   options.EnableSubnetRoutes,
 		enableSubnetRouter:   options.EnableSubnetRouter,
+		enableExitNode:       options.EnableExitNode,
 		routeSettingsPath:    options.RouteSettingsPath,
 		restartMarkerPath:    options.RestartMarkerPath,
 		loadRouteSettings:    routesettings.Load,
@@ -930,12 +937,14 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			}
 		}
 		nextControlKey, _ := record.NextControlKey()
-		var advertisedRoutes chan []netip.Prefix
+		var hostOffers chan controlplane.HostOffer
 		var routeHealth chan []controlplane.RouteSiteHealth
-		if s.enableSubnetRouter {
-			advertisedRoutes = make(chan []netip.Prefix)
+		if s.enableSubnetRouter || s.enableExitNode {
+			hostOffers = make(chan controlplane.HostOffer)
 			go watchRouteOffer(streamCtx, s.loadRouteSettings, s.routeSettingsPath, routeOfferPoll, s.logger,
-				advertisedRoutes)
+				hostOffers)
+		}
+		if s.enableSubnetRouter {
 			routeHealth = make(chan []controlplane.RouteSiteHealth)
 			go watchRouteHealth(streamCtx, s.subnetRouterStatus, routeHealthPoll, routeHealth)
 		}
@@ -948,7 +957,8 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					EnableDeviceAliases: s.enableDeviceAliases,
 					EnableSubnetRoutes:  s.enableSubnetRoutes,
 					EnableSubnetRouter:  s.enableSubnetRouter,
-					AdvertisedRoutes:    advertisedRoutes,
+					EnableExitNode:      s.enableExitNode,
+					HostOffers:          hostOffers,
 					RouteHealth:         routeHealth,
 					RouteSelection:      routeSelection,
 					AnnounceGoingAway:   func() bool { return !restartExpected(s.restartMarkerPath, s.clock()) },

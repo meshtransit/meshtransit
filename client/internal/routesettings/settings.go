@@ -1,8 +1,10 @@
 // Package routesettings holds the host's own subnet route settings
-// (mtcp-v1 §7.6): whether the node installs the routes Core grants it, and
-// which subnets it forwards as a router. They live in a file only root (or,
+// (mtcp-v1 §7.6): whether the node installs the routes Core grants it, which
+// subnets it forwards as a router, and whether it may be an exit node
+// (mtcp-v1 §7.7) and within which limits. They live in a file only root (or,
 // on Windows, SYSTEM and administrators) can write, so a compromised meshd
-// or Core cannot turn routes on or make the host a router.
+// or Core cannot turn routes on, make the host a router or an exit node, or
+// widen its limits.
 package routesettings
 
 import (
@@ -24,6 +26,17 @@ const (
 	MaximumAdvertised = 256
 	// maximumFileBytes bounds the settings file.
 	maximumFileBytes = 64 << 10
+	// DefaultExitConntrackPerConsumer is how many connections one consumer
+	// may hold through this exit node unless the settings lower it (exit
+	// node design §4.3); Core's value only lowers it further.
+	DefaultExitConntrackPerConsumer = 16384
+	// DefaultExitMaxConsumers is how many consumers the exit node forwards
+	// for unless the settings say otherwise.
+	DefaultExitMaxConsumers = 256
+	// Bounds of the exit limits.
+	MinimumExitConntrack = 1024
+	MaximumExitConntrack = 262144
+	MaximumExitConsumers = 4096
 )
 
 var (
@@ -46,18 +59,66 @@ type Settings struct {
 	// AdvertiseRoutes are the subnets the host offers to forward, canonical
 	// and sorted.
 	AdvertiseRoutes []netip.Prefix
+	// ExitMode offers the host as an exit node: it forwards other Devices'
+	// Internet traffic for the Exit Pool Core assigns it to.
+	ExitMode bool
+	// ExitSMTPAllowed lets consumers open TCP port 25 to the Internet; off,
+	// a pool that allows it cannot.
+	ExitSMTPAllowed bool
+	// ExitConntrackPerConsumerMax and ExitMaxConsumers bound what Core may
+	// ask of the exit node; zero is the default.
+	ExitConntrackPerConsumerMax int
+	ExitMaxConsumers            int
 }
 
 type document struct {
-	AcceptRoutes       bool     `json:"accept_routes"`
-	AcceptPublicRoutes bool     `json:"accept_public_routes"`
-	RouterMode         bool     `json:"router_mode"`
-	AdvertiseRoutes    []string `json:"advertise_routes"`
+	AcceptRoutes                bool     `json:"accept_routes"`
+	AcceptPublicRoutes          bool     `json:"accept_public_routes"`
+	RouterMode                  bool     `json:"router_mode"`
+	AdvertiseRoutes             []string `json:"advertise_routes"`
+	ExitMode                    bool     `json:"exit_mode,omitempty"`
+	ExitSMTPAllowed             bool     `json:"exit_smtp_allowed,omitempty"`
+	ExitConntrackPerConsumerMax int      `json:"exit_conntrack_per_consumer_max,omitempty"`
+	ExitMaxConsumers            int      `json:"exit_max_consumers,omitempty"`
 }
+
+// ExitConntrackLimit is the connections one consumer may hold through this
+// exit node: the settings' maximum (or the default), lowered to Core's when
+// Core asks for fewer. Core never raises it.
+func (settings Settings) ExitConntrackLimit(core int) int {
+	limit := settings.ExitConntrackPerConsumerMax
+	if limit == 0 {
+		limit = DefaultExitConntrackPerConsumer
+	}
+	if core > 0 && core < limit {
+		limit = core
+	}
+	return limit
+}
+
+// ExitConsumerLimit is how many consumers the exit node forwards for.
+func (settings Settings) ExitConsumerLimit() int {
+	if settings.ExitMaxConsumers == 0 {
+		return DefaultExitMaxConsumers
+	}
+	return settings.ExitMaxConsumers
+}
+
+// ExitSMTP reports whether consumers may open TCP port 25: only when both
+// the host and Core's pool allow it.
+func (settings Settings) ExitSMTP(core bool) bool { return settings.ExitSMTPAllowed && core }
 
 // Validate accepts at most MaximumAdvertised advertised subnets, each one a
 // Site could use (Usable) and none listed twice.
 func (settings Settings) Validate() error {
+	if limit := settings.ExitConntrackPerConsumerMax; limit != 0 &&
+		(limit < MinimumExitConntrack || limit > MaximumExitConntrack) {
+		return fmt.Errorf("%w: exit connection limit outside %d..%d", ErrInvalid, MinimumExitConntrack,
+			MaximumExitConntrack)
+	}
+	if consumers := settings.ExitMaxConsumers; consumers < 0 || consumers > MaximumExitConsumers {
+		return fmt.Errorf("%w: exit consumer limit outside 1..%d", ErrInvalid, MaximumExitConsumers)
+	}
 	if len(settings.AdvertiseRoutes) > MaximumAdvertised {
 		return fmt.Errorf("%w: more than %d advertised routes", ErrInvalid, MaximumAdvertised)
 	}
@@ -120,7 +181,8 @@ func Decode(encoded []byte) (Settings, error) {
 	}
 	settings := Settings{
 		AcceptRoutes: value.AcceptRoutes, AcceptPublicRoutes: value.AcceptPublicRoutes,
-		RouterMode: value.RouterMode,
+		RouterMode: value.RouterMode, ExitMode: value.ExitMode, ExitSMTPAllowed: value.ExitSMTPAllowed,
+		ExitConntrackPerConsumerMax: value.ExitConntrackPerConsumerMax, ExitMaxConsumers: value.ExitMaxConsumers,
 	}
 	for _, text := range value.AdvertiseRoutes {
 		prefix, err := netip.ParsePrefix(text)
@@ -144,6 +206,8 @@ func Encode(settings Settings) ([]byte, error) {
 	value := document{
 		AcceptRoutes: settings.AcceptRoutes, AcceptPublicRoutes: settings.AcceptPublicRoutes,
 		RouterMode: settings.RouterMode, AdvertiseRoutes: make([]string, len(settings.AdvertiseRoutes)),
+		ExitMode: settings.ExitMode, ExitSMTPAllowed: settings.ExitSMTPAllowed,
+		ExitConntrackPerConsumerMax: settings.ExitConntrackPerConsumerMax, ExitMaxConsumers: settings.ExitMaxConsumers,
 	}
 	for index, prefix := range settings.AdvertiseRoutes {
 		value.AdvertiseRoutes[index] = prefix.String()

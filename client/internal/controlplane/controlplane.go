@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 	"time"
 
 	"meshtransit.net/client/internal/networkmap"
@@ -128,6 +129,19 @@ type RegistrationResult struct {
 	MachineAuthorized bool
 }
 
+// HostOffer is what the host's local settings offer Core (mtcp-v1 §8.2).
+type HostOffer struct {
+	// Prefixes are the subnets it offers to forward to as a router.
+	Prefixes []netip.Prefix
+	// Exit reports that it offers to be an exit node.
+	Exit bool
+}
+
+// Equal reports whether two offers are the same.
+func (offer HostOffer) Equal(other HostOffer) bool {
+	return offer.Exit == other.Exit && slices.Equal(offer.Prefixes, other.Prefixes)
+}
+
 // NetmapOptions contains stable host facts, the persisted control-key pin,
 // and optional streams of node reports.
 type NetmapOptions struct {
@@ -141,10 +155,15 @@ type NetmapOptions struct {
 	// (mtcp-v1 §7.6, router.subnet.v1): it takes served routes and reports
 	// what it offers and serves.
 	EnableSubnetRouter bool
-	// AdvertisedRoutes, with EnableSubnetRouter, carries the subnets the
-	// host's local settings offer to forward; each set is sent to Core in a
-	// HostinfoReport, again in every new session.
-	AdvertisedRoutes <-chan []netip.Prefix
+	// EnableExitNode advertises that the node can be an exit node
+	// (mtcp-v1 §7.7, router.exit.v1): it reports whether its settings offer
+	// to be one, and its exit health.
+	EnableExitNode bool
+	// HostOffers, with EnableSubnetRouter or EnableExitNode, carries what the
+	// host's local settings offer: the subnets it forwards to and whether it
+	// may be an exit node; each offer is sent to Core in a HostinfoReport,
+	// again in every new session.
+	HostOffers <-chan HostOffer
 	// RouteHealth, with EnableSubnetRouter, carries the health of every
 	// served Site; each set is sent in a RouteHealthReport when Core takes
 	// it (router.health1), again every 10 seconds while not empty.

@@ -51,8 +51,11 @@ type mapState struct {
 	served      *mtcpv1.ServedRoutes
 	// takesServed: the node declared router.subnet.v1.
 	takesServed bool
-	relayMap    []byte
-	revisions   []*mtcpv1.NetworkRevision
+	servedExits *mtcpv1.ServedExits
+	// takesServedExits: the node declared router.exit.v1.
+	takesServedExits bool
+	relayMap         []byte
+	revisions        []*mtcpv1.NetworkRevision
 
 	signingKeys []mtrp.TrustedKey
 	ticket      []byte
@@ -90,6 +93,7 @@ func (state *mapState) applySnapshot(snapshot *mtcpv1.MapSnapshot) error {
 	state.filter, state.dns = snapshot.GetPacketFilter(), snapshot.GetDns()
 	// A snapshot without routes means none (mtcp-v1 §7.6).
 	state.routes, state.served = snapshot.GetRoutes(), snapshot.GetServed()
+	state.servedExits = snapshot.GetServedExits()
 	state.relayMap = bytes.Clone(snapshot.GetRelayMap())
 	state.revisions = snapshot.GetNetworkRevisions()
 	return nil
@@ -145,6 +149,9 @@ func (state *mapState) applyDelta(delta *mtcpv1.MapDelta) error {
 	}
 	if delta.GetServed() != nil {
 		state.served = delta.GetServed()
+	}
+	if delta.GetServedExits() != nil {
+		state.servedExits = delta.GetServedExits()
 	}
 	if len(delta.GetRelayMap()) != 0 {
 		state.relayMap = bytes.Clone(delta.GetRelayMap())
@@ -273,6 +280,11 @@ func (state *mapState) build(input snapshotInput) (networkmap.Snapshot, error) {
 	}
 	if state.takesServed {
 		if snapshot.Served, err = convertServed(state.served); err != nil {
+			return networkmap.Snapshot{}, err
+		}
+	}
+	if state.takesServedExits {
+		if snapshot.ServedExits, err = convertServedExits(state.servedExits); err != nil {
 			return networkmap.Snapshot{}, err
 		}
 	}
@@ -629,6 +641,40 @@ func convertServed(config *mtcpv1.ServedRoutes) ([]networkmap.ServedSite, error)
 				Address: address, TCP: kind == mtcpv1.RouteProbe_TCP, Port: uint16(probe.GetPort()), //nolint:gosec // G115: checked above
 			})
 		}
+		served = append(served, converted)
+	}
+	return served, nil
+}
+
+// convertServedExits reads the Exit Pool the node serves (mtcp-v1 §7.7);
+// networkmap validates the rest. Its rules are read as the packet filter's.
+func convertServedExits(config *mtcpv1.ServedExits) ([]networkmap.ServedExit, error) {
+	pools := config.GetPools()
+	served := make([]networkmap.ServedExit, 0, len(pools))
+	for _, pool := range pools {
+		converted := networkmap.ServedExit{
+			Ref: pool.GetPoolRef(), SMTPAllowed: pool.GetSmtpAllowed(),
+			ConntrackPerConsumer: int(min(pool.GetConntrackPerConsumer(), 1<<30)),
+		}
+		for _, probe := range pool.GetProbes() {
+			address, ok := netip.AddrFromSlice(probe.GetIp())
+			if !ok || address.Is4In6() || probe.GetPort() == 0 || probe.GetPort() > 65535 {
+				return nil, fmt.Errorf("%w: malformed exit probe", controlplane.ErrNetmapInvalid)
+			}
+			converted.Probes = append(converted.Probes, netip.AddrPortFrom(address, uint16(probe.GetPort()))) //nolint:gosec // checked
+		}
+		for _, raw := range pool.GetDnsUpstreams() {
+			address, ok := netip.AddrFromSlice(raw)
+			if !ok || address.Is4In6() {
+				return nil, fmt.Errorf("%w: malformed exit resolver", controlplane.ErrNetmapInvalid)
+			}
+			converted.DNSUpstreams = append(converted.DNSUpstreams, address)
+		}
+		rules, err := convertFilter(&mtcpv1.PacketFilter{Rules: pool.GetRules()})
+		if err != nil {
+			return nil, err
+		}
+		converted.Rules = rules
 		served = append(served, converted)
 	}
 	return served, nil

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/netip"
 	"slices"
+	"strconv"
 	"strings"
 
 	"meshtransit.net/client/internal/config"
@@ -23,6 +24,10 @@ const usage = `usage: %[1]s routes [--routes-file PATH] COMMAND
   router-mode on|off        forward into the advertised subnets
   advertise PREFIX...       offer to forward these subnets
   withdraw PREFIX...        stop offering these subnets
+  exit-mode on|off          offer to forward other Devices' Internet traffic
+  exit-smtp on|off          let consumers open TCP port 25 (off by default)
+  exit-conntrack-max N      connections per consumer, 1024 to 262144 (0: 16384)
+  exit-max-consumers N      consumers forwarded for, up to 4096 (0: 256)
 Changes need %[2]s and apply within seconds, without a restart.
 `
 
@@ -87,7 +92,20 @@ func changeRouteSettings(settings routesettings.Settings, command string, operan
 	routesettings.Settings, error,
 ) {
 	switch command {
-	case "accept", "accept-public", "router-mode":
+	case "exit-conntrack-max", "exit-max-consumers":
+		if len(operands) != 1 {
+			return settings, fmt.Errorf("%s takes a number", command)
+		}
+		value, err := strconv.Atoi(operands[0])
+		if err != nil || value < 0 {
+			return settings, fmt.Errorf("%s takes a number", command)
+		}
+		if command == "exit-conntrack-max" {
+			settings.ExitConntrackPerConsumerMax = value
+		} else {
+			settings.ExitMaxConsumers = value
+		}
+	case "accept", "accept-public", "router-mode", "exit-mode", "exit-smtp":
 		if len(operands) != 1 || (operands[0] != "on" && operands[0] != "off") {
 			return settings, fmt.Errorf("%s takes on or off", command)
 		}
@@ -97,6 +115,10 @@ func changeRouteSettings(settings routesettings.Settings, command string, operan
 			settings.AcceptRoutes = value
 		case "accept-public":
 			settings.AcceptPublicRoutes = value
+		case "exit-mode":
+			settings.ExitMode = value
+		case "exit-smtp":
+			settings.ExitSMTPAllowed = value
 		default:
 			settings.RouterMode = value
 		}
@@ -132,9 +154,12 @@ func (c Command) print(stdout, stderr io.Writer, settings routesettings.Settings
 	for index, prefix := range settings.AdvertiseRoutes {
 		advertised[index] = prefix.String()
 	}
-	if _, err := fmt.Fprintf(stdout, "accept: %s\naccept-public: %s\nrouter-mode: %s\nadvertise: %s\n",
+	if _, err := fmt.Fprintf(stdout,
+		"accept: %s\naccept-public: %s\nrouter-mode: %s\nadvertise: %s\n"+
+			"exit-mode: %s\nexit-smtp: %s\nexit-conntrack-max: %d\nexit-max-consumers: %d\n",
 		onOff[settings.AcceptRoutes], onOff[settings.AcceptPublicRoutes], onOff[settings.RouterMode],
-		strings.Join(advertised, " ")); err != nil {
+		strings.Join(advertised, " "), onOff[settings.ExitMode], onOff[settings.ExitSMTPAllowed],
+		settings.ExitConntrackLimit(0), settings.ExitConsumerLimit()); err != nil {
 		_, _ = fmt.Fprintf(stderr, "%s: %v\n", c.Program, err)
 		return 1
 	}

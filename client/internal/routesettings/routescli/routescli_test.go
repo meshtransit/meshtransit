@@ -77,3 +77,40 @@ func TestRunRoutesRefusesAnUnprivilegedChange(t *testing.T) {
 		t.Fatalf("settings after a refused change = %+v, %v", settings, err)
 	}
 }
+
+func TestChangeExitSettings(t *testing.T) {
+	t.Parallel()
+	settings := routesettings.Settings{}
+	for _, step := range []struct {
+		command  string
+		operands []string
+	}{
+		{"exit-mode", []string{"on"}},
+		{"exit-smtp", []string{"on"}},
+		{"exit-conntrack-max", []string{"8192"}},
+		{"exit-max-consumers", []string{"32"}},
+	} {
+		var err error
+		if settings, err = changeRouteSettings(settings, step.command, step.operands); err != nil {
+			t.Fatalf("%s: %v", step.command, err)
+		}
+	}
+	if !settings.ExitMode || !settings.ExitSMTPAllowed || settings.ExitConntrackPerConsumerMax != 8192 ||
+		settings.ExitMaxConsumers != 32 {
+		t.Fatalf("settings = %+v", settings)
+	}
+	for _, bad := range []struct {
+		command  string
+		operands []string
+	}{
+		{"exit-mode", []string{"maybe"}},
+		{"exit-conntrack-max", []string{"10"}},
+		{"exit-conntrack-max", []string{"-1"}},
+		{"exit-max-consumers", []string{"many"}},
+		{"exit-max-consumers", []string{"5000"}},
+	} {
+		if _, err := changeRouteSettings(settings, bad.command, bad.operands); err == nil {
+			t.Errorf("%s %v was accepted", bad.command, bad.operands)
+		}
+	}
+}

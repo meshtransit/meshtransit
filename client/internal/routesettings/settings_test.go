@@ -113,3 +113,43 @@ func TestAdmit(t *testing.T) {
 		t.Fatalf("over the bound: accepted %d, refused %d", len(accepted), len(refused))
 	}
 }
+
+func TestExitSettingsOnlyNarrowCore(t *testing.T) {
+	t.Parallel()
+	settings, err := Decode([]byte(`{"accept_routes":false,"accept_public_routes":false,"router_mode":false,` +
+		`"advertise_routes":[],"exit_mode":true,"exit_conntrack_per_consumer_max":4096,"exit_max_consumers":8}`))
+	if err != nil || !settings.ExitMode || settings.ExitSMTPAllowed {
+		t.Fatalf("Decode() = %+v, %v", settings, err)
+	}
+	if settings.ExitConntrackLimit(0) != 4096 || settings.ExitConntrackLimit(65536) != 4096 ||
+		settings.ExitConntrackLimit(2048) != 2048 || settings.ExitConsumerLimit() != 8 {
+		t.Fatalf("limits = %d %d %d %d", settings.ExitConntrackLimit(0), settings.ExitConntrackLimit(65536),
+			settings.ExitConntrackLimit(2048), settings.ExitConsumerLimit())
+	}
+	if settings.ExitSMTP(true) || (Settings{ExitSMTPAllowed: true}).ExitSMTP(false) ||
+		!(Settings{ExitSMTPAllowed: true}).ExitSMTP(true) {
+		t.Fatal("SMTP must need both the host and Core")
+	}
+	if (Settings{}).ExitConntrackLimit(0) != DefaultExitConntrackPerConsumer ||
+		(Settings{}).ExitConsumerLimit() != DefaultExitMaxConsumers {
+		t.Fatal("defaults are wrong")
+	}
+	for _, bad := range []Settings{
+		{ExitConntrackPerConsumerMax: 100},
+		{ExitConntrackPerConsumerMax: 300000},
+		{ExitMaxConsumers: -1},
+		{ExitMaxConsumers: 5000},
+	} {
+		if bad.Validate() == nil {
+			t.Errorf("%+v was accepted", bad)
+		}
+	}
+	encoded, err := Encode(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again, err := Decode(encoded); err != nil || again.ExitMode != settings.ExitMode ||
+		again.ExitConntrackPerConsumerMax != 4096 || again.ExitMaxConsumers != 8 {
+		t.Fatalf("round trip = %+v, %v", again, err)
+	}
+}

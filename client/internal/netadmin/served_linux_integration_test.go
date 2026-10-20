@@ -84,7 +84,7 @@ func TestKernelServedConfigurerIntegration(t *testing.T) {
 			// one merged range, and one without an end.
 			{Prefix: netip.MustParsePrefix("10.200.4.0/24"), Masquerade: true},
 			{Prefix: netip.MustParsePrefix("255.255.255.0/24")},
-		})
+		}, nil)
 	if err != nil {
 		t.Fatalf("ReplaceServed() error = %v", err)
 	}
@@ -140,7 +140,7 @@ func TestKernelServedConfigurerIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, _, err := configurer.ReplaceServed(name, []netip.Prefix{netip.MustParsePrefix("100.127.255.240/32")}, 1280,
-		served); err != nil {
+		served, nil); err != nil {
 		t.Fatal(err)
 	}
 	if sysctl("net/ipv4/conf/"+lan+"/forwarding") != "1" {
@@ -157,7 +157,7 @@ func TestKernelServedConfigurerIntegration(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = netlink.RouteDel(administrator) })
 	if _, _, err := configurer.ReplaceServed(name, []netip.Prefix{netip.MustParsePrefix("100.127.255.240/32")}, 1280,
-		served); err != nil {
+		served, nil); err != nil {
 		t.Fatal(err)
 	}
 	if problems := configurer.Problems(); !slices.Contains(problems, ProblemSelfTestUnrouted) {
@@ -254,4 +254,95 @@ func lanLink(t *testing.T, name string) int {
 		t.Fatal(err)
 	}
 	return link.Attrs().Index
+}
+
+// TestKernelExitConfigurerIntegration forwards as an exit node on a real
+// kernel and reads back the rules: what is not the Internet dropped before
+// any accept, SMTP refused, each consumer's connections counted, every
+// source translated, forwarding on for the TUN and the default route's
+// interface.
+func TestKernelExitConfigurerIntegration(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("root privileges are required")
+	}
+	nft, err := exec.LookPath("nft")
+	if err != nil {
+		t.Skip("nft is required to read the rules back")
+	}
+	const name, uplink = "meshit3", "wanit0"
+	file, _, err := (kernelTUNCreator{}).Open(name, 1280, 0,
+		[]netip.Prefix{netip.MustParsePrefix("100.127.255.241/32")}, []netip.Prefix{})
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = file.Close() })
+	dummy := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: uplink}}
+	if err := netlink.LinkAdd(dummy); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = netlink.LinkDel(dummy) })
+	address, _ := netlink.ParseAddr("45.76.10.10/29")
+	if err := netlink.AddrAdd(dummy, address); err != nil {
+		t.Fatal(err)
+	}
+	if err := netlink.LinkSetUp(dummy); err != nil {
+		t.Fatal(err)
+	}
+	// A default route of its own table metric, so the container's own is kept.
+	gateway := netip.MustParseAddr("45.76.10.9")
+	route := &netlink.Route{
+		LinkIndex: dummy.Attrs().Index, Gw: gateway.AsSlice(), Priority: 4000,
+		Dst: prefixIPNet(netip.MustParsePrefix("0.0.0.0/0")),
+	}
+	if err := netlink.RouteAdd(route); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = netlink.RouteDel(route) })
+	state := filepath.Join(t.TempDir(), "exit-state.json")
+	configurer := kernelServedConfigurer{table: "meshtransit_exit_it", statePath: state, sysctlRoot: "/proc/sys"}
+	t.Cleanup(func() { _ = configurer.Clear() })
+	public := netip.MustParsePrefix("34.1.2.3/32")
+	if _, _, err := configurer.ReplaceServed(name, []netip.Prefix{netip.MustParsePrefix("100.127.255.241/32")}, 1280,
+		nil, &exitForwarding{ConntrackPerConsumer: 2048, Excluded: []netip.Prefix{public}}); err != nil {
+		t.Fatalf("ReplaceServed(exit) error = %v", err)
+	}
+	if value, err := readSysctl("/proc/sys/net/ipv4/conf/" + uplink + "/forwarding"); err != nil || value != "1" {
+		t.Fatalf("uplink forwarding = %q, %v", value, err)
+	}
+	listing, err := exec.Command(nft, "list", "table", "inet", "meshtransit_exit_it").CombinedOutput()
+	if err != nil {
+		t.Fatalf("nft list: %v: %s", err, listing)
+	}
+	text := string(listing)
+	for _, want := range []string{
+		"set notinternet4", "set notinternet6", "10.0.0.0/8", "169.254.0.0/16", "100.64.0.0/10",
+		"45.76.10.8/29", "34.1.2.3", "4000::-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+		"tcp dport 25 drop", "ct count over 2048", "masquerade", "!= @consumers4 drop", "!= @consumers6 drop",
+		`iifname "` + name + `" accept`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("exit table lacks %q:\n%s", want, text)
+		}
+	}
+	// What is not the Internet is dropped before the exit's accept.
+	if drop, accept := strings.Index(text, "@notinternet4 drop"), strings.Index(text, `iifname "`+name+`" accept`); drop < 0 ||
+		accept < 0 || drop > accept {
+		t.Errorf("not-Internet drop at %d, accept at %d:\n%s", drop, accept, text)
+	}
+	t.Log(text)
+	// SMTP allowed by both: no port 25 rule.
+	if _, _, err := configurer.ReplaceServed(name, []netip.Prefix{netip.MustParsePrefix("100.127.255.241/32")}, 1280,
+		nil, &exitForwarding{ConntrackPerConsumer: 2048, SMTP: true}); err != nil {
+		t.Fatal(err)
+	}
+	if listing, err := exec.Command(nft, "list", "table", "inet", "meshtransit_exit_it").CombinedOutput(); err != nil ||
+		strings.Contains(string(listing), "dport 25") {
+		t.Fatalf("SMTP allowed still drops port 25: %v: %s", err, listing)
+	}
+	if err := configurer.Clear(); err != nil {
+		t.Fatal(err)
+	}
+	if present, err := configurer.Present(); err != nil || present {
+		t.Fatalf("Present() after Clear = %t, %v", present, err)
+	}
 }

@@ -26,6 +26,9 @@ type Snapshot struct {
 	// Served are the Sites the node forwards to as a router (mtcp-v1 §7.6),
 	// sorted by reference; nil when the node is not a router.
 	Served []ServedSite
+	// ServedExits is the Exit Pool the node forwards to the Internet for as
+	// an exit node (mtcp-v1 §7.7), at most one; nil when it cannot be one.
+	ServedExits []ServedExit
 }
 
 // Interchange is a verified relay grant: the ticket this node presents to

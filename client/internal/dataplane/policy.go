@@ -80,6 +80,8 @@ type policyFilter struct {
 	routedActivity map[string]*RoutedActivity
 	// served holds what the node forwards into as a router (servedFilter).
 	served servedFilter
+	// exit holds what the node forwards to the Internet as an exit node.
+	exit exitFilter
 	// unreachable limits and counts the answers to packets for a Site that
 	// cannot be reached.
 	unreachable *unreachableAnswerer
@@ -279,8 +281,9 @@ func (f *policyFilter) allowOrdinaryLocked(direction PacketDirection, header pac
 	switch direction {
 	case PacketOutbound:
 		if !containsAddress(f.self, header.Source) {
-			// A router forwards a Site's answers to the mesh.
-			return f.servedOutboundLocked(header, now)
+			// A router forwards a Site's answers to the mesh, an exit node
+			// the Internet's.
+			return f.servedOutboundLocked(header, now) || f.exitOutboundLocked(header, now)
 		}
 		if !f.peerUsableAt(header.Destination, now) {
 			if !f.routedUsableAt(header.Destination, now) {
@@ -293,8 +296,9 @@ func (f *policyFilter) allowOrdinaryLocked(direction PacketDirection, header pac
 		return true
 	case PacketInbound:
 		if !containsAddress(f.self, header.Destination) {
-			// A router forwards what its rules admit into a Site.
-			return f.servedInboundLocked(header, now)
+			// A router forwards what its rules admit into a Site, an exit
+			// node what its pool's rules admit to the Internet.
+			return f.servedInboundLocked(header, now) || f.exitInboundLocked(header, now)
 		}
 		if f.isTrackedErrorLocked(header, packet, now) {
 			return true

@@ -302,6 +302,10 @@ type WireGuardEngine struct {
 	// is what the helper did with it.
 	served       helperSync[[]networkmap.ServedSite, netadmin.ServedResult]
 	servedStatus SubnetRouterStatus
+	// servedExit keeps the exit node's forwarding in step with the map;
+	// exitStatus is what the helper did with it.
+	servedExit helperSync[[]networkmap.ServedExit, netadmin.ExitServing]
+	exitStatus ExitNodeStatus
 	// routerHealth measures the served Sites while the node serves any.
 	routerHealth routerHealth
 	// enforcementChanges signals enforced policy changes no map carried.
@@ -426,6 +430,7 @@ func (e *WireGuardEngine) Apply(
 	}
 	e.syncRoutedLocked(routed.allPrefixes())
 	e.syncServedLocked(snapshot.Served)
+	e.syncServedExitLocked(snapshot.ServedExits)
 	e.filter.resume()
 	return state, nil
 }
@@ -1416,6 +1421,7 @@ func (e *WireGuardEngine) closeLocked() error {
 	}
 	e.resetRoutedLocked()
 	e.resetServedLocked()
+	e.resetServedExitLocked()
 	if e.device == nil {
 		e.forgetLazyPeers()
 		return nil

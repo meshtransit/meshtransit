@@ -240,10 +240,10 @@ func TestStreamNetmapRouterOffersAndReportsRouteDigest(t *testing.T) {
 		answerPings(s)
 	})
 	material, options := core.options(t)
-	advertised := make(chan []netip.Prefix, 1)
-	advertised <- []netip.Prefix{netip.MustParsePrefix("10.20.0.0/16")}
+	advertised := make(chan controlplane.HostOffer, 1)
+	advertised <- controlplane.HostOffer{Prefixes: []netip.Prefix{netip.MustParsePrefix("10.20.0.0/16")}, Exit: true}
 	enforcement := make(chan controlplane.EnforcementReport, 1)
-	options.EnableSubnetRouter, options.AdvertisedRoutes, options.EnforcementReports = true, advertised, enforcement
+	options.EnableSubnetRouter, options.HostOffers, options.EnforcementReports = true, advertised, enforcement
 	err := core.client().StreamNetmap(t.Context(), core.origin(), material, options,
 		func(context.Context, networkmap.Snapshot) error {
 			enforcement <- controlplane.EnforcementReport{
@@ -263,7 +263,8 @@ func TestStreamNetmapRouterOffersAndReportsRouteDigest(t *testing.T) {
 	select {
 	case offer := <-offers:
 		prefixes := offer.GetHostinfo().GetAdvertisedPrefixes()
-		if len(prefixes) != 1 || prefixes[0].GetBits() != 16 {
+		// Exit mode counts only from a node that can be an exit node.
+		if len(prefixes) != 1 || prefixes[0].GetBits() != 16 || offer.GetHostinfo().GetExitOffered() {
 			t.Fatalf("offer = %v", offer)
 		}
 	default:
@@ -619,5 +620,45 @@ func TestStreamNetmapReportsTheRouterOfEachSite(t *testing.T) {
 		}
 	default:
 		t.Fatal("no route selection report reached Core")
+	}
+}
+
+// An exit node declares router.exit.v1 (and router.health1) and reports
+// whether its settings offer to be one, without subnets it may not route.
+func TestStreamNetmapExitNodeOffersItself(t *testing.T) {
+	t.Parallel()
+	offers := make(chan *mtcpv1.HostinfoReport, 1)
+	core := newStreamCore(t, func(core *streamCore, s *coreSession, _ int32) {
+		core.keyUpdate(s)
+		_ = s.send(sharedmtcp.MessageMapSnapshot, core.snapshot(1))
+		if offer, ok := core.expect(s, sharedmtcp.MessageHostinfoReport).(*mtcpv1.HostinfoReport); ok {
+			offers <- offer
+		}
+		_ = s.send(sharedmtcp.MessageLifecycle, &mtcpv1.Lifecycle{State: mtcpv1.Lifecycle_REVOKED})
+		answerPings(s)
+	})
+	material, options := core.options(t)
+	advertised := make(chan controlplane.HostOffer, 1)
+	advertised <- controlplane.HostOffer{Prefixes: []netip.Prefix{netip.MustParsePrefix("10.20.0.0/16")}, Exit: true}
+	options.EnableExitNode, options.HostOffers = true, advertised
+	err := core.client().StreamNetmap(t.Context(), core.origin(), material, options,
+		func(context.Context, networkmap.Snapshot) error { return nil })
+	if !errors.Is(err, controlplane.ErrNetmapAuthorityRevoked) {
+		t.Fatalf("StreamNetmap = %v", err)
+	}
+	if !slices.ContainsFunc(core.hello, func(hello *mtcpv1.ClientHello) bool {
+		return slices.Contains(hello.GetCapabilities(), "router.exit.v1") &&
+			slices.Contains(hello.GetCapabilities(), "router.health1") &&
+			!slices.Contains(hello.GetCapabilities(), "router.subnet.v1")
+	}) {
+		t.Fatal("the map stream did not declare router.exit.v1 and router.health1 alone")
+	}
+	select {
+	case offer := <-offers:
+		if !offer.GetHostinfo().GetExitOffered() || len(offer.GetHostinfo().GetAdvertisedPrefixes()) != 0 {
+			t.Fatalf("offer = %v", offer)
+		}
+	default:
+		t.Fatal("no offer reached Core")
 	}
 }

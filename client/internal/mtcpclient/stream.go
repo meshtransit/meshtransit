@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"net/netip"
 	"net/url"
 	"reflect"
 	"runtime"
@@ -82,7 +81,7 @@ func (c *Client) StreamNetmap(ctx context.Context, controlURL string, material c
 	var forwarders sync.WaitGroup
 	forwarders.Go(func() {
 		reports.forward(streamCtx, options.EndpointUpdates, options.EnforcementReports, options.PathStats,
-			options.AdvertisedRoutes, options.RouteHealth, options.RouteSelection)
+			options.HostOffers, options.RouteHealth, options.RouteSelection)
 	})
 	defer func() {
 		cancel()
@@ -120,7 +119,7 @@ type reportBox struct {
 	enforcement *controlplane.EnforcementReport
 	paths       *controlplane.PathStatsReport // sent once, then cleared
 	// advertised is the latest offer; nil until the host's settings are read.
-	advertised []netip.Prefix
+	advertised *controlplane.HostOffer
 	// routeHealth is the latest Site health; nil until it is measured.
 	routeHealth []controlplane.RouteSiteHealth
 	// routeSelection is the latest Site routers; nil until the first map.
@@ -134,7 +133,7 @@ func newReportBox(initial controlplane.EndpointUpdate) *reportBox {
 
 func (box *reportBox) forward(ctx context.Context, endpoints <-chan controlplane.EndpointUpdate,
 	enforcement <-chan controlplane.EnforcementReport, paths <-chan controlplane.PathStatsReport,
-	advertised <-chan []netip.Prefix, routeHealth <-chan []controlplane.RouteSiteHealth,
+	advertised <-chan controlplane.HostOffer, routeHealth <-chan []controlplane.RouteSiteHealth,
 	routeSelection <-chan []controlplane.RouteSiteSelection,
 ) {
 	for {
@@ -171,7 +170,8 @@ func (box *reportBox) forward(ctx context.Context, endpoints <-chan controlplane
 				continue
 			}
 			box.mu.Lock()
-			box.advertised = append([]netip.Prefix{}, offer...)
+			offer.Prefixes = slices.Clone(offer.Prefixes)
+			box.advertised = &offer
 			box.mu.Unlock()
 		case health, ok := <-routeHealth:
 			if !ok {
@@ -204,10 +204,15 @@ func (box *reportBox) latest() (controlplane.EndpointUpdate, *controlplane.Enfor
 }
 
 // offer returns the latest offer, nil before the settings were read.
-func (box *reportBox) offer() []netip.Prefix {
+func (box *reportBox) offer() *controlplane.HostOffer {
 	box.mu.Lock()
 	defer box.mu.Unlock()
-	return slices.Clone(box.advertised)
+	if box.advertised == nil {
+		return nil
+	}
+	offer := *box.advertised
+	offer.Prefixes = slices.Clone(offer.Prefixes)
+	return &offer
 }
 
 // health returns the latest Site health, nil before it was measured.
@@ -350,6 +355,12 @@ func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, e
 	if stream.options.EnableSubnetRouter {
 		capabilities = append(capabilities, "router.subnet.v1", "router.health1")
 	}
+	if stream.options.EnableExitNode {
+		capabilities = append(capabilities, "router.exit.v1")
+		if !stream.options.EnableSubnetRouter {
+			capabilities = append(capabilities, "router.health1")
+		}
+	}
 	s, err := c.open(ctx, stream.origin, sessionOptions{
 		machine: stream.keys.machine, control: stream.keys.control,
 		nodeKey: nodePublic[:], capabilities: capabilities, version: stream.options.Version,
@@ -385,6 +396,7 @@ func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, e
 	}()
 	state := newMapState(stream.options.EnableSubnetRoutes)
 	state.takesServed = stream.options.EnableSubnetRouter
+	state.takesServedExits = stream.options.EnableExitNode
 	run := &sessionRun{stream: stream, s: s, state: state, controlTime: time.UnixMilli(s.reply.GetServerTimeMs())}
 	return run.loop(ctx, inbox)
 }
@@ -401,7 +413,7 @@ type sessionRun struct {
 	sentReport  bool
 	enforced    *controlplane.EnforcementReport
 	// offered is the offer sent in this session; nil before the first.
-	offered []netip.Prefix
+	offered *controlplane.HostOffer
 	// healthSent is the Site health sent in this session and healthSentAt
 	// when; nil before the first.
 	healthSent   []controlplane.RouteSiteHealth
@@ -690,22 +702,26 @@ func (run *sessionRun) sendReports(timer *time.Timer) error {
 	return nil
 }
 
-// sendOffer sends the subnets the host offers to forward (mtcp-v1 §8.2) once
-// per session and whenever they change, always the whole set.
+// sendOffer sends what the host offers (mtcp-v1 §8.2), the subnets it
+// forwards to and whether it may be an exit node, once per session and
+// whenever it changes, always the whole offer.
 func (run *sessionRun) sendOffer() error {
-	if !run.stream.options.EnableSubnetRouter {
+	options := run.stream.options
+	if !options.EnableSubnetRouter && !options.EnableExitNode {
 		return nil
 	}
 	offer := run.stream.reports.offer()
-	if offer == nil || (run.offered != nil && slices.Equal(run.offered, offer)) {
+	if offer == nil || (run.offered != nil && run.offered.Equal(*offer)) {
 		return nil
 	}
 	hostinfo := &mtcpv1.Hostinfo{
-		Hostname: run.stream.options.Hostname, Os: runtime.GOOS, Arch: runtime.GOARCH,
-		ClientVersion: run.stream.options.Version,
+		Hostname: options.Hostname, Os: runtime.GOOS, Arch: runtime.GOARCH,
+		ClientVersion: options.Version, ExitOffered: options.EnableExitNode && offer.Exit,
 	}
-	for _, prefix := range offer {
-		hostinfo.AdvertisedPrefixes = append(hostinfo.AdvertisedPrefixes, sharedmtcp.AppendPrefix(prefix))
+	if options.EnableSubnetRouter {
+		for _, prefix := range offer.Prefixes {
+			hostinfo.AdvertisedPrefixes = append(hostinfo.AdvertisedPrefixes, sharedmtcp.AppendPrefix(prefix))
+		}
 	}
 	if err := run.send(sharedmtcp.MessageHostinfoReport, &mtcpv1.HostinfoReport{Hostinfo: hostinfo}); err != nil {
 		return err

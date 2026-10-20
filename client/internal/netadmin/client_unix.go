@@ -430,5 +430,48 @@ func (c *Client) CheckServedRoutes(ctx context.Context) (ServedHealth, error) {
 	if value.SelfTestPackets != nil {
 		health.SelfTestPackets, health.SelfTestKnown = *value.SelfTestPackets, true
 	}
+	health.Exit = exitServingOf(value)
 	return health, nil
+}
+
+// SetServedExit makes the host an exit node of the pool it serves, within
+// Core's limits narrowed by the host's settings, or stops it (mtcp-v1
+// §7.7). The helper forwards only while the host's exit mode is on and
+// reports why it does not otherwise.
+func (c *Client) SetServedExit(ctx context.Context, exit ExitRequest) (ExitServing, error) {
+	if c == nil {
+		return ExitServing{}, errors.New("netadmin: client is not initialized")
+	}
+	excluded := slices.Clone(exit.Excluded)
+	slices.SortFunc(excluded, compareRoutedPrefixes)
+	excluded = slices.Compact(excluded)
+	if len(excluded) > maxExitExcluded {
+		excluded = excluded[:maxExitExcluded]
+	}
+	requestValue := request{Version: protocolVersion, Operation: operationSetServedExit, Routes: []string{}}
+	if exit.Serve {
+		requestValue.Exit, requestValue.ExitConntrack, requestValue.ExitSMTP = true, exit.ConntrackPerConsumer, exit.SMTP
+		requestValue.Routes = prefixStrings(excluded)
+	}
+	value, descriptors, err := c.exchange(ctx, requestValue)
+	closeDescriptors(descriptors)
+	if err != nil {
+		return ExitServing{}, err
+	}
+	if len(descriptors) != 0 {
+		return ExitServing{}, fmt.Errorf("%w: exit response included descriptors", ErrProtocol)
+	}
+	serving := exitServingOf(value)
+	if serving.Serving && (!exit.Serve || serving.ConntrackPerConsumer > exit.ConntrackPerConsumer ||
+		(serving.SMTP && !exit.SMTP)) {
+		return ExitServing{}, fmt.Errorf("%w: helper widened the exit limits", ErrProtocol)
+	}
+	return serving, nil
+}
+
+func exitServingOf(value response) ExitServing {
+	return ExitServing{
+		Serving: value.ExitServing, ConntrackPerConsumer: value.ExitConntrack, SMTP: value.ExitSMTP,
+		MaxConsumers: value.ExitMaxConsumers, Refused: value.ExitRefused,
+	}
 }

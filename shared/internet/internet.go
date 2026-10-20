@@ -54,6 +54,19 @@ func Excluded() []netip.Prefix {
 	return slices.Clone(excluded[:])
 }
 
+// outsideGlobalUnicast is the IPv6 space outside 2000::/3.
+var outsideGlobalUnicast = [...]netip.Prefix{
+	netip.MustParsePrefix("::/3"),
+	netip.MustParsePrefix("4000::/2"),
+	netip.MustParsePrefix("8000::/1"),
+}
+
+// NotInternet returns every range that is not the Internet: Excluded and
+// the IPv6 space outside 2000::/3, as a packet filter needs them.
+func NotInternet() []netip.Prefix {
+	return append(slices.Clone(excluded[:]), outsideGlobalUnicast[:]...)
+}
+
 // Contains reports whether address is on the Internet: a valid address
 // without a zone, IPv4 outside the excluded ranges or IPv6 global unicast
 // outside them. IPv4-mapped IPv6 addresses are not: an exit node is never

@@ -2,6 +2,7 @@ package internet
 
 import (
 	"net/netip"
+	"slices"
 	"testing"
 )
 
@@ -109,6 +110,22 @@ func TestOnlyInternetPrefixes(t *testing.T) {
 	} {
 		if got := OnlyInternet(netip.MustParsePrefix(prefix)); got != internet {
 			t.Errorf("OnlyInternet(%s) = %v, want %v", prefix, got, internet)
+		}
+	}
+}
+
+func TestNotInternetCoversExactlyWhatContainsRefuses(t *testing.T) {
+	t.Parallel()
+	ranges := NotInternet()
+	for _, text := range []string{
+		"8.8.8.8", "1.1.1.1", "2606:4700::1111", "2a00:1450::1", "10.0.0.1",
+		"169.254.169.254", "100.64.0.1", "fd00::1", "fe80::1", "::1", "64:ff9b::808:808", "ff02::1",
+		"2001:db8::1", "2002::1", "3fff::1", "4000::1", "8000::1", "224.0.0.1", "255.255.255.255",
+	} {
+		address := netip.MustParseAddr(text)
+		covered := slices.ContainsFunc(ranges, func(prefix netip.Prefix) bool { return prefix.Contains(address) })
+		if covered == Contains(address) {
+			t.Errorf("%s: NotInternet covers it %t, Contains %t", text, covered, Contains(address))
 		}
 	}
 }

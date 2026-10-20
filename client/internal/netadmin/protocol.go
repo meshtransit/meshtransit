@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	protocolVersion = 5
+	protocolVersion = 6
 	// maxMessageBytes fits the largest route set, 4,096 IPv6 prefixes of
 	// the longest form, in one SEQPACKET message, below Linux's default
 	// socket send buffer (net.core.wmem_default, 208 KiB); a larger request
@@ -41,12 +41,19 @@ const (
 	// it forwards into, the host problems it could not repair, its
 	// connection tracking use and its self-test packet counter.
 	operationCheckServed = "check_served_routes"
-	maxTUNAddresses      = 8
-	maxTUNRoutes         = 512
-	maxAllowedPools      = 16
-	maxDNSDomains        = 256
-	maxDNSDomainBytes    = 16 << 10
-	interfaceNameSize    = 16
+	// operationSetServedExit makes the node an exit node of the Exit Pool it
+	// serves, or stops it (mtcp-v1 §7.7); the helper forwards only while its
+	// local settings turn exit mode on, within their limits.
+	operationSetServedExit = "set_served_exit"
+	// maxExitExcluded bounds the host addresses meshd learned that are no
+	// Internet (its public addresses).
+	maxExitExcluded   = 64
+	maxTUNAddresses   = 8
+	maxTUNRoutes      = 512
+	maxAllowedPools   = 16
+	maxDNSDomains     = 256
+	maxDNSDomainBytes = 16 << 10
+	interfaceNameSize = 16
 )
 
 var (
@@ -116,6 +123,13 @@ type request struct {
 	// Masquerade, with set_served_routes, has one flag per route: '1'
 	// translates its mesh sources to the router's address, '0' keeps them.
 	Masquerade string `json:"masquerade,omitempty"`
+	// With set_served_exit: Exit whether the node serves an Exit Pool; then
+	// ExitConntrack and ExitSMTP are Core's values, which the host's
+	// settings only narrow, and Routes the host addresses meshd learned that
+	// are no Internet (its public addresses as seen from outside).
+	Exit          bool `json:"exit,omitempty"`
+	ExitConntrack int  `json:"exit_conntrack,omitempty"`
+	ExitSMTP      bool `json:"exit_smtp,omitempty"`
 }
 
 type response struct {
@@ -138,6 +152,44 @@ type response struct {
 	ConntrackCount  int      `json:"conntrack_count,omitempty"`
 	ConntrackMax    int      `json:"conntrack_max,omitempty"`
 	SelfTestPackets *uint64  `json:"self_test_packets,omitempty"`
+	// Answer set_served_exit and check_served_routes: whether the node
+	// forwards as an exit node and within which limits, or why it does not.
+	ExitServing      bool   `json:"exit_serving,omitempty"`
+	ExitConntrack    int    `json:"exit_conntrack,omitempty"`
+	ExitSMTP         bool   `json:"exit_smtp,omitempty"`
+	ExitMaxConsumers int    `json:"exit_max_consumers,omitempty"`
+	ExitRefused      string `json:"exit_refused,omitempty"`
+}
+
+// Reasons the helper does not forward as an exit node.
+const (
+	// ExitRefusedOff: the host's exit mode is off.
+	ExitRefusedOff = "exit_off"
+	// ExitRefusedFailed: forwarding could not be installed.
+	ExitRefusedFailed = "install_failed"
+)
+
+// ExitRequest is what meshd asks of the helper for the Exit Pool it serves.
+type ExitRequest struct {
+	// Serve is false to stop forwarding as an exit node.
+	Serve bool
+	// ConntrackPerConsumer and SMTP are Core's values for the pool.
+	ConntrackPerConsumer int
+	SMTP                 bool
+	// Excluded are host addresses meshd learned that are no Internet.
+	Excluded []netip.Prefix
+}
+
+// ExitServing is how the helper forwards as an exit node: the limits it
+// applies, or why it does not forward.
+type ExitServing struct {
+	Serving              bool
+	ConntrackPerConsumer int
+	SMTP                 bool
+	MaxConsumers         int
+	// Refused is ExitRefusedOff or ExitRefusedFailed when not serving a
+	// requested pool; empty otherwise.
+	Refused string
 }
 
 // Router problems the helper reports when it could not repair them
@@ -172,6 +224,8 @@ type ServedHealth struct {
 	// The count restarts whenever the table is installed again.
 	SelfTestPackets uint64
 	SelfTestKnown   bool
+	// Exit is how the helper forwards as an exit node.
+	Exit ExitServing
 }
 
 // RoutedResult is what the helper did with requested subnet routes: those
@@ -236,6 +290,7 @@ type validatedRequest struct {
 	dns       DNSConfig
 	routed    []netip.Prefix
 	served    servedRequest
+	exit      ExitRequest
 }
 
 func validateRequest(value request) (validatedRequest, error) {
@@ -244,6 +299,9 @@ func validateRequest(value request) (validatedRequest, error) {
 	}
 	if value.Masquerade != "" && value.Operation != operationSetServed {
 		return validatedRequest{}, fmt.Errorf("%w: unexpected served route fields", ErrProtocol)
+	}
+	if (value.Exit || value.ExitConntrack != 0 || value.ExitSMTP) && value.Operation != operationSetServedExit {
+		return validatedRequest{}, fmt.Errorf("%w: unexpected exit fields", ErrProtocol)
 	}
 
 	switch value.Operation {
@@ -288,6 +346,8 @@ func validateRequest(value request) (validatedRequest, error) {
 			return validatedRequest{}, err
 		}
 		return validatedRequest{operation: value.Operation, routed: routed}, nil
+	case operationSetServedExit:
+		return validateExitRequest(value)
 	case operationCheckServed:
 		if value.Addresses != nil || value.Routes != nil || hasDNSRequestFields(value) {
 			return validatedRequest{}, fmt.Errorf("%w: served route check fields are invalid", ErrProtocol)
@@ -324,9 +384,58 @@ func validateRequest(value request) (validatedRequest, error) {
 	}
 }
 
+// validateExitRequest accepts a request to stop, or to serve with Core's
+// limits within their bounds and at most maxExitExcluded host addresses.
+func validateExitRequest(value request) (validatedRequest, error) {
+	if value.Addresses != nil || value.Masquerade != "" || hasDNSRequestFields(value) || value.Routes == nil ||
+		len(value.Routes) > maxExitExcluded {
+		return validatedRequest{}, fmt.Errorf("%w: exit fields are invalid", ErrProtocol)
+	}
+	if !value.Exit {
+		if value.ExitConntrack != 0 || value.ExitSMTP || len(value.Routes) != 0 {
+			return validatedRequest{}, fmt.Errorf("%w: exit fields are invalid", ErrProtocol)
+		}
+		return validatedRequest{operation: value.Operation}, nil
+	}
+	if value.ExitConntrack < routesettings.MinimumExitConntrack ||
+		value.ExitConntrack > routesettings.MaximumExitConntrack {
+		return validatedRequest{}, fmt.Errorf("%w: exit connection limit is invalid", ErrProtocol)
+	}
+	excluded := make([]netip.Prefix, 0, len(value.Routes))
+	for _, text := range value.Routes {
+		prefix, err := netip.ParsePrefix(text)
+		if err != nil || prefix.String() != text || !prefix.IsSingleIP() || prefix.Addr().Is4In6() {
+			return validatedRequest{}, fmt.Errorf("%w: exit excluded address is invalid", ErrProtocol)
+		}
+		excluded = append(excluded, prefix)
+	}
+	return validatedRequest{operation: value.Operation, exit: ExitRequest{
+		Serve:                true,
+		ConntrackPerConsumer: value.ExitConntrack, SMTP: value.ExitSMTP, Excluded: excluded,
+	}}, nil
+}
+
+// validExitResponse accepts exit fields only on the operations that report
+// them: limits within bounds while serving, a known reason otherwise.
+func validExitResponse(value response, operation string) bool {
+	reports := operation == operationSetServedExit || operation == operationCheckServed
+	if !value.ExitServing {
+		return value.ExitConntrack == 0 && !value.ExitSMTP && value.ExitMaxConsumers == 0 &&
+			(value.ExitRefused == "" || (reports && (value.ExitRefused == ExitRefusedOff ||
+				value.ExitRefused == ExitRefusedFailed)))
+	}
+	return reports && value.ExitRefused == "" &&
+		value.ExitConntrack >= routesettings.MinimumExitConntrack &&
+		value.ExitConntrack <= routesettings.MaximumExitConntrack &&
+		value.ExitMaxConsumers >= 1 && value.ExitMaxConsumers <= routesettings.MaximumExitConsumers
+}
+
 func validateResponse(value response, operation string) error {
 	if value.Version != protocolVersion {
 		return fmt.Errorf("%w: unsupported protocol version", ErrProtocol)
+	}
+	if !validExitResponse(value, operation) {
+		return fmt.Errorf("%w: unexpected exit fields", ErrProtocol)
 	}
 	listsRoutes := operation == operationSetRouted || operation == operationSetServed || operation == operationCheckServed
 	if operation != operationCheckServed && (value.Problems != nil || value.ConntrackCount != 0 ||
@@ -358,6 +467,11 @@ func validateResponse(value response, operation string) error {
 			if value.InterfaceName != "" || value.Resolver != "" || value.MTU != 0 ||
 				value.Addresses != nil || value.Routes != nil || value.Refused != nil {
 				return fmt.Errorf("%w: malformed dns response", ErrProtocol)
+			}
+		case operationSetServedExit:
+			if value.InterfaceName != "" || value.Resolver != "" || value.MTU != 0 ||
+				value.Addresses != nil || value.Routes != nil {
+				return fmt.Errorf("%w: malformed exit response", ErrProtocol)
 			}
 		case operationSetRouted, operationSetServed, operationCheckServed:
 			if !validProblems(value.Problems) || value.ConntrackCount < 0 || value.ConntrackMax < 0 {

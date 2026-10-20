@@ -29,13 +29,20 @@ type fakeServedConfigurer struct {
 	packets  uint64
 	// stuck are problems a repair does not clear.
 	stuck []string
+	// exit is the exit forwarding last installed.
+	exit *exitForwarding
 }
 
-func (f *fakeServedConfigurer) ReplaceServed(_ string, self []netip.Prefix, _ int, entries []routesettings.ServedEntry) (
-	[]routesettings.ServedEntry, []routesettings.Refusal, error,
-) {
+func (f *fakeServedConfigurer) ReplaceServed(_ string, self []netip.Prefix, _ int, entries []routesettings.ServedEntry,
+	exit *exitForwarding,
+) ([]routesettings.ServedEntry, []routesettings.Refusal, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.exit = nil
+	if exit != nil {
+		copied := *exit
+		f.exit = &copied
+	}
 	var served []routesettings.ServedEntry
 	var refused []routesettings.Refusal
 	for _, entry := range entries {
@@ -86,6 +93,12 @@ func (f *fakeServedConfigurer) Clear() error {
 	f.entries = nil
 	f.cleared++
 	return nil
+}
+
+func (f *fakeServedConfigurer) exitState() *exitForwarding {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.exit
 }
 
 func (f *fakeServedConfigurer) state() []routesettings.ServedEntry {
@@ -201,7 +214,7 @@ func TestClientServerServesOnlyWhatTheHostOffers(t *testing.T) {
 	settings.RouterMode = false
 	settingsMu.Unlock()
 	server.mu.Lock()
-	installed, refused, err := server.applyServed(*server.requestedServed)
+	installed, refused, err := server.applyForwarding(*server.requestedServed)
 	server.mu.Unlock()
 	if err != nil || len(installed) != 0 || len(refused) != 3 || len(configurer.state()) != 0 {
 		t.Fatalf("after router mode off: %v, %v, %v", installed, refused, err)

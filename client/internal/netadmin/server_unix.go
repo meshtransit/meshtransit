@@ -87,6 +87,10 @@ type Server struct {
 	servedFailed  bool
 	// servedRepaired is when a health check last installed forwarding again.
 	servedRepaired time.Time
+	// requestedExit is what meshd last asked of the exit node (nil before);
+	// activeExit how the helper forwards as one.
+	requestedExit *ExitRequest
+	activeExit    ExitServing
 	// loadSettings reads the route settings (routesettings.Load).
 	loadSettings func(string) (routesettings.Settings, error)
 	// mu serializes requests with background work (watchDNSLink on macOS).
@@ -294,6 +298,8 @@ func (s *Server) handle(ctx context.Context, rawConnection net.Conn) error {
 		return s.setRouted(connection, validated.routed)
 	case operationSetServed:
 		return s.setServed(connection, validated.served)
+	case operationSetServedExit:
+		return s.setServedExit(connection, validated.exit)
 	case operationCheckServed:
 		return s.checkServed(connection)
 	default:
@@ -385,8 +391,8 @@ func (s *Server) setTUN(connection *net.UnixConn, config TUNConfig) error {
 	}
 	s.activeTUN = cloneTUNConfig(config)
 	// The router's own addresses may have changed: its rules follow.
-	if s.requestedServed != nil {
-		if _, _, err := s.applyServed(*s.requestedServed); err != nil {
+	if s.forwarding() {
+		if _, _, err := s.applyForwarding(s.forwardingRequest()); err != nil {
 			s.logger.Warn("reapplying subnet forwarding after a tun change failed", "error", err)
 		}
 	}
