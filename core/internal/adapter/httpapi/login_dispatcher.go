@@ -234,7 +234,8 @@ func isBrowserManagementOperation(request *http.Request) bool {
 		isSessionWorkspaceOperation(request) || isShareTargetRead(request) || isNetworkAliasRangeOperation(request) || isNetworkDeviceLifetimeOperation(request) ||
 		isNetworkAddressUsageRead(request) ||
 		isAuditEventListRead(request) || isAuditEventExportRead(request) || isGuardrailOperation(request) || isInterchangeOperation(request) ||
-		isDeviceGroupOperation(request) || isSiteOperation(request) || isIdentityCatalogOperation(request) || isDeviceLifecycleOperation(request) ||
+		isDeviceGroupOperation(request) || isSiteOperation(request) || isExitPoolOperation(request) ||
+		isIdentityCatalogOperation(request) || isDeviceLifecycleOperation(request) ||
 		isMemberLifecycleOperation(request) || isNetworkMemberOperation(request) || isEnrollmentKeyOperation(request) ||
 		isInvitationOperation(request) {
 		return true
@@ -312,7 +313,8 @@ func (dispatcher *LoginDispatcher) validRequest(response http.ResponseWriter, re
 		deploymentCapabilities ||
 		registrationRead ||
 		resourceSharingCollectionRead || accessGraphRead || isAuditEventListRead(request) ||
-		isAuditEventExportRead(request) || isDeviceGroupRead(request) || isSiteRead(request) || isIdentityCatalogRead(request) ||
+		isAuditEventExportRead(request) || isDeviceGroupRead(request) || isSiteRead(request) || isExitPoolRead(request) ||
+		isIdentityCatalogRead(request) ||
 		isNetworkMemberRead(request) || target.RawQuery == ""
 }
 

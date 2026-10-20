@@ -18,6 +18,7 @@ import (
 	"meshtransit.net/core/internal/domain/devicelifecycle"
 	"meshtransit.net/core/internal/domain/devicetag"
 	"meshtransit.net/core/internal/domain/dnsname"
+	"meshtransit.net/core/internal/domain/exitpool"
 	"meshtransit.net/core/internal/domain/guardrail"
 	"meshtransit.net/core/internal/domain/identity/oidcauth"
 	"meshtransit.net/core/internal/domain/identity/sessioncontext"
@@ -252,6 +253,14 @@ func composePrivateIdentityFactory(
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
+	exitPoolStore, err := postgresadapter.NewExitPoolStore(dependencies.Runtime, postgresadapter.AccountSessionOptions{StatementTimeout: managementOptions.StatementTimeout, IdleTimeout: managementOptions.IdleTimeout})
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
+	exitPools, err := exitpool.NewService(exitPoolStore, clock, exitpool.SystemIDs{}, exitpool.DefaultLimits())
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
 	catalogOptions := postgresadapter.AccountSessionOptions{StatementTimeout: managementOptions.StatementTimeout, IdleTimeout: managementOptions.IdleTimeout}
 	identityGroupStore, err := postgresadapter.NewIdentityGroupStore(dependencies.Runtime, catalogOptions)
 	if err != nil {
@@ -440,7 +449,7 @@ func composePrivateIdentityFactory(
 		ClaimIDs: oidcauth.SystemClaimIDs{}, IssueMaterial: oidcauth.SystemIssueMaterial{},
 		Revocations: revocations, PolicyPublications: policies, PolicyCompilations: policyCompiler,
 		PolicyExplanations: policyExplainer, AccessGraphs: policyExplainer, PolicySimulations: policySimulator,
-		ActivePolicies: activePolicies, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations, AliasRanges: aliasRanges, DeviceLifetimes: deviceLifetimes, AddressUsage: addressUsage, AuditHistory: auditHistory, AuditExports: auditExports, Guardrails: guardrails, Interchanges: interchanges, InterchangeTrust: interchangeTrust, DeviceGroups: deviceGroups, Sites: sites, SiteRouterObservations: dependencies.Redis, SiteRouterUse: dependencies.Redis, IdentityGroups: identityGroups, DeviceTags: deviceTags, DeviceLifecycle: deviceLifecycle, MemberLifecycle: memberLifecycle, NetworkMembers: networkMembers, EnrollmentKeys: dependencies.EnrollmentKeys, Invitations: invitations, InvitationPreviews: invitations, InvitationAcceptor: invitationStore, AccountSignups: signups,
+		ActivePolicies: activePolicies, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations, AliasRanges: aliasRanges, DeviceLifetimes: deviceLifetimes, AddressUsage: addressUsage, AuditHistory: auditHistory, AuditExports: auditExports, Guardrails: guardrails, Interchanges: interchanges, InterchangeTrust: interchangeTrust, DeviceGroups: deviceGroups, Sites: sites, ExitPools: exitPools, SiteRouterObservations: dependencies.Redis, SiteRouterUse: dependencies.Redis, IdentityGroups: identityGroups, DeviceTags: deviceTags, DeviceLifecycle: deviceLifecycle, MemberLifecycle: memberLifecycle, NetworkMembers: networkMembers, EnrollmentKeys: dependencies.EnrollmentKeys, Invitations: invitations, InvitationPreviews: invitations, InvitationAcceptor: invitationStore, AccountSignups: signups,
 		SessionWorkspaces: sessionWorkspaces, ShareTargets: shareTargets,
 		PolicyApprovals: policyApprovals, PolicyApprovalCatalog: policyApprovalCatalog,
 		ResourceCreations: resources.creations, ResourceCatalog: resources.catalog, ResourceSharing: resources.sharing,

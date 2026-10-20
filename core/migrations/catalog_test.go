@@ -7,14 +7,16 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"meshtransit.net/shared/internet"
 )
 
 func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 200 {
-		t.Fatalf("len(Catalog()) = %d, want 200", len(catalog))
+	if len(catalog) != 201 {
+		t.Fatalf("len(Catalog()) = %d, want 201", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1609,8 +1611,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 200 {
-		t.Fatalf("LatestVersion() = %d, want 200", LatestVersion())
+	if LatestVersion() != 201 {
+		t.Fatalf("LatestVersion() = %d, want 201", LatestVersion())
 	}
 }
 
@@ -5758,6 +5760,39 @@ func TestMigration200StoresOffersInOneStatement(t *testing.T) {
 	} {
 		if !strings.Contains(migration.SQL, want) {
 			t.Errorf("schema 200 lacks %q", want)
+		}
+	}
+}
+
+func TestMigration201AddsExitPools(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[200]
+	if migration.Version != 201 {
+		t.Fatalf("migration 201 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE TABLE mesh.network_exit_pool (",
+		"CREATE TABLE mesh.network_exit_node (",
+		"CONSTRAINT network_exit_node_device_key UNIQUE (device_id)",
+		"CREATE TABLE mesh.device_exit_offer (",
+		"CREATE TRIGGER device_drop_exit_offer",
+		"'168.63.129.16/32'",
+		"p_address <<= '2000::/3'::INET",
+		"CREATE FUNCTION mesh_ops.change_exit_pool_v1(",
+		"CREATE FUNCTION mesh_ops.change_exit_node_v1(",
+		"ERRCODE = 'MTX05'",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 201 lacks %q", want)
+		}
+	}
+	if strings.Contains(migration.SQL, "network_site (") {
+		t.Error("schema 201 changes Site tables")
+	}
+	// The SQL guard holds the same set as Go's shared/internet.
+	for _, prefix := range internet.Excluded() {
+		if !strings.Contains(migration.SQL, "'"+prefix.String()+"'") {
+			t.Errorf("schema 201's Internet guard lacks %s", prefix)
 		}
 	}
 }

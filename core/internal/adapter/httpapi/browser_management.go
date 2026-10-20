@@ -300,7 +300,7 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		isNetworkCollectionPost(request) || isSessionWorkspaceOperation(request) || isShareTargetRead(request) ||
 		isNetworkAliasRangeOperation(request) || isNetworkDeviceLifetimeOperation(request) || isNetworkAddressUsageRead(request) || isAuditEventListRead(request) ||
 		isAuditEventExportRead(request) || isGuardrailOperation(request) || isInterchangeOperation(request) || isDeviceGroupOperation(request) || isSiteOperation(request) ||
-		isIdentityCatalogOperation(request) || isDeviceLifecycleOperation(request) ||
+		isExitPoolOperation(request) || isIdentityCatalogOperation(request) || isDeviceLifecycleOperation(request) ||
 		isMemberLifecycleOperation(request) || isNetworkMemberOperation(request) || isEnrollmentKeyOperation(request) ||
 		isInvitationOperation(request)
 	resourceSharing, _ := browserResourceSharingOperation(request)
@@ -522,10 +522,11 @@ var browserManagementMethods = map[string]bool{
 }
 
 // browserManagementMethod admits the request's method: one of
-// browserManagementMethods, or PUT on a route that takes it, a Site's router.
+// browserManagementMethods, or PUT on a route that takes it: a Site's router
+// or an Exit Pool's exit node.
 func browserManagementMethod(request *http.Request) bool {
 	if request.Method == http.MethodPut {
-		return isSiteOperation(request)
+		return isSiteOperation(request) || isExitPoolOperation(request)
 	}
 	return browserManagementMethods[request.Method]
 }
@@ -575,7 +576,7 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 			isInterchangeRead(request) ||
 			isInvitationRead(request))
 	auditRead := isAuditEventListRead(request) || isAuditEventExportRead(request) || isDeviceGroupRead(request) || isSiteRead(request) ||
-		isIdentityCatalogRead(request) || isNetworkMemberRead(request) || isEnrollmentKeyRead(request)
+		isExitPoolRead(request) || isIdentityCatalogRead(request) || isNetworkMemberRead(request) || isEnrollmentKeyRead(request)
 	safeRead := approvalRead || managementScopeRead || inventoryRead || deviceRead || distributionRead || historyRead ||
 		enforcementRead ||
 		deploymentCapabilityRead ||

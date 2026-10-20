@@ -5,6 +5,18 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: Networks have Exit Pools (schema 201), groups of exit nodes that
+  will forward other Devices' Internet traffic. A pool is its own entity,
+  never a kind of Site: `…/networks/{network}/exit-pools` lists, creates,
+  changes and deletes pools (`route.read`, `route.approve`,
+  `route.withdraw`), and `…/exit-pools/{pool}/nodes/{device}` assigns exit
+  nodes. A Device is an exit node of one pool at most and serves only once
+  its own configuration offers to. A pool's DNS resolvers and egress probes
+  must be addresses on the Internet, a set shared by Core and nodes
+  (`shared/internet`): private, shared, link-local (cloud metadata),
+  documentation and other special ranges, the mesh's own ranges, and IPv6
+  outside `2000::/3` are not. Policy rules to pools, maps and exit nodes
+  themselves come next.
 - Core: a route offer is stored in one statement (schema 200,
   `mesh_ops.report_device_route_offer_v2`), and a Device that is revoked,
   logged out or removed loses its offer in the same change. A router whose

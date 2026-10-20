@@ -267,6 +267,9 @@ type ManagementHandlerOptions struct {
 	DeviceGroups DeviceGroupManager
 	// Sites lists and changes Network Sites and their routers; nil answers 503.
 	Sites SiteManager
+	// ExitPools lists and changes Network Exit Pools and their exit nodes;
+	// nil answers 503.
+	ExitPools ExitPoolManager
 	// SiteRouterObservations, when set, adds each router's health of the
 	// Site and its route enforcement to one Site's read.
 	SiteRouterObservations distribution.ObservationLoader
@@ -340,6 +343,7 @@ type ManagementHandler struct {
 	interchangeTrust          InterchangeRelayTrust
 	deviceGroups              DeviceGroupManager
 	sites                     SiteManager
+	exitPools                 ExitPoolManager
 	siteRouterObservations    distribution.ObservationLoader
 	siteRouterUse             SiteRouterUseCounter
 	identityGroups            IdentityGroupManager
@@ -420,6 +424,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		interchangeTrust:          options.InterchangeTrust,
 		deviceGroups:              options.DeviceGroups,
 		sites:                     options.Sites,
+		exitPools:                 options.ExitPools,
 		siteRouterObservations:    options.SiteRouterObservations,
 		siteRouterUse:             options.SiteRouterUse,
 		identityGroups:            options.IdentityGroups,
@@ -540,6 +545,7 @@ func (handler *ManagementHandler) serveHTTP(
 	interchangePathValue, interchangeMatched := parseInterchangePath(request)
 	deviceGroupPathValue, deviceGroupMatched := parseDeviceGroupPath(request)
 	sitePathValue, siteMatched := parseSitePath(request)
+	exitPoolPathValue, exitPoolMatched := parseExitPoolPath(request)
 	identityCatalogPathValue, identityCatalogMatched := parseIdentityCatalogPath(request)
 	deviceLifecyclePathValue, deviceLifecycleMatched := parseDeviceLifecyclePath(request)
 	memberLifecyclePathValue, memberLifecycleMatched := parseMemberLifecyclePath(request)
@@ -550,7 +556,8 @@ func (handler *ManagementHandler) serveHTTP(
 		!accessGraphMatched && !accessGraphListMatched && !resourceMatched && !sharingMatched && !policyReadMatched && !workspaceRenameMatched &&
 		!workspaceRoleMatched && !workspaceCollectionMatched && !networkCollectionMatched && !sessionWorkspaceMatched &&
 		!shareTargetMatched && !aliasRangeMatched && !deviceLifetimeMatched && !addressUsageMatched && !auditEventMatched &&
-		!auditExportMatched && !guardrailMatched && !interchangeMatched && !deviceGroupMatched && !siteMatched && !identityCatalogMatched &&
+		!auditExportMatched && !guardrailMatched && !interchangeMatched && !deviceGroupMatched && !siteMatched && !exitPoolMatched &&
+		!identityCatalogMatched &&
 		!deviceLifecycleMatched && !memberLifecycleMatched && !networkMemberMatched && !invitationMatched &&
 		!enrollmentKeyMatched {
 		resultCode = "not_found"
@@ -592,6 +599,8 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = deviceGroupPathValue.operation()
 	} else if siteMatched {
 		operation = sitePathValue.operation
+	} else if exitPoolMatched {
+		operation = exitPoolPathValue.operation
 	} else if identityCatalogMatched {
 		operation = identityCatalogPathValue.operation()
 	} else if deviceLifecycleMatched {
@@ -652,6 +661,8 @@ func (handler *ManagementHandler) serveHTTP(
 		allowedMethod = deviceGroupPathValue.methods.allowedMethod(request.Method)
 	} else if siteMatched {
 		allowedMethod = sitePathValue.methods.allowedMethod(request.Method)
+	} else if exitPoolMatched {
+		allowedMethod = exitPoolPathValue.methods.allowedMethod(request.Method)
 	} else if identityCatalogMatched {
 		allowedMethod = identityCatalogPathValue.methods.allowedMethod(request.Method)
 	} else if networkMemberMatched {
@@ -688,6 +699,8 @@ func (handler *ManagementHandler) serveHTTP(
 			response.Header().Set("Allow", deviceGroupPathValue.methods.header())
 		} else if siteMatched {
 			response.Header().Set("Allow", sitePathValue.methods.header())
+		} else if exitPoolMatched {
+			response.Header().Set("Allow", exitPoolPathValue.methods.header())
 		} else if guardrailMatched {
 			response.Header().Set("Allow", guardrailPathValue.methods.header())
 		} else if interchangeMatched {
@@ -812,6 +825,10 @@ func (handler *ManagementHandler) serveHTTP(
 	}
 	if siteMatched {
 		resultCode = handler.handleSites(ctx, response, request, correlationID, sitePathValue, session)
+		return
+	}
+	if exitPoolMatched {
+		resultCode = handler.handleExitPools(ctx, response, request, correlationID, exitPoolPathValue, session)
 		return
 	}
 	if identityCatalogMatched {

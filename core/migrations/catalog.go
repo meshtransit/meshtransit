@@ -567,6 +567,7 @@ func Catalog() []Migration {
 		newMigration(198, "The Access Graph lists the Devices rules to Sites reach", accessGraphSiteEdgesSQL),
 		newMigration(199, "The access edge ledger records rules to Sites", accessLedgerSiteEdgesSQL),
 		newMigration(200, "A route offer is stored in one statement and dropped with its Device", routeOfferOneStatementSQL),
+		newMigration(201, "Networks have Exit Pools of exit nodes", networkExitPoolsSQL),
 	}
 }
 
@@ -946,3 +947,6 @@ var accessLedgerSiteEdgesSQL string
 
 //go:embed 000200_route_offer_one_statement.up.sql
 var routeOfferOneStatementSQL string
+
+//go:embed 000201_network_exit_pools.up.sql
+var networkExitPoolsSQL string

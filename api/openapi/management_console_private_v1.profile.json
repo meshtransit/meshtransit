@@ -15956,6 +15956,2085 @@
           }
         }
       }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/exit-pools": {
+      "get": {
+        "operationId": "listNetworkExitPools",
+        "summary": "List the Network's Exit Pools",
+        "description": "Requires route.read on the Network. An Exit Pool is a group of exit nodes, Devices that forward other Devices' Internet traffic. It is its own entity, never a Site. Pages in name order.",
+        "security": [
+          {
+            "accountSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The last Exit Pool of the previous page (next_after)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 10
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Active Exit Pools",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "exit_pools",
+                        "can_manage",
+                        "can_delete"
+                      ],
+                      "properties": {
+                        "exit_pools": {
+                          "type": "array",
+                          "maxItems": 100,
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "exit_pool_id",
+                              "name",
+                              "failback",
+                              "smtp_allowed",
+                              "conntrack_per_consumer",
+                              "dns_upstreams",
+                              "probes",
+                              "nodes",
+                              "version",
+                              "created_at",
+                              "updated_at"
+                            ],
+                            "properties": {
+                              "exit_pool_id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "name": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              },
+                              "failback": {
+                                "type": "boolean",
+                                "description": "Return to a preferred exit node once it is healthy again; changing exit node changes the public address"
+                              },
+                              "smtp_allowed": {
+                                "type": "boolean",
+                                "description": "Let consumers open TCP port 25 to the Internet"
+                              },
+                              "conntrack_per_consumer": {
+                                "type": "integer",
+                                "minimum": 1024,
+                                "maximum": 262144,
+                                "description": "Connections one consumer may hold open through an exit node; an exit node may lower it locally"
+                              },
+                              "dns_upstreams": {
+                                "type": "array",
+                                "maxItems": 4,
+                                "uniqueItems": true,
+                                "items": {
+                                  "type": "string",
+                                  "minLength": 2,
+                                  "maxLength": 39,
+                                  "description": "Canonical IPv4 or IPv6 address on the Internet"
+                                },
+                                "description": "Resolvers exit nodes forward DNS to, tried in order; empty uses each exit node's system resolver"
+                              },
+                              "probes": {
+                                "type": "array",
+                                "maxItems": 8,
+                                "uniqueItems": true,
+                                "items": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "address",
+                                    "port"
+                                  ],
+                                  "properties": {
+                                    "address": {
+                                      "type": "string",
+                                      "minLength": 2,
+                                      "maxLength": 39,
+                                      "description": "Canonical IPv4 or IPv6 address on the Internet"
+                                    },
+                                    "port": {
+                                      "type": "integer",
+                                      "minimum": 1,
+                                      "maximum": 65535
+                                    }
+                                  }
+                                },
+                                "description": "Internet addresses exit nodes connect to, through their forwarding path, to check they reach the Internet"
+                              },
+                              "nodes": {
+                                "type": "array",
+                                "maxItems": 16,
+                                "items": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "device_id",
+                                    "device_name",
+                                    "priority",
+                                    "state",
+                                    "offered",
+                                    "eligible",
+                                    "added_at"
+                                  ],
+                                  "properties": {
+                                    "device_id": {
+                                      "type": "string",
+                                      "format": "uuid"
+                                    },
+                                    "device_name": {
+                                      "type": "string"
+                                    },
+                                    "priority": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 999
+                                    },
+                                    "state": {
+                                      "type": "string",
+                                      "enum": [
+                                        "active",
+                                        "draining"
+                                      ]
+                                    },
+                                    "offered": {
+                                      "type": "boolean",
+                                      "description": "The Device's own configuration offers to be an exit node"
+                                    },
+                                    "eligible": {
+                                      "type": "boolean",
+                                      "description": "False while the Device is not active, not owned by the Workspace, or does not offer to be an exit node"
+                                    },
+                                    "added_at": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    }
+                                  }
+                                }
+                              },
+                              "version": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "created_at": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "updated_at": {
+                                "type": "string",
+                                "format": "date-time"
+                              }
+                            }
+                          }
+                        },
+                        "next_after": {
+                          "type": "string",
+                          "format": "uuid",
+                          "description": "Present when more Exit Pools follow"
+                        },
+                        "can_manage": {
+                          "type": "boolean"
+                        },
+                        "can_delete": {
+                          "type": "boolean",
+                          "description": "Holds route.withdraw: may delete Exit Pools and remove exit nodes"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createNetworkExitPool",
+        "summary": "Create an Exit Pool",
+        "description": "Requires route.approve. The pool starts without exit nodes. Resolvers and probes must be addresses on the Internet.",
+        "security": [
+          {
+            "accountSessionCookie": [],
+            "sessionCSRF": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionProof"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "failback",
+                  "smtp_allowed",
+                  "conntrack_per_consumer",
+                  "dns_upstreams",
+                  "probes"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "failback": {
+                    "type": "boolean",
+                    "description": "Return to a preferred exit node once it is healthy again; changing exit node changes the public address"
+                  },
+                  "smtp_allowed": {
+                    "type": "boolean",
+                    "description": "Let consumers open TCP port 25 to the Internet"
+                  },
+                  "conntrack_per_consumer": {
+                    "type": "integer",
+                    "minimum": 1024,
+                    "maximum": 262144,
+                    "description": "Connections one consumer may hold open through an exit node; an exit node may lower it locally"
+                  },
+                  "dns_upstreams": {
+                    "type": "array",
+                    "maxItems": 4,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "minLength": 2,
+                      "maxLength": 39,
+                      "description": "Canonical IPv4 or IPv6 address on the Internet"
+                    },
+                    "description": "Resolvers exit nodes forward DNS to, tried in order; empty uses each exit node's system resolver"
+                  },
+                  "probes": {
+                    "type": "array",
+                    "maxItems": 8,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "address",
+                        "port"
+                      ],
+                      "properties": {
+                        "address": {
+                          "type": "string",
+                          "minLength": 2,
+                          "maxLength": 39,
+                          "description": "Canonical IPv4 or IPv6 address on the Internet"
+                        },
+                        "port": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 65535
+                        }
+                      }
+                    },
+                    "description": "Internet addresses exit nodes connect to, through their forwarding path, to check they reach the Internet"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The new Exit Pool",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "exit_pool",
+                        "deleted"
+                      ],
+                      "properties": {
+                        "exit_pool": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "exit_pool_id",
+                            "name",
+                            "failback",
+                            "smtp_allowed",
+                            "conntrack_per_consumer",
+                            "dns_upstreams",
+                            "probes",
+                            "nodes",
+                            "version",
+                            "created_at",
+                            "updated_at"
+                          ],
+                          "properties": {
+                            "exit_pool_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64
+                            },
+                            "failback": {
+                              "type": "boolean",
+                              "description": "Return to a preferred exit node once it is healthy again; changing exit node changes the public address"
+                            },
+                            "smtp_allowed": {
+                              "type": "boolean",
+                              "description": "Let consumers open TCP port 25 to the Internet"
+                            },
+                            "conntrack_per_consumer": {
+                              "type": "integer",
+                              "minimum": 1024,
+                              "maximum": 262144,
+                              "description": "Connections one consumer may hold open through an exit node; an exit node may lower it locally"
+                            },
+                            "dns_upstreams": {
+                              "type": "array",
+                              "maxItems": 4,
+                              "uniqueItems": true,
+                              "items": {
+                                "type": "string",
+                                "minLength": 2,
+                                "maxLength": 39,
+                                "description": "Canonical IPv4 or IPv6 address on the Internet"
+                              },
+                              "description": "Resolvers exit nodes forward DNS to, tried in order; empty uses each exit node's system resolver"
+                            },
+                            "probes": {
+                              "type": "array",
+                              "maxItems": 8,
+                              "uniqueItems": true,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "address",
+                                  "port"
+                                ],
+                                "properties": {
+                                  "address": {
+                                    "type": "string",
+                                    "minLength": 2,
+                                    "maxLength": 39,
+                                    "description": "Canonical IPv4 or IPv6 address on the Internet"
+                                  },
+                                  "port": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 65535
+                                  }
+                                }
+                              },
+                              "description": "Internet addresses exit nodes connect to, through their forwarding path, to check they reach the Internet"
+                            },
+                            "nodes": {
+                              "type": "array",
+                              "maxItems": 16,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "device_id",
+                                  "device_name",
+                                  "priority",
+                                  "state",
+                                  "offered",
+                                  "eligible",
+                                  "added_at"
+                                ],
+                                "properties": {
+                                  "device_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "device_name": {
+                                    "type": "string"
+                                  },
+                                  "priority": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 999
+                                  },
+                                  "state": {
+                                    "type": "string",
+                                    "enum": [
+                                      "active",
+                                      "draining"
+                                    ]
+                                  },
+                                  "offered": {
+                                    "type": "boolean",
+                                    "description": "The Device's own configuration offers to be an exit node"
+                                  },
+                                  "eligible": {
+                                    "type": "boolean",
+                                    "description": "False while the Device is not active, not owned by the Workspace, or does not offer to be an exit node"
+                                  },
+                                  "added_at": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              }
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updated_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "deleted": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request"
+          },
+          "409": {
+            "description": "exit_pool_name_taken or exit_pool_limit"
+          },
+          "422": {
+            "description": "exit_pool_address_not_internet"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/exit-pools/{exit_pool_id}": {
+      "get": {
+        "operationId": "readNetworkExitPool",
+        "summary": "Read one Exit Pool",
+        "description": "Requires route.read on the Network. An Exit Pool is a group of exit nodes, Devices that forward other Devices' Internet traffic. It is its own entity, never a Site.",
+        "security": [
+          {
+            "accountSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "exit_pool_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The Exit Pool",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "exit_pool",
+                        "can_manage",
+                        "can_delete"
+                      ],
+                      "properties": {
+                        "exit_pool": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "exit_pool_id",
+                            "name",
+                            "failback",
+                            "smtp_allowed",
+                            "conntrack_per_consumer",
+                            "dns_upstreams",
+                            "probes",
+                            "nodes",
+                            "version",
+                            "created_at",
+                            "updated_at"
+                          ],
+                          "properties": {
+                            "exit_pool_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64
+                            },
+                            "failback": {
+                              "type": "boolean",
+                              "description": "Return to a preferred exit node once it is healthy again; changing exit node changes the public address"
+                            },
+                            "smtp_allowed": {
+                              "type": "boolean",
+                              "description": "Let consumers open TCP port 25 to the Internet"
+                            },
+                            "conntrack_per_consumer": {
+                              "type": "integer",
+                              "minimum": 1024,
+                              "maximum": 262144,
+                              "description": "Connections one consumer may hold open through an exit node; an exit node may lower it locally"
+                            },
+                            "dns_upstreams": {
+                              "type": "array",
+                              "maxItems": 4,
+                              "uniqueItems": true,
+                              "items": {
+                                "type": "string",
+                                "minLength": 2,
+                                "maxLength": 39,
+                                "description": "Canonical IPv4 or IPv6 address on the Internet"
+                              },
+                              "description": "Resolvers exit nodes forward DNS to, tried in order; empty uses each exit node's system resolver"
+                            },
+                            "probes": {
+                              "type": "array",
+                              "maxItems": 8,
+                              "uniqueItems": true,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "address",
+                                  "port"
+                                ],
+                                "properties": {
+                                  "address": {
+                                    "type": "string",
+                                    "minLength": 2,
+                                    "maxLength": 39,
+                                    "description": "Canonical IPv4 or IPv6 address on the Internet"
+                                  },
+                                  "port": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 65535
+                                  }
+                                }
+                              },
+                              "description": "Internet addresses exit nodes connect to, through their forwarding path, to check they reach the Internet"
+                            },
+                            "nodes": {
+                              "type": "array",
+                              "maxItems": 16,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "device_id",
+                                  "device_name",
+                                  "priority",
+                                  "state",
+                                  "offered",
+                                  "eligible",
+                                  "added_at"
+                                ],
+                                "properties": {
+                                  "device_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "device_name": {
+                                    "type": "string"
+                                  },
+                                  "priority": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 999
+                                  },
+                                  "state": {
+                                    "type": "string",
+                                    "enum": [
+                                      "active",
+                                      "draining"
+                                    ]
+                                  },
+                                  "offered": {
+                                    "type": "boolean",
+                                    "description": "The Device's own configuration offers to be an exit node"
+                                  },
+                                  "eligible": {
+                                    "type": "boolean",
+                                    "description": "False while the Device is not active, not owned by the Workspace, or does not offer to be an exit node"
+                                  },
+                                  "added_at": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              }
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updated_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "can_manage": {
+                          "type": "boolean"
+                        },
+                        "can_delete": {
+                          "type": "boolean",
+                          "description": "Holds route.withdraw: may delete Exit Pools and remove exit nodes"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "exit_pool_not_found"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateNetworkExitPool",
+        "summary": "Change an Exit Pool",
+        "description": "Requires route.approve. Replaces the whole definition at the version in If-Match; exit nodes are unchanged.",
+        "security": [
+          {
+            "accountSessionCookie": [],
+            "sessionCSRF": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "exit_pool_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionProof"
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\"[1-9][0-9]*\"$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "failback",
+                  "smtp_allowed",
+                  "conntrack_per_consumer",
+                  "dns_upstreams",
+                  "probes"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "failback": {
+                    "type": "boolean",
+                    "description": "Return to a preferred exit node once it is healthy again; changing exit node changes the public address"
+                  },
+                  "smtp_allowed": {
+                    "type": "boolean",
+                    "description": "Let consumers open TCP port 25 to the Internet"
+                  },
+                  "conntrack_per_consumer": {
+                    "type": "integer",
+                    "minimum": 1024,
+                    "maximum": 262144,
+                    "description": "Connections one consumer may hold open through an exit node; an exit node may lower it locally"
+                  },
+                  "dns_upstreams": {
+                    "type": "array",
+                    "maxItems": 4,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "minLength": 2,
+                      "maxLength": 39,
+                      "description": "Canonical IPv4 or IPv6 address on the Internet"
+                    },
+                    "description": "Resolvers exit nodes forward DNS to, tried in order; empty uses each exit node's system resolver"
+                  },
+                  "probes": {
+                    "type": "array",
+                    "maxItems": 8,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "address",
+                        "port"
+                      ],
+                      "properties": {
+                        "address": {
+                          "type": "string",
+                          "minLength": 2,
+                          "maxLength": 39,
+                          "description": "Canonical IPv4 or IPv6 address on the Internet"
+                        },
+                        "port": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 65535
+                        }
+                      }
+                    },
+                    "description": "Internet addresses exit nodes connect to, through their forwarding path, to check they reach the Internet"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The changed Exit Pool",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "exit_pool",
+                        "deleted"
+                      ],
+                      "properties": {
+                        "exit_pool": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "exit_pool_id",
+                            "name",
+                            "failback",
+                            "smtp_allowed",
+                            "conntrack_per_consumer",
+                            "dns_upstreams",
+                            "probes",
+                            "nodes",
+                            "version",
+                            "created_at",
+                            "updated_at"
+                          ],
+                          "properties": {
+                            "exit_pool_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64
+                            },
+                            "failback": {
+                              "type": "boolean",
+                              "description": "Return to a preferred exit node once it is healthy again; changing exit node changes the public address"
+                            },
+                            "smtp_allowed": {
+                              "type": "boolean",
+                              "description": "Let consumers open TCP port 25 to the Internet"
+                            },
+                            "conntrack_per_consumer": {
+                              "type": "integer",
+                              "minimum": 1024,
+                              "maximum": 262144,
+                              "description": "Connections one consumer may hold open through an exit node; an exit node may lower it locally"
+                            },
+                            "dns_upstreams": {
+                              "type": "array",
+                              "maxItems": 4,
+                              "uniqueItems": true,
+                              "items": {
+                                "type": "string",
+                                "minLength": 2,
+                                "maxLength": 39,
+                                "description": "Canonical IPv4 or IPv6 address on the Internet"
+                              },
+                              "description": "Resolvers exit nodes forward DNS to, tried in order; empty uses each exit node's system resolver"
+                            },
+                            "probes": {
+                              "type": "array",
+                              "maxItems": 8,
+                              "uniqueItems": true,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "address",
+                                  "port"
+                                ],
+                                "properties": {
+                                  "address": {
+                                    "type": "string",
+                                    "minLength": 2,
+                                    "maxLength": 39,
+                                    "description": "Canonical IPv4 or IPv6 address on the Internet"
+                                  },
+                                  "port": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 65535
+                                  }
+                                }
+                              },
+                              "description": "Internet addresses exit nodes connect to, through their forwarding path, to check they reach the Internet"
+                            },
+                            "nodes": {
+                              "type": "array",
+                              "maxItems": 16,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "device_id",
+                                  "device_name",
+                                  "priority",
+                                  "state",
+                                  "offered",
+                                  "eligible",
+                                  "added_at"
+                                ],
+                                "properties": {
+                                  "device_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "device_name": {
+                                    "type": "string"
+                                  },
+                                  "priority": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 999
+                                  },
+                                  "state": {
+                                    "type": "string",
+                                    "enum": [
+                                      "active",
+                                      "draining"
+                                    ]
+                                  },
+                                  "offered": {
+                                    "type": "boolean",
+                                    "description": "The Device's own configuration offers to be an exit node"
+                                  },
+                                  "eligible": {
+                                    "type": "boolean",
+                                    "description": "False while the Device is not active, not owned by the Workspace, or does not offer to be an exit node"
+                                  },
+                                  "added_at": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              }
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updated_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "deleted": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request"
+          },
+          "404": {
+            "description": "exit_pool_not_found"
+          },
+          "409": {
+            "description": "exit_pool_name_taken"
+          },
+          "412": {
+            "description": "version_conflict"
+          },
+          "422": {
+            "description": "exit_pool_address_not_internet"
+          },
+          "428": {
+            "description": "precondition_required"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteNetworkExitPool",
+        "summary": "Delete an Exit Pool",
+        "description": "Requires route.withdraw. Removes its exit nodes too.",
+        "security": [
+          {
+            "accountSessionCookie": [],
+            "sessionCSRF": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "exit_pool_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionProof"
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\"[1-9][0-9]*\"$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The deleted Exit Pool",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "exit_pool",
+                        "deleted"
+                      ],
+                      "properties": {
+                        "exit_pool": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "exit_pool_id",
+                            "name",
+                            "failback",
+                            "smtp_allowed",
+                            "conntrack_per_consumer",
+                            "dns_upstreams",
+                            "probes",
+                            "nodes",
+                            "version",
+                            "created_at",
+                            "updated_at"
+                          ],
+                          "properties": {
+                            "exit_pool_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64
+                            },
+                            "failback": {
+                              "type": "boolean",
+                              "description": "Return to a preferred exit node once it is healthy again; changing exit node changes the public address"
+                            },
+                            "smtp_allowed": {
+                              "type": "boolean",
+                              "description": "Let consumers open TCP port 25 to the Internet"
+                            },
+                            "conntrack_per_consumer": {
+                              "type": "integer",
+                              "minimum": 1024,
+                              "maximum": 262144,
+                              "description": "Connections one consumer may hold open through an exit node; an exit node may lower it locally"
+                            },
+                            "dns_upstreams": {
+                              "type": "array",
+                              "maxItems": 4,
+                              "uniqueItems": true,
+                              "items": {
+                                "type": "string",
+                                "minLength": 2,
+                                "maxLength": 39,
+                                "description": "Canonical IPv4 or IPv6 address on the Internet"
+                              },
+                              "description": "Resolvers exit nodes forward DNS to, tried in order; empty uses each exit node's system resolver"
+                            },
+                            "probes": {
+                              "type": "array",
+                              "maxItems": 8,
+                              "uniqueItems": true,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "address",
+                                  "port"
+                                ],
+                                "properties": {
+                                  "address": {
+                                    "type": "string",
+                                    "minLength": 2,
+                                    "maxLength": 39,
+                                    "description": "Canonical IPv4 or IPv6 address on the Internet"
+                                  },
+                                  "port": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 65535
+                                  }
+                                }
+                              },
+                              "description": "Internet addresses exit nodes connect to, through their forwarding path, to check they reach the Internet"
+                            },
+                            "nodes": {
+                              "type": "array",
+                              "maxItems": 16,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "device_id",
+                                  "device_name",
+                                  "priority",
+                                  "state",
+                                  "offered",
+                                  "eligible",
+                                  "added_at"
+                                ],
+                                "properties": {
+                                  "device_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "device_name": {
+                                    "type": "string"
+                                  },
+                                  "priority": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 999
+                                  },
+                                  "state": {
+                                    "type": "string",
+                                    "enum": [
+                                      "active",
+                                      "draining"
+                                    ]
+                                  },
+                                  "offered": {
+                                    "type": "boolean",
+                                    "description": "The Device's own configuration offers to be an exit node"
+                                  },
+                                  "eligible": {
+                                    "type": "boolean",
+                                    "description": "False while the Device is not active, not owned by the Workspace, or does not offer to be an exit node"
+                                  },
+                                  "added_at": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              }
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updated_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "deleted": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "exit_pool_not_found"
+          },
+          "412": {
+            "description": "version_conflict"
+          },
+          "428": {
+            "description": "precondition_required"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/exit-pools/{exit_pool_id}/nodes/{device_id}": {
+      "put": {
+        "operationId": "putNetworkExitNode",
+        "summary": "Make a Device an exit node of an Exit Pool, or change it",
+        "description": "Requires route.approve. A new exit node must be an active Device of the Network owned by the Workspace and no exit node of another pool. It may be assigned before its own configuration offers to be an exit node, but serves only once it does. If-Match carries the pool's version. Answers 200 whether the exit node is new or changed.",
+        "security": [
+          {
+            "accountSessionCookie": [],
+            "sessionCSRF": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "exit_pool_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionProof"
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\"[1-9][0-9]*\"$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "priority",
+                  "state"
+                ],
+                "properties": {
+                  "priority": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 999,
+                    "description": "A smaller number is preferred"
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "draining"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The Exit Pool with the exit node",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "exit_pool",
+                        "deleted"
+                      ],
+                      "properties": {
+                        "exit_pool": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "exit_pool_id",
+                            "name",
+                            "failback",
+                            "smtp_allowed",
+                            "conntrack_per_consumer",
+                            "dns_upstreams",
+                            "probes",
+                            "nodes",
+                            "version",
+                            "created_at",
+                            "updated_at"
+                          ],
+                          "properties": {
+                            "exit_pool_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64
+                            },
+                            "failback": {
+                              "type": "boolean",
+                              "description": "Return to a preferred exit node once it is healthy again; changing exit node changes the public address"
+                            },
+                            "smtp_allowed": {
+                              "type": "boolean",
+                              "description": "Let consumers open TCP port 25 to the Internet"
+                            },
+                            "conntrack_per_consumer": {
+                              "type": "integer",
+                              "minimum": 1024,
+                              "maximum": 262144,
+                              "description": "Connections one consumer may hold open through an exit node; an exit node may lower it locally"
+                            },
+                            "dns_upstreams": {
+                              "type": "array",
+                              "maxItems": 4,
+                              "uniqueItems": true,
+                              "items": {
+                                "type": "string",
+                                "minLength": 2,
+                                "maxLength": 39,
+                                "description": "Canonical IPv4 or IPv6 address on the Internet"
+                              },
+                              "description": "Resolvers exit nodes forward DNS to, tried in order; empty uses each exit node's system resolver"
+                            },
+                            "probes": {
+                              "type": "array",
+                              "maxItems": 8,
+                              "uniqueItems": true,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "address",
+                                  "port"
+                                ],
+                                "properties": {
+                                  "address": {
+                                    "type": "string",
+                                    "minLength": 2,
+                                    "maxLength": 39,
+                                    "description": "Canonical IPv4 or IPv6 address on the Internet"
+                                  },
+                                  "port": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 65535
+                                  }
+                                }
+                              },
+                              "description": "Internet addresses exit nodes connect to, through their forwarding path, to check they reach the Internet"
+                            },
+                            "nodes": {
+                              "type": "array",
+                              "maxItems": 16,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "device_id",
+                                  "device_name",
+                                  "priority",
+                                  "state",
+                                  "offered",
+                                  "eligible",
+                                  "added_at"
+                                ],
+                                "properties": {
+                                  "device_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "device_name": {
+                                    "type": "string"
+                                  },
+                                  "priority": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 999
+                                  },
+                                  "state": {
+                                    "type": "string",
+                                    "enum": [
+                                      "active",
+                                      "draining"
+                                    ]
+                                  },
+                                  "offered": {
+                                    "type": "boolean",
+                                    "description": "The Device's own configuration offers to be an exit node"
+                                  },
+                                  "eligible": {
+                                    "type": "boolean",
+                                    "description": "False while the Device is not active, not owned by the Workspace, or does not offer to be an exit node"
+                                  },
+                                  "added_at": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              }
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updated_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "deleted": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request"
+          },
+          "404": {
+            "description": "exit_pool_not_found"
+          },
+          "409": {
+            "description": "exit_node_limit, exit_node_not_eligible or exit_node_in_other_pool"
+          },
+          "412": {
+            "description": "version_conflict"
+          },
+          "428": {
+            "description": "precondition_required"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteNetworkExitNode",
+        "summary": "Remove an exit node from an Exit Pool",
+        "description": "Requires route.withdraw. If-Match carries the pool's version.",
+        "security": [
+          {
+            "accountSessionCookie": [],
+            "sessionCSRF": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "exit_pool_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionProof"
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\"[1-9][0-9]*\"$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The Exit Pool without the exit node",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "exit_pool",
+                        "deleted"
+                      ],
+                      "properties": {
+                        "exit_pool": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "exit_pool_id",
+                            "name",
+                            "failback",
+                            "smtp_allowed",
+                            "conntrack_per_consumer",
+                            "dns_upstreams",
+                            "probes",
+                            "nodes",
+                            "version",
+                            "created_at",
+                            "updated_at"
+                          ],
+                          "properties": {
+                            "exit_pool_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64
+                            },
+                            "failback": {
+                              "type": "boolean",
+                              "description": "Return to a preferred exit node once it is healthy again; changing exit node changes the public address"
+                            },
+                            "smtp_allowed": {
+                              "type": "boolean",
+                              "description": "Let consumers open TCP port 25 to the Internet"
+                            },
+                            "conntrack_per_consumer": {
+                              "type": "integer",
+                              "minimum": 1024,
+                              "maximum": 262144,
+                              "description": "Connections one consumer may hold open through an exit node; an exit node may lower it locally"
+                            },
+                            "dns_upstreams": {
+                              "type": "array",
+                              "maxItems": 4,
+                              "uniqueItems": true,
+                              "items": {
+                                "type": "string",
+                                "minLength": 2,
+                                "maxLength": 39,
+                                "description": "Canonical IPv4 or IPv6 address on the Internet"
+                              },
+                              "description": "Resolvers exit nodes forward DNS to, tried in order; empty uses each exit node's system resolver"
+                            },
+                            "probes": {
+                              "type": "array",
+                              "maxItems": 8,
+                              "uniqueItems": true,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "address",
+                                  "port"
+                                ],
+                                "properties": {
+                                  "address": {
+                                    "type": "string",
+                                    "minLength": 2,
+                                    "maxLength": 39,
+                                    "description": "Canonical IPv4 or IPv6 address on the Internet"
+                                  },
+                                  "port": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 65535
+                                  }
+                                }
+                              },
+                              "description": "Internet addresses exit nodes connect to, through their forwarding path, to check they reach the Internet"
+                            },
+                            "nodes": {
+                              "type": "array",
+                              "maxItems": 16,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "device_id",
+                                  "device_name",
+                                  "priority",
+                                  "state",
+                                  "offered",
+                                  "eligible",
+                                  "added_at"
+                                ],
+                                "properties": {
+                                  "device_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "device_name": {
+                                    "type": "string"
+                                  },
+                                  "priority": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 999
+                                  },
+                                  "state": {
+                                    "type": "string",
+                                    "enum": [
+                                      "active",
+                                      "draining"
+                                    ]
+                                  },
+                                  "offered": {
+                                    "type": "boolean",
+                                    "description": "The Device's own configuration offers to be an exit node"
+                                  },
+                                  "eligible": {
+                                    "type": "boolean",
+                                    "description": "False while the Device is not active, not owned by the Workspace, or does not offer to be an exit node"
+                                  },
+                                  "added_at": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              }
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updated_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "deleted": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "exit_pool_not_found"
+          },
+          "412": {
+            "description": "version_conflict"
+          },
+          "428": {
+            "description": "precondition_required"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      }
     }
   }
 }
