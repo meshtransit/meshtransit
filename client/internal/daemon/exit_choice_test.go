@@ -372,3 +372,23 @@ func TestExitPinsKeepAnEmptyPinEmpty(t *testing.T) {
 		t.Fatalf("approved = %#v, %t", nodes, pinned)
 	}
 }
+
+func TestExitChoiceKeepsTheOnlyExitNodeWhenItLooksSilent(t *testing.T) {
+	t.Parallel()
+	single := exitMap("exit-1")
+	single.Exits[0].Candidates = single.Exits[0].Candidates[:1]
+	h := newExitHarness(exitPreference{use: "pool-a"}, single)
+	h.step(21)
+	// Its direct path proof expires (the relay may still carry it): with
+	// no other candidate, dropping it would only block everything.
+	for range 30 {
+		h.step()
+	}
+	if got := h.route(); got.Node != "exit-1" {
+		t.Fatalf("route = %+v, want exit-1 kept", got)
+	}
+	attrs := h.failover.exitLogAttrs()
+	if len(attrs) != 6 || attrs[3] != "exit-1" {
+		t.Fatalf("log attributes = %v", attrs)
+	}
+}

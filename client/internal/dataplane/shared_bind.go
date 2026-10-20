@@ -163,7 +163,7 @@ func (b *sharedBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 	b.isOpen = true
 	// A failure leaves the sockets following the mesh routes, which only
 	// costs the direct paths; the next datagram tries again.
-	_ = b.bindPhysicalLocked()
+	underlay.ReportBindFailure("wireguard", b.bindPhysicalLocked())
 	socket := pathdiscovery.Socket{
 		Port:       actualPort,
 		Generation: b.generation,
@@ -193,7 +193,7 @@ func (b *sharedBind) followPhysical() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.isOpen && b.physicalStale() {
-		_ = b.bindPhysicalLocked()
+		underlay.ReportBindFailure("wireguard", b.bindPhysicalLocked())
 	}
 }
 

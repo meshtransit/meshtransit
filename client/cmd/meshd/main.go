@@ -28,6 +28,7 @@ import (
 	"meshtransit.net/client/internal/profile"
 	"meshtransit.net/client/internal/servicemanager"
 	"meshtransit.net/client/internal/socket"
+	"meshtransit.net/client/internal/underlay"
 	"meshtransit.net/client/internal/version"
 )
 
@@ -126,6 +127,7 @@ func runContext(parent context.Context, args []string, stdout, stderr io.Writer)
 			return 1
 		}
 	}
+	underlay.SetLogger(logger.With("component", "underlay"))
 	opener, netAdminClient, err := platformNetwork(cfg)
 	if err != nil {
 		logger.Error("preparing host networking failed", "error", err)

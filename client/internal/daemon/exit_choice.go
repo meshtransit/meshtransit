@@ -360,6 +360,14 @@ func (failover *routeFailover) chooseExitLocked(now time.Time) bool {
 		next = choice.node
 	default:
 		next = failover.nextExitNodeLocked(pool, mayCarry, alive, candidate)
+		if next == "" && pool.Status == networkmap.ExitServed {
+			// Every candidate looks silent: a silent exit node may still
+			// carry (its direct path proof expired while the relay works),
+			// and dropping it only blocks everything.
+			next = failover.lastResortExitNodeLocked(pool, func(id string) bool {
+				return usable(id) && !failover.stuckLocked(id, now)
+			})
+		}
 	}
 	switch {
 	case next == "":
@@ -440,6 +448,51 @@ func (failover *routeFailover) nextExitNodeLocked(pool networkmap.ExitPool, mayC
 		}
 	}
 	return ""
+}
+
+// lastResortExitNodeLocked returns a usable candidate when none answers: the
+// node in use, then the primary, then the first listed; "" when none is
+// usable. A stuck one stays avoided: it carries nothing.
+func (failover *routeFailover) lastResortExitNodeLocked(pool networkmap.ExitPool, usable func(string) bool) string {
+	for _, id := range []string{failover.exit.node, pool.Primary} {
+		if id != "" && usable(id) {
+			return id
+		}
+	}
+	for _, listed := range pool.Candidates {
+		if usable(listed.DeviceID) {
+			return listed.DeviceID
+		}
+	}
+	return ""
+}
+
+// exitLogAttrs describes the exit choice for the log: the node used and how
+// long ago each candidate last answered on a direct path.
+func (failover *routeFailover) exitLogAttrs() []any {
+	if failover == nil {
+		return nil
+	}
+	failover.mu.Lock()
+	defer failover.mu.Unlock()
+	if !failover.exit.wanted {
+		return nil
+	}
+	attrs := []any{"exit_pool", failover.exit.pool, "exit_node", failover.exit.node}
+	pool, found := failover.exitPoolLocked()
+	if !found {
+		return attrs
+	}
+	peers := peerIDs(failover.core)
+	answered := map[string]string{}
+	for _, candidate := range pool.Candidates {
+		age := "never"
+		if at, ok := failover.pongs[peers[candidate.DeviceID]]; ok {
+			age = failover.clock().Sub(at).Round(time.Second).String()
+		}
+		answered[candidate.DeviceID] = age
+	}
+	return append(attrs, "exit_answered", answered)
 }
 
 // exitRouteLocked is the local choice the map carries: nil when no exit

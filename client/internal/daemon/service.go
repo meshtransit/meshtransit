@@ -927,7 +927,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					return err
 				}
 				s.logger.Info("local router and exit choices changed; Sites not listed follow Core",
-					"choices", failover.choices())
+					append([]any{"choices", failover.choices()}, failover.exitLogAttrs()...)...)
 				if s.dns != nil && s.enableExits {
 					// The exit node's forwarder answers the names now.
 					if _, _, err := s.applyMapDNS(failoverCtx, current); err != nil {

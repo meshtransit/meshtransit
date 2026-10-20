@@ -70,7 +70,9 @@ func Protect(fd uintptr) error {
 func Control(_, address string, raw syscall.RawConn) error {
 	if destination, err := netip.ParseAddrPort(address); err == nil && physicalBound(destination.Addr()) {
 		if err := bindPhysical(raw, destination.Addr().Unmap()); err != nil {
-			return fmt.Errorf("underlay: keeping a socket to %s off the mesh routes: %w", destination.Addr(), err)
+			err = fmt.Errorf("underlay: keeping a socket to %s off the mesh routes: %w", destination.Addr(), err)
+			ReportBindFailure("dial", err)
+			return err
 		}
 	}
 	if !Active() {
