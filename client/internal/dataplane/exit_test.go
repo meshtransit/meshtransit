@@ -168,3 +168,88 @@ func TestWireGuardEngineReportsAnExitNodeTheHostRefuses(t *testing.T) {
 		t.Fatal("the filter admits exit traffic the host refuses")
 	}
 }
+
+// checkingExitOpener also answers the health check with the exit node's
+// forwarding.
+type checkingExitOpener struct {
+	exitTUNOpener
+}
+
+func (o *checkingExitOpener) CheckServedRoutes(context.Context) (netadmin.ServedHealth, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	health := netadmin.ServedHealth{}
+	if len(o.requests) != 0 && o.requests[len(o.requests)-1].Serve && o.refused == "" {
+		health.Exit = netadmin.ExitServing{Serving: true, ConntrackPerConsumer: 4096, MaxConsumers: 8}
+	} else if o.refused != "" {
+		health.Exit = netadmin.ExitServing{Refused: o.refused}
+	}
+	return health, nil
+}
+
+func TestWireGuardEngineMeasuresTheServedExitPool(t *testing.T) {
+	t.Parallel()
+	for _, refused := range []string{"", netadmin.ExitRefusedOff} {
+		privateKey, snapshot := testWireGuardSnapshot(t)
+		snapshot.ServedExits = []networkmap.ServedExit{{Ref: "p-main", ConntrackPerConsumer: 16384, Rules: testExitRules()}}
+		opener := &checkingExitOpener{exitTUNOpener{refused: refused}}
+		engine, err := newWireGuardEngine(opener, 41641, &fakeWireGuardFactory{device: &fakeWireGuardDevice{}}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := ExitHealth{State: SiteHealthOK, Code: SiteCodeOK}
+		if refused != "" {
+			want = ExitHealth{State: SiteHealthFailed, Code: ExitCodeNotOffered}
+		}
+		if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "the pool's health", func() bool {
+			health := engine.ExitNode().Health
+			return health != nil && *health == want
+		})
+		// The pool gone ends the measurement.
+		snapshot.Revision++
+		snapshot.ServedExits = nil
+		if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "the health to clear", func() bool { return engine.ExitNode().Health == nil })
+		_ = engine.Close()
+	}
+}
+
+// The host's public addresses, as peers see them, are no Internet for its
+// consumers: sent to the helper and refused by layer 1. Private ones are not
+// sent.
+func TestWireGuardEngineLeavesItsPublicAddressesOut(t *testing.T) {
+	t.Parallel()
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	snapshot.ServedExits = []networkmap.ServedExit{{Ref: "p-main", ConntrackPerConsumer: 16384, Rules: testExitRules()}}
+	opener := &exitTUNOpener{}
+	engine, err := newWireGuardEngine(opener, 41641, &fakeWireGuardFactory{device: &fakeWireGuardDevice{}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = engine.Close() })
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the exit node to serve", func() bool { return engine.ExitNode().Serving })
+	public := netip.MustParseAddr("34.1.2.3")
+	engine.SetExitPublicAddresses([]netip.Addr{public, netip.MustParseAddr("192.168.1.20"), public})
+	waitFor(t, "the public address to reach the helper", func() bool {
+		requests := opener.sent()
+		last := requests[len(requests)-1]
+		return len(last.Excluded) == 1 && last.Excluded[0] == netip.PrefixFrom(public, 32)
+	})
+	waitFor(t, "layer 1 to refuse it", func() bool {
+		return !engine.filter.Allow(PacketInbound,
+			testIPv4TransportPacket([4]byte{100, 64, 0, 4}, public.As4(), 40000, 443, packetmeta.ProtocolTCP, 0x02))
+	})
+	count := len(opener.sent())
+	engine.SetExitPublicAddresses([]netip.Addr{public})
+	if len(opener.sent()) != count {
+		t.Fatal("an unchanged public address was sent again")
+	}
+}

@@ -148,6 +148,18 @@ of the Sites it offers ([mtcp-v1 §7.6](../protocol/mtcp-v1.md)):
 - With `router.health1` the router also sends that health to Core in a
   `RouteHealthReport` on change and every 10 seconds
   ([mtcp-v1 §8.3](../protocol/mtcp-v1.md)).
+- An exit node (Linux, `--enable-exit-node` and root's `exit_mode`) measures
+  its pool the same way: TCP SYNs to the pool's probes from the self-test
+  addresses cross FORWARD and the source translation as consumers' packets
+  do, every 15 seconds while healthy and every round while failing; an answer
+  or a reset reached the Internet. Three rounds in a row without either fail
+  the family: `egress_failed` (failed) when IPv4 fails and IPv6 too or has no
+  probe, `egress_v6_failed` or `egress_v4_failed` (degraded) when one family
+  still works; `exit_not_offered` (failed) when exit mode is off. The
+  families that reached the Internet go with it. `meshctl status` shows an
+  `Exit node` line and the local API `exit_node`; with `router.exit.v1` the
+  health goes to Core in `RouteHealthReport.exit`. The host's public
+  addresses, as peers see them, are left out of its Internet.
 
 Another firewall's `drop` on the same hook still wins over the router
 table's `accept`: with Docker, allow the mesh interface in the `DOCKER-USER`

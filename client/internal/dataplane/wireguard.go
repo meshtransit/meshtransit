@@ -304,8 +304,12 @@ type WireGuardEngine struct {
 	servedStatus SubnetRouterStatus
 	// servedExit keeps the exit node's forwarding in step with the map;
 	// exitStatus is what the helper did with it.
-	servedExit helperSync[[]networkmap.ServedExit, netadmin.ExitServing]
+	servedExit helperSync[exitDesired, netadmin.ExitServing]
+	// exitPublic are the host's public addresses as peers see them.
+	exitPublic []netip.Addr
 	exitStatus ExitNodeStatus
+	// exitHealth measures the served pool while the map has one.
+	exitHealth exitHealthLoop
 	// routerHealth measures the served Sites while the node serves any.
 	routerHealth routerHealth
 	// enforcementChanges signals enforced policy changes no map carried.

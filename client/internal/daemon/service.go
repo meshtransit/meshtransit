@@ -157,8 +157,10 @@ type Status struct {
 	PeerPaths       dataplane.PeerPathSnapshot
 	SubnetRoutes    dataplane.SubnetRouteStatus
 	// RouteSites is the router each Site's traffic goes to.
-	RouteSites      []RouteSiteView
-	SubnetRouter    dataplane.SubnetRouterStatus
+	RouteSites   []RouteSiteView
+	SubnetRouter dataplane.SubnetRouterStatus
+	// ExitNode is how the node forwards as an exit node.
+	ExitNode        dataplane.ExitNodeStatus
 	PathProbes      PathProbeStatus
 	Relay           relay.HealthSnapshot
 	NetworkChanges  NetworkChangeStatus
@@ -939,6 +941,11 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		nextControlKey, _ := record.NextControlKey()
 		var hostOffers chan controlplane.HostOffer
 		var routeHealth chan []controlplane.RouteSiteHealth
+		var exitHealth chan controlplane.RouteExitHealth
+		if s.enableExitNode {
+			exitHealth = make(chan controlplane.RouteExitHealth)
+			go watchExitHealth(streamCtx, s.exitNodeStatus, routeHealthPoll, exitHealth)
+		}
 		if s.enableSubnetRouter || s.enableExitNode {
 			hostOffers = make(chan controlplane.HostOffer)
 			go watchRouteOffer(streamCtx, s.loadRouteSettings, s.routeSettingsPath, routeOfferPoll, s.logger,
@@ -959,6 +966,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					EnableSubnetRouter:  s.enableSubnetRouter,
 					EnableExitNode:      s.enableExitNode,
 					HostOffers:          hostOffers,
+					ExitHealth:          exitHealth,
 					RouteHealth:         routeHealth,
 					RouteSelection:      routeSelection,
 					AnnounceGoingAway:   func() bool { return !restartExpected(s.restartMarkerPath, s.clock()) },
@@ -1584,6 +1592,7 @@ func (s *Service) runEndpointRefresh(
 		lastPublished = update
 		hasPublished = true
 		s.notifyLocalEndpoints(candidates)
+		s.setExitPublicAddresses(candidates)
 		if s.logger != nil {
 			s.logger.Info("endpoints published", "candidates", candidates.Len(),
 				"home_relay", preferredRelay, "nat_known", update.Connectivity.NATKnown)
@@ -2190,6 +2199,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		SubnetRoutes:       subnetRoutes,
 		RouteSites:         s.routeSitesSnapshot(),
 		SubnetRouter:       s.subnetRouterStatus(),
+		ExitNode:           s.exitNodeStatus(),
 		PathProbes:         s.pathProbeStatus(),
 		Relay:              relayStatus,
 		NetworkChanges: NetworkChangeStatus{

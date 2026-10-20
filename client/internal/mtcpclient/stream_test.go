@@ -662,3 +662,43 @@ func TestStreamNetmapExitNodeOffersItself(t *testing.T) {
 		t.Fatal("no offer reached Core")
 	}
 }
+
+// An exit node sends its pool's health in the route health report where
+// Core takes router.exit.v1, with no Sites when it routes none.
+func TestStreamNetmapReportsExitHealth(t *testing.T) {
+	t.Parallel()
+	reports := make(chan *mtcpv1.RouteHealthReport, 1)
+	core := newStreamCore(t, func(core *streamCore, s *coreSession, _ int32) {
+		core.keyUpdate(s)
+		_ = s.send(sharedmtcp.MessageMapSnapshot, core.snapshot(1))
+		if report, ok := core.expect(s, sharedmtcp.MessageRouteHealthReport).(*mtcpv1.RouteHealthReport); ok {
+			reports <- report
+		}
+		_ = s.send(sharedmtcp.MessageLifecycle, &mtcpv1.Lifecycle{State: mtcpv1.Lifecycle_REVOKED})
+		answerPings(s)
+	})
+	core.extra = []string{"router.exit.v1", "router.health1"}
+	material, options := core.options(t)
+	health := make(chan controlplane.RouteExitHealth, 1)
+	health <- controlplane.RouteExitHealth{
+		Ref: "p-main", State: controlplane.RouteHealthDegraded,
+		Code: "egress_v6_failed", Families: controlplane.ExitFamiliesV4,
+	}
+	options.EnableExitNode, options.ExitHealth = true, health
+	err := core.client().StreamNetmap(t.Context(), core.origin(), material, options,
+		func(context.Context, networkmap.Snapshot) error { return nil })
+	if !errors.Is(err, controlplane.ErrNetmapAuthorityRevoked) {
+		t.Fatalf("StreamNetmap = %v", err)
+	}
+	select {
+	case report := <-reports:
+		exit := report.GetExit()
+		if len(report.GetSites()) != 0 || exit.GetPoolRef() != "p-main" ||
+			exit.GetState() != mtcpv1.RouteHealthReport_SiteHealth_DEGRADED || exit.GetCode() != "egress_v6_failed" ||
+			exit.GetFamilies() != mtcpv1.ExitCandidate_V4 {
+			t.Fatalf("route health report %v", report)
+		}
+	default:
+		t.Fatal("no exit health reached Core")
+	}
+}

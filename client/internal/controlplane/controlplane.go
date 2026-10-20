@@ -168,6 +168,11 @@ type NetmapOptions struct {
 	// served Site; each set is sent in a RouteHealthReport when Core takes
 	// it (router.health1), again every 10 seconds while not empty.
 	RouteHealth <-chan []RouteSiteHealth
+	// ExitHealth, with EnableExitNode, carries the health of the Exit Pool
+	// the node serves (an empty reference when none); it is sent in the
+	// RouteHealthReport when Core takes it (router.health1 and
+	// router.exit.v1), again every 10 seconds while the node serves one.
+	ExitHealth <-chan RouteExitHealth
 	// RouteSelection, with EnableSubnetRoutes, carries the router this node
 	// sends each Site's traffic to; each set is sent in a
 	// RouteSelectionReport when Core takes it (routes.selection1), again
@@ -318,6 +323,26 @@ type RouteSiteHealth struct {
 	State RouteHealthState
 	// Code is a short reason, at most 64 bytes.
 	Code string
+}
+
+// ExitFamilies are the address families an exit node reaches the Internet
+// in (mtcp-v1 §7.7); zero is not known.
+type ExitFamilies int
+
+// The families of mtcp-v1 §7.7.
+const (
+	ExitFamiliesV4 ExitFamilies = iota + 1
+	ExitFamiliesV6
+	ExitFamiliesBoth
+)
+
+// RouteExitHealth is an exit node's health of the Exit Pool it serves; an
+// empty Ref means it serves none.
+type RouteExitHealth struct {
+	Ref      string
+	State    RouteHealthState
+	Code     string
+	Families ExitFamilies
 }
 
 // EnforcementReport is the evidence of what the packet filter enforces

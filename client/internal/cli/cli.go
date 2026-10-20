@@ -510,7 +510,7 @@ func runStatus(
 	deviceExpiry := formatDeviceExpiry(status.DeviceExpiry, status.DeviceExpiresAt, time.Now())
 	_, _ = fmt.Fprintf(
 		stdout,
-		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nNetwork changes: %s\nRuntime recovery: %s\nRuntime: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\nNetwork: %s\nSelf addresses: %s\nDevice expiry: %s\nPeers: %d\nPeer paths: %s\nSubnet routes: %s\nSubnet router: %s\nPath transitions: %s\nPath probes: %s\nRelay: %s\nNAT: %s\nPort mapping: %s\nCloud: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
+		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nNetwork changes: %s\nRuntime recovery: %s\nRuntime: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\nNetwork: %s\nSelf addresses: %s\nDevice expiry: %s\nPeers: %d\nPeer paths: %s\nSubnet routes: %s\nSubnet router: %s\nExit node: %s\nPath transitions: %s\nPath probes: %s\nRelay: %s\nNAT: %s\nPort mapping: %s\nCloud: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
 		status.Daemon.Version,
 		status.State,
 		status.DataPlane,
@@ -531,6 +531,7 @@ func runStatus(
 		formatPathStatus(status.PeerPaths),
 		formatSubnetRouteStatus(status.SubnetRoutes),
 		formatSubnetRouterStatus(status.SubnetRouter),
+		formatExitNodeStatus(status.ExitNode),
 		formatPathTransitionStatus(status.PeerPaths),
 		formatPathProbeStatus(status.PathProbes),
 		formatRelayStatus(status.Relay),
@@ -647,6 +648,35 @@ func formatRouteSite(site localapi.SubnetRouteSite) string {
 	default:
 		return "not served"
 	}
+}
+
+func formatExitNodeStatus(status *localapi.ExitNodeStatus) string {
+	if status == nil || (status.Pool == "" && status.Error == "") {
+		return "none"
+	}
+	var summary string
+	switch {
+	case status.Serving:
+		summary = fmt.Sprintf("serving pool %s, %d connections per consumer, %d consumers", status.Pool,
+			status.ConntrackPerConsumer, status.MaxConsumers)
+		if status.SMTPAllowed {
+			summary += ", SMTP allowed"
+		}
+	case status.Refused != "":
+		summary = fmt.Sprintf("not serving pool %s [%s]", status.Pool, status.Refused)
+	default:
+		summary = fmt.Sprintf("not serving pool %s", status.Pool)
+	}
+	if status.State != "" && status.State != "ok" {
+		summary += " [" + status.State + " " + status.Code + "]"
+	}
+	if status.Families != "" {
+		summary += "; Internet over " + status.Families
+	}
+	if status.Error != "" {
+		summary += "; error: " + status.Error
+	}
+	return summary
 }
 
 func formatSubnetRouterStatus(status *localapi.SubnetRouterStatus) string {

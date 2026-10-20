@@ -16,7 +16,13 @@ merge (2026-10-09) are kept below.
   unless both allow it, bounds each consumer's connections (`ct count`) and
   translates every source; meshd's filter admits only the pool's rules to the
   Internet, never to the exit node's own addresses or the Sites it serves.
-  Egress probes, exit health, the DNS forwarder and consumers come next.
+  Exit nodes measure their pool through their own forwarding path (TCP
+  probes from the self-test addresses), report `exit_not_offered`,
+  `egress_failed`, `egress_v6_failed` or `conntrack_high` with the address
+  families that reach the Internet in `RouteHealthReport.exit`, leave their
+  public addresses (as peers see them) out of the Internet, and show an
+  `Exit node` line in `meshctl status` (`exit_node` in the local API). The
+  DNS forwarder and consumers come next.
 - Core: Explain, the Access Graph and the access ledger know Exit Pools
   (schemas 206–208). An Internet address no Site holds is explained through
   the first pool whose rules grant the Internet to the source

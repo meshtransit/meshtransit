@@ -40,6 +40,7 @@ type statusResponse struct {
 	PeerPaths         pathStatus            `json:"paths"`
 	SubnetRoutes      subnetRouteStatus     `json:"subnet_routes"`
 	SubnetRouter      subnetRouterStatus    `json:"subnet_router"`
+	ExitNode          exitNodeStatus        `json:"exit_node"`
 	PathProbes        pathProbeStatus       `json:"path_probes"`
 	Relay             relayStatus           `json:"relay"`
 	NetworkChanges    networkChangeStatus   `json:"network_changes"`
@@ -135,6 +136,22 @@ type subnetRouterStatus struct {
 	Error        string               `json:"error,omitempty"`
 	// SiteHealth is each served Site's measured health (design §6.5).
 	SiteHealth []subnetRouterSiteHealth `json:"site_health,omitempty"`
+}
+
+// exitNodeStatus is how the node forwards as an exit node (exit node design
+// §8): the served pool, the limits the host applies or why it does not
+// forward, and the pool's measured health.
+type exitNodeStatus struct {
+	Pool                 string `json:"pool,omitempty"`
+	Serving              bool   `json:"serving"`
+	Refused              string `json:"refused,omitempty"`
+	ConntrackPerConsumer int    `json:"conntrack_per_consumer,omitempty"`
+	SMTPAllowed          bool   `json:"smtp_allowed"`
+	MaxConsumers         int    `json:"max_consumers,omitempty"`
+	State                string `json:"state,omitempty"`
+	Code                 string `json:"code,omitempty"`
+	Families             string `json:"families,omitempty"`
+	Error                string `json:"error,omitempty"`
 }
 
 type subnetRouterSiteHealth struct {

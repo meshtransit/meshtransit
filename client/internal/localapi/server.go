@@ -466,6 +466,7 @@ func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request)
 		PeerPaths:          mapPathStatus(status.PeerPaths),
 		SubnetRoutes:       withRouteSites(mapSubnetRouteStatus(status.SubnetRoutes), status.RouteSites),
 		SubnetRouter:       mapSubnetRouterStatus(status.SubnetRouter),
+		ExitNode:           mapExitNodeStatus(status.ExitNode),
 		PathProbes:         mapPathProbeStatus(status.PathProbes),
 		Relay:              mapRelayStatus(status.Relay),
 		NetworkChanges:     mapNetworkChangeStatus(status.NetworkChanges),
@@ -656,6 +657,26 @@ func mapSubnetRouteStatus(status dataplane.SubnetRouteStatus) subnetRouteStatus 
 	}
 	for _, refusal := range status.Refused {
 		mapped.Refused = append(mapped.Refused, subnetRouteRefusal{Prefix: refusal.Prefix.String(), Reason: refusal.Reason})
+	}
+	return mapped
+}
+
+func mapExitNodeStatus(status dataplane.ExitNodeStatus) exitNodeStatus {
+	mapped := exitNodeStatus{
+		Pool: status.Pool, Serving: status.Serving, Refused: status.Refused,
+		ConntrackPerConsumer: status.ConntrackPerConsumer, SMTPAllowed: status.SMTP,
+		MaxConsumers: status.MaxConsumers, Error: status.Error,
+	}
+	if health := status.Health; health != nil {
+		mapped.State, mapped.Code = health.State, health.Code
+		switch {
+		case health.IPv4 && health.IPv6:
+			mapped.Families = "both"
+		case health.IPv4:
+			mapped.Families = "ipv4"
+		case health.IPv6:
+			mapped.Families = "ipv6"
+		}
 	}
 	return mapped
 }

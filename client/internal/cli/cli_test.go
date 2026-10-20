@@ -914,3 +914,22 @@ func TestFormatSubnetRouterStatusListsUnhealthySites(t *testing.T) {
 		t.Fatalf("formatSubnetRouterStatus() = %q", got)
 	}
 }
+
+func TestFormatExitNodeStatus(t *testing.T) {
+	t.Parallel()
+	if got := formatExitNodeStatus(nil); got != "none" {
+		t.Fatalf("no exit node = %q", got)
+	}
+	serving := &localapi.ExitNodeStatus{
+		Pool: "p-main", Serving: true, ConntrackPerConsumer: 4096, MaxConsumers: 8,
+		State: "degraded", Code: "egress_v6_failed", Families: "ipv4",
+	}
+	if got := formatExitNodeStatus(serving); got !=
+		"serving pool p-main, 4096 connections per consumer, 8 consumers [degraded egress_v6_failed]; Internet over ipv4" {
+		t.Fatalf("serving = %q", got)
+	}
+	refused := &localapi.ExitNodeStatus{Pool: "p-main", Refused: "exit_off", State: "failed", Code: "exit_not_offered"}
+	if got := formatExitNodeStatus(refused); got != "not serving pool p-main [exit_off] [failed exit_not_offered]" {
+		t.Fatalf("refused = %q", got)
+	}
+}

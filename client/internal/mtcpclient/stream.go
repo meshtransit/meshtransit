@@ -81,7 +81,7 @@ func (c *Client) StreamNetmap(ctx context.Context, controlURL string, material c
 	var forwarders sync.WaitGroup
 	forwarders.Go(func() {
 		reports.forward(streamCtx, options.EndpointUpdates, options.EnforcementReports, options.PathStats,
-			options.HostOffers, options.RouteHealth, options.RouteSelection)
+			options.HostOffers, options.RouteHealth, options.ExitHealth, options.RouteSelection)
 	})
 	defer func() {
 		cancel()
@@ -122,6 +122,8 @@ type reportBox struct {
 	advertised *controlplane.HostOffer
 	// routeHealth is the latest Site health; nil until it is measured.
 	routeHealth []controlplane.RouteSiteHealth
+	// exitHealth is the latest exit health; nil until it is measured.
+	exitHealth *controlplane.RouteExitHealth
 	// routeSelection is the latest Site routers; nil until the first map.
 	routeSelection []controlplane.RouteSiteSelection
 	changed        chan struct{}
@@ -134,6 +136,7 @@ func newReportBox(initial controlplane.EndpointUpdate) *reportBox {
 func (box *reportBox) forward(ctx context.Context, endpoints <-chan controlplane.EndpointUpdate,
 	enforcement <-chan controlplane.EnforcementReport, paths <-chan controlplane.PathStatsReport,
 	advertised <-chan controlplane.HostOffer, routeHealth <-chan []controlplane.RouteSiteHealth,
+	exitHealth <-chan controlplane.RouteExitHealth,
 	routeSelection <-chan []controlplane.RouteSiteSelection,
 ) {
 	for {
@@ -181,6 +184,14 @@ func (box *reportBox) forward(ctx context.Context, endpoints <-chan controlplane
 			box.mu.Lock()
 			box.routeHealth = append([]controlplane.RouteSiteHealth{}, health...)
 			box.mu.Unlock()
+		case health, ok := <-exitHealth:
+			if !ok {
+				exitHealth = nil
+				continue
+			}
+			box.mu.Lock()
+			box.exitHealth = &health
+			box.mu.Unlock()
 		case selection, ok := <-routeSelection:
 			if !ok {
 				routeSelection = nil
@@ -216,6 +227,17 @@ func (box *reportBox) offer() *controlplane.HostOffer {
 }
 
 // health returns the latest Site health, nil before it was measured.
+// exit returns the latest exit health, nil before it was measured.
+func (box *reportBox) exit() *controlplane.RouteExitHealth {
+	box.mu.Lock()
+	defer box.mu.Unlock()
+	if box.exitHealth == nil {
+		return nil
+	}
+	health := *box.exitHealth
+	return &health
+}
+
 func (box *reportBox) health() []controlplane.RouteSiteHealth {
 	box.mu.Lock()
 	defer box.mu.Unlock()
@@ -418,6 +440,8 @@ type sessionRun struct {
 	// when; nil before the first.
 	healthSent   []controlplane.RouteSiteHealth
 	healthSentAt time.Time
+	// exitSent is the exit health sent in this session; nil before.
+	exitSent *controlplane.RouteExitHealth
 	// selectionSent is the Site routers sent in this session and
 	// selectionSentAt when; nil before the first.
 	selectionSent   []controlplane.RouteSiteSelection
@@ -730,21 +754,44 @@ func (run *sessionRun) sendOffer() error {
 	return nil
 }
 
-// sendRouteHealth sends the served Sites' health (mtcp-v1 §8.3) when it
-// changed, and again every routeHealthHeartbeat while not empty.
+// sendRouteHealth sends the served Sites' health and the served Exit Pool's
+// (mtcp-v1 §8.3) when either changed, and again every routeHealthHeartbeat
+// while not empty. A router waits for its Sites to be measured.
 func (run *sessionRun) sendRouteHealth() error {
-	if !run.mapped || !run.stream.options.EnableSubnetRouter || !run.supports("router.health1") {
+	options := run.stream.options
+	takesExit := options.EnableExitNode && run.supports("router.exit.v1")
+	if !run.mapped || (!options.EnableSubnetRouter && !takesExit) || !run.supports("router.health1") {
 		return nil
 	}
 	health := run.stream.reports.health()
-	if health == nil {
+	if options.EnableSubnetRouter && health == nil {
 		return nil
 	}
-	changed := run.healthSent == nil || !slices.Equal(run.healthSent, health)
-	if !changed && (len(health) == 0 || time.Since(run.healthSentAt) < routeHealthHeartbeat-time.Second) {
+	if !options.EnableSubnetRouter || !run.supports("router.subnet.v1") {
+		health = []controlplane.RouteSiteHealth{}
+	}
+	var exit *controlplane.RouteExitHealth
+	if takesExit {
+		if exit = run.stream.reports.exit(); exit == nil && !options.EnableSubnetRouter {
+			return nil
+		}
+		if exit != nil && exit.Ref == "" {
+			exit = nil
+		}
+		// An exit node that never served a pool has nothing to withdraw.
+		if !options.EnableSubnetRouter && exit == nil && run.exitSent == nil {
+			return nil
+		}
+	}
+	changed := run.healthSent == nil || !slices.Equal(run.healthSent, health) || !equalExitHealth(run.exitSent, exit)
+	if !changed && ((len(health) == 0 && exit == nil) ||
+		time.Since(run.healthSentAt) < routeHealthHeartbeat-time.Second) {
 		return nil
 	}
-	report := &mtcpv1.RouteHealthReport{Sites: make([]*mtcpv1.RouteHealthReport_SiteHealth, 0, len(health))}
+	report := &mtcpv1.RouteHealthReport{
+		Sites: make([]*mtcpv1.RouteHealthReport_SiteHealth, 0, len(health)),
+		Exit:  exitHealthMessage(exit),
+	}
 	for _, site := range health {
 		report.Sites = append(report.Sites, &mtcpv1.RouteHealthReport_SiteHealth{
 			SiteRef: site.Ref, State: routeHealthState(site.State), Code: site.Code,
@@ -753,8 +800,35 @@ func (run *sessionRun) sendRouteHealth() error {
 	if err := run.send(sharedmtcp.MessageRouteHealthReport, report); err != nil {
 		return err
 	}
-	run.healthSent, run.healthSentAt = health, time.Now()
+	run.healthSent, run.healthSentAt, run.exitSent = health, time.Now(), exit
 	return nil
+}
+
+func equalExitHealth(first, second *controlplane.RouteExitHealth) bool {
+	if first == nil || second == nil {
+		return first == second
+	}
+	return *first == *second
+}
+
+// exitHealthMessage encodes an exit node's health; nil when it serves none.
+func exitHealthMessage(exit *controlplane.RouteExitHealth) *mtcpv1.RouteHealthReport_ExitHealth {
+	if exit == nil {
+		return nil
+	}
+	families := mtcpv1.ExitCandidate_FAMILIES_UNSPECIFIED
+	switch exit.Families {
+	case controlplane.ExitFamiliesV4:
+		families = mtcpv1.ExitCandidate_V4
+	case controlplane.ExitFamiliesV6:
+		families = mtcpv1.ExitCandidate_V6
+	case controlplane.ExitFamiliesBoth:
+		families = mtcpv1.ExitCandidate_BOTH
+	}
+	return &mtcpv1.RouteHealthReport_ExitHealth{
+		PoolRef: exit.Ref, State: routeHealthState(exit.State),
+		Code: exit.Code, Families: families,
+	}
 }
 
 // sendGoingAway tells Core that this router stops serving every Site it
@@ -764,11 +838,17 @@ func (run *sessionRun) sendRouteHealth() error {
 // the session ends either way.
 func (run *sessionRun) sendGoingAway() {
 	options := run.stream.options
-	if !run.mapped || !options.EnableSubnetRouter || !run.supports("router.health1") || len(run.healthSent) == 0 ||
+	if !run.mapped || (!options.EnableSubnetRouter && !options.EnableExitNode) || !run.supports("router.health1") ||
+		(len(run.healthSent) == 0 && run.exitSent == nil) ||
 		options.AnnounceGoingAway == nil || !options.AnnounceGoingAway() {
 		return
 	}
 	report := &mtcpv1.RouteHealthReport{Sites: make([]*mtcpv1.RouteHealthReport_SiteHealth, 0, len(run.healthSent))}
+	if run.exitSent != nil {
+		going := *run.exitSent
+		going.State, going.Code = controlplane.RouteHealthFailed, goingAwayCode
+		report.Exit = exitHealthMessage(&going)
+	}
 	for _, site := range run.healthSent {
 		report.Sites = append(report.Sites, &mtcpv1.RouteHealthReport_SiteHealth{
 			SiteRef: site.Ref, State: mtcpv1.RouteHealthReport_SiteHealth_FAILED, Code: goingAwayCode,

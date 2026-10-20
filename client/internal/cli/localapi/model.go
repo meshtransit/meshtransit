@@ -34,6 +34,7 @@ type Status struct {
 	PeerPaths          PathStatus             `json:"paths"`
 	SubnetRoutes       *SubnetRouteStatus     `json:"subnet_routes,omitempty"`
 	SubnetRouter       *SubnetRouterStatus    `json:"subnet_router,omitempty"`
+	ExitNode           *ExitNodeStatus        `json:"exit_node,omitempty"`
 	PathProbes         *PathProbeStatus       `json:"path_probes,omitempty"`
 	Relay              RelayStatus            `json:"relay"`
 	NetworkChanges     NetworkChangeStatus    `json:"network_changes"`
@@ -184,6 +185,20 @@ type SubnetRouteSite struct {
 	Router     string   `json:"router,omitempty"`
 	RouterName string   `json:"router_name,omitempty"`
 	Via        string   `json:"via"`
+}
+
+// ExitNodeStatus is how the node forwards as an exit node.
+type ExitNodeStatus struct {
+	Pool                 string `json:"pool,omitempty"`
+	Serving              bool   `json:"serving"`
+	Refused              string `json:"refused,omitempty"`
+	ConntrackPerConsumer int    `json:"conntrack_per_consumer,omitempty"`
+	SMTPAllowed          bool   `json:"smtp_allowed"`
+	MaxConsumers         int    `json:"max_consumers,omitempty"`
+	State                string `json:"state,omitempty"`
+	Code                 string `json:"code,omitempty"`
+	Families             string `json:"families,omitempty"`
+	Error                string `json:"error,omitempty"`
 }
 
 // SubnetRouterStatus is what the node forwards into as a router.
