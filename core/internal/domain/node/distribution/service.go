@@ -238,6 +238,85 @@ func (service *Service) ReadDevice(ctx context.Context, session accountsession.S
 	return report, nil
 }
 
+// Page is the standing of one page of a Device list against the Network's
+// current revisions (D-1). Devices holds one row per requested Device, in
+// order; a row is StatusUnknown when delivery records could not be read.
+type Page struct {
+	Scope                 network.Scope
+	NetworkRevision       int64
+	PolicyRevision        int64
+	ObservationsAvailable bool
+	Devices               []Device
+}
+
+// ReadPage reports up to MaximumObservationBatch Devices the caller already
+// read from the inventory as active or suspended: one durable read of the
+// current revisions under device.read, and one batch load of delivery
+// records. It never scans the Network. A Device revoked or expired between
+// the inventory read and this one keeps its listed state for this page; its
+// status is still only read for an ID of the scope.
+func (service *Service) ReadPage(ctx context.Context, session accountsession.Session, scope network.Scope,
+	devices []TargetDevice) (Page, error) {
+	if service == nil || ctx == nil || !session.IsValid() || !scope.IsValid() || len(devices) == 0 ||
+		len(devices) > MaximumObservationBatch {
+		return Page{}, ErrInvalidRequest
+	}
+	ids := make([]node.ID, len(devices))
+	seen := make(map[node.ID]struct{}, len(devices))
+	for index, device := range devices {
+		if _, duplicate := seen[device.ID]; duplicate || !device.ID.IsValid() || device.Hostname == "" ||
+			(device.State != "active" && device.State != "suspended") {
+			return Page{}, ErrInvalidRequest
+		}
+		seen[device.ID] = struct{}{}
+		ids[index] = device.ID
+	}
+	// The target read authorizes device.read and returns the revisions even
+	// when the Device it names was removed since the inventory read.
+	target, err := service.reader.ReadTarget(ctx, session, scope, ids[0])
+	if err != nil {
+		return Page{}, err
+	}
+	if !validRevisions(target, scope, ids[0]) {
+		return Page{}, ErrInvalidResult
+	}
+	page := Page{Scope: scope, NetworkRevision: target.NetworkRevision, PolicyRevision: target.PolicyRevision,
+		Devices: make([]Device, len(devices))}
+	for index, held := range devices {
+		page.Devices[index] = Device{ID: held.ID, Hostname: held.Hostname, State: held.State, Status: StatusUnknown,
+			Enforcement: EnforcementUnknown, RouteEnforcement: EnforcementUnknown}
+	}
+	observations, err := service.observations.LoadObservations(ctx, ids)
+	if err != nil || len(observations) != len(ids) {
+		// Delivery records are operational; the list still stands.
+		return page, nil
+	}
+	for _, observation := range observations {
+		if !observation.IsValid() {
+			return page, nil
+		}
+	}
+	now := service.clock.Now()
+	for index, observation := range observations {
+		row := &page.Devices[index]
+		row.Observation = observation
+		row.Status = Classify(target.NetworkRevision, observation)
+		row.Enforcement = ClassifyEnforcement(observation, now)
+		row.RouteEnforcement = ClassifyRouteEnforcement(observation, now)
+	}
+	page.ObservationsAvailable = true
+	return page, nil
+}
+
+// validRevisions accepts a target read for its revisions: the scope asked,
+// and at most the one Device asked.
+func validRevisions(target Target, scope network.Scope, id node.ID) bool {
+	if target.Scope != scope || target.NetworkRevision < 1 || target.PolicyRevision < 0 || len(target.Devices) > 1 {
+		return false
+	}
+	return len(target.Devices) == 0 || target.Devices[0].ID == id
+}
+
 // Classify compares one observation with the current Network revision.
 func Classify(networkRevision int64, observation Observation) Status {
 	switch {

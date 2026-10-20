@@ -315,6 +315,28 @@
               "items": {
                 "$ref": "#/components/schemas/ConsoleDevice"
               }
+            },
+            "network_revision": {
+              "description": "With include=status: the Network revision an in_sync Device holds; null when no row on the page receives policy (so nothing was read) or the revisions could not be read.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "policy_revision": {
+              "description": "With include=status: the active policy revision; null as network_revision.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "observations_available": {
+              "description": "With include=status: true when delivery records were read for the page's rows. false when they could not be read, and also when no row receives policy (network_revision is then null).",
+              "type": "boolean"
             }
           }
         },
@@ -479,6 +501,17 @@
           "minimum": 0,
           "maximum": 256,
           "description": "How many subnets the Device offers in all."
+        },
+        "status": {
+          "description": "List only, with include=status; never on a single Device's read. null for a Device that receives no policy (expired, revoked, deleted) and when the Network revisions could not be read. When only delivery records could not be read the object is present with status and enforcement unknown and observations_available is false.",
+          "oneOf": [
+            {
+              "$ref": "#/components/schemas/ConsoleDeviceListStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
@@ -1225,6 +1258,58 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 512
+        }
+      }
+    },
+    "ConsoleDeviceListStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A row's connection and policy status, the same classification as the Device's own status read.",
+      "required": [
+        "status",
+        "online",
+        "last_seen_at",
+        "delivered_network_revision",
+        "enforcement"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "in_sync",
+            "behind",
+            "offline",
+            "never_connected",
+            "unknown"
+          ]
+        },
+        "online": {
+          "type": "boolean"
+        },
+        "last_seen_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "delivered_network_revision": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "enforcement": {
+          "type": "string",
+          "enum": [
+            "enforced",
+            "applying",
+            "mismatch",
+            "not_reported",
+            "unknown"
+          ]
         }
       }
     }
@@ -10195,6 +10280,17 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 1024
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "description": "status adds each row's connection and policy status, read in one batch for the page (D-1). It never changes which rows a page holds.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "status"
+              ]
             }
           }
         ],

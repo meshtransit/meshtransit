@@ -5,6 +5,17 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: the Console Device list takes `include=status` (Console backlog D-1).
+  Each row of `GET …/networks/{n}/devices` then carries its connection and
+  policy status (`in_sync`, `behind`, `offline`, `never_connected`,
+  `unknown`; `online`, `last_seen_at`, `delivered_network_revision`,
+  `enforcement`), and the page its `network_revision`, `policy_revision`
+  and `observations_available`. Core reads the revisions once and the
+  page's delivery records in one batch (at most 100 Devices), never per
+  Device. Devices without policy get a null status; a bad page fails
+  closed, an outage degrades to null statuses and is logged. Without
+  `include` the list is unchanged.
+
 - Clients: Windows, macOS and Android consumers of exit nodes (exit node
   design E4, E5). Windows: the service routes `0/1`, `128/1`, `::/1`,
   `8000::/1` into Wintun behind a persistent WFP kill switch (`winfw`:

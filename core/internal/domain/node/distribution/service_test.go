@@ -3,6 +3,7 @@ package distribution
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -233,5 +234,120 @@ func TestClassifyRouteEnforcementAndCurrentHealth(t *testing.T) {
 	observation.RouteHealth[0].State = "melted"
 	if observation.IsValid() {
 		t.Fatal("an unknown health state is valid")
+	}
+}
+
+func TestServiceReadsAPageWithOneRevisionReadAndOneBatch(t *testing.T) {
+	t.Parallel()
+	scope := testScope(t)
+	first, second, third := testDeviceID(t, "301"), testDeviceID(t, "302"), testDeviceID(t, "303")
+	reader := &fakeReader{target: Target{Scope: scope, NetworkRevision: 7, PolicyRevision: 3}}
+	observations := fakeObservations{byID: map[node.ID]Observation{
+		first: known(7, true), second: known(5, true), third: {},
+	}}
+	service, _ := NewService(reader, observations, fixedClock{})
+	page, err := service.ReadPage(t.Context(), testSession(t), scope, []TargetDevice{
+		{ID: first, Hostname: "a", State: "active"},
+		{ID: second, Hostname: "b", State: "suspended"},
+		{ID: third, Hostname: "c", State: "active"},
+	})
+	if err != nil || reader.callCount != 1 || reader.gotID != first || !page.ObservationsAvailable ||
+		page.NetworkRevision != 7 || page.PolicyRevision != 3 || len(page.Devices) != 3 {
+		t.Fatalf("ReadPage() = %+v, %v (reads %d)", page, err, reader.callCount)
+	}
+	for index, want := range []Status{StatusInSync, StatusBehind, StatusNeverConnected} {
+		if page.Devices[index].Status != want {
+			t.Fatalf("row %d status = %s, want %s", index, page.Devices[index].Status, want)
+		}
+	}
+}
+
+func TestServiceKeepsThePageWhenDeliveriesAreUnavailable(t *testing.T) {
+	t.Parallel()
+	scope := testScope(t)
+	device := testDeviceID(t, "301")
+	reader := &fakeReader{target: Target{Scope: scope, NetworkRevision: 2}}
+	service, _ := NewService(reader, fakeObservations{err: errors.New("redis down")}, fixedClock{})
+	page, err := service.ReadPage(t.Context(), testSession(t), scope,
+		[]TargetDevice{{ID: device, Hostname: "a", State: "active"}})
+	if err != nil || page.ObservationsAvailable || page.Devices[0].Status != StatusUnknown ||
+		page.Devices[0].Enforcement != EnforcementUnknown {
+		t.Fatalf("ReadPage() = %+v, %v", page, err)
+	}
+}
+
+func TestServiceRejectsABadPage(t *testing.T) {
+	t.Parallel()
+	scope := testScope(t)
+	session := testSession(t)
+	device := testDeviceID(t, "301")
+	service, _ := NewService(&fakeReader{target: Target{Scope: scope, NetworkRevision: 1}},
+		fakeObservations{}, fixedClock{})
+	tooMany := make([]TargetDevice, MaximumObservationBatch+1)
+	for index := range tooMany {
+		id, _ := node.ParseID(fmt.Sprintf("01890f00-0000-7000-8000-%012d", index+1))
+		tooMany[index] = TargetDevice{ID: id, Hostname: "a", State: "active"}
+	}
+	for name, devices := range map[string][]TargetDevice{
+		"empty":     nil,
+		"too many":  tooMany,
+		"expired":   {{ID: device, Hostname: "a", State: "expired"}},
+		"duplicate": {{ID: device, Hostname: "a", State: "active"}, {ID: device, Hostname: "a", State: "active"}},
+		"no name":   {{ID: device, State: "active"}},
+	} {
+		if _, err := service.ReadPage(t.Context(), session, scope, devices); !errors.Is(err, ErrInvalidRequest) {
+			t.Fatalf("%s: error = %v, want ErrInvalidRequest", name, err)
+		}
+	}
+	page := []TargetDevice{{ID: device, Hostname: "a", State: "active"}}
+	for name, target := range map[string]Target{
+		"foreign scope":  {Scope: network.Scope{}, NetworkRevision: 1},
+		"no revision":    {Scope: scope},
+		"another device": {Scope: scope, NetworkRevision: 1, Devices: []TargetDevice{{ID: testDeviceID(t, "302"), Hostname: "a", State: "active"}}},
+	} {
+		service, _ := NewService(&fakeReader{target: target}, fakeObservations{}, fixedClock{})
+		if _, err := service.ReadPage(t.Context(), session, scope, page); !errors.Is(err, ErrInvalidResult) {
+			t.Fatalf("%s: error = %v, want ErrInvalidResult", name, err)
+		}
+	}
+	service, _ = NewService(&fakeReader{err: ErrForbidden}, fakeObservations{}, fixedClock{})
+	if _, err := service.ReadPage(t.Context(), session, scope, page); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("forbidden error = %v", err)
+	}
+}
+
+func TestServiceKeepsThePageWhenADeliveryRecordIsMalformed(t *testing.T) {
+	t.Parallel()
+	scope := testScope(t)
+	first, second := testDeviceID(t, "301"), testDeviceID(t, "302")
+	reader := &fakeReader{target: Target{Scope: scope, NetworkRevision: 7}}
+	// Known without a session generation is not a valid observation.
+	observations := fakeObservations{byID: map[node.ID]Observation{
+		first: known(7, true), second: {Known: true},
+	}}
+	service, _ := NewService(reader, observations, fixedClock{})
+	page, err := service.ReadPage(t.Context(), testSession(t), scope, []TargetDevice{
+		{ID: first, Hostname: "a", State: "active"}, {ID: second, Hostname: "b", State: "active"},
+	})
+	if err != nil || page.ObservationsAvailable || page.Devices[0].Status != StatusUnknown ||
+		page.Devices[1].Status != StatusUnknown {
+		t.Fatalf("ReadPage() = %+v, %v", page, err)
+	}
+}
+
+func TestServiceReadsAFullPageOfOneHundred(t *testing.T) {
+	t.Parallel()
+	scope := testScope(t)
+	devices := make([]TargetDevice, MaximumObservationBatch)
+	for index := range devices {
+		id, _ := node.ParseID(fmt.Sprintf("01890f00-0000-7000-8000-%012d", index+1))
+		devices[index] = TargetDevice{ID: id, Hostname: "a", State: "active"}
+	}
+	reader := &fakeReader{target: Target{Scope: scope, NetworkRevision: 7}}
+	service, _ := NewService(reader, fakeObservations{byID: map[node.ID]Observation{}}, fixedClock{})
+	page, err := service.ReadPage(t.Context(), testSession(t), scope, devices)
+	if err != nil || reader.callCount != 1 || len(page.Devices) != MaximumObservationBatch ||
+		page.Devices[99].Status != StatusNeverConnected {
+		t.Fatalf("ReadPage() = %d rows, %v (reads %d)", len(page.Devices), err, reader.callCount)
 	}
 }

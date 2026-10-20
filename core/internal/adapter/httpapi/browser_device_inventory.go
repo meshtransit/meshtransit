@@ -15,6 +15,7 @@ import (
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node/distribution"
 	"meshtransit.net/core/internal/domain/node/inventory"
 	"meshtransit.net/core/internal/domain/workspace"
 	"meshtransit.net/core/internal/platform/ratelimit"
@@ -89,16 +90,39 @@ func encodeDeviceInventoryPageToken(scope network.Scope, query inventory.Query, 
 	return base64.RawURLEncoding.EncodeToString(payload), err
 }
 
+// deviceInventoryIncludeStatus is the one value include takes: each row
+// then carries its connection and policy status (D-1).
+const deviceInventoryIncludeStatus = "status"
+
 // parseDeviceInventoryQuery reads page_size (1-100, 10 by default),
-// page_token, q (a name prefix) and state (active or inactive), each once.
+// page_token, q (a name prefix), state (active or inactive) and include
+// (status), each once. include adds to the rows and never changes which
+// rows a page holds, so a page token does not carry it.
 func parseDeviceInventoryQuery(raw string, scope network.Scope) (inventory.Query, error) {
+	query, _, err := parseDeviceInventoryRequest(raw, scope)
+	return query, err
+}
+
+// parseDeviceInventoryRequest is parseDeviceInventoryQuery that also says
+// whether the rows should carry their status.
+func parseDeviceInventoryRequest(raw string, scope network.Scope) (inventory.Query, bool, error) {
+	query, err := parseDeviceInventoryValues(raw, scope)
+	if err != nil {
+		return inventory.Query{}, false, err
+	}
+	values, _ := url.ParseQuery(raw)
+	return query, values.Get("include") == deviceInventoryIncludeStatus, nil
+}
+
+func parseDeviceInventoryValues(raw string, scope network.Scope) (inventory.Query, error) {
 	values, err := url.ParseQuery(raw)
 	if err != nil || !scope.IsValid() {
 		return inventory.Query{}, inventory.ErrInvalidRequest
 	}
 	for key, entries := range values {
-		known := key == "page_size" || key == "page_token" || key == "q" || key == "state"
-		if !known || len(entries) != 1 || entries[0] == "" {
+		known := key == "page_size" || key == "page_token" || key == "q" || key == "state" || key == "include"
+		if !known || len(entries) != 1 || entries[0] == "" ||
+			(key == "include" && entries[0] != deviceInventoryIncludeStatus) {
 			return inventory.Query{}, inventory.ErrInvalidRequest
 		}
 	}
@@ -207,6 +231,61 @@ type deviceInventoryData struct {
 	Revision    int64                 `json:"inventory_revision"`
 	Devices     []deviceInventoryItem `json:"devices"`
 }
+
+// deviceListStatus is one row's connection and policy status (D-1): the
+// same classification as the Device's own status read, without the detail.
+type deviceListStatus struct {
+	// Status is in_sync, behind, offline, never_connected or unknown.
+	Status                   string     `json:"status"`
+	Online                   bool       `json:"online"`
+	LastSeenAt               *time.Time `json:"last_seen_at"`
+	DeliveredNetworkRevision *int64     `json:"delivered_network_revision"`
+	// Enforcement is enforced, applying, mismatch, not_reported or unknown.
+	Enforcement string `json:"enforcement"`
+}
+
+// deviceInventoryStatusRow is a list row with its status; Status is null
+// for a Device that receives no policy (expired, revoked, deleted) and when
+// Core could not read delivery records.
+type deviceInventoryStatusRow struct {
+	deviceInventoryItem
+	Status *deviceListStatus `json:"status"`
+}
+
+type deviceInventoryStatusData struct {
+	WorkspaceID string `json:"workspace_id"`
+	NetworkID   string `json:"network_id"`
+	Revision    int64  `json:"inventory_revision"`
+	// NetworkRevision and PolicyRevision are what an in_sync Device holds;
+	// null when no row needed them or they could not be read.
+	NetworkRevision       *int64                     `json:"network_revision"`
+	PolicyRevision        *int64                     `json:"policy_revision"`
+	ObservationsAvailable bool                       `json:"observations_available"`
+	Devices               []deviceInventoryStatusRow `json:"devices"`
+}
+
+type deviceInventoryStatusEnvelope struct {
+	Data          deviceInventoryStatusData `json:"data"`
+	NextPageToken string                    `json:"next_page_token,omitempty"`
+	CorrelationID string                    `json:"correlation_id"`
+}
+
+func newDeviceListStatus(device distribution.Device) *deviceListStatus {
+	status := &deviceListStatus{Status: string(device.Status), Online: device.Observation.Online,
+		Enforcement: string(device.Enforcement)}
+	if device.Status == distribution.StatusUnknown {
+		status.Online = false
+	}
+	if status.Enforcement == "" {
+		status.Enforcement = string(distribution.EnforcementUnknown)
+	}
+	if observation := device.Observation; device.Status != distribution.StatusUnknown && observation.Known {
+		seenAt, revision := observation.SeenAt.UTC(), observation.NetworkRevision
+		status.LastSeenAt, status.DeliveredNetworkRevision = &seenAt, &revision
+	}
+	return status
+}
+
 type deviceInventoryEnvelope struct {
 	Data          deviceInventoryData `json:"data"`
 	NextPageToken string              `json:"next_page_token,omitempty"`
@@ -273,7 +352,7 @@ func (browser *BrowserManagement) readDeviceInventory(ctx context.Context, respo
 	if !ok {
 		return err
 	}
-	query, err := parseDeviceInventoryQuery(request.URL.RawQuery, scope)
+	query, withStatus, err := parseDeviceInventoryRequest(request.URL.RawQuery, scope)
 	if err != nil {
 		fail(*invalidManagementRequest())
 		return nil
@@ -305,8 +384,66 @@ func (browser *BrowserManagement) readDeviceInventory(ctx context.Context, respo
 			return ErrBrowserManagementUnavailable
 		}
 	}
+	if withStatus {
+		return browser.writeDeviceInventoryStatus(ctx, response, session, scope, page, data, next, fail, correlationID)
+	}
 	writeManagementJSON(ctx, browser.management.logger, response, http.StatusOK,
 		deviceInventoryEnvelope{Data: data, NextPageToken: next, CorrelationID: correlationID})
+	return nil
+}
+
+// writeDeviceInventoryStatus answers a page whose rows carry their status:
+// one revision read and one batch of delivery records for the page's
+// active and suspended Devices, never a read per Device. A Core without
+// delivery records still answers the page, with null statuses.
+func (browser *BrowserManagement) writeDeviceInventoryStatus(ctx context.Context, response *browserManagementResponse,
+	session accountsession.Session, scope network.Scope, page inventory.Page, data deviceInventoryData, next string,
+	fail func(managementError), correlationID string,
+) error {
+	envelope := deviceInventoryStatusEnvelope{NextPageToken: next, CorrelationID: correlationID,
+		Data: deviceInventoryStatusData{WorkspaceID: data.WorkspaceID, NetworkID: data.NetworkID,
+			Revision: data.Revision, Devices: make([]deviceInventoryStatusRow, len(data.Devices))}}
+	held := make([]distribution.TargetDevice, 0, len(data.Devices))
+	rows := make([]int, 0, len(data.Devices))
+	for index, device := range page.Devices() {
+		envelope.Data.Devices[index] = deviceInventoryStatusRow{deviceInventoryItem: data.Devices[index]}
+		if state := device.State(); state == "active" || state == "suspended" {
+			held = append(held, distribution.TargetDevice{ID: device.ID(), Hostname: device.Hostname(), State: state})
+			rows = append(rows, index)
+		}
+	}
+	if len(held) > 0 && browser.distribution != nil {
+		report, err := browser.distribution.ReadPage(ctx, session, scope, held)
+		switch {
+		case errors.Is(err, distribution.ErrForbidden):
+			fail(classifyDeviceDistributionError(err))
+			return nil
+		case errors.Is(err, distribution.ErrInvalidRequest), errors.Is(err, distribution.ErrInvalidResult):
+			// A bad page or bad evidence is a Core fault, not an outage: fail closed.
+			fail(internalManagementError())
+			return nil
+		case err != nil:
+			// The revisions could not be read; the page still stands, with null
+			// statuses, and the cause is logged so blank columns are explained.
+			browser.management.logger.WarnContext(ctx, "device list status unavailable",
+				"correlation_id", correlationID, "error", err)
+		case report.Scope != scope || len(report.Devices) != len(held):
+			fail(internalManagementError())
+			return nil
+		default:
+			networkRevision, policyRevision := report.NetworkRevision, report.PolicyRevision
+			envelope.Data.NetworkRevision, envelope.Data.PolicyRevision = &networkRevision, &policyRevision
+			envelope.Data.ObservationsAvailable = report.ObservationsAvailable
+			for position, row := range rows {
+				if report.Devices[position].ID != held[position].ID {
+					fail(internalManagementError())
+					return nil
+				}
+				envelope.Data.Devices[row].Status = newDeviceListStatus(report.Devices[position])
+			}
+		}
+	}
+	writeManagementJSON(ctx, browser.management.logger, response, http.StatusOK, envelope)
 	return nil
 }
 

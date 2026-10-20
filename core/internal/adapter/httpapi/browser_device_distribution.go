@@ -20,9 +20,11 @@ import (
 )
 
 // SessionDeviceDistribution requires current exact-scope device.read for
-// every Device's policy distribution status (R1-65).
+// every Device's policy distribution status (R1-65), and for the status of
+// one page of the Device list (D-1).
 type SessionDeviceDistribution interface {
 	ReadDevice(context.Context, accountsession.Session, network.Scope, node.ID) (distribution.Report, error)
+	ReadPage(context.Context, accountsession.Session, network.Scope, []distribution.TargetDevice) (distribution.Page, error)
 }
 
 // deviceDetailRead is a read below one Device: "status" or "peers".
