@@ -288,12 +288,16 @@ WHERE device_id = (SELECT id FROM mesh.device WHERE public_id = $1::UUID)`, rout
 func assertUniqueLocalSites(ctx context.Context, t *testing.T, admin *pgx.Conn, service *site.Service,
 	owner accountsession.Session, scope network.Scope) {
 	t.Helper()
-	var overlay netip.Prefix
+	var overlayText string
 	if err := admin.QueryRow(ctx, `SELECT pool.prefix::TEXT FROM mesh.address_pool AS pool
 JOIN mesh.workspace AS workspace ON workspace.id = pool.workspace_id
 WHERE workspace.public_id = $1 AND pool.purpose = 'node_overlay' AND pool.family = 6
-  AND pool.deleted_at IS NULL LIMIT 1`, scope.WorkspaceID().String()).Scan(&overlay); err != nil {
+  AND pool.deleted_at IS NULL LIMIT 1`, scope.WorkspaceID().String()).Scan(&overlayText); err != nil {
 		t.Fatalf("reading the Workspace's IPv6 overlay pool: %v", err)
+	}
+	overlay, err := netip.ParsePrefix(overlayText)
+	if err != nil {
+		t.Fatalf("parsing the Workspace's IPv6 overlay pool %q: %v", overlayText, err)
 	}
 	inside := netip.PrefixFrom(overlay.Addr(), max(overlay.Bits(), 64)).Masked()
 	if _, err := service.Create(ctx, owner, scope, site.Definition{Name: "Overlay clash",
