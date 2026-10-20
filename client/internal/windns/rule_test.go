@@ -42,6 +42,25 @@ func TestRuleFromPlanRefusesAllNames(t *testing.T) {
 	}
 }
 
+func TestRuleFromPlanSendsEveryNameWhileUsingAnExitNode(t *testing.T) {
+	t.Parallel()
+	for _, plan := range []dnsconfig.Plan{
+		{Enabled: true, Exit: &dnsconfig.ExitDNS{}},
+		{
+			Enabled: true, Exit: &dnsconfig.ExitDNS{IPv6: true}, Routes: []dnsconfig.Route{{Suffix: "shared.mesh"}},
+			DefaultResolvers: []netip.AddrPort{netip.MustParseAddrPort("1.1.1.1:53")},
+		},
+	} {
+		rule, err := RuleFromPlan(plan, ResolverAddress.Addr())
+		if err != nil {
+			t.Fatalf("RuleFromPlan(%+v) error = %v", plan, err)
+		}
+		if !slices.Contains(rule.Namespaces, ".") || rule.Namespaces[0] != "." {
+			t.Fatalf("RuleFromPlan(%+v) = %v, want the root namespace first", plan, rule.Namespaces)
+		}
+	}
+}
+
 func TestRuleFromPlanRejectsUnsafeDomains(t *testing.T) {
 	t.Parallel()
 	for _, domain := range []string{"", ".", "a..b", "Upper.mesh", "bad_label.mesh", "-a.mesh", "a\x00b", "a;b.mesh"} {

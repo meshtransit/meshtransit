@@ -16,3 +16,7 @@ const FollowsRoutes = false
 func bindPhysical(syscall.RawConn, netip.Addr) error {
 	return errors.New("binding to the physical path is not supported here")
 }
+
+// PhysicalIndex is 0: the client's sockets do not follow the mesh routes
+// here.
+func PhysicalIndex(netip.Addr) uint32 { return 0 }

@@ -30,6 +30,17 @@ func platformNetwork(cfg config.Config) (tunOpener, *netadmin.Client, error) {
 	return dataplane.NewWindowsTUNOpener(cfg.RouteSettingsFile), nil, nil
 }
 
+// releaseNetwork lifts the exit kill switch of a stopping service unless the
+// settings name a pool (dataplane.ReleaseWindowsExit).
+func releaseNetwork(cfg config.Config, logger *slog.Logger) {
+	if !cfg.EnableDataPlane {
+		return
+	}
+	if err := dataplane.ReleaseWindowsExit(cfg.RouteSettingsFile); err != nil {
+		logger.Warn("lifting the exit kill switch failed", "error", err)
+	}
+}
+
 // networkLogAttrs names where host networking is done, for startup logs: the
 // service itself configures the Wintun adapter, so there is no socket.
 func networkLogAttrs(config.Config) []any {

@@ -71,9 +71,9 @@ func (e *WireGuardEngine) syncRoutedLocked(desired []netip.Prefix) {
 	})
 }
 
-// RecheckSubnetRoutes asks again at once for the subnet routes the map wants,
-// as after a change of the host's networks: what may be installed depends on
-// the networks the host reaches itself.
+// RecheckSubnetRoutes asks again at once for the subnet and exit routes the
+// map wants, as after a change of the host's networks: what may be installed
+// depends on the networks the host reaches itself.
 func (e *WireGuardEngine) RecheckSubnetRoutes() {
 	if e == nil {
 		return
@@ -81,6 +81,12 @@ func (e *WireGuardEngine) RecheckSubnetRoutes() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.routed.recheckLocked()
+	// The exit route and its kill switch follow the host's networks too
+	// (its LAN), and so does the interface the sockets are bound to.
+	e.exitRoute.recheckLocked()
+	if underlay.FollowsRoutes && underlay.ExitBound() {
+		underlay.RebindPhysical()
+	}
 }
 
 // resetRoutedLocked forgets the routes of a closed device.

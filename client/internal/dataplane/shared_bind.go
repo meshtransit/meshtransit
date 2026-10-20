@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"golang.zx2c4.com/wireguard/conn"
 
@@ -38,6 +39,9 @@ type sharedBind struct {
 	isOpen     bool
 	port       uint16
 	generation uint64
+	// physicalGeneration is the underlay.PhysicalGeneration the sockets
+	// were last bound for.
+	physicalGeneration atomic.Uint64
 }
 
 // socketGenerationSource provides one monotonic namespace across every bind
@@ -131,6 +135,9 @@ func (b *sharedBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 
 		return nil, 0, err
 	}
+	// A failure leaves the sockets following the mesh routes, which only
+	// costs the direct paths; the engine binds them again and reports it.
+	_ = b.bindPhysicalLocked()
 	if b.relay != nil {
 		if err := b.relay.Open(); err != nil {
 			_ = b.inner.Close()
@@ -168,6 +175,51 @@ func (b *sharedBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 	return receivers, actualPort, nil
 }
 
+// followPhysical binds the sockets again when the exit route or the host's
+// networks changed since they were last bound (underlay.PhysicalGeneration):
+// a datagram never leaves by a binding that is out of date.
+func (b *sharedBind) followPhysical() {
+	if !underlay.FollowsRoutes || underlay.PhysicalGeneration() == b.physicalGeneration.Load() {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.isOpen && underlay.PhysicalGeneration() != b.physicalGeneration.Load() {
+		_ = b.bindPhysicalLocked()
+	}
+}
+
+// bindPhysicalLocked keeps the sockets on the physical path while the host
+// routes the Internet into the mesh where they follow its routes
+// (underlay.ExitBound): bound to the interface of the host's default route
+// off the mesh, or sending nothing without one; unbound otherwise. A bind
+// that cannot be bound fails only while it must be.
+func (b *sharedBind) bindPhysicalLocked() error {
+	// Before reading the state: a change meanwhile binds them once more.
+	b.physicalGeneration.Store(underlay.PhysicalGeneration())
+	bound := underlay.FollowsRoutes && underlay.ExitBound()
+	binder, ok := b.inner.(conn.BindSocketToInterface)
+	if !ok {
+		if bound {
+			return errors.New("dataplane: the wireguard bind cannot be kept on the physical path")
+		}
+
+		return nil
+	}
+	var index4, index6 uint32
+	if bound {
+		index4 = underlay.PhysicalIndex(netip.IPv4Unspecified())
+		index6 = underlay.PhysicalIndex(netip.IPv6Unspecified())
+	}
+	if err := binder.BindSocketToInterface4(index4, bound && index4 == 0); err != nil && bound {
+		return fmt.Errorf("dataplane: binding the IPv4 wireguard socket: %w", err)
+	}
+	// A host without IPv6 has no IPv6 socket to bind.
+	_ = binder.BindSocketToInterface6(index6, bound && index6 == 0)
+
+	return nil
+}
+
 func (b *sharedBind) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -193,6 +245,7 @@ func (b *sharedBind) Send(buffers [][]byte, endpoint conn.Endpoint) error {
 		)
 	}
 
+	b.followPhysical()
 	if underlay.Routed(endpoint.DstIP()) {
 		// Into a subnet route the datagram would loop through the mesh.
 		return errRoutedDestination
@@ -269,6 +322,7 @@ func (b *sharedBind) SendDatagram(
 	if underlay.Routed(destination.Addr()) {
 		return pathdiscovery.Socket{}, errRoutedDestination
 	}
+	b.followPhysical()
 
 	b.mu.RLock()
 	defer b.mu.RUnlock()

@@ -23,6 +23,14 @@ if ($service) {
     & sc.exe delete $serviceName | Out-Null
 }
 
+# A host that used an exit node keeps its kill switch after the service
+# stops; lift it before the program that installed it goes.
+$meshd = Join-Path $installDir 'meshd.exe'
+if (Test-Path $meshd) {
+    & $meshd release-exit
+    if ($LASTEXITCODE -ne 0) { throw 'meshd release-exit failed; the exit kill switch may still block this host.' }
+}
+
 # meshd removes its DNS rule when it stops; remove it here too in case the
 # service died without stopping.
 $nrptRule = '{6D657368-7472-616E-7369-74000000D053}'

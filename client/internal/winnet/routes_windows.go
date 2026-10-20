@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 
 	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
@@ -81,4 +82,35 @@ func Resolvers(adapter uint64) ([]netip.Addr, error) {
 	}
 
 	return resolvers, nil
+}
+
+// maximumAttachedSubnets bounds the subnets AttachedSubnets returns.
+const maximumAttachedSubnets = 64
+
+// AttachedSubnets returns the subnets of the addresses of every interface
+// but this adapter and loopback, masked and without repeats: the networks
+// the host reaches itself, read from its addresses rather than its routes.
+func AttachedSubnets(adapter uint64) ([]netip.Prefix, error) {
+	var subnets []netip.Prefix
+	rows, err := winipcfg.GetUnicastIPAddressTable(windows.AF_UNSPEC)
+	if err != nil {
+		return nil, fmt.Errorf("winnet: reading addresses: %w", err)
+	}
+	for i := range rows {
+		row := &rows[i]
+		address := row.Address.Addr().Unmap().WithZone("")
+		if uint64(row.InterfaceLUID) == adapter || !address.IsValid() || address.IsLoopback() {
+			continue
+		}
+		prefix, err := address.Prefix(int(row.OnLinkPrefixLength))
+		if err != nil || slices.Contains(subnets, prefix) {
+			continue
+		}
+		subnets = append(subnets, prefix)
+		if len(subnets) == maximumAttachedSubnets {
+			break
+		}
+	}
+
+	return subnets, nil
 }

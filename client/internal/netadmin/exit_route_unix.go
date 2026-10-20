@@ -59,14 +59,9 @@ func (s *Server) setExitRoute(connection *net.UnixConn, requested ExitRouteReque
 }
 
 // exitRouteWanted reports whether the host's Internet goes into the mesh,
-// and IPv6 too. Root's choice of a pool holds the kill switch on its own,
-// whatever meshd asks, before the first map and across restarts: neither a
-// compromised meshd nor Core can lift it (exit node design §6.4). A host
-// that only follows managed pools follows meshd, which follows Core.
+// and IPv6 too (ExitRouteWanted).
 func (s *Server) exitRouteWanted(settings routesettings.Settings) (wanted, ipv6 bool) {
-	requested := s.requestedExitRoute != nil && s.requestedExitRoute.Use
-	wanted = settings.ExitUse != "" || (settings.ExitAllowManaged && requested)
-	return wanted, wanted && requested && s.requestedExitRoute.IPv6
+	return ExitRouteWanted(settings, s.requestedExitRoute)
 }
 
 // applyExitRoute routes the host as the settings and meshd's last request

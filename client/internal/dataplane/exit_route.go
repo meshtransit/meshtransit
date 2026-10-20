@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"meshtransit.net/client/internal/netadmin"
+	"meshtransit.net/client/internal/underlay"
 )
 
 // exitRouteSetter is the helper's operation that sends the host's Internet
@@ -65,6 +66,9 @@ func (e *WireGuardEngine) syncExitRouteLocked(routed *routedTable) {
 		return
 	}
 	e.exitRouteStatus = status
+	// Before the helper routes anything: the client's own sockets must
+	// already stay off the exit routes.
+	e.followExitLocked(desired.use || status.Routing)
 	e.exitRoute.setLocked(e, desired, helperExchange[exitRouteDesired, netadmin.ExitRouting]{
 		empty: func(desired exitRouteDesired) bool { return !desired.use },
 		equal: func(first, second exitRouteDesired) bool { return first == second },
@@ -94,6 +98,7 @@ func (e *WireGuardEngine) recordExitRouteLocked(desired exitRouteDesired, result
 	status.Routing, status.Refused = result.Routing, result.Refused
 	e.exitRouteStatus = status
 	e.filter.SetExitRouted(desired.use && result.Routing)
+	e.followExitLocked(desired.use || result.Routing)
 	if e.logger == nil || previous == status {
 		return
 	}
@@ -103,6 +108,17 @@ func (e *WireGuardEngine) recordExitRouteLocked(desired exitRouteDesired, result
 	}
 	e.logger.Info("exit route applied", "pool", status.Pool, "exit_node", status.Node, "routing", status.Routing,
 		"refused", status.Refused, "ipv6", status.IPv6)
+}
+
+// followExitLocked keeps the client's own sockets off the exit routes where
+// they follow the host's routes (underlay.FollowsRoutes): bound to the
+// physical path while the host routes, or is about to route, the Internet
+// into the mesh. Elsewhere meshnetd keeps meshd's sockets off them, or the
+// platform VPN excludes them.
+func (e *WireGuardEngine) followExitLocked(bound bool) {
+	if underlay.FollowsRoutes {
+		underlay.SetExitBound(underlay.ExitRequested, bound)
+	}
 }
 
 // resetExitRouteLocked forgets the exit route of a closed device. The

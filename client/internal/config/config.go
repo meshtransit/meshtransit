@@ -270,8 +270,8 @@ func validate(cfg Config) error {
 	if cfg.EnableExitNode && (!cfg.EnableDataPlane || runtime.GOOS != "linux") {
 		return errors.New("an exit node requires --enable-data-plane on Linux")
 	}
-	if cfg.EnableExits && (!cfg.EnableDataPlane || runtime.GOOS != "linux") {
-		return errors.New("using an exit node requires --enable-data-plane on Linux")
+	if cfg.EnableExits && (!cfg.EnableDataPlane || !exitsSupported(runtime.GOOS)) {
+		return errors.New("using an exit node requires --enable-data-plane on Linux or Windows")
 	}
 	switch cfg.ControlProtocol {
 	case "auto", "mtcp":
@@ -340,4 +340,10 @@ func validate(cfg Config) error {
 	}
 
 	return nil
+}
+
+// exitsSupported reports whether a host of goos can send its Internet
+// traffic through an exit node.
+func exitsSupported(goos string) bool {
+	return goos == "linux" || goos == "windows"
 }

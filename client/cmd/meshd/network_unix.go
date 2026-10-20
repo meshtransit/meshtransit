@@ -18,6 +18,10 @@ type tunOpener interface {
 	OpenTUN(context.Context, netadmin.TUNConfig) (netadmin.TUN, error)
 }
 
+// releaseNetwork does nothing: meshnetd holds the exit kill switch and
+// decides on its own when to lift it.
+func releaseNetwork(config.Config, *slog.Logger) {}
+
 // platformNetwork returns meshnetd's client, which opens the TUN and
 // configures DNS; meshd itself holds no network privileges.
 func platformNetwork(cfg config.Config) (tunOpener, *netadmin.Client, error) {

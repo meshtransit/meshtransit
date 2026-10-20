@@ -16,6 +16,7 @@
 package underlay
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -64,11 +65,12 @@ func Protect(fd uintptr) error {
 
 // Control is a net.Dialer and net.ListenConfig Control function: it
 // protects each new socket before it connects or binds, and binds one to an
-// address inside a subnet route to the physical path.
+// address inside a subnet route, or outside the mesh while the host routes
+// the Internet into it (SetExitBound), to the physical path.
 func Control(_, address string, raw syscall.RawConn) error {
-	if destination, err := netip.ParseAddrPort(address); err == nil && Routed(destination.Addr()) {
+	if destination, err := netip.ParseAddrPort(address); err == nil && physicalBound(destination.Addr()) {
 		if err := bindPhysical(raw, destination.Addr().Unmap()); err != nil {
-			return fmt.Errorf("underlay: keeping a socket to %s off a subnet route: %w", destination.Addr(), err)
+			return fmt.Errorf("underlay: keeping a socket to %s off the mesh routes: %w", destination.Addr(), err)
 		}
 	}
 	if !Active() {
@@ -86,6 +88,18 @@ func Control(_, address string, raw syscall.RawConn) error {
 // where the host's resolver may be cut off (resolver).
 func Dialer(timeout time.Duration) *net.Dialer {
 	return &net.Dialer{Timeout: timeout, Control: Control, Resolver: resolver()}
+}
+
+// DialContext dials as Dialer(timeout) with keepAlive (0 for the default)
+// does, building the dialer at each dial: a long-lived transport resolves
+// names with the resolver in use at that moment, not the one of when it was
+// made.
+func DialContext(timeout, keepAlive time.Duration) func(context.Context, string, string) (net.Conn, error) {
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		dialer := Dialer(timeout)
+		dialer.KeepAlive = keepAlive
+		return dialer.DialContext(ctx, network, address)
+	}
 }
 
 // ListenConfig returns a listen configuration whose sockets are protected.

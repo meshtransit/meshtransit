@@ -113,3 +113,13 @@ func physicalInterface(destination netip.Addr) (uint32, error) {
 	}
 	return best.InterfaceIndex, nil
 }
+
+// PhysicalIndex returns the interface of the host's route to destination
+// off the MeshTransit adapter, 0 for none.
+func PhysicalIndex(destination netip.Addr) uint32 {
+	index, err := physicalInterface(destination)
+	if err != nil {
+		return 0
+	}
+	return index
+}

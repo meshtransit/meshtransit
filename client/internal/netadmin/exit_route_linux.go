@@ -38,16 +38,6 @@ const (
 	maximumExitSubnets    = 64
 )
 
-// The private ranges a LAN may use (exit node design §6.2).
-var exitLANRanges = []netip.Prefix{
-	netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("172.16.0.0/12"),
-	netip.MustParsePrefix("192.168.0.0/16"), netip.MustParsePrefix("169.254.0.0/16"),
-	netip.MustParsePrefix("fc00::/7"),
-}
-
-// Link-local multicast (mDNS, SSDP) a LAN uses when allowed.
-var exitLANMulticast = []netip.Prefix{netip.MustParsePrefix("224.0.0.0/24"), netip.MustParsePrefix("ff02::/16")}
-
 type kernelExitRouteConfigurer struct {
 	options RoutedOptions
 	uid     uint32
@@ -146,7 +136,7 @@ func readExitHost(name string) (exitHost, error) {
 		subnet := exitSubnet{prefix: prefix, link: address.LinkIndex}
 		if bridgeIndex[address.LinkIndex] {
 			host.bridged = append(host.bridged, subnet)
-		} else if lanSubnet(prefix) {
+		} else if ExitLANSubnet(prefix) {
 			host.lan = append(host.lan, subnet)
 		}
 	}
@@ -155,21 +145,6 @@ func readExitHost(name string) (exitHost, error) {
 	host.bridged = uniqueSubnets(host.bridged)
 	host.lan = uniqueSubnets(host.lan)
 	return host, nil
-}
-
-// lanSubnet admits a private attached subnet, IPv4 /16 or longer or IPv6
-// /64: never a public one, which a rogue DHCP server could hand out to pull
-// traffic out of the mesh.
-func lanSubnet(prefix netip.Prefix) bool {
-	if !slices.ContainsFunc(exitLANRanges, func(private netip.Prefix) bool {
-		return private.Bits() <= prefix.Bits() && private.Contains(prefix.Addr())
-	}) {
-		return false
-	}
-	if prefix.Addr().Is4() {
-		return prefix.Bits() >= 16
-	}
-	return prefix.Bits() == 64
 }
 
 func boundedSorted(names []string, maximum int) []string {
@@ -219,7 +194,7 @@ func (configurer *kernelExitRouteConfigurer) Replace(name string, ipv6, allowLAN
 		for _, subnet := range lan {
 			ruleset.LAN = append(ruleset.LAN, subnet.prefix)
 		}
-		ruleset.LAN = append(ruleset.LAN, exitLANMulticast...)
+		ruleset.LAN = append(ruleset.LAN, ExitLANMulticast...)
 	}
 	if err := replaceExitKillSwitch(ruleset); err != nil {
 		return err

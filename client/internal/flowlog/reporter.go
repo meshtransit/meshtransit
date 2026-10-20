@@ -162,7 +162,7 @@ func New(cfg Config) (*Reporter, error) {
 		if standard, ok := http.DefaultTransport.(*http.Transport); ok {
 			transport = standard.Clone()
 		}
-		transport.DialContext = underlay.Dialer(0).DialContext
+		transport.DialContext = underlay.DialContext(0, 0)
 		cfg.HTTPClient = &http.Client{Transport: transport}
 	}
 	httpClient := *cfg.HTTPClient

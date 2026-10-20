@@ -57,7 +57,7 @@ foreach ($file in 'meshd.exe', 'meshctl.exe', 'wintun.dll', 'wintun-LICENSE.txt'
     if (Test-Path $path) { Copy-Item -Force $path $installDir }
 }
 
-$binary = '"' + (Join-Path $installDir 'meshd.exe') + '" --enable-data-plane --enable-dns --enable-device-aliases --enable-subnet-routes --wireguard-listen-port=41641'
+$binary = '"' + (Join-Path $installDir 'meshd.exe') + '" --enable-data-plane --enable-dns --enable-device-aliases --enable-subnet-routes --enable-exits --wireguard-listen-port=41641'
 if ($existing) {
     # Windows PowerShell does not escape the quotes inside $binary for native
     # commands, so sc.exe config would get a broken binPath; write the

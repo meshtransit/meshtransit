@@ -132,6 +132,7 @@ func runContext(parent context.Context, args []string, stdout, stderr io.Writer)
 
 		return 1
 	}
+	defer releaseNetwork(cfg, logger)
 	daemonOptions.EnableDeviceAliases = cfg.EnableDeviceAliases
 	daemonOptions.EnableSubnetRoutes = cfg.EnableSubnetRoutes
 	daemonOptions.EnableSubnetRouter = cfg.EnableSubnetRouter

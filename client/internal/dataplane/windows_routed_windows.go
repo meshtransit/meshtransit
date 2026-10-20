@@ -48,10 +48,10 @@ func (o *WindowsTUNOpener) SetRoutedRoutes(_ context.Context, requested []netip.
 	if len(accepted) > 0 {
 		accepted, refused = o.withoutLocalConflicts(accepted, refused)
 	}
-	failed, err := winnet.ReplaceRoutesReporting(o.luid, routeUnion(o.overlay, accepted))
+	failed, err := winnet.ReplaceRoutesReporting(o.luid, o.adapterRoutesLocked(accepted))
 	if err != nil {
 		// What is installed is unknown: take every subnet route off.
-		_, clearErr := winnet.ReplaceRoutesReporting(o.luid, o.overlay)
+		_, clearErr := winnet.ReplaceRoutesReporting(o.luid, o.adapterRoutesLocked(nil))
 		o.routed = nil
 
 		return netadmin.RoutedResult{}, fmt.Errorf("dataplane: replacing subnet routes: %w", errors.Join(err, clearErr))

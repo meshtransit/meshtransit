@@ -36,14 +36,22 @@ type WindowsTUNOpener struct {
 	addresses []netip.Prefix
 	overlay   []netip.Prefix
 	routed    []netip.Prefix
+	// exitRequest is meshd's last exit route request, exitRouted whether
+	// the exit routes are on the adapter, exitRouting the last result
+	// (SetExitRoute).
+	exitRequest *netadmin.ExitRouteRequest
+	exitRouted  bool
+	exitRouting netadmin.ExitRouting
 }
 
 // NewWindowsTUNOpener returns an opener for the service's adapter that
 // installs the subnet routes routeSettings admits.
 func NewWindowsTUNOpener(routeSettings string) *WindowsTUNOpener {
 	setTunnelType.Do(func() { tun.WintunTunnelType = winadapter.Name })
+	opener := &WindowsTUNOpener{routeSettings: routeSettings}
+	opener.startExit()
 
-	return &WindowsTUNOpener{routeSettings: routeSettings}
+	return opener
 }
 
 // OpenTUN creates the adapter and gives it exactly the map's addresses and
@@ -77,9 +85,13 @@ func (o *WindowsTUNOpener) OpenTUN(_ context.Context, config netadmin.TUNConfig)
 		return netadmin.TUN{}, err
 	}
 	o.mu.Lock()
-	// A new adapter carries no subnet routes: the old one's left with it.
-	o.luid, o.overlay, o.routed = luid, slices.Clone(config.Routes), nil
+	// A new adapter carries no subnet or exit routes: the old one's left
+	// with it. A kill switch in place follows the new adapter at once.
+	o.luid, o.overlay, o.routed, o.exitRouted = luid, slices.Clone(config.Routes), nil, false
 	o.addresses = slices.Clone(config.Addresses)
+	if o.exitRequest == nil || o.exitRequest.Use || o.exitRouting.Routing {
+		_, _ = o.applyExitLocked()
+	}
 	o.mu.Unlock()
 
 	return netadmin.TUN{
@@ -101,8 +113,8 @@ func (o *WindowsTUNOpener) ConfigureTUNRoutes(_ context.Context, config netadmin
 	if o.luid == 0 {
 		return errors.New("dataplane: the Wintun adapter is not open")
 	}
-	failed, err := winnet.ReplaceRoutesReporting(o.luid, routeUnion(config.Routes, o.routed))
 	o.overlay = slices.Clone(config.Routes)
+	failed, err := winnet.ReplaceRoutesReporting(o.luid, o.adapterRoutesLocked(o.routed))
 	for _, route := range failed {
 		if slices.Contains(config.Routes, route) {
 			err = errors.Join(err, fmt.Errorf("dataplane: adding route %s failed", route))

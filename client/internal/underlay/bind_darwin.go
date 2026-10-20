@@ -5,6 +5,7 @@ package underlay
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/netip"
 	"syscall"
 
@@ -51,4 +52,14 @@ func physicalIndex(destination netip.Addr) (int, error) {
 		return 0, errors.New("no physical route")
 	}
 	return path.Index, nil
+}
+
+// PhysicalIndex returns the interface of the host's route to destination
+// off the mesh, 0 for none.
+func PhysicalIndex(destination netip.Addr) uint32 {
+	index, err := physicalInterfaces.lookup(destination, physicalIndex)
+	if err != nil || index <= 0 || index > math.MaxUint32 {
+		return 0
+	}
+	return uint32(index)
 }

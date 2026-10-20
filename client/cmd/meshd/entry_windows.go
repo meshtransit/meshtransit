@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -14,6 +15,8 @@ import (
 
 	"meshtransit.net/client/internal/privatefile"
 	"meshtransit.net/client/internal/routesettings/routescli"
+	"meshtransit.net/client/internal/windns"
+	"meshtransit.net/client/internal/winfw"
 )
 
 const (
@@ -33,6 +36,9 @@ func entry(args []string) int {
 		command := routescli.Command{Program: "meshd", Privilege: "administrator rights", Privileged: elevated}
 		return command.Run(args[1:], os.Stdout, os.Stderr)
 	}
+	if len(args) > 0 && args[0] == "release-exit" {
+		return releaseExit(args[1:], os.Stdout, os.Stderr)
+	}
 	isService, err := svc.IsWindowsService()
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "meshd: detecting the service manager: %v\n", err)
@@ -48,6 +54,32 @@ func entry(args []string) int {
 	}
 
 	return int(handler.exitCode)
+}
+
+// releaseExit lifts the exit kill switch and the DNS rule any run left: the
+// way out for an administrator whose host the kill switch keeps closed
+// (exit node design §6.4). It does not change the settings: a running
+// service applies them again within seconds, so stop the service or turn
+// exit-use off first.
+func releaseExit(args []string, stdout, stderr io.Writer) int {
+	if len(args) != 0 {
+		_, _ = fmt.Fprintln(stderr, "usage: meshd release-exit")
+
+		return 2
+	}
+	if !elevated() {
+		_, _ = fmt.Fprintln(stderr, "meshd: release-exit needs administrator rights")
+
+		return 1
+	}
+	if err := errors.Join(winfw.Disable(), windns.RemoveRule()); err != nil {
+		_, _ = fmt.Fprintf(stderr, "meshd: releasing the exit route: %v\n", err)
+
+		return 1
+	}
+	_, _ = fmt.Fprintln(stdout, "The exit kill switch and DNS rule are removed.")
+
+	return 0
 }
 
 // elevated reports whether meshd runs with an administrator's full token.

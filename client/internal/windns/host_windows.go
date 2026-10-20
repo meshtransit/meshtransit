@@ -123,6 +123,10 @@ func installRule(rule Rule) error {
 	return reloadPolicy(groupPolicy)
 }
 
+// RemoveRule removes the MeshTransit rule any run left, as an administrator
+// releasing the exit route does.
+func RemoveRule() error { return removeRules() }
+
 // removeRules removes the rule from both keys.
 func removeRules() error {
 	if err := errors.Join(deleteRule(localPolicyKey), deleteRule(groupPolicyKey)); err != nil {

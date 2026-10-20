@@ -34,10 +34,15 @@ type Rule struct {
 	Server netip.Addr
 }
 
+// rootNamespace is NRPT's namespace of every name.
+const rootNamespace = "."
+
 // RuleFromPlan turns an enabled DNS plan into the NRPT rule that sends its
-// route and search domains to server.
+// route and search domains to server, and every name while the host uses
+// an exit node (exit node design §7.1): removing the rule gives the host
+// its own resolvers back.
 func RuleFromPlan(plan dnsconfig.Plan, server netip.Addr) (Rule, error) {
-	if len(plan.DefaultResolvers) != 0 {
+	if len(plan.DefaultResolvers) != 0 && plan.Exit == nil {
 		return Rule{}, ErrAllNames
 	}
 	if !server.Is4() {
@@ -54,6 +59,9 @@ func RuleFromPlan(plan dnsconfig.Plan, server netip.Addr) (Rule, error) {
 			return Rule{}, fmt.Errorf("windns: domain %q is not a canonical DNS name", domain)
 		}
 		namespaces = append(namespaces, "."+domain)
+	}
+	if plan.Exit != nil {
+		namespaces = append(namespaces, rootNamespace)
 	}
 	slices.Sort(namespaces)
 	namespaces = slices.Compact(namespaces)

@@ -63,9 +63,7 @@ func New() *Client {
 	transport.DisableCompression = true
 	transport.Proxy = nil
 	transport.MaxResponseHeaderBytes = maxKeyDocument
-	dialer := underlay.Dialer(dialTimeout)
-	dialer.KeepAlive = dialKeepAlive
-	transport.DialContext = dialer.DialContext
+	transport.DialContext = underlay.DialContext(dialTimeout, dialKeepAlive)
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
 	transport.TLSClientConfig = tlsConfig.Clone()
 	return &Client{
