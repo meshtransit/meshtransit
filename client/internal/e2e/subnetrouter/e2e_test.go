@@ -82,6 +82,13 @@ func newLab(t *testing.T) *lab {
 	for name := range codes {
 		l.ip("netns", "add", l.ns(name))
 		l.ip("-n", l.ns(name), "link", "set", "lo", "up")
+		// The kernel checks a packet's reverse path as uid 0. Here meshd
+		// runs as root, so its own policy rule (not uidrange 0-0) also
+		// keeps those checks out of the routed table, and a host that sets
+		// rp_filter (GitHub's runners do) drops every reply from the Site. A
+		// real meshd runs as its own user and is not affected.
+		l.ip("netns", "exec", l.ns(name), "sh", "-c",
+			"echo 0 > /proc/sys/net/ipv4/conf/all/rp_filter && echo 0 > /proc/sys/net/ipv4/conf/default/rp_filter")
 	}
 	hub := l.ns("hub")
 	for _, bridge := range []string{"bu", "bl"} {
