@@ -36,6 +36,8 @@ func (o *WindowsTUNOpener) SetRoutedRoutes(_ context.Context, requested []netip.
 		settings = routesettings.Settings{}
 	}
 	accepted, refused := routesettings.Admit(settings, requested)
+	accepted, reserved := routesettings.WithoutMesh(accepted, append(slices.Clone(o.addresses), o.overlay...))
+	refused = append(refused, reserved...)
 	if len(accepted) > 0 {
 		accepted, refused = o.withoutLocalConflicts(accepted, refused)
 	}

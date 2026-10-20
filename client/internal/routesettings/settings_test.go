@@ -80,13 +80,13 @@ func TestLoadAndSave(t *testing.T) {
 func TestAdmit(t *testing.T) {
 	t.Parallel()
 	granted := prefixes("10.20.0.0/16", "8.8.8.0/24", "10.20.0.0/16", "0.0.0.0/0", "100.64.1.0/24",
-		"fd12::/48", "fc12::/48", "169.254.0.0/16", "10.0.0.1/8", "2001:db8::/48")
+		"fd12::/48", "fc12::/48", "fd00::/48", "169.254.0.0/16", "10.0.0.1/8", "2001:db8::/48")
 	accepted, refused := Admit(Settings{}, granted)
 	if len(accepted) != 0 || len(refused) != len(granted) {
 		t.Fatalf("routes off: accepted %v, refused %d", accepted, len(refused))
 	}
 	accepted, refused = Admit(Settings{AcceptRoutes: true}, granted)
-	if !slices.Equal(accepted, prefixes("10.20.0.0/16", "fc12::/48")) {
+	if !slices.Equal(accepted, prefixes("10.20.0.0/16", "fc12::/48", "fd12::/48")) {
 		t.Fatalf("private routes = %v", accepted)
 	}
 	reasons := map[string]string{}
@@ -95,14 +95,14 @@ func TestAdmit(t *testing.T) {
 	}
 	for prefix, reason := range map[string]string{
 		"8.8.8.0/24": ReasonPublic, "0.0.0.0/0": ReasonTooWide, "100.64.1.0/24": ReasonReserved,
-		"fd12::/48": ReasonReserved, "169.254.0.0/16": ReasonReserved, "10.0.0.1/8": ReasonMalformed,
+		"fd00::/48": ReasonReserved, "169.254.0.0/16": ReasonReserved, "10.0.0.1/8": ReasonMalformed,
 		"2001:db8::/48": ReasonPublic,
 	} {
 		if reasons[prefix] != reason {
 			t.Errorf("%s refused for %q, want %q", prefix, reasons[prefix], reason)
 		}
 	}
-	if accepted, _ := Admit(Settings{AcceptRoutes: true, AcceptPublicRoutes: true}, granted); len(accepted) != 4 {
+	if accepted, _ := Admit(Settings{AcceptRoutes: true, AcceptPublicRoutes: true}, granted); len(accepted) != 5 {
 		t.Fatalf("with public routes = %v", accepted)
 	}
 	many := make([]netip.Prefix, 0, MaximumRoutes+1)

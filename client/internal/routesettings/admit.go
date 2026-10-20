@@ -3,8 +3,6 @@ package routesettings
 import (
 	"net/netip"
 	"slices"
-
-	"meshtransit.net/client/internal/overlayframe"
 )
 
 // MaximumRoutes bounds the routed prefixes a node installs; beyond it the
@@ -36,8 +34,47 @@ type Refusal struct {
 	Reason string
 }
 
+// meshReserved are the overlay frame's IPv4 ranges and fd00::/48, which
+// holds the mesh's self-test address. The rest of the IPv6 frame (fd00::/8)
+// is unique local space a Site may use: MeshOverlaps keeps routes off the
+// /48s the mesh uses on this node.
+var meshReserved = [...]netip.Prefix{
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("fd00::/48"),
+}
+
+// meshBlockBits is the size of the unique local blocks the mesh hands out
+// (a Workspace's overlay, a deployment's alias pool): a route may not touch
+// the block of any mesh address or overlay route.
+const meshBlockBits = 48
+
+// WithoutMesh refuses each route that overlaps the unique local block (/48)
+// of a mesh address or overlay route the node holds, or the IPv4 overlay
+// route itself: a Site must never take over the mesh's own addresses.
+func WithoutMesh(routes, mesh []netip.Prefix) ([]netip.Prefix, []Refusal) {
+	blocks := make([]netip.Prefix, 0, len(mesh))
+	for _, prefix := range mesh {
+		if prefix.Addr().Is6() && prefix.Bits() > meshBlockBits {
+			prefix = netip.PrefixFrom(prefix.Addr(), meshBlockBits).Masked()
+		}
+		blocks = append(blocks, prefix.Masked())
+	}
+	kept := make([]netip.Prefix, 0, len(routes))
+	var refused []Refusal
+	for _, route := range routes {
+		if slices.ContainsFunc(blocks, route.Overlaps) {
+			refused = append(refused, Refusal{Prefix: route, Reason: ReasonReserved})
+			continue
+		}
+		kept = append(kept, route)
+	}
+	return kept, refused
+}
+
 // never lists ranges a route may never touch: loopback, link-local,
-// multicast and unspecified addresses (the overlay frame is checked apart).
+// multicast and unspecified addresses (the mesh's own ranges are checked
+// apart).
 var never = [...]netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),
 	netip.MustParsePrefix("127.0.0.0/8"),
@@ -60,7 +97,8 @@ var private = [...]netip.Prefix{
 
 // Usable reports why a prefix can never be a subnet route, or "" when it
 // can: not canonical (host bits, IPv4-mapped, a zone), a default route or
-// shorter than IPv4 /8 or IPv6 /32, or overlapping the overlay frame,
+// shorter than IPv4 /8 or IPv6 /32, or overlapping the IPv4 overlay frame or
+// fd00::/48,
 // loopback, link-local, multicast or unspecified addresses.
 func Usable(prefix netip.Prefix) string {
 	if !prefix.IsValid() || prefix != prefix.Masked() || prefix.Addr().Is4In6() || prefix.Addr().Zone() != "" {
@@ -73,8 +111,8 @@ func Usable(prefix netip.Prefix) string {
 	if prefix.Bits() < minimum {
 		return ReasonTooWide
 	}
-	for _, frame := range overlayframe.Prefixes() {
-		if prefix.Overlaps(frame) {
+	for _, reserved := range meshReserved {
+		if prefix.Overlaps(reserved) {
 			return ReasonReserved
 		}
 	}

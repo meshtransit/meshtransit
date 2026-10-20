@@ -280,6 +280,34 @@ WHERE device_id = (SELECT id FROM mesh.device WHERE public_id = $1::UUID)`, rout
 	if err := fixtureRouteOffer(ctx, admin, `DELETE FROM mesh.device_route_advertisement`); err != nil {
 		t.Fatal(err)
 	}
+	assertUniqueLocalSites(ctx, t, admin, service, owner, scope)
+}
+
+// assertUniqueLocalSites: a Site may use unique local space (schema 196),
+// but never a prefix that overlaps the Workspace's IPv6 overlay pool.
+func assertUniqueLocalSites(ctx context.Context, t *testing.T, admin *pgx.Conn, service *site.Service,
+	owner accountsession.Session, scope network.Scope) {
+	t.Helper()
+	var overlay netip.Prefix
+	if err := admin.QueryRow(ctx, `SELECT pool.prefix::TEXT FROM mesh.address_pool AS pool
+JOIN mesh.workspace AS workspace ON workspace.id = pool.workspace_id
+WHERE workspace.public_id = $1 AND pool.purpose = 'node_overlay' AND pool.family = 6
+  AND pool.deleted_at IS NULL LIMIT 1`, scope.WorkspaceID().String()).Scan(&overlay); err != nil {
+		t.Fatalf("reading the Workspace's IPv6 overlay pool: %v", err)
+	}
+	inside := netip.PrefixFrom(overlay.Addr(), max(overlay.Bits(), 64)).Masked()
+	if _, err := service.Create(ctx, owner, scope, site.Definition{Name: "Overlay clash",
+		Prefixes: []netip.Prefix{inside}}, newCorrelationID(t)); !errors.Is(err, site.ErrInvalidPrefix) {
+		t.Fatalf("a Site inside the overlay pool %s: %v", inside, err)
+	}
+	ula, err := service.Create(ctx, owner, scope, site.Definition{Name: "ULA lab",
+		Prefixes: []netip.Prefix{netip.MustParsePrefix("fd12:3456:789a::/48")}}, newCorrelationID(t))
+	if err != nil {
+		t.Fatalf("a unique local Site: %v", err)
+	}
+	if deleted, err := service.Delete(ctx, owner, scope, ula.Site.ID, 1, newCorrelationID(t)); err != nil || !deleted.Deleted {
+		t.Fatalf("delete the unique local Site = %+v, error = %v", deleted, err)
+	}
 }
 
 // fixtureRouteOffer runs one statement on route offers without the

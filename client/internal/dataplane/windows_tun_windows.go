@@ -31,10 +31,11 @@ type WindowsTUNOpener struct {
 	routeSettings string
 	// mu serializes every change of the adapter's routes: overlay are the
 	// per-peer routes, routed the subnet routes installed (SetRoutedRoutes).
-	mu      sync.Mutex
-	luid    uint64
-	overlay []netip.Prefix
-	routed  []netip.Prefix
+	mu        sync.Mutex
+	luid      uint64
+	addresses []netip.Prefix
+	overlay   []netip.Prefix
+	routed    []netip.Prefix
 }
 
 // NewWindowsTUNOpener returns an opener for the service's adapter that
@@ -78,6 +79,7 @@ func (o *WindowsTUNOpener) OpenTUN(_ context.Context, config netadmin.TUNConfig)
 	o.mu.Lock()
 	// A new adapter carries no subnet routes: the old one's left with it.
 	o.luid, o.overlay, o.routed = luid, slices.Clone(config.Routes), nil
+	o.addresses = slices.Clone(config.Addresses)
 	o.mu.Unlock()
 
 	return netadmin.TUN{

@@ -13,8 +13,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 195 {
-		t.Fatalf("len(Catalog()) = %d, want 195", len(catalog))
+	if len(catalog) != 196 {
+		t.Fatalf("len(Catalog()) = %d, want 196", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1609,8 +1609,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 195 {
-		t.Fatalf("LatestVersion() = %d, want 195", LatestVersion())
+	if LatestVersion() != 196 {
+		t.Fatalf("LatestVersion() = %d, want 196", LatestVersion())
 	}
 }
 
@@ -5656,5 +5656,27 @@ func TestMigration195NamesMapSites(t *testing.T) {
 		if !strings.Contains(migration.SQL, want) {
 			t.Errorf("schema 195 lacks %q", want)
 		}
+	}
+}
+
+func TestMigration196AllowsUniqueLocalSites(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[195]
+	if migration.Version != 196 {
+		t.Fatalf("migration 196 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE OR REPLACE FUNCTION mesh_ops.site_prefixes_valid_internal_v1(p_prefixes CIDR[])",
+		"CREATE OR REPLACE FUNCTION mesh_ops.advertised_prefixes_valid_internal_v1(p_prefixes CIDR[])",
+		"OR prefix && 'fd00::/48'::CIDR)",
+		"ERRCODE = 'MTS09'",
+		"BEFORE INSERT OR UPDATE OF prefixes ON mesh.network_site",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 196 lacks %q", want)
+		}
+	}
+	if strings.Contains(migration.SQL, "'fd00::/8'") {
+		t.Error("schema 196 still refuses all of fd00::/8")
 	}
 }

@@ -5,6 +5,11 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Sites may use IPv6 unique local prefixes (schema 196). Core refuses only
+  `fd00::/48` and, with `site_prefix_invalid`, a prefix that overlaps the
+  Workspace's overlay pool or the deployment's Device alias pools; clients
+  refuse a route that overlaps the /48 of a mesh address or overlay route
+  they hold, instead of all of `fd00::/8`.
 - MTCP: `SiteRoute.name` (field 7) carries the Site's display name (schema
   195, `mesh_ops.load_map_network_sites_v3`). Clients show it in
   `meshctl status`, the local API (`name`) and the mobile status, and ignore

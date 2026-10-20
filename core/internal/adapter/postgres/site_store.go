@@ -91,6 +91,8 @@ func siteDatabaseError(err error) error {
 			return site.ErrInUse
 		case "MTS08":
 			return site.ErrPrefixesInUse
+		case "MTS09":
+			return site.ErrInvalidPrefix
 		case "22023", "22P02", "23514":
 			return site.ErrInvalid
 		}

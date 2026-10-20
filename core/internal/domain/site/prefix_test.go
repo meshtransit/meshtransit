@@ -11,6 +11,7 @@ func TestValidatePrefixAcceptsSitePrefixes(t *testing.T) {
 	for _, text := range []string{
 		"10.0.0.0/8", "10.20.0.0/16", "172.16.5.0/24", "192.168.1.10/32",
 		"203.0.113.0/24", "2001:db8:10::/48", "2001:db8::1/128", "fc00:1::/32",
+		"fd12:3456:789a::/48", "fd07:d4de:9d87:ff::/64", // unique local; the database checks the mesh pools
 	} {
 		if err := ValidatePrefix(netip.MustParsePrefix(text), nil); err != nil {
 			t.Errorf("ValidatePrefix(%s) = %v", text, err)
@@ -25,7 +26,7 @@ func TestValidatePrefixRejectsUnsafePrefixes(t *testing.T) {
 		"0.0.0.0/0", "::/0", "10.0.0.0/7", "2001:db8::/31",
 		"10.0.0.1/8",                                                   // host bits
 		"100.64.0.0/16", "100.0.0.0/8", "198.18.0.0/24", "198.0.0.0/8", // overlay and alias frame
-		"fd00:1::/48", "fd07:d4de:9d87::/48", // overlay ULA until S1 narrows the frame
+		"fd00::/48", "fd00::/40", "fd00::1/128", // the mesh's self-test address
 		"127.0.0.0/8", "169.254.1.0/24", "224.0.0.0/4", "240.0.0.0/8", "0.1.0.0/16",
 		"::1/128", "fe80::/64", "ff02::/16", "::ffff:10.0.0.0/104",
 		"18.142.0.0/16",     // covers a denied address (relay)

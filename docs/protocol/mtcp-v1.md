@@ -585,12 +585,14 @@ Whatever Core sends, a node never installs a route prefix that:
 
 - is shorter than IPv4 /8 or IPv6 /32 (this excludes a default route split
   into halves);
-- overlaps the overlay frame (`100.64.0.0/10`, `198.18.0.0/15`, `fd00::/8`),
-  loopback, link-local, multicast or unspecified addresses;
+- overlaps the IPv4 overlay frame (`100.64.0.0/10`, `198.18.0.0/15`),
+  `fd00::/48` (which holds the self-test address), the /48 of any mesh
+  address or overlay route the node holds, loopback, link-local, multicast
+  or unspecified addresses. The rest of `fd00::/8` is unique local space a
+  Site may use;
 - is a public range, unless the user also enabled public routes. Only
   `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` and `fc00::/7` are private;
-  every other range, reserved ones included, counts as public. With the
-  overlay frame above, private IPv6 Sites lie in `fc00::/8`;
+  every other range, reserved ones included, counts as public;
 - overlaps a network the node is directly attached to, or a more specific
   route the node already has.
 

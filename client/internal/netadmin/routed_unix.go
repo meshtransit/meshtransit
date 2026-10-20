@@ -103,6 +103,11 @@ func (s *Server) applyRouted(requested []netip.Prefix) ([]netip.Prefix, []routes
 		settings = routesettings.Settings{}
 	}
 	accepted, refused := routesettings.Admit(settings, requested)
+	// Never a route into the mesh's own unique local blocks: meshd does not
+	// decide that either.
+	accepted, reserved := routesettings.WithoutMesh(accepted,
+		append(slices.Clone(s.activeTUN.Addresses), s.activeTUN.Routes...))
+	refused = append(refused, reserved...)
 	desired := routedState{Routes: accepted}
 	if len(accepted) > 0 {
 		local, err := s.hostRouting.LocalRoutes(s.activeName)

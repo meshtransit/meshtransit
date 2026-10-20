@@ -168,7 +168,8 @@ Packet payloads are never collected.
   `198.18.0.0/15`, `fd00::/8`). Subnet routes go only in the helper's own
   table and only as far as root's settings in
   `/etc/meshtransit/routes.json` admit: never a default or very wide route,
-  the frame, loopback, link-local or multicast, a public range without
+  the IPv4 frame, `fd00::/48` or the /48 of a mesh address or overlay route
+  of the tunnel, loopback, link-local or multicast, a public range without
   `accept-public`, more than 4,096 routes, or a network the host reaches
   itself. A compromised `meshd` cannot widen any of these. As a router it
   forwards only into the part of what is requested that root's settings

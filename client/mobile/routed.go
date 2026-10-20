@@ -33,6 +33,11 @@ func (opener *platformTUN) SetRoutedRoutes(ctx context.Context, requested []neti
 		settings = routesettings.Settings{}
 	}
 	accepted, refused := routesettings.Admit(settings, requested)
+	opener.mu.Lock()
+	mesh := append(slices.Clone(opener.addresses), opener.routes...)
+	opener.mu.Unlock()
+	accepted, reserved := routesettings.WithoutMesh(accepted, mesh)
+	refused = append(refused, reserved...)
 	if len(accepted) > 0 {
 		var conflicts []routesettings.Refusal
 		accepted, conflicts = netadmin.WithoutLocalConflicts(accepted, opener.attachedNetworks())

@@ -11,13 +11,15 @@ const (
 )
 
 // unusable lists ranges a Site prefix may never touch: the client overlay
-// frame (100.64.0.0/10, 198.18.0.0/15 and fd00::/8, which also keeps IPv6
-// unique local Sites out until clients narrow the frame to their Workspace)
-// and addresses that are never routed to a LAN.
+// frame's IPv4 ranges (100.64.0.0/10, 198.18.0.0/15), fd00::/48 where the
+// mesh's own self-test address lives, and addresses that are never routed to
+// a LAN. Other unique local prefixes are a Site's to use; the database
+// refuses one that overlaps the Workspace's or the deployment's address
+// pools (schema 196).
 var unusable = [...]netip.Prefix{
 	netip.MustParsePrefix("100.64.0.0/10"),
 	netip.MustParsePrefix("198.18.0.0/15"),
-	netip.MustParsePrefix("fd00::/8"),
+	netip.MustParsePrefix("fd00::/48"),
 	netip.MustParsePrefix("0.0.0.0/8"),
 	netip.MustParsePrefix("127.0.0.0/8"),
 	netip.MustParsePrefix("169.254.0.0/16"),
