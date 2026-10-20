@@ -48,11 +48,27 @@ Service identities:
   into `meshd`'s private credential mount; `meshnetd` cannot read it.
 
 `meshd` starts with `--allow-socket-peers --enable-data-plane
---wireguard-listen-port=41641 --enable-dns --enable-device-aliases`, plus
+--wireguard-listen-port=41641 --enable-dns --enable-device-aliases
+--enable-subnet-routes`, plus
 `MESHD_FLAGS` from `/etc/meshd/meshd.env` (for example `--log-level=debug`,
 `--port-mapping=off`, `--cloud-metadata=off`). Both long-running units are
 `Type=notify`: `systemctl start` returns once each has bound its socket, and
 fails if it cannot.
+
+## Subnet routes
+
+A Linux machine reaches the Sites its rules grant once root accepts subnet
+routes; nothing is installed until then:
+
+```bash
+sudo /usr/libexec/meshtransit/meshnetd routes accept on
+```
+
+The setting lives in `/etc/meshtransit/routes.json` and applies within
+seconds; `routes accept off` removes the routes. To forward into a subnet as
+a router, add `--enable-subnet-router` to `MESHD_FLAGS` and, as root, run
+`meshnetd routes router-mode on` and `meshnetd routes advertise PREFIX`. How
+the routes are kept safe is in [Client](../architecture/client.md).
 
 ## Install, upgrade, roll back
 

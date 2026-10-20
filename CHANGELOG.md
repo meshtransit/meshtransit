@@ -5,6 +5,9 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Packaging: the Linux `meshd` unit starts with `--enable-subnet-routes`, as
+  macOS and Windows do; routes stay off until root runs
+  `meshnetd routes accept on`.
 - Client: a network change asks again at once for the subnet routes the map
   wants, instead of at the next 10-second refresh. The mobile library gains
   `Engine.SetHostServers` (DNS servers and gateways of the physical

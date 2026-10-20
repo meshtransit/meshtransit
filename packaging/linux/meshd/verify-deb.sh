@@ -111,6 +111,8 @@ grep -Fq -- '--enable-dns' \
     "${work_dir}/root/usr/lib/systemd/system/meshnetd.service"
 grep -Fq -- '--routed-table=5267' \
     "${work_dir}/root/usr/lib/systemd/system/meshnetd.service"
+grep -Fq -- '--enable-subnet-routes' \
+    "${work_dir}/root/usr/lib/systemd/system/meshd.service"
 for forbidden_flag in \
     --enable-tun-poc \
     --enable-wireguard-poc \
