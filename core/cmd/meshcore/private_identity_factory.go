@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/netip"
 	"time"
 
 	"meshtransit.net/core/internal/adapter/httpapi"
@@ -76,6 +77,9 @@ type privateIdentityFactoryDependencies struct {
 	// SubnetRoutes lets Access Rules name Sites
 	// (MESHTRANSIT_SUBNET_ROUTES_ENABLED).
 	SubnetRoutes bool
+	// SiteDenied are the addresses no Site may cover
+	// (MESHTRANSIT_SITE_DENIED_CIDRS).
+	SiteDenied []netip.Prefix
 }
 
 // This owner closes only its HTTP clients. Admission/drain and borrowed pool/
@@ -244,7 +248,7 @@ func composePrivateIdentityFactory(
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
-	sites, err := site.NewService(siteStore, clock, site.SystemIDs{}, site.Config{Limits: site.DefaultLimits()})
+	sites, err := site.NewService(siteStore, clock, site.SystemIDs{}, site.Config{Limits: site.DefaultLimits(), Denied: dependencies.SiteDenied})
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}

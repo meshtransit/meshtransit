@@ -66,3 +66,24 @@ func validDeniedEndpointPrefixes(prefixes []netip.Prefix) bool {
 	}
 	return true
 }
+
+// coversDialed reports whether prefix holds an address clients dial: a
+// relay's or one in the operator's denied ranges. A subnet route there would
+// carry a client's own Control or relay traffic into the mesh (mtcp-v1
+// §7.6); Core refuses such Sites, and checks again here because relays and
+// denied ranges change after a Site is saved.
+func (filter endpointFilter) coversDialed(prefix netip.Prefix) bool {
+	return slices.ContainsFunc(filter.relays, prefix.Contains) ||
+		slices.ContainsFunc(filter.denied, prefix.Overlaps)
+}
+
+// routable returns prefixes without those holding an address clients dial.
+func (filter endpointFilter) routable(prefixes []netip.Prefix) []netip.Prefix {
+	kept := make([]netip.Prefix, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		if !filter.coversDialed(prefix) {
+			kept = append(kept, prefix)
+		}
+	}
+	return kept
+}

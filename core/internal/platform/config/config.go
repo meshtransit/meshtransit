@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -58,6 +59,8 @@ type Config struct {
 	DNSSuffix dnsname.Suffix
 	// SubnetRoutes lets Access Rules name Sites and maps carry routes.
 	SubnetRoutes bool
+	// SiteDenied are the addresses no Site may cover (MESHTRANSIT_SITE_DENIED_CIDRS).
+	SiteDenied   []netip.Prefix
 	Dependencies DependencyConfig
 	Storage      *StorageConfig
 	API          *APIConfig
@@ -177,6 +180,10 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, err
 	}
 	subnetRoutes, err := loadSubnetRoutes(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+	siteDenied, err := loadSiteDenied(lookup)
 	if err != nil {
 		return Config{}, err
 	}
@@ -324,6 +331,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		LogLevel:                logLevel,
 		DNSSuffix:               dnsSuffix,
 		SubnetRoutes:            subnetRoutes,
+		SiteDenied:              siteDenied,
 		Dependencies:            dependencyConfig,
 		Storage:                 storageConfig,
 		API:                     apiConfig,

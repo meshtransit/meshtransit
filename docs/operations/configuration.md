@@ -322,6 +322,7 @@ For `control` and `all`.
 | `MESHTRANSIT_CONTROL_MAP_SHARED_CONNECTIVITY` | `true` | bool | One connectivity table per replica |
 | `MESHTRANSIT_DEVICE_ALIASES_ENABLED` | `false` | bool | Offer Device alias peers ([sharing](../concepts/sharing.md#turning-it-on)) |
 | `MESHTRANSIT_SUBNET_ROUTES_ENABLED` | `false` | bool | Accept Access Rules to Sites ([policy](../concepts/policy.md#rules-to-sites)). Set it the same on every role, only once every replica runs a Core that knows Site rules, and do not turn it off while the active policy holds them |
+| `MESHTRANSIT_SITE_DENIED_CIDRS` | empty | CIDR list, canonical, no `/0`, no IPv4-mapped, at most 16 | Addresses no Site may cover: those clients dial, such as Core's public endpoint, its load balancers and the relays. Creating or changing a Site that covers one is refused (`site_prefix_invalid`). Maps also leave out any Site prefix holding a relay address or one of `MESHTRANSIT_CONTROL_MTCP_DENIED_ENDPOINT_CIDRS`, so relays added later are covered too |
 
 ### Relays
 

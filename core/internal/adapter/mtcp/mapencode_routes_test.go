@@ -132,7 +132,42 @@ func TestRoutedDestinationsUseTheFamiliesOfICMP(t *testing.T) {
 	}); err == nil {
 		t.Fatal("TCP without ports was encoded")
 	}
-	if encodeRoutes(mapsession.RouteView{}) != nil || encodeServed(mapsession.RouteView{}) != nil {
+	if encodeRoutes(mapsession.RouteView{}, endpointFilter{}) != nil ||
+		encodeServed(mapsession.RouteView{}, endpointFilter{}) != nil {
 		t.Fatal("an empty view encoded routes")
+	}
+}
+
+// A Site prefix holding an address clients dial (the operator's denied
+// ranges, a relay) is left out of both maps: a route there would carry a
+// client's own Control or relay traffic into the mesh. A Site left with no
+// prefix is left out.
+func TestEncodeSnapshotLeavesOutPrefixesHoldingDialedAddresses(t *testing.T) {
+	t.Parallel()
+	snapshot := routeSnapshotFixture(t)
+	denied := []netip.Prefix{netip.MustParsePrefix("10.30.7.0/24"), netip.MustParsePrefix("10.20.0.10/32")}
+	message, err := encodeSnapshot(snapshot, &mtcpv1.View{Epoch: 1, Seq: 1}, false, denied, dnsname.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.GetRoutes() != nil || message.GetServed() != nil {
+		t.Fatalf("routes = %v, served = %v", message.GetRoutes(), message.GetServed())
+	}
+	filter := endpointFilter{relays: []netip.Addr{netip.MustParseAddr("10.30.1.1")}}
+	for _, test := range []struct {
+		prefix string
+		want   bool
+	}{
+		{"10.30.0.0/16", true},
+		{"10.30.2.0/24", false},
+		{"10.31.0.0/16", false},
+	} {
+		if got := filter.coversDialed(netip.MustParsePrefix(test.prefix)); got != test.want {
+			t.Errorf("coversDialed(%s) = %t", test.prefix, got)
+		}
+	}
+	kept := filter.routable([]netip.Prefix{netip.MustParsePrefix("10.30.0.0/16"), netip.MustParsePrefix("10.31.0.0/16")})
+	if !slices.Equal(kept, []netip.Prefix{netip.MustParsePrefix("10.31.0.0/16")}) {
+		t.Fatalf("routable() = %v", kept)
 	}
 }

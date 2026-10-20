@@ -317,7 +317,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			privateIdentityFactoryDependencies{Runtime: storagePools.runtime, Redis: redisClient, Logger: logger,
 				Mailer: mailer, Signup: processConfig.Signup, Interchange: processConfig.Interchange,
 				DNSSuffix: processConfig.DNSSuffix, EnrollmentKeys: enrollmentKeys,
-				SubnetRoutes: processConfig.SubnetRoutes},
+				SubnetRoutes: processConfig.SubnetRoutes, SiteDenied: processConfig.SiteDenied},
 			browserRuntime...,
 		)
 		if composeErr != nil {

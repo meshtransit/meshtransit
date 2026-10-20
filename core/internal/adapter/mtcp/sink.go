@@ -168,7 +168,8 @@ func (sink *mapSink) SendAuthorityDelta(ctx context.Context, delta mapsession.Au
 		message.Dns = dns
 	}
 	// So are routes; a present, empty message clears them (mtcp-v1 §7.6).
-	routes, served := encodeRoutes(snapshot.Routes()), encodeServed(snapshot.Routes())
+	filter := newEndpointFilter(snapshot.RelayDirectory(), sink.deniedEndpoints)
+	routes, served := encodeRoutes(snapshot.Routes(), filter), encodeServed(snapshot.Routes(), filter)
 	if !proto.Equal(routes, sink.routes) {
 		message.Routes = cmp.Or(routes, &mtcpv1.RouteConfig{})
 	}

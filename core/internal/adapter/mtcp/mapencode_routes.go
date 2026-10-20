@@ -10,16 +10,17 @@ import (
 	sharedmtcp "meshtransit.net/shared/mtcp"
 )
 
-// encodeRoutes encodes the Sites a node may reach (mtcp-v1 §7.6); nil when
-// there are none.
-func encodeRoutes(view mapsession.RouteView) *mtcpv1.RouteConfig {
+// encodeRoutes encodes the Sites a node may reach (mtcp-v1 §7.6), without
+// the prefixes holding an address clients dial; nil when there are none.
+func encodeRoutes(view mapsession.RouteView, filter endpointFilter) *mtcpv1.RouteConfig {
 	sites := view.Sites()
-	if len(sites) == 0 {
-		return nil
-	}
 	config := &mtcpv1.RouteConfig{Sites: make([]*mtcpv1.SiteRoute, 0, len(sites))}
 	for _, site := range sites {
-		route := &mtcpv1.SiteRoute{SiteRef: site.Ref, Prefixes: encodePrefixes(site.Prefixes),
+		prefixes := filter.routable(site.Prefixes)
+		if len(prefixes) == 0 {
+			continue
+		}
+		route := &mtcpv1.SiteRoute{SiteRef: site.Ref, Prefixes: encodePrefixes(prefixes),
 			Generation: uint64(site.Generation), Status: routeStatus(site.Status)} //nolint:gosec // positive
 		for _, candidate := range site.Candidates {
 			route.Candidates = append(route.Candidates, candidate.String())
@@ -29,19 +30,23 @@ func encodeRoutes(view mapsession.RouteView) *mtcpv1.RouteConfig {
 		}
 		config.Sites = append(config.Sites, route)
 	}
+	if len(config.Sites) == 0 {
+		return nil
+	}
 	return config
 }
 
-// encodeServed encodes the Sites a router forwards to; nil when there are
-// none.
-func encodeServed(view mapsession.RouteView) *mtcpv1.ServedRoutes {
+// encodeServed encodes the Sites a router forwards to, without the prefixes
+// its consumers are not sent; nil when there are none.
+func encodeServed(view mapsession.RouteView, filter endpointFilter) *mtcpv1.ServedRoutes {
 	sites := view.Served()
-	if len(sites) == 0 {
-		return nil
-	}
 	served := &mtcpv1.ServedRoutes{Sites: make([]*mtcpv1.ServedSite, 0, len(sites))}
 	for _, site := range sites {
-		encoded := &mtcpv1.ServedSite{SiteRef: site.Ref, Prefixes: encodePrefixes(site.Prefixes),
+		prefixes := filter.routable(site.Prefixes)
+		if len(prefixes) == 0 {
+			continue
+		}
+		encoded := &mtcpv1.ServedSite{SiteRef: site.Ref, Prefixes: encodePrefixes(prefixes),
 			Masquerade: site.Masquerade}
 		for _, probe := range site.Probes {
 			kind, port := mtcpv1.RouteProbe_ICMP, uint32(0)
@@ -52,6 +57,9 @@ func encodeServed(view mapsession.RouteView) *mtcpv1.ServedRoutes {
 				Kind: kind, Port: port})
 		}
 		served.Sites = append(served.Sites, encoded)
+	}
+	if len(served.Sites) == 0 {
+		return nil
 	}
 	return served
 }

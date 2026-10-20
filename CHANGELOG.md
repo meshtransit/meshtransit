@@ -5,6 +5,11 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: `MESHTRANSIT_SITE_DENIED_CIDRS` lists the addresses no Site may
+  cover (Core's endpoint, load balancers, relays); creating or changing such
+  a Site is refused with `site_prefix_invalid`. Maps leave out any Site
+  prefix that holds a relay address or a denied endpoint range, so a relay
+  added after a Site was saved is never routed into the mesh.
 - Packaging: the Linux `meshd` unit starts with `--enable-subnet-routes`, as
   macOS and Windows do; routes stay off until root runs
   `meshnetd routes accept on`.
