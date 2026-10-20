@@ -147,7 +147,15 @@ jobs:
         run: go mod download
 
       - name: Route through a subnet router in network namespaces
-        run: make e2e-subnet-router
+        run: |
+          set -o pipefail
+          make e2e-subnet-router 2>&1 | tee "$RUNNER_TEMP/e2e.log"
+
+      # Job logs need a signed-in reader; annotations do not.
+      - name: Report the end of the log as an annotation
+        if: failure()
+        run: |
+          tail -n 120 "$RUNNER_TEMP/e2e.log" | python3 -c 'import sys; text = sys.stdin.read().replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"); print("::error title=Subnet router end to end::" + text)'
 
       - name: Keep the throughput and latency measurement
         if: ${{ !cancelled() }}
