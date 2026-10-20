@@ -24,8 +24,11 @@ merge (2026-10-09) are kept below.
   name, `meshd release-exit`; the installer enables `--enable-exits`.
   macOS: `meshnetd --enable-exits` routes the halves into the utun behind a
   pf anchor (`com.apple/250.MeshTransitExit`, `user _meshd`, pf enabled by
-  reference), the DNS service becomes primary, `meshnetd --release-exit`;
-  not yet tried on a Mac. Android: the app's Exit node card; the VPN
+  reference), scoped defaults on the physical interfaces (`RTF_IFSCOPE`),
+  `meshnetd --release-exit`; meshd binds its sockets to the physical
+  interface and its address, redials relays when the exit route changes and
+  sends to peers through relays only while it holds. A pool's only exit
+  node is kept when its direct-path proof expires. Android: the app's Exit node card; the VPN
   carries `0/0` and `::/0` (less the allowed LAN) with the exit node's
   resolvers as its DNS servers (a sinkhole while none answers); the
   library's `SetExitNode`, `ExitNode`, `ExitAllowsLAN`, `ApproveExitNodes`

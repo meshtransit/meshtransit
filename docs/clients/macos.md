@@ -115,8 +115,18 @@ the exit node's DNS forwarder; `meshd` resolves its own names from the
 networks' resolvers (`scutil --dns`) through sockets bound to the physical
 interface, its WireGuard sockets included.
 
-`sudo meshnetd --release-exit` removes the routes and the kill switch; the
-uninstaller runs it. Not yet tried on a Mac: see the release notes.
+While the exit routes are in place `meshnetd` also copies each physical
+default route as a scoped route on its interface (`RTF_IFSCOPE`), so a
+socket bound to that interface still has a route: `meshd` binds its own
+sockets to the physical interface and to its address (macOS would give a
+connecting socket the utun's address otherwise), redials its relays when
+the exit route comes or goes, and reaches peers through relays only, as
+wireguard-go's socket cannot be given the right source address.
+
+`sudo meshnetd --release-exit` removes the routes, the scoped defaults and
+the kill switch; the uninstaller runs it. Tried on a Mac on 2026-10-21:
+traffic leaves by the exit node, pf blocks the rest, and turning
+`exit-use off` gives the Mac its network back at once.
 
 ## Check and troubleshoot
 
