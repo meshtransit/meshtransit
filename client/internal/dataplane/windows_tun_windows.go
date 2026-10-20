@@ -109,14 +109,11 @@ func (o *WindowsTUNOpener) ConfigureTUNRoutes(_ context.Context, config netadmin
 		}
 	}
 	// A subnet route that did not come back is no longer installed: forget
-	// it, so status and the next request see the truth at once.
-	if err == nil {
-		o.routed = slices.DeleteFunc(slices.Clone(o.routed), func(route netip.Prefix) bool {
-			return slices.Contains(failed, route)
-		})
-	} else {
-		o.routed = nil
-	}
+	// it, so status and the next request see the truth at once. The others
+	// stay listed, so the next change keeps them on the adapter.
+	o.routed = slices.DeleteFunc(slices.Clone(o.routed), func(route netip.Prefix) bool {
+		return slices.Contains(failed, route)
+	})
 
 	return err
 }

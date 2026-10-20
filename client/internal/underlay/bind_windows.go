@@ -29,6 +29,9 @@ const unicastInterface = 31
 func bindPhysical(raw syscall.RawConn, destination netip.Addr) error {
 	cached, err := physicalInterfaces.lookup(destination, func(address netip.Addr) (int, error) {
 		index, err := physicalInterface(address)
+		if err == nil && index == 0 {
+			err = errors.New("no physical route")
+		}
 		return int(index), err
 	})
 	if err != nil {
