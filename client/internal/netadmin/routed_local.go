@@ -1,5 +1,3 @@
-//go:build linux || darwin
-
 package netadmin
 
 import (
@@ -14,25 +12,16 @@ import (
 	"meshtransit.net/client/internal/routesettings"
 )
 
-// localRoute is one route of the host's own (main) table on another
-// interface than the mesh's.
-type localRoute struct {
+// LocalRoute is one route of the host's own (main) table on another
+// interface than the mesh's. Windows, which has no helper, checks routes
+// with it in meshd.
+type LocalRoute struct {
 	Prefix netip.Prefix
 	// Connected marks a network the host is directly attached to.
 	Connected bool
 }
 
-// hostRouting reads what the local route checks need from the host.
-type hostRouting interface {
-	// LocalRoutes returns the main table's routes other than default routes
-	// and those on the mesh interface.
-	LocalRoutes(meshInterface string) ([]localRoute, error)
-	// Resolvers returns the system DNS servers learned from the physical
-	// network.
-	Resolvers() []netip.Addr
-}
-
-// withoutLocalConflicts drops each route that overlaps a network the host
+// WithoutLocalConflicts drops each route that overlaps a network the host
 // is attached to, or that an equal or more specific route of the host
 // already covers in part: the mesh must never take over the host's own LAN or a
 // network another path reaches (mtcp-v1 §7.6). A wider local route, such as
@@ -40,7 +29,7 @@ type hostRouting interface {
 //
 // The check is indexed: each route costs one binary search over the sorted
 // local routes and one map lookup per attached prefix length.
-func withoutLocalConflicts(routes []netip.Prefix, local []localRoute) ([]netip.Prefix, []routesettings.Refusal) {
+func WithoutLocalConflicts(routes []netip.Prefix, local []LocalRoute) ([]netip.Prefix, []routesettings.Refusal) {
 	sorted := make([]netip.Prefix, 0, len(local))
 	connected := map[netip.Prefix]struct{}{}
 	connectedLengths := map[bool][]int{}
@@ -98,9 +87,9 @@ func insideConnected(connected map[netip.Prefix]struct{}, lengths []int, route n
 	return false
 }
 
-// pinnedResolvers returns the host routes that keep system resolvers inside
+// PinnedResolvers returns the host routes that keep system resolvers inside
 // installed routes on the physical network, sorted and listed once.
-func pinnedResolvers(routes []netip.Prefix, resolvers []netip.Addr) []netip.Prefix {
+func PinnedResolvers(routes []netip.Prefix, resolvers []netip.Addr) []netip.Prefix {
 	var pinned []netip.Prefix
 	for _, resolver := range resolvers {
 		resolver = resolver.Unmap().WithZone("")

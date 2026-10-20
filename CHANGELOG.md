@@ -5,6 +5,15 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Client: Windows reaches subnet routes. The service (now installed with
+  `--enable-subnet-routes`) installs on its adapter the granted prefixes
+  that `C:\ProgramData\MeshTransit\settings\routes.json` admits, which an
+  administrator changes with `meshd routes accept on` and which is ignored
+  unless only SYSTEM and Administrators may access it. Routes overlapping a
+  network the machine reaches, or holding another adapter's DNS server, are
+  refused. A socket to an address inside an installed route leaves through
+  the physical interface (`IP_UNICAST_IF`). The settings command moved to a
+  shared package; `meshnetd routes` behaves as before.
 - Client: macOS reaches subnet routes. `meshnetd --enable-subnet-routes`
   (now in the launch daemons) installs the granted prefixes the local
   settings admit (`sudo meshnetd routes accept on`) on the `utun` link,

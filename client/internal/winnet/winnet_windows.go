@@ -3,9 +3,11 @@
 package winnet
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -32,16 +34,29 @@ func Configure(luid uint64, mtu int, addresses, routes []netip.Prefix) error {
 }
 
 // ReplaceRoutes makes routes the adapter's only on-link routes that
-// MeshTransit manages. It leaves the routes Windows derives from the
-// adapter's addresses (protocol Local: the address's host route, its subnet,
-// broadcast and multicast) in place, because without the host route Windows
-// drops every packet sent to the adapter's own address as not locally
-// destined. winipcfg's SetRoutes flushes those too, so it is not used.
+// MeshTransit manages, and fails if any of them could not be added.
 func ReplaceRoutes(luid uint64, routes []netip.Prefix) error {
+	failed, err := ReplaceRoutesReporting(luid, routes)
+	for _, route := range failed {
+		err = errors.Join(err, fmt.Errorf("winnet: adding route %s failed", route))
+	}
+
+	return err
+}
+
+// ReplaceRoutesReporting makes routes the adapter's only on-link routes that
+// MeshTransit manages and returns those Windows refused to add; err reports a
+// failure to read or remove routes. It leaves the routes Windows derives from
+// the adapter's addresses (protocol Local: the address's host route, its
+// subnet, broadcast and multicast) in place, because without the host route
+// Windows drops every packet sent to the adapter's own address as not
+// locally destined. winipcfg's SetRoutes flushes those too, so it is not
+// used.
+func ReplaceRoutesReporting(luid uint64, routes []netip.Prefix) ([]netip.Prefix, error) {
 	missing := make(map[netip.Prefix]struct{}, len(routes))
 	for _, route := range routes {
 		if !route.IsValid() || route != route.Masked() {
-			return fmt.Errorf("winnet: route %s is not a canonical prefix", route)
+			return nil, fmt.Errorf("winnet: route %s is not a canonical prefix", route)
 		}
 		missing[route] = struct{}{}
 	}
@@ -50,7 +65,7 @@ func ReplaceRoutes(luid uint64, routes []netip.Prefix) error {
 	for _, family := range []winipcfg.AddressFamily{windows.AF_INET, windows.AF_INET6} {
 		rows, err := winipcfg.GetIPForwardTable2(family)
 		if err != nil {
-			return fmt.Errorf("winnet: reading routes: %w", err)
+			return nil, fmt.Errorf("winnet: reading routes: %w", err)
 		}
 		for i := range rows {
 			row := &rows[i]
@@ -67,17 +82,21 @@ func ReplaceRoutes(luid uint64, routes []netip.Prefix) error {
 			}
 		}
 	}
+	var failed []netip.Prefix
 	for route := range missing {
 		nextHop := netip.IPv4Unspecified()
 		if route.Addr().Is6() {
 			nextHop = netip.IPv6Unspecified()
 		}
 		if err := adapter.AddRoute(route, nextHop, 0); err != nil && !errors.Is(err, windows.ERROR_OBJECT_ALREADY_EXISTS) {
-			errs = append(errs, fmt.Errorf("winnet: adding route %s: %w", route, err))
+			failed = append(failed, route)
 		}
 	}
+	slices.SortFunc(failed, func(first, second netip.Prefix) int {
+		return cmp.Or(first.Addr().Compare(second.Addr()), cmp.Compare(first.Bits(), second.Bits()))
+	})
 
-	return errors.Join(errs...)
+	return failed, errors.Join(errs...)
 }
 
 // Index returns the adapter's interface index, which other Windows APIs and

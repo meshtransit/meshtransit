@@ -104,7 +104,7 @@ func (s *Server) routedStamp() string {
 	if err != nil {
 		_, _ = fmt.Fprintf(digest, "local unknown\n")
 	}
-	slices.SortFunc(local, func(first, second localRoute) int { return compareRoutedPrefixes(first.Prefix, second.Prefix) })
+	slices.SortFunc(local, func(first, second LocalRoute) int { return compareRoutedPrefixes(first.Prefix, second.Prefix) })
 	for _, route := range local {
 		_, _ = fmt.Fprintf(digest, "local %s %t\n", route.Prefix, route.Connected)
 	}

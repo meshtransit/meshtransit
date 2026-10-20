@@ -26,15 +26,23 @@ var setTunnelType sync.Once
 // and configures it: a Wintun session cannot be handed to another process,
 // so there is no privileged helper on Windows.
 type WindowsTUNOpener struct {
-	mu   sync.Mutex
-	luid uint64
+	// routeSettings is the subnet route settings file only SYSTEM and
+	// administrators write (routesettings).
+	routeSettings string
+	// mu serializes every change of the adapter's routes: overlay are the
+	// per-peer routes, routed the subnet routes installed (SetRoutedRoutes).
+	mu      sync.Mutex
+	luid    uint64
+	overlay []netip.Prefix
+	routed  []netip.Prefix
 }
 
-// NewWindowsTUNOpener returns an opener for the service's adapter.
-func NewWindowsTUNOpener() *WindowsTUNOpener {
+// NewWindowsTUNOpener returns an opener for the service's adapter that
+// installs the subnet routes routeSettings admits.
+func NewWindowsTUNOpener(routeSettings string) *WindowsTUNOpener {
 	setTunnelType.Do(func() { tun.WintunTunnelType = winadapter.Name })
 
-	return &WindowsTUNOpener{}
+	return &WindowsTUNOpener{routeSettings: routeSettings}
 }
 
 // OpenTUN creates the adapter and gives it exactly the map's addresses and
@@ -68,7 +76,8 @@ func (o *WindowsTUNOpener) OpenTUN(_ context.Context, config netadmin.TUNConfig)
 		return netadmin.TUN{}, err
 	}
 	o.mu.Lock()
-	o.luid = luid
+	// A new adapter carries no subnet routes: the old one's left with it.
+	o.luid, o.overlay, o.routed = luid, slices.Clone(config.Routes), nil
 	o.mu.Unlock()
 
 	return netadmin.TUN{
@@ -86,13 +95,31 @@ func (o *WindowsTUNOpener) ConfigureTUNRoutes(_ context.Context, config netadmin
 		return err
 	}
 	o.mu.Lock()
-	luid := o.luid
-	o.mu.Unlock()
-	if luid == 0 {
+	defer o.mu.Unlock()
+	if o.luid == 0 {
 		return errors.New("dataplane: the Wintun adapter is not open")
 	}
+	failed, err := winnet.ReplaceRoutesReporting(o.luid, routeUnion(config.Routes, o.routed))
+	o.overlay = slices.Clone(config.Routes)
+	for _, route := range failed {
+		if slices.Contains(config.Routes, route) {
+			err = errors.Join(err, fmt.Errorf("dataplane: adding route %s failed", route))
+		}
+	}
 
-	return winnet.ReplaceRoutes(luid, config.Routes)
+	return err
+}
+
+// routeUnion returns the adapter's routes: per-peer and subnet ones.
+func routeUnion(overlay, routed []netip.Prefix) []netip.Prefix {
+	union := slices.Clone(overlay)
+	for _, route := range routed {
+		if !slices.Contains(union, route) {
+			union = append(union, route)
+		}
+	}
+
+	return union
 }
 
 // validateOverlayPrefixes checks what meshd would configure: host addresses,

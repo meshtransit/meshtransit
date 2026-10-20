@@ -1,4 +1,4 @@
-//go:build !linux && !darwin
+//go:build !linux && !darwin && !windows
 
 package routesettings
 
@@ -7,8 +7,7 @@ import (
 	"os"
 )
 
-// openSettings opens the settings file; on Windows the directory's ACL
-// admits only SYSTEM and administrators.
+// openSettings opens the settings file the embedding app owns.
 func openSettings(path string) (*os.File, error) {
 	return os.Open(path) //nolint:gosec // G304: the settings path SYSTEM chose
 }
@@ -23,3 +22,8 @@ func checkOwner(info fs.FileInfo) error {
 
 // syncDirectory does nothing: Windows makes a rename durable itself.
 func syncDirectory(string) error { return nil }
+
+// prepareDirectory creates the directory in the app's own storage.
+func prepareDirectory(directory string) error {
+	return os.MkdirAll(directory, 0o700)
+}

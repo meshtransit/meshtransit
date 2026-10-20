@@ -23,6 +23,7 @@ import (
 
 	"meshtransit.net/client/internal/config"
 	"meshtransit.net/client/internal/netadmin"
+	"meshtransit.net/client/internal/routesettings/routescli"
 	"meshtransit.net/client/internal/servicemanager"
 	"meshtransit.net/client/internal/socket"
 	"meshtransit.net/client/internal/version"
@@ -34,7 +35,10 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "routes" {
-		return runRoutes(args[1:], stdout, stderr)
+		command := routescli.Command{
+			Program: "meshnetd", Privilege: "root privileges", Privileged: func() bool { return os.Geteuid() == 0 },
+		}
+		return command.Run(args[1:], stdout, stderr)
 	}
 	flags := flag.NewFlagSet("meshnetd", flag.ContinueOnError)
 	flags.SetOutput(stderr)

@@ -26,7 +26,7 @@ type fakeRoutedConfigurer struct {
 }
 
 type fakeHostRouting struct {
-	local     []localRoute
+	local     []LocalRoute
 	resolvers []netip.Addr
 	err       error
 }
@@ -38,7 +38,7 @@ func (f *fakeRoutedConfigurer) state() (current, desired, throws []netip.Prefix,
 	return slices.Clone(f.current), slices.Clone(f.desired), slices.Clone(f.throws), f.uid
 }
 
-func (f fakeHostRouting) LocalRoutes(string) ([]localRoute, error) {
+func (f fakeHostRouting) LocalRoutes(string) ([]LocalRoute, error) {
 	return slices.Clone(f.local), f.err
 }
 
@@ -78,7 +78,7 @@ func TestClientServerSetsRoutedRoutesAsSettingsAdmit(t *testing.T) {
 	configurer := &fakeRoutedConfigurer{}
 	server.routedConfigurer = configurer
 	server.hostRouting = fakeHostRouting{
-		local: []localRoute{
+		local: []LocalRoute{
 			{Prefix: netip.MustParsePrefix("192.168.1.0/24"), Connected: true},
 			{Prefix: netip.MustParsePrefix("10.30.5.0/24")},
 		},

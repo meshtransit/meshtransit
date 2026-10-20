@@ -55,3 +55,10 @@ func syncDirectory(directory string) error {
 	}
 	return nil
 }
+
+// prepareDirectory creates the settings directory, readable by everyone: the
+// settings hold no secret, and meshnetd routes show works without root.
+// Load refuses one others could write.
+func prepareDirectory(directory string) error {
+	return os.MkdirAll(directory, 0o755) //nolint:gosec // G301: no secret, see above
+}

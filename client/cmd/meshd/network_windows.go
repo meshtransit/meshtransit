@@ -27,7 +27,7 @@ func platformNetwork(cfg config.Config) (tunOpener, *netadmin.Client, error) {
 		return nil, nil, nil
 	}
 
-	return dataplane.NewWindowsTUNOpener(), nil, nil
+	return dataplane.NewWindowsTUNOpener(cfg.RouteSettingsFile), nil, nil
 }
 
 // networkLogAttrs names where host networking is done, for startup logs: the

@@ -172,12 +172,12 @@ type kernelHostRouting struct{}
 
 // LocalRoutes returns the main table's routes but default routes and those
 // on the mesh interface; scope link routes are attached networks.
-func (kernelHostRouting) LocalRoutes(meshInterface string) ([]localRoute, error) {
+func (kernelHostRouting) LocalRoutes(meshInterface string) ([]LocalRoute, error) {
 	meshIndex := -1
 	if link, err := netlink.LinkByName(meshInterface); err == nil && link.Attrs() != nil {
 		meshIndex = link.Attrs().Index
 	}
-	var local []localRoute
+	var local []LocalRoute
 	tooMany := false
 	for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
 		// Iterated rather than listed: a host with a full Internet table
@@ -195,7 +195,7 @@ func (kernelHostRouting) LocalRoutes(meshInterface string) ([]localRoute, error)
 					tooMany = true
 					return false
 				}
-				local = append(local, localRoute{Prefix: prefix, Connected: route.Scope == netlink.SCOPE_LINK})
+				local = append(local, LocalRoute{Prefix: prefix, Connected: route.Scope == netlink.SCOPE_LINK})
 				return true
 			})
 		if tooMany {

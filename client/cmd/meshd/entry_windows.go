@@ -13,6 +13,7 @@ import (
 	"golang.org/x/sys/windows/svc"
 
 	"meshtransit.net/client/internal/privatefile"
+	"meshtransit.net/client/internal/routesettings/routescli"
 )
 
 const (
@@ -26,6 +27,12 @@ const (
 // entry runs meshd under the Windows service manager when it starts it, and
 // in the foreground otherwise (for debugging from an elevated console).
 func entry(args []string) int {
+	if len(args) > 0 && args[0] == "routes" {
+		// Windows has no helper: the service binary edits the subnet route
+		// settings it reads, from an elevated console.
+		command := routescli.Command{Program: "meshd", Privilege: "administrator rights", Privileged: elevated}
+		return command.Run(args[1:], os.Stdout, os.Stderr)
+	}
 	isService, err := svc.IsWindowsService()
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "meshd: detecting the service manager: %v\n", err)
@@ -41,6 +48,11 @@ func entry(args []string) int {
 	}
 
 	return int(handler.exitCode)
+}
+
+// elevated reports whether meshd runs with an administrator's full token.
+func elevated() bool {
+	return windows.GetCurrentProcessToken().IsElevated()
 }
 
 // serviceHandler adapts meshd to the service control protocol: it reports

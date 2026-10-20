@@ -44,7 +44,7 @@ func TestLocalRoutesDarwin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("localRoutes() error = %v", err)
 	}
-	want := []localRoute{
+	want := []LocalRoute{
 		{Prefix: prefix("192.168.35.0/24"), Connected: true},
 		{Prefix: prefix("10.0.0.0/8"), Connected: false},
 	}
@@ -53,9 +53,9 @@ func TestLocalRoutesDarwin(t *testing.T) {
 	}
 	// The more specific Site route stays: the wider VPN route is no
 	// conflict; one inside the attached LAN is.
-	kept, refused := withoutLocalConflicts([]netip.Prefix{prefix("10.35.0.0/17"), prefix("192.168.35.128/25")}, local)
+	kept, refused := WithoutLocalConflicts([]netip.Prefix{prefix("10.35.0.0/17"), prefix("192.168.35.128/25")}, local)
 	if len(kept) != 1 || kept[0] != prefix("10.35.0.0/17") || len(refused) != 1 {
-		t.Fatalf("withoutLocalConflicts() kept %v refused %v", kept, refused)
+		t.Fatalf("WithoutLocalConflicts() kept %v refused %v", kept, refused)
 	}
 }
 

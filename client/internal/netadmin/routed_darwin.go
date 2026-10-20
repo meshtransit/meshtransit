@@ -230,7 +230,7 @@ type kernelHostRouting struct{}
 // LocalRoutes returns the routing table's routes but default routes, those
 // on the mesh link, the helper's own and those the kernel cloned; a route
 // through no gateway is an attached network.
-func (kernelHostRouting) LocalRoutes(meshInterface string) ([]localRoute, error) {
+func (kernelHostRouting) LocalRoutes(meshInterface string) ([]LocalRoute, error) {
 	meshIndex := -1
 	if link, err := net.InterfaceByName(meshInterface); err == nil {
 		meshIndex = link.Index
@@ -242,8 +242,8 @@ func (kernelHostRouting) LocalRoutes(meshInterface string) ([]localRoute, error)
 	return localRoutes(table, meshIndex)
 }
 
-func localRoutes(table []hostroute.Route, meshIndex int) ([]localRoute, error) {
-	var local []localRoute
+func localRoutes(table []hostroute.Route, meshIndex int) ([]LocalRoute, error) {
+	var local []LocalRoute
 	for _, entry := range table {
 		prefix := entry.Prefix
 		if entry.Index == meshIndex || entry.Marked() || entry.Cloned() || prefix.Bits() == 0 ||
@@ -253,7 +253,7 @@ func localRoutes(table []hostroute.Route, meshIndex int) ([]localRoute, error) {
 		if len(local) == maximumLocalRoutes {
 			return nil, errTooManyLocalRoutes
 		}
-		local = append(local, localRoute{Prefix: prefix, Connected: entry.Flags&unix.RTF_GATEWAY == 0})
+		local = append(local, LocalRoute{Prefix: prefix, Connected: entry.Flags&unix.RTF_GATEWAY == 0})
 	}
 	return local, nil
 }

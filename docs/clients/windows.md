@@ -83,6 +83,30 @@ meshctl up --server https://control.example.com --fingerprint sha256:…
   incoming connections over the mesh; allow the traffic you need with a
   firewall rule for the **MeshTransit** interface.
 
+## Subnet routes
+
+A Windows machine reaches the Sites its rules grant once an administrator
+accepts subnet routes, from an elevated console:
+
+```powershell
+meshd routes accept on
+```
+
+The setting lives in `C:\ProgramData\MeshTransit\settings\routes.json`, in
+a directory only SYSTEM and Administrators may open; `meshd` ignores a file
+anyone else owns or may change. It applies within 10 seconds;
+`meshd routes accept off` removes the routes again. The service installs
+each granted prefix on the **MeshTransit** adapter and refuses one that
+overlaps a network the machine reaches itself, or that holds a DNS server
+of another adapter (`local_conflict`). Windows has no per-user routing, so
+`meshd` keeps its own sockets off these routes: a connection to an address
+inside one leaves through the interface Windows would use without it
+(`IP_UNICAST_IF`), and the packet path sends nothing to a peer address
+inside one. `meshctl status` shows the router each Site goes through.
+
+A Windows machine does not forward into subnets: a subnet router runs on
+Linux.
+
 ## Check and troubleshoot
 
 - `meshctl status`, `meshctl netcheck`, `meshctl doctor control`.

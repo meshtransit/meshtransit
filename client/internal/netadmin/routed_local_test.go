@@ -1,5 +1,3 @@
-//go:build linux || darwin
-
 package netadmin
 
 import (
@@ -14,7 +12,7 @@ import (
 
 func TestWithoutLocalConflicts(t *testing.T) {
 	t.Parallel()
-	local := []localRoute{
+	local := []LocalRoute{
 		{Prefix: netip.MustParsePrefix("192.168.1.0/24"), Connected: true},
 		{Prefix: netip.MustParsePrefix("10.30.5.0/24")},
 		{Prefix: netip.MustParsePrefix("10.0.0.0/8")},
@@ -35,9 +33,9 @@ func TestWithoutLocalConflicts(t *testing.T) {
 	}
 	for _, test := range tests {
 		route := netip.MustParsePrefix(test.route)
-		kept, refused := withoutLocalConflicts([]netip.Prefix{route}, local)
+		kept, refused := WithoutLocalConflicts([]netip.Prefix{route}, local)
 		if got := len(refused) == 1; got != test.conflict || len(kept)+len(refused) != 1 {
-			t.Errorf("withoutLocalConflicts(%s) kept %v refused %v, want conflict %t", route, kept, refused, test.conflict)
+			t.Errorf("WithoutLocalConflicts(%s) kept %v refused %v, want conflict %t", route, kept, refused, test.conflict)
 			continue
 		}
 		if test.conflict && refused[0].Reason != routesettings.ReasonLocalConflict {
@@ -58,11 +56,11 @@ func TestPinnedResolvers(t *testing.T) {
 		netip.MustParsePrefix("10.20.0.53/32"), netip.MustParsePrefix("10.20.0.54/32"),
 		netip.MustParsePrefix("fd00:1::53/128"),
 	}
-	if got := pinnedResolvers(routes, resolvers); !slices.Equal(got, want) {
-		t.Fatalf("pinnedResolvers() = %v, want %v", got, want)
+	if got := PinnedResolvers(routes, resolvers); !slices.Equal(got, want) {
+		t.Fatalf("PinnedResolvers() = %v, want %v", got, want)
 	}
-	if got := pinnedResolvers(nil, resolvers); len(got) != 0 {
-		t.Fatalf("pinnedResolvers(no routes) = %v", got)
+	if got := PinnedResolvers(nil, resolvers); len(got) != 0 {
+		t.Fatalf("PinnedResolvers(no routes) = %v", got)
 	}
 }
 

@@ -115,10 +115,10 @@ func (s *Server) applyRouted(requested []netip.Prefix) ([]netip.Prefix, []routes
 			accepted = []netip.Prefix{}
 		} else {
 			var conflicts []routesettings.Refusal
-			accepted, conflicts = withoutLocalConflicts(accepted, local)
+			accepted, conflicts = WithoutLocalConflicts(accepted, local)
 			refused = append(refused, conflicts...)
 		}
-		desired = routedState{Routes: accepted, Throws: pinnedResolvers(accepted, s.hostRouting.Resolvers())}
+		desired = routedState{Routes: accepted, Throws: PinnedResolvers(accepted, s.hostRouting.Resolvers())}
 	}
 	installed, failed, err := s.routedConfigurer.ReplaceRouted(s.activeName, *s.routed, s.allowedUID,
 		s.activeRouted, desired)
@@ -159,4 +159,14 @@ func withoutUnpinned(routes []netip.Prefix, failedPins []routesettings.Refusal) 
 // order.
 func prefixIntersection(left, right []netip.Prefix) []netip.Prefix {
 	return prefixDifference(left, prefixDifference(left, right))
+}
+
+// hostRouting reads what the local route checks need from the host.
+type hostRouting interface {
+	// LocalRoutes returns the main table's routes other than default routes
+	// and those on the mesh interface.
+	LocalRoutes(meshInterface string) ([]LocalRoute, error)
+	// Resolvers returns the system DNS servers learned from the physical
+	// network.
+	Resolvers() []netip.Addr
 }

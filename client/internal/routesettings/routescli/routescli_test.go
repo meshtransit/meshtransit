@@ -1,6 +1,4 @@
-//go:build linux || darwin
-
-package main
+package routescli
 
 import (
 	"bytes"
@@ -55,10 +53,27 @@ func TestRunRoutesShowsAMissingFileAsOff(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
 	path := filepath.Join(t.TempDir(), "routes.json")
-	if code := run([]string{"routes", "--routes-file", path, "show"}, &stdout, &stderr); code != 0 {
+	command := Command{Program: "meshnetd", Privilege: "root privileges", Privileged: func() bool { return false }}
+	if code := command.Run([]string{"--routes-file", path, "show"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "accept: off") || !strings.Contains(stdout.String(), "router-mode: off") {
 		t.Fatalf("output = %q", stdout.String())
+	}
+}
+
+func TestRunRoutesRefusesAnUnprivilegedChange(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	path := filepath.Join(t.TempDir(), "routes.json")
+	command := Command{Program: "meshd", Privilege: "administrator rights", Privileged: func() bool { return false }}
+	if code := command.Run([]string{"--routes-file", path, "accept", "on"}, &stdout, &stderr); code != 1 {
+		t.Fatalf("exit %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "meshd: administrator rights are required") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	if settings, err := routesettings.Load(path); err != nil || settings.AcceptRoutes {
+		t.Fatalf("settings after a refused change = %+v, %v", settings, err)
 	}
 }

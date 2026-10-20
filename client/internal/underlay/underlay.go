@@ -8,11 +8,11 @@
 // lets meshd's user reach, so nothing is needed here. macOS and Windows have
 // no such rule (FollowsRoutes): a socket whose destination an installed
 // subnet route covers is bound to the interface the host would use without
-// it, and the packet path sends no datagram into one. A mobile VPN routes the
-// whole app through its TUN unless each socket is excluded (Android
-// VpnService.protect): the embedding app installs a Protector, and every
-// socket the client opens to the network calls it before the socket connects
-// or sends.
+// it (IP_BOUND_IF, IP_UNICAST_IF), and the packet path sends no datagram into
+// one. A mobile VPN routes the whole app through its TUN unless each socket
+// is excluded (Android VpnService.protect): the embedding app installs a
+// Protector, and every socket the client opens to the network calls it
+// before the socket connects or sends.
 package underlay
 
 import (

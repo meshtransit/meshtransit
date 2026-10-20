@@ -67,7 +67,7 @@ narrow, validated requests from `meshd`:
 
 ## Subnet routes
 
-With `--enable-subnet-routes` (Linux and macOS), `meshd` asks Core for
+With `--enable-subnet-routes` (Linux, macOS and Windows), `meshd` asks Core for
 the Sites its rules grant and handles them as
 [mtcp-v1 §7.6](../protocol/mtcp-v1.md) requires:
 

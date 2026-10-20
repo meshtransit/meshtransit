@@ -1,6 +1,7 @@
-//go:build linux || darwin
-
-package main
+// Package routescli is the command that shows and changes the host's subnet
+// route settings: meshnetd routes on Linux and macOS, meshd routes on
+// Windows, where no helper runs.
+package routescli
 
 import (
 	"errors"
@@ -8,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
-	"os"
 	"slices"
 	"strings"
 
@@ -16,22 +16,33 @@ import (
 	"meshtransit.net/client/internal/routesettings"
 )
 
-const routesUsage = `usage: meshnetd routes [--routes-file PATH] COMMAND
+const usage = `usage: %[1]s routes [--routes-file PATH] COMMAND
   show                      print the subnet route settings
   accept on|off             install the private subnet routes Core grants
   accept-public on|off      also install granted routes to public ranges
   router-mode on|off        forward into the advertised subnets
   advertise PREFIX...       offer to forward these subnets
   withdraw PREFIX...        stop offering these subnets
-Changes need root and apply within seconds, without a restart.`
+Changes need %[2]s and apply within seconds, without a restart.
+`
 
-// runRoutes shows or changes the host's subnet route settings. Only root may
-// change them: meshd, Core and other users cannot turn routes on or make
-// the host a router.
-func runRoutes(args []string, stdout, stderr io.Writer) int {
-	flags := flag.NewFlagSet("meshnetd routes", flag.ContinueOnError)
+// Command names the program and who may change the settings.
+type Command struct {
+	// Program is the command name in messages, such as meshnetd.
+	Program string
+	// Privilege names what a change needs, such as "root privileges".
+	Privilege string
+	// Privileged reports whether the caller may change the settings.
+	Privileged func() bool
+}
+
+// Run shows or changes the host's subnet route settings, args following
+// "routes". Only a privileged caller may change them: meshd, Core and other
+// users cannot turn routes on or make the host a router.
+func (c Command) Run(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet(c.Program+" routes", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	flags.Usage = func() { _, _ = fmt.Fprintln(stderr, routesUsage) }
+	flags.Usage = func() { _, _ = fmt.Fprintf(stderr, usage, c.Program, c.Privilege) }
 	path := flags.String("routes-file", config.DefaultRouteSettingsPath, "route settings file")
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -41,30 +52,35 @@ func runRoutes(args []string, stdout, stderr io.Writer) int {
 		flags.Usage()
 		return 2
 	}
+	command, operands := words[0], words[1:]
 	settings, err := routesettings.Load(*path)
+	if errors.Is(err, routesettings.ErrUnsafeFile) && command != "show" {
+		// A change rewrites the file safely: start from everything off.
+		_, _ = fmt.Fprintf(stderr, "%s: ignoring the unsafe settings file: %v\n", c.Program, err)
+		settings, err = routesettings.Settings{}, nil
+	}
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "meshnetd: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "%s: %v\n", c.Program, err)
 		return 1
 	}
-	command, operands := words[0], words[1:]
 	if command == "show" && len(operands) == 0 {
-		return printRouteSettings(stdout, stderr, settings)
+		return c.print(stdout, stderr, settings)
 	}
 	changed, err := changeRouteSettings(settings, command, operands)
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "meshnetd: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "%s: %v\n", c.Program, err)
 		flags.Usage()
 		return 2
 	}
-	if os.Geteuid() != 0 {
-		_, _ = fmt.Fprintln(stderr, "meshnetd: root privileges are required to change route settings")
+	if c.Privileged == nil || !c.Privileged() {
+		_, _ = fmt.Fprintf(stderr, "%s: %s are required to change route settings\n", c.Program, c.Privilege)
 		return 1
 	}
 	if err := routesettings.Save(*path, changed); err != nil {
-		_, _ = fmt.Fprintf(stderr, "meshnetd: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "%s: %v\n", c.Program, err)
 		return 1
 	}
-	return printRouteSettings(stdout, stderr, changed)
+	return c.print(stdout, stderr, changed)
 }
 
 func changeRouteSettings(settings routesettings.Settings, command string, operands []string) (
@@ -110,7 +126,7 @@ func changeRouteSettings(settings routesettings.Settings, command string, operan
 	return settings.Canonical(), nil
 }
 
-func printRouteSettings(stdout, stderr io.Writer, settings routesettings.Settings) int {
+func (c Command) print(stdout, stderr io.Writer, settings routesettings.Settings) int {
 	onOff := map[bool]string{true: "on", false: "off"}
 	advertised := make([]string, len(settings.AdvertiseRoutes))
 	for index, prefix := range settings.AdvertiseRoutes {
@@ -119,7 +135,7 @@ func printRouteSettings(stdout, stderr io.Writer, settings routesettings.Setting
 	if _, err := fmt.Fprintf(stdout, "accept: %s\naccept-public: %s\nrouter-mode: %s\nadvertise: %s\n",
 		onOff[settings.AcceptRoutes], onOff[settings.AcceptPublicRoutes], onOff[settings.RouterMode],
 		strings.Join(advertised, " ")); err != nil {
-		_, _ = fmt.Fprintf(stderr, "meshnetd: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "%s: %v\n", c.Program, err)
 		return 1
 	}
 	return 0

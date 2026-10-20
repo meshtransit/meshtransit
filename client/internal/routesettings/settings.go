@@ -163,10 +163,8 @@ func Save(path string, settings Settings) error {
 		return err
 	}
 	directory := filepath.Dir(path)
-	// Readable by everyone: the settings hold no secret, and meshnetd routes
-	// show works without root.
-	if err := os.MkdirAll(directory, 0o755); err != nil { //nolint:gosec // G301: no secret, see above
-		return fmt.Errorf("routesettings: creating %s: %w", directory, err)
+	if err := prepareDirectory(directory); err != nil {
+		return fmt.Errorf("routesettings: preparing %s: %w", directory, err)
 	}
 	temporary, err := os.CreateTemp(directory, ".routes-*.json")
 	if err != nil {
