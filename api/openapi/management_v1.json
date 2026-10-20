@@ -3418,7 +3418,7 @@
           "destination_resource_id": {"$ref": "#/components/schemas/PublicID"},
           "destination_imported_resource_id": {"$ref": "#/components/schemas/PublicID"},
           "destination_address": {
-            "description": "A unicast address inside a Site; the explanation's target is the Site that holds it.",
+            "description": "A unicast address: the explanation's target is the Site that holds it or, for an Internet address no Site holds, the Exit Pool it is reached through.",
             "type": "string",
             "minLength": 2,
             "maxLength": 45
@@ -3482,7 +3482,7 @@
             "additionalProperties": false,
             "required": ["kind", "state", "name"],
             "properties": {
-              "kind": {"type": "string", "enum": ["device", "resource", "imported_resource", "site"]},
+              "kind": {"type": "string", "enum": ["device", "resource", "imported_resource", "site", "exit_pool"]},
               "state": {"$ref": "#/components/schemas/ExplainedPolicyParticipantState"},
               "name": {"type": ["string", "null"], "maxLength": 255}
             }
@@ -3543,10 +3543,10 @@
       "AccessGraphNode": {
         "type": "object",
         "additionalProperties": false,
-        "description": "A site node's name is null unless the caller may also read routes.",
+        "description": "A site or exit_pool node's name is null unless the caller may also read routes.",
         "required": ["kind", "id", "name", "state", "share"],
         "properties": {
-          "kind": {"type": "string", "enum": ["device", "resource", "imported_resource", "site"]},
+          "kind": {"type": "string", "enum": ["device", "resource", "imported_resource", "site", "exit_pool"]},
           "id": {"$ref": "#/components/schemas/PublicID"},
           "name": {"type": ["string", "null"], "maxLength": 255},
           "state": {"type": "string", "enum": ["active", "inactive"]},
@@ -3651,6 +3651,10 @@
           "site_id": {
             "$ref": "#/components/schemas/PublicID",
             "description": "The Site that holds address; absent when no Site does."
+          },
+          "exit_pool_id": {
+            "$ref": "#/components/schemas/PublicID",
+            "description": "The Exit Pool an Internet address no Site holds is reached through: the first pool by identity whose active rules grant the Internet to the source Device. Absent when no rule does."
           }
         }
       },
@@ -3706,7 +3710,18 @@
             "not": {"anyOf": [
               {"required": ["destination_device_id"]}, {"required": ["destination_resource_id"]},
               {"required": ["destination_resource_group_id"]}, {"required": ["destination_imported_resource_id"]},
-              {"required": ["destination_device_group_id"]}, {"required": ["destination_device_tag_id"]}
+              {"required": ["destination_device_group_id"]}, {"required": ["destination_device_tag_id"]},
+              {"required": ["destination_exit_pool_id"]}
+            ]}
+          },
+          {
+            "required": ["destination_exit_pool_id"],
+            "properties": {"selector_kind": {"const": "exit_pool"}},
+            "not": {"anyOf": [
+              {"required": ["destination_device_id"]}, {"required": ["destination_resource_id"]},
+              {"required": ["destination_resource_group_id"]}, {"required": ["destination_imported_resource_id"]},
+              {"required": ["destination_device_group_id"]}, {"required": ["destination_device_tag_id"]},
+              {"required": ["destination_site_id"]}, {"required": ["destination_prefixes"]}
             ]}
           }
         ],
@@ -3715,6 +3730,10 @@
           "destination_site_id": {
             "$ref": "#/components/schemas/PublicID",
             "description": "The Site of a path through a rule to a Site; projection_id then names the compiled route rule."
+          },
+          "destination_exit_pool_id": {
+            "$ref": "#/components/schemas/PublicID",
+            "description": "The Exit Pool of a path through a rule to the Internet; projection_id then names the compiled exit rule."
           },
           "destination_prefixes": {
             "description": "The prefixes of the Site the rule grants.",
@@ -3756,7 +3775,7 @@
           },
           "selector_kind": {
             "type": "string",
-            "enum": ["device", "resource", "resource_group", "imported_resource", "site"]
+            "enum": ["device", "resource", "resource_group", "imported_resource", "site", "exit_pool"]
           },
           "destination_resource_id": {"$ref": "#/components/schemas/PublicID"},
           "destination_resource_group_id": {"$ref": "#/components/schemas/PublicID"}

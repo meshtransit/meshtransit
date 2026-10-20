@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"meshtransit.net/core/internal/domain/accessgraph"
+	"meshtransit.net/core/internal/domain/exitpool"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/policy/publication"
@@ -38,7 +39,7 @@ const readAccessGraphSQL = `SELECT
     has_more,
     paths::TEXT,
     nodes::TEXT
-FROM mesh_ops.read_access_graph_v3(
+FROM mesh_ops.read_access_graph_v4(
     $1::UUID, $2::UUID, $3::UUID, $4::UUID,
     $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
     $10::UUID, $11::UUID, $12::UUID, $13::TEXT, $14::UUID, $15::INTEGER, $16::TIMESTAMPTZ
@@ -295,6 +296,9 @@ func (record accessGraphNodeRecord) node() (accessgraph.GraphNode, error) {
 	case "site":
 		params.Kind = accessgraph.GraphNodeKindSite
 		params.SiteID, err = site.ParseID(record.ID)
+	case "exit_pool":
+		params.Kind = accessgraph.GraphNodeKindExitPool
+		params.ExitPoolID, err = exitpool.ParseID(record.ID)
 	default:
 		return accessgraph.GraphNode{}, accessgraph.ErrInvalidSnapshot
 	}

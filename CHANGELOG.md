@@ -5,6 +5,14 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: Explain, the Access Graph and the access ledger know Exit Pools
+  (schemas 206–208). An Internet address no Site holds is explained through
+  the first pool whose rules grant the Internet to the source
+  (`target.exit_pool_id`, paths with `selector_kind` `exit_pool`); without
+  one the deny reason is `no_matching_active_rule`. The Access Graph
+  (`read_access_graph_v4`) and the ledger list one `exit_pool` edge per
+  Device a rule grants a pool to, never its own exit nodes; history v3 returns
+  them, while older readers leave them out. Pool names need `route.read`.
 - Core: maps carry Exit Pools (schema 205, mtcp-v1 §7.7) with
   `MESHTRANSIT_EXIT_NODES_ENABLED` and the shared inventory. A node with
   `routes.exit.v1` gets each pool an active rule lets it use (never the pool

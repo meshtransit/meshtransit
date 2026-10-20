@@ -10,6 +10,7 @@ import (
 
 	"meshtransit.net/core/internal/domain/devicegroup"
 	"meshtransit.net/core/internal/domain/devicetag"
+	"meshtransit.net/core/internal/domain/exitpool"
 	"meshtransit.net/core/internal/domain/identitygroup"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
@@ -18,6 +19,7 @@ import (
 	"meshtransit.net/core/internal/domain/resource"
 	"meshtransit.net/core/internal/domain/sharing"
 	"meshtransit.net/core/internal/domain/site"
+	"meshtransit.net/shared/internet"
 )
 
 const (
@@ -154,6 +156,9 @@ const (
 	// SelectorKindSite identifies a rule to a Site. Its path names the Site
 	// and the prefixes the rule grants, not a Device.
 	SelectorKindSite
+	// SelectorKindExitPool identifies a rule to an Exit Pool. Its path names
+	// the pool, neither a Device nor a prefix.
+	SelectorKindExitPool
 )
 
 // String returns the stable wire spelling.
@@ -169,6 +174,8 @@ func (kind SelectorKind) String() string {
 		return "imported_resource"
 	case SelectorKindSite:
 		return "site"
+	case SelectorKindExitPool:
+		return "exit_pool"
 	default:
 		return ""
 	}
@@ -201,6 +208,8 @@ type PathParams struct {
 	// SelectorKindSite: the Site and the prefixes of it the rule grants.
 	DestinationSiteID   site.ID
 	DestinationPrefixes []netip.Prefix
+	// DestinationExitPoolID is set only for SelectorKindExitPool.
+	DestinationExitPoolID exitpool.ID
 }
 
 // Path explains one effective compiled allow edge.
@@ -223,6 +232,7 @@ type Path struct {
 	destinationTagID              devicetag.ID
 	destinationSiteID             site.ID
 	destinationPrefixes           []netip.Prefix
+	destinationExitPoolID         exitpool.ID
 }
 
 // NewPath validates one immutable explanation path.
@@ -242,6 +252,7 @@ func NewPath(params PathParams) (Path, error) {
 		destinationTagID:              params.DestinationTagID,
 		destinationSiteID:             params.DestinationSiteID,
 		destinationPrefixes:           slices.Clone(params.DestinationPrefixes),
+		destinationExitPoolID:         params.DestinationExitPoolID,
 	}
 	if !path.IsValid() {
 		return Path{}, ErrInvalidSnapshot
@@ -307,19 +318,22 @@ func (path Path) DestinationSiteID() site.ID { return path.destinationSiteID }
 // DestinationPrefixes returns the prefixes of the Site a Site path grants.
 func (path Path) DestinationPrefixes() []netip.Prefix { return slices.Clone(path.destinationPrefixes) }
 
+// DestinationExitPoolID returns the Exit Pool of an exit path.
+func (path Path) DestinationExitPoolID() exitpool.ID { return path.destinationExitPoolID }
+
 // IsValid reports whether one path has complete canonical provenance.
 func (path Path) IsValid() bool {
 	if !path.projectionID.IsValid() || !path.ruleID.IsValid() || !path.sourceNodeID.IsValid() ||
 		!path.protocol.IsValid() || len(path.destinationPortRanges) > policy.MaximumPortRangesPerRule {
 		return false
 	}
-	toSite := path.selectorKind == SelectorKindSite
+	toSite, toExit := path.selectorKind == SelectorKindSite, path.selectorKind == SelectorKindExitPool
 	if toSite != path.destinationSiteID.IsValid() || toSite != (len(path.destinationPrefixes) > 0) ||
-		!validSitePrefixes(path.destinationPrefixes) {
+		!validSitePrefixes(path.destinationPrefixes) || toExit != path.destinationExitPoolID.IsValid() {
 		return false
 	}
 	shared := path.selectorKind == SelectorKindImportedResource
-	if toSite {
+	if toSite || toExit {
 		if path.destinationNodeID.IsValid() || path.destinationImportedResourceID.IsValid() ||
 			path.trustContractID.IsValid() {
 			return false
@@ -337,11 +351,11 @@ func (path Path) IsValid() bool {
 		path.sourceTagID.IsValid())
 	destinations := countValid(path.destinationDeviceGroupID.IsValid(), path.destinationTagID.IsValid())
 	if sources > 1 || destinations > 1 || (destinations > 0 && path.selectorKind != SelectorKindDevice) ||
-		(sources > 0 && path.selectorKind != SelectorKindDevice && !toSite) {
+		(sources > 0 && path.selectorKind != SelectorKindDevice && !toSite && !toExit) {
 		return false
 	}
 	switch path.selectorKind {
-	case SelectorKindDevice, SelectorKindSite:
+	case SelectorKindDevice, SelectorKindSite, SelectorKindExitPool:
 		if path.destinationResourceID.IsValid() || path.destinationGroupID.IsValid() {
 			return false
 		}
@@ -402,6 +416,10 @@ func (path Path) matches(query Query, snapshot Snapshot) bool {
 			}) {
 			return false
 		}
+	} else if path.selectorKind == SelectorKindExitPool {
+		if path.destinationExitPoolID != snapshot.targetExitPoolID || !internet.Contains(query.destinationAddress) {
+			return false
+		}
 	} else if path.selectorKind == SelectorKindImportedResource {
 		if path.destinationImportedResourceID != query.destinationImportedResourceID {
 			return false
@@ -438,7 +456,10 @@ type SnapshotParams struct {
 	TargetNodeID          node.ID
 	// TargetSiteID is the Site holding the queried address, when one does.
 	TargetSiteID site.ID
-	Paths        []Path
+	// TargetExitPoolID is the Exit Pool an Internet address is reached
+	// through, when a pool's rules grant it.
+	TargetExitPoolID exitpool.ID
+	Paths            []Path
 	// Source and Target describe the participants inside the explained
 	// Network. TargetKind must match the query. Share is set exactly when the
 	// target is an existing shared Device.
@@ -465,6 +486,7 @@ type Snapshot struct {
 	semanticHash          publication.SemanticHash
 	targetNodeID          node.ID
 	targetSiteID          site.ID
+	targetExitPoolID      exitpool.ID
 	paths                 []Path
 	source                Participant
 	targetKind            TargetKind
@@ -485,7 +507,8 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 		isolationGeneration: params.IsolationGeneration,
 		hasActiveRelease:    params.HasActiveRelease, releaseID: params.ReleaseID,
 		compilerFormatVersion: params.CompilerFormatVersion, semanticHash: params.SemanticHash,
-		targetNodeID: params.TargetNodeID, targetSiteID: params.TargetSiteID, paths: paths,
+		targetNodeID: params.TargetNodeID, targetSiteID: params.TargetSiteID,
+		targetExitPoolID: params.TargetExitPoolID, paths: paths,
 		source: params.Source, targetKind: params.TargetKind, target: params.Target,
 	}
 	if params.Share != nil {
@@ -522,8 +545,8 @@ func (snapshot Snapshot) IsValid() bool {
 		return false
 	}
 	shared := snapshot.targetKind == TargetKindImportedResource
-	toSite := snapshot.targetKind == TargetKindSite
-	if len(snapshot.paths) > 0 && !shared && !toSite && !snapshot.targetNodeID.IsValid() {
+	toSite, toExit := snapshot.targetKind == TargetKindSite, snapshot.targetKind == TargetKindExitPool
+	if len(snapshot.paths) > 0 && !shared && !toSite && !toExit && !snapshot.targetNodeID.IsValid() {
 		return false
 	}
 	projectionIDs := make(map[publication.ProjectionID]struct{}, len(snapshot.paths))
@@ -533,6 +556,8 @@ func (snapshot Snapshot) IsValid() bool {
 			(path.selectorKind == SelectorKindImportedResource) != shared ||
 			(path.selectorKind == SelectorKindSite) != toSite ||
 			(toSite && path.destinationSiteID != snapshot.targetSiteID) ||
+			(path.selectorKind == SelectorKindExitPool) != toExit ||
+			(toExit && path.destinationExitPoolID != snapshot.targetExitPoolID) ||
 			(shared && path.trustContractID != snapshot.share.contractID) ||
 			(index > 0 && comparePaths(snapshot.paths[index-1], path) >= 0) {
 			return false
@@ -547,12 +572,13 @@ func (snapshot Snapshot) IsValid() bool {
 // are usable now.
 func (snapshot Snapshot) validContext() bool {
 	if !snapshot.source.IsValid() || !snapshot.target.IsValid() ||
-		snapshot.targetKind == TargetKindUnknown || snapshot.targetKind > TargetKindSite {
+		snapshot.targetKind == TargetKindUnknown || snapshot.targetKind > TargetKindExitPool {
 		return false
 	}
-	toSite := snapshot.targetKind == TargetKindSite
+	toSite, toExit := snapshot.targetKind == TargetKindSite, snapshot.targetKind == TargetKindExitPool
 	if snapshot.targetSiteID.IsValid() != (toSite && snapshot.target.state != ParticipantStateMissing) ||
-		(toSite && snapshot.targetNodeID.IsValid()) {
+		snapshot.targetExitPoolID.IsValid() != (toExit && snapshot.target.state != ParticipantStateMissing) ||
+		((toSite || toExit) && snapshot.targetNodeID.IsValid()) {
 		return false
 	}
 	shared := snapshot.targetKind == TargetKindImportedResource
@@ -621,6 +647,10 @@ func (snapshot Snapshot) TargetNodeID() node.ID { return snapshot.targetNodeID }
 
 // TargetSiteID returns the Site holding the queried address, when present.
 func (snapshot Snapshot) TargetSiteID() site.ID { return snapshot.targetSiteID }
+
+// TargetExitPoolID returns the Exit Pool an Internet address is reached
+// through, when present.
+func (snapshot Snapshot) TargetExitPoolID() exitpool.ID { return snapshot.targetExitPoolID }
 
 // Paths returns caller-owned canonical matching paths.
 func (snapshot Snapshot) Paths() []Path { return clonePaths(snapshot.paths) }
@@ -718,7 +748,7 @@ type Result struct {
 
 func newResult(query Query, snapshot Snapshot) (Result, error) {
 	if !query.IsValid() || !snapshot.IsValid() || snapshot.scope != query.scope ||
-		snapshot.targetKind != query.targetKind() {
+		!query.allowsTargetKind(snapshot.targetKind) {
 		return Result{}, ErrInvalidSnapshot
 	}
 	if query.destinationNodeID.IsValid() && snapshot.targetNodeID.IsValid() &&

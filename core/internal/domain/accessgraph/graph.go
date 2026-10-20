@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"meshtransit.net/core/internal/domain/exitpool"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
@@ -210,6 +211,9 @@ const (
 	GraphNodeKindImportedResource
 	// GraphNodeKindSite is a Site of the Network that a rule grants.
 	GraphNodeKindSite
+	// GraphNodeKindExitPool is an Exit Pool a rule grants the Internet
+	// through.
+	GraphNodeKindExitPool
 )
 
 // String returns the stable wire spelling.
@@ -223,6 +227,8 @@ func (kind GraphNodeKind) String() string {
 		return "imported_resource"
 	case GraphNodeKindSite:
 		return "site"
+	case GraphNodeKindExitPool:
+		return "exit_pool"
 	default:
 		return ""
 	}
@@ -235,6 +241,7 @@ type GraphNodeParams struct {
 	ResourceID         resource.ID
 	ImportedResourceID sharing.ImportedResourceID
 	SiteID             site.ID
+	ExitPoolID         exitpool.ID
 	Participant        Participant
 	// Share is required exactly for an imported Resource.
 	Share *ShareContext
@@ -247,6 +254,7 @@ type GraphNode struct {
 	resourceID         resource.ID
 	importedResourceID sharing.ImportedResourceID
 	siteID             site.ID
+	exitPoolID         exitpool.ID
 	participant        Participant
 	share              ShareContext
 	hasShare           bool
@@ -257,7 +265,8 @@ type GraphNode struct {
 func NewGraphNode(params GraphNodeParams) (GraphNode, error) {
 	graphNode := GraphNode{
 		kind: params.Kind, deviceID: params.DeviceID, resourceID: params.ResourceID,
-		importedResourceID: params.ImportedResourceID, siteID: params.SiteID, participant: params.Participant,
+		importedResourceID: params.ImportedResourceID, siteID: params.SiteID, exitPoolID: params.ExitPoolID,
+		participant: params.Participant,
 	}
 	if params.Share != nil {
 		graphNode.share, graphNode.hasShare = *params.Share, true
@@ -285,6 +294,9 @@ func (graphNode GraphNode) ImportedResourceID() sharing.ImportedResourceID {
 // SiteID returns the identity of a Site node.
 func (graphNode GraphNode) SiteID() site.ID { return graphNode.siteID }
 
+// ExitPoolID returns the identity of an Exit Pool node.
+func (graphNode GraphNode) ExitPoolID() exitpool.ID { return graphNode.exitPoolID }
+
 // Participant returns the node name and state.
 func (graphNode GraphNode) Participant() Participant { return graphNode.participant }
 
@@ -302,6 +314,8 @@ func (graphNode GraphNode) key() string {
 		return "resource:" + graphNode.resourceID.String()
 	case GraphNodeKindSite:
 		return "site:" + graphNode.siteID.String()
+	case GraphNodeKindExitPool:
+		return "exit_pool:" + graphNode.exitPoolID.String()
 	default:
 		return "imported:" + graphNode.importedResourceID.String()
 	}
@@ -314,7 +328,8 @@ func (graphNode GraphNode) IsValid() bool {
 	}
 	device, resourceSet, imported := graphNode.deviceID.IsValid(), graphNode.resourceID.IsValid(),
 		graphNode.importedResourceID.IsValid()
-	if graphNode.siteID.IsValid() != (graphNode.kind == GraphNodeKindSite) {
+	if graphNode.siteID.IsValid() != (graphNode.kind == GraphNodeKindSite) ||
+		graphNode.exitPoolID.IsValid() != (graphNode.kind == GraphNodeKindExitPool) {
 		return false
 	}
 	switch graphNode.kind {
@@ -322,7 +337,7 @@ func (graphNode GraphNode) IsValid() bool {
 		return device && !resourceSet && !imported && !graphNode.hasShare
 	case GraphNodeKindResource:
 		return !device && resourceSet && !imported && !graphNode.hasShare
-	case GraphNodeKindSite:
+	case GraphNodeKindSite, GraphNodeKindExitPool:
 		return !device && !resourceSet && !imported && !graphNode.hasShare
 	case GraphNodeKindImportedResource:
 		return !device && !resourceSet && imported && graphNode.hasShare && graphNode.share.IsValid()
@@ -462,6 +477,8 @@ func pathNodeKeys(path Path) []string {
 		return []string{source, "imported:" + path.DestinationImportedResourceID().String()}
 	case SelectorKindSite:
 		return []string{source, "site:" + path.DestinationSiteID().String()}
+	case SelectorKindExitPool:
+		return []string{source, "exit_pool:" + path.DestinationExitPoolID().String()}
 	default:
 		return []string{source, "device:" + path.DestinationNodeID().String()}
 	}

@@ -208,6 +208,8 @@ type accessGraphHistoryEdgeItem struct {
 	// Set only on an edge to a Site.
 	DestinationSiteID   string   `json:"destination_site_id,omitempty"`
 	DestinationPrefixes []string `json:"destination_prefixes,omitempty"`
+	// Set only on an edge to the Internet through an Exit Pool.
+	DestinationExitPoolID string `json:"destination_exit_pool_id,omitempty"`
 }
 
 type accessGraphHistoryData struct {
@@ -264,6 +266,9 @@ func newAccessGraphHistoryEdgeItem(edge ledger.Edge) accessGraphHistoryEdgeItem 
 	if edge.ValidToRevision > 0 {
 		revision := edge.ValidToRevision
 		item.ValidToRevision = &revision
+	}
+	if edge.ExitPoolID != (publicid.ID{}) {
+		item.DestinationExitPoolID = edge.ExitPoolID.String()
 	}
 	if edge.SiteID != (publicid.ID{}) {
 		item.DestinationSiteID = edge.SiteID.String()

@@ -140,6 +140,8 @@ func parseAccessGraphTargetKind(value string) accessgraph.TargetKind {
 		return accessgraph.TargetKindImportedResource
 	case "site":
 		return accessgraph.TargetKindSite
+	case "exit_pool":
+		return accessgraph.TargetKindExitPool
 	default:
 		return accessgraph.TargetKindUnknown
 	}

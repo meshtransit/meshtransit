@@ -12,6 +12,7 @@ import (
 	"meshtransit.net/core/internal/domain/accessgraph"
 	"meshtransit.net/core/internal/domain/devicegroup"
 	"meshtransit.net/core/internal/domain/devicetag"
+	"meshtransit.net/core/internal/domain/exitpool"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/identitygroup"
 	"meshtransit.net/core/internal/domain/node"
@@ -134,16 +135,19 @@ func (store *AccessGraphStore) ReadActive(
 	record.ReleaseID = releaseID
 	record.CompilerFormatVersion = compilerFormatVersion
 	record.SemanticHash = semanticHash
-	if query.DestinationAddress().IsValid() {
-		record.TargetSiteID = targetID
-	} else {
-		record.TargetNodeID = targetID
-	}
 	if err := json.Unmarshal([]byte(paths), &record.Paths); err != nil {
 		return accessgraph.Snapshot{}, accessgraph.ErrInvalidSnapshot
 	}
 	if record.Context, err = decodeAccessGraphContext(explanationContext); err != nil {
 		return accessgraph.Snapshot{}, err
+	}
+	switch {
+	case !query.DestinationAddress().IsValid():
+		record.TargetNodeID = targetID
+	case record.Context.Target.Kind == accessgraph.TargetKindExitPool.String():
+		record.TargetExitPoolID = targetID
+	default:
+		record.TargetSiteID = targetID
 	}
 	snapshot, err = record.snapshot(query)
 	if err != nil {
@@ -157,7 +161,8 @@ func (store *AccessGraphStore) ReadActive(
 }
 
 // explainArguments returns the statement and arguments that explain query:
-// explain_site_access_v1 for an address, explain_active_policy_v4 otherwise.
+// explain_address_access_v1 for an address, explain_active_policy_v4
+// otherwise.
 func explainArguments(session accountsession.Session, query accessgraph.Query, evaluatedAt time.Time,
 ) (string, []any) {
 	arguments := []any{
@@ -167,7 +172,7 @@ func explainArguments(session accountsession.Session, query accessgraph.Query, e
 		query.Scope().WorkspaceID().String(), query.Scope().NetworkID().String(), query.SourceNodeID().String(),
 	}
 	if query.DestinationAddress().IsValid() {
-		return explainSiteAccessSQL, append(arguments, query.DestinationAddress().String(),
+		return explainAddressAccessSQL, append(arguments, query.DestinationAddress().String(),
 			query.Protocol().String(), int(query.DestinationPort()), evaluatedAt,
 			accessgraph.MaximumExplanationPaths+1)
 	}
@@ -199,6 +204,7 @@ type accessGraphSnapshotRecord struct {
 	SemanticHash          []byte
 	TargetNodeID          *string
 	TargetSiteID          *string
+	TargetExitPoolID      *string
 	Paths                 []accessGraphPathRecord
 	Context               accessGraphContextRecord
 }
@@ -227,6 +233,8 @@ type accessGraphPathRecord struct {
 	// Set only for paths to a Site (schema 197).
 	DestinationSiteID   string   `json:"destination_site_id"`
 	DestinationPrefixes []string `json:"destination_prefixes"`
+	// Set only for paths to an Exit Pool (schema 206).
+	DestinationExitPoolID string `json:"destination_exit_pool_id"`
 }
 
 func (record accessGraphSnapshotRecord) snapshot(query accessgraph.Query) (accessgraph.Snapshot, error) {
@@ -270,6 +278,13 @@ func (record accessGraphSnapshotRecord) snapshot(query accessgraph.Query) (acces
 			return accessgraph.Snapshot{}, accessgraph.ErrInvalidSnapshot
 		}
 		params.TargetSiteID = targetSiteID
+	}
+	if record.TargetExitPoolID != nil {
+		targetPoolID, err := exitpool.ParseID(*record.TargetExitPoolID)
+		if err != nil {
+			return accessgraph.Snapshot{}, accessgraph.ErrInvalidSnapshot
+		}
+		params.TargetExitPoolID = targetPoolID
 	}
 	if err := record.Context.apply(&params); err != nil {
 		return accessgraph.Snapshot{}, err
@@ -378,6 +393,13 @@ func (record accessGraphPathRecord) path() (accessgraph.Path, error) {
 	if err := record.applySite(&params); err != nil {
 		return accessgraph.Path{}, err
 	}
+	if record.DestinationExitPoolID != "" {
+		poolID, err := exitpool.ParseID(record.DestinationExitPoolID)
+		if err != nil {
+			return accessgraph.Path{}, accessgraph.ErrInvalidSnapshot
+		}
+		params.DestinationExitPoolID = poolID
+	}
 	return accessgraph.NewPath(params)
 }
 
@@ -428,6 +450,8 @@ func parseAccessGraphSelectorKind(value string) accessgraph.SelectorKind {
 		return accessgraph.SelectorKindImportedResource
 	case "site":
 		return accessgraph.SelectorKindSite
+	case "exit_pool":
+		return accessgraph.SelectorKindExitPool
 	default:
 		return accessgraph.SelectorKindUnknown
 	}

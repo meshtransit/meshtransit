@@ -17,7 +17,7 @@ import (
 	"meshtransit.net/core/internal/domain/workspace"
 )
 
-const readAccessGraphHistorySQL = `SELECT mesh_ops.read_access_graph_history_v2(
+const readAccessGraphHistorySQL = `SELECT mesh_ops.read_access_graph_history_v3(
     $1::UUID, $2::UUID, $3::UUID, $4::UUID,
     $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
     $10::UUID, $11::UUID, $12::TIMESTAMPTZ, $13::TIMESTAMPTZ,
@@ -186,6 +186,7 @@ type accessGraphHistoryEdgeJSON struct {
 	ValidToAt                     *time.Time `json:"valid_to_at"`
 	ExpiresAt                     *time.Time `json:"expires_at"`
 	DestinationSiteID             *string    `json:"destination_site_id"`
+	DestinationExitPoolID         *string    `json:"destination_exit_pool_id"`
 	DestinationPrefixes           []string   `json:"destination_prefixes"`
 }
 
@@ -257,6 +258,7 @@ func decodeAccessGraphHistoryEdge(wire accessGraphHistoryEdgeJSON) (ledger.Edge,
 		DestinationSelectorID:   optionalPublic(wire.DestinationSelectorID),
 		ValidFromRevision:       wire.ValidFromRevision, ValidFrom: wire.ValidFromAt.UTC()}
 	edge.SiteID = optionalPublic(wire.DestinationSiteID)
+	edge.ExitPoolID = optionalPublic(wire.DestinationExitPoolID)
 	if len(wire.DestinationPrefixes) > 1024 {
 		invalid = true
 	}

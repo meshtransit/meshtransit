@@ -313,8 +313,8 @@ digest of what it sent ([enforcement](audit.md#policy-distribution-and-enforceme
 
 | Operation | Needs | Answers |
 |---|---|---|
-| `GET …/access-graph` | `policy.read`, `device.read` | Every allowed path, optionally for one Device or protocol, page by page, including one edge (`selector_kind` `site`) per Device a rule grants a Site to, to a `site` node |
-| `POST …/access-graph/actions/explain` | `policy.explain` | For a source Device, a destination (Device, Resource, Imported Resource or an address inside a Site), protocol and port: allow or deny, the rules that allow it, and why not otherwise |
+| `GET …/access-graph` | `policy.read`, `device.read` | Every allowed path, optionally for one Device or protocol, page by page, including one edge (`selector_kind` `site`) per Device a rule grants a Site to, to a `site` node, and one edge (`selector_kind` `exit_pool`) per Device a rule grants the Internet through an Exit Pool, to an `exit_pool` node (not the pool's own exit nodes) |
+| `POST …/access-graph/actions/explain` | `policy.explain` | For a source Device, a destination (Device, Resource, Imported Resource, or an address inside a Site or on the Internet), protocol and port: allow or deny, the rules that allow it, and why not otherwise |
 | `GET …/access-graph/history` (Console private API) | `policy.read`, `device.read` | Paths at a past instant ([audit](audit.md#connection-history)) |
 
 Explain uses the same resolver as maps. A deny says why: no published policy,
@@ -335,9 +335,23 @@ The Site's name is returned only to callers that also hold `route.read`.
 Explain answers what policy allows: whether a router of the Site can serve
 the Device is shown on the Site.
 
+An Internet address (outside the ranges of `shared/internet`) that no Site
+holds is answered through the Exit Pools: Sites take their part of the
+Internet out of the exit path, as maps do. The target is the first active
+pool by identity whose rules grant the Internet to the source Device for the
+protocol and port (`target.exit_pool_id`, context `kind` `exit_pool`); each
+path is such a rule, with `selector_kind` `exit_pool`, the pool
+(`destination_exit_pool_id`) and no prefix. A Device that is an exit node of
+a pool does not use it. Without such a pool the target is `missing` and the
+deny reason is `no_matching_active_rule`. An address that is neither in a
+Site nor on the Internet is a missing Site (`target_inactive`). The pool's
+name is returned only to callers that also hold `route.read`.
+
 ## Not yet
 
-Exit nodes and connectors are not implemented. Subnet routes reach Sites
-through Linux routers. The permissions
+Connectors are not implemented, and nodes do not forward to the Internet
+yet: Core keeps Exit Pools, their rules and maps, behind
+`MESHTRANSIT_EXIT_NODES_ENABLED`. Subnet routes reach Sites through Linux
+routers. The permissions
 `connector.*`, `policy.draft`, `policy.rollback` and
 `approval_policy.manage` exist in the catalog without an operation.

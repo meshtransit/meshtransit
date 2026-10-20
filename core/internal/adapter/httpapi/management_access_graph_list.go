@@ -204,6 +204,8 @@ func newAccessGraphListing(page accessgraph.GraphPage, suffix dnsname.Suffix) ac
 			rendered.ID = graphNode.ResourceID().String()
 		case accessgraph.GraphNodeKindSite:
 			rendered.ID = graphNode.SiteID().String()
+		case accessgraph.GraphNodeKindExitPool:
+			rendered.ID = graphNode.ExitPoolID().String()
 		default:
 			rendered.ID = graphNode.ImportedResourceID().String()
 		}

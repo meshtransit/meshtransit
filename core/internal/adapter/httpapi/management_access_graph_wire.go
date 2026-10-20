@@ -72,6 +72,9 @@ func newExplainedPolicyTarget(query accessgraph.Query, snapshot accessgraph.Snap
 		if snapshot.TargetSiteID().IsValid() {
 			target.SiteID = snapshot.TargetSiteID().String()
 		}
+		if snapshot.TargetExitPoolID().IsValid() {
+			target.ExitPoolID = snapshot.TargetExitPoolID().String()
+		}
 		return target
 	case query.DestinationNodeID().IsValid():
 		return explainedPolicyTarget{DeviceID: query.DestinationNodeID().String()}
@@ -160,6 +163,9 @@ func newExplainedPolicyPaths(paths []accessgraph.Path) []explainedPolicyPath {
 			for _, prefix := range path.DestinationPrefixes() {
 				rendered[index].DestinationPrefixes = append(rendered[index].DestinationPrefixes, prefix.String())
 			}
+		}
+		if path.DestinationExitPoolID().IsValid() {
+			rendered[index].DestinationExitPoolID = path.DestinationExitPoolID().String()
 		}
 	}
 	return rendered

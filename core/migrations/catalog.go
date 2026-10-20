@@ -572,6 +572,9 @@ func Catalog() []Migration {
 		newMigration(203, "A node reports whether it offers to be an exit node", deviceExitOfferReportSQL),
 		newMigration(204, "Core elects each Exit Pool's primary exit node", exitPoolPrimaryElectionSQL),
 		newMigration(205, "Maps read each Network's Exit Pools", mapNetworkExitsSQL),
+		newMigration(206, "Explain answers for Internet addresses through Exit Pools", explainExitAccessSQL),
+		newMigration(207, "The Access Graph lists the Devices rules to Exit Pools reach", accessGraphExitEdgesSQL),
+		newMigration(208, "The access ledger records rules to Exit Pools", accessLedgerExitEdgesSQL),
 	}
 }
 
@@ -966,3 +969,12 @@ var exitPoolPrimaryElectionSQL string
 
 //go:embed 000205_map_network_exits.up.sql
 var mapNetworkExitsSQL string
+
+//go:embed 000206_explain_exit_access.up.sql
+var explainExitAccessSQL string
+
+//go:embed 000207_access_graph_exit_edges.up.sql
+var accessGraphExitEdgesSQL string
+
+//go:embed 000208_access_ledger_exit_edges.up.sql
+var accessLedgerExitEdgesSQL string

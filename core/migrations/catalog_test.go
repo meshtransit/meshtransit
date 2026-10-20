@@ -15,8 +15,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 205 {
-		t.Fatalf("len(Catalog()) = %d, want 205", len(catalog))
+	if len(catalog) != 208 {
+		t.Fatalf("len(Catalog()) = %d, want 208", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1611,8 +1611,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 205 {
-		t.Fatalf("LatestVersion() = %d, want 205", LatestVersion())
+	if LatestVersion() != 208 {
+		t.Fatalf("LatestVersion() = %d, want 208", LatestVersion())
 	}
 }
 
@@ -5900,5 +5900,84 @@ func TestMigration205ReadsNetworkExitsForMaps(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "TO mesh_worker") {
 		t.Error("schema 205 grants a map reader to the worker role")
+	}
+}
+
+func TestMigration206ExplainsExitAccess(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[205]
+	if migration.Version != 206 {
+		t.Fatalf("migration 206 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.explain_exit_rules_internal_v1(",
+		"CREATE FUNCTION mesh_ops.explain_address_access_v1(",
+		"IF v_site_id IS NULL AND mesh_ops.internet_address_internal_v1(p_destination_address) THEN",
+		"WHERE exit_node.pool_id = p_pool_id AND exit_node.device_id = p_source_id",
+		"'selector_kind', 'exit_pool',",
+		"'policy.explain', p_evaluated_at",
+		"'route.read', p_evaluated_at",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 206 lacks %q", want)
+		}
+	}
+	if strings.Contains(migration.SQL, "TO mesh_worker") ||
+		!strings.Contains(migration.SQL, "FROM PUBLIC, mesh_runtime, mesh_worker") {
+		t.Error("schema 206 grants the rule reader or the explanation to the wrong roles")
+	}
+}
+
+func TestMigration207ListsExitEdges(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[206]
+	if migration.Version != 207 {
+		t.Fatalf("migration 207 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.exit_graph_edges_internal_v1(",
+		"CREATE FUNCTION mesh_ops.read_access_graph_v4(",
+		"FROM mesh_ops.read_access_graph_v3(",
+		"WHERE exit_node.pool_id = edge.destination_exit_pool_id AND exit_node.device_id = edge.source_device_id",
+		"'exit:' || rule.public_id::TEXT || ':' || source.public_id::TEXT",
+		"'selector_kind', 'exit_pool',",
+		"'kind', 'exit_pool', 'id', exit_pool.public_id,",
+		"ERRCODE = 'MTA01'",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 207 lacks %q", want)
+		}
+	}
+	if strings.Contains(migration.SQL, "network_site") || strings.Contains(migration.SQL, "TO mesh_worker") {
+		t.Error("schema 207 reads Sites again or grants the worker role")
+	}
+}
+
+func TestMigration208RecordsExitEdges(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[207]
+	if migration.Version != 208 {
+		t.Fatalf("migration 208 = %+v", migration)
+	}
+	for _, want := range []string{
+		"ADD COLUMN destination_exit_pool_public_id UUID;",
+		"CREATE FUNCTION mesh_ops.access_edges_internal_v3(",
+		"FROM mesh_ops.access_edges_internal_v2(p_workspace_id, p_network_id, p_policy_revision, p_now) AS edge;",
+		"SELECT * FROM mesh_ops.access_edges_internal_v3(v_workspace_id, v_network_id, v_policy_revision, v_now)",
+		"'access-edge/v1', 'exit_pool', exit_edge.rule_id::TEXT",
+		"CREATE OR REPLACE FUNCTION mesh_ops.record_access_edges_v1(",
+		"CREATE FUNCTION mesh_ops.read_access_graph_history_internal_v2(",
+		"AND (p_include_exits OR edge.selector_kind <> 'exit_pool')",
+		"p_protocol, p_after_edge_key, p_limit, TRUE, FALSE)",
+		"CREATE FUNCTION mesh_ops.read_access_graph_history_v3(",
+		"DROP FUNCTION mesh_ops.read_access_graph_history_internal_v1(",
+		"VALIDATE CONSTRAINT access_edge_history_kind_check",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 208 lacks %q", want)
+		}
+	}
+	if strings.Contains(migration.SQL, "TO mesh_worker") {
+		t.Error("schema 208 grants the worker role")
 	}
 }

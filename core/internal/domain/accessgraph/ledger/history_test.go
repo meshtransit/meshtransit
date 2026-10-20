@@ -233,3 +233,34 @@ func TestValidResultChecksSiteEdges(t *testing.T) {
 		}
 	}
 }
+
+func TestValidResultChecksExitPoolEdges(t *testing.T) {
+	t.Parallel()
+	scope := testScope(t, "01890f00-0000-7000-8000-000000000201")
+	at := time.Date(2026, time.October, 8, 12, 0, 0, 0, time.UTC)
+	query := Query{At: at, Limit: 3}
+	exitEdge := func() Edge {
+		edge := edgeAt(t, 5, at.Add(-time.Minute))
+		edge.SelectorKind, edge.DestinationDeviceID = SelectorExitPool, node.ID{}
+		edge.ExitPoolID = mustPublic(t, "01890f00-0000-7000-8000-000000000981")
+		return edge
+	}
+	if !validResult(Result{Scope: scope, At: at, RecordedSince: at, Edges: []Edge{exitEdge()}}, scope, query) {
+		t.Fatal("exit edge rejected")
+	}
+	for name, mutate := range map[string]func(*Edge){
+		"no pool":            func(edge *Edge) { edge.ExitPoolID = publicid.ID{} },
+		"prefixes":           func(edge *Edge) { edge.Prefixes = []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")} },
+		"a Site":             func(edge *Edge) { edge.SiteID = mustPublic(t, "01890f00-0000-7000-8000-000000000971") },
+		"destination Device": func(edge *Edge) { edge.DestinationDeviceID = mustNode(t, "01890f00-0000-7000-8000-000000000302") },
+		"Device kind with pool": func(edge *Edge) {
+			edge.SelectorKind, edge.DestinationDeviceID = SelectorDevice, mustNode(t, "01890f00-0000-7000-8000-000000000302")
+		},
+	} {
+		edge := exitEdge()
+		mutate(&edge)
+		if validResult(Result{Scope: scope, At: at, RecordedSince: at, Edges: []Edge{edge}}, scope, query) {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}

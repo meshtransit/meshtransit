@@ -90,7 +90,9 @@ moment. It is a worker job, off by default
 For every new Network revision, the worker computes the Network's effective
 access edges: the published rules, with groups, identity groups and tags at
 their membership at that time, the Devices reachable through active shares,
-and each Device a rule grants a Site to (not the Site's own routers), keeping
+each Device a rule grants a Site to (not the Site's own routers), and each
+Device a rule grants the Internet through an Exit Pool (not the pool's own
+exit nodes), keeping
 only active, unexpired Devices. An edge that appears opens at
 that revision's time, one that disappears closes there. Each change also
 writes a sealed `access_graph.recorded` event whose hash is the digest of the
@@ -104,8 +106,10 @@ source, destination or protocol. It needs `policy.read` and `device.read`.
 The answer includes `recorded_since`: before the first recorded state there
 is no history. An edge to a Site has `selector_kind` `site`, no destination
 Device, and `destination_site_id` and `destination_prefixes` (the prefixes the
-rule grants). The snapshot's `edge_count` and `digest` cover every recorded
-edge, Site edges included.
+rule grants). An edge to the Internet has `selector_kind` `exit_pool`, no
+destination Device and `destination_exit_pool_id`. The snapshot's
+`edge_count` and `digest` cover every recorded edge, Site and exit edges
+included.
 
 The ledger polls every few seconds, so a change that is undone within one
 poll may not appear.

@@ -23,9 +23,11 @@ FROM mesh_ops.explain_active_policy_v4(
     $16::TEXT, $17::INTEGER, $18::TIMESTAMPTZ, $19::INTEGER
 )`
 
-// explainSiteAccessSQL returns the columns of explainActivePolicySQL, with
-// the Site holding the address in place of the target Device.
-const explainSiteAccessSQL = `SELECT
+// explainAddressAccessSQL returns the columns of explainActivePolicySQL,
+// with the Site holding the address, or the Exit Pool an Internet address is
+// reached through (schema 206), in place of the target Device; the context
+// names which.
+const explainAddressAccessSQL = `SELECT
     network_revision,
     inventory_revision,
     group_revision,
@@ -38,10 +40,10 @@ const explainSiteAccessSQL = `SELECT
     release_public_id::TEXT,
     compiler_format_version,
     release_semantic_hash,
-    target_site_public_id::TEXT,
+    target_public_id::TEXT,
     paths::TEXT,
     context::TEXT
-FROM mesh_ops.explain_site_access_v1(
+FROM mesh_ops.explain_address_access_v1(
     $1::UUID, $2::UUID, $3::UUID, $4::UUID,
     $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
     $10::UUID, $11::UUID, $12::UUID, $13::INET,

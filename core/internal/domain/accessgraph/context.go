@@ -8,6 +8,8 @@ import (
 
 	"meshtransit.net/core/internal/domain/identity"
 	"meshtransit.net/core/internal/domain/sharing"
+
+	"meshtransit.net/shared/internet"
 )
 
 const (
@@ -95,6 +97,9 @@ const (
 	TargetKindImportedResource
 	// TargetKindSite is the Site that holds the queried address.
 	TargetKindSite
+	// TargetKindExitPool is the Exit Pool an Internet address held by no
+	// Site is reached through.
+	TargetKindExitPool
 )
 
 // String returns the stable wire spelling.
@@ -108,9 +113,21 @@ func (kind TargetKind) String() string {
 		return "imported_resource"
 	case TargetKindSite:
 		return "site"
+	case TargetKindExitPool:
+		return "exit_pool"
 	default:
 		return ""
 	}
+}
+
+// allowsTargetKind reports whether a snapshot of kind answers query: an
+// address is held by a Site or, on the Internet, reached through an Exit
+// Pool.
+func (query Query) allowsTargetKind(kind TargetKind) bool {
+	if query.destinationAddress.IsValid() && kind == TargetKindExitPool {
+		return internet.Contains(query.destinationAddress)
+	}
+	return kind == query.targetKind()
 }
 
 func (query Query) targetKind() TargetKind {
@@ -254,6 +271,11 @@ func denyReasonFor(snapshot Snapshot) DenyReason {
 	}
 	if snapshot.source.state != ParticipantStateActive {
 		return DenyReasonSourceInactive
+	}
+	// Without a pool whose rules grant it, no rule lets the Device reach
+	// the Internet.
+	if snapshot.targetKind == TargetKindExitPool && snapshot.target.state == ParticipantStateMissing {
+		return DenyReasonNoMatchingActiveRule
 	}
 	if snapshot.targetKind == TargetKindImportedResource {
 		if !snapshot.hasShare {

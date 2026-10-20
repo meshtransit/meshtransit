@@ -69,6 +69,9 @@ type explainedPolicyTarget struct {
 	Address            string `json:"address,omitempty"`
 	// SiteID names the Site that holds Address, when one does.
 	SiteID string `json:"site_id,omitempty"`
+	// ExitPoolID names the Exit Pool an Internet address no Site holds is
+	// reached through, when a pool's rules grant it.
+	ExitPoolID string `json:"exit_pool_id,omitempty"`
 }
 
 type explainedPolicyEvidence struct {
@@ -109,6 +112,8 @@ type explainedPolicyPath struct {
 	// Set for a path to a Site: the Site and the prefixes the rule grants.
 	DestinationSiteID   string   `json:"destination_site_id,omitempty"`
 	DestinationPrefixes []string `json:"destination_prefixes,omitempty"`
+	// Set for a path to an Exit Pool.
+	DestinationExitPoolID string `json:"destination_exit_pool_id,omitempty"`
 }
 
 type accessGraphExplainPath struct {
