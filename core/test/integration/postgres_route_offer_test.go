@@ -155,8 +155,52 @@ WHERE outbox.aggregate_kind = 'device_route_advertisement' ORDER BY outbox.id DE
 		t.Fatalf("an empty offer stored %q, want an empty row", stored())
 	}
 
+	assertRouteOfferDroppedWithDevice(ctx, t, admin, device, report)
+
 	if _, err := sites.Delete(ctx, owner, scope, created.Site.ID, 2, newCorrelationID(t)); err != nil {
 		t.Fatalf("delete the Site: %v", err)
+	}
+}
+
+// assertRouteOfferDroppedWithDevice qualifies schema 200: suspending a
+// Device keeps its offer, revoking it deletes the offer in the same change.
+// It runs in a transaction it rolls back, so the Device stays active.
+func assertRouteOfferDroppedWithDevice(ctx context.Context, t *testing.T, admin *pgx.Conn, device node.ID,
+	report func(...string) (bool, error)) {
+	t.Helper()
+	if _, err := report("10.40.0.0/16"); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	offers := func() int {
+		var count int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM mesh.device_route_advertisement
+WHERE device_id = (SELECT id FROM mesh.device WHERE public_id = $1::UUID)`, device.String()).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		return count
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_catalog.set_config('mesh.change_public_id', $1, TRUE)`,
+		newCorrelationID(t).String()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE mesh.device SET state = 'suspended', suspended_reason = 'admin', version = version + 1
+WHERE public_id = $1::UUID`, device.String()); err != nil {
+		t.Fatalf("suspend the router: %v", err)
+	}
+	if offers() != 1 {
+		t.Fatal("suspending a Device dropped its offer")
+	}
+	if _, err := tx.Exec(ctx, `UPDATE mesh.device SET state = 'revoked', suspended_reason = NULL, version = version + 1
+WHERE public_id = $1::UUID`, device.String()); err != nil {
+		t.Fatalf("revoke the router: %v", err)
+	}
+	if offers() != 0 {
+		t.Fatal("revoking a Device kept its offer")
 	}
 }
 

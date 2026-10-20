@@ -18,7 +18,10 @@ import (
 )
 
 const (
-	reportDeviceRouteOfferSQL = `SELECT mesh_ops.report_device_route_offer_v1($1::BYTEA,$2::BYTEA,$3::CIDR[],$4::UUID)::TEXT`
+	// reportDeviceRouteOfferSQL resolves the session's Network and stores the
+	// offer in one statement (schema 200).
+	reportDeviceRouteOfferSQL = `SELECT workspace_public_id::TEXT, network_public_id::TEXT, result::TEXT
+FROM mesh_ops.report_device_route_offer_v2($1::BYTEA,$2::BYTEA,$3::CIDR[],$4::UUID)`
 	// deviceRouteOfferPermission names the authority a node uses on itself.
 	deviceRouteOfferPermission = "device.report_self"
 )
@@ -74,24 +77,14 @@ func (store *RouteOfferStore) ReportRouteOffer(ctx context.Context, identity con
 	fingerprint, nodeKey := identity.MachineFingerprint(), identity.NodeKey()
 	changed := false
 	err = store.transact(ctx, func(tx accountSessionTransaction) error {
-		var workspaceID, networkID string
-		if err := tx.QueryRow(ctx, resolveLogoutScopeSQL, fingerprint[:], nodeKey[:]).Scan(&workspaceID,
-			&networkID); err != nil {
+		var workspaceID, networkID, encoded string
+		if err := tx.QueryRow(ctx, reportDeviceRouteOfferSQL, fingerprint[:], nodeKey[:], texts,
+			changeID.String()).Scan(&workspaceID, &networkID, &encoded); err != nil {
 			return routeOfferDatabaseError(err)
 		}
 		scope, err := parseLogoutScope(workspaceID, networkID)
 		if err != nil {
 			return ErrRouteOfferUnavailable
-		}
-		var workspaceInternal, networkInternal int64
-		if err := tx.QueryRow(ctx, setResourceAuthorityScopeSQL, workspaceID, networkID).Scan(&workspaceInternal,
-			&networkInternal); err != nil || workspaceInternal <= 0 || networkInternal <= 0 {
-			return errors.Join(ErrRouteOfferNotFound, err)
-		}
-		var encoded string
-		if err := tx.QueryRow(ctx, reportDeviceRouteOfferSQL, fingerprint[:], nodeKey[:], texts,
-			changeID.String()).Scan(&encoded); err != nil {
-			return routeOfferDatabaseError(err)
 		}
 		changed, err = appendRouteOfferEvidence(ctx, tx, scope, changeID, encoded)
 		return err

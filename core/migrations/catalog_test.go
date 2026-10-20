@@ -13,8 +13,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 199 {
-		t.Fatalf("len(Catalog()) = %d, want 199", len(catalog))
+	if len(catalog) != 200 {
+		t.Fatalf("len(Catalog()) = %d, want 200", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1609,8 +1609,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 199 {
-		t.Fatalf("LatestVersion() = %d, want 199", LatestVersion())
+	if LatestVersion() != 200 {
+		t.Fatalf("LatestVersion() = %d, want 200", LatestVersion())
 	}
 }
 
@@ -5740,6 +5740,24 @@ func TestMigration199RecordsSiteEdges(t *testing.T) {
 	} {
 		if !strings.Contains(migration.SQL, want) {
 			t.Errorf("schema 199 lacks %q", want)
+		}
+	}
+}
+
+func TestMigration200StoresOffersInOneStatement(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[199]
+	if migration.Version != 200 {
+		t.Fatalf("migration 200 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.report_device_route_offer_v2(",
+		"FROM mesh_ops.resolve_map_session_scope(p_machine_fingerprint, p_node_key)",
+		"CREATE TRIGGER device_drop_route_offer",
+		"NEW.state NOT IN ('active', 'suspended')",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 200 lacks %q", want)
 		}
 	}
 }
