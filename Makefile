@@ -138,7 +138,8 @@ e2e-subnet-router:
 		apt-get -qq -o Acquire::Retries=3 update >/dev/null && apt-get -qq -o Acquire::Retries=3 install -y iproute2 nftables >/dev/null && \
 		go test -c -tags e2e -o /tmp/subnetrouter.test ./client/internal/e2e/subnetrouter && \
 		chmod 755 /tmp/subnetrouter.test && \
-		MESHTRANSIT_E2E_BENCH=/src/dist/subnet-router-bench.json /tmp/subnetrouter.test -test.v -test.timeout 5m'
+		MESHTRANSIT_E2E_BENCH=/src/dist/subnet-router-bench.json /tmp/subnetrouter.test -test.v -test.timeout 5m; \
+		status=$$?; chmod a+r /src/dist/subnet-router-bench.json 2>/dev/null; exit $$status'
 
 integration-deps:
 	$(GO) test -timeout=$(INTEGRATION_TEST_TIMEOUT) -tags=integration -count=1 \
