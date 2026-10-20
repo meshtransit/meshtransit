@@ -81,7 +81,7 @@ func (n *Notifier) send(ctx context.Context, state string) error {
 			return fmt.Errorf("set service-manager write deadline: %w", err)
 		}
 	}
-	written, err := connection.Write([]byte(state))
+	written, err := writeDatagram(connection, []byte(state))
 	if err != nil {
 		return fmt.Errorf("send service-manager state: %w", err)
 	}
