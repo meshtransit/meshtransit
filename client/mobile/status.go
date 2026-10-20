@@ -46,6 +46,15 @@ type status struct {
 	Sites        []siteRoute  `json:"sites"`
 	// Exit is the Exit Pool in use; absent when none is chosen.
 	Exit *exitStatus `json:"exit,omitempty"`
+	// ExitSettings is the app's choice (SetExitNode).
+	ExitSettings exitSettings `json:"exitSettings"`
+}
+
+// exitSettings is the Exit Pool the app chose and whether the LAN stays
+// outside it.
+type exitSettings struct {
+	Use      string `json:"use"`
+	AllowLAN bool   `json:"allowLan"`
 }
 
 // exitStatus is the Exit Pool the device sends its Internet traffic

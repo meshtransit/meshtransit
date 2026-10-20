@@ -473,6 +473,7 @@ func (engine *Engine) StatusJSON() (value string, err error) {
 		// An unreadable settings file admits nothing: shown as off.
 		settings, _ := loadRouteSettings(engine.routeSettings)
 		reported.SubnetRoutes.Accepted = settings.AcceptRoutes
+		reported.ExitSettings = exitSettings{Use: settings.ExitUse, AllowLAN: settings.ExitAllowLAN}
 		value, statusErr = reported.marshal()
 		return statusErr
 	})
