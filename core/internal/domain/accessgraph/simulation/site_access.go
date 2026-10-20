@@ -41,7 +41,9 @@ func (access SiteAccess) Prefixes() []netip.Prefix { return slices.Clone(access.
 func (access SiteAccess) Protocol() policy.Protocol { return access.protocol }
 
 // DestinationPortRanges returns the rule's ports; empty for ICMP.
-func (access SiteAccess) DestinationPortRanges() []policy.PortRange { return slices.Clone(access.ports) }
+func (access SiteAccess) DestinationPortRanges() []policy.PortRange {
+	return slices.Clone(access.ports)
+}
 
 func (access SiteAccess) isValid() bool {
 	return access.ruleID.IsValid() && access.source.IsValid() && access.site.IsValid() && access.protocol.IsValid()

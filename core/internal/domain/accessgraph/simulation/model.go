@@ -449,7 +449,9 @@ func (result Result) IsValid() bool {
 func (result Result) AddedSiteAccess() []SiteAccess { return cloneSiteAccess(result.addedSiteAccess) }
 
 // RemovedSiteAccess returns the access to Sites the proposal takes away.
-func (result Result) RemovedSiteAccess() []SiteAccess { return cloneSiteAccess(result.removedSiteAccess) }
+func (result Result) RemovedSiteAccess() []SiteAccess {
+	return cloneSiteAccess(result.removedSiteAccess)
+}
 
 // Baseline returns the exact current evidence.
 func (result Result) Baseline() Baseline { return result.baseline }
