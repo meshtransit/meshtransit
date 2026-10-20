@@ -82,9 +82,10 @@ func Control(_, address string, raw syscall.RawConn) error {
 }
 
 // Dialer returns a dialer with the given timeout (0 for none) whose sockets
-// are protected.
+// are protected, and whose names are resolved from the client's own sockets
+// where the host's resolver may be cut off (resolver).
 func Dialer(timeout time.Duration) *net.Dialer {
-	return &net.Dialer{Timeout: timeout, Control: Control}
+	return &net.Dialer{Timeout: timeout, Control: Control, Resolver: resolver()}
 }
 
 // ListenConfig returns a listen configuration whose sockets are protected.

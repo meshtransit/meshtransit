@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -50,10 +51,8 @@ var exitLANMulticast = []netip.Prefix{netip.MustParsePrefix("224.0.0.0/24"), net
 type kernelExitRouteConfigurer struct {
 	options RoutedOptions
 	uid     uint32
-	// sysctlRoot is /proc/sys; validMarkBefore is net.ipv4.conf.all.
-	// src_valid_mark before the helper set it, empty when it did not.
-	sysctlRoot      string
-	validMarkBefore string
+	// sysctlRoot is /proc/sys.
+	sysctlRoot string
 }
 
 // validMarkSetting makes the reverse path check of packets from outside use
@@ -412,7 +411,18 @@ func sameExitRule(installed, wanted netlink.Rule) bool {
 		installed.Invert == wanted.Invert && sameUIDs
 }
 
-// validateMarks turns src_valid_mark on, remembering what it was.
+// validMarkRecord is where the helper keeps src_valid_mark as it was before
+// it turned it on, next to its router state in its runtime directory, so a
+// helper that crashed, or meshnetd --release-exit, puts it back; the file
+// goes with a reboot, as the setting does. Empty without a state path.
+func validMarkRecord(options RoutedOptions) string {
+	if options.StatePath == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(options.StatePath), "exit-valid-mark")
+}
+
+// validateMarks turns src_valid_mark on, recording what it was first.
 func (configurer *kernelExitRouteConfigurer) validateMarks() error {
 	path := filepath.Join(configurer.sysctlRoot, validMarkSetting)
 	current, err := readSysctl(path)
@@ -422,13 +432,29 @@ func (configurer *kernelExitRouteConfigurer) validateMarks() error {
 	if current == "1" {
 		return nil
 	}
-	if err := writeSysctl(path, "1"); err != nil {
-		return err
+	if record := validMarkRecord(configurer.options); record != "" {
+		// Best effort: without the record only a crashed helper leaves the
+		// setting on, as wg-quick always does.
+		_ = os.WriteFile(record, []byte(current), 0o600) //nolint:gosec // G306: owner-only
 	}
-	if configurer.validMarkBefore == "" {
-		configurer.validMarkBefore = current
+	return writeSysctl(path, "1")
+}
+
+// restoreValidMark puts src_valid_mark back as recorded, unless someone
+// changed it since.
+func restoreValidMark(options RoutedOptions, sysctlRoot string) {
+	record := validMarkRecord(options)
+	if record == "" {
+		return
 	}
-	return nil
+	previous, err := os.ReadFile(record) //nolint:gosec // G304: the helper's own runtime file
+	if err != nil {
+		return
+	}
+	if value := strings.TrimSpace(string(previous)); value == "0" || value == "2" {
+		restoreSysctl(filepath.Join(sysctlRoot, validMarkSetting), "1", value)
+	}
+	_ = os.Remove(record)
 }
 
 // Present reports whether the kill switch is installed.
@@ -440,14 +466,7 @@ func (configurer *kernelExitRouteConfigurer) Present() (bool, error) {
 // and the table's routes, and the kill switch last, whatever a previous run
 // left: the priorities, table and nftables table are this helper's alone.
 func (configurer *kernelExitRouteConfigurer) Clear() error {
-	if err := clearExitRoute(configurer.options); err != nil {
-		return err
-	}
-	if configurer.validMarkBefore != "" {
-		restoreSysctl(filepath.Join(configurer.sysctlRoot, validMarkSetting), "1", configurer.validMarkBefore)
-		configurer.validMarkBefore = ""
-	}
-	return nil
+	return clearExitRoute(configurer.options)
 }
 
 func clearExitRoute(options RoutedOptions) error {
@@ -478,7 +497,11 @@ func clearExitRoute(options RoutedOptions) error {
 		// The kill switch stays while anything of the route may remain.
 		return errors.Join(failures...)
 	}
-	return deleteServedTable(options.ExitNftTable)
+	if err := deleteServedTable(options.ExitNftTable); err != nil {
+		return err
+	}
+	restoreValidMark(options, "/proc/sys")
+	return nil
 }
 
 // ReleaseExitRoute removes what a helper with options installed to route

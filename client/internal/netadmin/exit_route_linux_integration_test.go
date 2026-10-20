@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -82,6 +83,7 @@ func TestKernelExitRouteConfigurerIntegration(t *testing.T) {
 	options := RoutedOptions{
 		SettingsPath: "/etc/meshtransit/routes.json", Table: 5267, Priority: 5400,
 		ExitTable: 5291, ExitPriority: 5402, ExitNftTable: "meshtransit_kill_it",
+		StatePath: filepath.Join(t.TempDir(), "router-state.json"),
 	}
 	validMarkBefore, err := readSysctl("/proc/sys/" + validMarkSetting)
 	if err != nil {
@@ -225,7 +227,9 @@ func TestKernelExitRouteConfigurerIntegration(t *testing.T) {
 	if got := routeGet("8.8.8.8", "uid", "0"); strings.Contains(got, "dev "+lan) {
 		t.Errorf("without the TUN the Internet left by the LAN: %s", got)
 	}
-	if err := configurer.Clear(); err != nil {
+	// A helper started after a crash clears what the last one left, the
+	// setting it changed included.
+	if err := newKernelExitRouteConfigurer(options, meshdUID).Clear(); err != nil {
 		t.Fatalf("Clear() error = %v", err)
 	}
 	if countRules("5402")+countRules("5403")+countRules("5404")+countRules("5405") != 0 || routes() != "\n" {
