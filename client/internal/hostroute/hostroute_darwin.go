@@ -41,7 +41,7 @@ func (r Route) ExitOwned() bool {
 
 // meshnetds reports a route meshnetd installed into the mesh, a subnet or
 // an exit route.
-func (r Route) meshnetds() bool { return r.Flags&unix.RTF_PROTO2 != 0 }
+func (r Route) meshnetds() bool { return r.Marked() || r.ExitOwned() }
 
 // MeshLinks returns the interfaces meshnetd's subnet and exit routes use:
 // the mesh utun.

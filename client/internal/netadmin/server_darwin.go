@@ -72,8 +72,10 @@ func (s *Server) prepareRouted() error {
 		s.exitRouteConfigurer = newDarwinExitRouteConfigurer(s.allowedUID, s.routed.StatePath)
 		// A kill switch a previous run left stays while root's settings
 		// name a pool, and is installed if missing; otherwise it goes.
+		// A failure is no reason to stop the helper: subnet routes and
+		// DNS still work, and the next change of settings tries again.
 		if err := s.startExitRoute(); err != nil {
-			return fmt.Errorf("netadmin: clearing the exit route left by a previous run: %w", err)
+			s.logger.Warn("clearing an exit route left by a previous run failed", "error", err)
 		}
 	}
 	return nil

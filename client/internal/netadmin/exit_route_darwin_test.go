@@ -19,8 +19,8 @@ func TestPfExitRulesLetOutOnlyTheExceptions(t *testing.T) {
 		"pass out quick on utun7 all\n",
 		"pass out quick proto { tcp udp } user 270\n",
 		"pass out quick inet proto udp from any port 68 to any port 67\n",
-		"pass out quick to { 192.168.1.0/24 }\n",
-		"pass in quick all\n",
+		"pass out quick inet to { 192.168.1.0/24 }\n",
+		"pass out quick inet6 to fe80::/10\n",
 	} {
 		if !strings.Contains(rules, want) {
 			t.Errorf("rules lack %q:\n%s", want, rules)
@@ -50,6 +50,9 @@ func TestDarwinExitKillSwitchHoldsOnePfReference(t *testing.T) {
 			calls = append(calls, pfctlCall{args: strings.Join(args, " "), stdin: stdin})
 			if args[0] == "-E" {
 				return []byte("pf enabled\nToken : 1234\n"), nil
+			}
+			if strings.Join(args, " ") == "-s info" {
+				return []byte("Status: Enabled for 0 days\n"), nil
 			}
 			return nil, nil
 		},

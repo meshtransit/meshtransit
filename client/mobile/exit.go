@@ -11,12 +11,15 @@ import (
 
 	"meshtransit.net/client/internal/netadmin"
 	"meshtransit.net/client/internal/overlayframe"
-	"meshtransit.net/client/internal/routesettings"
 )
 
 // maximumExitRoutes bounds the routes the Internet takes on the interface:
 // 0/0 and ::/0 split around at most 64 excluded LAN subnets.
 const maximumExitRoutes = 4096
+
+// exitSinkholeResolver is the network address of the overlay frame's
+// CGNAT range: never a node's, so queries sent to it go nowhere.
+var exitSinkholeResolver = netip.MustParseAddr("100.64.0.0")
 
 // mobileExit is what the VPN interface carries for an exit node: the
 // Internet's routes and the exit node's resolvers.
@@ -81,6 +84,12 @@ func (opener *platformTUN) SetExitRoute(ctx context.Context, requested netadmin.
 			if address.IsValid() {
 				desired.dns = append(desired.dns, address)
 			}
+		}
+		if len(desired.dns) == 0 {
+			// No exit node answers names yet: a resolver nothing answers,
+			// inside the mesh, rather than the network's, which Android
+			// would otherwise use.
+			desired.dns = []netip.Addr{exitSinkholeResolver}
 		}
 	}
 	opener.mu.Lock()
@@ -182,7 +191,7 @@ func (engine *Engine) SetExitNode(pool string, allowLAN bool) (err error) {
 	}
 	settings, err := loadRouteSettings(engine.routeSettings)
 	if err != nil {
-		settings = routesettings.Settings{}
+		return err // never overwrite settings it cannot read
 	}
 	settings.ExitUse, settings.ExitAllowLAN = strings.TrimSpace(pool), allowLAN
 	return saveRouteSettings(engine.routeSettings, settings)

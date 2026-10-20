@@ -102,10 +102,10 @@ func (c *darwinExitRouteConfigurer) Present() (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), pfctlTimeout)
 	defer cancel()
 	output, err := c.run(ctx, c.pfctl, []string{"-a", exitAnchor, "-s", "rules"}, "")
-	if err != nil {
+	if err != nil || !bytes.Contains(output, []byte("block drop out")) {
 		return false, err
 	}
-	return bytes.Contains(output, []byte("block drop out")), nil
+	return c.enabled()
 }
 
 // Stamp identifies the utun and the attached LAN the rules follow.
@@ -130,10 +130,26 @@ func (c *darwinExitRouteConfigurer) Clear() error {
 	return c.release()
 }
 
-// enable turns pf on with a reference of the helper's own, once.
+// enabled reports whether pf filters at all: a reference kept from before
+// a reboot, or pf turned off by someone else, holds nothing.
+func (c *darwinExitRouteConfigurer) enabled() (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), pfctlTimeout)
+	defer cancel()
+	output, err := c.run(ctx, c.pfctl, []string{"-s", "info"}, "")
+	if err != nil {
+		return false, fmt.Errorf("netadmin: reading pf status: %w", err)
+	}
+	return bytes.Contains(output, []byte("Status: Enabled")), nil
+}
+
+// enable turns pf on with a reference of the helper's own, once while pf
+// stays on.
 func (c *darwinExitRouteConfigurer) enable() error {
 	if token, err := os.ReadFile(c.tokenPath); err == nil && len(bytes.TrimSpace(token)) != 0 {
-		return nil
+		if on, err := c.enabled(); err != nil || on {
+			return err
+		}
+		_ = os.Remove(c.tokenPath) // a reference pf no longer holds
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), pfctlTimeout)
 	defer cancel()
@@ -185,8 +201,9 @@ func (c *darwinExitRouteConfigurer) load(rules string) error {
 
 // pfExitRules is the kill switch: out by the utun, loopback, meshd's own
 // sockets, DHCP, neighbour discovery, link-local and the allowed LAN;
-// every other outbound packet is dropped. Inbound connections keep state,
-// so their replies leave. Without a utun nothing goes into the mesh either.
+// every other outbound packet is dropped, replies to connections opened
+// from outside too (they would follow the exit routes anyway). One family
+// per rule. Without a utun nothing goes into the mesh either.
 func pfExitRules(name string, uid uint32, lan []netip.Prefix) string {
 	var rules strings.Builder
 	rules.WriteString("pass out quick on lo0 all\n")
@@ -197,15 +214,22 @@ func pfExitRules(name string, uid uint32, lan []netip.Prefix) string {
 	rules.WriteString("pass out quick inet proto udp from any port 68 to any port 67\n")
 	rules.WriteString("pass out quick inet6 proto udp from any port 546 to any port 547\n")
 	rules.WriteString("pass out quick inet6 proto icmp6 icmp6-type { routersol neighbrsol neighbradv }\n")
-	rules.WriteString("pass out quick to { 169.254.0.0/16 fe80::/10 }\n")
-	if len(lan) > 0 {
-		values := make([]string, 0, len(lan))
+	rules.WriteString("pass out quick inet to 169.254.0.0/16\n")
+	rules.WriteString("pass out quick inet6 to fe80::/10\n")
+	for _, family := range []struct {
+		name string
+		is4  bool
+	}{{"inet", true}, {"inet6", false}} {
+		var values []string
 		for _, prefix := range lan {
-			values = append(values, prefix.Masked().String())
+			if prefix.Addr().Is4() == family.is4 {
+				values = append(values, prefix.Masked().String())
+			}
 		}
-		rules.WriteString("pass out quick to { " + strings.Join(values, " ") + " }\n")
+		if len(values) > 0 {
+			rules.WriteString("pass out quick " + family.name + " to { " + strings.Join(values, " ") + " }\n")
+		}
 	}
-	rules.WriteString("pass in quick all\n")
 	rules.WriteString("block drop out quick all\n")
 	return rules.String()
 }

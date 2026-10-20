@@ -23,6 +23,21 @@ func TestPlatformTUNSendsTheInternetToTheExitNode(t *testing.T) {
 	resolver := netip.MustParseAddr("100.64.0.9")
 	request := netadmin.ExitRouteRequest{Use: true, DNS: [2]netip.Addr{resolver}}
 
+	// Chosen, but no exit node answers names yet: a sinkhole resolver
+	// keeps names off the network's.
+	if err := saveRouteSettings(opener.routeSettings, routesettings.Settings{ExitUse: "World"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := opener.SetExitRoute(t.Context(), netadmin.ExitRouteRequest{Use: true}); err != nil {
+		t.Fatal(err)
+	}
+	if dns := fixture.provider.dnsValue(); dns != "100.64.0.0" {
+		t.Fatalf("DNS without an exit resolver = %q", dns)
+	}
+	if err := saveRouteSettings(opener.routeSettings, routesettings.Settings{}); err != nil {
+		t.Fatal(err)
+	}
+
 	// No pool chosen: meshd's request alone is refused.
 	result, err := opener.SetExitRoute(t.Context(), request)
 	if err != nil || result.Routing || result.Refused != netadmin.ExitRouteRefusedOff {
