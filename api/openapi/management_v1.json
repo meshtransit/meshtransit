@@ -3356,7 +3356,8 @@
                 "not": {
                   "anyOf": [
                     {"required": ["destination_resource_id"]},
-                    {"required": ["destination_imported_resource_id"]}
+                    {"required": ["destination_imported_resource_id"]},
+                    {"required": ["destination_address"]}
                   ]
                 }
               },
@@ -3365,7 +3366,8 @@
                 "not": {
                   "anyOf": [
                     {"required": ["destination_device_id"]},
-                    {"required": ["destination_imported_resource_id"]}
+                    {"required": ["destination_imported_resource_id"]},
+                    {"required": ["destination_address"]}
                   ]
                 }
               },
@@ -3374,7 +3376,18 @@
                 "not": {
                   "anyOf": [
                     {"required": ["destination_device_id"]},
-                    {"required": ["destination_resource_id"]}
+                    {"required": ["destination_resource_id"]},
+                    {"required": ["destination_address"]}
+                  ]
+                }
+              },
+              {
+                "required": ["destination_address"],
+                "not": {
+                  "anyOf": [
+                    {"required": ["destination_device_id"]},
+                    {"required": ["destination_resource_id"]},
+                    {"required": ["destination_imported_resource_id"]}
                   ]
                 }
               }
@@ -3398,6 +3411,12 @@
           "destination_device_id": {"$ref": "#/components/schemas/PublicID"},
           "destination_resource_id": {"$ref": "#/components/schemas/PublicID"},
           "destination_imported_resource_id": {"$ref": "#/components/schemas/PublicID"},
+          "destination_address": {
+            "description": "A unicast address inside a Site; the explanation's target is the Site that holds it.",
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 45
+          },
           "protocol": {"type": "string", "enum": ["tcp", "udp", "icmp"]},
           "destination_port": {"type": "integer", "minimum": 1, "maximum": 65535}
         }
@@ -3457,7 +3476,7 @@
             "additionalProperties": false,
             "required": ["kind", "state", "name"],
             "properties": {
-              "kind": {"type": "string", "enum": ["device", "resource", "imported_resource"]},
+              "kind": {"type": "string", "enum": ["device", "resource", "imported_resource", "site"]},
               "state": {"$ref": "#/components/schemas/ExplainedPolicyParticipantState"},
               "name": {"type": ["string", "null"], "maxLength": 255}
             }
@@ -3581,7 +3600,8 @@
             "not": {
               "anyOf": [
                 {"required": ["resource_id"]},
-                {"required": ["imported_resource_id"]}
+                {"required": ["imported_resource_id"]},
+                {"required": ["address"]}
               ]
             }
           },
@@ -3590,7 +3610,8 @@
             "not": {
               "anyOf": [
                 {"required": ["device_id"]},
-                {"required": ["imported_resource_id"]}
+                {"required": ["imported_resource_id"]},
+                {"required": ["address"]}
               ]
             }
           },
@@ -3599,7 +3620,18 @@
             "not": {
               "anyOf": [
                 {"required": ["device_id"]},
-                {"required": ["resource_id"]}
+                {"required": ["resource_id"]},
+                {"required": ["address"]}
+              ]
+            }
+          },
+          {
+            "required": ["address"],
+            "not": {
+              "anyOf": [
+                {"required": ["device_id"]},
+                {"required": ["resource_id"]},
+                {"required": ["imported_resource_id"]}
               ]
             }
           }
@@ -3607,7 +3639,12 @@
         "properties": {
           "device_id": {"$ref": "#/components/schemas/PublicID"},
           "resource_id": {"$ref": "#/components/schemas/PublicID"},
-          "imported_resource_id": {"$ref": "#/components/schemas/PublicID"}
+          "imported_resource_id": {"$ref": "#/components/schemas/PublicID"},
+          "address": {"type": "string", "minLength": 2, "maxLength": 45},
+          "site_id": {
+            "$ref": "#/components/schemas/PublicID",
+            "description": "The Site that holds address; absent when no Site does."
+          }
         }
       },
       "ExplainedPolicyEvidence": {
@@ -3655,10 +3692,30 @@
               {"required": ["destination_device_id"]}, {"required": ["destination_resource_id"]},
               {"required": ["destination_resource_group_id"]}
             ]}
+          },
+          {
+            "required": ["destination_site_id", "destination_prefixes"],
+            "properties": {"selector_kind": {"const": "site"}},
+            "not": {"anyOf": [
+              {"required": ["destination_device_id"]}, {"required": ["destination_resource_id"]},
+              {"required": ["destination_resource_group_id"]}, {"required": ["destination_imported_resource_id"]},
+              {"required": ["destination_device_group_id"]}, {"required": ["destination_device_tag_id"]}
+            ]}
           }
         ],
         "properties": {
           "projection_id": {"$ref": "#/components/schemas/PublicID"},
+          "destination_site_id": {
+            "$ref": "#/components/schemas/PublicID",
+            "description": "The Site of a path through a rule to a Site; projection_id then names the compiled route rule."
+          },
+          "destination_prefixes": {
+            "description": "The prefixes of the Site the rule grants.",
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1024,
+            "items": {"type": "string", "minLength": 9, "maxLength": 43}
+          },
           "access_rule_id": {"$ref": "#/components/schemas/PublicID"},
           "source_device_id": {"$ref": "#/components/schemas/PublicID"},
           "destination_device_id": {"$ref": "#/components/schemas/PublicID"},
@@ -3692,7 +3749,7 @@
           },
           "selector_kind": {
             "type": "string",
-            "enum": ["device", "resource", "resource_group", "imported_resource"]
+            "enum": ["device", "resource", "resource_group", "imported_resource", "site"]
           },
           "destination_resource_id": {"$ref": "#/components/schemas/PublicID"},
           "destination_resource_group_id": {"$ref": "#/components/schemas/PublicID"}

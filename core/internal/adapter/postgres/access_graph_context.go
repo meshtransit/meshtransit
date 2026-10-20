@@ -138,6 +138,8 @@ func parseAccessGraphTargetKind(value string) accessgraph.TargetKind {
 		return accessgraph.TargetKindResource
 	case "imported_resource":
 		return accessgraph.TargetKindImportedResource
+	case "site":
+		return accessgraph.TargetKindSite
 	default:
 		return accessgraph.TargetKindUnknown
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -18,6 +19,7 @@ import (
 	"meshtransit.net/core/internal/domain/policy/publication"
 	"meshtransit.net/core/internal/domain/resource"
 	"meshtransit.net/core/internal/domain/sharing"
+	"meshtransit.net/core/internal/domain/site"
 )
 
 // AccessGraphOptions bounds one effective-policy explanation transaction.
@@ -103,42 +105,13 @@ func (store *AccessGraphStore) ReadActive(
 		return accessgraph.Snapshot{}, accessGraphDatabaseError(ctx, err)
 	}
 
-	var destinationNodeArgument, destinationResourceArgument, destinationImportedArgument any
-	if query.DestinationNodeID().IsValid() {
-		destinationNodeArgument = query.DestinationNodeID().String()
-	} else if query.DestinationResourceID().IsValid() {
-		destinationResourceArgument = query.DestinationResourceID().String()
-	} else {
-		destinationImportedArgument = query.DestinationImportedResourceID().String()
-	}
+	statement, arguments := explainArguments(session, query, evaluatedAt)
 	var record accessGraphSnapshotRecord
-	var releaseID, targetNodeID *string
+	var releaseID, targetID *string
 	var compilerFormatVersion *int
 	var semanticHash []byte
 	var paths, explanationContext string
-	err = transaction.QueryRow(
-		ctx,
-		explainActivePolicySQL,
-		session.ID().String(),
-		session.DeploymentID().String(),
-		session.PrincipalID().String(),
-		session.IdentitySubjectID().String(),
-		session.Version(),
-		session.PrincipalAuthorityGeneration(),
-		session.AccountSessionGeneration(),
-		session.ProviderGeneration(),
-		session.DeploymentRecoveryEpoch(),
-		query.Scope().WorkspaceID().String(),
-		query.Scope().NetworkID().String(),
-		query.SourceNodeID().String(),
-		destinationNodeArgument,
-		destinationResourceArgument,
-		destinationImportedArgument,
-		query.Protocol().String(),
-		int(query.DestinationPort()),
-		evaluatedAt,
-		accessgraph.MaximumExplanationPaths+1,
-	).Scan(
+	err = transaction.QueryRow(ctx, statement, arguments...).Scan(
 		&record.NetworkRevision,
 		&record.InventoryRevision,
 		&record.GroupRevision,
@@ -151,7 +124,7 @@ func (store *AccessGraphStore) ReadActive(
 		&releaseID,
 		&compilerFormatVersion,
 		&semanticHash,
-		&targetNodeID,
+		&targetID,
 		&paths,
 		&explanationContext,
 	)
@@ -161,7 +134,11 @@ func (store *AccessGraphStore) ReadActive(
 	record.ReleaseID = releaseID
 	record.CompilerFormatVersion = compilerFormatVersion
 	record.SemanticHash = semanticHash
-	record.TargetNodeID = targetNodeID
+	if query.DestinationAddress().IsValid() {
+		record.TargetSiteID = targetID
+	} else {
+		record.TargetNodeID = targetID
+	}
 	if err := json.Unmarshal([]byte(paths), &record.Paths); err != nil {
 		return accessgraph.Snapshot{}, accessgraph.ErrInvalidSnapshot
 	}
@@ -179,6 +156,34 @@ func (store *AccessGraphStore) ReadActive(
 	return snapshot, nil
 }
 
+// explainArguments returns the statement and arguments that explain query:
+// explain_site_access_v1 for an address, explain_active_policy_v4 otherwise.
+func explainArguments(session accountsession.Session, query accessgraph.Query, evaluatedAt time.Time,
+) (string, []any) {
+	arguments := []any{
+		session.ID().String(), session.DeploymentID().String(), session.PrincipalID().String(),
+		session.IdentitySubjectID().String(), session.Version(), session.PrincipalAuthorityGeneration(),
+		session.AccountSessionGeneration(), session.ProviderGeneration(), session.DeploymentRecoveryEpoch(),
+		query.Scope().WorkspaceID().String(), query.Scope().NetworkID().String(), query.SourceNodeID().String(),
+	}
+	if query.DestinationAddress().IsValid() {
+		return explainSiteAccessSQL, append(arguments, query.DestinationAddress().String(),
+			query.Protocol().String(), int(query.DestinationPort()), evaluatedAt,
+			accessgraph.MaximumExplanationPaths+1)
+	}
+	var destinationNodeArgument, destinationResourceArgument, destinationImportedArgument any
+	if query.DestinationNodeID().IsValid() {
+		destinationNodeArgument = query.DestinationNodeID().String()
+	} else if query.DestinationResourceID().IsValid() {
+		destinationResourceArgument = query.DestinationResourceID().String()
+	} else {
+		destinationImportedArgument = query.DestinationImportedResourceID().String()
+	}
+	return explainActivePolicySQL, append(arguments, destinationNodeArgument, destinationResourceArgument,
+		destinationImportedArgument, query.Protocol().String(), int(query.DestinationPort()), evaluatedAt,
+		accessgraph.MaximumExplanationPaths+1)
+}
+
 type accessGraphSnapshotRecord struct {
 	NetworkRevision       int64
 	InventoryRevision     int64
@@ -193,6 +198,7 @@ type accessGraphSnapshotRecord struct {
 	CompilerFormatVersion *int
 	SemanticHash          []byte
 	TargetNodeID          *string
+	TargetSiteID          *string
 	Paths                 []accessGraphPathRecord
 	Context               accessGraphContextRecord
 }
@@ -218,6 +224,9 @@ type accessGraphPathRecord struct {
 	SourceIdentityGroupID  string `json:"source_identity_group_id"`
 	SourceDeviceTagID      string `json:"source_device_tag_id"`
 	DestinationDeviceTagID string `json:"destination_device_tag_id"`
+	// Set only for paths to a Site (schema 197).
+	DestinationSiteID   string   `json:"destination_site_id"`
+	DestinationPrefixes []string `json:"destination_prefixes"`
 }
 
 func (record accessGraphSnapshotRecord) snapshot(query accessgraph.Query) (accessgraph.Snapshot, error) {
@@ -254,6 +263,13 @@ func (record accessGraphSnapshotRecord) snapshot(query accessgraph.Query) (acces
 			return accessgraph.Snapshot{}, accessgraph.ErrInvalidSnapshot
 		}
 		params.TargetNodeID = targetNodeID
+	}
+	if record.TargetSiteID != nil {
+		targetSiteID, err := site.ParseID(*record.TargetSiteID)
+		if err != nil {
+			return accessgraph.Snapshot{}, accessgraph.ErrInvalidSnapshot
+		}
+		params.TargetSiteID = targetSiteID
 	}
 	if err := record.Context.apply(&params); err != nil {
 		return accessgraph.Snapshot{}, err
@@ -359,7 +375,32 @@ func (record accessGraphPathRecord) path() (accessgraph.Path, error) {
 		}
 		*side.target = parsed
 	}
+	if err := record.applySite(&params); err != nil {
+		return accessgraph.Path{}, err
+	}
 	return accessgraph.NewPath(params)
+}
+
+// applySite parses the Site and granted prefixes of a Site path.
+func (record accessGraphPathRecord) applySite(params *accessgraph.PathParams) error {
+	if record.DestinationSiteID == "" {
+		if len(record.DestinationPrefixes) > 0 {
+			return accessgraph.ErrInvalidSnapshot
+		}
+		return nil
+	}
+	siteID, err := site.ParseID(record.DestinationSiteID)
+	if err != nil || len(record.DestinationPrefixes) > site.MaximumPrefixesPerSite {
+		return accessgraph.ErrInvalidSnapshot
+	}
+	prefixes := make([]netip.Prefix, len(record.DestinationPrefixes))
+	for index, text := range record.DestinationPrefixes {
+		if prefixes[index], err = netip.ParsePrefix(text); err != nil {
+			return accessgraph.ErrInvalidSnapshot
+		}
+	}
+	params.DestinationSiteID, params.DestinationPrefixes = siteID, prefixes
+	return nil
 }
 
 func parseAccessGraphProtocol(value string) policy.Protocol {
@@ -385,6 +426,8 @@ func parseAccessGraphSelectorKind(value string) accessgraph.SelectorKind {
 		return accessgraph.SelectorKindResourceGroup
 	case "imported_resource":
 		return accessgraph.SelectorKindImportedResource
+	case "site":
+		return accessgraph.SelectorKindSite
 	default:
 		return accessgraph.SelectorKindUnknown
 	}

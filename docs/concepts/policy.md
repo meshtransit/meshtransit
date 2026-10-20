@@ -112,8 +112,9 @@ primary router ([routers and failover](#routers-and-failover)):
   active policy holds such rules makes every publication fail until they are
   removed, so remove them first.
 - The activity log reports them with `destination_kind` `site`. Simulation
-  checks them but does not count their impact yet, and explain and the access
-  graph do not include them yet.
+  reports, per source Device, the part of a Site a proposal grants or takes
+  away. Explain answers for an address inside a Site; the access graph does
+  not include Sites yet.
 
 ### Routers and failover
 
@@ -312,13 +313,23 @@ digest of what it sent ([enforcement](audit.md#policy-distribution-and-enforceme
 | Operation | Needs | Answers |
 |---|---|---|
 | `GET …/access-graph` | `policy.read`, `device.read` | Every allowed path, optionally for one Device or protocol, page by page |
-| `POST …/access-graph/actions/explain` | `policy.explain` | For a source Device, a destination (Device, Resource or Imported Resource), protocol and port: allow or deny, the rules that allow it, and why not otherwise |
+| `POST …/access-graph/actions/explain` | `policy.explain` | For a source Device, a destination (Device, Resource, Imported Resource or an address inside a Site), protocol and port: allow or deny, the rules that allow it, and why not otherwise |
 | `GET …/access-graph/history` (Console private API) | `policy.read`, `device.read` | Paths at a past instant ([audit](audit.md#connection-history)) |
 
 Explain uses the same resolver as maps. A deny says why: no published policy,
 an inactive source or destination, a share that is not active yet or has
 ended, or no matching rule. Every answer carries the revisions it was
 computed at.
+
+For `destination_address`, the target is the active Site whose prefixes hold
+the address (`target.site_id`, context `kind` `site`); when no Site holds it
+the target is `missing` and the deny reason is `target_inactive`. A path is a
+rule to that Site whose source holds the Device now, whose granted prefixes
+hold the address and whose protocol and ports match; it names the Site
+(`destination_site_id`), the prefixes the rule grants
+(`destination_prefixes`) and, as `projection_id`, the compiled route rule.
+Explain answers what policy allows: whether a router of the Site is up is
+shown on the Site.
 
 ## Not yet
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"net/netip"
 	"strings"
 
 	"meshtransit.net/core/internal/domain/accessgraph"
@@ -26,8 +27,10 @@ type explainPolicyRequest struct {
 	DestinationDeviceID           string `json:"destination_device_id"`
 	DestinationResourceID         string `json:"destination_resource_id"`
 	DestinationImportedResourceID string `json:"destination_imported_resource_id"`
-	Protocol                      string `json:"protocol"`
-	DestinationPort               *int   `json:"destination_port"`
+	// DestinationAddress asks about an address inside a Site.
+	DestinationAddress string `json:"destination_address"`
+	Protocol           string `json:"protocol"`
+	DestinationPort    *int   `json:"destination_port"`
 }
 
 type explainPolicyResponse struct {
@@ -63,6 +66,9 @@ type explainedPolicyTarget struct {
 	DeviceID           string `json:"device_id,omitempty"`
 	ResourceID         string `json:"resource_id,omitempty"`
 	ImportedResourceID string `json:"imported_resource_id,omitempty"`
+	Address            string `json:"address,omitempty"`
+	// SiteID names the Site that holds Address, when one does.
+	SiteID string `json:"site_id,omitempty"`
 }
 
 type explainedPolicyEvidence struct {
@@ -100,6 +106,9 @@ type explainedPolicyPath struct {
 	SourceIdentityGroupID    string `json:"source_identity_group_id,omitempty"`
 	SourceDeviceTagID        string `json:"source_device_tag_id,omitempty"`
 	DestinationDeviceTagID   string `json:"destination_device_tag_id,omitempty"`
+	// Set for a path to a Site: the Site and the prefixes the rule grants.
+	DestinationSiteID   string   `json:"destination_site_id,omitempty"`
+	DestinationPrefixes []string `json:"destination_prefixes,omitempty"`
 }
 
 type accessGraphExplainPath struct {
@@ -219,6 +228,13 @@ func decodeAccessGraphQuery(
 			return accessgraph.Query{}, invalidManagementRequest()
 		}
 	}
+	var destinationAddress netip.Addr
+	if body.DestinationAddress != "" {
+		destinationAddress, err = netip.ParseAddr(body.DestinationAddress)
+		if err != nil {
+			return accessgraph.Query{}, invalidManagementRequest()
+		}
+	}
 	protocol := parsePolicyProtocol(body.Protocol)
 	var destinationPort int
 	if protocol == policy.ProtocolICMP {
@@ -236,6 +252,7 @@ func decodeAccessGraphQuery(
 		Scope: scope, SourceNodeID: sourceID, DestinationNodeID: destinationID,
 		DestinationResourceID:         destinationResourceID,
 		DestinationImportedResourceID: destinationImportedResourceID,
+		DestinationAddress:            destinationAddress,
 		Protocol:                      protocol,
 		DestinationPort:               uint16(destinationPort),
 	})

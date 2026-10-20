@@ -5,6 +5,10 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: explain answers for an address inside a Site (schema 197,
+  `mesh_ops.explain_site_access_v1`). `destination_address` asks about it;
+  the answer names the Site that holds the address and each rule to it that
+  grants the address to the source Device, with the prefixes it grants.
 - Core: policy simulation reports access to Sites. `site_access_changes`
   lists, per source Device, the part of a Site a proposal grants or takes
   away (at most 256 each, with counts), its Devices count as affected, and

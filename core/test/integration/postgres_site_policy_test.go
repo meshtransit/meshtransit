@@ -11,9 +11,11 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/domain/accessgraph"
 	"meshtransit.net/core/internal/domain/devicegroup"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/policy"
 	"meshtransit.net/core/internal/domain/policy/compilation"
 	"meshtransit.net/core/internal/domain/policy/publication"
@@ -55,6 +57,11 @@ func assertPostgreSQLSitePolicy(ctx context.Context, t *testing.T, admin *pgx.Co
 	clients, err := groups.Create(ctx, owner, scope, devicegroup.Definition{Name: "Site clients"}, newCorrelationID(t))
 	if err != nil {
 		t.Fatal(err)
+	}
+	member := activeFixtureDevices(ctx, t, admin, 1)[0]
+	if _, err := groups.ChangeMembers(ctx, owner, scope, clients.Group.ID, 1, []node.ID{member}, nil,
+		newCorrelationID(t)); err != nil {
+		t.Fatalf("add a Site client: %v", err)
 	}
 
 	base := fixturePolicyRevision(ctx, t, admin)
@@ -99,6 +106,8 @@ JOIN mesh.policy_release AS release ON release.id = rule.policy_release_id WHERE
 		t.Fatalf("stored route rules = %d, error = %v", stored, err)
 	}
 
+	assertSiteExplanations(ctx, t, newIntegrationPolicyExplainer(t, runtimePool), owner, scope, member, hq)
+
 	catalogStore, err := postgresadapter.NewActivePolicyStore(runtimePool, postgresadapter.PolicySimulationOptions{
 		StatementTimeout: 5 * time.Second, LockTimeout: time.Second, IdleTimeout: 10 * time.Second,
 	})
@@ -134,7 +143,7 @@ JOIN mesh.policy_release AS release ON release.id = rule.policy_release_id WHERE
 	}
 	// Sources and granted address space stay while active rules use them:
 	// otherwise every later publication, which resends the rules, would fail.
-	if _, err := groups.Delete(ctx, owner, scope, clients.Group.ID, 1, newCorrelationID(t)); !errors.Is(err, devicegroup.ErrInUse) {
+	if _, err := groups.Delete(ctx, owner, scope, clients.Group.ID, 2, newCorrelationID(t)); !errors.Is(err, devicegroup.ErrInUse) {
 		t.Fatalf("delete the source group of active Site rules: %v", err)
 	}
 	reshape := func(id site.ID, version int64, name, prefix string) error {
@@ -171,8 +180,56 @@ JOIN mesh.policy_release AS release ON release.id = rule.policy_release_id WHERE
 			t.Fatalf("delete a released Site: %v", err)
 		}
 	}
-	if _, err := groups.Delete(ctx, owner, scope, clients.Group.ID, 1, newCorrelationID(t)); err != nil {
+	if _, err := groups.Delete(ctx, owner, scope, clients.Group.ID, 2, newCorrelationID(t)); err != nil {
 		t.Fatalf("delete the source group: %v", err)
+	}
+}
+
+// assertSiteExplanations qualifies schema 197: Explain allows an address
+// the source's group rule grants, names the Site and the granted prefixes,
+// and denies an address of the Site outside them, another port, and an
+// address no Site holds.
+func assertSiteExplanations(ctx context.Context, t *testing.T, explainer *accessgraph.Service,
+	owner accountsession.Session, scope network.Scope, source node.ID, hq site.ID) {
+	t.Helper()
+	explain := func(address string, port uint16) accessgraph.Result {
+		query, err := accessgraph.NewQuery(accessgraph.QueryParams{Scope: scope, SourceNodeID: source,
+			DestinationAddress: netip.MustParseAddr(address), Protocol: policy.ProtocolTCP, DestinationPort: port})
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := explainer.Explain(ctx, owner, query)
+		if err != nil {
+			t.Fatalf("explain %s:%d: %v", address, port, err)
+		}
+		return result
+	}
+	allowed := explain("10.20.5.9", 443)
+	if allowed.Decision() != accessgraph.DecisionAllow || len(allowed.Paths()) != 1 ||
+		allowed.Snapshot().TargetSiteID() != hq || allowed.Snapshot().Target().Name() != "Policy HQ" {
+		t.Fatalf("explain a granted Site address = %+v", allowed)
+	}
+	path := allowed.Paths()[0]
+	if path.SelectorKind() != accessgraph.SelectorKindSite || path.DestinationSiteID() != hq ||
+		len(path.DestinationPrefixes()) != 1 || path.DestinationPrefixes()[0].String() != "10.20.5.0/24" ||
+		!path.SourceDeviceGroupID().IsValid() {
+		t.Fatalf("Site path = %+v", path)
+	}
+	for _, denied := range []struct {
+		address string
+		port    uint16
+		reason  accessgraph.DenyReason
+		inSite  bool
+	}{
+		{"10.20.6.9", 443, accessgraph.DenyReasonNoMatchingActiveRule, true},
+		{"10.20.5.9", 22, accessgraph.DenyReasonNoMatchingActiveRule, true},
+		{"10.99.0.1", 443, accessgraph.DenyReasonTargetInactive, false},
+	} {
+		result := explain(denied.address, denied.port)
+		reason, isDenied := result.DenyReason()
+		if !isDenied || reason != denied.reason || result.Snapshot().TargetSiteID().IsValid() != denied.inSite {
+			t.Fatalf("explain %s:%d = %s, %s", denied.address, denied.port, result.Decision(), reason)
+		}
 	}
 }
 

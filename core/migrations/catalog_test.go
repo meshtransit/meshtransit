@@ -13,8 +13,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 196 {
-		t.Fatalf("len(Catalog()) = %d, want 196", len(catalog))
+	if len(catalog) != 197 {
+		t.Fatalf("len(Catalog()) = %d, want 197", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1609,8 +1609,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 196 {
-		t.Fatalf("LatestVersion() = %d, want 196", LatestVersion())
+	if LatestVersion() != 197 {
+		t.Fatalf("LatestVersion() = %d, want 197", LatestVersion())
 	}
 }
 
@@ -5678,5 +5678,25 @@ func TestMigration196AllowsUniqueLocalSites(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "'fd00::/8'") {
 		t.Error("schema 196 still refuses all of fd00::/8")
+	}
+}
+
+func TestMigration197ExplainsSiteAddresses(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[196]
+	if migration.Version != 197 {
+		t.Fatalf("migration 197 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.explain_site_access_v1(",
+		"'policy.explain', p_evaluated_at",
+		"mesh_ops.selector_devices_internal_v1(scoped_workspace, scoped_network)",
+		"WHERE prefix >>= p_destination_address",
+		"'selector_kind', 'site'",
+		") TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 197 lacks %q", want)
+		}
 	}
 }

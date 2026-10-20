@@ -127,13 +127,17 @@ func TestManagementV1MutationContracts(t *testing.T) {
 	if err := json.Unmarshal(document.Components.Schemas["ExplainPolicyRequest"], &explainRequest); err != nil {
 		t.Fatalf("decode ExplainPolicyRequest: %v", err)
 	}
-	if len(explainRequest.AllOf) < 1 || len(explainRequest.AllOf[0].OneOf) != 3 ||
+	if len(explainRequest.AllOf) < 1 || len(explainRequest.AllOf[0].OneOf) != 4 ||
 		explainRequest.Properties["destination_device_id"] == nil ||
 		explainRequest.Properties["destination_resource_id"] == nil ||
 		explainRequest.Properties["destination_imported_resource_id"] == nil ||
+		explainRequest.Properties["destination_address"] == nil ||
 		len(explainRequest.AllOf[0].OneOf[2].Required) != 1 ||
 		explainRequest.AllOf[0].OneOf[2].Required[0] != "destination_imported_resource_id" ||
-		len(explainRequest.AllOf[0].OneOf[2].Not.AnyOf) != 2 {
+		len(explainRequest.AllOf[0].OneOf[2].Not.AnyOf) != 3 ||
+		len(explainRequest.AllOf[0].OneOf[3].Required) != 1 ||
+		explainRequest.AllOf[0].OneOf[3].Required[0] != "destination_address" ||
+		len(explainRequest.AllOf[0].OneOf[3].Not.AnyOf) != 3 {
 		t.Fatalf("ExplainPolicyRequest typed destination contract = %+v", explainRequest)
 	}
 	var explainTarget struct {
@@ -143,12 +147,14 @@ func TestManagementV1MutationContracts(t *testing.T) {
 	if err := json.Unmarshal(document.Components.Schemas["ExplainedPolicyTarget"], &explainTarget); err != nil {
 		t.Fatalf("decode ExplainedPolicyTarget: %v", err)
 	}
-	if len(explainTarget.OneOf) != 3 || explainTarget.Properties["device_id"] == nil ||
+	if len(explainTarget.OneOf) != 4 || explainTarget.Properties["device_id"] == nil ||
 		explainTarget.Properties["resource_id"] == nil ||
 		explainTarget.Properties["imported_resource_id"] == nil ||
+		explainTarget.Properties["address"] == nil || explainTarget.Properties["site_id"] == nil ||
 		len(explainTarget.OneOf[2].Required) != 1 ||
 		explainTarget.OneOf[2].Required[0] != "imported_resource_id" ||
-		len(explainTarget.OneOf[2].Not.AnyOf) != 2 {
+		len(explainTarget.OneOf[2].Not.AnyOf) != 3 ||
+		len(explainTarget.OneOf[3].Required) != 1 || explainTarget.OneOf[3].Required[0] != "address" {
 		t.Fatalf("ExplainedPolicyTarget typed destination contract = %+v", explainTarget)
 	}
 	var policyRule struct {

@@ -563,6 +563,7 @@ func Catalog() []Migration {
 		newMigration(194, "A Site's read carries its elected primary and history", sitePrimaryReadsSQL),
 		newMigration(195, "Maps name each Site", mapSiteNamesSQL),
 		newMigration(196, "Sites may use IPv6 unique local prefixes", siteUniqueLocalPrefixesSQL),
+		newMigration(197, "Explain answers for an address inside a Site", explainSiteAccessSQL),
 	}
 }
 
@@ -930,3 +931,6 @@ var mapSiteNamesSQL string
 
 //go:embed 000196_site_unique_local_prefixes.up.sql
 var siteUniqueLocalPrefixesSQL string
+
+//go:embed 000197_explain_site_access.up.sql
+var explainSiteAccessSQL string

@@ -93,6 +93,8 @@ const (
 	TargetKindResource
 	// TargetKindImportedResource is a Device shared into the explained Network.
 	TargetKindImportedResource
+	// TargetKindSite is the Site that holds the queried address.
+	TargetKindSite
 )
 
 // String returns the stable wire spelling.
@@ -104,6 +106,8 @@ func (kind TargetKind) String() string {
 		return "resource"
 	case TargetKindImportedResource:
 		return "imported_resource"
+	case TargetKindSite:
+		return "site"
 	default:
 		return ""
 	}
@@ -117,6 +121,8 @@ func (query Query) targetKind() TargetKind {
 		return TargetKindResource
 	case query.destinationImportedResourceID.IsValid():
 		return TargetKindImportedResource
+	case query.destinationAddress.IsValid():
+		return TargetKindSite
 	default:
 		return TargetKindUnknown
 	}

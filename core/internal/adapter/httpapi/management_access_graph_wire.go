@@ -45,7 +45,7 @@ func newExplainedPolicy(query accessgraph.Query, result accessgraph.Result, suff
 		Decision: result.Decision().String(), Reason: result.Reason().String(),
 		Action:  newExplainedPolicyAction(query),
 		Subject: explainedPolicySubject{DeviceID: query.SourceNodeID().String()},
-		Target:  newExplainedPolicyTarget(query), Evidence: newExplainedPolicyEvidence(snapshot),
+		Target:  newExplainedPolicyTarget(query, snapshot), Evidence: newExplainedPolicyEvidence(snapshot),
 		Paths: newExplainedPolicyPaths(result.Paths()), Truncated: result.Truncated(),
 		Context: newExplainedPolicyContext(snapshot, suffix),
 	}
@@ -65,8 +65,14 @@ func newExplainedPolicyAction(query accessgraph.Query) explainedPolicyAction {
 	return action
 }
 
-func newExplainedPolicyTarget(query accessgraph.Query) explainedPolicyTarget {
+func newExplainedPolicyTarget(query accessgraph.Query, snapshot accessgraph.Snapshot) explainedPolicyTarget {
 	switch {
+	case query.DestinationAddress().IsValid():
+		target := explainedPolicyTarget{Address: query.DestinationAddress().String()}
+		if snapshot.TargetSiteID().IsValid() {
+			target.SiteID = snapshot.TargetSiteID().String()
+		}
+		return target
 	case query.DestinationNodeID().IsValid():
 		return explainedPolicyTarget{DeviceID: query.DestinationNodeID().String()}
 	case query.DestinationResourceID().IsValid():
@@ -148,6 +154,12 @@ func newExplainedPolicyPaths(paths []accessgraph.Path) []explainedPolicyPath {
 		}
 		if path.DestinationTagID().IsValid() {
 			rendered[index].DestinationDeviceTagID = path.DestinationTagID().String()
+		}
+		if path.DestinationSiteID().IsValid() {
+			rendered[index].DestinationSiteID = path.DestinationSiteID().String()
+			for _, prefix := range path.DestinationPrefixes() {
+				rendered[index].DestinationPrefixes = append(rendered[index].DestinationPrefixes, prefix.String())
+			}
 		}
 	}
 	return rendered
