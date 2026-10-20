@@ -108,6 +108,43 @@ inside one. `meshctl status` shows the router each Site goes through.
 A Windows machine does not forward into subnets: a subnet router runs on
 Linux.
 
+## Use an exit node
+
+A Windows machine sends its Internet traffic through an Exit Pool its rules
+grant once an administrator chooses one, from an elevated PowerShell
+(`--enable-exits` is on in the installed service):
+
+```powershell
+meshd routes exit-use POOL    # a pool's reference or name
+meshd routes exit-use auto    # the nearest pool Core serves, kept
+meshd routes exit-use off
+meshd routes exit-allow-lan on
+```
+
+The service then routes `0.0.0.0/1`, `128.0.0.0/1`, `::/1` and `8000::/1`
+into the MeshTransit adapter and holds a kill switch in the Windows
+Filtering Platform: a sublayer of its own lets new outbound connections
+out only for the MeshTransit service itself (its executable running as
+LocalSystem), loopback, the adapter, DHCP, neighbour discovery, link-local
+addresses (cloud metadata) and, with `exit-allow-lan`, the attached private
+subnets. Everything else fails, also while no exit node carries the
+traffic, the pool is not granted, or the service is stopped or crashed: the
+filters are persistent. Connections opened from outside (RDP, SSH) are left
+to the Windows firewall and their replies leave by the interface they came
+in on. An NRPT rule for every name (`.`) sends names to the MeshTransit
+resolver, which asks the exit node's DNS forwarder; the service resolves
+its own names (Core, relays) from the adapters' DNS servers through its own
+sockets, bound to the physical interface (`IP_UNICAST_IF`), as are its
+WireGuard sockets.
+
+`meshctl status` shows the exit node on its `Exit` line, and new exit nodes
+waiting for approval (`meshctl exit approve DEVICE_ID`), as on Linux.
+
+To get out of a closed machine, stop the service or turn `exit-use off`,
+then run `meshd release-exit` as an administrator; the uninstaller runs it.
+Traffic Windows forwards for others (Hyper-V, WSL, Internet Connection
+Sharing) is not filtered by the kill switch.
+
 ## Check and troubleshoot
 
 - `meshctl status`, `meshctl netcheck`, `meshctl doctor control`.

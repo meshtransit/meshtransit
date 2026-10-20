@@ -5,6 +5,24 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Clients: Windows, macOS and Android consumers of exit nodes (exit node
+  design E4, E5). Windows: the service routes `0/1`, `128/1`, `::/1`,
+  `8000::/1` into Wintun behind a persistent WFP kill switch (`winfw`:
+  only the service as LocalSystem, loopback, the adapter, DHCP, ND,
+  link-local and the allowed LAN may connect out), an NRPT rule for every
+  name, `meshd release-exit`; the installer enables `--enable-exits`.
+  macOS: `meshnetd --enable-exits` routes the halves into the utun behind a
+  pf anchor (`com.apple/250.MeshTransitExit`, `user _meshd`, pf enabled by
+  reference), the DNS service becomes primary, `meshnetd --release-exit`;
+  not yet tried on a Mac. Android: the app's Exit node card; the VPN
+  carries `0/0` and `::/0` (less the allowed LAN) with the exit node's
+  resolvers as its DNS servers (a sinkhole while none answers); the
+  library's `SetExitNode`, `ExitNode`, `ExitAllowsLAN`, `ApproveExitNodes`
+  and `TunProvider.OpenTUN(addresses, routes, dns, mtu)`. On Windows and
+  macOS meshd binds its own sockets, WireGuard's included, to the physical
+  interface and resolves Core and relays from the networks' resolvers while
+  a pool is chosen.
+
 - Clients: Linux consumers of exit nodes, second part (exit node design
   E3). Names go through the exit node: meshd becomes the host's default
   resolver while it uses one and asks the exit node's DNS forwarder (SERVFAIL

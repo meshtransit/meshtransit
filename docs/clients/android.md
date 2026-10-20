@@ -44,7 +44,19 @@ it on, is kept in the app's private storage, and applies within 10 seconds.
 The connection screen shows the router each Site goes through. Changing the
 routes makes a new VPN interface, as Android cannot change one in place.
 
-Not yet: MeshTransit DNS (the VPN sets no DNS server), Device aliases, port
+**Exit node:** the **Exit node** card takes an Exit Pool's name (or `auto`)
+the rules grant. While one is chosen the VPN interface carries `0.0.0.0/0`
+and `::/0` (less the phone's own private network with **Keep this phone's
+own network reachable**, as routes around it, so no Android 13 API is
+needed) and the exit node's DNS forwarder as its only DNS server; while no
+exit node answers, a resolver inside the mesh that answers nothing, never
+the network's. The card shows the exit node used, or why traffic is
+blocked, and an **Approve** button for exit nodes added since the pool was
+first used. For a kill switch while MeshTransit itself is off, turn on
+**Always-on VPN** and **Block connections without VPN** in Android's VPN
+settings; the app cannot.
+
+Not yet: MeshTransit DNS for mesh names (the VPN sets a DNS server only for an exit node), Device aliases, port
 mapping, always-on VPN, more than one profile. Logs are in `logcat` under the
 tags `MeshCore`, `MeshVpnService` and `VpnController`; release builds log
 warnings and errors only.

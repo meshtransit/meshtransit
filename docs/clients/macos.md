@@ -92,6 +92,32 @@ inside one. `meshctl status` shows the router each Site goes through.
 
 A Mac does not forward into subnets: a subnet router runs on Linux.
 
+## Use an exit node
+
+Root chooses the Exit Pool (`--enable-exits` is on in both launchd jobs):
+
+```bash
+sudo /usr/local/libexec/meshtransit/meshnetd routes exit-use POOL   # or auto, off
+sudo /usr/local/libexec/meshtransit/meshnetd routes exit-allow-lan on
+```
+
+`meshnetd` then routes `0/1`, `128/1`, `::/1` and `8000::/1` into the utun,
+marked apart from subnet routes, and loads a pf kill switch into the anchor
+`com.apple/250.MeshTransitExit`, which macOS's own `/etc/pf.conf` evaluates:
+out only by loopback, the utun, `meshd`'s own sockets (user `_meshd`), DHCP,
+neighbour discovery, link-local and, with `exit-allow-lan`, the attached
+private subnets. pf is enabled with a reference of the helper's own and
+given back when the kill switch goes. The rules stay while the helper is
+down; a reboot drops them until it starts again. Replies to connections
+opened from outside are dropped too. The MeshTransit DNS service becomes the
+primary one (`OverridePrimary`), so every name goes to `meshd`, which asks
+the exit node's DNS forwarder; `meshd` resolves its own names from the
+networks' resolvers (`scutil --dns`) through sockets bound to the physical
+interface, its WireGuard sockets included.
+
+`sudo meshnetd --release-exit` removes the routes and the kill switch; the
+uninstaller runs it. Not yet tried on a Mac: see the release notes.
+
 ## Check and troubleshoot
 
 - `meshctl status`, `meshctl netcheck`, `meshctl doctor control`, as on Linux.
