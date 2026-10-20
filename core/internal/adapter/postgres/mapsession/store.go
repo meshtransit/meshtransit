@@ -62,6 +62,9 @@ type Options struct {
 	// read without the shared inventory carry no routes.
 	SubnetRoutes   bool
 	RoutePeerLimit int
+	// ExitNodes reads each Network's Exit Pools with its shared policy
+	// (MESHTRANSIT_EXIT_NODES_ENABLED), at the same peer limit.
+	ExitNodes bool
 }
 
 // Store loads exact-scope snapshots in read-only repeatable-read transactions.
@@ -681,7 +684,7 @@ func validOptions(options Options) bool {
 		(!options.SharedInventory || options.InventoryStatementTimeout >= time.Millisecond &&
 			options.InventoryStatementTimeout <= maximumStatementTimeout &&
 			options.InventoryMaxAge >= time.Second && options.InventoryMaxAge <= maximumInventoryMaxAge) &&
-		(!options.SubnetRoutes || options.SharedInventory && options.RoutePeerLimit > 0 &&
+		(!options.SubnetRoutes && !options.ExitNodes || options.SharedInventory && options.RoutePeerLimit > 0 &&
 			options.RoutePeerLimit <= appmapsession.DefaultPeerLimit)
 }
 

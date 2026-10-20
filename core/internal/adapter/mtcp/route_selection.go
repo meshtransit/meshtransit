@@ -53,10 +53,20 @@ type keptReport[T any] struct {
 }
 
 // routeSelection validates a RouteSelectionReport and keeps the Sites of
-// the routes the session was sent.
+// the routes the session was sent. Sites need routes.subnet.v1 and the exit
+// routes.exit.v1, both routes.selection1. The exit node a node uses is
+// validated and not stored yet (exit node design E5).
 func (conversation *conversation) routeSelection(report *mtcpv1.RouteSelectionReport) error {
-	if !conversation.session.Supports("routes.selection1") || !conversation.session.Supports("routes.subnet.v1") {
-		return Violation(mtcpv1.Error_INVALID, "route selection without routes.selection1 and routes.subnet.v1")
+	subnet, exits := conversation.session.Supports("routes.subnet.v1"), conversation.session.Supports("routes.exit.v1")
+	if !conversation.session.Supports("routes.selection1") || (!subnet && !exits) ||
+		(len(report.GetSites()) > 0 && !subnet) || (report.GetExit() != nil && !exits) {
+		return Violation(mtcpv1.Error_INVALID, "route selection without routes.selection1 and the routes capability")
+	}
+	if !validExitSelection(report.GetExit()) {
+		return Violation(mtcpv1.Error_INVALID, "invalid exit selection")
+	}
+	if !subnet {
+		return nil
 	}
 	sites := make([]mapsession.SiteSelection, 0, len(report.GetSites()))
 	for _, reported := range report.GetSites() {
@@ -86,6 +96,25 @@ func (conversation *conversation) routeSelection(report *mtcpv1.RouteSelectionRe
 	}
 	conversation.offerRouteSelection(mapsession.SelectedOnly(sites, snapshot.Routes().Sites()))
 	return nil
+}
+
+// validExitSelection reports an absent exit selection, or one naming a
+// pool with a known reason and an exit node exactly when it uses one.
+func validExitSelection(exit *mtcpv1.RouteSelectionReport_ExitSelection) bool {
+	if exit == nil {
+		return true
+	}
+	reason := exit.GetReason()
+	if !mapsession.ValidSiteSelection([]mapsession.SiteSelection{{Ref: exit.GetPoolRef(),
+		Reason: mapsession.RouteSelectionNone}}) ||
+		reason < mtcpv1.RouteSelectionReport_ExitSelection_PRIMARY || reason > mtcpv1.RouteSelectionReport_ExitSelection_NONE {
+		return false
+	}
+	if reason == mtcpv1.RouteSelectionReport_ExitSelection_NONE {
+		return exit.GetExitNode() == ""
+	}
+	exitNode, err := node.ParseID(exit.GetExitNode())
+	return err == nil && exitNode.String() == exit.GetExitNode()
 }
 
 // offerRouteSelection stores sites now, or keeps them until the budget

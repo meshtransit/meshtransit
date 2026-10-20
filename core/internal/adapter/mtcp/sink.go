@@ -55,6 +55,8 @@ type mapSink struct {
 	dns        *mtcpv1.DnsConfig    // the DNS configuration the node holds
 	routes     *mtcpv1.RouteConfig  // the routes the node holds; nil: none
 	served     *mtcpv1.ServedRoutes // the Sites the node serves; nil: none
+	exits      *mtcpv1.ExitConfig   // the Exit Pools the node holds; nil: none
+	exitServed *mtcpv1.ServedExits  // the Exit Pool the node serves; nil: none
 	authorized bool                 // a registration awaits its RegisterResponse
 }
 
@@ -109,6 +111,7 @@ func (sink *mapSink) sendSnapshotLocked(_ context.Context, snapshot mapsession.S
 		sink.metrics.routesSent(message.GetRoutes(), snapshot.Routes().Omitted())
 	}
 	sink.routes, sink.served = message.GetRoutes(), message.GetServed()
+	sink.exits, sink.exitServed = message.GetExits(), message.GetServedExits()
 	// A map was authorized for this session: it serves a Device now.
 	sink.session.proveDevice()
 	sink.epoch, sink.seq, sink.acked = epoch, 1, 0
@@ -176,6 +179,18 @@ func (sink *mapSink) SendAuthorityDelta(ctx context.Context, delta mapsession.Au
 	if !proto.Equal(served, sink.served) {
 		message.Served = cmp.Or(served, &mtcpv1.ServedRoutes{})
 	}
+	// Exit Pools likewise (mtcp-v1 §7.7).
+	exits := encodeExits(snapshot)
+	exitServed, err := encodeServedExits(snapshot)
+	if err != nil {
+		return err
+	}
+	if !proto.Equal(exits, sink.exits) {
+		message.Exits = cmp.Or(exits, &mtcpv1.ExitConfig{})
+	}
+	if !proto.Equal(exitServed, sink.exitServed) {
+		message.ServedExits = cmp.Or(exitServed, &mtcpv1.ServedExits{})
+	}
 	if err := sink.sendDeltaLocked(ctx, message, snapshot, grant); err != nil {
 		return err
 	}
@@ -188,6 +203,12 @@ func (sink *mapSink) SendAuthorityDelta(ctx context.Context, delta mapsession.Au
 	}
 	if message.Served != nil {
 		sink.served = served
+	}
+	if message.Exits != nil {
+		sink.exits = exits
+	}
+	if message.ServedExits != nil {
+		sink.exitServed = exitServed
 	}
 	return nil
 }

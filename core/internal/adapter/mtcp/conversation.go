@@ -281,6 +281,12 @@ func (conversation *conversation) serve(ctx context.Context, nodeKey node.Key) e
 	if conversation.session.Supports("router.subnet.v1") {
 		request = request.WithRouter()
 	}
+	if conversation.session.Supports("routes.exit.v1") {
+		request = request.WithExits()
+	}
+	if conversation.session.Supports("router.exit.v1") {
+		request = request.WithExitRouter()
+	}
 	return conversation.application.options.Streams.Serve(ctx, machine, request, conversation.sink)
 }
 

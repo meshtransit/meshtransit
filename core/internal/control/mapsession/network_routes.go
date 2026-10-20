@@ -123,7 +123,15 @@ type RouteView struct {
 	// limit never removes them.
 	routers   []node.ID
 	consumers []node.ID
-	// omitted counts Sites left out by the bounds of one map.
+	// Exit Pools (mtcp-v1 §7.7): the pools it may use as a consumer, the
+	// pool it serves as an exit node with the traffic it admits, and the
+	// peers they add: a consumer's candidates, an exit node's consumers.
+	exits         []ExitPoolRoute
+	servedExits   []ServedExit
+	exitInbound   []ExitInbound
+	exitNodes     []node.ID
+	exitConsumers []node.ID
+	// omitted counts Sites and Exit Pools left out by the bounds of one map.
 	omitted int
 }
 
@@ -144,9 +152,10 @@ func (view RouteView) Inbound() []RoutedInbound {
 	return cloned
 }
 
-// Peers returns the Devices routes add to the map, sorted.
+// Peers returns the Devices routes and Exit Pools add to the map, sorted.
 func (view RouteView) Peers() []node.ID {
 	peers := append(slices.Clone(view.routers), view.consumers...)
+	peers = append(append(peers, view.exitNodes...), view.exitConsumers...)
 	slices.SortFunc(peers, compareNodeIDs)
 	return slices.Compact(peers)
 }
@@ -154,13 +163,20 @@ func (view RouteView) Peers() []node.ID {
 // ForCapabilities is forCapabilities for a store completing a snapshot with
 // the capabilities its session already declared.
 func (view RouteView) ForCapabilities(capabilities RouteCapabilities) RouteView {
-	return view.forCapabilities(capabilities.Routes, capabilities.Router)
+	view = view.forCapabilities(capabilities.Routes, capabilities.Router)
+	if !capabilities.Exits {
+		view.exits, view.exitNodes = nil, nil
+	}
+	if !capabilities.ExitRouter {
+		view.servedExits, view.exitInbound, view.exitConsumers = nil, nil, nil
+	}
+	return view
 }
 
-// RouteCapabilities are the route capabilities of a session (Request.Routes
-// and Request.Router).
+// RouteCapabilities are the route capabilities of a session (Request.Routes,
+// Request.Router, Request.Exits and Request.ExitRouter).
 type RouteCapabilities struct {
-	Routes, Router bool
+	Routes, Router, Exits, ExitRouter bool
 }
 
 // forCapabilities keeps what a session can use: the Sites to reach when it
@@ -182,7 +198,9 @@ func (view RouteView) Omitted() int { return view.omitted }
 // IsEmpty reports a view that carries nothing.
 func (view RouteView) IsEmpty() bool {
 	return len(view.sites) == 0 && len(view.served) == 0 && len(view.inbound) == 0 &&
-		len(view.routers) == 0 && len(view.consumers) == 0
+		len(view.routers) == 0 && len(view.consumers) == 0 && len(view.exits) == 0 &&
+		len(view.servedExits) == 0 && len(view.exitInbound) == 0 && len(view.exitNodes) == 0 &&
+		len(view.exitConsumers) == 0
 }
 
 // Equal reports whether two views carry the same routes.
@@ -191,6 +209,10 @@ func (view RouteView) Equal(other RouteView) bool {
 		slices.EqualFunc(view.served, other.served, equalServedSite) &&
 		slices.EqualFunc(view.inbound, other.inbound, equalRoutedInbound) &&
 		slices.Equal(view.routers, other.routers) && slices.Equal(view.consumers, other.consumers) &&
+		slices.EqualFunc(view.exits, other.exits, equalExitPoolRoute) &&
+		slices.EqualFunc(view.servedExits, other.servedExits, equalServedExit) &&
+		slices.EqualFunc(view.exitInbound, other.exitInbound, equalExitInbound) &&
+		slices.Equal(view.exitNodes, other.exitNodes) && slices.Equal(view.exitConsumers, other.exitConsumers) &&
 		view.omitted == other.omitted
 }
 
@@ -211,6 +233,14 @@ type routeIndex struct {
 	// peer limit never cuts a peer routes need.
 	routerLimit, consumers int
 	members                func(SelectorKind, int64) []int64
+	// Exit Pools: pools by internal reference, rule indexes by pool, the
+	// pool of each exit node, and the evidence as read, for Equal.
+	pools     map[int64]*exitPoolEntry
+	byPool    map[int64][]int
+	exitOf    map[int64]int64
+	poolList  []ExitPool
+	exitNodes []ExitNode
+	exitRules []ExitRule
 }
 
 type routeSiteEntry struct {
@@ -222,7 +252,8 @@ type routeSiteEntry struct {
 // newRouteIndex validates and indexes one Network's routes. Rules naming an
 // unknown Site grant nothing; routers of an unknown Site are ignored.
 func newRouteIndex(params NetworkPolicyParams, members func(SelectorKind, int64) []int64) (*routeIndex, bool) {
-	if len(params.Sites) == 0 && len(params.RouteRouters) == 0 && len(params.RouteRules) == 0 {
+	if len(params.Sites) == 0 && len(params.RouteRouters) == 0 && len(params.RouteRules) == 0 &&
+		len(params.ExitPools) == 0 && len(params.ExitNodes) == 0 && len(params.ExitRules) == 0 {
 		return nil, true
 	}
 	if params.RouteRevision <= 0 || params.RoutePeerLimit <= 0 || len(params.Sites) > MaximumRouteSites {
@@ -264,6 +295,9 @@ func newRouteIndex(params NetworkPolicyParams, members func(SelectorKind, int64)
 		})
 		entry.primary = siteRoutePrimary(entry.site, entry.routers)
 	}
+	if !index.indexExits(params) {
+		return nil, false
+	}
 	for position, rule := range index.ruleList {
 		if !rule.ID.IsValid() || !rule.SourceKind.valid() || rule.SourceRef <= 0 || len(rule.Prefixes) == 0 {
 			return nil, false
@@ -272,11 +306,12 @@ func newRouteIndex(params NetworkPolicyParams, members func(SelectorKind, int64)
 			index.bySite[rule.Site] = append(index.bySite[rule.Site], position)
 		}
 	}
-	// Each router's consumers in a fixed order, whatever their liveness or
-	// membership deadlines: a consumer finds its place without building the
-	// router's map, and both cut at the same place. One list per Site, shared
-	// by its routers; a router of several Sites merges theirs. The routers of
-	// a Site are never its consumers.
+	// Each router's and exit node's consumers in a fixed order, whatever
+	// their liveness or membership deadlines: a consumer finds its place
+	// without building the router's map, and both cut at the same place. One
+	// list per Site or pool, shared by its routers or exit nodes; a Device
+	// serving several merges theirs. The routers of a Site are never its
+	// consumers, nor the exit nodes of a pool.
 	bySiteConsumers := make(map[int64][]int64, len(index.sites))
 	for site, entry := range index.sites {
 		var consumers []int64
@@ -294,14 +329,24 @@ func newRouteIndex(params NetworkPolicyParams, members func(SelectorKind, int64)
 			return slices.ContainsFunc(entry.routers, func(router RouteRouter) bool { return router.Device == consumer })
 		})
 	}
+	byPoolConsumers := index.poolConsumers()
+	serving := make(map[int64][][]int64, len(index.routes)+len(index.exitOf))
 	for device, sites := range index.routes {
-		if len(sites) == 1 {
-			index.static[device] = bySiteConsumers[sites[0]]
+		for _, site := range sites {
+			serving[device] = append(serving[device], bySiteConsumers[site])
+		}
+	}
+	for device, pool := range index.exitOf {
+		serving[device] = append(serving[device], byPoolConsumers[pool])
+	}
+	for device, lists := range serving {
+		if len(lists) == 1 {
+			index.static[device] = lists[0]
 			continue
 		}
 		var consumers []int64
-		for _, site := range sites {
-			consumers = append(consumers, bySiteConsumers[site]...)
+		for _, list := range lists {
+			consumers = append(consumers, list...)
 		}
 		slices.Sort(consumers)
 		index.static[device] = slices.Compact(consumers)
@@ -317,7 +362,7 @@ func (index *routeIndex) equal(other *routeIndex) bool {
 	return index.revision == other.revision && index.limit == other.limit &&
 		slices.EqualFunc(index.siteList, other.siteList, equalRouteSite) &&
 		slices.EqualFunc(index.routers, other.routers, equalRouteRouter) &&
-		slices.EqualFunc(index.ruleList, other.ruleList, equalRouteRule)
+		slices.EqualFunc(index.ruleList, other.ruleList, equalRouteRule) && index.equalExits(other)
 }
 
 // serves reports whether a router can serve its Site now: its Device is
@@ -333,9 +378,12 @@ func (inner *networkPolicy) routesFor(self int64, now time.Time) RouteView {
 		return RouteView{}
 	}
 	view := RouteView{}
-	inner.consumerRoutes(&view, self, now)
+	routers := make(map[node.ID]struct{})
+	inner.consumerRoutes(&view, self, now, routers)
 	inner.servedRoutes(&view, self, now)
-	for _, peers := range []*[]node.ID{&view.routers, &view.consumers} {
+	inner.consumerExits(&view, self, now, routers)
+	inner.servedExits(&view, self, now)
+	for _, peers := range []*[]node.ID{&view.routers, &view.consumers, &view.exitNodes, &view.exitConsumers} {
 		slices.SortFunc(*peers, compareNodeIDs)
 		*peers = slices.Compact(*peers)
 	}
@@ -343,7 +391,8 @@ func (inner *networkPolicy) routesFor(self int64, now time.Time) RouteView {
 }
 
 // consumerRoutes adds the Sites self may reach.
-func (inner *networkPolicy) consumerRoutes(view *RouteView, self int64, now time.Time) {
+func (inner *networkPolicy) consumerRoutes(view *RouteView, self int64, now time.Time,
+	routers map[node.ID]struct{}) {
 	index := inner.routes
 	granted := make(map[int64][]netip.Prefix)
 	for _, rule := range index.ruleList {
@@ -379,7 +428,7 @@ func (inner *networkPolicy) consumerRoutes(view *RouteView, self int64, now time
 	}
 	slices.SortFunc(sites, func(first, second SiteRoute) int { return cmp.Compare(first.Ref, second.Ref) })
 	markRouteConflicts(sites)
-	prefixes, routers := 0, make(map[node.ID]struct{})
+	prefixes := 0
 	for _, route := range sites {
 		if route.Status == RouteServed && capacity[route.Ref] {
 			route.Status = RouteCapacity
@@ -669,7 +718,8 @@ func cloneRouteRules(rules []RouteRule) []RouteRule {
 // peers they add (Snapshot.Routes), and remembers the capabilities so a
 // refresh can filter before it builds (Snapshot.RouteCapabilities).
 func (snapshot Snapshot) withRouteCapabilities(request Request) (Snapshot, error) {
-	capabilities := RouteCapabilities{Routes: request.Routes(), Router: request.Router()}
+	capabilities := RouteCapabilities{Routes: request.Routes(), Router: request.Router(), Exits: request.Exits(),
+		ExitRouter: request.ExitRouter()}
 	routes := snapshot.routes.ForCapabilities(capabilities)
 	if routes.Equal(snapshot.routes) {
 		snapshot.routeCapabilities, snapshot.routeCapabilitiesKnown = capabilities, true

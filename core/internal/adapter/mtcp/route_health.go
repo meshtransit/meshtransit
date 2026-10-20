@@ -16,7 +16,7 @@ import (
 // map stream service implements it when its recorder can.
 type RouteHealthStreams interface {
 	ReportRouteHealth(ctx context.Context, machine control.AuthenticatedMachine, nodeKey node.Key,
-		sites []mapsession.SiteHealth) error
+		sites []mapsession.SiteHealth, exit *mapsession.ExitHealth) error
 }
 
 const (
@@ -43,6 +43,7 @@ type routeHealthPacing struct {
 // arrived.
 type keptRouteHealth struct {
 	sites   []mapsession.SiteHealth
+	exit    *mapsession.ExitHealth
 	nodeKey node.Key
 }
 
@@ -52,11 +53,22 @@ var routeHealthStates = map[mtcpv1.RouteHealthReport_SiteHealth_State]mapsession
 	mtcpv1.RouteHealthReport_SiteHealth_FAILED:   mapsession.RouteHealthFailed,
 }
 
+var exitFamilies = map[mtcpv1.ExitCandidate_Families]mapsession.ExitFamilies{
+	mtcpv1.ExitCandidate_FAMILIES_UNSPECIFIED: mapsession.ExitFamiliesUnknown,
+	mtcpv1.ExitCandidate_V4:                   mapsession.ExitFamiliesV4,
+	mtcpv1.ExitCandidate_V6:                   mapsession.ExitFamiliesV6,
+	mtcpv1.ExitCandidate_BOTH:                 mapsession.ExitFamiliesBoth,
+}
+
 // routeHealth validates a RouteHealthReport and keeps the Sites of the
-// served routes the session was sent.
+// served routes and the Exit Pool served the session was sent. Sites need
+// router.subnet.v1 and the pool router.exit.v1, both router.health1.
 func (conversation *conversation) routeHealth(report *mtcpv1.RouteHealthReport) error {
-	if !conversation.session.Supports("router.health1") || !conversation.session.Supports("router.subnet.v1") {
-		return Violation(mtcpv1.Error_INVALID, "route health without router.health1 and router.subnet.v1")
+	subnet, exitRouter := conversation.session.Supports("router.subnet.v1"),
+		conversation.session.Supports("router.exit.v1")
+	if !conversation.session.Supports("router.health1") || (!subnet && !exitRouter) ||
+		(len(report.GetSites()) > 0 && !subnet) || (report.GetExit() != nil && !exitRouter) {
+		return Violation(mtcpv1.Error_INVALID, "route health without router.health1 and the router capability")
 	}
 	sites := make([]mapsession.SiteHealth, 0, len(report.GetSites()))
 	for _, reported := range report.GetSites() {
@@ -69,6 +81,16 @@ func (conversation *conversation) routeHealth(report *mtcpv1.RouteHealthReport) 
 	if !mapsession.ValidSiteHealth(sites) {
 		return Violation(mtcpv1.Error_INVALID, "invalid route health report")
 	}
+	var exit *mapsession.ExitHealth
+	if reported := report.GetExit(); reported != nil {
+		state, knownState := routeHealthStates[reported.GetState()]
+		families, knownFamilies := exitFamilies[reported.GetFamilies()]
+		exit = &mapsession.ExitHealth{Ref: reported.GetPoolRef(), State: state, Code: reported.GetCode(),
+			Families: families}
+		if !knownState || !knownFamilies || !mapsession.ValidExitHealth(*exit) {
+			return Violation(mtcpv1.Error_INVALID, "invalid exit health report")
+		}
+	}
 	if _, ok := conversation.application.options.Streams.(RouteHealthStreams); !ok {
 		return nil
 	}
@@ -76,7 +98,8 @@ func (conversation *conversation) routeHealth(report *mtcpv1.RouteHealthReport) 
 	if !ok {
 		return nil // no map yet; the router reports again within 10 s
 	}
-	conversation.reportRouteHealth(servedOnly(sites, snapshot.Routes().Served()))
+	conversation.reportRouteHealth(servedOnly(sites, snapshot.Routes().Served()),
+		mapsession.ServedExitOnly(exit, snapshot.Routes().ServedExits()))
 	return nil
 }
 
@@ -96,15 +119,16 @@ func servedOnly(sites []mapsession.SiteHealth, served []mapsession.ServedSite) [
 	return kept
 }
 
-// reportRouteHealth stores sites now, or keeps them until the budget allows.
-func (conversation *conversation) reportRouteHealth(sites []mapsession.SiteHealth) {
+// reportRouteHealth stores sites and exit now, or keeps them until the
+// budget allows.
+func (conversation *conversation) reportRouteHealth(sites []mapsession.SiteHealth, exit *mapsession.ExitHealth) {
 	pacing := &conversation.routeHealthPacing
 	pacing.mu.Lock()
 	if pacing.stopped {
 		pacing.mu.Unlock()
 		return
 	}
-	pacing.waiting = &keptRouteHealth{sites: sites, nodeKey: conversation.currentKey()}
+	pacing.waiting = &keptRouteHealth{sites: sites, exit: exit, nodeKey: conversation.currentKey()}
 	next, ok, refused := conversation.claimRouteHealthLocked()
 	pacing.mu.Unlock()
 	if refused {
@@ -181,7 +205,7 @@ func (conversation *conversation) storeRouteHealthWithin(ctx context.Context, ke
 	if err != nil {
 		return
 	}
-	if err := streams.ReportRouteHealth(ctx, machine, kept.nodeKey, kept.sites); err != nil &&
+	if err := streams.ReportRouteHealth(ctx, machine, kept.nodeKey, kept.sites, kept.exit); err != nil &&
 		!errors.Is(err, context.Canceled) {
 		conversation.application.options.Logger.DebugContext(ctx, "mtcp route health not stored", "error", err)
 	}

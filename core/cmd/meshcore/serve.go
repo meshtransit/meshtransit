@@ -520,6 +520,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			relayDirectories,
 			connectivityHub,
 			processConfig.SubnetRoutes,
+			processConfig.ExitNodes,
 		)
 		if composeErr != nil {
 			logger.ErrorContext(

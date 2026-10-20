@@ -20,7 +20,8 @@ type ExitHealth struct {
 	Families string
 }
 
-func (health ExitHealth) isValid() bool {
+// IsValid reports a pool reference and code with known state and families.
+func (health ExitHealth) IsValid() bool {
 	return health.Ref != "" && health.Code != "" &&
 		(health.State == SiteHealthOK || health.State == SiteHealthDegraded || health.State == SiteHealthFailed) &&
 		(health.Families == "" || health.Families == ExitFamiliesV4 || health.Families == ExitFamiliesV6 ||
@@ -43,5 +44,5 @@ func validExitHealth(observation Observation) bool {
 	if observation.ExitHealth == nil {
 		return true
 	}
-	return !observation.RouteHealthAt.IsZero() && observation.ExitHealth.isValid()
+	return !observation.RouteHealthAt.IsZero() && observation.ExitHealth.IsValid()
 }

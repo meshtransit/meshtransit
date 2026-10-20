@@ -34,15 +34,19 @@ var routeHealthStates = map[mapsession.RouteHealthState]string{
 func (client *Client) RecordRouteHealth(ctx context.Context, health mapsession.RouteHealth) (bool, error) {
 	if ctx == nil || client == nil || client.recordRouteHealth == nil || client.loadSession == nil ||
 		!health.NodeKey.IsValid() || health.MachineFingerprint == [32]byte{} || health.ReportedAt.IsZero() ||
-		!mapsession.ValidSiteHealth(health.Sites) {
+		!mapsession.ValidSiteHealth(health.Sites) || (health.Exit != nil && !mapsession.ValidExitHealth(*health.Exit)) {
 		return false, ErrInvalidOptions
 	}
 	encoded, err := encodeRouteHealth(health.Sites)
 	if err != nil {
 		return false, errors.Join(ErrInvalidOptions, err)
 	}
+	exit, err := encodeExitHealth(health.Exit)
+	if err != nil {
+		return false, errors.Join(ErrInvalidOptions, err)
+	}
 	startedAt := time.Now()
-	stored, err := client.recordRouteHealthForSession(ctx, health, encoded)
+	stored, err := client.recordRouteHealthForSession(ctx, health, encoded, exit)
 	client.metrics.observeCommand(redisCommandRecordRouteHealth, startedAt, err)
 	if err != nil {
 		return false, errors.Join(ErrRecordDelivery, err)
@@ -51,7 +55,7 @@ func (client *Client) RecordRouteHealth(ctx context.Context, health mapsession.R
 }
 
 func (client *Client) recordRouteHealthForSession(ctx context.Context, health mapsession.RouteHealth,
-	encoded string,
+	encoded, exit string,
 ) (bool, error) {
 	fields, err := client.loadSession(ctx, sessionKeyForNodeKey(health.NodeKey))
 	if err != nil {
@@ -65,7 +69,7 @@ func (client *Client) recordRouteHealthForSession(ctx context.Context, health ma
 		return site.State == mapsession.RouteHealthFailed
 	})
 	result, err := client.recordRouteHealth(ctx, deliveryKeyForNode(nodeID), generation, encoded,
-		health.ReportedAt.UnixMilli(), deliveryTTL, failed)
+		health.ReportedAt.UnixMilli(), deliveryTTL, failed, exit)
 	if err == nil && result != 0 && result != 1 {
 		err = errors.New("unexpected route health record result")
 	}
@@ -106,6 +110,48 @@ func decodeRouteHealth(text string) ([]distribution.SiteHealth, error) {
 		sites = append(sites, distribution.SiteHealth{Ref: row[0], State: row[1], Code: row[2]})
 	}
 	return sites, nil
+}
+
+// exitFamilies names the stored families; unknown families are stored
+// empty.
+var exitFamilies = map[mapsession.ExitFamilies]string{
+	mapsession.ExitFamiliesUnknown: "",
+	mapsession.ExitFamiliesV4:      distribution.ExitFamiliesV4,
+	mapsession.ExitFamiliesV6:      distribution.ExitFamiliesV6,
+	mapsession.ExitFamiliesBoth:    distribution.ExitFamiliesBoth,
+}
+
+// encodeExitHealth writes an exit node's pool health as [ref, state, code,
+// families]; empty when it reported none.
+func encodeExitHealth(health *mapsession.ExitHealth) (string, error) {
+	if health == nil {
+		return "", nil
+	}
+	encoded, err := json.Marshal([4]string{health.Ref, routeHealthStates[health.State], health.Code,
+		exitFamilies[health.Families]})
+	if err != nil {
+		return "", errors.New("exit health does not fit")
+	}
+	return string(encoded), nil
+}
+
+// decodeExitHealth reads what encodeExitHealth wrote; empty is none.
+func decodeExitHealth(text string) (*distribution.ExitHealth, error) {
+	if text == "" {
+		return nil, nil
+	}
+	if len(text) > 512 {
+		return nil, errors.New("exit health is too large")
+	}
+	var row [4]string
+	if err := json.Unmarshal([]byte(text), &row); err != nil {
+		return nil, errors.New("malformed exit health")
+	}
+	health := distribution.ExitHealth{Ref: row[0], State: row[1], Code: row[2], Families: row[3]}
+	if !health.IsValid() {
+		return nil, errors.New("malformed exit health")
+	}
+	return &health, nil
 }
 
 // decodeRouteSummary reads a route digest and entry count that are both

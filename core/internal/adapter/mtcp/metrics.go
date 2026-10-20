@@ -190,7 +190,8 @@ func NewMetrics() *Metrics {
 func (metrics *Metrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{metrics.handshakes, metrics.sessions, metrics.messages, metrics.streamEnds,
 		metrics.sheds, metrics.unproven, metrics.forwarding, metrics.keyExpiry, metrics.limits, metrics.mapNames,
-		metrics.expiring, metrics.routeOffers, metrics.exitOffers, metrics.routeOfferDropped, metrics.routes, routedFilterOmitted}
+		metrics.expiring, metrics.routeOffers, metrics.exitOffers, metrics.routeOfferDropped, metrics.routes, routedFilterOmitted,
+		exitFilterOmitted}
 }
 
 // routedFilterOmitted reports the routed traffic groups left out of router

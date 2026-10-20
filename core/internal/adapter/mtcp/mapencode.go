@@ -87,10 +87,15 @@ func encodeNamedSnapshot(snapshot mapsession.Snapshot, view *mtcpv1.View, aliase
 	if err != nil {
 		return nil, err
 	}
+	servedExits, err := encodeServedExits(snapshot)
+	if err != nil {
+		return nil, err
+	}
 	return &mtcpv1.MapSnapshot{
 		View: view, NetworkRevisions: networkRevisions(snapshot), Self: self, Peers: peers,
 		PacketFilter: filter, Dns: encodeDNS(names), RelayMap: grant.relayMap, Settings: settings(),
 		Routes: encodeRoutes(snapshot.Routes(), endpoints), Served: encodeServed(snapshot.Routes(), endpoints),
+		Exits: encodeExits(snapshot), ServedExits: servedExits,
 	}, nil
 }
 

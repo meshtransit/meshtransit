@@ -61,7 +61,7 @@ type Client struct {
 	recordPaths        func(ctx context.Context, key string, generation int64, encoded string, ttl time.Duration) (int64, error)
 	recordConnectivity func(ctx context.Context, key string, generation int64, encoded string, ttl time.Duration) (int64, error)
 	recordRouteHealth  func(ctx context.Context, key string, generation int64, encoded string, reportedAt int64,
-		ttl time.Duration, failed bool) (int64, error)
+		ttl time.Duration, failed bool, exit string) (int64, error)
 	loadSession loadSessionFunc
 	// recordRouteSelection runs recordRouteSelectionScript; loadSiteSelection
 	// reads a Site's selection hash; pruneSiteSelection deletes its fields.
@@ -268,13 +268,13 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 			return client.HDel(pruneCtx, key, fields...).Err()
 		},
 		recordRouteHealth: func(recordCtx context.Context, key string, generation int64, encoded string,
-			reportedAt int64, ttl time.Duration, failed bool) (int64, error) {
+			reportedAt int64, ttl time.Duration, failed bool, exit string) (int64, error) {
 			flag := "0"
 			if failed {
 				flag = "1"
 			}
 			return recordRouteHealthScript.Run(recordCtx, client, []string{key}, generation, encoded, reportedAt,
-				ttl.Milliseconds(), flag, siteHealthFailedChannel, siteHealthFailedPayload).Int64()
+				ttl.Milliseconds(), flag, siteHealthFailedChannel, siteHealthFailedPayload, exit).Int64()
 		},
 		recordPaths: func(recordCtx context.Context, key string, generation int64, encoded string,
 			ttl time.Duration) (int64, error) {

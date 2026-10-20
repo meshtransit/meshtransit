@@ -15,8 +15,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 204 {
-		t.Fatalf("len(Catalog()) = %d, want 204", len(catalog))
+	if len(catalog) != 205 {
+		t.Fatalf("len(Catalog()) = %d, want 205", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1611,8 +1611,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 204 {
-		t.Fatalf("LatestVersion() = %d, want 204", LatestVersion())
+	if LatestVersion() != 205 {
+		t.Fatalf("LatestVersion() = %d, want 205", LatestVersion())
 	}
 }
 
@@ -5876,5 +5876,29 @@ func TestMigration204ElectsExitPoolPrimaries(t *testing.T) {
 		if strings.Contains(migration.SQL, refused) {
 			t.Errorf("schema 204 holds %q", refused)
 		}
+	}
+}
+
+func TestMigration205ReadsNetworkExitsForMaps(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[204]
+	if migration.Version != 205 {
+		t.Fatalf("migration 205 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.load_map_network_exit_pools_v1(p_limit INTEGER)",
+		"CREATE FUNCTION mesh_ops.load_map_network_exit_nodes_v1(p_limit INTEGER)",
+		"CREATE FUNCTION mesh_ops.load_map_network_exit_rules_v1(p_policy_revision BIGINT, p_limit INTEGER)",
+		"LEFT JOIN mesh.exit_pool_primary AS elected",
+		"LEFT JOIN mesh.device_exit_offer AS offer ON offer.device_id = exit_node.device_id",
+		"JOIN mesh.compiled_policy_exit_rule AS rule ON rule.policy_release_id = release.id",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_map_network_exit_rules_v1(BIGINT, INTEGER) TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 205 lacks %q", want)
+		}
+	}
+	if strings.Contains(migration.SQL, "TO mesh_worker") {
+		t.Error("schema 205 grants a map reader to the worker role")
 	}
 }

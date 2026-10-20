@@ -20,6 +20,8 @@ type Request struct {
 	largeMap           bool
 	routes             bool
 	router             bool
+	exits              bool
+	exitRouter         bool
 	endpointSet        node.EndpointSet
 	hasEndpointSet     bool
 	preferredRelay     int
@@ -144,3 +146,24 @@ func (request Request) WithRouter() Request {
 
 // Router reports whether the client can route into Sites on a large map.
 func (request Request) Router() bool { return request.router && request.largeMap }
+
+// WithExits records that the client may send its Internet traffic through
+// Exit Pools (MTCP routes.exit.v1). Pools reach only clients that also
+// declared large maps.
+func (request Request) WithExits() Request {
+	request.exits = true
+	return request
+}
+
+// Exits reports whether the client takes Exit Pools on a large map.
+func (request Request) Exits() bool { return request.exits && request.largeMap }
+
+// WithExitRouter records that the client can be an exit node (MTCP
+// router.exit.v1). It serves only on a large map, as a router does.
+func (request Request) WithExitRouter() Request {
+	request.exitRouter = true
+	return request
+}
+
+// ExitRouter reports whether the client can be an exit node on a large map.
+func (request Request) ExitRouter() bool { return request.exitRouter && request.largeMap }

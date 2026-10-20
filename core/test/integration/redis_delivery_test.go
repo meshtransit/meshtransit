@@ -164,6 +164,21 @@ func assertRedisEnforcementRecords(ctx context.Context, t *testing.T, client *re
 		current[0] != (distribution.SiteHealth{Ref: "prod", State: "failed", Code: "forward_blocked"}) {
 		t.Fatalf("route health = %+v, %t", current, ok)
 	}
+	if load().ExitHealth != nil {
+		t.Fatal("a router without an Exit Pool has exit health")
+	}
+	// An exit node's pool health is kept with it, and a failed pool does
+	// not wake the Site election.
+	health.Exit = &mapsession.ExitHealth{Ref: "pool", State: mapsession.RouteHealthFailed, Code: "egress_failed",
+		Families: mapsession.ExitFamiliesV4}
+	if stored, err := client.RecordRouteHealth(ctx, health); err != nil || !stored {
+		t.Fatalf("RecordRouteHealth(exit) = %t, %v", stored, err)
+	}
+	if current, ok := distribution.CurrentExitHealth(load(), at.Add(3*time.Second)); !ok ||
+		current != (distribution.ExitHealth{Ref: "pool", State: "failed", Code: "egress_failed", Families: "v4"}) {
+		t.Fatalf("exit health = %+v, %t", current, ok)
+	}
+	health.Exit = nil
 	if err := client.RecordDelivery(ctx, mapsession.Delivery{NodeID: nodeID, NodeKey: integrationNodeKey,
 		MachineFingerprint: integrationMachine, SessionGeneration: 4,
 		NetworkRevision: 3, PolicyRevision: 2, DeliveredAt: at.Add(time.Second), Filter: filter}); err != nil {
@@ -179,7 +194,7 @@ func assertRedisEnforcementRecords(ctx context.Context, t *testing.T, client *re
 	}
 	if observation := load(); !observation.Filter.IsZero() || !observation.Enforced.IsZero() ||
 		!observation.ReportedAt.IsZero() || !observation.Routes.IsZero() || !observation.EnforcedRoutes.IsZero() ||
-		observation.RouteHealth != nil || !observation.RouteHealthAt.IsZero() {
+		observation.RouteHealth != nil || !observation.RouteHealthAt.IsZero() || observation.ExitHealth != nil {
 		t.Fatalf("a new session kept the previous report: %+v", observation)
 	}
 	// A node's Site routers are kept for its session and counted per Site;

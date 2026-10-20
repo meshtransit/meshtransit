@@ -5,6 +5,19 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: maps carry Exit Pools (schema 205, mtcp-v1 §7.7) with
+  `MESHTRANSIT_EXIT_NODES_ENABLED` and the shared inventory. A node with
+  `routes.exit.v1` gets each pool an active rule lets it use (never the pool
+  it serves), with its exit nodes as candidates and peers, the primary Core
+  elected (an elected Device no longer in the pool is no primary) and
+  `SERVED`, `UNSERVED` or `CAPACITY`; each candidate carries its overlay
+  addresses for DNS. An exit node with `router.exit.v1` gets the pool it
+  serves, its probes, limits and DNS upstreams, and the pool's rules from
+  its consumers to `0.0.0.0/0` and `::/0`, outside its packet filter
+  (`meshtransit_mtcp_exit_filter_groups_omitted_total`). Exit nodes and
+  Site routers share the peer limit. Exit nodes report their pool's health
+  in `RouteHealthReport.exit`, which the Exit Pool election reads; a node's
+  exit selection is validated and not stored yet.
 - Core: exit nodes offer and Core elects (schemas 203 and 204). A node
   says in MTCP `Hostinfo.exit_offered` whether its own configuration offers
   to be an exit node (only with `router.exit.v1`); a change is recorded as
@@ -17,7 +30,7 @@ merge (2026-10-09) are kept below.
   package; Sites elect as before. MTCP v1 documents Exit Pools (§7.7):
   `ExitConfig`, `ServedExits`, exit health and selection reports, and the
   `routes.exit.v1` and `router.exit.v1` capabilities, which Core offers only
-  with the flag. Maps and exit health reports come next.
+  with the flag.
 - Core: an Access Rule may grant the Internet through an Exit Pool
   (schema 202): `destination_exit_pool_id` names the pool, with any source
   selector and the rule's protocol and ports, never addresses. The active

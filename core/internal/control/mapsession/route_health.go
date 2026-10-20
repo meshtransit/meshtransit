@@ -64,12 +64,52 @@ func ValidSiteHealth(sites []SiteHealth) bool {
 	return true
 }
 
+// ExitFamilies are the address families an exit node reaches the Internet
+// in (mtcp-v1 §7.7).
+type ExitFamilies int
+
+// The families of mtcp-v1 §7.7; the zero value is not known.
+const (
+	ExitFamiliesUnknown ExitFamilies = iota
+	ExitFamiliesV4
+	ExitFamiliesV6
+	ExitFamiliesBoth
+)
+
+// ExitHealth is an exit node's health of the Exit Pool it serves, as it
+// measures it itself (mtcp-v1 §8.3).
+type ExitHealth struct {
+	Ref      string
+	State    RouteHealthState
+	Code     string
+	Families ExitFamilies
+}
+
+// ValidExitHealth reports a pool reference, a known state and families,
+// and a code as for a Site.
+func ValidExitHealth(health ExitHealth) bool {
+	return health.Families >= ExitFamiliesUnknown && health.Families <= ExitFamiliesBoth &&
+		ValidSiteHealth([]SiteHealth{{Ref: health.Ref, State: health.State, Code: health.Code}})
+}
+
+// ServedExitOnly keeps exit health of the pool served: an exit node reports
+// only on what Core sent it, and nothing else is stored.
+func ServedExitOnly(health *ExitHealth, served []ServedExit) *ExitHealth {
+	if health == nil || !slices.ContainsFunc(served, func(pool ServedExit) bool { return pool.Ref == health.Ref }) {
+		return nil
+	}
+	kept := *health
+	return &kept
+}
+
 // RouteHealth is one route health report, bound to the authenticated node
 // that sent it; the recorder ties it to that node's current map session.
+// Exit is the health of the Exit Pool the node serves; nil: none.
 type RouteHealth struct {
 	NodeKey            node.Key
 	MachineFingerprint [32]byte
 	Sites              []SiteHealth
+	Exit               *ExitHealth
 	ReportedAt         time.Time
 }
 
@@ -80,12 +120,12 @@ type RouteHealthRecorder interface {
 	RecordRouteHealth(context.Context, RouteHealth) (bool, error)
 }
 
-// ReportRouteHealth stores the health of the Sites a router serves
-// (mtcp-v1 §8.3). Sites must already be those of the served routes the
-// session was sent; the recorder is the enforcement recorder when it also
-// records route health.
+// ReportRouteHealth stores the health of the Sites a router serves and of
+// the Exit Pool an exit node serves (mtcp-v1 §8.3). Sites and exit must
+// already be those the session was sent; the recorder is the enforcement
+// recorder when it also records route health.
 func (service *StreamService) ReportRouteHealth(ctx context.Context, machine control.AuthenticatedMachine,
-	nodeKey node.Key, sites []SiteHealth,
+	nodeKey node.Key, sites []SiteHealth, exit *ExitHealth,
 ) error {
 	if ctx == nil || service == nil || !machine.IsValid() {
 		return ErrInvalidStreamService
@@ -95,19 +135,24 @@ func (service *StreamService) ReportRouteHealth(ctx context.Context, machine con
 		return ErrEnforcementUnavailable
 	}
 	identity, err := machine.BindNodeKey(nodeKey)
-	if err != nil || !ValidSiteHealth(sites) {
+	if err != nil || !ValidSiteHealth(sites) || (exit != nil && !ValidExitHealth(*exit)) {
 		return ErrInvalidRouteHealth
+	}
+	var stored *ExitHealth
+	if exit != nil {
+		copied := *exit
+		stored = &copied
 	}
 	operationCtx, cancel := context.WithTimeout(ctx, service.options.CoordinationTimeout)
 	defer cancel()
-	stored, err := recorder.RecordRouteHealth(operationCtx, RouteHealth{
+	recorded, err := recorder.RecordRouteHealth(operationCtx, RouteHealth{
 		NodeKey: identity.NodeKey(), MachineFingerprint: identity.MachineFingerprint(),
-		Sites: slices.Clone(sites), ReportedAt: time.Now().UTC(),
+		Sites: slices.Clone(sites), Exit: stored, ReportedAt: time.Now().UTC(),
 	})
 	if err != nil {
 		return errors.Join(ErrEnforcementUnavailable, err)
 	}
-	if !stored {
+	if !recorded {
 		return ErrNoEnforcementStream
 	}
 	return nil

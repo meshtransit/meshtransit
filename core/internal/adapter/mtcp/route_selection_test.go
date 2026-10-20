@@ -75,3 +75,47 @@ func TestSelectedOnlyKeepsTheRoutersCoreSent(t *testing.T) {
 		t.Fatalf("SelectedOnly() = %v", kept)
 	}
 }
+
+// An exit selection needs routes.exit.v1 and is validated; a node that
+// takes only Exit Pools never overwrites Site selections.
+func TestConversationValidatesExitSelection(t *testing.T) {
+	t.Parallel()
+	exitNode := "01890f00-0000-7000-8000-000000000701"
+	report := func(reason mtcpv1.RouteSelectionReport_ExitSelection_Reason, used string) *mtcpv1.RouteSelectionReport {
+		return &mtcpv1.RouteSelectionReport{Exit: &mtcpv1.RouteSelectionReport_ExitSelection{PoolRef: "p-main",
+			ExitNode: used, Reason: reason}}
+	}
+	var violation protocolError
+	subnetOnly := newConversationFixture(t, sharedmtcp.MessagePing)
+	subnetOnly.session.capabilities = append(subnetOnly.session.capabilities, "routes.selection1", "routes.subnet.v1")
+	if err := subnetOnly.talk.Receive(t.Context(), sharedmtcp.MessageRouteSelectionReport,
+		report(mtcpv1.RouteSelectionReport_ExitSelection_PRIMARY, exitNode)); !errors.As(err, &violation) {
+		t.Fatalf("exit selection without routes.exit.v1: %v", err)
+	}
+	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	f.session.capabilities = append(f.session.capabilities, "routes.selection1", "routes.exit.v1")
+	for name, invalid := range map[string]*mtcpv1.RouteSelectionReport{
+		"unknown reason":       report(mtcpv1.RouteSelectionReport_ExitSelection_REASON_UNSPECIFIED, exitNode),
+		"none with a node":     report(mtcpv1.RouteSelectionReport_ExitSelection_NONE, exitNode),
+		"sticky without node":  report(mtcpv1.RouteSelectionReport_ExitSelection_STICKY, ""),
+		"malformed exit node":  report(mtcpv1.RouteSelectionReport_ExitSelection_LOCAL_FAILOVER, "node-7"),
+		"Sites without subnet": {Sites: []*mtcpv1.RouteSelectionReport_SiteSelection{{SiteRef: "a"}}},
+	} {
+		if err := f.talk.Receive(t.Context(), sharedmtcp.MessageRouteSelectionReport, invalid); !errors.As(err, &violation) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	for _, valid := range []*mtcpv1.RouteSelectionReport{
+		report(mtcpv1.RouteSelectionReport_ExitSelection_STICKY, exitNode),
+		report(mtcpv1.RouteSelectionReport_ExitSelection_NONE, ""),
+	} {
+		if err := f.talk.Receive(t.Context(), sharedmtcp.MessageRouteSelectionReport, valid); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.streams.mu.Lock()
+	defer f.streams.mu.Unlock()
+	if len(f.streams.selection) != 0 {
+		t.Fatalf("an exit-only node stored Site selections %v", f.streams.selection)
+	}
+}

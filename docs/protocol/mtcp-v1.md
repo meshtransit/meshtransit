@@ -1039,8 +1039,8 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `map.large1` | Node applies maps of up to 10,000 peers; without it Core sends at most 256 |
 | `routes.subnet.v1` | Node applies `routes` (7.6) |
 | `router.subnet.v1` | Node can forward into Sites: it applies `served` (7.6) and reports `route_digest` (8.4) |
-| `router.health1` | Node sends `RouteHealthReport` (8.3); only with `router.subnet.v1` |
-| `routes.selection1` | Node sends `RouteSelectionReport` (8.3); only with `routes.subnet.v1` |
+| `router.health1` | Node sends `RouteHealthReport` (8.3); only with `router.subnet.v1` (Sites) or `router.exit.v1` (its Exit Pool) |
+| `routes.selection1` | Node sends `RouteSelectionReport` (8.3); only with `routes.subnet.v1` (Sites) or `routes.exit.v1` (its exit) |
 | `routes.exit.v1` | Node applies `exits` (7.7); with `routes.selection1` it reports its exit in `RouteSelectionReport` |
 | `router.exit.v1` | Node can be an exit node: it applies `served_exits` (7.7) and reports `exit_offered` (8.2); with `router.health1` it reports its exit health in `RouteHealthReport` |
 | `relay.zones2` | Node hands relays MTT2 tickets and their ZONES (MTRP §5.4, §6.1). Core offers it only once every relay accepts them |

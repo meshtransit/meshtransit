@@ -75,6 +75,12 @@ type NetworkPolicyParams struct {
 	Sites          []RouteSite
 	RouteRouters   []RouteRouter
 	RouteRules     []RouteRule
+	// Exit Pools (mtcp-v1 §7.7), when the deployment has exit nodes: the
+	// active pools, their exit nodes and the active release's rules to
+	// pools, at the same route revision and peer limit. All empty: none.
+	ExitPools []ExitPool
+	ExitNodes []ExitNode
+	ExitRules []ExitRule
 }
 
 // NetworkPolicy is one Network's packet policy at selector level, shared by
@@ -176,7 +182,7 @@ func NewNetworkPolicy(params NetworkPolicyParams) (NetworkPolicy, error) {
 		}
 		return devices
 	})
-	if !ok || (!params.ReleaseActive && len(params.RouteRules) != 0) {
+	if !ok || (!params.ReleaseActive && (len(params.RouteRules) != 0 || len(params.ExitRules) != 0)) {
 		return NetworkPolicy{}, ErrInvalidNetworkPolicy
 	}
 	inner.routes = routes

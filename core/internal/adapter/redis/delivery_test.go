@@ -116,8 +116,9 @@ func TestClientLoadsObservationsInOrder(t *testing.T) {
 				"10000:80000", testDigestText, "3", testDigestText, "3",
 				`[["prod","failed","forward_blocked"]]`, "1759924803000",
 				`[["prod","01890f00-0000-7000-8000-000000000402","local_failover"],["uat","","none"]]`, "1759924804000",
+				`["01890f00-0000-7000-8000-000000000501","degraded","no_ipv6","v4"]`,
 				"1",
-				"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "0",
+				"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "0",
 			}, nil
 		},
 		metrics: newRedisMetrics(1, nil),
@@ -159,6 +160,10 @@ func TestClientLoadsObservationsInOrder(t *testing.T) {
 		first.RouteSelection[0] != (distribution.SiteRouter{Ref: "prod", Router: "01890f00-0000-7000-8000-000000000402",
 			Via: distribution.ViaLocalFailover}) || first.RouteSelection[1].Via != distribution.ViaNone {
 		t.Fatalf("first selection = %+v at %v", first.RouteSelection, first.RouteSelectionAt)
+	}
+	if first.ExitHealth == nil || *first.ExitHealth != (distribution.ExitHealth{
+		Ref: "01890f00-0000-7000-8000-000000000501", State: "degraded", Code: "no_ipv6", Families: "v4"}) {
+		t.Fatalf("first exit health = %+v", first.ExitHealth)
 	}
 	if second.Known || second.Online {
 		t.Fatalf("second = %+v", second)
@@ -328,11 +333,12 @@ func TestClientRecordsRouteHealthForItsSession(t *testing.T) {
 	var gotKey, gotEncoded string
 	var gotGeneration, gotAt int64
 	var gotFailed bool
+	var gotExit string
 	client := &Client{
 		loadSession: func(context.Context, string) ([]any, error) { return session, nil },
 		recordRouteHealth: func(_ context.Context, key string, generation int64, encoded string, at int64,
-			_ time.Duration, failed bool) (int64, error) {
-			gotKey, gotGeneration, gotEncoded, gotAt, gotFailed = key, generation, encoded, at, failed
+			_ time.Duration, failed bool, exit string) (int64, error) {
+			gotKey, gotGeneration, gotEncoded, gotAt, gotFailed, gotExit = key, generation, encoded, at, failed, exit
 			return 1, nil
 		},
 		metrics: newRedisMetrics(1, nil),
@@ -367,6 +373,31 @@ func TestClientRecordsRouteHealthForItsSession(t *testing.T) {
 	invalid.Sites = []mapsession.SiteHealth{{Ref: "prod", State: mapsession.RouteHealthFailed}}
 	if _, err := client.RecordRouteHealth(t.Context(), invalid); !errors.Is(err, ErrInvalidOptions) {
 		t.Fatalf("invalid health = %v", err)
+	}
+	if gotExit != "" {
+		t.Fatalf("a report without exit health stored %q", gotExit)
+	}
+	// An exit node's pool health is stored with it; a failed pool does not
+	// wake the Site election.
+	exitOnly := health
+	exitOnly.Sites = nil
+	exitOnly.Exit = &mapsession.ExitHealth{Ref: "pool", State: mapsession.RouteHealthFailed, Code: "egress_failed",
+		Families: mapsession.ExitFamiliesBoth}
+	if stored, err := client.RecordRouteHealth(t.Context(), exitOnly); err != nil || !stored || gotFailed ||
+		gotExit != `["pool","failed","egress_failed","both"]` || gotEncoded != "[]" {
+		t.Fatalf("exit health = %t, %v, failed %t, %q %q", stored, err, gotFailed, gotExit, gotEncoded)
+	}
+	if decoded, err := decodeExitHealth(gotExit); err != nil || decoded == nil || decoded.Families != "both" {
+		t.Fatalf("exit round trip = %+v, %v", decoded, err)
+	}
+	for _, text := range []string{"{", `["pool","failed","","v4"]`, `["pool","teleport","x","v4"]`, `["pool","ok","ok","v9"]`} {
+		if _, err := decodeExitHealth(text); err == nil {
+			t.Errorf("exit health %q was accepted", text)
+		}
+	}
+	exitOnly.Exit = &mapsession.ExitHealth{Ref: "pool", State: mapsession.RouteHealthOK}
+	if _, err := client.RecordRouteHealth(t.Context(), exitOnly); !errors.Is(err, ErrInvalidOptions) {
+		t.Fatalf("invalid exit health = %v", err)
 	}
 }
 
@@ -504,5 +535,17 @@ func TestClientRecordsRouteSelectionAndCountsRouters(t *testing.T) {
 	slices.Sort(pruned)
 	if !slices.Equal(pruned, []string{"n4", "n6"}) {
 		t.Fatalf("pruned %v", pruned)
+	}
+}
+
+// A record an older Core reset keeps exit health without its time: it is
+// read as none, not as a corrupt record.
+func TestDecodeObservationDropsExitHealthWithoutItsTime(t *testing.T) {
+	t.Parallel()
+	fields := []string{"4", "9", "3", "1759924800000", "1759924860000", "", "", "", "", "", "", "", "", "",
+		"", "", "", "", "", "", "", "", `["pool","ok","ok","v4"]`, "1"}
+	observation, err := decodeObservation(fields)
+	if err != nil || !observation.Known || observation.ExitHealth != nil {
+		t.Fatalf("decodeObservation() = %+v, %v", observation, err)
 	}
 }

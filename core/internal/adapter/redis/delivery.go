@@ -27,7 +27,7 @@ const (
 	deliveryTTL = 30 * 24 * time.Hour
 	// maximumDeliveryLoad bounds one read to one distribution page.
 	maximumDeliveryLoad = distribution.MaximumObservationBatch
-	deliveryFieldCount  = 23
+	deliveryFieldCount  = 24
 	presenceField       = deliveryFieldCount - 1
 )
 
@@ -74,7 +74,7 @@ if not same_generation then
     redis.call('HSET', KEYS[1], 'enforced_digest', '', 'enforced_grants', '',
         'applied_at', '', 'reported_at', '', 'paths', '', 'connectivity', '',
         'enforced_route_digest', '', 'enforced_route_entries', '', 'route_health', '', 'route_health_at', '',
-        'route_selection', '', 'route_selection_at', '')
+        'route_selection', '', 'route_selection_at', '', 'exit_health', '')
 end
 redis.call('PEXPIRE', KEYS[1], ARGV[5])
 redis.call('HSET', KEYS[2], 'node_id', ARGV[8], 'generation', ARGV[1], 'machine', ARGV[9])
@@ -93,7 +93,8 @@ redis.call('HSET', KEYS[1], 'enforced_digest', ARGV[2], 'enforced_grants', ARGV[
 redis.call('PEXPIRE', KEYS[1], ARGV[6])
 return 1
 `)
-	// A router's Site health is stored only for the session generation that
+	// A router's Site health, with an exit node's pool health (ARGV[8],
+	// empty: none), is stored only for the session generation that
 	// currently owns the delivery record. A report that newly holds a failed
 	// Site (ARGV[5] = '1' and other than the stored one) wakes the Site
 	// election worker on channel ARGV[6], in the same step. The wakeup is a
@@ -104,7 +105,7 @@ if redis.call('HGET', KEYS[1], 'generation') ~= ARGV[1] then
     return 0
 end
 local previous = redis.call('HGET', KEYS[1], 'route_health')
-redis.call('HSET', KEYS[1], 'route_health', ARGV[2], 'route_health_at', ARGV[3])
+redis.call('HSET', KEYS[1], 'route_health', ARGV[2], 'route_health_at', ARGV[3], 'exit_health', ARGV[8])
 redis.call('PEXPIRE', KEYS[1], ARGV[4])
 if ARGV[5] == '1' and previous ~= ARGV[2] then
     redis.pcall('PUBLISH', ARGV[6], ARGV[7])
@@ -140,8 +141,9 @@ redis.call('HSET', KEYS[1], 'seen_at', ARGV[2])
 redis.call('PEXPIRE', KEYS[1], ARGV[3])
 return 1
 `)
-	// KEYS alternate delivery and presence keys; each pair yields twenty-two
-	// fields (empty when absent) and whether a presence lease exists.
+	// KEYS alternate delivery and presence keys; each pair yields
+	// twenty-three fields (empty when absent) and whether a presence lease
+	// exists.
 	loadDeliveriesScript = redisclient.NewScript(`
 local result = {}
 for index = 1, #KEYS, 2 do
@@ -149,8 +151,8 @@ for index = 1, #KEYS, 2 do
         'policy_revision', 'delivered_at', 'seen_at', 'filter_digest', 'filter_grants',
         'enforced_digest', 'enforced_grants', 'applied_at', 'reported_at', 'paths', 'connectivity',
         'peer_limit', 'route_digest', 'route_entries', 'enforced_route_digest', 'enforced_route_entries',
-        'route_health', 'route_health_at', 'route_selection', 'route_selection_at')
-    for field = 1, 22 do
+        'route_health', 'route_health_at', 'route_selection', 'route_selection_at', 'exit_health')
+    for field = 1, 23 do
         result[#result + 1] = fields[field] or ''
     end
     result[#result + 1] = tostring(redis.call('EXISTS', KEYS[index + 1]))
@@ -393,7 +395,8 @@ func decodeObservations(raw []any, count int) ([]distribution.Observation, error
 // enforced_digest, enforced_grants, applied_at, reported_at, paths,
 // connectivity, peer_limit, route_digest, route_entries,
 // enforced_route_digest, enforced_route_entries, route_health,
-// route_health_at, route_selection, route_selection_at, presence.
+// route_health_at, route_selection, route_selection_at, exit_health,
+// presence.
 func decodeObservation(fields []string) (distribution.Observation, error) {
 	online := fields[presenceField] == "1"
 	if fields[presenceField] != "0" && fields[presenceField] != "1" {
@@ -467,6 +470,15 @@ func decodeObservation(fields []string) (distribution.Observation, error) {
 	if err != nil {
 		return distribution.Observation{}, err
 	}
+	exitHealth, err := decodeExitHealth(fields[22])
+	if err != nil {
+		return distribution.Observation{}, err
+	}
+	// A record a Core before schema 205 reset or rewrote keeps the exit
+	// health it never knew of: without its time it is none.
+	if routeHealthAt.IsZero() {
+		exitHealth = nil
+	}
 	observation := distribution.Observation{
 		Known:             true,
 		SessionGeneration: numbers[0],
@@ -488,6 +500,7 @@ func decodeObservation(fields []string) (distribution.Observation, error) {
 		RouteHealthAt:     routeHealthAt,
 		RouteSelection:    routeSelection,
 		RouteSelectionAt:  routeSelectionAt,
+		ExitHealth:        exitHealth,
 	}
 	if !observation.IsValid() {
 		return distribution.Observation{}, errors.New("inconsistent delivery record")

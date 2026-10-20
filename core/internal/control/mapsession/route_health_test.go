@@ -58,14 +58,14 @@ func TestReportRouteHealthNeedsARecorderThatTakesIt(t *testing.T) {
 	service := newStreamServiceFixture(t, &streamSnapshotOpener{snapshots: []Snapshot{initial}}, &streamPresenceStore{})
 	machine, _ := authenticatedRequestFixture(t, initial)
 	sites := []SiteHealth{{Ref: "prod", State: RouteHealthFailed, Code: "probe_failed"}}
-	if err := service.ReportRouteHealth(t.Context(), machine, initial.NodeKey(), sites); !errors.Is(err, ErrEnforcementUnavailable) {
+	if err := service.ReportRouteHealth(t.Context(), machine, initial.NodeKey(), sites, nil); !errors.Is(err, ErrEnforcementUnavailable) {
 		t.Fatalf("without a recorder = %v", err)
 	}
 	enforcementOnly, err := service.WithEnforcementRecorder(&recordingEnforcementRecorder{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := enforcementOnly.ReportRouteHealth(t.Context(), machine, initial.NodeKey(), sites); !errors.Is(err, ErrEnforcementUnavailable) {
+	if err := enforcementOnly.ReportRouteHealth(t.Context(), machine, initial.NodeKey(), sites, nil); !errors.Is(err, ErrEnforcementUnavailable) {
 		t.Fatalf("with an enforcement-only recorder = %v", err)
 	}
 	recorder := &recordingRouteHealthRecorder{}
@@ -73,7 +73,7 @@ func TestReportRouteHealthNeedsARecorderThatTakesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := recorded.ReportRouteHealth(t.Context(), machine, initial.NodeKey(), sites); err != nil {
+	if err := recorded.ReportRouteHealth(t.Context(), machine, initial.NodeKey(), sites, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(recorder.health) != 1 || recorder.health[0].NodeKey != initial.NodeKey() ||
@@ -82,11 +82,27 @@ func TestReportRouteHealthNeedsARecorderThatTakesIt(t *testing.T) {
 		t.Fatalf("stored = %+v", recorder.health)
 	}
 	if err := recorded.ReportRouteHealth(t.Context(), machine, initial.NodeKey(),
-		[]SiteHealth{{Ref: "prod", State: RouteHealthFailed}}); !errors.Is(err, ErrInvalidRouteHealth) {
+		[]SiteHealth{{Ref: "prod", State: RouteHealthFailed}}, nil); !errors.Is(err, ErrInvalidRouteHealth) {
 		t.Fatalf("malformed health = %v", err)
 	}
+	if err := recorded.ReportRouteHealth(t.Context(), machine, initial.NodeKey(), nil,
+		&ExitHealth{Ref: "pool", State: RouteHealthOK, Code: "ok", Families: ExitFamiliesBoth + 1}); !errors.Is(err, ErrInvalidRouteHealth) {
+		t.Fatalf("malformed exit health = %v", err)
+	}
+	exit := &ExitHealth{Ref: "pool", State: RouteHealthDegraded, Code: "no_ipv6", Families: ExitFamiliesV4}
+	if err := recorded.ReportRouteHealth(t.Context(), machine, initial.NodeKey(), nil, exit); err != nil {
+		t.Fatal(err)
+	}
+	if last := recorder.health[len(recorder.health)-1]; last.Exit == nil || *last.Exit != *exit || last.Exit == exit {
+		t.Fatalf("stored exit health = %+v", last.Exit)
+	}
+	served := []ServedExit{{Ref: "pool"}}
+	if ServedExitOnly(exit, served) == nil || ServedExitOnly(&ExitHealth{Ref: "other"}, served) != nil ||
+		ServedExitOnly(nil, served) != nil {
+		t.Fatal("ServedExitOnly keeps the wrong pools")
+	}
 	recorder.stale = true
-	if err := recorded.ReportRouteHealth(t.Context(), machine, initial.NodeKey(), sites); !errors.Is(err, ErrNoEnforcementStream) {
+	if err := recorded.ReportRouteHealth(t.Context(), machine, initial.NodeKey(), sites, nil); !errors.Is(err, ErrNoEnforcementStream) {
 		t.Fatalf("without a current session = %v", err)
 	}
 }
