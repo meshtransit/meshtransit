@@ -81,7 +81,7 @@ func (c *Client) StreamNetmap(ctx context.Context, controlURL string, material c
 	var forwarders sync.WaitGroup
 	forwarders.Go(func() {
 		reports.forward(streamCtx, options.EndpointUpdates, options.EnforcementReports, options.PathStats,
-			options.HostOffers, options.RouteHealth, options.ExitHealth, options.RouteSelection)
+			options.HostOffers, options.RouteHealth, options.ExitHealth, options.RouteSelection, options.ExitSelection)
 	})
 	defer func() {
 		cancel()
@@ -126,7 +126,9 @@ type reportBox struct {
 	exitHealth *controlplane.RouteExitHealth
 	// routeSelection is the latest Site routers; nil until the first map.
 	routeSelection []controlplane.RouteSiteSelection
-	changed        chan struct{}
+	// exitSelection is the latest exit node used; nil until the first map.
+	exitSelection *controlplane.RouteExitSelection
+	changed       chan struct{}
 }
 
 func newReportBox(initial controlplane.EndpointUpdate) *reportBox {
@@ -137,7 +139,7 @@ func (box *reportBox) forward(ctx context.Context, endpoints <-chan controlplane
 	enforcement <-chan controlplane.EnforcementReport, paths <-chan controlplane.PathStatsReport,
 	advertised <-chan controlplane.HostOffer, routeHealth <-chan []controlplane.RouteSiteHealth,
 	exitHealth <-chan controlplane.RouteExitHealth,
-	routeSelection <-chan []controlplane.RouteSiteSelection,
+	routeSelection <-chan []controlplane.RouteSiteSelection, exitSelection <-chan controlplane.RouteExitSelection,
 ) {
 	for {
 		select {
@@ -200,6 +202,14 @@ func (box *reportBox) forward(ctx context.Context, endpoints <-chan controlplane
 			box.mu.Lock()
 			box.routeSelection = append([]controlplane.RouteSiteSelection{}, selection...)
 			box.mu.Unlock()
+		case selection, ok := <-exitSelection:
+			if !ok {
+				exitSelection = nil
+				continue
+			}
+			box.mu.Lock()
+			box.exitSelection = &selection
+			box.mu.Unlock()
 		}
 		select {
 		case box.changed <- struct{}{}:
@@ -249,6 +259,17 @@ func (box *reportBox) selection() []controlplane.RouteSiteSelection {
 	box.mu.Lock()
 	defer box.mu.Unlock()
 	return slices.Clone(box.routeSelection)
+}
+
+// exitChoice returns the latest exit node used, nil before the first map.
+func (box *reportBox) exitChoice() *controlplane.RouteExitSelection {
+	box.mu.Lock()
+	defer box.mu.Unlock()
+	if box.exitSelection == nil {
+		return nil
+	}
+	selection := *box.exitSelection
+	return &selection
 }
 
 // takePaths returns the pending path report, once.
@@ -377,6 +398,12 @@ func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, e
 	if stream.options.EnableSubnetRouter {
 		capabilities = append(capabilities, "router.subnet.v1", "router.health1")
 	}
+	if stream.options.EnableExits {
+		capabilities = append(capabilities, "routes.exit.v1")
+		if !stream.options.EnableSubnetRoutes {
+			capabilities = append(capabilities, "routes.selection1")
+		}
+	}
 	if stream.options.EnableExitNode {
 		capabilities = append(capabilities, "router.exit.v1")
 		if !stream.options.EnableSubnetRouter {
@@ -419,6 +446,7 @@ func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, e
 	state := newMapState(stream.options.EnableSubnetRoutes)
 	state.takesServed = stream.options.EnableSubnetRouter
 	state.takesServedExits = stream.options.EnableExitNode
+	state.takesExits = stream.options.EnableExits
 	run := &sessionRun{stream: stream, s: s, state: state, controlTime: time.UnixMilli(s.reply.GetServerTimeMs())}
 	return run.loop(ctx, inbox)
 }
@@ -446,6 +474,8 @@ type sessionRun struct {
 	// selectionSentAt when; nil before the first.
 	selectionSent   []controlplane.RouteSiteSelection
 	selectionSentAt time.Time
+	// exitSelectionSent is the exit node sent with them; nil before.
+	exitSelectionSent *controlplane.RouteExitSelection
 	// unacked counts applied deltas not acknowledged yet, ackView is the
 	// latest applied view and ackTimer acknowledges it (mtcp-v1 §7.2).
 	unacked  int
@@ -857,18 +887,31 @@ func (run *sessionRun) sendGoingAway() {
 	_ = run.send(sharedmtcp.MessageRouteHealthReport, report)
 }
 
-// sendRouteSelection sends the router of each Site (mtcp-v1 §8.3) when it
-// changed, and again every routeSelectionHeartbeat while not empty.
+// sendRouteSelection sends the router of each Site (mtcp-v1 §8.3) and the
+// exit node used (§7.7) when they changed, and again every
+// routeSelectionHeartbeat while not empty.
 func (run *sessionRun) sendRouteSelection() error {
-	if !run.mapped || !run.stream.options.EnableSubnetRoutes || !run.supports("routes.selection1") {
+	sites := run.stream.options.EnableSubnetRoutes
+	exits := run.stream.options.EnableExits && run.supports("routes.exit.v1")
+	if !run.mapped || (!sites && !exits) || !run.supports("routes.selection1") {
 		return nil
 	}
-	selection := run.stream.reports.selection()
-	if selection == nil {
-		return nil
+	var selection []controlplane.RouteSiteSelection
+	if sites {
+		if selection = run.stream.reports.selection(); selection == nil {
+			return nil
+		}
 	}
-	changed := run.selectionSent == nil || !slices.Equal(run.selectionSent, selection)
-	if !changed && (len(selection) == 0 || time.Since(run.selectionSentAt) < routeSelectionHeartbeat-time.Second) {
+	var exit *controlplane.RouteExitSelection
+	if exits {
+		if exit = run.stream.reports.exitChoice(); exit == nil {
+			return nil
+		}
+	}
+	unchanged := !run.selectionSentAt.IsZero() && slices.Equal(run.selectionSent, selection) &&
+		equalExitSelection(run.exitSelectionSent, exit)
+	empty := len(selection) == 0 && (exit == nil || exit.Pool == "")
+	if unchanged && (empty || time.Since(run.selectionSentAt) < routeSelectionHeartbeat-time.Second) {
 		return nil
 	}
 	report := &mtcpv1.RouteSelectionReport{
@@ -879,11 +922,37 @@ func (run *sessionRun) sendRouteSelection() error {
 			SiteRef: site.Ref, Router: site.Router, Reason: routeSelectionReason(site.Reason),
 		})
 	}
+	if exit != nil && exit.Pool != "" {
+		report.Exit = &mtcpv1.RouteSelectionReport_ExitSelection{
+			PoolRef: exit.Pool, ExitNode: exit.ExitNode, Reason: exitSelectionReason(exit.Reason),
+		}
+	}
 	if err := run.send(sharedmtcp.MessageRouteSelectionReport, report); err != nil {
 		return err
 	}
-	run.selectionSent, run.selectionSentAt = selection, time.Now()
+	run.selectionSent, run.selectionSentAt, run.exitSelectionSent = selection, time.Now(), exit
 	return nil
+}
+
+func equalExitSelection(first, second *controlplane.RouteExitSelection) bool {
+	if first == nil || second == nil {
+		return first == second
+	}
+	return *first == *second
+}
+
+func exitSelectionReason(reason controlplane.RouteSelectionReason) mtcpv1.RouteSelectionReport_ExitSelection_Reason {
+	switch reason {
+	case controlplane.RouteSelectionPrimary:
+		return mtcpv1.RouteSelectionReport_ExitSelection_PRIMARY
+	case controlplane.RouteSelectionLocalFailover:
+		return mtcpv1.RouteSelectionReport_ExitSelection_LOCAL_FAILOVER
+	case controlplane.RouteSelectionSticky:
+		return mtcpv1.RouteSelectionReport_ExitSelection_STICKY
+	case controlplane.RouteSelectionNone:
+		return mtcpv1.RouteSelectionReport_ExitSelection_NONE
+	}
+	return mtcpv1.RouteSelectionReport_ExitSelection_REASON_UNSPECIFIED
 }
 
 func routeSelectionReason(reason controlplane.RouteSelectionReason) mtcpv1.RouteSelectionReport_SiteSelection_Reason {

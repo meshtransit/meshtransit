@@ -27,7 +27,8 @@ var errTooManyLocalRoutes = errors.New("too many local routes to check subnet ro
 // validPlatformRoutedOptions requires the table settings be unset: macOS has
 // one routing table and no policy rules, and a Mac does not forward.
 func validPlatformRoutedOptions(options RoutedOptions) bool {
-	return options.Table == 0 && options.Priority == 0 && options.NftTable == "" && options.StatePath == ""
+	return options.Table == 0 && options.Priority == 0 && options.NftTable == "" && options.StatePath == "" &&
+		options.ExitTable == 0 && options.ExitPriority == 0 && options.ExitNftTable == ""
 }
 
 type kernelRoutedConfigurer struct{}

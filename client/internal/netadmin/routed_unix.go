@@ -34,6 +34,14 @@ type RoutedOptions struct {
 	// host forwarding settings the helper changed.
 	NftTable  string
 	StatePath string
+	// ExitTable, when set, lets the host send its Internet traffic through
+	// an exit node (Linux, exit node design §6.1.1): the routing table of
+	// that route. ExitPriority is the first of the four policy rule
+	// priorities it takes, after Priority; ExitNftTable the inet nftables
+	// table of its kill switch.
+	ExitTable    int
+	ExitPriority int
+	ExitNftTable string
 }
 
 // routedState is what the routed table holds: routes to the mesh

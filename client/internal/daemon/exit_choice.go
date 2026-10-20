@@ -1,0 +1,425 @@
+package daemon
+
+import (
+	"context"
+	"log/slog"
+	"slices"
+	"time"
+
+	"meshtransit.net/client/internal/controlplane"
+	"meshtransit.net/client/internal/dataplane"
+	"meshtransit.net/client/internal/networkmap"
+	"meshtransit.net/client/internal/routesettings"
+)
+
+// Choosing the exit node (exit node design §9): the host's root-owned
+// settings name the pool, Core elects each pool's primary, and the node
+// keeps the exit node it uses while that one works, as changing it changes
+// the public address and cuts every connection.
+
+// exitPreference is what the host's settings ask of exit nodes.
+type exitPreference struct {
+	// use is a pool reference or name, routesettings.ExitUseAuto, or empty.
+	use string
+	// allowManaged follows a pool Core marks managed when use is empty.
+	allowManaged bool
+}
+
+// exitPreferenceOf reads the preference from settings; false when they
+// cannot be read, which changes nothing: the helper keeps its kill switch
+// then too.
+func exitPreferenceOf(load func(string) (routesettings.Settings, error), path string,
+	logger *slog.Logger,
+) (exitPreference, bool) {
+	settings, err := load(path)
+	if err != nil {
+		if logger != nil {
+			logger.Warn("route settings unusable; keeping the exit choice", "error", err)
+		}
+		return exitPreference{}, false
+	}
+	return exitPreference{use: settings.ExitUse, allowManaged: settings.ExitAllowManaged}, true
+}
+
+// exitChoice is the exit node chosen in one control session, and since when.
+type exitChoice struct {
+	preference exitPreference
+	// pool is the reference of the pool used; empty when the preference
+	// names none or one Core does not grant.
+	pool string
+	// node is the exit node used (a device ID); empty while none can carry
+	// the traffic, which is then dropped.
+	node   string
+	reason controlplane.RouteSelectionReason
+	// ipv6 is whether node carries IPv6.
+	ipv6 bool
+	// wanted means the preference asks for an exit node: the Internet goes
+	// into the mesh, through node or nowhere.
+	wanted bool
+	// lastSwitch, nextSwitch and backoff space the switches made because
+	// an exit node stopped answering.
+	lastSwitch time.Time
+	nextSwitch time.Time
+	backoff    time.Duration
+}
+
+// exitSticky is what a new control session starts from, so a reconnect
+// keeps the exit node in use.
+type exitSticky struct {
+	pool, node string
+}
+
+// seedExit starts the session's choice from the last one.
+func (failover *routeFailover) seedExit(preference exitPreference, sticky exitSticky) {
+	failover.mu.Lock()
+	defer failover.mu.Unlock()
+	failover.exit = exitChoice{preference: preference, pool: sticky.pool, node: sticky.node, backoff: failoverBackoff}
+	if sticky.node != "" {
+		failover.exit.reason = controlplane.RouteSelectionSticky
+	}
+}
+
+// setExitPreference records the settings' preference and reports whether
+// the exit route changed, so the map must be applied again. A new pool or
+// mode drops the exit node kept until now.
+func (failover *routeFailover) setExitPreference(preference exitPreference) bool {
+	if failover == nil {
+		return false
+	}
+	failover.mu.Lock()
+	defer failover.mu.Unlock()
+	if failover.exit.preference == preference {
+		return false
+	}
+	before := failover.exitRouteLocked()
+	failover.exit = exitChoice{preference: preference, backoff: failoverBackoff}
+	failover.chooseExitLocked(failover.clock())
+	return !equalExitRoutes(before, failover.exitRouteLocked())
+}
+
+// exitPoolLocked returns the pool the preference names among those Core
+// grants: by reference, else by a name only one pool has; with auto the
+// pool in use while Core still serves it, else the first served; with
+// allowManaged alone the first pool Core marks managed.
+func (failover *routeFailover) exitPoolLocked() (networkmap.ExitPool, bool) {
+	pools := failover.core.Exits
+	find := func(match func(networkmap.ExitPool) bool) (networkmap.ExitPool, bool) {
+		index := slices.IndexFunc(pools, match)
+		if index < 0 {
+			return networkmap.ExitPool{}, false
+		}
+		return pools[index], true
+	}
+	preference := failover.exit.preference
+	switch {
+	case preference.use == routesettings.ExitUseAuto:
+		if pool, found := find(func(pool networkmap.ExitPool) bool {
+			return pool.Ref == failover.exit.pool && pool.Status == networkmap.ExitServed
+		}); found {
+			return pool, true
+		}
+		if pool, found := find(func(pool networkmap.ExitPool) bool { return pool.Status == networkmap.ExitServed }); found {
+			return pool, true
+		}
+		return find(func(pool networkmap.ExitPool) bool { return pool.Ref == failover.exit.pool })
+	case preference.use != "":
+		if pool, found := find(func(pool networkmap.ExitPool) bool { return pool.Ref == preference.use }); found {
+			return pool, true
+		}
+		named := 0
+		for _, pool := range pools {
+			if pool.Name == preference.use {
+				named++
+			}
+		}
+		if named != 1 {
+			return networkmap.ExitPool{}, false
+		}
+		return find(func(pool networkmap.ExitPool) bool { return pool.Name == preference.use })
+	case preference.allowManaged:
+		return find(func(pool networkmap.ExitPool) bool { return pool.Managed })
+	}
+	return networkmap.ExitPool{}, false
+}
+
+// chooseExitLocked chooses the pool and the exit node again and reports
+// whether the exit route changed. The node in use stays while it is a
+// candidate Core does not report FAILED and it answers; otherwise the
+// primary when it may answer, else the first candidate that answers, else
+// the first that may.
+func (failover *routeFailover) chooseExitLocked(now time.Time) bool {
+	before := failover.exitRouteLocked()
+	choice := &failover.exit
+	pool, found := failover.exitPoolLocked()
+	choice.wanted = choice.preference.use != "" || found
+	if !found {
+		choice.pool, choice.node, choice.reason, choice.ipv6 = "", "", controlplane.RouteSelectionNone, false
+		return !equalExitRoutes(before, failover.exitRouteLocked())
+	}
+	if choice.pool != pool.Ref {
+		choice.pool, choice.node = pool.Ref, ""
+	}
+	alive, stopped := failover.livenessLocked(now)
+	peers := peerIDs(failover.core)
+	candidate := func(id string) (networkmap.ExitCandidate, bool) {
+		index := slices.IndexFunc(pool.Candidates, func(candidate networkmap.ExitCandidate) bool {
+			return candidate.DeviceID == id
+		})
+		if index < 0 {
+			return networkmap.ExitCandidate{}, false
+		}
+		_, peer := peers[id]
+		return pool.Candidates[index], peer
+	}
+	usable := func(id string) bool {
+		found, peer := candidate(id)
+		return peer && found.State != networkmap.ExitStateFailed
+	}
+	mayCarry := func(id string) bool { return usable(id) && !stopped(id) }
+	next := ""
+	switch {
+	case pool.Status != networkmap.ExitServed:
+	case choice.node != "" && mayCarry(choice.node):
+		next = choice.node
+	case choice.node != "" && usable(choice.node) && now.Before(choice.nextSwitch):
+		// Silent but still a working candidate: switches are spaced.
+		next = choice.node
+	default:
+		next = failover.nextExitNodeLocked(pool, mayCarry, alive, candidate)
+	}
+	switch {
+	case next == "":
+		choice.reason = controlplane.RouteSelectionNone
+	case next == pool.Primary:
+		choice.reason = controlplane.RouteSelectionPrimary
+	case next == choice.node && choice.reason == controlplane.RouteSelectionPrimary:
+		choice.reason = controlplane.RouteSelectionSticky // Core elected another
+	case next != choice.node:
+		choice.reason = controlplane.RouteSelectionLocalFailover
+	case choice.reason == 0 || choice.reason == controlplane.RouteSelectionNone:
+		choice.reason = controlplane.RouteSelectionSticky
+	}
+	if next != choice.node && choice.node != "" {
+		if !choice.lastSwitch.IsZero() && now.Sub(choice.lastSwitch) >= failoverStable {
+			choice.backoff = failoverBackoff
+		}
+		choice.lastSwitch, choice.nextSwitch = now, now.Add(choice.backoff)
+		choice.backoff = min(2*choice.backoff, failoverBackoffMax)
+	}
+	choice.node = next
+	if found, _ := candidate(next); next != "" {
+		choice.ipv6 = found.IPv6
+	} else {
+		choice.ipv6 = false
+	}
+	return !equalExitRoutes(before, failover.exitRouteLocked())
+}
+
+// nextExitNodeLocked picks the exit node to move to: the primary when it
+// may carry, else the first candidate, in priority order, that answers and
+// Core reports OK or DEGRADED, else the first that may carry.
+func (failover *routeFailover) nextExitNodeLocked(pool networkmap.ExitPool, mayCarry, alive func(string) bool,
+	candidate func(string) (networkmap.ExitCandidate, bool),
+) string {
+	if pool.Primary != "" && mayCarry(pool.Primary) {
+		return pool.Primary
+	}
+	for _, listed := range pool.Candidates {
+		found, peer := candidate(listed.DeviceID)
+		if peer && (found.State == networkmap.ExitStateOK || found.State == networkmap.ExitStateDegraded) &&
+			alive(listed.DeviceID) {
+			return listed.DeviceID
+		}
+	}
+	for _, listed := range pool.Candidates {
+		if mayCarry(listed.DeviceID) {
+			return listed.DeviceID
+		}
+	}
+	return ""
+}
+
+// exitRouteLocked is the local choice the map carries: nil when no exit
+// node is wanted.
+func (failover *routeFailover) exitRouteLocked() *networkmap.ExitRoute {
+	if !failover.exit.wanted {
+		return nil
+	}
+	return &networkmap.ExitRoute{Pool: failover.exit.pool, Node: failover.exit.node, IPv6: failover.exit.ipv6}
+}
+
+func equalExitRoutes(first, second *networkmap.ExitRoute) bool {
+	if first == nil || second == nil {
+		return first == second
+	}
+	return *first == *second
+}
+
+// livenessLocked returns whether a peer answers (its last pong, direct or
+// through the relay, is recent) and whether it stopped (it answered before
+// and no longer does). One that never answered is neither.
+func (failover *routeFailover) livenessLocked(now time.Time) (alive, stopped func(string) bool) {
+	peers := peerIDs(failover.core)
+	pongOf := func(stableID string) (time.Time, bool) {
+		id, found := peers[stableID]
+		if !found {
+			return time.Time{}, false
+		}
+		at, answered := failover.pongs[id]
+		return at, answered
+	}
+	alive = func(stableID string) bool {
+		at, answered := pongOf(stableID)
+		return answered && now.Sub(at) <= failoverAliveWithin
+	}
+	stopped = func(stableID string) bool {
+		at, answered := pongOf(stableID)
+		return answered && now.Sub(at) > failoverAliveWithin
+	}
+	return alive, stopped
+}
+
+// exitPeersLocked returns the candidates of the pool in use when there is
+// another to fail over to: the peers to ping through the relay.
+func (failover *routeFailover) exitPeersLocked() []uint64 {
+	pool, found := failover.exitPoolLocked()
+	if !found || len(pool.Candidates) < 2 {
+		return nil
+	}
+	peers := peerIDs(failover.core)
+	ids := make([]uint64, 0, len(pool.Candidates))
+	for _, candidate := range pool.Candidates {
+		if id, found := peers[candidate.DeviceID]; found {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// ExitView is the exit node this node sends its Internet traffic to, for
+// status.
+type ExitView struct {
+	// Use is what the host's settings ask: a pool, auto, or empty.
+	Use string
+	// Pool is the reference of the pool used and PoolName its name; empty
+	// when the settings name a pool Core does not grant.
+	Pool     string
+	PoolName string
+	// ExitNode is a device ID and ExitNodeName its name; empty when none
+	// carries the traffic.
+	ExitNode     string
+	ExitNodeName string
+	// Via is primary, local_failover, sticky or none.
+	Via string
+}
+
+// exitSelection returns the exit node used and why, as reported to Core
+// (mtcp-v1 §7.7) and shown in status; nil when no exit node is wanted.
+func (failover *routeFailover) exitSelection() (controlplane.RouteExitSelection, *ExitView, exitSticky) {
+	failover.mu.Lock()
+	defer failover.mu.Unlock()
+	choice := failover.exit
+	sticky := exitSticky{pool: choice.pool, node: choice.node}
+	if !choice.wanted {
+		return controlplane.RouteExitSelection{}, nil, sticky
+	}
+	view := &ExitView{Use: choice.preference.use, Pool: choice.pool, ExitNode: choice.node, Via: "none"}
+	if view.Use == "" {
+		view.Use = "managed"
+	}
+	for _, pool := range failover.core.Exits {
+		if pool.Ref == choice.pool {
+			view.PoolName = pool.Name
+		}
+	}
+	for _, peer := range failover.core.Peers {
+		if peer.StableID == choice.node {
+			view.ExitNodeName = peer.Name
+		}
+	}
+	switch choice.reason {
+	case controlplane.RouteSelectionPrimary:
+		view.Via = "primary"
+	case controlplane.RouteSelectionLocalFailover:
+		view.Via = "local_failover"
+	case controlplane.RouteSelectionSticky:
+		view.Via = "sticky"
+	}
+	report := controlplane.RouteExitSelection{Pool: choice.pool, ExitNode: choice.node, Reason: choice.reason}
+	if report.ExitNode == "" {
+		report.Reason = controlplane.RouteSelectionNone
+	}
+	return report, view, sticky
+}
+
+// watchExitPreference reads the host's exit preference every interval and,
+// when it changes the exit route, has apply apply the map again, until ctx
+// ends or apply fails.
+func watchExitPreference(ctx context.Context, failover *routeFailover, read func() (exitPreference, bool),
+	interval time.Duration, apply func() error,
+) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		preference, known := read()
+		if !known || !failover.setExitPreference(preference) {
+			continue
+		}
+		if err := apply(); err != nil {
+			return
+		}
+	}
+}
+
+func (s *Service) setExit(view *ExitView, sticky exitSticky) {
+	s.routeSitesMu.Lock()
+	defer s.routeSitesMu.Unlock()
+	s.exit, s.exitSticky = view, sticky
+}
+
+// clearExit forgets the session's exit view; the sticky choice stays for
+// the next session.
+func (s *Service) clearExit() {
+	s.routeSitesMu.Lock()
+	defer s.routeSitesMu.Unlock()
+	s.exit = nil
+}
+
+func (s *Service) exitSnapshot() *ExitView {
+	s.routeSitesMu.Lock()
+	defer s.routeSitesMu.Unlock()
+	if s.exit == nil {
+		return nil
+	}
+	view := *s.exit
+	return &view
+}
+
+func (s *Service) exitStickySnapshot() exitSticky {
+	s.routeSitesMu.Lock()
+	defer s.routeSitesMu.Unlock()
+	return s.exitSticky
+}
+
+type exitRouteDataPlane interface {
+	ExitRoute() dataplane.ExitRouteStatus
+}
+
+// exitRouteStatus is how the data plane sends the Internet through the exit
+// node.
+func (s *Service) exitRouteStatus() dataplane.ExitRouteStatus {
+	if s == nil || s.dataPlane == nil || !s.enableExits {
+		return dataplane.ExitRouteStatus{}
+	}
+	s.dataPlaneMu.Lock()
+	defer s.dataPlaneMu.Unlock()
+	if reporter, supported := s.dataPlane.(exitRouteDataPlane); supported {
+		return reporter.ExitRoute()
+	}
+	return dataplane.ExitRouteStatus{}
+}

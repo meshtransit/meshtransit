@@ -39,6 +39,11 @@ func (p platformFlags) routedOptions(settingsPath string) *netadmin.RoutedOption
 
 func (platformFlags) interfaceName() string { return "" }
 
+// releaseExit has nothing to remove: macOS hosts use no exit node yet.
+func (platformFlags) releaseExit(string) error {
+	return errors.New("using an exit node is not supported on macOS yet")
+}
+
 func (p platformFlags) dnsOptions(resolver netip.AddrPort) (*netadmin.DNSOptions, error) {
 	if !resolver.Addr().Is4() {
 		// The resolver address is an lo0 alias, IPv4 only for now.

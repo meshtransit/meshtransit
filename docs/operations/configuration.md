@@ -470,6 +470,8 @@ With `--tls`, exactly one certificate source is allowed.
 | `--enable-device-aliases` | `false` | Device alias v1; needs the data plane |
 | `--enable-subnet-routes` | `false` | Reach Sites through subnet routers (Linux); needs the data plane and `meshnetd --routed-table` |
 | `--enable-subnet-router` | `false` | Let Core make the host a router of the subnets it offers (Linux); needs the data plane |
+| `--enable-exit-node` | `false` | Let Core make the host an exit node while root's `exit_mode` is on (Linux); needs the data plane |
+| `--enable-exits` | `false` | Send the host's Internet traffic through the Exit Pool root's `exit_use` names (Linux); needs the data plane and `meshnetd --exit-table` |
 | `--routes-file` | `/etc/meshtransit/routes.json` | Root-owned subnet route settings `meshd` reads to offer subnets |
 | `--port-mapping` | `auto` | `auto` or `off` |
 | `--cloud-metadata` | `auto` | `auto` or `off` |
@@ -491,5 +493,9 @@ The packages run `meshd` with `--enable-data-plane --enable-dns
 `--interface` (`mesh0`), `--dns-interface` (`meshdns0`),
 `--resolvectl-path`, `--routed-table` (`0`, off; the package sets `5267`),
 `--routed-priority` (`5400`), `--router-nft-table` (`meshtransit`; empty
-forwards into no subnets) and `--router-state`
-(`/run/meshnetd/router-state.json`); on macOS `--scutil-path`.
+forwards into no subnets), `--router-state`
+(`/run/meshnetd/router-state.json`), `--exit-table` (`0`, uses no exit node;
+the package sets `5268`), `--exit-priority` (`5402`, takes 5402–5405) and
+`--exit-nft-table` (`meshtransit_exit`, the kill switch); on macOS
+`--scutil-path`. `meshnetd --release-exit` (root, Linux) removes the exit
+route and kill switch a stopped helper left, then exits.

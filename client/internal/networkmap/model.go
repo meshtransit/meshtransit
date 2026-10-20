@@ -29,6 +29,13 @@ type Snapshot struct {
 	// ServedExits is the Exit Pool the node forwards to the Internet for as
 	// an exit node (mtcp-v1 §7.7), at most one; nil when it cannot be one.
 	ServedExits []ServedExit
+	// Exits are the Exit Pools the node may use (mtcp-v1 §7.7), sorted by
+	// reference; nil when the node does not take them.
+	Exits []ExitPool
+	// ExitRoute is the exit node this node sends its Internet traffic to:
+	// a local choice among Exits (exit node design §9), never part of
+	// Core's map; nil when it uses none.
+	ExitRoute *ExitRoute
 }
 
 // Interchange is a verified relay grant: the ticket this node presents to

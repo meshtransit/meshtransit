@@ -114,3 +114,32 @@ func TestChangeExitSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestChangeExitUseSettings(t *testing.T) {
+	t.Parallel()
+	settings := routesettings.Settings{}
+	for _, step := range []struct {
+		command  string
+		operands []string
+	}{
+		{"exit-use", []string{"Office egress"}},
+		{"exit-allow-lan", []string{"on"}},
+		{"exit-allow-managed", []string{"on"}},
+	} {
+		var err error
+		if settings, err = changeRouteSettings(settings, step.command, step.operands); err != nil {
+			t.Fatalf("%s: %v", step.command, err)
+		}
+	}
+	if settings.ExitUse != "Office egress" || !settings.ExitAllowLAN || !settings.ExitAllowManaged {
+		t.Fatalf("settings = %+v", settings)
+	}
+	if off, err := changeRouteSettings(settings, "exit-use", []string{"off"}); err != nil || off.ExitUse != "" {
+		t.Fatalf("exit-use off = %+v, %v", off, err)
+	}
+	for _, bad := range [][]string{nil, {""}, {" padded"}, {"a\nb"}} {
+		if _, err := changeRouteSettings(settings, "exit-use", bad); err == nil {
+			t.Errorf("exit-use %q was accepted", bad)
+		}
+	}
+}

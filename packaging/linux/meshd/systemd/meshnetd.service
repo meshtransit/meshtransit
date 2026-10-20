@@ -12,7 +12,7 @@ TimeoutStartSec=30s
 User=root
 Group=meshd
 UMask=0007
-ExecStart=/usr/libexec/meshtransit/meshnetd --allow-user=meshd --enable-dns --routed-table=5267
+ExecStart=/usr/libexec/meshtransit/meshnetd --allow-user=meshd --enable-dns --routed-table=5267 --exit-table=5268
 Restart=on-failure
 RestartSec=2s
 TimeoutStopSec=15s

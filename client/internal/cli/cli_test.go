@@ -915,6 +915,40 @@ func TestFormatSubnetRouterStatusListsUnhealthySites(t *testing.T) {
 	}
 }
 
+func TestFormatExitStatus(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		status *localapi.ExitStatus
+		want   string
+	}{
+		{nil, "none"},
+		{
+			&localapi.ExitStatus{Use: "europe", Routing: true},
+			"europe: pool not granted; Internet traffic is dropped",
+		},
+		{
+			&localapi.ExitStatus{Use: "auto", Pool: "p1", PoolName: "Europe", Routing: true},
+			"pool Europe: no exit node available; Internet traffic is dropped",
+		},
+		{
+			&localapi.ExitStatus{
+				Use: "p1", Pool: "p1", PoolName: "Europe", ExitNode: "d1", ExitNodeName: "fra", Via: "sticky",
+				IPv6: true, Routing: true,
+			},
+			"via fra in pool Europe (kept: Core elected another primary)",
+		},
+		{
+			&localapi.ExitStatus{Use: "p1", Pool: "p1", ExitNode: "d1", Via: "primary", Refused: "exit_use_off"},
+			"via d1 in pool p1; IPv6 blocked [helper: exit_use_off]",
+		},
+	}
+	for _, test := range cases {
+		if got := formatExitStatus(test.status); got != test.want {
+			t.Errorf("formatExitStatus(%+v) = %q, want %q", test.status, got, test.want)
+		}
+	}
+}
+
 func TestFormatExitNodeStatus(t *testing.T) {
 	t.Parallel()
 	if got := formatExitNodeStatus(nil); got != "none" {

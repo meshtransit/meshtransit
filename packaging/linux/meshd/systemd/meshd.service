@@ -16,7 +16,7 @@ UMask=0007
 Environment=MESHD_FLAGS=
 EnvironmentFile=-/etc/meshd/meshd.env
 LoadCredentialEncrypted=meshd.identity-key:/etc/credstore.encrypted/meshd.identity-key
-ExecStart=/usr/bin/meshd --allow-socket-peers --enable-data-plane --wireguard-listen-port=41641 --enable-dns --enable-device-aliases --enable-subnet-routes $MESHD_FLAGS
+ExecStart=/usr/bin/meshd --allow-socket-peers --enable-data-plane --wireguard-listen-port=41641 --enable-dns --enable-device-aliases --enable-subnet-routes --enable-exits $MESHD_FLAGS
 Restart=on-failure
 RestartSec=2s
 TimeoutStopSec=15s

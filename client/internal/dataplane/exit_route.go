@@ -1,0 +1,126 @@
+package dataplane
+
+import (
+	"context"
+
+	"meshtransit.net/client/internal/netadmin"
+)
+
+// exitRouteSetter is the helper's operation that sends the host's Internet
+// traffic into the mesh, behind its kill switch (exit node design §6).
+type exitRouteSetter interface {
+	SetExitRoute(ctx context.Context, route netadmin.ExitRouteRequest) (netadmin.ExitRouting, error)
+}
+
+// ExitRouteStatus is how the node sends its Internet traffic through an exit
+// node (mtcp-v1 §7.7).
+type ExitRouteStatus struct {
+	// Pool is the chosen pool's reference and Node the exit node used, a
+	// device ID; Node is empty while none carries the traffic, which is
+	// then dropped.
+	Pool string
+	Node string
+	// IPv6 is whether IPv6 goes through the exit node; otherwise it is
+	// refused.
+	IPv6 bool
+	// Routing is whether the helper sends the host's Internet traffic into
+	// the mesh, with its kill switch; Refused (helper reason) why not.
+	Routing bool
+	Refused string
+	// Error is the last failure to configure the helper.
+	Error string
+}
+
+// exitRouteDesired is what the helper is asked: to route the Internet into
+// the mesh, and IPv6 too.
+type exitRouteDesired struct {
+	use  bool
+	ipv6 bool
+}
+
+// syncExitRouteLocked has the helper route the Internet into the mesh while
+// the map's local choice names a pool, whether or not an exit node carries
+// it: without one the traffic is dropped, never sent outside the mesh.
+func (e *WireGuardEngine) syncExitRouteLocked(routed *routedTable) {
+	desired := exitRouteDesired{}
+	status := ExitRouteStatus{
+		Routing: e.exitRouteStatus.Routing, Refused: e.exitRouteStatus.Refused,
+		Error: e.exitRouteStatus.Error,
+	}
+	if routed != nil && routed.exit != nil {
+		desired = exitRouteDesired{use: true, ipv6: routed.exit.ipv6}
+		status.Pool, status.IPv6 = routed.exit.pool, routed.exit.ipv6
+		if routed.exit.served {
+			status.Node = routed.exit.nodeRef
+		}
+	}
+	setter, supported := e.opener.(exitRouteSetter)
+	if !supported {
+		status.Routing, status.Refused, status.Error = false, "", ""
+		if desired.use {
+			status.Error = "using an exit node is not supported on this platform"
+		}
+		e.exitRouteStatus = status
+		e.filter.SetExitRouted(false)
+		return
+	}
+	e.exitRouteStatus = status
+	e.exitRoute.setLocked(e, desired, helperExchange[exitRouteDesired, netadmin.ExitRouting]{
+		empty: func(desired exitRouteDesired) bool { return !desired.use },
+		equal: func(first, second exitRouteDesired) bool { return first == second },
+		clone: func(desired exitRouteDesired) exitRouteDesired { return desired },
+		send: func(ctx context.Context, desired exitRouteDesired) (netadmin.ExitRouting, error) {
+			return setter.SetExitRoute(ctx, netadmin.ExitRouteRequest{Use: desired.use, IPv6: desired.ipv6})
+		},
+		record: e.recordExitRouteLocked,
+		giveUp: func(err error) {
+			if e.logger != nil {
+				e.logger.Warn("releasing the exit route keeps failing; giving up until the next change", "error", err)
+			}
+		},
+	})
+}
+
+// recordExitRouteLocked keeps what the helper did and lets Internet packets
+// reach the exit node only while the helper routes them into the mesh.
+func (e *WireGuardEngine) recordExitRouteLocked(desired exitRouteDesired, result netadmin.ExitRouting, err error) {
+	previous := e.exitRouteStatus
+	status := previous
+	status.Error = ""
+	if err != nil {
+		status.Error = err.Error()
+		result = netadmin.ExitRouting{}
+	}
+	status.Routing, status.Refused = result.Routing, result.Refused
+	e.exitRouteStatus = status
+	e.filter.SetExitRouted(desired.use && result.Routing)
+	if e.logger == nil || previous == status {
+		return
+	}
+	if err != nil {
+		e.logger.Warn("routing the Internet through the exit node failed", "pool", status.Pool, "error", err)
+		return
+	}
+	e.logger.Info("exit route applied", "pool", status.Pool, "exit_node", status.Node, "routing", status.Routing,
+		"refused", status.Refused, "ipv6", status.IPv6)
+}
+
+// resetExitRouteLocked forgets the exit route of a closed device. The
+// helper keeps its kill switch: the host's Internet traffic stays dropped
+// until the next device asks again or the host stops using an exit node.
+func (e *WireGuardEngine) resetExitRouteLocked() {
+	e.exitRoute.resetLocked()
+	e.exitRouteStatus = ExitRouteStatus{}
+	e.filter.SetExitRouted(false)
+}
+
+// ExitRoute returns how the node sends its Internet traffic through an exit
+// node.
+func (e *WireGuardEngine) ExitRoute() ExitRouteStatus {
+	if e == nil {
+		return ExitRouteStatus{}
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.exitRouteStatus
+}

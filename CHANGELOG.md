@@ -5,6 +5,27 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Clients: Linux consumers of exit nodes, first part (exit node design E3).
+  With `--enable-exits` (on in the Linux package) meshd declares
+  `routes.exit.v1`, takes the Exit Pools its rules grant and, once root names
+  one (`meshnetd routes exit-use POOL|auto|off`; `exit-allow-managed`,
+  `exit-allow-lan`), sends the host's Internet traffic through one of its
+  exit nodes: the map's primary, kept while it works even after Core elects
+  another (`STICKY`), left for the next answering candidate when it stops
+  answering, is reported FAILED or leaves the pool (`LOCAL_FAILOVER`); the
+  choice goes to Core in `RouteSelectionReport.exit`. Only that exit node
+  holds the default routes in WireGuard, and meshd's filter accepts from it
+  only replies from Internet addresses. meshnetd (`set_exit_route`) holds a
+  kill switch (`inet meshtransit_exit`) and an exit table (`--exit-table`,
+  5268 in the package) with an unreachable default, rules 5402–5405 keeping
+  replies to inbound connections, DHCP and interface-bound sockets on the
+  host's routes, local bridges and the allowed LAN outside, and IPv6 refused
+  when the exit node has none. The kill switch follows root's `exit-use` alone (meshd and Core cannot
+  lift it; it holds across restarts and before the first map); `meshnetd
+  --release-exit`, which the package runs on removal, removes it. Status
+  shows an `Exit` line (`exit` in the local API). DNS does not go through the
+  exit node yet (names resolve only through a resolver in an allowed LAN);
+  it comes next, with pinning exit nodes and `auto` by latency.
 - Clients: Linux exit nodes, first part (exit node design E2). With
   `--enable-exit-node` meshd declares `router.exit.v1`, reports
   `exit_offered` from the root-owned `exit_mode`, and serves the Exit Pool

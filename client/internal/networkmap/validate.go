@@ -113,6 +113,12 @@ func ValidateAndClone(snapshot Snapshot, now time.Time) (Snapshot, error) {
 	if err := validateServedExits(snapshot.ServedExits); err != nil {
 		return Snapshot{}, fmt.Errorf("%w: served exits: %w", ErrInvalid, err)
 	}
+	if err := validateExits(snapshot.Exits, snapshot.Self.StableID); err != nil {
+		return Snapshot{}, fmt.Errorf("%w: exits: %w", ErrInvalid, err)
+	}
+	if err := validateExitRoute(snapshot.ExitRoute, snapshot.Exits); err != nil {
+		return Snapshot{}, fmt.Errorf("%w: exit route: %w", ErrInvalid, err)
+	}
 	if err := validateRoutes(snapshot.Routes, snapshot.Self.StableID); err != nil {
 		return Snapshot{}, fmt.Errorf("%w: routes: %w", ErrInvalid, err)
 	}
@@ -532,6 +538,11 @@ func cloneSnapshot(snapshot Snapshot) Snapshot {
 	cloned.Routes = cloneRoutes(snapshot.Routes)
 	cloned.Served = cloneServed(snapshot.Served)
 	cloned.ServedExits = cloneServedExits(snapshot.ServedExits)
+	cloned.Exits = cloneExits(snapshot.Exits)
+	if snapshot.ExitRoute != nil {
+		route := *snapshot.ExitRoute
+		cloned.ExitRoute = &route
+	}
 
 	return cloned
 }

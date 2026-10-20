@@ -41,6 +41,7 @@ type statusResponse struct {
 	SubnetRoutes      subnetRouteStatus     `json:"subnet_routes"`
 	SubnetRouter      subnetRouterStatus    `json:"subnet_router"`
 	ExitNode          exitNodeStatus        `json:"exit_node"`
+	Exit              *exitStatus           `json:"exit,omitempty"`
 	PathProbes        pathProbeStatus       `json:"path_probes"`
 	Relay             relayStatus           `json:"relay"`
 	NetworkChanges    networkChangeStatus   `json:"network_changes"`
@@ -152,6 +153,23 @@ type exitNodeStatus struct {
 	Code                 string `json:"code,omitempty"`
 	Families             string `json:"families,omitempty"`
 	Error                string `json:"error,omitempty"`
+}
+
+// exitStatus is the exit node the node sends its Internet traffic to
+// (exit node design §9): what the host's settings ask, the pool and exit
+// node used and why, and whether the helper routes the Internet into the
+// mesh behind its kill switch or why not.
+type exitStatus struct {
+	Use          string `json:"use"`
+	Pool         string `json:"pool,omitempty"`
+	PoolName     string `json:"pool_name,omitempty"`
+	ExitNode     string `json:"exit_node,omitempty"`
+	ExitNodeName string `json:"exit_node_name,omitempty"`
+	Via          string `json:"via"`
+	IPv6         bool   `json:"ipv6"`
+	Routing      bool   `json:"routing"`
+	Refused      string `json:"refused,omitempty"`
+	Error        string `json:"error,omitempty"`
 }
 
 type subnetRouterSiteHealth struct {

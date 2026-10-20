@@ -64,6 +64,8 @@ type routeFailover struct {
 	sites map[string]*failoverSite
 	// core is the last map from Core, unchanged.
 	core networkmap.Snapshot
+	// exit is the exit node chosen (exit_choice.go).
+	exit exitChoice
 }
 
 func newRouteFailover(clock func() time.Time) *routeFailover {
@@ -105,8 +107,9 @@ func (failover *routeFailover) ObserveRelayPong(peerID uint64, at time.Time) {
 	}
 }
 
-// routerPeers returns the peers that route a Site this node is sent, the
-// ones to ping through the relay when no direct path to them is proven.
+// routerPeers returns the peers that route a Site this node is sent, and
+// the candidates of the exit pool it uses, the ones to ping through the
+// relay when no direct path to them is proven.
 func (failover *routeFailover) routerPeers() []uint64 {
 	if failover == nil {
 		return nil
@@ -125,6 +128,7 @@ func (failover *routeFailover) routerPeers() []uint64 {
 			}
 		}
 	}
+	ids = append(ids, failover.exitPeersLocked()...)
 	slices.Sort(ids)
 	return slices.Compact(ids)
 }
@@ -182,6 +186,7 @@ func (failover *routeFailover) effective(snapshot networkmap.Snapshot) networkma
 			delete(failover.pongs, id)
 		}
 	}
+	failover.chooseExitLocked(now)
 	return failover.applyLocked()
 }
 
@@ -194,6 +199,7 @@ func (failover *routeFailover) current() networkmap.Snapshot {
 
 func (failover *routeFailover) applyLocked() networkmap.Snapshot {
 	snapshot := failover.core
+	snapshot.ExitRoute = failover.exitRouteLocked()
 	changed := false
 	for _, site := range failover.sites {
 		if site.chosen != "" {
@@ -223,28 +229,12 @@ func (failover *routeFailover) judge(activity []dataplane.RoutedActivity) bool {
 	failover.mu.Lock()
 	defer failover.mu.Unlock()
 	now := failover.clock()
-	peers := peerIDs(failover.core)
 	// A router answers when its last pong (direct, or through the relay)
 	// is recent, and has stopped when it answered before and no longer does.
 	// One that never answered (not probed yet, or too old to answer relayed
 	// pings) is neither: it is never left for silence the node cannot
 	// measure.
-	pongOf := func(stableID string) (time.Time, bool) {
-		id, found := peers[stableID]
-		if !found {
-			return time.Time{}, false
-		}
-		at, answered := failover.pongs[id]
-		return at, answered
-	}
-	alive := func(stableID string) bool {
-		at, answered := pongOf(stableID)
-		return answered && now.Sub(at) <= failoverAliveWithin
-	}
-	stopped := func(stableID string) bool {
-		at, answered := pongOf(stableID)
-		return answered && now.Sub(at) > failoverAliveWithin
-	}
+	alive, stopped := failover.livenessLocked(now)
 	changed := false
 	for _, route := range failover.core.Routes {
 		if route.Status != networkmap.RouteServed || route.Primary == "" {
@@ -305,6 +295,9 @@ func (failover *routeFailover) judge(activity []dataplane.RoutedActivity) bool {
 		}
 		site.lastSwitch, site.nextSwitch = now, now.Add(site.backoff)
 		site.backoff = min(2*site.backoff, failoverBackoffMax)
+		changed = true
+	}
+	if failover.chooseExitLocked(now) {
 		changed = true
 	}
 	return changed

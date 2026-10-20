@@ -91,6 +91,15 @@ type Server struct {
 	// activeExit how the helper forwards as one.
 	requestedExit *ExitRequest
 	activeExit    ExitServing
+	// exitRouteConfigurer sends the host's Internet traffic through an exit
+	// node; requestedExitRoute is what meshd last asked (nil before) and
+	// activeExitRoute what the helper did.
+	exitRouteConfigurer exitRouteConfigurer
+	requestedExitRoute  *ExitRouteRequest
+	activeExitRoute     ExitRouting
+	// exitRouteKey identifies the exit route installed (interface,
+	// families, LAN and the host's networks); empty when none is.
+	exitRouteKey string
 	// loadSettings reads the route settings (routesettings.Load).
 	loadSettings func(string) (routesettings.Settings, error)
 	// mu serializes requests with background work (watchDNSLink on macOS).
@@ -302,6 +311,8 @@ func (s *Server) handle(ctx context.Context, rawConnection net.Conn) error {
 		return s.setServedExit(connection, validated.exit)
 	case operationCheckServed:
 		return s.checkServed(connection)
+	case operationSetExitRoute:
+		return s.setExitRoute(connection, validated.exitRoute)
 	default:
 		return errors.New("netadmin: validated request has an unknown operation")
 	}
@@ -346,6 +357,10 @@ func (s *Server) openTUN(connection *net.UnixConn, config TUNConfig) error {
 	s.activeRouted, s.requestedRouted = routedState{}, nil
 	// Nor forwarding: meshd asks again for the new interface.
 	s.clearServed()
+	// The exit route went with the old interface, but not its kill switch:
+	// the new interface carries it at once while the settings want it.
+	s.activeExitRoute, s.exitRouteKey = ExitRouting{}, ""
+	s.applyExitRoute()
 
 	return writeResponse(connection, response{
 		Version:       protocolVersion,

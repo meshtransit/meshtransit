@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -510,7 +511,7 @@ func runStatus(
 	deviceExpiry := formatDeviceExpiry(status.DeviceExpiry, status.DeviceExpiresAt, time.Now())
 	_, _ = fmt.Fprintf(
 		stdout,
-		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nNetwork changes: %s\nRuntime recovery: %s\nRuntime: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\nNetwork: %s\nSelf addresses: %s\nDevice expiry: %s\nPeers: %d\nPeer paths: %s\nSubnet routes: %s\nSubnet router: %s\nExit node: %s\nPath transitions: %s\nPath probes: %s\nRelay: %s\nNAT: %s\nPort mapping: %s\nCloud: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
+		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nNetwork changes: %s\nRuntime recovery: %s\nRuntime: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\nNetwork: %s\nSelf addresses: %s\nDevice expiry: %s\nPeers: %d\nPeer paths: %s\nSubnet routes: %s\nSubnet router: %s\nExit node: %s\nExit: %s\nPath transitions: %s\nPath probes: %s\nRelay: %s\nNAT: %s\nPort mapping: %s\nCloud: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
 		status.Daemon.Version,
 		status.State,
 		status.DataPlane,
@@ -532,6 +533,7 @@ func runStatus(
 		formatSubnetRouteStatus(status.SubnetRoutes),
 		formatSubnetRouterStatus(status.SubnetRouter),
 		formatExitNodeStatus(status.ExitNode),
+		formatExitStatus(status.Exit),
 		formatPathTransitionStatus(status.PeerPaths),
 		formatPathProbeStatus(status.PathProbes),
 		formatRelayStatus(status.Relay),
@@ -648,6 +650,42 @@ func formatRouteSite(site localapi.SubnetRouteSite) string {
 	default:
 		return "not served"
 	}
+}
+
+// formatExitStatus says which exit node the Internet goes through, and
+// that it is dropped while none carries it.
+func formatExitStatus(status *localapi.ExitStatus) string {
+	if status == nil {
+		return "none"
+	}
+	pool := cmp.Or(status.PoolName, status.Pool)
+	var summary string
+	switch {
+	case status.Pool == "":
+		summary = fmt.Sprintf("%s: pool not granted; Internet traffic is dropped", status.Use)
+	case status.ExitNode == "":
+		summary = fmt.Sprintf("pool %s: no exit node available; Internet traffic is dropped", pool)
+	default:
+		summary = fmt.Sprintf("via %s in pool %s", cmp.Or(status.ExitNodeName, status.ExitNode), pool)
+		switch status.Via {
+		case "local_failover":
+			summary += " (chosen here: the primary does not answer)"
+		case "sticky":
+			summary += " (kept: Core elected another primary)"
+		}
+		if !status.IPv6 {
+			summary += "; IPv6 blocked"
+		}
+	}
+	switch {
+	case status.Error != "":
+		summary += "; error: " + status.Error
+	case !status.Routing && status.Refused != "":
+		summary += " [helper: " + status.Refused + "]"
+	case !status.Routing:
+		summary += " [not routed yet]"
+	}
+	return summary
 }
 
 func formatExitNodeStatus(status *localapi.ExitNodeStatus) string {

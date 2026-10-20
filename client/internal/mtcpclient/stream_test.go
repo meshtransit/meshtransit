@@ -623,6 +623,49 @@ func TestStreamNetmapReportsTheRouterOfEachSite(t *testing.T) {
 	}
 }
 
+// A node that uses exit nodes, without subnet routes, declares
+// routes.exit.v1 and routes.selection1 and reports the exit node it uses.
+func TestStreamNetmapReportsTheExitNodeUsed(t *testing.T) {
+	t.Parallel()
+	reports := make(chan *mtcpv1.RouteSelectionReport, 1)
+	core := newStreamCore(t, func(core *streamCore, s *coreSession, _ int32) {
+		core.keyUpdate(s)
+		_ = s.send(sharedmtcp.MessageMapSnapshot, core.snapshot(1))
+		if report, ok := core.expect(s, sharedmtcp.MessageRouteSelectionReport).(*mtcpv1.RouteSelectionReport); ok {
+			reports <- report
+		}
+		_ = s.send(sharedmtcp.MessageLifecycle, &mtcpv1.Lifecycle{State: mtcpv1.Lifecycle_REVOKED})
+		answerPings(s)
+	})
+	core.extra = []string{"routes.exit.v1", "routes.selection1"}
+	material, options := core.options(t)
+	selection := make(chan controlplane.RouteExitSelection, 1)
+	selection <- controlplane.RouteExitSelection{
+		Pool: "pool-a", ExitNode: "exit-1", Reason: controlplane.RouteSelectionSticky,
+	}
+	options.EnableExits, options.ExitSelection = true, selection
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	_ = core.client().StreamNetmap(ctx, core.origin(), material, options,
+		func(context.Context, networkmap.Snapshot) error { return nil })
+	if !slices.ContainsFunc(core.hello, func(hello *mtcpv1.ClientHello) bool {
+		return slices.Contains(hello.GetCapabilities(), "routes.exit.v1") &&
+			slices.Contains(hello.GetCapabilities(), "routes.selection1")
+	}) {
+		t.Fatal("the map stream did not declare routes.exit.v1 and routes.selection1")
+	}
+	select {
+	case report := <-reports:
+		exit := report.GetExit()
+		if len(report.GetSites()) != 0 || exit.GetPoolRef() != "pool-a" || exit.GetExitNode() != "exit-1" ||
+			exit.GetReason() != mtcpv1.RouteSelectionReport_ExitSelection_STICKY {
+			t.Fatalf("selection report %v", report)
+		}
+	default:
+		t.Fatal("no exit selection reached Core")
+	}
+}
+
 // An exit node declares router.exit.v1 (and router.health1) and reports
 // whether its settings offer to be one, without subnets it may not route.
 func TestStreamNetmapExitNodeOffersItself(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"net/netip"
 
 	"meshtransit.net/client/internal/networkmap"
+	"meshtransit.net/shared/internet"
 )
 
 // routedSite is one Site of the map as the packet path handles it
@@ -16,11 +17,25 @@ type routedSite struct {
 	primary packetAuthority
 }
 
+// routedExit is the exit node the node chose (networkmap.ExitRoute) as the
+// packet path handles it (mtcp-v1 §7.7).
+type routedExit struct {
+	pool string
+	// served means Internet packets go through node; otherwise they are
+	// dropped, never sent outside the mesh.
+	served bool
+	// nodeRef is the exit node's device ID, node its packet authority.
+	nodeRef string
+	node    packetAuthority
+	ipv6    bool
+}
+
 // routedTable finds the Site of an address among the map's at most 4,096
-// routed prefixes.
+// routed prefixes, and the exit node of the others on the Internet.
 type routedTable struct {
 	sites    []routedSite
 	prefixes *prefixIndex[int]
+	exit     *routedExit
 }
 
 // newRoutedTable indexes the map's Sites. A Site whose prefixes overlap
@@ -29,15 +44,25 @@ type routedTable struct {
 // of this node or a peer is left out entirely: a router must never take over
 // a node's own address, in WireGuard or in the routing table.
 func newRoutedTable(snapshot networkmap.Snapshot) *routedTable {
-	if len(snapshot.Routes) == 0 {
+	if len(snapshot.Routes) == 0 && snapshot.ExitRoute == nil {
 		return nil
 	}
 	peers := make(map[string]networkmap.Node, len(snapshot.Peers))
 	for _, peer := range snapshot.Peers {
 		peers[peer.StableID] = peer
 	}
+	table := &routedTable{prefixes: newPrefixIndex[int](0)}
+	if route := snapshot.ExitRoute; route != nil {
+		table.exit = &routedExit{pool: route.Pool, ipv6: route.IPv6}
+		if peer, found := peers[route.Node]; found && route.Node != "" {
+			table.exit.served, table.exit.nodeRef, table.exit.node = true, route.Node, authorityFor(peer)
+		}
+	}
+	if len(snapshot.Routes) == 0 {
+		return table
+	}
 	statuses := networkmap.EffectiveStatus(snapshot.Routes)
-	table := &routedTable{sites: make([]routedSite, 0, len(snapshot.Routes)), prefixes: newPrefixIndex[int](0)}
+	table.sites = make([]routedSite, 0, len(snapshot.Routes))
 	for index, route := range snapshot.Routes {
 		site := routedSite{ref: route.Ref}
 		if primary, found := peers[route.Primary]; found && statuses[index] == networkmap.RouteServed {
@@ -83,7 +108,11 @@ func (t *routedTable) lookup(address netip.Addr) (netip.Prefix, *routedSite, boo
 }
 
 // servedPrefixes returns, per primary's node id, the prefixes of the Sites
-// it serves, sorted: the WireGuard allowed IPs routed traffic needs.
+// it serves, sorted, then the default routes of the exit node: the
+// WireGuard allowed IPs routed traffic needs. Only the chosen exit node
+// holds a default route, so an Internet source is accepted from it alone;
+// a mesh address or a Site prefix stays with its own peer, the most
+// specific match, whatever source the exit node puts on its packets.
 func (t *routedTable) servedPrefixes() map[uint64][]netip.Prefix {
 	if t == nil {
 		return nil
@@ -94,7 +123,29 @@ func (t *routedTable) servedPrefixes() map[uint64][]netip.Prefix {
 			served[site.primary.nodeID] = append(served[site.primary.nodeID], prefix)
 		}
 	}
+	if exit := t.exit; exit != nil && exit.served {
+		served[exit.node.nodeID] = append(served[exit.node.nodeID], exit.prefixes()...)
+	}
 	return served
+}
+
+// prefixes are the default routes the exit node takes.
+func (exit *routedExit) prefixes() []netip.Prefix {
+	routes := []netip.Prefix{netip.PrefixFrom(netip.IPv4Unspecified(), 0)}
+	if exit.ipv6 {
+		routes = append(routes, netip.PrefixFrom(netip.IPv6Unspecified(), 0))
+	}
+	return routes
+}
+
+// exitFor returns the exit node that carries traffic with an Internet
+// address, of a family it carries.
+func (t *routedTable) exitFor(address netip.Addr) (packetAuthority, bool) {
+	if t == nil || t.exit == nil || !t.exit.served || !internet.Contains(address) ||
+		(address.Is6() && !t.exit.ipv6) {
+		return packetAuthority{}, false
+	}
+	return t.exit.node, true
 }
 
 // routedPrefixesOf returns every prefix of the map's Sites, sorted: the
@@ -118,7 +169,7 @@ func equalRoutedTables(first, second *routedTable) bool {
 	if first == nil || second == nil {
 		return first == second
 	}
-	if first.prefixes.len() != second.prefixes.len() {
+	if !equalRoutedExits(first.exit, second.exit) || first.prefixes.len() != second.prefixes.len() {
 		return false
 	}
 	for prefix, index := range first.prefixes.values {
@@ -132,4 +183,12 @@ func equalRoutedTables(first, second *routedTable) bool {
 
 func equalRoutedSite(first, second routedSite) bool {
 	return first.ref == second.ref && first.served == second.served && first.primary.equal(second.primary)
+}
+
+func equalRoutedExits(first, second *routedExit) bool {
+	if first == nil || second == nil {
+		return first == second
+	}
+	return first.pool == second.pool && first.served == second.served && first.nodeRef == second.nodeRef &&
+		first.node.equal(second.node) && first.ipv6 == second.ipv6
 }

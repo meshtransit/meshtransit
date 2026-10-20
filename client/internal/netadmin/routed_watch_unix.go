@@ -31,6 +31,7 @@ func (s *Server) watchRouteSettings(ctx context.Context) {
 		case <-ticker.C:
 		}
 		s.checkServedRules()
+		s.checkExitRoute()
 		stamp := s.routedStamp()
 		if stamp == last {
 			continue
@@ -55,6 +56,12 @@ func (s *Server) watchRouteSettings(ctx context.Context) {
 				s.logger.Info("route settings changed; subnet forwarding reapplied", "served", len(s.activeServed))
 			}
 		}
+		if s.exitRouteConfigurer != nil {
+			s.applyExitRoute()
+			if s.activeExitRoute.Refused == ExitRouteRefusedFailed {
+				applied = false
+			}
+		}
 		s.mu.Unlock()
 		if applied {
 			last = stamp
@@ -71,6 +78,8 @@ func (s *Server) clearRouted() {
 	}
 	s.activeRouted, s.requestedRouted = routedState{}, nil
 	s.clearServed()
+	s.stopExitRoute()
+	s.requestedExitRoute = nil
 }
 
 // checkServedRules installs the router rules again when another tool removed
@@ -98,12 +107,17 @@ func (s *Server) checkServedRules() {
 func (s *Server) routedStamp() string {
 	s.mu.Lock()
 	name, exit := s.activeName, s.requestedExit != nil
+	exitRoute := s.exitRouteKey != ""
 	s.mu.Unlock()
 	digest := sha256.New()
 	_, _ = fmt.Fprintf(digest, "settings %s\n", settingsStamp(s.routed.SettingsPath))
 	if exit {
 		// An exit node's rules also follow its addresses and gateways.
 		_, _ = fmt.Fprintf(digest, "exit %s\n", exitStamp(name))
+	}
+	if exitRoute {
+		// The exit route also follows the host's interfaces and subnets.
+		_, _ = fmt.Fprintf(digest, "exit route %s\n", s.exitRouteConfigurer.Stamp(name))
 	}
 	local, err := s.hostRouting.LocalRoutes(name)
 	if err != nil {

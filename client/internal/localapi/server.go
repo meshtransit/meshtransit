@@ -467,6 +467,7 @@ func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request)
 		SubnetRoutes:       withRouteSites(mapSubnetRouteStatus(status.SubnetRoutes), status.RouteSites),
 		SubnetRouter:       mapSubnetRouterStatus(status.SubnetRouter),
 		ExitNode:           mapExitNodeStatus(status.ExitNode),
+		Exit:               mapExitStatus(status.Exit, status.ExitRoute),
 		PathProbes:         mapPathProbeStatus(status.PathProbes),
 		Relay:              mapRelayStatus(status.Relay),
 		NetworkChanges:     mapNetworkChangeStatus(status.NetworkChanges),
@@ -659,6 +660,17 @@ func mapSubnetRouteStatus(status dataplane.SubnetRouteStatus) subnetRouteStatus 
 		mapped.Refused = append(mapped.Refused, subnetRouteRefusal{Prefix: refusal.Prefix.String(), Reason: refusal.Reason})
 	}
 	return mapped
+}
+
+func mapExitStatus(view *daemon.ExitView, route dataplane.ExitRouteStatus) *exitStatus {
+	if view == nil {
+		return nil
+	}
+	return &exitStatus{
+		Use: view.Use, Pool: view.Pool, PoolName: view.PoolName, ExitNode: view.ExitNode,
+		ExitNodeName: view.ExitNodeName, Via: view.Via, IPv6: route.IPv6, Routing: route.Routing,
+		Refused: route.Refused, Error: route.Error,
+	}
 }
 
 func mapExitNodeStatus(status dataplane.ExitNodeStatus) exitNodeStatus {

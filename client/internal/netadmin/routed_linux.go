@@ -17,11 +17,28 @@ import (
 )
 
 // validPlatformRoutedOptions requires a table of the helper's own, its rule
-// priority and, to forward, an nftables table and a state file.
+// priority, to forward, an nftables table and a state file, and to use an
+// exit node, its own table, rules and kill switch table.
 func validPlatformRoutedOptions(options RoutedOptions) bool {
-	return options.Table > 0 && options.Table < 1<<31 && (options.Table < 253 || options.Table > 255) &&
-		options.Priority > 0 && options.Priority < 32766 &&
-		(options.NftTable == "" || (validNftTableName(options.NftTable) && filepath.IsAbs(options.StatePath)))
+	return validRoutingTable(options.Table) && options.Priority > 0 && options.Priority < 32766 &&
+		(options.NftTable == "" || (validNftTableName(options.NftTable) && filepath.IsAbs(options.StatePath))) &&
+		validExitRouteOptions(options)
+}
+
+func validRoutingTable(table int) bool {
+	return table > 0 && table < 1<<31 && (table < 253 || table > 255)
+}
+
+// validExitRouteOptions requires, when the host may use an exit node, a
+// table of its own, four rule priorities after the routed one, and a kill
+// switch table other than the router's.
+func validExitRouteOptions(options RoutedOptions) bool {
+	if options.ExitTable == 0 {
+		return options.ExitPriority == 0 && options.ExitNftTable == ""
+	}
+	return validRoutingTable(options.ExitTable) && options.ExitTable != options.Table &&
+		options.ExitPriority > options.Priority && options.ExitPriority+exitRulePriorities <= 32766 &&
+		validNftTableName(options.ExitNftTable) && options.ExitNftTable != options.NftTable
 }
 
 // validNftTableName accepts a short table name of letters, digits, '_' and

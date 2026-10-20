@@ -75,6 +75,9 @@ type policyFilter struct {
 	// installed on the host. Only those reach a Site (mtcp-v1 §7.6).
 	routed          *routedTable
 	routedInstalled map[netip.Prefix]struct{}
+	// exitRouted means the helper sends the host's Internet traffic into
+	// the mesh: only then does an Internet address reach the exit node.
+	exitRouted bool
 	// routedActivity is what this node sent to each Site and heard back,
 	// by Site reference (RoutedActivity).
 	routedActivity map[string]*RoutedActivity
@@ -363,9 +366,11 @@ type flowAuthority struct {
 	selfAuthority packetAuthority
 	peers         map[netip.Addr]packetAuthority
 	aliases       map[netip.Addr]aliasPacketGrant
-	// routed and routedInstalled reach a Site's hosts through its primary.
+	// routed and routedInstalled reach a Site's hosts through its primary,
+	// and with exitRouted the Internet through the chosen exit node.
 	routed          *routedTable
 	routedInstalled map[netip.Prefix]struct{}
+	exitRouted      bool
 }
 
 // retainFlowsLocked drops every tracked flow whose authority the new map
@@ -668,25 +673,34 @@ func (f *policyFilter) peerUsableAt(address netip.Addr, now time.Time) bool {
 func (f *policyFilter) flowAuthorityLocked() flowAuthority {
 	return flowAuthority{
 		self: f.self, selfAuthority: f.selfAuthority, peers: f.peers, aliases: f.aliases,
-		routed: f.routed, routedInstalled: f.routedInstalled,
+		routed: f.routed, routedInstalled: f.routedInstalled, exitRouted: f.exitRouted,
 	}
 }
 
 // remoteAuthority returns the node a remote address is reached through: the
-// peer itself, or the primary router of a served Site whose prefix the
-// helper installed.
+// peer itself, the primary router of a served Site whose prefix the helper
+// installed, or the chosen exit node for an Internet address outside every
+// installed Site prefix while the helper routes the Internet into the mesh.
+// An exit node is never the authority of a mesh, private or other special
+// address: a packet from it with such a source is dropped (exit node design
+// §5.3).
 func (authority flowAuthority) remoteAuthority(address netip.Addr) (packetAuthority, bool) {
 	if peer, found := authority.peers[address]; found {
 		return peer, true
 	}
 	prefix, site, found := authority.routed.lookup(address)
-	if !found || !site.served {
+	if found {
+		if _, installed := authority.routedInstalled[prefix]; installed {
+			if !site.served {
+				return packetAuthority{}, false
+			}
+			return site.primary, true
+		}
+	}
+	if !authority.exitRouted {
 		return packetAuthority{}, false
 	}
-	if _, installed := authority.routedInstalled[prefix]; !installed {
-		return packetAuthority{}, false
-	}
-	return site.primary, true
+	return authority.routed.exitFor(address)
 }
 
 func (f *policyFilter) routedUsableAt(address netip.Addr, now time.Time) bool {
@@ -714,6 +728,22 @@ func (f *policyFilter) SetRoutedInstalled(prefixes []netip.Prefix) {
 	}
 	previous := f.flowAuthorityLocked()
 	f.routedInstalled = installed
+	f.retainFlowsLocked(previous, false)
+}
+
+// SetExitRouted records whether the helper sends the host's Internet
+// traffic into the mesh; flows through the exit node end when it stops.
+func (f *policyFilter) SetExitRouted(routed bool) {
+	if f == nil {
+		return
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.exitRouted == routed {
+		return
+	}
+	previous := f.flowAuthorityLocked()
+	f.exitRouted = routed
 	f.retainFlowsLocked(previous, false)
 }
 

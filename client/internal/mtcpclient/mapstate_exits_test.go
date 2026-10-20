@@ -105,3 +105,60 @@ func TestMapStateServedExitsNeedTheCapabilityAndTheInternet(t *testing.T) {
 		t.Error("two served Exit Pools were accepted")
 	}
 }
+
+func exitConfig() *mtcpv1.ExitConfig {
+	return &mtcpv1.ExitConfig{Pools: []*mtcpv1.ExitPool{{
+		PoolRef: "p-main", Name: "Main", Primary: "exit-a", Generation: 9, Status: mtcpv1.ExitPool_SERVED,
+		Candidates: []*mtcpv1.ExitCandidate{
+			{
+				DeviceId: "exit-a", State: mtcpv1.ExitCandidate_OK, Families: mtcpv1.ExitCandidate_BOTH,
+				DnsIpv4: []byte{100, 64, 0, 9},
+			},
+			{DeviceId: "exit-b", State: mtcpv1.ExitCandidate_FAILED, Families: mtcpv1.ExitCandidate_V4},
+		},
+	}}}
+}
+
+func TestMapStateReadsExitPools(t *testing.T) {
+	t.Parallel()
+	snapshot := snapshotMessage(7)
+	snapshot.Exits = exitConfig()
+	ignoring := newMapState(false)
+	if err := ignoring.applySnapshot(snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if exits := build(t, ignoring).Exits; exits != nil {
+		t.Fatalf("a node without routes.exit.v1 took Exit Pools: %+v", exits)
+	}
+	state := newMapState(false)
+	state.takesExits = true
+	if err := state.applySnapshot(snapshot); err != nil {
+		t.Fatal(err)
+	}
+	exits := build(t, state).Exits
+	if len(exits) != 1 || exits[0].Primary != "exit-a" || exits[0].Status != 1 || len(exits[0].Candidates) != 2 ||
+		!exits[0].Candidates[0].IPv6 || exits[0].Candidates[0].DNS4 != netip.MustParseAddr("100.64.0.9") ||
+		exits[0].Candidates[1].State != 3 || exits[0].Candidates[1].IPv6 {
+		t.Fatalf("exits = %+v", exits)
+	}
+	for name, change := range map[string]func(*mtcpv1.ExitPool){
+		"served without primary": func(pool *mtcpv1.ExitPool) { pool.Primary = "" },
+		"self as candidate":      func(pool *mtcpv1.ExitPool) { pool.Candidates[1].DeviceId = "self" },
+		"no candidates":          func(pool *mtcpv1.ExitPool) { pool.Candidates = nil },
+		"unknown status":         func(pool *mtcpv1.ExitPool) { pool.Status = 9 },
+		"primary elsewhere":      func(pool *mtcpv1.ExitPool) { pool.Primary = "exit-z" },
+		"control in name":        func(pool *mtcpv1.ExitPool) { pool.Name = "Main\n" },
+	} {
+		malformed := snapshotMessage(7)
+		malformed.Exits = exitConfig()
+		change(malformed.Exits.Pools[0])
+		state := newMapState(false)
+		state.takesExits = true
+		if err := state.applySnapshot(malformed); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := state.build(snapshotInput{revision: 1}); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

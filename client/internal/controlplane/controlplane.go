@@ -155,6 +155,10 @@ type NetmapOptions struct {
 	// (mtcp-v1 §7.6, router.subnet.v1): it takes served routes and reports
 	// what it offers and serves.
 	EnableSubnetRouter bool
+	// EnableExits advertises that the node may send its Internet traffic
+	// through Exit Pools (mtcp-v1 §7.7, routes.exit.v1): it takes the
+	// pools a rule grants and reports the exit node it uses.
+	EnableExits bool
 	// EnableExitNode advertises that the node can be an exit node
 	// (mtcp-v1 §7.7, router.exit.v1): it reports whether its settings offer
 	// to be one, and its exit health.
@@ -178,6 +182,11 @@ type NetmapOptions struct {
 	// RouteSelectionReport when Core takes it (routes.selection1), again
 	// every 60 seconds while not empty.
 	RouteSelection <-chan []RouteSiteSelection
+	// ExitSelection, with EnableExits, carries the exit node this node sends
+	// its Internet traffic to (an empty pool when it uses none); it goes in
+	// the RouteSelectionReport when Core takes it (routes.selection1 and
+	// routes.exit.v1).
+	ExitSelection <-chan RouteExitSelection
 	// AnnounceGoingAway, with EnableSubnetRouter, reports whether a router
 	// that stops (its context ends with ErrStopping) tells Core with a last
 	// RouteHealthReport; false while a restart is expected.
@@ -308,6 +317,9 @@ const (
 	RouteSelectionLocalFailover
 	// RouteSelectionNone means the Site is not served: no router.
 	RouteSelectionNone
+	// RouteSelectionSticky, for an exit node only (mtcp-v1 §7.7), is the
+	// one the node kept using after Core chose another primary.
+	RouteSelectionSticky
 )
 
 // RouteSiteSelection is the router a node uses for one Site; Router is
@@ -316,6 +328,15 @@ type RouteSiteSelection struct {
 	Ref    string
 	Router string
 	Reason RouteSelectionReason
+}
+
+// RouteExitSelection is the exit node a node sends its Internet traffic
+// to: Pool is empty when it uses none, ExitNode (a device ID) is empty with
+// RouteSelectionNone.
+type RouteExitSelection struct {
+	Pool     string
+	ExitNode string
+	Reason   RouteSelectionReason
 }
 
 type RouteSiteHealth struct {

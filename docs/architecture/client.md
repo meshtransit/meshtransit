@@ -173,6 +173,41 @@ A consumer granted a subnet reaches the other Devices' addresses in it
 through the router, as those addresses: that is the grant, not a bypass of
 their own policy.
 
+## Exit nodes on a consumer
+
+With `--enable-exits` (Linux) `meshd` takes the Exit Pools its rules grant
+and, once root's `exit_use` names one, chooses the exit node with the local
+router choices: the map's primary first, then the one in use while it works
+(sticky, even after Core elects another), the next answering candidate when
+it stops answering or Core reports it FAILED. That exit node alone holds
+`0.0.0.0/0` (and `::/0` when it has IPv6) in WireGuard, so a source address
+of the mesh or of a Site still belongs to its own peer; the filter takes from
+it only replies from Internet addresses. `meshnetd` routes the host into the
+mesh while `exit_use` (or `exit_allow_managed`) allows it:
+
+- a kill switch first (`inet meshtransit_exit`): output and forward to any
+  interface but the TUN, loopback and local bridges are dropped, except
+  `meshd`'s uid, DHCP, neighbour discovery, the allowed LAN and connections
+  opened from outside, whose conntrack mark also marks their replies;
+- an exit table (`--exit-table`) with a default into the TUN, an
+  `unreachable` default behind it (the TUN gone, nothing falls through to
+  `main`), and the local bridges' and allowed LAN subnets;
+- rules after the routed one: the reply mark, DHCP and interface-bound
+  sockets look up `main`; everyone but `meshd` looks up the exit table.
+
+DNS does not go through the exit node yet: the host's resolvers are behind
+the kill switch (`systemd-resolved` binds its queries to the link, which the
+kill switch drops), so names resolve only through a resolver in an allowed
+LAN. The routed table's throws for system resolvers fall through to the exit
+table. The kill switch
+follows root's `exit_use` alone, before the first map and across restarts
+of `meshd` and `meshnetd`, without the TUN (the table is then unreachable
+only); `meshd` only adds IPv6 and the managed pools. It goes when root stops
+using an exit node, with `meshnetd --release-exit`, or when the package is
+removed. Connections opened from outside are marked by conntrack direction,
+so those open before the exit node was used keep working, and their replies
+for containers carry the mark into routing.
+
 On Windows a Wintun session cannot be handed to another process, so `meshd`
 is one LocalSystem service that applies the same checks in process.
 

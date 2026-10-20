@@ -4,6 +4,7 @@
 package routescli
 
 import (
+	"cmp"
 	"errors"
 	"flag"
 	"fmt"
@@ -28,6 +29,9 @@ const usage = `usage: %[1]s routes [--routes-file PATH] COMMAND
   exit-smtp on|off          let consumers open TCP port 25 (off by default)
   exit-conntrack-max N      connections per consumer, 1024 to 262144 (0: 16384)
   exit-max-consumers N      consumers forwarded for, up to 4096 (0: 256)
+  exit-use POOL|auto|off    send this host's Internet traffic through an Exit Pool
+  exit-allow-lan on|off     keep the attached private subnets off the exit node
+  exit-allow-managed on|off let the administrator choose the Exit Pool
 Changes need %[2]s and apply within seconds, without a restart.
 `
 
@@ -105,7 +109,15 @@ func changeRouteSettings(settings routesettings.Settings, command string, operan
 		} else {
 			settings.ExitMaxConsumers = value
 		}
-	case "accept", "accept-public", "router-mode", "exit-mode", "exit-smtp":
+	case "exit-use":
+		if len(operands) != 1 || operands[0] == "" {
+			return settings, errors.New("exit-use takes a pool, auto or off")
+		}
+		settings.ExitUse = operands[0]
+		if operands[0] == "off" {
+			settings.ExitUse = ""
+		}
+	case "accept", "accept-public", "router-mode", "exit-mode", "exit-smtp", "exit-allow-lan", "exit-allow-managed":
 		if len(operands) != 1 || (operands[0] != "on" && operands[0] != "off") {
 			return settings, fmt.Errorf("%s takes on or off", command)
 		}
@@ -119,6 +131,10 @@ func changeRouteSettings(settings routesettings.Settings, command string, operan
 			settings.ExitMode = value
 		case "exit-smtp":
 			settings.ExitSMTPAllowed = value
+		case "exit-allow-lan":
+			settings.ExitAllowLAN = value
+		case "exit-allow-managed":
+			settings.ExitAllowManaged = value
 		default:
 			settings.RouterMode = value
 		}
@@ -156,10 +172,12 @@ func (c Command) print(stdout, stderr io.Writer, settings routesettings.Settings
 	}
 	if _, err := fmt.Fprintf(stdout,
 		"accept: %s\naccept-public: %s\nrouter-mode: %s\nadvertise: %s\n"+
-			"exit-mode: %s\nexit-smtp: %s\nexit-conntrack-max: %d\nexit-max-consumers: %d\n",
+			"exit-mode: %s\nexit-smtp: %s\nexit-conntrack-max: %d\nexit-max-consumers: %d\n"+
+			"exit-use: %s\nexit-allow-lan: %s\nexit-allow-managed: %s\n",
 		onOff[settings.AcceptRoutes], onOff[settings.AcceptPublicRoutes], onOff[settings.RouterMode],
 		strings.Join(advertised, " "), onOff[settings.ExitMode], onOff[settings.ExitSMTPAllowed],
-		settings.ExitConntrackLimit(0), settings.ExitConsumerLimit()); err != nil {
+		settings.ExitConntrackLimit(0), settings.ExitConsumerLimit(), cmp.Or(settings.ExitUse, "off"),
+		onOff[settings.ExitAllowLAN], onOff[settings.ExitAllowManaged]); err != nil {
 		_, _ = fmt.Fprintf(stderr, "%s: %v\n", c.Program, err)
 		return 1
 	}

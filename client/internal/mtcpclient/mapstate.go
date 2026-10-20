@@ -54,8 +54,11 @@ type mapState struct {
 	servedExits *mtcpv1.ServedExits
 	// takesServedExits: the node declared router.exit.v1.
 	takesServedExits bool
-	relayMap         []byte
-	revisions        []*mtcpv1.NetworkRevision
+	exits            *mtcpv1.ExitConfig
+	// takesExits: the node declared routes.exit.v1.
+	takesExits bool
+	relayMap   []byte
+	revisions  []*mtcpv1.NetworkRevision
 
 	signingKeys []mtrp.TrustedKey
 	ticket      []byte
@@ -93,7 +96,7 @@ func (state *mapState) applySnapshot(snapshot *mtcpv1.MapSnapshot) error {
 	state.filter, state.dns = snapshot.GetPacketFilter(), snapshot.GetDns()
 	// A snapshot without routes means none (mtcp-v1 §7.6).
 	state.routes, state.served = snapshot.GetRoutes(), snapshot.GetServed()
-	state.servedExits = snapshot.GetServedExits()
+	state.servedExits, state.exits = snapshot.GetServedExits(), snapshot.GetExits()
 	state.relayMap = bytes.Clone(snapshot.GetRelayMap())
 	state.revisions = snapshot.GetNetworkRevisions()
 	return nil
@@ -152,6 +155,9 @@ func (state *mapState) applyDelta(delta *mtcpv1.MapDelta) error {
 	}
 	if delta.GetServedExits() != nil {
 		state.servedExits = delta.GetServedExits()
+	}
+	if delta.GetExits() != nil {
+		state.exits = delta.GetExits()
 	}
 	if len(delta.GetRelayMap()) != 0 {
 		state.relayMap = bytes.Clone(delta.GetRelayMap())
@@ -285,6 +291,11 @@ func (state *mapState) build(input snapshotInput) (networkmap.Snapshot, error) {
 	}
 	if state.takesServedExits {
 		if snapshot.ServedExits, err = convertServedExits(state.servedExits); err != nil {
+			return networkmap.Snapshot{}, err
+		}
+	}
+	if state.takesExits {
+		if snapshot.Exits, err = convertExits(state.exits); err != nil {
 			return networkmap.Snapshot{}, err
 		}
 	}
@@ -644,6 +655,71 @@ func convertServed(config *mtcpv1.ServedRoutes) ([]networkmap.ServedSite, error)
 		served = append(served, converted)
 	}
 	return served, nil
+}
+
+// convertExits reads the Exit Pools the node may use (mtcp-v1 §7.7);
+// networkmap validates the rest.
+func convertExits(config *mtcpv1.ExitConfig) ([]networkmap.ExitPool, error) {
+	pools := config.GetPools()
+	exits := make([]networkmap.ExitPool, 0, len(pools))
+	for _, pool := range pools {
+		converted := networkmap.ExitPool{
+			Ref: pool.GetPoolRef(), Name: pool.GetName(), Primary: pool.GetPrimary(),
+			Generation: pool.GetGeneration(), Managed: pool.GetManaged(),
+		}
+		switch pool.GetStatus() {
+		case mtcpv1.ExitPool_SERVED:
+			converted.Status = networkmap.ExitServed
+		case mtcpv1.ExitPool_UNSERVED:
+			converted.Status = networkmap.ExitUnserved
+		case mtcpv1.ExitPool_CAPACITY:
+			converted.Status = networkmap.ExitCapacity
+		default:
+			return nil, fmt.Errorf("%w: unknown exit pool status", controlplane.ErrNetmapInvalid)
+		}
+		for _, candidate := range pool.GetCandidates() {
+			next := networkmap.ExitCandidate{DeviceID: candidate.GetDeviceId()}
+			switch candidate.GetState() {
+			case mtcpv1.ExitCandidate_STATE_UNSPECIFIED:
+			case mtcpv1.ExitCandidate_OK:
+				next.State = networkmap.ExitStateOK
+			case mtcpv1.ExitCandidate_DEGRADED:
+				next.State = networkmap.ExitStateDegraded
+			case mtcpv1.ExitCandidate_FAILED:
+				next.State = networkmap.ExitStateFailed
+			default:
+				return nil, fmt.Errorf("%w: unknown exit candidate state", controlplane.ErrNetmapInvalid)
+			}
+			switch candidate.GetFamilies() {
+			case mtcpv1.ExitCandidate_FAMILIES_UNSPECIFIED:
+			case mtcpv1.ExitCandidate_V4:
+				next.IPv4 = true
+			case mtcpv1.ExitCandidate_V6:
+				next.IPv6 = true
+			case mtcpv1.ExitCandidate_BOTH:
+				next.IPv4, next.IPv6 = true, true
+			default:
+				return nil, fmt.Errorf("%w: unknown exit candidate families", controlplane.ErrNetmapInvalid)
+			}
+			for _, raw := range [][]byte{candidate.GetDnsIpv4(), candidate.GetDnsIpv6()} {
+				if len(raw) == 0 {
+					continue
+				}
+				address, ok := netip.AddrFromSlice(raw)
+				if !ok || address.Is4In6() {
+					return nil, fmt.Errorf("%w: malformed exit DNS address", controlplane.ErrNetmapInvalid)
+				}
+				if address.Is4() {
+					next.DNS4 = address
+				} else {
+					next.DNS6 = address
+				}
+			}
+			converted.Candidates = append(converted.Candidates, next)
+		}
+		exits = append(exits, converted)
+	}
+	return exits, nil
 }
 
 // convertServedExits reads the Exit Pool the node serves (mtcp-v1 §7.7);

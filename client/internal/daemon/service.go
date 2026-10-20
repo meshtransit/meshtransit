@@ -160,7 +160,11 @@ type Status struct {
 	RouteSites   []RouteSiteView
 	SubnetRouter dataplane.SubnetRouterStatus
 	// ExitNode is how the node forwards as an exit node.
-	ExitNode        dataplane.ExitNodeStatus
+	ExitNode dataplane.ExitNodeStatus
+	// Exit is the exit node this node sends its Internet traffic to, nil
+	// when it uses none, and ExitRoute what the helper does with it.
+	Exit            *ExitView
+	ExitRoute       dataplane.ExitRouteStatus
 	PathProbes      PathProbeStatus
 	Relay           relay.HealthSnapshot
 	NetworkChanges  NetworkChangeStatus
@@ -380,11 +384,16 @@ type Service struct {
 	enableSubnetRoutes   bool
 	enableSubnetRouter   bool
 	enableExitNode       bool
+	enableExits          bool
 	routeSettingsPath    string
 	restartMarkerPath    string
-	// routeSites is the router of each Site of the current session.
+	// routeSites is the router of each Site of the current session, exit
+	// the exit node used (nil when none is wanted), and exitSticky the
+	// exit node a new session keeps using.
 	routeSitesMu         sync.Mutex
 	routeSites           []RouteSiteView
+	exit                 *ExitView
+	exitSticky           exitSticky
 	loadRouteSettings    func(string) (routesettings.Settings, error)
 	clock                func() time.Time
 	runtimeRetryDelay    func(time.Duration) time.Duration
@@ -453,7 +462,11 @@ type Options struct {
 	// EnableExitNode declares router.exit.v1 and offers to be an exit node
 	// while the settings at RouteSettingsPath turn exit mode on (mtcp-v1
 	// §7.7).
-	EnableExitNode    bool
+	EnableExitNode bool
+	// EnableExits declares routes.exit.v1 and sends the host's Internet
+	// traffic through the Exit Pool the settings at RouteSettingsPath name
+	// (mtcp-v1 §7.7).
+	EnableExits       bool
 	RouteSettingsPath string
 	// RestartMarkerPath, when set, is the file a package upgrade writes just
 	// before it restarts meshd: a stopping router then does not tell Core it
@@ -497,11 +510,11 @@ func New(
 	if options.EnableDeviceAliases && options.DataPlane == nil {
 		return nil, errors.New("daemon: Device aliases require a packet engine")
 	}
-	if (options.EnableSubnetRoutes || options.EnableSubnetRouter || options.EnableExitNode) &&
+	if (options.EnableSubnetRoutes || options.EnableSubnetRouter || options.EnableExitNode || options.EnableExits) &&
 		options.DataPlane == nil {
 		return nil, errors.New("daemon: subnet routes and exit nodes require a packet engine")
 	}
-	if (options.EnableSubnetRouter || options.EnableExitNode) && options.RouteSettingsPath == "" {
+	if (options.EnableSubnetRouter || options.EnableExitNode || options.EnableExits) && options.RouteSettingsPath == "" {
 		return nil, errors.New("daemon: a subnet router or exit node requires its route settings path")
 	}
 	if options.Clock == nil {
@@ -548,6 +561,7 @@ func New(
 		enableSubnetRoutes:   options.EnableSubnetRoutes,
 		enableSubnetRouter:   options.EnableSubnetRouter,
 		enableExitNode:       options.EnableExitNode,
+		enableExits:          options.EnableExits,
 		routeSettingsPath:    options.RouteSettingsPath,
 		restartMarkerPath:    options.RestartMarkerPath,
 		loadRouteSettings:    routesettings.Load,
@@ -767,11 +781,29 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		if s.enableSubnetRoutes {
 			routeSelection = make(chan []controlplane.RouteSiteSelection, 1)
 		}
+		// The exit node used (exit node design §9), from the host's settings
+		// and the last session's choice.
+		var exitSelection chan controlplane.RouteExitSelection
+		readExitPreference := func() (exitPreference, bool) {
+			return exitPreferenceOf(s.loadRouteSettings, s.routeSettingsPath, s.logger)
+		}
+		if s.enableExits {
+			exitSelection = make(chan controlplane.RouteExitSelection, 1)
+			// Unreadable settings start with none: the helper's kill switch
+			// holds meanwhile, and the next read applies them.
+			preference, _ := readExitPreference()
+			failover.seedExit(preference, s.exitStickySnapshot())
+		}
 		publishRouteSelection := func() {
 			reports, views := failover.selections()
 			s.setRouteSites(views)
 			if routeSelection != nil {
 				offerLatest(routeSelection, reports)
+			}
+			if exitSelection != nil {
+				report, view, sticky := failover.exitSelection()
+				s.setExit(view, sticky)
+				offerLatest(exitSelection, report)
 			}
 		}
 		if dataPlane, supported := s.dataPlane.(peerProbeDataPlane); supported {
@@ -845,42 +877,47 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		stopFailover := func() {}
 		if activityPlane, supported := s.dataPlane.(routedActivityDataPlane); supported {
 			failoverCtx, failoverCancel := context.WithCancel(streamCtx)
-			failoverDone := make(chan struct{})
-			go func() {
-				defer close(failoverDone)
+			var failoverWorkers sync.WaitGroup
+			applyLocalChoices := func() error {
+				s.dataPlaneMu.Lock()
+				// Under the lock: the map callback applies maps under it too,
+				// so this is the newest map with the local choices.
+				current := failover.current()
+				if current.Revision == 0 {
+					s.dataPlaneMu.Unlock()
+					return nil
+				}
+				_, err := s.dataPlane.Apply(failoverCtx, current, privateKey)
+				if err == nil {
+					publishRouteSelection()
+				}
+				s.dataPlaneMu.Unlock()
+				if err != nil && failoverCtx.Err() != nil {
+					return err // the session is ending: nothing to recover
+				}
+				if err != nil {
+					cancelStream(fmt.Errorf("%w: applying a local router choice: %w", errRuntimeRecovery, err))
+					return err
+				}
+				s.logger.Info("local router and exit choices changed; Sites not listed follow Core",
+					"choices", failover.choices())
+				return nil
+			}
+			failoverWorkers.Go(func() {
 				runRouteFailover(failoverCtx, failover, func() []dataplane.RoutedActivity {
 					s.dataPlaneMu.Lock()
 					defer s.dataPlaneMu.Unlock()
 					return activityPlane.RoutedActivity()
-				}, func() error {
-					s.dataPlaneMu.Lock()
-					// Under the lock: the map callback applies maps under it too,
-					// so this is the newest map with the local choices.
-					current := failover.current()
-					if current.Revision == 0 {
-						s.dataPlaneMu.Unlock()
-						return nil
-					}
-					_, err := s.dataPlane.Apply(failoverCtx, current, privateKey)
-					if err == nil {
-						publishRouteSelection()
-					}
-					s.dataPlaneMu.Unlock()
-					if err != nil && failoverCtx.Err() != nil {
-						return err // the session is ending: nothing to recover
-					}
-					if err != nil {
-						cancelStream(fmt.Errorf("%w: applying a local router choice: %w", errRuntimeRecovery, err))
-						return err
-					}
-					s.logger.Info("local router choices changed; Sites not listed follow Core",
-						"choices", failover.choices())
-					return nil
+				}, applyLocalChoices)
+			})
+			if s.enableExits {
+				failoverWorkers.Go(func() {
+					watchExitPreference(failoverCtx, failover, readExitPreference, routeOfferPoll, applyLocalChoices)
 				})
-			}()
+			}
 			stopFailover = func() {
 				failoverCancel()
-				<-failoverDone
+				failoverWorkers.Wait()
 			}
 		}
 		dnsRetries := &dnsRetry{}
@@ -890,6 +927,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			// Before the private key is cleared: it applies maps with it.
 			stopFailover()
 			s.setRouteSites(nil)
+			s.clearExit()
 			stopPathStats()
 			s.setLocalEndpointSink(nil)
 			if probeRuntime != nil {
@@ -965,6 +1003,8 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					EnableSubnetRoutes:  s.enableSubnetRoutes,
 					EnableSubnetRouter:  s.enableSubnetRouter,
 					EnableExitNode:      s.enableExitNode,
+					EnableExits:         s.enableExits,
+					ExitSelection:       exitSelection,
 					HostOffers:          hostOffers,
 					ExitHealth:          exitHealth,
 					RouteHealth:         routeHealth,
@@ -2200,6 +2240,8 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		RouteSites:         s.routeSitesSnapshot(),
 		SubnetRouter:       s.subnetRouterStatus(),
 		ExitNode:           s.exitNodeStatus(),
+		Exit:               s.exitSnapshot(),
+		ExitRoute:          s.exitRouteStatus(),
 		PathProbes:         s.pathProbeStatus(),
 		Relay:              relayStatus,
 		NetworkChanges: NetworkChangeStatus{

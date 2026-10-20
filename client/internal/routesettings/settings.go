@@ -19,6 +19,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -69,7 +72,22 @@ type Settings struct {
 	// ask of the exit node; zero is the default.
 	ExitConntrackPerConsumerMax int
 	ExitMaxConsumers            int
+	// ExitUse is the Exit Pool this host sends its Internet traffic
+	// through: a pool reference or name, ExitUseAuto, or empty for none.
+	ExitUse string
+	// ExitAllowLAN keeps the host's attached private subnets off the exit
+	// node while it uses one (exit node design §6.2).
+	ExitAllowLAN bool
+	// ExitAllowManaged lets the administrator choose the pool for this host
+	// (a pool Core marks managed) when ExitUse is empty.
+	ExitAllowManaged bool
 }
+
+// ExitUseAuto picks the nearest pool Core grants and keeps it.
+const ExitUseAuto = "auto"
+
+// maximumExitUse bounds the ExitUse text: a pool reference or name.
+const maximumExitUse = 64
 
 type document struct {
 	AcceptRoutes                bool     `json:"accept_routes"`
@@ -80,6 +98,9 @@ type document struct {
 	ExitSMTPAllowed             bool     `json:"exit_smtp_allowed,omitempty"`
 	ExitConntrackPerConsumerMax int      `json:"exit_conntrack_per_consumer_max,omitempty"`
 	ExitMaxConsumers            int      `json:"exit_max_consumers,omitempty"`
+	ExitUse                     string   `json:"exit_use,omitempty"`
+	ExitAllowLAN                bool     `json:"exit_allow_lan,omitempty"`
+	ExitAllowManaged            bool     `json:"exit_allow_managed,omitempty"`
 }
 
 // ExitConntrackLimit is the connections one consumer may hold through this
@@ -118,6 +139,10 @@ func (settings Settings) Validate() error {
 	}
 	if consumers := settings.ExitMaxConsumers; consumers < 0 || consumers > MaximumExitConsumers {
 		return fmt.Errorf("%w: exit consumer limit outside 1..%d", ErrInvalid, MaximumExitConsumers)
+	}
+	if use := settings.ExitUse; len(use) > maximumExitUse || !utf8.ValidString(use) ||
+		strings.IndexFunc(use, unicode.IsControl) >= 0 || strings.TrimSpace(use) != use {
+		return fmt.Errorf("%w: exit pool name is invalid", ErrInvalid)
 	}
 	if len(settings.AdvertiseRoutes) > MaximumAdvertised {
 		return fmt.Errorf("%w: more than %d advertised routes", ErrInvalid, MaximumAdvertised)
@@ -183,6 +208,7 @@ func Decode(encoded []byte) (Settings, error) {
 		AcceptRoutes: value.AcceptRoutes, AcceptPublicRoutes: value.AcceptPublicRoutes,
 		RouterMode: value.RouterMode, ExitMode: value.ExitMode, ExitSMTPAllowed: value.ExitSMTPAllowed,
 		ExitConntrackPerConsumerMax: value.ExitConntrackPerConsumerMax, ExitMaxConsumers: value.ExitMaxConsumers,
+		ExitUse: value.ExitUse, ExitAllowLAN: value.ExitAllowLAN, ExitAllowManaged: value.ExitAllowManaged,
 	}
 	for _, text := range value.AdvertiseRoutes {
 		prefix, err := netip.ParsePrefix(text)
@@ -208,6 +234,7 @@ func Encode(settings Settings) ([]byte, error) {
 		RouterMode: settings.RouterMode, AdvertiseRoutes: make([]string, len(settings.AdvertiseRoutes)),
 		ExitMode: settings.ExitMode, ExitSMTPAllowed: settings.ExitSMTPAllowed,
 		ExitConntrackPerConsumerMax: settings.ExitConntrackPerConsumerMax, ExitMaxConsumers: settings.ExitMaxConsumers,
+		ExitUse: settings.ExitUse, ExitAllowLAN: settings.ExitAllowLAN, ExitAllowManaged: settings.ExitAllowManaged,
 	}
 	for index, prefix := range settings.AdvertiseRoutes {
 		value.AdvertiseRoutes[index] = prefix.String()

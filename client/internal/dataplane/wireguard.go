@@ -310,6 +310,10 @@ type WireGuardEngine struct {
 	exitStatus ExitNodeStatus
 	// exitHealth measures the served pool while the map has one.
 	exitHealth exitHealthLoop
+	// exitRoute keeps the helper's exit route and kill switch in step with
+	// the exit node chosen; exitRouteStatus is what the helper did with it.
+	exitRoute       helperSync[exitRouteDesired, netadmin.ExitRouting]
+	exitRouteStatus ExitRouteStatus
 	// routerHealth measures the served Sites while the node serves any.
 	routerHealth routerHealth
 	// enforcementChanges signals enforced policy changes no map carried.
@@ -435,6 +439,7 @@ func (e *WireGuardEngine) Apply(
 	e.syncRoutedLocked(routed.allPrefixes())
 	e.syncServedLocked(snapshot.Served)
 	e.syncServedExitLocked(snapshot.ServedExits)
+	e.syncExitRouteLocked(routed)
 	e.filter.resume()
 	return state, nil
 }
@@ -1426,6 +1431,7 @@ func (e *WireGuardEngine) closeLocked() error {
 	e.resetRoutedLocked()
 	e.resetServedLocked()
 	e.resetServedExitLocked()
+	e.resetExitRouteLocked()
 	if e.device == nil {
 		e.forgetLazyPeers()
 		return nil

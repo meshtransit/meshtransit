@@ -34,6 +34,14 @@ func NewServer(options ServerOptions) (*Server, error) {
 				server.logger.Warn("clearing subnet forwarding left by a previous run failed", "error", err)
 			}
 		}
+		if options.Routed.ExitTable != 0 {
+			server.exitRouteConfigurer = newKernelExitRouteConfigurer(*options.Routed, options.AllowedUID)
+			// A kill switch a previous run left stays while root's settings
+			// name a pool, and is installed if missing; otherwise it goes.
+			if err := server.startExitRoute(); err != nil {
+				return nil, fmt.Errorf("netadmin: clearing the exit route left by a previous run: %w", err)
+			}
+		}
 	}
 	return server, nil
 }
@@ -41,4 +49,18 @@ func NewServer(options ServerOptions) (*Server, error) {
 // validConfiguredInterfaceName requires the fixed mesh* names root chose.
 func validConfiguredInterfaceName(name string) bool {
 	return validInterfaceName(name) && name[:4] == "mesh"
+}
+
+// startExitRoute takes over what a previous run left: the kill switch stays
+// while root's settings name a pool, and goes otherwise.
+func (s *Server) startExitRoute() error {
+	if s.exitRouteConfigurer == nil {
+		return nil
+	}
+	settings, err := s.loadSettings(s.routed.SettingsPath)
+	if err == nil && settings.ExitUse == "" {
+		return s.exitRouteConfigurer.Clear()
+	}
+	s.applyExitRoute()
+	return nil
 }

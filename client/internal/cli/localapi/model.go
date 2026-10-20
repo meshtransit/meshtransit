@@ -35,6 +35,7 @@ type Status struct {
 	SubnetRoutes       *SubnetRouteStatus     `json:"subnet_routes,omitempty"`
 	SubnetRouter       *SubnetRouterStatus    `json:"subnet_router,omitempty"`
 	ExitNode           *ExitNodeStatus        `json:"exit_node,omitempty"`
+	Exit               *ExitStatus            `json:"exit,omitempty"`
 	PathProbes         *PathProbeStatus       `json:"path_probes,omitempty"`
 	Relay              RelayStatus            `json:"relay"`
 	NetworkChanges     NetworkChangeStatus    `json:"network_changes"`
@@ -185,6 +186,20 @@ type SubnetRouteSite struct {
 	Router     string   `json:"router,omitempty"`
 	RouterName string   `json:"router_name,omitempty"`
 	Via        string   `json:"via"`
+}
+
+// ExitStatus is the exit node the node sends its Internet traffic to.
+type ExitStatus struct {
+	Use          string `json:"use"`
+	Pool         string `json:"pool,omitempty"`
+	PoolName     string `json:"pool_name,omitempty"`
+	ExitNode     string `json:"exit_node,omitempty"`
+	ExitNodeName string `json:"exit_node_name,omitempty"`
+	Via          string `json:"via"`
+	IPv6         bool   `json:"ipv6"`
+	Routing      bool   `json:"routing"`
+	Refused      string `json:"refused,omitempty"`
+	Error        string `json:"error,omitempty"`
 }
 
 // ExitNodeStatus is how the node forwards as an exit node.

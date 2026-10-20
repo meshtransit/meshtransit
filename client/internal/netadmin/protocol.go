@@ -45,6 +45,11 @@ const (
 	// serves, or stops it (mtcp-v1 §7.7); the helper forwards only while its
 	// local settings turn exit mode on, within their limits.
 	operationSetServedExit = "set_served_exit"
+	// operationSetExitRoute sends the host's Internet traffic into the mesh
+	// through the exit node meshd chose, behind a kill switch, or stops
+	// (exit node design §6); the helper does so only while its local
+	// settings say the host uses an exit node.
+	operationSetExitRoute = "set_exit_route"
 	// maxExitExcluded bounds the host addresses meshd learned that are no
 	// Internet (its public addresses).
 	maxExitExcluded   = 64
@@ -130,6 +135,10 @@ type request struct {
 	Exit          bool `json:"exit,omitempty"`
 	ExitConntrack int  `json:"exit_conntrack,omitempty"`
 	ExitSMTP      bool `json:"exit_smtp,omitempty"`
+	// With set_exit_route: ExitRoute whether the host sends its Internet
+	// traffic into the mesh, and ExitRouteIPv6 whether IPv6 too.
+	ExitRoute     bool `json:"exit_route,omitempty"`
+	ExitRouteIPv6 bool `json:"exit_route_ipv6,omitempty"`
 }
 
 type response struct {
@@ -159,6 +168,10 @@ type response struct {
 	ExitSMTP         bool   `json:"exit_smtp,omitempty"`
 	ExitMaxConsumers int    `json:"exit_max_consumers,omitempty"`
 	ExitRefused      string `json:"exit_refused,omitempty"`
+	// Answer set_exit_route: whether the host's Internet traffic goes into
+	// the mesh, or why not.
+	ExitRouting      bool   `json:"exit_routing,omitempty"`
+	ExitRouteRefused string `json:"exit_route_refused,omitempty"`
 }
 
 // Reasons the helper does not forward as an exit node.
@@ -168,6 +181,35 @@ const (
 	// ExitRefusedFailed: forwarding could not be installed.
 	ExitRefusedFailed = "install_failed"
 )
+
+// Reasons the helper does not route the host's Internet traffic into the
+// mesh.
+const (
+	// ExitRouteRefusedOff: the host's settings name no exit node to use.
+	ExitRouteRefusedOff = "exit_use_off"
+	// ExitRouteRefusedFailed: the routes or the kill switch could not be
+	// installed.
+	ExitRouteRefusedFailed = "install_failed"
+)
+
+// ExitRouteRequest is what meshd asks of the helper for the exit node it
+// uses.
+type ExitRouteRequest struct {
+	// Use is false to stop sending the Internet into the mesh.
+	Use bool
+	// IPv6 sends IPv6 into the mesh too; otherwise IPv6 to the Internet is
+	// refused at once.
+	IPv6 bool
+}
+
+// ExitRouting is whether the helper routes the host's Internet traffic into
+// the mesh, behind its kill switch, or why not.
+type ExitRouting struct {
+	Routing bool
+	// Refused is ExitRouteRefusedOff or ExitRouteRefusedFailed when not
+	// routing a requested exit; empty otherwise.
+	Refused string
+}
 
 // ExitRequest is what meshd asks of the helper for the Exit Pool it serves.
 type ExitRequest struct {
@@ -291,6 +333,7 @@ type validatedRequest struct {
 	routed    []netip.Prefix
 	served    servedRequest
 	exit      ExitRequest
+	exitRoute ExitRouteRequest
 }
 
 func validateRequest(value request) (validatedRequest, error) {
@@ -302,6 +345,9 @@ func validateRequest(value request) (validatedRequest, error) {
 	}
 	if (value.Exit || value.ExitConntrack != 0 || value.ExitSMTP) && value.Operation != operationSetServedExit {
 		return validatedRequest{}, fmt.Errorf("%w: unexpected exit fields", ErrProtocol)
+	}
+	if (value.ExitRoute || value.ExitRouteIPv6) && value.Operation != operationSetExitRoute {
+		return validatedRequest{}, fmt.Errorf("%w: unexpected exit route fields", ErrProtocol)
 	}
 
 	switch value.Operation {
@@ -348,6 +394,14 @@ func validateRequest(value request) (validatedRequest, error) {
 		return validatedRequest{operation: value.Operation, routed: routed}, nil
 	case operationSetServedExit:
 		return validateExitRequest(value)
+	case operationSetExitRoute:
+		if value.Addresses != nil || value.Routes != nil || hasDNSRequestFields(value) ||
+			(value.ExitRouteIPv6 && !value.ExitRoute) {
+			return validatedRequest{}, fmt.Errorf("%w: exit route fields are invalid", ErrProtocol)
+		}
+		return validatedRequest{operation: value.Operation, exitRoute: ExitRouteRequest{
+			Use: value.ExitRoute, IPv6: value.ExitRouteIPv6,
+		}}, nil
 	case operationCheckServed:
 		if value.Addresses != nil || value.Routes != nil || hasDNSRequestFields(value) {
 			return validatedRequest{}, fmt.Errorf("%w: served route check fields are invalid", ErrProtocol)
@@ -430,12 +484,25 @@ func validExitResponse(value response, operation string) bool {
 		value.ExitMaxConsumers >= 1 && value.ExitMaxConsumers <= routesettings.MaximumExitConsumers
 }
 
+// validExitRouteResponse accepts exit route fields only on set_exit_route:
+// routing, or a known reason it does not.
+func validExitRouteResponse(value response, operation string) bool {
+	if operation != operationSetExitRoute {
+		return !value.ExitRouting && value.ExitRouteRefused == ""
+	}
+	return value.ExitRouteRefused == "" || (!value.ExitRouting &&
+		(value.ExitRouteRefused == ExitRouteRefusedOff || value.ExitRouteRefused == ExitRouteRefusedFailed))
+}
+
 func validateResponse(value response, operation string) error {
 	if value.Version != protocolVersion {
 		return fmt.Errorf("%w: unsupported protocol version", ErrProtocol)
 	}
 	if !validExitResponse(value, operation) {
 		return fmt.Errorf("%w: unexpected exit fields", ErrProtocol)
+	}
+	if !validExitRouteResponse(value, operation) {
+		return fmt.Errorf("%w: unexpected exit route fields", ErrProtocol)
 	}
 	listsRoutes := operation == operationSetRouted || operation == operationSetServed || operation == operationCheckServed
 	if operation != operationCheckServed && (value.Problems != nil || value.ConntrackCount != 0 ||
@@ -468,7 +535,7 @@ func validateResponse(value response, operation string) error {
 				value.Addresses != nil || value.Routes != nil || value.Refused != nil {
 				return fmt.Errorf("%w: malformed dns response", ErrProtocol)
 			}
-		case operationSetServedExit:
+		case operationSetServedExit, operationSetExitRoute:
 			if value.InterfaceName != "" || value.Resolver != "" || value.MTU != 0 ||
 				value.Addresses != nil || value.Routes != nil {
 				return fmt.Errorf("%w: malformed exit response", ErrProtocol)

@@ -49,7 +49,7 @@ Service identities:
 
 `meshd` starts with `--allow-socket-peers --enable-data-plane
 --wireguard-listen-port=41641 --enable-dns --enable-device-aliases
---enable-subnet-routes`, plus
+--enable-subnet-routes --enable-exits`, plus
 `MESHD_FLAGS` from `/etc/meshd/meshd.env` (for example `--log-level=debug`,
 `--port-mapping=off`, `--cloud-metadata=off`). Both long-running units are
 `Type=notify`: `systemctl start` returns once each has bound its socket, and
@@ -89,6 +89,45 @@ link-local (cloud metadata) or other special ranges, the mesh, its own
 addresses, the subnets it is attached to or its gateways, whatever Core
 sends. Every source is translated to the machine's own address. `routes
 exit-mode off` stops forwarding within seconds.
+
+## Use an exit node
+
+A Linux machine sends its Internet traffic through an Exit Pool its rules
+grant only once root chooses one; nothing changes until then:
+
+```bash
+sudo /usr/libexec/meshtransit/meshnetd routes exit-use POOL   # a pool's reference or name
+sudo /usr/libexec/meshtransit/meshnetd routes exit-use auto   # the first pool Core serves, kept
+sudo /usr/libexec/meshtransit/meshnetd routes exit-use off
+```
+
+`meshctl status` shows the exit node used on its `Exit` line. While a pool
+is chosen the machine fails closed: traffic to the Internet goes into the
+mesh or nowhere, also while no exit node of the pool can carry it, the pool
+is not granted, or `meshd` is down. Mesh Devices and Sites keep their own
+routes. What still leaves by the machine's own networks:
+
+- `meshd`'s own connections to Core, relays and peers;
+- replies to connections opened from outside (a server keeps its SSH);
+- DHCP, IPv6 neighbour discovery, and local bridges without a physical port
+  (Docker, libvirt);
+- the attached private subnets, only after `routes exit-allow-lan on`.
+
+DNS does not go through the exit node yet: names resolve only when the
+machine's resolver is in an allowed LAN (`exit-allow-lan on`). Containers
+and VMs on the machine also go through the exit node. IPv6 goes
+through it only when the exit node has IPv6; otherwise it is refused at once.
+`routes exit-allow-managed on` lets an administrator choose the pool (one
+Core marks managed) while `exit-use` is off.
+
+The kill switch is held by `meshnetd` from root's `exit-use` alone: neither
+`meshd` nor Core can lift it, and it stays while `meshd` or `meshnetd` are
+stopped, restarted or upgraded, and before the first map. `routes exit-use
+off` removes it within seconds; removing the package removes it too. If the
+machine stays offline with no helper running, root removes it with
+`sudo /usr/libexec/meshtransit/meshnetd --release-exit`. A pool chosen by the
+administrator (`exit-allow-managed`) is the exception: Core decides when it
+applies.
 
 ## Install, upgrade, roll back
 

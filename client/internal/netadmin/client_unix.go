@@ -469,6 +469,29 @@ func (c *Client) SetServedExit(ctx context.Context, exit ExitRequest) (ExitServi
 	return serving, nil
 }
 
+// SetExitRoute sends the host's Internet traffic into the mesh, behind the
+// helper's kill switch, or stops (exit node design §6). The helper does so
+// only while the host's settings say it uses an exit node, and reports why
+// it does not otherwise; while root names a pool it keeps routing into the
+// mesh even when asked to stop.
+func (c *Client) SetExitRoute(ctx context.Context, route ExitRouteRequest) (ExitRouting, error) {
+	if c == nil {
+		return ExitRouting{}, errors.New("netadmin: client is not initialized")
+	}
+	value, descriptors, err := c.exchange(ctx, request{
+		Version: protocolVersion, Operation: operationSetExitRoute,
+		ExitRoute: route.Use, ExitRouteIPv6: route.Use && route.IPv6,
+	})
+	closeDescriptors(descriptors)
+	if err != nil {
+		return ExitRouting{}, err
+	}
+	if len(descriptors) != 0 {
+		return ExitRouting{}, fmt.Errorf("%w: exit route response included descriptors", ErrProtocol)
+	}
+	return ExitRouting{Routing: value.ExitRouting, Refused: value.ExitRouteRefused}, nil
+}
+
 func exitServingOf(value response) ExitServing {
 	return ExitServing{
 		Serving: value.ExitServing, ConntrackPerConsumer: value.ExitConntrack, SMTP: value.ExitSMTP,

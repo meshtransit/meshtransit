@@ -14,5 +14,11 @@ case "$1" in
             fi
             deb-systemd-invoke stop meshd.service meshnetd.service meshcred.service >/dev/null || true
         fi
+        # The helper keeps its exit kill switch while root's settings name an
+        # exit pool, also when it stops: a removed package must not leave the
+        # host offline.
+        if [ -z "${DPKG_ROOT:-}" ] && [ -x /usr/libexec/meshtransit/meshnetd ]; then
+            /usr/libexec/meshtransit/meshnetd --release-exit >/dev/null 2>&1 || true
+        fi
         ;;
 esac

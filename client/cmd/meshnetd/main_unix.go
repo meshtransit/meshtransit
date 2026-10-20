@@ -49,6 +49,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	dnsPort := flags.Uint64("dns-port", 1053, "unprivileged local dns service port")
 	platform := registerPlatformFlags(flags)
 	showVersion := flags.Bool("version", false, "print version and exit")
+	releaseExit := flags.Bool("release-exit", false,
+		"remove the exit route and kill switch a stopped helper left, then exit; pass the helper's flags")
 	routesFile := flags.String("routes-file", config.DefaultRouteSettingsPath,
 		"root-owned subnet route settings (meshnetd routes)")
 	allowedPrefixes := prefixList{}
@@ -91,6 +93,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, "meshnetd: root privileges are required")
 
 		return 1
+	}
+	if *releaseExit {
+		if err := platform.releaseExit(*routesFile); err != nil {
+			_, _ = fmt.Fprintf(stderr, "meshnetd: releasing the exit route: %v\n", err)
+			return 1
+		}
+		_, _ = fmt.Fprintln(stdout, "exit route and kill switch removed")
+		return 0
 	}
 	resolvedUID, err := resolveAllowedUID(hasAllowedUID, allowedUID, *allowedUser, lookupLocalUser)
 	if err != nil {
