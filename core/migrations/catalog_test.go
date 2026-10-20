@@ -5690,8 +5690,10 @@ func TestMigration197ExplainsSiteAddresses(t *testing.T) {
 	for _, want := range []string{
 		"CREATE FUNCTION mesh_ops.explain_site_access_v1(",
 		"'policy.explain', p_evaluated_at",
-		"mesh_ops.selector_devices_internal_v1(scoped_workspace, scoped_network)",
-		"WHERE prefix >>= p_destination_address",
+		"CREATE FUNCTION mesh_ops.explain_site_rules_internal_v1(",
+		"WHERE router.site_id = p_site_id AND router.device_id = p_source_id",
+		"'route.read', p_evaluated_at",
+		"AND prefix >>= p_destination_address",
 		"'selector_kind', 'site'",
 		") TO mesh_runtime;",
 	} {

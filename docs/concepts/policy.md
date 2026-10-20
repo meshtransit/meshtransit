@@ -321,15 +321,18 @@ an inactive source or destination, a share that is not active yet or has
 ended, or no matching rule. Every answer carries the revisions it was
 computed at.
 
-For `destination_address`, the target is the active Site whose prefixes hold
-the address (`target.site_id`, context `kind` `site`); when no Site holds it
-the target is `missing` and the deny reason is `target_inactive`. A path is a
-rule to that Site whose source holds the Device now, whose granted prefixes
-hold the address and whose protocol and ports match; it names the Site
-(`destination_site_id`), the prefixes the rule grants
-(`destination_prefixes`) and, as `projection_id`, the compiled route rule.
-Explain answers what policy allows: whether a router of the Site is up is
-shown on the Site.
+For `destination_address`, the target is an active Site whose prefixes hold
+the address (`target.site_id`, context `kind` `site`): one with a matching
+rule if any, else the one with the longest prefix holding it. When no Site
+holds it the target is `missing` and the deny reason is `target_inactive`. A
+path is a rule to that Site whose source holds the Device now, whose granted
+prefixes hold the address and whose protocol and ports match; it names the
+Site (`destination_site_id`), the prefixes the rule grants
+(`destination_prefixes`) and, as `projection_id`, the compiled route rule. As
+in maps, a rule grants nothing to a Device that is one of the Site's routers.
+The Site's name is returned only to callers that also hold `route.read`.
+Explain answers what policy allows: whether a router of the Site can serve
+the Device is shown on the Site.
 
 ## Not yet
 

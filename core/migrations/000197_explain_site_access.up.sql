@@ -2,16 +2,59 @@
 --
 -- explain_site_access_v1 asks the same question explain_active_policy_v4
 -- asks of a Device or Resource, with an address as the destination: may this
--- Device reach this address with this protocol and port? The target is the
--- active Site whose prefixes hold the address (Sites of a Network never
--- overlap); with none it is missing. Paths are the active release's route
--- rules to that Site whose source holds the Device now (the shared selector
--- resolver maps use), whose granted prefixes hold the address and whose
--- protocol and ports match. Route rules carry no compiled edge: a path names
--- the route rule's own identity as its projection.
+-- Device reach this address with this protocol and port? Paths are the active
+-- release's route rules to a Site that holds the address whose source holds
+-- the Device now, whose granted prefixes hold the address and whose protocol
+-- and ports match. Route rules carry no compiled edge: a path names the route
+-- rule's own identity as its projection.
+--
+-- It resolves only the source Device's own memberships, with the rules of
+-- selector_devices_internal_v1 (active groups and tags; Identity Groups for
+-- an untagged Device of an active owner with an active Workspace
+-- membership), so its cost does not grow with the Network. Like maps, a rule
+-- does not grant a Site to a Device that is one of the Site's routers.
+--
+-- Sites may overlap. The target is the active Site holding the address that
+-- has a matching rule, else the one with the longest prefix holding it, then
+-- the lowest identity; with none the target is missing. The Site's name is
+-- returned only to a caller that may also read routes (route.read).
 --
 -- The result keeps the columns of explain_active_policy_v4, with the Site in
 -- the place of the target Device, so one reader decodes both.
+
+-- The rules of one release to one Site that grant p_address to the source
+-- Device, given its memberships.
+CREATE FUNCTION mesh_ops.explain_site_rules_internal_v1(
+    p_release_id BIGINT, p_site_id BIGINT, p_source_id BIGINT,
+    p_device_groups BIGINT[], p_identity_groups BIGINT[], p_tags BIGINT[],
+    p_address INET, p_protocol TEXT, p_port INTEGER
+)
+RETURNS SETOF mesh.compiled_policy_route_rule
+LANGUAGE sql
+STABLE
+SET search_path = pg_catalog
+AS $function$
+    SELECT rule.*
+    FROM mesh.compiled_policy_route_rule AS rule
+    WHERE rule.policy_release_id = p_release_id
+      AND rule.destination_site_id = p_site_id
+      AND rule.protocol = p_protocol
+      AND ((p_protocol = 'icmp' AND pg_catalog.isempty(rule.destination_ports))
+           OR (p_protocol <> 'icmp' AND rule.destination_ports @> p_port))
+      AND EXISTS (SELECT 1 FROM pg_catalog.unnest(rule.prefixes) AS prefix WHERE prefix >>= p_address)
+      AND (rule.source_device_id = p_source_id
+           OR rule.source_device_group_id = ANY (p_device_groups)
+           OR rule.source_identity_group_id = ANY (p_identity_groups)
+           OR rule.source_device_tag_id = ANY (p_tags))
+      AND NOT EXISTS (
+          SELECT 1 FROM mesh.network_site_router AS router
+          WHERE router.site_id = p_site_id AND router.device_id = p_source_id
+      )
+$function$;
+
+REVOKE ALL ON FUNCTION mesh_ops.explain_site_rules_internal_v1(
+    BIGINT, BIGINT, BIGINT, BIGINT[], BIGINT[], BIGINT[], INET, TEXT, INTEGER
+) FROM PUBLIC, mesh_runtime, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;
 
 CREATE FUNCTION mesh_ops.explain_site_access_v1(
     p_session_public_id UUID, p_deployment_public_id UUID, p_principal_public_id UUID,
@@ -47,8 +90,14 @@ DECLARE
     v_compiler_format_version INTEGER;
     v_semantic_hash BYTEA;
     v_source_id BIGINT;
+    v_source_owner BIGINT;
     source_name TEXT;
     source_state TEXT;
+    v_device_groups BIGINT[] := '{}';
+    v_identity_groups BIGINT[] := '{}';
+    v_tags BIGINT[] := '{}';
+    v_tagged BOOLEAN := FALSE;
+    v_evaluate BOOLEAN;
     v_site_id BIGINT;
     v_site_public_id UUID;
     site_name TEXT;
@@ -103,30 +152,70 @@ BEGIN
       AND release.policy_revision = revision.policy_revision
       AND release.state = 'active';
 
-    SELECT device.id, device.hostname,
+    SELECT device.id, device.owner_principal_id, device.hostname,
         CASE WHEN device.state = 'active' AND device.deleted_at IS NULL
                   AND device.expires_at > p_evaluated_at THEN 'active'
              ELSE 'inactive' END
-    INTO v_source_id, source_name, source_state
+    INTO v_source_id, v_source_owner, source_name, source_state
     FROM mesh.device AS device
     WHERE device.workspace_id = scoped_workspace
       AND device.network_id = scoped_network
       AND device.public_id = p_source_device_public_id;
+    v_evaluate := v_release_id IS NOT NULL AND source_state = 'active';
 
-    SELECT network_site.id, network_site.public_id, network_site.name
+    IF v_evaluate THEN
+        SELECT COALESCE(pg_catalog.array_agg(member.device_group_id), '{}')
+        INTO v_device_groups
+        FROM mesh.device_group_member AS member
+        JOIN mesh.device_group AS device_group
+          ON device_group.id = member.device_group_id AND device_group.state = 'active'
+        WHERE member.workspace_id = scoped_workspace AND member.network_id = scoped_network
+          AND member.device_id = v_source_id;
+        SELECT COALESCE(pg_catalog.array_agg(assignment.device_tag_id)
+                   FILTER (WHERE tag.state = 'active'), '{}'),
+               pg_catalog.count(*) > 0
+        INTO v_tags, v_tagged
+        FROM mesh.device_tag_assignment AS assignment
+        JOIN mesh.device_tag AS tag ON tag.id = assignment.device_tag_id
+        WHERE assignment.device_id = v_source_id;
+        IF NOT v_tagged AND v_source_owner IS NOT NULL THEN
+            SELECT COALESCE(pg_catalog.array_agg(member.identity_group_id), '{}')
+            INTO v_identity_groups
+            FROM mesh.identity_group_member AS member
+            JOIN mesh.identity_group AS identity_group
+              ON identity_group.id = member.identity_group_id AND identity_group.state = 'active'
+            JOIN mesh.principal AS principal
+              ON principal.id = member.principal_id AND principal.state = 'active' AND principal.deleted_at IS NULL
+            JOIN mesh.workspace_membership AS membership
+              ON membership.workspace_id = scoped_workspace AND membership.principal_id = principal.id
+             AND membership.state = 'active'
+             AND (membership.expires_at IS NULL OR membership.expires_at > pg_catalog.transaction_timestamp())
+            WHERE member.workspace_id = scoped_workspace AND member.principal_id = v_source_owner;
+        END IF;
+    END IF;
+
+    SELECT holding.id, holding.public_id, holding.name
     INTO v_site_id, v_site_public_id, site_name
-    FROM mesh.network_site AS network_site
-    WHERE network_site.workspace_id = scoped_workspace
-      AND network_site.network_id = scoped_network
-      AND network_site.state = 'active'
-      AND EXISTS (
-          SELECT 1 FROM pg_catalog.unnest(network_site.prefixes) AS prefix
-          WHERE prefix >>= p_destination_address
-      )
-    ORDER BY network_site.public_id
+    FROM (
+        SELECT network_site.id, network_site.public_id, network_site.name,
+               pg_catalog.max(pg_catalog.masklen(prefix)) AS bits
+        FROM mesh.network_site AS network_site
+        CROSS JOIN LATERAL pg_catalog.unnest(network_site.prefixes) AS prefix
+        WHERE network_site.workspace_id = scoped_workspace
+          AND network_site.network_id = scoped_network
+          AND network_site.state = 'active'
+          AND prefix >>= p_destination_address
+        GROUP BY network_site.id, network_site.public_id, network_site.name
+    ) AS holding
+    ORDER BY v_evaluate AND EXISTS (
+                 SELECT 1 FROM mesh_ops.explain_site_rules_internal_v1(
+                     v_release_id, holding.id, v_source_id, v_device_groups, v_identity_groups, v_tags,
+                     p_destination_address, p_protocol, p_destination_port)
+             ) DESC,
+             holding.bits DESC, holding.public_id
     LIMIT 1;
 
-    IF v_release_id IS NOT NULL AND source_state = 'active' AND v_site_id IS NOT NULL THEN
+    IF v_evaluate AND v_site_id IS NOT NULL THEN
         SELECT COALESCE(pg_catalog.jsonb_agg(path.value ORDER BY path.rule_id, path.projection_id), '[]'::JSONB)
         INTO v_paths
         FROM (
@@ -147,40 +236,33 @@ BEGIN
                        'selector_kind', 'site',
                        'destination_site_id', v_site_public_id,
                        'destination_prefixes', ARRAY(
-                           SELECT prefix::TEXT
-                           FROM pg_catalog.unnest(rule.prefixes) AS prefix
-                           ORDER BY prefix),
+                           SELECT prefix::TEXT FROM pg_catalog.unnest(rule.prefixes) AS prefix ORDER BY prefix),
                        'source_device_group_id', device_group.public_id,
                        'source_identity_group_id', identity_group.public_id,
                        'source_device_tag_id', device_tag.public_id
                    )) AS value
-            FROM mesh.compiled_policy_route_rule AS rule
+            FROM mesh_ops.explain_site_rules_internal_v1(
+                v_release_id, v_site_id, v_source_id, v_device_groups, v_identity_groups, v_tags,
+                p_destination_address, p_protocol, p_destination_port) AS rule
             LEFT JOIN mesh.device_group AS device_group ON device_group.id = rule.source_device_group_id
             LEFT JOIN mesh.identity_group AS identity_group ON identity_group.id = rule.source_identity_group_id
             LEFT JOIN mesh.device_tag AS device_tag ON device_tag.id = rule.source_device_tag_id
-            WHERE rule.policy_release_id = v_release_id
-              AND rule.destination_site_id = v_site_id
-              AND rule.protocol = p_protocol
-              AND ((p_protocol = 'icmp' AND pg_catalog.isempty(rule.destination_ports))
-                   OR rule.destination_ports @> p_destination_port)
-              AND EXISTS (
-                  SELECT 1 FROM pg_catalog.unnest(rule.prefixes) AS prefix
-                  WHERE prefix >>= p_destination_address
-              )
-              AND (rule.source_device_id = v_source_id OR EXISTS (
-                  SELECT 1
-                  FROM mesh_ops.selector_devices_internal_v1(scoped_workspace, scoped_network) AS selected
-                  WHERE selected.device_id = v_source_id
-                    AND selected.selector_id = COALESCE(rule.source_device_group_id,
-                        rule.source_identity_group_id, rule.source_device_tag_id)
-                    AND selected.selector_kind = CASE
-                        WHEN rule.source_device_group_id IS NOT NULL THEN 'device_group'
-                        WHEN rule.source_identity_group_id IS NOT NULL THEN 'identity_group'
-                        ELSE 'device_tag' END
-              ))
             ORDER BY rule.access_rule_public_id, rule.public_id
             LIMIT p_path_limit
         ) AS path;
+    END IF;
+
+    IF v_site_id IS NOT NULL THEN
+        PERFORM permission.role_binding_public_id
+        FROM mesh_ops.resolve_network_permission_v2(
+            p_session_public_id, p_deployment_public_id, p_principal_public_id,
+            p_identity_subject_public_id, p_session_version, p_principal_authority_generation,
+            p_account_session_generation, p_provider_generation, p_deployment_recovery_epoch,
+            p_workspace_public_id, p_network_public_id, 'route.read', p_evaluated_at
+        ) AS permission;
+        IF NOT FOUND THEN
+            site_name := NULL;
+        END IF;
     END IF;
 
     RETURN QUERY SELECT revision.network_revision, revision.inventory_revision, revision.group_revision,

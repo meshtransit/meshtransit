@@ -532,6 +532,7 @@ func (snapshot Snapshot) IsValid() bool {
 		if !path.IsValid() || duplicateProjection ||
 			(path.selectorKind == SelectorKindImportedResource) != shared ||
 			(path.selectorKind == SelectorKindSite) != toSite ||
+			(toSite && path.destinationSiteID != snapshot.targetSiteID) ||
 			(shared && path.trustContractID != snapshot.share.contractID) ||
 			(index > 0 && comparePaths(snapshot.paths[index-1], path) >= 0) {
 			return false
