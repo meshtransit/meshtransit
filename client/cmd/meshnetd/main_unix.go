@@ -47,14 +47,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 	showVersion := flags.Bool("version", false, "print version and exit")
 	routesFile := flags.String("routes-file", config.DefaultRouteSettingsPath,
 		"root-owned subnet route settings (meshnetd routes)")
-	routedTable := flags.Int("routed-table", 0,
-		"routing table for subnet routes, unique per helper on the host; 0 installs none")
-	routerTable := flags.String("router-nft-table", "meshtransit",
-		"nftables table this helper owns to forward as a subnet router; empty forwards into no subnets")
-	routerState := flags.String("router-state", "/run/meshnetd/router-state.json",
-		"where the helper records the host forwarding settings it changed, to restore them")
-	routedPriority := flags.Int("routed-priority", 5400,
-		"first of three policy rule priorities that keep meshd's sockets out of the routed table")
 	allowedPrefixes := prefixList{}
 	flags.Var(
 		&allowedPrefixes,
@@ -140,13 +132,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 		return 1
 	}
-	var routed *netadmin.RoutedOptions
-	if *routedTable != 0 {
-		routed = &netadmin.RoutedOptions{
-			SettingsPath: *routesFile, Table: *routedTable, Priority: *routedPriority,
-			NftTable: *routerTable, StatePath: *routerState,
-		}
-	}
+	routed := platform.routedOptions(*routesFile)
 	server, err := netadmin.NewServer(netadmin.ServerOptions{
 		AllowedUID:      resolvedUID,
 		InterfaceName:   platform.interfaceName(),
@@ -193,7 +179,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		"interface", platform.interfaceName(),
 		"mtu", *mtu,
 		"dns_enabled", *enableDNS,
-		"routed_table", *routedTable,
+		"subnet_routes", routed != nil,
 	)
 	if err := server.Serve(ctx, listener); err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error("meshnetd stopped unexpectedly", "error", err)

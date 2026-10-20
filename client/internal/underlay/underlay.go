@@ -5,17 +5,21 @@
 // mesh TUN, or they would loop through the tunnel they carry. Overlay routes
 // never cover these destinations; subnet routes may (mtcp-v1 §7.6). On
 // Linux meshnetd keeps them in their own table, which a policy rule never
-// lets meshd's user reach, so nothing is needed here. A mobile VPN routes the
-// whole app through its TUN unless
-// each socket is excluded (Android VpnService.protect): the embedding app
-// installs a Protector, and every socket the client opens to the network
-// calls it before the socket connects or sends.
+// lets meshd's user reach, so nothing is needed here. macOS and Windows have
+// no such rule (FollowsRoutes): a socket whose destination an installed
+// subnet route covers is bound to the interface the host would use without
+// it, and the packet path sends no datagram into one. A mobile VPN routes the
+// whole app through its TUN unless each socket is excluded (Android
+// VpnService.protect): the embedding app installs a Protector, and every
+// socket the client opens to the network calls it before the socket connects
+// or sends.
 package underlay
 
 import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -59,8 +63,14 @@ func Protect(fd uintptr) error {
 }
 
 // Control is a net.Dialer and net.ListenConfig Control function: it
-// protects each new socket before it connects or binds.
-func Control(_, _ string, raw syscall.RawConn) error {
+// protects each new socket before it connects or binds, and binds one to an
+// address inside a subnet route to the physical path.
+func Control(_, address string, raw syscall.RawConn) error {
+	if destination, err := netip.ParseAddrPort(address); err == nil && Routed(destination.Addr()) {
+		if err := bindPhysical(raw, destination.Addr().Unmap()); err != nil {
+			return fmt.Errorf("underlay: keeping a socket to %s off a subnet route: %w", destination.Addr(), err)
+		}
+	}
 	if !Active() {
 		return nil
 	}

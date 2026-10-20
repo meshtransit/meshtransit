@@ -5,6 +5,15 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Client: macOS reaches subnet routes. `meshnetd --enable-subnet-routes`
+  (now in the launch daemons) installs the granted prefixes the local
+  settings admit (`sudo meshnetd routes accept on`) on the `utun` link,
+  marked as its own, with the same local conflict checks and resolver pins
+  as Linux. `meshd` binds a socket to an address inside an installed route
+  to the physical interface (`IP_BOUND_IF`) and sends no datagram there.
+  meshnetd's Linux-only flags (`--routed-table`, `--routed-priority`,
+  `--router-nft-table`, `--router-state`) are no longer accepted on macOS.
+  Flow log uploads now also go through the client's underlay sockets.
 - Testing: `make e2e-subnet-router` (and a CI job) routes real traffic from a
   consumer through a subnet router into a Site's LAN in network namespaces,
   with the real helper and data plane, moves it to the other router when the

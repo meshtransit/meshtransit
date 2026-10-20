@@ -22,6 +22,7 @@ import (
 	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/packetmeta"
+	"meshtransit.net/client/internal/underlay"
 )
 
 const (
@@ -155,7 +156,14 @@ func New(cfg Config) (*Reporter, error) {
 		return nil, errors.New("flowlog: queue or flow limit is invalid")
 	}
 	if cfg.HTTPClient == nil {
-		cfg.HTTPClient = &http.Client{}
+		// Its sockets stay on the physical network like every other of
+		// the client's (underlay).
+		transport := &http.Transport{Proxy: http.ProxyFromEnvironment}
+		if standard, ok := http.DefaultTransport.(*http.Transport); ok {
+			transport = standard.Clone()
+		}
+		transport.DialContext = underlay.Dialer(0).DialContext
+		cfg.HTTPClient = &http.Client{Transport: transport}
 	}
 	httpClient := *cfg.HTTPClient
 	httpClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {

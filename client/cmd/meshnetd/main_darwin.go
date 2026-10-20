@@ -16,13 +16,25 @@ import (
 
 // platformFlags are the macOS helper settings; the kernel names tunnels.
 type platformFlags struct {
-	scutilPath *string
+	scutilPath   *string
+	subnetRoutes *bool
 }
 
 func registerPlatformFlags(flags *flag.FlagSet) platformFlags {
 	return platformFlags{
 		scutilPath: flags.String("scutil-path", netadmin.DefaultScutilPath, "absolute trusted scutil binary path"),
+		subnetRoutes: flags.Bool("enable-subnet-routes", false,
+			"install the subnet routes meshd asks for, as the route settings admit"),
 	}
+}
+
+// routedOptions installs subnet routes in the host's routing table when
+// enabled: macOS has no other table to put them in.
+func (p platformFlags) routedOptions(settingsPath string) *netadmin.RoutedOptions {
+	if !*p.subnetRoutes {
+		return nil
+	}
+	return &netadmin.RoutedOptions{SettingsPath: settingsPath}
 }
 
 func (platformFlags) interfaceName() string { return "" }

@@ -72,6 +72,26 @@ Until you log out and in again after the install, run `meshctl` with `sudo`
   mesh names only. "DNS for all names" is not supported on macOS yet.
 - Instance metadata of cloud providers is not read on macOS.
 
+## Subnet routes
+
+A Mac reaches the Sites its rules grant once root accepts subnet routes:
+
+```bash
+sudo /usr/local/libexec/meshtransit/meshnetd routes accept on
+```
+
+The setting lives in `/Library/Application Support/MeshTransit/routes.json`
+and applies within seconds; `routes accept off` removes the routes again.
+`meshnetd` installs each granted prefix on the `utun` interface in the
+host's routing table, marked as its own, and refuses one that overlaps a
+network the Mac reaches itself (`local_conflict`). macOS has no per-user
+routing, so `meshd` keeps its own sockets off these routes: a connection to
+an address inside one is bound to the interface the Mac would use without
+it (`IP_BOUND_IF`), and the packet path sends nothing to a peer address
+inside one. `meshctl status` shows the router each Site goes through.
+
+A Mac does not forward into subnets: a subnet router runs on Linux.
+
 ## Check and troubleshoot
 
 - `meshctl status`, `meshctl netcheck`, `meshctl doctor control`, as on Linux.

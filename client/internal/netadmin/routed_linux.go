@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"path/filepath"
 	"slices"
 
 	"github.com/vishvananda/netlink"
@@ -14,6 +15,30 @@ import (
 
 	"meshtransit.net/client/internal/routesettings"
 )
+
+// validPlatformRoutedOptions requires a table of the helper's own, its rule
+// priority and, to forward, an nftables table and a state file.
+func validPlatformRoutedOptions(options RoutedOptions) bool {
+	return options.Table > 0 && options.Table < 1<<31 && (options.Table < 253 || options.Table > 255) &&
+		options.Priority > 0 && options.Priority < 32766 &&
+		(options.NftTable == "" || (validNftTableName(options.NftTable) && filepath.IsAbs(options.StatePath)))
+}
+
+// validNftTableName accepts a short table name of letters, digits, '_' and
+// '-'.
+func validNftTableName(name string) bool {
+	if name == "" || len(name) > 32 {
+		return false
+	}
+	for _, character := range name {
+		allowed := character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || character == '_' ||
+			character == '-'
+		if !allowed {
+			return false
+		}
+	}
+	return true
+}
 
 type kernelRoutedConfigurer struct{}
 
@@ -120,31 +145,6 @@ func addRoutes(installed, desired []netip.Prefix, route func(netip.Prefix) *netl
 	}
 	slices.SortFunc(kept, compareRoutedPrefixes)
 	return kept, refused
-}
-
-// withoutUnpinned drops each route containing a resolver whose pin the
-// kernel refused, with the pin's reason.
-func withoutUnpinned(routes []netip.Prefix, failedPins []routesettings.Refusal) ([]netip.Prefix, []routesettings.Refusal) {
-	if len(failedPins) == 0 {
-		return routes, nil
-	}
-	kept := make([]netip.Prefix, 0, len(routes))
-	var refused []routesettings.Refusal
-	for _, route := range routes {
-		index := slices.IndexFunc(failedPins, func(pin routesettings.Refusal) bool { return route.Contains(pin.Prefix.Addr()) })
-		if index >= 0 {
-			refused = append(refused, routesettings.Refusal{Prefix: route, Reason: failedPins[index].Reason})
-			continue
-		}
-		kept = append(kept, route)
-	}
-	return kept, refused
-}
-
-// prefixIntersection returns the prefixes of left also in right, in left's
-// order.
-func prefixIntersection(left, right []netip.Prefix) []netip.Prefix {
-	return prefixDifference(left, prefixDifference(left, right))
 }
 
 // removeRoutes removes prefixes; one already gone is removed.

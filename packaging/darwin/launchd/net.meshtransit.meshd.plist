@@ -14,6 +14,7 @@
 		<string>--wireguard-listen-port=41641</string>
 		<string>--enable-dns</string>
 		<string>--enable-device-aliases</string>
+		<string>--enable-subnet-routes</string>
 	</array>
 	<key>UserName</key>
 	<string>_meshd</string>

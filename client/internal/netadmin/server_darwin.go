@@ -2,6 +2,7 @@ package netadmin
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"time"
 )
@@ -27,10 +28,17 @@ func NewServer(options ServerOptions) (*Server, error) {
 		}
 	}
 	if configurator == nil {
-		return newServerWithDNS(options, kernelTUNCreator{logger: options.Logger}, nil)
+		server, err := newServerWithDNS(options, kernelTUNCreator{logger: options.Logger}, nil)
+		if err != nil {
+			return nil, err
+		}
+		return server, server.prepareRouted()
 	}
 	server, err := newServerWithDNS(options, kernelTUNCreator{logger: options.Logger}, configurator)
 	if err != nil {
+		return nil, err
+	}
+	if err := server.prepareRouted(); err != nil {
 		return nil, err
 	}
 	server.dnsLoopback = kernelLoopback{}
@@ -44,8 +52,39 @@ func NewServer(options ServerOptions) (*Server, error) {
 	if err := server.dnsLoopback.Remove(server.dnsEndpoint.Resolver.Addr()); err != nil {
 		server.logger.Warn("removing a stale resolver address failed", "error", err)
 	}
-	server.background = server.watchDNSLink
+	server.background = withBackground(server.background, server.watchDNSLink)
 	return server, nil
+}
+
+// prepareRouted sets up subnet routes when they are enabled, starting from
+// none: a previous run may have left routes and pins.
+func (s *Server) prepareRouted() error {
+	if s.routed == nil {
+		return nil
+	}
+	s.routedConfigurer = kernelRoutedConfigurer{}
+	s.hostRouting = kernelHostRouting{}
+	s.background = withBackground(s.background, s.watchRouteSettings)
+	if err := s.routedConfigurer.Clear(*s.routed, s.allowedUID); err != nil {
+		return fmt.Errorf("netadmin: clearing subnet routes left by a previous run: %w", err)
+	}
+	return nil
+}
+
+// withBackground runs next alongside the background work already set.
+func withBackground(current, next func(context.Context)) func(context.Context) {
+	if current == nil {
+		return next
+	}
+	return func(ctx context.Context) {
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			current(ctx)
+		}()
+		next(ctx)
+		<-done
+	}
 }
 
 // validConfiguredInterfaceName requires an empty name: the kernel picks utunN.

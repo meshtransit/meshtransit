@@ -13,6 +13,10 @@ type platformFlags struct {
 	interfaceNameValue *string
 	dnsInterfaceName   *string
 	resolvectlPath     *string
+	routedTable        *int
+	routedPriority     *int
+	routerTable        *string
+	routerState        *string
 }
 
 func registerPlatformFlags(flags *flag.FlagSet) platformFlags {
@@ -24,6 +28,25 @@ func registerPlatformFlags(flags *flag.FlagSet) platformFlags {
 			"/usr/bin/resolvectl",
 			"absolute trusted resolvectl binary path",
 		),
+		routedTable: flags.Int("routed-table", 0,
+			"routing table for subnet routes, unique per helper on the host; 0 installs none"),
+		routedPriority: flags.Int("routed-priority", 5400,
+			"policy rule priority that keeps meshd's sockets out of the routed table"),
+		routerTable: flags.String("router-nft-table", "meshtransit",
+			"nftables table this helper owns to forward as a subnet router; empty forwards into no subnets"),
+		routerState: flags.String("router-state", "/run/meshnetd/router-state.json",
+			"where the helper records the host forwarding settings it changed, to restore them"),
+	}
+}
+
+// routedOptions installs subnet routes in their own table when one is set.
+func (p platformFlags) routedOptions(settingsPath string) *netadmin.RoutedOptions {
+	if *p.routedTable == 0 {
+		return nil
+	}
+	return &netadmin.RoutedOptions{
+		SettingsPath: settingsPath, Table: *p.routedTable, Priority: *p.routedPriority,
+		NftTable: *p.routerTable, StatePath: *p.routerState,
 	}
 }
 

@@ -4,12 +4,15 @@
 <dict>
 	<key>Label</key>
 	<string>net.meshtransit.meshnetd</string>
-	<!-- The privileged helper: utun links, host routes, host DNS. Runs as root. -->
+	<!-- The privileged helper: utun links, host routes, host DNS. Runs as root.
+	     Subnet routes stay off until root turns them on:
+	     sudo meshnetd routes accept on -->
 	<key>ProgramArguments</key>
 	<array>
 		<string>/usr/local/libexec/meshtransit/meshnetd</string>
 		<string>--allow-user=_meshd</string>
 		<string>--enable-dns</string>
+		<string>--enable-subnet-routes</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>

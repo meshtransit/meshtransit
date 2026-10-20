@@ -295,6 +295,9 @@ type WireGuardEngine struct {
 	// routedStatus is what it did with them.
 	routed       helperSync[[]netip.Prefix, netadmin.RoutedResult]
 	routedStatus SubnetRouteStatus
+	// routedGuard is what the client's own sockets stay off where they
+	// follow the host's routes (underlay.FollowsRoutes).
+	routedGuard []netip.Prefix
 	// served keeps the router's forwarding in step with the map; servedStatus
 	// is what the helper did with it.
 	served       helperSync[[]networkmap.ServedSite, netadmin.ServedResult]

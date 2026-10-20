@@ -30,23 +30,34 @@ narrow, validated requests from `meshd`:
   the overlay frame: `100.64.0.0/10`, `198.18.0.0/15` (Device aliases) and
   `fd00::/8`. `--allow-prefix` can narrow the frame, never widen it.
 - It returns the TUN file descriptor to `meshd`, which runs the data plane.
-- On Linux, with `--routed-table`, it can also install the subnet routes Core
-  grants ([mtcp-v1 §7.6](../protocol/mtcp-v1.md)), but only those the host's
+- On Linux with `--routed-table`, and on macOS with `--enable-subnet-routes`,
+  it can also install the subnet routes Core grants ([mtcp-v1 §7.6](../protocol/mtcp-v1.md)), but only those the host's
   own settings admit. Those settings live in `/etc/meshtransit/routes.json`,
   which only root writes (`sudo meshnetd routes accept on`, `accept-public`,
-  `router-mode`, `advertise PREFIX…`, `withdraw PREFIX…`); everything is off
-  until root turns it on, and a change applies within seconds. Subnet routes
-  go in their own routing table, which one policy rule per address family
+  `router-mode`, `advertise PREFIX…`, `withdraw PREFIX…`; on macOS the file
+  is `/Library/Application Support/MeshTransit/routes.json`); everything is
+  off until root turns it on, and a change applies within seconds. On Linux
+  subnet routes go in their own routing table, which one policy rule per address family
   has every user but `meshd`'s look up (`not uidrange`): the node's own
   sockets (Control, relays, WireGuard) follow the host's routing unchanged
   and cannot enter the mesh they carry. Each helper on a host uses its own
   table and rule priority (`--routed-table`, `--routed-priority`, default
   5400), and removes what it installed when it stops or starts again.
+- macOS has one routing table and no per-user rule. `meshnetd` installs the
+  routes there on the `utun` link, marked with both protocol flags
+  (`RTF_PROTO1|RTF_PROTO2`) so it tells them apart from the overlay routes
+  and from anyone else's, and removes every marked route when it stops or
+  starts again. `meshd` keeps its own sockets off them itself: a socket to an
+  address inside an installed route is bound with `IP_BOUND_IF` (or
+  `IPV6_BOUND_IF`) to the interface of the most specific route the host has
+  besides them, and the packet path refuses datagrams to such an address (a
+  peer is then reached through its other paths or a relay).
 - It never lets a subnet route take over a network the host reaches itself:
   a route that overlaps an attached network, or an equal or more specific
   route of the host's main table (another VPN, for example), is refused as
   `local_conflict`. A system resolver inside an installed route keeps its
-  physical path through a host exception in the routed table. It checks
+  physical path through a host exception in the routed table (on macOS a
+  marked host route through the gateway it uses). It checks
   again whenever the host's routes or resolvers change, such as a laptop
   joining another Wi-Fi network, and a host with more than 16,384 routes of
   its own installs none. Each request is compared with the kernel's table,
@@ -56,7 +67,7 @@ narrow, validated requests from `meshd`:
 
 ## Subnet routes
 
-With `--enable-subnet-routes` (Linux only for now), `meshd` asks Core for
+With `--enable-subnet-routes` (Linux and macOS), `meshd` asks Core for
 the Sites its rules grant and handles them as
 [mtcp-v1 §7.6](../protocol/mtcp-v1.md) requires:
 

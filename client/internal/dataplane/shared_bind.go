@@ -13,7 +13,14 @@ import (
 
 	"meshtransit.net/client/internal/pathdiscovery"
 	"meshtransit.net/client/internal/relay"
+	"meshtransit.net/client/internal/underlay"
 )
+
+// errRoutedDestination refuses a datagram to an address an installed subnet
+// route covers, where the client's own sockets follow the host's routes
+// (underlay.FollowsRoutes): it would enter the mesh it is carried by. The
+// peer stays reachable through its other paths and the relays.
+var errRoutedDestination = errors.New("dataplane: destination is inside a subnet route")
 
 const maxControlDatagramSize = 2048
 
@@ -186,6 +193,11 @@ func (b *sharedBind) Send(buffers [][]byte, endpoint conn.Endpoint) error {
 		)
 	}
 
+	if underlay.Routed(endpoint.DstIP()) {
+		// Into a subnet route the datagram would loop through the mesh.
+		return errRoutedDestination
+	}
+
 	return b.inner.Send(buffers, endpoint)
 }
 
@@ -253,6 +265,9 @@ func (b *sharedBind) SendDatagram(
 	}
 	if !validDatagramEndpoint(destination) {
 		return pathdiscovery.Socket{}, errors.New("dataplane: control datagram destination is invalid")
+	}
+	if underlay.Routed(destination.Addr()) {
+		return pathdiscovery.Socket{}, errRoutedDestination
 	}
 
 	b.mu.RLock()

@@ -7,17 +7,19 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"path/filepath"
 	"slices"
 
 	"meshtransit.net/client/internal/routesettings"
 )
 
-// RoutedOptions let meshnetd install subnet routes (mtcp-v1 §7.6). The
-// routes go in their own routing table, which a policy rule consults for
+// RoutedOptions let meshnetd install subnet routes (mtcp-v1 §7.6). On Linux
+// the routes go in their own routing table, which a policy rule consults for
 // every user but meshd: meshd's own sockets (Control, relays, WireGuard)
 // keep the main table and so never enter the mesh they carry. Each helper
-// instance on a host has its own table and rule priorities.
+// instance on a host has its own table and rule priorities. macOS has one
+// table and no such rule: the routes go there, marked, and meshd keeps its
+// sockets off them itself; Table, Priority, NftTable and StatePath stay
+// unset.
 type RoutedOptions struct {
 	// SettingsPath is the root-owned local route settings file
 	// (routesettings): routes are installed only as it admits.
@@ -55,25 +57,7 @@ type routedConfigurer interface {
 var errRoutedUnsupported = errors.New("netadmin: routed routes are not supported on this platform")
 
 func validRoutedOptions(options RoutedOptions) bool {
-	return options.SettingsPath != "" && options.Table > 0 && options.Table < 1<<31 &&
-		(options.Table < 253 || options.Table > 255) && options.Priority > 0 && options.Priority < 32766 &&
-		(options.NftTable == "" || (validNftTableName(options.NftTable) && filepath.IsAbs(options.StatePath)))
-}
-
-// validNftTableName accepts a short table name of letters, digits, '_' and
-// '-'.
-func validNftTableName(name string) bool {
-	if name == "" || len(name) > 32 {
-		return false
-	}
-	for _, character := range name {
-		allowed := character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || character == '_' ||
-			character == '-'
-		if !allowed {
-			return false
-		}
-	}
-	return true
+	return options.SettingsPath != "" && validPlatformRoutedOptions(options)
 }
 
 // setRouted installs the routed routes the local settings admit and
@@ -150,4 +134,29 @@ func (s *Server) applyRouted(requested []netip.Prefix) ([]netip.Prefix, []routes
 	s.activeRouted = routedState{Routes: slices.Clone(installed.Routes), Throws: slices.Clone(installed.Throws)}
 	s.requestedRouted = slices.Clone(requested)
 	return installed.Routes, append(refused, failed...), nil
+}
+
+// withoutUnpinned drops each route containing a resolver whose pin the
+// kernel refused, with the pin's reason.
+func withoutUnpinned(routes []netip.Prefix, failedPins []routesettings.Refusal) ([]netip.Prefix, []routesettings.Refusal) {
+	if len(failedPins) == 0 {
+		return routes, nil
+	}
+	kept := make([]netip.Prefix, 0, len(routes))
+	var refused []routesettings.Refusal
+	for _, route := range routes {
+		index := slices.IndexFunc(failedPins, func(pin routesettings.Refusal) bool { return route.Contains(pin.Prefix.Addr()) })
+		if index >= 0 {
+			refused = append(refused, routesettings.Refusal{Prefix: route, Reason: failedPins[index].Reason})
+			continue
+		}
+		kept = append(kept, route)
+	}
+	return kept, refused
+}
+
+// prefixIntersection returns the prefixes of left also in right, in left's
+// order.
+func prefixIntersection(left, right []netip.Prefix) []netip.Prefix {
+	return prefixDifference(left, prefixDifference(left, right))
 }

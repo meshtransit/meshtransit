@@ -7,6 +7,7 @@ import (
 
 	"meshtransit.net/client/internal/netadmin"
 	"meshtransit.net/client/internal/routesettings"
+	"meshtransit.net/client/internal/underlay"
 )
 
 // routedRouteSetter is the helper's subnet route operation.
@@ -49,6 +50,12 @@ func (e *WireGuardEngine) syncRoutedLocked(desired []netip.Prefix) {
 		e.filter.SetRoutedInstalled(nil)
 		return
 	}
+	if underlay.FollowsRoutes {
+		// Before the helper installs anything: a socket opened meanwhile
+		// must already stay off the new routes, and one to a route still
+		// being removed too.
+		underlay.SetRouted(append(slices.Clone(desired), e.routedGuard...))
+	}
 	e.routed.setLocked(e, desired, helperExchange[[]netip.Prefix, netadmin.RoutedResult]{
 		empty:  func(routes []netip.Prefix) bool { return len(routes) == 0 },
 		equal:  slices.Equal[[]netip.Prefix],
@@ -69,6 +76,27 @@ func (e *WireGuardEngine) resetRoutedLocked() {
 	e.routed.resetLocked()
 	e.routedStatus = SubnetRouteStatus{}
 	e.filter.SetRoutedInstalled(nil)
+	if underlay.FollowsRoutes {
+		e.routedGuard = nil
+		underlay.SetRouted(nil)
+	}
+}
+
+// routedGuard returns the requested routes the client's own sockets must stay
+// off: every one the helper may install, now or after a change of its
+// settings it applies on its own, but those it refused because the host
+// reaches them itself, where a peer's address is a valid direct path.
+func routedGuard(requested []netip.Prefix, refused []routesettings.Refusal) []netip.Prefix {
+	guard := make([]netip.Prefix, 0, len(requested))
+	for _, prefix := range requested {
+		local := slices.ContainsFunc(refused, func(refusal routesettings.Refusal) bool {
+			return refusal.Prefix == prefix && refusal.Reason == routesettings.ReasonLocalConflict
+		})
+		if !local {
+			guard = append(guard, prefix)
+		}
+	}
+	return guard
 }
 
 // recordRoutedLocked keeps what the helper did with requested.
@@ -90,6 +118,10 @@ func (e *WireGuardEngine) recordRoutedLocked(requested []netip.Prefix, result ne
 	}
 	e.routedStatus = status
 	e.filter.SetRoutedInstalled(result.Installed)
+	if underlay.FollowsRoutes {
+		e.routedGuard = routedGuard(requested, status.Refused)
+		underlay.SetRouted(e.routedGuard)
+	}
 	if e.logger == nil || equalSubnetRouteStatus(previous, status) {
 		return
 	}
