@@ -66,8 +66,8 @@ var exitHooks struct {
 }
 
 // OnExitBoundChange runs hook, in a goroutine of its own, each time the
-// client's sockets start or stop keeping off the exit routes, and returns
-// what stops it. Where a connected socket keeps the route it took
+// client's sockets start or stop keeping off the exit routes, or the host's
+// networks change while they keep off them, and returns what stops it. Where a connected socket keeps the route it took
 // (ReconnectOnExitChange), its owner reconnects then.
 func OnExitBoundChange(hook func()) (stop func()) {
 	exitHooks.Lock()
@@ -102,10 +102,14 @@ func runExitHooks() {
 func ExitBound() bool { return exitSources.Load() != 0 }
 
 // RebindPhysical asks sockets bound to the physical path to be bound again,
-// as after a change of the host's networks.
+// as after a change of the host's networks. Connections kept off the exit
+// routes hold the interface they took, so their owners reconnect too.
 func RebindPhysical() {
 	forgetPhysicalInterfaces()
 	physicalGeneration.Add(1)
+	if ReconnectOnExitChange && ExitBound() {
+		runExitHooks()
+	}
 }
 
 // PhysicalGeneration changes whenever sockets bound to the physical path

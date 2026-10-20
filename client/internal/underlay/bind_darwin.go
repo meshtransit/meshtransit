@@ -77,7 +77,8 @@ func bindSource(fd int, source netip.Addr) error {
 }
 
 // interfaceAddress returns the interface's first usable address of the
-// family: not link-local, nor a mesh address.
+// family: not link-local, and for IPv6 a global one, never a unique local
+// address, which has no way back from the Internet.
 func interfaceAddress(index int, ipv6 bool) (netip.Addr, error) {
 	link, err := net.InterfaceByIndex(index)
 	if err != nil {
@@ -97,7 +98,7 @@ func interfaceAddress(index int, ipv6 bool) (netip.Addr, error) {
 			continue
 		}
 		ip = ip.Unmap()
-		if ip.Is6() != ipv6 || !ip.IsGlobalUnicast() && !ip.IsPrivate() || ip.IsLinkLocalUnicast() {
+		if ip.Is6() != ipv6 || !ip.IsGlobalUnicast() || ip.IsLinkLocalUnicast() || ip.Is6() && ip.IsPrivate() {
 			continue
 		}
 		return ip, nil

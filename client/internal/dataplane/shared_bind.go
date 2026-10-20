@@ -52,8 +52,8 @@ type sharedBind struct {
 	physicalRetry      atomic.Int64
 	// physicalBound is whether the sockets are bound to an interface now.
 	physicalBound bool
-	// stopReconnect stops redialing the relays when the exit binding
-	// changes (underlay.ReconnectOnExitChange).
+	// stopReconnect stops redialing the relays when the exit binding or
+	// the host's networks change (underlay.ReconnectOnExitChange).
 	stopReconnect func()
 }
 
@@ -152,23 +152,26 @@ func (b *sharedBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 		return nil, 0, err
 	}
 	if b.relay != nil {
+		if underlay.ReconnectOnExitChange && b.stopReconnect == nil {
+			// Relay connections made before the exit routes came, or
+			// before the host's networks changed under them, keep the
+			// source address they took: make them again. Registered
+			// before the pool dials, so no exit change is missed.
+			b.stopReconnect = underlay.OnExitBoundChange(b.relay.Reconnect)
+		}
 		if err := b.relay.Open(); err != nil {
 			_ = b.inner.Close()
+			b.stopReconnectLocked()
 
 			return nil, 0, fmt.Errorf("dataplane: opening relay pool: %w", err)
 		}
 		receivers = append(receivers, b.receiveRelay)
-		if underlay.ReconnectOnExitChange && b.stopReconnect == nil {
-			// Relay connections made before the exit routes came keep the
-			// mesh source address they took: make them again.
-			relays := b.relay
-			b.stopReconnect = underlay.OnExitBoundChange(relays.Reconnect)
-		}
 	}
 	generation, err := b.generations.next()
 	if err != nil {
 		_ = b.inner.Close()
 		_ = b.closeRelay()
+		b.stopReconnectLocked()
 
 		return nil, 0, err
 	}
@@ -186,6 +189,7 @@ func (b *sharedBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 		if receiver == nil {
 			_ = b.inner.Close()
 			_ = b.closeRelay()
+			b.stopReconnectLocked()
 			b.isOpen = false
 			b.port = 0
 
@@ -263,10 +267,7 @@ func (b *sharedBind) bindPhysicalLocked() error {
 func (b *sharedBind) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.stopReconnect != nil {
-		b.stopReconnect()
-		b.stopReconnect = nil
-	}
+	b.stopReconnectLocked()
 	err := errors.Join(b.inner.Close(), b.closeRelay())
 	b.isOpen = false
 	b.port = 0
@@ -538,4 +539,12 @@ func (b *sharedBind) closeRelayPermanently() error {
 	}
 
 	return b.relay.Close()
+}
+
+// stopReconnectLocked stops redialing the relays on exit changes.
+func (b *sharedBind) stopReconnectLocked() {
+	if b.stopReconnect != nil {
+		b.stopReconnect()
+		b.stopReconnect = nil
+	}
 }

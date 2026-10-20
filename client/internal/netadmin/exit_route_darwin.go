@@ -61,6 +61,8 @@ type darwinExitRouteConfigurer struct {
 	tokenPath string
 	run       func(ctx context.Context, path string, args []string, stdin string) ([]byte, error)
 	lan       func() []netip.Prefix
+	// warn reports what failed without failing the exit route; nil drops it.
+	warn func(message string, args ...any)
 }
 
 func newDarwinExitRouteConfigurer(uid uint32, statePath string) *darwinExitRouteConfigurer {
@@ -94,7 +96,7 @@ func (c *darwinExitRouteConfigurer) Replace(name string, _, allowLAN bool) error
 	if name == "" {
 		return nil
 	}
-	return replaceDarwinExitRoutes(name)
+	return replaceDarwinExitRoutes(name, c.warn)
 }
 
 // Present reports whether the anchor holds rules.
@@ -116,9 +118,12 @@ func (c *darwinExitRouteConfigurer) Stamp(name string) string {
 		values = append(values, prefix.String())
 	}
 	if table, err := hostroute.Read(); err == nil {
+		var defaults []string
 		for _, entry := range physicalDefaults(table) {
-			values = append(values, fmt.Sprintf("default %d %v", entry.Index, entry.Gateway))
+			defaults = append(defaults, fmt.Sprintf("default %d %v", entry.Index, entry.Gateway))
 		}
+		slices.Sort(defaults)
+		values = append(values, defaults...)
 	}
 	return strings.Join(values, ",")
 }
@@ -279,8 +284,8 @@ func darwinAttachedLAN() []netip.Prefix {
 }
 
 // replaceDarwinExitRoutes puts the exit routes on name, removing those on
-// another link.
-func replaceDarwinExitRoutes(name string) error {
+// another link; warn, when set, hears of the scoped defaults that failed.
+func replaceDarwinExitRoutes(name string, warn func(message string, args ...any)) error {
 	link, err := net.InterfaceByName(name)
 	if err != nil {
 		return fmt.Errorf("netadmin: finding the utun for the exit route: %w", err)
@@ -292,8 +297,11 @@ func replaceDarwinExitRoutes(name string) error {
 	// The physical interfaces' scoped defaults first: a socket meshd keeps
 	// on one (IP_BOUND_IF) finds no route once 0/1 sends the destination to
 	// the utun, unless its interface has a default of its own.
-	if err := replaceScopedDefaults(table); err != nil {
-		return err
+	// Best effort, one default at a time: they only help meshd's own
+	// sockets, and the exit routes must come behind the kill switch anyway.
+	// A failed one leaves only meshd's own sockets without a path.
+	if err := replaceScopedDefaults(table); err != nil && warn != nil {
+		warn("keeping a scoped default route for the client's own sockets failed", "error", err)
 	}
 	present := map[netip.Prefix]bool{}
 	for _, entry := range table {
@@ -343,13 +351,15 @@ func clearDarwinExitRoutes() error {
 	return errors.Join(failures...)
 }
 
-// physicalDefaults returns the host's own default routes: unscoped, through
-// a gateway, none of meshnetd's.
+// physicalDefaults returns the host's own default routes: unscoped (a
+// scoped one, macOS's own or another's, is never copied), through a
+// gateway, none of meshnetd's, and not on a tunnel (another VPN's utun,
+// ipsec or ppp).
 func physicalDefaults(table []hostroute.Route) []hostroute.Route {
 	var defaults []hostroute.Route
 	for _, entry := range table {
 		if entry.Prefix.Bits() != 0 || entry.Gateway == nil || entry.Flags&unix.RTF_GATEWAY == 0 ||
-			entry.Cloned() || entry.Marked() || entry.ExitOwned() || entry.ExitScoped() {
+			entry.Cloned() || entry.Marked() || entry.ExitOwned() || entry.ExitScoped() || tunnelInterface(interfaceName(entry.Index)) {
 			continue
 		}
 		defaults = append(defaults, entry)
@@ -357,10 +367,33 @@ func physicalDefaults(table []hostroute.Route) []hostroute.Route {
 	return defaults
 }
 
+// interfaceName names the interface at index, or returns "" when there is
+// none; tests replace it.
+var interfaceName = func(index int) string {
+	link, err := net.InterfaceByIndex(index)
+	if err != nil {
+		return ""
+	}
+	return link.Name
+}
+
+// tunnelInterface reports an interface of a tunnel, by its name. ppp is not
+// one: PPPoE and USB modems are a host's real uplink.
+func tunnelInterface(name string) bool {
+	for _, prefix := range []string{"utun", "ipsec", "tun", "tap", "gif", "stf"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // replaceScopedDefaults gives each physical default route a scoped copy on
 // its interface (RTF_IFSCOPE), as NetBird does, and removes the copies of
-// defaults that are gone. One macOS already holds is used as it is.
+// defaults that are gone. One macOS already holds is used as it is. Each
+// one is tried apart: the failures are returned together.
 func replaceScopedDefaults(table []hostroute.Route) error {
+	var failures []error
 	wanted := physicalDefaults(table)
 	same := func(scoped, physical hostroute.Route) bool {
 		return scoped.Index == physical.Index && scoped.Prefix == physical.Prefix &&
@@ -376,19 +409,15 @@ func replaceScopedDefaults(table []hostroute.Route) error {
 			present[index] = true
 			continue
 		}
-		if err := writeScopedDefault(unix.RTM_DELETE, entry); err != nil {
-			return err
-		}
+		failures = append(failures, writeScopedDefault(unix.RTM_DELETE, entry))
 	}
 	for index, physical := range wanted {
 		if present[index] {
 			continue
 		}
-		if err := writeScopedDefault(unix.RTM_ADD, physical); err != nil {
-			return err
-		}
+		failures = append(failures, writeScopedDefault(unix.RTM_ADD, physical))
 	}
-	return nil
+	return errors.Join(failures...)
 }
 
 // writeScopedDefault adds or deletes the scoped copy of a default route.

@@ -629,8 +629,12 @@ func (p *Pool) runWorker(worker *regionWorker) {
 		}
 		p.markFailure(worker)
 		attempt = nextRetryAttempt(attempt, p.clock().Sub(connectedAt))
-		if !waitContext(worker.ctx, p.retryDelay(attempt)) {
+		reconnected, alive := waitRetry(worker, p.retryDelay(attempt))
+		if !alive {
 			return
+		}
+		if reconnected {
+			attempt = 0
 		}
 	}
 }
@@ -897,14 +901,18 @@ func randomizedRetryDelay(attempt int) time.Duration {
 	return base/2 + time.Duration(random.Int64())
 }
 
-func waitContext(ctx context.Context, delay time.Duration) bool {
+// waitRetry waits delay before the next dial, or less when Reconnect asks
+// for one at once (reconnected); alive is false once the worker ends.
+func waitRetry(worker *regionWorker, delay time.Duration) (reconnected, alive bool) {
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
-	case <-ctx.Done():
-		return false
+	case <-worker.ctx.Done():
+		return false, false
+	case <-worker.reconnect:
+		return true, true
 	case <-timer.C:
-		return true
+		return false, true
 	}
 }
 

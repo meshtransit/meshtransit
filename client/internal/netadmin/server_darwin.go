@@ -69,7 +69,9 @@ func (s *Server) prepareRouted() error {
 		return fmt.Errorf("netadmin: clearing subnet routes left by a previous run: %w", err)
 	}
 	if s.routed.Exits {
-		s.exitRouteConfigurer = newDarwinExitRouteConfigurer(s.allowedUID, s.routed.StatePath)
+		exitRoutes := newDarwinExitRouteConfigurer(s.allowedUID, s.routed.StatePath)
+		exitRoutes.warn = s.logger.Warn
+		s.exitRouteConfigurer = exitRoutes
 		// A kill switch a previous run left stays while root's settings
 		// name a pool, and is installed if missing; otherwise it goes.
 		// A failure is no reason to stop the helper: subnet routes and

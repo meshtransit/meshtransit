@@ -3,6 +3,7 @@ package underlay
 import (
 	"net/netip"
 	"testing"
+	"time"
 )
 
 func TestPhysicalBoundFollowsTheExitRoute(t *testing.T) {
@@ -43,4 +44,30 @@ func TestExitSourcesHoldTheBindingTogether(t *testing.T) {
 	if PhysicalGeneration() != start+3 {
 		t.Fatal("RebindPhysical must ask for a new binding")
 	}
+}
+
+func TestNetworkChangeReconnectsOnlyWhileKeptOffTheExitRoutes(t *testing.T) {
+	t.Cleanup(func() { SetExitBound(ExitRequested|ExitHeld, false) })
+	runs := make(chan struct{}, 8)
+	stop := OnExitBoundChange(func() { runs <- struct{}{} })
+	defer stop()
+	waitRun := func(want bool, what string) {
+		t.Helper()
+		select {
+		case <-runs:
+			if !want {
+				t.Fatalf("%s: the hook ran", what)
+			}
+		case <-time.After(200 * time.Millisecond):
+			if want {
+				t.Fatalf("%s: the hook did not run", what)
+			}
+		}
+	}
+	RebindPhysical()
+	waitRun(false, "a network change without an exit route")
+	SetExitBound(ExitHeld, true)
+	waitRun(true, "the exit route came")
+	RebindPhysical()
+	waitRun(ReconnectOnExitChange, "a network change under the exit route")
 }

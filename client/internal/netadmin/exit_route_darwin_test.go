@@ -111,10 +111,15 @@ func TestDarwinExitKillSwitchHoldsOnePfReference(t *testing.T) {
 }
 
 func TestPhysicalDefaultsSkipMeshnetdsAndScopedRoutes(t *testing.T) {
-	t.Parallel()
+	names := map[int]string{14: "en0", 9: "en1", 22: "utun4", 30: "utun0", 31: "ppp0"}
+	previous := interfaceName
+	interfaceName = func(index int) string { return names[index] }
+	t.Cleanup(func() { interfaceName = previous })
 	gateway := &route.Inet4Addr{IP: [4]byte{172, 20, 10, 1}}
 	table := []hostroute.Route{
 		{Prefix: netip.MustParsePrefix("0.0.0.0/0"), Flags: unix.RTF_UP | unix.RTF_GATEWAY | unix.RTF_STATIC, Index: 14, Gateway: gateway},
+		{Prefix: netip.MustParsePrefix("0.0.0.0/0"), Flags: unix.RTF_UP | unix.RTF_GATEWAY | unix.RTF_STATIC, Index: 30, Gateway: gateway},
+		{Prefix: netip.MustParsePrefix("0.0.0.0/0"), Flags: unix.RTF_UP | unix.RTF_GATEWAY | unix.RTF_STATIC, Index: 31, Gateway: gateway},
 		{Prefix: netip.MustParsePrefix("0.0.0.0/0"), Flags: unix.RTF_UP | unix.RTF_GATEWAY | unix.RTF_IFSCOPE, Index: 9, Gateway: gateway},
 		{Prefix: netip.MustParsePrefix("0.0.0.0/1"), Flags: unix.RTF_UP | unix.RTF_STATIC | hostroute.ExitMark, Index: 22, Gateway: &route.LinkAddr{Index: 22}},
 		{
@@ -123,10 +128,10 @@ func TestPhysicalDefaultsSkipMeshnetdsAndScopedRoutes(t *testing.T) {
 		},
 	}
 	defaults := physicalDefaults(table)
-	if len(defaults) != 1 || defaults[0].Index != 14 {
-		t.Fatalf("physicalDefaults() = %+v, want the unscoped en0 default only", defaults)
+	if len(defaults) != 2 || defaults[0].Index != 14 || defaults[1].Index != 31 {
+		t.Fatalf("physicalDefaults() = %+v, want the unscoped en0 and ppp0 defaults only", defaults)
 	}
-	if !table[3].ExitScoped() || table[0].ExitScoped() || table[1].ExitScoped() {
+	if !table[5].ExitScoped() || table[0].ExitScoped() || table[3].ExitScoped() {
 		t.Fatal("ExitScoped() must match only meshnetd's scoped default")
 	}
 }
