@@ -18,6 +18,8 @@ import (
 type platformFlags struct {
 	scutilPath   *string
 	subnetRoutes *bool
+	exits        *bool
+	exitState    *string
 }
 
 func registerPlatformFlags(flags *flag.FlagSet) platformFlags {
@@ -25,23 +27,31 @@ func registerPlatformFlags(flags *flag.FlagSet) platformFlags {
 		scutilPath: flags.String("scutil-path", netadmin.DefaultScutilPath, "absolute trusted scutil binary path"),
 		subnetRoutes: flags.Bool("enable-subnet-routes", false,
 			"install the subnet routes meshd asks for, as the route settings admit"),
+		exits: flags.Bool("enable-exits", false,
+			"route the host through the exit node the route settings name, behind a pf kill switch"),
+		exitState: flags.String("exit-state", netadmin.DarwinExitStatePath(config.DefaultNetAdminSocketPath),
+			"file keeping the helper's pf enable reference"),
 	}
 }
 
-// routedOptions installs subnet routes in the host's routing table when
-// enabled: macOS has no other table to put them in.
+// routedOptions installs subnet and exit routes in the host's routing table
+// when enabled: macOS has no other table to put them in.
 func (p platformFlags) routedOptions(settingsPath string) *netadmin.RoutedOptions {
-	if !*p.subnetRoutes {
+	if !*p.subnetRoutes && !*p.exits {
 		return nil
 	}
-	return &netadmin.RoutedOptions{SettingsPath: settingsPath}
+	options := &netadmin.RoutedOptions{SettingsPath: settingsPath}
+	if *p.exits {
+		options.Exits, options.StatePath = true, *p.exitState
+	}
+	return options
 }
 
 func (platformFlags) interfaceName() string { return "" }
 
-// releaseExit has nothing to remove: macOS hosts use no exit node yet.
-func (platformFlags) releaseExit(string) error {
-	return errors.New("using an exit node is not supported on macOS yet")
+// releaseExit removes the exit routes and the pf kill switch any run left.
+func (p platformFlags) releaseExit(string) error {
+	return netadmin.ReleaseDarwinExitRoute(*p.exitState)
 }
 
 func (p platformFlags) dnsOptions(resolver netip.AddrPort) (*netadmin.DNSOptions, error) {

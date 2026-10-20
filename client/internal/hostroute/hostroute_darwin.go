@@ -15,6 +15,10 @@ import (
 // from everyone else's. macOS sets neither protocol flag itself.
 const Mark = unix.RTF_PROTO1 | unix.RTF_PROTO2
 
+// ExitMark tells the exit routes meshnetd installs (0/1, 128/1, ::/1,
+// 8000::/1 on the utun) apart from its subnet routes and everyone else's.
+const ExitMark = unix.RTF_PROTO2
+
 // Route is one route of the host's routing table.
 type Route struct {
 	Prefix  netip.Prefix
@@ -30,12 +34,22 @@ func (r Route) Marked() bool { return r.Flags&Mark == Mark }
 // kernel derived, which never carries the mark of the route it came from.
 func (r Route) Owned() bool { return r.Marked() && r.Flags&unix.RTF_STATIC != 0 && !r.Cloned() }
 
-// MeshLinks returns the interfaces meshnetd's subnet routes use: the mesh
-// utun.
+// ExitOwned reports an exit route meshnetd installed.
+func (r Route) ExitOwned() bool {
+	return r.Flags&Mark == ExitMark && r.Flags&unix.RTF_STATIC != 0 && !r.Cloned()
+}
+
+// meshnetds reports a route meshnetd installed into the mesh, a subnet or
+// an exit route.
+func (r Route) meshnetds() bool { return r.Flags&unix.RTF_PROTO2 != 0 }
+
+// MeshLinks returns the interfaces meshnetd's subnet and exit routes use:
+// the mesh utun.
 func MeshLinks(table []Route) []int {
 	var links []int
 	for _, entry := range table {
-		if entry.Owned() && entry.Flags&unix.RTF_GATEWAY == 0 && !slices.Contains(links, entry.Index) {
+		if (entry.Owned() || entry.ExitOwned()) && entry.Flags&unix.RTF_GATEWAY == 0 &&
+			!slices.Contains(links, entry.Index) {
 			links = append(links, entry.Index)
 		}
 	}
@@ -105,7 +119,7 @@ func Parse(messages []route.Message) []Route {
 func Physical(table []Route, skip []int, address netip.Addr) (Route, bool) {
 	best, found := Route{}, false
 	for _, entry := range table {
-		if slices.Contains(skip, entry.Index) || entry.Marked() || entry.Cloned() || entry.Gateway == nil ||
+		if slices.Contains(skip, entry.Index) || entry.meshnetds() || entry.Cloned() || entry.Gateway == nil ||
 			!entry.Prefix.Contains(address) {
 			continue
 		}

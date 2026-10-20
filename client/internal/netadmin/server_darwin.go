@@ -68,6 +68,14 @@ func (s *Server) prepareRouted() error {
 	if err := s.routedConfigurer.Clear(*s.routed, s.allowedUID); err != nil {
 		return fmt.Errorf("netadmin: clearing subnet routes left by a previous run: %w", err)
 	}
+	if s.routed.Exits {
+		s.exitRouteConfigurer = newDarwinExitRouteConfigurer(s.allowedUID, s.routed.StatePath)
+		// A kill switch a previous run left stays while root's settings
+		// name a pool, and is installed if missing; otherwise it goes.
+		if err := s.startExitRoute(); err != nil {
+			return fmt.Errorf("netadmin: clearing the exit route left by a previous run: %w", err)
+		}
+	}
 	return nil
 }
 

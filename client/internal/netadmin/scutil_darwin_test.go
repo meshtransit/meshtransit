@@ -86,7 +86,12 @@ func TestScutilConfiguratorAppliesResetsAndRollsBack(t *testing.T) {
 	allNames := testDNSConfig()
 	allNames.RouteDomains = append(allNames.RouteDomains, ".")
 	allNames.DefaultRoute = true
-	if err := (&scutilConfigurator{path: DefaultScutilPath, runner: &recordingScriptRunner{}}).Apply(t.Context(), allNames); err == nil {
-		t.Fatal("Apply() accepted DNS for all names")
+	recorder := &recordingScriptRunner{}
+	if err := (&scutilConfigurator{path: DefaultScutilPath, runner: recorder}).Apply(t.Context(), allNames); err != nil {
+		t.Fatalf("Apply() for all names: %v", err)
+	}
+	script := recorder.scripts[len(recorder.scripts)-1]
+	if !strings.Contains(script, "d.add OverridePrimary # 1\n") || strings.Contains(script, "SupplementalMatchDomains") {
+		t.Fatalf("all names script = %q, want the primary service without match domains", script)
 	}
 }

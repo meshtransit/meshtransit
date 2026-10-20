@@ -13,6 +13,7 @@
 		<string>--allow-user=_meshd</string>
 		<string>--enable-dns</string>
 		<string>--enable-subnet-routes</string>
+		<string>--enable-exits</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>

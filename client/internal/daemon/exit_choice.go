@@ -11,6 +11,7 @@ import (
 	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/routesettings"
+	"meshtransit.net/client/internal/underlay"
 )
 
 // Choosing the exit node (exit node design §9): the host's root-owned
@@ -39,7 +40,18 @@ func exitPreferenceOf(load func(string) (routesettings.Settings, error), path st
 		}
 		return exitPreference{}, false
 	}
+	noteExitChoice(settings.ExitUse)
 	return exitPreference{use: settings.ExitUse, allowManaged: settings.ExitAllowManaged}, true
+}
+
+// noteExitChoice keeps the client's own sockets and lookups off the host's
+// routes and resolver while root's settings name a pool, where they follow
+// the host's routes (underlay.FollowsRoutes): the helper's kill switch cuts
+// the host's resolver off from the start, before any map.
+func noteExitChoice(use string) {
+	if underlay.FollowsRoutes {
+		underlay.SetExitBound(underlay.ExitChosen, use != "")
+	}
 }
 
 const (

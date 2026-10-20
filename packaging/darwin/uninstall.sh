@@ -26,6 +26,9 @@ for label in "${labels[@]}"; do
 	launchctl bootout "system/$label" 2>/dev/null || true
 	rm -f "/Library/LaunchDaemons/$label.plist"
 done
+# A host that used an exit node keeps its pf kill switch and exit routes
+# after the helper stops; lift them before the helper goes.
+/usr/local/libexec/meshtransit/meshnetd --release-exit 2>/dev/null || true
 # meshnetd removes its DNS entries and resolver alias when meshd goes away;
 # remove them here too in case it stopped first.
 printf 'remove State:/Network/Service/net.meshtransit.dns/DNS\nremove State:/Network/Service/net.meshtransit.dns/IPv4\n' |

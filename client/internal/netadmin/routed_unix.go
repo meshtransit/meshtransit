@@ -42,6 +42,10 @@ type RoutedOptions struct {
 	ExitTable    int
 	ExitPriority int
 	ExitNftTable string
+	// Exits lets a macOS host send its Internet traffic through an exit
+	// node: routes on the utun behind a pf kill switch (exit node design
+	// §6.1, §6.4). Linux uses ExitTable.
+	Exits bool
 }
 
 // routedState is what the routed table holds: routes to the mesh

@@ -53,11 +53,6 @@ func (c *scutilConfigurator) Apply(ctx context.Context, config DNSConfig) error 
 	if c == nil || c.runner == nil {
 		return errors.New("netadmin: scutil configurator is not initialized")
 	}
-	if config.DefaultRoute {
-		// Sending every query to MeshTransit needs the primary service's
-		// resolvers captured and restored; until that exists, refuse.
-		return errors.New("netadmin: DNS for all names is not supported on macOS yet")
-	}
 	script, err := scutilApplyScript(config)
 	if err != nil {
 		return err
@@ -111,11 +106,20 @@ func scutilApplyScript(config DNSConfig) (string, error) {
 	script.WriteString("d.init\n")
 	script.WriteString("d.add Addresses * " + resolver + "\n")
 	script.WriteString("d.add InterfaceName " + config.Endpoint.InterfaceName + "\n")
+	if config.DefaultRoute {
+		// Every name, while the host uses an exit node (exit node design
+		// §7.1): the service becomes the primary one, whose resolver is
+		// the host's default. Removing the entry gives the host's own
+		// resolvers back.
+		script.WriteString("d.add OverridePrimary # 1\n")
+	}
 	script.WriteString("set " + scutilIPv4Key + "\n")
 	script.WriteString("d.init\n")
 	script.WriteString("d.add ServerAddresses * " + resolver + "\n")
 	script.WriteString("d.add ServerPort # " + strconv.Itoa(int(config.Endpoint.Resolver.Port())) + "\n")
-	script.WriteString("d.add SupplementalMatchDomains * " + strings.Join(matchDomains, " ") + "\n")
+	if !config.DefaultRoute {
+		script.WriteString("d.add SupplementalMatchDomains * " + strings.Join(matchDomains, " ") + "\n")
+	}
 	if len(config.SearchDomains) != 0 {
 		script.WriteString("d.add SearchDomains * " + strings.Join(config.SearchDomains, " ") + "\n")
 	}

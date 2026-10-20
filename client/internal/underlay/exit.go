@@ -18,6 +18,9 @@ const (
 	// asked for them (root's settings hold them on their own): the host's
 	// own resolver is cut off.
 	ExitHeld
+	// ExitChosen: root's settings name a pool, so a helper holds the kill
+	// switch, before meshd asks for anything.
+	ExitChosen
 )
 
 var (

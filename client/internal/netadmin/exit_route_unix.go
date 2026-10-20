@@ -150,3 +150,17 @@ func (s *Server) checkExitRoute() {
 	s.exitRouteKey = ""
 	s.applyExitRoute()
 }
+
+// startExitRoute takes over what a previous run left: the kill switch stays
+// while root's settings name a pool, and goes otherwise.
+func (s *Server) startExitRoute() error {
+	if s.exitRouteConfigurer == nil {
+		return nil
+	}
+	settings, err := s.loadSettings(s.routed.SettingsPath)
+	if err == nil && settings.ExitUse == "" {
+		return s.exitRouteConfigurer.Clear()
+	}
+	s.applyExitRoute()
+	return nil
+}

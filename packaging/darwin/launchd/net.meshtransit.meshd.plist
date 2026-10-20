@@ -15,6 +15,7 @@
 		<string>--enable-dns</string>
 		<string>--enable-device-aliases</string>
 		<string>--enable-subnet-routes</string>
+		<string>--enable-exits</string>
 	</array>
 	<key>UserName</key>
 	<string>_meshd</string>

@@ -45,6 +45,8 @@ type sharedBind struct {
 	// nanosecond after which a failed binding is tried again.
 	physicalGeneration atomic.Uint64
 	physicalRetry      atomic.Int64
+	// physicalBound is whether the sockets are bound to an interface now.
+	physicalBound bool
 }
 
 // physicalRetryDelay spaces the attempts to bind a socket that failed.
@@ -141,9 +143,6 @@ func (b *sharedBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 
 		return nil, 0, err
 	}
-	// A failure leaves the sockets following the mesh routes, which only
-	// costs the direct paths; the engine binds them again and reports it.
-	_ = b.bindPhysicalLocked()
 	if b.relay != nil {
 		if err := b.relay.Open(); err != nil {
 			_ = b.inner.Close()
@@ -162,6 +161,9 @@ func (b *sharedBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 	b.generation = generation
 	b.port = actualPort
 	b.isOpen = true
+	// A failure leaves the sockets following the mesh routes, which only
+	// costs the direct paths; the next datagram tries again.
+	_ = b.bindPhysicalLocked()
 	socket := pathdiscovery.Socket{
 		Port:       actualPort,
 		Generation: b.generation,
@@ -215,7 +217,10 @@ func (b *sharedBind) bindPhysicalLocked() error {
 	b.physicalGeneration.Store(underlay.PhysicalGeneration())
 	b.physicalRetry.Store(0)
 	bound := underlay.FollowsRoutes && underlay.ExitBound()
-	binder, ok := b.inner.(conn.BindSocketToInterface)
+	if !bound && !b.physicalBound {
+		return nil // never bound: nothing to undo
+	}
+	binder, ok := interfaceBinder(b.inner, b.port)
 	if !ok {
 		if bound {
 			return errors.New("dataplane: the wireguard bind cannot be kept on the physical path")
@@ -236,6 +241,7 @@ func (b *sharedBind) bindPhysicalLocked() error {
 	}
 	// A host without IPv6 has no IPv6 socket to bind.
 	_ = binder.BindSocketToInterface6(index6, bound && index6 == 0)
+	b.physicalBound = bound
 
 	return nil
 }
