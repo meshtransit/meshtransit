@@ -563,6 +563,7 @@ message to clear. A snapshot without the field means none.
 | `primary` | The router Core chose, one of `candidates`; empty when none |
 | `generation` | Per Site; increases each time `primary` changes and never goes back, also across Core replicas and restarts |
 | `status` | `SERVED`: forward through `primary`. `UNSERVED`: no router can serve now. `CONFLICT`: the Site overlaps another Site granted to this node. `CAPACITY`: the routers' maps cannot hold this node |
+| `name` | The Site's display name, for status only: 1–64 characters without control characters; empty from an older Core. A node ignores a name it would not show (longer, with control characters, not UTF-8) rather than the map |
 
 Core:
 

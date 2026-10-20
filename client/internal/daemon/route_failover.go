@@ -349,6 +349,8 @@ func runRouteFailover(ctx context.Context, failover *routeFailover, read func() 
 // status.
 type RouteSiteView struct {
 	Ref string
+	// Name is the Site's display name; empty from an older Core.
+	Name string
 	// Prefixes are the Site's prefixes the rules grant: the map names a
 	// Site only by its reference.
 	Prefixes   []netip.Prefix
@@ -372,7 +374,7 @@ func (failover *routeFailover) selections() ([]controlplane.RouteSiteSelection, 
 	views := make([]RouteSiteView, 0, len(failover.core.Routes))
 	for _, route := range failover.core.Routes {
 		report := controlplane.RouteSiteSelection{Ref: route.Ref, Reason: controlplane.RouteSelectionNone}
-		view := RouteSiteView{Ref: route.Ref, Prefixes: slices.Clone(route.Prefixes), Via: "none"}
+		view := RouteSiteView{Ref: route.Ref, Name: route.Name, Prefixes: slices.Clone(route.Prefixes), Via: "none"}
 		if route.Status == networkmap.RouteServed && route.Primary != "" {
 			report.Router, report.Reason, view.Via = route.Primary, controlplane.RouteSelectionPrimary, "primary"
 			if site := failover.sites[route.Ref]; site != nil && site.chosen != "" {

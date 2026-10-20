@@ -64,7 +64,7 @@ func TestStatusShowsSubnetRoutes(t *testing.T) {
 		SubnetRoutes: dataplane.SubnetRouteStatus{Requested: 2, Installed: 1, RefusedTotal: 1, LocalConflict: true},
 		RouteSites: []daemon.RouteSiteView{
 			{
-				Ref: "prod", Prefixes: []netip.Prefix{netip.MustParsePrefix("10.35.0.0/17")}, Router: "01a156d6",
+				Ref: "prod", Name: "Production", Prefixes: []netip.Prefix{netip.MustParsePrefix("10.35.0.0/17")}, Router: "01a156d6",
 				RouterName: "prod-1.073438549244.296056403058.mesh.internal.", Via: "primary",
 			},
 			{Ref: "lab", Via: "none"},
@@ -76,7 +76,7 @@ func TestStatusShowsSubnetRoutes(t *testing.T) {
 	}
 	for _, want := range []string{
 		`"subnetRoutes":{"accepted":false,"requested":2,"installed":1,"refused":1,"localConflict":true}`,
-		`"sites":[{"site":"prod","prefixes":["10.35.0.0/17"],"router":"prod-1","via":"primary"},` +
+		`"sites":[{"site":"prod","name":"Production","prefixes":["10.35.0.0/17"],"router":"prod-1","via":"primary"},` +
 			`{"site":"lab","prefixes":[],"via":"none"}]`,
 	} {
 		if !strings.Contains(encoded, want) {

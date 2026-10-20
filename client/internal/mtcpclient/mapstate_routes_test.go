@@ -83,3 +83,21 @@ func TestMapStateRoutesNeedTheCapabilityAndCanonicalPrefixes(t *testing.T) {
 		}
 	}
 }
+
+// A Site's name is kept when the node may show it and dropped otherwise,
+// without refusing the map.
+func TestMapStateKeepsSiteNamesItMayShow(t *testing.T) {
+	t.Parallel()
+	state := newMapState(true)
+	snapshot := snapshotMessage(7)
+	snapshot.Routes = routeConfig("hq", "lab")
+	snapshot.Routes.Sites[0].Name = "Head office"
+	snapshot.Routes.Sites[1].Name = "lab\x00"
+	if err := state.applySnapshot(snapshot); err != nil {
+		t.Fatal(err)
+	}
+	routes := build(t, state).Routes
+	if len(routes) != 2 || routes[0].Name != "Head office" || routes[1].Name != "" {
+		t.Fatalf("routes = %+v", routes)
+	}
+}

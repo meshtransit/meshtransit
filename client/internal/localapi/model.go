@@ -115,6 +115,7 @@ type subnetRouteStatus struct {
 // the primary does not answer) or none.
 type subnetRouteSite struct {
 	Site       string   `json:"site"`
+	Name       string   `json:"name,omitempty"`
 	Prefixes   []string `json:"prefixes,omitempty"`
 	Router     string   `json:"router,omitempty"`
 	RouterName string   `json:"router_name,omitempty"`

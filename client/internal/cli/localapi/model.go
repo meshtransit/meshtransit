@@ -179,6 +179,7 @@ type SubnetRouteStatus struct {
 // SubnetRouteSite is the router one Site's traffic goes to.
 type SubnetRouteSite struct {
 	Site       string   `json:"site"`
+	Name       string   `json:"name,omitempty"`
 	Prefixes   []string `json:"prefixes,omitempty"`
 	Router     string   `json:"router,omitempty"`
 	RouterName string   `json:"router_name,omitempty"`

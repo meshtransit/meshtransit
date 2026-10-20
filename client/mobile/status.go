@@ -62,6 +62,8 @@ type subnetRoutes struct {
 // primary (Core's choice), local_failover or none (not served).
 type siteRoute struct {
 	Site string `json:"site"`
+	// Name is the Site's display name; empty from an older Core.
+	Name string `json:"name,omitempty"`
 	// Prefixes are the Site's granted prefixes, which name it here.
 	Prefixes []string `json:"prefixes"`
 	// Router is the router's Device name, without the DNS suffix.
@@ -123,7 +125,9 @@ func siteRoutes(views []daemon.RouteSiteView) []siteRoute {
 			prefixes = append(prefixes, prefix.String())
 		}
 		router, _, _ := strings.Cut(view.RouterName, ".")
-		sites = append(sites, siteRoute{Site: view.Ref, Prefixes: prefixes, Router: router, Via: view.Via})
+		sites = append(sites, siteRoute{
+			Site: view.Ref, Name: view.Name, Prefixes: prefixes, Router: router, Via: view.Via,
+		})
 	}
 	return sites
 }

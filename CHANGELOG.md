@@ -5,6 +5,11 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- MTCP: `SiteRoute.name` (field 7) carries the Site's display name (schema
+  195, `mesh_ops.load_map_network_sites_v3`). Clients show it in
+  `meshctl status`, the local API (`name`) and the mobile status, and ignore
+  a name longer than 64 characters or with control characters rather than
+  the map.
 - Core: `MESHTRANSIT_SITE_DENIED_CIDRS` lists the addresses no Site may
   cover (Core's endpoint, load balancers, relays); creating or changing such
   a Site is refused with `site_prefix_invalid`. Maps leave out any Site

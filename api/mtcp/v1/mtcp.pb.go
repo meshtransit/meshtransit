@@ -3106,6 +3106,7 @@ type SiteRoute struct {
 	Primary       string                 `protobuf:"bytes,4,opt,name=primary,proto3" json:"primary,omitempty"`
 	Generation    uint64                 `protobuf:"varint,5,opt,name=generation,proto3" json:"generation,omitempty"`
 	Status        SiteRoute_Status       `protobuf:"varint,6,opt,name=status,proto3,enum=meshtransit.mtcp.v1.SiteRoute_Status" json:"status,omitempty"`
+	Name          string                 `protobuf:"bytes,7,opt,name=name,proto3" json:"name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3180,6 +3181,13 @@ func (x *SiteRoute) GetStatus() SiteRoute_Status {
 		return x.Status
 	}
 	return SiteRoute_STATUS_UNSPECIFIED
+}
+
+func (x *SiteRoute) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
 }
 
 type ServedRoutes struct {
@@ -5525,7 +5533,7 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\x05first\x18\x01 \x01(\rR\x05first\x12\x12\n" +
 	"\x04last\x18\x02 \x01(\rR\x04last\"C\n" +
 	"\vRouteConfig\x124\n" +
-	"\x05sites\x18\x01 \x03(\v2\x1e.meshtransit.mtcp.v1.SiteRouteR\x05sites\"\xd0\x02\n" +
+	"\x05sites\x18\x01 \x03(\v2\x1e.meshtransit.mtcp.v1.SiteRouteR\x05sites\"\xe4\x02\n" +
 	"\tSiteRoute\x12\x19\n" +
 	"\bsite_ref\x18\x01 \x01(\tR\asiteRef\x127\n" +
 	"\bprefixes\x18\x02 \x03(\v2\x1b.meshtransit.mtcp.v1.PrefixR\bprefixes\x12\x1e\n" +
@@ -5536,7 +5544,8 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\n" +
 	"generation\x18\x05 \x01(\x04R\n" +
 	"generation\x12=\n" +
-	"\x06status\x18\x06 \x01(\x0e2%.meshtransit.mtcp.v1.SiteRoute.StatusR\x06status\"V\n" +
+	"\x06status\x18\x06 \x01(\x0e2%.meshtransit.mtcp.v1.SiteRoute.StatusR\x06status\x12\x12\n" +
+	"\x04name\x18\a \x01(\tR\x04name\"V\n" +
 	"\x06Status\x12\x16\n" +
 	"\x12STATUS_UNSPECIFIED\x10\x00\x12\n" +
 	"\n" +

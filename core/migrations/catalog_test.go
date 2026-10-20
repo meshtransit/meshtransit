@@ -13,8 +13,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 194 {
-		t.Fatalf("len(Catalog()) = %d, want 194", len(catalog))
+	if len(catalog) != 195 {
+		t.Fatalf("len(Catalog()) = %d, want 195", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1609,8 +1609,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 194 {
-		t.Fatalf("LatestVersion() = %d, want 194", LatestVersion())
+	if LatestVersion() != 195 {
+		t.Fatalf("LatestVersion() = %d, want 195", LatestVersion())
 	}
 }
 
@@ -5638,5 +5638,23 @@ func TestSchema194SitePrimaryReads(t *testing.T) {
 	}
 	if strings.Count(migration.SQL, ") TO mesh_runtime;") != 2 || strings.Contains(migration.SQL, "TO mesh_worker") {
 		t.Error("schema 194 grants other than the runtime role")
+	}
+}
+
+func TestMigration195NamesMapSites(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[194]
+	if migration.Version != 195 {
+		t.Fatalf("migration 195 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.load_map_network_sites_v3(p_limit INTEGER)",
+		"FROM mesh_ops.load_map_network_sites_v2(p_limit) AS sites",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_map_network_sites_v3(INTEGER) TO mesh_runtime;",
+		"FROM PUBLIC, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 195 lacks %q", want)
+		}
 	}
 }

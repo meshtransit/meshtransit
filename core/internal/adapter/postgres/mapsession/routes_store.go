@@ -28,6 +28,11 @@ FROM mesh_ops.load_map_network_sites_v1($1::INTEGER)`
 	loadElectedNetworkSitesSQL = `SELECT site_id, site_public_id::TEXT, prefixes, masquerade,
     probe_addresses, probe_kinds, probe_ports, elected, COALESCE(primary_device_id, 0)
 FROM mesh_ops.load_map_network_sites_v2($1::INTEGER)`
+	namesGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
+    pg_catalog.to_regprocedure('mesh_ops.load_map_network_sites_v3(integer)'), 'EXECUTE'), FALSE)`
+	loadNamedNetworkSitesSQL = `SELECT site_id, site_public_id::TEXT, prefixes, masquerade,
+    probe_addresses, probe_kinds, probe_ports, elected, COALESCE(primary_device_id, 0), site_name
+FROM mesh_ops.load_map_network_sites_v3($1::INTEGER)`
 	loadNetworkSiteRoutersSQL = `SELECT site_id, device_id, device_public_id::TEXT, priority, router_state,
     workspace_owned, offered
 FROM mesh_ops.load_map_network_site_routers_v1($1::INTEGER)`
@@ -57,7 +62,13 @@ func readNetworkRoutes(ctx context.Context, transaction databaseTransaction, par
 	if err != nil {
 		return errors.Join(ErrLoadSnapshot, fmt.Errorf("check elected route readers: %w", err))
 	}
-	if params.Sites, err = readNetworkSites(ctx, transaction, elected); err != nil {
+	named := false
+	if elected {
+		if named, err = functionGranted(ctx, transaction, namesGrantedSQL); err != nil {
+			return errors.Join(ErrLoadSnapshot, fmt.Errorf("check named route readers: %w", err))
+		}
+	}
+	if params.Sites, err = readNetworkSites(ctx, transaction, elected, named); err != nil {
 		return err
 	}
 	if len(params.Sites) == 0 {
@@ -75,10 +86,15 @@ func readNetworkRoutes(ctx context.Context, transaction databaseTransaction, par
 }
 
 // readNetworkSites reads the Sites with their elected primaries once schema
-// 193 is installed, and without before.
-func readNetworkSites(ctx context.Context, transaction databaseTransaction, elected bool) ([]appmapsession.RouteSite, error) {
+// 193 is installed, and their names once schema 195 is.
+func readNetworkSites(ctx context.Context, transaction databaseTransaction, elected, named bool) (
+	[]appmapsession.RouteSite, error,
+) {
 	query := loadNetworkSitesSQL
-	if elected {
+	switch {
+	case named:
+		query = loadNamedNetworkSitesSQL
+	case elected:
 		query = loadElectedNetworkSitesSQL
 	}
 	rows, err := transaction.Query(ctx, query, maximumNetworkSites+1)
@@ -98,6 +114,9 @@ func readNetworkSites(ctx context.Context, transaction databaseTransaction, elec
 		targets := []any{&site.Site, &site.Ref, &site.Prefixes, &site.Masquerade, &addresses, &kinds, &ports}
 		if elected {
 			targets = append(targets, &site.Elected, &site.Primary)
+		}
+		if named {
+			targets = append(targets, &site.Name)
 		}
 		if err := rows.Scan(targets...); err != nil {
 			return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("scan network site: %w", err))

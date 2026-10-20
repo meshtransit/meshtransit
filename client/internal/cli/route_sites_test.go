@@ -17,6 +17,7 @@ func TestFormatSubnetRouteStatusNamesEachSitesRouter(t *testing.T) {
 				RouterName: "router-2-prod.0734.2960.mesh.internal.", Via: "local_failover",
 			},
 			{Site: "uat", Router: "01a15307-484b", Via: "primary"},
+			{Site: "01a1531b", Name: "Office LAN", Prefixes: []string{"192.168.50.0/24"}, RouterName: "gw.mesh.", Via: "primary"},
 			{Site: "lab", Via: "none"},
 		},
 	})
@@ -24,6 +25,7 @@ func TestFormatSubnetRouteStatusNamesEachSitesRouter(t *testing.T) {
 		"2 of 2 installed",
 		"Site 10.35.0.0/17, 10.36.0.0/16 via router-2-prod (chosen here: the primary does not answer)",
 		"Site uat via 01a15307-484b",
+		"Site Office LAN (192.168.50.0/24) via gw",
 		"Site lab not served",
 	} {
 		if !strings.Contains(got, want) {

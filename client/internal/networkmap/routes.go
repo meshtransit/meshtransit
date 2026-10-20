@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/netip"
 	"slices"
+	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -37,7 +39,10 @@ const (
 // SiteRoute is one Site the node may reach: the prefixes its rules grant
 // and the routers (peers by StableID) that forward to them.
 type SiteRoute struct {
-	Ref        string
+	Ref string
+	// Name is the Site's display name, empty when Core sent none or one
+	// the node would not show (SiteName).
+	Name       string
 	Prefixes   []netip.Prefix
 	Candidates []string
 	Primary    string // empty: none
@@ -151,4 +156,18 @@ func cloneRoutes(routes []SiteRoute) []SiteRoute {
 		cloned[index] = route
 	}
 	return cloned
+}
+
+// maxSiteNameCharacters bounds a Site's display name (mtcp-v1 §7.6).
+const maxSiteNameCharacters = 64
+
+// SiteName returns name when a node may show it: UTF-8, at most 64
+// characters, no control characters. Otherwise it returns "": a name is for
+// status only, so a bad one costs the name, never the map.
+func SiteName(name string) string {
+	if !utf8.ValidString(name) || utf8.RuneCountInString(name) > maxSiteNameCharacters ||
+		strings.ContainsFunc(name, unicode.IsControl) {
+		return ""
+	}
+	return name
 }

@@ -125,7 +125,8 @@ func assertPostgreSQLSiteMaps(ctx context.Context, t *testing.T, admin *pgx.Conn
 		t.Fatal(err)
 	}
 	routes := consumerMap.Routes().Sites()
-	if len(routes) != 1 || routes[0].Ref != created.Site.ID.String() || routes[0].Primary != router ||
+	if len(routes) != 1 || routes[0].Ref != created.Site.ID.String() || routes[0].Name != created.Site.Name ||
+		routes[0].Primary != router ||
 		routes[0].Status != mapsession.RouteServed ||
 		!slices.Equal(routes[0].Prefixes, []netip.Prefix{netip.MustParsePrefix("10.50.5.0/24")}) {
 		t.Fatalf("consumer routes = %+v", routes)

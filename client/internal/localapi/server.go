@@ -635,7 +635,8 @@ func withRouteSites(mapped subnetRouteStatus, sites []daemon.RouteSiteView) subn
 			prefixes = append(prefixes, prefix.String())
 		}
 		mapped.Sites = append(mapped.Sites, subnetRouteSite{
-			Site: site.Ref, Prefixes: prefixes, Router: site.Router, RouterName: site.RouterName, Via: site.Via,
+			Site: site.Ref, Name: site.Name, Prefixes: prefixes, Router: site.Router, RouterName: site.RouterName,
+			Via: site.Via,
 		})
 	}
 	return mapped

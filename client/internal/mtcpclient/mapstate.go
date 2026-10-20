@@ -575,8 +575,9 @@ func convertRoutes(config *mtcpv1.RouteConfig) ([]networkmap.SiteRoute, error) {
 	routes := make([]networkmap.SiteRoute, 0, len(sites))
 	for _, site := range sites {
 		route := networkmap.SiteRoute{
-			Ref: site.GetSiteRef(), Candidates: slices.Clone(site.GetCandidates()),
-			Primary: site.GetPrimary(), Generation: site.GetGeneration(),
+			Ref: site.GetSiteRef(), Name: networkmap.SiteName(site.GetName()),
+			Candidates: slices.Clone(site.GetCandidates()),
+			Primary:    site.GetPrimary(), Generation: site.GetGeneration(),
 		}
 		switch site.GetStatus() {
 		case mtcpv1.SiteRoute_SERVED:

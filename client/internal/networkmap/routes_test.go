@@ -108,3 +108,21 @@ func overlaps(first, second []netip.Prefix) bool {
 		return slices.ContainsFunc(second, prefix.Overlaps)
 	})
 }
+
+func TestSiteName(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct{ name, want string }{
+		{"prod", "prod"},
+		{"Văn phòng Hà Nội", "Văn phòng Hà Nội"},
+		{strings.Repeat("ạ", 64), strings.Repeat("ạ", 64)},
+		{strings.Repeat("a", 65), ""},
+		{"bad\nname", ""},
+		{"bad\x1bname", ""},
+		{string([]byte{0xff, 0xfe}), ""},
+		{"", ""},
+	} {
+		if got := SiteName(test.name); got != test.want {
+			t.Errorf("SiteName(%q) = %q, want %q", test.name, got, test.want)
+		}
+	}
+}

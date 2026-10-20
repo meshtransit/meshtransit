@@ -20,7 +20,7 @@ func encodeRoutes(view mapsession.RouteView, filter endpointFilter) *mtcpv1.Rout
 		if len(prefixes) == 0 {
 			continue
 		}
-		route := &mtcpv1.SiteRoute{SiteRef: site.Ref, Prefixes: encodePrefixes(prefixes),
+		route := &mtcpv1.SiteRoute{SiteRef: site.Ref, Name: site.Name, Prefixes: encodePrefixes(prefixes),
 			Generation: uint64(site.Generation), Status: routeStatus(site.Status)} //nolint:gosec // positive
 		for _, candidate := range site.Candidates {
 			route.Candidates = append(route.Candidates, candidate.String())

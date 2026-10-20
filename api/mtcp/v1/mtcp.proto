@@ -332,6 +332,7 @@ message SiteRoute {
   string primary = 4; // the router Core chose, one of candidates; empty when none
   uint64 generation = 5; // per Site; increases whenever primary changes, never goes back
   Status status = 6;
+  string name = 7; // the Site's display name, 1 to 64 characters without controls; empty from an older Core
 
   enum Status {
     STATUS_UNSPECIFIED = 0;

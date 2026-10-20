@@ -44,8 +44,10 @@ type RouteProbe struct {
 
 // RouteSite is one active Site of the Network as maps see it.
 type RouteSite struct {
-	Site       int64 // internal reference
-	Ref        string
+	Site int64 // internal reference
+	Ref  string
+	// Name is the Site's display name; empty before schema 195.
+	Name       string
 	Prefixes   []netip.Prefix
 	Masquerade bool
 	Probes     []RouteProbe
@@ -83,6 +85,7 @@ type RouteRule struct {
 // SiteRoute is one Site a consumer may reach.
 type SiteRoute struct {
 	Ref        string
+	Name       string
 	Prefixes   []netip.Prefix
 	Candidates []node.ID
 	Primary    node.ID // zero: none
@@ -359,7 +362,8 @@ func (inner *networkPolicy) consumerRoutes(view *RouteView, self int64, now time
 		if len(prefixes) == 0 {
 			continue
 		}
-		route := SiteRoute{Ref: entry.site.Ref, Prefixes: prefixes, Generation: index.revision, Status: RouteUnserved}
+		route := SiteRoute{Ref: entry.site.Ref, Name: entry.site.Name, Prefixes: prefixes, Generation: index.revision,
+			Status: RouteUnserved}
 		for _, router := range entry.routers {
 			route.Candidates = append(route.Candidates, router.NodeID)
 		}

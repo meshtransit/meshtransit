@@ -617,9 +617,15 @@ func formatSubnetRouteStatus(status *localapi.SubnetRouteStatus) string {
 			status.UnreachableLimited)
 	}
 	for _, site := range status.Sites {
+		// The name when Core sent one, with the prefixes the rules grant.
 		name := site.Site
 		if len(site.Prefixes) > 0 {
 			name = strings.Join(site.Prefixes, ", ")
+			if site.Name != "" {
+				name = site.Name + " (" + name + ")"
+			}
+		} else if site.Name != "" {
+			name = site.Name
 		}
 		summary += "; Site " + name + " " + formatRouteSite(site)
 	}
