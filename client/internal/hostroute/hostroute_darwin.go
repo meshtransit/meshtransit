@@ -39,6 +39,12 @@ func (r Route) ExitOwned() bool {
 	return r.Flags&Mark == ExitMark && r.Flags&unix.RTF_STATIC != 0 && !r.Cloned()
 }
 
+// ExitScoped reports a scoped default route meshnetd installed for a
+// physical interface while the host uses an exit node (RTF_IFSCOPE).
+func (r Route) ExitScoped() bool {
+	return r.Flags&Mark == ExitMark && r.Flags&unix.RTF_STATIC != 0 && r.Flags&unix.RTF_IFSCOPE != 0
+}
+
 // meshnetds reports a route meshnetd installed into the mesh, a subnet or
 // an exit route.
 func (r Route) meshnetds() bool { return r.Marked() || r.ExitOwned() }

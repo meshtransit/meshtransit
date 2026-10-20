@@ -108,11 +108,17 @@ func (c *darwinExitRouteConfigurer) Present() (bool, error) {
 	return c.enabled()
 }
 
-// Stamp identifies the utun and the attached LAN the rules follow.
+// Stamp identifies the utun, the attached LAN the rules follow and the
+// physical default routes the scoped defaults copy.
 func (c *darwinExitRouteConfigurer) Stamp(name string) string {
 	values := []string{name}
 	for _, prefix := range c.lan() {
 		values = append(values, prefix.String())
+	}
+	if table, err := hostroute.Read(); err == nil {
+		for _, entry := range physicalDefaults(table) {
+			values = append(values, fmt.Sprintf("default %d %v", entry.Index, entry.Gateway))
+		}
 	}
 	return strings.Join(values, ",")
 }
@@ -283,6 +289,12 @@ func replaceDarwinExitRoutes(name string) error {
 	if err != nil {
 		return err
 	}
+	// The physical interfaces' scoped defaults first: a socket meshd keeps
+	// on one (IP_BOUND_IF) finds no route once 0/1 sends the destination to
+	// the utun, unless its interface has a default of its own.
+	if err := replaceScopedDefaults(table); err != nil {
+		return err
+	}
 	present := map[netip.Prefix]bool{}
 	for _, entry := range table {
 		if !entry.ExitOwned() {
@@ -310,7 +322,8 @@ func replaceDarwinExitRoutes(name string) error {
 	return nil
 }
 
-// clearDarwinExitRoutes removes every exit route, whatever run left it.
+// clearDarwinExitRoutes removes every exit route, then the scoped
+// defaults, whatever run left them.
 func clearDarwinExitRoutes() error {
 	table, err := hostroute.Read()
 	if err != nil {
@@ -322,7 +335,75 @@ func clearDarwinExitRoutes() error {
 			failures = append(failures, deleteDarwinExitRoute(entry.Prefix, entry.Gateway))
 		}
 	}
+	for _, entry := range table {
+		if entry.ExitScoped() {
+			failures = append(failures, writeScopedDefault(unix.RTM_DELETE, entry))
+		}
+	}
 	return errors.Join(failures...)
+}
+
+// physicalDefaults returns the host's own default routes: unscoped, through
+// a gateway, none of meshnetd's.
+func physicalDefaults(table []hostroute.Route) []hostroute.Route {
+	var defaults []hostroute.Route
+	for _, entry := range table {
+		if entry.Prefix.Bits() != 0 || entry.Gateway == nil || entry.Flags&unix.RTF_GATEWAY == 0 ||
+			entry.Cloned() || entry.Marked() || entry.ExitOwned() || entry.ExitScoped() {
+			continue
+		}
+		defaults = append(defaults, entry)
+	}
+	return defaults
+}
+
+// replaceScopedDefaults gives each physical default route a scoped copy on
+// its interface (RTF_IFSCOPE), as NetBird does, and removes the copies of
+// defaults that are gone. One macOS already holds is used as it is.
+func replaceScopedDefaults(table []hostroute.Route) error {
+	wanted := physicalDefaults(table)
+	same := func(scoped, physical hostroute.Route) bool {
+		return scoped.Index == physical.Index && scoped.Prefix == physical.Prefix &&
+			hostroute.SameGateway(scoped.Gateway, physical.Gateway)
+	}
+	present := make([]bool, len(wanted))
+	for _, entry := range table {
+		if !entry.ExitScoped() {
+			continue
+		}
+		index := slices.IndexFunc(wanted, func(physical hostroute.Route) bool { return same(entry, physical) })
+		if index >= 0 {
+			present[index] = true
+			continue
+		}
+		if err := writeScopedDefault(unix.RTM_DELETE, entry); err != nil {
+			return err
+		}
+	}
+	for index, physical := range wanted {
+		if present[index] {
+			continue
+		}
+		if err := writeScopedDefault(unix.RTM_ADD, physical); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeScopedDefault adds or deletes the scoped copy of a default route.
+func writeScopedDefault(messageType int, physical hostroute.Route) error {
+	message := routedMessage(messageType, physical.Prefix, physical.Gateway, unix.RTF_GATEWAY)
+	message.Flags = message.Flags&^hostroute.Mark | hostroute.ExitMark | unix.RTF_IFSCOPE
+	message.Index = physical.Index
+	err := writeRoute(message)
+	switch {
+	case err == nil, messageType == unix.RTM_ADD && errors.Is(err, unix.EEXIST),
+		messageType == unix.RTM_DELETE && errors.Is(err, unix.ESRCH):
+		return nil
+	default:
+		return fmt.Errorf("netadmin: scoped default on interface %d: %w", physical.Index, err)
+	}
 }
 
 func deleteDarwinExitRoute(prefix netip.Prefix, gateway route.Addr) error {
