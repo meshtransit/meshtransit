@@ -18,6 +18,17 @@ type hostAddressList struct {
 	// networks are the attached networks of the addresses reported with
 	// their prefix length, which subnet routes must not take over.
 	networks atomic.Pointer[[]netip.Prefix]
+	// servers are the DNS servers and gateways of the physical networks
+	// (SetHostServers): a subnet route containing one would take the
+	// system's own traffic to it into the VPN.
+	servers atomic.Pointer[[]netip.Addr]
+}
+
+func (list *hostAddressList) networkServers() []netip.Addr {
+	if servers := list.servers.Load(); servers != nil {
+		return *servers
+	}
+	return nil
 }
 
 func (list *hostAddressList) attached() []netip.Prefix {

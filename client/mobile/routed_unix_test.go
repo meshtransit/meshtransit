@@ -99,3 +99,30 @@ func TestValidateRoutedConfig(t *testing.T) {
 		}
 	}
 }
+
+// A route holding a DNS server or gateway of the phone's networks stays off
+// the interface: the system's own traffic to it would enter the VPN.
+func TestPlatformTUNRefusesRoutesHoldingNetworkServers(t *testing.T) {
+	t.Parallel()
+	fixture, opener := newPlatformFixture(t)
+	opened, err := opener.OpenTUN(t.Context(), netadmin.TUNConfig{Addresses: testAddresses, Routes: testRoutes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = opened.Device.Close() })
+	if err := saveRouteSettings(opener.routeSettings, routesettings.Settings{AcceptRoutes: true}); err != nil {
+		t.Fatal(err)
+	}
+	servers := []netip.Addr{netip.MustParseAddr("10.35.0.2")}
+	opener.hosts.servers.Store(&servers)
+	site := netip.MustParsePrefix("10.35.0.0/17")
+	other := netip.MustParsePrefix("10.40.0.0/16")
+	result, err := opener.SetRoutedRoutes(t.Context(), []netip.Prefix{site, other})
+	if err != nil || len(result.Installed) != 1 || result.Installed[0] != other ||
+		len(result.Refused) != 1 || result.Refused[0] != (routesettings.Refusal{Prefix: site, Reason: routesettings.ReasonLocalConflict}) {
+		t.Fatalf("SetRoutedRoutes() = %+v, %v", result, err)
+	}
+	if _, routes, _ := fixture.provider.last(); routes != "100.64.0.0/10,10.40.0.0/16" {
+		t.Fatalf("interface routes = %q", routes)
+	}
+}

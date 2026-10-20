@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -84,5 +85,22 @@ func TestStatusShowsSubnetRoutes(t *testing.T) {
 	}
 	if encoded, _ := newStatus(false, daemon.Status{}).marshal(); !strings.Contains(encoded, `"sites":[]`) {
 		t.Errorf("empty status %s lacks an empty sites list", encoded)
+	}
+}
+
+func TestEngineSetHostServers(t *testing.T) {
+	t.Parallel()
+	engine := &Engine{hosts: &hostAddressList{}}
+	if err := engine.SetHostServers("10.35.0.2, 192.168.1.1/24,fe80::1%wlan0"); err != nil {
+		t.Fatal(err)
+	}
+	want := []netip.Addr{
+		netip.MustParseAddr("10.35.0.2"), netip.MustParseAddr("192.168.1.1"), netip.MustParseAddr("fe80::1"),
+	}
+	if servers := engine.hosts.networkServers(); !slices.Equal(servers, want) {
+		t.Fatalf("servers = %v, want %v", servers, want)
+	}
+	if err := engine.SetHostServers("not-an-address"); err == nil {
+		t.Fatal("a malformed list was accepted")
 	}
 }

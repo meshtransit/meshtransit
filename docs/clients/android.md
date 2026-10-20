@@ -39,7 +39,7 @@ if the Keystore key is lost, the app starts as a new installation.
 **Subnet routes:** with **Use subnet routes** on, the phone reaches the Sites
 its rules grant: the library puts each granted private prefix on the VPN
 interface (public ones need a second switch), refusing one that overlaps a
-network the phone is attached to. The setting is off until the person turns
+network the phone is attached to or holds its DNS server or gateway. The setting is off until the person turns
 it on, is kept in the app's private storage, and applies within 10 seconds.
 The connection screen shows the router each Site goes through. Changing the
 routes makes a new VPN interface, as Android cannot change one in place.

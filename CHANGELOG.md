@@ -5,6 +5,10 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Client: a network change asks again at once for the subnet routes the map
+  wants, instead of at the next 10-second refresh. The mobile library gains
+  `Engine.SetHostServers` (DNS servers and gateways of the physical
+  networks); a subnet route containing one is refused as `local_conflict`.
 - Client: status names each granted Site by its prefixes and its router by
   the Device name without the DNS suffix (`meshctl status`, local API
   `prefixes`, mobile status `prefixes`); the map carries no Site name.

@@ -71,6 +71,18 @@ func (e *WireGuardEngine) syncRoutedLocked(desired []netip.Prefix) {
 	})
 }
 
+// RecheckSubnetRoutes asks again at once for the subnet routes the map wants,
+// as after a change of the host's networks: what may be installed depends on
+// the networks the host reaches itself.
+func (e *WireGuardEngine) RecheckSubnetRoutes() {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.routed.recheckLocked()
+}
+
 // resetRoutedLocked forgets the routes of a closed device.
 func (e *WireGuardEngine) resetRoutedLocked() {
 	e.routed.resetLocked()

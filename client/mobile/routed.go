@@ -37,6 +37,8 @@ func (opener *platformTUN) SetRoutedRoutes(ctx context.Context, requested []neti
 		var conflicts []routesettings.Refusal
 		accepted, conflicts = netadmin.WithoutLocalConflicts(accepted, opener.attachedNetworks())
 		refused = append(refused, conflicts...)
+		accepted, conflicts = opener.withoutNetworkServers(accepted)
+		refused = append(refused, conflicts...)
 	}
 	opener.mu.Lock()
 	current, addresses, routes, installed := opener.open, opener.addresses, opener.routes, opener.routed
@@ -76,6 +78,26 @@ func (opener *platformTUN) attachedNetworks() []netadmin.LocalRoute {
 		local = append(local, netadmin.LocalRoute{Prefix: network, Connected: true})
 	}
 	return local
+}
+
+// withoutNetworkServers refuses each route containing a DNS server or
+// gateway of the physical networks: protect() keeps only the app's own
+// sockets out of the VPN, not the system's queries or a carrier's services.
+func (opener *platformTUN) withoutNetworkServers(routes []netip.Prefix) ([]netip.Prefix, []routesettings.Refusal) {
+	if opener.hosts == nil {
+		return routes, nil
+	}
+	servers := opener.hosts.networkServers()
+	kept := make([]netip.Prefix, 0, len(routes))
+	var refused []routesettings.Refusal
+	for _, route := range routes {
+		if slices.ContainsFunc(servers, route.Contains) {
+			refused = append(refused, routesettings.Refusal{Prefix: route, Reason: routesettings.ReasonLocalConflict})
+			continue
+		}
+		kept = append(kept, route)
+	}
+	return kept, refused
 }
 
 // validateRoutedConfig keeps subnet routes on the interface to canonical

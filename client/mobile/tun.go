@@ -118,7 +118,7 @@ func (opener *platformTUN) ConfigureTUNRoutes(ctx context.Context, config netadm
 	}
 	opener.mu.Lock()
 	if opener.open == current {
-		opener.routes = routes
+		opener.routes, opener.addresses = routes, slices.Clone(config.Addresses)
 	}
 	opener.mu.Unlock()
 	return nil
@@ -161,6 +161,7 @@ func (opener *platformTUN) openDevice(ctx context.Context, addresses, routes, ro
 	}
 	device, err := opener.adopt(file, opener.mtu, opener.logger)
 	if err != nil {
+		// adopt closed the descriptor, tearing the unused interface down.
 		return nil, fmt.Errorf("%w: %w", errNoTUN, err)
 	}
 	return device, nil

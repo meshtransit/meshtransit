@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -430,6 +431,27 @@ func (engine *Engine) SetHostAddresses(addresses string) (err error) {
 	}
 	engine.hosts.current.Store(&parsed)
 	engine.hosts.networks.Store(&networks)
+	return nil
+}
+
+// SetHostServers tells the runtime the DNS servers and gateways of the
+// device's networks, other than the app's own VPN: a comma-separated list of
+// IP addresses. Subnet routes containing one are not installed. The app
+// reports them with SetHostAddresses, before NetworkChanged. It never blocks.
+func (engine *Engine) SetHostServers(addresses string) (err error) {
+	defer recoverPanic(&err)
+	if engine == nil {
+		return errEngineClosed
+	}
+	parsed, _, err := parseHostAddresses(addresses)
+	if err != nil {
+		return err
+	}
+	servers := make([]netip.Addr, 0, len(parsed))
+	for _, address := range parsed {
+		servers = append(servers, address.Unmap().WithZone(""))
+	}
+	engine.hosts.servers.Store(&servers)
 	return nil
 }
 

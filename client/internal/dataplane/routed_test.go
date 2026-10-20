@@ -594,3 +594,31 @@ func TestWireGuardEngineMovesASiteToAnotherPrimaryOfTheSameMap(t *testing.T) {
 		t.Fatalf("activity without traffic = %+v", activity)
 	}
 }
+
+// A change of the host's networks sends the unchanged request again at once,
+// not at the next refresh: what the helper may install depends on them.
+func TestWireGuardEngineRechecksSubnetRoutesAtOnce(t *testing.T) {
+	t.Parallel()
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	snapshot.Peers[0].StableID = "router"
+	snapshot.Routes = testRoutedSnapshot().Routes
+	opener := &routedTUNOpener{}
+	engine, err := newWireGuardEngine(opener, 41641, &fakeWireGuardFactory{device: &fakeWireGuardDevice{}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine.routed.refresh = time.Hour
+	t.Cleanup(func() { _ = engine.Close() })
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the first request", func() bool { return len(opener.requested()) == 1 })
+	engine.RecheckSubnetRoutes()
+	waitFor(t, "the recheck", func() bool { return len(opener.requested()) == 2 })
+	requests := opener.requested()
+	if !slices.Equal(requests[0], requests[1]) {
+		t.Fatalf("requests = %v", requests)
+	}
+	var none *WireGuardEngine
+	none.RecheckSubnetRoutes()
+}

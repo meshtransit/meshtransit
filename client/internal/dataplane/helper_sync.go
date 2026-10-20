@@ -38,6 +38,9 @@ type helperSync[T, R any] struct {
 	// wake starts or prods the worker; running is true while it runs.
 	wake    chan struct{}
 	running bool
+	// recheck asks the worker to send the unchanged request again at once:
+	// the helper's answer depends on the host's networks, which changed.
+	recheck bool
 	// refresh overrides helperRefreshInterval in tests.
 	refresh time.Duration
 }
@@ -70,6 +73,16 @@ func (h *helperSync[T, R]) setLocked(e *WireGuardEngine, desired T, exchange hel
 		h.running = true
 		go h.run(e, exchange, h.wake)
 	}
+	h.prodLocked()
+}
+
+// recheckLocked has the worker send the current request again now, when it
+// runs: the host's networks changed.
+func (h *helperSync[T, R]) recheckLocked() {
+	if !h.running {
+		return
+	}
+	h.recheck = true
 	h.prodLocked()
 }
 
@@ -113,7 +126,7 @@ func (h *helperSync[T, R]) run(e *WireGuardEngine, exchange helperExchange[T, R]
 			return
 		}
 		requested, generation := exchange.clone(h.desired), h.generation
-		h.mayHold = true
+		h.mayHold, h.recheck = true, false
 		e.mu.Unlock()
 
 		ctx, cancel := context.WithTimeout(context.Background(), helperRequestTimeout)
@@ -133,7 +146,7 @@ func (h *helperSync[T, R]) run(e *WireGuardEngine, exchange helperExchange[T, R]
 		select {
 		case <-wake:
 			e.mu.Lock()
-			unchanged := h.generation == generation
+			unchanged := h.generation == generation && !h.recheck
 			e.mu.Unlock()
 			if unchanged {
 				// Prodded without a change: wait for the refresh.

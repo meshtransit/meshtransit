@@ -290,6 +290,12 @@ type peerPathStatusDataPlane interface {
 	PeerPaths() dataplane.PeerPathSnapshot
 }
 
+// subnetRouteRechecker checks the installed subnet routes again against the
+// host's networks after they change.
+type subnetRouteRechecker interface {
+	RecheckSubnetRoutes()
+}
+
 type subnetRouteStatusDataPlane interface {
 	SubnetRoutes() dataplane.SubnetRouteStatus
 }
@@ -1603,6 +1609,9 @@ func (s *Service) runEndpointRefresh(
 				continue
 			}
 			s.networkObserved.Add(1)
+			if rechecker, ok := s.dataPlane.(subnetRouteRechecker); ok {
+				rechecker.RecheckSubnetRoutes()
+			}
 			if s.logger != nil {
 				// Without an active map session the change waits for the
 				// session's first discovery round.
