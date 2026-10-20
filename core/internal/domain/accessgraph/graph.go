@@ -15,6 +15,7 @@ import (
 	"meshtransit.net/core/internal/domain/policy/publication"
 	"meshtransit.net/core/internal/domain/resource"
 	"meshtransit.net/core/internal/domain/sharing"
+	"meshtransit.net/core/internal/domain/site"
 )
 
 const (
@@ -207,6 +208,8 @@ const (
 	GraphNodeKindResource
 	// GraphNodeKindImportedResource is a Device shared into the Network.
 	GraphNodeKindImportedResource
+	// GraphNodeKindSite is a Site of the Network that a rule grants.
+	GraphNodeKindSite
 )
 
 // String returns the stable wire spelling.
@@ -218,6 +221,8 @@ func (kind GraphNodeKind) String() string {
 		return "resource"
 	case GraphNodeKindImportedResource:
 		return "imported_resource"
+	case GraphNodeKindSite:
+		return "site"
 	default:
 		return ""
 	}
@@ -229,6 +234,7 @@ type GraphNodeParams struct {
 	DeviceID           node.ID
 	ResourceID         resource.ID
 	ImportedResourceID sharing.ImportedResourceID
+	SiteID             site.ID
 	Participant        Participant
 	// Share is required exactly for an imported Resource.
 	Share *ShareContext
@@ -240,6 +246,7 @@ type GraphNode struct {
 	deviceID           node.ID
 	resourceID         resource.ID
 	importedResourceID sharing.ImportedResourceID
+	siteID             site.ID
 	participant        Participant
 	share              ShareContext
 	hasShare           bool
@@ -250,7 +257,7 @@ type GraphNode struct {
 func NewGraphNode(params GraphNodeParams) (GraphNode, error) {
 	graphNode := GraphNode{
 		kind: params.Kind, deviceID: params.DeviceID, resourceID: params.ResourceID,
-		importedResourceID: params.ImportedResourceID, participant: params.Participant,
+		importedResourceID: params.ImportedResourceID, siteID: params.SiteID, participant: params.Participant,
 	}
 	if params.Share != nil {
 		graphNode.share, graphNode.hasShare = *params.Share, true
@@ -275,6 +282,9 @@ func (graphNode GraphNode) ImportedResourceID() sharing.ImportedResourceID {
 	return graphNode.importedResourceID
 }
 
+// SiteID returns the identity of a Site node.
+func (graphNode GraphNode) SiteID() site.ID { return graphNode.siteID }
+
 // Participant returns the node name and state.
 func (graphNode GraphNode) Participant() Participant { return graphNode.participant }
 
@@ -290,6 +300,8 @@ func (graphNode GraphNode) key() string {
 		return "device:" + graphNode.deviceID.String()
 	case GraphNodeKindResource:
 		return "resource:" + graphNode.resourceID.String()
+	case GraphNodeKindSite:
+		return "site:" + graphNode.siteID.String()
 	default:
 		return "imported:" + graphNode.importedResourceID.String()
 	}
@@ -302,11 +314,16 @@ func (graphNode GraphNode) IsValid() bool {
 	}
 	device, resourceSet, imported := graphNode.deviceID.IsValid(), graphNode.resourceID.IsValid(),
 		graphNode.importedResourceID.IsValid()
+	if graphNode.siteID.IsValid() != (graphNode.kind == GraphNodeKindSite) {
+		return false
+	}
 	switch graphNode.kind {
 	case GraphNodeKindDevice:
 		return device && !resourceSet && !imported && !graphNode.hasShare
 	case GraphNodeKindResource:
 		return !device && resourceSet && !imported && !graphNode.hasShare
+	case GraphNodeKindSite:
+		return !device && !resourceSet && !imported && !graphNode.hasShare
 	case GraphNodeKindImportedResource:
 		return !device && !resourceSet && imported && graphNode.hasShare && graphNode.share.IsValid()
 	default:
@@ -443,6 +460,8 @@ func pathNodeKeys(path Path) []string {
 		return []string{source, "resource:" + path.DestinationResourceID().String()}
 	case SelectorKindImportedResource:
 		return []string{source, "imported:" + path.DestinationImportedResourceID().String()}
+	case SelectorKindSite:
+		return []string{source, "site:" + path.DestinationSiteID().String()}
 	default:
 		return []string{source, "device:" + path.DestinationNodeID().String()}
 	}

@@ -13,8 +13,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 197 {
-		t.Fatalf("len(Catalog()) = %d, want 197", len(catalog))
+	if len(catalog) != 198 {
+		t.Fatalf("len(Catalog()) = %d, want 198", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1609,8 +1609,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 197 {
-		t.Fatalf("LatestVersion() = %d, want 197", LatestVersion())
+	if LatestVersion() != 198 {
+		t.Fatalf("LatestVersion() = %d, want 198", LatestVersion())
 	}
 }
 
@@ -5699,6 +5699,26 @@ func TestMigration197ExplainsSiteAddresses(t *testing.T) {
 	} {
 		if !strings.Contains(migration.SQL, want) {
 			t.Errorf("schema 197 lacks %q", want)
+		}
+	}
+}
+
+func TestMigration198ListsSiteEdges(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[197]
+	if migration.Version != 198 {
+		t.Fatalf("migration 198 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.site_graph_edges_internal_v1(",
+		"CREATE FUNCTION mesh_ops.read_access_graph_v3(",
+		"FROM mesh_ops.read_access_graph_v2(",
+		"ERRCODE = 'MTA01'",
+		"'route.read', p_evaluated_at",
+		"WHERE router.site_id = edge.destination_site_id AND router.device_id = edge.source_device_id",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 198 lacks %q", want)
 		}
 	}
 }

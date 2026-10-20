@@ -14,6 +14,7 @@ import (
 	"meshtransit.net/core/internal/domain/policy/publication"
 	"meshtransit.net/core/internal/domain/resource"
 	"meshtransit.net/core/internal/domain/sharing"
+	"meshtransit.net/core/internal/domain/site"
 )
 
 // maximumAccessGraphListingBytes bounds each JSON document of one graph page:
@@ -37,7 +38,7 @@ const readAccessGraphSQL = `SELECT
     has_more,
     paths::TEXT,
     nodes::TEXT
-FROM mesh_ops.read_access_graph_v2(
+FROM mesh_ops.read_access_graph_v3(
     $1::UUID, $2::UUID, $3::UUID, $4::UUID,
     $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
     $10::UUID, $11::UUID, $12::UUID, $13::TEXT, $14::UUID, $15::INTEGER, $16::TIMESTAMPTZ
@@ -291,6 +292,9 @@ func (record accessGraphNodeRecord) node() (accessgraph.GraphNode, error) {
 	case "imported_resource":
 		params.Kind = accessgraph.GraphNodeKindImportedResource
 		params.ImportedResourceID, err = sharing.ParseImportedResourceID(record.ID)
+	case "site":
+		params.Kind = accessgraph.GraphNodeKindSite
+		params.SiteID, err = site.ParseID(record.ID)
 	default:
 		return accessgraph.GraphNode{}, accessgraph.ErrInvalidSnapshot
 	}

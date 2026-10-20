@@ -3537,9 +3537,10 @@
       "AccessGraphNode": {
         "type": "object",
         "additionalProperties": false,
+        "description": "A site node's name is null unless the caller may also read routes.",
         "required": ["kind", "id", "name", "state", "share"],
         "properties": {
-          "kind": {"type": "string", "enum": ["device", "resource", "imported_resource"]},
+          "kind": {"type": "string", "enum": ["device", "resource", "imported_resource", "site"]},
           "id": {"$ref": "#/components/schemas/PublicID"},
           "name": {"type": ["string", "null"], "maxLength": 255},
           "state": {"type": "string", "enum": ["active", "inactive"]},

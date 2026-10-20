@@ -107,6 +107,7 @@ JOIN mesh.policy_release AS release ON release.id = rule.policy_release_id WHERE
 	}
 
 	assertSiteExplanations(ctx, t, newIntegrationPolicyExplainer(t, runtimePool), owner, scope, member, hq)
+	assertSiteGraph(ctx, t, newIntegrationPolicyExplainer(t, runtimePool), owner, scope, member, hq, lab)
 
 	catalogStore, err := postgresadapter.NewActivePolicyStore(runtimePool, postgresadapter.PolicySimulationOptions{
 		StatementTimeout: 5 * time.Second, LockTimeout: time.Second, IdleTimeout: 10 * time.Second,
@@ -230,6 +231,69 @@ func assertSiteExplanations(ctx context.Context, t *testing.T, explainer *access
 		if !isDenied || reason != denied.reason || result.Snapshot().TargetSiteID().IsValid() != denied.inSite {
 			t.Fatalf("explain %s:%d = %s, %s", denied.address, denied.port, result.Decision(), reason)
 		}
+	}
+}
+
+// assertSiteGraph qualifies schema 198: the Access Graph lists one edge per
+// Site a rule grants the member, with the Site node, both filtered to the
+// member and unfiltered across small pages that merge with the other edges.
+func assertSiteGraph(ctx context.Context, t *testing.T, graph *accessgraph.Service,
+	owner accountsession.Session, scope network.Scope, member node.ID, hq, lab site.ID) {
+	t.Helper()
+	list := func(filter node.ID, pageSize int) ([]accessgraph.Path, map[site.ID]accessgraph.GraphNode) {
+		var paths []accessgraph.Path
+		sites := make(map[site.ID]accessgraph.GraphNode)
+		var cursor accessgraph.GraphCursor
+		for range 1000 {
+			query, err := accessgraph.NewGraphQuery(accessgraph.GraphQueryParams{
+				Scope: scope, DeviceID: filter, PageSize: pageSize, Cursor: cursor,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			page, err := graph.Graph(ctx, owner, query)
+			if err != nil {
+				t.Fatalf("list Access Graph: %v", err)
+			}
+			paths = append(paths, page.Paths()...)
+			for _, graphNode := range page.Nodes() {
+				if graphNode.Kind() == accessgraph.GraphNodeKindSite {
+					sites[graphNode.SiteID()] = graphNode
+				}
+			}
+			next, more := page.Next()
+			if !more {
+				return paths, sites
+			}
+			cursor = next
+		}
+		t.Fatal("Access Graph pages never end")
+		return nil, nil
+	}
+	siteEdges := func(paths []accessgraph.Path) map[site.ID]accessgraph.Path {
+		edges := make(map[site.ID]accessgraph.Path)
+		seen := make(map[string]bool)
+		for _, path := range paths {
+			if seen[path.ProjectionID().String()] {
+				t.Fatalf("Access Graph repeats edge %s", path.ProjectionID())
+			}
+			seen[path.ProjectionID().String()] = true
+			if path.SelectorKind() == accessgraph.SelectorKindSite && path.SourceNodeID() == member {
+				edges[path.DestinationSiteID()] = path
+			}
+		}
+		return edges
+	}
+	filtered, nodes := list(member, accessgraph.MaximumGraphPageSize)
+	edges := siteEdges(filtered)
+	if len(edges) != 2 || !edges[hq].SourceDeviceGroupID().IsValid() ||
+		len(edges[hq].DestinationPrefixes()) != 1 || edges[hq].DestinationPrefixes()[0].String() != "10.20.5.0/24" ||
+		nodes[hq].Participant().Name() != "Policy HQ" || nodes[lab].Participant().Name() != "Policy Lab" {
+		t.Fatalf("Site edges of the member = %+v, Site nodes = %+v", edges, nodes)
+	}
+	unfiltered, _ := list(node.ID{}, 2)
+	if all := siteEdges(unfiltered); len(all) != 2 || all[lab].RuleID() != edges[lab].RuleID() {
+		t.Fatalf("unfiltered Site edges = %+v", all)
 	}
 }
 

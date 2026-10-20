@@ -113,8 +113,8 @@ primary router ([routers and failover](#routers-and-failover)):
   removed, so remove them first.
 - The activity log reports them with `destination_kind` `site`. Simulation
   reports, per source Device, the part of a Site a proposal grants or takes
-  away. Explain answers for an address inside a Site; the access graph does
-  not include Sites yet.
+  away. Explain answers for an address inside a Site, and the access graph
+  lists one edge per Device a rule grants a Site to.
 
 ### Routers and failover
 
@@ -312,7 +312,7 @@ digest of what it sent ([enforcement](audit.md#policy-distribution-and-enforceme
 
 | Operation | Needs | Answers |
 |---|---|---|
-| `GET …/access-graph` | `policy.read`, `device.read` | Every allowed path, optionally for one Device or protocol, page by page |
+| `GET …/access-graph` | `policy.read`, `device.read` | Every allowed path, optionally for one Device or protocol, page by page, including one edge (`selector_kind` `site`) per Device a rule grants a Site to, to a `site` node |
 | `POST …/access-graph/actions/explain` | `policy.explain` | For a source Device, a destination (Device, Resource, Imported Resource or an address inside a Site), protocol and port: allow or deny, the rules that allow it, and why not otherwise |
 | `GET …/access-graph/history` (Console private API) | `policy.read`, `device.read` | Paths at a past instant ([audit](audit.md#connection-history)) |
 

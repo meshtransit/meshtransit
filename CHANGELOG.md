@@ -5,6 +5,11 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: the Access Graph lists the Devices each rule to a Site reaches
+  (schema 198, `mesh_ops.read_access_graph_v3`): one `site` edge per Device
+  with the prefixes the rule grants, to a `site` node, in the same projection
+  order and pages as other edges. A Site's routers get no edge, and a Site
+  node is named only for callers with `route.read`.
 - Core: explain answers for an address inside a Site (schema 197,
   `mesh_ops.explain_site_access_v1`). `destination_address` asks about it;
   the answer names the Site that holds the address and each rule to it that
