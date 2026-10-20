@@ -195,11 +195,22 @@ mesh while `exit_use` (or `exit_allow_managed`) allows it:
 - rules after the routed one: the reply mark, DHCP and interface-bound
   sockets look up `main`; everyone but `meshd` looks up the exit table.
 
-DNS does not go through the exit node yet: the host's resolvers are behind
-the kill switch (`systemd-resolved` binds its queries to the link, which the
-kill switch drops), so names resolve only through a resolver in an allowed
-LAN. The routed table's throws for system resolvers fall through to the exit
-table. The kill switch
+DNS follows: the plan makes `meshd`'s resolver the host's default (`~.`)
+and sends every name it neither answers nor routes to a private resolver
+to the exit node's forwarder, at the overlay address Core sends
+(`dns_ipv4`/`dns_ipv6`), answering SERVFAIL without an exit node and no
+AAAA data without its IPv6. On the exit node the helper redirects port 53
+of its overlay addresses to `meshd`'s forwarder (port 1055), which the
+filter opens to the sources of the pool's rules; it asks the pool's
+`dns_upstreams` or the host's resolvers, drops every A, AAAA and SVCB/HTTPS
+hint that is no Internet for the consumer, bounds questions (256 at once,
+64 TCP connections, 64 a second per consumer) and logs no names. The
+exit nodes of a pool's first use are pinned (`exit-pins.json` in the state
+directory); a later one waits for `meshctl exit approve`, unless the host
+follows managed pools. `auto` takes the pool whose primary has the lowest
+round trip once measured and keeps it; new TCP connections through the
+exit node left unanswered for 5 seconds move the node to the next
+candidate. The kill switch
 follows root's `exit_use` alone, before the first map and across restarts
 of `meshd` and `meshnetd`, without the TUN (the table is then unreachable
 only); `meshd` only adds IPv6 and the managed pools. It goes when root stops

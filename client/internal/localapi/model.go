@@ -170,6 +170,24 @@ type exitStatus struct {
 	Routing      bool   `json:"routing"`
 	Refused      string `json:"refused,omitempty"`
 	Error        string `json:"error,omitempty"`
+	// Pending are exit nodes added to the pool that wait for meshctl exit
+	// approve, by device ID and name.
+	Pending      []string `json:"pending,omitempty"`
+	PendingNames []string `json:"pending_names,omitempty"`
+	PendingPool  string   `json:"pending_pool,omitempty"`
+}
+
+// exitApprovalRequest names the exit nodes (device IDs) or pool (its
+// reference) to approve, as status listed them.
+type exitApprovalRequest struct {
+	IDs []string `json:"ids"`
+}
+
+// exitApprovalResponse names the exit nodes just approved.
+type exitApprovalResponse struct {
+	APIVersion string   `json:"api_version"`
+	Pool       string   `json:"pool"`
+	Approved   []string `json:"approved"`
 }
 
 type subnetRouterSiteHealth struct {

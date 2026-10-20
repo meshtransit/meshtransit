@@ -808,6 +808,10 @@ func (f *fakeClient) RefreshNAT(_ context.Context) (localapi.Netcheck, error) {
 	return f.netcheck, f.err
 }
 
+func (f *fakeClient) ApproveExitNodes(_ context.Context, ids []string) (localapi.ExitApproval, error) {
+	return localapi.ExitApproval{APIVersion: "v1", Pool: "p1", Approved: ids}, f.err
+}
+
 func (f *fakeClient) Status(_ context.Context) (localapi.Status, error) {
 	return f.status, f.err
 }

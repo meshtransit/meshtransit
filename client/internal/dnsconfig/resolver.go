@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/netip"
 	"slices"
 	"strings"
@@ -14,7 +15,9 @@ import (
 
 	"golang.org/x/net/dns/dnsmessage"
 
+	"meshtransit.net/client/internal/overlayframe"
 	"meshtransit.net/client/internal/underlay"
+	"meshtransit.net/shared/internet"
 )
 
 const (
@@ -94,6 +97,26 @@ func (e *resolverEngine) resolve(
 	resolvers := plan.DefaultResolvers
 	if routed {
 		resolvers = route.Resolvers
+	}
+	if exit := plan.Exit; exit != nil {
+		// A suffix routed to a resolver of a Site or LAN keeps it; every
+		// other name goes to the exit node, never to a resolver on the
+		// Internet through the host's own network.
+		private := slices.DeleteFunc(slices.Clone(resolvers), func(resolver netip.AddrPort) bool {
+			return internet.Contains(resolver.Addr())
+		})
+		if !routed || len(private) == 0 {
+			if question.Type == dnsmessage.TypeAAAA && !exit.IPv6 {
+				response, err := noDataResponse(message, question, plan)
+				if err != nil {
+					return nil, err
+				}
+				return limitUDPResponse(query, response, transport)
+			}
+			// Compile admitted only the exit node's own mesh addresses.
+			private = exit.Resolvers
+		}
+		resolvers = private
 	}
 	if len(resolvers) == 0 {
 		return failureResponse(query, message, question, plan, transport, errNoResolver)
@@ -213,6 +236,12 @@ func ptrResponse(
 	}}
 
 	return response.Pack()
+}
+
+// noDataResponse answers that the name has no record of the question's
+// type, which a client takes at once, unlike a timeout.
+func noDataResponse(query dnsmessage.Message, question dnsmessage.Question, plan Plan) ([]byte, error) {
+	return negativeResponse(query, question, dnsmessage.RCodeSuccess, ".", plan)
 }
 
 func negativeResponse(
@@ -484,12 +513,22 @@ func exchangeDNS(
 	return response, nil
 }
 
+// dialerFor keeps a socket to a resolver on the physical network, except
+// to one in the mesh (an exit node's forwarder), which only the mesh
+// reaches.
+func dialerFor(resolver netip.AddrPort) *net.Dialer {
+	if overlayframe.Contains(netip.PrefixFrom(resolver.Addr().Unmap(), resolver.Addr().Unmap().BitLen())) {
+		return &net.Dialer{}
+	}
+	return underlay.Dialer(0)
+}
+
 func exchangeUDP(ctx context.Context, query []byte, resolver netip.AddrPort) ([]byte, error) {
 	network := "udp4"
 	if resolver.Addr().Is6() {
 		network = "udp6"
 	}
-	connection, err := underlay.Dialer(0).DialContext(ctx, network, resolver.String())
+	connection, err := dialerFor(resolver).DialContext(ctx, network, resolver.String())
 	if err != nil {
 		return nil, fmt.Errorf("dialing udp: %w", err)
 	}
@@ -522,7 +561,7 @@ func exchangeTCP(ctx context.Context, query []byte, resolver netip.AddrPort) ([]
 	if resolver.Addr().Is6() {
 		network = "tcp6"
 	}
-	connection, err := underlay.Dialer(0).DialContext(ctx, network, resolver.String())
+	connection, err := dialerFor(resolver).DialContext(ctx, network, resolver.String())
 	if err != nil {
 		return nil, fmt.Errorf("dialing tcp: %w", err)
 	}

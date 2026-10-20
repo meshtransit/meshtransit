@@ -190,16 +190,31 @@ type SubnetRouteSite struct {
 
 // ExitStatus is the exit node the node sends its Internet traffic to.
 type ExitStatus struct {
-	Use          string `json:"use"`
-	Pool         string `json:"pool,omitempty"`
-	PoolName     string `json:"pool_name,omitempty"`
-	ExitNode     string `json:"exit_node,omitempty"`
-	ExitNodeName string `json:"exit_node_name,omitempty"`
-	Via          string `json:"via"`
-	IPv6         bool   `json:"ipv6"`
-	Routing      bool   `json:"routing"`
-	Refused      string `json:"refused,omitempty"`
-	Error        string `json:"error,omitempty"`
+	Use          string   `json:"use"`
+	Pool         string   `json:"pool,omitempty"`
+	PoolName     string   `json:"pool_name,omitempty"`
+	ExitNode     string   `json:"exit_node,omitempty"`
+	ExitNodeName string   `json:"exit_node_name,omitempty"`
+	Via          string   `json:"via"`
+	IPv6         bool     `json:"ipv6"`
+	Routing      bool     `json:"routing"`
+	Refused      string   `json:"refused,omitempty"`
+	Error        string   `json:"error,omitempty"`
+	Pending      []string `json:"pending,omitempty"`
+	PendingNames []string `json:"pending_names,omitempty"`
+	PendingPool  string   `json:"pending_pool,omitempty"`
+}
+
+// exitApprovalRequest names what to approve.
+type exitApprovalRequest struct {
+	IDs []string `json:"ids"`
+}
+
+// ExitApproval names the exit nodes just approved.
+type ExitApproval struct {
+	APIVersion string   `json:"api_version"`
+	Pool       string   `json:"pool"`
+	Approved   []string `json:"approved"`
 }
 
 // ExitNodeStatus is how the node forwards as an exit node.

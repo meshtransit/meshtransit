@@ -318,7 +318,7 @@ func TestKernelExitConfigurerIntegration(t *testing.T) {
 		"set notinternet4", "set notinternet6", "10.0.0.0/8", "169.254.0.0/16", "100.64.0.0/10",
 		"45.76.10.8/29", "34.1.2.3", "4000::-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
 		"tcp dport 25 drop", "ct count over 2048", "masquerade", "!= @consumers4 drop", "!= @consumers6 drop",
-		`iifname "` + name + `" accept`,
+		`iifname "` + name + `" accept`, "udp dport 53 redirect to :1055", "tcp dport 53 redirect to :1055",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("exit table lacks %q:\n%s", want, text)

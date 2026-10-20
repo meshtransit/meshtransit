@@ -207,6 +207,20 @@ func (c *Client) Up(ctx context.Context) (Connection, error) {
 	return c.postConnection(ctx, "/v1/up")
 }
 
+// ApproveExitNodes lets the pool in use carry traffic through the exit
+// nodes Core added to it.
+func (c *Client) ApproveExitNodes(ctx context.Context, ids []string) (ExitApproval, error) {
+	response := ExitApproval{}
+	if err := c.do(ctx, http.MethodPost, "/v1/exit/approve", exitApprovalRequest{IDs: ids}, http.StatusOK,
+		&response); err != nil {
+		return ExitApproval{}, err
+	}
+	if response.APIVersion != apiVersion {
+		return ExitApproval{}, fmt.Errorf("localapi: unsupported api version %q", response.APIVersion)
+	}
+	return response, nil
+}
+
 func (c *Client) postConnection(ctx context.Context, path string) (Connection, error) {
 	response := Connection{}
 	if err := c.do(ctx, http.MethodPost, path, nil, http.StatusOK, &response); err != nil {

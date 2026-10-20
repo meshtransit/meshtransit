@@ -105,6 +105,15 @@ func replaceServedTable(ruleset servedRuleset) error {
 	for _, exprs := range postroutingRules(ruleset, sets) {
 		conn.AddRule(&nftables.Rule{Table: table, Chain: postrouting, Exprs: exprs})
 	}
+	if ruleset.Exit != nil {
+		prerouting := conn.AddChain(&nftables.Chain{
+			Name: "prerouting", Table: table, Type: nftables.ChainTypeNAT,
+			Hooknum: nftables.ChainHookPrerouting, Priority: nftables.ChainPriorityNATDest,
+		})
+		for _, exprs := range exitDNSRedirectRules(ruleset, sets) {
+			conn.AddRule(&nftables.Rule{Table: table, Chain: prerouting, Exprs: exprs})
+		}
+	}
 	if err := conn.Flush(); err != nil {
 		return fmt.Errorf("installing router rules: %w", err)
 	}
@@ -438,6 +447,33 @@ func exitPostroutingRules(ruleset servedRuleset, sets servedSets) [][]expr.Any {
 		join(interfaceIs(expr.MetaKeyIIFNAME, ruleset.Interface), family(unix.NFPROTO_IPV6),
 			addressIn(true, 24, 16, sets.served6), []expr.Any{&expr.Masq{}}),
 	}
+}
+
+// exitDNSRedirectRules send consumers' DNS to the exit node's own overlay
+// addresses on to the port its forwarder listens on: meshd may not bind
+// port 53 (exit node design §7.2).
+func exitDNSRedirectRules(ruleset servedRuleset, sets servedSets) [][]expr.Any {
+	port := make([]byte, 2)
+	binary.BigEndian.PutUint16(port, ExitDNSPort)
+	var rules [][]expr.Any
+	for _, family4 := range []bool{true, false} {
+		protocol, self := byte(unix.NFPROTO_IPV6), addressIn(false, 24, 16, sets.self6)
+		if family4 {
+			protocol, self = unix.NFPROTO_IPV4, addressIn(false, 16, 4, sets.self4)
+		}
+		for _, transport := range []byte{unix.IPPROTO_UDP, unix.IPPROTO_TCP} {
+			rules = append(rules, join(interfaceIs(expr.MetaKeyIIFNAME, ruleset.Interface), family(protocol), self,
+				[]expr.Any{
+					&expr.Meta{Key: expr.MetaKeyL4PROTO, Register: 1},
+					&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{transport}},
+					&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseTransportHeader, Offset: 2, Len: 2},
+					&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{0, 53}},
+					&expr.Immediate{Register: 1, Data: port},
+					&expr.Redir{RegisterProtoMin: 1},
+				}))
+		}
+	}
+	return rules
 }
 
 func join(parts ...[]expr.Any) []expr.Any {

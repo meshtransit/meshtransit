@@ -33,6 +33,8 @@ type lab struct {
 	t        *testing.T
 	suffix   string
 	dir      string
+	names    []string // the namespaces of the topology
+	scenario string   // envScenario of its processes
 	mu       sync.Mutex
 	children map[string]*child
 }
@@ -64,9 +66,31 @@ var labs atomic.Int64
 
 // codes are the one-letter names of the namespaces, kept short so the
 // namespace and interface names fit.
-var codes = map[string]string{"hub": "h", consumer: "c", routerA: "a", routerB: "b", "lan": "l"}
+var codes = map[string]string{
+	"hub": "h", consumer: "c", routerA: "a", routerB: "b", "lan": "l", exitA: "x", exitB: "y", "net": "n",
+}
 
 func newLab(t *testing.T) *lab {
+	t.Helper()
+	l := newBareLab(t, "hub", consumer, routerA, routerB, "lan")
+	hub := l.ns("hub")
+	for _, bridge := range []string{"bu", "bl"} {
+		l.ip("-n", hub, "link", "add", bridge, "type", "bridge")
+		l.ip("-n", hub, "link", "set", bridge, "up")
+	}
+	for _, name := range []string{consumer, routerA, routerB} {
+		l.attach(name, "under0", "bu", nodes[name].underlay.String()+"/24")
+	}
+	for _, name := range []string{routerA, routerB} {
+		l.attach(name, "lan0", "bl", nodes[name].lan.String()+"/24")
+	}
+	l.attach("lan", "lan0", "bl", lanHost.String()+"/24")
+	return l
+}
+
+// newBareLab creates the namespaces names, with loopback up and reverse
+// path checks off, and no links between them.
+func newBareLab(t *testing.T, names ...string) *lab {
 	t.Helper()
 	if os.Geteuid() != 0 {
 		t.Skip("root privileges are required")
@@ -77,9 +101,9 @@ func newLab(t *testing.T) *lab {
 		}
 	}
 	suffix := strconv.Itoa(os.Getpid()%10000) + strconv.FormatInt(labs.Add(1), 36)
-	l := &lab{t: t, suffix: suffix, dir: t.TempDir(), children: map[string]*child{}}
+	l := &lab{t: t, suffix: suffix, dir: t.TempDir(), names: names, children: map[string]*child{}}
 	t.Cleanup(l.close)
-	for name := range codes {
+	for _, name := range names {
 		l.ip("netns", "add", l.ns(name))
 		l.ip("-n", l.ns(name), "link", "set", "lo", "up")
 		// The kernel checks a packet's reverse path as uid 0. Here meshd
@@ -90,26 +114,18 @@ func newLab(t *testing.T) *lab {
 		l.ip("netns", "exec", l.ns(name), "sh", "-c",
 			"echo 0 > /proc/sys/net/ipv4/conf/all/rp_filter && echo 0 > /proc/sys/net/ipv4/conf/default/rp_filter")
 	}
-	hub := l.ns("hub")
-	for _, bridge := range []string{"bu", "bl"} {
-		l.ip("-n", hub, "link", "add", bridge, "type", "bridge")
-		l.ip("-n", hub, "link", "set", bridge, "up")
-	}
-	attach := func(name, inside, bridge, address string) {
-		peer := "h" + codes[name] + bridge[1:]
-		l.ip("link", "add", inside, "netns", l.ns(name), "type", "veth", "peer", "name", peer, "netns", hub)
-		l.ip("-n", hub, "link", "set", peer, "master", bridge, "up")
-		l.ip("-n", l.ns(name), "addr", "add", address, "dev", inside)
-		l.ip("-n", l.ns(name), "link", "set", inside, "up")
-	}
-	for _, name := range []string{consumer, routerA, routerB} {
-		attach(name, "under0", "bu", nodes[name].underlay.String()+"/24")
-	}
-	for _, name := range []string{routerA, routerB} {
-		attach(name, "lan0", "bl", nodes[name].lan.String()+"/24")
-	}
-	attach("lan", "lan0", "bl", lanHost.String()+"/24")
 	return l
+}
+
+// attach links name's interface inside to the hub's bridge, with address.
+func (l *lab) attach(name, inside, bridge, address string) {
+	l.t.Helper()
+	hub := l.ns("hub")
+	peer := "h" + codes[name] + bridge[1:]
+	l.ip("link", "add", inside, "netns", l.ns(name), "type", "veth", "peer", "name", peer, "netns", hub)
+	l.ip("-n", hub, "link", "set", peer, "master", bridge, "up")
+	l.ip("-n", l.ns(name), "addr", "add", address, "dev", inside)
+	l.ip("-n", l.ns(name), "link", "set", inside, "up")
 }
 
 func (l *lab) ns(name string) string { return "mtx" + l.suffix + codes[name] }
@@ -131,7 +147,7 @@ func (l *lab) start(name, role string) {
 	// Not bound to a context: stop ends it, with the signal the test chose.
 	cmd := exec.CommandContext(context.Background(), "ip", "netns", "exec", l.ns(name), self, //nolint:gosec // this test binary
 		"-test.run=^$")
-	cmd.Env = append(os.Environ(), envRole+"="+role, envNode+"="+name, envDir+"="+l.dir)
+	cmd.Env = append(os.Environ(), envRole+"="+role, envNode+"="+name, envDir+"="+l.dir, envScenario+"="+l.scenario)
 	output := &lockedBuffer{}
 	cmd.Stdout, cmd.Stderr = output, output
 	if err := cmd.Start(); err != nil {
@@ -178,7 +194,7 @@ func (l *lab) close() {
 	for _, name := range names {
 		l.stop(name, syscall.SIGTERM)
 	}
-	for name := range codes {
+	for _, name := range l.names {
 		//nolint:gosec // the test's own namespaces
 		if output, err := exec.CommandContext(context.Background(), "ip", "netns", "del", l.ns(name)).CombinedOutput(); err != nil {
 			l.t.Logf("removing namespace %s: %v: %s", l.ns(name), err, output)
@@ -212,7 +228,7 @@ func (l *lab) run(role string, timeout time.Duration) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "ip", "netns", "exec", l.ns(consumer), self, "-test.run=^$") //nolint:gosec // this test binary
-	cmd.Env = append(os.Environ(), envRole+"="+role, envDir+"="+l.dir)
+	cmd.Env = append(os.Environ(), envRole+"="+role, envDir+"="+l.dir, envScenario+"="+l.scenario)
 	var output bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &output, &output
 	err = cmd.Run()

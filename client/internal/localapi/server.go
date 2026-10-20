@@ -43,6 +43,7 @@ type service interface {
 	Up(context.Context) (daemon.ConnectionChange, error)
 	Logout(context.Context) (daemon.LogoutResult, error)
 	RefreshNAT(context.Context) (daemon.NATStatus, error)
+	ApproveExitNodes(context.Context, []string) (daemon.ExitApproval, error)
 }
 
 // Server serves the local control API with bounded HTTP resources.
@@ -169,6 +170,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/v1/up", s.handleUp)
 	mux.HandleFunc("/v1/logout", s.handleLogout)
 	mux.HandleFunc("/v1/netcheck", s.handleNetcheck)
+	mux.HandleFunc("/v1/exit/approve", s.handleExitApprove)
 
 	bounded := http.MaxBytesHandler(mux, maxRequestBodyBytes)
 
@@ -259,6 +261,33 @@ func (s *Server) handleDown(writer http.ResponseWriter, request *http.Request) {
 // handleUp clears a down (meshctl up).
 func (s *Server) handleUp(writer http.ResponseWriter, request *http.Request) {
 	s.handleConnectionChange(writer, request, s.service.Up)
+}
+
+// handleExitApprove lets the pool in use carry traffic through the exit
+// nodes Core added to it (meshctl exit approve).
+func (s *Server) handleExitApprove(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		s.writeMethodNotAllowed(writer, http.MethodPost)
+		return
+	}
+	input := exitApprovalRequest{}
+	if !s.decodeJSONRequest(writer, request, &input) {
+		return
+	}
+	if len(input.IDs) == 0 || len(input.IDs) > 16 {
+		s.writeError(writer, http.StatusBadRequest, "invalid_exit_approval", "name 1 to 16 exit nodes or pools")
+		return
+	}
+	result, err := s.service.ApproveExitNodes(request.Context(), input.IDs)
+	if err != nil {
+		s.writeServiceError(writer, err)
+		return
+	}
+	approved := result.Approved
+	if approved == nil {
+		approved = []string{}
+	}
+	s.writeJSON(writer, http.StatusOK, exitApprovalResponse{APIVersion: apiVersion, Pool: result.Pool, Approved: approved})
 }
 
 func (s *Server) handleConnectionChange(
@@ -669,7 +698,8 @@ func mapExitStatus(view *daemon.ExitView, route dataplane.ExitRouteStatus) *exit
 	return &exitStatus{
 		Use: view.Use, Pool: view.Pool, PoolName: view.PoolName, ExitNode: view.ExitNode,
 		ExitNodeName: view.ExitNodeName, Via: view.Via, IPv6: route.IPv6, Routing: route.Routing,
-		Refused: route.Refused, Error: route.Error,
+		Refused: route.Refused, Error: route.Error, Pending: view.Pending, PendingNames: view.PendingNames,
+		PendingPool: view.PendingPool,
 	}
 }
 
@@ -920,6 +950,8 @@ func (s *Server) writeServiceError(writer http.ResponseWriter, err error) {
 	case errors.Is(err, daemon.ErrNodeKeyRotation):
 		s.logger.Warn("node key rotation failed", "error", err)
 		s.writeError(writer, http.StatusBadGateway, "node_key_rotation_failed", "node key rotation failed")
+	case errors.Is(err, daemon.ErrNothingToApprove):
+		s.writeError(writer, http.StatusConflict, "nothing_to_approve", "none of these exit nodes or pools waits for approval")
 	case errors.Is(err, daemon.ErrControlSessionBusy):
 		s.writeError(writer, http.StatusServiceUnavailable, "control_session_busy", "meshd is still stopping its control session; try again")
 	case errors.Is(err, daemon.ErrLogout) &&

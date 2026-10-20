@@ -115,6 +115,10 @@ func (*upFakeClient) RefreshNAT(context.Context) (localapi.Netcheck, error) {
 	return localapi.Netcheck{}, nil
 }
 
+func (*upFakeClient) ApproveExitNodes(context.Context, []string) (localapi.ExitApproval, error) {
+	return localapi.ExitApproval{}, nil
+}
+
 var _ DaemonClient = (*upFakeClient)(nil)
 
 func runUpCommand(t *testing.T, client DaemonClient, args ...string) (int, string, string) {

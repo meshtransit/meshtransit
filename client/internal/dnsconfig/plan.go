@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"meshtransit.net/client/internal/networkmap"
+	"meshtransit.net/client/internal/overlayframe"
 )
 
 var ErrInvalid = errors.New("dnsconfig: invalid plan")
@@ -40,6 +41,59 @@ type Plan struct {
 	// root or a single-label suffix, which would hide names the host
 	// resolves elsewhere; they are not installed.
 	IgnoredRoutes int
+	// Exit, while the node sends its Internet traffic through an exit node,
+	// makes this resolver the host's default and sends every name it does
+	// not answer or route to a private resolver to the exit node's DNS
+	// forwarder (exit node design §7.1).
+	Exit *ExitDNS
+}
+
+// ExitDNS is the DNS of the exit node in use.
+type ExitDNS struct {
+	// Resolvers are its forwarder's overlay addresses; empty while no exit
+	// node carries the traffic: names are then answered SERVFAIL, never
+	// asked of the host's own resolvers.
+	Resolvers []netip.AddrPort
+	// IPv6 is whether the exit node carries IPv6; otherwise AAAA questions
+	// are answered with no data, so applications use IPv4 at once.
+	IPv6 bool
+}
+
+// exitDNSPort is the port consumers ask the exit node's forwarder on.
+const exitDNSPort = 53
+
+// exitDNSOf returns the DNS of the exit node snapshot's local choice uses.
+func exitDNSOf(snapshot networkmap.Snapshot) *ExitDNS {
+	route := snapshot.ExitRoute
+	if route == nil {
+		return nil
+	}
+	exit := &ExitDNS{Resolvers: []netip.AddrPort{}, IPv6: route.IPv6}
+	// The forwarder answers on the exit node's own mesh addresses only:
+	// Core's addresses are no reason to send names anywhere else.
+	var own []netip.Prefix
+	for _, peer := range snapshot.Peers {
+		if peer.StableID == route.Node && route.Node != "" {
+			own = peer.Addresses
+		}
+	}
+	for _, pool := range snapshot.Exits {
+		if pool.Ref != route.Pool || route.Node == "" {
+			continue
+		}
+		for _, candidate := range pool.Candidates {
+			if candidate.DeviceID != route.Node {
+				continue
+			}
+			for _, address := range []netip.Addr{candidate.DNS4, candidate.DNS6} {
+				if address.IsValid() && slices.Contains(own, netip.PrefixFrom(address, address.BitLen())) &&
+					overlayframe.Contains(netip.PrefixFrom(address, address.BitLen())) {
+					exit.Resolvers = append(exit.Resolvers, netip.AddrPortFrom(address, exitDNSPort))
+				}
+			}
+		}
+	}
+	return exit
 }
 
 // Route is one canonical suffix and its ordered resolver set. An empty
@@ -67,8 +121,9 @@ type Reverse struct {
 // defensively-owned DNS plan. It rejects ambiguous local names and ensures
 // every local record is covered by a locally authoritative route.
 func Compile(snapshot networkmap.Snapshot) (Plan, error) {
-	plan := Plan{Revision: snapshot.Revision}
+	plan := Plan{Revision: snapshot.Revision, Exit: exitDNSOf(snapshot)}
 	if snapshot.DNS == nil {
+		plan.Enabled = plan.Exit != nil
 		return plan, nil
 	}
 
@@ -137,7 +192,7 @@ func Compile(snapshot networkmap.Snapshot) (Plan, error) {
 		return plan.Reverse[left].Address.Compare(plan.Reverse[right].Address) < 0
 	})
 	for _, domain := range plan.SearchDomains {
-		if len(plan.DefaultResolvers) == 0 && !hasRoute(plan.Routes, domain) {
+		if len(plan.DefaultResolvers) == 0 && plan.Exit == nil && !hasRoute(plan.Routes, domain) {
 			return Plan{}, fmt.Errorf(
 				"%w: search domain %q has no resolver route",
 				ErrInvalid,
@@ -146,7 +201,7 @@ func Compile(snapshot networkmap.Snapshot) (Plan, error) {
 		}
 	}
 	plan.Enabled = len(plan.DefaultResolvers) != 0 || len(plan.Routes) != 0 ||
-		len(plan.SearchDomains) != 0 || len(plan.Hosts) != 0
+		len(plan.SearchDomains) != 0 || len(plan.Hosts) != 0 || plan.Exit != nil
 
 	return plan, nil
 }

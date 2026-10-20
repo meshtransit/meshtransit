@@ -97,7 +97,7 @@ grant only once root chooses one; nothing changes until then:
 
 ```bash
 sudo /usr/libexec/meshtransit/meshnetd routes exit-use POOL   # a pool's reference or name
-sudo /usr/libexec/meshtransit/meshnetd routes exit-use auto   # the first pool Core serves, kept
+sudo /usr/libexec/meshtransit/meshnetd routes exit-use auto   # the nearest pool Core serves, kept
 sudo /usr/libexec/meshtransit/meshnetd routes exit-use off
 ```
 
@@ -113,9 +113,30 @@ routes. What still leaves by the machine's own networks:
   (Docker, libvirt);
 - the attached private subnets, only after `routes exit-allow-lan on`.
 
-DNS does not go through the exit node yet: names resolve only when the
-machine's resolver is in an allowed LAN (`exit-allow-lan on`). Containers
-and VMs on the machine also go through the exit node. IPv6 goes
+Names are resolved through the exit node too: `meshd` becomes the
+machine's default resolver and asks the exit node's DNS forwarder, which
+never answers with addresses of the exit node's own networks. Names under a
+suffix the Network routes to a Site's resolver keep it; without an exit node
+names fail rather than leak to the local resolver, and AAAA answers are
+empty while the exit node has no IPv6. Containers and VMs on the machine
+also go through the exit node.
+
+The exit nodes a pool has when the machine first uses it are pinned. One
+the administrator adds later carries no traffic until a user of the machine
+approves it by the device ID the `Exit` line of `meshctl status` shows; a
+pool chosen by name works the same way when another pool takes that name:
+
+```bash
+meshctl exit approve DEVICE_ID
+```
+
+Once a pool is pinned, `auto` chooses among pinned pools only.
+
+`auto` measures the round trip to each served pool's primary for up to 10
+seconds, takes the nearest, and keeps it while Core serves it and one of
+its exit nodes answers. The machine moves to another exit node of its pool
+when the one it uses stops answering, Core reports it failed, or new
+connections through it go unanswered. IPv6 goes
 through it only when the exit node has IPv6; otherwise it is refused at once.
 `routes exit-allow-managed on` lets an administrator choose the pool (one
 Core marks managed) while `exit-use` is off.

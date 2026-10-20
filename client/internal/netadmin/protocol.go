@@ -50,6 +50,9 @@ const (
 	// (exit node design §6); the helper does so only while its local
 	// settings say the host uses an exit node.
 	operationSetExitRoute = "set_exit_route"
+	// ExitDNSPort is where an exit node's DNS forwarder listens on its
+	// overlay addresses: the helper redirects consumers' port 53 there.
+	ExitDNSPort = 1055
 	// maxExitExcluded bounds the host addresses meshd learned that are no
 	// Internet (its public addresses).
 	maxExitExcluded   = 64

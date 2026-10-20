@@ -25,6 +25,12 @@ const (
 	unserved = "unserved"
 	// wireGuardPort is each node's listen port, in its own namespace.
 	wireGuardPort = 41641
+	// The exit nodes of the exit scenario and their pool; none, as the
+	// consumer's exit node, is a map where no exit node carries its traffic.
+	exitA   = "exit-a"
+	exitB   = "exit-b"
+	poolRef = "world"
+	none    = "none"
 )
 
 var (
@@ -45,7 +51,21 @@ var (
 			id: 3, mesh: netip.MustParsePrefix("100.64.0.3/32"), underlay: netip.MustParseAddr("10.99.0.3"),
 			lan: netip.MustParseAddr("10.50.0.3"),
 		},
+		// An exit node's lan is its egress address towards the Internet.
+		exitA: {
+			id: 4, mesh: netip.MustParsePrefix("100.64.0.4/32"), underlay: netip.MustParseAddr("10.99.0.4"),
+			lan: netip.MustParseAddr("45.76.20.2"),
+		},
+		exitB: {
+			id: 5, mesh: netip.MustParsePrefix("100.64.0.5/32"), underlay: netip.MustParseAddr("10.99.0.5"),
+			lan: netip.MustParseAddr("45.76.20.3"),
+		},
 	}
+	// netHost stands for the Internet, behind the hub's router; egressGateway
+	// is the hub on the exit nodes' egress network.
+	netHost       = netip.MustParseAddr("34.10.0.10")
+	netGateway    = netip.MustParseAddr("34.10.0.1")
+	egressGateway = netip.MustParseAddr("45.76.20.1")
 )
 
 // privateKey is a node's fixed test key.
@@ -97,6 +117,47 @@ func mapFor(name, primary string, revision uint64) networkmap.Snapshot {
 		Sources: []networkmap.Selector{{Kind: networkmap.SelectorPrefix, Prefix: nodes[consumer].mesh}},
 		Destinations: []networkmap.Destination{{
 			Selector: networkmap.Selector{Kind: networkmap.SelectorPrefix, Prefix: sitePrefix}, PortFrom: 0, PortTo: 65535,
+		}},
+	}}
+	return snapshot
+}
+
+// exitMapFor is the network map Core would send name in the exit scenario
+// while the consumer's local choice is the exit node used (none: no exit
+// node carries its traffic).
+func exitMapFor(name, used string, revision uint64) networkmap.Snapshot {
+	self := node(name)
+	snapshot := networkmap.Snapshot{Revision: revision, NetworkName: "e2e", ControlTime: time.Now(), Self: self}
+	if name == consumer {
+		snapshot.Peers = []networkmap.Node{node(exitA), node(exitB)}
+		pool := networkmap.ExitPool{Ref: poolRef, Name: "World", Primary: exitA, Generation: 1, Status: networkmap.ExitServed}
+		for _, exit := range []string{exitA, exitB} {
+			pool.Candidates = append(pool.Candidates, networkmap.ExitCandidate{
+				DeviceID: exit, State: networkmap.ExitStateOK, IPv4: true, DNS4: nodes[exit].mesh.Addr(),
+			})
+		}
+		snapshot.Exits = []networkmap.ExitPool{pool}
+		route := &networkmap.ExitRoute{Pool: poolRef}
+		if used != none {
+			route.Node = used
+		}
+		snapshot.ExitRoute = route
+		return snapshot
+	}
+	// An exit node: the consumer is its peer and the pool's rule lets it
+	// reach the whole Internet.
+	snapshot.Peers = []networkmap.Node{node(consumer)}
+	everywhere := func(prefix string) networkmap.Destination {
+		return networkmap.Destination{
+			Selector: networkmap.Selector{Kind: networkmap.SelectorPrefix, Prefix: netip.MustParsePrefix(prefix)},
+			PortFrom: 0, PortTo: 65535,
+		}
+	}
+	snapshot.ServedExits = []networkmap.ServedExit{{
+		Ref: poolRef, ConntrackPerConsumer: 4096,
+		Rules: []networkmap.Rule{{
+			Sources:      []networkmap.Selector{{Kind: networkmap.SelectorPrefix, Prefix: nodes[consumer].mesh}},
+			Destinations: []networkmap.Destination{everywhere("0.0.0.0/0"), everywhere("::/0")},
 		}},
 	}}
 	return snapshot

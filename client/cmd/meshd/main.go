@@ -137,6 +137,7 @@ func runContext(parent context.Context, args []string, stdout, stderr io.Writer)
 	daemonOptions.EnableSubnetRouter = cfg.EnableSubnetRouter
 	daemonOptions.EnableExitNode = cfg.EnableExitNode
 	daemonOptions.EnableExits = cfg.EnableExits
+	daemonOptions.ExitPinsDir = cfg.StateDir
 	daemonOptions.RouteSettingsPath = cfg.RouteSettingsFile
 	if runtime.GOOS == "linux" {
 		// Written by the package's postinst before it restarts meshd.

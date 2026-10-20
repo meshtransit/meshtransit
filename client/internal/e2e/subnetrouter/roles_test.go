@@ -32,9 +32,12 @@ const (
 	envRole = "MESHTRANSIT_E2E_ROLE"
 	envNode = "MESHTRANSIT_E2E_NODE"
 	envDir  = "MESHTRANSIT_E2E_DIR"
+	// envScenario is "exit" for the exit node scenario.
+	envScenario = "MESHTRANSIT_E2E_SCENARIO"
 	// Ports of the LAN host: who reached it, a byte sink and an echo.
 	whoPort, sinkPort, echoPort = 7000, 7001, 7002
 	routedTable, routedPriority = 5267, 5400
+	exitTable, exitPriority     = 5268, 5402
 )
 
 func runRole(role string) int {
@@ -44,6 +47,12 @@ func runRole(role string) int {
 		err = runNode(os.Getenv(envNode), os.Getenv(envDir))
 	case "lan":
 		err = runLAN()
+	case "net":
+		err = runNet()
+	case "whonet":
+		if err = dropToNobody(); err == nil {
+			err = runWhoAt(netHost)
+		}
 	case "who":
 		if err = dropToNobody(); err == nil {
 			err = runWho()
@@ -71,9 +80,19 @@ func runNode(name, dir string) error {
 	// Shown only when a test fails.
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	settings := filepath.Join(dir, name+".routes.json")
+	exitScenario := os.Getenv(envScenario) == "exit"
 	local := routesettings.Settings{AcceptRoutes: true}
-	if name != consumer {
+	switch {
+	case exitScenario && name == consumer:
+		local = routesettings.Settings{ExitUse: poolRef}
+	case exitScenario:
+		local = routesettings.Settings{ExitMode: true}
+	case name != consumer:
 		local = routesettings.Settings{RouterMode: true, AdvertiseRoutes: []netip.Prefix{sitePrefix}}
+	}
+	maps := mapFor
+	if exitScenario {
+		maps = exitMapFor
 	}
 	if err := routesettings.Save(settings, local); err != nil {
 		return fmt.Errorf("writing route settings: %w", err)
@@ -84,6 +103,7 @@ func runNode(name, dir string) error {
 		Routed: &netadmin.RoutedOptions{
 			SettingsPath: settings, Table: routedTable, Priority: routedPriority,
 			NftTable: "meshtransit", StatePath: filepath.Join(dir, name+".router-state.json"),
+			ExitTable: exitTable, ExitPriority: exitPriority, ExitNftTable: "meshtransit_exit",
 		},
 		Logger: logger,
 	})
@@ -114,7 +134,7 @@ func runNode(name, dir string) error {
 		if err == nil && strings.TrimSpace(string(wanted)) != "" && strings.TrimSpace(string(wanted)) != applied {
 			primary := strings.TrimSpace(string(wanted))
 			revision++
-			if _, err := engine.Apply(ctx, mapFor(name, primary, revision), privateKey(name)); err != nil {
+			if _, err := engine.Apply(ctx, maps(name, primary, revision), privateKey(name)); err != nil {
 				return fmt.Errorf("applying the map for %s: %w", primary, err)
 			}
 			applied = primary
@@ -134,6 +154,30 @@ func runNode(name, dir string) error {
 			return fmt.Errorf("helper stopped: %w", err)
 		case <-ticker.C:
 		}
+	}
+}
+
+// runNet serves the Internet host's who: the address that reached it (the
+// exit node's egress address, through its masquerade).
+func runNet() error {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", net.JoinHostPort(netHost.String(), strconv.Itoa(whoPort)))
+	if err != nil {
+		return err
+	}
+	go func() {
+		<-ctx.Done()
+		_ = listener.Close()
+	}()
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			return nil
+		}
+		host, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
+		_, _ = io.WriteString(conn, host+"\n")
+		_ = conn.Close()
 	}
 }
 
@@ -186,8 +230,11 @@ func runLAN() error {
 }
 
 // runWho prints the address the LAN host saw, or fails within 2 s.
-func runWho() error {
-	conn, err := dialLAN(whoPort)
+func runWho() error { return runWhoAt(lanHost) }
+
+// runWhoAt prints the address host's who service saw, or fails within 2 s.
+func runWhoAt(host netip.Addr) error {
+	conn, err := dialHost(host, whoPort)
 	if err != nil {
 		return err
 	}
@@ -286,10 +333,13 @@ func dropToNobody() error {
 }
 
 // dialLAN connects to the LAN host's port within 2 s.
-func dialLAN(port int) (*net.TCPConn, error) {
+func dialLAN(port int) (*net.TCPConn, error) { return dialHost(lanHost, port) }
+
+// dialHost connects to host's port within 2 s.
+func dialHost(host netip.Addr, port int) (*net.TCPConn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(lanHost.String(), strconv.Itoa(port)))
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(host.String(), strconv.Itoa(port)))
 	if err != nil {
 		return nil, err
 	}

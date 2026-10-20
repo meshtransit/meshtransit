@@ -195,3 +195,33 @@ func TestWireGuardEngineStopsTheExitRoute(t *testing.T) {
 		t.Fatalf("requests = %+v, want a release", got)
 	}
 }
+
+// Only new TCP connections through the exit node count, and any answer from
+// the Internet clears them.
+func TestPolicyFilterCountsConnectionsThroughTheExitNode(t *testing.T) {
+	t.Parallel()
+	filter := newPolicyFilter()
+	filter.UpdateNetwork(withExitRoute(testPolicySnapshot(), false))
+	filter.SetExitRouted(true)
+	self := [4]byte{100, 64, 0, 3}
+	for index := range 3 {
+		syn := testIPv4TransportPacket(self, [4]byte{1, 1, 1, byte(index + 1)}, 40000, 443, packetmeta.ProtocolTCP, 0x02)
+		for range 2 { // the second is a retransmission
+			if !filter.Allow(PacketOutbound, syn) {
+				t.Fatal("a connection through the exit node was denied")
+			}
+		}
+	}
+	activity := filter.ExitActivity()
+	if activity.Node != "exit" || activity.NewConnections != 3 || activity.WaitingSince.IsZero() {
+		t.Fatalf("activity = %+v", activity)
+	}
+	answer := reverseTestPacket(testIPv4TransportPacket(self, [4]byte{1, 1, 1, 1}, 40000, 443, packetmeta.ProtocolTCP, 0x02))
+	answer[33] = 0x12
+	if !filter.Allow(PacketInbound, answer) {
+		t.Fatal("the answer was denied")
+	}
+	if activity := filter.ExitActivity(); activity.NewConnections != 0 || activity.LastAnswered.IsZero() {
+		t.Fatalf("activity after an answer = %+v", activity)
+	}
+}

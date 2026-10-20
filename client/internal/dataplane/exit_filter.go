@@ -84,6 +84,26 @@ func (f *policyFilter) exitOutboundLocked(header packetmeta.Header, now time.Tim
 	return f.exit.active && f.internetLocked(header.Source) && f.peerUsableAt(header.Destination, now)
 }
 
+// exitDNSLocked admits a consumer's DNS question to the exit node's own
+// address, port 53: the forwarder answers every source a rule of the pool
+// names, whatever ports the rule opens (exit node design §7.2). Its answer
+// leaves as any reply of this node.
+func (f *policyFilter) exitDNSLocked(header packetmeta.Header, now time.Time) bool {
+	if !f.exit.active || header.DestinationPort != 53 ||
+		(header.Protocol != packetmeta.ProtocolUDP && header.Protocol != packetmeta.ProtocolTCP) ||
+		!f.peerUsableAt(header.Source, now) {
+		return false
+	}
+	named := false
+	for _, rule := range f.exit.rules {
+		if selectorsContain(rule.sources, header.Source) {
+			named = true
+			break
+		}
+	}
+	return named && f.exit.admitConsumer(header.Source, now)
+}
+
 // admitConsumer counts consumer against the limit: a known one always, a new
 // one while fewer than maxConsumers were active within exitConsumerIdle.
 func (exit *exitFilter) admitConsumer(consumer netip.Addr, now time.Time) bool {

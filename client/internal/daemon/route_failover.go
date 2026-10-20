@@ -59,8 +59,10 @@ type failoverSite struct {
 type routeFailover struct {
 	mu    sync.Mutex
 	clock func() time.Time
-	// pongs is each peer's last authenticated direct path proof.
+	// pongs is each peer's last authenticated direct path proof, and rtts
+	// its last round trips (exit node design §9.2).
 	pongs map[uint64]time.Time
+	rtts  map[uint64][]time.Duration
 	sites map[string]*failoverSite
 	// core is the last map from Core, unchanged.
 	core networkmap.Snapshot
@@ -69,7 +71,10 @@ type routeFailover struct {
 }
 
 func newRouteFailover(clock func() time.Time) *routeFailover {
-	return &routeFailover{clock: clock, pongs: map[uint64]time.Time{}, sites: map[string]*failoverSite{}}
+	return &routeFailover{
+		clock: clock, pongs: map[uint64]time.Time{}, rtts: map[uint64][]time.Duration{},
+		sites: map[string]*failoverSite{},
+	}
 }
 
 // routeFailoverObserver sends path proofs to the path controller and to the
@@ -143,6 +148,11 @@ func (failover *routeFailover) ObservePath(observation pathdiscovery.PathObserva
 	if observation.ObservedAt.After(failover.pongs[observation.PeerID]) {
 		failover.pongs[observation.PeerID] = observation.ObservedAt
 	}
+	if observation.RoundTrip > 0 {
+		failover.rtts[observation.PeerID] = append(failover.rtts[observation.PeerID], observation.RoundTrip)
+		samples := failover.rtts[observation.PeerID]
+		failover.rtts[observation.PeerID] = samples[max(0, len(samples)-exitRTTSamples):]
+	}
 }
 
 // effective records snapshot as Core's map and returns it with the local
@@ -184,6 +194,11 @@ func (failover *routeFailover) effective(snapshot networkmap.Snapshot) networkma
 	for id := range failover.pongs {
 		if _, kept := current[id]; !kept {
 			delete(failover.pongs, id)
+		}
+	}
+	for id := range failover.rtts {
+		if _, kept := current[id]; !kept {
+			delete(failover.rtts, id)
 		}
 	}
 	failover.chooseExitLocked(now)
@@ -363,7 +378,7 @@ type routedActivityDataPlane interface {
 // local choice changed, has apply apply the map again (failover.current);
 // it stops at the first failure.
 func runRouteFailover(ctx context.Context, failover *routeFailover, read func() []dataplane.RoutedActivity,
-	apply func() error,
+	readExit func() dataplane.ExitActivity, apply func() error,
 ) {
 	ticker := time.NewTicker(failoverTick)
 	defer ticker.Stop()
@@ -372,6 +387,9 @@ func runRouteFailover(ctx context.Context, failover *routeFailover, read func() 
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		}
+		if readExit != nil {
+			failover.observeExitActivity(readExit())
 		}
 		if !failover.judge(read()) {
 			continue

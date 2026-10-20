@@ -253,3 +253,26 @@ func TestWireGuardEngineLeavesItsPublicAddressesOut(t *testing.T) {
 		t.Fatal("an unchanged public address was sent again")
 	}
 }
+
+// A consumer the pool's rules name may ask the exit node's DNS forwarder,
+// whatever ports the rules open; nobody else may.
+func TestPolicyFilterAdmitsConsumersDNSAtTheExitNode(t *testing.T) {
+	t.Parallel()
+	filter := newPolicyFilter()
+	filter.UpdateNetwork(testRouterSnapshot())
+	self, consumer := [4]byte{100, 64, 0, 3}, [4]byte{100, 64, 0, 4}
+	question := testIPv4TransportPacket(consumer, self, 40000, 53, packetmeta.ProtocolUDP, 0)
+	if filter.Allow(PacketInbound, question) {
+		t.Fatal("DNS was admitted before the node served a pool")
+	}
+	filter.SetExitInstalled(testExitRules(), nil, 2)
+	if !filter.Allow(PacketInbound, question) {
+		t.Fatal("a consumer's DNS question was denied")
+	}
+	if !filter.Allow(PacketInbound, testIPv4TransportPacket(consumer, self, 40001, 53, packetmeta.ProtocolTCP, 0x02)) {
+		t.Fatal("DNS over TCP was denied")
+	}
+	if filter.Allow(PacketInbound, testIPv4TransportPacket(consumer, self, 40000, 54, packetmeta.ProtocolUDP, 0)) {
+		t.Fatal("another port of the exit node was admitted")
+	}
+}

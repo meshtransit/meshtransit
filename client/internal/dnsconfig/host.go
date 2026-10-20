@@ -112,7 +112,7 @@ func buildResolvedConfig(plan Plan, endpoint netadmin.DNSEndpoint) (netadmin.DNS
 		seen[route.Suffix] = struct{}{}
 		config.RouteDomains = append(config.RouteDomains, route.Suffix)
 	}
-	if len(plan.DefaultResolvers) != 0 {
+	if len(plan.DefaultResolvers) != 0 || plan.Exit != nil {
 		if _, exists := seen["."]; !exists {
 			config.RouteDomains = append(config.RouteDomains, ".")
 		}

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"slices"
 	"time"
@@ -41,6 +42,23 @@ func exitPreferenceOf(load func(string) (routesettings.Settings, error), path st
 	return exitPreference{use: settings.ExitUse, allowManaged: settings.ExitAllowManaged}, true
 }
 
+const (
+	// exitRTTSamples is how many round trips to a pool's primary auto
+	// waits for, at most exitAutoMeasure after it starts choosing.
+	exitRTTSamples  = 3
+	exitAutoMeasure = 10 * time.Second
+	// exitSilentAfter is how long every candidate of the pool auto uses
+	// must be silent before it chooses another pool.
+	exitSilentAfter = 10 * time.Second
+	// exitStuckConnections new TCP connections through an exit node, none
+	// answered for exitStuckAfter, show it no longer reaches the Internet.
+	exitStuckConnections = 3
+	exitStuckAfter       = 5 * time.Second
+	// exitStuckAvoid is how long an exit node left as stuck is not chosen
+	// again: then it is tried afresh, so a pool of one comes back.
+	exitStuckAvoid = 30 * time.Second
+)
+
 // exitChoice is the exit node chosen in one control session, and since when.
 type exitChoice struct {
 	preference exitPreference
@@ -61,6 +79,22 @@ type exitChoice struct {
 	lastSwitch time.Time
 	nextSwitch time.Time
 	backoff    time.Duration
+	// pins are the approved exit nodes; pending the candidates of pool
+	// waiting for approval.
+	pins    *exitPins
+	pending []string
+	// pendingPool is a pool given the name the settings use, other than
+	// the one bound to it, waiting for approval.
+	pendingPool string
+	// autoSince is when auto started choosing; autoSettled once it chose
+	// by round trip, after which it keeps its pool.
+	autoSince   time.Time
+	autoSettled bool
+	// activity is what the node sent through its exit node and heard back;
+	// avoid is until when an exit node left as stuck is not chosen.
+	activity      dataplane.ExitActivity
+	activitySince time.Time
+	avoid         map[string]time.Time
 }
 
 // exitSticky is what a new control session starts from, so a reconnect
@@ -69,11 +103,15 @@ type exitSticky struct {
 	pool, node string
 }
 
-// seedExit starts the session's choice from the last one.
-func (failover *routeFailover) seedExit(preference exitPreference, sticky exitSticky) {
+// seedExit starts the session's choice from the last one, with the
+// host's pinned exit nodes.
+func (failover *routeFailover) seedExit(preference exitPreference, sticky exitSticky, pins *exitPins) {
 	failover.mu.Lock()
 	defer failover.mu.Unlock()
-	failover.exit = exitChoice{preference: preference, pool: sticky.pool, node: sticky.node, backoff: failoverBackoff}
+	failover.exit = exitChoice{
+		preference: preference, pool: sticky.pool, node: sticky.node, backoff: failoverBackoff, pins: pins,
+		autoSince: failover.clock(), autoSettled: sticky.pool != "",
+	}
 	if sticky.node != "" {
 		failover.exit.reason = controlplane.RouteSelectionSticky
 	}
@@ -92,15 +130,52 @@ func (failover *routeFailover) setExitPreference(preference exitPreference) bool
 		return false
 	}
 	before := failover.exitRouteLocked()
-	failover.exit = exitChoice{preference: preference, backoff: failoverBackoff}
+	failover.exit = exitChoice{
+		preference: preference, backoff: failoverBackoff, pins: failover.exit.pins, autoSince: failover.clock(),
+	}
 	failover.chooseExitLocked(failover.clock())
 	return !equalExitRoutes(before, failover.exitRouteLocked())
 }
 
+// observeExitActivity records what the node sent through its exit node.
+func (failover *routeFailover) observeExitActivity(activity dataplane.ExitActivity) {
+	failover.mu.Lock()
+	defer failover.mu.Unlock()
+	if !activity.WaitingSince.IsZero() && !activity.WaitingSince.After(failover.exit.activitySince) {
+		// Evidence from before the node was last left as stuck counts no more.
+		activity = dataplane.ExitActivity{Node: activity.Node}
+	}
+	failover.exit.activity = activity
+}
+
+// stuckLocked reports that new connections through node went unanswered:
+// the exit node answers path probes but no longer reaches the Internet. A
+// stuck node is avoided for exitStuckAvoid, its evidence then forgotten.
+func (failover *routeFailover) stuckLocked(node string, now time.Time) bool {
+	choice := &failover.exit
+	if until, avoided := choice.avoid[node]; avoided {
+		if now.Before(until) {
+			return true
+		}
+		delete(choice.avoid, node)
+	}
+	activity := choice.activity
+	stuck := activity.Node == node && activity.NewConnections >= exitStuckConnections &&
+		!activity.WaitingSince.IsZero() && now.Sub(activity.WaitingSince) >= exitStuckAfter
+	if stuck {
+		if choice.avoid == nil {
+			choice.avoid = map[string]time.Time{}
+		}
+		choice.avoid[node] = now.Add(exitStuckAvoid)
+		choice.activity, choice.activitySince = dataplane.ExitActivity{}, now
+	}
+	return stuck
+}
+
 // exitPoolLocked returns the pool the preference names among those Core
 // grants: by reference, else by a name only one pool has; with auto the
-// pool in use while Core still serves it, else the first served; with
-// allowManaged alone the first pool Core marks managed.
+// one chosen by round trip (exitAutoPoolLocked); with allowManaged alone
+// the first pool Core marks managed.
 func (failover *routeFailover) exitPoolLocked() (networkmap.ExitPool, bool) {
 	pools := failover.core.Exits
 	find := func(match func(networkmap.ExitPool) bool) (networkmap.ExitPool, bool) {
@@ -113,12 +188,7 @@ func (failover *routeFailover) exitPoolLocked() (networkmap.ExitPool, bool) {
 	preference := failover.exit.preference
 	switch {
 	case preference.use == routesettings.ExitUseAuto:
-		if pool, found := find(func(pool networkmap.ExitPool) bool {
-			return pool.Ref == failover.exit.pool && pool.Status == networkmap.ExitServed
-		}); found {
-			return pool, true
-		}
-		if pool, found := find(func(pool networkmap.ExitPool) bool { return pool.Status == networkmap.ExitServed }); found {
+		if pool, found := failover.exitAutoPoolLocked(failover.clock()); found {
 			return pool, true
 		}
 		return find(func(pool networkmap.ExitPool) bool { return pool.Ref == failover.exit.pool })
@@ -135,11 +205,95 @@ func (failover *routeFailover) exitPoolLocked() (networkmap.ExitPool, bool) {
 		if named != 1 {
 			return networkmap.ExitPool{}, false
 		}
-		return find(func(pool networkmap.ExitPool) bool { return pool.Name == preference.use })
+		pool, _ := find(func(pool networkmap.ExitPool) bool { return pool.Name == preference.use })
+		// The name means the pool it meant at first use: another pool
+		// given that name waits for approval.
+		bound, wasBound := failover.exit.pins.boundPool(preference.use)
+		if wasBound && bound != pool.Ref {
+			failover.exit.pendingPool = pool.Ref
+			return networkmap.ExitPool{}, false
+		}
+		if !wasBound {
+			_ = failover.exit.pins.bind(preference.use, pool.Ref)
+		}
+		return pool, true
 	case preference.allowManaged:
 		return find(func(pool networkmap.ExitPool) bool { return pool.Managed })
 	}
 	return networkmap.ExitPool{}, false
+}
+
+// exitAutoPoolLocked keeps the pool auto uses while Core serves it and one
+// of its exit nodes answers; otherwise, once the primaries of the served
+// pools were measured (or exitAutoMeasure passed), it takes the one with
+// the lowest round trip, pools already pinned first, and keeps it: a
+// slightly faster pool is no reason to cut every connection.
+func (failover *routeFailover) exitAutoPoolLocked(now time.Time) (networkmap.ExitPool, bool) {
+	choice := &failover.exit
+	// Once the host pinned a pool, auto chooses among pinned pools only: a
+	// pool Core adds is used after an explicit choice.
+	pinnedOnly := choice.pins.anyPinned()
+	var served []networkmap.ExitPool
+	for _, pool := range failover.core.Exits {
+		if pool.Status == networkmap.ExitServed && (!pinnedOnly || failover.exitPoolPinned(pool.Ref)) {
+			served = append(served, pool)
+		}
+	}
+	if len(served) == 0 {
+		return networkmap.ExitPool{}, false
+	}
+	index := slices.IndexFunc(served, func(pool networkmap.ExitPool) bool { return pool.Ref == choice.pool })
+	if index >= 0 && choice.autoSettled && !failover.silentLocked(served[index], now) {
+		return served[index], true
+	}
+	peers := peerIDs(failover.core)
+	measured := true
+	rtt := func(pool networkmap.ExitPool) time.Duration {
+		samples := failover.rtts[peers[pool.Primary]]
+		if len(samples) < exitRTTSamples {
+			measured = false
+		}
+		if len(samples) == 0 {
+			return time.Duration(1<<63 - 1)
+		}
+		sorted := slices.Clone(samples)
+		slices.Sort(sorted)
+		return sorted[len(sorted)/2]
+	}
+	best := served[0]
+	bestRTT := rtt(best)
+	for _, pool := range served[1:] {
+		if delay := rtt(pool); delay < bestRTT {
+			best, bestRTT = pool, delay
+		}
+	}
+	if !choice.autoSettled && (measured || len(served) == 1 || now.Sub(choice.autoSince) >= exitAutoMeasure) {
+		choice.autoSettled = true
+	} else if !choice.autoSettled && index >= 0 {
+		return served[index], true // still measuring: no switch yet
+	}
+	return best, true
+}
+
+func (failover *routeFailover) exitPoolPinned(pool string) bool {
+	_, pinned := failover.exit.pins.approved(pool)
+	return pinned
+}
+
+// silentLocked reports that no candidate of pool answered for
+// exitSilentAfter, counting one that never answered from when auto started.
+func (failover *routeFailover) silentLocked(pool networkmap.ExitPool, now time.Time) bool {
+	peers := peerIDs(failover.core)
+	for _, candidate := range pool.Candidates {
+		at, answered := failover.pongs[peers[candidate.DeviceID]]
+		if !answered {
+			at = failover.exit.autoSince // never answered since auto started
+		}
+		if now.Sub(at) <= exitSilentAfter {
+			return false
+		}
+	}
+	return true
 }
 
 // chooseExitLocked chooses the pool and the exit node again and reports
@@ -150,6 +304,7 @@ func (failover *routeFailover) exitPoolLocked() (networkmap.ExitPool, bool) {
 func (failover *routeFailover) chooseExitLocked(now time.Time) bool {
 	before := failover.exitRouteLocked()
 	choice := &failover.exit
+	choice.pendingPool = ""
 	pool, found := failover.exitPoolLocked()
 	choice.wanted = choice.preference.use != "" || found
 	if !found {
@@ -158,6 +313,12 @@ func (failover *routeFailover) chooseExitLocked(now time.Time) bool {
 	}
 	if choice.pool != pool.Ref {
 		choice.pool, choice.node = pool.Ref, ""
+	}
+	if choice.preference.use == routesettings.ExitUseAuto && !choice.autoSettled {
+		// Still measuring which pool is nearest: nothing is carried, and
+		// nothing pinned, until auto settles.
+		choice.node, choice.reason, choice.ipv6, choice.pending = "", controlplane.RouteSelectionNone, false, nil
+		return !equalExitRoutes(before, failover.exitRouteLocked())
 	}
 	alive, stopped := failover.livenessLocked(now)
 	peers := peerIDs(failover.core)
@@ -171,11 +332,12 @@ func (failover *routeFailover) chooseExitLocked(now time.Time) bool {
 		_, peer := peers[id]
 		return pool.Candidates[index], peer
 	}
+	trusted := failover.trustedLocked(pool)
 	usable := func(id string) bool {
 		found, peer := candidate(id)
-		return peer && found.State != networkmap.ExitStateFailed
+		return peer && found.State != networkmap.ExitStateFailed && (trusted == nil || slices.Contains(trusted, id))
 	}
-	mayCarry := func(id string) bool { return usable(id) && !stopped(id) }
+	mayCarry := func(id string) bool { return usable(id) && !stopped(id) && !failover.stuckLocked(id, now) }
 	next := ""
 	switch {
 	case pool.Status != networkmap.ExitServed:
@@ -215,6 +377,35 @@ func (failover *routeFailover) chooseExitLocked(now time.Time) bool {
 	return !equalExitRoutes(before, failover.exitRouteLocked())
 }
 
+// trustedLocked returns the candidates of pool the node may use, nil for
+// all of them, and records the others as pending. A host that lets the
+// administrator choose trusts what Core sends; otherwise the candidates
+// of the first use are pinned, those Core removes are forgotten, and a new
+// one waits for approval.
+func (failover *routeFailover) trustedLocked(pool networkmap.ExitPool) []string {
+	choice := &failover.exit
+	choice.pending = nil
+	if choice.preference.allowManaged {
+		return nil
+	}
+	candidates := make([]string, 0, len(pool.Candidates))
+	for _, candidate := range pool.Candidates {
+		candidates = append(candidates, candidate.DeviceID)
+	}
+	approved, pinned := choice.pins.approved(pool.Ref)
+	if !pinned {
+		approved = candidates
+	}
+	approved = slices.DeleteFunc(approved, func(id string) bool { return !slices.Contains(candidates, id) })
+	_ = choice.pins.set(pool.Ref, approved) // kept in memory when it cannot be written
+	for _, id := range candidates {
+		if !slices.Contains(approved, id) {
+			choice.pending = append(choice.pending, id)
+		}
+	}
+	return approved
+}
+
 // nextExitNodeLocked picks the exit node to move to: the primary when it
 // may carry, else the first candidate, in priority order, that answers and
 // Core reports OK or DEGRADED, else the first that may carry.
@@ -227,7 +418,7 @@ func (failover *routeFailover) nextExitNodeLocked(pool networkmap.ExitPool, mayC
 	for _, listed := range pool.Candidates {
 		found, peer := candidate(listed.DeviceID)
 		if peer && (found.State == networkmap.ExitStateOK || found.State == networkmap.ExitStateDegraded) &&
-			alive(listed.DeviceID) {
+			alive(listed.DeviceID) && mayCarry(listed.DeviceID) {
 			return listed.DeviceID
 		}
 	}
@@ -311,6 +502,13 @@ type ExitView struct {
 	ExitNodeName string
 	// Via is primary, local_failover, sticky or none.
 	Via string
+	// Pending are exit nodes Core added to the pool that carry no traffic
+	// until a user approves them, as device IDs, with their names.
+	Pending      []string
+	PendingNames []string
+	// PendingPool is another pool given the name the settings use, which
+	// waits for approval before it is used.
+	PendingPool string
 }
 
 // exitSelection returns the exit node used and why, as reported to Core
@@ -323,7 +521,10 @@ func (failover *routeFailover) exitSelection() (controlplane.RouteExitSelection,
 	if !choice.wanted {
 		return controlplane.RouteExitSelection{}, nil, sticky
 	}
-	view := &ExitView{Use: choice.preference.use, Pool: choice.pool, ExitNode: choice.node, Via: "none"}
+	view := &ExitView{
+		Use: choice.preference.use, Pool: choice.pool, ExitNode: choice.node, Via: "none",
+		Pending: slices.Clone(choice.pending), PendingPool: choice.pendingPool,
+	}
 	if view.Use == "" {
 		view.Use = "managed"
 	}
@@ -331,6 +532,15 @@ func (failover *routeFailover) exitSelection() (controlplane.RouteExitSelection,
 		if pool.Ref == choice.pool {
 			view.PoolName = pool.Name
 		}
+	}
+	for _, id := range view.Pending {
+		name := id
+		for _, peer := range failover.core.Peers {
+			if peer.StableID == id && peer.Name != "" {
+				name = peer.Name
+			}
+		}
+		view.PendingNames = append(view.PendingNames, name)
 	}
 	for _, peer := range failover.core.Peers {
 		if peer.StableID == choice.node {
@@ -406,6 +616,11 @@ func (s *Service) exitStickySnapshot() exitSticky {
 	return s.exitSticky
 }
 
+// exitActivityDataPlane reports what the node sent through its exit node.
+type exitActivityDataPlane interface {
+	ExitActivity() dataplane.ExitActivity
+}
+
 type exitRouteDataPlane interface {
 	ExitRoute() dataplane.ExitRouteStatus
 }
@@ -422,4 +637,57 @@ func (s *Service) exitRouteStatus() dataplane.ExitRouteStatus {
 		return reporter.ExitRoute()
 	}
 	return dataplane.ExitRouteStatus{}
+}
+
+// ExitApproval is what approving a pool's new exit nodes did.
+type ExitApproval struct {
+	Pool     string
+	Approved []string
+}
+
+// ErrNothingToApprove means none of the exit nodes or pools named waits
+// for approval.
+var ErrNothingToApprove = errors.New("daemon: nothing named waits for approval")
+
+// ApproveExitNodes approves what ids name of what waits: exit nodes Core
+// added to the pool in use (device IDs) and a pool given the name the
+// settings use (its reference). Naming them keeps Core from slipping in
+// another between status and approval. They are used from the next choice,
+// within a second.
+func (s *Service) ApproveExitNodes(_ context.Context, ids []string) (ExitApproval, error) {
+	view := s.exitSnapshot()
+	if view == nil || s.exitPins == nil {
+		return ExitApproval{}, ErrNothingToApprove
+	}
+	result := ExitApproval{Pool: view.Pool}
+	if view.PendingPool != "" && slices.Contains(ids, view.PendingPool) {
+		if err := s.exitPins.bind(view.Use, view.PendingPool); err != nil {
+			return ExitApproval{}, err
+		}
+		result.Pool, result.Approved = view.PendingPool, []string{view.PendingPool}
+	}
+	var nodes []string
+	for _, id := range view.Pending {
+		if slices.Contains(ids, id) {
+			nodes = append(nodes, id)
+		}
+	}
+	if len(nodes) != 0 && view.Pool != "" {
+		approved, _ := s.exitPins.approved(view.Pool)
+		if err := s.exitPins.set(view.Pool, append(approved, nodes...)); err != nil {
+			return ExitApproval{}, err
+		}
+		result.Approved = append(result.Approved, nodes...)
+	}
+	if len(result.Approved) == 0 {
+		return ExitApproval{}, ErrNothingToApprove
+	}
+	s.routeSitesMu.Lock()
+	if s.exit != nil {
+		s.exit.Pending = slices.DeleteFunc(slices.Clone(s.exit.Pending), func(id string) bool {
+			return slices.Contains(nodes, id)
+		})
+	}
+	s.routeSitesMu.Unlock()
+	return result, nil
 }

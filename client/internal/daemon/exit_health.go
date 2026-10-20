@@ -8,6 +8,8 @@ import (
 
 	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/dataplane"
+	"meshtransit.net/client/internal/dnsconfig"
+	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/pathdiscovery"
 )
 
@@ -37,17 +39,45 @@ func (s *Service) setExitPublicAddresses(candidates pathdiscovery.Set) {
 	}
 }
 
-// exitNodeStatus is how the data plane forwards as an exit node.
+// exitCodeDNSFailed: the DNS forwarder's upstreams failed its last
+// questions in a row (exit node design §8).
+const exitCodeDNSFailed = "dns_failed"
+
+// exitNodeStatus is how the data plane forwards as an exit node, degraded
+// while its DNS forwarder cannot reach its upstreams.
 func (s *Service) exitNodeStatus() dataplane.ExitNodeStatus {
 	if s == nil || s.dataPlane == nil {
 		return dataplane.ExitNodeStatus{}
 	}
 	s.dataPlaneMu.Lock()
-	defer s.dataPlaneMu.Unlock()
+	status := dataplane.ExitNodeStatus{}
 	if reporter, supported := s.dataPlane.(exitNodeStatusDataPlane); supported {
-		return reporter.ExitNode()
+		status = reporter.ExitNode()
 	}
-	return dataplane.ExitNodeStatus{}
+	s.dataPlaneMu.Unlock()
+	if health := status.Health; health != nil && health.State == dataplane.SiteHealthOK && s.exitForwarder.Failing() {
+		degraded := *health
+		degraded.State, degraded.Code = dataplane.SiteHealthDegraded, exitCodeDNSFailed
+		status.Health = &degraded
+	}
+	return status
+}
+
+// syncExitForwarder answers consumers' DNS on the node's overlay addresses
+// while the map has it serve an Exit Pool, with the pool's upstreams.
+func (s *Service) syncExitForwarder(snapshot networkmap.Snapshot) {
+	if s.exitForwarder == nil {
+		return
+	}
+	if len(snapshot.ServedExits) == 0 {
+		s.exitForwarder.Configure(nil, nil)
+		return
+	}
+	addresses := make([]netip.Addr, 0, len(snapshot.Self.Addresses))
+	for _, prefix := range snapshot.Self.Addresses {
+		addresses = append(addresses, prefix.Addr().Unmap())
+	}
+	s.exitForwarder.Configure(addresses, snapshot.ServedExits[0].DNSUpstreams)
 }
 
 // watchExitHealth hands each new exit health to the map session, until ctx
@@ -107,4 +137,13 @@ func exitHealthOf(status dataplane.ExitNodeStatus) (controlplane.RouteExitHealth
 		health.Families = controlplane.ExitFamiliesV6
 	}
 	return health, true
+}
+
+// exitForwarderFor returns the DNS forwarder of an exit node, nil for any
+// other node.
+func exitForwarderFor(options Options) *dnsconfig.ExitForwarder {
+	if !options.EnableExitNode {
+		return nil
+	}
+	return dnsconfig.NewExitForwarder(options.Logger, nil)
 }

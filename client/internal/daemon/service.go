@@ -385,8 +385,12 @@ type Service struct {
 	enableSubnetRouter   bool
 	enableExitNode       bool
 	enableExits          bool
-	routeSettingsPath    string
-	restartMarkerPath    string
+	// exitForwarder answers an exit node's consumers' DNS; exitPins are
+	// the exit nodes users approved.
+	exitForwarder     *dnsconfig.ExitForwarder
+	exitPins          *exitPins
+	routeSettingsPath string
+	restartMarkerPath string
 	// routeSites is the router of each Site of the current session, exit
 	// the exit node used (nil when none is wanted), and exitSticky the
 	// exit node a new session keeps using.
@@ -466,7 +470,10 @@ type Options struct {
 	// EnableExits declares routes.exit.v1 and sends the host's Internet
 	// traffic through the Exit Pool the settings at RouteSettingsPath name
 	// (mtcp-v1 §7.7).
-	EnableExits       bool
+	EnableExits bool
+	// ExitPinsDir, with EnableExits, is where the exit nodes users
+	// approved are kept; empty keeps them in memory.
+	ExitPinsDir       string
 	RouteSettingsPath string
 	// RestartMarkerPath, when set, is the file a package upgrade writes just
 	// before it restarts meshd: a stopping router then does not tell Core it
@@ -520,6 +527,14 @@ func New(
 	if options.Clock == nil {
 		options.Clock = time.Now
 	}
+	var pins *exitPins
+	if options.EnableExits {
+		opened, err := openExitPins(options.ExitPinsDir)
+		if err != nil {
+			return nil, err
+		}
+		pins = opened
+	}
 	configuredCandidates := make(
 		[]pathdiscovery.Candidate,
 		0,
@@ -562,6 +577,8 @@ func New(
 		enableSubnetRouter:   options.EnableSubnetRouter,
 		enableExitNode:       options.EnableExitNode,
 		enableExits:          options.EnableExits,
+		exitForwarder:        exitForwarderFor(options),
+		exitPins:             pins,
 		routeSettingsPath:    options.RouteSettingsPath,
 		restartMarkerPath:    options.RestartMarkerPath,
 		loadRouteSettings:    routesettings.Load,
@@ -792,7 +809,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			// Unreadable settings start with none: the helper's kill switch
 			// holds meanwhile, and the next read applies them.
 			preference, _ := readExitPreference()
-			failover.seedExit(preference, s.exitStickySnapshot())
+			failover.seedExit(preference, s.exitStickySnapshot(), s.exitPins)
 		}
 		publishRouteSelection := func() {
 			reports, views := failover.selections()
@@ -901,14 +918,28 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				}
 				s.logger.Info("local router and exit choices changed; Sites not listed follow Core",
 					"choices", failover.choices())
+				if s.dns != nil && s.enableExits {
+					// The exit node's forwarder answers the names now.
+					if _, _, err := s.applyMapDNS(failoverCtx, current); err != nil {
+						return err
+					}
+				}
 				return nil
 			}
 			failoverWorkers.Go(func() {
+				var readExit func() dataplane.ExitActivity
+				if exitPlane, supported := s.dataPlane.(exitActivityDataPlane); supported && s.enableExits {
+					readExit = func() dataplane.ExitActivity {
+						s.dataPlaneMu.Lock()
+						defer s.dataPlaneMu.Unlock()
+						return exitPlane.ExitActivity()
+					}
+				}
 				runRouteFailover(failoverCtx, failover, func() []dataplane.RoutedActivity {
 					s.dataPlaneMu.Lock()
 					defer s.dataPlaneMu.Unlock()
 					return activityPlane.RoutedActivity()
-				}, applyLocalChoices)
+				}, readExit, applyLocalChoices)
 			})
 			if s.enableExits {
 				failoverWorkers.Go(func() {
@@ -928,6 +959,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			stopFailover()
 			s.setRouteSites(nil)
 			s.clearExit()
+			s.exitForwarder.Configure(nil, nil)
 			stopPathStats()
 			s.setLocalEndpointSink(nil)
 			if probeRuntime != nil {
@@ -1060,10 +1092,15 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					}
 					probeSocket := pathdiscovery.Socket{}
 					var probeAttachErr error
+					// The map with the local router and exit choices: DNS
+					// follows the exit node too.
+					effective := snapshot
 					if s.dataPlane != nil {
 						s.dataPlaneMu.Lock()
-						state, err := s.dataPlane.Apply(callbackCtx, failover.effective(snapshot), privateKey)
+						effective = failover.effective(snapshot)
+						state, err := s.dataPlane.Apply(callbackCtx, effective, privateKey)
 						if err == nil {
+							s.syncExitForwarder(snapshot)
 							publishRouteSelection()
 							// Routers reached only through the relay still prove
 							// they are up, for local failover.
@@ -1151,7 +1188,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 						// apply this map again until a newer one arrives.
 						var dnsErr, lastDNSFailure error
 						dnsRetries.apply(func() bool {
-							dnsState, lastDNSFailure, dnsErr = s.applyMapDNS(callbackCtx, snapshot)
+							dnsState, lastDNSFailure, dnsErr = s.applyMapDNS(callbackCtx, effective)
 							return dnsErr == nil && dnsState != DNSFailed
 						})
 						if dnsErr != nil {
@@ -1169,7 +1206,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 						// A map the plan refuses fails the same way every time.
 						if dnsState == DNSFailed && !errors.Is(lastDNSFailure, dnsconfig.ErrInvalid) {
 							retryDNS = func() bool {
-								state, _, err := s.applyMapDNS(streamCtx, snapshot)
+								state, _, err := s.applyMapDNS(streamCtx, effective)
 								if streamCtx.Err() != nil {
 									return true
 								}

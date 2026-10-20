@@ -138,6 +138,14 @@ func (exit *routedExit) prefixes() []netip.Prefix {
 	return routes
 }
 
+// exitNodeRef returns the device ID of the exit node used, "" for none.
+func (t *routedTable) exitNodeRef() string {
+	if t == nil || t.exit == nil || !t.exit.served {
+		return ""
+	}
+	return t.exit.nodeRef
+}
+
 // exitFor returns the exit node that carries traffic with an Internet
 // address, of a family it carries.
 func (t *routedTable) exitFor(address netip.Addr) (packetAuthority, bool) {

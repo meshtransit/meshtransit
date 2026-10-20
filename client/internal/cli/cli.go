@@ -46,6 +46,7 @@ type DaemonClient interface {
 	Up(context.Context) (localapi.Connection, error)
 	Logout(context.Context) (localapi.Logout, error)
 	RefreshNAT(context.Context) (localapi.Netcheck, error)
+	ApproveExitNodes(context.Context, []string) (localapi.ExitApproval, error)
 }
 
 // ClientFactory constructs the local daemon client after global flags are parsed.
@@ -153,6 +154,8 @@ func Run(
 		return runDown(ctx, commandArgs[1:], stdout, stderr, global.isJSON, client)
 	case "logout":
 		return runLogout(ctx, commandArgs[1:], stdout, stderr, global.isJSON, client)
+	case "exit":
+		return runExit(ctx, commandArgs[1:], stdout, stderr, global.isJSON, client)
 	default:
 		_, _ = fmt.Fprintf(stderr, "meshctl: unknown command %q\n", commandArgs[0])
 		writeUsage(stderr)
@@ -677,6 +680,19 @@ func formatExitStatus(status *localapi.ExitStatus) string {
 			summary += "; IPv6 blocked"
 		}
 	}
+	if len(status.Pending) != 0 {
+		waiting := make([]string, len(status.Pending))
+		for index, id := range status.Pending {
+			waiting[index] = id
+			if index < len(status.PendingNames) && status.PendingNames[index] != id {
+				waiting[index] = status.PendingNames[index] + " (" + id + ")"
+			}
+		}
+		summary += "; new exit nodes wait for meshctl exit approve ID: " + strings.Join(waiting, ", ")
+	}
+	if status.PendingPool != "" {
+		summary += "; another pool now has this name: meshctl exit approve " + status.PendingPool
+	}
 	switch {
 	case status.Error != "":
 		summary += "; error: " + status.Error
@@ -1095,6 +1111,7 @@ Commands:
   login complete                          Recover a pending browser authorization
   identity rotate-node-key                Rotate the active profile Node key
   netcheck                                Classify the NAT in front of this machine now
+  exit approve ID...                      Use the exit nodes (or pool) status lists as waiting
   doctor control                          Probe active control compatibility
   version                                 Show meshctl build information
   help                                    Show this help

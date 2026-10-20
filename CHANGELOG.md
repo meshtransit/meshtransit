@@ -5,6 +5,22 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Clients: Linux consumers of exit nodes, second part (exit node design
+  E3). Names go through the exit node: meshd becomes the host's default
+  resolver while it uses one and asks the exit node's DNS forwarder (SERVFAIL
+  without an exit node, no AAAA data without its IPv6); Site-routed suffixes
+  keep their resolvers. Exit nodes answer on their overlay addresses (the
+  helper redirects port 53 to 1055), only to the pool's sources, from the
+  pool's `dns_upstreams` or the host's resolvers, without addresses of their
+  own networks (A, AAAA, SVCB/HTTPS hints), bounded per consumer and without
+  logging names; `dns_failed` degrades their health. The exit nodes of a
+  pool's first use are pinned; a later one, or another pool given the name
+  the settings use, waits for `meshctl exit approve ID` (status lists it),
+  and `auto` keeps to pinned pools. The DNS forwarder of an exit node is
+  only asked at the exit node's own mesh address. `auto` takes the nearest served pool by round trip and
+  keeps it; unanswered new connections move the node to another exit node.
+  A netns end-to-end test covers the exit path, failover, the exit node's
+  LAN and leaks without an exit node.
 - Clients: Linux consumers of exit nodes, first part (exit node design E3).
   With `--enable-exits` (on in the Linux package) meshd declares
   `routes.exit.v1`, takes the Exit Pools its rules grant and, once root names

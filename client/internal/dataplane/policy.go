@@ -78,6 +78,9 @@ type policyFilter struct {
 	// exitRouted means the helper sends the host's Internet traffic into
 	// the mesh: only then does an Internet address reach the exit node.
 	exitRouted bool
+	// exitActivity is what this node sent through the exit node and heard
+	// back.
+	exitActivity ExitActivity
 	// routedActivity is what this node sent to each Site and heard back,
 	// by Site reference (RoutedActivity).
 	routedActivity map[string]*RoutedActivity
@@ -199,6 +202,10 @@ func (f *policyFilter) updateNetwork(snapshot networkmap.Snapshot, routed *route
 	f.aliases = aliases
 	f.routed = routed
 	f.pruneRoutedActivityLocked()
+	if exitNode := routed.exitNodeRef(); exitNode != f.exitActivity.Node {
+		// Another exit node, or none: what the last one did is no evidence.
+		f.exitActivity = ExitActivity{Node: exitNode}
+	}
 	if !isUnchanged {
 		f.retainFlowsLocked(previous, rulesChanged)
 	}
@@ -293,6 +300,7 @@ func (f *policyFilter) allowOrdinaryLocked(direction PacketDirection, header pac
 				return false
 			}
 			f.noteRoutedLocked(header.Destination, true, now)
+			f.noteExitLocked(header, true, now)
 		}
 		f.trackOutbound(header, now)
 
@@ -313,13 +321,14 @@ func (f *policyFilter) allowOrdinaryLocked(direction PacketDirection, header pac
 				return false
 			}
 			f.noteRoutedLocked(header.Source, false, now)
+			f.noteExitLocked(header, false, now)
 			return true
 		}
 		if f.isTrackedReply(header, now) {
 			return true
 		}
 
-		return rulesAllow(f.rules, header)
+		return rulesAllow(f.rules, header) || f.exitDNSLocked(header, now)
 	default:
 		return false
 	}
