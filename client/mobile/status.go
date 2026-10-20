@@ -39,6 +39,28 @@ type status struct {
 	PeerCount    int        `json:"peerCount"`
 	Paths        pathCounts `json:"paths"`
 	Version      string     `json:"version"`
+	// SubnetRoutes is what the device does with the Sites Core grants, and
+	// Sites the router each one goes through.
+	SubnetRoutes subnetRoutes `json:"subnetRoutes"`
+	Sites        []siteRoute  `json:"sites"`
+}
+
+// subnetRoutes counts the granted subnet routes on the VPN interface and
+// those refused (by the settings, or overlapping an attached network).
+type subnetRoutes struct {
+	Requested     int    `json:"requested"`
+	Installed     int    `json:"installed"`
+	Refused       int    `json:"refused"`
+	LocalConflict bool   `json:"localConflict"`
+	Error         string `json:"error,omitempty"`
+}
+
+// siteRoute is one granted Site and the router its traffic goes to: via
+// primary (Core's choice), local_failover or none (not served).
+type siteRoute struct {
+	Site   string `json:"site"`
+	Router string `json:"router,omitempty"`
+	Via    string `json:"via"`
 }
 
 // pathCounts counts the current map's peers by packet path.
@@ -78,7 +100,21 @@ func newStatus(running bool, current daemon.Status) status {
 			Pending: current.PeerPaths.PendingCount,
 		},
 		Version: current.Build.Version,
+		SubnetRoutes: subnetRoutes{
+			Requested: current.SubnetRoutes.Requested, Installed: current.SubnetRoutes.Installed,
+			Refused: current.SubnetRoutes.RefusedTotal, LocalConflict: current.SubnetRoutes.LocalConflict,
+			Error: current.SubnetRoutes.Error,
+		},
+		Sites: siteRoutes(current.RouteSites),
 	}
+}
+
+func siteRoutes(views []daemon.RouteSiteView) []siteRoute {
+	sites := make([]siteRoute, 0, len(views))
+	for _, view := range views {
+		sites = append(sites, siteRoute{Site: view.Ref, Router: view.RouterName, Via: view.Via})
+	}
+	return sites
 }
 
 func (value status) marshal() (string, error) {

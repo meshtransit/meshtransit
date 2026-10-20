@@ -5,6 +5,12 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Mobile library: the device reaches subnet routes once the app turns them
+  on (`Engine.SetSubnetRoutes`, kept in the state directory, off by
+  default). Admitted prefixes go on the VPN interface (a new interface when
+  they change), except those overlapping an attached network reported with
+  `SetHostAddresses`. The status JSON gains `subnetRoutes` and `sites` (the
+  router each Site goes through); its schema stays 1.
 - Client: Windows reaches subnet routes. The service (now installed with
   `--enable-subnet-routes`) installs on its adapter the granted prefixes
   that `C:\ProgramData\MeshTransit\settings\routes.json` admits, which an

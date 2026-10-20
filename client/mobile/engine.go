@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -81,6 +82,9 @@ type Engine struct {
 	logs       *asyncLog // nil without a log sink
 	hosts      *hostAddressList
 	network    chan struct{}
+	// routeSettings is the subnet route settings file in the state
+	// directory (SetSubnetRoutes).
+	routeSettings string
 	// stopWait bounds how long Stop and Close wait for the runtime.
 	stopWait time.Duration
 
@@ -139,8 +143,10 @@ func build(resolved Config, tun TunProvider, keys KeyStore, queue *asyncLog) (*E
 	if err != nil {
 		return nil, err
 	}
+	hosts := &hostAddressList{}
+	routeSettings := filepath.Join(resolved.StateDir, routeSettingsFile)
 	packets, err := dataplane.NewWireGuardWithObserver(
-		newPlatformTUN(tun, DefaultMTU, logger.With("component", "tun")),
+		newPlatformTUN(tun, DefaultMTU, logger.With("component", "tun"), routeSettings, hosts),
 		uint16(resolved.ListenPort), //nolint:gosec // validated to 1024-65535
 		nil,
 	)
@@ -148,7 +154,6 @@ func build(resolved Config, tun TunProvider, keys KeyStore, queue *asyncLog) (*E
 		return nil, errors.Join(fmt.Errorf("mobile: create data plane: %w", err), closeStores(profiles, identities))
 	}
 	packets.SetLogger(logger.With("component", "data_plane"))
-	hosts := &hostAddressList{}
 	packets.SetHostAddressSource(hosts.load)
 	network := make(chan struct{}, 1)
 	service, err := daemon.New(profiles, identities, version.Current(), mtcpclient.New(), daemon.Options{
@@ -156,13 +161,16 @@ func build(resolved Config, tun TunProvider, keys KeyStore, queue *asyncLog) (*E
 		DataPlane:      packets,
 		Logger:         logger.With("component", "daemon"),
 		NetworkChanges: network,
+		// Core sends the Sites the rules grant; the device installs them
+		// only once the person accepts subnet routes (SetSubnetRoutes).
+		EnableSubnetRoutes: true,
 	})
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("mobile: create runtime: %w", err), closeStores(profiles, identities))
 	}
 	return &Engine{
 		service: service, serve: service.Run, profiles: profiles, identities: identities, logger: logger, logs: queue,
-		network: network, stopWait: stopTimeout, hosts: hosts,
+		network: network, stopWait: stopTimeout, hosts: hosts, routeSettings: routeSettings,
 	}, nil
 }
 
@@ -416,11 +424,12 @@ func (engine *Engine) SetHostAddresses(addresses string) (err error) {
 	if engine == nil {
 		return errEngineClosed
 	}
-	parsed, err := parseHostAddresses(addresses)
+	parsed, networks, err := parseHostAddresses(addresses)
 	if err != nil {
 		return err
 	}
 	engine.hosts.current.Store(&parsed)
+	engine.hosts.networks.Store(&networks)
 	return nil
 }
 

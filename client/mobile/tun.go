@@ -40,28 +40,48 @@ type platformTUN struct {
 	mtu      int
 	logger   *slog.Logger
 	adopt    adoptTUN
+	// routeSettings is the app's subnet route settings file, and hosts the
+	// device's attached networks the platform last reported.
+	routeSettings string
+	hosts         *hostAddressList
 
+	// change serializes every change of the interface: the data plane's
+	// and the subnet route worker's.
+	change sync.Mutex
 	mu     sync.Mutex
 	open   *replaceableTUN // the TUN last given to the data plane
-	routes []netip.Prefix  // the stable routes the open TUN's interface has
+	// The open TUN's interface has the stable overlay routes and the
+	// subnet routes installed, and the addresses it was opened with.
+	addresses []netip.Prefix
+	routes    []netip.Prefix
+	routed    []netip.Prefix
 }
 
-func newPlatformTUN(provider TunProvider, mtu int, logger *slog.Logger) *platformTUN {
-	return &platformTUN{provider: provider, mtu: mtu, logger: logger, adopt: dataplane.AdoptTUN}
+func newPlatformTUN(provider TunProvider, mtu int, logger *slog.Logger, routeSettings string,
+	hosts *hostAddressList,
+) *platformTUN {
+	return &platformTUN{
+		provider: provider, mtu: mtu, logger: logger, adopt: dataplane.AdoptTUN, routeSettings: routeSettings,
+		hosts: hosts,
+	}
 }
 
 // OpenTUN asks the platform for a TUN configured with exactly the addresses
 // and routes of the current map. The platform cannot be cancelled mid-call;
 // a context already done is honoured before calling it.
 func (opener *platformTUN) OpenTUN(ctx context.Context, config netadmin.TUNConfig) (netadmin.TUN, error) {
+	opener.change.Lock()
+	defer opener.change.Unlock()
 	routes := stableRoutes(config.Routes)
-	device, err := opener.openDevice(ctx, config.Addresses, routes)
+	device, err := opener.openDevice(ctx, config.Addresses, routes, nil)
 	if err != nil {
 		return netadmin.TUN{}, err
 	}
 	replaceable := newReplaceableTUN(device, opener.mtu, opener.logger)
 	opener.mu.Lock()
-	opener.open, opener.routes = replaceable, routes
+	// A new interface carries no subnet routes: the data plane asks again.
+	opener.open, opener.routes, opener.routed = replaceable, routes, nil
+	opener.addresses = slices.Clone(config.Addresses)
 	opener.mu.Unlock()
 	return netadmin.TUN{
 		Device:    replaceable,
@@ -79,9 +99,11 @@ func (opener *platformTUN) OpenTUN(ctx context.Context, config netadmin.TUNConfi
 // and the running device moves to it. On an error the old interface stays
 // and the data plane rebuilds.
 func (opener *platformTUN) ConfigureTUNRoutes(ctx context.Context, config netadmin.TUNConfig) error {
+	opener.change.Lock()
+	defer opener.change.Unlock()
 	routes := stableRoutes(config.Routes)
 	opener.mu.Lock()
-	current, unchanged := opener.open, slices.Equal(opener.routes, routes)
+	current, unchanged, routed := opener.open, slices.Equal(opener.routes, routes), opener.routed
 	opener.mu.Unlock()
 	if current == nil || current.isClosed() {
 		return fmt.Errorf("%w: no open TUN to change", errNoTUN)
@@ -90,7 +112,7 @@ func (opener *platformTUN) ConfigureTUNRoutes(ctx context.Context, config netadm
 		return nil
 	}
 	if err := current.Replace(func() (tun.Device, error) {
-		return opener.openDevice(ctx, config.Addresses, routes)
+		return opener.openDevice(ctx, config.Addresses, routes, routed)
 	}); err != nil {
 		return err
 	}
@@ -104,7 +126,9 @@ func (opener *platformTUN) ConfigureTUNRoutes(ctx context.Context, config netadm
 
 // openDevice asks the platform for a configured interface and adopts its
 // descriptor.
-func (opener *platformTUN) openDevice(ctx context.Context, addresses, routes []netip.Prefix) (tun.Device, error) {
+func (opener *platformTUN) openDevice(ctx context.Context, addresses, routes, routed []netip.Prefix) (
+	tun.Device, error,
+) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -114,7 +138,16 @@ func (opener *platformTUN) openDevice(ctx context.Context, addresses, routes []n
 	if err := validateOverlayConfig(addresses, routes); err != nil {
 		return nil, err
 	}
-	fd, err := opener.provider.OpenTUN(joinPrefixes(addresses), joinPrefixes(routes), opener.mtu)
+	if err := validateRoutedConfig(routed); err != nil {
+		return nil, err
+	}
+	interfaceRoutes := slices.Clone(routes)
+	for _, prefix := range routed {
+		if !slices.Contains(interfaceRoutes, prefix) {
+			interfaceRoutes = append(interfaceRoutes, prefix)
+		}
+	}
+	fd, err := opener.provider.OpenTUN(joinPrefixes(addresses), joinPrefixes(interfaceRoutes), opener.mtu)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", errNoTUN, err)
 	}

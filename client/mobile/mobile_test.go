@@ -546,17 +546,21 @@ func waitForGoroutines(t *testing.T, want int) {
 func TestParseHostAddresses(t *testing.T) {
 	t.Parallel()
 	// Link-local and zoned addresses parse; the data plane drops them.
-	addresses, err := parseHostAddresses(" 10.63.186.255/20, 2001:db8::5/64,, 192.168.1.20 ")
+	addresses, networks, err := parseHostAddresses(" 10.63.186.255/20, 2001:db8::5/64,, 192.168.1.20 ")
 	if err != nil || len(addresses) != 3 || addresses[0] != netip.MustParseAddr("10.63.186.255") {
 		t.Fatalf("parseHostAddresses() = %v, %v", addresses, err)
 	}
-	if _, err := parseHostAddresses("10.0.0.1,not-an-address"); !errors.Is(err, errInvalidConfig) {
+	if len(networks) != 2 || networks[0] != netip.MustParsePrefix("10.63.176.0/20") ||
+		networks[1] != netip.MustParsePrefix("2001:db8::/64") {
+		t.Fatalf("parseHostAddresses() networks = %v", networks)
+	}
+	if _, _, err := parseHostAddresses("10.0.0.1,not-an-address"); !errors.Is(err, errInvalidConfig) {
 		t.Fatalf("invalid entry error = %v", err)
 	}
-	if addresses, err := parseHostAddresses(""); err != nil || len(addresses) != 0 {
+	if addresses, _, err := parseHostAddresses(""); err != nil || len(addresses) != 0 {
 		t.Fatalf("parseHostAddresses(\"\") = %v, %v", addresses, err)
 	}
-	if _, err := parseHostAddresses(strings.Repeat("10.0.0.1,", maxHostAddresses+1)); !errors.Is(err, errInvalidConfig) {
+	if _, _, err := parseHostAddresses(strings.Repeat("10.0.0.1,", maxHostAddresses+1)); !errors.Is(err, errInvalidConfig) {
 		t.Fatalf("too many addresses error = %v", err)
 	}
 }

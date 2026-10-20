@@ -15,6 +15,16 @@ const maxHostAddresses = 64
 // candidates.
 type hostAddressList struct {
 	current atomic.Pointer[[]netip.Addr]
+	// networks are the attached networks of the addresses reported with
+	// their prefix length, which subnet routes must not take over.
+	networks atomic.Pointer[[]netip.Prefix]
+}
+
+func (list *hostAddressList) attached() []netip.Prefix {
+	if networks := list.networks.Load(); networks != nil {
+		return *networks
+	}
+	return nil
 }
 
 func (list *hostAddressList) load() []netip.Addr {
@@ -27,25 +37,27 @@ func (list *hostAddressList) load() []netip.Addr {
 // parseHostAddresses reads a comma-separated list of IP addresses; an
 // address may carry its prefix length ("192.168.1.20/24"), as Android's
 // LinkAddress writes it.
-func parseHostAddresses(value string) ([]netip.Addr, error) {
+func parseHostAddresses(value string) ([]netip.Addr, []netip.Prefix, error) {
 	addresses := []netip.Addr{}
+	networks := []netip.Prefix{}
 	for entry := range strings.SplitSeq(value, ",") {
 		entry = strings.TrimSpace(entry)
 		if entry == "" {
 			continue
 		}
 		if len(addresses) == maxHostAddresses {
-			return nil, fmt.Errorf("%w: more than %d host addresses", errInvalidConfig, maxHostAddresses)
+			return nil, nil, fmt.Errorf("%w: more than %d host addresses", errInvalidConfig, maxHostAddresses)
 		}
 		if prefix, err := netip.ParsePrefix(entry); err == nil {
 			addresses = append(addresses, prefix.Addr())
+			networks = append(networks, prefix.Masked())
 			continue
 		}
 		address, err := netip.ParseAddr(entry)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %q is not an IP address", errInvalidConfig, entry)
+			return nil, nil, fmt.Errorf("%w: %q is not an IP address", errInvalidConfig, entry)
 		}
 		addresses = append(addresses, address)
 	}
-	return addresses, nil
+	return addresses, networks, nil
 }

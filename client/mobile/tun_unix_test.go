@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"testing"
@@ -119,7 +120,8 @@ func newPlatformFixture(t *testing.T) (*platformFixture, *platformTUN) {
 	fixture := &platformFixture{t: t, pipe: reader}
 	fixture.provider = &fakeTUN{}
 	fixture.provider.next = fixture.freshDescriptor
-	opener := newPlatformTUN(fixture.provider, DefaultMTU, slog.New(slog.DiscardHandler))
+	opener := newPlatformTUN(fixture.provider, DefaultMTU, slog.New(slog.DiscardHandler),
+		filepath.Join(t.TempDir(), routeSettingsFile), &hostAddressList{})
 	opener.adopt = func(file *os.File, mtu int, _ *slog.Logger) (tun.Device, error) {
 		device := newFakeDevice(file, mtu)
 		fixture.mu.Lock()
