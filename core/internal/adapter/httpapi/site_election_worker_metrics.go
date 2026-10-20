@@ -20,6 +20,14 @@ type siteElectionWorkerMetricsCollector struct {
 	worker  *election.Worker
 	running *prometheus.Desc
 	counter []siteElectionCounter
+	sites   *prometheus.Desc
+	routers *prometheus.Desc
+}
+
+// siteRouterStates names router statuses for the routers gauge.
+var siteRouterStates = map[election.Status]string{
+	election.StatusUsable: "usable", election.StatusHoldDown: "hold_down", election.StatusDraining: "draining",
+	election.StatusFailed: "failed", election.StatusIneligible: "ineligible",
 }
 
 // NewSiteElectionWorkerMetricsCollector exposes identifier-free worker
@@ -32,8 +40,16 @@ func NewSiteElectionWorkerMetricsCollector(worker *election.Worker) (prometheus.
 		return siteElectionCounter{descriptor: prometheus.NewDesc(name, help, nil, nil), value: value}
 	}
 	// Alert: rate(meshtransit_site_election_worker_elections_total[15m]) > 0
-	// means a Site's primary router changed.
+	// means a Site's primary router changed;
+	// meshtransit_site_election_sites{state=~"degraded|unserved"} > 0 for 5m
+	// means a Site no router can serve.
 	return &siteElectionWorkerMetricsCollector{worker: worker,
+		sites: prometheus.NewDesc("meshtransit_site_election_sites",
+			"Sites by whether a router can serve them, at the last sweep that read router health.",
+			[]string{"state"}, nil),
+		routers: prometheus.NewDesc("meshtransit_site_election_routers",
+			"Routers of Sites (one per router and Site) by status, at the last sweep that read router health.",
+			[]string{"state"}, nil),
 		running: prometheus.NewDesc("meshtransit_site_election_worker_running",
 			"Whether the Site election worker is running.", nil, nil),
 		counter: []siteElectionCounter{
@@ -54,6 +70,8 @@ func NewSiteElectionWorkerMetricsCollector(worker *election.Worker) (prometheus.
 
 func (collector *siteElectionWorkerMetricsCollector) Describe(descriptions chan<- *prometheus.Desc) {
 	descriptions <- collector.running
+	descriptions <- collector.sites
+	descriptions <- collector.routers
 	for _, counter := range collector.counter {
 		descriptions <- counter.descriptor
 	}
@@ -69,5 +87,16 @@ func (collector *siteElectionWorkerMetricsCollector) Collect(metrics chan<- prom
 	for _, counter := range collector.counter {
 		metrics <- prometheus.MustNewConstMetric(counter.descriptor, prometheus.CounterValue,
 			float64(counter.value(snapshot)))
+	}
+	if snapshot.Tally == nil {
+		return
+	}
+	for state, count := range map[string]uint64{"served": snapshot.Tally.SitesServed,
+		"degraded": snapshot.Tally.SitesDegraded, "unserved": snapshot.Tally.SitesUnserved} {
+		metrics <- prometheus.MustNewConstMetric(collector.sites, prometheus.GaugeValue, float64(count), state)
+	}
+	for status, state := range siteRouterStates {
+		metrics <- prometheus.MustNewConstMetric(collector.routers, prometheus.GaugeValue,
+			float64(snapshot.Tally.Routers[status]), state)
 	}
 }

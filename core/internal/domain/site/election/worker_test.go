@@ -364,3 +364,30 @@ func TestWorkerRunsAPassWhenWokenUp(t *testing.T) {
 		t.Fatalf("after a wakeup: %+v", got)
 	}
 }
+
+func TestWorkerTalliesSiteHealth(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, true)
+	if h.worker.Snapshot().Tally != nil {
+		t.Fatal("a tally before any sweep")
+	}
+	h.report(h.first, distribution.SiteHealthOK, "ok")
+	h.report(h.second, distribution.SiteHealthFailed, "probe_failed")
+	h.sweep(0)
+	tally := h.worker.Snapshot().Tally
+	if tally == nil || tally.SitesServed != 1 || tally.SitesDegraded != 0 ||
+		tally.Routers[StatusUsable] != 1 || tally.Routers[StatusFailed] != 1 {
+		t.Fatalf("served Site tally = %+v", tally)
+	}
+	h.report(h.first, distribution.SiteHealthFailed, "probe_failed")
+	h.report(h.second, distribution.SiteHealthFailed, "probe_failed")
+	h.sweep(time.Second)
+	if tally = h.worker.Snapshot().Tally; tally.SitesDegraded != 1 || tally.SitesServed != 0 {
+		t.Fatalf("degraded Site tally = %+v", tally)
+	}
+	h.health.err = errors.New("redis down")
+	h.sweep(time.Second)
+	if h.worker.Snapshot().Tally != tally {
+		t.Fatal("a sweep without health replaced the tally")
+	}
+}

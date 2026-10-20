@@ -55,6 +55,7 @@ Names are stable; labels carry outcome names only, never identifiers.
 | Wakeups | `meshtransit_revision_feed_*`, `meshtransit_connectivity_feed_*`: subscriber connected, watchers, wakeups, fan-out, reconnects |
 | Revision worker | `meshtransit_revision_worker_ready_backlog_events`, `…_oldest_ready_event_age_seconds`, `…_delivery_attempts_total{result}` |
 | Other workers | `meshtransit_<job>_worker_running` and `…_passes_total`, plus per-job counters, for `access_ledger`, `enforcement_ledger`, `contract_expiry`, `device_alias`, `private_endpoint` |
+| Sites | `meshtransit_site_election_worker_running`, `…_passes_total`, `…_read_errors_total`, `…_elections_total` (a primary router changed), `…_write_errors_total`, `…_wakeups_total`; `meshtransit_site_election_sites{state}` (`served`, `degraded`: routers, none can serve now; `unserved`: no router the Site can use) and `meshtransit_site_election_routers{state}` (`usable`, `hold_down`, `draining`, `failed`, `ineligible`; one per router of each Site), from the last sweep that could read router health |
 | Relay authority | `meshtransit_relay_authority_refreshes_total{result}`, `…_requests_total{result}`, `…_tickets_total{result}`, `…_revocations`, `…_last_refresh_timestamp_seconds` |
 | API | `meshtransit_management_requests_active`, `…_limit`, `…_total{operation,result}`, `…_request_duration_seconds` |
 | Sign-in | `meshtransit_browser_*`, `meshtransit_oidc_*` (login starts, callbacks, session issuance, expiry worker), `meshtransit_identity_*` (broker connections and requests) |
@@ -92,6 +93,7 @@ Go runtime and process metrics are included.
 | Redis | error rate > 0; p99 > 0.5 s; `…_pool_pending_requests > 0`; timeouts |
 | A worker job stopped | `meshtransit_<job>_worker_running != 1` for an enabled job |
 | Enforcement mismatch | rate of `meshtransit_enforcement_ledger_worker_audited_total` > 0 (Devices not enforcing what they were sent) |
+| Site down | `max(meshtransit_site_election_sites{state=~"degraded|unserved"}) > 0` for 5 m (open the Site in the Console for each router's health); `increase(meshtransit_site_election_worker_elections_total[15m]) > 0` (a failover) |
 | Relay | `meshrelay_core_state_polls_total{result!="ok"}` rising; `meshrelay_tls_certificate_expiry_timestamp_seconds > 0` and within 14 days; `network_rate_limited` drops |
 
 ## Clocks

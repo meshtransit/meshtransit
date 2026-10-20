@@ -156,12 +156,48 @@ type Worker struct {
 
 	running                                             atomic.Bool
 	passes, readErrors, elections, writeErrors, wakeups atomic.Uint64
+	// tally is the Site and router health of the last complete sweep that
+	// could read the routers' health.
+	tally atomic.Pointer[Tally]
 }
 
-// Measurements are identifier-free process counters.
+// Measurements are identifier-free process counters and the health counts
+// of the last complete sweep.
 type Measurements struct {
 	Running                                             bool
 	Passes, ReadErrors, Elections, WriteErrors, Wakeups uint64
+	// Tally is nil until a sweep has completed with health known.
+	Tally *Tally
+}
+
+// Tally counts Sites by how well their routers can serve them and routers by
+// status, over one sweep.
+type Tally struct {
+	// SitesServed have a router that can serve them now.
+	SitesServed uint64
+	// SitesDegraded have routers, none of which can serve now (failed,
+	// recovering or draining).
+	SitesDegraded uint64
+	// SitesUnserved have no router the Site can use at all.
+	SitesUnserved uint64
+	// Routers counts router entries (one router of one Site) by status.
+	Routers map[Status]uint64
+}
+
+func (tally *Tally) add(candidates []Candidate) {
+	best := StatusIneligible
+	for _, candidate := range candidates {
+		tally.Routers[candidate.Status]++
+		best = min(best, candidate.Status)
+	}
+	switch {
+	case best == StatusUsable:
+		tally.SitesServed++
+	case best == StatusIneligible:
+		tally.SitesUnserved++
+	default:
+		tally.SitesDegraded++
+	}
 }
 
 // New constructs a stopped worker without I/O.
@@ -245,7 +281,7 @@ func (worker *Worker) Snapshot() Measurements {
 	}
 	return Measurements{Running: worker.running.Load(), Passes: worker.passes.Load(),
 		ReadErrors: worker.readErrors.Load(), Elections: worker.elections.Load(),
-		WriteErrors: worker.writeErrors.Load(), Wakeups: worker.wakeups.Load()}
+		WriteErrors: worker.writeErrors.Load(), Wakeups: worker.wakeups.Load(), Tally: worker.tally.Load()}
 }
 
 func (worker *Worker) run(ctx context.Context) {
@@ -332,6 +368,8 @@ func (worker *Worker) Sweep(ctx context.Context) {
 	now := worker.clock.Now()
 	worker.freeze(now)
 	seen := map[trackKey]struct{}{}
+	tally := &Tally{Routers: map[Status]uint64{}}
+	healthKnown := true
 	var after site.ID
 	for ctx.Err() == nil {
 		readCtx, cancel := context.WithTimeout(ctx, worker.options.OperationTimeout)
@@ -343,13 +381,17 @@ func (worker *Worker) Sweep(ctx context.Context) {
 			return
 		}
 		observations, known := worker.observe(ctx, page.Sites)
+		healthKnown = healthKnown && known
 		for _, facts := range page.Sites {
-			worker.elect(ctx, facts, observations, known, now, seen)
+			tally.add(worker.elect(ctx, facts, observations, known, now, seen))
 			after = facts.Site
 		}
 		if page.Done || len(page.Sites) == 0 {
 			break
 		}
+	}
+	if ctx.Err() == nil && healthKnown {
+		worker.tally.Store(tally)
 	}
 	// Forget routers no longer listed.
 	for key := range worker.tracks {
@@ -393,7 +435,7 @@ func (worker *Worker) observe(ctx context.Context, sites []SiteFacts) (map[node.
 
 func (worker *Worker) elect(ctx context.Context, facts SiteFacts,
 	observations map[node.ID]distribution.Observation, known bool, now time.Time, seen map[trackKey]struct{},
-) {
+) []Candidate {
 	candidates := make([]Candidate, 0, len(facts.Routers))
 	for _, router := range facts.Routers {
 		key := trackKey{site: facts.Site, device: router.Device}
@@ -405,7 +447,7 @@ func (worker *Worker) elect(ctx context.Context, facts SiteFacts,
 	// Without the routers' health (health counts every router usable) only
 	// authority facts are certain: no failback on it.
 	if (facts.Generation > 0 && primary == facts.Primary) || (!known && reason == ReasonFailback) {
-		return
+		return candidates
 	}
 	if reason == "" {
 		reason = ReasonElected
@@ -419,13 +461,14 @@ func (worker *Worker) elect(ctx context.Context, facts SiteFacts,
 		worker.writeErrors.Add(1)
 		worker.logger.WarnContext(ctx, "Site primary not recorded", "site", facts.Site.String(),
 			"error_code", "site_election_write_failed")
-		return
+		return candidates
 	}
 	if changed {
 		worker.elections.Add(1)
 		worker.logger.InfoContext(ctx, "Site primary elected", "site", facts.Site.String(),
 			"primary", primary.String(), "previous", facts.Primary.String(), "reason", reason)
 	}
+	return candidates
 }
 
 // status judges one router of one Site and updates what is remembered of

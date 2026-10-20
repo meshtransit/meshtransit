@@ -5,6 +5,11 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: `meshtransit_site_election_sites{state}` and
+  `meshtransit_site_election_routers{state}` count Sites a router can serve,
+  cannot serve now, or have no usable router, and routers by status, from the
+  election worker's last sweep with router health; monitoring docs suggest an
+  alert on degraded or unserved Sites.
 - Core: the access ledger records rules to Sites (schema 199). Each Device a
   rule grants a Site to is an edge with `selector_kind` `site`,
   `destination_site_id` and `destination_prefixes`; the history read
