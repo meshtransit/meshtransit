@@ -104,7 +104,8 @@ source, destination or protocol. It needs `policy.read` and `device.read`.
 The answer includes `recorded_since`: before the first recorded state there
 is no history. An edge to a Site has `selector_kind` `site`, no destination
 Device, and `destination_site_id` and `destination_prefixes` (the prefixes the
-rule grants).
+rule grants). The snapshot's `edge_count` and `digest` cover every recorded
+edge, Site edges included.
 
 The ledger polls every few seconds, so a change that is undone within one
 poll may not appear.

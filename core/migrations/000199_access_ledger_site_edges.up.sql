@@ -12,7 +12,9 @@
 -- every Core version that calls it records the same edges. History reads
 -- share one body: read_access_graph_history_v1, which older Cores call and
 -- whose decoders know no Site edge, leaves Site edges out; v2 returns them
--- with destination_site_id and destination_prefixes.
+-- with destination_site_id and destination_prefixes. The snapshot's edge
+-- count and digest cover every recorded edge, Site edges included, so through
+-- v1 they can exceed the listed edges.
 
 ALTER TABLE mesh_ops.access_edge_history
     ADD COLUMN destination_site_public_id UUID,
@@ -32,7 +34,10 @@ ALTER TABLE mesh_ops.access_edge_history ADD CONSTRAINT access_edge_history_kind
         AND destination_imported_resource_public_id IS NULL AND trust_contract_public_id IS NULL
         AND destination_site_public_id IS NOT NULL
         AND destination_prefixes IS NOT NULL AND mesh_ops.site_prefixes_valid_internal_v1(destination_prefixes))
-);
+) NOT VALID;
+-- Validated apart, so the scan of the history holds no lock that stops the
+-- worker or readers.
+ALTER TABLE mesh_ops.access_edge_history VALIDATE CONSTRAINT access_edge_history_kind_check;
 
 CREATE FUNCTION mesh_ops.access_edges_internal_v2(
     p_workspace_id BIGINT,
