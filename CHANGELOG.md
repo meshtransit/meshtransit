@@ -5,6 +5,17 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: a route offer is stored in one statement (schema 200,
+  `mesh_ops.report_device_route_offer_v2`), and a Device that is revoked,
+  logged out or removed loses its offer in the same change. A router whose
+  consumers fill its packet filter keeps its own rules and the Sites that
+  fit, instead of failing its map
+  (`meshtransit_mtcp_routed_filter_groups_omitted_total`).
+- Clients: macOS and Windows reuse the interface found for a destination
+  kept off subnet routes for half a second; Windows refuses routes with
+  `settings_unusable` when the settings file is unsafe or unreadable, and
+  forgets a subnet route that did not come back after its adapter's routes
+  changed.
 - Clients: local router failover also covers routers reached only through a
   relay. A node pings the routers of a Site it routes through, through the
   relay, every second while no direct path to them is proven, and counts

@@ -94,7 +94,8 @@ meshd routes accept on
 
 The setting lives in `C:\ProgramData\MeshTransit\settings\routes.json`, in
 a directory only SYSTEM and Administrators may open; `meshd` ignores a file
-anyone else owns or may change. It applies within 10 seconds;
+anyone else owns or may change, and status then refuses every route with
+`settings_unusable`. It applies within 10 seconds;
 `meshd routes accept off` removes the routes again. The service installs
 each granted prefix on the **MeshTransit** adapter and refuses one that
 overlaps a network the machine reaches itself, or that holds a DNS server

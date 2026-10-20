@@ -108,6 +108,15 @@ func (o *WindowsTUNOpener) ConfigureTUNRoutes(_ context.Context, config netadmin
 			err = errors.Join(err, fmt.Errorf("dataplane: adding route %s failed", route))
 		}
 	}
+	// A subnet route that did not come back is no longer installed: forget
+	// it, so status and the next request see the truth at once.
+	if err == nil {
+		o.routed = slices.DeleteFunc(slices.Clone(o.routed), func(route netip.Prefix) bool {
+			return slices.Contains(failed, route)
+		})
+	} else {
+		o.routed = nil
+	}
 
 	return err
 }

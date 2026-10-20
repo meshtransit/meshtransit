@@ -24,8 +24,11 @@ const (
 	// ReasonFamilyUnavailable one of an address family the host lacks.
 	ReasonInstallFailed     = "install_failed"
 	ReasonFamilyUnavailable = "family_unavailable"
-	minimumIPv4Bits         = 8
-	minimumIPv6Bits         = 32
+	// ReasonSettingsUnusable refuses every route while the settings file
+	// cannot be read or is not owned and protected as required.
+	ReasonSettingsUnusable = "settings_unusable"
+	minimumIPv4Bits        = 8
+	minimumIPv6Bits        = 32
 )
 
 // Refusal is one granted route the node does not install, and why.

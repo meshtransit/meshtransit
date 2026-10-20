@@ -30,12 +30,19 @@ func (o *WindowsTUNOpener) SetRoutedRoutes(_ context.Context, requested []netip.
 	if o.luid == 0 {
 		return netadmin.RoutedResult{}, errors.New("dataplane: the Wintun adapter is not open")
 	}
-	settings, err := routesettings.Load(o.routeSettings)
-	if err != nil {
-		// Unusable settings admit nothing.
+	settings, loadErr := routesettings.Load(o.routeSettings)
+	if loadErr != nil {
+		// Unusable settings admit nothing, and every refusal says so.
 		settings = routesettings.Settings{}
 	}
 	accepted, refused := routesettings.Admit(settings, requested)
+	if loadErr != nil {
+		for index := range refused {
+			if refused[index].Reason == routesettings.ReasonRoutesOff {
+				refused[index].Reason = routesettings.ReasonSettingsUnusable
+			}
+		}
+	}
 	accepted, reserved := routesettings.WithoutMesh(accepted, append(slices.Clone(o.addresses), o.overlay...))
 	refused = append(refused, reserved...)
 	if len(accepted) > 0 {

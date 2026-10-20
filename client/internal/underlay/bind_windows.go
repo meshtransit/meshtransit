@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"net/netip"
 	"syscall"
 
@@ -26,10 +27,17 @@ const unicastInterface = 31
 // (IP_UNICAST_IF), so they take the path the host would use without its
 // subnet routes.
 func bindPhysical(raw syscall.RawConn, destination netip.Addr) error {
-	index, err := physicalInterface(destination)
+	cached, err := physicalInterfaces.lookup(destination, func(address netip.Addr) (int, error) {
+		index, err := physicalInterface(address)
+		return int(index), err
+	})
 	if err != nil {
 		return err
 	}
+	if cached <= 0 || cached > math.MaxUint32 {
+		return errors.New("no physical route")
+	}
+	index := uint32(cached)
 	var bindErr error
 	if err := raw.Control(func(fd uintptr) {
 		handle := windows.Handle(fd)
