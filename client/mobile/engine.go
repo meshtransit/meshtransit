@@ -441,7 +441,11 @@ func (engine *Engine) StatusJSON() (value string, err error) {
 		if statusErr != nil {
 			return statusErr
 		}
-		value, statusErr = newStatus(engine.Running(), current).marshal()
+		reported := newStatus(engine.Running(), current)
+		// An unreadable settings file admits nothing: shown as off.
+		settings, _ := loadRouteSettings(engine.routeSettings)
+		reported.SubnetRoutes.Accepted = settings.AcceptRoutes
+		value, statusErr = reported.marshal()
 		return statusErr
 	})
 	return value, err

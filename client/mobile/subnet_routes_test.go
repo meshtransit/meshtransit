@@ -70,7 +70,7 @@ func TestStatusShowsSubnetRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`"subnetRoutes":{"requested":2,"installed":1,"refused":1,"localConflict":true}`,
+		`"subnetRoutes":{"accepted":false,"requested":2,"installed":1,"refused":1,"localConflict":true}`,
 		`"sites":[{"site":"prod","router":"prod-1","via":"primary"},{"site":"lab","via":"none"}]`,
 	} {
 		if !strings.Contains(encoded, want) {

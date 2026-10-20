@@ -48,6 +48,8 @@ type status struct {
 // subnetRoutes counts the granted subnet routes on the VPN interface and
 // those refused (by the settings, or overlapping an attached network).
 type subnetRoutes struct {
+	// Accepted is the app's setting (SetSubnetRoutes).
+	Accepted      bool   `json:"accepted"`
 	Requested     int    `json:"requested"`
 	Installed     int    `json:"installed"`
 	Refused       int    `json:"refused"`
