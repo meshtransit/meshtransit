@@ -68,7 +68,7 @@ func replaceExitKillSwitch(ruleset exitKillSwitch) error {
 		},
 		{
 			"route", nftables.ChainTypeRoute, nftables.ChainHookOutput, nftables.ChainPriorityMangle,
-			exitRerouteRules(),
+			exitRerouteRules(ruleset),
 		},
 		{
 			"output", nftables.ChainTypeFilter, nftables.ChainHookOutput, nftables.ChainPriorityFilter,
@@ -118,10 +118,22 @@ func exitMarkInboundRules(ruleset exitKillSwitch) [][]expr.Any {
 	return append(rules, join(original, setCtMark(exitInboundMark)), join(original, setMetaMark(exitInboundMark)))
 }
 
-// exitRerouteRules copy the inbound mark of a connection to the host's own
-// packets of it, which the route chain looks up again (rule ExitPriority).
-func exitRerouteRules() [][]expr.Any {
-	return [][]expr.Any{join(ctMarked(exitInboundMark), setMetaMark(exitInboundMark))}
+// exitRerouteRules mark the connections meshd opens, so their replies pass
+// the reverse path check in the main table as those of connections opened
+// from outside do (meshd must reach Core while the TUN is gone), and copy
+// the mark of a connection to the host's own packets of it, which the route
+// chain looks up again (rule ExitPriority).
+func exitRerouteRules(ruleset exitKillSwitch) [][]expr.Any {
+	uid := make([]byte, 4)
+	binary.NativeEndian.PutUint32(uid, ruleset.UID)
+	meshd := []expr.Any{
+		&expr.Meta{Key: expr.MetaKeySKUID, Register: 1},
+		&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: uid},
+	}
+	return [][]expr.Any{
+		join(meshd, setCtMark(exitInboundMark)),
+		join(ctMarked(exitInboundMark), setMetaMark(exitInboundMark)),
+	}
 }
 
 // exitOutputRules let the host's own packets leave outside the mesh only by

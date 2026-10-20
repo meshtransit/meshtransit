@@ -12,13 +12,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/netip"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"meshtransit.net/client/internal/relay"
+	"meshtransit.net/client/internal/underlay"
 	"meshtransit.net/shared/key"
 	"meshtransit.net/shared/mtrp"
 )
@@ -75,7 +75,7 @@ func NewDialer(creds Credentials) *Dialer {
 		now:         time.Now,
 		random:      rand.Reader,
 		resolve: func(ctx context.Context, host string) ([]netip.Addr, error) {
-			return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+			return underlay.Resolver().LookupNetIP(ctx, "ip", host)
 		},
 		dialUDP: dialUDP,
 		dialTLS: dialTLS,

@@ -136,7 +136,7 @@ func TestKernelExitRouteConfigurerIntegration(t *testing.T) {
 		}
 		return count
 	}
-	if countRules("5402") != 2 || countRules("5403") != 2 || countRules("5405") != 2 || countRules("5404") < 6 {
+	if countRules("5402") < 4 || countRules("5403") != 2 || countRules("5405") != 2 || countRules("5404") < 6 {
 		t.Errorf("rules: 5402=%d 5403=%d 5404=%d 5405=%d", countRules("5402"), countRules("5403"),
 			countRules("5404"), countRules("5405"))
 	}
@@ -162,7 +162,7 @@ func TestKernelExitRouteConfigurerIntegration(t *testing.T) {
 	for _, want := range []string{
 		"hook output", "hook forward", "hook prerouting", "type route", "meta skuid 4242 accept",
 		`oifname "` + name + `" accept`, `oifname "` + bridge + `" accept`, "udp sport 68 udp dport 67",
-		"ct direction original", "meta mark set meta mark | 0x20000000",
+		"ct direction original", "meta mark set meta mark | 0x20000000", "meta skuid 4242 ct mark set",
 		"192.168.77.0/24", "224.0.0.0/24", "drop",
 	} {
 		if !strings.Contains(string(ruleset), want) {
@@ -211,6 +211,12 @@ func TestKernelExitRouteConfigurerIntegration(t *testing.T) {
 	// through to the main table.
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
+	}
+	// Replies from the host's own addresses (SSH, pings) still leave by its
+	// own routes, not into the unreachable exit table.
+	if got := routeGet("8.8.8.8", "from", "192.168.77.2", "uid", "0"); strings.Contains(got, "unreachable") ||
+		strings.Contains(got, "dev "+name) {
+		t.Errorf("a reply from the host's own address: %s", got)
 	}
 	// The host stays reachable from outside: with loose reverse path
 	// checks, a marked packet from the LAN is checked against the main

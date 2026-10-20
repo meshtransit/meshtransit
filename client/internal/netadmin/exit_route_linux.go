@@ -81,6 +81,10 @@ type exitHost struct {
 	bridges    []string
 	bridged    []exitSubnet
 	lan        []exitSubnet
+	// own are the host's addresses outside the mesh: replies from them
+	// (to connections opened from outside, pings) leave by the host's
+	// own routes, also while the TUN is gone.
+	own []netip.Addr
 }
 
 // localBridgePorts are the kinds of bridge port that never reach another
@@ -133,6 +137,9 @@ func readExitHost(name string) (exitHost, error) {
 		prefix, ok := netipPrefix(address.IPNet)
 		if !ok || prefix.Addr().IsLoopback() || prefix.Addr().IsLinkLocalUnicast() && prefix.Addr().Is6() {
 			continue // IPv6 link-local sockets name their interface
+		}
+		if len(host.own) < maximumExitInterfaces {
+			host.own = append(host.own, prefix.Addr())
 		}
 		subnet := exitSubnet{prefix: prefix, link: address.LinkIndex}
 		if bridgeIndex[address.LinkIndex] {
@@ -221,7 +228,7 @@ func (configurer *kernelExitRouteConfigurer) Replace(name string, ipv6, allowLAN
 	if err := replaceExitTable(configurer.options.ExitTable, host, lan, ipv6); err != nil {
 		return err
 	}
-	rules := exitRules(configurer.options, configurer.uid, host.interfaces)
+	rules := exitRules(configurer.options, configurer.uid, host.interfaces, host.own)
 	if err := replaceRulesAt(configurer.options.ExitPriority, exitRulePriorities, rules); err != nil {
 		return err
 	}
@@ -314,10 +321,13 @@ func exitRouteKey(family int, route netlink.Route) string {
 	return fmt.Sprintf("%d %s %d %d %d", family, destination, route.Type, link, route.Priority)
 }
 
-// exitRules are, per family: replies to connections opened from outside,
-// DHCP and sockets bound to one of interfaces follow the main table; then
-// everything but meshd looks up the exit table.
-func exitRules(options RoutedOptions, uid uint32, interfaces []string) []*netlink.Rule {
+// exitRules are, per family: replies to connections opened from outside
+// (by their mark, or by the host's own source address), DHCP and sockets
+// bound to one of interfaces follow the main table; then everything but
+// meshd looks up the exit table. A packet that picks a host address as its
+// source on purpose also follows the main table, where the kill switch
+// drops it.
+func exitRules(options RoutedOptions, uid uint32, interfaces []string, own []netip.Addr) []*netlink.Rule {
 	var rules []*netlink.Rule
 	for _, family := range []int{unix.AF_INET, unix.AF_INET6} {
 		mask := exitInboundMark
@@ -332,6 +342,15 @@ func exitRules(options RoutedOptions, uid uint32, interfaces []string) []*netlin
 			dhcp.Sport, dhcp.Dport = netlink.NewRulePortRange(546, 546), netlink.NewRulePortRange(547, 547)
 		}
 		rules = append(rules, inbound, dhcp)
+		for _, address := range own {
+			if address.Is4() != (family == unix.AF_INET) {
+				continue
+			}
+			fromOwn := netlink.NewRule()
+			fromOwn.Family, fromOwn.Priority, fromOwn.Table = family, options.ExitPriority, unix.RT_TABLE_MAIN
+			fromOwn.Src = prefixIPNet(netip.PrefixFrom(address, address.BitLen()))
+			rules = append(rules, fromOwn)
+		}
 		for _, name := range interfaces {
 			bound := netlink.NewRule()
 			bound.Family, bound.Priority, bound.Table = family, options.ExitPriority+2, unix.RT_TABLE_MAIN
@@ -405,7 +424,9 @@ func sameExitRule(installed, wanted netlink.Rule) bool {
 	}
 	sameUIDs := (installed.UIDRange == nil) == (wanted.UIDRange == nil) &&
 		(installed.UIDRange == nil || *installed.UIDRange == *wanted.UIDRange)
-	return installed.Table == wanted.Table && installed.Mark == wanted.Mark && sameMask &&
+	sameSource := (installed.Src == nil) == (wanted.Src == nil) &&
+		(installed.Src == nil || installed.Src.String() == wanted.Src.String())
+	return installed.Table == wanted.Table && installed.Mark == wanted.Mark && sameMask && sameSource &&
 		installed.IPProto == wanted.IPProto && samePorts(installed.Sport, wanted.Sport) &&
 		samePorts(installed.Dport, wanted.Dport) && strings.TrimRight(installed.OifName, "\x00") == wanted.OifName &&
 		installed.Invert == wanted.Invert && sameUIDs
@@ -435,7 +456,7 @@ func (configurer *kernelExitRouteConfigurer) validateMarks() error {
 	if record := validMarkRecord(configurer.options); record != "" {
 		// Best effort: without the record only a crashed helper leaves the
 		// setting on, as wg-quick always does.
-		_ = os.WriteFile(record, []byte(current), 0o600) //nolint:gosec // G306: owner-only
+		_ = os.WriteFile(record, []byte(current), 0o600)
 	}
 	return writeSysctl(path, "1")
 }
