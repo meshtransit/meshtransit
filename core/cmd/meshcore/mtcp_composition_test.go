@@ -120,7 +120,9 @@ func TestMTCPCapabilities(t *testing.T) {
 		!slices.Contains(mtcpCapabilities(true, false, false), "device-alias.v1") || !slices.Contains(mtcpCapabilities(false, false, false), "map.zstd") ||
 		slices.Contains(mtcpCapabilities(true, false, false), "relay.zones2") || !slices.Contains(mtcpCapabilities(false, true, false), "relay.zones2") ||
 		slices.Contains(mtcpCapabilities(false, false, false), "routes.subnet.v1") ||
-		!slices.Contains(mtcpCapabilities(false, false, true), "router.subnet.v1") {
+		!slices.Contains(mtcpCapabilities(false, false, true), "router.subnet.v1") ||
+		len(exitCapabilities(false)) != 0 || !slices.Contains(exitCapabilities(true), "router.exit.v1") ||
+		!slices.Contains(exitCapabilities(true), "routes.exit.v1") {
 		t.Fatal("capabilities do not follow the deployment")
 	}
 }

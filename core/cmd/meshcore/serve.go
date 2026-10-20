@@ -288,6 +288,17 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			additionalMetrics = append(additionalMetrics, electionMetrics)
 			roleServices = append(roleServices, app.OwnedService{Name: "site-election-worker", Service: electionService})
 		}
+		if processConfig.ExitNodes {
+			exitElection, exitElectionMetrics, composeErr := composeExitPoolElectionWorker(
+				*processConfig.EnforcementLedgerWorker, storagePools.worker, redisClient, logger)
+			if composeErr != nil {
+				logger.ErrorContext(ctx, "startup failed", "error_code", "exit_pool_election_worker_composition_failure")
+				return 1
+			}
+			additionalMetrics = append(additionalMetrics, exitElectionMetrics)
+			roleServices = append(roleServices, app.OwnedService{Name: "exit-pool-election-worker",
+				Service: exitElection})
+		}
 	}
 	var enrollmentKeys httpapi.EnrollmentKeyManager
 	if processConfig.API != nil {
@@ -572,10 +583,24 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			logger.ErrorContext(ctx, "startup failed", "error_code", "mtcp_composition_failure", "error", offerErr)
 			return 1
 		}
+		exitOffers, offerErr := postgresadapter.NewExitOfferStore(storagePools.runtime, postgresadapter.AccountSessionOptions{
+			StatementTimeout: processConfig.Control.Map.StatementTimeout,
+			IdleTimeout:      processConfig.Control.Map.TransactionIdleLimit,
+		})
+		if offerErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "mtcp_composition_failure", "error", offerErr)
+			return 1
+		}
 		deps := mtcpDependencies{streams: mapStreamService, sessions: mapSessionService,
 			registrations: registrationService, logout: logout, paths: redisClient, connectivity: redisClient, guard: timestamps, logger: logger,
 			dnsSuffix: processConfig.DNSSuffix, routeOffers: routeOffers,
-			subnetRoutes: processConfig.SubnetRoutes && processConfig.Control.Map.SharedInventory}
+			subnetRoutes: processConfig.SubnetRoutes && processConfig.Control.Map.SharedInventory,
+			exitNodes:    processConfig.ExitNodes && processConfig.Control.Map.SharedInventory}
+		if deps.exitNodes {
+			// Exit offers are stored only while Core offers router.exit.v1:
+			// then a node that no longer lists it withdraws its offer.
+			deps.exitOffers = exitOffers
+		}
 		if len(browserControl) == 1 {
 			deps.browser, deps.origin = &browserControl[0], processConfig.BrowserRegistration.Origin
 		}

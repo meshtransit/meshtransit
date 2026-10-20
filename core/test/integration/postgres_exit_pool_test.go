@@ -31,6 +31,9 @@ func newIntegrationExitPoolService(t *testing.T, runtimePool *postgresadapter.Po
 	if err != nil {
 		t.Fatal(err)
 	}
+	if service, err = service.WithPrimaryHistory(store); err != nil {
+		t.Fatal(err)
+	}
 	return service
 }
 
@@ -188,8 +191,8 @@ ORDER BY event_identity_id DESC LIMIT 1`).Scan(&auditedDevice); err != nil || au
 	}
 	// Offers come from nodes; the fixture writes one directly.
 	if err := fixtureRouteOffer(ctx, admin, `INSERT INTO mesh.device_exit_offer
-    (device_id, workspace_id, network_id, offered, reported_at)
-SELECT id, workspace_id, network_id, TRUE, now() FROM mesh.device WHERE public_id = $1::UUID`,
+    (device_id, workspace_id, network_id, public_id, offered, reported_at)
+SELECT id, workspace_id, network_id, public_id, TRUE, now() FROM mesh.device WHERE public_id = $1::UUID`,
 		exitDevice.String()); err != nil {
 		t.Fatal(err)
 	}

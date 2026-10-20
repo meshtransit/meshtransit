@@ -64,6 +64,8 @@ type ApplicationOptions struct {
 	Connectivity    ConnectivityRecorder
 	// RouteOffers, when set, stores the subnets Devices offer to forward.
 	RouteOffers RouteOffers
+	// ExitOffers, when set, stores whether Devices offer to be exit nodes.
+	ExitOffers ExitOffers
 	// ApprovalOrigin is the https origin of approval URLs; ApprovalTTL is
 	// how long an approval stays open.
 	ApprovalOrigin string

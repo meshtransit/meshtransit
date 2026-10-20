@@ -25,6 +25,7 @@ const (
 	exitPoolDeleteOperation     = "exit_pool_delete"
 	exitPoolNodePutOperation    = "exit_pool_node_put"
 	exitPoolNodeDeleteOperation = "exit_pool_node_delete"
+	exitPoolPrimaryHistory      = "exit_pool_primary_history"
 )
 
 // ExitPoolManager lists and changes the Exit Pools of a Network and their
@@ -42,6 +43,8 @@ type ExitPoolManager interface {
 		publicid.ID) (exitpool.Result, error)
 	RemoveNode(context.Context, accountsession.Session, network.Scope, exitpool.ID, int64, node.ID,
 		publicid.ID) (exitpool.Result, error)
+	PrimaryChanges(context.Context, accountsession.Session, network.Scope, exitpool.ID, publicid.ID,
+		int) (exitpool.PrimaryHistory, error)
 }
 
 type exitPoolPath struct {
@@ -54,6 +57,8 @@ type exitPoolPath struct {
 	operation string
 	after     exitpool.ID
 	limit     int
+	// afterEvent pages the primary history.
+	afterEvent publicid.ID
 }
 
 // parseExitPoolPath matches, under /api/v1/workspaces/{ws}/networks/{net}:
@@ -61,8 +66,10 @@ type exitPoolPath struct {
 //	GET|POST         exit-pools                       list, create
 //	GET|PATCH|DELETE exit-pools/{pool}                read, update, delete
 //	PUT|DELETE       exit-pools/{pool}/nodes/{device} set, remove an exit node
+//	GET              exit-pools/{pool}/primary-changes the elected primary's history
 //
-// Only the list takes a query: after (a pool ID) and limit, once each.
+// Only the lists take a query: after (a pool or change ID) and limit, once
+// each.
 func parseExitPoolPath(request *http.Request) (exitPoolPath, bool) {
 	if request == nil || request.URL == nil || request.URL.RawPath != "" {
 		return exitPoolPath{}, false
@@ -95,6 +102,9 @@ func parseExitPoolPath(request *http.Request) (exitPoolPath, bool) {
 		path.methods = restMethods{http.MethodGet, http.MethodPatch, http.MethodDelete}
 		operations = map[string]string{http.MethodGet: exitPoolReadOperation, http.MethodPatch: exitPoolUpdateOperation,
 			http.MethodDelete: exitPoolDeleteOperation}
+	case len(rest) == 2 && rest[1] == "primary-changes":
+		path.methods = restMethods{http.MethodGet}
+		operations = map[string]string{http.MethodGet: exitPoolPrimaryHistory}
 	case len(rest) == 3 && rest[1] == "nodes":
 		device, err := node.ParseID(rest[2])
 		if err != nil || device.String() != rest[2] {
@@ -117,10 +127,45 @@ func parseExitPoolPath(request *http.Request) (exitPoolPath, bool) {
 	if path.methods.allows(request.Method) {
 		path.operation = operations[request.Method]
 	}
-	if path.operation == exitPoolListOperation {
+	switch path.operation {
+	case exitPoolListOperation:
 		return path.withPage(request.URL.RawQuery)
+	case exitPoolPrimaryHistory:
+		return path.withHistoryPage(request.URL.RawQuery)
+	default:
+		return path, request.URL.RawQuery == ""
 	}
-	return path, request.URL.RawQuery == ""
+}
+
+func (path exitPoolPath) withHistoryPage(rawQuery string) (exitPoolPath, bool) {
+	path.limit = exitpool.DefaultHistoryPage
+	if rawQuery == "" {
+		return path, true
+	}
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return exitPoolPath{}, false
+	}
+	for key, items := range values {
+		if (key != "after" && key != "limit") || len(items) != 1 || items[0] == "" {
+			return exitPoolPath{}, false
+		}
+	}
+	if value := values.Get("after"); value != "" {
+		after, err := publicid.Parse(value)
+		if err != nil || after.String() != value {
+			return exitPoolPath{}, false
+		}
+		path.afterEvent = after
+	}
+	if value := values.Get("limit"); value != "" {
+		limit, err := strconv.Atoi(value)
+		if err != nil || strconv.Itoa(limit) != value || limit < 1 || limit > exitpool.MaximumHistoryPage {
+			return exitPoolPath{}, false
+		}
+		path.limit = limit
+	}
+	return path, true
 }
 
 func (path exitPoolPath) withPage(rawQuery string) (exitPoolPath, bool) {
@@ -192,6 +237,9 @@ type exitPoolBody struct {
 	Version              int64               `json:"version"`
 	CreatedAt            string              `json:"created_at"`
 	UpdatedAt            string              `json:"updated_at"`
+	// Primary comes with one pool's read only, absent before Core's first
+	// election.
+	Primary *sitePrimaryBody `json:"primary,omitempty"`
 }
 
 var exitNodeStateNames = map[exitpool.NodeState]string{exitpool.NodeActive: "active", exitpool.NodeDraining: "draining"}
@@ -285,6 +333,8 @@ func (handler *ManagementHandler) handleExitPools(ctx context.Context, response 
 	switch path.operation {
 	case exitPoolListOperation, exitPoolReadOperation:
 		return handler.readExitPools(ctx, response, correlationID, path, session, fail)
+	case exitPoolPrimaryHistory:
+		return handler.readExitPoolPrimaryHistory(ctx, response, correlationID, path, session, fail)
 	case exitPoolCreateOperation:
 		definition, valid := parseExitPoolDefinition(response, request)
 		if !valid {
@@ -342,6 +392,10 @@ func (handler *ManagementHandler) readExitPools(ctx context.Context, response ht
 			CorrelationID string `json:"correlation_id"`
 		}
 		output.Data.Pool, output.Data.CanManage = newExitPoolBody(reading.Pool), reading.CanManage
+		if primary := reading.Primary; primary != nil {
+			output.Data.Pool.Primary = &sitePrimaryBody{DeviceID: optionalDeviceText(primary.Device),
+				Generation: primary.Generation, Reason: primary.Reason, ElectedAt: managementTime(primary.ElectedAt)}
+		}
 		output.Data.CanDelete, output.CorrelationID = reading.CanDelete, correlationID.String()
 		response.Header().Set("ETag", strongVersionETag(reading.Pool.Version))
 		writeManagementJSON(ctx, handler.logger, response, http.StatusOK, output)
@@ -389,6 +443,37 @@ func (handler *ManagementHandler) writeExitPoolResult(ctx context.Context, respo
 		correlationID.String()
 	response.Header().Set("ETag", strongVersionETag(result.Pool.Version))
 	writeManagementJSON(ctx, handler.logger, response, status, output)
+	return "success"
+}
+
+func (handler *ManagementHandler) readExitPoolPrimaryHistory(ctx context.Context, response http.ResponseWriter,
+	correlationID publicid.ID, path exitPoolPath, session accountsession.Session,
+	fail func(managementError) string) string {
+	history, err := handler.exitPools.PrimaryChanges(ctx, session, path.scope, path.poolID, path.afterEvent,
+		path.limit)
+	if err != nil {
+		return fail(classifyExitPoolError(err))
+	}
+	var output struct {
+		Data struct {
+			Changes []sitePrimaryChangeBody `json:"changes"`
+			Next    string                  `json:"next_after,omitempty"`
+		} `json:"data"`
+		CorrelationID string `json:"correlation_id"`
+	}
+	output.Data.Changes = make([]sitePrimaryChangeBody, 0, len(history.Changes))
+	for _, change := range history.Changes {
+		output.Data.Changes = append(output.Data.Changes, sitePrimaryChangeBody{
+			EventID: change.EventID.String(), OccurredAt: managementTime(change.OccurredAt),
+			DeviceID: optionalDeviceText(change.Device), PreviousDeviceID: optionalDeviceText(change.Previous),
+			Reason: change.Reason, Generation: change.Generation,
+		})
+	}
+	if history.HasMore && len(history.Changes) > 0 {
+		output.Data.Next = history.Changes[len(history.Changes)-1].EventID.String()
+	}
+	output.CorrelationID = correlationID.String()
+	writeManagementJSON(ctx, handler.logger, response, http.StatusOK, output)
 	return "success"
 }
 

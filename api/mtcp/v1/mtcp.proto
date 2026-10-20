@@ -179,6 +179,8 @@ message MapSnapshot {
   Settings settings = 8;
   RouteConfig routes = 9; // routes.subnet.v1: subnet routes this node may use
   ServedRoutes served = 10; // router.subnet.v1: subnets this node forwards to
+  ExitConfig exits = 11; // routes.exit.v1: Exit Pools this node may use (section 7.7)
+  ServedExits served_exits = 12; // router.exit.v1: the Exit Pool this node is an exit node of
 }
 
 message MapDelta {
@@ -194,6 +196,8 @@ message MapDelta {
   Settings settings = 10; // replaces settings when set
   RouteConfig routes = 11; // replaces routes when set; set and empty clears them
   ServedRoutes served = 12; // replaces served routes when set; set and empty clears them
+  ExitConfig exits = 13; // replaces Exit Pools when set; set and empty clears them
+  ServedExits served_exits = 14; // replaces served Exit Pools when set; set and empty clears them
 }
 
 message MapAck {
@@ -317,6 +321,74 @@ message PortRange {
   uint32 last = 2;
 }
 
+// ---- Exit Pools (section 7.7) ----
+
+message ExitConfig {
+  repeated ExitPool pools = 1; // sorted by pool_ref, at most 64
+}
+
+// ExitPool is one Exit Pool this node may send its Internet traffic
+// through: policy grants it, and its exit nodes forward to the Internet.
+message ExitPool {
+  string pool_ref = 1; // opaque, stable for the pool, 1 to 64 bytes of UTF-8
+  string name = 2; // the pool's display name, 1 to 64 characters without controls
+  repeated ExitCandidate candidates = 3; // priority order, 1 to 16
+  string primary = 4; // the exit node Core chose, one of candidates; empty when none
+  uint64 generation = 5; // per pool; increases whenever primary changes, never goes back
+  Status status = 6;
+  bool managed = 7; // the administrator asks this node to use this pool
+
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    SERVED = 1; // send through primary
+    UNSERVED = 2; // granted, but no exit node can serve now
+    CAPACITY = 3; // the exit nodes' maps cannot hold this node
+  }
+}
+
+// ExitCandidate is one exit node of a pool as Core last heard of it.
+message ExitCandidate {
+  string device_id = 1;
+  State state = 2; // from the exit node's last health report
+  Families families = 3; // the address families it reaches the Internet in
+  bytes dns_ipv4 = 4; // overlay address of its DNS forwarder; empty when none
+  bytes dns_ipv6 = 5;
+
+  enum State {
+    STATE_UNSPECIFIED = 0; // no recent report
+    OK = 1;
+    DEGRADED = 2;
+    FAILED = 3;
+  }
+  enum Families {
+    FAMILIES_UNSPECIFIED = 0; // not known
+    V4 = 1;
+    V6 = 2;
+    BOTH = 3;
+  }
+}
+
+message ServedExits {
+  repeated ServedExit pools = 1; // at most 1: a Device is an exit node of one pool
+}
+
+// ServedExit is the Exit Pool this node forwards to the Internet for.
+message ServedExit {
+  string pool_ref = 1;
+  repeated ExitProbe probes = 2; // Internet addresses only
+  uint32 conntrack_per_consumer = 3; // a local limit may only lower it
+  bool smtp_allowed = 4; // a local setting may only refuse it
+  repeated bytes dns_upstreams = 5; // IPv4 or IPv6 addresses on the Internet, tried in order
+  repeated FilterRule rules = 6; // the pool's rules: sources and traffic; destinations are always 0/0 and ::/0
+}
+
+// ExitProbe is an Internet address and TCP port an exit node connects to,
+// through its own forwarding path, to check it reaches the Internet.
+message ExitProbe {
+  bytes ip = 1;
+  uint32 port = 2;
+}
+
 // ---- Subnet routes (section 7.6) ----
 
 message RouteConfig {
@@ -436,6 +508,7 @@ message Hostinfo {
   string arch = 5;
   string device_model = 6;
   repeated Prefix advertised_prefixes = 7; // subnets this node offers to forward, at most 256 (section 8.2)
+  bool exit_offered = 8; // this node's own configuration offers to be an exit node (section 7.7)
 }
 
 message HostinfoReport {
@@ -472,6 +545,14 @@ message HealthReport {
 // serves any; empty once it serves none.
 message RouteHealthReport {
   repeated SiteHealth sites = 1; // at most 1,024, sorted by site_ref, each once
+  ExitHealth exit = 2; // router.exit.v1: the served Exit Pool's health (section 7.7); unset when none
+
+  message ExitHealth {
+    string pool_ref = 1; // as in ServedExit
+    SiteHealth.State state = 2;
+    string code = 3; // short machine-readable reason, ≤ 64 bytes
+    ExitCandidate.Families families = 4; // the families this node reaches the Internet in
+  }
 
   message SiteHealth {
     string site_ref = 1; // as in ServedSite
@@ -492,6 +573,21 @@ message RouteHealthReport {
 // reaches any Site; empty once it reaches none.
 message RouteSelectionReport {
   repeated SiteSelection sites = 1; // at most 1,024, sorted by site_ref, each once
+  ExitSelection exit = 2; // routes.exit.v1: the exit node this node sends its Internet traffic to; unset when it uses none
+
+  message ExitSelection {
+    string pool_ref = 1; // as in ExitPool
+    string exit_node = 2; // one of the pool's candidates; empty with NONE
+    Reason reason = 3;
+
+    enum Reason {
+      REASON_UNSPECIFIED = 0;
+      PRIMARY = 1; // the primary of the map
+      LOCAL_FAILOVER = 2; // another candidate this node chose while the one it used does not answer
+      STICKY = 3; // the candidate this node kept using after Core chose another primary (section 7.7)
+      NONE = 4; // the pool is not served: no exit node
+    }
+  }
 
   message SiteSelection {
     string site_ref = 1; // as in SiteRoute

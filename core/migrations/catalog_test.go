@@ -15,8 +15,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 202 {
-		t.Fatalf("len(Catalog()) = %d, want 202", len(catalog))
+	if len(catalog) != 204 {
+		t.Fatalf("len(Catalog()) = %d, want 204", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1611,8 +1611,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 202 {
-		t.Fatalf("LatestVersion() = %d, want 202", LatestVersion())
+	if LatestVersion() != 204 {
+		t.Fatalf("LatestVersion() = %d, want 204", LatestVersion())
 	}
 }
 
@@ -5824,5 +5824,57 @@ func TestMigration202StoresExitRules(t *testing.T) {
 		!strings.Contains(migration.SQL, "CREATE OR REPLACE FUNCTION mesh_ops.change_identity_group_members_v1") ||
 		strings.Count(migration.SQL, "AND rule.source_identity_group_id = v_group.id") != 3 {
 		t.Error("schema 202 replaces unexpected functions, or the member change misses a rule kind")
+	}
+}
+
+func TestMigration203ReportsExitOffers(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[202]
+	if migration.Version != 203 {
+		t.Fatalf("migration 203 = %+v", migration)
+	}
+	for _, want := range []string{
+		"ADD COLUMN public_id UUID NOT NULL",
+		"CREATE TRIGGER device_exit_offer_authority_mutation",
+		"CREATE FUNCTION mesh_ops.report_device_exit_offer_v1(",
+		"CREATE FUNCTION mesh_ops.report_device_exit_offer_v2(",
+		"FROM mesh_ops.resolve_map_session_scope(p_machine_fingerprint, p_node_key)",
+		"FROM mesh.network_exit_node AS exit_node",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.report_device_exit_offer_v2(BYTEA, BYTEA, BOOLEAN, UUID) TO mesh_runtime",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 203 lacks %q", want)
+		}
+	}
+	if strings.Contains(migration.SQL, "report_device_exit_offer_v1(BYTEA, BYTEA, BOOLEAN, UUID) TO mesh_runtime") {
+		t.Error("schema 203 grants the scope-bound v1 to the runtime role")
+	}
+}
+
+func TestMigration204ElectsExitPoolPrimaries(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[203]
+	if migration.Version != 204 {
+		t.Fatalf("migration 204 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE TABLE mesh.exit_pool_primary (",
+		"CREATE FUNCTION mesh_ops.list_exit_pool_elections_v1(",
+		"CREATE FUNCTION mesh_ops.prepare_exit_pool_primary_v1(",
+		"CREATE FUNCTION mesh_ops.finalize_exit_pool_primary_v1(",
+		"JOIN mesh.device_exit_offer AS offer ON offer.device_id = exit_node.device_id AND offer.offered",
+		"'exit_pool.primary_changed'",
+		"CREATE FUNCTION mesh_ops.read_exit_pool_v2(",
+		"CREATE FUNCTION mesh_ops.list_exit_pool_primary_changes_v1(",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.prepare_exit_pool_primary_v1(UUID, UUID, BIGINT, UUID, TEXT, UUID) TO mesh_worker",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 204 lacks %q", want)
+		}
+	}
+	for _, refused := range []string{"network_site_router", "site_primary AS", "TO mesh_runtime;\n-- Only"} {
+		if strings.Contains(migration.SQL, refused) {
+			t.Errorf("schema 204 holds %q", refused)
+		}
 	}
 }

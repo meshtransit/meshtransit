@@ -48,6 +48,10 @@ func TestParseExitPoolPath(t *testing.T) {
 		{http.MethodPut, base + "/" + poolID + "/nodes", "", false},
 		{http.MethodPut, base + "/" + poolID + "/routers/" + deviceID, "", false},
 		{http.MethodGet, strings.TrimSuffix(base, "exit-pools") + "sites", "", false},
+		{http.MethodGet, base + "/" + poolID + "/primary-changes", exitPoolPrimaryHistory, true},
+		{http.MethodGet, base + "/" + poolID + "/primary-changes?after=" + deviceID + "&limit=50", exitPoolPrimaryHistory, true},
+		{http.MethodPost, base + "/" + poolID + "/primary-changes", "", true},
+		{http.MethodGet, base + "/" + poolID + "/primary-changes?limit=51", "", false},
 	} {
 		request := httptest.NewRequestWithContext(t.Context(), test.method, test.path, nil)
 		path, matched := parseExitPoolPath(request)
@@ -120,6 +124,11 @@ func (manager *fakeExitPoolManager) PutNode(_ context.Context, _ accountsession.
 	_ exitpool.ID, expected int64, assignment exitpool.NodeAssignment, _ publicid.ID) (exitpool.Result, error) {
 	manager.expected, manager.assignment = expected, assignment
 	return exitpool.Result{Pool: manager.pool, Changed: true}, nil
+}
+
+func (manager *fakeExitPoolManager) PrimaryChanges(context.Context, accountsession.Session, network.Scope,
+	exitpool.ID, publicid.ID, int) (exitpool.PrimaryHistory, error) {
+	return exitpool.PrimaryHistory{Changes: []exitpool.PrimaryChange{}}, nil
 }
 
 func (manager *fakeExitPoolManager) RemoveNode(_ context.Context, _ accountsession.Session, _ network.Scope,
@@ -247,6 +256,7 @@ func TestExitPoolsThroughServeHTTP(t *testing.T) {
 		{http.MethodDelete, exitNode, "", http.StatusOK, ""},
 		{http.MethodPut, pool, definition, http.StatusMethodNotAllowed, "GET, PATCH, DELETE"},
 		{http.MethodGet, exitNode, "", http.StatusMethodNotAllowed, "PUT, DELETE"},
+		{http.MethodGet, pool + "/primary-changes", "", http.StatusOK, ""},
 	} {
 		request := newManagementRequest(t, test.method, test.path, test.body)
 		request.Header.Del("Idempotency-Key")

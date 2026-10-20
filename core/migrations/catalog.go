@@ -569,6 +569,8 @@ func Catalog() []Migration {
 		newMigration(200, "A route offer is stored in one statement and dropped with its Device", routeOfferOneStatementSQL),
 		newMigration(201, "Networks have Exit Pools of exit nodes", networkExitPoolsSQL),
 		newMigration(202, "Access Rules may grant the Internet through an Exit Pool", policyExitRulesSQL),
+		newMigration(203, "A node reports whether it offers to be an exit node", deviceExitOfferReportSQL),
+		newMigration(204, "Core elects each Exit Pool's primary exit node", exitPoolPrimaryElectionSQL),
 	}
 }
 
@@ -954,3 +956,9 @@ var networkExitPoolsSQL string
 
 //go:embed 000202_policy_exit_rules.up.sql
 var policyExitRulesSQL string
+
+//go:embed 000203_device_exit_offer_report.up.sql
+var deviceExitOfferReportSQL string
+
+//go:embed 000204_exit_pool_primary_election.up.sql
+var exitPoolPrimaryElectionSQL string

@@ -16780,6 +16780,44 @@
                             "updated_at": {
                               "type": "string",
                               "format": "date-time"
+                            },
+                            "primary": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "description": "The exit node Core elected to carry the pool's Internet traffic; absent before the first election. device_id is null when no exit node can serve.",
+                              "required": [
+                                "device_id",
+                                "generation",
+                                "reason",
+                                "elected_at"
+                              ],
+                              "properties": {
+                                "device_id": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ],
+                                  "format": "uuid"
+                                },
+                                "generation": {
+                                  "type": "integer",
+                                  "minimum": 1
+                                },
+                                "reason": {
+                                  "type": "string",
+                                  "enum": [
+                                    "elected",
+                                    "failover",
+                                    "failback",
+                                    "degraded",
+                                    "none"
+                                  ]
+                                },
+                                "elected_at": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                }
+                              }
                             }
                           }
                         },
@@ -18029,6 +18067,184 @@
           },
           "403": {
             "description": "permission_denied"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/exit-pools/{exit_pool_id}/primary-changes": {
+      "get": {
+        "operationId": "listNetworkExitPoolPrimaryChanges",
+        "summary": "List an Exit Pool's primary changes",
+        "description": "Requires route.read on the Network. Each change of the Exit Pool's primary exit node Core recorded, newest first, from the audit history.",
+        "security": [
+          {
+            "accountSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "exit_pool_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "description": "Continue after this change (next_after of the previous page)",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 10
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of primary changes",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "changes"
+                      ],
+                      "properties": {
+                        "changes": {
+                          "type": "array",
+                          "maxItems": 50,
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "event_id",
+                              "occurred_at",
+                              "device_id",
+                              "previous_device_id",
+                              "reason",
+                              "generation"
+                            ],
+                            "properties": {
+                              "event_id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "occurred_at": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "device_id": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ],
+                                "format": "uuid"
+                              },
+                              "previous_device_id": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ],
+                                "format": "uuid"
+                              },
+                              "reason": {
+                                "type": "string",
+                                "enum": [
+                                  "elected",
+                                  "failover",
+                                  "failback",
+                                  "degraded",
+                                  "none"
+                                ]
+                              },
+                              "generation": {
+                                "type": "integer",
+                                "minimum": 1
+                              }
+                            }
+                          }
+                        },
+                        "next_after": {
+                          "type": "string",
+                          "format": "uuid"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "404": {
+            "description": "exit_pool_not_found"
           },
           "429": {
             "description": "rate_limited"

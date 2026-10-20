@@ -2,47 +2,28 @@ package election
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"reflect"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"meshtransit.net/core/internal/domain/deployment"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/node/distribution"
+	"meshtransit.net/core/internal/domain/primaryelection"
 	"meshtransit.net/core/internal/domain/site"
 )
 
-const (
-	// PageSize is how many Sites one read returns.
-	PageSize = 64
-	// massSilenceTransitions and massSilenceShare: this many routers
-	// turning silent within massSilenceWindow, and at least this share of
-	// those known, look like Core or Redis trouble, not routers dying: their
-	// silence proves nothing for up to massSilenceFreeze (design §6.2).
-	massSilenceTransitions = 20
-	massSilenceShare       = 0.3
-	massSilenceWindow      = time.Minute
-	massSilenceFreeze      = 10 * time.Minute
-	// silenceConfirm is how long silence past its grace must last before it
-	// counts: one regular pass, whatever wakeups ran passes in between.
-	silenceConfirm = 10 * time.Second
-	// wakeInterval bounds the passes wakeups run.
-	wakeInterval = time.Second
-	// resubscribeAfter and resubscribeMax pace a lost wakeup subscription.
-	resubscribeAfter = time.Second
-	resubscribeMax   = 30 * time.Second
-)
+// PageSize is how many Sites one read returns.
+const PageSize = primaryelection.PageSize
 
 var (
 	// ErrInvalidWorker rejects unsafe dependencies or timing bounds.
-	ErrInvalidWorker = errors.New("site election worker: invalid configuration")
+	ErrInvalidWorker = primaryelection.ErrInvalidWorker
 	// ErrWorkerStarted rejects duplicate lifecycle ownership.
-	ErrWorkerStarted = errors.New("site election worker: already started")
+	ErrWorkerStarted = primaryelection.ErrWorkerStarted
 	// ErrWorkerNotStarted rejects shutdown before startup.
-	ErrWorkerNotStarted = errors.New("site election worker: not started")
+	ErrWorkerNotStarted = primaryelection.ErrWorkerNotStarted
 )
 
 // RouterFacts is what the database holds about one router of a Site.
@@ -93,7 +74,10 @@ type Recorder interface {
 }
 
 // Clock is this host's time.
-type Clock interface{ Now() time.Time }
+type Clock = primaryelection.Clock
+
+// WakeupSubscription receives wakeup hints; Receive blocks until one comes.
+type WakeupSubscription = primaryelection.WakeupSubscription
 
 // Options binds one process to an installation and its pacing.
 type Options struct {
@@ -102,63 +86,6 @@ type Options struct {
 	// Wakeups, when set, subscribes to hints that a router newly reports a
 	// failed Site: a pass then runs at once instead of at the next poll.
 	Wakeups func(context.Context) (WakeupSubscription, error)
-}
-
-// WakeupSubscription receives wakeup hints; Receive blocks until one comes.
-type WakeupSubscription interface {
-	Receive(ctx context.Context) error
-	Close() error
-}
-
-func (options Options) valid() bool {
-	return options.DeploymentID.IsValid() && options.PollInterval >= time.Second &&
-		options.PollInterval <= time.Minute && options.OperationTimeout >= 100*time.Millisecond &&
-		options.OperationTimeout <= 15*time.Second
-}
-
-// trackKey names one router of one Site.
-type trackKey struct {
-	site   site.ID
-	device node.ID
-}
-
-// track is what the worker remembers about one router of one Site across
-// sweeps; it is lost when the process restarts, which only restarts the
-// hold-down, silence and failback clocks. Each worker replica keeps its own:
-// the hold-down and failback bounds hold per replica, and the generation
-// check keeps replicas from writing over each other's decisions.
-type track struct {
-	failedAt     time.Time // the last failure seen; zero once recovered
-	healthySince time.Time // healthy since, after failedAt
-	usableSince  time.Time
-	silentAt     time.Time // when silence was first seen; zero while reporting
-	seen         time.Time
-}
-
-// Worker elects primaries every poll. It owns one goroutine.
-type Worker struct {
-	options      Options
-	facts        Facts
-	recorder     Recorder
-	observations distribution.ObservationLoader
-	clock        Clock
-	logger       *slog.Logger
-
-	mu      sync.Mutex
-	started bool
-	cancel  context.CancelFunc
-	done    chan error
-
-	// Owned by the sweep goroutine.
-	tracks      map[trackKey]*track
-	silences    map[node.ID]time.Time // routers that turned silent, when
-	frozenUntil time.Time
-
-	running                                             atomic.Bool
-	passes, readErrors, elections, writeErrors, wakeups atomic.Uint64
-	// tally is the Site and router health of the last complete sweep that
-	// could read the routers' health.
-	tally atomic.Pointer[Tally]
 }
 
 // Measurements are identifier-free process counters and the health counts
@@ -184,32 +111,35 @@ type Tally struct {
 	Routers map[Status]uint64
 }
 
-func (tally *Tally) add(candidates []Candidate) {
-	best := StatusIneligible
-	for _, candidate := range candidates {
-		tally.Routers[candidate.Status]++
-		best = min(best, candidate.Status)
-	}
-	switch best {
-	case StatusUsable:
-		tally.SitesServed++
-	case StatusIneligible:
-		tally.SitesUnserved++
-	default:
-		tally.SitesDegraded++
-	}
+// Worker elects the primary router of every Site every poll, with the
+// election of package primaryelection. It owns one goroutine.
+type Worker struct {
+	*primaryelection.Worker
+	options Options
+
+	// tallyMu guards the last converted tally: the same sweep converts to
+	// the same pointer, so snapshots can be compared.
+	tallyMu   sync.Mutex
+	tallyFrom *primaryelection.Tally
+	tallyTo   *Tally
 }
 
 // New constructs a stopped worker without I/O.
 func New(options Options, facts Facts, recorder Recorder, observations distribution.ObservationLoader,
 	clock Clock, logger *slog.Logger,
 ) (*Worker, error) {
-	if !options.valid() || nilPort(facts) || nilPort(recorder) || nilPort(observations) || nilPort(clock) ||
-		logger == nil {
+	if nilPort(facts) || nilPort(recorder) {
 		return nil, ErrInvalidWorker
 	}
-	return &Worker{options: options, facts: facts, recorder: recorder, observations: observations, clock: clock,
-		logger: logger, tracks: map[trackKey]*track{}, silences: map[node.ID]time.Time{}}, nil
+	shared, err := primaryelection.New(primaryelection.Options{
+		DeploymentID: options.DeploymentID, PollInterval: options.PollInterval,
+		OperationTimeout: options.OperationTimeout, Wakeups: options.Wakeups, Health: siteHealth,
+		Label: "Site", Key: "site", Code: "site_election",
+	}, siteFacts{facts}, siteRecorder{recorder}, observations, clock, logger)
+	if err != nil {
+		return nil, err
+	}
+	return &Worker{Worker: shared, options: options}, nil
 }
 
 func nilPort(port any) bool {
@@ -225,363 +155,86 @@ func nilPort(port any) bool {
 	}
 }
 
-// Start owns cancellation separately from the caller's startup context.
-func (worker *Worker) Start(ctx context.Context) error {
-	if worker == nil || ctx == nil {
-		return ErrInvalidWorker
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	worker.mu.Lock()
-	defer worker.mu.Unlock()
-	if worker.started {
-		return ErrWorkerStarted
-	}
-	owned, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	worker.cancel, worker.done, worker.started = cancel, make(chan error, 1), true
-	go func() {
-		worker.running.Store(true)
-		worker.run(owned)
-		worker.running.Store(false)
-		worker.done <- nil
-		close(worker.done)
-	}()
-	return nil
-}
-
-// Done is the process-owned lifecycle join, available after Start.
-func (worker *Worker) Done() <-chan error {
-	if worker == nil {
-		return nil
-	}
-	worker.mu.Lock()
-	defer worker.mu.Unlock()
-	return worker.done
-}
-
-// Shutdown cancels the sweeps.
-func (worker *Worker) Shutdown(ctx context.Context) error {
-	if worker == nil || ctx == nil {
-		return ErrInvalidWorker
-	}
-	worker.mu.Lock()
-	defer worker.mu.Unlock()
-	if !worker.started {
-		return ErrWorkerNotStarted
-	}
-	worker.cancel()
-	return nil
-}
-
-// Snapshot returns race-safe measurements.
+// Snapshot returns race-safe measurements with Site and router counts. The
+// same sweep's counts are the same Tally value, so snapshots can be compared.
 func (worker *Worker) Snapshot() Measurements {
-	if worker == nil {
+	if worker == nil || worker.Worker == nil {
 		return Measurements{}
 	}
-	return Measurements{Running: worker.running.Load(), Passes: worker.passes.Load(),
-		ReadErrors: worker.readErrors.Load(), Elections: worker.elections.Load(),
-		WriteErrors: worker.writeErrors.Load(), Wakeups: worker.wakeups.Load(), Tally: worker.tally.Load()}
+	shared := worker.Worker.Snapshot()
+	measurements := Measurements{Running: shared.Running, Passes: shared.Passes, ReadErrors: shared.ReadErrors,
+		Elections: shared.Elections, WriteErrors: shared.WriteErrors, Wakeups: shared.Wakeups}
+	if shared.Tally != nil {
+		measurements.Tally = worker.siteTally(shared.Tally)
+	}
+	return measurements
 }
 
-func (worker *Worker) run(ctx context.Context) {
-	wake := make(chan struct{}, 1)
-	var listening sync.WaitGroup
-	if worker.options.Wakeups != nil {
-		listening.Go(func() { worker.listen(ctx, wake) })
+// siteTally names a group tally as Sites and routers.
+func (worker *Worker) siteTally(tally *primaryelection.Tally) *Tally {
+	worker.tallyMu.Lock()
+	defer worker.tallyMu.Unlock()
+	if worker.tallyFrom != tally {
+		worker.tallyFrom = tally
+		worker.tallyTo = &Tally{SitesServed: tally.GroupsServed, SitesDegraded: tally.GroupsDegraded,
+			SitesUnserved: tally.GroupsUnserved, Routers: tally.Members}
 	}
-	defer listening.Wait()
-	timer := time.NewTimer(0)
-	defer timer.Stop()
-	var last time.Time
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-wake:
-			worker.wakeups.Add(1)
-			if wait := wakeInterval - time.Since(last); wait > 0 {
-				// Too soon after a pass: run when the interval ends.
-				if !timer.Stop() {
-					select {
-					case <-timer.C:
-					default:
-					}
-				}
-				timer.Reset(wait)
-				continue
-			}
-		case <-timer.C:
-		}
-		worker.Sweep(ctx)
-		last = time.Now()
-		if ctx.Err() != nil {
-			return
-		}
-		if !timer.Stop() {
-			select {
-			case <-timer.C:
-			default:
-			}
-		}
-		timer.Reset(worker.options.PollInterval)
-	}
+	return worker.tallyTo
 }
 
-// listen forwards wakeup hints to wake until ctx ends, subscribing again
-// after a failure with a growing pause. A lost hint only delays a pass until
-// the next poll.
-func (worker *Worker) listen(ctx context.Context, wake chan<- struct{}) {
-	pause := resubscribeAfter
-	for ctx.Err() == nil {
-		subscription, err := worker.options.Wakeups(ctx)
-		if err == nil {
-			for {
-				if err = subscription.Receive(ctx); err != nil {
-					break
-				}
-				// Only a subscription that delivers resets the pause.
-				pause = resubscribeAfter
-				select {
-				case wake <- struct{}{}:
-				default:
-				}
-			}
-			_ = subscription.Close()
-		}
-		if ctx.Err() != nil {
-			return
-		}
-		worker.logger.DebugContext(ctx, "Site election wakeups unavailable", "error", err)
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(pause):
-		}
-		pause = min(2*pause, resubscribeMax)
-	}
-}
-
-// Sweep elects for every Site once.
-func (worker *Worker) Sweep(ctx context.Context) {
-	worker.passes.Add(1)
-	now := worker.clock.Now()
-	worker.freeze(now)
-	seen := map[trackKey]struct{}{}
-	tally := &Tally{Routers: map[Status]uint64{}}
-	healthKnown := true
-	var after site.ID
-	for ctx.Err() == nil {
-		readCtx, cancel := context.WithTimeout(ctx, worker.options.OperationTimeout)
-		page, err := worker.facts.List(readCtx, worker.options.DeploymentID, after, PageSize)
-		cancel()
-		if err != nil {
-			worker.readErrors.Add(1)
-			worker.logger.WarnContext(ctx, "Site election deferred", "error_code", "site_election_read_failed")
-			return
-		}
-		observations, known := worker.observe(ctx, page.Sites)
-		healthKnown = healthKnown && known
-		for _, facts := range page.Sites {
-			tally.add(worker.elect(ctx, facts, observations, known, now, seen))
-			after = facts.Site
-		}
-		if page.Done || len(page.Sites) == 0 {
-			break
-		}
-	}
-	if ctx.Err() == nil && healthKnown {
-		worker.tally.Store(tally)
-	}
-	// Forget routers no longer listed.
-	for key := range worker.tracks {
-		if _, kept := seen[key]; !kept && ctx.Err() == nil {
-			delete(worker.tracks, key)
-		}
-	}
-}
-
-// observe reads the delivery records of every router of sites; known is
-// false when Redis could not be read, so health proves nothing this sweep.
-func (worker *Worker) observe(ctx context.Context, sites []SiteFacts) (map[node.ID]distribution.Observation, bool) {
-	var ids []node.ID
-	unique := map[node.ID]struct{}{}
-	for _, facts := range sites {
-		for _, router := range facts.Routers {
-			if _, listed := unique[router.Device]; !listed {
-				unique[router.Device] = struct{}{}
-				ids = append(ids, router.Device)
-			}
-		}
-	}
-	observations := make(map[node.ID]distribution.Observation, len(ids))
-	for start := 0; start < len(ids); start += distribution.MaximumObservationBatch {
-		batch := ids[start:min(len(ids), start+distribution.MaximumObservationBatch)]
-		readCtx, cancel := context.WithTimeout(ctx, worker.options.OperationTimeout)
-		loaded, err := worker.observations.LoadObservations(readCtx, batch)
-		cancel()
-		if err != nil || len(loaded) != len(batch) {
-			worker.readErrors.Add(1)
-			return nil, false
-		}
-		for index, id := range batch {
-			if loaded[index].IsValid() {
-				observations[id] = loaded[index]
-			}
-		}
-	}
-	return observations, true
-}
-
-func (worker *Worker) elect(ctx context.Context, facts SiteFacts,
-	observations map[node.ID]distribution.Observation, known bool, now time.Time, seen map[trackKey]struct{},
-) []Candidate {
-	candidates := make([]Candidate, 0, len(facts.Routers))
-	for _, router := range facts.Routers {
-		key := trackKey{site: facts.Site, device: router.Device}
-		seen[key] = struct{}{}
-		candidates = append(candidates, worker.status(key, router, observations[router.Device], known,
-			router.Device == facts.Primary, now))
-	}
-	primary, reason := Elect(facts.Primary, candidates, facts.Failback)
-	// Without the routers' health (health counts every router usable) only
-	// authority facts are certain: no failback on it.
-	if (facts.Generation > 0 && primary == facts.Primary) || (!known && reason == ReasonFailback) {
-		return candidates
-	}
-	if reason == "" {
-		reason = ReasonElected
-	}
-	writeCtx, cancel := context.WithTimeout(ctx, worker.options.OperationTimeout)
-	defer cancel()
-	changed, err := worker.recorder.Record(writeCtx, worker.options.DeploymentID, Decision{
-		Site: facts.Site, ExpectedGeneration: facts.Generation, Primary: primary, Reason: reason,
-	})
-	if err != nil {
-		worker.writeErrors.Add(1)
-		worker.logger.WarnContext(ctx, "Site primary not recorded", "site", facts.Site.String(),
-			"error_code", "site_election_write_failed")
-		return candidates
-	}
-	if changed {
-		worker.elections.Add(1)
-		worker.logger.InfoContext(ctx, "Site primary elected", "site", facts.Site.String(),
-			"primary", primary.String(), "previous", facts.Primary.String(), "reason", reason)
-	}
-	return candidates
-}
-
-// status judges one router of one Site and updates what is remembered of
-// it.
-func (worker *Worker) status(key trackKey, router RouterFacts, observation distribution.Observation, known,
-	current bool, now time.Time,
-) Candidate {
-	remembered := worker.tracks[key]
-	if remembered == nil {
-		remembered = &track{}
-		worker.tracks[key] = remembered
-	}
-	remembered.seen = now
-	candidate := Candidate{Device: router.Device}
-	switch {
-	case !router.Live || !router.WorkspaceOwned || !router.Covers:
-		candidate.Status = StatusIneligible
-	case router.Draining:
-		candidate.Status = StatusDraining
-	default:
-		candidate.Status, candidate.Code = worker.health(remembered, key, observation, known, current, now)
-	}
-	if candidate.Status == StatusUsable && known {
-		if remembered.usableSince.IsZero() {
-			remembered.usableSince = now
-		}
-		candidate.UsableFor = now.Sub(remembered.usableSince)
-	} else {
-		remembered.usableSince = time.Time{}
-	}
-	return candidate
-}
-
-// health judges what a router reports of a Site: failed, silent past its
-// grace, recovering, or usable. A router that never reported health (an
-// older client) is usable: missing health is no evidence. Without health
-// (Redis unreadable) the current primary stays usable, and a router last
-// seen failing is no target to move to.
-func (worker *Worker) health(remembered *track, key trackKey, observation distribution.Observation, known,
-	current bool, now time.Time,
-) (Status, string) {
-	if !known {
-		if current || remembered.failedAt.IsZero() {
-			return StatusUsable, ""
-		}
-		return StatusHoldDown, ""
-	}
-	if !observation.RouteHealthAt.IsZero() && now.Sub(observation.RouteHealthAt) > SilenceGrace {
-		// Silence counts once it lasted silenceConfirm, so the sweeps in
-		// between have seen how many routers turned silent with it.
-		if remembered.silentAt.IsZero() {
-			remembered.silentAt = now
-			if _, counted := worker.silences[key.device]; !counted {
-				worker.silences[key.device] = now
-			}
-		}
-		if now.Sub(remembered.silentAt) < silenceConfirm {
-			return StatusUsable, ""
-		}
-		if now.Before(worker.frozenUntil) {
-			return StatusUsable, ""
-		}
-		remembered.failedAt, remembered.healthySince = now, time.Time{}
-		return StatusFailed, "silent"
-	}
-	remembered.silentAt = time.Time{}
+// siteHealth reads a router's report of a Site.
+func siteHealth(observation distribution.Observation, group string, now time.Time) primaryelection.Report {
+	report := primaryelection.Report{ReportedAt: observation.RouteHealthAt}
 	reported, fresh := distribution.CurrentRouteHealth(observation, now)
-	state, code := "", ""
 	if fresh {
 		for _, entry := range reported {
-			if entry.Ref == key.site.String() {
-				state, code = entry.State, entry.Code
+			if entry.Ref == group {
+				report.State, report.Code = entry.State, entry.Code
 			}
 		}
 	}
-	if state == distribution.SiteHealthFailed {
-		remembered.failedAt, remembered.healthySince = now, time.Time{}
-		return StatusFailed, code
-	}
-	if !remembered.failedAt.IsZero() {
-		if state == "" {
-			return StatusHoldDown, "" // not healthy yet, only not failed
-		}
-		if remembered.healthySince.IsZero() {
-			remembered.healthySince = now
-		}
-		if now.Sub(remembered.healthySince) < HoldDown {
-			return StatusHoldDown, ""
-		}
-		remembered.failedAt, remembered.healthySince = time.Time{}, time.Time{}
-	}
-	return StatusUsable, ""
+	return report
 }
 
-// freeze decides, before a sweep judges any router, whether silence proves
-// nothing for a while: after many routers turned silent at once (design
-// §6.2). It counts routers, not Sites: one router of many Sites going
-// silent is one router failing.
-func (worker *Worker) freeze(now time.Time) {
-	for device, at := range worker.silences {
-		if now.Sub(at) > massSilenceWindow {
-			delete(worker.silences, device)
+// siteFacts lists Sites as groups of routers.
+type siteFacts struct{ facts Facts }
+
+func (adapter siteFacts) List(ctx context.Context, installation deployment.ID, after string,
+	limit int) (primaryelection.Page, error) {
+	var afterSite site.ID
+	if after != "" {
+		parsed, err := site.ParseID(after)
+		if err != nil {
+			return primaryelection.Page{}, err
 		}
+		afterSite = parsed
 	}
-	routers := map[node.ID]struct{}{}
-	for key := range worker.tracks {
-		routers[key.device] = struct{}{}
+	page, err := adapter.facts.List(ctx, installation, afterSite, limit)
+	if err != nil {
+		return primaryelection.Page{}, err
 	}
-	if len(worker.silences) >= massSilenceTransitions &&
-		float64(len(worker.silences)) >= massSilenceShare*float64(max(len(routers), 1)) &&
-		now.After(worker.frozenUntil) {
-		worker.frozenUntil = now.Add(massSilenceFreeze)
-		worker.logger.Warn("many routers went silent at once; their silence proves nothing for a while",
-			"routers", len(worker.silences), "error_code", "site_election_frozen")
+	groups := make([]primaryelection.GroupFacts, 0, len(page.Sites))
+	for _, facts := range page.Sites {
+		members := make([]primaryelection.MemberFacts, 0, len(facts.Routers))
+		for _, router := range facts.Routers {
+			members = append(members, primaryelection.MemberFacts{Device: router.Device, Priority: router.Priority,
+				Draining: router.Draining, Eligible: router.Live && router.WorkspaceOwned && router.Covers})
+		}
+		groups = append(groups, primaryelection.GroupFacts{Group: facts.Site.String(), Failback: facts.Failback,
+			Primary: facts.Primary, Generation: facts.Generation, Members: members})
 	}
+	return primaryelection.Page{Groups: groups, Done: page.Done}, nil
+}
+
+// siteRecorder records group decisions as Site decisions.
+type siteRecorder struct{ recorder Recorder }
+
+func (adapter siteRecorder) Record(ctx context.Context, installation deployment.ID,
+	decision primaryelection.Decision) (bool, error) {
+	siteID, err := site.ParseID(decision.Group)
+	if err != nil {
+		return false, err
+	}
+	return adapter.recorder.Record(ctx, installation, Decision{Site: siteID,
+		ExpectedGeneration: decision.ExpectedGeneration, Primary: decision.Primary, Reason: decision.Reason})
 }

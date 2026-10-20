@@ -53,6 +53,8 @@ type Listing struct {
 // Reading is one pool and what the reader may do with it.
 type Reading struct {
 	Pool Pool
+	// Primary is the exit node Core elected; nil before the first election.
+	Primary *Primary
 	Abilities
 }
 
@@ -107,10 +109,11 @@ type IDs interface{ New() (publicid.ID, error) }
 
 // Service validates pool changes before PostgreSQL authorizes them.
 type Service struct {
-	store  Store
-	clock  Clock
-	ids    IDs
-	limits Limits
+	store   Store
+	history PrimaryHistoryStore
+	clock   Clock
+	ids     IDs
+	limits  Limits
 }
 
 // NewService requires a store, clock, identifier source and valid limits.
@@ -119,6 +122,17 @@ func NewService(store Store, clock Clock, ids IDs, limits Limits) (*Service, err
 		return nil, ErrInvalid
 	}
 	return &Service{store: store, clock: clock, ids: ids, limits: limits}, nil
+}
+
+// WithPrimaryHistory returns the service reading pools' primary changes
+// from history.
+func (service *Service) WithPrimaryHistory(history PrimaryHistoryStore) (*Service, error) {
+	if service == nil || history == nil {
+		return nil, ErrInvalid
+	}
+	extended := *service
+	extended.history = history
+	return &extended, nil
 }
 
 // admit is an early, fail-closed gate on this host's clock: it can only deny.

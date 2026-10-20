@@ -76,6 +76,10 @@ type Observation struct {
 	// Core received it.
 	RouteHealth   []SiteHealth
 	RouteHealthAt time.Time
+	// ExitHealth is an exit node's latest health of the Exit Pool it serves,
+	// received with its Site health at RouteHealthAt; nil when it reported
+	// none.
+	ExitHealth *ExitHealth
 	// RouteSelection is the router the node last reported using for each
 	// Site and RouteSelectionAt when Core received it.
 	RouteSelection   []SiteRouter
@@ -104,7 +108,7 @@ func (observation Observation) IsValid() bool {
 			observation.AppliedAt.IsZero() && observation.ReportedAt.IsZero() && observation.Paths == nil &&
 			observation.Connectivity == nil && observation.PeerLimit.IsZero() &&
 			observation.Routes.IsZero() && observation.EnforcedRoutes.IsZero() &&
-			observation.RouteHealth == nil && observation.RouteHealthAt.IsZero() &&
+			observation.RouteHealth == nil && observation.RouteHealthAt.IsZero() && observation.ExitHealth == nil &&
 			observation.RouteSelection == nil && observation.RouteSelectionAt.IsZero()
 	}
 	if !observation.PeerLimit.IsZero() && !observation.PeerLimit.IsValid() {
@@ -119,7 +123,7 @@ func (observation Observation) IsValid() bool {
 	return observation.SessionGeneration > 0 && observation.NetworkRevision > 0 &&
 		observation.PolicyRevision >= 0 && !observation.DeliveredAt.IsZero() &&
 		!observation.SeenAt.Before(observation.DeliveredAt) && validEnforcement(observation) &&
-		validRoutes(observation)
+		validRoutes(observation) && validExitHealth(observation)
 }
 
 // TargetDevice is a Device that should hold the current revision.

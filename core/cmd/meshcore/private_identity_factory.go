@@ -264,6 +264,9 @@ func composePrivateIdentityFactory(
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
+	if exitPools, err = exitPools.WithPrimaryHistory(exitPoolStore); err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
 	catalogOptions := postgresadapter.AccountSessionOptions{StatementTimeout: managementOptions.StatementTimeout, IdleTimeout: managementOptions.IdleTimeout}
 	identityGroupStore, err := postgresadapter.NewIdentityGroupStore(dependencies.Runtime, catalogOptions)
 	if err != nil {

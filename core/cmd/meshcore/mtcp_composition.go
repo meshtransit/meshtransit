@@ -46,6 +46,16 @@ func mtcpCapabilities(deviceAliases, relayZones, subnetRoutes bool) []string {
 	return capabilities
 }
 
+// exitCapabilities are the exit node capabilities (mtcp-v1 §7.7), offered
+// when the deployment has exit nodes: routes.exit.v1 for nodes that use
+// Exit Pools, router.exit.v1 for exit nodes.
+func exitCapabilities(exitNodes bool) []string {
+	if !exitNodes {
+		return nil
+	}
+	return []string{"routes.exit.v1", "router.exit.v1"}
+}
+
 // mtcpDependencies are the application services MTCP sessions use. The
 // browser fields are nil when browser registration is off.
 type mtcpDependencies struct {
@@ -56,12 +66,14 @@ type mtcpDependencies struct {
 	paths         mtcpadapter.PathRecorder         // optional
 	connectivity  mtcpadapter.ConnectivityRecorder // optional
 	routeOffers   mtcpadapter.RouteOffers          // optional
+	exitOffers    mtcpadapter.ExitOffers           // optional
 	browser       *browserControlServices
 	origin        string
 	guard         mtcpadapter.TimestampGuard
 	logger        *slog.Logger
 	relayZones    bool           // offer relay.zones2 (MESHTRANSIT_RELAY_TICKET_ZONES_V2)
 	subnetRoutes  bool           // offer subnet routes (MESHTRANSIT_SUBNET_ROUTES_ENABLED)
+	exitNodes     bool           // offer exit nodes (MESHTRANSIT_EXIT_NODES_ENABLED)
 	dnsSuffix     dnsname.Suffix // MESHTRANSIT_DNS_SUFFIX; zero: the default
 }
 
@@ -128,7 +140,7 @@ func composeMTCP(
 	applicationOptions := mtcpadapter.ApplicationOptions{
 		Streams: deps.streams, Endpoints: deps.sessions, Snapshots: deps.sessions, ControlKeys: keys,
 		Logger: logger, Registrations: deps.registrations, RegistrationIDs: intake.PublicRegistrationIDGenerator{},
-		Logout: deps.logout, Paths: deps.paths, Connectivity: deps.connectivity, RouteOffers: deps.routeOffers,
+		Logout: deps.logout, Paths: deps.paths, Connectivity: deps.connectivity, RouteOffers: deps.routeOffers, ExitOffers: deps.exitOffers,
 		Metrics:                metrics,
 		DeniedEndpointPrefixes: controlConfig.MTCP.DeniedEndpointPrefixes(),
 		DNSSuffix:              deps.dnsSuffix,
@@ -144,11 +156,12 @@ func composeMTCP(
 		return nil, nil, errors.Join(errInvalidMTCPComposition, err)
 	}
 	server, err := mtcpadapter.NewServer(mtcpadapter.Options{
-		Keys:           keys,
-		ClientIPs:      clients,
-		Handler:        application,
-		Guard:          deps.guard,
-		Capabilities:   mtcpCapabilities(controlConfig.Map.EnableDeviceAliases, deps.relayZones, deps.subnetRoutes),
+		Keys:      keys,
+		ClientIPs: clients,
+		Handler:   application,
+		Guard:     deps.guard,
+		Capabilities: append(mtcpCapabilities(controlConfig.Map.EnableDeviceAliases, deps.relayZones,
+			deps.subnetRoutes), exitCapabilities(deps.exitNodes)...),
 		Logger:         logger,
 		Metrics:        metrics,
 		HandshakeRate:  controlConfig.MTCP.HandshakeRate,

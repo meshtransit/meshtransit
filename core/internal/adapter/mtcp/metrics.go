@@ -27,6 +27,7 @@ type Metrics struct {
 	// routeOffers counts stored offers by result; routeOfferDropped the
 	// offered prefixes ignored as unusable (mtcp-v1 §8.2).
 	routeOffers       *prometheus.CounterVec
+	exitOffers        *prometheus.CounterVec
 	routeOfferDropped prometheus.Counter
 	// routes counts the Sites of routes sent to nodes by status, and those
 	// the bounds of one map left out (mtcp-v1 §7.6, §14).
@@ -144,6 +145,10 @@ func NewMetrics() *Metrics {
 			Name: "meshtransit_mtcp_route_offers_total",
 			Help: "Subnet offers of HostinfoReports stored, by result (changed, unchanged, failed).",
 		}, []string{"result"}),
+		exitOffers: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "meshtransit_mtcp_exit_offers_total",
+			Help: "Exit offers of HostinfoReports stored, by result (changed, unchanged, failed).",
+		}, []string{"result"}),
 		routeOfferDropped: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "meshtransit_mtcp_route_offer_prefixes_dropped_total",
 			Help: "Offered subnet prefixes ignored as malformed, not canonical or unusable for a Site.",
@@ -173,6 +178,7 @@ func NewMetrics() *Metrics {
 	}
 	for _, result := range []string{routeOfferChanged, routeOfferUnchanged, routeOfferFailed} {
 		metrics.routeOffers.WithLabelValues(result)
+		metrics.exitOffers.WithLabelValues(result)
 	}
 	for _, result := range routeResults {
 		metrics.routes.WithLabelValues(result)
@@ -184,7 +190,7 @@ func NewMetrics() *Metrics {
 func (metrics *Metrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{metrics.handshakes, metrics.sessions, metrics.messages, metrics.streamEnds,
 		metrics.sheds, metrics.unproven, metrics.forwarding, metrics.keyExpiry, metrics.limits, metrics.mapNames,
-		metrics.expiring, metrics.routeOffers, metrics.routeOfferDropped, metrics.routes, routedFilterOmitted}
+		metrics.expiring, metrics.routeOffers, metrics.exitOffers, metrics.routeOfferDropped, metrics.routes, routedFilterOmitted}
 }
 
 // routedFilterOmitted reports the routed traffic groups left out of router
@@ -247,6 +253,14 @@ func (metrics *Metrics) routeOffer(result string) {
 		return
 	}
 	metrics.routeOffers.WithLabelValues(result).Inc()
+}
+
+// exitOffer counts one stored exit offer; a nil Metrics counts nothing.
+func (metrics *Metrics) exitOffer(result string) {
+	if metrics == nil {
+		return
+	}
+	metrics.exitOffers.WithLabelValues(result).Inc()
 }
 
 // routesSent counts the Sites of routes a node now holds, when they change.

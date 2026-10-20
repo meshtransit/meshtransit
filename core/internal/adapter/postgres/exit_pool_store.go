@@ -27,7 +27,10 @@ const maximumExitPoolDocumentBytes = 1 << 20
 const listExitPoolsSQL = `SELECT mesh_ops.list_exit_pools_v1(` + sessionArguments + `,$10::UUID,$11::UUID,
  NULLIF($12::TEXT,'')::UUID,$13::INTEGER)::TEXT`
 
-const readExitPoolSQL = `SELECT mesh_ops.read_exit_pool_v1(` + sessionArguments + `,$10::UUID,$11::UUID,$12::UUID)::TEXT`
+const readExitPoolSQL = `SELECT mesh_ops.read_exit_pool_v2(` + sessionArguments + `,$10::UUID,$11::UUID,$12::UUID)::TEXT`
+
+const listExitPoolPrimaryChangesSQL = `SELECT mesh_ops.list_exit_pool_primary_changes_v1(` + sessionArguments +
+	`,$10::UUID,$11::UUID,$12::UUID,$13::UUID,$14::INTEGER)::TEXT`
 
 const changeExitPoolSQL = `SELECT mesh_ops.change_exit_pool_v1(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::TEXT,$13::UUID,$14::BIGINT,$15::TEXT,$16::BOOLEAN,$17::BOOLEAN,$18::INTEGER,
@@ -269,9 +272,10 @@ func (store *ExitPoolStore) Read(ctx context.Context, session accountsession.Ses
 		return exitpool.Reading{}, exitpool.ErrInvalid
 	}
 	var envelope struct {
-		Pool      exitPoolDocument `json:"pool"`
-		CanManage bool             `json:"can_manage"`
-		CanDelete bool             `json:"can_delete"`
+		Pool      exitPoolDocument     `json:"pool"`
+		Primary   *sitePrimaryDocument `json:"primary"`
+		CanManage bool                 `json:"can_manage"`
+		CanDelete bool                 `json:"can_delete"`
 	}
 	if err := store.read(ctx, session, scope, readExitPoolSQL, &envelope, id.String()); err != nil {
 		return exitpool.Reading{}, err
@@ -280,8 +284,66 @@ func (store *ExitPoolStore) Read(ctx context.Context, session accountsession.Ses
 	if err != nil || stored.ID != id {
 		return exitpool.Reading{}, exitpool.ErrInvalid
 	}
-	return exitpool.Reading{Pool: stored, Abilities: exitpool.Abilities{CanManage: envelope.CanManage,
-		CanDelete: envelope.CanDelete}}, nil
+	reading := exitpool.Reading{Pool: stored, Abilities: exitpool.Abilities{CanManage: envelope.CanManage,
+		CanDelete: envelope.CanDelete}}
+	if envelope.Primary != nil {
+		elected, err := envelope.Primary.primary()
+		if err != nil {
+			return exitpool.Reading{}, exitpool.ErrInvalid
+		}
+		primary := exitpool.Primary{Device: elected.Device, Generation: elected.Generation, Reason: elected.Reason,
+			ElectedAt: elected.ElectedAt}
+		if !primary.IsValid() {
+			return exitpool.Reading{}, exitpool.ErrInvalid
+		}
+		reading.Primary = &primary
+	}
+	return reading, nil
+}
+
+// PrimaryChanges reads one page of a pool's primary changes from the audit
+// history, newest first.
+func (store *ExitPoolStore) PrimaryChanges(ctx context.Context, session accountsession.Session,
+	scope network.Scope, id exitpool.ID, after publicid.ID, limit int) (exitpool.PrimaryHistory, error) {
+	if !session.IsValid() || !scope.IsValid() || !id.IsValid() || limit < 1 || limit > exitpool.MaximumHistoryPage {
+		return exitpool.PrimaryHistory{}, exitpool.ErrInvalid
+	}
+	var afterText any
+	if after != (publicid.ID{}) {
+		afterText = after.String()
+	}
+	var envelope struct {
+		Changes []sitePrimaryChangeDocument `json:"changes"`
+		HasMore bool                        `json:"has_more"`
+	}
+	if err := store.read(ctx, session, scope, listExitPoolPrimaryChangesSQL, &envelope, id.String(), afterText,
+		limit); err != nil {
+		return exitpool.PrimaryHistory{}, err
+	}
+	if envelope.Changes == nil || len(envelope.Changes) > limit {
+		return exitpool.PrimaryHistory{}, exitpool.ErrInvalid
+	}
+	history := exitpool.PrimaryHistory{HasMore: envelope.HasMore,
+		Changes: make([]exitpool.PrimaryChange, 0, len(envelope.Changes))}
+	optionalDevice := func(text *string) (node.ID, bool) {
+		if text == nil {
+			return node.ID{}, true
+		}
+		device, err := node.ParseID(*text)
+		return device, err == nil
+	}
+	for _, document := range envelope.Changes {
+		eventID, err := publicid.Parse(document.EventID)
+		device, deviceOK := optionalDevice(document.DeviceID)
+		previous, previousOK := optionalDevice(document.PreviousID)
+		change := exitpool.PrimaryChange{EventID: eventID, OccurredAt: document.OccurredAt.UTC(), Device: device,
+			Previous: previous, Reason: document.Reason, Generation: document.Generation}
+		if err != nil || !deviceOK || !previousOK || !change.IsValid() {
+			return exitpool.PrimaryHistory{}, exitpool.ErrInvalid
+		}
+		history.Changes = append(history.Changes, change)
+	}
+	return history, nil
 }
 
 // ResolvePolicyExitPools authorizes route.read and returns the active pools

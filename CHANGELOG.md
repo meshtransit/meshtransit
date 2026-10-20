@@ -5,6 +5,19 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: exit nodes offer and Core elects (schemas 203 and 204). A node
+  says in MTCP `Hostinfo.exit_offered` whether its own configuration offers
+  to be an exit node (only with `router.exit.v1`); a change is recorded as
+  `device.exit_offer_changed` and, for an exit node, rebuilds the Network's
+  maps. With `MESHTRANSIT_EXIT_NODES_ENABLED` a worker elects each Exit
+  Pool's primary exit node as Sites elect their router
+  (`exit_pool.primary_changed`, `meshtransit_exit_pool_election_*`); the
+  pool's read carries `primary`, and `…/exit-pools/{pool}/primary-changes`
+  pages its history (`route.read`). Site and Exit Pool elections share one
+  package; Sites elect as before. MTCP v1 documents Exit Pools (§7.7):
+  `ExitConfig`, `ServedExits`, exit health and selection reports, and the
+  `routes.exit.v1` and `router.exit.v1` capabilities, which Core offers only
+  with the flag. Maps and exit health reports come next.
 - Core: an Access Rule may grant the Internet through an Exit Pool
   (schema 202): `destination_exit_pool_id` names the pool, with any source
   selector and the rule's protocol and ports, never addresses. The active

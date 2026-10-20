@@ -671,6 +671,76 @@ as it keeps the rest of its map, until a new map or `Lifecycle` arrives; the
 key deadlines it checks on every packet still apply. A Core restart or
 rolling update therefore never interrupts a Site.
 
+### 7.7 Exit Pools
+
+An **Exit Pool** is a group of exit nodes: Devices that forward other
+Devices' Internet traffic. It is its own entity of the Network, not a kind of
+Site. Core decides which exit node is a pool's primary and which nodes may
+use the pool. Core sends `exits` only to nodes that list `routes.exit.v1`
+and `served_exits` only to nodes that list `router.exit.v1`; a node that
+receives a field it did not list ignores it. Both follow the ordering and
+clearing rules of 7.6, with `pool_ref` in place of `site_ref`.
+
+**The Internet.** An exit node forwards only to the Internet: IPv4 outside
+`0.0.0.0/8`, `10.0.0.0/8`, `100.64.0.0/10`, `127.0.0.0/8`,
+`168.63.129.16/32`, `169.254.0.0/16`, `172.16.0.0/12`, `192.0.0.0/24`,
+`192.0.2.0/24`, `192.31.196.0/24`, `192.52.193.0/24`, `192.88.99.0/24`,
+`192.168.0.0/16`, `198.18.0.0/15`, `198.51.100.0/24`, `203.0.113.0/24`,
+`224.0.0.0/4` and `240.0.0.0/4`, and IPv6 inside `2000::/3` outside
+`2001::/32`, `2001:2::/48`, `2001:10::/28`, `2001:20::/28`, `2001:db8::/32`,
+`2002::/16` and `3fff::/20`. It also leaves out its own addresses, the
+subnets it is attached to, its gateway and its public addresses as seen from
+outside. Rules never name Internet addresses: Core sends them with the
+destinations `0.0.0.0/0` and `::/0`, and the exit node subtracts this set.
+
+#### Consumer pools
+
+`exits` (`ExitConfig`) is a list of at most 64 `ExitPool`:
+
+| Field | Meaning |
+|---|---|
+| `pool_ref` | Opaque, stable reference of the pool: 1–64 bytes of UTF-8 |
+| `name` | The pool's display name: 1–64 characters without control characters |
+| `candidates` | The pool's exit nodes in priority order, 1 to 16, each with the `state` and `families` of its last health report and the overlay addresses of its DNS forwarder |
+| `primary` | The exit node Core chose, one of `candidates`; empty when none |
+| `generation` | Per pool; increases each time `primary` changes and never goes back |
+| `status` | `SERVED`: send through `primary`. `UNSERVED`: no exit node can serve now. `CAPACITY`: the exit nodes' maps cannot hold this node |
+| `managed` | The administrator asks this node to use the pool. A node follows it only if its own configuration allows managed exits |
+
+Core sends a pool to a node only while an active rule lets the node reach the
+Internet through it, never the pool the node is an exit node of, and includes
+every candidate that is a live Device of the Network as a peer, as for
+routers (7.6).
+
+**Local choice.** Using an exit is the node's user's choice, among the pools
+Core sends; Core cannot make a node use one unless the node allows managed
+exits. A node keeps using the candidate it chose while that candidate
+answers and its `state` is not `FAILED`, even when Core chooses another
+`primary`: changing exit node changes the node's public address.
+
+#### Served pool
+
+`served_exits` (`ServedExits`) holds at most one `ServedExit`: the pool this
+node is an exit node of, with its `probes` (at most 8 Internet addresses and
+TCP ports the exit node connects to through its own forwarding path),
+`conntrack_per_consumer`, `smtp_allowed`, `dns_upstreams` (at most 4
+Internet addresses, tried in order) and `rules`: the pool's rules as filter
+rules whose destinations are `0.0.0.0/0` and `::/0`. An exit node forwards
+only when its own configuration offers to be one (`exit_offered`, 8.2) and
+only what those rules admit to the Internet; its local limits may lower
+`conntrack_per_consumer` and refuse SMTP whatever Core sends.
+
+#### Validity
+
+A node refuses a map as malformed when `exits` or `served_exits`: lists a
+`pool_ref` twice, out of order, empty, longer than 64 bytes or not UTF-8;
+has more pools than allowed; in `exits`, has no candidate, more than 16,
+duplicate candidates, the node itself as a candidate, a `primary` outside
+`candidates`, `SERVED` with an empty `primary` or an unknown status or state;
+in `served_exits`, has more than one pool, a probe or upstream that is not an
+Internet address, a probe port of 0, or a rule whose destination is not
+`0.0.0.0/0` or `::/0`.
+
 ## 8. Node reports
 
 ### 8.1 Endpoints and NAT
@@ -783,6 +853,12 @@ each Device, and a report that offers what is already stored writes nothing.
 Core uses the hostname only to propose a Device name; it never trusts it for
 identity.
 
+`exit_offered`, from a node that lists `router.exit.v1`, says the node's own
+configuration offers to be an exit node (7.7). Like prefixes, it grants
+nothing: an administrator must make the Device an exit node of a pool, and it
+serves only while it offers. Core keeps the latest value of each Device and
+ignores it from a node without `router.exit.v1`.
+
 ### 8.3 Health and path statistics
 
 - `HealthReport`: component states (data plane, DNS, relay sessions, clock
@@ -802,6 +878,13 @@ identity.
   Device's current session, only for Sites of the `served` it sent, and
   treats a set without a report for 30 s as unknown, not failed. A malformed
   report, or one on a session without `router.health1`, is `INVALID`.
+  With `router.exit.v1`, `exit` is the health of the pool the node is an exit
+  node of (7.7), measured the same way, with the address `families` it
+  reaches the Internet in, and codes such as `exit_not_offered`,
+  `egress_failed`, `egress_v6_failed`, `forward_blocked`, `dns_failed` or
+  `conntrack_high`; unset when the node serves no pool. Core keeps it only
+  for the pool of the `served_exits` it sent. An `exit` on a session without
+  `router.exit.v1` is `INVALID`.
 - `RouteSelectionReport`: only on a session that negotiated
   `routes.selection1`, the router the node sends each Site's traffic to, for
   the Sites of its `routes`: `site_ref`, `router` (one of the Site's
@@ -814,6 +897,12 @@ identity.
   of the `routes` it sent with a `router` among their `candidates`, and
   treats a Site without a report for 3 minutes as unknown. A malformed
   report, or one on a session without `routes.selection1`, is `INVALID`.
+  With `routes.exit.v1`, `exit` is the exit node the node sends its Internet
+  traffic to (7.7): `pool_ref`, `exit_node` (one of the pool's `candidates`)
+  and why, `PRIMARY`, `LOCAL_FAILOVER`, `STICKY` (the candidate it kept after
+  Core chose another primary) or `NONE` with an empty `exit_node`; unset when
+  it uses no exit. Core keeps it only for a pool of the `exits` it sent. An
+  `exit` on a session without `routes.exit.v1` is `INVALID`.
 - `PathStatsReport`: per peer, for the last interval (default 60 s): bytes and
   packets sent/received direct and relayed, the path technique (direct,
   peer-reflexive, prediction, birthday, relay), the relay region, smoothed RTT
@@ -952,6 +1041,8 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `router.subnet.v1` | Node can forward into Sites: it applies `served` (7.6) and reports `route_digest` (8.4) |
 | `router.health1` | Node sends `RouteHealthReport` (8.3); only with `router.subnet.v1` |
 | `routes.selection1` | Node sends `RouteSelectionReport` (8.3); only with `routes.subnet.v1` |
+| `routes.exit.v1` | Node applies `exits` (7.7); with `routes.selection1` it reports its exit in `RouteSelectionReport` |
+| `router.exit.v1` | Node can be an exit node: it applies `served_exits` (7.7) and reports `exit_offered` (8.2); with `router.health1` it reports its exit health in `RouteHealthReport` |
 | `relay.zones2` | Node hands relays MTT2 tickets and their ZONES (MTRP §5.4, §6.1). Core offers it only once every relay accepts them |
 
 Unknown names are ignored. Core sends a feature only when both sides list it.
