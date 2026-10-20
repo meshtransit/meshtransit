@@ -138,8 +138,10 @@ func readExitHost(name string) (exitHost, error) {
 		if !ok || prefix.Addr().IsLoopback() || prefix.Addr().IsLinkLocalUnicast() && prefix.Addr().Is6() {
 			continue // IPv6 link-local sockets name their interface
 		}
-		if len(host.own) < maximumExitInterfaces {
-			host.own = append(host.own, prefix.Addr())
+		own, valid := netip.AddrFromSlice(address.IP)
+		if valid && len(host.own) < maximumExitInterfaces {
+			// The address itself: prefix holds the subnet it is in.
+			host.own = append(host.own, own.Unmap())
 		}
 		subnet := exitSubnet{prefix: prefix, link: address.LinkIndex}
 		if bridgeIndex[address.LinkIndex] {

@@ -212,6 +212,11 @@ func TestKernelExitRouteConfigurerIntegration(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
+	rules, err := exec.Command(ip, "-4", "rule", "show", "priority", "5402").CombinedOutput()
+	if err != nil || !strings.Contains(string(rules), "from 192.168.77.2 lookup main") ||
+		!strings.Contains(string(rules), "from 45.76.10.10 lookup main") {
+		t.Errorf("rules for the host's own addresses: %v\n%s", err, rules)
+	}
 	// Replies from the host's own addresses (SSH, pings) still leave by its
 	// own routes, not into the unreachable exit table.
 	if got := routeGet("8.8.8.8", "from", "192.168.77.2", "uid", "0"); strings.Contains(got, "unreachable") ||
