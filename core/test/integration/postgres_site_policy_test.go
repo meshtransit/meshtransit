@@ -61,7 +61,8 @@ func assertPostgreSQLSitePolicy(ctx context.Context, t *testing.T, admin *pgx.Co
 	if err != nil {
 		t.Fatal(err)
 	}
-	member := activeFixtureDevices(ctx, t, admin, 1)[0]
+	fixtures := activeFixtureDevices(ctx, t, admin, 2)
+	member, direct := fixtures[0], fixtures[1]
 	if _, err := groups.ChangeMembers(ctx, owner, scope, clients.Group.ID, 1, []node.ID{member}, nil,
 		newCorrelationID(t)); err != nil {
 		t.Fatalf("add a Site client: %v", err)
@@ -83,8 +84,9 @@ func assertPostgreSQLSitePolicy(ctx context.Context, t *testing.T, admin *pgx.Co
 	}
 
 	candidate, err := compileSiteRules(ctx, t, compiler, owner, scope, base+1,
-		siteRuleIntent(t, scope, clients.Group.ID, hq, "10.20.5.0/24"), siteRuleIntent(t, scope, clients.Group.ID, lab))
-	if err != nil || len(candidate.RouteRules()) != 2 {
+		siteRuleIntent(t, scope, clients.Group.ID, hq, "10.20.5.0/24"), siteRuleIntent(t, scope, clients.Group.ID, lab),
+		siteDeviceRuleIntent(t, scope, direct, hq, "10.20.7.0/24"))
+	if err != nil || len(candidate.RouteRules()) != 3 {
 		t.Fatalf("compile Site rules = %+v, error = %v", candidate, err)
 	}
 	reason, err := publication.NewAuditReason("integration Site rules")
@@ -105,12 +107,13 @@ func assertPostgreSQLSitePolicy(ctx context.Context, t *testing.T, admin *pgx.Co
 	var stored int
 	if err := admin.QueryRow(ctx, `SELECT count(*) FROM mesh.compiled_policy_route_rule AS rule
 JOIN mesh.policy_release AS release ON release.id = rule.policy_release_id WHERE release.state = 'active'
-  AND release.workspace_id = 103 AND release.network_id = 203`).Scan(&stored); err != nil || stored != 2 {
+  AND release.workspace_id = 103 AND release.network_id = 203`).Scan(&stored); err != nil || stored != 3 {
 		t.Fatalf("stored route rules = %d, error = %v", stored, err)
 	}
 
 	assertSiteExplanations(ctx, t, newIntegrationPolicyExplainer(t, runtimePool), owner, scope, member, hq)
 	assertSiteGraph(ctx, t, newIntegrationPolicyExplainer(t, runtimePool), owner, scope, member, hq, lab)
+	assertDirectSiteSource(ctx, t, newIntegrationPolicyExplainer(t, runtimePool), owner, scope, direct, hq)
 	assertSiteLedger(ctx, t, admin, runtimePool, workerPool, owner, scope, member)
 
 	catalogStore, err := postgresadapter.NewActivePolicyStore(runtimePool, postgresadapter.PolicySimulationOptions{
@@ -120,7 +123,7 @@ JOIN mesh.policy_release AS release ON release.id = rule.policy_release_id WHERE
 		t.Fatal(err)
 	}
 	active, err := catalogStore.ReadActivePolicy(ctx, owner, scope)
-	if err != nil || len(active.Rows()) != 2 || active.DeviceRulesOnly() || active.SemanticHash() != candidate.SemanticHash() {
+	if err != nil || len(active.Rows()) != 3 || active.DeviceRulesOnly() || active.SemanticHash() != candidate.SemanticHash() {
 		t.Fatalf("catalog of Site rules = %+v, error = %v", active, err)
 	}
 	narrowed := 0
@@ -350,6 +353,70 @@ WHERE workspace_id = 103 AND network_id = 203 AND selector_kind = 'site' AND val
   AND source_device_public_id = $1::UUID`, member.String()).Scan(&legacy); err != nil || legacy != 2 {
 		t.Fatalf("open Site edges = %d, error = %v", legacy, err)
 	}
+}
+
+// assertDirectSiteSource: a rule whose source is one Device grants it the
+// Site without naming a selector, in Explain and in the Access Graph.
+func assertDirectSiteSource(ctx context.Context, t *testing.T, graph *accessgraph.Service,
+	owner accountsession.Session, scope network.Scope, source node.ID, hq site.ID) {
+	t.Helper()
+	query, err := accessgraph.NewQuery(accessgraph.QueryParams{Scope: scope, SourceNodeID: source,
+		DestinationAddress: netip.MustParseAddr("10.20.7.9"), Protocol: policy.ProtocolICMP})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := graph.Explain(ctx, owner, query)
+	if err != nil {
+		t.Fatalf("explain the direct source: %v", err)
+	}
+	if result.Decision() != accessgraph.DecisionAllow || len(result.Paths()) != 1 ||
+		result.Paths()[0].SourceDeviceGroupID().IsValid() || result.Snapshot().TargetSiteID() != hq {
+		t.Fatalf("explain the direct source = %+v", result)
+	}
+	listing, err := accessgraph.NewGraphQuery(accessgraph.GraphQueryParams{
+		Scope: scope, DeviceID: source, PageSize: accessgraph.MaximumGraphPageSize,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := graph.Graph(ctx, owner, listing)
+	if err != nil {
+		t.Fatalf("list the direct source: %v", err)
+	}
+	edges := 0
+	for _, path := range page.Paths() {
+		if path.SelectorKind() == accessgraph.SelectorKindSite {
+			edges++
+			if path.DestinationSiteID() != hq || path.SourceDeviceGroupID().IsValid() ||
+				path.DestinationPrefixes()[0].String() != "10.20.7.0/24" {
+				t.Fatalf("direct Site edge = %+v", path)
+			}
+		}
+	}
+	if edges != 1 {
+		t.Fatalf("direct source has %d Site edges, want 1", edges)
+	}
+}
+
+func siteDeviceRuleIntent(t *testing.T, scope network.Scope, source node.ID, destination site.ID,
+	prefixes ...string) compilation.RuleIntent {
+	t.Helper()
+	ruleID, err := policy.ParseRuleID(newCorrelationID(t).String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	params := compilation.RuleIntentParams{
+		ID: ruleID, Scope: scope, SourceNodeID: source, DestinationSiteID: destination,
+		Protocol: policy.ProtocolICMP, DestinationPortRanges: []policy.PortRange{},
+	}
+	for _, text := range prefixes {
+		params.DestinationPrefixes = append(params.DestinationPrefixes, netip.MustParsePrefix(text))
+	}
+	intent, err := compilation.NewRuleIntent(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return intent
 }
 
 func siteRuleIntent(t *testing.T, scope network.Scope, source devicegroup.ID, destination site.ID,
