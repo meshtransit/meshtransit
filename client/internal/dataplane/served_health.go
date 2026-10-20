@@ -63,6 +63,8 @@ type servedChecker interface {
 // lock.
 type routerHealth struct {
 	running bool
+	// stop closes when the device closes, ending the loop's round and wait.
+	stop chan struct{}
 	// failures counts each Site's probe rounds failed in a row, and cause
 	// what the last one found; helperFailures the rounds in a row the helper
 	// did not answer.
@@ -95,15 +97,39 @@ func (e *WireGuardEngine) startRouterHealthLocked() {
 	if !ok || e.routerHealth.running || e.filter == nil {
 		return
 	}
-	e.routerHealth.running = true
-	go e.runRouterHealth(checker, e.filter.selfTest)
+	stop := make(chan struct{})
+	e.routerHealth.running, e.routerHealth.stop = true, stop
+	go e.runRouterHealth(checker, e.filter.selfTest, stop)
 }
 
-func (e *WireGuardEngine) runRouterHealth(checker servedChecker, tester *selfTester) {
+// stopRouterHealthLocked ends the health loop at once; a later start runs a
+// new one.
+func (e *WireGuardEngine) stopRouterHealthLocked() {
+	if e.routerHealth.stop != nil {
+		close(e.routerHealth.stop)
+	}
+	e.routerHealth = routerHealth{}
+}
+
+func (e *WireGuardEngine) runRouterHealth(checker servedChecker, tester *selfTester, stop chan struct{}) {
 	ticker := time.NewTicker(routerHealthInterval)
 	defer ticker.Stop()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		select {
+		case <-stop:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
 	for {
 		e.mu.Lock()
+		if e.routerHealth.stop != stop {
+			// Stopped: a closed device reset the state, or a new loop owns it.
+			e.mu.Unlock()
+			return
+		}
 		if e.device == nil || len(e.served.desired) == 0 {
 			e.routerHealth = routerHealth{}
 			e.servedStatus.Health = nil
@@ -114,11 +140,13 @@ func (e *WireGuardEngine) runRouterHealth(checker servedChecker, tester *selfTes
 		cursor := e.routerHealth.cursor
 		e.mu.Unlock()
 
-		round, next := measureRouter(checker, tester, sites, cursor)
+		round, next := measureRouter(ctx, checker, tester, sites, cursor)
 		if code := netadmin.RemoteCode(round.beforeErr); code == "unsupported_request" || code == "served_routes_unavailable" {
 			// An older helper cannot report: the health is unknown, not failed.
 			e.mu.Lock()
-			e.routerHealth.running, e.servedStatus.Health = false, nil
+			if e.routerHealth.stop == stop {
+				e.routerHealth.running, e.routerHealth.stop, e.servedStatus.Health = false, nil, nil
+			}
 			e.mu.Unlock()
 			if e.logger != nil {
 				e.logger.Warn("the network helper cannot report subnet router health; update meshnetd")
@@ -127,12 +155,16 @@ func (e *WireGuardEngine) runRouterHealth(checker servedChecker, tester *selfTes
 		}
 
 		e.mu.Lock()
-		if e.device != nil && equalServedSites(sites, e.served.desired) {
+		if e.routerHealth.stop == stop && e.device != nil && equalServedSites(sites, e.served.desired) {
 			e.routerHealth.cursor = next
 			e.recordRouterHealthLocked(sites, round)
 		}
 		e.mu.Unlock()
-		<-ticker.C
+		select {
+		case <-ticker.C:
+		case <-stop:
+			return
+		}
 	}
 }
 
@@ -140,8 +172,10 @@ func (e *WireGuardEngine) runRouterHealth(checker servedChecker, tester *selfTes
 // maximumProbesPerRound self-tests from cursor on, and asks again, so the
 // self-test counter tells a packet dropped on the way from one the target
 // did not answer. It returns where the next round starts.
-func measureRouter(checker servedChecker, tester *selfTester, sites []networkmap.ServedSite, cursor int) (routerRound, int) {
-	ctx, cancel := context.WithTimeout(context.Background(), routerHealthTimeout)
+func measureRouter(parent context.Context, checker servedChecker, tester *selfTester, sites []networkmap.ServedSite,
+	cursor int,
+) (routerRound, int) {
+	ctx, cancel := context.WithTimeout(parent, routerHealthTimeout)
 	defer cancel()
 	round := routerRound{outcomes: map[probeRef]probeOutcome{}}
 	round.before, round.beforeErr = checker.CheckServedRoutes(ctx)

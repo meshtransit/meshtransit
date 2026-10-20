@@ -73,6 +73,7 @@ func (e *WireGuardEngine) syncServedLocked(served []networkmap.ServedSite) {
 
 // resetServedLocked forgets what a closed device forwarded into.
 func (e *WireGuardEngine) resetServedLocked() {
+	e.stopRouterHealthLocked()
 	e.served.resetLocked()
 	e.servedStatus = SubnetRouterStatus{}
 	e.filter.SetServedInstalled(nil, nil)

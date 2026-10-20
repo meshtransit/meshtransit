@@ -296,3 +296,55 @@ func TestSelfTesterMatchesAnswersAndResetsTCP(t *testing.T) {
 		t.Fatalf("detached = %v", outcome)
 	}
 }
+
+type blockingChecker struct{}
+
+func (blockingChecker) CheckServedRoutes(ctx context.Context) (netadmin.ServedHealth, error) {
+	<-ctx.Done()
+	return netadmin.ServedHealth{}, ctx.Err()
+}
+
+func TestMeasureRouterEndsWhenStopped(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		measureRouter(ctx, blockingChecker{}, nil, []networkmap.ServedSite{prodSite}, 0)
+	}()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(routerHealthTimeout / 2):
+		t.Fatal("a stopped round waited for its timeout")
+	}
+}
+
+func TestStopRouterHealthEndsTheLoopsClaim(t *testing.T) {
+	t.Parallel()
+	engine := &WireGuardEngine{}
+	stop := make(chan struct{})
+	engine.routerHealth = routerHealth{running: true, stop: stop}
+	engine.mu.Lock()
+	engine.stopRouterHealthLocked()
+	engine.mu.Unlock()
+	select {
+	case <-stop:
+	default:
+		t.Fatal("stop was not closed")
+	}
+	if engine.routerHealth.running || engine.routerHealth.stop != nil {
+		t.Fatalf("health state after stop = %+v", engine.routerHealth)
+	}
+	// The stopped loop no longer owns the state: it returns without touching it.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		engine.runRouterHealth(blockingChecker{}, nil, stop)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("a stopped loop kept running")
+	}
+}
