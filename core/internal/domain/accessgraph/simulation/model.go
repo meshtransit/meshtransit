@@ -405,6 +405,8 @@ type Result struct {
 	removedExplanations    []Explanation
 	addedImportedIntents   []publication.ImportedResourceDestination
 	removedImportedIntents []publication.ImportedResourceDestination
+	addedSiteAccess        []SiteAccess
+	removedSiteAccess      []SiteAccess
 	affectedDevices        []node.ID
 	affectedResources      []resource.ID
 	affectedGroups         []resource.GroupID
@@ -429,6 +431,7 @@ func (result Result) IsValid() bool {
 		!validExplanations(result.removedExplanations) ||
 		!validImportedIntents(result.addedImportedIntents, result.baseline.scope) ||
 		!validImportedIntents(result.removedImportedIntents, result.baseline.scope) ||
+		!validSiteAccess(result.addedSiteAccess) || !validSiteAccess(result.removedSiteAccess) ||
 		!validNodeIDs(result.affectedDevices) || !validResourceIDs(result.affectedResources) ||
 		!validGroupIDs(result.affectedGroups) || !validCapabilities(result.unsupported) ||
 		!validGuardrailFindings(result.guardrailFindings) ||
@@ -439,6 +442,14 @@ func (result Result) IsValid() bool {
 	return err == nil && expectedVector.Equal(result.proposedVector) &&
 		result.hash == hashResult(result)
 }
+
+// AddedSiteAccess returns the Devices' new access to Sites: each source
+// Device a rule of the proposal lets reach part of a Site that the current
+// policy does not, by that rule.
+func (result Result) AddedSiteAccess() []SiteAccess { return cloneSiteAccess(result.addedSiteAccess) }
+
+// RemovedSiteAccess returns the access to Sites the proposal takes away.
+func (result Result) RemovedSiteAccess() []SiteAccess { return cloneSiteAccess(result.removedSiteAccess) }
 
 // Baseline returns the exact current evidence.
 func (result Result) Baseline() Baseline { return result.baseline }

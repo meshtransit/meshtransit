@@ -60,6 +60,14 @@ func newResult(baseline Baseline, proposed publication.Candidate) (Result, error
 	if err != nil {
 		return Result{}, err
 	}
+	currentSiteAccess, err := siteAccess(baseline.candidate, baseline.selectorMembers)
+	if err != nil {
+		return Result{}, withPeerEstimate(err, peers)
+	}
+	proposedSiteAccess, err := siteAccess(proposed, baseline.selectorMembers)
+	if err != nil {
+		return Result{}, withPeerEstimate(err, peers)
+	}
 	addedRelationships, removedRelationships, err := relationshipChanges(
 		currentRelationships,
 		proposedRelationships,
@@ -82,6 +90,8 @@ func newResult(baseline Baseline, proposed publication.Candidate) (Result, error
 			proposedExplanations,
 			compareExplanations,
 		),
+		addedSiteAccess:   difference(proposedSiteAccess, currentSiteAccess, compareSiteAccess),
+		removedSiteAccess: difference(currentSiteAccess, proposedSiteAccess, compareSiteAccess),
 		unsupported: []UnsupportedCapability{
 			UnsupportedCapabilityPrincipalProjection,
 			UnsupportedCapabilitySensitiveResourceClassification,
@@ -451,6 +461,11 @@ func affectedEntities(result Result) ([]node.ID, []resource.ID, []resource.Group
 			if explanation.groupID.IsValid() {
 				groups[explanation.groupID] = struct{}{}
 			}
+		}
+	}
+	for _, values := range [][]SiteAccess{result.addedSiteAccess, result.removedSiteAccess} {
+		for _, access := range values {
+			devices[access.source] = struct{}{}
 		}
 	}
 	deviceIDs := make([]node.ID, 0, len(devices))

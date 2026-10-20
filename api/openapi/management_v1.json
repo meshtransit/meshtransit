@@ -3085,6 +3085,7 @@
         ],
         "properties": {
           "imported_intent_changes": {"$ref": "#/components/schemas/PolicySimulationImportedIntentChanges"},
+          "site_access_changes": {"$ref": "#/components/schemas/PolicySimulationSiteAccessChanges"},
           "impact_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
           "added_relationship_count": {"type": "integer", "minimum": 0},
           "added_relationships": {
@@ -3198,6 +3199,31 @@
           "removed_count": {"type": "integer", "minimum": 0, "maximum": 10000},
           "removed": {"type": "array", "maxItems": 256, "items": {"$ref": "#/components/schemas/PolicySimulationImportedIntent"}},
           "packet_authority_evaluated": {"type": "boolean", "const": false}
+        }
+      },
+      "PolicySimulationSiteAccessChanges": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Present when the current policy or the proposal has a rule to a Site. Lists, per source Device, the access to part of a Site the proposal adds and removes; at most 256 entries each, the counts carry the totals.",
+        "required": ["added_count", "added", "removed_count", "removed"],
+        "properties": {
+          "added_count": {"type": "integer", "minimum": 0},
+          "added": {"type": "array", "maxItems": 256, "items": {"$ref": "#/components/schemas/PolicySimulationSiteAccess"}},
+          "removed_count": {"type": "integer", "minimum": 0},
+          "removed": {"type": "array", "maxItems": 256, "items": {"$ref": "#/components/schemas/PolicySimulationSiteAccess"}}
+        }
+      },
+      "PolicySimulationSiteAccess": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["access_rule_id", "source_device_id", "site_id", "prefixes", "protocol", "destination_port_ranges"],
+        "properties": {
+          "access_rule_id": {"$ref": "#/components/schemas/PublicID"},
+          "source_device_id": {"$ref": "#/components/schemas/PublicID"},
+          "site_id": {"$ref": "#/components/schemas/PublicID"},
+          "prefixes": {"type": "array", "maxItems": 1024, "description": "The part of the Site the rule grants; empty for all of it.", "items": {"type": "string"}},
+          "protocol": {"type": "string", "enum": ["tcp", "udp", "icmp"]},
+          "destination_port_ranges": {"type": "array", "maxItems": 64, "items": {"$ref": "#/components/schemas/PortRange"}}
         }
       },
       "PolicySimulationImportedIntent": {

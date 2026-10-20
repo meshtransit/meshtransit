@@ -14,6 +14,10 @@ const impactHashDomainV1 = "meshtransit/policy-simulation-impact/v1\x00"
 // adds their guardrail findings, so a v2 impact never matches again.
 const impactHashDomainV3 = "meshtransit/policy-simulation-impact/v3\x00"
 
+// impactHashSiteAccessV1 introduces the access to Sites a proposal changes;
+// a result without such changes never writes it.
+const impactHashSiteAccessV1 = "meshtransit/policy-simulation-site-access/v1\x00"
+
 type impactEncoder struct{ digest hash.Hash }
 
 func hashResult(result Result) ImpactHash {
@@ -53,6 +57,13 @@ func hashResult(result Result) ImpactHash {
 		for _, finding := range result.guardrailFindings {
 			encoder.writeText(guardrailFindingKey(finding))
 		}
+	}
+	// Only a proposal that changes access to Sites adds them: every other
+	// impact keeps the hash it had before Sites were simulated.
+	if len(result.addedSiteAccess)+len(result.removedSiteAccess) > 0 {
+		encoder.write([]byte(impactHashSiteAccessV1))
+		encoder.writeSiteAccess(result.addedSiteAccess)
+		encoder.writeSiteAccess(result.removedSiteAccess)
 	}
 	encoder.writeUint64(uint64(len(result.affectedDevices)))
 	for _, id := range result.affectedDevices {
@@ -98,6 +109,25 @@ func (encoder impactEncoder) writeRelationships(values []Relationship) {
 		encoder.write([]byte{byte(value.protocol)})
 		encoder.writeUint16(value.firstPort)
 		encoder.writeUint16(value.lastPort)
+	}
+}
+
+func (encoder impactEncoder) writeSiteAccess(values []SiteAccess) {
+	encoder.writeUint64(uint64(len(values)))
+	for _, value := range values {
+		encoder.writeText(value.ruleID.String())
+		encoder.writeText(value.source.String())
+		encoder.writeText(value.site.String())
+		encoder.writeUint64(uint64(len(value.prefixes)))
+		for _, prefix := range value.prefixes {
+			encoder.writeText(prefix.String())
+		}
+		encoder.write([]byte{byte(value.protocol)})
+		encoder.writeUint64(uint64(len(value.ports)))
+		for _, port := range value.ports {
+			encoder.writeUint16(port.First())
+			encoder.writeUint16(port.Last())
+		}
 	}
 }
 

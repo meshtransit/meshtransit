@@ -89,6 +89,7 @@ type simulatedPolicyProposed struct {
 
 type simulatedPolicyImpact struct {
 	ImportedIntentChanges    *simulatedImportedIntentChanges `json:"imported_intent_changes,omitempty"`
+	SiteAccessChanges        *simulatedSiteAccessChanges     `json:"site_access_changes,omitempty"`
 	ImpactHash               string                          `json:"impact_hash"`
 	AddedRelationshipCount   int                             `json:"added_relationship_count"`
 	AddedRelationships       []simulatedRelationship         `json:"added_relationships"`
@@ -151,6 +152,50 @@ func encodeSimulatedGuardrailFindings(findings []simulation.GuardrailFinding) []
 			}
 		}
 		encoded = append(encoded, item)
+	}
+	return encoded
+}
+
+// simulatedSiteAccessChanges lists, per source Device, the access to Sites
+// the proposal adds and removes (rules to Sites, mtcp-v1 §7.6). Present when
+// the current policy or the proposal has a rule to a Site.
+type simulatedSiteAccessChanges struct {
+	AddedCount   int                   `json:"added_count"`
+	Added        []simulatedSiteAccess `json:"added"`
+	RemovedCount int                   `json:"removed_count"`
+	Removed      []simulatedSiteAccess `json:"removed"`
+}
+
+type simulatedSiteAccess struct {
+	AccessRuleID          string                          `json:"access_rule_id"`
+	SourceDeviceID        string                          `json:"source_device_id"`
+	SiteID                string                          `json:"site_id"`
+	Prefixes              []string                        `json:"prefixes"`
+	Protocol              string                          `json:"protocol"`
+	DestinationPortRanges []publishPolicyPortRangeRequest `json:"destination_port_ranges"`
+}
+
+// maximumSimulatedSiteAccess bounds the Site access one list carries; the
+// counts carry the totals.
+const maximumSimulatedSiteAccess = 256
+
+func encodeSimulatedSiteAccess(values []simulation.SiteAccess) []simulatedSiteAccess {
+	values = values[:min(len(values), maximumSimulatedSiteAccess)]
+	encoded := make([]simulatedSiteAccess, len(values))
+	for index, value := range values {
+		prefixes := make([]string, 0, len(value.Prefixes()))
+		for _, prefix := range value.Prefixes() {
+			prefixes = append(prefixes, prefix.String())
+		}
+		ports := make([]publishPolicyPortRangeRequest, 0, len(value.DestinationPortRanges()))
+		for _, portRange := range value.DestinationPortRanges() {
+			ports = append(ports, publishPolicyPortRangeRequest{First: int(portRange.First()), Last: int(portRange.Last())})
+		}
+		encoded[index] = simulatedSiteAccess{
+			AccessRuleID: value.RuleID().String(), SourceDeviceID: value.SourceNodeID().String(),
+			SiteID: value.SiteID().String(), Prefixes: prefixes, Protocol: value.Protocol().String(),
+			DestinationPortRanges: ports,
+		}
 	}
 	return encoded
 }
@@ -388,6 +433,13 @@ func encodePolicySimulationResult(result simulation.Result) simulatedPolicy {
 	}
 	for _, capability := range result.UnsupportedCapabilities() {
 		impact.UnsupportedCapabilities = append(impact.UnsupportedCapabilities, capability.String())
+	}
+	if len(baselineCandidate.RouteRules())+len(proposed.RouteRules()) > 0 {
+		added, removed := result.AddedSiteAccess(), result.RemovedSiteAccess()
+		impact.SiteAccessChanges = &simulatedSiteAccessChanges{
+			AddedCount: len(added), Added: encodeSimulatedSiteAccess(added),
+			RemovedCount: len(removed), Removed: encodeSimulatedSiteAccess(removed),
+		}
 	}
 	if baselineCandidate.CompilerFormatVersion() == 4 || proposed.CompilerFormatVersion() == 4 {
 		impact.ImportedIntentChanges = &simulatedImportedIntentChanges{

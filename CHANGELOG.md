@@ -5,6 +5,11 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: policy simulation reports access to Sites. `site_access_changes`
+  lists, per source Device, the part of a Site a proposal grants or takes
+  away (at most 256 each, with counts), its Devices count as affected, and
+  such a change enters the impact hash (an impact without Site changes keeps
+  its hash).
 - Sites may use IPv6 unique local prefixes (schema 196). Core refuses only
   `fd00::/48` and, with `site_prefix_invalid`, a prefix that overlaps the
   Workspace's overlay pool or the deployment's Device alias pools; clients
