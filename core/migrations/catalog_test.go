@@ -15,8 +15,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 208 {
-		t.Fatalf("len(Catalog()) = %d, want 208", len(catalog))
+	if len(catalog) != 209 {
+		t.Fatalf("len(Catalog()) = %d, want 209", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1611,8 +1611,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 208 {
-		t.Fatalf("LatestVersion() = %d, want 208", LatestVersion())
+	if LatestVersion() != 209 {
+		t.Fatalf("LatestVersion() = %d, want 209", LatestVersion())
 	}
 }
 
@@ -5979,5 +5979,28 @@ func TestMigration208RecordsExitEdges(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "TO mesh_worker") {
 		t.Error("schema 208 grants the worker role")
+	}
+}
+
+func TestMigration209ReadsConsoleDeviceAddresses(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[208]
+	if migration.Version != 209 {
+		t.Fatalf("migration 209 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.read_console_device_v3(",
+		"v_result := mesh_ops.read_console_device_v2(",
+		"IF v_result IS NULL OR NOT v_result ? 'device' THEN",
+		"JOIN mesh.node_address_lease AS lease",
+		"lease.state = 'active' AND lease.lease_role = 'primary'",
+		") TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 209 lacks %q", want)
+		}
+	}
+	if strings.Contains(migration.SQL, "TO mesh_worker") {
+		t.Error("schema 209 grants the Console read to the worker role")
 	}
 }

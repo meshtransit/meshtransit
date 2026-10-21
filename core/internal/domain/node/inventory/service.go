@@ -276,6 +276,9 @@ type Record struct {
 	Enrollment Enrollment
 	// Tags are the Device's tags by name.
 	Tags []Tag
+	// Addresses are the mesh addresses the Device holds now, IPv4 first;
+	// empty for a Device that holds none.
+	Addresses []netip.Addr
 	// Found is false when the scope holds no such Device.
 	Found                      bool
 	WorkspaceCode, NetworkCode identity.DisplayCode

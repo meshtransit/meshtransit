@@ -531,7 +531,8 @@
             "network_id",
             "device",
             "enrollment",
-            "tags"
+            "tags",
+            "addresses"
           ],
           "properties": {
             "workspace_id": {
@@ -598,6 +599,16 @@
                     }
                   ]
                 }
+              }
+            },
+            "addresses": {
+              "description": "The mesh addresses the Device holds now, IPv4 before IPv6, without a prefix length; empty for a Device that holds none (expired, revoked).",
+              "type": "array",
+              "maxItems": 4,
+              "items": {
+                "type": "string",
+                "minLength": 2,
+                "maxLength": 39
               }
             },
             "tags": {

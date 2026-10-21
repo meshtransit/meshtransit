@@ -30,9 +30,9 @@ const readConsoleDeviceInventorySQL = `SELECT mesh_ops.read_console_devices_v5(
     $10::UUID, $11::UUID, $12::TIMESTAMPTZ, $13::TEXT, $14::TEXT, $15::TEXT, $16::UUID, $17::INTEGER
 )::TEXT`
 
-// readConsoleDeviceSQL reads one Device with every prefix it offers and how
-// it was enrolled (schema 192).
-const readConsoleDeviceSQL = `SELECT mesh_ops.read_console_device_v2(
+// readConsoleDeviceSQL reads one Device with every prefix it offers, how it
+// was enrolled and the mesh addresses it holds (schema 209).
+const readConsoleDeviceSQL = `SELECT mesh_ops.read_console_device_v3(
     $1::UUID, $2::UUID, $3::UUID, $4::UUID,
     $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
     $10::UUID, $11::UUID, $12::TIMESTAMPTZ, $13::UUID
@@ -407,6 +407,28 @@ type consoleDeviceWire struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
 	} `json:"tags"`
+	Addresses []string `json:"addresses"`
+}
+
+// maximumDeviceAddresses bounds the addresses one Device holds: one primary
+// lease per family, with room for a lease being replaced.
+const maximumDeviceAddresses = 4
+
+// decodeDeviceAddresses reads canonical single addresses, IPv4 before IPv6.
+func decodeDeviceAddresses(encoded []string) ([]netip.Addr, bool) {
+	if len(encoded) > maximumDeviceAddresses {
+		return nil, false
+	}
+	addresses := make([]netip.Addr, len(encoded))
+	for index, text := range encoded {
+		address, err := netip.ParseAddr(text)
+		if err != nil || address.String() != text || address.Zone() != "" ||
+			(index > 0 && address.Is4() && addresses[index-1].Is6()) {
+			return nil, false
+		}
+		addresses[index] = address
+	}
+	return addresses, true
 }
 
 func decodeConsoleDevice(encoded string) (inventory.Record, error) {
@@ -416,7 +438,8 @@ func decodeConsoleDevice(encoded string) (inventory.Record, error) {
 	}
 	scope, workspaceCode, networkCode, ok := decodeConsoleScope(wire.WorkspaceID, wire.NetworkID,
 		wire.WorkspaceCode, wire.NetworkCode)
-	if !ok || (wire.Device == nil) != (wire.Enrollment == nil) || (wire.Device == nil) != (wire.Tags == nil) {
+	if !ok || (wire.Device == nil) != (wire.Enrollment == nil) || (wire.Device == nil) != (wire.Tags == nil) ||
+		(wire.Device == nil) != (wire.Addresses == nil) {
 		return inventory.Record{}, inventory.ErrInvalidResult
 	}
 	record := inventory.Record{Scope: scope, WorkspaceCode: workspaceCode, NetworkCode: networkCode}
@@ -428,6 +451,9 @@ func decodeConsoleDevice(encoded string) (inventory.Record, error) {
 		return inventory.Record{}, inventory.ErrInvalidResult
 	}
 	record.Device, record.Found = device, true
+	if record.Addresses, ok = decodeDeviceAddresses(wire.Addresses); !ok {
+		return inventory.Record{}, inventory.ErrInvalidResult
+	}
 	record.Tags = make([]inventory.Tag, len(wire.Tags))
 	for index, tag := range wire.Tags {
 		id, err := publicid.Parse(tag.ID)

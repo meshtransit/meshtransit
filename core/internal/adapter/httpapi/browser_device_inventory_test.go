@@ -183,7 +183,8 @@ func TestBrowserDeviceReadAnswersOneDevice(t *testing.T) {
 	reader := &inventoryTestReader{record: inventory.Record{Scope: scope, Device: inventoryTestDevice(t), Found: true,
 		WorkspaceCode: "000000000101", NetworkCode: "000000000201",
 		Enrollment: inventory.Enrollment{ByKey: true, KeyID: keyID, KeyDescription: "router",
-			KeyCreatedBy: inventory.Member{PrincipalID: creator, DisplayName: "Trang"}}}}
+			KeyCreatedBy: inventory.Member{PrincipalID: creator, DisplayName: "Trang"}},
+		Addresses: []netip.Addr{netip.MustParseAddr("100.64.0.7"), netip.MustParseAddr("fd7a:115c:a1e0::7")}}}
 	service, err := inventory.NewService(reader, fixture)
 	if err != nil {
 		t.Fatal(err)
@@ -202,7 +203,8 @@ func TestBrowserDeviceReadAnswersOneDevice(t *testing.T) {
 		!strings.Contains(body, `"dns_name":"laptop.000000000101.000000000201.mesh.internal"`) ||
 		!strings.Contains(body, `"enrollment":{"kind":"key","key_id":"01890f00-0000-7000-8000-000000000a01",`+
 			`"description":"router","created_by":{"principal_id":"01890f00-0000-7000-8000-000000000011",`+
-			`"display_name":"Trang"}}`) {
+			`"display_name":"Trang"}}`) ||
+		!strings.Contains(body, `"addresses":["100.64.0.7","fd7a:115c:a1e0::7"]`) {
 		t.Fatalf("Device read = %d: %s", response.Code, body)
 	}
 	reader.record = inventory.Record{Scope: scope, WorkspaceCode: "000000000101", NetworkCode: "000000000201"}

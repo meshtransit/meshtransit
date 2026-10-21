@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -243,10 +244,40 @@ func assertPostgreSQLDeviceLifecycle(ctx context.Context, t *testing.T, admin *p
 				t.Fatalf("inventory lifecycle = %+v, label %q, codes %q %q", listed.Lifecycle(), label,
 					page.WorkspaceCode, page.NetworkCode)
 			}
+			assertConsoleDeviceAddresses(ctx, t, admin, inventoryStore, owner, scope, device)
 			return
 		}
 	}
 	t.Fatal("inventory lacks the Device")
+}
+
+// assertConsoleDeviceAddresses checks schema 209: one Device's read names the
+// mesh addresses it holds, exactly its active primary leases, IPv4 first.
+func assertConsoleDeviceAddresses(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	store *postgresadapter.ConsoleDeviceInventoryStore, session accountsession.Session,
+	scope network.Scope, device node.ID,
+) {
+	t.Helper()
+	var want []string
+	if err := admin.QueryRow(ctx, `SELECT COALESCE(pg_catalog.array_agg(pg_catalog.host(lease.address)
+	        ORDER BY lease.family, lease.address), ARRAY[]::TEXT[])
+	    FROM mesh.node_address_lease AS lease
+	    JOIN mesh.device AS device ON device.id = lease.device_id
+	    WHERE device.public_id = $1 AND lease.state = 'active' AND lease.lease_role = 'primary'`,
+		device.String()).Scan(&want); err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.ReadDevice(ctx, session, scope, device)
+	if err != nil || !record.Found {
+		t.Fatalf("read Device = %+v, %v", record, err)
+	}
+	got := make([]string, len(record.Addresses))
+	for index, address := range record.Addresses {
+		got[index] = address.String()
+	}
+	if len(want) == 0 || strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("Device addresses = %v, want its active primary leases %v", got, want)
+	}
 }
 
 // assertPostgreSQLBrowserHandover completes a schema 125 handover through

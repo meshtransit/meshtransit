@@ -467,6 +467,8 @@ type deviceRecordEnvelope struct {
 		Device      deviceInventoryItem  `json:"device"`
 		Enrollment  deviceEnrollmentBody `json:"enrollment"`
 		Tags        []deviceTagRefBody   `json:"tags"`
+		// Addresses are the mesh addresses the Device holds now, IPv4 first.
+		Addresses []string `json:"addresses"`
 	} `json:"data"`
 	CorrelationID string `json:"correlation_id"`
 }
@@ -505,6 +507,10 @@ func (browser *BrowserManagement) readDevice(ctx context.Context, response *brow
 	envelope.Data.Tags = make([]deviceTagRefBody, len(record.Tags))
 	for index, tag := range record.Tags {
 		envelope.Data.Tags[index] = deviceTagRefBody{ID: tag.ID.String(), Name: tag.Name}
+	}
+	envelope.Data.Addresses = make([]string, len(record.Addresses))
+	for index, address := range record.Addresses {
+		envelope.Data.Addresses[index] = address.String()
 	}
 	envelope.CorrelationID = correlationID
 	writeManagementJSON(ctx, browser.management.logger, response, http.StatusOK, envelope)
