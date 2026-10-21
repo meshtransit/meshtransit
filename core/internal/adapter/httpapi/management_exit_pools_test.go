@@ -16,6 +16,7 @@ import (
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node/distribution"
 	"meshtransit.net/core/internal/domain/publicid"
 )
 
@@ -266,5 +267,123 @@ func TestExitPoolsThroughServeHTTP(t *testing.T) {
 			t.Errorf("%s %s = %d (Allow %q); %s", test.method, test.path, response.Code,
 				response.Header().Get("Allow"), response.Body)
 		}
+	}
+}
+
+func TestAddExitNodeHealthShowsEachNodesMeasureOfThePool(t *testing.T) {
+	t.Parallel()
+	poolID, _ := exitpool.ParseID("01a159f2-8c40-718b-bea7-ea6c60ff7b0e")
+	first, _ := node.ParseID("01a159eb-da65-77e1-a9aa-0696ec043e4f")
+	second, _ := node.ParseID("01a144c1-5017-78d7-9ac9-244ebfb3c10e")
+	third, _ := node.ParseID("01a15729-b3db-7142-bdd4-230b203db786")
+	stored := exitpool.Pool{ID: poolID, Nodes: []exitpool.Node{
+		{NodeAssignment: exitpool.NodeAssignment{DeviceID: first, Priority: 10, State: exitpool.NodeActive}},
+		{NodeAssignment: exitpool.NodeAssignment{DeviceID: second, Priority: 20, State: exitpool.NodeActive}},
+		{NodeAssignment: exitpool.NodeAssignment{DeviceID: third, Priority: 30, State: exitpool.NodeDraining}},
+	}}
+	now := time.Now()
+	reported := now.Add(-5 * time.Second)
+	healthy := distribution.Observation{Known: true, RouteHealthAt: reported,
+		ExitHealth: &distribution.ExitHealth{Ref: poolID.String(), State: "degraded", Code: "egress_v6_failed",
+			Families: distribution.ExitFamiliesV4}}
+	stale := healthy
+	stale.RouteHealthAt = now.Add(-time.Minute)
+	otherPool := healthy
+	otherPool.ExitHealth = &distribution.ExitHealth{Ref: "01a159f2-8c40-718b-bea7-ea6c60ff7b0f", State: "ok",
+		Code: "ok", Families: distribution.ExitFamiliesBoth}
+	loader := &fakeSiteObservations{observations: []distribution.Observation{healthy, stale, otherPool}}
+	handler := &ManagementHandler{siteRouterObservations: loader, logger: slog.New(slog.DiscardHandler)}
+	body := newExitPoolBody(stored)
+	handler.addExitNodeHealth(t.Context(), &body, stored)
+	if len(loader.asked) != 3 || loader.asked[0] != first || loader.asked[2] != third {
+		t.Fatalf("asked for %v", loader.asked)
+	}
+	if got := body.Nodes[0].Health; got == nil || got.State != "degraded" || got.Code != "egress_v6_failed" ||
+		got.Families != "v4" || got.ReportedAt != managementTime(reported) {
+		t.Fatalf("first node health = %+v", got)
+	}
+	// Older than 30 s, or of another pool: unknown.
+	if body.Nodes[1].Health != nil || body.Nodes[2].Health != nil {
+		t.Fatalf("stale or foreign health shown: %+v %+v", body.Nodes[1].Health, body.Nodes[2].Health)
+	}
+	// Without delivery records the pool is answered as stored.
+	loader.err = errors.New("redis down")
+	plain := newExitPoolBody(stored)
+	handler.addExitNodeHealth(t.Context(), &plain, stored)
+	if plain.Nodes[0].Health != nil {
+		t.Fatalf("node without records = %+v", plain.Nodes[0].Health)
+	}
+	if raw, _ := json.Marshal(plain.Nodes[0]); strings.Contains(string(raw), "health") {
+		t.Fatalf("absent health is written: %s", raw)
+	}
+}
+
+type fakeExitNodeUse struct {
+	uses  map[string]distribution.RouterUse
+	err   error
+	asked string
+}
+
+func (counter *fakeExitNodeUse) CountExitNodes(_ context.Context, poolRef string, _ time.Time) (
+	map[string]distribution.RouterUse, error,
+) {
+	counter.asked = poolRef
+	return counter.uses, counter.err
+}
+
+func TestAddExitNodeUseCountsTheConsumersOfEachNode(t *testing.T) {
+	t.Parallel()
+	poolID, _ := exitpool.ParseID("01a159f2-8c40-718b-bea7-ea6c60ff7b0e")
+	first, _ := node.ParseID("01a159eb-da65-77e1-a9aa-0696ec043e4f")
+	second, _ := node.ParseID("01a144c1-5017-78d7-9ac9-244ebfb3c10e")
+	stored := exitpool.Pool{ID: poolID, Nodes: []exitpool.Node{
+		{NodeAssignment: exitpool.NodeAssignment{DeviceID: first, Priority: 10, State: exitpool.NodeActive}},
+		{NodeAssignment: exitpool.NodeAssignment{DeviceID: second, Priority: 20, State: exitpool.NodeActive}},
+	}}
+	counter := &fakeExitNodeUse{uses: map[string]distribution.RouterUse{
+		first.String(): {Clients: 3, LocalFailover: 1},
+	}}
+	handler := &ManagementHandler{exitNodeUse: counter, logger: slog.New(slog.DiscardHandler)}
+	body := newExitPoolBody(stored)
+	handler.addExitNodeUse(t.Context(), &body, stored)
+	if counter.asked != poolID.String() {
+		t.Fatalf("asked for %q", counter.asked)
+	}
+	if got := body.Nodes[0]; got.Consumers == nil || *got.Consumers != 3 || got.LocalFailoverConsumers == nil ||
+		*got.LocalFailoverConsumers != 1 {
+		t.Fatalf("first node = %+v", got)
+	}
+	// A node nobody reported is used by none: zero, not unknown.
+	if got := body.Nodes[1]; got.Consumers == nil || *got.Consumers != 0 {
+		t.Fatalf("second node = %+v", got)
+	}
+	counter.err = errors.New("redis down")
+	plain := newExitPoolBody(stored)
+	handler.addExitNodeUse(t.Context(), &plain, stored)
+	if plain.Nodes[0].Consumers != nil {
+		t.Fatalf("counts without Redis = %+v", plain.Nodes[0])
+	}
+}
+
+func TestDeviceStatusNamesTheExitNodeTheDeviceUses(t *testing.T) {
+	t.Parallel()
+	exitNode := "01a159eb-da65-77e1-a9aa-0696ec043e4f"
+	device := distribution.Device{Observation: distribution.Observation{Known: true},
+		ExitSelection: &distribution.ExitSelection{Pool: "01a159f2-8c40-718b-bea7-ea6c60ff7b0e", Node: exitNode,
+			Via: distribution.ViaSticky}}
+	item := newDeviceDistributionItem(device)
+	if item.Exit == nil || item.Exit.ExitPoolID != "01a159f2-8c40-718b-bea7-ea6c60ff7b0e" ||
+		item.Exit.ExitNodeID == nil || *item.Exit.ExitNodeID != exitNode || item.Exit.Via != "sticky" {
+		t.Fatalf("exit item = %+v", item.Exit)
+	}
+	device.ExitSelection = &distribution.ExitSelection{Pool: "01a159f2-8c40-718b-bea7-ea6c60ff7b0e",
+		Via: distribution.ViaNone}
+	raw, _ := json.Marshal(newDeviceDistributionItem(device).Exit)
+	if string(raw) != `{"exit_pool_id":"01a159f2-8c40-718b-bea7-ea6c60ff7b0e","exit_node_device_id":null,"via":"none"}` {
+		t.Fatalf("unserved exit item = %s", raw)
+	}
+	device.ExitSelection = nil
+	if item := newDeviceDistributionItem(device); item.Exit != nil {
+		t.Fatalf("no exit reported = %+v", item.Exit)
 	}
 }

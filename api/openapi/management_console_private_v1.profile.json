@@ -1127,6 +1127,39 @@
                       }
                     }
                   }
+                },
+                "exit": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "exit_pool_id",
+                    "exit_node_device_id",
+                    "via"
+                  ],
+                  "description": "The Exit Pool the Device sends its Internet traffic through and the exit node it uses, as it last reported (within three minutes).",
+                  "properties": {
+                    "exit_pool_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "exit_node_device_id": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "uuid"
+                    },
+                    "via": {
+                      "type": "string",
+                      "enum": [
+                        "primary",
+                        "local_failover",
+                        "sticky",
+                        "none"
+                      ],
+                      "description": "sticky: kept although Core elected another exit node; none: no exit node can serve (exit_node_device_id is null)."
+                    }
+                  }
                 }
               }
             }
@@ -16872,6 +16905,56 @@
                                   "added_at": {
                                     "type": "string",
                                     "format": "date-time"
+                                  },
+                                  "health": {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "required": [
+                                      "state",
+                                      "code",
+                                      "families",
+                                      "reported_at"
+                                    ],
+                                    "properties": {
+                                      "state": {
+                                        "type": "string",
+                                        "enum": [
+                                          "ok",
+                                          "degraded",
+                                          "failed"
+                                        ]
+                                      },
+                                      "code": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 64
+                                      },
+                                      "families": {
+                                        "type": "string",
+                                        "enum": [
+                                          "",
+                                          "v4",
+                                          "v6",
+                                          "both"
+                                        ],
+                                        "description": "Address families the exit node reaches the Internet in; empty when it did not say."
+                                      },
+                                      "reported_at": {
+                                        "type": "string",
+                                        "format": "date-time"
+                                      }
+                                    },
+                                    "description": "The exit node's own health of this pool (egress probes, forwarding, DNS); only on one pool's read, absent when it reported none in the last 30 seconds."
+                                  },
+                                  "consumers": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "description": "Devices that reported using this exit node in the last three minutes; only on one pool's read, absent when the counts could not be read."
+                                  },
+                                  "local_failover_consumers": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "description": "Of those, the Devices that chose it themselves while the primary did not answer."
                                   }
                                 }
                               }

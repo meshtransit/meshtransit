@@ -462,7 +462,7 @@ func decodeObservation(fields []string) (distribution.Observation, error) {
 	if err != nil {
 		return distribution.Observation{}, err
 	}
-	routeSelection, err := decodeRouteSelection(fields[20])
+	routeSelection, exitSelection, err := decodeRouteSelection(fields[20])
 	if err != nil {
 		return distribution.Observation{}, err
 	}
@@ -500,6 +500,7 @@ func decodeObservation(fields []string) (distribution.Observation, error) {
 		RouteHealthAt:     routeHealthAt,
 		RouteSelection:    routeSelection,
 		RouteSelectionAt:  routeSelectionAt,
+		ExitSelection:     exitSelection,
 		ExitHealth:        exitHealth,
 	}
 	if !observation.IsValid() {

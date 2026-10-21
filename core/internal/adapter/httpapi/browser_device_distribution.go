@@ -154,6 +154,18 @@ type deviceDistributionItem struct {
 	// SubnetRoutes is the router the Device uses for each Site it reaches,
 	// as it last reported (within three minutes).
 	SubnetRoutes []deviceSiteRouteItem `json:"subnet_routes,omitempty"`
+	// Exit is the exit node the Device sends its Internet traffic through,
+	// as it last reported (within three minutes).
+	Exit *deviceExitItem `json:"exit,omitempty"`
+}
+
+// deviceExitItem is the Exit Pool a Device uses and its exit node: Via is
+// primary, local_failover, sticky (kept although Core elected another) or
+// none (no exit node can serve; ExitNodeID is null).
+type deviceExitItem struct {
+	ExitPoolID string  `json:"exit_pool_id"`
+	ExitNodeID *string `json:"exit_node_device_id"`
+	Via        string  `json:"via"`
 }
 
 type deviceSiteRouteItem struct {
@@ -420,6 +432,13 @@ func newDeviceDistributionItem(device distribution.Device) deviceDistributionIte
 				route.RouterID = &router
 			}
 			item.SubnetRoutes = append(item.SubnetRoutes, route)
+		}
+		if exit := device.ExitSelection; exit != nil {
+			item.Exit = &deviceExitItem{ExitPoolID: exit.Pool, Via: exit.Via}
+			if exit.Node != "" {
+				exitNode := exit.Node
+				item.Exit.ExitNodeID = &exitNode
+			}
 		}
 	}
 	return item

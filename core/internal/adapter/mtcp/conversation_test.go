@@ -44,7 +44,9 @@ type fakeStreams struct {
 	health    [][]mapsession.SiteHealth
 	exits     []*mapsession.ExitHealth
 	selection [][]mapsession.SiteSelection
-	started   chan node.Key
+	// exitSelections are the exit selections stored, one per report.
+	exitSelections []*mapsession.ExitSelection
+	started        chan node.Key
 	// block, when set, holds the next ReportEnforcement until it is closed;
 	// entered is signalled when that call starts.
 	block   chan struct{}
@@ -70,11 +72,12 @@ func (streams *fakeStreams) Serve(ctx context.Context, _ control.AuthenticatedMa
 }
 
 func (streams *fakeStreams) ReportRouteSelection(_ context.Context, _ control.AuthenticatedMachine, _ node.Key,
-	sites []mapsession.SiteSelection,
+	sites []mapsession.SiteSelection, exit *mapsession.ExitSelection,
 ) error {
 	streams.mu.Lock()
 	defer streams.mu.Unlock()
 	streams.selection = append(streams.selection, slices.Clone(sites))
+	streams.exitSelections = append(streams.exitSelections, exit)
 	return nil
 }
 

@@ -276,6 +276,9 @@ type ManagementHandlerOptions struct {
 	// SiteRouterUse, when set, adds how many Devices use each router to one
 	// Site's read (mtcp-v1 §8.3).
 	SiteRouterUse SiteRouterUseCounter
+	// ExitNodeUse, when set, adds how many Devices use each exit node to one
+	// Exit Pool's read (mtcp-v1 §8.3).
+	ExitNodeUse ExitNodeUseCounter
 	// IdentityGroups lists and changes Workspace Identity Groups; nil answers 503.
 	IdentityGroups IdentityGroupManager
 	// DeviceTags lists and changes the device tag catalog and Device tags; nil answers 503.
@@ -346,6 +349,7 @@ type ManagementHandler struct {
 	exitPools                 ExitPoolManager
 	siteRouterObservations    distribution.ObservationLoader
 	siteRouterUse             SiteRouterUseCounter
+	exitNodeUse               ExitNodeUseCounter
 	identityGroups            IdentityGroupManager
 	deviceTags                DeviceTagManager
 	deviceLifecycle           DeviceLifecycleManager
@@ -427,6 +431,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		exitPools:                 options.ExitPools,
 		siteRouterObservations:    options.SiteRouterObservations,
 		siteRouterUse:             options.SiteRouterUse,
+		exitNodeUse:               options.ExitNodeUse,
 		identityGroups:            options.IdentityGroups,
 		deviceTags:                options.DeviceTags,
 		deviceLifecycle:           options.DeviceLifecycle,

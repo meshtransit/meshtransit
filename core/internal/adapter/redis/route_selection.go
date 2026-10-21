@@ -72,24 +72,35 @@ return 1
 var selectionVia = map[mapsession.RouteSelectionReason]string{
 	mapsession.RouteSelectionPrimary:       distribution.ViaPrimary,
 	mapsession.RouteSelectionLocalFailover: distribution.ViaLocalFailover,
+	mapsession.RouteSelectionSticky:        distribution.ViaSticky,
 	mapsession.RouteSelectionNone:          distribution.ViaNone,
 }
 
-// RecordRouteSelection stores a node's Site routers for its current
-// session, and counts it in each Site's routers.
+// RecordRouteSelection stores a node's Site routers and exit node for its
+// current session, and counts it in each Site's routers and in its Exit
+// Pool's exit nodes (distribution.ExitSelectionRefPrefix).
 func (client *Client) RecordRouteSelection(ctx context.Context, selection mapsession.RouteSelection) (bool, error) {
 	if ctx == nil || client == nil || client.recordRouteSelection == nil || client.loadSession == nil ||
 		!selection.NodeKey.IsValid() || selection.MachineFingerprint == [32]byte{} || selection.ReportedAt.IsZero() ||
-		!mapsession.ValidSiteSelection(selection.Sites) {
+		!mapsession.ValidSiteSelection(selection.Sites) ||
+		(selection.Exit != nil && !mapsession.ValidExitSelection(*selection.Exit)) {
 		return false, ErrInvalidOptions
 	}
-	rows := make([][3]string, 0, len(selection.Sites))
+	rows := make([][3]string, 0, len(selection.Sites)+1)
 	for _, site := range selection.Sites {
 		router := ""
 		if site.Router != (node.ID{}) {
 			router = site.Router.String()
 		}
 		rows = append(rows, [3]string{site.Ref, router, selectionVia[site.Reason]})
+	}
+	if exit := selection.Exit; exit != nil {
+		exitNode := ""
+		if exit.Node != (node.ID{}) {
+			exitNode = exit.Node.String()
+		}
+		rows = append(rows, [3]string{distribution.ExitSelectionRefPrefix + exit.Ref, exitNode,
+			selectionVia[exit.Reason]})
 	}
 	encoded, err := json.Marshal(rows)
 	if err != nil || len(encoded) > maximumRouteSelectionBytes {
@@ -123,23 +134,46 @@ func (client *Client) recordRouteSelectionForSession(ctx context.Context, select
 	return result == 1, err
 }
 
-// decodeRouteSelection reads [[ref, router, via], ...].
-func decodeRouteSelection(text string) ([]distribution.SiteRouter, error) {
+// decodeRouteSelection reads [[ref, router, via], ...]: the Site routers,
+// and the exit node from the one row of an Exit Pool.
+func decodeRouteSelection(text string) ([]distribution.SiteRouter, *distribution.ExitSelection, error) {
 	if text == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if len(text) > maximumRouteSelectionBytes {
-		return nil, errors.New("route selection is too large")
+		return nil, nil, errors.New("route selection is too large")
 	}
 	var rows [][3]string
-	if err := json.Unmarshal([]byte(text), &rows); err != nil || len(rows) > mapsession.MaximumRouteHealthSites {
-		return nil, errors.New("malformed route selection")
+	if err := json.Unmarshal([]byte(text), &rows); err != nil || len(rows) > mapsession.MaximumRouteHealthSites+1 {
+		return nil, nil, errors.New("malformed route selection")
 	}
 	sites := make([]distribution.SiteRouter, 0, len(rows))
+	var exit *distribution.ExitSelection
 	for _, row := range rows {
-		sites = append(sites, distribution.SiteRouter{Ref: row[0], Router: row[1], Via: row[2]})
+		pool, isExit := strings.CutPrefix(row[0], distribution.ExitSelectionRefPrefix)
+		if !isExit {
+			sites = append(sites, distribution.SiteRouter{Ref: row[0], Router: row[1], Via: row[2]})
+			continue
+		}
+		if exit != nil {
+			return nil, nil, errors.New("malformed route selection")
+		}
+		exit = &distribution.ExitSelection{Pool: pool, Node: row[1], Via: row[2]}
 	}
-	return sites, nil
+	return sites, exit, nil
+}
+
+// CountExitNodes counts, per exit node, the consumers that reported using it
+// for the pool within distribution.RouteSelectionStale of now, and how many
+// of those chose it themselves (local failover); a consumer keeping a node
+// (sticky) counts as using it.
+func (client *Client) CountExitNodes(ctx context.Context, poolRef string, now time.Time) (
+	map[string]distribution.RouterUse, error,
+) {
+	if poolRef == "" {
+		return nil, ErrInvalidOptions
+	}
+	return client.CountSiteRouters(ctx, distribution.ExitSelectionRefPrefix+poolRef, now)
 }
 
 // CountSiteRouters counts, per router (Device public ID), the nodes that

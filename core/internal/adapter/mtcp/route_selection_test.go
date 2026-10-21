@@ -119,3 +119,57 @@ func TestConversationValidatesExitSelection(t *testing.T) {
 		t.Fatalf("an exit-only node stored Site selections %v", f.streams.selection)
 	}
 }
+
+func TestReadExitSelection(t *testing.T) {
+	t.Parallel()
+	exitNode := "01890f00-0000-7000-8000-000000000701"
+	read := func(reason mtcpv1.RouteSelectionReport_ExitSelection_Reason, used string) (*mapsession.ExitSelection, bool) {
+		return readExitSelection(&mtcpv1.RouteSelectionReport_ExitSelection{PoolRef: "p-main", ExitNode: used,
+			Reason: reason})
+	}
+	if exit, ok := readExitSelection(nil); !ok || exit != nil {
+		t.Fatalf("absent = %+v, %v", exit, ok)
+	}
+	for reason, want := range map[mtcpv1.RouteSelectionReport_ExitSelection_Reason]mapsession.RouteSelectionReason{
+		mtcpv1.RouteSelectionReport_ExitSelection_PRIMARY:        mapsession.RouteSelectionPrimary,
+		mtcpv1.RouteSelectionReport_ExitSelection_LOCAL_FAILOVER: mapsession.RouteSelectionLocalFailover,
+		mtcpv1.RouteSelectionReport_ExitSelection_STICKY:         mapsession.RouteSelectionSticky,
+	} {
+		exit, ok := read(reason, exitNode)
+		if !ok || exit.Ref != "p-main" || exit.Node.String() != exitNode || exit.Reason != want {
+			t.Errorf("%v = %+v, %v", reason, exit, ok)
+		}
+	}
+	if exit, ok := read(mtcpv1.RouteSelectionReport_ExitSelection_NONE, ""); !ok || exit.Node != (node.ID{}) {
+		t.Fatalf("none = %+v, %v", exit, ok)
+	}
+	// Not canonical: upper case.
+	if _, ok := read(mtcpv1.RouteSelectionReport_ExitSelection_PRIMARY, "01890F00-0000-7000-8000-000000000701"); ok {
+		t.Fatal("a non-canonical exit node was read")
+	}
+}
+
+func TestSelectedReportKeepsTheSitesAndExitCoreSent(t *testing.T) {
+	t.Parallel()
+	router, _ := node.ParseID("01890f00-0000-7000-8000-000000000402")
+	exitNode, _ := node.ParseID("01890f00-0000-7000-8000-000000000701")
+	pools := []mapsession.ExitPoolRoute{{Ref: "p-main", Candidates: []node.ID{exitNode}}}
+	exit := &mapsession.ExitSelection{Ref: "p-main", Node: exitNode, Reason: mapsession.RouteSelectionSticky}
+	// An exit-only node: no Sites, its exit node.
+	report := selectedReport(nil, exit, nil, pools)
+	if len(report.sites) != 0 || report.exit == nil || *report.exit != *exit {
+		t.Fatalf("exit-only report = %+v", report)
+	}
+	// Both: the Site router and the exit node, each checked against what was sent.
+	sites := []mapsession.SiteSelection{{Ref: "a", Router: router, Reason: mapsession.RouteSelectionPrimary}}
+	report = selectedReport(sites, exit, []mapsession.SiteRoute{{Ref: "a", Candidates: []node.ID{router}}}, pools)
+	if len(report.sites) != 1 || report.exit == nil {
+		t.Fatalf("both = %+v", report)
+	}
+	// A pool the session was not sent is dropped; its Sites stay.
+	report = selectedReport(sites, &mapsession.ExitSelection{Ref: "p-other", Node: exitNode,
+		Reason: mapsession.RouteSelectionPrimary}, []mapsession.SiteRoute{{Ref: "a", Candidates: []node.ID{router}}}, pools)
+	if len(report.sites) != 1 || report.exit != nil {
+		t.Fatalf("unsent pool = %+v", report)
+	}
+}

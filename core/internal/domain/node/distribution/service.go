@@ -84,6 +84,9 @@ type Observation struct {
 	// Site and RouteSelectionAt when Core received it.
 	RouteSelection   []SiteRouter
 	RouteSelectionAt time.Time
+	// ExitSelection is the exit node the consumer last reported using,
+	// received with its Site routers; nil: none.
+	ExitSelection *ExitSelection
 }
 
 // PeerLimit is how many peers a limited map carried and how many the
@@ -109,7 +112,7 @@ func (observation Observation) IsValid() bool {
 			observation.Connectivity == nil && observation.PeerLimit.IsZero() &&
 			observation.Routes.IsZero() && observation.EnforcedRoutes.IsZero() &&
 			observation.RouteHealth == nil && observation.RouteHealthAt.IsZero() && observation.ExitHealth == nil &&
-			observation.RouteSelection == nil && observation.RouteSelectionAt.IsZero()
+			observation.RouteSelection == nil && observation.RouteSelectionAt.IsZero() && observation.ExitSelection == nil
 	}
 	if !observation.PeerLimit.IsZero() && !observation.PeerLimit.IsValid() {
 		return false
@@ -123,7 +126,8 @@ func (observation Observation) IsValid() bool {
 	return observation.SessionGeneration > 0 && observation.NetworkRevision > 0 &&
 		observation.PolicyRevision >= 0 && !observation.DeliveredAt.IsZero() &&
 		!observation.SeenAt.Before(observation.DeliveredAt) && validEnforcement(observation) &&
-		validRoutes(observation) && validExitHealth(observation)
+		validRoutes(observation) && validExitHealth(observation) &&
+		validExitSelection(observation)
 }
 
 // TargetDevice is a Device that should hold the current revision.
@@ -174,6 +178,9 @@ type Device struct {
 	// RouteSelection is the router the Device uses for each Site it
 	// reaches, empty when it reported none within RouteSelectionStale.
 	RouteSelection []SiteRouter
+	// ExitSelection is the exit node the Device uses, nil when it reported
+	// none within RouteSelectionStale.
+	ExitSelection *ExitSelection
 }
 
 // Report is one Device's standing against the Network's current revisions.
@@ -234,6 +241,9 @@ func (service *Service) ReadDevice(ctx context.Context, session accountsession.S
 	report.Device.RouteEnforcement = ClassifyRouteEnforcement(observations[0], now)
 	report.Device.RouteHealth, _ = CurrentRouteHealth(observations[0], now)
 	report.Device.RouteSelection, _ = CurrentRouteSelection(observations[0], now)
+	if exit, current := CurrentExitSelection(observations[0], now); current {
+		report.Device.ExitSelection = &exit
+	}
 	report.ObservationsAvailable = true
 	return report, nil
 }

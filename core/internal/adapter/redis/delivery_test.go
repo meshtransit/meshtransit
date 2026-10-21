@@ -549,3 +549,61 @@ func TestDecodeObservationDropsExitHealthWithoutItsTime(t *testing.T) {
 		t.Fatalf("decodeObservation() = %+v, %v", observation, err)
 	}
 }
+
+// A consumer's exit node rides with its Site routers, under the pool's
+// reference with the exit prefix, and is counted per pool the same way.
+func TestClientRecordsExitSelectionWithItsSites(t *testing.T) {
+	t.Parallel()
+	nodeID := testDeliveryNode(t)
+	session := []any{nodeID.String(), "4", hex.EncodeToString(testMachine[:])}
+	exitNode, _ := node.ParseID("01890f00-0000-7000-8000-000000000701")
+	var gotEncoded string
+	client := &Client{
+		loadSession: func(context.Context, string) ([]any, error) { return session, nil },
+		recordRouteSelection: func(_ context.Context, _ string, _ int64, encoded string, _ int64, _ string) (int64, error) {
+			gotEncoded = encoded
+			return 1, nil
+		},
+		metrics: newRedisMetrics(1, nil),
+	}
+	selection := mapsession.RouteSelection{NodeKey: testNodeKey, MachineFingerprint: testMachine,
+		ReportedAt: time.UnixMilli(1759924803000),
+		Sites:      []mapsession.SiteSelection{{Ref: "prod", Reason: mapsession.RouteSelectionNone}},
+		Exit:       &mapsession.ExitSelection{Ref: "pool", Node: exitNode, Reason: mapsession.RouteSelectionSticky}}
+	if stored, err := client.RecordRouteSelection(t.Context(), selection); err != nil || !stored ||
+		gotEncoded != `[["prod","","none"],["exit:pool","01890f00-0000-7000-8000-000000000701","sticky"]]` {
+		t.Fatalf("RecordRouteSelection() = %t, %v; %s", stored, err, gotEncoded)
+	}
+	invalid := selection
+	invalid.Exit = &mapsession.ExitSelection{Ref: "pool", Reason: mapsession.RouteSelectionSticky}
+	if _, err := client.RecordRouteSelection(t.Context(), invalid); !errors.Is(err, ErrInvalidOptions) {
+		t.Fatalf("a sticky exit without a node = %v", err)
+	}
+
+	sites, exit, err := decodeRouteSelection(gotEncoded)
+	if err != nil || len(sites) != 1 || sites[0].Ref != "prod" || exit == nil ||
+		*exit != (distribution.ExitSelection{Pool: "pool", Node: exitNode.String(), Via: distribution.ViaSticky}) {
+		t.Fatalf("decodeRouteSelection() = %+v, %+v, %v", sites, exit, err)
+	}
+	if _, _, err := decodeRouteSelection(`[["exit:a","","none"],["exit:b","","none"]]`); err == nil {
+		t.Fatal("two exit rows were read")
+	}
+
+	now := time.UnixMilli(1759924900000)
+	fresh := strconv.FormatInt(now.Add(-time.Minute).UnixMilli(), 10)
+	client.loadSiteSelection = func(_ context.Context, key string, _ int) (map[string]string, error) {
+		if key != siteSelectionPrefix+"exit:pool" {
+			t.Fatalf("read %q", key)
+		}
+		return map[string]string{"n1": "e1|primary|" + fresh, "n2": "e1|sticky|" + fresh,
+			"n3": "e2|local_failover|" + fresh}, nil
+	}
+	uses, err := client.CountExitNodes(t.Context(), "pool", now)
+	if err != nil || uses["e1"] != (distribution.RouterUse{Clients: 2}) ||
+		uses["e2"] != (distribution.RouterUse{Clients: 1, LocalFailover: 1}) {
+		t.Fatalf("CountExitNodes() = %+v, %v", uses, err)
+	}
+	if _, err := client.CountExitNodes(t.Context(), "", now); !errors.Is(err, ErrInvalidOptions) {
+		t.Fatalf("CountExitNodes(\"\") = %v", err)
+	}
+}

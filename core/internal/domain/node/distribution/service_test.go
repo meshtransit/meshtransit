@@ -351,3 +351,30 @@ func TestServiceReadsAFullPageOfOneHundred(t *testing.T) {
 		t.Fatalf("ReadPage() = %d rows, %v (reads %d)", len(page.Devices), err, reader.callCount)
 	}
 }
+
+func TestCurrentExitSelection(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, time.October, 21, 5, 0, 0, 0, time.UTC)
+	exit := ExitSelection{Pool: "pool", Node: "01890f00-0000-7000-8000-000000000701", Via: ViaPrimary}
+	observation := Observation{Known: true, RouteSelectionAt: now.Add(-time.Minute), ExitSelection: &exit}
+	if got, ok := CurrentExitSelection(observation, now); !ok || got != exit {
+		t.Fatalf("CurrentExitSelection() = %+v, %v", got, ok)
+	}
+	observation.RouteSelectionAt = now.Add(-RouteSelectionStale - time.Second)
+	if _, ok := CurrentExitSelection(observation, now); ok {
+		t.Fatal("a stale exit selection is current")
+	}
+	for _, invalid := range []ExitSelection{
+		{Pool: "pool", Via: ViaPrimary},
+		{Pool: "pool", Node: exit.Node, Via: ViaNone},
+		{Pool: "", Node: exit.Node, Via: ViaPrimary},
+		{Pool: "pool", Node: exit.Node, Via: "elsewhere"},
+	} {
+		if validExitSelection(Observation{RouteSelectionAt: now, ExitSelection: &invalid}) {
+			t.Errorf("valid: %+v", invalid)
+		}
+	}
+	if validExitSelection(Observation{ExitSelection: &exit}) {
+		t.Fatal("an exit selection without its time is valid")
+	}
+}

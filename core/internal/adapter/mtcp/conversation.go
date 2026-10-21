@@ -139,7 +139,7 @@ func (application *Application) Open(session *Session) Conversation {
 		enforcementPacing: enforcementPacing{budget: newRateBudget(enforcementBurst, enforcementRate)},
 		routeOfferPacing:  routeOfferPacing{budget: newRateBudget(routeOfferBurst, routeOfferRate)},
 		routeHealthPacing: routeHealthPacing{budget: newRateBudget(routeHealthBurst, routeHealthRate)},
-		routeSelectionPacing: latestPacing[[]mapsession.SiteSelection]{
+		routeSelectionPacing: latestPacing[routeSelectionReport]{
 			budget: newRateBudget(routeSelectionBurst, routeSelectionRate),
 		}}
 }
@@ -165,7 +165,7 @@ type conversation struct {
 	// routeHealthPacing paces RouteHealthReports.
 	routeHealthPacing routeHealthPacing
 	// routeSelectionPacing paces RouteSelectionReports.
-	routeSelectionPacing latestPacing[[]mapsession.SiteSelection]
+	routeSelectionPacing latestPacing[routeSelectionReport]
 	// lastConnectivity is the connectivity last stored for this session.
 	// Only a store claimed by endpointPacing reads and writes it, without
 	// the lock: busy runs one store at a time, and claiming and finishing

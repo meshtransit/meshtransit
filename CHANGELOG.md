@@ -5,6 +5,17 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: who uses which exit node. A consumer's exit selection
+  (`RouteSelectionReport.exit`, of a pool it was sent, with a candidate) is
+  stored with its Site routers: in the node's delivery record and counted
+  per pool under `meshtransit:v1:site-selection:exit:<pool>` (no new Redis
+  key prefix). One Exit Pool's read (`GET …/exit-pools/{p}`) gives each
+  exit node its current `health` (`state`, `code`, `families`,
+  `reported_at`, from the last 30 seconds) and `consumers` /
+  `local_failover_consumers` (last three minutes); a Device's status gives
+  its `exit` (`exit_pool_id`, `exit_node_device_id`, `via`: `primary`,
+  `local_failover`, `sticky` or `none`). Both degrade to absent when Redis
+  cannot be read within a second.
 - Core: the Console Device list takes `include=status` (Console backlog D-1).
   Each row of `GET …/networks/{n}/devices` then carries its connection and
   policy status (`in_sync`, `behind`, `offline`, `never_connected`,
@@ -119,7 +130,8 @@ merge (2026-10-09) are kept below.
   (`meshtransit_mtcp_exit_filter_groups_omitted_total`). Exit nodes and
   Site routers share the peer limit. Exit nodes report their pool's health
   in `RouteHealthReport.exit`, which the Exit Pool election reads; a node's
-  exit selection is validated and not stored yet.
+  exit selection was validated and not stored yet (stored since: see
+  above).
 - Core: exit nodes offer and Core elects (schemas 203 and 204). A node
   says in MTCP `Hostinfo.exit_offered` whether its own configuration offers
   to be an exit node (only with `router.exit.v1`); a change is recorded as

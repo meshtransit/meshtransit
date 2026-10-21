@@ -8,11 +8,13 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"meshtransit.net/core/internal/domain/exitpool"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node/distribution"
 	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/domain/workspace"
 )
@@ -223,6 +225,30 @@ type exitNodeBody struct {
 	Offered    bool   `json:"offered"`
 	Eligible   bool   `json:"eligible"`
 	AddedAt    string `json:"added_at"`
+	// Health comes with one pool's read only, while the node's last report
+	// of this pool is current.
+	Health *exitNodeHealthBody `json:"health,omitempty"`
+	// Consumers and LocalFailoverConsumers, with one pool's read, count the
+	// Devices that reported using the node in the last three minutes, and
+	// those that chose it themselves while the primary did not answer.
+	Consumers              *int `json:"consumers,omitempty"`
+	LocalFailoverConsumers *int `json:"local_failover_consumers,omitempty"`
+}
+
+// ExitNodeUseCounter counts, per exit node of a pool, the consumers that
+// report using it.
+type ExitNodeUseCounter interface {
+	CountExitNodes(ctx context.Context, poolRef string, now time.Time) (map[string]distribution.RouterUse, error)
+}
+
+// exitNodeHealthBody is what an exit node measures of the pool it serves:
+// State is ok, degraded or failed, Code its reason, Families the address
+// families it reaches the Internet in (v4, v6 or both; empty when unknown).
+type exitNodeHealthBody struct {
+	State      string `json:"state"`
+	Code       string `json:"code"`
+	Families   string `json:"families"`
+	ReportedAt string `json:"reported_at"`
 }
 
 type exitPoolBody struct {
@@ -267,6 +293,55 @@ func newExitPoolBody(stored exitpool.Pool) exitPoolBody {
 		})
 	}
 	return body
+}
+
+// addExitNodeHealth adds to one pool's read what its exit nodes report of
+// it. Delivery records are operational: when they cannot be read within a
+// second the pool is answered without them.
+func (handler *ManagementHandler) addExitNodeHealth(ctx context.Context, body *exitPoolBody, stored exitpool.Pool) {
+	if nilContinuationDependency(handler.siteRouterObservations) || len(stored.Nodes) == 0 {
+		return
+	}
+	ids := make([]node.ID, 0, len(stored.Nodes))
+	for _, exitNode := range stored.Nodes {
+		ids = append(ids, exitNode.DeviceID)
+	}
+	loadCtx, cancel := context.WithTimeout(ctx, siteRouterObservationTimeout)
+	defer cancel()
+	observations, err := handler.siteRouterObservations.LoadObservations(loadCtx, ids)
+	if err != nil || len(observations) != len(ids) {
+		handler.logger.DebugContext(ctx, "exit node delivery records unavailable", "error", err)
+		return
+	}
+	now, poolID := time.Now(), stored.ID.String()
+	for index := range body.Nodes {
+		health, current := distribution.CurrentExitHealth(observations[index], now)
+		if !current || health.Ref != poolID {
+			continue
+		}
+		body.Nodes[index].Health = &exitNodeHealthBody{State: health.State, Code: health.Code,
+			Families: health.Families, ReportedAt: managementTime(observations[index].RouteHealthAt)}
+	}
+}
+
+// addExitNodeUse adds how many Devices use each exit node of the pool;
+// nothing when the counts cannot be read within a second.
+func (handler *ManagementHandler) addExitNodeUse(ctx context.Context, body *exitPoolBody, stored exitpool.Pool) {
+	if nilContinuationDependency(handler.exitNodeUse) || len(stored.Nodes) == 0 {
+		return
+	}
+	loadCtx, cancel := context.WithTimeout(ctx, siteRouterObservationTimeout)
+	defer cancel()
+	uses, err := handler.exitNodeUse.CountExitNodes(loadCtx, stored.ID.String(), time.Now())
+	if err != nil {
+		handler.logger.DebugContext(ctx, "exit node use unavailable", "error", err)
+		return
+	}
+	for index := range body.Nodes {
+		use := uses[body.Nodes[index].DeviceID]
+		consumers, local := use.Clients, use.LocalFailover
+		body.Nodes[index].Consumers, body.Nodes[index].LocalFailoverConsumers = &consumers, &local
+	}
 }
 
 // parseExitPoolDefinition reads a whole definition; PATCH replaces it whole
@@ -392,6 +467,11 @@ func (handler *ManagementHandler) readExitPools(ctx context.Context, response ht
 			CorrelationID string `json:"correlation_id"`
 		}
 		output.Data.Pool, output.Data.CanManage = newExitPoolBody(reading.Pool), reading.CanManage
+		// One second for both: a slow Redis delays a pool's read by at most that.
+		operational, cancel := context.WithTimeout(ctx, siteRouterObservationTimeout)
+		handler.addExitNodeHealth(operational, &output.Data.Pool, reading.Pool)
+		handler.addExitNodeUse(operational, &output.Data.Pool, reading.Pool)
+		cancel()
 		if primary := reading.Primary; primary != nil {
 			output.Data.Pool.Primary = &sitePrimaryBody{DeviceID: optionalDeviceText(primary.Device),
 				Generation: primary.Generation, Reason: primary.Reason, ElectedAt: managementTime(primary.ElectedAt)}
