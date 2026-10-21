@@ -240,7 +240,7 @@ test("use another account ends this browser session then restarts sign-in", asyn
     ["/auth/v1/session/prepare", "/auth/v1/session/logout"]);
   for (const call of instance.calls) {
     assert.equal(call.init.method, "POST");
-    assert.equal(call.init.mode, "same-origin");
+    assert.equal(call.init.mode, undefined);
     assert.equal(call.init.credentials, "same-origin");
     assert.equal(call.init.redirect, "error");
     assert.equal(call.init.body, "{}");

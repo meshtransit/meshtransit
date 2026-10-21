@@ -34,8 +34,10 @@
       if (note) note.textContent = "Signing out of this browser.";
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 15000);
+      // Sent the way Console sends them: Core admits session calls in cors
+      // mode only. The relative path keeps them on this origin.
       const post = (destination, extra) => fetch(destination, {
-        method: "POST", mode: "same-origin", credentials: "same-origin",
+        method: "POST", credentials: "same-origin",
         redirect: "error", cache: "no-store", referrerPolicy: "no-referrer",
         headers: { Accept: "application/json", "Content-Type": "application/json",
           "X-MeshTransit-Session": "v1", ...extra },
