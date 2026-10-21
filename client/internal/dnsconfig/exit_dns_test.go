@@ -145,6 +145,7 @@ func TestExitForwarderAnswersFromTheHostResolver(t *testing.T) {
 	}
 	forwarder := NewExitForwarder(nil, func() []netip.Prefix { return nil })
 	forwarder.port, forwarder.upstreamPort, forwarder.resolvConf = 0, upstream.Port(), resolvConf
+	forwarder.resolvedConf = filepath.Join(t.TempDir(), "absent") // the loopback resolver is no resolved stub here
 	forwarder.Configure([]netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil)
 	t.Cleanup(forwarder.Close)
 	forwarder.lifecycle.Lock()
@@ -241,6 +242,7 @@ func TestExitForwarderBoundsWhatOneConsumerHolds(t *testing.T) {
 func TestExitForwarderFailsOnlyAfterAQuietWindow(t *testing.T) {
 	t.Parallel()
 	forwarder := NewExitForwarder(nil, nil)
+	forwarder.configured = []netip.AddrPort{netip.MustParseAddrPort("9.9.9.9:53")}
 	forwarder.running, forwarder.answeredAt = true, time.Now()
 	for range exitFailuresToFail {
 		forwarder.noteUpstream(false)
@@ -255,5 +257,73 @@ func TestExitForwarderFailsOnlyAfterAQuietWindow(t *testing.T) {
 	forwarder.noteUpstream(true)
 	if forwarder.Failing() {
 		t.Fatal("still failing after an answer")
+	}
+}
+
+// A question for the exit network's own names (a single label, a search
+// domain of the host, a suffix no public resolver serves) is answered
+// NXDOMAIN without asking: its resolver would tell a consumer the
+// network's hosts and services, through any record type.
+func TestExitForwarderKeepsTheExitNetworksOwnNamesOfAnyType(t *testing.T) {
+	t.Parallel()
+	resolvConf := filepath.Join(t.TempDir(), "resolv.conf")
+	if err := os.WriteFile(resolvConf, []byte("nameserver 192.0.2.1\nsearch corp.example.com lab.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	forwarder := NewExitForwarder(nil, func() []netip.Prefix { return nil })
+	forwarder.resolvConf, forwarder.resolvedConf = resolvConf, filepath.Join(t.TempDir(), "absent")
+	consumer := netip.MustParseAddr("100.64.0.4")
+	for _, question := range []struct {
+		name string
+		kind dnsmessage.Type
+	}{
+		{"fileserver.", dnsmessage.TypeA},
+		{"_ldap._tcp.corp.example.com.", dnsmessage.TypeSRV},
+		{"corp.example.com.", dnsmessage.TypeNS},
+		{"mail.lab.", dnsmessage.TypeMX},
+		{"printer.local.", dnsmessage.TypeTXT},
+		{"git.internal.", dnsmessage.TypeAAAA},
+		{"router.home.arpa.", dnsmessage.TypeA},
+	} {
+		response := forwarder.answer(t.Context(), packQuery(t, question.name, question.kind), "udp", consumer)
+		if message := unpackMessage(t, response); message.RCode != dnsmessage.RCodeNameError {
+			t.Errorf("%s %v: %v, want NXDOMAIN", question.name, question.kind, message.RCode)
+		}
+	}
+	if forwarder.failures != 0 {
+		t.Fatal("a local name was asked upstream")
+	}
+}
+
+// An exit node whose resolv.conf names only systemd-resolved's stub asks
+// the resolvers behind it, with resolved's search domains; another kind
+// of local stub stays; without any resolver the forwarder reports failing.
+func TestExitForwarderAsksTheResolversBehindTheStub(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	stub, behind := filepath.Join(dir, "resolv.conf"), filepath.Join(dir, "resolved.conf")
+	write := func(path, text string) {
+		if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(stub, "nameserver 127.0.0.53\nsearch lan\n")
+	write(behind, "nameserver 10.0.0.1\nnameserver 1.1.1.1\nnameserver 127.0.0.1\nsearch office.example\n")
+	servers, domains := hostResolvers(stub, behind, 53)
+	if len(servers) != 2 || servers[0].Addr() != netip.MustParseAddr("10.0.0.1") || len(domains) != 2 ||
+		domains[1] != "office.example" {
+		t.Fatalf("servers %v, domains %v", servers, domains)
+	}
+	if servers, _ := hostResolvers(stub, filepath.Join(dir, "absent"), 53); len(servers) != 1 ||
+		!servers[0].Addr().IsLoopback() {
+		t.Fatalf("without resolved: %v, want the local stub", servers)
+	}
+	empty := filepath.Join(dir, "empty.conf")
+	write(empty, "# no resolver\n")
+	forwarder := NewExitForwarder(nil, func() []netip.Prefix { return nil })
+	forwarder.resolvConf, forwarder.resolvedConf = empty, filepath.Join(dir, "absent")
+	forwarder.running, forwarder.answeredAt = true, time.Now()
+	if !forwarder.Failing() {
+		t.Fatal("a forwarder without any resolver was not failing")
 	}
 }

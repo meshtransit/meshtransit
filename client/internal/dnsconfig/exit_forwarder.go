@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
-	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -18,7 +17,6 @@ import (
 	"golang.org/x/net/dns/dnsmessage"
 
 	"meshtransit.net/client/internal/netadmin"
-	"meshtransit.net/client/internal/overlayframe"
 	"meshtransit.net/shared/internet"
 )
 
@@ -61,10 +59,12 @@ type ExitForwarder struct {
 	logger *slog.Logger
 	// local returns the host's own addresses and attached subnets.
 	local func() []netip.Prefix
-	// port, upstreamPort and resolvConf are fixed but for tests.
+	// port, upstreamPort, resolvConf and resolvedConf are fixed but for
+	// tests.
 	port         uint16
 	upstreamPort uint16
 	resolvConf   string
+	resolvedConf string
 
 	// lifecycle serializes Configure and owns the listeners.
 	lifecycle sync.Mutex
@@ -81,6 +81,7 @@ type ExitForwarder struct {
 	running    bool
 	configured []netip.AddrPort
 	system     []netip.AddrPort
+	domains    []string
 	private    []netip.Prefix
 	readAt     time.Time
 	buckets    map[netip.Addr]*exitBucket
@@ -107,6 +108,7 @@ func NewExitForwarder(logger *slog.Logger, local func() []netip.Prefix) *ExitFor
 	return &ExitForwarder{
 		logger: logger, local: local, buckets: map[netip.Addr]*exitBucket{}, held: map[netip.Addr]int{},
 		port: netadmin.ExitDNSPort, upstreamPort: 53, resolvConf: exitSystemResolvers,
+		resolvedConf: exitResolvedResolvers,
 		slots: make(chan struct{}, maxConcurrentQueries), tcpSlots: make(chan struct{}, maxTCPConnections),
 	}
 }
@@ -153,16 +155,17 @@ func (f *ExitForwarder) Configure(addresses, upstreams []netip.Addr) {
 	}
 }
 
-// Failing reports whether the forwarder could not listen, or its upstreams
-// failed the last questions in a row and answered none for
-// exitFailingAfter.
+// Failing reports whether the forwarder could not listen, has no upstream
+// to ask, or its upstreams failed the last questions in a row and answered
+// none for exitFailingAfter.
 func (f *ExitForwarder) Failing() bool {
 	if f == nil {
 		return false
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.startFailed ||
+	f.refreshLocked(time.Now())
+	return f.startFailed || (f.running && len(f.configured) == 0 && len(f.system) == 0) ||
 		(f.running && f.failures >= exitFailuresToFail && time.Since(f.answeredAt) >= exitFailingAfter)
 }
 
@@ -333,7 +336,14 @@ func (f *ExitForwarder) answer(ctx context.Context, query []byte, transport stri
 		}
 		return formatError(query)
 	}
-	upstreams, private, admitted := f.prepare(consumer, time.Now())
+	upstreams, private, domains, admitted := f.prepare(consumer, time.Now())
+	if name := strings.TrimSuffix(strings.ToLower(question.Name.String()), "."); question.Type != dnsmessage.TypePTR &&
+		exitLocalName(name, domains) {
+		// The exit network's own names stay its own: asking its resolver
+		// for them would tell a consumer its hosts and services.
+		response, _ := negativeResponse(message, question, dnsmessage.RCodeNameError, ".", Plan{})
+		return response
+	}
 	if question.Type == dnsmessage.TypePTR {
 		// The exit network's own names stay its own.
 		if address, reverse := parseReverseName(strings.TrimSuffix(strings.ToLower(question.Name.String()), ".")); reverse &&
@@ -370,21 +380,29 @@ func (f *ExitForwarder) answer(ctx context.Context, query []byte, transport stri
 	return limited
 }
 
-// prepare charges consumer one question and returns the upstreams and the
-// host's own networks, read again when stale.
-func (f *ExitForwarder) prepare(consumer netip.Addr, now time.Time) ([]netip.AddrPort, []netip.Prefix, bool) {
+// prepare charges consumer one question and returns the upstreams, the
+// host's own networks and its search domains, read again when stale.
+func (f *ExitForwarder) prepare(consumer netip.Addr, now time.Time) ([]netip.AddrPort, []netip.Prefix, []string,
+	bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if now.Sub(f.readAt) >= exitUpstreamRefresh {
-		f.readAt = now
-		f.private = f.local()
-		f.system = systemResolvers(f.resolvConf, f.upstreamPort)
-	}
+	f.refreshLocked(now)
 	upstreams := f.configured
 	if len(upstreams) == 0 {
 		upstreams = f.system
 	}
-	return slices.Clone(upstreams), slices.Clone(f.private), f.chargeLocked(consumer, now)
+	return slices.Clone(upstreams), slices.Clone(f.private), slices.Clone(f.domains), f.chargeLocked(consumer, now)
+}
+
+// refreshLocked reads the host's resolvers, search domains and networks
+// again when stale.
+func (f *ExitForwarder) refreshLocked(now time.Time) {
+	if now.Sub(f.readAt) < exitUpstreamRefresh {
+		return
+	}
+	f.readAt = now
+	f.private = f.local()
+	f.system, f.domains = hostResolvers(f.resolvConf, f.resolvedConf, f.upstreamPort)
 }
 
 func (f *ExitForwarder) chargeLocked(consumer netip.Addr, now time.Time) bool {
@@ -420,32 +438,6 @@ func (f *ExitForwarder) noteUpstream(answered bool) {
 		return
 	}
 	f.failures++
-}
-
-// systemResolvers reads the nameservers of path, at most maxExitUpstreams,
-// other than any in the mesh, which would ask the mesh again.
-func systemResolvers(path string, port uint16) []netip.AddrPort {
-	file, err := os.Open(path) //nolint:gosec // G304: a fixed system path
-	if err != nil {
-		return nil
-	}
-	defer func() { _ = file.Close() }()
-	var resolvers []netip.AddrPort
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() && len(resolvers) < maxExitUpstreams {
-		fields := strings.Fields(scanner.Text())
-		if len(fields) < 2 || fields[0] != "nameserver" {
-			continue
-		}
-		address, err := netip.ParseAddr(fields[1])
-		address = address.Unmap()
-		if err != nil || address.Zone() != "" ||
-			overlayframe.Contains(netip.PrefixFrom(address, address.BitLen())) {
-			continue
-		}
-		resolvers = append(resolvers, netip.AddrPortFrom(address, port))
-	}
-	return resolvers
 }
 
 // interfacePrefixes returns every address of the host's interfaces as a
