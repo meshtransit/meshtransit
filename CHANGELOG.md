@@ -5,6 +5,18 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core, Console and clients: spread Exit Pools (schema 210, exit node design
+  §16), behind `MESHTRANSIT_EXIT_SPREAD_ENABLED`. A pool's `mode` is
+  `failover` (as before) or `spread`: the worker elects a serving set (the
+  healthy exit nodes of the best priority; one with `conntrack_high` or
+  `egress_v4_failed` for a minute leaves until five calm minutes; at most
+  one change every 30 s; audited `exit_pool.serving_changed`), and maps give
+  each consumer its own exit node by rendezvous hashing with the pool's
+  secret salt, in its own candidate order, so failover spreads too. MTCP
+  `ExitPool.mode` and `ExitCandidate.draining`. Clients move back to the exit
+  node Core assigned (spread) or off a draining one once nothing went
+  through the exit for five minutes. The Console sets the mode and shows the
+  serving set, Devices not yet moved and its changes.
 - Core and Console: each Device's platform and public addresses. Core
   keeps the platform its client names in the MTCP ClientHello (`os`,
   `os_version`, `arch`, client version) and up to four public addresses of

@@ -65,6 +65,10 @@ type Options struct {
 	// ExitNodes reads each Network's Exit Pools with its shared policy
 	// (MESHTRANSIT_EXIT_NODES_ENABLED), at the same peer limit.
 	ExitNodes bool
+	// ExitSpread reads spread pools' serving sets so maps assign consumers
+	// their own exit nodes (MESHTRANSIT_EXIT_SPREAD_ENABLED); off, every
+	// pool is read as failover.
+	ExitSpread bool
 }
 
 // Store loads exact-scope snapshots in read-only repeatable-read transactions.

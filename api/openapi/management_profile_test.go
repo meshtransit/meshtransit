@@ -66,13 +66,13 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 	}
 	basePaths, paths := profileMap(t, base, "paths"), profileMap(t, console, "paths")
 	// The private document holds 23 bearer operations moved onto the cookie
-	// and 80 cookie-only Console operations (8 of them the Exit Pools);
+	// and 81 cookie-only Console operations (9 of them the Exit Pools);
 	// another count means an API was added or dropped without review.
 	operations := 0
 	for _, item := range paths {
 		operations += len(item.(map[string]any))
 	}
-	if len(basePaths) != 33 || operations != 103 {
+	if len(basePaths) != 33 || operations != 104 {
 		t.Fatal("private profile introduced another product resource API", len(basePaths), operations)
 	}
 	for path, raw := range paths {

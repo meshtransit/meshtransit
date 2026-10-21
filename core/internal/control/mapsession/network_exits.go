@@ -38,6 +38,12 @@ type ExitPool struct {
 	// the first active exit node by priority is.
 	Elected bool
 	Primary int64
+	// Spread pools give each consumer its own exit node of Serving, the
+	// Devices Core elected to serve (schema 210), hashed with Salt; Spread
+	// is false while MESHTRANSIT_EXIT_SPREAD_ENABLED is off.
+	Spread  bool
+	Salt    [16]byte
+	Serving []int64
 }
 
 // ExitNode is one exit node of an active pool, with the facts that decide
@@ -72,6 +78,12 @@ type ExitPoolRoute struct {
 	Primary    node.ID // zero: none
 	Generation int64
 	Status     RouteStatus
+	// Spread is true when Primary is the consumer's own exit node of a
+	// spread pool and Candidates its own order (exit node design §16.4).
+	Spread bool
+	// Draining are the candidates an administrator is taking out of the
+	// pool.
+	Draining []node.ID
 }
 
 // ServedExit is the Exit Pool an exit node forwards to the Internet for.
@@ -102,7 +114,7 @@ type exitPoolEntry struct {
 func (view RouteView) Exits() []ExitPoolRoute {
 	cloned := make([]ExitPoolRoute, len(view.exits))
 	for index, route := range view.exits {
-		route.Candidates = slices.Clone(route.Candidates)
+		route.Candidates, route.Draining = slices.Clone(route.Candidates), slices.Clone(route.Draining)
 		cloned[index] = route
 	}
 	return cloned
@@ -142,7 +154,10 @@ func (index *routeIndex) indexExits(params NetworkPolicyParams) bool {
 	index.exitOf = make(map[int64]int64)
 	for _, value := range index.poolList {
 		if value.Pool <= 0 || value.Ref == "" || len(value.Ref) > 64 || value.Name == "" || value.Primary < 0 ||
-			(!value.Elected && value.Primary != 0) || value.ConntrackPerConsumer <= 0 {
+			(!value.Elected && value.Primary != 0) || value.ConntrackPerConsumer <= 0 ||
+			len(value.Serving) > MaximumExitCandidates || slices.ContainsFunc(value.Serving, func(device int64) bool {
+			return device <= 0
+		}) {
 			return false
 		}
 		if _, duplicate := index.pools[value.Pool]; duplicate {
@@ -236,6 +251,13 @@ func (inner *networkPolicy) consumerExits(view *RouteView, self int64, now time.
 			Status: RouteUnserved}
 		for _, exitNode := range entry.nodes {
 			route.Candidates = append(route.Candidates, exitNode.NodeID)
+			if !exitNode.Active {
+				route.Draining = append(route.Draining, exitNode.NodeID)
+			}
+		}
+		if entry.pool.Spread && inner.spreadRoute(&route, entry, self, now) {
+			pools = append(pools, route)
+			continue
 		}
 		if primary := entry.primary; primary.Device > 0 {
 			route.Primary = primary.NodeID
@@ -362,12 +384,14 @@ func equalExitPool(first, second ExitPool) bool {
 	return first.Pool == second.Pool && first.Ref == second.Ref && first.Name == second.Name &&
 		first.SMTPAllowed == second.SMTPAllowed && first.ConntrackPerConsumer == second.ConntrackPerConsumer &&
 		slices.Equal(first.DNSUpstreams, second.DNSUpstreams) && slices.Equal(first.Probes, second.Probes) &&
-		first.Elected == second.Elected && first.Primary == second.Primary
+		first.Elected == second.Elected && first.Primary == second.Primary && first.Spread == second.Spread &&
+		first.Salt == second.Salt && slices.Equal(first.Serving, second.Serving)
 }
 
 func equalExitPoolRoute(first, second ExitPoolRoute) bool {
 	return first.Ref == second.Ref && first.Name == second.Name && slices.Equal(first.Candidates, second.Candidates) &&
-		first.Primary == second.Primary && first.Generation == second.Generation && first.Status == second.Status
+		first.Primary == second.Primary && first.Generation == second.Generation && first.Status == second.Status &&
+		first.Spread == second.Spread && slices.Equal(first.Draining, second.Draining)
 }
 
 func equalServedExit(first, second ServedExit) bool {
@@ -385,6 +409,7 @@ func cloneExitPools(pools []ExitPool) []ExitPool {
 	cloned := make([]ExitPool, len(pools))
 	for index, pool := range pools {
 		pool.DNSUpstreams, pool.Probes = slices.Clone(pool.DNSUpstreams), slices.Clone(pool.Probes)
+		pool.Serving = slices.Clone(pool.Serving)
 		cloned[index] = pool
 	}
 	return cloned

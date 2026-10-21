@@ -666,6 +666,7 @@ func convertExits(config *mtcpv1.ExitConfig) ([]networkmap.ExitPool, error) {
 		converted := networkmap.ExitPool{
 			Ref: pool.GetPoolRef(), Name: pool.GetName(), Primary: pool.GetPrimary(),
 			Generation: pool.GetGeneration(), Managed: pool.GetManaged(),
+			Spread: pool.GetMode() == mtcpv1.ExitPool_SPREAD,
 		}
 		switch pool.GetStatus() {
 		case mtcpv1.ExitPool_SERVED:
@@ -678,7 +679,7 @@ func convertExits(config *mtcpv1.ExitConfig) ([]networkmap.ExitPool, error) {
 			return nil, fmt.Errorf("%w: unknown exit pool status", controlplane.ErrNetmapInvalid)
 		}
 		for _, candidate := range pool.GetCandidates() {
-			next := networkmap.ExitCandidate{DeviceID: candidate.GetDeviceId()}
+			next := networkmap.ExitCandidate{DeviceID: candidate.GetDeviceId(), Draining: candidate.GetDraining()}
 			switch candidate.GetState() {
 			case mtcpv1.ExitCandidate_STATE_UNSPECIFIED:
 			case mtcpv1.ExitCandidate_OK:

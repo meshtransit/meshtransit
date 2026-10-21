@@ -36,3 +36,13 @@ func TestElectionHealthReadsTheServedPoolOnly(t *testing.T) {
 		t.Fatalf("an exit node that never reported = %+v", report)
 	}
 }
+
+func TestOverloaded(t *testing.T) {
+	t.Parallel()
+	for code, want := range map[string]bool{"conntrack_high": true, "egress_v4_failed": true,
+		"egress_v6_failed": false, "dns_failed": false, "probe_unavailable": false, "ok": false} {
+		if Overloaded(code) != want {
+			t.Errorf("Overloaded(%q) = %v", code, !want)
+		}
+	}
+}

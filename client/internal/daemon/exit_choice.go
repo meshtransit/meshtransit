@@ -69,6 +69,17 @@ const (
 	// exitStuckAvoid is how long an exit node left as stuck is not chosen
 	// again: then it is tried afresh, so a pool of one comes back.
 	exitStuckAvoid = 30 * time.Second
+	// exitIdleReturnAfter is how long nothing must go through the exit
+	// node in use before the node moves back to the one Core assigned or
+	// elected (exit node design §16.5): at least the 5 minutes the packet
+	// filter keeps an idle flow, so no connection is cut.
+	exitIdleReturnAfter = 5 * time.Minute
+	// exitReturnProbation: leaving the node moved back to within this time
+	// counts the move as failed; it is then not tried again for
+	// exitReturnRetry, doubling up to exitReturnRetryMax.
+	exitReturnProbation = 2 * time.Minute
+	exitReturnRetry     = 30 * time.Minute
+	exitReturnRetryMax  = 4 * time.Hour
 )
 
 // exitChoice is the exit node chosen in one control session, and since when.
@@ -107,6 +118,19 @@ type exitChoice struct {
 	activity      dataplane.ExitActivity
 	activitySince time.Time
 	avoid         map[string]time.Time
+	// chosenAt is when node became the exit node in use; returnedTo and
+	// returnedAt the last move back to Core's choice, and returnWait until
+	// when each node a move back failed to is not tried again.
+	chosenAt                 time.Time
+	returnedTo, returnedFrom string
+	returnedAt               time.Time
+	returnWait               map[string]exitReturnWait
+}
+
+// exitReturnWait spaces the moves back to one exit node after they failed.
+type exitReturnWait struct {
+	until time.Time
+	wait  time.Duration
 }
 
 // exitSticky is what a new control session starts from, so a reconnect
@@ -122,7 +146,7 @@ func (failover *routeFailover) seedExit(preference exitPreference, sticky exitSt
 	defer failover.mu.Unlock()
 	failover.exit = exitChoice{
 		preference: preference, pool: sticky.pool, node: sticky.node, backoff: failoverBackoff, pins: pins,
-		autoSince: failover.clock(), autoSettled: sticky.pool != "",
+		autoSince: failover.clock(), autoSettled: sticky.pool != "", chosenAt: failover.clock(),
 	}
 	if sticky.node != "" {
 		failover.exit.reason = controlplane.RouteSelectionSticky
@@ -154,8 +178,10 @@ func (failover *routeFailover) observeExitActivity(activity dataplane.ExitActivi
 	failover.mu.Lock()
 	defer failover.mu.Unlock()
 	if !activity.WaitingSince.IsZero() && !activity.WaitingSince.After(failover.exit.activitySince) {
-		// Evidence from before the node was last left as stuck counts no more.
-		activity = dataplane.ExitActivity{Node: activity.Node}
+		// Evidence from before the node was last left as stuck counts no
+		// more; when the node last used it still counts.
+		activity = dataplane.ExitActivity{Node: activity.Node, LastAnswered: activity.LastAnswered,
+			LastSent: activity.LastSent}
 	}
 	failover.exit.activity = activity
 }
@@ -369,6 +395,23 @@ func (failover *routeFailover) chooseExitLocked(now time.Time) bool {
 			})
 		}
 	}
+	if choice.returnedTo != "" && choice.node == choice.returnedTo &&
+		now.Sub(choice.returnedAt) >= exitReturnProbation {
+		// The move back held: the next failed one waits from the start.
+		delete(choice.returnWait, choice.returnedTo)
+		choice.returnedTo, choice.returnedFrom = "", ""
+	}
+	// Leaving the exit node moved back to within the probation goes back
+	// where the node came from, when that still carries.
+	failedBack := next != choice.node && choice.node != "" && choice.node == choice.returnedTo &&
+		now.Sub(choice.returnedAt) < exitReturnProbation
+	if failedBack && choice.returnedFrom != "" && choice.returnedFrom != choice.node && mayCarry(choice.returnedFrom) {
+		next = choice.returnedFrom
+	}
+	returning := next != "" && next == choice.node && failover.mayReturnLocked(pool, mayCarry, alive, now)
+	if returning {
+		next = pool.Primary
+	}
 	switch {
 	case next == "":
 		choice.reason = controlplane.RouteSelectionNone
@@ -381,12 +424,23 @@ func (failover *routeFailover) chooseExitLocked(now time.Time) bool {
 	case choice.reason == 0 || choice.reason == controlplane.RouteSelectionNone:
 		choice.reason = controlplane.RouteSelectionSticky
 	}
-	if next != choice.node && choice.node != "" {
+	if failedBack {
+		choice.failReturn(choice.node, now)
+	}
+	// A move back to Core's choice is no failure: it does not space the
+	// switches failures make.
+	if next != choice.node && choice.node != "" && !returning {
 		if !choice.lastSwitch.IsZero() && now.Sub(choice.lastSwitch) >= failoverStable {
 			choice.backoff = failoverBackoff
 		}
 		choice.lastSwitch, choice.nextSwitch = now, now.Add(choice.backoff)
 		choice.backoff = min(2*choice.backoff, failoverBackoffMax)
+	}
+	if returning {
+		choice.returnedTo, choice.returnedFrom, choice.returnedAt = next, choice.node, now
+	}
+	if next != choice.node {
+		choice.chosenAt = now
 	}
 	choice.node = next
 	if found, _ := candidate(next); next != "" {
@@ -395,6 +449,51 @@ func (failover *routeFailover) chooseExitLocked(now time.Time) bool {
 		choice.ipv6 = false
 	}
 	return !equalExitRoutes(before, failover.exitRouteLocked())
+}
+
+// mayReturnLocked reports that the node may move from the exit node it uses
+// back to Core's choice (exit node design §16.5): in a spread pool, or off
+// a draining exit node, once nothing went through the exit node for
+// exitIdleReturnAfter, to a primary that answers, may carry and is not
+// waiting after a failed move back.
+func (failover *routeFailover) mayReturnLocked(pool networkmap.ExitPool, mayCarry, alive func(string) bool,
+	now time.Time) bool {
+	choice := &failover.exit
+	primary := pool.Primary
+	if pool.Status != networkmap.ExitServed || primary == "" || choice.node == "" || choice.node == primary {
+		return false
+	}
+	index := slices.IndexFunc(pool.Candidates, func(candidate networkmap.ExitCandidate) bool {
+		return candidate.DeviceID == choice.node
+	})
+	if !pool.Spread && (index < 0 || !pool.Candidates[index].Draining) {
+		return false
+	}
+	if wait, waiting := choice.returnWait[primary]; waiting && now.Before(wait.until) {
+		return false
+	}
+	if choice.chosenAt.IsZero() {
+		choice.chosenAt = now
+	}
+	since := choice.chosenAt
+	if activity := choice.activity; activity.Node == choice.node {
+		since = latest(since, latest(activity.LastSent, activity.LastAnswered))
+	}
+	return now.Sub(since) >= exitIdleReturnAfter && mayCarry(primary) && alive(primary)
+}
+
+// failReturn records that moving back to node failed: it is not tried
+// again for exitReturnRetry, doubling each time up to exitReturnRetryMax.
+func (choice *exitChoice) failReturn(node string, now time.Time) {
+	wait := exitReturnRetry
+	if previous, failed := choice.returnWait[node]; failed {
+		wait = min(2*previous.wait, exitReturnRetryMax)
+	}
+	if choice.returnWait == nil {
+		choice.returnWait = map[string]exitReturnWait{}
+	}
+	choice.returnWait[node] = exitReturnWait{until: now.Add(wait), wait: wait}
+	choice.returnedTo, choice.returnedFrom = "", ""
 }
 
 // trustedLocked returns the candidates of pool the node may use, nil for

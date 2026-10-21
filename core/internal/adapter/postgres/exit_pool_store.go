@@ -24,19 +24,22 @@ import (
 
 const maximumExitPoolDocumentBytes = 1 << 20
 
-const listExitPoolsSQL = `SELECT mesh_ops.list_exit_pools_v1(` + sessionArguments + `,$10::UUID,$11::UUID,
+const listExitPoolsSQL = `SELECT mesh_ops.list_exit_pools_v2(` + sessionArguments + `,$10::UUID,$11::UUID,
  NULLIF($12::TEXT,'')::UUID,$13::INTEGER)::TEXT`
 
-const readExitPoolSQL = `SELECT mesh_ops.read_exit_pool_v2(` + sessionArguments + `,$10::UUID,$11::UUID,$12::UUID)::TEXT`
+const readExitPoolSQL = `SELECT mesh_ops.read_exit_pool_v3(` + sessionArguments + `,$10::UUID,$11::UUID,$12::UUID)::TEXT`
 
 const listExitPoolPrimaryChangesSQL = `SELECT mesh_ops.list_exit_pool_primary_changes_v1(` + sessionArguments +
 	`,$10::UUID,$11::UUID,$12::UUID,$13::UUID,$14::INTEGER)::TEXT`
 
-const changeExitPoolSQL = `SELECT mesh_ops.change_exit_pool_v1(` + sessionArguments + `,
+const changeExitPoolSQL = `SELECT mesh_ops.change_exit_pool_v2(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::TEXT,$13::UUID,$14::BIGINT,$15::TEXT,$16::BOOLEAN,$17::BOOLEAN,$18::INTEGER,
- $19::INET[],$20::JSONB,$21::INTEGER,$22::UUID)::TEXT`
+ $19::INET[],$20::JSONB,$21::TEXT,$22::BYTEA,$23::INTEGER,$24::UUID)::TEXT`
 
-const changeExitNodeSQL = `SELECT mesh_ops.change_exit_node_v1(` + sessionArguments + `,
+const listExitPoolServingChangesSQL = `SELECT mesh_ops.list_exit_pool_serving_changes_v1(` + sessionArguments +
+	`,$10::UUID,$11::UUID,$12::UUID,$13::UUID,$14::INTEGER)::TEXT`
+
+const changeExitNodeSQL = `SELECT mesh_ops.change_exit_node_v2(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::TEXT,$13::UUID,$14::BIGINT,$15::UUID,$16::INTEGER,$17::TEXT,$18::INTEGER,
  $19::UUID,$20::UUID)::TEXT`
 
@@ -168,12 +171,27 @@ type exitPoolDocument struct {
 	CreatedAt            time.Time           `json:"created_at"`
 	UpdatedAt            time.Time           `json:"updated_at"`
 	Nodes                []exitNodeDocument  `json:"nodes"`
+	// Mode comes beside the document (schema 210), never inside it.
+	Mode string `json:"-"`
 }
+
+// withMode sets the mode read beside a document; a reader without modes
+// leaves pools failover.
+func (document exitPoolDocument) withMode(mode string) exitPoolDocument {
+	document.Mode = mode
+	return document
+}
+
+var exitPoolModes = map[string]exitpool.Mode{"": exitpool.ModeFailover, "failover": exitpool.ModeFailover,
+	"spread": exitpool.ModeSpread}
 
 var exitNodeStates = map[string]exitpool.NodeState{"active": exitpool.NodeActive, "draining": exitpool.NodeDraining}
 
 func (document exitPoolDocument) pool(allowDeleted bool) (exitpool.Pool, error) {
 	id, err := exitpool.ParseID(document.ID)
+	if _, known := exitPoolModes[document.Mode]; !known {
+		return exitpool.Pool{}, exitpool.ErrInvalid
+	}
 	if err != nil || (document.State != "active" && (!allowDeleted || document.State != "deleted")) ||
 		document.Version <= 0 || document.CreatedAt.IsZero() || document.UpdatedAt.Before(document.CreatedAt) {
 		return exitpool.Pool{}, exitpool.ErrInvalid
@@ -182,9 +200,9 @@ func (document exitPoolDocument) pool(allowDeleted bool) (exitpool.Pool, error) 
 		ID: id, Version: document.Version, CreatedAt: document.CreatedAt, UpdatedAt: document.UpdatedAt,
 		Definition: exitpool.Definition{
 			Name: document.Name, Failback: document.Failback, SMTPAllowed: document.SMTPAllowed,
-			ConntrackPerConsumer: document.ConntrackPerConsumer,
-			DNSUpstreams:         make([]netip.Addr, 0, len(document.DNSUpstreams)),
-			Probes:               make([]exitpool.Probe, 0, len(document.Probes)),
+			ConntrackPerConsumer: document.ConntrackPerConsumer, Mode: exitPoolModes[document.Mode],
+			DNSUpstreams: make([]netip.Addr, 0, len(document.DNSUpstreams)),
+			Probes:       make([]exitpool.Probe, 0, len(document.Probes)),
 		},
 		Nodes: make([]exitpool.Node, 0, len(document.Nodes)),
 	}
@@ -246,6 +264,7 @@ func (store *ExitPoolStore) List(ctx context.Context, session accountsession.Ses
 		HasMore   bool               `json:"has_more"`
 		CanManage bool               `json:"can_manage"`
 		CanDelete bool               `json:"can_delete"`
+		Modes     map[string]string  `json:"modes"`
 	}
 	if err := store.read(ctx, session, scope, listExitPoolsSQL, &envelope, afterText, limit); err != nil {
 		return exitpool.Listing{}, err
@@ -256,7 +275,11 @@ func (store *ExitPoolStore) List(ctx context.Context, session accountsession.Ses
 	listing := exitpool.Listing{Pools: make([]exitpool.Pool, 0, len(envelope.Pools)), HasMore: envelope.HasMore,
 		Abilities: exitpool.Abilities{CanManage: envelope.CanManage, CanDelete: envelope.CanDelete}}
 	for _, document := range envelope.Pools {
-		stored, err := document.pool(false)
+		mode, listed := envelope.Modes[document.ID]
+		if !listed {
+			return exitpool.Listing{}, exitpool.ErrInvalid
+		}
+		stored, err := document.withMode(mode).pool(false)
 		if err != nil {
 			return exitpool.Listing{}, err
 		}
@@ -272,15 +295,20 @@ func (store *ExitPoolStore) Read(ctx context.Context, session accountsession.Ses
 		return exitpool.Reading{}, exitpool.ErrInvalid
 	}
 	var envelope struct {
-		Pool      exitPoolDocument     `json:"pool"`
-		Primary   *sitePrimaryDocument `json:"primary"`
-		CanManage bool                 `json:"can_manage"`
-		CanDelete bool                 `json:"can_delete"`
+		Pool      exitPoolDocument         `json:"pool"`
+		Primary   *sitePrimaryDocument     `json:"primary"`
+		CanManage bool                     `json:"can_manage"`
+		CanDelete bool                     `json:"can_delete"`
+		Mode      string                   `json:"mode"`
+		Serving   *exitPoolServingDocument `json:"serving"`
 	}
 	if err := store.read(ctx, session, scope, readExitPoolSQL, &envelope, id.String()); err != nil {
 		return exitpool.Reading{}, err
 	}
-	stored, err := envelope.Pool.pool(false)
+	if envelope.Mode == "" || (envelope.Serving != nil && envelope.Mode != "spread") {
+		return exitpool.Reading{}, exitpool.ErrInvalid
+	}
+	stored, err := envelope.Pool.withMode(envelope.Mode).pool(false)
 	if err != nil || stored.ID != id {
 		return exitpool.Reading{}, exitpool.ErrInvalid
 	}
@@ -297,6 +325,13 @@ func (store *ExitPoolStore) Read(ctx context.Context, session accountsession.Ses
 			return exitpool.Reading{}, exitpool.ErrInvalid
 		}
 		reading.Primary = &primary
+	}
+	if envelope.Serving != nil {
+		serving, err := envelope.Serving.serving()
+		if err != nil {
+			return exitpool.Reading{}, err
+		}
+		reading.Serving = &serving
 	}
 	return reading, nil
 }
@@ -405,6 +440,10 @@ type exitPoolChangeRecord struct {
 	NetworkRevision int64             `json:"network_revision"`
 	RouteRevision   int64             `json:"route_revision"`
 	RoleBindingID   *string           `json:"role_binding_id"`
+	// Mode is the pool's mode after the change and PreviousMode before it
+	// (schema 210); an exit node change gives the mode only.
+	Mode         string  `json:"mode"`
+	PreviousMode *string `json:"previous_mode"`
 }
 
 func exitProbesJSON(probes []exitpool.Probe) ([]byte, error) {
@@ -430,7 +469,7 @@ func (store *ExitPoolStore) Change(ctx context.Context, change exitpool.Change) 
 		!change.CorrelationID.IsValid() {
 		return exitpool.Result{}, exitpool.ErrInvalid
 	}
-	var expected, name, failback, smtp, conntrack, upstreams, probes, limit any
+	var expected, name, failback, smtp, conntrack, upstreams, probes, mode, limit any
 	if change.Operation != exitpool.OperationCreate {
 		expected = change.ExpectedVersion
 	} else {
@@ -445,6 +484,9 @@ func (store *ExitPoolStore) Change(ctx context.Context, change exitpool.Change) 
 		name, failback, smtp, conntrack = definition.Name, definition.Failback, definition.SMTPAllowed,
 			definition.ConntrackPerConsumer
 		upstreams, probes = addressTexts(definition.DNSUpstreams), encodedProbes
+		if definition.Mode != exitpool.ModeKeep {
+			mode = string(definition.Mode)
+		}
 	}
 	permission := "route.approve"
 	if change.Operation == exitpool.OperationDelete {
@@ -456,8 +498,8 @@ func (store *ExitPoolStore) Change(ctx context.Context, change exitpool.Change) 
 			var encoded string
 			err := tx.QueryRow(ctx, changeExitPoolSQL, append(sessionQueryArguments(change.Session),
 				change.Scope.WorkspaceID().String(), change.Scope.NetworkID().String(), string(change.Operation),
-				change.PoolID.String(), expected, name, failback, smtp, conntrack, upstreams, probes, limit,
-				changeID.String())...).Scan(&encoded)
+				change.PoolID.String(), expected, name, failback, smtp, conntrack, upstreams, probes, mode,
+				change.SpreadSalt[:], limit, changeID.String())...).Scan(&encoded)
 			return encoded, err
 		})
 }
@@ -530,8 +572,17 @@ func (store *ExitPoolStore) commit(ctx context.Context, session accountsession.S
 	}
 	var record exitPoolChangeRecord
 	if err := decodeExitPoolJSON([]byte(encoded), &record); err != nil ||
-		(record.Changed && (record.NetworkRevision <= 0 || record.RouteRevision <= 0)) {
+		(record.Changed && (record.NetworkRevision <= 0 || record.RouteRevision <= 0)) || record.Mode == "" {
 		return exitpool.Result{}, exitpool.ErrInvalid
+	}
+	record.Pool = record.Pool.withMode(record.Mode)
+	if record.Previous != nil {
+		previousMode := record.Mode
+		if record.PreviousMode != nil {
+			previousMode = *record.PreviousMode
+		}
+		previous := record.Previous.withMode(previousMode)
+		record.Previous = &previous
 	}
 	saved, err := record.Pool.pool(deleted)
 	if err != nil || saved.ID != poolID || (record.Previous == nil) != (action == "network_exit_pool.created") {
@@ -583,8 +634,11 @@ func exitPoolSemanticHash(document exitPoolDocument) ([32]byte, error) {
 		DNSUpstreams         []string            `json:"dns_upstreams"`
 		Probes               []exitProbeDocument `json:"probes"`
 		Nodes                []exitNode          `json:"nodes"`
+		// Mode only when spread: failover pools hash as they did before
+		// modes (schema 210).
+		Mode string `json:"mode,omitempty"`
 	}{document.ID, document.Name, document.State, document.Failback, document.SMTPAllowed,
-		document.ConntrackPerConsumer, document.DNSUpstreams, document.Probes, nodes})
+		document.ConntrackPerConsumer, document.DNSUpstreams, document.Probes, nodes, spreadOnly(document.Mode)})
 	return sha256.Sum256(encoded), err
 }
 
@@ -603,6 +657,8 @@ type exitPoolAuditPayload struct {
 	DNSUpstreams         []string           `json:"dns_upstreams"`
 	PreviousDNSUpstreams []string           `json:"previous_dns_upstreams,omitempty"`
 	Probes               int                `json:"probe_count"`
+	Mode                 string             `json:"mode"`
+	PreviousMode         string             `json:"previous_mode,omitempty"`
 	Nodes                int                `json:"exit_node_count"`
 	Node                 *exitPoolNodeAudit `json:"exit_node,omitempty"`
 	// RemovedNodes are the Devices a deleted pool had as exit nodes.
@@ -650,6 +706,7 @@ func exitPoolAudit(session accountsession.Session, networkID string, record exit
 		Name: record.Pool.Name, Failback: record.Pool.Failback, SMTPAllowed: record.Pool.SMTPAllowed,
 		ConntrackPerConsumer: record.Pool.ConntrackPerConsumer, DNSUpstreams: record.Pool.DNSUpstreams,
 		Probes: len(record.Pool.Probes), Nodes: len(record.Pool.Nodes),
+		Mode: string(exitPoolModes[record.Pool.Mode]),
 	}
 	if record.Previous != nil {
 		if record.Previous.Name != record.Pool.Name {
@@ -658,6 +715,9 @@ func exitPoolAudit(session accountsession.Session, networkID string, record exit
 		if record.Previous.Failback != record.Pool.Failback {
 			previous := record.Previous.Failback
 			audited.PreviousFailback = &previous
+		}
+		if exitPoolModes[record.Previous.Mode] != exitPoolModes[record.Pool.Mode] {
+			audited.PreviousMode = string(exitPoolModes[record.Previous.Mode])
 		}
 		if record.Previous.SMTPAllowed != record.Pool.SMTPAllowed {
 			previous := record.Previous.SMTPAllowed
@@ -756,3 +816,91 @@ FROM mesh_audit.lock_network_stream_head()`).Scan(&streamID, &sequence, &previou
 	}
 	return nil
 }
+
+func spreadOnly(mode string) string {
+	if mode == string(exitpool.ModeSpread) {
+		return mode
+	}
+	return ""
+}
+
+type exitPoolServingDocument struct {
+	DeviceIDs  []string  `json:"device_ids"`
+	Generation int64     `json:"generation"`
+	Reason     string    `json:"reason"`
+	ChangedAt  time.Time `json:"changed_at"`
+}
+
+func (document exitPoolServingDocument) serving() (exitpool.Serving, error) {
+	devices, ok := parseDeviceIDs(document.DeviceIDs)
+	serving := exitpool.Serving{Devices: devices, Generation: document.Generation, Reason: document.Reason,
+		ChangedAt: document.ChangedAt.UTC()}
+	if !ok || !serving.IsValid() {
+		return exitpool.Serving{}, exitpool.ErrInvalid
+	}
+	return serving, nil
+}
+
+func parseDeviceIDs(texts []string) ([]node.ID, bool) {
+	if texts == nil {
+		return nil, false
+	}
+	devices := make([]node.ID, 0, len(texts))
+	for _, text := range texts {
+		device, err := node.ParseID(text)
+		if err != nil {
+			return nil, false
+		}
+		devices = append(devices, device)
+	}
+	return devices, true
+}
+
+type exitPoolServingChangeDocument struct {
+	EventID    string    `json:"event_id"`
+	OccurredAt time.Time `json:"occurred_at"`
+	DeviceIDs  []string  `json:"device_ids"`
+	PreviousID []string  `json:"previous_device_ids"`
+	Reason     string    `json:"reason"`
+	Generation int64     `json:"generation"`
+}
+
+// ServingChanges reads one page of a spread pool's serving set changes from
+// the audit history, newest first.
+func (store *ExitPoolStore) ServingChanges(ctx context.Context, session accountsession.Session,
+	scope network.Scope, id exitpool.ID, after publicid.ID, limit int) (exitpool.ServingHistory, error) {
+	if !session.IsValid() || !scope.IsValid() || !id.IsValid() || limit < 1 || limit > exitpool.MaximumHistoryPage {
+		return exitpool.ServingHistory{}, exitpool.ErrInvalid
+	}
+	var afterText any
+	if after != (publicid.ID{}) {
+		afterText = after.String()
+	}
+	var envelope struct {
+		Changes []exitPoolServingChangeDocument `json:"changes"`
+		HasMore bool                            `json:"has_more"`
+	}
+	if err := store.read(ctx, session, scope, listExitPoolServingChangesSQL, &envelope, id.String(), afterText,
+		limit); err != nil {
+		return exitpool.ServingHistory{}, err
+	}
+	if envelope.Changes == nil || len(envelope.Changes) > limit {
+		return exitpool.ServingHistory{}, exitpool.ErrInvalid
+	}
+	history := exitpool.ServingHistory{HasMore: envelope.HasMore,
+		Changes: make([]exitpool.ServingChange, 0, len(envelope.Changes))}
+	for _, document := range envelope.Changes {
+		eventID, err := publicid.Parse(document.EventID)
+		devices, devicesOK := parseDeviceIDs(document.DeviceIDs)
+		previous, previousOK := parseDeviceIDs(document.PreviousID)
+		change := exitpool.ServingChange{EventID: eventID, OccurredAt: document.OccurredAt.UTC(), Devices: devices,
+			Previous: previous, Reason: document.Reason, Generation: document.Generation}
+		if err != nil || !devicesOK || !previousOK || !change.IsValid() {
+			return exitpool.ServingHistory{}, exitpool.ErrInvalid
+		}
+		history.Changes = append(history.Changes, change)
+	}
+	return history, nil
+}
+
+var _ exitpool.ServingHistoryStore = (*ExitPoolStore)(nil)

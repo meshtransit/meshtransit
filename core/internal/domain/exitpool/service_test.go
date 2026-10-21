@@ -21,6 +21,7 @@ type recordingStore struct {
 	calls  int
 	change exitpool.Change
 	node   exitpool.NodeChange
+	stored exitpool.Mode
 }
 
 func (store *recordingStore) List(context.Context, accountsession.Session, network.Scope, exitpool.ID,
@@ -32,7 +33,7 @@ func (store *recordingStore) List(context.Context, accountsession.Session, netwo
 func (store *recordingStore) Read(context.Context, accountsession.Session, network.Scope,
 	exitpool.ID) (exitpool.Reading, error) {
 	store.calls++
-	return exitpool.Reading{}, nil
+	return exitpool.Reading{Pool: exitpool.Pool{Definition: exitpool.Definition{Mode: store.stored}}}, nil
 }
 
 func (store *recordingStore) Change(_ context.Context, change exitpool.Change) (exitpool.Result, error) {
@@ -177,5 +178,66 @@ func TestNewServiceRefusesBadLimits(t *testing.T) {
 	if _, err := exitpool.NewService(&recordingStore{}, fixedClock{}, exitpool.SystemIDs{},
 		exitpool.Limits{}); !errors.Is(err, exitpool.ErrInvalid) {
 		t.Fatalf("zero limits = %v", err)
+	}
+}
+
+// TestServiceGatesSpreadPools: a pool becomes spread only while the
+// deployment enables it; a pool already spread stays editable; a new pool
+// without a mode is failover; an update without one keeps it; every change
+// carries a fresh salt.
+func TestServiceGatesSpreadPools(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, time.October, 21, 10, 0, 0, 0, time.UTC)
+	store := &recordingStore{stored: exitpool.ModeFailover}
+	service, err := exitpool.NewService(store, fixedClock{now}, exitpool.SystemIDs{}, exitpool.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := activeSession(t, now)
+	login, _ := session.LoginWorkspaceID()
+	scope, err := network.NewScope(login, network.ID(newID(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	spread := exitpool.Definition{Name: "SG", ConntrackPerConsumer: exitpool.DefaultConntrackPerConsumer,
+		Mode: exitpool.ModeSpread}
+	if _, err := service.Create(ctx, session, scope, spread, newID(t)); !errors.Is(err, exitpool.ErrSpreadDisabled) {
+		t.Fatalf("a spread pool while disabled = %v", err)
+	}
+	pool := exitpool.ID(newID(t))
+	if _, err := service.Update(ctx, session, scope, pool, 2, spread, newID(t)); !errors.Is(err,
+		exitpool.ErrSpreadDisabled) {
+		t.Fatalf("a failover pool turned spread while disabled = %v", err)
+	}
+	store.stored = exitpool.ModeSpread
+	if _, err := service.Update(ctx, session, scope, pool, 2, spread, newID(t)); err != nil ||
+		store.change.Definition.Mode != exitpool.ModeSpread {
+		t.Fatalf("a spread pool kept spread while disabled = %v, %+v", err, store.change)
+	}
+	plain := spread
+	plain.Mode = exitpool.ModeKeep
+	if _, err := service.Create(ctx, session, scope, plain, newID(t)); err != nil ||
+		store.change.Definition.Mode != exitpool.ModeFailover {
+		t.Fatalf("a new pool without mode = %v, %+v", err, store.change.Definition)
+	}
+	first := store.change.SpreadSalt
+	if _, err := service.Update(ctx, session, scope, pool, 3, plain, newID(t)); err != nil ||
+		store.change.Definition.Mode != exitpool.ModeKeep || store.change.SpreadSalt == first ||
+		store.change.SpreadSalt == ([exitpool.SpreadSaltSize]byte{}) {
+		t.Fatalf("an update without mode = %v, %+v", err, store.change)
+	}
+	enabled, err := service.WithSpread(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := enabled.Create(ctx, session, scope, spread, newID(t)); err != nil ||
+		store.change.Definition.Mode != exitpool.ModeSpread {
+		t.Fatalf("a spread pool while enabled = %v, %+v", err, store.change.Definition)
+	}
+	bad := spread
+	bad.Mode = "random"
+	if _, err := enabled.Create(ctx, session, scope, bad, newID(t)); !errors.Is(err, exitpool.ErrInvalid) {
+		t.Fatalf("an unknown mode = %v", err)
 	}
 }

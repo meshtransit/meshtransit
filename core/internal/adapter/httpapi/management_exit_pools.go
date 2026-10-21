@@ -28,6 +28,7 @@ const (
 	exitPoolNodePutOperation    = "exit_pool_node_put"
 	exitPoolNodeDeleteOperation = "exit_pool_node_delete"
 	exitPoolPrimaryHistory      = "exit_pool_primary_history"
+	exitPoolServingHistory      = "exit_pool_serving_history"
 )
 
 // ExitPoolManager lists and changes the Exit Pools of a Network and their
@@ -47,6 +48,8 @@ type ExitPoolManager interface {
 		publicid.ID) (exitpool.Result, error)
 	PrimaryChanges(context.Context, accountsession.Session, network.Scope, exitpool.ID, publicid.ID,
 		int) (exitpool.PrimaryHistory, error)
+	ServingChanges(context.Context, accountsession.Session, network.Scope, exitpool.ID, publicid.ID,
+		int) (exitpool.ServingHistory, error)
 }
 
 type exitPoolPath struct {
@@ -69,6 +72,7 @@ type exitPoolPath struct {
 //	GET|PATCH|DELETE exit-pools/{pool}                read, update, delete
 //	PUT|DELETE       exit-pools/{pool}/nodes/{device} set, remove an exit node
 //	GET              exit-pools/{pool}/primary-changes the elected primary's history
+//	GET              exit-pools/{pool}/serving-changes a spread pool's serving set history
 //
 // Only the lists take a query: after (a pool or change ID) and limit, once
 // each.
@@ -107,6 +111,9 @@ func parseExitPoolPath(request *http.Request) (exitPoolPath, bool) {
 	case len(rest) == 2 && rest[1] == "primary-changes":
 		path.methods = restMethods{http.MethodGet}
 		operations = map[string]string{http.MethodGet: exitPoolPrimaryHistory}
+	case len(rest) == 2 && rest[1] == "serving-changes":
+		path.methods = restMethods{http.MethodGet}
+		operations = map[string]string{http.MethodGet: exitPoolServingHistory}
 	case len(rest) == 3 && rest[1] == "nodes":
 		device, err := node.ParseID(rest[2])
 		if err != nil || device.String() != rest[2] {
@@ -132,7 +139,7 @@ func parseExitPoolPath(request *http.Request) (exitPoolPath, bool) {
 	switch path.operation {
 	case exitPoolListOperation:
 		return path.withPage(request.URL.RawQuery)
-	case exitPoolPrimaryHistory:
+	case exitPoolPrimaryHistory, exitPoolServingHistory:
 		return path.withHistoryPage(request.URL.RawQuery)
 	default:
 		return path, request.URL.RawQuery == ""
@@ -233,6 +240,9 @@ type exitNodeBody struct {
 	// those that chose it themselves while the primary did not answer.
 	Consumers              *int `json:"consumers,omitempty"`
 	LocalFailoverConsumers *int `json:"local_failover_consumers,omitempty"`
+	// StickyConsumers counts those that keep the node although Core elected
+	// or, in a spread pool, assigned them another.
+	StickyConsumers *int `json:"sticky_consumers,omitempty"`
 }
 
 // ExitNodeUseCounter counts, per exit node of a pool, the consumers that
@@ -266,6 +276,38 @@ type exitPoolBody struct {
 	// Primary comes with one pool's read only, absent before Core's first
 	// election.
 	Primary *sitePrimaryBody `json:"primary,omitempty"`
+	// Mode is failover (every consumer through the primary) or spread (each
+	// consumer its own exit node of the serving set).
+	Mode string `json:"mode"`
+	// Serving comes with one spread pool's read only, absent before Core's
+	// first election of its serving set.
+	Serving *exitPoolServingBody `json:"serving,omitempty"`
+}
+
+// exitPoolServingBody is the set of exit nodes a spread pool assigns its
+// consumers to.
+type exitPoolServingBody struct {
+	DeviceIDs  []string `json:"device_ids"`
+	Generation int64    `json:"generation"`
+	Reason     string   `json:"reason"`
+	ChangedAt  string   `json:"changed_at"`
+}
+
+type exitPoolServingChangeBody struct {
+	EventID           string   `json:"event_id"`
+	OccurredAt        string   `json:"occurred_at"`
+	DeviceIDs         []string `json:"device_ids"`
+	PreviousDeviceIDs []string `json:"previous_device_ids"`
+	Reason            string   `json:"reason"`
+	Generation        int64    `json:"generation"`
+}
+
+func deviceTexts(devices []node.ID) []string {
+	texts := make([]string, 0, len(devices))
+	for _, device := range devices {
+		texts = append(texts, device.String())
+	}
+	return texts
 }
 
 var exitNodeStateNames = map[exitpool.NodeState]string{exitpool.NodeActive: "active", exitpool.NodeDraining: "draining"}
@@ -278,6 +320,10 @@ func newExitPoolBody(stored exitpool.Pool) exitPoolBody {
 		Probes:               make([]exitPoolProbeBody, 0, len(stored.Probes)),
 		Nodes:                make([]exitNodeBody, 0, len(stored.Nodes)), Version: stored.Version,
 		CreatedAt: managementTime(stored.CreatedAt), UpdatedAt: managementTime(stored.UpdatedAt),
+		Mode: string(stored.Mode),
+	}
+	if !stored.Mode.IsKnown() {
+		body.Mode = string(exitpool.ModeFailover)
 	}
 	for _, address := range stored.DNSUpstreams {
 		body.DNSUpstreams = append(body.DNSUpstreams, address.String())
@@ -339,13 +385,16 @@ func (handler *ManagementHandler) addExitNodeUse(ctx context.Context, body *exit
 	}
 	for index := range body.Nodes {
 		use := uses[body.Nodes[index].DeviceID]
-		consumers, local := use.Clients, use.LocalFailover
+		consumers, local, sticky := use.Clients, use.LocalFailover, use.Sticky
 		body.Nodes[index].Consumers, body.Nodes[index].LocalFailoverConsumers = &consumers, &local
+		body.Nodes[index].StickyConsumers = &sticky
 	}
 }
 
 // parseExitPoolDefinition reads a whole definition; PATCH replaces it whole
-// too. Addresses must be canonical text: the API never rewrites them.
+// too, except mode: absent, a new pool is failover and an update keeps the
+// stored mode. Addresses must be canonical text: the API never rewrites
+// them.
 func parseExitPoolDefinition(response http.ResponseWriter, request *http.Request) (exitpool.Definition, bool) {
 	var body struct {
 		Name                 *string              `json:"name"`
@@ -354,6 +403,7 @@ func parseExitPoolDefinition(response http.ResponseWriter, request *http.Request
 		ConntrackPerConsumer *int                 `json:"conntrack_per_consumer"`
 		DNSUpstreams         *[]string            `json:"dns_upstreams"`
 		Probes               *[]exitPoolProbeBody `json:"probes"`
+		Mode                 *string              `json:"mode"`
 	}
 	if !readSiteBody(response, request, &body) || body.Name == nil || body.Failback == nil ||
 		body.SMTPAllowed == nil || body.ConntrackPerConsumer == nil || body.DNSUpstreams == nil ||
@@ -363,6 +413,12 @@ func parseExitPoolDefinition(response http.ResponseWriter, request *http.Request
 	}
 	definition := exitpool.Definition{Name: *body.Name, Failback: *body.Failback, SMTPAllowed: *body.SMTPAllowed,
 		ConntrackPerConsumer: *body.ConntrackPerConsumer}
+	if body.Mode != nil {
+		definition.Mode = exitpool.Mode(*body.Mode)
+		if !definition.Mode.IsKnown() {
+			return exitpool.Definition{}, false
+		}
+	}
 	for _, text := range *body.DNSUpstreams {
 		address, err := netip.ParseAddr(text)
 		if err != nil || address.String() != text {
@@ -410,6 +466,8 @@ func (handler *ManagementHandler) handleExitPools(ctx context.Context, response 
 		return handler.readExitPools(ctx, response, correlationID, path, session, fail)
 	case exitPoolPrimaryHistory:
 		return handler.readExitPoolPrimaryHistory(ctx, response, correlationID, path, session, fail)
+	case exitPoolServingHistory:
+		return handler.readExitPoolServingHistory(ctx, response, correlationID, path, session, fail)
 	case exitPoolCreateOperation:
 		definition, valid := parseExitPoolDefinition(response, request)
 		if !valid {
@@ -475,6 +533,10 @@ func (handler *ManagementHandler) readExitPools(ctx context.Context, response ht
 		if primary := reading.Primary; primary != nil {
 			output.Data.Pool.Primary = &sitePrimaryBody{DeviceID: optionalDeviceText(primary.Device),
 				Generation: primary.Generation, Reason: primary.Reason, ElectedAt: managementTime(primary.ElectedAt)}
+		}
+		if serving := reading.Serving; serving != nil {
+			output.Data.Pool.Serving = &exitPoolServingBody{DeviceIDs: deviceTexts(serving.Devices),
+				Generation: serving.Generation, Reason: serving.Reason, ChangedAt: managementTime(serving.ChangedAt)}
 		}
 		output.Data.CanDelete, output.CorrelationID = reading.CanDelete, correlationID.String()
 		response.Header().Set("ETag", strongVersionETag(reading.Pool.Version))
@@ -557,6 +619,37 @@ func (handler *ManagementHandler) readExitPoolPrimaryHistory(ctx context.Context
 	return "success"
 }
 
+func (handler *ManagementHandler) readExitPoolServingHistory(ctx context.Context, response http.ResponseWriter,
+	correlationID publicid.ID, path exitPoolPath, session accountsession.Session,
+	fail func(managementError) string) string {
+	history, err := handler.exitPools.ServingChanges(ctx, session, path.scope, path.poolID, path.afterEvent,
+		path.limit)
+	if err != nil {
+		return fail(classifyExitPoolError(err))
+	}
+	var output struct {
+		Data struct {
+			Changes []exitPoolServingChangeBody `json:"changes"`
+			Next    string                      `json:"next_after,omitempty"`
+		} `json:"data"`
+		CorrelationID string `json:"correlation_id"`
+	}
+	output.Data.Changes = make([]exitPoolServingChangeBody, 0, len(history.Changes))
+	for _, change := range history.Changes {
+		output.Data.Changes = append(output.Data.Changes, exitPoolServingChangeBody{
+			EventID: change.EventID.String(), OccurredAt: managementTime(change.OccurredAt),
+			DeviceIDs: deviceTexts(change.Devices), PreviousDeviceIDs: deviceTexts(change.Previous),
+			Reason: change.Reason, Generation: change.Generation,
+		})
+	}
+	if history.HasMore && len(history.Changes) > 0 {
+		output.Data.Next = history.Changes[len(history.Changes)-1].EventID.String()
+	}
+	output.CorrelationID = correlationID.String()
+	writeManagementJSON(ctx, handler.logger, response, http.StatusOK, output)
+	return "success"
+}
+
 func classifyExitPoolError(err error) managementError {
 	switch {
 	case errors.Is(err, exitpool.ErrForbidden):
@@ -586,6 +679,9 @@ func classifyExitPoolError(err error) managementError {
 	case errors.Is(err, exitpool.ErrInUse):
 		return managementError{Status: http.StatusConflict, Code: "exit_pool_in_use",
 			Message: "Active rules name this Exit Pool. Change those rules first."}
+	case errors.Is(err, exitpool.ErrSpreadDisabled):
+		return managementError{Status: http.StatusConflict, Code: "exit_spread_disabled",
+			Message: "This deployment does not spread Exit Pools yet. Keep the pool in failover mode."}
 	case errors.Is(err, exitpool.ErrNotInternet):
 		return managementError{Status: http.StatusUnprocessableEntity, Code: "exit_pool_address_not_internet",
 			Message: "A resolver or probe address is not on the Internet: private, local, the mesh or a special range"}

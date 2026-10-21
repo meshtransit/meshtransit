@@ -163,6 +163,8 @@ type ExitCandidate struct {
 	// DNS4 and DNS6 are the overlay addresses of its DNS forwarder; zero
 	// when none.
 	DNS4, DNS6 netip.Addr
+	// Draining: the administrator is taking it out of the pool.
+	Draining bool
 }
 
 // ExitPool is one Exit Pool the node may send its Internet traffic
@@ -177,6 +179,9 @@ type ExitPool struct {
 	// Managed: the administrator asks the node to use this pool; it
 	// follows only when its own settings allow managed exits.
 	Managed bool
+	// Spread: Primary is the exit node Core assigned to this node, and
+	// Candidates come in this node's own order (exit node design §16).
+	Spread bool
 }
 
 // validateExits checks exits as mtcp-v1 §7.7 requires: at most 64 pools,

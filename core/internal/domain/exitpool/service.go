@@ -55,6 +55,9 @@ type Reading struct {
 	Pool Pool
 	// Primary is the exit node Core elected; nil before the first election.
 	Primary *Primary
+	// Serving is a spread pool's serving set; nil for a failover pool and
+	// before the first election.
+	Serving *Serving
 	Abilities
 }
 
@@ -76,7 +79,10 @@ type Change struct {
 	ExpectedVersion int64
 	Definition      Definition
 	PoolLimit       int
-	CorrelationID   publicid.ID
+	// SpreadSalt becomes the pool's assignment salt the first time it is
+	// spread.
+	SpreadSalt    [SpreadSaltSize]byte
+	CorrelationID publicid.ID
 }
 
 // NodeChange adds, changes or removes one exit node of a pool.
@@ -109,11 +115,14 @@ type IDs interface{ New() (publicid.ID, error) }
 
 // Service validates pool changes before PostgreSQL authorizes them.
 type Service struct {
-	store   Store
-	history PrimaryHistoryStore
-	clock   Clock
-	ids     IDs
-	limits  Limits
+	store          Store
+	history        PrimaryHistoryStore
+	servingHistory ServingHistoryStore
+	clock          Clock
+	ids            IDs
+	limits         Limits
+	// spread allows pools to become spread (exit node design §16).
+	spread bool
 }
 
 // NewService requires a store, clock, identifier source and valid limits.
@@ -184,13 +193,24 @@ func (service *Service) Create(ctx context.Context, session accountsession.Sessi
 	if !correlationID.IsValid() {
 		return Result{}, ErrInvalid
 	}
+	if definition.Mode == ModeKeep {
+		definition.Mode = ModeFailover
+	}
+	if err := service.admitMode(definition.Mode, ModeFailover); err != nil {
+		return Result{}, err
+	}
 	id, err := service.ids.New()
+	if err != nil {
+		return Result{}, ErrUnavailable
+	}
+	salt, err := NewSpreadSalt()
 	if err != nil {
 		return Result{}, ErrUnavailable
 	}
 	return service.store.Change(ctx, Change{
 		Session: session, Scope: scope, Operation: OperationCreate, PoolID: ID(id),
-		Definition: definition.Canonical(), PoolLimit: service.limits.PoolsPerNetwork, CorrelationID: correlationID,
+		Definition: definition.Canonical(), PoolLimit: service.limits.PoolsPerNetwork, SpreadSalt: salt,
+		CorrelationID: correlationID,
 	})
 }
 
@@ -206,9 +226,24 @@ func (service *Service) Update(ctx context.Context, session accountsession.Sessi
 	if err := definition.Validate(service.limits); err != nil {
 		return Result{}, err
 	}
+	if definition.Mode == ModeSpread && !service.spread {
+		// Only a pool already spread may stay spread.
+		current, err := service.store.Read(ctx, session, scope, pool)
+		if err != nil {
+			return Result{}, err
+		}
+		if err := service.admitMode(definition.Mode, current.Pool.Mode); err != nil {
+			return Result{}, err
+		}
+	}
+	salt, err := NewSpreadSalt()
+	if err != nil {
+		return Result{}, ErrUnavailable
+	}
 	return service.store.Change(ctx, Change{
 		Session: session, Scope: scope, Operation: OperationUpdate, PoolID: pool,
-		ExpectedVersion: expectedVersion, Definition: definition.Canonical(), CorrelationID: correlationID,
+		ExpectedVersion: expectedVersion, Definition: definition.Canonical(), SpreadSalt: salt,
+		CorrelationID: correlationID,
 	})
 }
 

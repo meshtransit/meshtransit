@@ -2,6 +2,7 @@ package mtcp
 
 import (
 	"net/netip"
+	"slices"
 	"sync/atomic"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -31,9 +32,14 @@ func encodeExits(snapshot mapsession.Snapshot) *mtcpv1.ExitConfig {
 	config := &mtcpv1.ExitConfig{Pools: make([]*mtcpv1.ExitPool, 0, len(pools))}
 	for _, pool := range pools {
 		encoded := &mtcpv1.ExitPool{PoolRef: pool.Ref, Name: pool.Name,
-			Generation: uint64(pool.Generation), Status: exitStatus(pool.Status)} //nolint:gosec // positive
+			Generation: uint64(pool.Generation), Status: exitStatus(pool.Status), //nolint:gosec // positive
+			Mode: mtcpv1.ExitPool_FAILOVER}
+		if pool.Spread {
+			encoded.Mode = mtcpv1.ExitPool_SPREAD
+		}
 		for _, candidate := range pool.Candidates {
-			exitCandidate := &mtcpv1.ExitCandidate{DeviceId: candidate.String()}
+			exitCandidate := &mtcpv1.ExitCandidate{DeviceId: candidate.String(),
+				Draining: slices.Contains(pool.Draining, candidate)}
 			if peer, ok := peers[candidate]; ok {
 				for _, prefix := range peer.Addresses() {
 					if address := prefix.Addr().Unmap(); address.Is4() {

@@ -99,6 +99,9 @@ type Definition struct {
 	// order; empty uses each exit node's own system resolver.
 	DNSUpstreams []netip.Addr
 	Probes       []Probe
+	// Mode is failover or spread; ModeKeep in an update keeps the stored
+	// one and in a new pool means failover.
+	Mode Mode
 }
 
 // Validate accepts a trimmed, bounded name of plain text, a connection
@@ -110,6 +113,9 @@ func (definition Definition) Validate(limits Limits) error {
 	}
 	name := strings.TrimSpace(definition.Name)
 	if name != definition.Name || name == "" || utf8.RuneCountInString(name) > MaximumNameLength || !plainText(name) {
+		return ErrInvalid
+	}
+	if definition.Mode != ModeKeep && !definition.Mode.IsKnown() {
 		return ErrInvalid
 	}
 	if definition.ConntrackPerConsumer < MinimumConntrackPerConsumer ||

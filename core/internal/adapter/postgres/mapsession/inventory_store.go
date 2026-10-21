@@ -175,7 +175,8 @@ func (store *Store) readInventory(
 	routes := networkRoutes{}
 	if store.options.SubnetRoutes || store.options.ExitNodes {
 		routes = networkRoutes{revision: routeRevision, peerLimit: store.options.RoutePeerLimit,
-			sites: store.options.SubnetRoutes, exits: store.options.ExitNodes}
+			sites: store.options.SubnetRoutes, exits: store.options.ExitNodes,
+			spread: store.options.ExitNodes && store.options.ExitSpread}
 	}
 	cached.policy, err = readNetworkPolicy(ctx, transaction, scope, policyRevision, releaseActive, routes)
 	if err != nil {
@@ -376,6 +377,7 @@ type networkRoutes struct {
 	peerLimit int
 	sites     bool
 	exits     bool
+	spread    bool
 }
 
 // readNetworkPolicy reads one Network's policy at selector level within the
@@ -399,7 +401,7 @@ func readNetworkPolicy(
 			}
 		}
 		if routes.exits {
-			if err := readNetworkExits(ctx, transaction, &params); err != nil {
+			if err := readNetworkExits(ctx, transaction, &params, routes.spread); err != nil {
 				return appmapsession.NetworkPolicy{}, err
 			}
 		}

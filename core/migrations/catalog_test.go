@@ -15,8 +15,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 209 {
-		t.Fatalf("len(Catalog()) = %d, want 209", len(catalog))
+	if len(catalog) != 210 {
+		t.Fatalf("len(Catalog()) = %d, want 210", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1611,8 +1611,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 209 {
-		t.Fatalf("LatestVersion() = %d, want 209", LatestVersion())
+	if LatestVersion() != 210 {
+		t.Fatalf("LatestVersion() = %d, want 210", LatestVersion())
 	}
 }
 
@@ -6004,5 +6004,40 @@ func TestMigration209ReadsConsoleDeviceAddresses(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "TO mesh_worker") {
 		t.Error("schema 209 grants the Console read to the worker role")
+	}
+}
+
+func TestMigration210SpreadsExitPools(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[209]
+	if migration.Version != 210 {
+		t.Fatalf("migration 210 = %+v", migration)
+	}
+	for _, want := range []string{
+		"ADD COLUMN mode TEXT NOT NULL DEFAULT 'failover'",
+		"(mode <> 'spread' OR spread_salt IS NOT NULL)",
+		"CREATE TABLE mesh.exit_pool_serving (",
+		"capture_authority_mutation('exit_pool_serving', 'public_id')",
+		"CREATE FUNCTION mesh_ops.change_exit_pool_v2(",
+		"COALESCE(spread_salt, p_spread_salt)",
+		"SET previous_device_ids = device_ids, device_ids = '{}'::BIGINT[], generation = generation + 1,",
+		"'serving_previous', CASE WHEN v_pool.previous_device_ids IS NULL",
+		"IF mesh_ops.exit_pool_rule_count_internal_v1(v_pool.id) > 0 THEN",
+		"CREATE FUNCTION mesh_ops.read_exit_pool_v3(",
+		"CREATE FUNCTION mesh_ops.list_exit_pool_elections_v2(",
+		"CREATE FUNCTION mesh_ops.prepare_exit_pool_serving_v1(",
+		"IF v_pool.state <> 'active' OR v_pool.mode <> 'spread' THEN",
+		"'exit_pool.serving_changed',",
+		"CREATE FUNCTION mesh_ops.load_map_network_exit_pools_v2(",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.prepare_exit_pool_serving_v1(UUID, UUID, BIGINT, UUID[], TEXT, UUID)\n    TO mesh_worker;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 210 lacks %q", want)
+		}
+	}
+	// The salt never leaves for the Console: only the map loader returns it.
+	if strings.Count(migration.SQL, "exit_pool.spread_salt") != 1 ||
+		!strings.Contains(migration.SQL, "CASE WHEN exit_pool.mode = 'spread' THEN exit_pool.spread_salt END") {
+		t.Error("schema 210 returns the salt outside the map loader")
 	}
 }

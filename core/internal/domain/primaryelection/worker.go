@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"reflect"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -67,6 +68,18 @@ type GroupFacts struct {
 	Generation int64
 	// Members in priority order.
 	Members []MemberFacts
+	// Spread groups also have a serving set (exit node design §16): Serving
+	// is the set now (empty before its first election), ServingGeneration
+	// its election's generation (0 before the first) and ServingChangedAt
+	// when it last changed.
+	Spread            bool
+	Serving           []node.ID
+	ServingGeneration int64
+	ServingChangedAt  time.Time
+	// ServingReason is why the set last changed and ServingPrevious the set
+	// before: every replica holds back members that left overloaded.
+	ServingReason   string
+	ServingPrevious []node.ID
 }
 
 // Page is one page of groups in group order.
@@ -122,6 +135,12 @@ type Options struct {
 	// Wakeups, when set, subscribes to hints that a member newly reports a
 	// failed group: a pass then runs at once instead of at the next poll.
 	Wakeups func(context.Context) (WakeupSubscription, error)
+	// Overloaded, when set, says which health codes of a degraded member
+	// take it out of a spread group's serving set.
+	Overloaded func(code string) bool
+	// Serving elects spread groups' serving sets
+	// (MESHTRANSIT_EXIT_SPREAD_ENABLED); off, they are left as they are.
+	Serving bool
 }
 
 // WakeupSubscription receives wakeup hints; Receive blocks until one comes.
@@ -154,6 +173,9 @@ type track struct {
 	usableSince  time.Time
 	silentAt     time.Time // when silence was first seen; zero while reporting
 	seen         time.Time
+	// overloadedSince is when the member began reporting overload; zero
+	// while it reports none.
+	overloadedSince time.Time
 }
 
 // Worker elects primaries every poll. It owns one goroutine.
@@ -465,11 +487,20 @@ func (worker *Worker) elect(ctx context.Context, facts GroupFacts,
 		candidates = append(candidates, worker.status(key, member, observations[member.Device], known,
 			member.Device == facts.Primary, now))
 	}
+	worker.electPrimary(ctx, facts, candidates, known)
+	if facts.Spread && known && worker.options.Serving {
+		worker.electServing(ctx, facts, candidates, observations, now)
+	}
+	return candidates
+}
+
+// electPrimary records a group's primary when it changed.
+func (worker *Worker) electPrimary(ctx context.Context, facts GroupFacts, candidates []Candidate, known bool) {
 	primary, reason := Elect(facts.Primary, candidates, facts.Failback)
 	// Without the members' health (health counts every member usable) only
 	// authority facts are certain: no failback on it.
 	if (facts.Generation > 0 && primary == facts.Primary) || (!known && reason == ReasonFailback) {
-		return candidates
+		return
 	}
 	if reason == "" {
 		reason = ReasonElected
@@ -483,14 +514,87 @@ func (worker *Worker) elect(ctx context.Context, facts GroupFacts,
 		worker.writeErrors.Add(1)
 		worker.logger.WarnContext(ctx, worker.options.Label+" primary not recorded", worker.options.Key,
 			facts.Group, "error_code", worker.options.Code+"_write_failed")
-		return candidates
+		return
 	}
 	if changed {
 		worker.elections.Add(1)
 		worker.logger.InfoContext(ctx, worker.options.Label+" primary elected", worker.options.Key, facts.Group,
 			"primary", primary.String(), "previous", facts.Primary.String(), "reason", reason)
 	}
-	return candidates
+}
+
+// electServing records a spread group's serving set when it changed, at
+// most once every ServingChangeSpacing. It runs only on known health: an
+// unreadable Redis changes nothing.
+func (worker *Worker) electServing(ctx context.Context, facts GroupFacts, candidates []Candidate,
+	observations map[node.ID]distribution.Observation, now time.Time,
+) {
+	recorder, records := worker.recorder.(ServingRecorder)
+	if !records {
+		return
+	}
+	// Members the last change took out overloaded are held back until
+	// RecoveredAfter, as every replica reads it from the database.
+	var leftOverloaded []node.ID
+	if facts.ServingReason == ServingOverloaded {
+		for _, device := range facts.ServingPrevious {
+			if !slices.Contains(facts.Serving, device) {
+				leftOverloaded = append(leftOverloaded, device)
+			}
+		}
+	}
+	heldUntil := facts.ServingChangedAt.Add(RecoveredAfter)
+	members := make([]ServingCandidate, 0, len(candidates))
+	for index, candidate := range candidates {
+		member := facts.Members[index]
+		remembered := worker.tracks[trackKey{group: facts.Group, device: member.Device}]
+		overloaded, reporting := worker.overload(remembered, candidate, observations[member.Device], facts.Group, now)
+		left := slices.Contains(leftOverloaded, member.Device)
+		members = append(members, ServingCandidate{Device: member.Device, Priority: member.Priority,
+			Status: candidate.Status, UsableFor: candidate.UsableFor, Overloaded: overloaded, Reporting: reporting,
+			HeldBack: left && now.Before(heldUntil), Recovered: left && !now.Before(heldUntil)})
+	}
+	serving, reason, changed := ElectServing(facts.Serving, members)
+	if !changed || (!facts.ServingChangedAt.IsZero() && now.Sub(facts.ServingChangedAt) < ServingChangeSpacing) {
+		return
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, worker.options.OperationTimeout)
+	defer cancel()
+	recorded, err := recorder.RecordServing(writeCtx, worker.options.DeploymentID, ServingDecision{
+		Group: facts.Group, ExpectedGeneration: facts.ServingGeneration, Devices: serving, Reason: reason,
+	})
+	if err != nil {
+		worker.writeErrors.Add(1)
+		worker.logger.WarnContext(ctx, worker.options.Label+" serving set not recorded", worker.options.Key,
+			facts.Group, "error_code", worker.options.Code+"_serving_write_failed")
+		return
+	}
+	if recorded {
+		worker.elections.Add(1)
+		worker.logger.InfoContext(ctx, worker.options.Label+" serving set elected", worker.options.Key,
+			facts.Group, "members", len(serving), "reason", reason)
+	}
+}
+
+// overload judges whether a member reports overload now (reporting) and
+// has for OverloadedAfter (overloaded).
+func (worker *Worker) overload(remembered *track, candidate Candidate, observation distribution.Observation,
+	group string, now time.Time,
+) (overloaded, reporting bool) {
+	if remembered == nil || worker.options.Overloaded == nil {
+		return false, false
+	}
+	report := worker.options.Health(observation, group, now)
+	reporting = candidate.Status == StatusUsable && report.State == distribution.SiteHealthDegraded &&
+		worker.options.Overloaded(report.Code)
+	if !reporting {
+		remembered.overloadedSince = time.Time{}
+		return false, false
+	}
+	if remembered.overloadedSince.IsZero() {
+		remembered.overloadedSince = now
+	}
+	return now.Sub(remembered.overloadedSince) >= OverloadedAfter, true
 }
 
 // status judges one member of one group and updates what is remembered of

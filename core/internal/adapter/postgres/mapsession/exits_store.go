@@ -23,6 +23,14 @@ const (
 	loadNetworkExitPoolsSQL = `SELECT pool_id, pool_public_id::TEXT, pool_name, smtp_allowed, conntrack_per_consumer,
     dns_upstreams, probe_addresses, probe_ports, elected, COALESCE(primary_device_id, 0)
 FROM mesh_ops.load_map_network_exit_pools_v1($1::INTEGER)`
+	// Schema 210: each pool's mode, assignment version, salt and serving
+	// set, read only while spread pools are enabled.
+	exitSpreadGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
+    pg_catalog.to_regprocedure('mesh_ops.load_map_network_exit_pools_v2(integer)'), 'EXECUTE'), FALSE)`
+	loadNetworkSpreadExitPoolsSQL = `SELECT pool_id, pool_public_id::TEXT, pool_name, smtp_allowed,
+    conntrack_per_consumer, dns_upstreams, probe_addresses, probe_ports, elected, COALESCE(primary_device_id, 0),
+    spread, assignment_version, spread_salt, serving_device_ids
+FROM mesh_ops.load_map_network_exit_pools_v2($1::INTEGER)`
 	loadNetworkExitNodesSQL = `SELECT pool_id, device_id, device_public_id::TEXT, priority, node_state,
     workspace_owned, offered
 FROM mesh_ops.load_map_network_exit_nodes_v1($1::INTEGER)`
@@ -39,8 +47,11 @@ FROM mesh_ops.load_map_network_exit_rules_v1($1::BIGINT, $2::INTEGER)`
 
 // readNetworkExits adds the Network's Exit Pools, exit nodes and rules to
 // pools to params, in the inventory transaction. Before schema 205 is
-// installed there are none: maps carry no pools rather than failing.
-func readNetworkExits(ctx context.Context, transaction databaseTransaction, params *appmapsession.NetworkPolicyParams) error {
+// installed there are none: maps carry no pools rather than failing. With
+// spread, pools come with their modes and serving sets once schema 210 is
+// installed; before it, every pool is failover.
+func readNetworkExits(ctx context.Context, transaction databaseTransaction, params *appmapsession.NetworkPolicyParams,
+	spread bool) error {
 	granted, err := functionGranted(ctx, transaction, exitsGrantedSQL)
 	if err != nil {
 		return errors.Join(ErrLoadSnapshot, fmt.Errorf("check exit readers: %w", err))
@@ -48,7 +59,12 @@ func readNetworkExits(ctx context.Context, transaction databaseTransaction, para
 	if !granted {
 		return nil
 	}
-	if params.ExitPools, err = readNetworkExitPools(ctx, transaction); err != nil {
+	if spread {
+		if spread, err = functionGranted(ctx, transaction, exitSpreadGrantedSQL); err != nil {
+			return errors.Join(ErrLoadSnapshot, fmt.Errorf("check spread exit reader: %w", err))
+		}
+	}
+	if params.ExitPools, err = readNetworkExitPools(ctx, transaction, spread); err != nil {
 		return err
 	}
 	if len(params.ExitPools) == 0 {
@@ -65,8 +81,13 @@ func readNetworkExits(ctx context.Context, transaction databaseTransaction, para
 	return nil
 }
 
-func readNetworkExitPools(ctx context.Context, transaction databaseTransaction) ([]appmapsession.ExitPool, error) {
-	rows, err := transaction.Query(ctx, loadNetworkExitPoolsSQL, maximumNetworkExitPools+1)
+func readNetworkExitPools(ctx context.Context, transaction databaseTransaction, spread bool) (
+	[]appmapsession.ExitPool, error) {
+	statement := loadNetworkExitPoolsSQL
+	if spread {
+		statement = loadNetworkSpreadExitPoolsSQL
+	}
+	rows, err := transaction.Query(ctx, statement, maximumNetworkExitPools+1)
 	if err != nil || rows == nil {
 		return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("read network exit pools: %w", nonNil(err)))
 	}
@@ -80,9 +101,27 @@ func readNetworkExitPools(ctx context.Context, transaction databaseTransaction) 
 		var conntrack int32
 		var upstreams, addresses []netip.Prefix
 		var ports []int32
-		if err := rows.Scan(&pool.Pool, &pool.Ref, &pool.Name, &pool.SMTPAllowed, &conntrack, &upstreams,
-			&addresses, &ports, &pool.Elected, &pool.Primary); err != nil {
+		destinations := []any{&pool.Pool, &pool.Ref, &pool.Name, &pool.SMTPAllowed, &conntrack, &upstreams,
+			&addresses, &ports, &pool.Elected, &pool.Primary}
+		var assignmentVersion int16
+		var salt []byte
+		if spread {
+			destinations = append(destinations, &pool.Spread, &assignmentVersion, &salt, &pool.Serving)
+		}
+		if err := rows.Scan(destinations...); err != nil {
 			return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("scan network exit pool: %w", err))
+		}
+		if pool.Spread {
+			// A pool another Core version assigns differently, or without its
+			// salt, is served as failover.
+			if assignmentVersion != appmapsession.ExitAssignmentVersion || len(salt) != len(pool.Salt) {
+				pool.Spread, pool.Serving = false, nil
+			} else {
+				copy(pool.Salt[:], salt)
+			}
+		}
+		if len(pool.Serving) > appmapsession.MaximumExitCandidates {
+			return nil, ErrSnapshotEvidence
 		}
 		if len(addresses) != len(ports) || len(upstreams) > appmapsession.MaximumExitUpstreams ||
 			len(addresses) > appmapsession.MaximumExitProbes || conntrack <= 0 || pool.Primary < 0 ||

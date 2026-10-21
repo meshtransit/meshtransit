@@ -17,11 +17,13 @@ import (
 
 var errInvalidExitPoolElectionWorkerComposition = errors.New("invalid Exit Pool election worker composition")
 
-// composeExitPoolElectionWorker elects Exit Pool primaries from the exit
-// nodes' health in Redis, with the election Sites use. It runs with the
+// composeExitPoolElectionWorker elects Exit Pool primaries, and spread
+// pools' serving sets, from the exit nodes' health in Redis, with the
+// election Sites use. It runs with the
 // enforcement ledger worker when the deployment has exit nodes.
 func composeExitPoolElectionWorker(settings config.EnforcementLedgerWorkerConfig, pool *postgresadapter.Pool,
-	redisClient *redisadapter.Client, logger *slog.Logger) (*primaryelection.Worker, prometheus.Collector, error) {
+	redisClient *redisadapter.Client, spread bool, logger *slog.Logger,
+) (*primaryelection.Worker, prometheus.Collector, error) {
 	if pool == nil || redisClient == nil || logger == nil {
 		return nil, nil, errInvalidExitPoolElectionWorkerComposition
 	}
@@ -32,7 +34,8 @@ func composeExitPoolElectionWorker(settings config.EnforcementLedgerWorkerConfig
 	worker, err := primaryelection.New(primaryelection.Options{
 		DeploymentID: settings.DeploymentID, PollInterval: siteElectionPoll,
 		OperationTimeout: settings.OperationTimeout, Health: exitpool.ElectionHealth,
-		Label: "Exit Pool", Key: "exit_pool", Code: "exit_pool_election",
+		Label: "Exit Pool", Key: "exit_pool", Code: "exit_pool_election", Overloaded: exitpool.Overloaded,
+		Serving: spread,
 	}, store, store, redisClient, accountsession.SystemClock{}, logger)
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidExitPoolElectionWorkerComposition, err)

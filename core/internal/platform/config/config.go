@@ -63,6 +63,8 @@ type Config struct {
 	SiteDenied []netip.Prefix
 	// ExitNodes lets Access Rules name Exit Pools (MESHTRANSIT_EXIT_NODES_ENABLED).
 	ExitNodes bool
+	// ExitSpread lets Exit Pools become spread (MESHTRANSIT_EXIT_SPREAD_ENABLED).
+	ExitSpread bool
 	// GeoIPCountryFile is the country table Console Device reads place
 	// public addresses with (MESHTRANSIT_GEOIP_COUNTRY_FILE); empty: none.
 	GeoIPCountryFile string
@@ -193,6 +195,10 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, err
 	}
 	exitNodes, err := loadExitNodes(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+	exitSpread, err := loadExitSpread(lookup)
 	if err != nil {
 		return Config{}, err
 	}
@@ -346,6 +352,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		SubnetRoutes:            subnetRoutes,
 		SiteDenied:              siteDenied,
 		ExitNodes:               exitNodes,
+		ExitSpread:              exitSpread,
 		GeoIPCountryFile:        geoIPCountryFile,
 		Dependencies:            dependencyConfig,
 		Storage:                 storageConfig,

@@ -576,6 +576,7 @@ func Catalog() []Migration {
 		newMigration(207, "The Access Graph lists the Devices rules to Exit Pools reach", accessGraphExitEdgesSQL),
 		newMigration(208, "The access ledger records rules to Exit Pools", accessLedgerExitEdgesSQL),
 		newMigration(209, "The Console reads the mesh addresses a Device holds", consoleDeviceAddressesSQL),
+		newMigration(210, "Exit Pools spread their consumers over their exit nodes", exitPoolSpreadSQL),
 	}
 }
 
@@ -982,3 +983,6 @@ var accessLedgerExitEdgesSQL string
 
 //go:embed 000209_console_device_addresses.up.sql
 var consoleDeviceAddressesSQL string
+
+//go:embed 000210_exit_pool_spread.up.sql
+var exitPoolSpreadSQL string

@@ -53,6 +53,9 @@ func TestParseExitPoolPath(t *testing.T) {
 		{http.MethodGet, base + "/" + poolID + "/primary-changes?after=" + deviceID + "&limit=50", exitPoolPrimaryHistory, true},
 		{http.MethodPost, base + "/" + poolID + "/primary-changes", "", true},
 		{http.MethodGet, base + "/" + poolID + "/primary-changes?limit=51", "", false},
+		{http.MethodGet, base + "/" + poolID + "/serving-changes", exitPoolServingHistory, true},
+		{http.MethodGet, base + "/" + poolID + "/serving-changes?limit=50", exitPoolServingHistory, true},
+		{http.MethodPost, base + "/" + poolID + "/serving-changes", "", true},
 	} {
 		request := httptest.NewRequestWithContext(t.Context(), test.method, test.path, nil)
 		path, matched := parseExitPoolPath(request)
@@ -76,6 +79,7 @@ func TestClassifyExitPoolError(t *testing.T) {
 		exitpool.ErrNodeInOtherPool: "exit_node_in_other_pool",
 		exitpool.ErrInUse:           "exit_pool_in_use",
 		exitpool.ErrNotInternet:     "exit_pool_address_not_internet",
+		exitpool.ErrSpreadDisabled:  "exit_spread_disabled",
 		exitpool.ErrInvalid:         "invalid_request",
 		errors.New("database"):      "temporarily_unavailable",
 	} {
@@ -91,6 +95,7 @@ type fakeExitPoolManager struct {
 	assignment exitpool.NodeAssignment
 	removed    node.ID
 	pool       exitpool.Pool
+	serving    *exitpool.Serving
 }
 
 func (manager *fakeExitPoolManager) List(context.Context, accountsession.Session, network.Scope, exitpool.ID,
@@ -100,7 +105,7 @@ func (manager *fakeExitPoolManager) List(context.Context, accountsession.Session
 
 func (manager *fakeExitPoolManager) Read(context.Context, accountsession.Session, network.Scope,
 	exitpool.ID) (exitpool.Reading, error) {
-	return exitpool.Reading{Pool: manager.pool}, nil
+	return exitpool.Reading{Pool: manager.pool, Serving: manager.serving}, nil
 }
 
 func (manager *fakeExitPoolManager) Create(_ context.Context, _ accountsession.Session, _ network.Scope,
@@ -130,6 +135,11 @@ func (manager *fakeExitPoolManager) PutNode(_ context.Context, _ accountsession.
 func (manager *fakeExitPoolManager) PrimaryChanges(context.Context, accountsession.Session, network.Scope,
 	exitpool.ID, publicid.ID, int) (exitpool.PrimaryHistory, error) {
 	return exitpool.PrimaryHistory{Changes: []exitpool.PrimaryChange{}}, nil
+}
+
+func (manager *fakeExitPoolManager) ServingChanges(context.Context, accountsession.Session, network.Scope,
+	exitpool.ID, publicid.ID, int) (exitpool.ServingHistory, error) {
+	return exitpool.ServingHistory{Changes: []exitpool.ServingChange{}}, nil
 }
 
 func (manager *fakeExitPoolManager) RemoveNode(_ context.Context, _ accountsession.Session, _ network.Scope,
@@ -258,6 +268,7 @@ func TestExitPoolsThroughServeHTTP(t *testing.T) {
 		{http.MethodPut, pool, definition, http.StatusMethodNotAllowed, "GET, PATCH, DELETE"},
 		{http.MethodGet, exitNode, "", http.StatusMethodNotAllowed, "PUT, DELETE"},
 		{http.MethodGet, pool + "/primary-changes", "", http.StatusOK, ""},
+		{http.MethodGet, pool + "/serving-changes", "", http.StatusOK, ""},
 	} {
 		request := newManagementRequest(t, test.method, test.path, test.body)
 		request.Header.Del("Idempotency-Key")
@@ -385,5 +396,60 @@ func TestDeviceStatusNamesTheExitNodeTheDeviceUses(t *testing.T) {
 	device.ExitSelection = nil
 	if item := newDeviceDistributionItem(device, nil); item.Exit != nil {
 		t.Fatalf("no exit reported = %+v", item.Exit)
+	}
+}
+
+// TestExitPoolModeAndServing: a pool shows its mode (failover when the store
+// knows none) and, when spread, its serving set; a definition takes a mode
+// or none, and refuses one it does not know.
+func TestExitPoolModeAndServing(t *testing.T) {
+	t.Parallel()
+	poolID, _ := exitpool.ParseID("01890f00-0000-7000-8000-000000000b01")
+	device, _ := node.ParseID("01890f00-0000-7000-8000-000000000b02")
+	changedAt := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	manager := &fakeExitPoolManager{pool: exitpool.Pool{ID: poolID, Version: 2, CreatedAt: changedAt,
+		UpdatedAt: changedAt, Definition: exitpool.Definition{Name: "SG", Mode: exitpool.ModeSpread,
+			ConntrackPerConsumer: exitpool.DefaultConntrackPerConsumer}},
+		serving: &exitpool.Serving{Devices: []node.ID{device}, Generation: 3, Reason: exitpool.ServingJoined,
+			ChangedAt: changedAt}}
+	handler := &ManagementHandler{exitPools: manager, logger: slog.New(slog.DiscardHandler)}
+	base := "/api/v1/workspaces/01890f00-0000-7000-8000-000000000101/networks/01890f00-0000-7000-8000-000000000201/exit-pools"
+	correlationID, _ := publicid.New()
+	serve := func(method, target, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequestWithContext(t.Context(), method, target, strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("If-Match", `"2"`)
+		path, ok := parseExitPoolPath(request)
+		if !ok {
+			t.Fatalf("%s %s did not match", method, target)
+		}
+		response := httptest.NewRecorder()
+		handler.handleExitPools(t.Context(), response, request, correlationID, path, accountsession.Session{})
+		return response
+	}
+	read := serve(http.MethodGet, base+"/"+poolID.String(), "")
+	want := `"mode":"spread","serving":{"device_ids":["` + device.String() +
+		`"],"generation":3,"reason":"joined","changed_at":"2026-10-21T12:00:00Z"}`
+	if read.Code != http.StatusOK || !strings.Contains(read.Body.String(), want) {
+		t.Fatalf("read = %d %s", read.Code, read.Body)
+	}
+	definition := `{"name":"SG","failback":false,"smtp_allowed":false,"conntrack_per_consumer":16384,` +
+		`"dns_upstreams":[],"probes":[]`
+	if response := serve(http.MethodPatch, base+"/"+poolID.String(), definition+`}`); response.Code != http.StatusOK ||
+		manager.created.Mode != exitpool.ModeKeep {
+		t.Fatalf("an update without mode = %d, %q", response.Code, manager.created.Mode)
+	}
+	if response := serve(http.MethodPatch, base+"/"+poolID.String(), definition+`,"mode":"failover"}`); response.Code !=
+		http.StatusOK || manager.created.Mode != exitpool.ModeFailover {
+		t.Fatalf("an update to failover = %d, %q", response.Code, manager.created.Mode)
+	}
+	if response := serve(http.MethodPost, base, definition+`,"mode":"roundrobin"}`); response.Code != http.StatusBadRequest {
+		t.Fatalf("an unknown mode = %d", response.Code)
+	}
+	manager.pool.Mode, manager.serving = exitpool.ModeKeep, nil
+	listed := serve(http.MethodGet, base, "")
+	if !strings.Contains(listed.Body.String(), `"mode":"failover"`) || strings.Contains(listed.Body.String(), `"serving"`) {
+		t.Fatalf("a pool without a known mode = %s", listed.Body)
 	}
 }

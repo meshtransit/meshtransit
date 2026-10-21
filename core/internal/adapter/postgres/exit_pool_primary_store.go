@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
 	"strconv"
 	"time"
 
@@ -29,7 +30,11 @@ var (
 )
 
 const (
-	listExitPoolElectionsSQL   = `SELECT mesh_ops.list_exit_pool_elections_v1($1::UUID,$2::UUID,$3::INTEGER)`
+	listExitPoolElectionsSQL   = `SELECT mesh_ops.list_exit_pool_elections_v2($1::UUID,$2::UUID,$3::INTEGER)`
+	prepareExitPoolServingSQL  = `SELECT mesh_ops.prepare_exit_pool_serving_v1($1::UUID,$2::UUID,$3::BIGINT,$4::UUID[],$5::TEXT,$6::UUID)`
+	finalizeExitPoolServingSQL = `SELECT mesh_ops.finalize_exit_pool_serving_v1($1::UUID,$2::UUID,$3::UUID,$4::TEXT,$5::JSONB)`
+	exitPoolServingAction      = "exit_pool.serving_changed"
+	exitPoolServingAggregate   = "exit_pool_serving"
 	prepareExitPoolPrimarySQL  = `SELECT mesh_ops.prepare_exit_pool_primary_v1($1::UUID,$2::UUID,$3::BIGINT,$4::UUID,$5::TEXT,$6::UUID)`
 	finalizeExitPoolPrimarySQL = `SELECT mesh_ops.finalize_exit_pool_primary_v1($1::UUID,$2::UUID,$3::UUID,$4::TEXT,$5::JSONB)`
 	exitPoolPrimaryAction      = "exit_pool.primary_changed"
@@ -44,8 +49,9 @@ type ExitPoolPrimaryStore struct {
 }
 
 var (
-	_ primaryelection.Facts    = (*ExitPoolPrimaryStore)(nil)
-	_ primaryelection.Recorder = (*ExitPoolPrimaryStore)(nil)
+	_ primaryelection.Facts           = (*ExitPoolPrimaryStore)(nil)
+	_ primaryelection.Recorder        = (*ExitPoolPrimaryStore)(nil)
+	_ primaryelection.ServingRecorder = (*ExitPoolPrimaryStore)(nil)
 )
 
 // NewExitPoolPrimaryStore rejects non-worker pools before any effect.
@@ -121,6 +127,14 @@ type exitPoolElectionRecord struct {
 	Primary     *string                  `json:"primary_device_id"`
 	Generation  *int64                   `json:"generation"`
 	Nodes       []exitPoolElectionMember `json:"nodes"`
+	// Schema 210: whether the pool is spread, its serving set, the set's
+	// generation and when it last changed (null before the first).
+	Spread            *bool      `json:"spread"`
+	Serving           []string   `json:"serving"`
+	ServingGeneration *int64     `json:"serving_generation"`
+	ServingChangedAt  *time.Time `json:"serving_changed_at"`
+	ServingReason     *string    `json:"serving_reason"`
+	ServingPrevious   []string   `json:"serving_previous"`
 }
 
 type exitPoolElectionMember struct {
@@ -173,8 +187,38 @@ func decodeExitPoolElection(item exitPoolElectionRecord) (primaryelection.GroupF
 		item.WorkspaceID == "" || item.NetworkID == "" {
 		return primaryelection.GroupFacts{}, false
 	}
+	if item.Spread == nil || item.Serving == nil || len(item.Serving) > exitpool.MaximumNodesPerPool ||
+		item.ServingGeneration == nil || *item.ServingGeneration < 0 ||
+		(*item.ServingGeneration > 0) != (item.ServingChangedAt != nil) {
+		return primaryelection.GroupFacts{}, false
+	}
 	facts := primaryelection.GroupFacts{Group: item.PoolID, Failback: *item.Failback, Generation: *item.Generation,
-		Members: make([]primaryelection.MemberFacts, 0, len(item.Nodes))}
+		Members: make([]primaryelection.MemberFacts, 0, len(item.Nodes)), Spread: *item.Spread,
+		ServingGeneration: *item.ServingGeneration}
+	if item.ServingChangedAt != nil {
+		facts.ServingChangedAt = item.ServingChangedAt.UTC()
+	}
+	if (item.ServingReason != nil) != (*item.ServingGeneration > 0) || item.ServingPrevious == nil ||
+		len(item.ServingPrevious) > exitpool.MaximumNodesPerPool {
+		return primaryelection.GroupFacts{}, false
+	}
+	if item.ServingReason != nil {
+		facts.ServingReason = *item.ServingReason
+	}
+	for _, text := range item.ServingPrevious {
+		device, err := node.ParseID(text)
+		if err != nil {
+			return primaryelection.GroupFacts{}, false
+		}
+		facts.ServingPrevious = append(facts.ServingPrevious, device)
+	}
+	for _, text := range item.Serving {
+		device, err := node.ParseID(text)
+		if err != nil || slices.Contains(facts.Serving, device) {
+			return primaryelection.GroupFacts{}, false
+		}
+		facts.Serving = append(facts.Serving, device)
+	}
 	if item.Primary != nil {
 		if facts.Primary, err = node.ParseID(*item.Primary); err != nil {
 			return primaryelection.GroupFacts{}, false
@@ -212,11 +256,62 @@ func decodeExitPoolElection(item exitPoolElectionRecord) (primaryelection.GroupF
 // re-reads committed state.
 func (store *ExitPoolPrimaryStore) Record(ctx context.Context, installation deployment.ID,
 	decision primaryelection.Decision,
+) (bool, error) {
+	if !validElectionReason(decision.Reason) {
+		return false, ErrInvalidExitPoolPrimary
+	}
+	var device any
+	if decision.Primary.IsValid() {
+		device = decision.Primary.String()
+	}
+	return store.record(ctx, installation, exitPoolElection{
+		group: decision.Group, expectedGeneration: decision.ExpectedGeneration, reason: decision.Reason,
+		prepareSQL: prepareExitPoolPrimarySQL, finalizeSQL: finalizeExitPoolPrimarySQL, choice: device,
+		aggregate: exitPoolPrimaryAggregate, action: exitPoolPrimaryAction,
+	})
+}
+
+// RecordServing records a spread pool's serving set as Record records its
+// primary: audited as exit_pool.serving_changed.
+func (store *ExitPoolPrimaryStore) RecordServing(ctx context.Context, installation deployment.ID,
+	decision primaryelection.ServingDecision,
+) (bool, error) {
+	if !exitpool.IsValidServingReason(decision.Reason) || len(decision.Devices) > exitpool.MaximumNodesPerPool {
+		return false, ErrInvalidExitPoolPrimary
+	}
+	devices := make([]string, 0, len(decision.Devices))
+	for _, device := range decision.Devices {
+		if !device.IsValid() || slices.Contains(devices, device.String()) {
+			return false, ErrInvalidExitPoolPrimary
+		}
+		devices = append(devices, device.String())
+	}
+	return store.record(ctx, installation, exitPoolElection{
+		group: decision.Group, expectedGeneration: decision.ExpectedGeneration, reason: decision.Reason,
+		prepareSQL: prepareExitPoolServingSQL, finalizeSQL: finalizeExitPoolServingSQL, choice: devices,
+		aggregate: exitPoolServingAggregate, action: exitPoolServingAction,
+	})
+}
+
+// exitPoolElection is one primary or serving set decision to record.
+type exitPoolElection struct {
+	group              string
+	expectedGeneration int64
+	reason             string
+	prepareSQL         string
+	finalizeSQL        string
+	// choice is the prepare argument after the generation: the primary's
+	// Device or the serving set's Devices.
+	choice            any
+	aggregate, action string
+}
+
+func (store *ExitPoolPrimaryStore) record(ctx context.Context, installation deployment.ID,
+	election exitPoolElection,
 ) (changed bool, resultErr error) {
-	poolID, poolErr := exitpool.ParseID(decision.Group)
+	poolID, poolErr := exitpool.ParseID(election.group)
 	if ctx == nil || store == nil || store.database == nil || !installation.IsValid() || poolErr != nil ||
-		poolID.String() != decision.Group || decision.ExpectedGeneration < 0 ||
-		!validElectionReason(decision.Reason) {
+		poolID.String() != election.group || election.expectedGeneration < 0 {
 		return false, ErrInvalidExitPoolPrimary
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -254,29 +349,25 @@ func (store *ExitPoolPrimaryStore) Record(ctx context.Context, installation depl
 	if err := transaction.Exec(ctx, configureAuthTransactionSQL, "5000", "1000", "10000"); err != nil {
 		return false, errors.Join(ErrExitPoolPrimary, err)
 	}
-	var device any
-	if decision.Primary.IsValid() {
-		device = decision.Primary.String()
-	}
 	var encoded []byte
-	if err := transaction.QueryRow(ctx, prepareExitPoolPrimarySQL, installation.String(), decision.Group,
-		decision.ExpectedGeneration, device, decision.Reason, change.String()).Scan(&encoded); err != nil {
+	if err := transaction.QueryRow(ctx, election.prepareSQL, installation.String(), election.group,
+		election.expectedGeneration, election.choice, election.reason, change.String()).Scan(&encoded); err != nil {
 		return false, errors.Join(ErrExitPoolPrimary, err)
 	}
-	proof, err := decodeExitPoolPrimaryProof(encoded, decision, change)
+	proof, err := decodeExitPoolPrimaryProof(encoded, election.group, election.expectedGeneration, change)
 	if err != nil {
 		return false, err
 	}
 	if !proof.Changed {
 		return false, nil // rolled back by the deferred function
 	}
-	event, err := hashExitPoolPrimaryEvent(proof, change, ids[1], ids[2])
+	event, err := hashExitPoolElectionEvent(proof, change, ids[1], ids[2], election.aggregate, election.action)
 	if err != nil {
 		return false, errors.Join(ErrExitPoolPrimary, err)
 	}
 	var count int
-	if err := transaction.QueryRow(ctx, finalizeExitPoolPrimarySQL, installation.String(), decision.Group,
-		change.String(), decision.Reason, event).Scan(&count); err != nil {
+	if err := transaction.QueryRow(ctx, election.finalizeSQL, installation.String(), election.group,
+		change.String(), election.reason, event).Scan(&count); err != nil {
 		return false, errors.Join(ErrExitPoolPrimary, err)
 	}
 	if count != 1 {
@@ -304,7 +395,7 @@ type exitPoolPrimaryProof struct {
 
 // decodeExitPoolPrimaryProof accepts exactly the unchanged answer, or one
 // election of the requested pool under this change, one generation on.
-func decodeExitPoolPrimaryProof(encoded []byte, decision primaryelection.Decision, change publicid.ID,
+func decodeExitPoolPrimaryProof(encoded []byte, group string, expectedGeneration int64, change publicid.ID,
 ) (exitPoolPrimaryProof, error) {
 	if len(encoded) == 0 || len(encoded) > resourceRetirementMaximumBytes {
 		return exitPoolPrimaryProof{}, ErrExitPoolPrimary
@@ -327,17 +418,18 @@ func decodeExitPoolPrimaryProof(encoded []byte, decision primaryelection.Decisio
 		return proof, nil
 	}
 	transaction, err := strconv.ParseInt(proof.TransactionID, 10, 64)
-	if err != nil || transaction <= 0 || proof.ChangeID != change.String() || proof.PoolID != decision.Group ||
-		proof.Generation != decision.ExpectedGeneration+1 || proof.AggregateVersion < 1 || proof.Event == nil ||
+	if err != nil || transaction <= 0 || proof.ChangeID != change.String() || proof.PoolID != group ||
+		proof.Generation != expectedGeneration+1 || proof.AggregateVersion < 1 || proof.Event == nil ||
 		!validResourceRetirementEvidence(*proof.Event) {
 		return exitPoolPrimaryProof{}, ErrExitPoolPrimary
 	}
 	return proof, nil
 }
 
-// hashExitPoolPrimaryEvent binds the event to fresh event and outbox ids.
+// hashExitPoolElectionEvent binds the event to fresh event and outbox ids.
 // The system actor and correlation are zero, as in other reconcilers.
-func hashExitPoolPrimaryEvent(proof exitPoolPrimaryProof, change, eventID, outboxID publicid.ID) ([]byte, error) {
+func hashExitPoolElectionEvent(proof exitPoolPrimaryProof, change, eventID, outboxID publicid.ID,
+	aggregate, action string) ([]byte, error) {
 	if proof.Event == nil {
 		return nil, ErrExitPoolPrimary
 	}
@@ -352,8 +444,8 @@ func hashExitPoolPrimaryEvent(proof exitPoolPrimaryProof, change, eventID, outbo
 	}
 	hash, err := audit.HashEvent(audit.EventHashMaterial{
 		PreviousHash: [32]byte(previous), EventID: eventID, ChangeID: change,
-		AggregateKind: exitPoolPrimaryAggregate, AggregateID: aggregateID, AggregateVersion: proof.AggregateVersion,
-		NetworkRevision: event.NetworkRevision, Action: exitPoolPrimaryAction, Permission: sitePrimaryPermission,
+		AggregateKind: aggregate, AggregateID: aggregateID, AggregateVersion: proof.AggregateVersion,
+		NetworkRevision: event.NetworkRevision, Action: action, Permission: sitePrimaryPermission,
 		AuditPayloadHash:  sha256.Sum256([]byte(event.AuditPayload)),
 		OutboxEventClass:  sitePrimaryOutboxClass,
 		OutboxPayloadHash: sha256.Sum256([]byte(event.OutboxPayload)),

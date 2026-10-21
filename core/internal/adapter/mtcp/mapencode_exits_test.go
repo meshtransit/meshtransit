@@ -24,6 +24,13 @@ import (
 // and group 10 = {702} may reach the Internet through it over TCP 443.
 func exitSnapshotFixture(t *testing.T, self int64) mapsession.Snapshot {
 	t.Helper()
+	return exitSnapshotFixtureWith(t, self, nil)
+}
+
+// exitSnapshotFixtureWith is exitSnapshotFixture with the policy changed
+// first.
+func exitSnapshotFixtureWith(t *testing.T, self int64, change func(*mapsession.NetworkPolicyParams)) mapsession.Snapshot {
+	t.Helper()
 	scope := snapshotFixture(t, 1).Scope()
 	now := time.Date(2026, time.October, 20, 4, 0, 0, 0, time.UTC)
 	ids := map[int64]node.ID{}
@@ -33,7 +40,7 @@ func exitSnapshotFixture(t *testing.T, self int64) mapsession.Snapshot {
 		devices = append(devices, mapsession.PolicyDevice{Device: device, NodeID: ids[device], ExpiresAt: now.Add(time.Hour)})
 	}
 	https := must(policy.NewPortRange(443, 443))
-	networkPolicy := must(mapsession.NewNetworkPolicy(mapsession.NetworkPolicyParams{
+	params := mapsession.NetworkPolicyParams{
 		Scope: scope, Revision: 5, ReleaseActive: true, Devices: devices,
 		Members:       []mapsession.SelectorMember{{Kind: mapsession.SelectorDeviceGroup, Selector: 10, Device: 702}},
 		RouteRevision: 9, RoutePeerLimit: 10_000,
@@ -47,7 +54,11 @@ func exitSnapshotFixture(t *testing.T, self int64) mapsession.Snapshot {
 		ExitRules: []mapsession.ExitRule{{ID: must(policy.ParseRuleID("01890f00-0000-7000-8000-000000000901")),
 			SourceKind: mapsession.SelectorDeviceGroup, SourceRef: 10, Pool: 1, Protocol: policy.ProtocolTCP,
 			Ports: []policy.PortRange{https}}},
-	}))
+	}
+	if change != nil {
+		change(&params)
+	}
+	networkPolicy := must(mapsession.NewNetworkPolicy(params))
 	var peers []mapsession.PeerCandidate
 	for _, device := range []int64{701, 702, 703} {
 		if device != self {
@@ -69,6 +80,35 @@ func exitSnapshotFixture(t *testing.T, self int64) mapsession.Snapshot {
 		Routes:         networkPolicy.RoutesFor(ids[self], now),
 		RelayDirectory: relayDirectoryFixture(t),
 	}))
+}
+
+// TestEncodeSnapshotCarriesSpreadExitPools: a spread pool's map says so,
+// names the consumer's own exit node as primary, in its own candidate order,
+// and marks draining exit nodes.
+func TestEncodeSnapshotCarriesSpreadExitPools(t *testing.T) {
+	t.Parallel()
+	consumer := exitSnapshotFixtureWith(t, 702, func(params *mapsession.NetworkPolicyParams) {
+		params.ExitPools[0].Spread, params.ExitPools[0].Serving = true, []int64{703}
+		params.ExitNodes[0].Active = false // 701 drains
+	})
+	message, err := encodeSnapshot(consumer, &mtcpv1.View{Epoch: 1, Seq: 1}, false, nil, dnsname.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pools := message.GetExits().GetPools()
+	if len(pools) != 1 || pools[0].GetMode() != mtcpv1.ExitPool_SPREAD ||
+		pools[0].GetPrimary() != "01890f00-0000-7000-8000-000000000703" {
+		t.Fatalf("spread exits = %v", message.GetExits())
+	}
+	candidates := pools[0].GetCandidates()
+	if len(candidates) != 2 || !candidates[0].GetDraining() || candidates[1].GetDraining() {
+		t.Fatalf("spread candidates = %v", candidates)
+	}
+	failover, err := encodeSnapshot(exitSnapshotFixture(t, 702), &mtcpv1.View{Epoch: 1, Seq: 1}, false, nil,
+		dnsname.Default())
+	if err != nil || failover.GetExits().GetPools()[0].GetMode() != mtcpv1.ExitPool_FAILOVER {
+		t.Fatalf("failover mode = %v, %v", failover.GetExits(), err)
+	}
 }
 
 func TestEncodeSnapshotCarriesExitPools(t *testing.T) {

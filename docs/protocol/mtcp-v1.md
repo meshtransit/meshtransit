@@ -701,11 +701,12 @@ destinations `0.0.0.0/0` and `::/0`, and the exit node subtracts this set.
 |---|---|
 | `pool_ref` | Opaque, stable reference of the pool: 1–64 bytes of UTF-8 |
 | `name` | The pool's display name: 1–64 characters without control characters |
-| `candidates` | The pool's exit nodes in priority order, 1 to 16, each with the `state` and `families` of its last health report and the overlay addresses of its DNS forwarder |
-| `primary` | The exit node Core chose, one of `candidates`; empty when none |
-| `generation` | Per pool; increases each time `primary` changes and never goes back |
+| `candidates` | The pool's exit nodes in priority order (`SPREAD`: this node's own order), 1 to 16, each with the `state` and `families` of its last health report, the overlay addresses of its DNS forwarder and `draining` when the administrator is taking it out of the pool |
+| `primary` | The exit node Core chose, one of `candidates`; empty when none. `SPREAD`: the exit node Core assigned to this node |
+| `generation` | Per pool; increases each time `primary` (`SPREAD`: the pool's serving set) changes and never goes back |
 | `status` | `SERVED`: send through `primary`. `UNSERVED`: no exit node can serve now. `CAPACITY`: the exit nodes' maps cannot hold this node |
 | `managed` | The administrator asks this node to use the pool. A node follows it only if its own configuration allows managed exits |
+| `mode` | `FAILOVER` (or unset): every consumer goes through the elected primary. `SPREAD`: each consumer has its own exit node of the pool's serving set |
 
 Core sends a pool to a node only while an active rule lets the node reach the
 Internet through it, never the pool the node is an exit node of, and includes
@@ -716,7 +717,17 @@ routers (7.6).
 Core sends; Core cannot make a node use one unless the node allows managed
 exits. A node keeps using the candidate it chose while that candidate
 answers and its `state` is not `FAILED`, even when Core chooses another
-`primary`: changing exit node changes the node's public address.
+`primary`: changing exit node changes the node's public address. It may
+move back to `primary` once no connection goes through the exit node it
+uses: when that node is `draining` or the pool has `mode` `SPREAD`.
+
+**Spread pools.** In a `SPREAD` pool Core assigns each consumer one exit
+node of the pool's serving set by rendezvous hashing, so consumers spread
+over the exit nodes and each keeps one public address; `candidates` come in
+the consumer's own order (priority tier, then the serving set, then its
+hash), so consumers of an exit node that stops answering spread over the
+others as they fail over locally. Nodes that do not know modes follow
+`primary` and the candidate order as in a `FAILOVER` pool.
 
 #### Served pool
 

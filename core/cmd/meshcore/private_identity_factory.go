@@ -78,6 +78,9 @@ type privateIdentityFactoryDependencies struct {
 	// ExitNodes lets Access Rules name Exit Pools
 	// (MESHTRANSIT_EXIT_NODES_ENABLED).
 	ExitNodes bool
+	// ExitSpread lets Exit Pools become spread
+	// (MESHTRANSIT_EXIT_SPREAD_ENABLED).
+	ExitSpread bool
 	// SubnetRoutes lets Access Rules name Sites
 	// (MESHTRANSIT_SUBNET_ROUTES_ENABLED).
 	SubnetRoutes bool
@@ -268,6 +271,12 @@ func composePrivateIdentityFactory(
 		return nil, errInvalidPrivateIdentityComposition
 	}
 	if exitPools, err = exitPools.WithPrimaryHistory(exitPoolStore); err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
+	if exitPools, err = exitPools.WithServingHistory(exitPoolStore); err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
+	if exitPools, err = exitPools.WithSpread(dependencies.ExitSpread); err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
 	catalogOptions := postgresadapter.AccountSessionOptions{StatementTimeout: managementOptions.StatementTimeout, IdleTimeout: managementOptions.IdleTimeout}

@@ -132,4 +132,7 @@ func validSelection(observation Observation) bool {
 type RouterUse struct {
 	Clients       int
 	LocalFailover int
+	// Sticky counts the Clients that keep the node although Core assigned
+	// or elected another.
+	Sticky int
 }

@@ -681,7 +681,7 @@ func TestClientRecordsExitSelectionWithItsSites(t *testing.T) {
 			"n3": "e2|local_failover|" + fresh}, nil
 	}
 	uses, err := client.CountExitNodes(t.Context(), "pool", now)
-	if err != nil || uses["e1"] != (distribution.RouterUse{Clients: 2}) ||
+	if err != nil || uses["e1"] != (distribution.RouterUse{Clients: 2, Sticky: 1}) ||
 		uses["e2"] != (distribution.RouterUse{Clients: 1, LocalFailover: 1}) {
 		t.Fatalf("CountExitNodes() = %+v, %v", uses, err)
 	}

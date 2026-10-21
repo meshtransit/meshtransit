@@ -34,6 +34,9 @@ func newIntegrationExitPoolService(t *testing.T, runtimePool *postgresadapter.Po
 	if service, err = service.WithPrimaryHistory(store); err != nil {
 		t.Fatal(err)
 	}
+	if service, err = service.WithServingHistory(store); err != nil {
+		t.Fatal(err)
+	}
 	return service
 }
 

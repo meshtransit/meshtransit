@@ -332,17 +332,26 @@ message ExitConfig {
 message ExitPool {
   string pool_ref = 1; // opaque, stable for the pool, 1 to 64 bytes of UTF-8
   string name = 2; // the pool's display name, 1 to 64 characters without controls
-  repeated ExitCandidate candidates = 3; // priority order, 1 to 16
-  string primary = 4; // the exit node Core chose, one of candidates; empty when none
+  // Priority order; SPREAD: this node's own order (section 7.7).
+  repeated ExitCandidate candidates = 3; // 1 to 16
+  // The exit node Core chose, one of candidates; empty when none. SPREAD:
+  // the exit node Core assigned to this node.
+  string primary = 4;
   uint64 generation = 5; // per pool; increases whenever primary changes, never goes back
   Status status = 6;
   bool managed = 7; // the administrator asks this node to use this pool
+  Mode mode = 8; // how the pool serves its consumers; UNSPECIFIED reads as FAILOVER
 
   enum Status {
     STATUS_UNSPECIFIED = 0;
     SERVED = 1; // send through primary
     UNSERVED = 2; // granted, but no exit node can serve now
     CAPACITY = 3; // the exit nodes' maps cannot hold this node
+  }
+  enum Mode {
+    MODE_UNSPECIFIED = 0;
+    FAILOVER = 1; // every consumer through the elected primary
+    SPREAD = 2; // each consumer through its own exit node of the pool
   }
 }
 
@@ -353,6 +362,7 @@ message ExitCandidate {
   Families families = 3; // the address families it reaches the Internet in
   bytes dns_ipv4 = 4; // overlay address of its DNS forwarder; empty when none
   bytes dns_ipv6 = 5;
+  bool draining = 6; // the administrator is taking it out of the pool
 
   enum State {
     STATE_UNSPECIFIED = 0; // no recent report

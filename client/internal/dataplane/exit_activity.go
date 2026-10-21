@@ -18,6 +18,9 @@ type ExitActivity struct {
 	NewConnections int
 	WaitingSince   time.Time
 	LastAnswered   time.Time
+	// LastSent is the last packet sent through it: with LastAnswered, when
+	// the node last used the exit node at all.
+	LastSent time.Time
 }
 
 // noteExitLocked records a packet sent to (sent) or a reply from an
@@ -43,6 +46,7 @@ func (f *policyFilter) noteExitLocked(header packetmeta.Header, sent bool, now t
 		f.exitActivity.NewConnections, f.exitActivity.WaitingSince, f.exitActivity.LastAnswered = 0, time.Time{}, now
 		return
 	}
+	f.exitActivity.LastSent = now
 	if header.Protocol != packetmeta.ProtocolTCP || !startsTrackableFlow(header) {
 		return
 	}

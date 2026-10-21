@@ -392,3 +392,140 @@ func TestExitChoiceKeepsTheOnlyExitNodeWhenItLooksSilent(t *testing.T) {
 		t.Fatalf("log attributes = %v", attrs)
 	}
 }
+
+// spreadMap is exitMap with pool-a spread and primary assigned to this node.
+func spreadMap(primary string, draining ...string) networkmap.Snapshot {
+	snapshot := exitMap(primary)
+	snapshot.Exits[0].Spread = true
+	for index := range snapshot.Exits[0].Candidates {
+		for _, id := range draining {
+			if snapshot.Exits[0].Candidates[index].DeviceID == id {
+				snapshot.Exits[0].Candidates[index].Draining = true
+			}
+		}
+	}
+	return snapshot
+}
+
+// TestExitChoiceMovesBackToItsAssignedExitNodeWhenIdle: in a spread pool a
+// node kept on another exit node moves to the one Core assigned once
+// nothing went through the exit for five minutes, not before, and only to
+// one that answers; the move does not space later failovers.
+func TestExitChoiceMovesBackToItsAssignedExitNodeWhenIdle(t *testing.T) {
+	t.Parallel()
+	h := newExitHarness(exitPreference{use: "pool-a"}, exitMap("exit-1"))
+	h.step(21, 22)
+	h.failover.effective(spreadMap("exit-2"))
+	if h.route().Node != "exit-1" {
+		t.Fatalf("node = %q, want the sticky exit-1", h.route().Node)
+	}
+	// Traffic through exit-1 keeps it.
+	h.clock.now = h.clock.now.Add(4 * time.Minute)
+	h.failover.observeExitActivity(dataplane.ExitActivity{Node: "exit-1", LastSent: h.clock.now})
+	h.clock.now = h.clock.now.Add(4 * time.Minute)
+	h.step(21, 22)
+	if h.route().Node != "exit-1" {
+		t.Fatal("moved while a connection may still be open")
+	}
+	// Idle, but exit-2 does not answer: it stays.
+	h.clock.now = h.clock.now.Add(2 * time.Minute)
+	h.step(21)
+	if h.route().Node != "exit-1" {
+		t.Fatal("moved to an exit node that does not answer")
+	}
+	if !h.step(21, 22) || h.route().Node != "exit-2" {
+		t.Fatalf("route = %+v, want exit-2 once idle", h.route())
+	}
+	report, _, _ := h.failover.exitSelection()
+	if report.Reason != controlplane.RouteSelectionPrimary || !h.failover.exit.nextSwitch.IsZero() {
+		t.Fatalf("reason %v, next switch %v", report.Reason, h.failover.exit.nextSwitch)
+	}
+}
+
+// TestExitChoiceStaysStickyInAFailoverPool: a failover pool keeps the
+// sticky exit node however idle, unless that node drains.
+func TestExitChoiceStaysStickyInAFailoverPool(t *testing.T) {
+	t.Parallel()
+	h := newExitHarness(exitPreference{use: "pool-a"}, exitMap("exit-1"))
+	h.step(21, 22)
+	h.failover.effective(exitMap("exit-2"))
+	h.clock.now = h.clock.now.Add(time.Hour)
+	h.step(21, 22)
+	if h.route().Node != "exit-1" {
+		t.Fatal("left a sticky exit node of a failover pool")
+	}
+	draining := exitMap("exit-2")
+	draining.Exits[0].Candidates[0].Draining = true
+	h.failover.effective(draining)
+	h.step(21, 22)
+	if h.route().Node != "exit-2" {
+		t.Fatalf("route = %+v, want exit-2 off the draining exit-1", h.route())
+	}
+}
+
+// TestExitChoiceWaitsAfterAFailedMoveBack: leaving the exit node moved back
+// to within two minutes counts against it: it is not tried again for 30
+// minutes.
+func TestExitChoiceWaitsAfterAFailedMoveBack(t *testing.T) {
+	t.Parallel()
+	h := newExitHarness(exitPreference{use: "pool-a"}, exitMap("exit-1"))
+	h.step(21, 22)
+	h.failover.effective(spreadMap("exit-2"))
+	h.clock.now = h.clock.now.Add(6 * time.Minute)
+	h.step(21, 22)
+	if h.route().Node != "exit-2" {
+		t.Fatalf("route = %+v, want exit-2", h.route())
+	}
+	// exit-2 no longer reaches the Internet: three connections unanswered.
+	h.failover.observeExitActivity(dataplane.ExitActivity{Node: "exit-2", NewConnections: 3,
+		WaitingSince: h.clock.now})
+	for range 6 {
+		h.step(21, 22)
+	}
+	if h.route().Node != "exit-1" {
+		t.Fatalf("route = %+v, want back on exit-1", h.route())
+	}
+	h.clock.now = h.clock.now.Add(10 * time.Minute)
+	h.step(21, 22)
+	if h.route().Node != "exit-1" {
+		t.Fatal("moved back again within the wait")
+	}
+	h.clock.now = h.clock.now.Add(25 * time.Minute)
+	h.step(21, 22)
+	if h.route().Node != "exit-2" {
+		t.Fatalf("route = %+v, want exit-2 after the wait", h.route())
+	}
+}
+
+// TestExitChoiceGoesBackWhereItCameFrom: a move back that fails within the
+// probation returns to the exit node the node came from, not to the first
+// candidate.
+func TestExitChoiceGoesBackWhereItCameFrom(t *testing.T) {
+	t.Parallel()
+	three := func(primary string) networkmap.Snapshot {
+		snapshot := spreadMap(primary)
+		snapshot.Peers = append(snapshot.Peers, networkmap.Node{ID: 23, StableID: "exit-3", Name: "lon"})
+		snapshot.Exits[0].Candidates = append(snapshot.Exits[0].Candidates,
+			networkmap.ExitCandidate{DeviceID: "exit-3", State: networkmap.ExitStateOK, IPv4: true})
+		return snapshot
+	}
+	h := newExitHarness(exitPreference{use: "pool-a"}, three("exit-2"))
+	h.step(21, 22, 23)
+	if h.route().Node != "exit-2" {
+		t.Fatalf("route = %+v, want exit-2", h.route())
+	}
+	h.failover.effective(three("exit-3"))
+	h.clock.now = h.clock.now.Add(6 * time.Minute)
+	h.step(21, 22, 23)
+	if h.route().Node != "exit-3" {
+		t.Fatalf("route = %+v, want exit-3", h.route())
+	}
+	h.failover.observeExitActivity(dataplane.ExitActivity{Node: "exit-3", NewConnections: 3,
+		WaitingSince: h.clock.now})
+	for range 6 {
+		h.step(21, 22, 23)
+	}
+	if h.route().Node != "exit-2" {
+		t.Fatalf("route = %+v, want back on exit-2", h.route())
+	}
+}

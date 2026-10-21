@@ -24,3 +24,11 @@ func ElectionHealth(observation distribution.Observation, pool string, now time.
 	}
 	return report
 }
+
+// Overloaded reports the health codes that take a degraded exit node out of
+// a spread pool's serving set (exit node design §16.3): too many
+// connections, or no IPv4 to the Internet. Other degraded exit nodes, such
+// as one without IPv6, keep serving: they often stay so.
+func Overloaded(code string) bool {
+	return code == "conntrack_high" || code == "egress_v4_failed"
+}

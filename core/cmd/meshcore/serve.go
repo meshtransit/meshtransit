@@ -291,7 +291,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		}
 		if processConfig.ExitNodes {
 			exitElection, exitElectionMetrics, composeErr := composeExitPoolElectionWorker(
-				*processConfig.EnforcementLedgerWorker, storagePools.worker, redisClient, logger)
+				*processConfig.EnforcementLedgerWorker, storagePools.worker, redisClient, processConfig.ExitSpread, logger)
 			if composeErr != nil {
 				logger.ErrorContext(ctx, "startup failed", "error_code", "exit_pool_election_worker_composition_failure")
 				return 1
@@ -340,7 +340,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 				Mailer: mailer, Signup: processConfig.Signup, Interchange: processConfig.Interchange,
 				DNSSuffix: processConfig.DNSSuffix, EnrollmentKeys: enrollmentKeys,
 				SubnetRoutes: processConfig.SubnetRoutes, SiteDenied: processConfig.SiteDenied,
-				ExitNodes: processConfig.ExitNodes, Countries: countries},
+				ExitNodes: processConfig.ExitNodes, ExitSpread: processConfig.ExitSpread, Countries: countries},
 			browserRuntime...,
 		)
 		if composeErr != nil {
@@ -532,6 +532,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			connectivityHub,
 			processConfig.SubnetRoutes,
 			processConfig.ExitNodes,
+			processConfig.ExitSpread,
 		)
 		if composeErr != nil {
 			logger.ErrorContext(

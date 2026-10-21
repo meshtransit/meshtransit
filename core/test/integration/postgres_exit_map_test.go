@@ -13,6 +13,7 @@ import (
 
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	postgresmapsession "meshtransit.net/core/internal/adapter/postgres/mapsession"
+	"meshtransit.net/core/internal/control"
 	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/accessgraph"
 	"meshtransit.net/core/internal/domain/accessgraph/ledger"
@@ -26,6 +27,7 @@ import (
 	"meshtransit.net/core/internal/domain/policy"
 	"meshtransit.net/core/internal/domain/policy/compilation"
 	"meshtransit.net/core/internal/domain/policy/publication"
+	"meshtransit.net/core/internal/domain/primaryelection"
 )
 
 // assertPostgreSQLExitMaps qualifies schema 205 through the shared map
@@ -119,19 +121,20 @@ func assertPostgreSQLExitMaps(ctx context.Context, t *testing.T, admin *pgx.Conn
 	}
 	publish(candidate, base)
 
-	store := func(exits bool) *postgresmapsession.Store {
+	storeWith := func(exits, spread bool) *postgresmapsession.Store {
 		shared, err := postgresadapter.NewMapSessionStore(runtimePool, postgresadapter.MapSessionOptions{
 			StatementTimeout: 5 * time.Second, IdleTimeout: 5 * time.Second,
 			PeerCandidateLimit: mapsession.MaximumPeerCandidates, PolicyRuleLimit: mapsession.MaximumPacketPolicyRules,
 			RelayDirectory: integrationRelayDirectory(t), SharedInventory: true,
 			InventoryStatementTimeout: 30 * time.Second, InventoryMaxAge: 30 * time.Second,
-			ExitNodes: exits, RoutePeerLimit: mapsession.DefaultPeerLimit,
+			ExitNodes: exits, ExitSpread: spread, RoutePeerLimit: mapsession.DefaultPeerLimit,
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return shared
 	}
+	store := func(exits bool) *postgresmapsession.Store { return storeWith(exits, false) }
 	exits := store(true)
 	consumerMap, err := exits.Load(ctx, consumerIdentity)
 	if err != nil {
@@ -165,6 +168,8 @@ func assertPostgreSQLExitMaps(ctx context.Context, t *testing.T, admin *pgx.Conn
 	if plain, err := store(false).Load(ctx, consumerIdentity); err != nil || !plain.Routes().IsEmpty() {
 		t.Fatalf("exits without exit nodes on = %+v, error %v", plain.Routes().Exits(), err)
 	}
+	assertSpreadExitMap(ctx, t, admin, runtimePool, workerPool, owner, scope, poolID, consumerIdentity, exitNode,
+		storeWith)
 	assertExitExplanations(ctx, t, newIntegrationPolicyExplainer(t, runtimePool), owner, scope, consumer, exitNode,
 		poolID)
 	assertExitGraph(ctx, t, newIntegrationPolicyExplainer(t, runtimePool), owner, scope, consumer, exitNode, poolID)
@@ -370,5 +375,63 @@ WHERE workspace_id = 103 AND network_id = 203 AND selector_kind = 'exit_pool' AN
   AND source_device_public_id = $1::UUID AND destination_exit_pool_public_id = $2::UUID`,
 		consumer.String(), pool.String()).Scan(&recorded); err != nil || recorded != 1 {
 		t.Fatalf("open exit edges = %d, error = %v", recorded, err)
+	}
+}
+
+// assertSpreadExitMap: a spread pool with a serving set gives the consumer
+// its exit node as its own, read only while spread is enabled (schema 210).
+func assertSpreadExitMap(ctx context.Context, t *testing.T, admin *pgx.Conn, runtimePool,
+	workerPool *postgresadapter.Pool, owner accountsession.Session, scope network.Scope, poolID exitpool.ID,
+	consumerIdentity control.AuthenticatedNode, exitNode node.ID, storeWith func(exits, spread bool) *postgresmapsession.Store) {
+	t.Helper()
+	pools, err := newIntegrationExitPoolService(t, runtimePool).WithSpread(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reading, err := pools.Read(ctx, owner, scope, poolID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := reading.Pool.Definition
+	definition.Mode = exitpool.ModeSpread
+	spread, err := pools.Update(ctx, owner, scope, poolID, reading.Pool.Version, definition, newCorrelationID(t))
+	if err != nil {
+		t.Fatalf("become spread: %v", err)
+	}
+	elections, err := postgresadapter.NewExitPoolPrimaryStore(workerPool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var installationText string
+	if err := admin.QueryRow(ctx, `SELECT deployment.installation_public_id::TEXT
+FROM mesh.network_exit_pool AS exit_pool JOIN mesh.deployment AS deployment ON deployment.id = exit_pool.deployment_id
+WHERE exit_pool.public_id = $1::UUID`, poolID.String()).Scan(&installationText); err != nil {
+		t.Fatal(err)
+	}
+	installation, err := deployment.ParseID(installationText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := elections.RecordServing(ctx, installation, primaryelection.ServingDecision{
+		Group: poolID.String(), Devices: []node.ID{exitNode}, Reason: primaryelection.ServingElected}); err != nil ||
+		!changed {
+		t.Fatalf("record the serving set = %t, %v", changed, err)
+	}
+	spreadMap, err := storeWith(true, true).Load(ctx, consumerIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if granted := spreadMap.Routes().Exits(); len(granted) != 1 || !granted[0].Spread ||
+		granted[0].Primary != exitNode || granted[0].Status != mapsession.RouteServed {
+		t.Fatalf("spread consumer exits = %+v", granted)
+	}
+	disabled, err := storeWith(true, false).Load(ctx, consumerIdentity)
+	if err != nil || disabled.Routes().Exits()[0].Spread {
+		t.Fatalf("spread read while disabled = %+v, %v", disabled.Routes().Exits(), err)
+	}
+	definition.Mode = exitpool.ModeFailover
+	if _, err := pools.Update(ctx, owner, scope, poolID, spread.Pool.Version, definition,
+		newCorrelationID(t)); err != nil {
+		t.Fatalf("back to failover: %v", err)
 	}
 }

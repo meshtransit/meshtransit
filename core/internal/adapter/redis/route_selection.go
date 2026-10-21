@@ -210,8 +210,11 @@ func (client *Client) CountSiteRouters(ctx context.Context, siteRef string, now 
 		}
 		use := uses[router]
 		use.Clients++
-		if via == distribution.ViaLocalFailover {
+		switch via {
+		case distribution.ViaLocalFailover:
 			use.LocalFailover++
+		case distribution.ViaSticky:
+			use.Sticky++
 		}
 		uses[router] = use
 	}

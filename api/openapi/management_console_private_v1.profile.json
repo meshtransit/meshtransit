@@ -16287,7 +16287,8 @@
                               "nodes",
                               "version",
                               "created_at",
-                              "updated_at"
+                              "updated_at",
+                              "mode"
                             ],
                             "properties": {
                               "exit_pool_id": {
@@ -16413,6 +16414,14 @@
                               "updated_at": {
                                 "type": "string",
                                 "format": "date-time"
+                              },
+                              "mode": {
+                                "type": "string",
+                                "enum": [
+                                  "failover",
+                                  "spread"
+                                ],
+                                "description": "failover: every consumer goes through the elected primary. spread: each consumer has its own exit node of the serving set, chosen by rendezvous hashing (exit node design §16)."
                               }
                             }
                           }
@@ -16566,6 +16575,14 @@
                       }
                     },
                     "description": "Internet addresses exit nodes connect to, through their forwarding path, to check they reach the Internet"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "failover",
+                      "spread"
+                    ],
+                    "description": "failover: every consumer goes through the elected primary. spread: each consumer has its own exit node of the serving set, chosen by rendezvous hashing (exit node design §16). Absent: a new pool is failover and an update keeps the stored mode. Becoming spread needs MESHTRANSIT_EXIT_SPREAD_ENABLED (409 exit_spread_disabled)."
                   }
                 }
               }
@@ -16621,7 +16638,8 @@
                             "nodes",
                             "version",
                             "created_at",
-                            "updated_at"
+                            "updated_at",
+                            "mode"
                           ],
                           "properties": {
                             "exit_pool_id": {
@@ -16747,6 +16765,14 @@
                             "updated_at": {
                               "type": "string",
                               "format": "date-time"
+                            },
+                            "mode": {
+                              "type": "string",
+                              "enum": [
+                                "failover",
+                                "spread"
+                              ],
+                              "description": "failover: every consumer goes through the elected primary. spread: each consumer has its own exit node of the serving set, chosen by rendezvous hashing (exit node design §16)."
                             }
                           }
                         },
@@ -16880,7 +16906,8 @@
                             "nodes",
                             "version",
                             "created_at",
-                            "updated_at"
+                            "updated_at",
+                            "mode"
                           ],
                           "properties": {
                             "exit_pool_id": {
@@ -17041,6 +17068,11 @@
                                     "type": "integer",
                                     "minimum": 0,
                                     "description": "Of those, the Devices that chose it themselves while the primary did not answer."
+                                  },
+                                  "sticky_consumers": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "description": "Devices that keep this exit node although Core elected, or in a spread pool assigned, them another (last three minutes)."
                                   }
                                 }
                               }
@@ -17090,6 +17122,54 @@
                                   ]
                                 },
                                 "elected_at": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                }
+                              }
+                            },
+                            "mode": {
+                              "type": "string",
+                              "enum": [
+                                "failover",
+                                "spread"
+                              ],
+                              "description": "failover: every consumer goes through the elected primary. spread: each consumer has its own exit node of the serving set, chosen by rendezvous hashing (exit node design §16)."
+                            },
+                            "serving": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": [
+                                "device_ids",
+                                "generation",
+                                "reason",
+                                "changed_at"
+                              ],
+                              "description": "A spread pool's serving set: the exit nodes consumers are assigned to. Absent for a failover pool and before Core's first election of the set.",
+                              "properties": {
+                                "device_ids": {
+                                  "type": "array",
+                                  "maxItems": 16,
+                                  "items": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  }
+                                },
+                                "generation": {
+                                  "type": "integer",
+                                  "minimum": 1
+                                },
+                                "reason": {
+                                  "type": "string",
+                                  "enum": [
+                                    "elected",
+                                    "joined",
+                                    "failover",
+                                    "overloaded",
+                                    "recovered",
+                                    "none"
+                                  ]
+                                },
+                                "changed_at": {
                                   "type": "string",
                                   "format": "date-time"
                                 }
@@ -17259,6 +17339,14 @@
                       }
                     },
                     "description": "Internet addresses exit nodes connect to, through their forwarding path, to check they reach the Internet"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "failover",
+                      "spread"
+                    ],
+                    "description": "failover: every consumer goes through the elected primary. spread: each consumer has its own exit node of the serving set, chosen by rendezvous hashing (exit node design §16). Absent: a new pool is failover and an update keeps the stored mode. Becoming spread needs MESHTRANSIT_EXIT_SPREAD_ENABLED (409 exit_spread_disabled)."
                   }
                 }
               }
@@ -17314,7 +17402,8 @@
                             "nodes",
                             "version",
                             "created_at",
-                            "updated_at"
+                            "updated_at",
+                            "mode"
                           ],
                           "properties": {
                             "exit_pool_id": {
@@ -17440,6 +17529,14 @@
                             "updated_at": {
                               "type": "string",
                               "format": "date-time"
+                            },
+                            "mode": {
+                              "type": "string",
+                              "enum": [
+                                "failover",
+                                "spread"
+                              ],
+                              "description": "failover: every consumer goes through the elected primary. spread: each consumer has its own exit node of the serving set, chosen by rendezvous hashing (exit node design §16)."
                             }
                           }
                         },
@@ -17592,7 +17689,8 @@
                             "nodes",
                             "version",
                             "created_at",
-                            "updated_at"
+                            "updated_at",
+                            "mode"
                           ],
                           "properties": {
                             "exit_pool_id": {
@@ -17718,6 +17816,14 @@
                             "updated_at": {
                               "type": "string",
                               "format": "date-time"
+                            },
+                            "mode": {
+                              "type": "string",
+                              "enum": [
+                                "failover",
+                                "spread"
+                              ],
+                              "description": "failover: every consumer goes through the elected primary. spread: each consumer has its own exit node of the serving set, chosen by rendezvous hashing (exit node design §16)."
                             }
                           }
                         },
@@ -17905,7 +18011,8 @@
                             "nodes",
                             "version",
                             "created_at",
-                            "updated_at"
+                            "updated_at",
+                            "mode"
                           ],
                           "properties": {
                             "exit_pool_id": {
@@ -18031,6 +18138,14 @@
                             "updated_at": {
                               "type": "string",
                               "format": "date-time"
+                            },
+                            "mode": {
+                              "type": "string",
+                              "enum": [
+                                "failover",
+                                "spread"
+                              ],
+                              "description": "failover: every consumer goes through the elected primary. spread: each consumer has its own exit node of the serving set, chosen by rendezvous hashing (exit node design §16)."
                             }
                           }
                         },
@@ -18189,7 +18304,8 @@
                             "nodes",
                             "version",
                             "created_at",
-                            "updated_at"
+                            "updated_at",
+                            "mode"
                           ],
                           "properties": {
                             "exit_pool_id": {
@@ -18315,6 +18431,14 @@
                             "updated_at": {
                               "type": "string",
                               "format": "date-time"
+                            },
+                            "mode": {
+                              "type": "string",
+                              "enum": [
+                                "failover",
+                                "spread"
+                              ],
+                              "description": "failover: every consumer goes through the elected primary. spread: each consumer has its own exit node of the serving set, chosen by rendezvous hashing (exit node design §16)."
                             }
                           }
                         },
@@ -18491,6 +18615,187 @@
                                   "failover",
                                   "failback",
                                   "degraded",
+                                  "none"
+                                ]
+                              },
+                              "generation": {
+                                "type": "integer",
+                                "minimum": 1
+                              }
+                            }
+                          }
+                        },
+                        "next_after": {
+                          "type": "string",
+                          "format": "uuid"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "404": {
+            "description": "exit_pool_not_found"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/exit-pools/{exit_pool_id}/serving-changes": {
+      "get": {
+        "operationId": "listNetworkExitPoolServingChanges",
+        "summary": "List a spread Exit Pool's serving set changes",
+        "description": "One page of a spread pool's serving set changes, newest first, as audited (exit_pool.serving_changed). Requires route.read.",
+        "security": [
+          {
+            "accountSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "exit_pool_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "description": "Continue after this change (next_after of the previous page)",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 10
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of primary changes",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "changes"
+                      ],
+                      "properties": {
+                        "changes": {
+                          "type": "array",
+                          "maxItems": 50,
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "event_id",
+                              "occurred_at",
+                              "device_ids",
+                              "previous_device_ids",
+                              "reason",
+                              "generation"
+                            ],
+                            "properties": {
+                              "event_id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "occurred_at": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "device_ids": {
+                                "type": "array",
+                                "maxItems": 16,
+                                "items": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                }
+                              },
+                              "previous_device_ids": {
+                                "type": "array",
+                                "maxItems": 16,
+                                "items": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                }
+                              },
+                              "reason": {
+                                "type": "string",
+                                "enum": [
+                                  "elected",
+                                  "joined",
+                                  "failover",
+                                  "overloaded",
+                                  "recovered",
                                   "none"
                                 ]
                               },
