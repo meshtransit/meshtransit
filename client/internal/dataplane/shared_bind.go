@@ -19,15 +19,20 @@ import (
 )
 
 // errDirectBlocked refuses a datagram on the client's own UDP socket while
-// it cannot carry the right source address (underlay.DirectBlocked): peers
-// are reached through the relays then.
-var errDirectBlocked = errors.New("dataplane: direct paths are off while the host routes the Internet into the mesh")
+// the host routes the Internet into the mesh and the socket could not be
+// kept on the physical path: it would send into the mesh that carries it.
+// Peers are reached through the relays then.
+var errDirectBlocked = errors.New("dataplane: the wireguard socket is not kept off the exit routes")
 
 // errRoutedDestination refuses a datagram to an address an installed subnet
 // route covers, where the client's own sockets follow the host's routes
 // (underlay.FollowsRoutes): it would enter the mesh it is carried by. The
 // peer stays reachable through its other paths and the relays.
 var errRoutedDestination = errors.New("dataplane: destination is inside a subnet route")
+
+// errNoBindSocket reports that the bind has no socket of the family to
+// bind to an interface (a host without IPv6).
+var errNoBindSocket = errors.New("dataplane: no wireguard socket on the bind's port")
 
 const maxControlDatagramSize = 2048
 
@@ -52,6 +57,12 @@ type sharedBind struct {
 	physicalRetry      atomic.Int64
 	// physicalBound is whether the sockets are bound to an interface now.
 	physicalBound bool
+	// physicalIndex is underlay.PhysicalIndex; tests replace it.
+	physicalIndex func(netip.Addr) uint32
+	// offExit4 and offExit6 report that the socket of the family keeps off
+	// the exit routes: none is in place, or it is bound to the physical
+	// path. Only then may it send.
+	offExit4, offExit6 atomic.Bool
 	// stopReconnect stops redialing the relays when the exit binding or
 	// the host's networks change (underlay.ReconnectOnExitChange).
 	stopReconnect func()
@@ -95,11 +106,17 @@ func newSharedBindWithRelay(
 		return nil, errors.New("dataplane: socket generation source is required")
 	}
 
-	return &sharedBind{
-		inner:       inner,
-		generations: generations,
-		relay:       relayPool,
-	}, nil
+	bind := &sharedBind{
+		inner:         inner,
+		generations:   generations,
+		relay:         relayPool,
+		physicalIndex: underlay.PhysicalIndex,
+	}
+	// Bound for the exit routes at Open (bindPhysicalLocked).
+	bind.offExit4.Store(true)
+	bind.offExit6.Store(true)
+
+	return bind, nil
 }
 
 func (s *socketGenerationSource) next() (uint64, error) {
@@ -215,6 +232,17 @@ func (b *sharedBind) followPhysical() {
 	}
 }
 
+// offExitRoutes reports whether the socket for destination keeps off the
+// exit routes (offExit4, offExit6).
+func (b *sharedBind) offExitRoutes(destination netip.Addr) bool {
+	// By the socket wireguard-go sends on: an IPv4-mapped address goes out
+	// of the IPv6 one.
+	if destination.Is4() {
+		return b.offExit4.Load()
+	}
+	return b.offExit6.Load()
+}
+
 // physicalStale reports a binding out of date, or a failed one due for
 // another attempt.
 func (b *sharedBind) physicalStale() bool {
@@ -231,11 +259,18 @@ func (b *sharedBind) physicalStale() bool {
 // off the mesh, or sending nothing without one; unbound otherwise. A bind
 // that cannot be bound fails only while it must be.
 func (b *sharedBind) bindPhysicalLocked() error {
+	// Nothing leaves into the exit routes until the binding below succeeds,
+	// and before the generation: a sender that finds it current must not
+	// read what an earlier binding allowed.
+	b.offExit4.Store(false)
+	b.offExit6.Store(false)
 	// Before reading the state: a change meanwhile binds them once more.
 	b.physicalGeneration.Store(underlay.PhysicalGeneration())
 	b.physicalRetry.Store(0)
 	bound := underlay.FollowsRoutes && underlay.ExitBound()
 	if !bound && !b.physicalBound {
+		b.offExit4.Store(true)
+		b.offExit6.Store(true)
 		return nil // never bound: nothing to undo
 	}
 	binder, ok := interfaceBinder(b.inner, b.port)
@@ -243,23 +278,42 @@ func (b *sharedBind) bindPhysicalLocked() error {
 		if bound {
 			return errors.New("dataplane: the wireguard bind cannot be kept on the physical path")
 		}
-
+		b.offExit4.Store(true)
+		b.offExit6.Store(true)
 		return nil
 	}
 	var index4, index6 uint32
 	if bound {
-		index4 = underlay.PhysicalIndex(netip.IPv4Unspecified())
-		index6 = underlay.PhysicalIndex(netip.IPv6Unspecified())
+		index4 = b.physicalIndex(netip.IPv4Unspecified())
+		index6 = b.physicalIndex(netip.IPv6Unspecified())
 	}
-	if err := binder.BindSocketToInterface4(index4, bound && index4 == 0); err != nil && bound {
-		// Left unbound the socket would follow the exit routes: try again
+	// Set first: whatever got bound below is unbound once the exit goes.
+	b.physicalBound = bound
+	retry := false
+	// Without a physical route (index 0) a socket is left to send nothing:
+	// macOS would unbind it, into the exit routes. A host without IPv6 has
+	// no IPv6 socket to bind and sends nothing over IPv6 then.
+	err6 := binder.BindSocketToInterface6(index6, bound && index6 == 0)
+	switch {
+	case !bound || err6 == nil && index6 != 0:
+		b.offExit6.Store(true)
+	case err6 != nil && !errors.Is(err6, errNoBindSocket):
+		retry = true
+	}
+	err4 := binder.BindSocketToInterface4(index4, bound && index4 == 0)
+	if !bound || err4 == nil && index4 != 0 {
+		b.offExit4.Store(true)
+	} else {
+		retry = true
+	}
+	if retry {
+		// Left unbound a socket would follow the exit routes: try again
 		// soon, from the next datagram on.
 		b.physicalRetry.Store(time.Now().Add(physicalRetryDelay).UnixNano())
-		return fmt.Errorf("dataplane: binding the IPv4 wireguard socket: %w", err)
 	}
-	// A host without IPv6 has no IPv6 socket to bind.
-	_ = binder.BindSocketToInterface6(index6, bound && index6 == 0)
-	b.physicalBound = bound
+	if err4 != nil && bound {
+		return fmt.Errorf("dataplane: binding the IPv4 wireguard socket: %w", err4)
+	}
 
 	return nil
 }
@@ -291,7 +345,7 @@ func (b *sharedBind) Send(buffers [][]byte, endpoint conn.Endpoint) error {
 	}
 
 	b.followPhysical()
-	if underlay.DirectBlocked() {
+	if !b.offExitRoutes(endpoint.DstIP()) {
 		return errDirectBlocked
 	}
 	if underlay.Routed(endpoint.DstIP()) {
@@ -370,10 +424,10 @@ func (b *sharedBind) SendDatagram(
 	if underlay.Routed(destination.Addr()) {
 		return pathdiscovery.Socket{}, errRoutedDestination
 	}
-	if underlay.DirectBlocked() {
+	b.followPhysical()
+	if !b.offExitRoutes(destination.Addr()) {
 		return pathdiscovery.Socket{}, errDirectBlocked
 	}
-	b.followPhysical()
 
 	b.mu.RLock()
 	defer b.mu.RUnlock()

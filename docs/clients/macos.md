@@ -119,9 +119,11 @@ While the exit routes are in place `meshnetd` also copies each physical
 default route as a scoped route on its interface (`RTF_IFSCOPE`), so a
 socket bound to that interface still has a route: `meshd` binds its own
 sockets to the physical interface and to its address (macOS would give a
-connecting socket the utun's address otherwise), redials its relays when
-the exit route comes or goes, and reaches peers through relays only, as
-wireguard-go's socket cannot be given the right source address.
+connecting socket the utun's address otherwise), and redials its relays
+when the exit route comes or goes or the networks change under it. Its
+WireGuard socket, bound to the physical interface, finds the scoped default
+too and leaves with the interface's address, so peers are still reached
+directly; a socket that could not be bound sends nothing until it is.
 
 `sudo meshnetd --release-exit` removes the routes, the scoped defaults and
 the kill switch; the uninstaller runs it. Tried on a Mac on 2026-10-21:

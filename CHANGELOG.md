@@ -27,7 +27,8 @@ merge (2026-10-09) are kept below.
   reference), scoped defaults on the physical interfaces (`RTF_IFSCOPE`),
   `meshnetd --release-exit`; meshd binds its sockets to the physical
   interface and its address, redials relays when the exit route changes and
-  sends to peers through relays only while it holds. A pool's only exit
+  keeps direct paths to peers through its bound WireGuard socket (a socket
+  it could not bind sends nothing until it is). A pool's only exit
   node is kept when its direct-path proof expires. Android: the app's Exit node card; the VPN
   carries `0/0` and `::/0` (less the allowed LAN) with the exit node's
   resolvers as its DNS servers (a sinkhole while none answers); the

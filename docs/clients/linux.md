@@ -90,6 +90,15 @@ addresses, the subnets it is attached to or its gateways, whatever Core
 sends. Every source is translated to the machine's own address. `routes
 exit-mode off` stops forwarding within seconds.
 
+An exit node or subnet router in a cloud should accept UDP from anywhere
+on `meshd`'s WireGuard port (`--wireguard-listen-port`, 41641 above) in the
+provider's firewall (security group, cloud firewall). It is not required:
+without it, consumers behind a NAT that maps each destination to its own
+port (most mobile networks) cannot open a direct path through a stateful
+cloud firewall and reach it through a relay, at a fraction of the speed.
+Only authenticated WireGuard and path-discovery packets are answered on
+that port.
+
 ## Use an exit node
 
 A Linux machine sends its Internet traffic through an Exit Pool its rules

@@ -124,10 +124,6 @@ func PhysicalIndex(destination netip.Addr) uint32 {
 	return index
 }
 
-// DirectBlocked is false: Windows sends a bound socket's datagrams with its
-// interface's address (strong host model).
-func DirectBlocked() bool { return false }
-
 // ReconnectOnExitChange is false: a bound socket sends with its interface's
 // address whatever the routes (strong host model).
 const ReconnectOnExitChange = false

@@ -222,12 +222,6 @@ func PhysicalIndex(destination netip.Addr) uint32 {
 // routes came (or went) must be made again (OnExitBoundChange).
 const ReconnectOnExitChange = true
 
-// DirectBlocked reports that the packet path must send no datagram on its
-// own UDP socket: while the host routes the Internet into the mesh, macOS
-// gives that unconnected socket the utun's source address whatever
-// interface it is bound to, so its peers are reached through the relays.
-func DirectBlocked() bool { return ExitBound() }
-
 // reportBound notes, at most every 10 s, a socket kept on the physical
 // path: which destination, interface and source address.
 func reportBound(destination string, index int, source string) {

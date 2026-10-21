@@ -3,8 +3,6 @@
 package dataplane
 
 import (
-	"errors"
-
 	"golang.org/x/sys/unix"
 	"golang.zx2c4.com/wireguard/conn"
 )
@@ -64,7 +62,7 @@ func (binder portBinder) bind(ipv6 bool, index uint32) error {
 		found = true
 	}
 	if !found {
-		return errors.New("dataplane: no wireguard socket on the bind's port")
+		return errNoBindSocket
 	}
 	return nil
 }
