@@ -24,9 +24,16 @@ var (
 	linkLocal4 = netip.MustParsePrefix("169.254.0.0/16")
 	linkLocal6 = netip.MustParsePrefix("fe80::/10")
 	// azureWireServer is the address an Azure VM's agent, DHCP and DNS
-	// talk to; it answers only inside Azure.
+	// talk to, on azureWireServerPorts; it answers only inside Azure.
 	azureWireServer = netip.MustParsePrefix("168.63.129.16/32")
 )
+
+// azureWireServerPorts are the WireServer's: the guest agent (TCP 80 and
+// 32526) and DNS (UDP 53).
+var azureWireServerPorts = []struct {
+	protocol uint8
+	port     uint16
+}{{protocolTCP, 80}, {protocolTCP, 32526}, {protocolUDP, 53}}
 
 // maximumLAN bounds the LAN prefixes a kill switch admits.
 const maximumLAN = 64
@@ -44,6 +51,7 @@ const (
 
 // Protocols the rules name.
 const (
+	protocolTCP    = 6
 	protocolUDP    = 17
 	protocolICMPv6 = 58
 )
@@ -68,8 +76,12 @@ type Rule struct {
 	Weight uint8
 	Block  bool
 	// Forward puts the filter at the forwarding layer: Adapter then matches
-	// the interface a forwarded packet leaves by, Remote its destination.
-	Forward bool
+	// the interface a forwarded packet leaves by, Remote its destination,
+	// and Arrival (physical arrival) or ArrivalLocal (local interface) the
+	// one it came in by.
+	Forward      bool
+	Arrival      uint64
+	ArrivalLocal uint64
 	// Service matches the MeshTransit service: its executable running as
 	// LocalSystem.
 	Service  bool
@@ -113,10 +125,15 @@ func Rules(config Config) []Rule {
 		})
 	}
 	// Link-local addresses never leave the link: cloud metadata services
-	// (169.254.169.254), Azure's WireServer and IPv6 neighbours keep
-	// working.
+	// (169.254.169.254) and IPv6 neighbours keep working.
+	for _, wire := range azureWireServerPorts {
+		rules = append(rules, Rule{
+			Name: "Permit Azure's WireServer", Weight: weightSystem, Protocol: wire.protocol, RemotePort: wire.port,
+			Remote: []netip.Prefix{azureWireServer},
+		})
+	}
 	rules = append(rules,
-		Rule{Name: "Permit link-local (IPv4)", Weight: weightSystem, Remote: []netip.Prefix{linkLocal4, azureWireServer}},
+		Rule{Name: "Permit link-local (IPv4)", Weight: weightSystem, Remote: []netip.Prefix{linkLocal4}},
 		Rule{Name: "Permit link-local (IPv6)", IPv6: true, Weight: weightSystem, Remote: []netip.Prefix{linkLocal6}})
 	lan4, lan6 := splitFamilies(config.LAN)
 	if len(lan4) > 0 {
@@ -126,11 +143,20 @@ func Rules(config Config) []Rule {
 		rules = append(rules, Rule{Name: "Permit the LAN (IPv6)", IPv6: true, Weight: weightLAN, Remote: lan6})
 	}
 	both(Rule{Name: "Block everything else", Weight: weightBlock, Block: true})
-	// What the host forwards for others: into the adapter, or the LAN.
+	// What the host forwards for others: into the adapter, the answers that
+	// come back from it (to a WSL or Hyper-V NAT network), or the LAN.
 	if config.Adapter != 0 {
 		both(Rule{
 			Name: "Permit forwarding into the MeshTransit adapter", Weight: weightAdapter, Forward: true,
 			Adapter: config.Adapter,
+		})
+		both(Rule{
+			Name: "Permit forwarding from the MeshTransit adapter", Weight: weightAdapter, Forward: true,
+			Arrival: config.Adapter,
+		})
+		both(Rule{
+			Name: "Permit forwarding from the MeshTransit adapter (local)", Weight: weightAdapter, Forward: true,
+			ArrivalLocal: config.Adapter,
 		})
 	}
 	if len(lan4) > 0 {

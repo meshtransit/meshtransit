@@ -213,11 +213,21 @@ func addFilter(engine uintptr, index int, rule Rule, appID *fwpByteBlob, system 
 	if rule.Forward {
 		interfaceField, remoteField = conditionIPForwardInterface, conditionIPDestinationAddress
 	}
-	if rule.Adapter != 0 {
+	for _, match := range []struct {
+		field windows.GUID
+		luid  uint64
+	}{
+		{interfaceField, rule.Adapter},
+		{conditionIPPhysicalArrivalInterface, rule.Arrival},
+		{conditionIPLocalInterface, rule.ArrivalLocal},
+	} {
+		if match.luid == 0 {
+			continue
+		}
 		luid := new(uint64)
-		*luid = rule.Adapter
+		*luid = match.luid
 		keep = append(keep, luid)
-		add(interfaceField, fwpMatchEqual, fwpUint64, uintptr(unsafe.Pointer(luid))) //nolint:gosec // G103: WFP keeps no reference past the call.
+		add(match.field, fwpMatchEqual, fwpUint64, uintptr(unsafe.Pointer(luid))) //nolint:gosec // G103: WFP keeps no reference past the call.
 	}
 	if rule.Protocol != 0 {
 		add(conditionIPProtocol, fwpMatchEqual, fwpUint8, uintptr(rule.Protocol))

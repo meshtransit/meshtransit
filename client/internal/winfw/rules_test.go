@@ -2,6 +2,7 @@ package winfw
 
 import (
 	"net/netip"
+	"slices"
 	"testing"
 )
 
@@ -66,14 +67,22 @@ func TestRulesForwardOnlyIntoTheAdapterOrTheLAN(t *testing.T) {
 	if len(blocks) != 2 || blocks[0].IPv6 == blocks[1].IPv6 || blocks[0].Adapter != 0 || len(blocks[0].Remote) != 0 {
 		t.Fatalf("forwarding blocks %+v", blocks)
 	}
-	if len(permits) != 3 {
-		t.Fatalf("forwarding permits %+v, want the adapter twice and the IPv4 LAN", permits)
+	if len(permits) != 7 {
+		t.Fatalf("forwarding permits %+v, want into and from the adapter, both families, and the IPv4 LAN", permits)
 	}
+	from := 0
 	for _, rule := range permits {
-		if rule.Weight <= weightBlock || (rule.Adapter != 42 && len(rule.Remote) == 0) || rule.Service ||
-			rule.Loopback || rule.Protocol != 0 {
+		if rule.Weight <= weightBlock || (rule.Adapter != 42 && rule.Arrival != 42 && rule.ArrivalLocal != 42 &&
+			len(rule.Remote) == 0) || rule.Service || rule.Loopback || rule.Protocol != 0 {
 			t.Fatalf("forwarding permit %+v", rule)
 		}
+		if rule.Arrival == 42 || rule.ArrivalLocal == 42 {
+			from++
+		}
+	}
+	// The answers to what the host forwarded into the tunnel come back.
+	if from != 4 {
+		t.Fatalf("%d permits for what comes back from the adapter, want 4", from)
 	}
 	for _, rule := range Rules(Config{}) {
 		if rule.Forward && !rule.Block {
@@ -127,5 +136,23 @@ func TestRulesAdmitTheLANByFamilyBounded(t *testing.T) {
 	four, six := splitFamilies(many)
 	if len(four)+len(six) != maximumLAN {
 		t.Fatalf("kept %d LAN prefixes, want %d", len(four)+len(six), maximumLAN)
+	}
+}
+
+// Azure's WireServer is reachable only on its own ports: off Azure it is a
+// public address no other traffic may reach outside the tunnel.
+func TestRulesOpenTheWireServerOnItsPortsOnly(t *testing.T) {
+	ports := 0
+	for _, rule := range Rules(Config{}) {
+		if !slices.Contains(rule.Remote, azureWireServer) {
+			continue
+		}
+		if rule.RemotePort == 0 || rule.Protocol == 0 || len(rule.Remote) != 1 || rule.Forward {
+			t.Fatalf("WireServer rule %+v opens more than a port", rule)
+		}
+		ports++
+	}
+	if ports != len(azureWireServerPorts) {
+		t.Fatalf("%d WireServer rules, want %d", ports, len(azureWireServerPorts))
 	}
 }
