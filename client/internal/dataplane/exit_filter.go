@@ -79,9 +79,23 @@ func (f *policyFilter) exitInboundLocked(header packetmeta.Header, now time.Time
 }
 
 // exitOutboundLocked admits the Internet's answers to a consumer: the
-// kernel lets only answers through (layer 2).
-func (f *policyFilter) exitOutboundLocked(header packetmeta.Header, now time.Time) bool {
-	return f.exit.active && f.internetLocked(header.Source) && f.peerUsableAt(header.Destination, now)
+// kernel lets only answers through (layer 2). An ICMP error about a packet
+// the consumer sent to the Internet passes whatever hop sent it, a private
+// or CGNAT router on the path included: without "fragmentation needed"
+// path MTU discovery fails. The kernel admits it only as related to the
+// consumer's connection.
+func (f *policyFilter) exitOutboundLocked(header packetmeta.Header, packet []byte, now time.Time) bool {
+	if !f.exit.active || !f.peerUsableAt(header.Destination, now) {
+		return false
+	}
+	if f.internetLocked(header.Source) {
+		return true
+	}
+	if header.Protocol != packetmeta.ProtocolICMPv4 && header.Protocol != packetmeta.ProtocolICMPv6 {
+		return false
+	}
+	quoted, ok := packetmeta.ICMPErrorQuote(packet)
+	return ok && quoted.Source.Unmap() == header.Destination && f.internetLocked(quoted.Destination.Unmap())
 }
 
 // exitDNSLocked admits a consumer's DNS question to the exit node's own

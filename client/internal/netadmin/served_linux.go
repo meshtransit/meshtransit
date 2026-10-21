@@ -208,12 +208,19 @@ func routeLinks(route netlink.Route) []int {
 	return links
 }
 
+// maximumLearnedRoutes bounds the main table routes an exit node keeps from
+// its consumers; a host with more (a full BGP table) forwards nothing.
+const maximumLearnedRoutes = 16384
+
 // learnedNotInternet returns what an exit node learns on its own is no
 // Internet (exit node design §4.1): every address of every interface but
-// the mesh's, the subnets they are attached to, even public ones, and the
-// gateways of the main table. They are read again at each apply, which the
-// helper repeats when the host's addresses or routes change (exitStamp). A
-// read that fails fails the apply: nothing is forwarded on a partial set.
+// the mesh's, the subnets they are attached to, even public ones, the
+// gateways of the main table, and the destination of every route of it but
+// the defaults and the mesh's own: a network reached by a route of its own
+// (another VPN, a VPC peering, a container network) is the host's, not the
+// Internet. They are read again at each apply, which the helper repeats
+// when the host's addresses or routes change (exitStamp). A read that fails
+// fails the apply: nothing is forwarded on a partial set.
 func learnedNotInternet(meshIndex int) ([]netip.Prefix, error) {
 	var learned []netip.Prefix
 	addresses, err := netlink.AddrList(nil, netlink.FAMILY_ALL)
@@ -242,12 +249,19 @@ func learnedNotInternet(meshIndex int) ([]netip.Prefix, error) {
 		if err != nil {
 			return nil, fmt.Errorf("listing routes: %w", err)
 		}
+		if len(routes) > maximumLearnedRoutes {
+			return nil, fmt.Errorf("the main table holds %d routes, more than an exit node keeps", len(routes))
+		}
 		for _, route := range routes {
 			for _, gateway := range append([]net.IP{route.Gw}, multipathGateways(route)...) {
 				if ip, ok := netip.AddrFromSlice(gateway); ok {
 					ip = ip.Unmap()
 					learned = append(learned, netip.PrefixFrom(ip, ip.BitLen()))
 				}
+			}
+			if destination, ok := netipPrefix(route.Dst); ok && destination.Bits() > 0 &&
+				(meshIndex <= 0 || route.LinkIndex != meshIndex) {
+				learned = append(learned, destination.Masked())
 			}
 		}
 	}

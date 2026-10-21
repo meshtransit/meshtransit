@@ -64,6 +64,22 @@ func TestPolicyFilterForwardsToTheInternetAsAnExitNode(t *testing.T) {
 	if filter.Allow(PacketOutbound, testIPv4TransportPacket(lan, peer, 443, 40000, packetmeta.ProtocolTCP, 0x12)) {
 		t.Fatal("a LAN host reached the mesh through the exit node")
 	}
+	// A router of the exit network or a CGNAT hop on the path tells the
+	// consumer its packet to the Internet was too big; about anything else
+	// it says nothing.
+	for _, hop := range [][4]byte{lan, {100, 72, 0, 1}} {
+		if !filter.Allow(PacketOutbound, fragmentationNeeded(hop, peer, toInternet)) {
+			t.Errorf("fragmentation needed from %v was dropped", hop)
+		}
+	}
+	toLAN := testIPv4TransportPacket(peer, lan, 40000, 443, packetmeta.ProtocolTCP, 0x02)
+	if filter.Allow(PacketOutbound, fragmentationNeeded(lan, peer, toLAN)) {
+		t.Fatal("an error about a packet to the LAN reached the consumer")
+	}
+	other := testIPv4TransportPacket([4]byte{100, 64, 0, 9}, public, 40000, 443, packetmeta.ProtocolTCP, 0x02)
+	if filter.Allow(PacketOutbound, fragmentationNeeded(lan, peer, other)) {
+		t.Fatal("an error about another consumer's packet reached this one")
+	}
 	filter.SetExitInstalled(nil, nil, 0)
 	if filter.Allow(PacketInbound, toInternet) {
 		t.Fatal("the Internet was reached after the exit node stopped")

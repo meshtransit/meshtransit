@@ -51,8 +51,11 @@ type exitRuleset struct {
 }
 
 // exitConsumerSetSize bounds the consumers an exit node's kernel counts:
-// well above the most a host may allow (routesettings.MaximumExitConsumers),
-// as elements stay until the table is installed again.
+// well above the most a host may allow (routesettings.MaximumExitConsumers).
+// An element goes once its consumer has no connection left: the set's
+// garbage collection drops connlimit elements that count none (seen on
+// POC, Linux 7.0), which is also why the set takes no timeout (the kernel
+// refuses one with ct count).
 const exitConsumerSetSize = 65535
 
 const (

@@ -293,7 +293,7 @@ func (f *policyFilter) allowOrdinaryLocked(direction PacketDirection, header pac
 		if !containsAddress(f.self, header.Source) {
 			// A router forwards a Site's answers to the mesh, an exit node
 			// the Internet's.
-			return f.servedOutboundLocked(header, now) || f.exitOutboundLocked(header, now)
+			return f.servedOutboundLocked(header, now) || f.exitOutboundLocked(header, packet, now)
 		}
 		if !f.peerUsableAt(header.Destination, now) {
 			if !f.routedUsableAt(header.Destination, now) {

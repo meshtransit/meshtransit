@@ -298,6 +298,15 @@ func TestKernelExitConfigurerIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = netlink.RouteDel(route) })
+	// A network the host reaches by a route of its own (another VPN) is no
+	// Internet for the consumers.
+	private := &netlink.Route{
+		LinkIndex: dummy.Attrs().Index, Gw: gateway.AsSlice(), Dst: prefixIPNet(netip.MustParsePrefix("52.94.0.0/16")),
+	}
+	if err := netlink.RouteAdd(private); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = netlink.RouteDel(private) })
 	state := filepath.Join(t.TempDir(), "exit-state.json")
 	configurer := kernelServedConfigurer{table: "meshtransit_exit_it", statePath: state, sysctlRoot: "/proc/sys"}
 	t.Cleanup(func() { _ = configurer.Clear() })
@@ -316,7 +325,7 @@ func TestKernelExitConfigurerIntegration(t *testing.T) {
 	text := string(listing)
 	for _, want := range []string{
 		"set notinternet4", "set notinternet6", "10.0.0.0/8", "169.254.0.0/16", "100.64.0.0/10",
-		"45.76.10.8/29", "34.1.2.3", "4000::-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+		"45.76.10.8/29", "34.1.2.3", "52.94.0.0/16", "4000::-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
 		"tcp dport 25 drop", "ct count over 2048", "masquerade", "!= @consumers4 drop", "!= @consumers6 drop",
 		`iifname "` + name + `" accept`, "udp dport 53 redirect to :1055", "tcp dport 53 redirect to :1055",
 	} {
