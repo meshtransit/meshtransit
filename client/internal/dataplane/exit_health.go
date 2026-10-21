@@ -264,6 +264,11 @@ func judgeExit(round exitRound, loop exitHealthLoop) (ExitHealth, bool) {
 			return ExitHealth{}, false
 		}
 	}
+	if !round.hasPool[0] && !round.hasPool[1] {
+		// A pool without probes: forwarding is in place, the Internet
+		// unverified; say so rather than OK.
+		return ExitHealth{State: SiteHealthDegraded, Code: ExitCodeProbeUnavailable}, true
+	}
 	health := ExitHealth{State: SiteHealthOK, Code: SiteCodeOK, IPv4: loop.ok[0], IPv6: loop.ok[1]}
 	v4Failed := round.hasPool[0] && loop.failures[0] >= routerProbeFailures
 	v6Failed := round.hasPool[1] && loop.failures[1] >= routerProbeFailures

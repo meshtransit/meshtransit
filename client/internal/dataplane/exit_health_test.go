@@ -27,6 +27,12 @@ func TestJudgeExit(t *testing.T) {
 			SiteHealthOK, SiteCodeOK, true, true,
 		},
 		{
+			"no probes",
+			exitRound{status: serving, health: helper},
+			exitHealthLoop{},
+			SiteHealthDegraded, ExitCodeProbeUnavailable, false, false,
+		},
+		{
 			"exit mode off",
 			exitRound{status: ExitNodeStatus{Pool: "p", Refused: netadmin.ExitRefusedOff}},
 			exitHealthLoop{},

@@ -213,7 +213,8 @@ func TestWireGuardEngineMeasuresTheServedExitPool(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := ExitHealth{State: SiteHealthOK, Code: SiteCodeOK}
+		// A pool without probes forwards, unverified.
+		want := ExitHealth{State: SiteHealthDegraded, Code: ExitCodeProbeUnavailable}
 		if refused != "" {
 			want = ExitHealth{State: SiteHealthFailed, Code: ExitCodeNotOffered}
 		}
