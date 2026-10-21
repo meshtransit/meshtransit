@@ -620,6 +620,9 @@ func (p *Pool) runWorker(worker *regionWorker) {
 		if err == nil {
 			p.markConnected(worker)
 			err = p.runConnection(worker, client)
+			if err != nil && !errors.Is(err, errReconnect) && worker.ctx.Err() == nil {
+				underlay.ReportFailure("relay connection lost", "region "+strconv.Itoa(worker.region.ID), err)
+			}
 		} else {
 			underlay.ReportFailure("relay connection failed", "region "+strconv.Itoa(worker.region.ID), err)
 		}
