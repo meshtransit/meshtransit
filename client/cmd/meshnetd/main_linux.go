@@ -5,6 +5,7 @@ import (
 	"flag"
 	"net/netip"
 
+	"meshtransit.net/client/internal/config"
 	"meshtransit.net/client/internal/netadmin"
 )
 
@@ -21,6 +22,7 @@ type platformFlags struct {
 	exitTable          *int
 	exitPriority       *int
 	exitNftTable       *string
+	captiveWindow      *string
 }
 
 func registerPlatformFlags(flags *flag.FlagSet) platformFlags {
@@ -47,6 +49,8 @@ func registerPlatformFlags(flags *flag.FlagSet) platformFlags {
 			"first of the four policy rule priorities of the exit route, after --routed-priority"),
 		exitNftTable: flags.String("exit-nft-table", "meshtransit_exit",
 			"nftables table this helper owns for the kill switch while the host uses an exit node"),
+		captiveWindow: flags.String("captive-window", config.DefaultCaptiveWindowPath,
+			"captive portal window file root writes (meshctl exit captive); empty opens none"),
 	}
 }
 
@@ -61,6 +65,7 @@ func (p platformFlags) routedOptions(settingsPath string) *netadmin.RoutedOption
 	}
 	if *p.exitTable != 0 {
 		options.ExitTable, options.ExitPriority, options.ExitNftTable = *p.exitTable, *p.exitPriority, *p.exitNftTable
+		options.CaptiveWindowPath = *p.captiveWindow
 	}
 	return options
 }
@@ -76,7 +81,7 @@ func (p platformFlags) releaseExit(settingsPath string) error {
 	return netadmin.ReleaseExitRoute(netadmin.RoutedOptions{
 		SettingsPath: settingsPath, Table: *p.routedTable, Priority: *p.routedPriority, NftTable: *p.routerTable,
 		ExitTable: cmp.Or(*p.exitTable, packagedExitTable), ExitPriority: *p.exitPriority,
-		ExitNftTable: *p.exitNftTable,
+		ExitNftTable: *p.exitNftTable, CaptiveWindowPath: *p.captiveWindow,
 	})
 }
 

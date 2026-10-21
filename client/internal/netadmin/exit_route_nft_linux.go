@@ -27,6 +27,8 @@ type exitKillSwitch struct {
 	// LAN are the allowed attached private subnets and link-local
 	// multicast; empty unless the LAN is allowed.
 	LAN []netip.Prefix
+	// Captive is what a captive portal window lets out; nil without one.
+	Captive *captiveHoles
 }
 
 // ICMPv6 types the host sends to keep its links working: router and
@@ -55,6 +57,10 @@ func replaceExitKillSwitch(ruleset exitKillSwitch) (int, error) {
 			return 0, fmt.Errorf("adding kill switch set %s: %w", set.set.Name, err)
 		}
 	}
+	captive := newCaptiveSets(table)
+	if err := captive.add(conn, ruleset.Captive); err != nil {
+		return 0, err
+	}
 	chains := []struct {
 		name     string
 		kind     nftables.ChainType
@@ -64,7 +70,7 @@ func replaceExitKillSwitch(ruleset exitKillSwitch) (int, error) {
 	}{
 		{
 			"prerouting", nftables.ChainTypeFilter, nftables.ChainHookPrerouting, nftables.ChainPriorityMangle,
-			exitMarkInboundRules(ruleset),
+			exitMarkInboundRules(ruleset, captive),
 		},
 		{
 			"route", nftables.ChainTypeRoute, nftables.ChainHookOutput, nftables.ChainPriorityMangle,
@@ -72,7 +78,7 @@ func replaceExitKillSwitch(ruleset exitKillSwitch) (int, error) {
 		},
 		{
 			"output", nftables.ChainTypeFilter, nftables.ChainHookOutput, nftables.ChainPriorityFilter,
-			exitOutputRules(ruleset, lan4, lan6),
+			exitOutputRules(ruleset, lan4, lan6, captive),
 		},
 		{
 			"forward", nftables.ChainTypeFilter, nftables.ChainHookForward, nftables.ChainPriorityFilter,
@@ -103,9 +109,10 @@ func replaceExitKillSwitch(ruleset exitKillSwitch) (int, error) {
 // for connections opened before the exit node was used. Replies routed
 // for a container (published ports) carry the mark into the routing
 // decision.
-func exitMarkInboundRules(ruleset exitKillSwitch) [][]expr.Any {
-	rules := make([][]expr.Any, 0, len(ruleset.Inner)+2)
+func exitMarkInboundRules(ruleset exitKillSwitch, captive captiveSets) [][]expr.Any {
+	rules := make([][]expr.Any, 0, len(ruleset.Inner)+7)
 	rules = append(rules, join(ctMarked(exitInboundMark), setMetaMark(exitInboundMark)))
+	rules = append(rules, captiveReplyRules(captive)...)
 	for _, name := range ruleset.Inner {
 		rules = append(rules, join(interfaceIs(expr.MetaKeyIIFNAME, name), verdict(expr.VerdictReturn)))
 	}
@@ -140,9 +147,10 @@ func exitRerouteRules(ruleset exitKillSwitch) [][]expr.Any {
 
 // exitOutputRules let the host's own packets leave outside the mesh only by
 // the exceptions: inner interfaces, meshd, connections opened from outside,
-// DHCP, neighbour discovery and the allowed LAN.
-func exitOutputRules(ruleset exitKillSwitch, lan4, lan6 *nftables.Set) [][]expr.Any {
-	rules := make([][]expr.Any, 0, len(ruleset.Inner)+16)
+// DHCP, neighbour discovery, a captive portal window's holes and the allowed
+// LAN.
+func exitOutputRules(ruleset exitKillSwitch, lan4, lan6 *nftables.Set, captive captiveSets) [][]expr.Any {
+	rules := make([][]expr.Any, 0, len(ruleset.Inner)+20)
 	for _, name := range ruleset.Inner {
 		rules = append(rules, join(interfaceIs(expr.MetaKeyOIFNAME, name), verdict(expr.VerdictAccept)))
 	}
@@ -166,6 +174,7 @@ func exitOutputRules(ruleset exitKillSwitch, lan4, lan6 *nftables.Set) [][]expr.
 			&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{kind}},
 		}, verdict(expr.VerdictAccept)))
 	}
+	rules = append(rules, captiveOutputRules(captive)...)
 	rules = append(rules, exitLANRules(lan4, lan6)...)
 	return append(rules, join([]expr.Any{&expr.Counter{}}, verdict(expr.VerdictDrop)))
 }

@@ -14,6 +14,8 @@ import (
 
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
+
+	"meshtransit.net/client/internal/captive"
 )
 
 const (
@@ -179,15 +181,21 @@ func (configurer *kernelExitRouteConfigurer) Stamp(name string) string {
 // rules, the one sending everything but meshd into the table last: no
 // packet ever meets the table half built, and none leaves outside the mesh
 // but by the kill switch's exceptions.
-func (configurer *kernelExitRouteConfigurer) Replace(name string, ipv6, allowLAN bool) error {
+func (configurer *kernelExitRouteConfigurer) Replace(name string, ipv6, allowLAN bool, window *exitCaptive) (
+	string, error,
+) {
 	configurer.installed = nil
 	host, err := readExitHost(name)
 	if err != nil {
-		return err
+		return "", err
+	}
+	holes, err := readCaptiveHoles(host.meshIndex, window)
+	if err != nil {
+		return "", err
 	}
 	ruleset := exitKillSwitch{
 		Table: configurer.options.ExitNftTable, Interface: name, UID: configurer.uid,
-		Inner: append([]string{"lo"}, host.bridges...),
+		Inner: append([]string{"lo"}, host.bridges...), Captive: holes,
 	}
 	if name != "" {
 		ruleset.Inner = append(ruleset.Inner, name)
@@ -202,21 +210,90 @@ func (configurer *kernelExitRouteConfigurer) Replace(name string, ipv6, allowLAN
 	}
 	nftRules, err := replaceExitKillSwitch(ruleset)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := configurer.validateMarks(); err != nil {
-		return err
+		return "", err
 	}
 	routes, err := replaceExitTable(configurer.options.ExitTable, host, lan, ipv6)
 	if err != nil {
-		return err
+		return "", err
 	}
 	rules := exitRules(configurer.options, configurer.uid, host.interfaces, host.own)
+	rules = append(rules, captiveRouteRules(configurer.options.ExitPriority+2, holes)...)
 	if err := replaceRulesAt(configurer.options.ExitPriority, exitRulePriorities, rules); err != nil {
-		return err
+		return "", err
 	}
-	configurer.installed = &installedExit{rules: rules, routes: routes, nftRules: nftRules, lan: ruleset.LAN}
-	return nil
+	configurer.installed = &installedExit{
+		rules: rules, routes: routes, nftRules: nftRules, lan: ruleset.LAN, captive: captiveKeys(holes),
+	}
+	return holes.openedName(), nil
+}
+
+// readCaptiveHoles finds where a window opens: in each family, the interface
+// of the main table's default route with the lowest metric (where the
+// host's own packets to the Internet would go without the exit node), other
+// than the mesh's, and its addresses but link-local ones. Nil without a
+// window.
+func readCaptiveHoles(meshIndex int, window *exitCaptive) (*captiveHoles, error) {
+	if window == nil {
+		return nil, nil
+	}
+	holes := &captiveHoles{portals: window.Portals, remaining: window.Remaining}
+	for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
+		routes, err := dumped(func() ([]netlink.Route, error) {
+			return netlink.RouteListFiltered(family, &netlink.Route{Table: unix.RT_TABLE_MAIN}, netlink.RT_FILTER_TABLE)
+		})
+		if familyUnsupported(err) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("listing default routes: %w", err)
+		}
+		best := -1
+		for index, route := range routes {
+			prefix, ok := netipPrefix(route.Dst)
+			if (route.Dst != nil && (!ok || prefix.Bits() != 0)) || route.Type != unix.RTN_UNICAST ||
+				route.LinkIndex <= 0 || route.LinkIndex == meshIndex {
+				continue
+			}
+			if best < 0 || route.Priority < routes[best].Priority {
+				best = index
+			}
+		}
+		if best < 0 {
+			continue
+		}
+		link, err := netlink.LinkByIndex(routes[best].LinkIndex)
+		if err != nil {
+			return nil, fmt.Errorf("reading the default route's interface: %w", err)
+		}
+		addresses, err := dumped(func() ([]netlink.Addr, error) { return netlink.AddrList(link, family) })
+		if err != nil {
+			return nil, fmt.Errorf("listing the default route's addresses: %w", err)
+		}
+		opening := captiveOpening{name: link.Attrs().Name}
+		for _, address := range addresses {
+			own, ok := netip.AddrFromSlice(address.IP)
+			own = own.Unmap()
+			if ok && !own.IsLinkLocalUnicast() && !own.IsLoopback() && len(opening.addresses) < maximumCaptiveAddresses {
+				opening.addresses = append(opening.addresses, own)
+			}
+		}
+		if len(opening.addresses) != 0 && validHostInterfaceName(opening.name) {
+			holes.openings = append(holes.openings, opening)
+		}
+	}
+	return holes, nil
+}
+
+// openedName is the interface a window opens, IPv4's first; empty without
+// one.
+func (holes *captiveHoles) openedName() string {
+	if holes == nil || len(holes.openings) == 0 {
+		return ""
+	}
+	return holes.openings[0].name
 }
 
 // replaceExitTable makes the exit table hold exactly the unreachable
@@ -430,12 +507,14 @@ func sameExitRule(installed, wanted netlink.Rule) bool {
 	}
 	sameUIDs := (installed.UIDRange == nil) == (wanted.UIDRange == nil) &&
 		(installed.UIDRange == nil || *installed.UIDRange == *wanted.UIDRange)
-	sameSource := (installed.Src == nil) == (wanted.Src == nil) &&
-		(installed.Src == nil || installed.Src.String() == wanted.Src.String())
-	return installed.Table == wanted.Table && installed.Mark == wanted.Mark && sameMask && sameSource &&
+	samePrefix := func(first, second *net.IPNet) bool {
+		return (first == nil) == (second == nil) && (first == nil || first.String() == second.String())
+	}
+	return installed.Table == wanted.Table && installed.Mark == wanted.Mark && sameMask &&
+		samePrefix(installed.Src, wanted.Src) && samePrefix(installed.Dst, wanted.Dst) &&
 		installed.IPProto == wanted.IPProto && samePorts(installed.Sport, wanted.Sport) &&
 		samePorts(installed.Dport, wanted.Dport) && strings.TrimRight(installed.OifName, "\x00") == wanted.OifName &&
-		installed.Invert == wanted.Invert && sameUIDs
+		strings.TrimRight(installed.IifName, "\x00") == wanted.IifName && installed.Invert == wanted.Invert && sameUIDs
 }
 
 // validMarkRecord is where the helper keeps src_valid_mark as it was before
@@ -546,5 +625,11 @@ func ReleaseExitRoute(options RoutedOptions) error {
 	if options.ExitTable == 0 || !validExitRouteOptions(options) {
 		return errors.New("netadmin: exit route options are invalid")
 	}
-	return clearExitRoute(options)
+	if err := clearExitRoute(options); err != nil {
+		return err
+	}
+	if options.CaptiveWindowPath != "" {
+		return captive.CloseWindow(options.CaptiveWindowPath)
+	}
+	return nil
 }

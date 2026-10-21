@@ -15,4 +15,8 @@ const (
 	// DefaultRouteSettingsPath holds the host's subnet route settings, which
 	// only root writes (routesettings).
 	DefaultRouteSettingsPath = "/Library/Application Support/MeshTransit/routes.json"
+	// DefaultCaptiveWindowPath is the captive portal window root opens
+	// (meshctl exit captive), in the helper's runtime directory: gone with a
+	// reboot or once closed.
+	DefaultCaptiveWindowPath = "/var/run/meshnetd/captive.json"
 )

@@ -32,6 +32,7 @@ const usage = `usage: %[1]s routes [--routes-file PATH] COMMAND
   exit-use POOL|auto|off    send this host's Internet traffic through an Exit Pool
   exit-allow-lan on|off     keep the attached private subnets off the exit node
   exit-allow-managed on|off let the administrator choose the Exit Pool
+  exit-captive on|off       allow short windows to sign in to a captive portal
 Changes need %[2]s and apply within seconds, without a restart.
 `
 
@@ -142,7 +143,8 @@ func changeRouteSettings(settings routesettings.Settings, command string, operan
 		if operands[0] == "off" {
 			settings.ExitUse = ""
 		}
-	case "accept", "accept-public", "router-mode", "exit-mode", "exit-smtp", "exit-allow-lan", "exit-allow-managed":
+	case "accept", "accept-public", "router-mode", "exit-mode", "exit-smtp", "exit-allow-lan", "exit-allow-managed",
+		"exit-captive":
 		if len(operands) != 1 || (operands[0] != "on" && operands[0] != "off") {
 			return settings, fmt.Errorf("%s takes on or off", command)
 		}
@@ -160,6 +162,8 @@ func changeRouteSettings(settings routesettings.Settings, command string, operan
 			settings.ExitAllowLAN = value
 		case "exit-allow-managed":
 			settings.ExitAllowManaged = value
+		case "exit-captive":
+			settings.ExitCaptiveOff = !value
 		default:
 			settings.RouterMode = value
 		}
@@ -198,11 +202,12 @@ func (c Command) print(stdout, stderr io.Writer, settings routesettings.Settings
 	if _, err := fmt.Fprintf(stdout,
 		"accept: %s\naccept-public: %s\nrouter-mode: %s\nadvertise: %s\n"+
 			"exit-mode: %s\nexit-smtp: %s\nexit-conntrack-max: %d\nexit-max-consumers: %d\n"+
-			"exit-use: %s\nexit-allow-lan: %s\nexit-allow-managed: %s\n",
+			"exit-use: %s\nexit-allow-lan: %s\nexit-allow-managed: %s\nexit-captive: %s\n",
 		onOff[settings.AcceptRoutes], onOff[settings.AcceptPublicRoutes], onOff[settings.RouterMode],
 		strings.Join(advertised, " "), onOff[settings.ExitMode], onOff[settings.ExitSMTPAllowed],
 		settings.ExitConntrackLimit(0), settings.ExitConsumerLimit(), cmp.Or(settings.ExitUse, "off"),
-		onOff[settings.ExitAllowLAN], onOff[settings.ExitAllowManaged]); err != nil {
+		onOff[settings.ExitAllowLAN], onOff[settings.ExitAllowManaged],
+		onOff[!settings.ExitCaptiveOff]); err != nil {
 		_, _ = fmt.Fprintf(stderr, "%s: %v\n", c.Program, err)
 		return 1
 	}

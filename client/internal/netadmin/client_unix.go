@@ -481,6 +481,7 @@ func (c *Client) SetExitRoute(ctx context.Context, route ExitRouteRequest) (Exit
 	value, descriptors, err := c.exchange(ctx, request{
 		Version: protocolVersion, Operation: operationSetExitRoute,
 		ExitRoute: route.Use, ExitRouteIPv6: route.Use && route.IPv6,
+		CaptivePortals: captivePortalStrings(route), CaptiveClose: captiveCloseOf(route),
 	})
 	closeDescriptors(descriptors)
 	if err != nil {
@@ -489,7 +490,25 @@ func (c *Client) SetExitRoute(ctx context.Context, route ExitRouteRequest) (Exit
 	if len(descriptors) != 0 {
 		return ExitRouting{}, fmt.Errorf("%w: exit route response included descriptors", ErrProtocol)
 	}
-	return ExitRouting{Routing: value.ExitRouting, Refused: value.ExitRouteRefused, Tampered: value.ExitRouteTampered}, nil
+	return ExitRouting{
+		Routing: value.ExitRouting, Refused: value.ExitRouteRefused, Tampered: value.ExitRouteTampered,
+		Captive: CaptiveWindow{
+			ID: value.CaptiveWindow, Remaining: time.Duration(value.CaptiveRemaining) * time.Second,
+			Interface: value.CaptiveInterface,
+		},
+	}, nil
+}
+
+// captivePortalStrings are the portals a request carries, none unless the
+// exit route is in use.
+func captivePortalStrings(route ExitRouteRequest) []string {
+	var portals []string
+	for _, portal := range route.CaptivePortals {
+		if route.Use && portal.IsValid() {
+			portals = append(portals, portal.String())
+		}
+	}
+	return portals
 }
 
 func exitServingOf(value response) ExitServing {
@@ -497,4 +516,13 @@ func exitServingOf(value response) ExitServing {
 		Serving: value.ExitServing, ConntrackPerConsumer: value.ExitConntrack, SMTP: value.ExitSMTP,
 		MaxConsumers: value.ExitMaxConsumers, Refused: value.ExitRefused,
 	}
+}
+
+// captiveCloseOf is the window a request closes, none unless the exit route
+// is in use.
+func captiveCloseOf(route ExitRouteRequest) string {
+	if !route.Use {
+		return ""
+	}
+	return route.CaptiveClose
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"path/filepath"
 	"slices"
 
 	"meshtransit.net/client/internal/routesettings"
@@ -46,6 +47,9 @@ type RoutedOptions struct {
 	// node: routes on the utun behind a pf kill switch (exit node design
 	// §6.1, §6.4). Linux uses ExitTable.
 	Exits bool
+	// CaptiveWindowPath is the captive portal window file root writes
+	// (captive.OpenWindow); empty opens no window (exit node design §17.4).
+	CaptiveWindowPath string
 }
 
 // routedState is what the routed table holds: routes to the mesh
@@ -69,7 +73,8 @@ type routedConfigurer interface {
 var errRoutedUnsupported = errors.New("netadmin: routed routes are not supported on this platform")
 
 func validRoutedOptions(options RoutedOptions) bool {
-	return options.SettingsPath != "" && validPlatformRoutedOptions(options)
+	return options.SettingsPath != "" && validPlatformRoutedOptions(options) &&
+		(options.CaptiveWindowPath == "" || filepath.IsAbs(options.CaptiveWindowPath))
 }
 
 // setRouted installs the routed routes the local settings admit and

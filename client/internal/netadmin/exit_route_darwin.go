@@ -78,25 +78,25 @@ func DarwinExitStatePath(helperSocket string) string {
 }
 
 // Replace installs the kill switch, then the routes on name; without a
-// utun the host stays closed.
-func (c *darwinExitRouteConfigurer) Replace(name string, _, allowLAN bool) error {
+// utun the host stays closed. A captive portal window opens nothing yet.
+func (c *darwinExitRouteConfigurer) Replace(name string, _, allowLAN bool, _ *exitCaptive) (string, error) {
 	if name != "" && (!validInterfaceName(name) || !strings.HasPrefix(name, "utun")) {
-		return errors.New("netadmin: exit route target is invalid")
+		return "", errors.New("netadmin: exit route target is invalid")
 	}
 	var lan []netip.Prefix
 	if allowLAN {
 		lan = c.lan()
 	}
 	if err := c.enable(); err != nil {
-		return err
+		return "", err
 	}
 	if err := c.load(pfExitRules(name, c.uid, lan)); err != nil {
-		return err
+		return "", err
 	}
 	if name == "" {
-		return nil
+		return "", nil
 	}
-	return replaceDarwinExitRoutes(name, c.warn)
+	return "", replaceDarwinExitRoutes(name, c.warn)
 }
 
 // Present reports whether the anchor holds rules.

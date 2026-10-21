@@ -125,14 +125,23 @@ func TestChangeExitUseSettings(t *testing.T) {
 		{"exit-use", []string{"Office egress"}},
 		{"exit-allow-lan", []string{"on"}},
 		{"exit-allow-managed", []string{"on"}},
+		{"exit-captive", []string{"off"}},
 	} {
 		var err error
 		if settings, err = changeRouteSettings(settings, step.command, step.operands); err != nil {
 			t.Fatalf("%s: %v", step.command, err)
 		}
 	}
-	if settings.ExitUse != "Office egress" || !settings.ExitAllowLAN || !settings.ExitAllowManaged {
+	if settings.ExitUse != "Office egress" || !settings.ExitAllowLAN || !settings.ExitAllowManaged ||
+		!settings.ExitCaptiveOff {
 		t.Fatalf("settings = %+v", settings)
+	}
+	encoded, err := routesettings.Encode(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded, err := routesettings.Decode(encoded); err != nil || !decoded.ExitCaptiveOff {
+		t.Fatalf("exit_captive_off did not survive the file: %+v, %v", decoded, err)
 	}
 	if off, err := changeRouteSettings(settings, "exit-use", []string{"off"}); err != nil || off.ExitUse != "" {
 		t.Fatalf("exit-use off = %+v, %v", off, err)

@@ -41,6 +41,9 @@ func NewServer(options ServerOptions) (*Server, error) {
 			if err := server.startExitRoute(); err != nil {
 				return nil, fmt.Errorf("netadmin: clearing the exit route left by a previous run: %w", err)
 			}
+			if options.Routed.CaptiveWindowPath != "" {
+				server.background = withBackground(server.background, server.watchCaptiveWindow)
+			}
 		}
 	}
 	return server, nil

@@ -75,7 +75,7 @@ func TestDarwinExitKillSwitchHoldsOnePfReference(t *testing.T) {
 	}
 	// Without a utun the host is closed: no route is touched.
 	for range 2 {
-		if err := configurer.Replace("", false, false); err != nil {
+		if _, err := configurer.Replace("", false, false, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -105,7 +105,7 @@ func TestDarwinExitKillSwitchHoldsOnePfReference(t *testing.T) {
 	if _, err := os.Stat(configurer.tokenPath); !os.IsNotExist(err) {
 		t.Fatalf("token kept after clear: %v", err)
 	}
-	if err := configurer.Replace("en0", false, false); err == nil {
+	if _, err := configurer.Replace("en0", false, false, nil); err == nil {
 		t.Fatal("Replace() accepted a target that is no utun")
 	}
 }

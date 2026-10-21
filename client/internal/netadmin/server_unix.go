@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"meshtransit.net/client/internal/captive"
+
 	"meshtransit.net/client/internal/peercred"
 	"meshtransit.net/client/internal/routesettings"
 )
@@ -103,6 +105,12 @@ type Server struct {
 	// exitTamperedAt is when the helper last found the exit routes it
 	// installed changed by another program.
 	exitTamperedAt time.Time
+	// captiveWindow is the captive portal window open, nil while none is;
+	// captiveNow the clock it is counted on (time.Now, monotonic).
+	captiveWindow *openCaptiveWindow
+	captiveNow    func() time.Time
+	// readWindow reads the window file (captive.ReadWindow).
+	readWindow func(string) (captive.Window, error)
 	// loadSettings reads the route settings (routesettings.Load).
 	loadSettings func(string) (routesettings.Settings, error)
 	// mu serializes requests with background work (watchDNSLink on macOS).
@@ -178,6 +186,8 @@ func newServerWithDNS(
 	}
 	return &Server{
 		loadSettings:    routesettings.Load,
+		captiveNow:      time.Now,
+		readWindow:      captive.ReadWindow,
 		routed:          routed,
 		allowedUID:      options.AllowedUID,
 		interfaceName:   options.InterfaceName,
@@ -631,4 +641,20 @@ func configuredDNSEndpoint(interfaceName string, resolver netip.AddrPort) (DNSEn
 	}
 	endpoint.InterfaceName = interfaceName
 	return endpoint, nil
+}
+
+// withBackground runs next alongside the background work already set.
+func withBackground(current, next func(context.Context)) func(context.Context) {
+	if current == nil {
+		return next
+	}
+	return func(ctx context.Context) {
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			current(ctx)
+		}()
+		next(ctx)
+		<-done
+	}
 }

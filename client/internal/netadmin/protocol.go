@@ -11,9 +11,11 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"golang.zx2c4.com/wireguard/tun"
 
+	"meshtransit.net/client/internal/overlayframe"
 	"meshtransit.net/client/internal/routesettings"
 )
 
@@ -142,6 +144,11 @@ type request struct {
 	// traffic into the mesh, and ExitRouteIPv6 whether IPv6 too.
 	ExitRoute     bool `json:"exit_route,omitempty"`
 	ExitRouteIPv6 bool `json:"exit_route_ipv6,omitempty"`
+	// With set_exit_route, for a captive portal window root opened:
+	// CaptivePortals the portal's address and port meshd found (up to one
+	// per family), and CaptiveClose a window meshd asks to close early.
+	CaptivePortals []string `json:"captive_portals,omitempty"`
+	CaptiveClose   string   `json:"captive_close,omitempty"`
 }
 
 type response struct {
@@ -178,6 +185,11 @@ type response struct {
 	// ExitRouteTampered: the helper installed the exit routes again lately
 	// because another program changed them.
 	ExitRouteTampered bool `json:"exit_route_tampered,omitempty"`
+	// CaptiveWindow is the captive portal window open, its seconds left
+	// and the interface it opens; empty while none is.
+	CaptiveWindow    string `json:"captive_window,omitempty"`
+	CaptiveRemaining int    `json:"captive_remaining,omitempty"`
+	CaptiveInterface string `json:"captive_interface,omitempty"`
 }
 
 // Reasons the helper does not forward as an exit node.
@@ -211,6 +223,23 @@ type ExitRouteRequest struct {
 	// platform VPN's resolvers (Android). They never cross the helper
 	// socket: the desktop resolver follows the map itself.
 	DNS [2]netip.Addr `json:"-"`
+	// CaptivePortals are the captive portal's address and port on a port
+	// other than 80 and 443, IPv4 then IPv6, zero when unknown: a window
+	// root opened lets them through too (exit node design §17.5).
+	CaptivePortals [2]netip.AddrPort
+	// CaptiveClose names a window to close before its time: the tunnel
+	// came back (§17.4). meshd never opens one.
+	CaptiveClose string
+}
+
+// CaptiveWindow is a captive portal window the helper holds open.
+type CaptiveWindow struct {
+	// ID names the window; empty while none is open.
+	ID string
+	// Remaining is how long it stays open, and Interface the network
+	// interface it opens.
+	Remaining time.Duration
+	Interface string
 }
 
 // ExitRouting is whether the helper routes the host's Internet traffic into
@@ -223,6 +252,8 @@ type ExitRouting struct {
 	// Tampered: while routing, the helper installed the routes again lately
 	// because another program changed them.
 	Tampered bool
+	// Captive is the captive portal window open, if any.
+	Captive CaptiveWindow
 }
 
 // ExitRequest is what meshd asks of the helper for the Exit Pool it serves.
@@ -360,7 +391,8 @@ func validateRequest(value request) (validatedRequest, error) {
 	if (value.Exit || value.ExitConntrack != 0 || value.ExitSMTP) && value.Operation != operationSetServedExit {
 		return validatedRequest{}, fmt.Errorf("%w: unexpected exit fields", ErrProtocol)
 	}
-	if (value.ExitRoute || value.ExitRouteIPv6) && value.Operation != operationSetExitRoute {
+	if (value.ExitRoute || value.ExitRouteIPv6 || value.CaptivePortals != nil || value.CaptiveClose != "") &&
+		value.Operation != operationSetExitRoute {
 		return validatedRequest{}, fmt.Errorf("%w: unexpected exit route fields", ErrProtocol)
 	}
 
@@ -413,9 +445,11 @@ func validateRequest(value request) (validatedRequest, error) {
 			(value.ExitRouteIPv6 && !value.ExitRoute) {
 			return validatedRequest{}, fmt.Errorf("%w: exit route fields are invalid", ErrProtocol)
 		}
-		return validatedRequest{operation: value.Operation, exitRoute: ExitRouteRequest{
-			Use: value.ExitRoute, IPv6: value.ExitRouteIPv6,
-		}}, nil
+		route := ExitRouteRequest{Use: value.ExitRoute, IPv6: value.ExitRouteIPv6}
+		if err := parseCaptiveRequest(value, &route); err != nil {
+			return validatedRequest{}, err
+		}
+		return validatedRequest{operation: value.Operation, exitRoute: route}, nil
 	case operationCheckServed:
 		if value.Addresses != nil || value.Routes != nil || hasDNSRequestFields(value) {
 			return validatedRequest{}, fmt.Errorf("%w: served route check fields are invalid", ErrProtocol)
@@ -501,10 +535,15 @@ func validExitResponse(value response, operation string) bool {
 // validExitRouteResponse accepts exit route fields only on set_exit_route:
 // routing, or a known reason it does not.
 func validExitRouteResponse(value response, operation string) bool {
+	captive := value.CaptiveWindow != "" || value.CaptiveRemaining != 0 || value.CaptiveInterface != ""
 	if operation != operationSetExitRoute {
-		return !value.ExitRouting && value.ExitRouteRefused == "" && !value.ExitRouteTampered
+		return !value.ExitRouting && value.ExitRouteRefused == "" && !value.ExitRouteTampered && !captive
 	}
 	if value.ExitRouteTampered && !value.ExitRouting {
+		return false
+	}
+	if captive && (!value.ExitRouting || !captiveWindowID(value.CaptiveWindow) || value.CaptiveRemaining < 0 ||
+		value.CaptiveRemaining > maxCaptiveSeconds || !validHostInterfaceName(value.CaptiveInterface)) {
 		return false
 	}
 	return value.ExitRouteRefused == "" || (!value.ExitRouting &&
@@ -852,4 +891,73 @@ func compareRoutedPrefixes(first, second netip.Prefix) int {
 		return order
 	}
 	return first.Bits() - second.Bits()
+}
+
+// maxCaptiveSeconds bounds a captive portal window (captive.MaximumWindow).
+const maxCaptiveSeconds = 300
+
+// captiveWindowID reports whether id names a window as the window file does:
+// 16 random bytes in hex.
+func captiveWindowID(id string) bool {
+	if len(id) != 32 {
+		return false
+	}
+	for _, character := range id {
+		if !strings.ContainsRune("0123456789abcdef", character) {
+			return false
+		}
+	}
+	return true
+}
+
+// parseCaptiveRequest reads the captive portal fields of set_exit_route:
+// only with the exit route in use, at most one canonical portal per family on
+// a port other than 80 and 443, never in the mesh, and a window id to close.
+func parseCaptiveRequest(value request, route *ExitRouteRequest) error {
+	if (value.CaptivePortals != nil || value.CaptiveClose != "") && !value.ExitRoute {
+		return fmt.Errorf("%w: captive fields without the exit route", ErrProtocol)
+	}
+	if value.CaptiveClose != "" && !captiveWindowID(value.CaptiveClose) {
+		return fmt.Errorf("%w: captive window id is invalid", ErrProtocol)
+	}
+	route.CaptiveClose = value.CaptiveClose
+	if value.CaptivePortals != nil && len(value.CaptivePortals) == 0 || len(value.CaptivePortals) > 2 {
+		return fmt.Errorf("%w: captive portals are invalid", ErrProtocol)
+	}
+	for _, text := range value.CaptivePortals {
+		portal, err := netip.ParseAddrPort(text)
+		slot := 0
+		if portal.Addr().Is6() {
+			slot = 1
+		}
+		if err != nil || portal.String() != text || !CaptivePortalAllowed(portal) || route.CaptivePortals[slot].IsValid() {
+			return fmt.Errorf("%w: captive portal %q is invalid", ErrProtocol, text)
+		}
+		route.CaptivePortals[slot] = portal
+	}
+	return nil
+}
+
+// CaptivePortalAllowed reports whether a window may let portal through: a
+// unicast address outside the mesh and the host, on a port other than the
+// window's own 80 and 443.
+func CaptivePortalAllowed(portal netip.AddrPort) bool {
+	address := portal.Addr()
+	return portal.IsValid() && portal.Port() != 0 && portal.Port() != 80 && portal.Port() != 443 &&
+		address.Zone() == "" && !address.Is4In6() && address.IsGlobalUnicast() &&
+		!overlayframe.Contains(netip.PrefixFrom(address, address.BitLen()))
+}
+
+// validHostInterfaceName accepts a name the host's kernel could give a
+// network interface (Linux wlp2s0, macOS en0): short, printable, no path.
+func validHostInterfaceName(name string) bool {
+	if name == "" || len(name) >= interfaceNameSize || name == "." || name == ".." {
+		return false
+	}
+	for _, character := range name {
+		if character <= ' ' || character > '~' || character == '/' {
+			return false
+		}
+	}
+	return true
 }

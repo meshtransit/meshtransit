@@ -22,6 +22,10 @@ type installedExit struct {
 	// lan are the subnets the kill switch lets through: its lan4 and lan6
 	// sets must hold exactly their ranges.
 	lan []netip.Prefix
+	// captive are a captive portal window's holes by set, as elementKeys
+	// names them: the sets hold no others (the kernel drops them as the
+	// window ends).
+	captive map[string][]string
 }
 
 // intact reports whether the kernel holds what installed records: every rule
@@ -44,6 +48,17 @@ func (installed *installedExit) intact(options RoutedOptions) (bool, error) {
 		}
 		if !slices.Equal(held, elementKeys(intervalElements(installed.lan, set.ipv4))) {
 			return false, nil // a range added to what the kill switch lets through
+		}
+	}
+	for _, set := range []string{"captive4", "captive6", "portal4", "portal6"} {
+		held, err := nftSetElements(options.ExitNftTable, set)
+		if err != nil {
+			return false, err
+		}
+		for _, key := range held {
+			if !slices.Contains(installed.captive[set], key) {
+				return false, nil // a hole no window opened
+			}
 		}
 	}
 	for priority := options.ExitPriority; priority < options.ExitPriority+exitRulePriorities; priority++ {

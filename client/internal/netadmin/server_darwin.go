@@ -79,24 +79,11 @@ func (s *Server) prepareRouted() error {
 		if err := s.startExitRoute(); err != nil {
 			s.logger.Warn("clearing an exit route left by a previous run failed", "error", err)
 		}
+		if s.routed.CaptiveWindowPath != "" {
+			s.background = withBackground(s.background, s.watchCaptiveWindow)
+		}
 	}
 	return nil
-}
-
-// withBackground runs next alongside the background work already set.
-func withBackground(current, next func(context.Context)) func(context.Context) {
-	if current == nil {
-		return next
-	}
-	return func(ctx context.Context) {
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			current(ctx)
-		}()
-		next(ctx)
-		<-done
-	}
 }
 
 // validConfiguredInterfaceName requires an empty name: the kernel picks utunN.

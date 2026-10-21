@@ -92,7 +92,7 @@ func TestKernelExitRouteConfigurerIntegration(t *testing.T) {
 	configurer := newKernelExitRouteConfigurer(options, meshdUID)
 	t.Cleanup(func() { _ = configurer.Clear() })
 	for range 2 { // installing twice changes nothing
-		if err := configurer.Replace(name, true, true); err != nil {
+		if _, err := configurer.Replace(name, true, true, nil); err != nil {
 			t.Fatalf("Replace() error = %v", err)
 		}
 	}
@@ -199,7 +199,7 @@ func TestKernelExitRouteConfigurerIntegration(t *testing.T) {
 		if present, err := configurer.Present(); err != nil || present {
 			t.Errorf("after %v: Present() = %t, %v", tamper[1:], present, err)
 		}
-		if err := configurer.Replace(name, true, true); err != nil {
+		if _, err := configurer.Replace(name, true, true, nil); err != nil {
 			t.Fatal(err)
 		}
 		if present, err := configurer.Present(); err != nil || !present {
@@ -212,7 +212,7 @@ func TestKernelExitRouteConfigurerIntegration(t *testing.T) {
 	}
 	// Without IPv6 at the exit node, IPv6 stops at once; without the LAN,
 	// the LAN goes into the mesh.
-	if err := configurer.Replace(name, false, false); err != nil {
+	if _, err := configurer.Replace(name, false, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	if table := routes(); strings.Count(table, "default dev "+name) != 1 || strings.Contains(table, "192.168.77.0") {
@@ -224,13 +224,13 @@ func TestKernelExitRouteConfigurerIntegration(t *testing.T) {
 	}
 	// Without the TUN (a helper started before meshd) the kill switch and
 	// table still hold: the Internet is unreachable.
-	if err := configurer.Replace("", false, false); err != nil {
+	if _, err := configurer.Replace("", false, false, nil); err != nil {
 		t.Fatalf("Replace() without the TUN: %v", err)
 	}
 	if table := routes(); strings.Contains(table, "default dev "+name) || !strings.Contains(table, "unreachable default") {
 		t.Errorf("exit table without the TUN:\n%s", table)
 	}
-	if err := configurer.Replace(name, false, false); err != nil {
+	if _, err := configurer.Replace(name, false, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	// Once the TUN is gone the table answers unreachable; nothing falls

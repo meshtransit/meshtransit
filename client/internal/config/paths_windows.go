@@ -18,4 +18,8 @@ const (
 	// DefaultRouteSettingsPath holds the host's subnet route settings in a
 	// directory only SYSTEM and administrators may access (routesettings).
 	DefaultRouteSettingsPath = `C:\ProgramData\MeshTransit\settings\routes.json`
+	// DefaultCaptiveWindowPath is the captive portal window root opens
+	// (meshctl exit captive), next to the route settings: the service
+	// removes it when it starts and once the window closes.
+	DefaultCaptiveWindowPath = `C:\ProgramData\MeshTransit\settings\captive.json`
 )

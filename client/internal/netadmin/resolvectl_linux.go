@@ -91,3 +91,13 @@ func (c *resolvectlConfigurator) run(ctx context.Context, args ...string) ([]byt
 
 	return output, fmt.Errorf("running resolvectl %s: %w: %s", args[0], err, message)
 }
+
+// FlushCaches empties resolved's cache: answers a captive portal's network
+// gave during a window must not outlive it (exit node design §17.5).
+func (c *resolvectlConfigurator) FlushCaches(ctx context.Context) error {
+	if c == nil || c.runner == nil {
+		return errors.New("netadmin: resolvectl configurator is not initialized")
+	}
+	_, err := c.run(ctx, "flush-caches")
+	return err
+}

@@ -8,6 +8,7 @@ import (
 	"net"
 	"time"
 
+	"meshtransit.net/client/internal/captive"
 	"meshtransit.net/client/internal/routesettings"
 )
 
@@ -19,10 +20,13 @@ type exitRouteConfigurer interface {
 	// Replace installs the kill switch, then the exit table and its rules;
 	// the Internet goes into the mesh interface name when it exists, and
 	// IPv6 too when ipv6; otherwise it is unreachable. allowLAN keeps the
-	// host's attached private subnets out of the mesh. An error leaves what
-	// it installed: once the kill switch is in, the host keeps failing
-	// closed.
-	Replace(name string, ipv6, allowLAN bool) error
+	// host's attached private subnets out of the mesh. A captive portal
+	// window, when not nil, lets the host's own HTTP and HTTPS and its
+	// portals out by the physical interface of the default route, which it
+	// returns, for the window's time left at most (exit node design §17.5).
+	// An error leaves what it installed: once the kill switch is in, the
+	// host keeps failing closed.
+	Replace(name string, ipv6, allowLAN bool, window *exitCaptive) (string, error)
 	// Present reports whether the kill switch is installed.
 	Present() (bool, error)
 	// Stamp identifies the host's interfaces and attached subnets the
@@ -52,11 +56,15 @@ func (s *Server) setExitRoute(connection *net.UnixConn, requested ExitRouteReque
 		return errors.New("netadmin: exit route before the tun interface")
 	}
 	s.requestedExitRoute = &requested
+	s.closeCaptiveOnRequest(requested.CaptiveClose)
 	s.applyExitRoute()
+	window := s.captiveView()
 	return writeResponse(connection, response{
 		Version: protocolVersion, OK: true,
 		ExitRouting: s.activeExitRoute.Routing, ExitRouteRefused: s.activeExitRoute.Refused,
 		ExitRouteTampered: s.activeExitRoute.Routing && s.exitTampered(),
+		CaptiveWindow:     window.ID, CaptiveRemaining: int(window.Remaining / time.Second),
+		CaptiveInterface: window.Interface,
 	}, nil)
 }
 
@@ -81,6 +89,7 @@ func (s *Server) applyExitRoute() {
 	wanted, ipv6 := s.exitRouteWanted(settings)
 	requested := s.requestedExitRoute != nil && s.requestedExitRoute.Use
 	if !wanted {
+		s.dropCaptiveWindow()
 		if s.exitRouteKey != "" || requested {
 			s.clearExitRoute()
 		}
@@ -93,7 +102,11 @@ func (s *Server) applyExitRoute() {
 	if s.hasActiveTUN {
 		name = s.activeName
 	}
-	key := fmt.Sprintf("%s %t %t %s", name, ipv6, settings.ExitAllowLAN, s.exitRouteConfigurer.Stamp(name))
+	if settings.ExitCaptiveOff {
+		s.dropCaptiveWindow()
+	}
+	key := fmt.Sprintf("%s %t %t %s %s", name, ipv6, settings.ExitAllowLAN, s.exitRouteConfigurer.Stamp(name),
+		s.captiveKey())
 	if key == s.exitRouteKey {
 		present, err := s.exitRouteConfigurer.Present()
 		if err != nil {
@@ -106,10 +119,14 @@ func (s *Server) applyExitRoute() {
 		}
 		s.noteExitTampered()
 	}
-	if err := s.exitRouteConfigurer.Replace(name, ipv6, settings.ExitAllowLAN); err != nil {
+	opened, err := s.exitRouteConfigurer.Replace(name, ipv6, settings.ExitAllowLAN, s.captiveFor())
+	if err != nil {
 		s.logger.Warn("routing the host through the exit node failed", "error", err)
 		s.activeExitRoute, s.exitRouteKey = ExitRouting{Refused: ExitRouteRefusedFailed}, ""
 		return
+	}
+	if s.captiveWindow != nil {
+		s.captiveWindow.opened = opened
 	}
 	s.exitRouteKey = key
 	s.activeExitRoute = ExitRouting{Routing: name != ""}
@@ -138,6 +155,12 @@ func (s *Server) stopExitRoute() {
 	}
 	settings, err := s.loadSettings(s.routed.SettingsPath)
 	if err != nil || settings.ExitUse != "" {
+		// The kill switch stays, without the window's holes.
+		if s.captiveWindow != nil {
+			s.dropCaptiveWindow()
+			s.exitRouteKey = ""
+			s.applyExitRoute()
+		}
 		return
 	}
 	s.clearExitRoute()
@@ -188,10 +211,27 @@ func (s *Server) startExitRoute() error {
 	if s.exitRouteConfigurer == nil {
 		return nil
 	}
+	// A window a previous run held is never opened again.
+	s.dropCaptiveWindow()
 	settings, err := s.loadSettings(s.routed.SettingsPath)
 	if err == nil && settings.ExitUse == "" {
 		return s.exitRouteConfigurer.Clear()
 	}
 	s.applyExitRoute()
 	return nil
+}
+
+// dropCaptiveWindow forgets the window and removes its file, without
+// applying the exit route again: the caller does, or clears it.
+func (s *Server) dropCaptiveWindow() {
+	if path := s.captiveWindowPath(); path != "" {
+		if err := captive.CloseWindow(path); err != nil {
+			s.logger.Warn("removing the captive portal window file failed", "error", err)
+		}
+	}
+	if s.captiveWindow != nil {
+		s.captiveWindow = nil
+		s.flushDNSCaches()
+		s.logger.Info("captive portal window closed", "reason", "the exit route changed")
+	}
 }

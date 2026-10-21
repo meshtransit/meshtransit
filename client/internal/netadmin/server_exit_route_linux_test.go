@@ -25,18 +25,24 @@ type fakeExitRouteConfigurer struct {
 	fail     error
 	// readErr fails Present, as an interrupted netlink dump does.
 	readErr error
+	// windows are the captive portal windows each Replace was given.
+	windows []*exitCaptive
 }
 
-func (f *fakeExitRouteConfigurer) Replace(name string, ipv6, allowLAN bool) error {
+func (f *fakeExitRouteConfigurer) Replace(name string, ipv6, allowLAN bool, window *exitCaptive) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.fail != nil {
-		return f.fail
+		return "", f.fail
 	}
 	f.replaced = append(f.replaced, name+map[bool]string{true: " ipv6", false: ""}[ipv6]+
 		map[bool]string{true: " lan", false: ""}[allowLAN])
+	f.windows = append(f.windows, window)
 	f.present = true
-	return nil
+	if window == nil {
+		return "", nil
+	}
+	return "wlan0", nil
 }
 
 func (f *fakeExitRouteConfigurer) Present() (bool, error) {
