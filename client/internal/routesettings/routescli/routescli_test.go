@@ -182,3 +182,24 @@ func TestRunRoutesElevatesOnlyAValidChange(t *testing.T) {
 		t.Fatalf("privileged change = %d, elevated %d: %s", code, elevated, stdout.String())
 	}
 }
+
+func TestOperatorsSwitchSurvivesTheFile(t *testing.T) {
+	t.Parallel()
+	settings, err := changeRouteSettings(routesettings.Settings{}, "operators", []string{"off"})
+	if err != nil || !settings.OperatorsOff {
+		t.Fatalf("operators off = %+v, %v", settings, err)
+	}
+	encoded, err := routesettings.Encode(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded, err := routesettings.Decode(encoded); err != nil || !decoded.OperatorsOff {
+		t.Fatalf("operators_off did not survive the file: %+v, %v", decoded, err)
+	}
+	if on, err := changeRouteSettings(settings, "operators", []string{"on"}); err != nil || on.OperatorsOff {
+		t.Fatalf("operators on = %+v, %v", on, err)
+	}
+	if _, err := changeRouteSettings(settings, "operators", []string{"maybe"}); err == nil {
+		t.Fatal("operators maybe was accepted")
+	}
+}

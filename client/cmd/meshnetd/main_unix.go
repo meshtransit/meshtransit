@@ -190,6 +190,24 @@ func run(args []string, stdout, stderr io.Writer) int {
 			logger.Warn("reporting service shutdown failed", "error", notifyErr)
 		}
 	}()
+	serveOperator, err := platform.routeOperator(*routesFile, resolvedUID, logger)
+	if err != nil {
+		// The tunnel matters more: run without the socket, choices root's.
+		logger.Error("opening the route operator socket failed", "error", err)
+	}
+	if serveOperator != nil {
+		operatorDone := make(chan struct{})
+		go func() {
+			defer close(operatorDone)
+			if err := serveOperator(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				logger.Error("route operator socket stopped", "error", err)
+			}
+		}()
+		defer func() {
+			stop()
+			<-operatorDone
+		}()
+	}
 	logger.Info(
 		"meshnetd started",
 		"socket", *socketPath,

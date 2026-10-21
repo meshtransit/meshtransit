@@ -33,6 +33,8 @@ const usage = `usage: %[1]s routes [--routes-file PATH] COMMAND
   exit-allow-lan on|off     keep the attached private subnets off the exit node
   exit-allow-managed on|off let the administrator choose the Exit Pool
   exit-captive on|off       allow short windows to sign in to a captive portal
+  operators on|off          let the meshtransit group change exit-use, accept
+                            and exit-allow-lan without root (on by default)
 Changes need %[2]s and apply within seconds, without a restart.
 `
 
@@ -95,8 +97,8 @@ func (c Command) Run(args []string, stdout, stderr io.Writer) int {
 	if command == "show" && len(operands) == 0 {
 		return c.print(stdout, stderr, settings)
 	}
-	changed, err := changeRouteSettings(settings, command, operands)
-	if err != nil {
+	// A malformed change fails here, before root's password is asked for.
+	if _, err := changeRouteSettings(settings, command, operands); err != nil {
 		_, _ = fmt.Fprintf(stderr, "%s: %v\n", c.Program, err)
 		flags.Usage()
 		return 2
@@ -108,14 +110,28 @@ func (c Command) Run(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "%s: %s are required to change route settings\n", c.Program, c.Privilege)
 		return 1
 	}
-	if err := routesettings.Save(*path, changed); err != nil {
+	// Changed again under the lock, from the file as it is then: another
+	// writer (the operator socket, another root command) may have written
+	// since it was read above.
+	saved, err := routesettings.Update(*path, func(current routesettings.Settings, loadErr error) (
+		routesettings.Settings, error,
+	) {
+		if errors.Is(loadErr, routesettings.ErrUnsafeFile) {
+			current, loadErr = routesettings.Settings{}, nil
+		}
+		if loadErr != nil {
+			return current, loadErr
+		}
+		return changeRouteSettings(current, command, operands)
+	})
+	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "%s: %v\n", c.Program, err)
 		return 1
 	}
 	if c.Quiet {
 		return 0
 	}
-	return c.print(stdout, stderr, changed)
+	return c.print(stdout, stderr, saved)
 }
 
 func changeRouteSettings(settings routesettings.Settings, command string, operands []string) (
@@ -144,7 +160,7 @@ func changeRouteSettings(settings routesettings.Settings, command string, operan
 			settings.ExitUse = ""
 		}
 	case "accept", "accept-public", "router-mode", "exit-mode", "exit-smtp", "exit-allow-lan", "exit-allow-managed",
-		"exit-captive":
+		"exit-captive", "operators":
 		if len(operands) != 1 || (operands[0] != "on" && operands[0] != "off") {
 			return settings, fmt.Errorf("%s takes on or off", command)
 		}
@@ -164,6 +180,8 @@ func changeRouteSettings(settings routesettings.Settings, command string, operan
 			settings.ExitAllowManaged = value
 		case "exit-captive":
 			settings.ExitCaptiveOff = !value
+		case "operators":
+			settings.OperatorsOff = !value
 		default:
 			settings.RouterMode = value
 		}
@@ -202,12 +220,12 @@ func (c Command) print(stdout, stderr io.Writer, settings routesettings.Settings
 	if _, err := fmt.Fprintf(stdout,
 		"accept: %s\naccept-public: %s\nrouter-mode: %s\nadvertise: %s\n"+
 			"exit-mode: %s\nexit-smtp: %s\nexit-conntrack-max: %d\nexit-max-consumers: %d\n"+
-			"exit-use: %s\nexit-allow-lan: %s\nexit-allow-managed: %s\nexit-captive: %s\n",
+			"exit-use: %s\nexit-allow-lan: %s\nexit-allow-managed: %s\nexit-captive: %s\noperators: %s\n",
 		onOff[settings.AcceptRoutes], onOff[settings.AcceptPublicRoutes], onOff[settings.RouterMode],
 		strings.Join(advertised, " "), onOff[settings.ExitMode], onOff[settings.ExitSMTPAllowed],
 		settings.ExitConntrackLimit(0), settings.ExitConsumerLimit(), cmp.Or(settings.ExitUse, "off"),
 		onOff[settings.ExitAllowLAN], onOff[settings.ExitAllowManaged],
-		onOff[!settings.ExitCaptiveOff]); err != nil {
+		onOff[!settings.ExitCaptiveOff], onOff[!settings.OperatorsOff]); err != nil {
 		_, _ = fmt.Fprintf(stderr, "%s: %v\n", c.Program, err)
 		return 1
 	}

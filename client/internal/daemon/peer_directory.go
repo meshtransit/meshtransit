@@ -1,10 +1,12 @@
 package daemon
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -152,6 +154,43 @@ func pathOf(stat dataplane.PeerPathStat, held bool, relayCodes map[int]string) (
 		return PeerPathPending, ""
 	default:
 		return PeerPathPending, ""
+	}
+}
+
+// SortedPeers returns views as the apps list them: online peers first, then
+// those whose state is unknown, then offline ones, each by the first label
+// of the name, then ID. The
+// keys are made once: a Network may hold 100,000 Devices.
+func SortedPeers(views []PeerView) []PeerView {
+	type keyed struct {
+		rank int
+		name string
+		view PeerView
+	}
+	sorted := make([]keyed, len(views))
+	for index, view := range views {
+		label, _, _ := strings.Cut(view.Name, ".")
+		sorted[index] = keyed{rank: onlineRank(view), name: strings.ToLower(label), view: view}
+	}
+	slices.SortFunc(sorted, func(a, b keyed) int {
+		return cmp.Or(cmp.Compare(a.rank, b.rank), cmp.Compare(a.name, b.name),
+			cmp.Compare(a.view.DeviceID, b.view.DeviceID))
+	})
+	result := make([]PeerView, len(sorted))
+	for index, entry := range sorted {
+		result[index] = entry.view
+	}
+	return result
+}
+
+func onlineRank(view PeerView) int {
+	switch {
+	case view.OnlineKnown && view.Online:
+		return 0
+	case !view.OnlineKnown:
+		return 1
+	default:
+		return 2
 	}
 }
 

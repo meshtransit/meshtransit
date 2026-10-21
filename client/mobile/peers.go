@@ -1,7 +1,6 @@
 package mobile
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"slices"
@@ -90,35 +89,19 @@ func (engine *Engine) PingPeer(deviceID string) (value string, err error) {
 }
 
 func newPeerList(views []daemon.PeerView) peerList {
-	peers := make([]listedPeer, 0, len(views))
-	for _, view := range views {
+	sorted := daemon.SortedPeers(views)
+	list := peerList{Total: len(sorted), Truncated: len(sorted) > maxListedPeers}
+	list.Peers = make([]listedPeer, 0, min(len(sorted), maxListedPeers))
+	for _, view := range sorted[:min(len(sorted), maxListedPeers)] {
 		name, _, _ := strings.Cut(view.Name, ".")
 		addresses := slices.Clone(view.Addresses)
 		if addresses == nil {
 			addresses = []string{}
 		}
-		peers = append(peers, listedPeer{
+		list.Peers = append(list.Peers, listedPeer{
 			ID: view.DeviceID, Name: name, Addresses: addresses, Online: onlineOf(view),
 			Path: view.Path, Relay: view.RelayRegion, Measurable: view.Measurable,
 		})
-	}
-	// The sort keys are made once: a Network may list 100,000 Devices.
-	type keyed struct {
-		rank int
-		name string
-		peer listedPeer
-	}
-	sorted := make([]keyed, len(peers))
-	for index, peer := range peers {
-		sorted[index] = keyed{rank: onlineRank(peer.Online), name: strings.ToLower(peer.Name), peer: peer}
-	}
-	slices.SortFunc(sorted, func(a, b keyed) int {
-		return cmp.Or(cmp.Compare(a.rank, b.rank), cmp.Compare(a.name, b.name), cmp.Compare(a.peer.ID, b.peer.ID))
-	})
-	list := peerList{Total: len(peers), Truncated: len(peers) > maxListedPeers}
-	list.Peers = make([]listedPeer, 0, min(len(sorted), maxListedPeers))
-	for _, entry := range sorted[:min(len(sorted), maxListedPeers)] {
-		list.Peers = append(list.Peers, entry.peer)
 	}
 	return list
 }
@@ -131,17 +114,6 @@ func onlineOf(view daemon.PeerView) string {
 		return "online"
 	default:
 		return "offline"
-	}
-}
-
-func onlineRank(online string) int {
-	switch online {
-	case "online":
-		return 0
-	case "unknown":
-		return 1
-	default:
-		return 2
 	}
 }
 

@@ -2,9 +2,11 @@ package main
 
 import (
 	"cmp"
+	"context"
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/netip"
 
 	"meshtransit.net/client/internal/config"
@@ -100,6 +102,12 @@ func (p platformFlags) dnsOptions(resolver netip.AddrPort) (*netadmin.DNSOptions
 // preparePlatform has nothing to do on Linux: systemd tmpfiles creates the
 // runtime directories.
 func preparePlatform(string, uint32) error { return nil }
+
+// routeOperator is macOS's: Linux has no operators group yet, so the route
+// choices stay root's.
+func (platformFlags) routeOperator(string, uint32, *slog.Logger) (func(context.Context) error, error) {
+	return nil, nil
+}
 
 // runCaptive is macOS's: on Linux the kernel ends a captive portal window's
 // holes by itself.

@@ -84,6 +84,10 @@ type Settings struct {
 	// ExitCaptiveOff refuses captive portal windows (exit node design
 	// §17.4): on a managed host the kill switch never opens.
 	ExitCaptiveOff bool
+	// OperatorsOff keeps the host's own choices (ExitUse, AcceptRoutes,
+	// ExitAllowLAN) root's: the meshtransit group may no longer change them
+	// through the helper (package operator). A managed host turns it on.
+	OperatorsOff bool
 }
 
 // ExitUseAuto picks the nearest pool Core grants and keeps it.
@@ -105,6 +109,7 @@ type document struct {
 	ExitAllowLAN                bool     `json:"exit_allow_lan,omitempty"`
 	ExitAllowManaged            bool     `json:"exit_allow_managed,omitempty"`
 	ExitCaptiveOff              bool     `json:"exit_captive_off,omitempty"`
+	OperatorsOff                bool     `json:"operators_off,omitempty"`
 }
 
 // ExitConntrackLimit is the connections one consumer may hold through this
@@ -213,7 +218,7 @@ func Decode(encoded []byte) (Settings, error) {
 		RouterMode: value.RouterMode, ExitMode: value.ExitMode, ExitSMTPAllowed: value.ExitSMTPAllowed,
 		ExitConntrackPerConsumerMax: value.ExitConntrackPerConsumerMax, ExitMaxConsumers: value.ExitMaxConsumers,
 		ExitUse: value.ExitUse, ExitAllowLAN: value.ExitAllowLAN, ExitAllowManaged: value.ExitAllowManaged,
-		ExitCaptiveOff: value.ExitCaptiveOff,
+		ExitCaptiveOff: value.ExitCaptiveOff, OperatorsOff: value.OperatorsOff,
 	}
 	for _, text := range value.AdvertiseRoutes {
 		prefix, err := netip.ParsePrefix(text)
@@ -240,7 +245,7 @@ func Encode(settings Settings) ([]byte, error) {
 		ExitMode: settings.ExitMode, ExitSMTPAllowed: settings.ExitSMTPAllowed,
 		ExitConntrackPerConsumerMax: settings.ExitConntrackPerConsumerMax, ExitMaxConsumers: settings.ExitMaxConsumers,
 		ExitUse: settings.ExitUse, ExitAllowLAN: settings.ExitAllowLAN, ExitAllowManaged: settings.ExitAllowManaged,
-		ExitCaptiveOff: settings.ExitCaptiveOff,
+		ExitCaptiveOff: settings.ExitCaptiveOff, OperatorsOff: settings.OperatorsOff,
 	}
 	for index, prefix := range settings.AdvertiseRoutes {
 		value.AdvertiseRoutes[index] = prefix.String()

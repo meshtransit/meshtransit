@@ -19,4 +19,8 @@ const (
 	// (meshctl exit captive), in the helper's runtime directory: gone with a
 	// reboot or once closed.
 	DefaultCaptiveWindowPath = "/var/run/meshnetd/captive.json"
+	// DefaultOperatorSocketPath is where meshnetd lets the meshtransit group
+	// change the host's own route choices (package operator), in a directory
+	// of that group.
+	DefaultOperatorSocketPath = "/var/run/meshtransit/settings.sock"
 )

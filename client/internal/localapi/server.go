@@ -45,6 +45,8 @@ type service interface {
 	RefreshNAT(context.Context) (daemon.NATStatus, error)
 	ApproveExitNodes(context.Context, []string) (daemon.ExitApproval, error)
 	CheckCaptiveWindow()
+	Peers(context.Context) ([]daemon.PeerView, error)
+	PingPeer(context.Context, string) (daemon.PeerPing, error)
 }
 
 // Server serves the local control API with bounded HTTP resources.
@@ -173,6 +175,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/v1/netcheck", s.handleNetcheck)
 	mux.HandleFunc("/v1/exit/approve", s.handleExitApprove)
 	mux.HandleFunc("/v1/exit/captive/check", s.handleCaptiveCheck)
+	mux.HandleFunc("/v1/peers", s.handlePeers)
+	mux.HandleFunc("/v1/peers/{id}/ping", s.handlePeerPing)
 
 	bounded := http.MaxBytesHandler(mux, maxRequestBodyBytes)
 

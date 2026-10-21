@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/netip"
 	"os"
 	"os/user"
@@ -12,9 +14,13 @@ import (
 	"strconv"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"meshtransit.net/client/internal/captive"
 	"meshtransit.net/client/internal/config"
 	"meshtransit.net/client/internal/netadmin"
+	"meshtransit.net/client/internal/routesettings/operator"
+	"meshtransit.net/client/internal/socket"
 )
 
 // platformFlags are the macOS helper settings; the kernel names tunnels.
@@ -23,6 +29,9 @@ type platformFlags struct {
 	subnetRoutes *bool
 	exits        *bool
 	exitState    *string
+	// operatorSocket lets the meshtransit group change the host's own route
+	// choices on config.DefaultOperatorSocketPath.
+	operatorSocket *bool
 }
 
 func registerPlatformFlags(flags *flag.FlagSet) platformFlags {
@@ -34,6 +43,8 @@ func registerPlatformFlags(flags *flag.FlagSet) platformFlags {
 			"route the host through the exit node the route settings name, behind a pf kill switch"),
 		exitState: flags.String("exit-state", netadmin.DarwinExitStatePath(config.DefaultNetAdminSocketPath),
 			"file keeping the helper's pf enable reference"),
+		operatorSocket: flags.Bool("operator-socket", true,
+			"let the meshtransit group set exit-use, accept and exit-allow-lan on "+config.DefaultOperatorSocketPath),
 	}
 }
 
@@ -88,32 +99,121 @@ func preparePlatform(helperSocket string, meshdUID uint32) error {
 		return err
 	}
 	clientGID := int(meshdGID)
-	if group, err := user.LookupGroup(meshtransitGroup); err == nil {
-		if parsed, parseErr := strconv.ParseUint(group.Gid, 10, 32); parseErr == nil {
-			clientGID = int(parsed)
-		}
+	if gid, ok := meshtransitGroupID(); ok {
+		clientGID = int(gid)
 	}
 	return ownedDirectory(filepath.Dir(config.DefaultSocketPath), int(meshdUID), clientGID)
 }
 
-// ownedDirectory creates or repairs a 0750 directory with the given owner,
-// refusing a symlink in its place.
+// meshtransitGroupID returns the meshtransit group's ID, if the installer
+// made the group.
+func meshtransitGroupID() (uint32, bool) {
+	group, err := user.LookupGroup(meshtransitGroup)
+	if err != nil {
+		return 0, false
+	}
+	parsed, err := strconv.ParseUint(group.Gid, 10, 32)
+	if err != nil || parsed == 0 {
+		return 0, false
+	}
+	return uint32(parsed), true
+}
+
+// routeOperator returns what serves the socket where the meshtransit group
+// changes the host's own route choices, or nil when it is off. The
+// directory and socket belong to root and the group, so only its members
+// connect; the server checks them again and never takes meshd's user.
+func (p platformFlags) routeOperator(settingsPath string, meshdUID uint32, logger *slog.Logger) (
+	func(context.Context) error, error,
+) {
+	if !*p.operatorSocket {
+		return nil, nil
+	}
+	path := config.DefaultOperatorSocketPath
+	return func(ctx context.Context) error {
+		gid, err := waitForMeshtransitGroup(ctx)
+		if err != nil {
+			logger.Warn("no meshtransit group: route choices stay root's", "socket", path, "error", err)
+			return nil
+		}
+		// meshd in the group would reach the socket through its mode: the
+		// server refuses it anyway, but such a host is misconfigured.
+		if member, err := operator.UserInGroup(meshdUID, gid); err != nil || member {
+			logger.Error("meshd's user is in the meshtransit group or unknown: route choices stay root's",
+				"uid", meshdUID, "error", err)
+			return nil
+		}
+		server, err := operator.NewServer(operator.ServerOptions{
+			SettingsPath: settingsPath, GroupID: gid, DeniedUIDs: []uint32{meshdUID}, Logger: logger,
+		})
+		if err != nil {
+			return err
+		}
+		if err := ownedDirectory(filepath.Dir(path), 0, int(gid)); err != nil {
+			return err
+		}
+		listener, err := socket.Listen(path)
+		if err != nil {
+			return fmt.Errorf("opening the operator socket: %w", err)
+		}
+		if err := os.Lchown(path, 0, int(gid)); err != nil {
+			_ = listener.Close()
+			return fmt.Errorf("setting the operator socket's group: %w", err)
+		}
+		logger.Info("route operator socket ready", "socket", path)
+		return server.Serve(ctx, listener)
+	}, nil
+}
+
+// groupLookupPause is the first pause between looking the meshtransit group
+// up at boot, when the directory service may not answer yet.
+const groupLookupPause = 500 * time.Millisecond
+
+// waitForMeshtransitGroup looks the group up, a few times over about a
+// minute: a group that is still missing then was never made.
+func waitForMeshtransitGroup(ctx context.Context) (uint32, error) {
+	pause := groupLookupPause
+	for attempt := 0; ; attempt++ {
+		if gid, ok := meshtransitGroupID(); ok {
+			return gid, nil
+		}
+		if attempt == 7 {
+			return 0, errors.New("the group was not found")
+		}
+		select {
+		case <-time.After(pause):
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		}
+		pause *= 2
+	}
+}
+
+// ownedDirectory creates or repairs a 0750 directory with the given owner.
+// It works on the directory it opened without following a link, so no link
+// swapped in turns the chown on another file, and refuses a directory owned
+// by anyone but root or the intended owner: someone else made it.
 func ownedDirectory(path string, uid, gid int) error {
 	if err := os.Mkdir(path, 0o750); err != nil && !errors.Is(err, os.ErrExist) {
 		return fmt.Errorf("creating %s: %w", path, err)
 	}
-	info, err := os.Lstat(path)
+	descriptor, err := unix.Open(path, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
+		return fmt.Errorf("opening %s: %w", path, err)
+	}
+	defer func() { _ = unix.Close(descriptor) }()
+	var stat unix.Stat_t
+	if err := unix.Fstat(descriptor, &stat); err != nil {
 		return fmt.Errorf("inspecting %s: %w", path, err)
 	}
-	if !info.IsDir() {
-		return fmt.Errorf("%s is not a directory", path)
+	if stat.Uid != 0 && int(stat.Uid) != uid {
+		return fmt.Errorf("%s belongs to uid %d, not root or %d", path, stat.Uid, uid)
 	}
-	if err := os.Chown(path, uid, gid); err != nil {
+	if err := unix.Fchown(descriptor, uid, gid); err != nil {
 		return fmt.Errorf("setting owner of %s: %w", path, err)
 	}
 	// Group traversal is the point: meshd (or meshctl users) connect through it.
-	if err := os.Chmod(path, 0o750); err != nil { //nolint:gosec // see above
+	if err := unix.Fchmod(descriptor, 0o750); err != nil {
 		return fmt.Errorf("setting mode of %s: %w", path, err)
 	}
 	return nil

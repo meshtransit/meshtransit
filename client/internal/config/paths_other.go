@@ -18,4 +18,7 @@ const (
 	// (meshctl exit captive), in the helper's runtime directory: gone with a
 	// reboot or once closed.
 	DefaultCaptiveWindowPath = "/run/meshnetd/captive.json"
+	// DefaultOperatorSocketPath is empty: Linux has no operators group yet,
+	// so route choices stay root's (package operator).
+	DefaultOperatorSocketPath = ""
 )
