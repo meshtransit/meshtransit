@@ -5,6 +5,12 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- macOS: names resolved while an exit node is used. The MeshTransit DNS
+  service asked to be the primary one (`OverridePrimary`), which configd
+  ignores for a service without a router, so names went to the network's
+  resolvers and the kill switch dropped them (cached names hid it). The
+  service now matches the root domain, which makes its resolver the default
+  one without touching the primary service or the routes.
 - Clients: `meshctl exit approve` also approves, while no pool is used, an
   exit node added to a pool the host pinned before; status says
   `primary_unapproved` ("the primary waits for approval") when another

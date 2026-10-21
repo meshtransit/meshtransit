@@ -113,9 +113,10 @@ neighbour discovery, link-local and, with `exit-allow-lan`, the attached
 private subnets. pf is enabled with a reference of the helper's own and
 given back when the kill switch goes. The rules stay while the helper is
 down; a reboot drops them until it starts again. Replies to connections
-opened from outside are dropped too. The MeshTransit DNS service becomes the
-primary one (`OverridePrimary`), so every name goes to `meshd`, which asks
-the exit node's DNS forwarder; `meshd` resolves its own names from the
+opened from outside are dropped too. The MeshTransit DNS service matches
+the root domain (`SupplementalMatchDomains` `""`), which makes its resolver
+the host's default one without touching the primary service or its routes,
+so every name goes to `meshd`, which asks the exit node's DNS forwarder; `meshd` resolves its own names from the
 networks' resolvers (`scutil --dns`) through sockets bound to the physical
 interface, its WireGuard sockets included.
 

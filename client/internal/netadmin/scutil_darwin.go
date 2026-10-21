@@ -106,18 +106,19 @@ func scutilApplyScript(config DNSConfig) (string, error) {
 	script.WriteString("d.init\n")
 	script.WriteString("d.add Addresses * " + resolver + "\n")
 	script.WriteString("d.add InterfaceName " + config.Endpoint.InterfaceName + "\n")
-	if config.DefaultRoute {
-		// Every name, while the host uses an exit node (exit node design
-		// §7.1): the service becomes the primary one, whose resolver is
-		// the host's default. Removing the entry gives the host's own
-		// resolvers back.
-		script.WriteString("d.add OverridePrimary # 1\n")
-	}
 	script.WriteString("set " + scutilIPv4Key + "\n")
 	script.WriteString("d.init\n")
 	script.WriteString("d.add ServerAddresses * " + resolver + "\n")
 	script.WriteString("d.add ServerPort # " + strconv.Itoa(int(config.Endpoint.Resolver.Port())) + "\n")
-	if !config.DefaultRoute {
+	if config.DefaultRoute {
+		// Every name, while the host uses an exit node (exit node design
+		// §7.1): a resolver matching the root domain becomes the host's
+		// default one, the primary service and its routes untouched.
+		// OverridePrimary did nothing for a service without a router, and
+		// one with a router moves the host's default route (macOS 26 probe,
+		// 2026-10-21). Removing the entry gives the host's resolvers back.
+		script.WriteString("d.add SupplementalMatchDomains * \"\"\n")
+	} else {
 		script.WriteString("d.add SupplementalMatchDomains * " + strings.Join(matchDomains, " ") + "\n")
 	}
 	if len(config.SearchDomains) != 0 {

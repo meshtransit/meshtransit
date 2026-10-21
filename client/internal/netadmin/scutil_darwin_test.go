@@ -91,7 +91,7 @@ func TestScutilConfiguratorAppliesResetsAndRollsBack(t *testing.T) {
 		t.Fatalf("Apply() for all names: %v", err)
 	}
 	script := recorder.scripts[len(recorder.scripts)-1]
-	if !strings.Contains(script, "d.add OverridePrimary # 1\n") || strings.Contains(script, "SupplementalMatchDomains") {
-		t.Fatalf("all names script = %q, want the primary service without match domains", script)
+	if !strings.Contains(script, "d.add SupplementalMatchDomains * \"\"\n") || strings.Contains(script, "OverridePrimary") {
+		t.Fatalf("all names script = %q, want a resolver for the root domain, the primary service untouched", script)
 	}
 }
