@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/netip"
+	"slices"
 	"time"
 
 	"meshtransit.net/client/internal/dataplane"
@@ -17,9 +18,11 @@ import (
 // Site behind the routers.
 const (
 	consumer = "consumer"
-	routerA  = "router-a"
-	routerB  = "router-b"
-	siteRef  = "lab"
+	// consumer2 is the second consumer of the spread scenario.
+	consumer2 = "consumer-2"
+	routerA   = "router-a"
+	routerB   = "router-b"
+	siteRef   = "lab"
 	// unserved, as a consumer's primary, is a map where no router can serve
 	// the Site.
 	unserved = "unserved"
@@ -60,6 +63,7 @@ var (
 			id: 5, mesh: netip.MustParsePrefix("100.64.0.5/32"), underlay: netip.MustParseAddr("10.99.0.5"),
 			lan: netip.MustParseAddr("45.76.20.3"),
 		},
+		consumer2: {id: 6, mesh: netip.MustParsePrefix("100.64.0.6/32"), underlay: netip.MustParseAddr("10.99.0.6")},
 	}
 	// netHost stands for the Internet, behind the hub's router; egressGateway
 	// is the hub on the exit nodes' egress network.
@@ -126,11 +130,31 @@ func mapFor(name, primary string, revision uint64) networkmap.Snapshot {
 // while the consumer's local choice is the exit node used (none: no exit
 // node carries its traffic).
 func exitMapFor(name, used string, revision uint64) networkmap.Snapshot {
+	return exitMap([]string{consumer}, false, name, used, revision)
+}
+
+// spreadPrimaries are the consumers' primaries in the spread scenario, as
+// Core's assignment would name them.
+var spreadPrimaries = map[string]string{consumer: exitA, consumer2: exitB}
+
+// spreadMapFor is the network map Core would send name in the spread
+// scenario: the pool spreads both consumers over its exit nodes (exit node
+// design §16), and used is name's local choice.
+func spreadMapFor(name, used string, revision uint64) networkmap.Snapshot {
+	return exitMap([]string{consumer, consumer2}, true, name, used, revision)
+}
+
+// exitMap is the network map Core would send name when consumers use the
+// pool, spread or not, and used is a consumer's local choice.
+func exitMap(consumers []string, spread bool, name, used string, revision uint64) networkmap.Snapshot {
 	self := node(name)
 	snapshot := networkmap.Snapshot{Revision: revision, NetworkName: "e2e", ControlTime: time.Now(), Self: self}
-	if name == consumer {
+	if slices.Contains(consumers, name) {
 		snapshot.Peers = []networkmap.Node{node(exitA), node(exitB)}
 		pool := networkmap.ExitPool{Ref: poolRef, Name: "World", Primary: exitA, Generation: 1, Status: networkmap.ExitServed}
+		if spread {
+			pool.Primary, pool.Spread = spreadPrimaries[name], true
+		}
 		for _, exit := range []string{exitA, exitB} {
 			pool.Candidates = append(pool.Candidates, networkmap.ExitCandidate{
 				DeviceID: exit, State: networkmap.ExitStateOK, IPv4: true, DNS4: nodes[exit].mesh.Addr(),
@@ -144,9 +168,13 @@ func exitMapFor(name, used string, revision uint64) networkmap.Snapshot {
 		snapshot.ExitRoute = route
 		return snapshot
 	}
-	// An exit node: the consumer is its peer and the pool's rule lets it
-	// reach the whole Internet.
-	snapshot.Peers = []networkmap.Node{node(consumer)}
+	// An exit node: the consumers are its peers and the pool's rule lets
+	// them reach the whole Internet.
+	var sources []networkmap.Selector
+	for _, name := range consumers {
+		snapshot.Peers = append(snapshot.Peers, node(name))
+		sources = append(sources, networkmap.Selector{Kind: networkmap.SelectorPrefix, Prefix: nodes[name].mesh})
+	}
 	everywhere := func(prefix string) networkmap.Destination {
 		return networkmap.Destination{
 			Selector: networkmap.Selector{Kind: networkmap.SelectorPrefix, Prefix: netip.MustParsePrefix(prefix)},
@@ -156,7 +184,7 @@ func exitMapFor(name, used string, revision uint64) networkmap.Snapshot {
 	snapshot.ServedExits = []networkmap.ServedExit{{
 		Ref: poolRef, ConntrackPerConsumer: 4096,
 		Rules: []networkmap.Rule{{
-			Sources:      []networkmap.Selector{{Kind: networkmap.SelectorPrefix, Prefix: nodes[consumer].mesh}},
+			Sources:      sources,
 			Destinations: []networkmap.Destination{everywhere("0.0.0.0/0"), everywhere("::/0")},
 		}},
 	}}

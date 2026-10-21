@@ -32,7 +32,8 @@ const (
 	envRole = "MESHTRANSIT_E2E_ROLE"
 	envNode = "MESHTRANSIT_E2E_NODE"
 	envDir  = "MESHTRANSIT_E2E_DIR"
-	// envScenario is "exit" for the exit node scenario.
+	// envScenario is "exit" for the exit node scenario and "spread" for the
+	// spread Exit Pool one.
 	envScenario = "MESHTRANSIT_E2E_SCENARIO"
 	// Ports of the LAN host: who reached it, a byte sink and an echo.
 	whoPort, sinkPort, echoPort = 7000, 7001, 7002
@@ -84,10 +85,11 @@ func runNode(name, dir string) error {
 	// Shown only when a test fails.
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	settings := filepath.Join(dir, name+".routes.json")
-	exitScenario := os.Getenv(envScenario) == "exit"
+	scenario := os.Getenv(envScenario)
+	exitScenario := scenario == "exit" || scenario == "spread"
 	local := routesettings.Settings{AcceptRoutes: true}
 	switch {
-	case exitScenario && name == consumer:
+	case exitScenario && (name == consumer || name == consumer2):
 		local = routesettings.Settings{ExitUse: poolRef}
 	case exitScenario:
 		local = routesettings.Settings{ExitMode: true}
@@ -95,8 +97,11 @@ func runNode(name, dir string) error {
 		local = routesettings.Settings{RouterMode: true, AdvertiseRoutes: []netip.Prefix{sitePrefix}}
 	}
 	maps := mapFor
-	if exitScenario {
+	switch scenario {
+	case "exit":
 		maps = exitMapFor
+	case "spread":
+		maps = spreadMapFor
 	}
 	if err := routesettings.Save(settings, local); err != nil {
 		return fmt.Errorf("writing route settings: %w", err)
