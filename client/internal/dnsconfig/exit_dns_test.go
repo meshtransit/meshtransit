@@ -260,10 +260,12 @@ func TestExitForwarderFailsOnlyAfterAQuietWindow(t *testing.T) {
 	}
 }
 
-// A question for the exit network's own names (a single label, a search
-// domain of the host, a suffix no public resolver serves) is answered
-// NXDOMAIN without asking: its resolver would tell a consumer the
-// network's hosts and services, through any record type.
+// A question for the exit network's own names is answered without asking:
+// NXDOMAIN under a suffix no public resolver serves; no data for a single
+// label, and for what tells an internal zone's hosts and services under a
+// search domain (NS, SRV, MX, TXT). What DNSSEC validation needs of a
+// top-level domain, and addresses under a search domain that may also be
+// public, still go to the upstreams (whose private answers are dropped).
 func TestExitForwarderKeepsTheExitNetworksOwnNamesOfAnyType(t *testing.T) {
 	t.Parallel()
 	resolvConf := filepath.Join(t.TempDir(), "resolv.conf")
@@ -274,24 +276,39 @@ func TestExitForwarderKeepsTheExitNetworksOwnNamesOfAnyType(t *testing.T) {
 	forwarder.resolvConf, forwarder.resolvedConf = resolvConf, filepath.Join(t.TempDir(), "absent")
 	consumer := netip.MustParseAddr("100.64.0.4")
 	for _, question := range []struct {
-		name string
-		kind dnsmessage.Type
+		name  string
+		kind  dnsmessage.Type
+		rcode dnsmessage.RCode
 	}{
-		{"fileserver.", dnsmessage.TypeA},
-		{"_ldap._tcp.corp.example.com.", dnsmessage.TypeSRV},
-		{"corp.example.com.", dnsmessage.TypeNS},
-		{"mail.lab.", dnsmessage.TypeMX},
-		{"printer.local.", dnsmessage.TypeTXT},
-		{"git.internal.", dnsmessage.TypeAAAA},
-		{"router.home.arpa.", dnsmessage.TypeA},
+		{"fileserver.", dnsmessage.TypeA, dnsmessage.RCodeSuccess},
+		{"_ldap._tcp.corp.example.com.", dnsmessage.TypeSRV, dnsmessage.RCodeSuccess},
+		{"corp.example.com.", dnsmessage.TypeNS, dnsmessage.RCodeSuccess},
+		{"mail.lab.", dnsmessage.TypeMX, dnsmessage.RCodeSuccess},
+		{"printer.local.", dnsmessage.TypeTXT, dnsmessage.RCodeNameError},
+		{"git.internal.", dnsmessage.TypeAAAA, dnsmessage.RCodeNameError},
+		{"router.home.arpa.", dnsmessage.TypeA, dnsmessage.RCodeNameError},
 	} {
 		response := forwarder.answer(t.Context(), packQuery(t, question.name, question.kind), "udp", consumer)
-		if message := unpackMessage(t, response); message.RCode != dnsmessage.RCodeNameError {
-			t.Errorf("%s %v: %v, want NXDOMAIN", question.name, question.kind, message.RCode)
+		message := unpackMessage(t, response)
+		if message.RCode != question.rcode || len(message.Answers) != 0 {
+			t.Errorf("%s %v: %v with %d answers, want %v and none", question.name, question.kind, message.RCode,
+				len(message.Answers), question.rcode)
 		}
 	}
 	if forwarder.failures != 0 {
 		t.Fatal("a local name was asked upstream")
+	}
+	for _, question := range []struct {
+		name string
+		kind dnsmessage.Type
+	}{
+		{"com", typeDS}, {"com", typeDNSKEY}, {"com", dnsmessage.TypeSOA},
+		{"www.corp.example.com", dnsmessage.TypeA}, {"corp.example.com", typeDS},
+		{"example.org", dnsmessage.TypeTXT},
+	} {
+		if _, refused := exitLocalRefusal(question.name, question.kind, []string{"corp.example.com", "lab"}); refused {
+			t.Errorf("%s %v was refused", question.name, question.kind)
+		}
 	}
 }
 

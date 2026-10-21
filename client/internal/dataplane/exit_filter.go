@@ -79,11 +79,12 @@ func (f *policyFilter) exitInboundLocked(header packetmeta.Header, now time.Time
 }
 
 // exitOutboundLocked admits the Internet's answers to a consumer: the
-// kernel lets only answers through (layer 2). An ICMP error about a packet
-// the consumer sent to the Internet passes whatever hop sent it, a private
-// or CGNAT router on the path included: without "fragmentation needed"
-// path MTU discovery fails. The kernel admits it only as related to the
-// consumer's connection.
+// kernel lets only answers through (layer 2). "Fragmentation needed" (and
+// IPv6's "packet too big") about a packet the consumer sent to the Internet
+// passes from whatever hop sent it, a private or CGNAT router on the path
+// included: without it path MTU discovery fails. Other errors from such a
+// hop do not, so a traceroute never shows the exit network's own routers.
+// The kernel admits it only as related to the consumer's connection.
 func (f *policyFilter) exitOutboundLocked(header packetmeta.Header, packet []byte, now time.Time) bool {
 	if !f.exit.active || !f.peerUsableAt(header.Destination, now) {
 		return false
@@ -91,7 +92,9 @@ func (f *policyFilter) exitOutboundLocked(header packetmeta.Header, packet []byt
 	if f.internetLocked(header.Source) {
 		return true
 	}
-	if header.Protocol != packetmeta.ProtocolICMPv4 && header.Protocol != packetmeta.ProtocolICMPv6 {
+	tooBig := (header.Protocol == packetmeta.ProtocolICMPv4 && header.ICMPType == 3 && header.ICMPCode == 4) ||
+		(header.Protocol == packetmeta.ProtocolICMPv6 && header.ICMPType == 2)
+	if !tooBig {
 		return false
 	}
 	quoted, ok := packetmeta.ICMPErrorQuote(packet)

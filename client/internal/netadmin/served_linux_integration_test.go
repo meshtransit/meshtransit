@@ -307,6 +307,15 @@ func TestKernelExitConfigurerIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = netlink.RouteDel(private) })
+	// Half the Internet by a route of its own (a VPN client's 128.0.0.0/1)
+	// is still the Internet.
+	half := &netlink.Route{
+		LinkIndex: dummy.Attrs().Index, Gw: gateway.AsSlice(), Dst: prefixIPNet(netip.MustParsePrefix("128.0.0.0/1")),
+	}
+	if err := netlink.RouteAdd(half); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = netlink.RouteDel(half) })
 	state := filepath.Join(t.TempDir(), "exit-state.json")
 	configurer := kernelServedConfigurer{table: "meshtransit_exit_it", statePath: state, sysctlRoot: "/proc/sys"}
 	t.Cleanup(func() { _ = configurer.Clear() })
@@ -332,6 +341,9 @@ func TestKernelExitConfigurerIntegration(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("exit table lacks %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "128.0.0.0/1") {
+		t.Errorf("half the Internet was taken for no Internet:\n%s", text)
 	}
 	// What is not the Internet is dropped before the exit's accept.
 	if drop, accept := strings.Index(text, "@notinternet4 drop"), strings.Index(text, `iifname "`+name+`" accept`); drop < 0 ||

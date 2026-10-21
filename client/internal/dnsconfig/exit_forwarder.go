@@ -337,11 +337,11 @@ func (f *ExitForwarder) answer(ctx context.Context, query []byte, transport stri
 		return formatError(query)
 	}
 	upstreams, private, domains, admitted := f.prepare(consumer, time.Now())
-	if name := strings.TrimSuffix(strings.ToLower(question.Name.String()), "."); question.Type != dnsmessage.TypePTR &&
-		exitLocalName(name, domains) {
+	name := strings.TrimSuffix(strings.ToLower(question.Name.String()), ".")
+	if rcode, refused := exitLocalRefusal(name, question.Type, domains); refused && question.Type != dnsmessage.TypePTR {
 		// The exit network's own names stay its own: asking its resolver
 		// for them would tell a consumer its hosts and services.
-		response, _ := negativeResponse(message, question, dnsmessage.RCodeNameError, ".", Plan{})
+		response, _ := negativeResponse(message, question, rcode, ".", Plan{})
 		return response
 	}
 	if question.Type == dnsmessage.TypePTR {

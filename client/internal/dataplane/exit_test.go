@@ -80,6 +80,13 @@ func TestPolicyFilterForwardsToTheInternetAsAnExitNode(t *testing.T) {
 	if filter.Allow(PacketOutbound, fragmentationNeeded(lan, peer, other)) {
 		t.Fatal("an error about another consumer's packet reached this one")
 	}
+	// A private hop's other errors (a traceroute's time exceeded) stay in
+	// the exit network.
+	timeExceeded := fragmentationNeeded(lan, peer, toInternet)
+	timeExceeded[20], timeExceeded[21] = 11, 0
+	if filter.Allow(PacketOutbound, timeExceeded) {
+		t.Fatal("a private hop's time exceeded reached the consumer")
+	}
 	filter.SetExitInstalled(nil, nil, 0)
 	if filter.Allow(PacketInbound, toInternet) {
 		t.Fatal("the Internet was reached after the exit node stopped")

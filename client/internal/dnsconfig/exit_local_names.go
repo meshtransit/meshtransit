@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 
+	"golang.org/x/net/dns/dnsmessage"
+
 	"meshtransit.net/client/internal/overlayframe"
 )
 
@@ -17,8 +19,8 @@ import (
 const exitResolvedResolvers = "/run/systemd/resolve/resolv.conf"
 
 // exitInternalSuffixes are names no public resolver serves: a question for
-// one, or for a single label, is the exit network's own business and is
-// answered NXDOMAIN without asking anyone (exit node design §7.2).
+// one is the exit network's own business and is answered NXDOMAIN without
+// asking anyone (exit node design §7.2).
 var exitInternalSuffixes = []string{
 	"local", "localhost", "localdomain", "internal", "intranet", "lan", "home", "corp", "private",
 	"home.arpa", "invalid",
@@ -83,13 +85,45 @@ func readResolvConf(path string, port uint16) ([]netip.AddrPort, []string) {
 	return servers, domains
 }
 
-// exitLocalName reports whether name (lower case, without the final dot) is
-// a single label, under one of the host's search domains, or under a suffix
-// no public resolver serves.
-func exitLocalName(name string, domains []string) bool {
-	if name == "" || !strings.Contains(name, ".") {
-		return name != "" // the root is asked; a single label is local
-	}
+// typeDS and typeDNSKEY are what a validating resolver asks of a zone
+// besides its SOA.
+const (
+	typeDS     dnsmessage.Type = 43
+	typeDNSKEY dnsmessage.Type = 48
+)
+
+// exitLocalRefusal decides a question for the exit network's own names,
+// name in lower case without the final dot, before anyone is asked:
+//   - under a suffix no public resolver serves: NXDOMAIN, whatever the type;
+//   - a single label (a LAN host, or a top-level domain): no data, but for
+//     the SOA, NS, DS and DNSKEY a resolver asks of a top-level domain; an
+//     NXDOMAIN there would deny every name below it (RFC 8020);
+//   - under one of the host's search domains, which may be a public domain
+//     too: only addresses (filtered as every answer is) and what DNSSEC
+//     validation needs; no data for service, text, mail or name server
+//     records, which tell an internal zone's hosts and services.
+//
+// It returns false when the question goes to the upstreams.
+func exitLocalRefusal(name string, kind dnsmessage.Type, domains []string) (dnsmessage.RCode, bool) {
 	under := func(suffix string) bool { return name == suffix || strings.HasSuffix(name, "."+suffix) }
-	return slices.ContainsFunc(exitInternalSuffixes, under) || slices.ContainsFunc(domains, under)
+	switch {
+	case name == "":
+		return 0, false // the root
+	case slices.ContainsFunc(exitInternalSuffixes, under):
+		return dnsmessage.RCodeNameError, true
+	case !strings.Contains(name, "."):
+		if slices.Contains([]dnsmessage.Type{dnsmessage.TypeSOA, dnsmessage.TypeNS, typeDS, typeDNSKEY}, kind) {
+			return 0, false
+		}
+		return dnsmessage.RCodeSuccess, true
+	case slices.ContainsFunc(domains, under):
+		if slices.Contains([]dnsmessage.Type{
+			dnsmessage.TypeA, dnsmessage.TypeAAAA, dnsmessage.TypeCNAME, dnsmessage.TypeHTTPS, dnsmessage.TypeSVCB,
+			dnsmessage.TypeSOA, typeDS, typeDNSKEY,
+		}, kind) {
+			return 0, false
+		}
+		return dnsmessage.RCodeSuccess, true
+	}
+	return 0, false
 }

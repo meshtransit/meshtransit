@@ -212,6 +212,17 @@ func routeLinks(route netlink.Route) []int {
 // its consumers; a host with more (a full BGP table) forwards nothing.
 const maximumLearnedRoutes = 16384
 
+// minimumLearnedBits is the shortest route the exit node keeps from its
+// consumers: shorter ones (0/1 and 128/1 of a VPN client, 2000::/3 of an
+// IPv6 tunnel) are the host's way to the Internet itself, and kept they
+// would cut every consumer off it.
+func minimumLearnedBits(prefix netip.Prefix) int {
+	if prefix.Addr().Is4() {
+		return 8
+	}
+	return 16
+}
+
 // learnedNotInternet returns what an exit node learns on its own is no
 // Internet (exit node design §4.1): every address of every interface but
 // the mesh's, the subnets they are attached to, even public ones, the
@@ -260,7 +271,7 @@ func learnedNotInternet(meshIndex int) ([]netip.Prefix, error) {
 					learned = append(learned, netip.PrefixFrom(ip, ip.BitLen()))
 				}
 			}
-			if destination, ok := netipPrefix(route.Dst); ok && destination.Bits() > 0 &&
+			if destination, ok := netipPrefix(route.Dst); ok && destination.Bits() >= minimumLearnedBits(destination) &&
 				(meshIndex <= 0 || route.LinkIndex != meshIndex) {
 				learned = append(learned, destination.Masked())
 			}
