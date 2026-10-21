@@ -24,8 +24,11 @@ const captiveWindowPoll = time.Second
 // openCaptiveWindow is the window the helper holds open.
 type openCaptiveWindow struct {
 	id string
-	// until is when it ends, on the helper's monotonic clock.
-	until time.Time
+	// until is when it ends, on the helper's monotonic clock, and untilWall
+	// on the wall clock: the monotonic clock stops while a Mac sleeps, and
+	// whichever ends first ends the window.
+	until     time.Time
+	untilWall time.Time
 	// opened is the interface the last apply opened.
 	opened string
 }
@@ -33,6 +36,8 @@ type openCaptiveWindow struct {
 // exitCaptive is what the exit route lets out during a window: for how much
 // longer, and the portals meshd found.
 type exitCaptive struct {
+	// ID names the window, for an expiry kept outside the helper.
+	ID        string
 	Remaining time.Duration
 	Portals   [2]netip.AddrPort
 }
@@ -89,7 +94,7 @@ func (s *Server) pollCaptiveWindow() {
 	}
 	now := s.captiveNow()
 	if s.captiveWindow != nil && s.captiveWindow.id == window.ID {
-		if !now.Before(s.captiveWindow.until) {
+		if s.captiveWindow.remainingAt(now) <= 0 {
 			s.closeCaptiveWindow("its time is up")
 		}
 		return
@@ -100,7 +105,9 @@ func (s *Server) pollCaptiveWindow() {
 		return
 	}
 	// Opening again is a new window, from now: never added to the last.
-	s.captiveWindow = &openCaptiveWindow{id: window.ID, until: now.Add(window.Duration())}
+	s.captiveWindow = &openCaptiveWindow{
+		id: window.ID, until: now.Add(window.Duration()), untilWall: now.Round(0).Add(window.Duration()),
+	}
 	s.exitRouteKey = ""
 	s.applyExitRoute()
 	if s.captiveWindow == nil {
@@ -150,11 +157,11 @@ func (s *Server) captiveFor() *exitCaptive {
 	if s.captiveWindow == nil {
 		return nil
 	}
-	remaining := s.captiveWindow.until.Sub(s.captiveNow())
+	remaining := s.captiveWindow.remainingAt(s.captiveNow())
 	if remaining <= 0 {
 		return nil
 	}
-	window := &exitCaptive{Remaining: remaining}
+	window := &exitCaptive{ID: s.captiveWindow.id, Remaining: remaining}
 	if s.requestedExitRoute != nil {
 		window.Portals = s.requestedExitRoute.CaptivePortals
 	}
@@ -174,7 +181,8 @@ func (s *Server) captiveKey() string {
 // captiveView is the window for meshd.
 func (s *Server) captiveView() CaptiveWindow {
 	window := s.captiveFor()
-	if window == nil || !s.activeExitRoute.Routing {
+	if window == nil || !s.activeExitRoute.Routing || s.captiveWindow.opened == "" {
+		// Open in name only: no interface to open it on.
 		return CaptiveWindow{}
 	}
 	return CaptiveWindow{
@@ -201,4 +209,10 @@ func (s *Server) flushDNSCaches() {
 	if err := flusher.FlushCaches(ctx); err != nil {
 		s.logger.Warn("flushing the host's DNS cache after the captive portal window failed", "error", err)
 	}
+}
+
+// remainingAt is how long the window stays open after now, by whichever
+// clock ends it first.
+func (window *openCaptiveWindow) remainingAt(now time.Time) time.Duration {
+	return min(window.until.Sub(now), window.untilWall.Sub(now.Round(0)))
 }

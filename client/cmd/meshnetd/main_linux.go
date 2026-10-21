@@ -3,6 +3,8 @@ package main
 import (
 	"cmp"
 	"flag"
+	"fmt"
+	"io"
 	"net/netip"
 
 	"meshtransit.net/client/internal/config"
@@ -98,3 +100,10 @@ func (p platformFlags) dnsOptions(resolver netip.AddrPort) (*netadmin.DNSOptions
 // preparePlatform has nothing to do on Linux: systemd tmpfiles creates the
 // runtime directories.
 func preparePlatform(string, uint32) error { return nil }
+
+// runCaptive is macOS's: on Linux the kernel ends a captive portal window's
+// holes by itself.
+func runCaptive(_ []string, stderr io.Writer) int {
+	_, _ = fmt.Fprintln(stderr, "meshnetd: captive is for macOS; the kernel ends a window's holes here")
+	return 2
+}

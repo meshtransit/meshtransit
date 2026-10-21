@@ -63,12 +63,28 @@ type darwinExitRouteConfigurer struct {
 	lan       func() []netip.Prefix
 	// warn reports what failed without failing the exit route; nil drops it.
 	warn func(message string, args ...any)
+	// holesPath keeps what ends a captive portal window without the
+	// helper; empty opens no window. interfaces names where a window
+	// opens, spawnExpiry starts the child process that ends one, and
+	// expiring is the window it was started for.
+	holesPath   string
+	interfaces  func() []string
+	spawnExpiry func(id string, remaining time.Duration) error
+	expiring    string
 }
 
 func newDarwinExitRouteConfigurer(uid uint32, statePath string) *darwinExitRouteConfigurer {
 	return &darwinExitRouteConfigurer{
 		uid: uid, pfctl: DefaultPfctlPath, tokenPath: statePath, run: runPfctl, lan: darwinAttachedLAN,
+		interfaces: darwinCaptiveInterfaces,
 	}
+}
+
+// withCaptive lets the configurer open captive portal windows, keeping
+// their state at holesPath.
+func (c *darwinExitRouteConfigurer) withCaptive(holesPath string) *darwinExitRouteConfigurer {
+	c.holesPath, c.spawnExpiry = holesPath, spawnDarwinExpiry(holesPath)
+	return c
 }
 
 // DarwinExitStatePath is where the pf enable reference is kept, next to
@@ -78,8 +94,10 @@ func DarwinExitStatePath(helperSocket string) string {
 }
 
 // Replace installs the kill switch, then the routes on name; without a
-// utun the host stays closed. A captive portal window opens nothing yet.
-func (c *darwinExitRouteConfigurer) Replace(name string, _, allowLAN bool, _ *exitCaptive) (string, error) {
+// utun the host stays closed. A captive portal window opens the kill switch
+// for its rules on the physical default routes' interfaces and takes the
+// /1 routes away until it ends.
+func (c *darwinExitRouteConfigurer) Replace(name string, _, allowLAN bool, window *exitCaptive) (string, error) {
 	if name != "" && (!validInterfaceName(name) || !strings.HasPrefix(name, "utun")) {
 		return "", errors.New("netadmin: exit route target is invalid")
 	}
@@ -90,13 +108,35 @@ func (c *darwinExitRouteConfigurer) Replace(name string, _, allowLAN bool, _ *ex
 	if err := c.enable(); err != nil {
 		return "", err
 	}
-	if err := c.load(pfExitRules(name, c.uid, lan)); err != nil {
+	closed := pfExitRules(name, c.uid, lan, "")
+	var opened []string
+	if window != nil {
+		opened = c.openCaptive(name, closed, window)
+	}
+	rules := closed
+	if len(opened) != 0 {
+		rules = pfExitRules(name, c.uid, lan, pfCaptiveRules(opened, window.Portals))
+	}
+	if err := c.load(rules); err != nil {
 		return "", err
 	}
+	if len(opened) == 0 {
+		c.closeCaptive()
+	}
 	if name == "" {
-		return "", nil
+		return firstOf(opened), nil
+	}
+	if len(opened) != 0 {
+		return opened[0], removeDarwinExitHalves()
 	}
 	return "", replaceDarwinExitRoutes(name, c.warn)
+}
+
+func firstOf(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	return names[0]
 }
 
 // Present reports whether the anchor holds rules.
@@ -130,6 +170,7 @@ func (c *darwinExitRouteConfigurer) Stamp(name string) string {
 
 // Clear removes the routes first and the kill switch last.
 func (c *darwinExitRouteConfigurer) Clear() error {
+	c.closeCaptive()
 	if err := clearDarwinExitRoutes(); err != nil {
 		return err
 	}
@@ -215,8 +256,9 @@ func (c *darwinExitRouteConfigurer) load(rules string) error {
 // every other outbound packet is dropped, replies to connections opened
 // from outside too (they would follow the exit routes anyway). One family
 // per rule; "flags any" keeps connections opened before the anchor loaded.
-// Without a utun nothing goes into the mesh either.
-func pfExitRules(name string, uid uint32, lan []netip.Prefix) string {
+// Without a utun nothing goes into the mesh either. captive are a captive
+// portal window's rules, before the drop.
+func pfExitRules(name string, uid uint32, lan []netip.Prefix, captive string) string {
 	var rules strings.Builder
 	rules.WriteString("pass out quick on lo0 all flags any\n")
 	if name != "" {
@@ -242,6 +284,7 @@ func pfExitRules(name string, uid uint32, lan []netip.Prefix) string {
 			rules.WriteString("pass out quick " + family.name + " to { " + strings.Join(values, " ") + " }\n")
 		}
 	}
+	rules.WriteString(captive)
 	rules.WriteString("block drop out quick all\n")
 	return rules.String()
 }

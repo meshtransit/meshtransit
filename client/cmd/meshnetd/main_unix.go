@@ -34,6 +34,9 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "captive" {
+		return runCaptive(args[1:], stderr)
+	}
 	if len(args) > 0 && args[0] == "routes" {
 		command := routescli.Command{
 			Program: "meshnetd", Privilege: "root privileges", Privileged: func() bool { return os.Geteuid() == 0 },

@@ -19,7 +19,7 @@ import (
 
 func TestPfExitRulesLetOutOnlyTheExceptions(t *testing.T) {
 	t.Parallel()
-	rules := pfExitRules("utun7", 270, []netip.Prefix{netip.MustParsePrefix("192.168.1.9/24")})
+	rules := pfExitRules("utun7", 270, []netip.Prefix{netip.MustParsePrefix("192.168.1.9/24")}, "")
 	for _, want := range []string{
 		"pass out quick on lo0 all flags any\n",
 		"pass out quick on utun7 all flags any\n",
@@ -45,7 +45,7 @@ func TestPfExitRulesLetOutOnlyTheExceptions(t *testing.T) {
 	if !strings.HasSuffix(rules, "block drop out quick all\n") {
 		t.Fatalf("rules do not end blocking:\n%s", rules)
 	}
-	closed := pfExitRules("", 270, nil)
+	closed := pfExitRules("", 270, nil, "")
 	if strings.Contains(closed, "utun") || strings.Contains(closed, "192.168") {
 		t.Fatalf("without a utun or LAN the rules let them out:\n%s", closed)
 	}

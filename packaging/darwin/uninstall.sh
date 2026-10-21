@@ -5,7 +5,7 @@
 # The Device stays registered until it is removed in the Console.
 set -euo pipefail
 
-readonly labels=(net.meshtransit.meshd net.meshtransit.meshnetd)
+readonly labels=(net.meshtransit.meshd net.meshtransit.meshnetd net.meshtransit.meshnetd-captive)
 readonly support="/Library/Application Support/MeshTransit"
 purge=false
 case "${1:-}" in

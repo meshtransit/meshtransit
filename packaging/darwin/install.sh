@@ -4,7 +4,7 @@
 #
 #   /usr/local/libexec/meshtransit/{meshd,meshnetd,meshcred}  daemons
 #   /usr/local/bin/meshctl                                     command line
-#   /Library/LaunchDaemons/net.meshtransit.{meshnetd,meshd}.plist
+#   /Library/LaunchDaemons/net.meshtransit.{meshnetd,meshnetd-captive,meshd}.plist
 #   /Library/Application Support/MeshTransit/                  key and state
 #   /var/log/meshtransit/                                      logs
 #
@@ -16,7 +16,7 @@ set -euo pipefail
 readonly libexec=/usr/local/libexec/meshtransit
 readonly support="/Library/Application Support/MeshTransit"
 readonly daemons=/Library/LaunchDaemons
-readonly labels=(net.meshtransit.meshnetd net.meshtransit.meshd)
+readonly labels=(net.meshtransit.meshnetd net.meshtransit.meshnetd-captive net.meshtransit.meshd)
 source_dir=$(cd "$(dirname "$0")" && pwd -P)
 readonly source_dir
 

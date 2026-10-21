@@ -4,12 +4,15 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/netip"
 	"os"
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"time"
 
+	"meshtransit.net/client/internal/captive"
 	"meshtransit.net/client/internal/config"
 	"meshtransit.net/client/internal/netadmin"
 )
@@ -43,6 +46,7 @@ func (p platformFlags) routedOptions(settingsPath string) *netadmin.RoutedOption
 	options := &netadmin.RoutedOptions{SettingsPath: settingsPath}
 	if *p.exits {
 		options.Exits, options.StatePath = true, *p.exitState
+		options.CaptiveWindowPath = config.DefaultCaptiveWindowPath
 	}
 	return options
 }
@@ -113,4 +117,47 @@ func ownedDirectory(path string, uid, gid int) error {
 		return fmt.Errorf("setting mode of %s: %w", path, err)
 	}
 	return nil
+}
+
+// captiveUsage is meshnetd captive's: what ends a captive portal window
+// should the helper not (exit node design §17.6).
+const captiveUsage = `usage: meshnetd captive close-at --state PATH --id ID --after DURATION
+       meshnetd captive expire [--state PATH]`
+
+// runCaptive ends a captive portal window outside the helper: close-at is
+// the child process the helper starts for one window, expire the launchd
+// job that ends any window past its time.
+func runCaptive(args []string, stderr io.Writer) int {
+	if len(args) == 0 || (args[0] != "close-at" && args[0] != "expire") {
+		_, _ = fmt.Fprintln(stderr, captiveUsage)
+		return 2
+	}
+	flags := flag.NewFlagSet("meshnetd captive "+args[0], flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	state := flags.String("state", netadmin.DarwinCaptiveStatePath(config.DefaultNetAdminSocketPath),
+		"what ends the window, kept by the helper")
+	id := flags.String("id", "", "the window to end")
+	after := flags.Duration("after", 0, "when to end it")
+	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 {
+		_, _ = fmt.Fprintln(stderr, captiveUsage)
+		return 2
+	}
+	if args[0] == "close-at" && (*id == "" || *after <= 0 || *after > captive.MaximumWindow) {
+		_, _ = fmt.Fprintln(stderr, captiveUsage)
+		return 2
+	}
+	if os.Geteuid() != 0 {
+		_, _ = fmt.Fprintln(stderr, "meshnetd: root privileges are required")
+		return 1
+	}
+	// The monotonic clock: a wall clock that jumps does not move it.
+	time.Sleep(*after)
+	if args[0] == "expire" {
+		*id = ""
+	}
+	if err := netadmin.ExpireDarwinCaptive(*state, *id, time.Now()); err != nil {
+		_, _ = fmt.Fprintf(stderr, "meshnetd: ending the captive portal window: %v\n", err)
+		return 1
+	}
+	return 0
 }

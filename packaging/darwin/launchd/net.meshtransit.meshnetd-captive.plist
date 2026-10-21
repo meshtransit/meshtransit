@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>net.meshtransit.meshnetd-captive</string>
+	<!-- Ends a captive portal window past its time should the helper be
+	     down or hung (sudo meshctl exit captive opens one). Does nothing
+	     while no window is open. Runs as root. -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/local/libexec/meshtransit/meshnetd</string>
+		<string>captive</string>
+		<string>expire</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>30</integer>
+	<key>Umask</key>
+	<integer>63</integer>
+	<key>StandardErrorPath</key>
+	<string>/var/log/meshtransit/meshnetd.log</string>
+</dict>
+</plist>

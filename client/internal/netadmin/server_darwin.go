@@ -70,6 +70,9 @@ func (s *Server) prepareRouted() error {
 	}
 	if s.routed.Exits {
 		exitRoutes := newDarwinExitRouteConfigurer(s.allowedUID, s.routed.StatePath)
+		if s.routed.CaptiveWindowPath != "" {
+			exitRoutes.withCaptive(DarwinCaptiveStatePath(s.routed.StatePath))
+		}
 		exitRoutes.warn = s.logger.Warn
 		s.exitRouteConfigurer = exitRoutes
 		// A kill switch a previous run left stays while root's settings
