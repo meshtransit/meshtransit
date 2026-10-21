@@ -41,3 +41,10 @@ func (c Caller) IsOperator(operatorsSID string) bool {
 
 	return false
 }
+
+// IsAdministrator reports whether the caller is LocalSystem or an enabled
+// (elevated) member of Administrators: what changing the host's trust in
+// exit nodes needs, beyond the operators group.
+func (c Caller) IsAdministrator() bool {
+	return c.IsOperator("")
+}

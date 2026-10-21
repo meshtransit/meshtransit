@@ -11,6 +11,9 @@ type peerIdentity struct {
 	// operator is set on Windows when the caller's token is LocalSystem or
 	// an enabled member of Administrators or the operators group.
 	operator bool
+	// administrator is root on Unix, and LocalSystem or an elevated
+	// Administrator on Windows.
+	administrator bool
 }
 
 type peerContextKey struct{}

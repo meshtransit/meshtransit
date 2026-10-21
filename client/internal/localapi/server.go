@@ -270,6 +270,13 @@ func (s *Server) handleExitApprove(writer http.ResponseWriter, request *http.Req
 		s.writeMethodNotAllowed(writer, http.MethodPost)
 		return
 	}
+	// Approving an exit node lets it see the host's Internet traffic: as
+	// the root-owned settings that choose the pool, it is root's to do.
+	if peer, found := peerFromContext(request.Context()); !found || !peer.administrator {
+		s.writeError(writer, http.StatusForbidden, "exit_approval_needs_root",
+			"approving exit nodes needs root (sudo) or an elevated administrator")
+		return
+	}
 	input := exitApprovalRequest{}
 	if !s.decodeJSONRequest(writer, request, &input) {
 		return

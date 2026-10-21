@@ -138,11 +138,12 @@ also go through the exit node.
 
 The exit nodes a pool has when the machine first uses it are pinned. One
 the administrator adds later carries no traffic until a user of the machine
-approves it by the device ID the `Exit` line of `meshctl status` shows; a
-pool chosen by name works the same way when another pool takes that name:
+approves it as root by the device ID the `Exit` line of `meshctl status`
+shows; a pool chosen by name works the same way when another pool takes
+that name:
 
 ```bash
-meshctl exit approve DEVICE_ID
+sudo meshctl exit approve DEVICE_ID
 ```
 
 Approval also works while the machine uses no pool, for an exit node added

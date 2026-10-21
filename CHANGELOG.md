@@ -9,7 +9,9 @@ merge (2026-10-09) are kept below.
   exit node added to a pool the host pinned before; status says
   `primary_unapproved` ("the primary waits for approval") when another
   exit node carries only because the primary is not approved yet
-  (TD-CLI-49).
+  (TD-CLI-49). Approving exit nodes over the local API needs root, or an
+  elevated administrator on Windows (`exit_approval_needs_root`); the
+  operators group alone no longer suffices.
 - Core, Console and clients: spread Exit Pools (schema 210, exit node design
   §16), behind `MESHTRANSIT_EXIT_SPREAD_ENABLED`. A pool's `mode` is
   `failover` (as before) or `spread`: the worker elects a serving set (the

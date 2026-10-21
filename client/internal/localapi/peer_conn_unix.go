@@ -20,5 +20,5 @@ func peerFromConn(connection net.Conn, _ string) (peerIdentity, error) {
 	if err != nil {
 		return peerIdentity{isPresent: true}, err
 	}
-	return peerIdentity{uid: uid, isPresent: true, isVerified: true}, nil
+	return peerIdentity{uid: uid, isPresent: true, isVerified: true, administrator: uid == 0}, nil
 }

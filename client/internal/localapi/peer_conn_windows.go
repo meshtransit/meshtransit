@@ -24,5 +24,8 @@ func peerFromConn(connection net.Conn, operatorsSID string) (peerIdentity, error
 		return peerIdentity{isPresent: true}, err
 	}
 
-	return peerIdentity{isPresent: true, isVerified: true, operator: caller.IsOperator(operatorsSID)}, nil
+	return peerIdentity{
+		isPresent: true, isVerified: true, operator: caller.IsOperator(operatorsSID),
+		administrator: caller.IsAdministrator(),
+	}, nil
 }

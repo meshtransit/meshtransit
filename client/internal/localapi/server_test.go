@@ -558,6 +558,30 @@ func TestServer_AuthorizesVerifiedSocketPeerWhenEnabled(t *testing.T) {
 	}
 }
 
+// Approving exit nodes is root's: an operator that may use meshctl gets
+// 403, root reaches the daemon (which has nothing waiting here).
+func TestServer_ExitApprovalNeedsRoot(t *testing.T) {
+	t.Parallel()
+
+	server := newTestServer(t)
+	body := []byte(`{"ids":["01a144c1-5017-78d7-9ac9-244ebfb3c10e"]}`)
+	response := performRequest(t, server, http.MethodPost, "/v1/exit/approve", "application/json", body)
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "exit_approval_needs_root") {
+		t.Fatalf("operator approval = %d %s, want 403 exit_approval_needs_root", response.Code, response.Body.String())
+	}
+
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/exit/approve", bytes.NewReader(body))
+	request = request.WithContext(contextWithPeer(request.Context(), peerIdentity{
+		uid: testUID, isPresent: true, isVerified: true, administrator: true,
+	}))
+	request.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "nothing_to_approve") {
+		t.Fatalf("root approval = %d %s, want 409 nothing_to_approve", response.Code, response.Body.String())
+	}
+}
+
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
 

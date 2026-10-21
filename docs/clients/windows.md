@@ -141,7 +141,8 @@ sockets, bound to the physical interface (`IP_UNICAST_IF`), as are its
 WireGuard sockets.
 
 `meshctl status` shows the exit node on its `Exit` line, and new exit nodes
-waiting for approval (`meshctl exit approve DEVICE_ID`), as on Linux.
+waiting for approval (`meshctl exit approve DEVICE_ID` in an administrator
+terminal), as on Linux.
 
 To get out of a closed machine, stop the service or turn `exit-use off`,
 then run `meshd release-exit` as an administrator; the uninstaller runs it.

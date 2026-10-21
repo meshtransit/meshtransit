@@ -25,3 +25,18 @@ func TestCallerIsOperator(t *testing.T) {
 		}
 	}
 }
+
+func TestCallerIsAdministrator(t *testing.T) {
+	t.Parallel()
+	const operators = "S-1-5-21-1-2-3-1001"
+	member := "S-1-5-21-1-2-3-1002"
+	if !(Caller{UserSID: SIDLocalSystem}).IsAdministrator() {
+		t.Error("LocalSystem is no administrator")
+	}
+	if !(Caller{UserSID: member, Groups: []Group{{SIDAdministrators, true}}}).IsAdministrator() {
+		t.Error("an elevated administrator is no administrator")
+	}
+	if (Caller{UserSID: member, Groups: []Group{{SIDAdministrators, false}, {operators, true}}}).IsAdministrator() {
+		t.Error("an operator with a filtered administrator token is an administrator")
+	}
+}

@@ -144,7 +144,7 @@ const routesUsage = `usage: meshctl routes COMMAND, as meshnetd routes (Windows:
 const exitUsage = `usage: meshctl exit use POOL|auto|off   send this machine's Internet traffic through an Exit Pool
        meshctl exit serve on|off        offer to be an exit node
        meshctl exit status              this machine's choice and the exit node in use
-       meshctl exit approve ID...       use exit nodes added since the pool was pinned`
+       meshctl exit approve ID...       use exit nodes added since the pool was pinned (as root)`
 
 // runExitStatus prints the host's exit settings and the exit node the
 // daemon uses. Settings that cannot be read (Windows: not an administrator)
