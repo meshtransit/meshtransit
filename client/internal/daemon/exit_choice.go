@@ -63,6 +63,13 @@ const (
 	// exitSilentAfter is how long every candidate of the pool auto uses
 	// must be silent before it chooses another pool.
 	exitSilentAfter = 10 * time.Second
+	// exitLeaveAfter is how long the exit node in use must be silent before
+	// the node leaves it: leaving changes the public address and cuts every
+	// connection, so a few seconds lost on a poor Wi-Fi or a relay that
+	// reconnects are waited out; an exit node that answers but no longer
+	// reaches the Internet is left sooner, as stuck. A Site's router is left
+	// after failoverAliveWithin.
+	exitLeaveAfter = 15 * time.Second
 	// exitStuckConnections new TCP connections through an exit node, none
 	// answered for exitStuckAfter, show it no longer reaches the Internet.
 	exitStuckConnections = 3
@@ -379,10 +386,15 @@ func (failover *routeFailover) chooseExitLocked(now time.Time) bool {
 		return peer && found.State != networkmap.ExitStateFailed && (trusted == nil || slices.Contains(trusted, id))
 	}
 	mayCarry := func(id string) bool { return usable(id) && !stopped(id) && !failover.stuckLocked(id, now) }
+	// The node in use is kept through a shorter silence than another is
+	// judged by (exitLeaveAfter).
+	keeps := func(id string) bool {
+		return usable(id) && !failover.silentForLocked(id, exitLeaveAfter, now) && !failover.stuckLocked(id, now)
+	}
 	next := ""
 	switch {
 	case pool.Status != networkmap.ExitServed:
-	case choice.node != "" && mayCarry(choice.node):
+	case choice.node != "" && keeps(choice.node):
 		next = choice.node
 	case choice.node != "" && usable(choice.node) && now.Before(choice.nextSwitch):
 		// Silent but still a working candidate: switches are spaced.
@@ -631,6 +643,17 @@ func (failover *routeFailover) livenessLocked(now time.Time) (alive, stopped fun
 		return answered && now.Sub(at) > failoverAliveWithin
 	}
 	return alive, stopped
+}
+
+// silentForLocked reports that the peer stableID answered before and not
+// within the last window.
+func (failover *routeFailover) silentForLocked(stableID string, window time.Duration, now time.Time) bool {
+	id, found := peerIDs(failover.core)[stableID]
+	if !found {
+		return false
+	}
+	at, answered := failover.pongs[id]
+	return answered && now.Sub(at) > window
 }
 
 // exitPeersLocked returns the candidates of the pool in use when there is

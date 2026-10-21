@@ -126,8 +126,15 @@ func TestExitChoiceFailsOverWhenTheExitNodeStopsAnswering(t *testing.T) {
 			t.Fatal("a working exit node was left")
 		}
 	}
+	// A silence a poor Wi-Fi or a reconnecting relay causes is waited out:
+	// leaving changes the public address and cuts every connection.
+	for range 12 {
+		if h.step(22) {
+			t.Fatalf("left exit-1 after a short silence: %+v", h.route())
+		}
+	}
 	changed := false
-	for range 6 {
+	for range 5 {
 		changed = h.step(22) || changed
 	}
 	if !changed || h.route().Node != "exit-2" {

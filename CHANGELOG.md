@@ -5,6 +5,11 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Clients: the exit node in use is kept through 15 seconds of silence (a
+  Site's router through 4, as before): leaving changes the public address
+  and cuts every connection, and a poor Wi-Fi or a reconnecting relay made
+  a Mac switch exit nodes twice within a minute. An exit node that answers
+  but no longer reaches the Internet is still left after 5 seconds, as stuck.
 - macOS: names resolved while an exit node is used. The MeshTransit DNS
   service asked to be the primary one (`OverridePrimary`), which configd
   ignores for a service without a router, so names went to the network's
