@@ -23,6 +23,8 @@ type fakeExitRouteConfigurer struct {
 	clears   int
 	present  bool
 	fail     error
+	// readErr fails Present, as an interrupted netlink dump does.
+	readErr error
 }
 
 func (f *fakeExitRouteConfigurer) Replace(name string, ipv6, allowLAN bool) error {
@@ -40,6 +42,9 @@ func (f *fakeExitRouteConfigurer) Replace(name string, ipv6, allowLAN bool) erro
 func (f *fakeExitRouteConfigurer) Present() (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.readErr != nil {
+		return false, f.readErr
+	}
 	return f.present, nil
 }
 
@@ -201,6 +206,18 @@ func TestServerRepairsTheExitKillSwitch(t *testing.T) {
 	if server.exitTampered() {
 		t.Fatal("tampered before anything changed")
 	}
+	// A check that cannot read the kernel changes nothing and reports
+	// nothing: unknown is no tampering.
+	configurer.mu.Lock()
+	configurer.readErr = errors.New("netlink: dump interrupted")
+	configurer.mu.Unlock()
+	server.checkExitRoute()
+	if replaced, _, _ := configurer.state(); len(replaced) != 1 || server.exitTampered() {
+		t.Fatalf("a failed read reinstalled %v or reported tampering", replaced)
+	}
+	configurer.mu.Lock()
+	configurer.readErr = nil
+	configurer.mu.Unlock()
 	server.checkExitRoute()
 	if replaced, _, present := configurer.state(); len(replaced) != 2 || !present {
 		t.Fatalf("repair installed %v", replaced)

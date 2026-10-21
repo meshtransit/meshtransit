@@ -223,7 +223,7 @@ const maximumLearnedRoutes = 16384
 // fails the apply: nothing is forwarded on a partial set.
 func learnedNotInternet(meshIndex int) ([]netip.Prefix, error) {
 	var learned []netip.Prefix
-	addresses, err := netlink.AddrList(nil, netlink.FAMILY_ALL)
+	addresses, err := dumped(func() ([]netlink.Addr, error) { return netlink.AddrList(nil, netlink.FAMILY_ALL) })
 	if err != nil {
 		return nil, fmt.Errorf("listing addresses: %w", err)
 	}
@@ -244,8 +244,9 @@ func learnedNotInternet(meshIndex int) ([]netip.Prefix, error) {
 		learned = append(learned, netip.PrefixFrom(ip, ip.BitLen()), subnet)
 	}
 	for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
-		routes, err := netlink.RouteListFiltered(family, &netlink.Route{Table: unix.RT_TABLE_MAIN},
-			netlink.RT_FILTER_TABLE)
+		routes, err := dumped(func() ([]netlink.Route, error) {
+			return netlink.RouteListFiltered(family, &netlink.Route{Table: unix.RT_TABLE_MAIN}, netlink.RT_FILTER_TABLE)
+		})
 		if err != nil {
 			return nil, fmt.Errorf("listing routes: %w", err)
 		}

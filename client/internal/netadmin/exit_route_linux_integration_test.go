@@ -191,6 +191,7 @@ func TestKernelExitRouteConfigurerIntegration(t *testing.T) {
 		{ip, "-4", "rule", "add", "priority", "5404", "lookup", "main"},
 		{ip, "-4", "route", "add", "198.51.100.0/24", "dev", lan, "table", "5291"},
 		{nft, "flush", "chain", "inet", "meshtransit_kill_it", "output"},
+		{nft, "add", "element", "inet", "meshtransit_kill_it", "lan4", "{ 8.8.8.0/24 }"},
 	} {
 		if output, err := exec.Command(tamper[0], tamper[1:]...).CombinedOutput(); err != nil {
 			t.Fatalf("%v: %v: %s", tamper, err, output)

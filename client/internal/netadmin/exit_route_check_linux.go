@@ -1,7 +1,9 @@
 package netadmin
 
 import (
+	"encoding/hex"
 	"fmt"
+	"net/netip"
 	"slices"
 
 	"github.com/google/nftables"
@@ -17,6 +19,9 @@ type installedExit struct {
 	rules    []*netlink.Rule
 	routes   map[string]bool
 	nftRules int
+	// lan are the subnets the kill switch lets through: its lan4 and lan6
+	// sets must hold exactly their ranges.
+	lan []netip.Prefix
 }
 
 // intact reports whether the kernel holds what installed records: every rule
@@ -29,9 +34,23 @@ func (installed *installedExit) intact(options RoutedOptions) (bool, error) {
 	if err != nil || count != installed.nftRules {
 		return false, err
 	}
+	for _, set := range []struct {
+		name string
+		ipv4 bool
+	}{{"lan4", true}, {"lan6", false}} {
+		held, err := nftSetElements(options.ExitNftTable, set.name)
+		if err != nil {
+			return false, err
+		}
+		if !slices.Equal(held, elementKeys(intervalElements(installed.lan, set.ipv4))) {
+			return false, nil // a range added to what the kill switch lets through
+		}
+	}
 	for priority := options.ExitPriority; priority < options.ExitPriority+exitRulePriorities; priority++ {
 		for _, family := range []int{unix.AF_INET, unix.AF_INET6} {
-			present, err := netlink.RuleListFiltered(family, &netlink.Rule{Priority: priority}, netlink.RT_FILTER_PRIORITY)
+			present, err := dumped(func() ([]netlink.Rule, error) {
+				return netlink.RuleListFiltered(family, &netlink.Rule{Priority: priority}, netlink.RT_FILTER_PRIORITY)
+			})
 			if familyUnsupported(err) && family == unix.AF_INET6 {
 				continue
 			}
@@ -54,7 +73,9 @@ func (installed *installedExit) intact(options RoutedOptions) (bool, error) {
 		}
 	}
 	for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
-		routes, err := netlink.RouteListFiltered(family, &netlink.Route{Table: options.ExitTable}, netlink.RT_FILTER_TABLE)
+		routes, err := dumped(func() ([]netlink.Route, error) {
+			return netlink.RouteListFiltered(family, &netlink.Route{Table: options.ExitTable}, netlink.RT_FILTER_TABLE)
+		})
 		if familyUnsupported(err) {
 			continue
 		}
@@ -99,4 +120,33 @@ func nftRuleCount(name string) (int, error) {
 		count += len(rules)
 	}
 	return count, nil
+}
+
+// nftSetElements returns the elements of set name in the inet table, as
+// elementKeys does.
+func nftSetElements(table, name string) ([]string, error) {
+	conn, err := nftables.New()
+	if err != nil {
+		return nil, fmt.Errorf("opening nftables: %w", err)
+	}
+	set, err := conn.GetSetByName(&nftables.Table{Family: nftables.TableFamilyINet, Name: table}, name)
+	if err != nil {
+		return nil, fmt.Errorf("reading kill switch set %s: %w", name, err)
+	}
+	elements, err := conn.GetSetElements(set)
+	if err != nil {
+		return nil, fmt.Errorf("reading kill switch set %s: %w", name, err)
+	}
+	return elementKeys(elements), nil
+}
+
+// elementKeys names each element by its key and whether it ends a range,
+// sorted.
+func elementKeys(elements []nftables.SetElement) []string {
+	keys := make([]string, 0, len(elements))
+	for _, element := range elements {
+		keys = append(keys, fmt.Sprintf("%s/%t", hex.EncodeToString(element.Key), element.IntervalEnd))
+	}
+	slices.Sort(keys)
+	return keys
 }

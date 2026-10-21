@@ -96,10 +96,15 @@ func (s *Server) applyExitRoute() {
 	key := fmt.Sprintf("%s %t %t %s", name, ipv6, settings.ExitAllowLAN, s.exitRouteConfigurer.Stamp(name))
 	if key == s.exitRouteKey {
 		present, err := s.exitRouteConfigurer.Present()
-		if err == nil && present {
+		if err != nil {
+			// Unknown, not changed: kept as installed until a read works.
+			s.logger.Warn("checking the exit routes failed; keeping them", "error", err)
 			return
 		}
-		s.noteExitTampered(err)
+		if present {
+			return
+		}
+		s.noteExitTampered()
 	}
 	if err := s.exitRouteConfigurer.Replace(name, ipv6, settings.ExitAllowLAN); err != nil {
 		s.logger.Warn("routing the host through the exit node failed", "error", err)
@@ -113,7 +118,7 @@ func (s *Server) applyExitRoute() {
 // clearExitRoute removes the exit routes and the kill switch, whatever a
 // previous run left.
 func (s *Server) clearExitRoute() {
-	s.activeExitRoute, s.exitRouteKey = ExitRouting{}, ""
+	s.activeExitRoute, s.exitRouteKey, s.exitTamperedAt = ExitRouting{}, "", time.Time{}
 	if s.exitRouteConfigurer == nil {
 		return
 	}
@@ -147,10 +152,14 @@ func (s *Server) checkExitRoute() {
 		return
 	}
 	present, err := s.exitRouteConfigurer.Present()
-	if err == nil && present {
+	if err != nil {
+		s.logger.Warn("checking the exit routes failed; keeping them", "error", err)
 		return
 	}
-	s.noteExitTampered(err)
+	if present {
+		return
+	}
+	s.noteExitTampered()
 	s.exitRouteKey = ""
 	s.applyExitRoute()
 }
@@ -162,8 +171,8 @@ const exitTamperedFor = 10 * time.Minute
 // noteExitTampered records that the kill switch or the exit routes it
 // installed changed under it: a firewall reload, or a program sending the
 // host's traffic elsewhere (exit_rule_tampered).
-func (s *Server) noteExitTampered(err error) {
-	s.logger.Warn("the exit kill switch or routes changed under the helper; installing them again", "error", err)
+func (s *Server) noteExitTampered() {
+	s.logger.Warn("the exit kill switch or routes changed under the helper; installing them again")
 	s.exitTamperedAt = time.Now()
 }
 

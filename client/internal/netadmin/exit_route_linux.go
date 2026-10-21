@@ -88,7 +88,7 @@ var localBridgePorts = []string{"veth", "tuntap", "dummy"}
 // readExitHost reads the host's interfaces and their addresses; meshIndex
 // is -1 while the mesh interface name does not exist.
 func readExitHost(name string) (exitHost, error) {
-	links, err := netlink.LinkList()
+	links, err := dumped(netlink.LinkList)
 	if err != nil {
 		return exitHost{}, fmt.Errorf("listing interfaces: %w", err)
 	}
@@ -119,7 +119,7 @@ func readExitHost(name string) (exitHost, error) {
 		}
 		host.interfaces = append(host.interfaces, attributes.Name)
 	}
-	addresses, err := netlink.AddrList(nil, netlink.FAMILY_ALL)
+	addresses, err := dumped(func() ([]netlink.Addr, error) { return netlink.AddrList(nil, netlink.FAMILY_ALL) })
 	if err != nil {
 		return exitHost{}, fmt.Errorf("listing addresses: %w", err)
 	}
@@ -215,7 +215,7 @@ func (configurer *kernelExitRouteConfigurer) Replace(name string, ipv6, allowLAN
 	if err := replaceRulesAt(configurer.options.ExitPriority, exitRulePriorities, rules); err != nil {
 		return err
 	}
-	configurer.installed = &installedExit{rules: rules, routes: routes, nftRules: nftRules}
+	configurer.installed = &installedExit{rules: rules, routes: routes, nftRules: nftRules, lan: ruleset.LAN}
 	return nil
 }
 
@@ -256,7 +256,9 @@ func replaceExitTable(table int, host exitHost, lan []exitSubnet, ipv6 bool) (ma
 		kept[exitRouteKey(family, *route)] = true
 	}
 	for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
-		routes, err := netlink.RouteListFiltered(family, &netlink.Route{Table: table}, netlink.RT_FILTER_TABLE)
+		routes, err := dumped(func() ([]netlink.Route, error) {
+			return netlink.RouteListFiltered(family, &netlink.Route{Table: table}, netlink.RT_FILTER_TABLE)
+		})
 		if familyUnsupported(err) {
 			continue
 		}
@@ -371,7 +373,9 @@ func replaceRulesAt(first, count int, rules []*netlink.Rule) error {
 }
 
 func replaceRulesOf(family, priority int, wanted []*netlink.Rule) error {
-	installed, err := netlink.RuleListFiltered(family, &netlink.Rule{Priority: priority}, netlink.RT_FILTER_PRIORITY)
+	installed, err := dumped(func() ([]netlink.Rule, error) {
+		return netlink.RuleListFiltered(family, &netlink.Rule{Priority: priority}, netlink.RT_FILTER_PRIORITY)
+	})
 	if familyUnsupported(err) && family == unix.AF_INET6 {
 		return nil // no IPv6 here: no IPv6 rule is needed
 	}
@@ -392,7 +396,9 @@ func replaceRulesOf(family, priority int, wanted []*netlink.Rule) error {
 				return fmt.Errorf("adding exit policy rule %d: %w", rule.Priority, err)
 			}
 		}
-		installed, err = netlink.RuleListFiltered(family, &netlink.Rule{Priority: priority}, netlink.RT_FILTER_PRIORITY)
+		installed, err = dumped(func() ([]netlink.Rule, error) {
+			return netlink.RuleListFiltered(family, &netlink.Rule{Priority: priority}, netlink.RT_FILTER_PRIORITY)
+		})
 		if err != nil {
 			return fmt.Errorf("listing exit policy rules: %w", err)
 		}
@@ -405,7 +411,9 @@ func replaceRulesOf(family, priority int, wanted []*netlink.Rule) error {
 		if err := netlink.RuleDel(&installed[stale]); err != nil && !errors.Is(err, unix.ENOENT) {
 			return fmt.Errorf("removing stale exit policy rule %d: %w", priority, err)
 		}
-		installed, err = netlink.RuleListFiltered(family, &netlink.Rule{Priority: priority}, netlink.RT_FILTER_PRIORITY)
+		installed, err = dumped(func() ([]netlink.Rule, error) {
+			return netlink.RuleListFiltered(family, &netlink.Rule{Priority: priority}, netlink.RT_FILTER_PRIORITY)
+		})
 		if err != nil {
 			return fmt.Errorf("listing exit policy rules: %w", err)
 		}
@@ -504,7 +512,9 @@ func clearExitRoute(options RoutedOptions) error {
 		}
 	}
 	for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
-		routes, err := netlink.RouteListFiltered(family, &netlink.Route{Table: options.ExitTable}, netlink.RT_FILTER_TABLE)
+		routes, err := dumped(func() ([]netlink.Route, error) {
+			return netlink.RouteListFiltered(family, &netlink.Route{Table: options.ExitTable}, netlink.RT_FILTER_TABLE)
+		})
 		if familyUnsupported(err) {
 			continue
 		}
