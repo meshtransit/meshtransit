@@ -58,6 +58,9 @@ var (
 
 	// ErrProbeThrottled reports a probe the peer's probe budget refused.
 	ErrProbeThrottled = errors.New("peerprobe: probe budget exhausted")
+
+	// ErrSendFailed reports a PING the transport could not send.
+	ErrSendFailed = errors.New("peerprobe: sending ping")
 )
 
 // MapDiscoveryKey formats a disco public key as the legacy control map
@@ -826,6 +829,37 @@ func (r *Registry) RecentPong(peerID uint64, now time.Time, window time.Duration
 	peer, exists := r.byID[peerID]
 
 	return exists && !peer.lastPong.IsZero() && now.Sub(peer.lastPong) < window
+}
+
+// ConfirmedEndpoint returns the peer's candidate that answered most recently,
+// within the given window (at most confirmedPathLifetime, so the probe
+// budget does not charge it): the direct path a measurement pings
+// (measure.go).
+func (r *Registry) ConfirmedEndpoint(peerID uint64, now time.Time, within time.Duration) (netip.AddrPort, bool) {
+	if r == nil {
+		return netip.AddrPort{}, false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.closed || !r.generation.IsValid() {
+		return netip.AddrPort{}, false
+	}
+	peer, exists := r.byID[peerID]
+	if !exists || peer.allowance == nil {
+		return netip.AddrPort{}, false
+	}
+	var best netip.AddrPort
+	var confirmedAt time.Time
+	for endpoint, state := range peer.allowance.probes {
+		if !state.confirmedAt(now) || now.Sub(state.confirmed) >= within ||
+			!peer.isCandidate(endpoint, now) || !r.filter.Allows(endpoint) {
+			continue
+		}
+		if !best.IsValid() || state.confirmed.After(confirmedAt) {
+			best, confirmedAt = endpoint, state.confirmed
+		}
+	}
+	return best, best.IsValid()
 }
 
 // PeerCandidates returns the current candidates of one peer.

@@ -28,6 +28,13 @@ const (
 	relayPongWithin = 5 * time.Second
 	// relayPingAnswerSpacing paces the PONGs this node sends one peer.
 	relayPingAnswerSpacing = time.Second
+	// maxRelayPending bounds the relay PINGs waiting for a PONG: liveness
+	// pings, and on-demand measurements (measure.go), whose PINGs stay
+	// pending until their deadline, one a second for each running one.
+	// A target has one PING a second (relayLivenessSpacing) pending for
+	// relayPongWithin, so up to one more than its seconds.
+	maxRelayLivenessPending = maxRelayLivenessPeers * (1 + int(relayPongWithin/relayLivenessSpacing))
+	maxRelayPending         = maxRelayLivenessPending + maxConcurrentMeasurements*(1+int(relayPongWithin/time.Second))
 )
 
 // RelayLivenessObserver learns that a peer answered a PING through the
@@ -40,6 +47,9 @@ type relayPing struct {
 	peerID   uint64
 	sentAt   time.Time
 	deadline time.Time
+	// reply receives the round trip while the measurement whose PING it is
+	// waits (measure.go); nil for liveness.
+	reply chan<- time.Duration
 }
 
 // relayLiveness is the state of the relay pings; guarded by its mutex.
@@ -47,6 +57,9 @@ type relayLiveness struct {
 	targets []uint64
 	sent    map[uint64]time.Time
 	pending map[disco.TxID]relayPing
+	// waiting are measurements of peers: liveness leaves those peers to
+	// them, whose PINGs prove the peers up just the same (measure.go).
+	waiting map[uint64]chan<- time.Duration
 }
 
 // SetRelayLiveness replaces the peers to ping through the relay while no
@@ -110,6 +123,9 @@ func (r *Runtime) sendRelayPings(relayed pathdiscovery.RelayDatagramTransport) {
 		if r.registry.RecentPong(peerID, now, directProvenWithin) {
 			continue
 		}
+		if _, measuring := r.relay.waiting[peerID]; measuring {
+			continue
+		}
 		due = append(due, peerID)
 	}
 	r.relayMu.Unlock()
@@ -123,17 +139,28 @@ func (r *Runtime) sendRelayPings(relayed pathdiscovery.RelayDatagramTransport) {
 			continue
 		}
 		r.relayMu.Lock()
-		r.relay.sent[peerID] = now
-		if len(r.relay.pending) < 4*maxRelayLivenessPeers {
-			r.relay.pending[id] = relayPing{peerID: peerID, sentAt: now, deadline: now.Add(relayPongWithin)}
+		// A measurement may have taken the peer since it was found due: a
+		// second PING within the peer's pacing would go unanswered.
+		_, measuring := r.relay.waiting[peerID]
+		last, sent := r.relay.sent[peerID]
+		// A PING that cannot be recorded can never be credited, and would
+		// still use up the peer's pacing.
+		full := len(r.relay.pending) >= maxRelayLivenessPending
+		if measuring || full || sent && now.Sub(last) < relayLivenessSpacing {
+			r.relayMu.Unlock()
+			continue
 		}
+		r.relay.sent[peerID] = now
+		r.relay.pending[id] = relayPing{peerID: peerID, sentAt: now, deadline: now.Add(relayPongWithin)}
 		r.relayMu.Unlock()
 		_ = relayed.SendRelayDatagram(packet, node)
 	}
 }
 
 // forgetRelayPings drops the PINGs in flight when the peers change:
-// a PONG must answer the generation it was sent in. relayMu must not be held.
+// a PONG must answer the generation it was sent in. Measurements waiting
+// for their turn keep the peer: each releases it when it returns.
+// relayMu must not be held.
 func (r *Runtime) forgetRelayPings() {
 	r.relayMu.Lock()
 	clear(r.relay.pending)
@@ -166,6 +193,9 @@ func (r *Runtime) acceptRelayPong(pong IncomingRelayPong, now time.Time) {
 	r.relayMu.Unlock()
 	if !matched {
 		return
+	}
+	if ping.reply != nil {
+		deliverRoundTrip(ping.reply, now.Sub(ping.sentAt))
 	}
 	// The peer answered some time after the PING left: credit that time, so
 	// a relay that holds a PONG back cannot make a dead peer look fresh.

@@ -116,6 +116,8 @@ type Runtime struct {
 
 	relayMu sync.Mutex
 	relay   relayLiveness
+	// measure is the state of on-demand round trips (measure.go).
+	measure *measurements
 
 	datagrams chan receivedDatagram
 	slots     chan struct{}
@@ -190,8 +192,12 @@ func newRuntime(
 		bursts:    make(chan probeBatch, maxBurstQueue),
 		reflexive: make(map[netip.AddrPort]time.Time),
 		callSent:  make(map[uint64]time.Time),
-		relay:     relayLiveness{sent: map[uint64]time.Time{}, pending: map[disco.TxID]relayPing{}},
-		done:      workerCtx.Done(),
+		relay: relayLiveness{
+			sent: map[uint64]time.Time{}, pending: map[disco.TxID]relayPing{},
+			waiting: map[uint64]chan<- time.Duration{},
+		},
+		measure: newMeasurements(),
+		done:    workerCtx.Done(),
 
 		scheduleLimit:     maxScheduledProbes,
 		callMeMaybeBudget: maxCallMeMaybePerTick,
@@ -309,6 +315,19 @@ func (r *Runtime) probe(
 	endpoint netip.AddrPort,
 	scheduled bool,
 ) (pathdiscovery.ProbeTransaction, error) {
+	return r.probeWatched(ctx, generation, peerID, endpoint, scheduled, nil)
+}
+
+// probeWatched is probe that, given a reply channel, registers it for the
+// transaction's round trip before the PING leaves (measure.go).
+func (r *Runtime) probeWatched(
+	ctx context.Context,
+	generation pathdiscovery.ProbeGeneration,
+	peerID uint64,
+	endpoint netip.AddrPort,
+	scheduled bool,
+	reply chan<- time.Duration,
+) (transaction pathdiscovery.ProbeTransaction, err error) {
 	r.lifecycleMu.RLock()
 	defer r.lifecycleMu.RUnlock()
 	if ctx == nil {
@@ -333,7 +352,7 @@ func (r *Runtime) probe(
 	}
 	// A probe that never leaves costs nothing: an outage or a socket change
 	// must not spend the budget and push every candidate's backoff out.
-	transaction, err := r.manager.Start(r.clock(), peerID, endpoint)
+	transaction, err = r.manager.Start(r.clock(), peerID, endpoint)
 	if err != nil {
 		r.registry.ReleaseProbe(peerID, claim)
 		r.telemetry.RecordProbeStartFailure()
@@ -346,6 +365,14 @@ func (r *Runtime) probe(
 		r.telemetry.RecordProbeSendFailure()
 
 		return pathdiscovery.ProbeTransaction{}, ErrInvalidGeneration
+	}
+	if reply != nil {
+		r.measure.watchDirect(transaction.ID, reply)
+		defer func() {
+			if err != nil {
+				r.measure.forgetDirect(transaction.ID)
+			}
+		}()
 	}
 	packet, err := r.registry.SealPing(transaction, 0)
 	if err != nil {
@@ -361,10 +388,7 @@ func (r *Runtime) probe(
 		r.registry.ReleaseProbe(peerID, claim)
 		r.telemetry.RecordProbeSendFailure()
 
-		return pathdiscovery.ProbeTransaction{}, fmt.Errorf(
-			"peerprobe: sending ping: %w",
-			err,
-		)
+		return pathdiscovery.ProbeTransaction{}, fmt.Errorf("%w: %w", ErrSendFailed, err)
 	}
 	if usedSocket != generation.Socket {
 		r.manager.Cancel(transaction)
@@ -559,6 +583,7 @@ func (r *Runtime) processDatagram(datagram receivedDatagram) {
 		r.registry.ConfirmProbe(reply.PeerID, reply.Source, now)
 		r.noteReflexive(reply.ObservedLocalEndpoint, now)
 		r.telemetry.RecordProbeCompletion()
+		r.measure.completeDirect(reply.ID, observation.RoundTrip)
 		if r.observer == nil {
 			return
 		}
