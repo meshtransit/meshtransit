@@ -27,6 +27,7 @@ type Relay struct {
 	coreLink   *prometheus.CounterVec
 	closed     *prometheus.CounterVec
 	revoked    prometheus.Gauge
+	probes     *prometheus.CounterVec
 }
 
 // New registers the relay collectors and the Go runtime and process ones.
@@ -66,6 +67,9 @@ func New() *Relay {
 		revoked: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "meshrelay_revocations", Help: "Revocation entries (tickets, nodes, disco keys, zones) in force from Core.",
 		}),
+		probes: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "meshrelay_captive_probes_total", Help: "Captive portal probes (GET /generate_204) by outcome.",
+		}, []string{"result"}),
 		certExpiry: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "meshrelay_tls_certificate_expiry_timestamp_seconds",
 			Help: "Expiry of the TLS certificate last served (alert when it nears).",
@@ -73,7 +77,7 @@ func New() *Relay {
 	}
 	r.registry.MustRegister(
 		r.handshakes, r.control, r.data, r.dataBytes, r.sessions, r.routes, r.stun, r.streams, r.certExpiry, r.coreLink,
-		r.closed, r.revoked,
+		r.closed, r.revoked, r.probes,
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
@@ -124,3 +128,6 @@ func (r *Relay) CoreLink(result string) { r.coreLink.WithLabelValues(result).Inc
 
 // STUN counts a STUN request outcome.
 func (r *Relay) STUN(result string) { r.stun.WithLabelValues(result).Inc() }
+
+// Probe counts a captive portal probe outcome.
+func (r *Relay) Probe(result string) { r.probes.WithLabelValues(result).Inc() }

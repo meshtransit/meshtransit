@@ -450,6 +450,7 @@ the flag wins. See [Relay](../architecture/relay.md).
 | `--tls-self-signed` | `false` | For labs |
 | `--tls-max-conns`, `--tls-max-conns-per-ip` | `10000`, `64` | TLS connection limits (IPv6 per /64) |
 | `--network-bandwidth-mbit` | `500` | 1–100000; per-Network forwarding budget |
+| `--probe-http` | empty | Plain HTTP address (for example `0.0.0.0:80`) answering the captive portal probe `GET /generate_204` with 204 and the client's nonce echoed in `Meshtransit-Probe-Nonce`; 200 probes a second (burst 400), then 429; counted as `meshrelay_captive_probes_total` |
 | `--admin` | `127.0.0.1:9479` | Metrics and health |
 | `--drain-timeout` | `5s` | Time sessions get to move at shutdown |
 | `--log-level` | `info` | |

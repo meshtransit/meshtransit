@@ -28,6 +28,7 @@ meshrelay serve \
 | `--acme-host`, `--acme-cache` | none | Let's Encrypt certificate via TLS-ALPN-01 on the TLS port |
 | `--tls-cert`, `--tls-key` | none | Certificate files instead of ACME |
 | `--tls-self-signed` | off | Ephemeral certificate, for labs |
+| `--probe-http` | empty | Plain HTTP address (for example `0.0.0.0:80`) for the captive portal probe of clients using an exit node: `GET /generate_204` answers 204 and echoes the `n` nonce in `Meshtransit-Probe-Nonce`; `meshrelay_captive_probes_total` |
 | `--network-bandwidth-mbit` | `500` | Mbit/s that all sessions of one Network forward through this relay together; past it the relay drops that Network's DATA, counted as `meshrelay_data_frames_total{result="network_rate_limited"}` |
 | `--core-url` | none | Core control URL; the relay polls `/relay/v1/state` for trusted signing keys, revocations and drain (with it, `--trusted-signing-keys` only bootstraps trust) |
 

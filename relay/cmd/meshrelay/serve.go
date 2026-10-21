@@ -13,6 +13,7 @@ import (
 
 	"meshtransit.net/relay/internal/corelink"
 	"meshtransit.net/relay/internal/metrics"
+	"meshtransit.net/relay/internal/probe"
 	"meshtransit.net/relay/internal/server"
 	"meshtransit.net/relay/internal/stream"
 	"meshtransit.net/relay/internal/stunserver"
@@ -105,11 +106,17 @@ func serve(ctx context.Context, cfg serveConfig, logOut io.Writer) error {
 	if err != nil {
 		return err
 	}
+	var probes *probe.Server
+	if cfg.probeAddr != "" {
+		if probes, err = probe.Listen(ctx, cfg.probeAddr, m.Probe); err != nil {
+			return err
+		}
+	}
 
 	logger.Info("relay started",
 		"version", version, "public_key", relay.PublicKey().String(),
 		"udp", udpListener.LocalAddr().String(), "stun", cfg.stunAddr, "stun_alt", cfg.stunAltPort, "tls", cfg.tlsAddr,
-		"trusted_signing_keys", len(cfg.signingKeys))
+		"probe", cfg.probeAddr, "trusted_signing_keys", len(cfg.signingKeys))
 
 	if link != nil {
 		// Admit no session before Core's revocations are known: the sockets
@@ -124,7 +131,7 @@ func serve(ctx context.Context, cfg serveConfig, logOut io.Writer) error {
 	runCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var wg sync.WaitGroup
-	errs := make(chan error, 6)
+	errs := make(chan error, 7)
 	wg.Go(func() { errs <- udpListener.Serve(runCtx, cfg.udpReaders, relay.HandleUDP) })
 	wg.Go(func() { errs <- ignoreCanceled(relay.Run(runCtx)) })
 	if stun != nil {
@@ -137,6 +144,9 @@ func serve(ctx context.Context, cfg serveConfig, logOut io.Writer) error {
 		wg.Go(func() { errs <- link.Run(runCtx) })
 	}
 	wg.Go(func() { errs <- ignoreServerClosed(admin.server.Serve(admin.listener)) })
+	if probes != nil {
+		wg.Go(func() { errs <- probes.Serve() })
+	}
 
 	var runErr error
 	select {
@@ -154,6 +164,9 @@ func serve(ctx context.Context, cfg serveConfig, logOut io.Writer) error {
 	shutdownCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
 	defer done()
 	_ = admin.server.Shutdown(shutdownCtx)
+	if probes != nil {
+		_ = probes.Shutdown(shutdownCtx)
+	}
 	wg.Wait()
 	close(errs)
 	for err := range errs {
