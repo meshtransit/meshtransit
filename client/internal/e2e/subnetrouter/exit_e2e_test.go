@@ -4,6 +4,7 @@ package subnetrouter
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"meshtransit.net/client/internal/captive"
 )
 
 // newExitLab builds the exit scenario: the consumer and two exit nodes on
@@ -35,8 +38,11 @@ func newEgressLab(t *testing.T, scenario string, consumers ...string) *lab {
 	t.Helper()
 	names := append([]string{"hub"}, consumers...)
 	names = append(names, exitA, exitB, "net")
-	if scenario == "exit" {
+	switch scenario {
+	case "exit":
 		names = append(names, "lan")
+	case "captive":
+		names = append(names, "portal")
 	}
 	l := newBareLab(t, names...)
 	l.scenario = scenario
@@ -223,5 +229,109 @@ func TestExitPoolSpreadE2E(t *testing.T) {
 		if leaked := l.leaked(name); leaked != "0" {
 			t.Fatalf("%s packets left by %s's own network", leaked, name)
 		}
+	}
+}
+
+// TestExitCaptiveWindowE2E: behind a captive portal, nothing reaches it
+// until root opens a window; then HTTP reaches it from the consumer's own
+// address, its sign-in port once meshd names it, and nothing else does,
+// while the mesh keeps working. The window ends on time, also when the
+// helper died during it (the kernel drops the holes), and a helper that
+// starts again never opens it again (exit node design §17.10).
+func TestExitCaptiveWindowE2E(t *testing.T) {
+	l := newEgressLab(t, "captive", consumer)
+	l.attach("portal", "net0", "bu", portalHost.String()+"/24")
+	l.start("net", "net")
+	l.start("portal", "portal")
+	for _, name := range []string{exitA, exitB, consumer} {
+		l.start(name, "node")
+	}
+	for _, name := range []string{exitA, exitB} {
+		l.route(name, "serve")
+	}
+	l.route(consumer, exitA)
+	l.waitExit(consumer, exitA, 30*time.Second)
+	reach := func(role string) (string, error) { return l.runIn(consumer, role, 5*time.Second) }
+	if seen, err := reach("portal80"); err == nil {
+		t.Fatalf("the portal answered without a window: %q", seen)
+	}
+
+	window := filepath.Join(l.dir, consumer+".captive.json")
+	open := func(duration time.Duration) {
+		t.Helper()
+		if _, err := captive.OpenWindow(window, duration, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitFor := func(role, want string, timeout time.Duration) {
+		t.Helper()
+		deadline := time.Now().Add(timeout)
+		last := ""
+		for time.Now().Before(deadline) {
+			seen, err := reach(role)
+			if err == nil && seen == want {
+				return
+			}
+			last = fmt.Sprintf("%q (%v)", seen, err)
+			time.Sleep(200 * time.Millisecond)
+		}
+		t.Fatalf("%s never answered %q; last %s", role, want, last)
+	}
+	waitClosed := func(role string, timeout time.Duration) {
+		t.Helper()
+		deadline := time.Now().Add(timeout)
+		for time.Now().Before(deadline) {
+			if _, err := reach(role); err != nil {
+				return
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		t.Fatalf("%s still answered", role)
+	}
+	signIn := "http://10.99.0.254:8880/login"
+
+	open(12 * time.Second)
+	opened := time.Now()
+	waitFor("portal80", signIn, 5*time.Second)
+	if seen, err := reach("portal8880"); err == nil {
+		t.Fatalf("the sign-in port answered before meshd named it: %q", seen)
+	}
+	if err := writeAtomically(filepath.Join(l.dir, consumer+".portal"), "10.99.0.254:8880"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor("portal8880", "sign in here", 5*time.Second)
+	if seen, err := reach("portal7000"); err == nil {
+		t.Fatalf("a port the window does not open answered: %q", seen)
+	}
+	l.waitExit(consumer, exitA, 5*time.Second) // the mesh still carries the rest
+	waitClosed("portal80", 12*time.Second-time.Since(opened)+3*time.Second)
+	if _, err := os.Stat(window); !os.IsNotExist(err) {
+		t.Fatalf("the window file outlived the window: %v", err)
+	}
+	if leaked := l.leaked(consumer); leaked != "0" {
+		t.Fatalf("%s packets to the Internet host left by the consumer's own network", leaked)
+	}
+
+	// The helper dies during a window: the kernel still ends it on time,
+	// and the helper that starts again does not open it again.
+	open(6 * time.Second)
+	opened = time.Now()
+	waitFor("portal80", signIn, 5*time.Second)
+	l.stop(consumer, syscall.SIGKILL)
+	if seen, err := reach("portal80"); err != nil || seen != signIn {
+		t.Fatalf("the window closed with the helper: %q, %v", seen, err)
+	}
+	waitClosed("portal80", 6*time.Second-time.Since(opened)+3*time.Second)
+	if err := os.Remove(filepath.Join(l.dir, consumer+".applied")); err != nil {
+		t.Fatal(err)
+	}
+	l.start(consumer, "node")
+	l.route(consumer, exitA)
+	l.waitExit(consumer, exitA, 30*time.Second)
+	if _, err := os.Stat(window); !os.IsNotExist(err) {
+		t.Fatalf("a starting helper kept the window file: %v", err)
+	}
+	if seen, err := reach("portal80"); err == nil {
+		t.Fatalf("a starting helper opened the window again: %q", seen)
 	}
 }

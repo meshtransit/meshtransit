@@ -68,6 +68,7 @@ var labs atomic.Int64
 // namespace and interface names fit.
 var codes = map[string]string{
 	"hub": "h", consumer: "c", consumer2: "d", routerA: "a", routerB: "b", "lan": "l", exitA: "x", exitB: "y", "net": "n",
+	"portal": "p",
 }
 
 func newLab(t *testing.T) *lab {

@@ -32,8 +32,8 @@ const (
 	envRole = "MESHTRANSIT_E2E_ROLE"
 	envNode = "MESHTRANSIT_E2E_NODE"
 	envDir  = "MESHTRANSIT_E2E_DIR"
-	// envScenario is "exit" for the exit node scenario and "spread" for the
-	// spread Exit Pool one.
+	// envScenario is "exit" for the exit node scenario, "spread" for the
+	// spread Exit Pool one and "captive" for a captive portal window.
 	envScenario = "MESHTRANSIT_E2E_SCENARIO"
 	// Ports of the LAN host: who reached it, a byte sink and an echo.
 	whoPort, sinkPort, echoPort = 7000, 7001, 7002
@@ -66,6 +66,12 @@ func runRole(role string) int {
 		if err = dropToNobody(); err == nil {
 			err = runBench()
 		}
+	case "portal":
+		err = runPortal()
+	case "portal80", "portal8880", "portal7000":
+		if err = dropToNobody(); err == nil {
+			err = runPortalClient(strings.TrimPrefix(role, "portal"))
+		}
 	default:
 		err = fmt.Errorf("unknown role %q", role)
 	}
@@ -86,7 +92,7 @@ func runNode(name, dir string) error {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	settings := filepath.Join(dir, name+".routes.json")
 	scenario := os.Getenv(envScenario)
-	exitScenario := scenario == "exit" || scenario == "spread"
+	exitScenario := scenario == "exit" || scenario == "spread" || scenario == "captive"
 	local := routesettings.Settings{AcceptRoutes: true}
 	switch {
 	case exitScenario && (name == consumer || name == consumer2):
@@ -98,7 +104,7 @@ func runNode(name, dir string) error {
 	}
 	maps := mapFor
 	switch scenario {
-	case "exit":
+	case "exit", "captive":
 		maps = exitMapFor
 	case "spread":
 		maps = spreadMapFor
@@ -113,6 +119,7 @@ func runNode(name, dir string) error {
 			SettingsPath: settings, Table: routedTable, Priority: routedPriority,
 			NftTable: "meshtransit", StatePath: filepath.Join(dir, name+".router-state.json"),
 			ExitTable: exitTable, ExitPriority: exitPriority, ExitNftTable: "meshtransit_exit",
+			CaptiveWindowPath: filepath.Join(dir, name+".captive.json"),
 		},
 		Logger: logger,
 	})
@@ -139,6 +146,12 @@ func runNode(name, dir string) error {
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	for {
+		// A captive portal's address and port, as meshd would find it.
+		if portal, err := os.ReadFile(filepath.Join(dir, name+".portal")); err == nil { //nolint:gosec // the test's own directory
+			if address, err := netip.ParseAddrPort(strings.TrimSpace(string(portal))); err == nil {
+				engine.SetCaptiveRequest([2]netip.AddrPort{address}, "")
+			}
+		}
 		wanted, err := os.ReadFile(filepath.Join(dir, name+".primary")) //nolint:gosec // the test's own directory
 		if err == nil && strings.TrimSpace(string(wanted)) != "" && strings.TrimSpace(string(wanted)) != applied {
 			primary := strings.TrimSpace(string(wanted))
@@ -392,4 +405,85 @@ func writeAtomically(path, text string) error {
 		return err
 	}
 	return os.Rename(temporary, path) //nolint:gosec // the test's own directory
+}
+
+// portalHost is the captive portal on the consumer's own network, its
+// default gateway: port 80 sends every page to the sign-in page on port
+// 8880, and port 7000 stands for any other service.
+var portalHost = netip.MustParseAddr("10.99.0.254")
+
+// runPortal serves the captive portal.
+func runPortal() error {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
+	signIn := "http://" + net.JoinHostPort(portalHost.String(), "8880") + "/login"
+	handlers := map[string]func(net.Conn){
+		"80": func(conn net.Conn) {
+			_, _ = io.WriteString(conn, "HTTP/1.1 302 Found\r\nLocation: "+signIn+"\r\nContent-Length: 0\r\n\r\n")
+		},
+		"8880": func(conn net.Conn) { _, _ = io.WriteString(conn, "sign in here\n") },
+		"7000": func(conn net.Conn) { _, _ = io.WriteString(conn, "another service\n") },
+	}
+	for port, handle := range handlers {
+		listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", net.JoinHostPort(portalHost.String(), port))
+		if err != nil {
+			return err
+		}
+		go func() {
+			<-ctx.Done()
+			_ = listener.Close()
+		}()
+		go func() {
+			for {
+				conn, err := listener.Accept()
+				if err != nil {
+					return
+				}
+				go func() {
+					defer func() { _ = conn.Close() }()
+					_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+					if port == "80" {
+						_, _ = bufio.NewReader(conn).ReadString('\n') // the request line
+					}
+					handle(conn)
+				}()
+			}
+		}()
+	}
+	<-ctx.Done()
+	return nil
+}
+
+// runPortalClient prints the first line the portal answers on port, or
+// fails within 2 s.
+func runPortalClient(port string) error {
+	dialer := &net.Dialer{Timeout: 2 * time.Second}
+	conn, err := dialer.Dial("tcp", net.JoinHostPort(portalHost.String(), port))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if port == "80" {
+		if _, err := io.WriteString(conn, "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"); err != nil {
+			return err
+		}
+		reader := bufio.NewReader(conn)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				return err
+			}
+			if location, found := strings.CutPrefix(line, "Location: "); found {
+				fmt.Print(location)
+				return nil
+			}
+		}
+	}
+	line, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		return err
+	}
+	fmt.Print(line)
+	return nil
 }
