@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 
+	"meshtransit.net/client/internal/cli"
 	"meshtransit.net/client/internal/config"
 	"meshtransit.net/client/internal/routesettings/routescli"
 )
@@ -25,7 +26,7 @@ func hostRoutes(args []string, quiet bool, stdout, stderr io.Writer) (int, bool)
 		Privileged: func() bool { return os.Geteuid() == 0 },
 		Elevate: func() int {
 			delegated = true
-			return runWithSudo(stderr)
+			return runWithSudo(stderr, "changing route settings")
 		},
 	}
 	code := command.Run(args, stdout, stderr)
@@ -38,15 +39,15 @@ func hostRoutes(args []string, quiet bool, stdout, stderr io.Writer) (int, bool)
 const elevatedMarker = "MESHCTL_SUDO_RUN"
 
 // runWithSudo runs this meshctl invocation again as root and returns its
-// exit code.
-func runWithSudo(stderr io.Writer) int {
+// exit code; what names the change, for the messages.
+func runWithSudo(stderr io.Writer, what string) int {
 	if os.Getenv(elevatedMarker) != "" {
 		_, _ = fmt.Fprintln(stderr, "meshctl: sudo did not make meshctl root: run it as root")
 		return 1
 	}
 	sudo, err := exec.LookPath("sudo")
 	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "meshctl: root privileges are required to change route settings: run it as root")
+		_, _ = fmt.Fprintf(stderr, "meshctl: root privileges are required for %s: run it as root\n", what)
 		return 1
 	}
 	executable, err := os.Executable()
@@ -54,7 +55,7 @@ func runWithSudo(stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "meshctl: finding meshctl to run it with sudo: %v\n", err)
 		return 1
 	}
-	_, _ = fmt.Fprintln(stderr, "meshctl: changing route settings needs root; asking sudo")
+	_, _ = fmt.Fprintf(stderr, "meshctl: %s needs root; asking sudo\n", what)
 	// The user's own command, run again by the same binary.
 	// Interrupting meshctl interrupts sudo through the terminal: no deadline.
 	// sudo resets the environment: carry the marker and the socket meshctl
@@ -77,4 +78,13 @@ func runWithSudo(stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// hostCaptive opens or closes the captive portal window as root, running
+// meshctl again through sudo when not root.
+func hostCaptive(request cli.CaptiveRequest, stdout, stderr io.Writer) (int, bool) {
+	if os.Geteuid() != 0 {
+		return runWithSudo(stderr, "a captive portal window"), true
+	}
+	return changeCaptiveWindow(request, stdout, stderr), false
 }

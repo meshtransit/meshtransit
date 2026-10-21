@@ -358,3 +358,12 @@ var (
 	_ Resolver       = (*Server)(nil)
 	_ EndpointSource = (*Server)(nil)
 )
+
+// SetCaptiveWindow sends the names the exit node's resolver answers to the
+// network's resolvers while open, their answers expiring within 5 s.
+func (s *Server) SetCaptiveWindow(open bool) {
+	if s == nil {
+		return
+	}
+	s.engine.captive.Store(open)
+}

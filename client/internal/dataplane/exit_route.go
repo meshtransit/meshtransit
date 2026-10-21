@@ -3,6 +3,7 @@ package dataplane
 import (
 	"context"
 	"net/netip"
+	"time"
 
 	"meshtransit.net/client/internal/netadmin"
 	"meshtransit.net/client/internal/underlay"
@@ -34,38 +35,54 @@ type ExitRouteStatus struct {
 	Tampered bool
 	// Error is the last failure to configure the helper.
 	Error string
+	// Captive is the captive portal window the helper holds open, and
+	// CaptiveUntil when it ends by the helper's last answer (exit node
+	// design §17.4).
+	Captive      netadmin.CaptiveWindow
+	CaptiveUntil time.Time
+}
+
+// captiveAsk is what meshd asks of a captive portal window root opened: let
+// the portal through, or close the window the tunnel no longer needs.
+type captiveAsk struct {
+	portals [2]netip.AddrPort
+	close   string
 }
 
 // exitRouteDesired is what the helper is asked: to route the Internet into
 // the mesh, and IPv6 too; dns are the exit node's resolvers.
 type exitRouteDesired struct {
-	use  bool
-	ipv6 bool
-	dns  [2]netip.Addr
+	use     bool
+	ipv6    bool
+	dns     [2]netip.Addr
+	captive captiveAsk
 }
 
 // syncExitRouteLocked has the helper route the Internet into the mesh while
 // the map's local choice names a pool, whether or not an exit node carries
 // it: without one the traffic is dropped, never sent outside the mesh.
 func (e *WireGuardEngine) syncExitRouteLocked(routed *routedTable) {
+	e.exitRouteTable = routed
 	desired := exitRouteDesired{}
 	status := ExitRouteStatus{
 		Routing: e.exitRouteStatus.Routing, Refused: e.exitRouteStatus.Refused,
 		Error: e.exitRouteStatus.Error,
 	}
 	if routed != nil && routed.exit != nil {
-		desired = exitRouteDesired{use: true, ipv6: routed.exit.ipv6, dns: exitResolverPair(routed.exit.dns)}
+		desired = exitRouteDesired{
+			use: true, ipv6: routed.exit.ipv6, dns: exitResolverPair(routed.exit.dns), captive: e.captiveAsk,
+		}
 		status.Pool, status.IPv6 = routed.exit.pool, routed.exit.ipv6
 		if routed.exit.served {
 			status.Node = routed.exit.nodeRef
 		}
 	}
-	if desired != e.exitRouteAsked {
+	if asked := e.exitRouteAsked; desired.use != asked.use || desired.ipv6 != asked.ipv6 || desired.dns != asked.dns {
 		// A new request: what the helper said of the old one no longer
 		// holds, while it is still routing (or not) as it was.
 		status.Refused, status.Error = "", ""
-		e.exitRouteAsked = desired
 	}
+	e.exitRouteAsked = desired
 	setter, supported := e.opener.(exitRouteSetter)
 	if !supported {
 		status.Routing, status.Refused, status.Error = false, "", ""
@@ -87,6 +104,7 @@ func (e *WireGuardEngine) syncExitRouteLocked(routed *routedTable) {
 		send: func(ctx context.Context, desired exitRouteDesired) (netadmin.ExitRouting, error) {
 			return setter.SetExitRoute(ctx, netadmin.ExitRouteRequest{
 				Use: desired.use, IPv6: desired.ipv6, DNS: desired.dns,
+				CaptivePortals: desired.captive.portals, CaptiveClose: desired.captive.close,
 			})
 		},
 		record: e.recordExitRouteLocked,
@@ -124,10 +142,16 @@ func (e *WireGuardEngine) recordExitRouteLocked(desired exitRouteDesired, result
 		result = netadmin.ExitRouting{}
 	}
 	status.Routing, status.Refused, status.Tampered = result.Routing, result.Refused, result.Tampered
+	status.Captive, status.CaptiveUntil = result.Captive, time.Time{}
+	if result.Captive.ID != "" {
+		status.CaptiveUntil = time.Now().Add(result.Captive.Remaining)
+	}
 	e.exitRouteStatus = status
 	e.filter.SetExitRouted(desired.use && result.Routing)
 	e.followExitLocked(desired.use || result.Routing)
-	if e.logger == nil || previous == status {
+	if e.logger == nil || previous.Routing == status.Routing && previous.Refused == status.Refused &&
+		previous.Tampered == status.Tampered && previous.Error == status.Error && previous.Pool == status.Pool &&
+		previous.Node == status.Node && previous.IPv6 == status.IPv6 {
 		return
 	}
 	if err != nil {
@@ -159,6 +183,7 @@ func (e *WireGuardEngine) resetExitRouteLocked() {
 	e.exitRoute.resetLocked()
 	e.exitRouteStatus = ExitRouteStatus{}
 	e.exitRouteAsked = exitRouteDesired{}
+	e.exitRouteTable, e.captiveAsk = nil, captiveAsk{}
 	e.filter.SetExitRouted(false)
 	// The next device asks again; a kill switch the helper keeps is held
 	// by root's choice (underlay.ExitChosen).
@@ -174,4 +199,35 @@ func (e *WireGuardEngine) ExitRoute() ExitRouteStatus {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.exitRouteStatus
+}
+
+// SetCaptiveRequest asks the helper to let a captive portal's address and
+// port through a window root opened (IPv4 then IPv6, zero when unknown), or
+// to close the window closeWindow names early (exit node design §17.4,
+// §17.5). The helper heeds neither without such a window.
+func (e *WireGuardEngine) SetCaptiveRequest(portals [2]netip.AddrPort, closeWindow string) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	ask := captiveAsk{portals: portals, close: closeWindow}
+	if ask == e.captiveAsk {
+		return
+	}
+	e.captiveAsk = ask
+	if e.device != nil && e.exitRouteTable != nil {
+		e.syncExitRouteLocked(e.exitRouteTable)
+	}
+}
+
+// RecheckExitRoute asks the helper again at once how it routes the host,
+// such as after root opened or closed a captive portal window.
+func (e *WireGuardEngine) RecheckExitRoute() {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.exitRoute.recheckLocked()
 }

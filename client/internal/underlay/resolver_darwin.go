@@ -23,10 +23,6 @@ const (
 	upstreamTTL = 30 * time.Second
 )
 
-// testNet is TEST-NET-1, where MeshTransit's own resolver listens on lo0:
-// never a resolver of the host's networks.
-var testNet = netip.MustParsePrefix("192.0.2.0/24")
-
 // physicalResolver asks the resolvers of the host's networks directly, from
 // sockets bound to the physical path: while the host routes the Internet
 // into the mesh, the system resolver is MeshTransit's, which cannot answer
@@ -52,6 +48,26 @@ func dialPhysicalResolver(ctx context.Context, network, address string) (net.Con
 func nextUpstream(ctx context.Context) (netip.AddrPort, bool) {
 	upstreams.mu.Lock()
 	defer upstreams.mu.Unlock()
+	refreshUpstreamsLocked(ctx)
+	if len(upstreams.servers) == 0 {
+		return netip.AddrPort{}, false
+	}
+	server := upstreams.servers[upstreams.next%len(upstreams.servers)]
+	upstreams.next++
+	return server, true
+}
+
+// NetworkResolvers returns the resolvers of the host's networks: the ones
+// MeshTransit's resolver asks during a captive portal window.
+func NetworkResolvers() []netip.AddrPort {
+	upstreams.mu.Lock()
+	defer upstreams.mu.Unlock()
+	refreshUpstreamsLocked(context.Background())
+	return append([]netip.AddrPort(nil), upstreams.servers...)
+}
+
+// refreshUpstreamsLocked reads the resolvers again once they are old.
+func refreshUpstreamsLocked(ctx context.Context) {
 	if time.Since(upstreams.at) > upstreamTTL || len(upstreams.servers) == 0 {
 		lookup, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
@@ -60,12 +76,6 @@ func nextUpstream(ctx context.Context) (netip.AddrPort, bool) {
 			upstreams.servers, upstreams.at = parseScutilResolvers(output), time.Now()
 		}
 	}
-	if len(upstreams.servers) == 0 {
-		return netip.AddrPort{}, false
-	}
-	server := upstreams.servers[upstreams.next%len(upstreams.servers)]
-	upstreams.next++
-	return server, true
 }
 
 // parseScutilResolvers reads the default and scoped resolvers of "scutil

@@ -247,3 +247,51 @@ func TestExitStatusStillAsksTheDaemonWhenSettingsCannotBeRead(t *testing.T) {
 		t.Fatalf("exit status = %d: %q", code, stdout.String())
 	}
 }
+
+// meshctl exit captive checks its flags before asking for root, leaves the
+// window to Captive, then has meshd look and prints the exit once meshd
+// sees the window.
+func TestExitCaptive(t *testing.T) {
+	t.Parallel()
+	var requests []CaptiveRequest
+	options := testOptions(&statusSequence{statuses: []localapi.Status{
+		{},
+		{Captive: &localapi.CaptiveStatus{State: "open", Until: "2026-10-21T23:02:00Z", Interface: "wlan0"}},
+	}})
+	options.ExitWait = time.Second
+	options.Captive = func(request CaptiveRequest, _, _ io.Writer) (int, bool) {
+		requests = append(requests, request)
+		return 0, false
+	}
+	var stdout, stderr bytes.Buffer
+	for _, bad := range [][]string{
+		{"exit", "captive", "--for", "6m"},
+		{"exit", "captive", "--for", "0s"},
+		{"exit", "captive", "now"},
+		{"exit", "captive", "--close", "--for", "1m"},
+		{"exit", "captive", "--during", "1m"},
+	} {
+		if code := Run(t.Context(), bad, &stdout, &stderr, options); code != 2 {
+			t.Errorf("%v = %d", bad, code)
+		}
+	}
+	if len(requests) != 0 {
+		t.Fatalf("a bad command reached Captive: %+v", requests)
+	}
+	if code := Run(t.Context(), []string{"exit", "captive", "--for", "90s"}, &stdout, &stderr, options); code != 0 {
+		t.Fatalf("exit captive = %d: %s", code, stderr.String())
+	}
+	if len(requests) != 1 || requests[0] != (CaptiveRequest{For: 90 * time.Second}) {
+		t.Fatalf("requests = %+v", requests)
+	}
+	if got := stdout.String(); !strings.Contains(got, "captive portal window open until") || !strings.Contains(got, "on wlan0") {
+		t.Fatalf("output = %q", got)
+	}
+	// Run again through sudo: that run said everything.
+	stdout.Reset()
+	options.Captive = func(CaptiveRequest, io.Writer, io.Writer) (int, bool) { return 0, true }
+	if code := Run(t.Context(), []string{"exit", "captive", "--close"}, &stdout, &stderr, options); code != 0 ||
+		stdout.Len() != 0 {
+		t.Fatalf("delegated close = %d, %q", code, stdout.String())
+	}
+}

@@ -373,7 +373,13 @@ type errorResponse struct {
 
 // CaptiveStatus is a captive portal found while the host uses an exit node.
 type CaptiveStatus struct {
-	State string `json:"state"`
-	URL   string `json:"url,omitempty"`
-	Since string `json:"since,omitempty"`
+	State     string `json:"state"`
+	URL       string `json:"url,omitempty"`
+	Since     string `json:"since,omitempty"`
+	Until     string `json:"until,omitempty"`
+	Interface string `json:"interface,omitempty"`
+}
+
+type captiveCheckResponse struct {
+	APIVersion string `json:"api_version"`
 }

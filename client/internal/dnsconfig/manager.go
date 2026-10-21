@@ -208,3 +208,21 @@ func clonePlan(plan Plan) Plan {
 
 	return cloned
 }
+
+// captiveResolver is a resolver that can send names to the network's own
+// resolvers during a captive portal window.
+type captiveResolver interface {
+	SetCaptiveWindow(open bool)
+}
+
+// SetCaptiveWindow sends the names the exit node's resolver answers to the
+// network's resolvers while open: a captive portal window root opened, whose
+// portal the exit node cannot see (exit node design §17.5).
+func (m *Manager) SetCaptiveWindow(open bool) {
+	if m == nil {
+		return
+	}
+	if resolver, ok := m.resolver.(captiveResolver); ok {
+		resolver.SetCaptiveWindow(open)
+	}
+}

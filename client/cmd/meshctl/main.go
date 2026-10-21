@@ -27,10 +27,11 @@ func run() int {
 		os.Stdout,
 		os.Stderr,
 		cli.Options{
-			Build:  version.Current(),
-			Getenv: os.Getenv,
-			Stdin:  os.Stdin,
-			Routes: hostRoutes,
+			Build:   version.Current(),
+			Getenv:  os.Getenv,
+			Stdin:   os.Stdin,
+			Routes:  hostRoutes,
+			Captive: hostCaptive,
 			NewClient: func(socketPath string, timeout time.Duration) (cli.DaemonClient, error) {
 				return localapi.New(socketPath, timeout)
 			},

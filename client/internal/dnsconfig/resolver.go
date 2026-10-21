@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
@@ -44,10 +45,17 @@ var (
 
 type resolverEngine struct {
 	forwardSlots chan struct{}
+	// captive is set while a captive portal window is open: names the exit
+	// node would answer go to networkResolvers instead (exit node design
+	// §17.5).
+	captive          atomic.Bool
+	networkResolvers func() []netip.AddrPort
 }
 
 func newResolverEngine() *resolverEngine {
-	return &resolverEngine{forwardSlots: make(chan struct{}, maxForwardQueries)}
+	return &resolverEngine{
+		forwardSlots: make(chan struct{}, maxForwardQueries), networkResolvers: underlay.NetworkResolvers,
+	}
 }
 
 func (e *resolverEngine) resolve(
@@ -98,6 +106,7 @@ func (e *resolverEngine) resolve(
 	if routed {
 		resolvers = route.Resolvers
 	}
+	captiveWindow := false
 	if exit := plan.Exit; exit != nil {
 		// A suffix routed to a resolver of a Site or LAN keeps it; every
 		// other name goes to the exit node, never to a resolver on the
@@ -105,7 +114,14 @@ func (e *resolverEngine) resolve(
 		private := slices.DeleteFunc(slices.Clone(resolvers), func(resolver netip.AddrPort) bool {
 			return internet.Contains(resolver.Addr())
 		})
-		if !routed || len(private) == 0 {
+		network := e.captiveResolvers()
+		switch {
+		case routed && len(private) != 0:
+		case len(network) != 0:
+			// A captive portal window: the network's resolvers, from the
+			// client's own sockets, and answers that soon expire.
+			captiveWindow, private = true, network
+		default:
 			if question.Type == dnsmessage.TypeAAAA && !exit.IPv6 {
 				response, err := noDataResponse(message, question, plan)
 				if err != nil {
@@ -133,6 +149,11 @@ func (e *resolverEngine) resolve(
 	response, err := forwardQuery(forwardCtx, query, question, resolvers, transport)
 	if err != nil {
 		return failureResponse(query, message, question, plan, transport, err)
+	}
+	if captiveWindow {
+		if response, err = capTTLs(response, uint32(positiveTTL/time.Second)); err != nil {
+			return failureResponse(query, message, question, plan, transport, err)
+		}
 	}
 
 	return limitUDPResponse(query, response, transport)
@@ -747,4 +768,35 @@ func formatError(query []byte) []byte {
 	}
 
 	return response
+}
+
+// captiveResolvers are the network's resolvers while a captive portal window
+// is open; none otherwise.
+func (e *resolverEngine) captiveResolvers() []netip.AddrPort {
+	if !e.captive.Load() || e.networkResolvers == nil {
+		return nil
+	}
+	return e.networkResolvers()
+}
+
+// capTTLs lowers every record's TTL in response to at most limit seconds,
+// the OPT pseudo-record's flags kept: a captive portal's network answers
+// must not outlive its window in any cache.
+func capTTLs(response []byte, limit uint32) ([]byte, error) {
+	var message dnsmessage.Message
+	if err := message.Unpack(response); err != nil {
+		return nil, fmt.Errorf("dnsconfig: reading the network's answer: %w", err)
+	}
+	for _, section := range [][]dnsmessage.Resource{message.Answers, message.Authorities, message.Additionals} {
+		for index := range section {
+			if section[index].Header.Type != dnsmessage.TypeOPT {
+				section[index].Header.TTL = min(section[index].Header.TTL, limit)
+			}
+		}
+	}
+	capped, err := message.Pack()
+	if err != nil {
+		return nil, fmt.Errorf("dnsconfig: writing the network's answer: %w", err)
+	}
+	return capped, nil
 }

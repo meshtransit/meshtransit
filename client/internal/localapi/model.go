@@ -389,9 +389,17 @@ func mapProfile(item profile.Profile, activeID string) profileResponse {
 }
 
 // captiveStatus is a captive portal found while the host uses an exit node:
-// suspected or portal, the sign-in page the network named, and since when.
+// suspected, portal or open, the sign-in page the network named, and since
+// when; for a window root holds open, when it ends and the interface.
 type captiveStatus struct {
-	State string `json:"state"`
-	URL   string `json:"url,omitempty"`
-	Since string `json:"since,omitempty"`
+	State     string `json:"state"`
+	URL       string `json:"url,omitempty"`
+	Since     string `json:"since,omitempty"`
+	Until     string `json:"until,omitempty"`
+	Interface string `json:"interface,omitempty"`
+}
+
+// captiveCheckResponse answers a captive portal window check.
+type captiveCheckResponse struct {
+	APIVersion string `json:"api_version"`
 }

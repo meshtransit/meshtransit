@@ -347,3 +347,32 @@ func TestExitForwarderAsksTheResolversBehindTheStub(t *testing.T) {
 		t.Fatal("a forwarder without any resolver was not failing")
 	}
 }
+
+// During a captive portal window the names the exit node answers go to the
+// network's resolvers, their answers expiring within 5 s; once it closes,
+// they go to the exit node again.
+func TestResolverEngineAsksTheNetworkDuringACaptiveWindow(t *testing.T) {
+	t.Parallel()
+	network := startUDPUpstream(t, netip.MustParseAddr("10.0.0.1"))
+	exit := startUDPUpstream(t, netip.MustParseAddr("93.184.216.34"))
+	plan := Plan{Enabled: true, Exit: &ExitDNS{Resolvers: []netip.AddrPort{exit}}}
+	engine := newResolverEngine()
+	engine.networkResolvers = func() []netip.AddrPort { return []netip.AddrPort{network} }
+	engine.captive.Store(true)
+	response, err := engine.resolve(t.Context(), plan, packQuery(t, "portal.example.", dnsmessage.TypeA), "udp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := unpackMessage(t, response)
+	if got := firstA(t, message); got != netip.MustParseAddr("10.0.0.1") || message.Answers[0].Header.TTL != 5 {
+		t.Fatalf("in the window: %s with TTL %d", got, message.Answers[0].Header.TTL)
+	}
+	engine.captive.Store(false)
+	response, err = engine.resolve(t.Context(), plan, packQuery(t, "portal.example.", dnsmessage.TypeA), "udp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := firstA(t, unpackMessage(t, response)); got != netip.MustParseAddr("93.184.216.34") {
+		t.Fatalf("after the window: %s", got)
+	}
+}

@@ -649,6 +649,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		captiveCtx, stopCaptive := context.WithCancel(ctx)
 		defer stopCaptive()
 		go detector.Run(captiveCtx)
+		go s.runCaptiveWindow(captiveCtx)
 	}
 
 	// Signals raised before the supervisor starts are already reflected in the
@@ -830,6 +831,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		// of each Site reported to Core and shown in status.
 		failover := newRouteFailover(s.clock)
 		failover.exitHeld = s.captive.held
+		s.captive.setExitAnswered(failover.exitAnsweredAfter)
 		var routeSelection chan []controlplane.RouteSiteSelection
 		if s.enableSubnetRoutes {
 			routeSelection = make(chan []controlplane.RouteSiteSelection, 1)

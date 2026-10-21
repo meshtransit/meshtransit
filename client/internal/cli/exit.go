@@ -5,11 +5,14 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"strings"
 	"time"
 
+	"meshtransit.net/client/internal/captive"
 	"meshtransit.net/client/internal/cli/localapi"
 )
 
@@ -144,7 +147,9 @@ const routesUsage = `usage: meshctl routes COMMAND, as meshnetd routes (Windows:
 const exitUsage = `usage: meshctl exit use POOL|auto|off   send this machine's Internet traffic through an Exit Pool
        meshctl exit serve on|off        offer to be an exit node
        meshctl exit status              this machine's choice and the exit node in use
-       meshctl exit approve ID...       use exit nodes added since the pool was pinned (as root)`
+       meshctl exit approve ID...       use exit nodes added since the pool was pinned (as root)
+       meshctl exit captive [--for D]   let HTTP and HTTPS out for D (2m, at most 5m) to sign in to a captive portal
+       meshctl exit captive --close     close that window early`
 
 // runExitStatus prints the host's exit settings and the exit node the
 // daemon uses. Settings that cannot be read (Windows: not an administrator)
@@ -198,3 +203,86 @@ func runExit(
 	_, _ = fmt.Fprintf(stdout, "Approved in pool %s: %s.\n", result.Pool, strings.Join(result.Approved, ", "))
 	return 0
 }
+
+// CaptiveRequest opens a captive portal window For long, or closes it.
+type CaptiveRequest struct {
+	Close bool
+	For   time.Duration
+}
+
+// parseCaptiveArgs reads meshctl exit captive [--for D] [--close].
+func parseCaptiveArgs(args []string) (CaptiveRequest, error) {
+	flags := flag.NewFlagSet("meshctl exit captive", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	request := CaptiveRequest{}
+	flags.DurationVar(&request.For, "for", captive.DefaultWindow, "how long the window stays open")
+	flags.BoolVar(&request.Close, "close", false, "close the window")
+	if err := flags.Parse(args); err != nil {
+		return CaptiveRequest{}, err
+	}
+	switch {
+	case flags.NArg() != 0:
+		return CaptiveRequest{}, errors.New("unexpected arguments")
+	case request.Close && request.For != captive.DefaultWindow:
+		return CaptiveRequest{}, errors.New("--close takes no --for")
+	case !request.Close && (request.For < time.Second || request.For > captive.MaximumWindow):
+		return CaptiveRequest{}, fmt.Errorf("--for must be between 1s and %s", captive.MaximumWindow)
+	}
+	return request, nil
+}
+
+// runCaptive opens or closes a captive portal window through Captive, then
+// has meshd look at once, so names follow the window without waiting, and
+// prints how the exit stands.
+func runCaptive(
+	ctx context.Context, args []string, stdout, stderr io.Writer, options Options, global globalOptions,
+) int {
+	request, err := parseCaptiveArgs(args)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "meshctl: %v\n%s\n", err, exitUsage)
+		return 2
+	}
+	if global.isJSON {
+		_, _ = fmt.Fprintln(stderr, "meshctl: exit captive has no JSON output")
+		return 2
+	}
+	if options.Captive == nil {
+		_, _ = fmt.Fprintln(stderr, "meshctl: this build cannot open a captive portal window")
+		return 1
+	}
+	code, delegated := options.Captive(request, stdout, stderr)
+	if code != 0 || delegated {
+		return code
+	}
+	client, err := options.NewClient(global.socketPath, global.timeout)
+	if err != nil {
+		return 0 // the helper has the window; meshd follows it when it runs
+	}
+	if err := client.CheckCaptiveWindow(ctx); err != nil {
+		return 0
+	}
+	wait := cmp.Or(options.ExitWait, captiveWaitDefault)
+	deadline := time.Now().Add(wait)
+	for {
+		status, err := client.Status(ctx)
+		if err != nil || ctx.Err() != nil {
+			return 0
+		}
+		open := status.Captive != nil && status.Captive.State == "open"
+		if open != request.Close {
+			_, _ = fmt.Fprintf(stdout, "Exit: %s\n", formatExitStatus(status.Exit)+formatCaptive(status.Captive))
+			return 0
+		}
+		if !time.Now().Before(deadline) {
+			return 0
+		}
+		select {
+		case <-ctx.Done():
+			return 0
+		case <-time.After(min(exitWaitInterval, wait/10)):
+		}
+	}
+}
+
+// captiveWaitDefault bounds how long meshctl waits for meshd to see a window.
+const captiveWaitDefault = 5 * time.Second

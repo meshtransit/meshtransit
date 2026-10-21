@@ -384,3 +384,16 @@ func isProfileID(id string) bool {
 
 	return true
 }
+
+// CheckCaptiveWindow has meshd ask the helper about a captive portal window
+// root just opened or closed.
+func (c *Client) CheckCaptiveWindow(ctx context.Context) error {
+	response := captiveCheckResponse{}
+	if err := c.do(ctx, http.MethodPost, "/v1/exit/captive/check", nil, http.StatusOK, &response); err != nil {
+		return err
+	}
+	if response.APIVersion != apiVersion {
+		return fmt.Errorf("localapi: unsupported api version %q", response.APIVersion)
+	}
+	return nil
+}

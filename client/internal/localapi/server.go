@@ -44,6 +44,7 @@ type service interface {
 	Logout(context.Context) (daemon.LogoutResult, error)
 	RefreshNAT(context.Context) (daemon.NATStatus, error)
 	ApproveExitNodes(context.Context, []string) (daemon.ExitApproval, error)
+	CheckCaptiveWindow()
 }
 
 // Server serves the local control API with bounded HTTP resources.
@@ -171,6 +172,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/v1/logout", s.handleLogout)
 	mux.HandleFunc("/v1/netcheck", s.handleNetcheck)
 	mux.HandleFunc("/v1/exit/approve", s.handleExitApprove)
+	mux.HandleFunc("/v1/exit/captive/check", s.handleCaptiveCheck)
 
 	bounded := http.MaxBytesHandler(mux, maxRequestBodyBytes)
 
@@ -1077,9 +1079,24 @@ func mapCaptiveStatus(view daemon.CaptiveView) *captiveStatus {
 	if view.State == "" || view.State == "none" {
 		return nil
 	}
-	status := &captiveStatus{State: view.State, URL: view.URL}
+	status := &captiveStatus{State: view.State, URL: view.URL, Interface: view.Interface}
 	if !view.Since.IsZero() {
 		status.Since = view.Since.UTC().Format(time.RFC3339)
 	}
+	if !view.Until.IsZero() {
+		status.Until = view.Until.UTC().Format(time.RFC3339)
+	}
 	return status
+}
+
+// handleCaptiveCheck has meshd ask the helper about a captive portal window
+// at once, after root opened or closed one (meshctl exit captive). It
+// changes nothing, so any local user may ask.
+func (s *Server) handleCaptiveCheck(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		s.writeMethodNotAllowed(writer, http.MethodPost)
+		return
+	}
+	s.service.CheckCaptiveWindow()
+	s.writeJSON(writer, http.StatusOK, captiveCheckResponse{APIVersion: apiVersion})
 }

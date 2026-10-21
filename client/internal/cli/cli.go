@@ -48,6 +48,7 @@ type DaemonClient interface {
 	Logout(context.Context) (localapi.Logout, error)
 	RefreshNAT(context.Context) (localapi.Netcheck, error)
 	ApproveExitNodes(context.Context, []string) (localapi.ExitApproval, error)
+	CheckCaptiveWindow(context.Context) error
 }
 
 // ClientFactory constructs the local daemon client after global flags are parsed.
@@ -65,6 +66,10 @@ type Options struct {
 	// printed after a change. delegated reports the command ran again
 	// elsewhere (meshctl through sudo), which said all there was to say.
 	Routes func(args []string, quiet bool, stdout, stderr io.Writer) (code int, delegated bool)
+	// Captive opens or closes a captive portal window, asking for the
+	// privileges it needs (exit node design §17.4); nil where meshctl
+	// cannot. delegated is as for Routes.
+	Captive func(request CaptiveRequest, stdout, stderr io.Writer) (code int, delegated bool)
 	// ExitWait bounds how long exit use waits for meshd to apply the
 	// choice; zero waits 15 s.
 	ExitWait time.Duration
@@ -119,6 +124,12 @@ func Run(
 		}
 
 		return writeVersion(stdout, global.isJSON, options.Build)
+	}
+
+	// A captive portal window is root's to open: it goes through Captive,
+	// never the daemon, which can only be told to look.
+	if len(commandArgs) >= 2 && commandArgs[0] == "exit" && commandArgs[1] == "captive" {
+		return runCaptive(ctx, commandArgs[2:], stdout, stderr, options, global)
 	}
 
 	// The host's route settings are root's: they go through Routes, not the
@@ -1183,6 +1194,16 @@ func formatCaptive(status *localapi.CaptiveStatus) string {
 	where := ""
 	if status.URL != "" {
 		where = ", sign in at " + status.URL + " (reported by the network)"
+	}
+	if status.State == "open" {
+		window := "captive portal window open"
+		if until, err := time.Parse(time.RFC3339, status.Until); err == nil {
+			window += " until " + until.Local().Format(time.TimeOnly)
+		}
+		if status.Interface != "" {
+			window += " on " + status.Interface
+		}
+		return "; " + window + ": HTTP and HTTPS go straight to the network" + where
 	}
 	what := "a captive portal holds this network"
 	if status.State == "suspected" {

@@ -1001,3 +1001,5 @@ func TestFormatCaptive(t *testing.T) {
 		t.Fatalf("suspected = %q", got)
 	}
 }
+
+func (*fakeClient) CheckCaptiveWindow(context.Context) error { return nil }

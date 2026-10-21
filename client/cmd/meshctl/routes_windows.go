@@ -8,6 +8,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
+	"meshtransit.net/client/internal/cli"
 	"meshtransit.net/client/internal/config"
 	"meshtransit.net/client/internal/routesettings/routescli"
 )
@@ -31,4 +32,15 @@ func hostRoutes(args []string, quiet bool, stdout, stderr io.Writer) (int, bool)
 		Quiet: quiet, Privileged: func() bool { return elevated },
 	}
 	return command.Run(args, stdout, stderr), false
+}
+
+// hostCaptive opens or closes the captive portal window from a terminal
+// opened as administrator.
+func hostCaptive(request cli.CaptiveRequest, stdout, stderr io.Writer) (int, bool) {
+	if !windows.GetCurrentProcessToken().IsElevated() {
+		_, _ = fmt.Fprintln(stderr, "meshctl: administrator rights are required for a captive portal window: "+
+			"open Terminal or PowerShell with \"Run as administrator\" and run the same meshctl command")
+		return 1, false
+	}
+	return changeCaptiveWindow(request, stdout, stderr), false
 }

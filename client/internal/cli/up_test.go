@@ -285,3 +285,5 @@ func TestUpStopsWhenTheServerKeyDoesNotMatch(t *testing.T) {
 		t.Fatalf("up exit = %d, logins = %d, stderr = %s", code, client.loginCalls, stderr)
 	}
 }
+
+func (*upFakeClient) CheckCaptiveWindow(context.Context) error { return nil }

@@ -458,3 +458,15 @@ func (s *Service) routeSitesSnapshot() []RouteSiteView {
 	defer s.routeSitesMu.Unlock()
 	return slices.Clone(s.routeSites)
 }
+
+// exitAnsweredAfter reports that the exit node in use answered after at.
+func (failover *routeFailover) exitAnsweredAfter(at time.Time) bool {
+	failover.mu.Lock()
+	defer failover.mu.Unlock()
+	id, found := peerIDs(failover.core)[failover.exit.node]
+	if !found {
+		return false
+	}
+	pong, answered := failover.pongs[id]
+	return answered && pong.After(at)
+}

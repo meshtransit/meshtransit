@@ -317,6 +317,10 @@ type WireGuardEngine struct {
 	// exitRouteAsked is what the helper was last asked; a change clears the
 	// refusal and error of the previous request, which no longer hold.
 	exitRouteAsked exitRouteDesired
+	// exitRouteTable is the map's routed table the exit route last
+	// followed, and captiveAsk what meshd asks of a captive portal window.
+	exitRouteTable *routedTable
+	captiveAsk     captiveAsk
 	// routerHealth measures the served Sites while the node serves any.
 	routerHealth routerHealth
 	// enforcementChanges signals enforced policy changes no map carried.

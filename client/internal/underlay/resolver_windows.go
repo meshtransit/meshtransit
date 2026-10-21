@@ -3,6 +3,7 @@ package underlay
 import (
 	"context"
 	"net"
+	"net/netip"
 )
 
 // physicalResolver asks the DNS servers of the host's own interfaces
@@ -33,3 +34,7 @@ func Resolver() *net.Resolver {
 	}
 	return net.DefaultResolver
 }
+
+// NetworkResolvers returns the resolvers of the host's networks: none known
+// here, so a captive portal window keeps names on the exit node's resolver.
+func NetworkResolvers() []netip.AddrPort { return nil }
