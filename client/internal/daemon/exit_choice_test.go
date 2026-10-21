@@ -307,6 +307,56 @@ func TestExitChoiceBindsAPoolName(t *testing.T) {
 	}
 }
 
+// A primary Core adds after the pool was pinned leaves the node on the exit
+// node it trusts, and status says the primary waits for approval rather
+// than that it does not answer; it may be approved while no pool is used,
+// and the next use takes it (TD-CLI-49).
+func TestExitChoiceApprovesANewPrimaryWhileTheExitIsOff(t *testing.T) {
+	t.Parallel()
+	first := exitMap("exit-2")
+	first.Exits[0].Candidates = first.Exits[0].Candidates[1:] // exit-2 only
+	h := newExitHarness(exitPreference{use: "pool-a"}, first)
+	h.failover.effective(exitMap("exit-1")) // Core adds exit-1 as primary
+	h.step(21, 22)
+	report, view, _ := h.failover.exitSelection()
+	if h.route().Node != "exit-2" || report.Reason != controlplane.RouteSelectionSticky ||
+		view.Via != "primary_unapproved" {
+		t.Fatalf("route = %+v, report = %+v, via = %q", h.route(), report, view.Via)
+	}
+
+	h.failover.setExitPreference(exitPreference{})
+	_, view, sticky := h.failover.exitSelection()
+	service := &Service{exitPins: h.failover.exit.pins}
+	service.setExit(view, sticky, h.failover.exitCandidates())
+	if _, err := service.ApproveExitNodes(t.Context(), []string{"exit-9"}); err == nil {
+		t.Fatal("approving an exit node of no pool succeeded")
+	}
+	result, err := service.ApproveExitNodes(t.Context(), []string{"exit-1"})
+	if err != nil || result.Pool != "pool-a" || len(result.Approved) != 1 || result.Approved[0] != "exit-1" {
+		t.Fatalf("approving while off = %+v, %v", result, err)
+	}
+	if _, err := service.ApproveExitNodes(t.Context(), []string{"exit-1"}); err == nil {
+		t.Fatal("approving it again succeeded")
+	}
+	h.failover.setExitPreference(exitPreference{use: "pool-a"})
+	if report, view, _ := h.failover.exitSelection(); h.route().Node != "exit-1" ||
+		report.Reason != controlplane.RouteSelectionPrimary || len(view.Pending) != 0 {
+		t.Fatalf("route = %+v, report = %+v, pending = %v", h.route(), report, view.Pending)
+	}
+}
+
+// A pool never pinned has nothing to approve: its first use trusts every
+// candidate.
+func TestExitChoiceApprovesNothingInAnUnpinnedPool(t *testing.T) {
+	t.Parallel()
+	pins, _ := openExitPins("")
+	service := &Service{exitPins: pins}
+	service.setExit(nil, exitSticky{}, map[string][]string{"pool-a": {"exit-1", "exit-2"}})
+	if _, err := service.ApproveExitNodes(t.Context(), []string{"exit-1"}); err == nil {
+		t.Fatal("approved in a pool never pinned")
+	}
+}
+
 // Once a pool is pinned, auto never moves to a pool Core adds.
 func TestExitChoiceAutoKeepsToPinnedPools(t *testing.T) {
 	t.Parallel()

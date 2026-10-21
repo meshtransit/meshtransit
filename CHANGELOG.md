@@ -5,6 +5,11 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Clients: `meshctl exit approve` also approves, while no pool is used, an
+  exit node added to a pool the host pinned before; status says
+  `primary_unapproved` ("the primary waits for approval") when another
+  exit node carries only because the primary is not approved yet
+  (TD-CLI-49).
 - Core, Console and clients: spread Exit Pools (schema 210, exit node design
   §16), behind `MESHTRANSIT_EXIT_SPREAD_ENABLED`. A pool's `mode` is
   `failover` (as before) or `spread`: the worker elects a serving set (the

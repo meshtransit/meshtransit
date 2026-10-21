@@ -944,6 +944,13 @@ func TestFormatExitStatus(t *testing.T) {
 			"via fra in pool Europe (kept: Core elected another primary)",
 		},
 		{
+			&localapi.ExitStatus{
+				Use: "p1", Pool: "p1", PoolName: "Europe", ExitNode: "d1", ExitNodeName: "fra",
+				Via: "primary_unapproved", IPv6: true, Routing: true,
+			},
+			"via fra in pool Europe (chosen here: the primary waits for approval)",
+		},
+		{
 			&localapi.ExitStatus{Use: "p1", Pool: "p1", ExitNode: "d1", Via: "primary", Refused: "exit_use_off"},
 			"via d1 in pool p1; IPv6 blocked [helper: exit_use_off]",
 		},

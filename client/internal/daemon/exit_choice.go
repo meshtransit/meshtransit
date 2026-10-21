@@ -651,6 +651,20 @@ func (failover *routeFailover) exitPeersLocked() []uint64 {
 	return ids
 }
 
+// exitCandidates returns the candidates of each pool Core grants, by
+// reference.
+func (failover *routeFailover) exitCandidates() map[string][]string {
+	failover.mu.Lock()
+	defer failover.mu.Unlock()
+	pools := make(map[string][]string, len(failover.core.Exits))
+	for _, pool := range failover.core.Exits {
+		for _, candidate := range pool.Candidates {
+			pools[pool.Ref] = append(pools[pool.Ref], candidate.DeviceID)
+		}
+	}
+	return pools
+}
+
 // ExitView is the exit node this node sends its Internet traffic to, for
 // status.
 type ExitView struct {
@@ -664,7 +678,8 @@ type ExitView struct {
 	// carries the traffic.
 	ExitNode     string
 	ExitNodeName string
-	// Via is primary, local_failover, sticky or none.
+	// Via is primary, local_failover, sticky, primary_unapproved (another
+	// node carries while the primary waits for approval) or none.
 	Via string
 	// Pending are exit nodes Core added to the pool that carry no traffic
 	// until a user approves them, as device IDs, with their names.
@@ -719,6 +734,14 @@ func (failover *routeFailover) exitSelection() (controlplane.RouteExitSelection,
 	case controlplane.RouteSelectionSticky:
 		view.Via = "sticky"
 	}
+	// Another node carries because the primary is not trusted yet, not
+	// because it is silent or newly elected: say what frees it.
+	for _, pool := range failover.core.Exits {
+		if view.Via != "primary" && view.Via != "none" && pool.Ref == choice.pool && pool.Primary != "" &&
+			slices.Contains(choice.pending, pool.Primary) {
+			view.Via = "primary_unapproved"
+		}
+	}
 	report := controlplane.RouteExitSelection{Pool: choice.pool, ExitNode: choice.node, Reason: choice.reason}
 	if report.ExitNode == "" {
 		report.Reason = controlplane.RouteSelectionNone
@@ -750,18 +773,18 @@ func watchExitPreference(ctx context.Context, failover *routeFailover, read func
 	}
 }
 
-func (s *Service) setExit(view *ExitView, sticky exitSticky) {
+func (s *Service) setExit(view *ExitView, sticky exitSticky, pools map[string][]string) {
 	s.routeSitesMu.Lock()
 	defer s.routeSitesMu.Unlock()
-	s.exit, s.exitSticky = view, sticky
+	s.exit, s.exitSticky, s.exitPools = view, sticky, pools
 }
 
-// clearExit forgets the session's exit view; the sticky choice stays for
-// the next session.
+// clearExit forgets the session's exit view and pools; the sticky choice
+// stays for the next session.
 func (s *Service) clearExit() {
 	s.routeSitesMu.Lock()
 	defer s.routeSitesMu.Unlock()
-	s.exit = nil
+	s.exit, s.exitPools = nil, nil
 }
 
 func (s *Service) exitSnapshot() *ExitView {
@@ -817,11 +840,15 @@ var ErrNothingToApprove = errors.New("daemon: nothing named waits for approval")
 // added to the pool in use (device IDs) and a pool given the name the
 // settings use (its reference). Naming them keeps Core from slipping in
 // another between status and approval. They are used from the next choice,
-// within a second.
+// within a second. While no pool is used, an exit node Core added to a
+// pool the host pinned before is approved in that pool.
 func (s *Service) ApproveExitNodes(_ context.Context, ids []string) (ExitApproval, error) {
-	view := s.exitSnapshot()
-	if view == nil || s.exitPins == nil {
+	if s.exitPins == nil {
 		return ExitApproval{}, ErrNothingToApprove
+	}
+	view := s.exitSnapshot()
+	if view == nil {
+		return s.approvePinnedExitNodes(ids)
 	}
 	result := ExitApproval{Pool: view.Pool}
 	if view.PendingPool != "" && slices.Contains(ids, view.PendingPool) {
@@ -844,7 +871,7 @@ func (s *Service) ApproveExitNodes(_ context.Context, ids []string) (ExitApprova
 		result.Approved = append(result.Approved, nodes...)
 	}
 	if len(result.Approved) == 0 {
-		return ExitApproval{}, ErrNothingToApprove
+		return s.approvePinnedExitNodes(ids)
 	}
 	s.routeSitesMu.Lock()
 	if s.exit != nil {
@@ -854,4 +881,41 @@ func (s *Service) ApproveExitNodes(_ context.Context, ids []string) (ExitApprova
 	}
 	s.routeSitesMu.Unlock()
 	return result, nil
+}
+
+// approvePinnedExitNodes approves, in the pinned pool whose candidates they
+// are, the exit nodes ids name that wait there; only one pool at a time,
+// so a device ID listed in two pools is not approved in both by surprise.
+func (s *Service) approvePinnedExitNodes(ids []string) (ExitApproval, error) {
+	s.routeSitesMu.Lock()
+	pools := make(map[string][]string, len(s.exitPools))
+	for ref, candidates := range s.exitPools {
+		pools[ref] = slices.Clone(candidates)
+	}
+	s.routeSitesMu.Unlock()
+	refs := make([]string, 0, len(pools))
+	for ref := range pools {
+		refs = append(refs, ref)
+	}
+	slices.Sort(refs)
+	for _, ref := range refs {
+		approved, pinned := s.exitPins.approved(ref)
+		if !pinned {
+			continue // its first use pins every candidate
+		}
+		var nodes []string
+		for _, id := range pools[ref] {
+			if slices.Contains(ids, id) && !slices.Contains(approved, id) {
+				nodes = append(nodes, id)
+			}
+		}
+		if len(nodes) == 0 {
+			continue
+		}
+		if err := s.exitPins.set(ref, append(approved, nodes...)); err != nil {
+			return ExitApproval{}, err
+		}
+		return ExitApproval{Pool: ref, Approved: nodes}, nil
+	}
+	return ExitApproval{}, ErrNothingToApprove
 }

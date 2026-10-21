@@ -145,6 +145,10 @@ pool chosen by name works the same way when another pool takes that name:
 meshctl exit approve DEVICE_ID
 ```
 
+Approval also works while the machine uses no pool, for an exit node added
+to a pool it pinned before. Until then, when the new node is the one Core
+assigns or elects, the `Exit` line says the primary waits for approval.
+
 Once a pool is pinned, `auto` chooses among pinned pools only.
 
 `auto` measures the round trip to each served pool's primary for up to 10

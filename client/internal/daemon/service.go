@@ -392,12 +392,15 @@ type Service struct {
 	routeSettingsPath string
 	restartMarkerPath string
 	// routeSites is the router of each Site of the current session, exit
-	// the exit node used (nil when none is wanted), and exitSticky the
-	// exit node a new session keeps using.
+	// the exit node used (nil when none is wanted), exitSticky the exit
+	// node a new session keeps using, and exitPools the candidates of each
+	// pool Core grants, by reference, which approval checks while no exit
+	// node is used.
 	routeSitesMu         sync.Mutex
 	routeSites           []RouteSiteView
 	exit                 *ExitView
 	exitSticky           exitSticky
+	exitPools            map[string][]string
 	loadRouteSettings    func(string) (routesettings.Settings, error)
 	clock                func() time.Time
 	runtimeRetryDelay    func(time.Duration) time.Duration
@@ -829,7 +832,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			}
 			if exitSelection != nil {
 				report, view, sticky := failover.exitSelection()
-				s.setExit(view, sticky)
+				s.setExit(view, sticky, failover.exitCandidates())
 				offerLatest(exitSelection, report)
 			}
 		}

@@ -708,6 +708,8 @@ func formatExitStatus(status *localapi.ExitStatus) string {
 		switch status.Via {
 		case "local_failover":
 			summary += " (chosen here: the primary does not answer)"
+		case "primary_unapproved":
+			summary += " (chosen here: the primary waits for approval)"
 		case "sticky":
 			summary += " (kept: Core elected another primary)"
 		}
