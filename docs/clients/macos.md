@@ -135,6 +135,27 @@ the kill switch; the uninstaller runs it. Tried on a Mac on 2026-10-21:
 traffic leaves by the exit node, pf blocks the rest, and turning
 `exit-use off` gives the Mac its network back at once.
 
+### Captive portals
+
+`meshd` finds a captive portal and root opens a window as on Linux
+(`meshctl exit captive [--for D] [--close]`, which asks `sudo`). The window's
+pf rules go into the kill switch's own anchor, right before its block: TCP
+from each physical default interface's own address (`from (en0)`) to ports
+80 and 443, and to the portal's own port, without state, so they stop the
+moment the rules go. The `/1` routes leave the utun for the window, since a
+route cannot tell ports apart: everything else meets the kill switch rather
+than the tunnel, and the mesh keeps its own routes. macOS's own portal
+window may appear by itself during the window, as expected.
+
+`meshnetd` keeps what ends the window without it in
+`/var/run/meshnetd/captive-holes.json` (root only): a child process it starts
+for the window (`meshnetd captive close-at`) sleeps until the end, and the
+launchd job `net.meshtransit.meshnetd-captive` (`meshnetd captive expire`,
+every 30 seconds) ends any window past its time; either loads the kill
+switch without the window's rules, puts the `/1` routes back and empties
+mDNSResponder's cache. The window also ends by the wall clock, since the
+monotonic clock stops while the Mac sleeps.
+
 ## Check and troubleshoot
 
 - `meshctl status`, `meshctl netcheck`, `meshctl doctor control`, as on Linux.

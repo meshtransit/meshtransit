@@ -5,6 +5,23 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Clients (exit, captive portals, exit node design §17): `meshd` finds a
+  captive portal while the control session is down (the network's RFC 8908
+  API on Linux, an HTTP probe of a relay that echoes a nonce, the network
+  resolver's answer for the relay's name), says so on the `Exit` line with
+  the sign-in page the network named, and keeps the exit node meanwhile.
+  `meshctl exit captive [--for D] [--close]`, as root (an administrator on
+  Windows), opens a window of 2 minutes (5 at most) in which TCP to ports 80
+  and 443, and to the portal's own port, leaves by the default route's
+  interface from its own address, and names go to the network's resolvers
+  with answers kept 5 seconds; nothing else leaves. The window ends on time
+  even without the helper (Linux: nftables element timeouts; macOS: a child
+  process and the launchd job `net.meshtransit.meshnetd-captive`; Windows: a
+  child holding a dynamic WFP session), when root closes it, and 15 seconds
+  after the tunnel is back. `routes exit-captive off` refuses windows.
+- Relay: `--probe-http ADDRESS` (off by default; `0.0.0.0:80` in
+  production) answers `GET /generate_204` with 204 and the client's nonce,
+  rate limited, for the clients' captive portal check.
 - Clients: the exit node in use is kept through 15 seconds of silence (a
   Site's router through 4, as before): leaving changes the public address
   and cuts every connection, and a poor Wi-Fi or a reconnecting relay made

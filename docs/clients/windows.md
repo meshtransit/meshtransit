@@ -149,6 +149,25 @@ then run `meshd release-exit` as an administrator; the uninstaller runs it.
 Traffic Windows forwards for others (Hyper-V, WSL, Internet Connection
 Sharing) is not filtered by the kill switch.
 
+### Captive portals
+
+`meshd` finds a captive portal as on Linux; an administrator opens a window
+from an elevated terminal (`meshctl exit captive [--for D] [--close]`), which
+writes `C:\ProgramData\MeshTransit\settings\captive.json`. The service then
+starts `meshd captive hold`, a child whose dynamic WFP session holds permits
+in the kill switch's sublayer above its block: TCP from the default route
+interface's own addresses to ports 80 and 443, and to the portal's own
+port. The child ends at the window's end, or once the file is gone, and its
+permits go with its session, also when the service is hung or stopped. The
+`/1` routes leave the adapter for the window, the DNS client cache is
+flushed when it closes, and the service removes a leftover window file when
+it starts. While the service is down names do not resolve (the NRPT rule
+points at its resolver); open the portal by address then, or restart the
+service. Windows' own portal detection (NCSI) may open the sign-in page
+during the window, as expected. Tried on a Windows Server test machine on 2026-10-21:
+HTTP and HTTPS left with the machine's own address, other ports stayed
+blocked, the window ended on time with the service killed and kept down.
+
 ## Check and troubleshoot
 
 - `meshctl status`, `meshctl netcheck`, `meshctl doctor control`.

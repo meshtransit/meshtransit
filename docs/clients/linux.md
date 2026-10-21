@@ -170,6 +170,48 @@ machine stays offline with no helper running, root removes it with
 administrator (`exit-allow-managed`) is the exception: Core decides when it
 applies.
 
+### Captive portals (hotel, airport and café Wi-Fi)
+
+Behind a captive portal the kill switch also blocks the sign-in page. While
+a pool is chosen and the control session is down for 10 seconds, `meshd`
+checks the network: the portal API the network announces (RFC 8908, read
+from systemd-networkd), a plain HTTP probe of a MeshTransit relay by address
+(`/generate_204`, whose answer echoes a nonce), and the network resolver's
+answer for the relay's name. `meshctl status` then says so on its `Exit`
+line, with the sign-in page the network named (reported by the network, not
+checked by MeshTransit), and the machine keeps its exit node: the network,
+not the exit node, is at fault.
+
+Root opens a short window to sign in; nothing else ever opens one, not
+`meshd` and not Core:
+
+```bash
+meshctl exit captive              # 2 minutes
+meshctl exit captive --for 5m     # at most 5 minutes
+meshctl exit captive --close
+```
+
+For that long, TCP to ports 80 and 443 of every program on the machine
+leaves by the interface of the default route, from that interface's own
+address, and so does TCP to the portal's own port (`meshd` reads it from
+the sign-in page, such as `:8880`). Names the exit node would answer go to
+the network's resolvers, asked by `meshd` with answers kept at most 5
+seconds. Nothing else leaves: other ports, containers and VMs, and traffic
+whose source is a mesh address are still dropped, and the mesh keeps
+working. The cost is plain: during the window the network sees, and can
+change, every HTTP page any program opens, and the destinations and names
+of every HTTPS connection.
+
+`meshnetd` keeps the window in `/run/meshnetd/captive.json` and counts it
+from when it read it, on a clock a changed system time does not move. The
+holes are nftables set elements with the window's time left as their
+timeout, so the kernel removes them on time even if `meshnetd` is gone. The
+window also closes when root closes it, when the machine stops using an exit
+node, and 15 seconds after the tunnel is back (`meshd` asks for that); the
+system resolver's cache is emptied then. A starting `meshnetd` never opens a
+window again. `meshctl routes exit-captive off` refuses windows, for a
+managed machine.
+
 ## Install, upgrade, roll back
 
 ```bash
