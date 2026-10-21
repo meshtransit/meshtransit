@@ -625,6 +625,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 	defer s.endRun()
 	defer func() {
 		runErr = errors.Join(runErr, s.closeDNS(), s.stopDataPlane())
+		s.exitPins.settle() // the pins a session took are written before it ends
 	}()
 	// The restart the marker announced has happened: a later stop is real.
 	clearRestartMarker(s.restartMarkerPath, s.logger)

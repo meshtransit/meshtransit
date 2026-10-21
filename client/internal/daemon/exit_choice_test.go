@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -173,6 +174,7 @@ func TestExitChoicePinsTheExitNodesOfAPool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(pins.settle)
 	clock := &failoverClock{now: time.Date(2026, time.October, 20, 9, 0, 0, 0, time.UTC)}
 	failover := newRouteFailover(clock.Now)
 	failover.seedExit(exitPreference{use: "pool-a"}, exitSticky{}, pins)
@@ -577,5 +579,34 @@ func TestExitChoiceGoesBackWhereItCameFrom(t *testing.T) {
 	}
 	if h.route().Node != "exit-2" {
 		t.Fatalf("route = %+v, want back on exit-2", h.route())
+	}
+}
+
+// The pins a choice takes are written in the background, outside the
+// failover lock, and a full store forgets the pool used longest ago.
+func TestExitPinsWriteLaterAndForgetTheOldestPool(t *testing.T) {
+	t.Parallel()
+	pins, err := openExitPins(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := range maxPinnedPools {
+		pins.setLater(fmt.Sprintf("pool-%03d", index), []string{"exit-1"})
+	}
+	pins.approved("pool-000") // used again: now pool-001 is the oldest
+	pins.setLater("pool-new", []string{"exit-2"})
+	pins.settle()
+	reopened, err := openExitPins(pins.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, pinned := reopened.approved("pool-new"); !pinned {
+		t.Fatal("the pin written in the background was lost")
+	}
+	if _, pinned := reopened.approved("pool-000"); !pinned {
+		t.Fatal("a pool used lately was forgotten")
+	}
+	if _, pinned := reopened.approved("pool-001"); pinned {
+		t.Fatal("the pool used longest ago was kept")
 	}
 }

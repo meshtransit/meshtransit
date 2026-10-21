@@ -252,7 +252,7 @@ func (failover *routeFailover) exitPoolLocked() (networkmap.ExitPool, bool) {
 			return networkmap.ExitPool{}, false
 		}
 		if !wasBound {
-			_ = failover.exit.pins.bind(preference.use, pool.Ref)
+			_ = failover.exit.pins.bindLater(preference.use, pool.Ref)
 		}
 		return pool, true
 	case preference.allowManaged:
@@ -516,7 +516,7 @@ func (failover *routeFailover) trustedLocked(pool networkmap.ExitPool) []string 
 		approved = candidates
 	}
 	approved = slices.DeleteFunc(approved, func(id string) bool { return !slices.Contains(candidates, id) })
-	_ = choice.pins.set(pool.Ref, approved) // kept in memory when it cannot be written
+	choice.pins.setLater(pool.Ref, approved) // written outside failover.mu
 	for _, id := range candidates {
 		if !slices.Contains(approved, id) {
 			choice.pending = append(choice.pending, id)

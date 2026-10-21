@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
+	"sync/atomic"
 
 	"meshtransit.net/client/internal/privatefile"
 )
@@ -37,6 +38,16 @@ type exitPins struct {
 	// names binds a pool name the host's settings use to the pool reference
 	// it meant: another pool given that name later needs approval.
 	names map[string]string
+	// used orders the pools by their last use, so a full store forgets the
+	// pool used longest ago; clock counts the uses.
+	used  map[string]uint64
+	clock uint64
+	// writeMu orders the writes; dirty and flushing coalesce the writes made
+	// in the background (persistLater), which flushed waits for.
+	writeMu  sync.Mutex
+	dirty    atomic.Bool
+	flushing atomic.Bool
+	flushed  sync.WaitGroup
 }
 
 type storedExitPins struct {
@@ -46,7 +57,7 @@ type storedExitPins struct {
 
 // openExitPins reads the pins kept in dir; an empty dir keeps none.
 func openExitPins(dir string) (*exitPins, error) {
-	pins := &exitPins{pools: map[string][]string{}, names: map[string]string{}}
+	pins := &exitPins{pools: map[string][]string{}, names: map[string]string{}, used: map[string]uint64{}}
 	if dir == "" {
 		return pins, nil
 	}
@@ -118,21 +129,39 @@ func (p *exitPins) boundPool(name string) (string, bool) {
 	return pool, bound
 }
 
-// bind binds name to pool and persists it.
+// bind binds name to pool and persists it before it returns.
 func (p *exitPins) bind(name, pool string) error {
+	changed, err := p.bindInMemory(name, pool)
+	if err != nil || !changed {
+		return err
+	}
+	return p.persist()
+}
+
+// bindLater binds name to pool and persists it in the background: for
+// callers holding a lock a write must not stall.
+func (p *exitPins) bindLater(name, pool string) error {
+	changed, err := p.bindInMemory(name, pool)
+	if changed {
+		p.persistLater()
+	}
+	return err
+}
+
+func (p *exitPins) bindInMemory(name, pool string) (bool, error) {
 	if p == nil {
-		return nil
+		return false, nil
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.names[name] == pool {
-		return nil
+		return false, nil
 	}
 	if _, bound := p.names[name]; !bound && len(p.names) >= maxPinnedPools {
-		return errors.New("daemon: too many exit pool names")
+		return false, errors.New("daemon: too many exit pool names")
 	}
 	p.names[name] = pool
-	return p.persistLocked()
+	return true, nil
 }
 
 // anyPinned reports whether some pool was ever pinned.
@@ -157,38 +186,105 @@ func (p *exitPins) approved(pool string) ([]string, bool) {
 	if !pinned {
 		return nil, false
 	}
+	p.touchLocked(pool)
 	return append([]string{}, nodes...), true // never nil: an empty pin trusts nobody
 }
 
+func (p *exitPins) touchLocked(pool string) {
+	p.clock++
+	p.used[pool] = p.clock
+}
+
 // set records the pinned exit nodes of pool, kept for its candidates only,
-// and persists them when they changed.
+// and persists them before it returns when they changed.
 func (p *exitPins) set(pool string, nodes []string) error {
-	if p == nil {
+	if !p.setInMemory(pool, nodes) {
 		return nil
+	}
+	return p.persist()
+}
+
+// setLater is set persisting in the background: for callers holding a lock
+// a write must not stall. A write that fails leaves the pins in memory.
+func (p *exitPins) setLater(pool string, nodes []string) {
+	if p.setInMemory(pool, nodes) {
+		p.persistLater()
+	}
+}
+
+// setInMemory records the pins of pool and reports whether they changed. A
+// full store forgets the pool used longest ago, which pins again on its
+// next use.
+func (p *exitPins) setInMemory(pool string, nodes []string) bool {
+	if p == nil {
+		return false
 	}
 	nodes = append([]string{}, nodes...)
 	slices.Sort(nodes)
 	nodes = slices.Compact(nodes)
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.touchLocked(pool)
 	if current, pinned := p.pools[pool]; pinned && slices.Equal(current, nodes) {
-		return nil
+		return false
 	}
 	if _, pinned := p.pools[pool]; !pinned && len(p.pools) >= maxPinnedPools {
+		oldest := ""
 		for other := range p.pools {
-			delete(p.pools, other) // forget one: it pins again on its next use
-			break
+			if oldest == "" || p.used[other] < p.used[oldest] ||
+				(p.used[other] == p.used[oldest] && other < oldest) {
+				oldest = other
+			}
 		}
+		delete(p.pools, oldest)
+		delete(p.used, oldest)
 	}
 	p.pools[pool] = nodes
-	return p.persistLocked()
+	return true
 }
 
-func (p *exitPins) persistLocked() error {
+// persistLater writes the pins in the background, one write at a time, the
+// last one with the pins as they are then.
+func (p *exitPins) persistLater() {
+	if p.root == nil {
+		return
+	}
+	p.dirty.Store(true)
+	if !p.flushing.CompareAndSwap(false, true) {
+		return
+	}
+	p.flushed.Add(1)
+	go func() {
+		defer p.flushed.Done()
+		for {
+			for p.dirty.Swap(false) {
+				_ = p.persist() // kept in memory when it cannot be written
+			}
+			p.flushing.Store(false)
+			if !p.dirty.Load() || !p.flushing.CompareAndSwap(false, true) {
+				return
+			}
+		}
+	}()
+}
+
+// settle waits for the writes made in the background.
+func (p *exitPins) settle() {
+	if p != nil {
+		p.flushed.Wait()
+	}
+}
+
+// persist writes the pins as they are when it starts.
+func (p *exitPins) persist() error {
 	if p.root == nil {
 		return nil
 	}
+	p.writeMu.Lock()
+	defer p.writeMu.Unlock()
+	p.mu.Lock()
 	encoded, err := json.Marshal(storedExitPins{Pools: p.pools, Names: p.names})
+	p.mu.Unlock()
 	if err != nil {
 		return fmt.Errorf("daemon: encoding exit pins: %w", err)
 	}
