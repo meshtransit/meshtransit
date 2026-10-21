@@ -45,7 +45,7 @@ func entry(args []string) int {
 		return releaseExit(args[1:], os.Stdout, os.Stderr)
 	}
 	if len(args) > 1 && args[0] == "captive" && args[1] == "hold" {
-		return holdCaptive(args[2:], os.Stderr)
+		return holdCaptive(args[2:], os.Stdout, os.Stderr)
 	}
 	isService, err := svc.IsWindowsService()
 	if err != nil {
@@ -200,12 +200,13 @@ func isPlainFile(file *os.File) bool {
 // session until the window ends, or its file is gone or names another
 // window, then exits, and the permits go with it, whatever became of the
 // service.
-func holdCaptive(args []string, stderr io.Writer) int {
+func holdCaptive(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("meshd captive hold", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	file := flags.String("file", "", "the window file")
 	id := flags.String("id", "", "the window")
 	after := flags.Duration("after", 0, "how long the window has left")
+	until := flags.String("until", "", "when the window ends by the wall clock (RFC 3339)")
 	luid := flags.Uint64("interface", 0, "the LUID of the interface the window opens")
 	var addresses, portals []string
 	flags.Func("address", "an address of that interface; repeatable", func(value string) error {
@@ -218,7 +219,12 @@ func holdCaptive(args []string, stderr io.Writer) int {
 	})
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || *file == "" || *id == "" || *luid == 0 ||
 		*after <= 0 || *after > captive.MaximumWindow || len(addresses) == 0 || len(addresses) > 8 || len(portals) > 2 {
-		_, _ = fmt.Fprintln(stderr, "usage: meshd captive hold --file PATH --id ID --after D --interface LUID --address A... [--portal IP:PORT]")
+		_, _ = fmt.Fprintln(stderr, "usage: meshd captive hold --file PATH --id ID --after D --until TIME --interface LUID --address A... [--portal IP:PORT]")
+		return 2
+	}
+	wallEnd, err := time.Parse(time.RFC3339Nano, *until)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "meshd: --until: %v\n", err)
 		return 2
 	}
 	if !elevated() {
@@ -254,10 +260,13 @@ func holdCaptive(args []string, stderr io.Writer) int {
 		return 1
 	}
 	defer release()
+	// The service opens the window once it reads this.
+	_, _ = fmt.Fprintln(stdout, "held")
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-	// The monotonic clock: a wall clock that jumps does not move it.
-	for time.Now().Before(deadline) {
+	// Whichever clock ends it first: the monotonic one does not move when
+	// the wall clock jumps, the wall clock keeps counting while asleep.
+	for now := time.Now(); now.Before(deadline) && now.Round(0).Before(wallEnd); now = time.Now() {
 		window, err := captive.ReadWindow(*file)
 		if err != nil || window.ID != *id {
 			return 0 // closed, or another window

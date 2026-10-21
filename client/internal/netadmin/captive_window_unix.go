@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io/fs"
 	"net/netip"
+	"slices"
 	"time"
 
 	"meshtransit.net/client/internal/captive"
@@ -20,6 +21,9 @@ import (
 
 // captiveWindowPoll is how often the helper reads the window file.
 const captiveWindowPoll = time.Second
+
+// maximumCaptiveSeen bounds the windows a helper remembers having opened.
+const maximumCaptiveSeen = 64
 
 // openCaptiveWindow is the window the helper holds open.
 type openCaptiveWindow struct {
@@ -99,12 +103,19 @@ func (s *Server) pollCaptiveWindow() {
 		}
 		return
 	}
+	if slices.Contains(s.captiveSeen, window.ID) || window.Stale(now) {
+		// A window this run already closed whose file stayed, or one older
+		// than any window lasts: never opened (again).
+		s.closeCaptiveWindow("a window already used")
+		return
+	}
 	if refusal := s.captiveRefusal(); refusal != "" {
 		s.logger.Warn("refusing the captive portal window", "reason", refusal)
 		s.closeCaptiveWindow(refusal)
 		return
 	}
 	// Opening again is a new window, from now: never added to the last.
+	s.captiveSeen = append(s.captiveSeen[max(0, len(s.captiveSeen)-maximumCaptiveSeen+1):], window.ID)
 	s.captiveWindow = &openCaptiveWindow{
 		id: window.ID, until: now.Add(window.Duration()), untilWall: now.Round(0).Add(window.Duration()),
 	}
@@ -197,18 +208,31 @@ func (s *Server) closeCaptiveOnRequest(id string) {
 	}
 }
 
+// captiveFlushAgain is when the host resolver's cache is emptied a second
+// time after a window: meshd may still have answered a name from the
+// network's resolvers in the second it takes to see the window closed.
+const captiveFlushAgain = 6 * time.Second
+
 // flushDNSCaches empties the host resolver's cache, when the helper manages
-// one.
+// one, now and once more a little later, without holding up requests.
 func (s *Server) flushDNSCaches() {
 	flusher, ok := s.dns.(dnsCacheFlusher)
 	if !ok {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := flusher.FlushCaches(ctx); err != nil {
-		s.logger.Warn("flushing the host's DNS cache after the captive portal window failed", "error", err)
-	}
+	logger := s.logger
+	go func() {
+		for index := range 2 {
+			if index == 1 {
+				time.Sleep(captiveFlushAgain)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := flusher.FlushCaches(ctx); err != nil {
+				logger.Warn("flushing the host's DNS cache after the captive portal window failed", "error", err)
+			}
+			cancel()
+		}
+	}()
 }
 
 // remainingAt is how long the window stays open after now, by whichever

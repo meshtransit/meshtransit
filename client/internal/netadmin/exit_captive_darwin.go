@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net"
@@ -18,6 +19,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"meshtransit.net/client/internal/hostroute"
 )
@@ -213,6 +216,11 @@ func readCaptiveState(path string) (darwinCaptiveState, error) {
 // empties the host's DNS cache. A window the helper already closed, or a
 // newer one, is left alone.
 func ExpireDarwinCaptive(statePath, id string, now time.Time) error {
+	unlock, err := lockCaptive(statePath)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	state, err := readCaptiveState(statePath)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -273,4 +281,27 @@ func flushDarwinDNSCache(ctx context.Context) {
 func (c *scutilConfigurator) FlushCaches(ctx context.Context) error {
 	flushDarwinDNSCache(ctx)
 	return nil
+}
+
+// lockCaptive takes the lock the helper and what ends a window without it
+// share, next to the holes state at statePath: neither loads the kill
+// switch while the other reads or changes it. Without a state path there is
+// nothing to share.
+func lockCaptive(statePath string) (func(), error) {
+	if statePath == "" {
+		return func() {}, nil
+	}
+	path := filepath.Join(filepath.Dir(statePath), "captive.lock")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600) //nolint:gosec // G304: the helper's runtime directory
+	if err != nil {
+		return nil, fmt.Errorf("netadmin: opening the captive portal window lock: %w", err)
+	}
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("netadmin: taking the captive portal window lock: %w", err)
+	}
+	return func() {
+		_ = unix.Flock(int(file.Fd()), unix.LOCK_UN)
+		_ = file.Close()
+	}, nil
 }

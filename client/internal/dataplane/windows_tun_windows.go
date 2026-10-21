@@ -50,6 +50,8 @@ type WindowsTUNOpener struct {
 	// writes, captive the window open (windows_captive_windows.go).
 	captivePath string
 	captive     *windowsCaptive
+	// captiveSeen are the windows this run opened, never opened again.
+	captiveSeen []string
 }
 
 // NewWindowsTUNOpener returns an opener for the service's adapter that

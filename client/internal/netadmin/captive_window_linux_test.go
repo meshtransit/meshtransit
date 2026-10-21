@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -192,10 +193,30 @@ func TestCaptiveWindowLifecycle(t *testing.T) {
 	if h.lastWindow() != nil || routing.Captive != (CaptiveWindow{}) || !h.fileGone() {
 		t.Fatalf("early close left %+v, captive %+v", h.lastWindow(), routing.Captive)
 	}
-	// The file is gone: polling does not open it again.
+	// The file is gone: polling does not open it again; nor does a file
+	// that stayed (a delete that failed), nor one older than any window.
 	h.poll()
 	if h.server.captiveWindow != nil {
 		t.Fatal("a closed window opened again")
+	}
+	stayed, err := json.Marshal(again)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(h.window, stayed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.poll()
+	if h.server.captiveWindow != nil || !h.fileGone() {
+		t.Fatal("a window whose file stayed opened again")
+	}
+	old := captive.Window{ID: strings.Repeat("cd", 16), Seconds: 60, Opened: h.now.Add(-time.Hour)}
+	if stale, err := json.Marshal(old); err != nil || os.WriteFile(h.window, stale, 0o600) != nil {
+		t.Fatal(err)
+	}
+	h.poll()
+	if h.server.captiveWindow != nil {
+		t.Fatal("a stale window opened")
 	}
 
 	// The window ends on time.

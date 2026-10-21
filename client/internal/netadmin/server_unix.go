@@ -109,6 +109,8 @@ type Server struct {
 	// captiveNow the clock it is counted on (time.Now, monotonic).
 	captiveWindow *openCaptiveWindow
 	captiveNow    func() time.Time
+	// captiveSeen are the windows this run opened, never opened again.
+	captiveSeen []string
 	// readWindow reads the window file (captive.ReadWindow).
 	readWindow func(string) (captive.Window, error)
 	// loadSettings reads the route settings (routesettings.Load).

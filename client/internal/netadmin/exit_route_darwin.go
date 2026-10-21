@@ -101,6 +101,11 @@ func (c *darwinExitRouteConfigurer) Replace(name string, _, allowLAN bool, windo
 	if name != "" && (!validInterfaceName(name) || !strings.HasPrefix(name, "utun")) {
 		return "", errors.New("netadmin: exit route target is invalid")
 	}
+	unlock, err := lockCaptive(c.holesPath)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	var lan []netip.Prefix
 	if allowLAN {
 		lan = c.lan()
@@ -170,6 +175,11 @@ func (c *darwinExitRouteConfigurer) Stamp(name string) string {
 
 // Clear removes the routes first and the kill switch last.
 func (c *darwinExitRouteConfigurer) Clear() error {
+	unlock, err := lockCaptive(c.holesPath)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	c.closeCaptive()
 	if err := clearDarwinExitRoutes(); err != nil {
 		return err

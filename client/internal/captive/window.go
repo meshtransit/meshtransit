@@ -47,6 +47,12 @@ type Window struct {
 	Opened time.Time `json:"opened"`
 }
 
+// Stale reports a window opened longer ago than any window lasts, by the
+// wall clock: one a helper must never open, whatever happened to its file.
+func (w Window) Stale(now time.Time) bool {
+	return now.Round(0).Sub(w.Opened) > MaximumWindow+time.Minute
+}
+
 // Duration is how long the window stays open, clamped to MaximumWindow.
 func (w Window) Duration() time.Duration {
 	return min(time.Duration(w.Seconds)*time.Second, MaximumWindow)

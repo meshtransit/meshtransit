@@ -3,13 +3,16 @@
 package dataplane
 
 import (
+	"bufio"
 	"errors"
+	"io"
 	"io/fs"
 	"net/netip"
 	"os"
 	"os/exec"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -32,8 +35,19 @@ import (
 // adapter for the window: a route cannot tell ports apart, so everything
 // but the window's traffic meets the kill switch rather than the tunnel.
 
-// captiveWindowPoll is how often the service reads the window file.
-const captiveWindowPoll = time.Second
+// Following a captive portal window.
+const (
+	// captiveWindowPoll is how often the service reads the window file.
+	captiveWindowPoll = time.Second
+	// captiveReadyWithin bounds the wait for the child to hold the permits.
+	captiveReadyWithin = 5 * time.Second
+	// maximumCaptiveSeen bounds the windows a run remembers having opened.
+	maximumCaptiveSeen = 64
+	// captiveFlushAgain is when the DNS cache is emptied a second time
+	// after a window: meshd may answer a name from the network's resolvers
+	// in the second it takes to see the window closed.
+	captiveFlushAgain = 6 * time.Second
+)
 
 // windowsCaptive is the window the service holds open.
 type windowsCaptive struct {
@@ -82,7 +96,10 @@ func (o *WindowsTUNOpener) pollCaptiveLocked(now time.Time) {
 	}
 	o.closeCaptiveLocked()
 	settings, err := routesettings.Load(o.routeSettings)
-	if err != nil || settings.ExitCaptiveOff || !o.exitRouting.Routing {
+	// A window this run already opened whose file stayed (a delete that
+	// failed), or one older than any window lasts, never opens (again).
+	if err != nil || settings.ExitCaptiveOff || !o.exitRouting.Routing ||
+		slices.Contains(o.captiveSeen, window.ID) || window.Stale(now) {
 		_ = captive.CloseWindow(o.captivePath)
 		return
 	}
@@ -91,6 +108,7 @@ func (o *WindowsTUNOpener) pollCaptiveLocked(now time.Time) {
 		_ = captive.CloseWindow(o.captivePath)
 		return
 	}
+	o.captiveSeen = append(o.captiveSeen[max(0, len(o.captiveSeen)-maximumCaptiveSeen+1):], window.ID)
 	o.captive = &windowsCaptive{
 		id: window.ID, until: now.Add(window.Duration()), untilWall: now.Round(0).Add(window.Duration()),
 		opened: name, holes: winfw.Captive{Openings: []winfw.CaptiveOpening{opening}, Portals: o.requestedPortals()},
@@ -142,9 +160,11 @@ func (o *WindowsTUNOpener) holdCaptiveLocked(now time.Time) error {
 		return err
 	}
 	opening := o.captive.holes.Openings[0]
+	remaining := o.captiveRemaining(now)
 	args := []string{
 		"captive", "hold", "--file", o.captivePath, "--id", o.captive.id,
-		"--after", o.captiveRemaining(now).Round(time.Millisecond).String(),
+		"--after", remaining.Round(time.Millisecond).String(),
+		"--until", now.Round(0).Add(remaining).UTC().Format(time.RFC3339Nano),
 		"--interface", strconv.FormatUint(opening.Interface, 10),
 	}
 	for _, address := range opening.Addresses {
@@ -156,12 +176,54 @@ func (o *WindowsTUNOpener) holdCaptiveLocked(now time.Time) error {
 		}
 	}
 	command := exec.Command(self, args...) //nolint:gosec,noctx // G204: this binary; it outlives every context on purpose
+	ready, err := command.StdoutPipe()
+	if err != nil {
+		return err
+	}
 	if err := command.Start(); err != nil {
 		return err
 	}
-	o.captive.child = command.Process
-	go func() { _ = command.Wait() }()
+	child := command.Process
+	// The window opens only once the child holds its permits: without them
+	// taking the /1 routes away would only cut the host off.
+	held := make(chan bool, 1)
+	go func() {
+		line, _ := bufio.NewReader(ready).ReadString('\n')
+		held <- strings.TrimSpace(line) == captiveHoldReady
+		_, _ = io.Copy(io.Discard, ready)
+	}()
+	select {
+	case ok := <-held:
+		if !ok {
+			_ = child.Kill()
+			_ = command.Wait()
+			return errors.New("dataplane: the captive portal window's permits could not be held")
+		}
+	case <-time.After(captiveReadyWithin):
+		_ = child.Kill()
+		_ = command.Wait()
+		return errors.New("dataplane: the captive portal window's permits were not held in time")
+	}
+	o.captive.child = child
+	go o.captiveChildEnded(command, child)
 	return nil
+}
+
+// captiveHoldReady is what meshd captive hold prints once it holds the
+// window's permits.
+const captiveHoldReady = "held"
+
+// captiveChildEnded closes the window when its child ends while the window
+// is still open: its permits are gone, so the /1 routes come back.
+func (o *WindowsTUNOpener) captiveChildEnded(command *exec.Cmd, child *os.Process) {
+	_ = command.Wait()
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.captive != nil && o.captive.child == child {
+		o.captive.child = nil
+		o.closeCaptiveLocked()
+		_ = captive.CloseWindow(o.captivePath)
+	}
 }
 
 // stopCaptiveChildLocked ends the child: its permits go with its session.
@@ -182,6 +244,7 @@ func (o *WindowsTUNOpener) closeCaptiveLocked() {
 	o.captive = nil
 	_ = o.replaceAdapterRoutesLocked()
 	_ = windns.FlushCache()
+	time.AfterFunc(captiveFlushAgain, func() { _ = windns.FlushCache() })
 }
 
 // replaceAdapterRoutesLocked installs the adapter's routes as they are now.
@@ -212,13 +275,20 @@ func windowsCaptiveOpening(adapter uint64) (winfw.CaptiveOpening, string) {
 		if err != nil {
 			continue
 		}
+		bestMetric := uint64(0)
 		for index := range rows {
 			row := &rows[index]
 			if row.DestinationPrefix.Prefix().Bits() != 0 || uint64(row.InterfaceLUID) == adapter {
 				continue
 			}
-			if best == nil || row.Metric < best.Metric {
-				best = row
+			// Windows ranks routes by the route's metric plus its
+			// interface's.
+			metric := uint64(row.Metric)
+			if link, err := row.InterfaceLUID.IPInterface(family); err == nil {
+				metric += uint64(link.Metric)
+			}
+			if best == nil || metric < bestMetric {
+				best, bestMetric = row, metric
 			}
 		}
 		if best != nil {

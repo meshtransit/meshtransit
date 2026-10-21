@@ -47,6 +47,10 @@ const captiveStateOpen = "open"
 // design §17.4).
 const captiveCloseAfter = 15 * time.Second
 
+// captiveEndsEarly is how long before the helper's end of a window meshd
+// treats it as closed.
+const captiveEndsEarly = time.Second
+
 // captiveWindowFollow is what meshd follows of a window root opened.
 type captiveWindowFollow struct {
 	id    string
@@ -198,7 +202,9 @@ func (t *captiveTracker) followWindow(window netadmin.CaptiveWindow, until, now 
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if window.ID == "" || !now.Before(until) {
+	// A second early: names stop going to the network's resolvers before
+	// the helper empties the host's cache at the window's end.
+	if window.ID == "" || !now.Before(until.Add(-captiveEndsEarly)) {
 		t.window = captiveWindowFollow{}
 		return "", false
 	}
