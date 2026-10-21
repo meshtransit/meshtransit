@@ -57,6 +57,12 @@ func (e *WireGuardEngine) syncExitRouteLocked(routed *routedTable) {
 			status.Node = routed.exit.nodeRef
 		}
 	}
+	if desired != e.exitRouteAsked {
+		// A new request: what the helper said of the old one no longer
+		// holds, while it is still routing (or not) as it was.
+		status.Refused, status.Error = "", ""
+		e.exitRouteAsked = desired
+	}
 	setter, supported := e.opener.(exitRouteSetter)
 	if !supported {
 		status.Routing, status.Refused, status.Error = false, "", ""
@@ -146,6 +152,7 @@ func (e *WireGuardEngine) followExitLocked(bound bool) {
 func (e *WireGuardEngine) resetExitRouteLocked() {
 	e.exitRoute.resetLocked()
 	e.exitRouteStatus = ExitRouteStatus{}
+	e.exitRouteAsked = exitRouteDesired{}
 	e.filter.SetExitRouted(false)
 	// The next device asks again; a kill switch the helper keeps is held
 	// by root's choice (underlay.ExitChosen).

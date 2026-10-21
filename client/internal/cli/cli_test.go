@@ -881,6 +881,8 @@ func testOptions(client DaemonClient) Options {
 		NewClient: func(string, time.Duration) (DaemonClient, error) {
 			return client, nil
 		},
+		// exit use waits for meshd: not for long in tests.
+		ExitWait: 20 * time.Millisecond,
 	}
 }
 

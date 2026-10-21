@@ -47,6 +47,8 @@ type Command struct {
 	// needs (meshctl through sudo) and returns its exit code; without it an
 	// unprivileged change is refused.
 	Elevate func() int
+	// Quiet leaves out the settings printed after a change.
+	Quiet bool
 	// FixedPath, when set, is the only settings file: no --routes-file
 	// flag, so a command run as root (meshctl through sudo) writes nowhere
 	// else.
@@ -108,6 +110,9 @@ func (c Command) Run(args []string, stdout, stderr io.Writer) int {
 	if err := routesettings.Save(*path, changed); err != nil {
 		_, _ = fmt.Fprintf(stderr, "%s: %v\n", c.Program, err)
 		return 1
+	}
+	if c.Quiet {
+		return 0
 	}
 	return c.print(stdout, stderr, changed)
 }

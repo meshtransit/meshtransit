@@ -20,15 +20,15 @@ const administratorHint = "meshctl: administrator rights are required for route 
 // does, in the default file only. Only SYSTEM and Administrators may open
 // that file (privatefile), so reading needs an administrator's full token
 // as a change does, which only a terminal opened as administrator has.
-func hostRoutes(args []string, stdout, stderr io.Writer) int {
+func hostRoutes(args []string, quiet bool, stdout, stderr io.Writer) (int, bool) {
 	elevated := windows.GetCurrentProcessToken().IsElevated()
 	if !elevated {
 		_, _ = fmt.Fprintln(stderr, administratorHint)
-		return 1
+		return 1, false
 	}
 	command := routescli.Command{
 		Program: "meshctl", Privilege: "administrator rights", FixedPath: config.DefaultRouteSettingsPath,
-		Privileged: func() bool { return elevated },
+		Quiet: quiet, Privileged: func() bool { return elevated },
 	}
-	return command.Run(args, stdout, stderr)
+	return command.Run(args, stdout, stderr), false
 }

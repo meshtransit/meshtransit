@@ -314,6 +314,9 @@ type WireGuardEngine struct {
 	// the exit node chosen; exitRouteStatus is what the helper did with it.
 	exitRoute       helperSync[exitRouteDesired, netadmin.ExitRouting]
 	exitRouteStatus ExitRouteStatus
+	// exitRouteAsked is what the helper was last asked; a change clears the
+	// refusal and error of the previous request, which no longer hold.
+	exitRouteAsked exitRouteDesired
 	// routerHealth measures the served Sites while the node serves any.
 	routerHealth routerHealth
 	// enforcementChanges signals enforced policy changes no map carried.

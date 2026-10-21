@@ -2,10 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"meshtransit.net/client/internal/cli/localapi"
 )
@@ -36,15 +39,119 @@ func TestExitApprove(t *testing.T) {
 
 // fakeRoutes records what meshctl asks of the host's route settings.
 type fakeRoutes struct {
-	calls  [][]string
-	output string
-	code   int
+	calls     [][]string
+	quiet     []bool
+	output    string
+	code      int
+	delegated bool
 }
 
-func (routes *fakeRoutes) run(args []string, stdout, _ io.Writer) int {
+func (routes *fakeRoutes) run(args []string, quiet bool, stdout, _ io.Writer) (int, bool) {
 	routes.calls = append(routes.calls, append([]string(nil), args...))
+	routes.quiet = append(routes.quiet, quiet)
 	_, _ = io.WriteString(stdout, routes.output)
-	return routes.code
+	return routes.code, routes.delegated
+}
+
+// statusSequence answers each Status with the next of statuses, the last
+// one again once they run out.
+type statusSequence struct {
+	fakeClient
+	statuses []localapi.Status
+	asked    int
+}
+
+func (client *statusSequence) Status(context.Context) (localapi.Status, error) {
+	if client.err != nil {
+		return localapi.Status{}, client.err
+	}
+	status := client.statuses[min(client.asked, len(client.statuses)-1)]
+	client.asked++
+	return status, nil
+}
+
+func TestExitUseWaitsUntilTheChoiceApplies(t *testing.T) {
+	t.Parallel()
+	serving := localapi.Status{Exit: &localapi.ExitStatus{
+		Use: "World", Pool: "p1", PoolName: "World",
+		ExitNode: "d1", ExitNodeName: "poc-02", Via: "primary", Routing: true,
+	}}
+	for _, test := range []struct {
+		name      string
+		args      []string
+		statuses  []localapi.Status
+		delegated bool
+		err       error
+		want      string
+		asked     int
+	}{
+		{
+			"applies",
+			[]string{"exit", "use", "World"},
+			[]localapi.Status{{}, serving},
+			false, nil,
+			"Exit: via poc-02 in pool World; IPv6 blocked\n", 2,
+		},
+		{
+			"off",
+			[]string{"exit", "use", "off"},
+			[]localapi.Status{serving, {}},
+			false, nil,
+			"Exit: off; this machine uses its own network again\n", 2,
+		},
+		{
+			"refused",
+			[]string{"exit", "use", "World"},
+			[]localapi.Status{{Exit: &localapi.ExitStatus{Use: "World", Refused: "exit_use_off"}}},
+			false, nil,
+			"Exit: not routed: exit_use_off\n", 1,
+		},
+		{"run through sudo", []string{"exit", "use", "World"}, []localapi.Status{{}}, true, nil, "", 0},
+		{"auto after a pool", []string{"exit", "use", "auto"}, []localapi.Status{
+			serving,
+			{Exit: &localapi.ExitStatus{Use: "auto", Pool: "p1", PoolName: "World", Routing: true}},
+			{Exit: &localapi.ExitStatus{
+				Use: "auto", Pool: "p1", PoolName: "World", ExitNode: "d1",
+				ExitNodeName: "poc-02", Via: "primary", Routing: true, IPv6: true,
+			}},
+		}, false, nil, "Exit: via poc-02 in pool World\n", 3},
+		{"off under a managed pool", []string{"exit", "use", "off"}, []localapi.Status{
+			serving,
+			{Exit: &localapi.ExitStatus{
+				Use: "managed", Pool: "p1", PoolName: "World", ExitNode: "d1",
+				ExitNodeName: "poc-02", Via: "primary", Routing: true, IPv6: true,
+			}},
+		}, false, nil, "Exit: off here; the administrator's pool applies: via poc-02 in pool World\n", 2},
+		{
+			"never applies",
+			[]string{"exit", "use", "World"},
+			[]localapi.Status{{}},
+			false, nil,
+			"Exit: not applied yet; meshctl exit status shows when it is\n", -1,
+		},
+		{
+			"meshd down",
+			[]string{"exit", "use", "World"},
+			[]localapi.Status{{}},
+			false, errors.New("no socket"),
+			"Exit: saved; it applies when meshd runs\n", -1,
+		},
+	} {
+		client := &statusSequence{statuses: test.statuses}
+		client.err = test.err
+		routes := &fakeRoutes{delegated: test.delegated}
+		options := testOptions(client)
+		options.Routes = routes.run
+		options.ExitWait = 50 * time.Millisecond
+		var stdout, stderr bytes.Buffer
+		if code := Run(t.Context(), test.args, &stdout, &stderr, options); code != 0 {
+			t.Fatalf("%s = %d: %s", test.name, code, stderr.String())
+		}
+		if got := stdout.String(); got != test.want || len(routes.quiet) != 1 || !routes.quiet[0] ||
+			(test.asked >= 0 && client.asked != test.asked) {
+			t.Errorf("%s: printed %q, quiet %v, asked %d", test.name, got, routes.quiet, client.asked)
+		}
+	}
 }
 
 func TestExitUseAndServeChangeTheHostSettings(t *testing.T) {

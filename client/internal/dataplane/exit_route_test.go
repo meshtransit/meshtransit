@@ -107,9 +107,17 @@ type exitRouteOpener struct {
 	mu       sync.Mutex
 	requests []netadmin.ExitRouteRequest
 	refused  string
+	// hold, when set, keeps the helper's answer until it is closed.
+	hold chan struct{}
 }
 
 func (o *exitRouteOpener) SetExitRoute(_ context.Context, route netadmin.ExitRouteRequest) (netadmin.ExitRouting, error) {
+	o.mu.Lock()
+	hold := o.hold
+	o.mu.Unlock()
+	if hold != nil {
+		<-hold
+	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.requests = append(o.requests, route)
@@ -230,5 +238,37 @@ func TestPolicyFilterCountsConnectionsThroughTheExitNode(t *testing.T) {
 	}
 	if activity := filter.ExitActivity(); activity.NewConnections != 0 || activity.LastAnswered.IsZero() {
 		t.Fatalf("activity after an answer = %+v", activity)
+	}
+}
+
+// A new request clears what the helper said of the previous one at once:
+// meshctl exit use reads the status while the helper still works.
+func TestWireGuardEngineForgetsTheOldRefusalOfANewRequest(t *testing.T) {
+	// Not parallel: see TestWireGuardEngineStopsTheExitRoute.
+	t.Cleanup(func() { underlay.SetExitBound(underlay.ExitRequested|underlay.ExitHeld, false) })
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	opener := &exitRouteOpener{refused: netadmin.ExitRouteRefusedOff}
+	engine, err := newWireGuardEngine(opener, 41641, &fakeWireGuardFactory{device: &fakeWireGuardDevice{}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = engine.Close() })
+	snapshot = withExitRoute(snapshot, false)
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the refusal", func() bool { return engine.ExitRoute().Refused == netadmin.ExitRouteRefusedOff })
+	hold := make(chan struct{})
+	opener.mu.Lock()
+	opener.hold, opener.refused = hold, ""
+	opener.mu.Unlock()
+	defer close(hold)
+	snapshot = withExitRoute(snapshot, true)
+	snapshot.Revision++
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatal(err)
+	}
+	if status := engine.ExitRoute(); status.Refused != "" || status.Error != "" {
+		t.Fatalf("ExitRoute() while the helper works = %+v, want the old refusal gone", status)
 	}
 }

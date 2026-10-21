@@ -60,8 +60,13 @@ type Options struct {
 	Stdin     io.Reader
 	// Routes shows or changes the host's route settings as meshnetd routes
 	// does (args after "routes"), asking for the privileges a change needs;
-	// nil where meshctl cannot change them.
-	Routes func(args []string, stdout, stderr io.Writer) int
+	// nil where meshctl cannot change them. quiet leaves out the settings
+	// printed after a change. delegated reports the command ran again
+	// elsewhere (meshctl through sudo), which said all there was to say.
+	Routes func(args []string, quiet bool, stdout, stderr io.Writer) (code int, delegated bool)
+	// ExitWait bounds how long exit use waits for meshd to apply the
+	// choice; zero waits 15 s.
+	ExitWait time.Duration
 }
 
 // Run executes one meshctl command and returns a process exit code.
@@ -122,7 +127,16 @@ func Run(
 			_, _ = fmt.Fprintf(stderr, "meshctl: %s has no JSON output\n", strings.Join(commandArgs[:min(2, len(commandArgs))], " "))
 			return 2
 		}
-		return runHostRoutes(commandArgs[0], routes, stdout, stderr, options.Routes)
+		quiet := commandArgs[0] == "exit"
+		code, delegated := runHostRoutes(commandArgs[0], routes, quiet, stdout, stderr, options.Routes)
+		if code != 0 || delegated || !quiet {
+			return code
+		}
+		if routes[0] == "exit-mode" {
+			_, _ = fmt.Fprintf(stdout, "Exit node: %s\n", exitServeText[routes[1]])
+			return 0
+		}
+		return waitForExit(ctx, routes[1], stdout, options, global)
 	}
 
 	timeout := global.timeout

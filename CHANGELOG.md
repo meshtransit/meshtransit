@@ -5,6 +5,10 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Clients: `meshctl exit use` waits, up to 15 s, until meshd applied the
+  choice and prints one line (`Exit: via NODE in pool POOL`, `Exit: off …`,
+  or why it is not routed) instead of every route setting; `exit serve`
+  prints one line too.
 - Clients: `meshctl exit use POOL|auto|off`, `meshctl exit serve on|off`,
   `meshctl exit status` and `meshctl routes COMMAND` (every `meshnetd
   routes` / Windows `meshd routes` command) on Linux, macOS and Windows. A

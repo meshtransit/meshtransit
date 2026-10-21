@@ -18,13 +18,18 @@ import (
 // does, in the default file only. Anyone reads them; a change needs root,
 // so meshctl runs the same command again through sudo, which asks for the
 // password.
-func hostRoutes(args []string, stdout, stderr io.Writer) int {
+func hostRoutes(args []string, quiet bool, stdout, stderr io.Writer) (int, bool) {
+	delegated := false
 	command := routescli.Command{
-		Program: "meshctl", Privilege: "root privileges", FixedPath: config.DefaultRouteSettingsPath,
+		Program: "meshctl", Privilege: "root privileges", FixedPath: config.DefaultRouteSettingsPath, Quiet: quiet,
 		Privileged: func() bool { return os.Geteuid() == 0 },
-		Elevate:    func() int { return runWithSudo(stderr) },
+		Elevate: func() int {
+			delegated = true
+			return runWithSudo(stderr)
+		},
 	}
-	return command.Run(args, stdout, stderr)
+	code := command.Run(args, stdout, stderr)
+	return code, delegated
 }
 
 // elevatedMarker is set in the environment of the meshctl sudo runs: one
@@ -52,8 +57,14 @@ func runWithSudo(stderr io.Writer) int {
 	_, _ = fmt.Fprintln(stderr, "meshctl: changing route settings needs root; asking sudo")
 	// The user's own command, run again by the same binary.
 	// Interrupting meshctl interrupts sudo through the terminal: no deadline.
-	sudoCommand := exec.CommandContext(context.Background(), sudo, //nolint:gosec // see above
-		append([]string{"-u", "root", "--", "env", elevatedMarker + "=1", executable}, os.Args[1:]...)...)
+	// sudo resets the environment: carry the marker and the socket meshctl
+	// was told to use.
+	command := []string{"-u", "root", "--", "env", elevatedMarker + "=1"}
+	if socket := os.Getenv("MESHCTL_SOCKET"); socket != "" {
+		command = append(command, "MESHCTL_SOCKET="+socket)
+	}
+	command = append(append(command, executable), os.Args[1:]...)
+	sudoCommand := exec.CommandContext(context.Background(), sudo, command...) //nolint:gosec // see above
 	sudoCommand.Stdin, sudoCommand.Stdout, sudoCommand.Stderr = os.Stdin, os.Stdout, os.Stderr
 	err = sudoCommand.Run()
 	var exited *exec.ExitError

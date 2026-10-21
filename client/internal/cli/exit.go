@@ -3,10 +3,14 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"fmt"
 	"io"
 	"strings"
+	"time"
+
+	"meshtransit.net/client/internal/cli/localapi"
 )
 
 // hostRouteArgs maps the commands that change the host's route settings to
@@ -35,22 +39,102 @@ func hostRouteArgs(args []string) (routes []string, handled bool) {
 
 // runHostRoutes runs one routes command through Routes; routes is empty
 // for a malformed command, answered with the usage of what was typed.
-func runHostRoutes(command string, routes []string, stdout, stderr io.Writer,
-	run func([]string, io.Writer, io.Writer) int,
-) int {
+func runHostRoutes(command string, routes []string, quiet bool, stdout, stderr io.Writer,
+	run func([]string, bool, io.Writer, io.Writer) (int, bool),
+) (int, bool) {
 	if len(routes) == 0 {
 		usage := exitUsage
 		if command == "routes" {
 			usage = routesUsage
 		}
 		_, _ = fmt.Fprintln(stderr, usage)
-		return 2
+		return 2, false
 	}
 	if run == nil {
 		_, _ = fmt.Fprintln(stderr, "meshctl: this build cannot change the host's route settings")
-		return 1
+		return 1, false
 	}
-	return run(routes, stdout, stderr)
+	return run(routes, quiet, stdout, stderr)
+}
+
+var exitServeText = map[string]string{
+	"on":  "offered; Core makes this machine an exit node of the pool it is added to",
+	"off": "not offered; this machine forwards no one's Internet traffic",
+}
+
+// Waiting for meshd to take an exit choice.
+const (
+	exitWaitDefault  = 15 * time.Second
+	exitWaitInterval = 500 * time.Millisecond
+)
+
+// waitForExit asks meshd, until it applied the exit choice use (a pool,
+// auto or off) or ExitWait ran out, and prints one line on where the
+// Internet goes. The choice is saved whatever meshd says.
+func waitForExit(ctx context.Context, use string, stdout io.Writer, options Options, global globalOptions) int {
+	client, err := options.NewClient(global.socketPath, global.timeout)
+	if err != nil {
+		_, _ = fmt.Fprintln(stdout, "Exit: saved; it applies when meshd runs")
+		return 0
+	}
+	wait := cmp.Or(options.ExitWait, exitWaitDefault)
+	deadline := time.Now().Add(wait)
+	for {
+		status, err := client.Status(ctx)
+		if ctx.Err() != nil {
+			return 1
+		}
+		if err != nil {
+			_, _ = fmt.Fprintln(stdout, "Exit: saved; it applies when meshd runs")
+			return 0
+		}
+		if line, applied := exitApplied(use, status.Exit); applied {
+			_, _ = fmt.Fprintln(stdout, line)
+			return 0
+		}
+		if !time.Now().Before(deadline) {
+			_, _ = fmt.Fprintln(stdout, "Exit: not applied yet; meshctl exit status shows when it is")
+			return 0
+		}
+		select {
+		case <-ctx.Done():
+			return 1
+		case <-time.After(min(exitWaitInterval, wait/10)):
+		}
+	}
+}
+
+// exitApplied reports the line to print once meshd applied the choice use:
+// no exit for off (or the pool the administrator manages, when allowed);
+// for a pool or auto, an exit status for that choice (meshd reports Use as
+// chosen, "auto" included) that routes, says why it does not, or names a
+// pool not granted. auto still measuring its pools has no exit node yet.
+// A refusal or error is the helper's answer to this request: meshd clears
+// the previous one when it asks anew.
+func exitApplied(use string, exit *localapi.ExitStatus) (string, bool) {
+	if use == "off" {
+		switch {
+		case exit == nil:
+			return "Exit: off; this machine uses its own network again", true
+		case exit.Use == "managed":
+			return "Exit: off here; the administrator's pool applies: " + formatExitStatus(exit), true
+		}
+		return "", false
+	}
+	if exit == nil || exit.Use != use {
+		return "", false
+	}
+	switch {
+	case exit.Refused != "":
+		return "Exit: not routed: " + exit.Refused, true
+	case exit.Error != "":
+		return "Exit: not routed: " + exit.Error, true
+	case exit.Pool == "":
+		return "Exit: " + formatExitStatus(exit), true
+	case exit.Routing && (exit.ExitNode != "" || use != "auto"):
+		return "Exit: " + formatExitStatus(exit), true
+	}
+	return "", false
 }
 
 const routesUsage = `usage: meshctl routes COMMAND, as meshnetd routes (Windows: meshd routes):
@@ -66,11 +150,11 @@ const exitUsage = `usage: meshctl exit use POOL|auto|off   send this machine's I
 // daemon uses. Settings that cannot be read (Windows: not an administrator)
 // are skipped with the reason; a daemon that cannot answer fails it.
 func runExitStatus(ctx context.Context, stdout, stderr io.Writer, client DaemonClient,
-	routes func([]string, io.Writer, io.Writer) int,
+	routes func([]string, bool, io.Writer, io.Writer) (int, bool),
 ) int {
 	if routes != nil {
 		var settings bytes.Buffer
-		if code := routes([]string{"show"}, &settings, stderr); code != 0 {
+		if code, _ := routes([]string{"show"}, false, &settings, stderr); code != 0 {
 			settings.Reset()
 		}
 		lines := bufio.NewScanner(&settings)
