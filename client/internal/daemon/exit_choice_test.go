@@ -529,8 +529,10 @@ func TestExitChoiceWaitsAfterAFailedMoveBack(t *testing.T) {
 		t.Fatalf("route = %+v, want exit-2", h.route())
 	}
 	// exit-2 no longer reaches the Internet: three connections unanswered.
-	h.failover.observeExitActivity(dataplane.ExitActivity{Node: "exit-2", NewConnections: 3,
-		WaitingSince: h.clock.now})
+	h.failover.observeExitActivity(dataplane.ExitActivity{
+		Node: "exit-2", NewConnections: 3,
+		WaitingSince: h.clock.now,
+	})
 	for range 6 {
 		h.step(21, 22)
 	}
@@ -572,8 +574,10 @@ func TestExitChoiceGoesBackWhereItCameFrom(t *testing.T) {
 	if h.route().Node != "exit-3" {
 		t.Fatalf("route = %+v, want exit-3", h.route())
 	}
-	h.failover.observeExitActivity(dataplane.ExitActivity{Node: "exit-3", NewConnections: 3,
-		WaitingSince: h.clock.now})
+	h.failover.observeExitActivity(dataplane.ExitActivity{
+		Node: "exit-3", NewConnections: 3,
+		WaitingSince: h.clock.now,
+	})
 	for range 6 {
 		h.step(21, 22, 23)
 	}

@@ -383,7 +383,8 @@ func (f *ExitForwarder) answer(ctx context.Context, query []byte, transport stri
 // prepare charges consumer one question and returns the upstreams, the
 // host's own networks and its search domains, read again when stale.
 func (f *ExitForwarder) prepare(consumer netip.Addr, now time.Time) ([]netip.AddrPort, []netip.Prefix, []string,
-	bool) {
+	bool,
+) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.refreshLocked(now)

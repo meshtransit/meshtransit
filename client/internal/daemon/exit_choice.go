@@ -181,8 +181,10 @@ func (failover *routeFailover) observeExitActivity(activity dataplane.ExitActivi
 	if !activity.WaitingSince.IsZero() && !activity.WaitingSince.After(failover.exit.activitySince) {
 		// Evidence from before the node was last left as stuck counts no
 		// more; when the node last used it still counts.
-		activity = dataplane.ExitActivity{Node: activity.Node, LastAnswered: activity.LastAnswered,
-			LastSent: activity.LastSent}
+		activity = dataplane.ExitActivity{
+			Node: activity.Node, LastAnswered: activity.LastAnswered,
+			LastSent: activity.LastSent,
+		}
 	}
 	failover.exit.activity = activity
 }
@@ -458,7 +460,8 @@ func (failover *routeFailover) chooseExitLocked(now time.Time) bool {
 // exitIdleReturnAfter, to a primary that answers, may carry and is not
 // waiting after a failed move back.
 func (failover *routeFailover) mayReturnLocked(pool networkmap.ExitPool, mayCarry, alive func(string) bool,
-	now time.Time) bool {
+	now time.Time,
+) bool {
 	choice := &failover.exit
 	primary := pool.Primary
 	if pool.Status != networkmap.ExitServed || primary == "" || choice.node == "" || choice.node == primary {

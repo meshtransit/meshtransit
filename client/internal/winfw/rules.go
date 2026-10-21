@@ -128,8 +128,10 @@ func Rules(config Config) []Rule {
 	both(Rule{Name: "Block everything else", Weight: weightBlock, Block: true})
 	// What the host forwards for others: into the adapter, or the LAN.
 	if config.Adapter != 0 {
-		both(Rule{Name: "Permit forwarding into the MeshTransit adapter", Weight: weightAdapter, Forward: true,
-			Adapter: config.Adapter})
+		both(Rule{
+			Name: "Permit forwarding into the MeshTransit adapter", Weight: weightAdapter, Forward: true,
+			Adapter: config.Adapter,
+		})
 	}
 	if len(lan4) > 0 {
 		rules = append(rules, Rule{Name: "Permit forwarding to the LAN (IPv4)", Weight: weightLAN, Forward: true, Remote: lan4})
