@@ -30,6 +30,7 @@ func run() int {
 			Build:  version.Current(),
 			Getenv: os.Getenv,
 			Stdin:  os.Stdin,
+			Routes: hostRoutes,
 			NewClient: func(socketPath string, timeout time.Duration) (cli.DaemonClient, error) {
 				return localapi.New(socketPath, timeout)
 			},

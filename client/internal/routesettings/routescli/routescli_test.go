@@ -143,3 +143,33 @@ func TestChangeExitUseSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestRunRoutesElevatesOnlyAValidChange(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "routes.json")
+	elevated := 0
+	command := Command{
+		Program: "meshctl", Privilege: "root privileges", Privileged: func() bool { return false },
+		Elevate: func() int { elevated++; return 7 },
+	}
+	var stdout, stderr bytes.Buffer
+	if code := command.Run([]string{"--routes-file", path, "exit-use", "World"}, &stdout, &stderr); code != 7 ||
+		elevated != 1 {
+		t.Fatalf("valid change = %d, elevated %d", code, elevated)
+	}
+	// A typo fails here, before any password is asked for.
+	if code := command.Run([]string{"--routes-file", path, "exit-use"}, &stdout, &stderr); code != 2 || elevated != 1 {
+		t.Fatalf("malformed change = %d, elevated %d", code, elevated)
+	}
+	// Reading needs nothing.
+	if code := command.Run([]string{"--routes-file", path, "show"}, &stdout, &stderr); code != 0 || elevated != 1 {
+		t.Fatalf("show = %d, elevated %d", code, elevated)
+	}
+	// Privileged, it changes the file itself.
+	command.Privileged = func() bool { return true }
+	stdout.Reset()
+	if code := command.Run([]string{"--routes-file", path, "exit-use", "World"}, &stdout, &stderr); code != 0 ||
+		elevated != 1 || !strings.Contains(stdout.String(), "exit-use: World") {
+		t.Fatalf("privileged change = %d, elevated %d: %s", code, elevated, stdout.String())
+	}
+}

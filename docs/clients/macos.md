@@ -94,12 +94,16 @@ A Mac does not forward into subnets: a subnet router runs on Linux.
 
 ## Use an exit node
 
-Root chooses the Exit Pool (`--enable-exits` is on in both launchd jobs):
+Root chooses the Exit Pool (`--enable-exits` is on in both launchd jobs);
+`meshctl` asks `sudo` for the password itself:
 
 ```bash
-sudo /usr/local/libexec/meshtransit/meshnetd routes exit-use POOL   # or auto, off
-sudo /usr/local/libexec/meshtransit/meshnetd routes exit-allow-lan on
+meshctl exit use POOL     # or auto, off
+meshctl routes exit-allow-lan on
+meshctl exit status
 ```
+
+`sudo /usr/local/libexec/meshtransit/meshnetd routes …` still works.
 
 `meshnetd` then routes `0/1`, `128/1`, `::/1` and `8000::/1` into the utun,
 marked apart from subnet routes, and loads a pf kill switch into the anchor

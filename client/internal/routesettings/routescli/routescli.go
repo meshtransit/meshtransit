@@ -43,6 +43,14 @@ type Command struct {
 	Privilege string
 	// Privileged reports whether the caller may change the settings.
 	Privileged func() bool
+	// Elevate, when set, runs a valid change again with the privileges it
+	// needs (meshctl through sudo) and returns its exit code; without it an
+	// unprivileged change is refused.
+	Elevate func() int
+	// FixedPath, when set, is the only settings file: no --routes-file
+	// flag, so a command run as root (meshctl through sudo) writes nowhere
+	// else.
+	FixedPath string
 }
 
 // Run shows or changes the host's subnet route settings, args following
@@ -51,8 +59,17 @@ type Command struct {
 func (c Command) Run(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet(c.Program+" routes", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	flags.Usage = func() { _, _ = fmt.Fprintf(stderr, usage, c.Program, c.Privilege) }
-	path := flags.String("routes-file", config.DefaultRouteSettingsPath, "route settings file")
+	flags.Usage = func() {
+		text := fmt.Sprintf(usage, c.Program, c.Privilege)
+		if c.FixedPath != "" {
+			text = strings.Replace(text, " [--routes-file PATH]", "", 1)
+		}
+		_, _ = io.WriteString(stderr, text)
+	}
+	path := &c.FixedPath
+	if c.FixedPath == "" {
+		path = flags.String("routes-file", config.DefaultRouteSettingsPath, "route settings file")
+	}
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -82,6 +99,9 @@ func (c Command) Run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if c.Privileged == nil || !c.Privileged() {
+		if c.Elevate != nil {
+			return c.Elevate()
+		}
 		_, _ = fmt.Fprintf(stderr, "%s: %s are required to change route settings\n", c.Program, c.Privilege)
 		return 1
 	}

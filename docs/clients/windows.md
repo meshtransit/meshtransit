@@ -111,15 +111,18 @@ Linux.
 ## Use an exit node
 
 A Windows machine sends its Internet traffic through an Exit Pool its rules
-grant once an administrator chooses one, from an elevated PowerShell
-(`--enable-exits` is on in the installed service):
+grant once an administrator chooses one, from a terminal opened with "Run
+as administrator" (`--enable-exits` is on in the installed service):
 
 ```powershell
-meshd routes exit-use POOL    # a pool's reference or name
-meshd routes exit-use auto    # the nearest pool Core serves, kept
-meshd routes exit-use off
-meshd routes exit-allow-lan on
+meshctl exit use POOL     # a pool's reference or name
+meshctl exit use auto     # the nearest pool Core serves, kept
+meshctl exit use off
+meshctl routes exit-allow-lan on
+meshctl exit status
 ```
+
+`meshd routes …` takes the same commands.
 
 The service then routes `0.0.0.0/1`, `128.0.0.0/1`, `::/1` and `8000::/1`
 into the MeshTransit adapter and holds a kill switch in the Windows

@@ -58,6 +58,10 @@ type Options struct {
 	Getenv    func(string) string
 	NewClient ClientFactory
 	Stdin     io.Reader
+	// Routes shows or changes the host's route settings as meshnetd routes
+	// does (args after "routes"), asking for the privileges a change needs;
+	// nil where meshctl cannot change them.
+	Routes func(args []string, stdout, stderr io.Writer) int
 }
 
 // Run executes one meshctl command and returns a process exit code.
@@ -111,6 +115,16 @@ func Run(
 		return writeVersion(stdout, global.isJSON, options.Build)
 	}
 
+	// The host's route settings are root's: they go through Routes, not the
+	// daemon, which can never change them.
+	if routes, handled := hostRouteArgs(commandArgs); handled {
+		if global.isJSON {
+			_, _ = fmt.Fprintf(stderr, "meshctl: %s has no JSON output\n", strings.Join(commandArgs[:min(2, len(commandArgs))], " "))
+			return 2
+		}
+		return runHostRoutes(commandArgs[0], routes, stdout, stderr, options.Routes)
+	}
+
 	timeout := global.timeout
 	switch commandArgs[0] {
 	case "netcheck":
@@ -155,6 +169,13 @@ func Run(
 	case "logout":
 		return runLogout(ctx, commandArgs[1:], stdout, stderr, global.isJSON, client)
 	case "exit":
+		if len(commandArgs) == 2 && commandArgs[1] == "status" {
+			if global.isJSON {
+				_, _ = fmt.Fprintln(stderr, "meshctl: exit status has no JSON output; meshctl --json status carries the exit in use")
+				return 2
+			}
+			return runExitStatus(ctx, stdout, stderr, client, options.Routes)
+		}
 		return runExit(ctx, commandArgs[1:], stdout, stderr, global.isJSON, client)
 	default:
 		_, _ = fmt.Fprintf(stderr, "meshctl: unknown command %q\n", commandArgs[0])
@@ -1111,7 +1132,11 @@ Commands:
   login complete                          Recover a pending browser authorization
   identity rotate-node-key                Rotate the active profile Node key
   netcheck                                Classify the NAT in front of this machine now
+  exit use POOL|auto|off                  Send this machine's Internet traffic through an Exit Pool (needs root or administrator)
+  exit serve on|off                       Offer to be an exit node for other Devices (needs root or administrator)
+  exit status                             Show this machine's exit choice and the exit node in use
   exit approve ID...                      Use the exit nodes (or pool) status lists as waiting
+  routes COMMAND                          Show or change subnet and exit route settings (meshctl routes show)
   doctor control                          Probe active control compatibility
   version                                 Show meshctl build information
   help                                    Show this help

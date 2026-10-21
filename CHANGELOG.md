@@ -5,6 +5,14 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Clients: `meshctl exit use POOL|auto|off`, `meshctl exit serve on|off`,
+  `meshctl exit status` and `meshctl routes COMMAND` (every `meshnetd
+  routes` / Windows `meshd routes` command) on Linux, macOS and Windows. A
+  change still needs root (Windows: an administrator terminal, which reading
+  needs too): on Linux and macOS `meshctl` runs the same command again
+  through `sudo -u root`, which asks for the password, once the change is
+  valid, and never twice; reading needs nothing there. `meshctl` always
+  uses the default settings file.
 - Core: who uses which exit node. A consumer's exit selection
   (`RouteSelectionReport.exit`, of a pool it was sent, with a candidate) is
   stored with its Site routers: in the node's delivery record and counted

@@ -74,14 +74,15 @@ the routes are kept safe is in [Client](../architecture/client.md).
 
 A Linux machine forwards other Devices' Internet traffic for the Exit Pool
 Core assigns it to only when both the deployment and root allow it: add
-`--enable-exit-node` to `MESHD_FLAGS`, and as root run
-`meshnetd routes exit-mode on`. Core's limits only narrow the machine's own:
+`--enable-exit-node` to `MESHD_FLAGS`, and run `meshctl exit serve on`
+(it asks `sudo`; or `sudo meshnetd routes exit-mode on`). Core's limits
+only narrow the machine's own:
 
 ```bash
-sudo /usr/libexec/meshtransit/meshnetd routes exit-mode on
-sudo /usr/libexec/meshtransit/meshnetd routes exit-conntrack-max 8192   # connections per consumer
-sudo /usr/libexec/meshtransit/meshnetd routes exit-max-consumers 64
-sudo /usr/libexec/meshtransit/meshnetd routes exit-smtp on              # TCP 25, off by default
+meshctl exit serve on
+meshctl routes exit-conntrack-max 8192   # connections per consumer
+meshctl routes exit-max-consumers 64
+meshctl routes exit-smtp on              # TCP 25, off by default
 ```
 
 The exit node forwards only to the Internet: never to private, shared,
@@ -102,13 +103,18 @@ that port.
 ## Use an exit node
 
 A Linux machine sends its Internet traffic through an Exit Pool its rules
-grant only once root chooses one; nothing changes until then:
+grant only once root chooses one; nothing changes until then. `meshctl`
+asks `sudo` for the password when it is not run as root:
 
 ```bash
-sudo /usr/libexec/meshtransit/meshnetd routes exit-use POOL   # a pool's reference or name
-sudo /usr/libexec/meshtransit/meshnetd routes exit-use auto   # the nearest pool Core serves, kept
-sudo /usr/libexec/meshtransit/meshnetd routes exit-use off
+meshctl exit use POOL     # a pool's reference or name
+meshctl exit use auto     # the nearest pool Core serves, kept
+meshctl exit use off
+meshctl exit status       # this machine's choice and the exit node in use
 ```
+
+`meshctl routes COMMAND` takes every `meshnetd routes` command (for example
+`meshctl routes exit-allow-lan on`); `sudo meshnetd routes …` still works.
 
 `meshctl status` shows the exit node used on its `Exit` line. While a pool
 is chosen the machine fails closed: traffic to the Internet goes into the
