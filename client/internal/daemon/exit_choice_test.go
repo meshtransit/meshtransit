@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -595,10 +596,10 @@ func TestExitPinsWriteLaterAndForgetTheOldestPool(t *testing.T) {
 		t.Fatal(err)
 	}
 	for index := range maxPinnedPools {
-		pins.setLater(fmt.Sprintf("pool-%03d", index), []string{"exit-1"})
+		pins.trust(fmt.Sprintf("pool-%03d", index), []string{"exit-1"})
 	}
-	pins.approved("pool-000") // used again: now pool-001 is the oldest
-	pins.setLater("pool-new", []string{"exit-2"})
+	pins.trust("pool-000", []string{"exit-1"}) // used again: now pool-001 is the oldest
+	pins.trust("pool-new", []string{"exit-2"})
 	pins.settle()
 	reopened, err := openExitPins(pins.dir)
 	if err != nil {
@@ -612,5 +613,36 @@ func TestExitPinsWriteLaterAndForgetTheOldestPool(t *testing.T) {
 	}
 	if _, pinned := reopened.approved("pool-001"); pinned {
 		t.Fatal("the pool used longest ago was kept")
+	}
+}
+
+// An approval made while the choice prunes the same pool is never undone:
+// both read and write the pins under one lock.
+func TestExitPinsKeepAnApprovalMadeWhileChoosing(t *testing.T) {
+	t.Parallel()
+	pins, err := openExitPins(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pins.settle)
+	candidates := []string{"exit-1", "exit-2"}
+	pins.trust("pool-a", candidates[:1]) // pinned with exit-1 only
+	for round := range 200 {
+		node := fmt.Sprintf("exit-%d", round+3)
+		listed := append(slices.Clone(candidates), node)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for range 20 {
+				pins.trust("pool-a", listed)
+			}
+		}()
+		if added, err := pins.approve("pool-a", []string{node}); err != nil || len(added) != 1 {
+			t.Fatalf("approve %s = %v, %v", node, added, err)
+		}
+		<-done
+		if trusted := pins.trust("pool-a", listed); !slices.Contains(trusted, node) {
+			t.Fatalf("approval of %s undone: %v", node, trusted)
+		}
 	}
 }

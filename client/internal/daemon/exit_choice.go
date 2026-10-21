@@ -515,12 +515,7 @@ func (failover *routeFailover) trustedLocked(pool networkmap.ExitPool) []string 
 	for _, candidate := range pool.Candidates {
 		candidates = append(candidates, candidate.DeviceID)
 	}
-	approved, pinned := choice.pins.approved(pool.Ref)
-	if !pinned {
-		approved = candidates
-	}
-	approved = slices.DeleteFunc(approved, func(id string) bool { return !slices.Contains(candidates, id) })
-	choice.pins.setLater(pool.Ref, approved) // written outside failover.mu
+	approved := choice.pins.trust(pool.Ref, candidates) // written outside failover.mu
 	for _, id := range candidates {
 		if !slices.Contains(approved, id) {
 			choice.pending = append(choice.pending, id)
@@ -868,8 +863,7 @@ func (s *Service) ApproveExitNodes(_ context.Context, ids []string) (ExitApprova
 		}
 	}
 	if len(nodes) != 0 && view.Pool != "" {
-		approved, _ := s.exitPins.approved(view.Pool)
-		if err := s.exitPins.set(view.Pool, append(approved, nodes...)); err != nil {
+		if _, err := s.exitPins.approve(view.Pool, nodes); err != nil {
 			return ExitApproval{}, err
 		}
 		result.Approved = append(result.Approved, nodes...)
@@ -916,10 +910,14 @@ func (s *Service) approvePinnedExitNodes(ids []string) (ExitApproval, error) {
 		if len(nodes) == 0 {
 			continue
 		}
-		if err := s.exitPins.set(ref, append(approved, nodes...)); err != nil {
+		added, err := s.exitPins.approve(ref, nodes)
+		if err != nil {
 			return ExitApproval{}, err
 		}
-		return ExitApproval{Pool: ref, Approved: nodes}, nil
+		if len(added) == 0 {
+			continue // approved meanwhile
+		}
+		return ExitApproval{Pool: ref, Approved: added}, nil
 	}
 	return ExitApproval{}, ErrNothingToApprove
 }

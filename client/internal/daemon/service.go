@@ -544,6 +544,7 @@ func New(
 			return nil, err
 		}
 		pins = opened
+		pins.logger = options.Logger
 		// Before the first connection to Core: a kill switch root's
 		// settings hold already cuts the host's resolver off.
 		_, _ = exitPreferenceOf(options.LoadRouteSettings, options.RouteSettingsPath, nil)

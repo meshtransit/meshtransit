@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -48,6 +49,8 @@ type exitPins struct {
 	dirty    atomic.Bool
 	flushing atomic.Bool
 	flushed  sync.WaitGroup
+	// logger reports a background write that failed; nil logs nothing.
+	logger *slog.Logger
 }
 
 type storedExitPins struct {
@@ -186,8 +189,53 @@ func (p *exitPins) approved(pool string) ([]string, bool) {
 	if !pinned {
 		return nil, false
 	}
-	p.touchLocked(pool)
 	return append([]string{}, nodes...), true // never nil: an empty pin trusts nobody
+}
+
+// trust returns the exit nodes of pool the host trusts among candidates:
+// all of them at the pool's first use, which pins them, else the pinned
+// ones Core still lists, forgetting the others. It reads and writes under
+// one lock, so an approval made meanwhile is never undone; the change is
+// written in the background. A nil store trusts every candidate.
+func (p *exitPins) trust(pool string, candidates []string) []string {
+	if p == nil {
+		return slices.Clone(candidates)
+	}
+	p.mu.Lock()
+	trusted := slices.Clone(candidates)
+	if current, pinned := p.pools[pool]; pinned {
+		trusted = slices.DeleteFunc(slices.Clone(current), func(id string) bool { return !slices.Contains(candidates, id) })
+	}
+	changed := p.setLocked(pool, trusted)
+	p.mu.Unlock()
+	if changed {
+		p.persistLater()
+	}
+	return trusted
+}
+
+// approve adds nodes to the pins of pool, a pool pinned before, and writes
+// them before it returns; it returns those not approved already.
+func (p *exitPins) approve(pool string, nodes []string) ([]string, error) {
+	if p == nil {
+		return nil, nil
+	}
+	p.mu.Lock()
+	current, pinned := p.pools[pool]
+	var added []string
+	for _, node := range nodes {
+		if pinned && !slices.Contains(current, node) && !slices.Contains(added, node) {
+			added = append(added, node)
+		}
+	}
+	if len(added) != 0 {
+		p.setLocked(pool, append(slices.Clone(current), added...))
+	}
+	p.mu.Unlock()
+	if len(added) == 0 {
+		return nil, nil
+	}
+	return added, p.persist()
 }
 
 func (p *exitPins) touchLocked(pool string) {
@@ -204,14 +252,6 @@ func (p *exitPins) set(pool string, nodes []string) error {
 	return p.persist()
 }
 
-// setLater is set persisting in the background: for callers holding a lock
-// a write must not stall. A write that fails leaves the pins in memory.
-func (p *exitPins) setLater(pool string, nodes []string) {
-	if p.setInMemory(pool, nodes) {
-		p.persistLater()
-	}
-}
-
 // setInMemory records the pins of pool and reports whether they changed. A
 // full store forgets the pool used longest ago, which pins again on its
 // next use.
@@ -219,11 +259,17 @@ func (p *exitPins) setInMemory(pool string, nodes []string) bool {
 	if p == nil {
 		return false
 	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.setLocked(pool, nodes)
+}
+
+// setLocked records the pins of pool as a use of it and reports whether
+// they changed.
+func (p *exitPins) setLocked(pool string, nodes []string) bool {
 	nodes = append([]string{}, nodes...)
 	slices.Sort(nodes)
 	nodes = slices.Compact(nodes)
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.touchLocked(pool)
 	if current, pinned := p.pools[pool]; pinned && slices.Equal(current, nodes) {
 		return false
@@ -258,7 +304,11 @@ func (p *exitPins) persistLater() {
 		defer p.flushed.Done()
 		for {
 			for p.dirty.Swap(false) {
-				_ = p.persist() // kept in memory when it cannot be written
+				// Kept in memory when it cannot be written; a restart then
+				// pins again what Core lists, so say so.
+				if err := p.persist(); err != nil && p.logger != nil {
+					p.logger.Warn("writing the exit pins failed", "error", err)
+				}
 			}
 			p.flushing.Store(false)
 			if !p.dirty.Load() || !p.flushing.CompareAndSwap(false, true) {
