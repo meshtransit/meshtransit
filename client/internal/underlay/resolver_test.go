@@ -41,6 +41,18 @@ func TestUpstreamResolverAsksResolvedUpstreamsWhenBypassing(t *testing.T) {
 	if err != nil || len(addresses) != 1 || addresses[0] != "203.0.113.7" {
 		t.Fatalf("LookupHost() = %v, %v", addresses, err)
 	}
+	// Bound off the exit routes (a meshd restarting under the kill
+	// switch), the upstreams are asked at once, never resolved's stub.
+	bypassUntil.Store(0)
+	SetExitChosen(true)
+	t.Cleanup(func() { SetExitChosen(false) })
+	if !usesUpstreamsNow() {
+		t.Fatal("a client whose settings name a pool asked the system resolver first")
+	}
+	SetExitChosen(false)
+	if usesUpstreamsNow() {
+		t.Fatal("a client neither bound nor bypassing skipped the system resolver")
+	}
 	if got := readUpstreams(filepath.Join(t.TempDir(), "absent")); got != nil {
 		t.Fatalf("upstreams without the file = %v", got)
 	}

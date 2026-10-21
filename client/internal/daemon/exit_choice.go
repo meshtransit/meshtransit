@@ -44,11 +44,12 @@ func exitPreferenceOf(load func(string) (routesettings.Settings, error), path st
 	return exitPreference{use: settings.ExitUse, allowManaged: settings.ExitAllowManaged}, true
 }
 
-// noteExitChoice keeps the client's own sockets and lookups off the host's
-// routes and resolver while root's settings name a pool, where they follow
-// the host's routes (underlay.FollowsRoutes): the helper's kill switch cuts
-// the host's resolver off from the start, before any map.
+// noteExitChoice keeps the client's own lookups off the host's resolver
+// while root's settings name a pool, and its sockets off the host's routes
+// where they follow them (underlay.FollowsRoutes): the helper's kill switch
+// cuts the host's resolver off from the start, before any map.
 func noteExitChoice(use string) {
+	underlay.SetExitChosen(use != "")
 	if underlay.FollowsRoutes {
 		underlay.SetExitBound(underlay.ExitChosen, use != "")
 	}
