@@ -336,15 +336,26 @@ func (paths *fakePaths) RecordPaths(_ context.Context, nodeID node.ID, _ int64, 
 }
 
 type fakeConnectivity struct {
-	mu      sync.Mutex
-	reports []distribution.Connectivity
+	mu          sync.Mutex
+	reports     []distribution.Connectivity
+	platforms   []*distribution.Platform
+	generations []int64
+	// dropNext answers the next record as not stored (another generation).
+	dropNext bool
 }
 
-func (c *fakeConnectivity) RecordConnectivity(_ context.Context, _ node.ID, _ int64, report distribution.Connectivity) error {
+func (c *fakeConnectivity) RecordConnectivity(_ context.Context, _ node.ID, generation int64,
+	report distribution.Connectivity, platform *distribution.Platform) (bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.reports = append(c.reports, report)
-	return nil
+	c.platforms = append(c.platforms, platform)
+	c.generations = append(c.generations, generation)
+	if c.dropNext {
+		c.dropNext = false
+		return false, nil
+	}
+	return true, nil
 }
 
 type conversationFixture struct {
@@ -1154,6 +1165,129 @@ func TestConversationStoresConnectivityWhenItChanges(t *testing.T) {
 	if changed.NAT.Mapping != distribution.NATMappingUnknown || changed.PortMapping.Protocol != distribution.PortMappingProtocolUnknown ||
 		changed.PortMapping.State != distribution.PortMappingUnknown || !changed.IsValid() {
 		t.Fatalf("changed %+v", changed)
+	}
+	if f.connectivity.platforms[0] != nil {
+		t.Fatalf("a ClientHello without client info stored platform %+v", f.connectivity.platforms[0])
+	}
+}
+
+// TestConversationStoresPublicAddressesAndPlatform: the public addresses of
+// an endpoint report, reflexive before local and private ones left out, are
+// stored with the platform the ClientHello named.
+func TestConversationStoresPublicAddressesAndPlatform(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	f.session.hello.Client = &mtcpv1.ClientInfo{Product: "meshd", Version: "0.9.1", Os: " Darwin ", Arch: "arm64"}
+	if err := f.talk.sink.SendSnapshot(t.Context(), streamFixture(t, 1)); err != nil {
+		t.Fatal(err)
+	}
+	disco := make([]byte, 32)
+	disco[0] = 9
+	endpoint := func(text string, kind mtcpv1.Endpoint_Kind) *mtcpv1.Endpoint {
+		address := netip.MustParseAddr(text)
+		return &mtcpv1.Endpoint{Ip: address.AsSlice(), Port: 41641, Kind: kind}
+	}
+	report := &mtcpv1.EndpointReport{DiscoKey: disco, Endpoints: []*mtcpv1.Endpoint{
+		endpoint("192.168.1.5", mtcpv1.Endpoint_HOST),
+		endpoint("203.0.113.9", mtcpv1.Endpoint_HOST),
+		endpoint("198.51.100.4", mtcpv1.Endpoint_SERVER_REFLEXIVE),
+		endpoint("2a01:4f8::7", mtcpv1.Endpoint_SERVER_REFLEXIVE),
+		endpoint("100.72.1.1", mtcpv1.Endpoint_PORT_MAPPED),
+	}}
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEndpointReport, report); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.connectivity.reports) != 1 {
+		t.Fatalf("stored %d connectivity reports", len(f.connectivity.reports))
+	}
+	want := []netip.Addr{netip.MustParseAddr("198.51.100.4"), netip.MustParseAddr("2a01:4f8::7")}
+	if got := f.connectivity.reports[0].PublicAddresses; !slices.Equal(got, want) {
+		t.Fatalf("public addresses %v, want %v", got, want)
+	}
+	platform := f.connectivity.platforms[0]
+	if platform == nil || *platform != (distribution.Platform{OS: "darwin", Arch: "arm64", ClientVersion: "0.9.1"}) {
+		t.Fatalf("platform %+v", platform)
+	}
+	// A new public address is a change.
+	f.advance(endpointReportInterval)
+	report.Endpoints[2] = endpoint("198.51.100.5", mtcpv1.Endpoint_SERVER_REFLEXIVE)
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEndpointReport, report); err != nil || len(f.connectivity.reports) != 2 {
+		t.Fatalf("changed address: %v, %d stored", err, len(f.connectivity.reports))
+	}
+}
+
+func TestPublicAddressesKeepReflexiveOnesFirst(t *testing.T) {
+	t.Parallel()
+	var disco node.DiscoveryKey
+	disco[0] = 1
+	var endpoints []node.Endpoint
+	for _, value := range []struct {
+		text   string
+		source node.EndpointSource
+	}{
+		{"1.1.1.1:1", node.EndpointSourceLocal}, {"1.1.1.2:1", node.EndpointSourceLocal},
+		{"1.1.1.3:1", node.EndpointSourceLocal}, {"9.9.9.9:1", node.EndpointSourceSTUN},
+		{"9.9.9.8:1", node.EndpointSourcePortMapped}, {"9.9.9.9:2", node.EndpointSourceSTUN},
+	} {
+		endpoint, err := node.NewEndpoint(netip.MustParseAddrPort(value.text), value.source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		endpoints = append(endpoints, endpoint)
+	}
+	set, err := node.NewEndpointSet(disco, endpoints)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := publicAddressesOf(set)
+	want := []netip.Addr{netip.MustParseAddr("9.9.9.8"), netip.MustParseAddr("9.9.9.9")}
+	if !slices.Equal(got, want) {
+		t.Fatalf("publicAddressesOf = %v, want %v", got, want)
+	}
+	// Without reflexive addresses the interface ones stand in, at most four.
+	locals, err := node.NewEndpointSet(disco, endpoints[:3])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := publicAddressesOf(locals); len(got) != 3 || got[0] != netip.MustParseAddr("1.1.1.1") {
+		t.Fatalf("interface addresses %v", got)
+	}
+}
+
+// TestConversationStoresConnectivityAgainForANewGenerationOrAfterADrop: the
+// record of a new session generation starts empty, so the same report is
+// stored again; so is one the store dropped.
+func TestConversationStoresConnectivityAgainForANewGenerationOrAfterADrop(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	if err := f.talk.sink.SendSnapshot(t.Context(), streamFixture(t, 1)); err != nil {
+		t.Fatal(err)
+	}
+	disco := make([]byte, 32)
+	disco[0] = 9
+	report := &mtcpv1.EndpointReport{DiscoKey: disco, Ipv6Global: true}
+	f.connectivity.dropNext = true
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEndpointReport, report); err != nil {
+		t.Fatal(err)
+	}
+	f.advance(endpointReportInterval)
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEndpointReport, report); err != nil ||
+		len(f.connectivity.reports) != 2 {
+		t.Fatalf("after a dropped record: %v, %d recorded", err, len(f.connectivity.reports))
+	}
+	f.advance(endpointReportInterval)
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEndpointReport, report); err != nil ||
+		len(f.connectivity.reports) != 2 {
+		t.Fatalf("an unchanged stored report: %v, %d recorded", err, len(f.connectivity.reports))
+	}
+	if err := f.talk.sink.SendSnapshot(t.Context(), snapshotGenerationFixture(t, 2, 4)); err != nil {
+		t.Fatal(err)
+	}
+	f.advance(endpointReportInterval)
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEndpointReport, report); err != nil ||
+		len(f.connectivity.reports) != 3 || f.connectivity.generations[2] != 4 {
+		t.Fatalf("a new generation: %v, %d recorded, generations %v", err, len(f.connectivity.reports),
+			f.connectivity.generations)
 	}
 }
 

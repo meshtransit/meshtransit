@@ -242,6 +242,10 @@ type deviceListStatus struct {
 	DeliveredNetworkRevision *int64     `json:"delivered_network_revision"`
 	// Enforcement is enforced, applying, mismatch, not_reported or unknown.
 	Enforcement string `json:"enforcement"`
+	// Platform is what the Device's client runs on; null when unknown.
+	Platform *devicePlatformItem `json:"platform"`
+	// PublicAddresses are its addresses on the Internet; empty when unknown.
+	PublicAddresses []devicePublicAddressItem `json:"public_addresses"`
 }
 
 // deviceInventoryStatusRow is a list row with its status; Status is null
@@ -270,9 +274,9 @@ type deviceInventoryStatusEnvelope struct {
 	CorrelationID string                    `json:"correlation_id"`
 }
 
-func newDeviceListStatus(device distribution.Device) *deviceListStatus {
+func newDeviceListStatus(device distribution.Device, countries CountryLookup) *deviceListStatus {
 	status := &deviceListStatus{Status: string(device.Status), Online: device.Observation.Online,
-		Enforcement: string(device.Enforcement)}
+		Enforcement: string(device.Enforcement), PublicAddresses: []devicePublicAddressItem{}}
 	if device.Status == distribution.StatusUnknown {
 		status.Online = false
 	}
@@ -282,6 +286,8 @@ func newDeviceListStatus(device distribution.Device) *deviceListStatus {
 	if observation := device.Observation; device.Status != distribution.StatusUnknown && observation.Known {
 		seenAt, revision := observation.SeenAt.UTC(), observation.NetworkRevision
 		status.LastSeenAt, status.DeliveredNetworkRevision = &seenAt, &revision
+		status.Platform = newDevicePlatformItem(observation.Platform)
+		status.PublicAddresses = newDevicePublicAddresses(observation.Connectivity, countries)
 	}
 	return status
 }
@@ -439,7 +445,7 @@ func (browser *BrowserManagement) writeDeviceInventoryStatus(ctx context.Context
 					fail(internalManagementError())
 					return nil
 				}
-				envelope.Data.Devices[row].Status = newDeviceListStatus(report.Devices[position])
+				envelope.Data.Devices[row].Status = newDeviceListStatus(report.Devices[position], browser.management.countries)
 			}
 		}
 	}

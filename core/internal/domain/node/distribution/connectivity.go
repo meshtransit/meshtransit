@@ -1,6 +1,10 @@
 package distribution
 
-import "time"
+import (
+	"net/netip"
+	"slices"
+	"time"
+)
 
 // NATMapping is a Device's NAT mapping behaviour (RFC 4787 terms).
 type NATMapping string
@@ -78,18 +82,23 @@ type PortMapping struct {
 }
 
 // Connectivity is how a Device reaches the Internet, from its latest
-// endpoint report: NAT classification, IPv6 reachability and port mapping.
+// endpoint report: NAT classification, IPv6 reachability, port mapping and
+// its public addresses.
 type Connectivity struct {
 	ReportedAt  time.Time
 	NAT         *NATClass // nil: not classified
 	IPv6Global  bool      // the Device has a global IPv6 address
 	IPv6STUN    bool      // STUN over IPv6 succeeded
 	PortMapping *PortMapping
+	// PublicAddresses are the Device's addresses on the Internet: what STUN
+	// saw, what its gateway mapped and public addresses of its interfaces,
+	// in address order (IPv4 first), at most MaximumPublicAddresses.
+	PublicAddresses []netip.Addr
 }
 
 // IsValid reports whether every value is one of the defined ones.
 func (c Connectivity) IsValid() bool {
-	if c.ReportedAt.IsZero() || (c.IPv6STUN && !c.IPv6Global) {
+	if c.ReportedAt.IsZero() || (c.IPv6STUN && !c.IPv6Global) || !validPublicAddresses(c.PublicAddresses) {
 		return false
 	}
 	if c.NAT != nil {
@@ -120,6 +129,7 @@ func (c Connectivity) IsValid() bool {
 // ignoring when they were reported.
 func (c Connectivity) SameAs(other Connectivity) bool {
 	if c.IPv6Global != other.IPv6Global || c.IPv6STUN != other.IPv6STUN ||
+		!slices.Equal(c.PublicAddresses, other.PublicAddresses) ||
 		(c.NAT == nil) != (other.NAT == nil) || (c.PortMapping == nil) != (other.PortMapping == nil) {
 		return false
 	}

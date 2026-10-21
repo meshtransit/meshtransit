@@ -371,19 +371,19 @@ func TestDeviceStatusNamesTheExitNodeTheDeviceUses(t *testing.T) {
 	device := distribution.Device{Observation: distribution.Observation{Known: true},
 		ExitSelection: &distribution.ExitSelection{Pool: "01a159f2-8c40-718b-bea7-ea6c60ff7b0e", Node: exitNode,
 			Via: distribution.ViaSticky}}
-	item := newDeviceDistributionItem(device)
+	item := newDeviceDistributionItem(device, nil)
 	if item.Exit == nil || item.Exit.ExitPoolID != "01a159f2-8c40-718b-bea7-ea6c60ff7b0e" ||
 		item.Exit.ExitNodeID == nil || *item.Exit.ExitNodeID != exitNode || item.Exit.Via != "sticky" {
 		t.Fatalf("exit item = %+v", item.Exit)
 	}
 	device.ExitSelection = &distribution.ExitSelection{Pool: "01a159f2-8c40-718b-bea7-ea6c60ff7b0e",
 		Via: distribution.ViaNone}
-	raw, _ := json.Marshal(newDeviceDistributionItem(device).Exit)
+	raw, _ := json.Marshal(newDeviceDistributionItem(device, nil).Exit)
 	if string(raw) != `{"exit_pool_id":"01a159f2-8c40-718b-bea7-ea6c60ff7b0e","exit_node_device_id":null,"via":"none"}` {
 		t.Fatalf("unserved exit item = %s", raw)
 	}
 	device.ExitSelection = nil
-	if item := newDeviceDistributionItem(device); item.Exit != nil {
+	if item := newDeviceDistributionItem(device, nil); item.Exit != nil {
 		t.Fatalf("no exit reported = %+v", item.Exit)
 	}
 }

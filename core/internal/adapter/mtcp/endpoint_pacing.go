@@ -177,7 +177,8 @@ func (conversation *conversation) doEndpointWork(work endpointWork) (mapsession.
 		announcement, err = options.Endpoints.ObserveSessionEndpoints(ctx, work.store.snapshot, work.store.set,
 			work.store.relay, true)
 		if err == nil {
-			conversation.connectivity(ctx, work.store.snapshot, work.store.report, conversation.application.now())
+			conversation.connectivity(ctx, work.store.snapshot, work.store.report, work.store.set,
+				conversation.application.now())
 		}
 	}
 	if err != nil && ctx.Err() == nil {

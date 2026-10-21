@@ -35,6 +35,16 @@ Core speaks MTCP v1 and MTRP v1 only (`docs/protocol/`), implemented in this
 repository. `hack/check-import-boundaries.sh` fails the build when `go.mod`
 requires a module that is not on the reviewed `hack/allowed-modules.txt`.
 
+## Data
+
+The Core image includes the DB-IP "IP to Country Lite" database
+(`/usr/share/meshtransit/dbip-country-lite.csv.gz`), which places Devices'
+public addresses in countries. It is licensed under the Creative Commons
+Attribution 4.0 International License
+(https://creativecommons.org/licenses/by/4.0/): IP Geolocation by DB-IP,
+https://db-ip.com. The MeshTransit Console shows that attribution wherever
+it shows a country.
+
 ## MIT-licensed components
 
 Copyright (c) 2013-2021 Jack Christensen  

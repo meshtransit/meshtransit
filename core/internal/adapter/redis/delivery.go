@@ -438,7 +438,7 @@ func decodeObservation(fields []string) (distribution.Observation, error) {
 	if err != nil {
 		return distribution.Observation{}, err
 	}
-	connectivity, err := decodeConnectivity(fields[12])
+	connectivity, platform, err := decodeConnectivity(fields[12])
 	if err != nil {
 		return distribution.Observation{}, err
 	}
@@ -493,6 +493,7 @@ func decodeObservation(fields []string) (distribution.Observation, error) {
 		ReportedAt:        reportedAt,
 		Paths:             paths,
 		Connectivity:      connectivity,
+		Platform:          platform,
 		PeerLimit:         peerLimit,
 		Routes:            routes,
 		EnforcedRoutes:    enforcedRoutes,

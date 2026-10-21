@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -157,6 +158,67 @@ type deviceDistributionItem struct {
 	// Exit is the exit node the Device sends its Internet traffic through,
 	// as it last reported (within three minutes).
 	Exit *deviceExitItem `json:"exit,omitempty"`
+	// Platform is what the Device's client runs on, from its latest
+	// session; null when unknown.
+	Platform *devicePlatformItem `json:"platform"`
+	// PublicAddresses are the Device's addresses on the Internet from its
+	// latest endpoint report; empty when unknown.
+	PublicAddresses []devicePublicAddressItem `json:"public_addresses"`
+}
+
+// CountryLookup places an address in the country it is registered in, as
+// an ISO 3166-1 alpha-2 code (geoip.Countries).
+type CountryLookup interface {
+	Country(netip.Addr) (string, bool)
+}
+
+// devicePlatformItem is what a Device's client says it runs on: os as Go
+// names it (darwin, linux, windows, android, ios, freebsd).
+type devicePlatformItem struct {
+	OS            string  `json:"os"`
+	OSVersion     *string `json:"os_version"`
+	Arch          *string `json:"arch"`
+	ClientVersion *string `json:"client_version"`
+}
+
+// devicePublicAddressItem is one public address and the country it is
+// registered in; Country is null when unknown.
+type devicePublicAddressItem struct {
+	Address string  `json:"address"`
+	Country *string `json:"country"`
+}
+
+func newDevicePlatformItem(platform *distribution.Platform) *devicePlatformItem {
+	if platform == nil {
+		return nil
+	}
+	optional := func(text string) *string {
+		if text == "" {
+			return nil
+		}
+		return &text
+	}
+	return &devicePlatformItem{OS: platform.OS, OSVersion: optional(platform.OSVersion),
+		Arch: optional(platform.Arch), ClientVersion: optional(platform.ClientVersion)}
+}
+
+// newDevicePublicAddresses lists a report's public addresses, placed in
+// countries when a lookup is set; never nil.
+func newDevicePublicAddresses(report *distribution.Connectivity, countries CountryLookup) []devicePublicAddressItem {
+	items := []devicePublicAddressItem{}
+	if report == nil {
+		return items
+	}
+	for _, address := range report.PublicAddresses {
+		item := devicePublicAddressItem{Address: address.String()}
+		if countries != nil {
+			if country, found := countries.Country(address); found {
+				item.Country = &country
+			}
+		}
+		items = append(items, item)
+	}
+	return items
 }
 
 // deviceExitItem is the Exit Pool a Device uses and its exit node: Via is
@@ -405,10 +467,11 @@ func newDeviceEnforcementItem(status distribution.Enforcement,
 	return item
 }
 
-func newDeviceDistributionItem(device distribution.Device) deviceDistributionItem {
+func newDeviceDistributionItem(device distribution.Device, countries CountryLookup) deviceDistributionItem {
 	item := deviceDistributionItem{ID: device.ID.String(), Hostname: device.Hostname, State: device.State,
 		Status: string(device.Status), Online: device.Observation.Online,
-		Enforcement: deviceEnforcementItem{Status: string(distribution.EnforcementUnknown)}}
+		Enforcement:     deviceEnforcementItem{Status: string(distribution.EnforcementUnknown)},
+		PublicAddresses: []devicePublicAddressItem{}}
 	if device.Status == distribution.StatusUnknown {
 		item.Online = false
 		return item
@@ -421,6 +484,8 @@ func newDeviceDistributionItem(device distribution.Device) deviceDistributionIte
 		item.DeliveredAt, item.LastSeenAt = &deliveredAt, &seenAt
 		item.Paths = newDevicePathSummary(observation.Paths)
 		item.Connectivity = newDeviceConnectivityItem(observation.Connectivity)
+		item.Platform = newDevicePlatformItem(observation.Platform)
+		item.PublicAddresses = newDevicePublicAddresses(observation.Connectivity, countries)
 		if limit := observation.PeerLimit; limit.IsValid() {
 			item.PeerLimit = &devicePeerLimitItem{Sent: limit.Sent, Authorized: limit.Authorized}
 		}
@@ -519,7 +584,7 @@ func (browser *BrowserManagement) readDeviceDetail(ctx context.Context, response
 		envelope.Data.NetworkID = read.scope.NetworkID().String()
 		envelope.Data.NetworkRevision, envelope.Data.PolicyRevision = report.NetworkRevision, report.PolicyRevision
 		envelope.Data.ObservationsAvailable = report.ObservationsAvailable
-		envelope.Data.Device = newDeviceDistributionItem(report.Device)
+		envelope.Data.Device = newDeviceDistributionItem(report.Device, browser.management.countries)
 		envelope.CorrelationID = correlationID
 		writeManagementJSON(ctx, browser.management.logger, response, http.StatusOK, envelope)
 		return nil

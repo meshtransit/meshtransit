@@ -62,12 +62,15 @@ type Config struct {
 	// SiteDenied are the addresses no Site may cover (MESHTRANSIT_SITE_DENIED_CIDRS).
 	SiteDenied []netip.Prefix
 	// ExitNodes lets Access Rules name Exit Pools (MESHTRANSIT_EXIT_NODES_ENABLED).
-	ExitNodes    bool
-	Dependencies DependencyConfig
-	Storage      *StorageConfig
-	API          *APIConfig
-	Control      *ControlConfig
-	Enrollment   *EnrollmentConfig
+	ExitNodes bool
+	// GeoIPCountryFile is the country table Console Device reads place
+	// public addresses with (MESHTRANSIT_GEOIP_COUNTRY_FILE); empty: none.
+	GeoIPCountryFile string
+	Dependencies     DependencyConfig
+	Storage          *StorageConfig
+	API              *APIConfig
+	Control          *ControlConfig
+	Enrollment       *EnrollmentConfig
 	// EnrollmentKeyDigest digests the enrollment keys the api role issues;
 	// nil when the deployment does not give the api role the keys.
 	EnrollmentKeyDigest   *CredentialDigestConfig
@@ -190,6 +193,10 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, err
 	}
 	exitNodes, err := loadExitNodes(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+	geoIPCountryFile, err := loadGeoIPCountryFile(lookup)
 	if err != nil {
 		return Config{}, err
 	}
@@ -339,6 +346,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		SubnetRoutes:            subnetRoutes,
 		SiteDenied:              siteDenied,
 		ExitNodes:               exitNodes,
+		GeoIPCountryFile:        geoIPCountryFile,
 		Dependencies:            dependencyConfig,
 		Storage:                 storageConfig,
 		API:                     apiConfig,

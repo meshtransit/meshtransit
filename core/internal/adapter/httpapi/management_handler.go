@@ -279,6 +279,9 @@ type ManagementHandlerOptions struct {
 	// ExitNodeUse, when set, adds how many Devices use each exit node to one
 	// Exit Pool's read (mtcp-v1 §8.3).
 	ExitNodeUse ExitNodeUseCounter
+	// Countries, when set, places the public addresses of Device reads in
+	// the country they are registered in.
+	Countries CountryLookup
 	// IdentityGroups lists and changes Workspace Identity Groups; nil answers 503.
 	IdentityGroups IdentityGroupManager
 	// DeviceTags lists and changes the device tag catalog and Device tags; nil answers 503.
@@ -350,6 +353,7 @@ type ManagementHandler struct {
 	siteRouterObservations    distribution.ObservationLoader
 	siteRouterUse             SiteRouterUseCounter
 	exitNodeUse               ExitNodeUseCounter
+	countries                 CountryLookup
 	identityGroups            IdentityGroupManager
 	deviceTags                DeviceTagManager
 	deviceLifecycle           DeviceLifecycleManager
@@ -432,6 +436,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		siteRouterObservations:    options.SiteRouterObservations,
 		siteRouterUse:             options.SiteRouterUse,
 		exitNodeUse:               options.ExitNodeUse,
+		countries:                 options.Countries,
 		identityGroups:            options.IdentityGroups,
 		deviceTags:                options.DeviceTags,
 		deviceLifecycle:           options.DeviceLifecycle,

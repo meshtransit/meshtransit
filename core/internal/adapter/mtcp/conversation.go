@@ -171,6 +171,8 @@ type conversation struct {
 	// the lock: busy runs one store at a time, and claiming and finishing
 	// under the pacing lock order the stores one after another.
 	lastConnectivity *distribution.Connectivity
+	// lastConnectivityGeneration is the session generation it was stored for.
+	lastConnectivityGeneration int64
 
 	mu         sync.Mutex
 	nodeKey    node.Key // the key the map stream serves; zero until known

@@ -64,9 +64,12 @@ type Observation struct {
 	ReportedAt        time.Time
 	// Paths is the Device's latest path report for the session, if any.
 	Paths *PathReport
-	// Connectivity is the Device's latest NAT, IPv6 and port mapping report
-	// for the session, if any.
+	// Connectivity is the Device's latest NAT, IPv6, port mapping and
+	// public address report for the session, if any.
 	Connectivity *Connectivity
+	// Platform is what the Device's client runs on, stored with its
+	// connectivity; nil when it reported none.
+	Platform *Platform
 	// PeerLimit is set when the last map was cut to a peer limit.
 	PeerLimit PeerLimit
 	// Routes is the route digest of the served routes last delivered to a
@@ -109,7 +112,7 @@ func (observation Observation) IsValid() bool {
 			observation.PolicyRevision == 0 && observation.DeliveredAt.IsZero() && observation.SeenAt.IsZero() &&
 			observation.Filter.IsZero() && observation.Enforced.IsZero() &&
 			observation.AppliedAt.IsZero() && observation.ReportedAt.IsZero() && observation.Paths == nil &&
-			observation.Connectivity == nil && observation.PeerLimit.IsZero() &&
+			observation.Connectivity == nil && observation.Platform == nil && observation.PeerLimit.IsZero() &&
 			observation.Routes.IsZero() && observation.EnforcedRoutes.IsZero() &&
 			observation.RouteHealth == nil && observation.RouteHealthAt.IsZero() && observation.ExitHealth == nil &&
 			observation.RouteSelection == nil && observation.RouteSelectionAt.IsZero() && observation.ExitSelection == nil
@@ -121,6 +124,9 @@ func (observation Observation) IsValid() bool {
 		return false
 	}
 	if observation.Connectivity != nil && !observation.Connectivity.IsValid() {
+		return false
+	}
+	if observation.Platform != nil && !observation.Platform.IsValid() {
 		return false
 	}
 	return observation.SessionGeneration > 0 && observation.NetworkRevision > 0 &&

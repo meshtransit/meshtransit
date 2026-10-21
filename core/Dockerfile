@@ -33,6 +33,14 @@ RUN GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
     -o /out/meshcore \
     ./core/cmd/meshcore
 
+# The DB-IP "IP to Country Lite" table (CC BY 4.0, IP Geolocation by DB-IP)
+# that places Devices' public addresses in countries
+# (MESHTRANSIT_GEOIP_COUNTRY_FILE). Pinned by digest; a new month's table is a
+# new URL and digest.
+FROM scratch AS geoip
+ADD --checksum=sha256:097426b8ddae89157d444a59ac1847e873f7943c32d52becc4371c8b0273af80 \
+    https://download.db-ip.com/free/dbip-country-lite-2026-10.csv.gz /dbip-country-lite.csv.gz
+
 FROM scratch
 
 ARG VERSION
@@ -50,6 +58,7 @@ COPY --from=build --chown=65532:65532 /out/meshcore /meshcore
 COPY --chown=65532:65532 core/LICENSE /licenses/LICENSE
 COPY --chown=65532:65532 COMMERCIAL-LICENSING.md /licenses/COMMERCIAL-LICENSING.md
 COPY --chown=65532:65532 core/THIRD_PARTY_NOTICES.md /licenses/THIRD_PARTY_NOTICES.md
+COPY --from=geoip --chown=65532:65532 /dbip-country-lite.csv.gz /usr/share/meshtransit/dbip-country-lite.csv.gz
 
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 

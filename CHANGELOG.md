@@ -5,6 +5,18 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core and Console: each Device's platform and public addresses. Core
+  keeps the platform its client names in the MTCP ClientHello (`os`,
+  `os_version`, `arch`, client version) and up to four public addresses of
+  its endpoint report (what STUN saw or its gateway mapped, then public
+  addresses of its interfaces; private and CGNAT addresses never), with its
+  connectivity in the delivery record. Device reads (`include=status` rows
+  and one Device's status, under `device.read`) give `platform` and
+  `public_addresses` (`address`, `country`); the country comes from a DB-IP
+  Lite table (`MESHTRANSIT_GEOIP_COUNTRY_FILE`). The Console shows an OS
+  mark by the name, a Location column (flag and code) and the public
+  address, hidden until the eye is pressed, on the list and the Device
+  page.
 - Clients: `meshctl exit use` waits, up to 15 s, until meshd applied the
   choice and prints one line (`Exit: via NODE in pool POOL`, `Exit: off …`,
   or why it is not routed) instead of every route setting; `exit serve`

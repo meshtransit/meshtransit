@@ -103,7 +103,9 @@ type privateIdentityPorts struct {
 	// SiteRouterUse counts the Devices using each router of a Site.
 	SiteRouterUse httpapi.SiteRouterUseCounter
 	// ExitNodeUse counts the Devices using each exit node of a pool.
-	ExitNodeUse     httpapi.ExitNodeUseCounter
+	ExitNodeUse httpapi.ExitNodeUseCounter
+	// Countries places Devices' public addresses in countries; nil: none.
+	Countries       httpapi.CountryLookup
 	IdentityGroups  httpapi.IdentityGroupManager
 	DeviceTags      httpapi.DeviceTagManager
 	DeviceLifecycle httpapi.DeviceLifecycleManager
@@ -236,6 +238,7 @@ func composePrivateIdentity(
 		SiteRouterObservations: ports.SiteRouterObservations,
 		SiteRouterUse:          ports.SiteRouterUse,
 		ExitNodeUse:            ports.ExitNodeUse,
+		Countries:              ports.Countries,
 		IdentityGroups:         ports.IdentityGroups,
 		DeviceTags:             ports.DeviceTags,
 		DeviceLifecycle:        ports.DeviceLifecycle,

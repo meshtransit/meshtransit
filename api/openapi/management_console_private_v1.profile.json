@@ -694,7 +694,9 @@
                 "delivered_policy_revision",
                 "delivered_at",
                 "last_seen_at",
-                "enforcement"
+                "enforcement",
+                "platform",
+                "public_addresses"
               ],
               "properties": {
                 "id": {
@@ -1160,6 +1162,12 @@
                       "description": "sticky: kept although Core elected another exit node; none: no exit node can serve (exit_node_device_id is null)."
                     }
                   }
+                },
+                "platform": {
+                  "$ref": "#/components/schemas/ConsoleDevicePlatform"
+                },
+                "public_addresses": {
+                  "$ref": "#/components/schemas/ConsoleDevicePublicAddresses"
                 }
               }
             }
@@ -1314,7 +1322,9 @@
         "online",
         "last_seen_at",
         "delivered_network_revision",
-        "enforcement"
+        "enforcement",
+        "platform",
+        "public_addresses"
       ],
       "properties": {
         "status": {
@@ -1354,6 +1364,82 @@
             "not_reported",
             "unknown"
           ]
+        },
+        "platform": {
+          "$ref": "#/components/schemas/ConsoleDevicePlatform"
+        },
+        "public_addresses": {
+          "$ref": "#/components/schemas/ConsoleDevicePublicAddresses"
+        }
+      }
+    },
+    "ConsoleDevicePlatform": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "description": "What the Device's client says it runs on, from its latest session; null when unknown.",
+      "required": [
+        "os",
+        "os_version",
+        "arch",
+        "client_version"
+      ],
+      "properties": {
+        "os": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The operating system as Go names it: darwin, linux, windows, android, ios or freebsd."
+        },
+        "os_version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "arch": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "client_version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        }
+      }
+    },
+    "ConsoleDevicePublicAddresses": {
+      "type": "array",
+      "maxItems": 4,
+      "description": "The Device's addresses on the Internet from its latest endpoint report (what STUN saw, what its gateway mapped, public addresses of its interfaces), IPv4 first; empty when unknown. Readable under device.read.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "address",
+          "country"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "An IPv4 or IPv6 address."
+          },
+          "country": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[A-Z]{2}$",
+            "description": "ISO 3166-1 alpha-2 code of the country the address is registered in (IP Geolocation by DB-IP); null when unknown or no country table is configured."
+          }
         }
       }
     }

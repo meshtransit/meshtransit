@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -268,12 +269,74 @@ func TestDeviceDistributionItemShowsAPeerLimit(t *testing.T) {
 		DeliveredAt: at, SeenAt: at, Online: true}
 	device := distribution.Device{ID: id, Hostname: "edge", State: "active", Status: distribution.StatusInSync,
 		Observation: observation}
-	if item := newDeviceDistributionItem(device); item.PeerLimit != nil {
+	if item := newDeviceDistributionItem(device, nil); item.PeerLimit != nil {
 		t.Fatalf("an unlimited map shows a peer limit: %+v", item.PeerLimit)
 	}
 	device.Observation.PeerLimit = distribution.PeerLimit{Sent: 10_000, Authorized: 80_000}
-	encoded, err := json.Marshal(newDeviceDistributionItem(device).PeerLimit)
+	encoded, err := json.Marshal(newDeviceDistributionItem(device, nil).PeerLimit)
 	if err != nil || string(encoded) != `{"sent":10000,"authorized":80000}` {
 		t.Fatalf("peer limit JSON = %s, %v", encoded, err)
+	}
+}
+
+type fakeCountries map[netip.Addr]string
+
+func (countries fakeCountries) Country(address netip.Addr) (string, bool) {
+	country, found := countries[address]
+	return country, found
+}
+
+// TestDeviceReadsShowPlatformAndPlacedPublicAddresses: both the list status
+// and the Device's own status carry its platform and its public addresses,
+// each placed in a country when the table knows it.
+func TestDeviceReadsShowPlatformAndPlacedPublicAddresses(t *testing.T) {
+	t.Parallel()
+	id, err := node.ParseID("01890f90-0000-7000-8000-0000000000c3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	vietnam, unplaced := netip.MustParseAddr("113.161.2.3"), netip.MustParseAddr("2a01:4f8::1")
+	observation := distribution.Observation{Known: true, SessionGeneration: 1, NetworkRevision: 4, PolicyRevision: 2,
+		DeliveredAt: at, SeenAt: at, Online: true,
+		Connectivity: &distribution.Connectivity{ReportedAt: at, PublicAddresses: []netip.Addr{vietnam, unplaced}},
+		Platform:     &distribution.Platform{OS: "darwin", Arch: "arm64", ClientVersion: "0.9.1"}}
+	device := distribution.Device{ID: id, Hostname: "mac", State: "active", Status: distribution.StatusInSync,
+		Observation: observation}
+	countries := fakeCountries{vietnam: "VN"}
+	const want = `{"platform":{"os":"darwin","os_version":null,"arch":"arm64","client_version":"0.9.1"},` +
+		`"public_addresses":[{"address":"113.161.2.3","country":"VN"},{"address":"2a01:4f8::1","country":null}]}`
+	pick := func(platform *devicePlatformItem, addresses []devicePublicAddressItem) string {
+		encoded, err := json.Marshal(struct {
+			Platform        *devicePlatformItem       `json:"platform"`
+			PublicAddresses []devicePublicAddressItem `json:"public_addresses"`
+		}{platform, addresses})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(encoded)
+	}
+	item := newDeviceDistributionItem(device, countries)
+	if got := pick(item.Platform, item.PublicAddresses); got != want {
+		t.Fatalf("Device status:\n got %s\nwant %s", got, want)
+	}
+	status := newDeviceListStatus(device, countries)
+	if got := pick(status.Platform, status.PublicAddresses); got != want {
+		t.Fatalf("list status:\n got %s\nwant %s", got, want)
+	}
+	// Without a table the addresses are unplaced; without a report there
+	// are none, as an empty list.
+	if got := newDeviceListStatus(device, nil).PublicAddresses; got[0].Country != nil {
+		t.Fatalf("placed without a table: %+v", got)
+	}
+	device.Observation.Connectivity, device.Observation.Platform = nil, nil
+	bare := newDeviceDistributionItem(device, countries)
+	if got := pick(bare.Platform, bare.PublicAddresses); got != `{"platform":null,"public_addresses":[]}` {
+		t.Fatalf("no report: %s", got)
+	}
+	device.Status = distribution.StatusUnknown
+	if got := newDeviceListStatus(device, countries); got.Platform != nil || got.PublicAddresses == nil ||
+		len(got.PublicAddresses) != 0 {
+		t.Fatalf("unknown status: %+v", got)
 	}
 }

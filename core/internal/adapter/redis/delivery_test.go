@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
@@ -454,17 +456,97 @@ func TestClientRecordsConnectivity(t *testing.T) {
 			Filtering: distribution.NATFilteringAddressDependent, Allocation: distribution.NATAllocationPreserving,
 			ObservedAt: time.UnixMilli(1759924800000).UTC()},
 		PortMapping: &distribution.PortMapping{Protocol: distribution.PortMappingProtocolPCP,
-			State: distribution.PortMappingMapped, ExpiresAt: time.UnixMilli(1759932030000).UTC()}}
-	if err := client.RecordConnectivity(t.Context(), id, 4, report); err != nil {
+			State: distribution.PortMappingMapped, ExpiresAt: time.UnixMilli(1759932030000).UTC()},
+		PublicAddresses: []netip.Addr{netip.MustParseAddr("203.0.113.7"), netip.MustParseAddr("2a01:4f8::1")}}
+	platform := &distribution.Platform{OS: "darwin", Arch: "arm64", ClientVersion: "0.9.1"}
+	if stored, err := client.RecordConnectivity(t.Context(), id, 4, report, platform); err != nil || !stored {
+		t.Fatal(stored, err)
+	}
+	decoded, decodedPlatform, err := decodeConnectivity(stored)
+	if err != nil || decoded == nil || !decoded.SameAs(report) || !decoded.ReportedAt.Equal(report.ReportedAt) ||
+		decodedPlatform == nil || *decodedPlatform != *platform {
+		t.Fatalf("round trip %+v %+v, %v", decoded, decodedPlatform, err)
+	}
+	if _, err := client.RecordConnectivity(t.Context(), id, 4, report, nil); err != nil {
 		t.Fatal(err)
 	}
-	decoded, err := decodeConnectivity(stored)
-	if err != nil || decoded == nil || !decoded.SameAs(report) || !decoded.ReportedAt.Equal(report.ReportedAt) {
-		t.Fatalf("round trip %+v, %v", decoded, err)
+	if _, decodedPlatform, err = decodeConnectivity(stored); err != nil || decodedPlatform != nil {
+		t.Fatalf("without a platform: %+v, %v", decodedPlatform, err)
+	}
+	if _, err := client.RecordConnectivity(t.Context(), id, 4, report, &distribution.Platform{Arch: "arm64"}); !errors.Is(err, ErrInvalidOptions) {
+		t.Fatalf("a platform without an OS: %v", err)
 	}
 	report.PortMapping.State = "teleported"
-	if err := client.RecordConnectivity(t.Context(), id, 4, report); !errors.Is(err, ErrInvalidOptions) {
+	if _, err := client.RecordConnectivity(t.Context(), id, 4, report, platform); !errors.Is(err, ErrInvalidOptions) {
 		t.Fatalf("invalid report: %v", err)
+	}
+}
+
+// TestClientRecordsTheLargestConnectivity: the largest report, with four
+// IPv6 addresses and a platform of HTML-like bytes, fits; a record of
+// another generation is reported as not stored.
+func TestClientRecordsTheLargestConnectivity(t *testing.T) {
+	t.Parallel()
+	id := testDeliveryNode(t)
+	var stored string
+	result := int64(1)
+	client := &Client{
+		recordConnectivity: func(_ context.Context, _ string, _ int64, encoded string, _ time.Duration) (int64, error) {
+			stored = encoded
+			return result, nil
+		},
+		metrics: newRedisMetrics(1, nil),
+	}
+	at := time.UnixMilli(1759924830000).UTC()
+	report := distribution.Connectivity{ReportedAt: at, IPv6Global: true, IPv6STUN: true,
+		NAT: &distribution.NATClass{Mapping: distribution.NATMappingAddressAndPortDependent,
+			Filtering: distribution.NATFilteringAddressAndPortDependent, Allocation: distribution.NATAllocationSequential,
+			SequentialStep: 65535, ObservedAt: at},
+		PortMapping: &distribution.PortMapping{Protocol: distribution.PortMappingProtocolUnknown,
+			State: distribution.PortMappingUnavailable, ExpiresAt: at},
+		PublicAddresses: []netip.Addr{
+			netip.MustParseAddr("2a01:4f8:ffff:ffff:ffff:ffff:ffff:fff1"),
+			netip.MustParseAddr("2a01:4f8:ffff:ffff:ffff:ffff:ffff:fff2"),
+			netip.MustParseAddr("2a01:4f8:ffff:ffff:ffff:ffff:ffff:fff3"),
+			netip.MustParseAddr("2a01:4f8:ffff:ffff:ffff:ffff:ffff:fff4"),
+		}}
+	field := strings.Repeat("<&>", 21) + "x"
+	platform := &distribution.Platform{OS: field, OSVersion: field, Arch: field, ClientVersion: field}
+	if ok, err := client.RecordConnectivity(t.Context(), id, 4, report, platform); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	_, decodedPlatform, err := decodeConnectivity(stored)
+	if err != nil || decodedPlatform == nil || *decodedPlatform != *platform || len(stored) > maximumConnectivityWriteBytes {
+		t.Fatalf("%d bytes, platform %+v, %v", len(stored), decodedPlatform, err)
+	}
+	result = 0
+	if ok, err := client.RecordConnectivity(t.Context(), id, 4, report, platform); err != nil || ok {
+		t.Fatalf("another generation: %v, %v", ok, err)
+	}
+}
+
+// TestDecodeConnectivityLeavesOutBadPublicAddressesAndPlatforms: values a
+// later rule refuses are dropped, not fatal to the record.
+func TestDecodeConnectivityLeavesOutBadPublicAddressesAndPlatforms(t *testing.T) {
+	t.Parallel()
+	for text, want := range map[string]string{
+		`{"at":1,"pub":["10.0.0.1","8.8.8.8"]}`:          "[8.8.8.8]",
+		`{"at":1,"pub":["nonsense"]}`:                    "[]",
+		`{"at":1,"pub":["8.8.8.8","1.1.1.1","8.8.8.8"]}`: "[1.1.1.1 8.8.8.8]",
+	} {
+		report, _, err := decodeConnectivity(text)
+		if err != nil || report == nil || fmt.Sprint(report.PublicAddresses) != want {
+			t.Errorf("decodeConnectivity(%s) = %v, %v; want %s", text, report, err, want)
+		}
+	}
+	for _, text := range []string{`{"at":1,"os":{"os":""}}`, `{"at":1,"os":{"os":"linux","ver":"a\nb"}}`} {
+		if report, platform, err := decodeConnectivity(text); err != nil || report == nil || platform != nil {
+			t.Errorf("decodeConnectivity(%s) = %+v %+v, %v", text, report, platform, err)
+		}
+	}
+	report, platform, err := decodeConnectivity(`{"at":1}`)
+	if err != nil || report == nil || report.PublicAddresses != nil || platform != nil {
+		t.Fatalf("a record before public addresses: %+v %+v, %v", report, platform, err)
 	}
 }
 

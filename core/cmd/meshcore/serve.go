@@ -10,6 +10,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"meshtransit.net/core/internal/adapter/geoip"
 	"meshtransit.net/core/internal/adapter/httpapi"
 	oidcadapter "meshtransit.net/core/internal/adapter/oidc"
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
@@ -322,6 +323,16 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			logger.ErrorContext(ctx, "startup failed", "error_code", "mail_composition_failure")
 			return 1
 		}
+		var countries httpapi.CountryLookup
+		if processConfig.GeoIPCountryFile != "" {
+			table, openErr := geoip.Open(processConfig.GeoIPCountryFile)
+			if openErr != nil {
+				logger.ErrorContext(ctx, "startup failed", "error_code", "geoip_country_table_failure",
+					"error", openErr)
+				return 1
+			}
+			countries = table
+		}
 		factory, loginService, composeErr := composePrivateIdentityRuntime(
 			ctx,
 			privateProfile,
@@ -329,7 +340,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 				Mailer: mailer, Signup: processConfig.Signup, Interchange: processConfig.Interchange,
 				DNSSuffix: processConfig.DNSSuffix, EnrollmentKeys: enrollmentKeys,
 				SubnetRoutes: processConfig.SubnetRoutes, SiteDenied: processConfig.SiteDenied,
-				ExitNodes: processConfig.ExitNodes},
+				ExitNodes: processConfig.ExitNodes, Countries: countries},
 			browserRuntime...,
 		)
 		if composeErr != nil {
