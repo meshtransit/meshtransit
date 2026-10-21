@@ -482,6 +482,7 @@ func (c *Client) SetExitRoute(ctx context.Context, route ExitRouteRequest) (Exit
 		Version: protocolVersion, Operation: operationSetExitRoute,
 		ExitRoute: route.Use, ExitRouteIPv6: route.Use && route.IPv6,
 		CaptivePortals: captivePortalStrings(route), CaptiveClose: captiveCloseOf(route),
+		CaptiveOff: route.Use && route.CaptiveOff,
 	})
 	closeDescriptors(descriptors)
 	if err != nil {

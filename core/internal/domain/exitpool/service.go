@@ -196,6 +196,9 @@ func (service *Service) Create(ctx context.Context, session accountsession.Sessi
 	if definition.Mode == ModeKeep {
 		definition.Mode = ModeFailover
 	}
+	if definition.CaptiveWindows == CaptiveKeep {
+		definition.CaptiveWindows = CaptiveAllowed
+	}
 	if err := service.admitMode(definition.Mode, ModeFailover); err != nil {
 		return Result{}, err
 	}

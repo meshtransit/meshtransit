@@ -666,7 +666,7 @@ func convertExits(config *mtcpv1.ExitConfig) ([]networkmap.ExitPool, error) {
 		converted := networkmap.ExitPool{
 			Ref: pool.GetPoolRef(), Name: pool.GetName(), Primary: pool.GetPrimary(),
 			Generation: pool.GetGeneration(), Managed: pool.GetManaged(),
-			Spread: pool.GetMode() == mtcpv1.ExitPool_SPREAD,
+			Spread: pool.GetMode() == mtcpv1.ExitPool_SPREAD, CaptiveOff: pool.GetCaptiveOff(),
 		}
 		switch pool.GetStatus() {
 		case mtcpv1.ExitPool_SERVED:

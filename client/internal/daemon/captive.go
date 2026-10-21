@@ -56,6 +56,10 @@ type captiveWindowFollow struct {
 	id    string
 	until time.Time
 	iface string
+	// opened is when meshd first saw it; closeAsked whether meshd asked
+	// the helper to close it.
+	opened     time.Time
+	closeAsked bool
 	// downSeen: the tunnel was down during the window; upSince is since
 	// when it is back.
 	downSeen bool
@@ -79,13 +83,19 @@ type captiveTracker struct {
 	relays captiveRelays
 	state  captive.State
 	window captiveWindowFollow
+	// closed are the windows that closed, still to report to Core.
+	closed []closedCaptiveWindow
 	// exitAnswered reports the exit node in use answered after a time.
 	exitAnswered func(time.Time) bool
 }
 
-// newCaptiveTracker reads the relays kept in dir, none when it has none.
+// newCaptiveTracker reads the relays and closed windows kept in dir, none
+// when it has none.
 func newCaptiveTracker(dir string) *captiveTracker {
-	tracker := &captiveTracker{dir: dir, state: captive.State{Verdict: captive.VerdictNone}}
+	tracker := &captiveTracker{
+		dir: dir, state: captive.State{Verdict: captive.VerdictNone},
+		closed: readClosedCaptiveWindows(dir, time.Now()),
+	}
 	if dir == "" {
 		return tracker
 	}
@@ -205,11 +215,17 @@ func (t *captiveTracker) followWindow(window netadmin.CaptiveWindow, until, now 
 	// A second early: names stop going to the network's resolvers before
 	// the helper empties the host's cache at the window's end.
 	if window.ID == "" || !now.Before(until.Add(-captiveEndsEarly)) {
+		if t.window.id != "" {
+			t.noteClosedLocked(now, t.windowEndLocked(now))
+		}
 		t.window = captiveWindowFollow{}
 		return "", false
 	}
 	if window.ID != t.window.id {
-		t.window = captiveWindowFollow{id: window.ID}
+		if t.window.id != "" {
+			t.noteClosedLocked(now, t.windowEndLocked(now))
+		}
+		t.window = captiveWindowFollow{id: window.ID, opened: now}
 	}
 	t.window.until, t.window.iface = until, window.Interface
 	switch {
@@ -219,6 +235,7 @@ func (t *captiveTracker) followWindow(window netadmin.CaptiveWindow, until, now 
 	case t.window.upSince.IsZero():
 		t.window.upSince = now
 	case now.Sub(t.window.upSince) >= captiveCloseAfter:
+		t.window.closeAsked = true
 		return t.window.id, true
 	}
 	return "", true

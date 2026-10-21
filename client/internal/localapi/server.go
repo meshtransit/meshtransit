@@ -713,7 +713,7 @@ func mapExitStatus(view *daemon.ExitView, route dataplane.ExitRouteStatus) *exit
 		Use: view.Use, Pool: view.Pool, PoolName: view.PoolName, ExitNode: view.ExitNode,
 		ExitNodeName: view.ExitNodeName, Via: view.Via, IPv6: route.IPv6, Routing: route.Routing,
 		Refused: route.Refused, Error: route.Error, Tampered: route.Tampered, Pending: view.Pending,
-		PendingNames: view.PendingNames, PendingPool: view.PendingPool,
+		PendingNames: view.PendingNames, PendingPool: view.PendingPool, CaptiveOff: route.CaptiveOff,
 	}
 }
 

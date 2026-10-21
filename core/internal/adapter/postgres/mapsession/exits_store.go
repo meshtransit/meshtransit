@@ -31,7 +31,11 @@ FROM mesh_ops.load_map_network_exit_pools_v1($1::INTEGER)`
     conntrack_per_consumer, dns_upstreams, probe_addresses, probe_ports, elected, COALESCE(primary_device_id, 0),
     spread, assignment_version, spread_salt, serving_device_ids
 FROM mesh_ops.load_map_network_exit_pools_v2($1::INTEGER)`
-	loadNetworkExitNodesSQL = `SELECT pool_id, device_id, device_public_id::TEXT, priority, node_state,
+	// Schema 211: the pools that turn captive portal windows off.
+	exitCaptiveGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
+    pg_catalog.to_regprocedure('mesh_ops.load_map_network_exit_pool_captive_v1(integer)'), 'EXECUTE'), FALSE)`
+	loadNetworkExitCaptiveSQL = `SELECT pool_id FROM mesh_ops.load_map_network_exit_pool_captive_v1($1::INTEGER)`
+	loadNetworkExitNodesSQL   = `SELECT pool_id, device_id, device_public_id::TEXT, priority, node_state,
     workspace_owned, offered
 FROM mesh_ops.load_map_network_exit_nodes_v1($1::INTEGER)`
 	loadNetworkExitRulesSQL = `SELECT access_rule_public_id::TEXT, source_kind, source_ref, pool_id, protocol,
@@ -69,6 +73,9 @@ func readNetworkExits(ctx context.Context, transaction databaseTransaction, para
 	}
 	if len(params.ExitPools) == 0 {
 		return nil
+	}
+	if err := readNetworkExitCaptive(ctx, transaction, params.ExitPools); err != nil {
+		return err
 	}
 	if params.ExitNodes, err = readNetworkExitNodes(ctx, transaction); err != nil {
 		return err
@@ -215,4 +222,41 @@ func readNetworkExitRules(ctx context.Context, transaction databaseTransaction, 
 		return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("iterate network exit rules: %w", err))
 	}
 	return rules, nil
+}
+
+// readNetworkExitCaptive marks the pools that turn captive portal windows
+// off, once schema 211 is installed; before it none does.
+func readNetworkExitCaptive(ctx context.Context, transaction databaseTransaction,
+	pools []appmapsession.ExitPool) error {
+	granted, err := functionGranted(ctx, transaction, exitCaptiveGrantedSQL)
+	if err != nil {
+		return errors.Join(ErrLoadSnapshot, fmt.Errorf("check exit captive reader: %w", err))
+	}
+	if !granted {
+		return nil
+	}
+	rows, err := transaction.Query(ctx, loadNetworkExitCaptiveSQL, maximumNetworkExitPools+1)
+	if err != nil || rows == nil {
+		return errors.Join(ErrLoadSnapshot, fmt.Errorf("read exit captive pools: %w", nonNil(err)))
+	}
+	defer rows.Close()
+	index := make(map[int64]int, len(pools))
+	for position, pool := range pools {
+		index[pool.Pool] = position
+	}
+	for rows.Next() {
+		var pool int64
+		if err := rows.Scan(&pool); err != nil {
+			return errors.Join(ErrLoadSnapshot, fmt.Errorf("scan exit captive pool: %w", err))
+		}
+		position, known := index[pool]
+		if !known {
+			return ErrSnapshotEvidence
+		}
+		pools[position].CaptiveOff = true
+	}
+	if err := rows.Err(); err != nil {
+		return errors.Join(ErrLoadSnapshot, fmt.Errorf("iterate exit captive pools: %w", err))
+	}
+	return nil
 }

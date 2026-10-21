@@ -244,6 +244,7 @@ payload     bytes[...]
 | 0x34 | `EnforcementReport` | N→C | 1 KiB |
 | 0x35 | `RouteHealthReport` | N→C | 160 KiB |
 | 0x36 | `RouteSelectionReport` | N→C | 128 KiB |
+| 0x37 | `CaptiveWindowReport` | N→C | 4 KiB |
 | 0x40 | `RelayTicket` | C→N | 256 KiB (4 KiB without `relay.zones2`) |
 | 0x50 | `Lifecycle` | C→N | 4 KiB |
 | 0x51 | `KeyUpdate` | C→N | 4 KiB |
@@ -707,6 +708,7 @@ destinations `0.0.0.0/0` and `::/0`, and the exit node subtracts this set.
 | `status` | `SERVED`: send through `primary`. `UNSERVED`: no exit node can serve now. `CAPACITY`: the exit nodes' maps cannot hold this node |
 | `managed` | The administrator asks this node to use the pool. A node follows it only if its own configuration allows managed exits |
 | `mode` | `FAILOVER` (or unset): every consumer goes through the elected primary. `SPREAD`: each consumer has its own exit node of the pool's serving set |
+| `captive_off` | The administrator turned captive portal windows off for the pool: a node using it opens none, and closes one already open (8.5) |
 
 Core sends a pool to a node only while an active rule lets the node reach the
 Internet through it, never the pool the node is an exit node of, and includes
@@ -959,6 +961,35 @@ Core compares it with the digest of the filter it sent at that view and shows
 the Device as enforced, applying (within 60 s) or mismatch. The report is
 evidence from the node, not attestation (policy digest §6).
 
+### 8.5 Captive portal windows
+
+To sign in to a hotel or airport Wi-Fi while it uses an exit, a node's root
+may open a captive portal window: for a few minutes (at most 5) the host's
+web traffic leaves straight to the local network instead of the exit node.
+No window opens while the node's pool has `captive_off` (7.7); a node
+without that field's support ignores it.
+
+With `captive.audit1` (a node lists it with `routes.exit.v1`) the node
+reports each window that closed in a `CaptiveWindowReport{windows}`, at most
+16, each once per session and at most one report per 15 s: `window_id` (32
+lowercase hex digits), `opened_ms` and `closed_ms` (when the node saw it open
+and close, at the latest its end) and `end`: `EXPIRED` (its time ran out),
+`CLOSED` (root closed it, or the node stopped using the exit) or
+`TUNNEL_BACK` (the node closed it once the tunnel was back). Core does not
+answer; the node reports a window in up to 3 sessions. Core records each
+window once per Device and `window_id`, with a `device.captive_window` audit
+event, at most 48 per Device per day. A report never names the portal.
+
+An empty report, more than 16 windows, a `window_id` of another shape, an
+unknown `end`, or a report on a session without `captive.audit1` is
+`INVALID`. Core leaves out, without ending the session, a `window_id` listed
+twice after its first, and a window whose times it cannot take (closed more
+than a minute after Core's clock, more than 6 minutes long, or more than 30
+days old). It drops a report sooner than 10 s after the last of the session
+or before the session has a map; a window it could not record (the daily
+budget, another session of the Device recording, a database error) is not
+audited unless a later session reports it again.
+
 ## 9. Relay access
 
 - `RelayTicket{ticket, not_after, zones}` carries an MTRP v1 ticket (MTRP §6)
@@ -1055,6 +1086,7 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `routes.exit.v1` | Node applies `exits` (7.7); with `routes.selection1` it reports its exit in `RouteSelectionReport` |
 | `router.exit.v1` | Node can be an exit node: it applies `served_exits` (7.7) and reports `exit_offered` (8.2); with `router.health1` it reports its exit health in `RouteHealthReport` |
 | `relay.zones2` | Node hands relays MTT2 tickets and their ZONES (MTRP §5.4, §6.1). Core offers it only once every relay accepts them |
+| `captive.audit1` | Node sends `CaptiveWindowReport` (8.5); only with `routes.exit.v1` |
 
 Unknown names are ignored. Core sends a feature only when both sides list it.
 

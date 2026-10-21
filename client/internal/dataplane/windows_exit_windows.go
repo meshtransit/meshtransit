@@ -40,7 +40,7 @@ func (o *WindowsTUNOpener) SetExitRoute(_ context.Context, requested netadmin.Ex
 	// A window just opened or closed shows in this answer, not a second
 	// later: meshd asks at once after meshctl changed it.
 	o.pollCaptiveLocked(time.Now())
-	if o.captive != nil && requested.CaptiveClose == o.captive.id {
+	if o.captive != nil && (requested.CaptiveClose == o.captive.id || requested.CaptiveOff) {
 		// The tunnel is back: the window has done its work.
 		o.closeCaptiveLocked()
 		_ = captive.CloseWindow(o.captivePath)

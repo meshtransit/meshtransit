@@ -170,6 +170,7 @@ func assertPostgreSQLExitMaps(ctx context.Context, t *testing.T, admin *pgx.Conn
 	}
 	assertSpreadExitMap(ctx, t, admin, runtimePool, workerPool, owner, scope, poolID, consumerIdentity, exitNode,
 		storeWith)
+	assertCaptiveExitMap(ctx, t, runtimePool, owner, scope, poolID, consumerIdentity, storeWith)
 	assertExitExplanations(ctx, t, newIntegrationPolicyExplainer(t, runtimePool), owner, scope, consumer, exitNode,
 		poolID)
 	assertExitGraph(ctx, t, newIntegrationPolicyExplainer(t, runtimePool), owner, scope, consumer, exitNode, poolID)
@@ -433,5 +434,52 @@ WHERE exit_pool.public_id = $1::UUID`, poolID.String()).Scan(&installationText);
 	if _, err := pools.Update(ctx, owner, scope, poolID, spread.Pool.Version, definition,
 		newCorrelationID(t)); err != nil {
 		t.Fatalf("back to failover: %v", err)
+	}
+}
+
+// assertCaptiveExitMap qualifies schema 211: a pool turns captive portal
+// windows off and says so in its consumers' maps; an update without the
+// setting keeps it; the pool's read and listing carry it.
+func assertCaptiveExitMap(ctx context.Context, t *testing.T, runtimePool *postgresadapter.Pool,
+	owner accountsession.Session, scope network.Scope, poolID exitpool.ID, consumerIdentity control.AuthenticatedNode,
+	storeWith func(exits, spread bool) *postgresmapsession.Store) {
+	t.Helper()
+	pools := newIntegrationExitPoolService(t, runtimePool)
+	reading, err := pools.Read(ctx, owner, scope, poolID)
+	if err != nil || reading.Pool.CaptiveWindows != exitpool.CaptiveAllowed {
+		t.Fatalf("a pool's captive windows before schema 211's change = %+v, %v", reading.Pool.Definition, err)
+	}
+	definition := reading.Pool.Definition
+	definition.CaptiveWindows = exitpool.CaptiveOff
+	off, err := pools.Update(ctx, owner, scope, poolID, reading.Pool.Version, definition, newCorrelationID(t))
+	if err != nil || off.Pool.CaptiveWindows != exitpool.CaptiveOff || off.Previous == nil ||
+		off.Previous.CaptiveWindows != exitpool.CaptiveAllowed || !off.Changed {
+		t.Fatalf("turn captive windows off = %+v, %v", off, err)
+	}
+	offMap, err := storeWith(true, false).Load(ctx, consumerIdentity)
+	if err != nil || len(offMap.Routes().Exits()) != 1 || !offMap.Routes().Exits()[0].CaptiveOff {
+		t.Fatalf("map of a pool with captive windows off = %+v, %v", offMap.Routes().Exits(), err)
+	}
+	renamed := off.Pool.Definition
+	renamed.Name, renamed.CaptiveWindows = renamed.Name+" 2", exitpool.CaptiveKeep
+	kept, err := pools.Update(ctx, owner, scope, poolID, off.Pool.Version, renamed, newCorrelationID(t))
+	if err != nil || kept.Pool.CaptiveWindows != exitpool.CaptiveOff {
+		t.Fatalf("an update without captive windows = %+v, %v", kept.Pool.Definition, err)
+	}
+	listing, err := pools.List(ctx, owner, scope, exitpool.ID{}, exitpool.MaximumPage)
+	if err != nil || !slices.ContainsFunc(listing.Pools, func(pool exitpool.Pool) bool {
+		return pool.ID == poolID && pool.CaptiveWindows == exitpool.CaptiveOff
+	}) {
+		t.Fatalf("listing = %+v, %v", listing.Pools, err)
+	}
+	allowed := kept.Pool.Definition
+	allowed.Name, allowed.CaptiveWindows = reading.Pool.Name, exitpool.CaptiveAllowed
+	if back, err := pools.Update(ctx, owner, scope, poolID, kept.Pool.Version, allowed,
+		newCorrelationID(t)); err != nil || back.Pool.CaptiveWindows != exitpool.CaptiveAllowed {
+		t.Fatalf("allow captive windows again = %+v, %v", back, err)
+	}
+	allowedMap, err := storeWith(true, false).Load(ctx, consumerIdentity)
+	if err != nil || allowedMap.Routes().Exits()[0].CaptiveOff {
+		t.Fatalf("map of a pool allowing captive windows = %+v, %v", allowedMap.Routes().Exits(), err)
 	}
 }

@@ -37,6 +37,7 @@ const (
 	appendDeviceEnforcementEvidenceSQL = `SELECT mesh_ops.append_device_enforcement_evidence_v1(
     $1::UUID,$2::BIGINT,$3::BIGINT,$4::BYTEA,$5::BYTEA,$6::UUID,$7::UUID,$8::JSONB)`
 	pruneDeviceEnforcementSQL       = `SELECT mesh_ops.prune_device_enforcement_v1($1::UUID,$2::INTEGER)`
+	pruneDeviceCaptiveWindowsSQL    = `SELECT mesh_ops.prune_device_captive_windows_v1($1::UUID,$2::INTEGER)`
 	enforcementLedgerPermission     = "system.reconcile"
 	enforcementLedgerAggregateKind  = "device_enforcement_event"
 	enforcementLedgerMaximumPage    = 500
@@ -272,6 +273,19 @@ func (store *EnforcementLedgerStore) Prune(ctx context.Context, installation dep
 	}()
 	if err := transaction.QueryRow(ctx, pruneDeviceEnforcementSQL, installation.String(), limit).Scan(&removed); err != nil {
 		return 0, errors.Join(ErrEnforcementLedger, err)
+	}
+	// The captive portal windows Devices reported (schema 212) go with the
+	// enforcement evidence, in what the call has left.
+	if removed >= 0 && removed < limit {
+		var captive int
+		if err := transaction.QueryRow(ctx, pruneDeviceCaptiveWindowsSQL, installation.String(),
+			limit-removed).Scan(&captive); err != nil {
+			return 0, errors.Join(ErrEnforcementLedger, err)
+		}
+		if captive < 0 {
+			return 0, ErrEnforcementLedger
+		}
+		removed += captive
 	}
 	if removed < 0 {
 		return 0, ErrEnforcementLedger

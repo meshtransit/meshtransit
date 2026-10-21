@@ -179,6 +179,8 @@ type exitStatus struct {
 	Pending      []string `json:"pending,omitempty"`
 	PendingNames []string `json:"pending_names,omitempty"`
 	PendingPool  string   `json:"pending_pool,omitempty"`
+	// CaptiveOff: the pool turns captive portal windows off.
+	CaptiveOff bool `json:"captive_off,omitempty"`
 }
 
 // exitApprovalRequest names the exit nodes (device IDs) or pool (its

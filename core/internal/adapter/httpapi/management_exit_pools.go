@@ -282,6 +282,9 @@ type exitPoolBody struct {
 	// Serving comes with one spread pool's read only, absent before Core's
 	// first election of its serving set.
 	Serving *exitPoolServingBody `json:"serving,omitempty"`
+	// CaptiveWindows is allowed (root on each consumer may open captive
+	// portal windows) or off (none may).
+	CaptiveWindows string `json:"captive_windows"`
 }
 
 // exitPoolServingBody is the set of exit nodes a spread pool assigns its
@@ -320,10 +323,13 @@ func newExitPoolBody(stored exitpool.Pool) exitPoolBody {
 		Probes:               make([]exitPoolProbeBody, 0, len(stored.Probes)),
 		Nodes:                make([]exitNodeBody, 0, len(stored.Nodes)), Version: stored.Version,
 		CreatedAt: managementTime(stored.CreatedAt), UpdatedAt: managementTime(stored.UpdatedAt),
-		Mode: string(stored.Mode),
+		Mode: string(stored.Mode), CaptiveWindows: string(stored.CaptiveWindows),
 	}
 	if !stored.Mode.IsKnown() {
 		body.Mode = string(exitpool.ModeFailover)
+	}
+	if !stored.CaptiveWindows.IsKnown() {
+		body.CaptiveWindows = string(exitpool.CaptiveAllowed)
 	}
 	for _, address := range stored.DNSUpstreams {
 		body.DNSUpstreams = append(body.DNSUpstreams, address.String())
@@ -392,8 +398,8 @@ func (handler *ManagementHandler) addExitNodeUse(ctx context.Context, body *exit
 }
 
 // parseExitPoolDefinition reads a whole definition; PATCH replaces it whole
-// too, except mode: absent, a new pool is failover and an update keeps the
-// stored mode. Addresses must be canonical text: the API never rewrites
+// too, except mode and captive_windows: absent, a new pool is failover and
+// allows captive portal windows, and an update keeps the stored ones. Addresses must be canonical text: the API never rewrites
 // them.
 func parseExitPoolDefinition(response http.ResponseWriter, request *http.Request) (exitpool.Definition, bool) {
 	var body struct {
@@ -404,6 +410,7 @@ func parseExitPoolDefinition(response http.ResponseWriter, request *http.Request
 		DNSUpstreams         *[]string            `json:"dns_upstreams"`
 		Probes               *[]exitPoolProbeBody `json:"probes"`
 		Mode                 *string              `json:"mode"`
+		CaptiveWindows       *string              `json:"captive_windows"`
 	}
 	if !readSiteBody(response, request, &body) || body.Name == nil || body.Failback == nil ||
 		body.SMTPAllowed == nil || body.ConntrackPerConsumer == nil || body.DNSUpstreams == nil ||
@@ -416,6 +423,12 @@ func parseExitPoolDefinition(response http.ResponseWriter, request *http.Request
 	if body.Mode != nil {
 		definition.Mode = exitpool.Mode(*body.Mode)
 		if !definition.Mode.IsKnown() {
+			return exitpool.Definition{}, false
+		}
+	}
+	if body.CaptiveWindows != nil {
+		definition.CaptiveWindows = exitpool.CaptiveWindows(*body.CaptiveWindows)
+		if !definition.CaptiveWindows.IsKnown() {
 			return exitpool.Definition{}, false
 		}
 	}

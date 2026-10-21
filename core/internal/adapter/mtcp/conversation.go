@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"meshtransit.net/core/internal/domain/captivewindow"
 	"net/netip"
 	"slices"
 	"sync"
@@ -66,6 +67,9 @@ type ApplicationOptions struct {
 	RouteOffers RouteOffers
 	// ExitOffers, when set, stores whether Devices offer to be exit nodes.
 	ExitOffers ExitOffers
+	// CaptiveWindows, when set, records the captive portal windows Devices
+	// report (captive.audit1).
+	CaptiveWindows captivewindow.Recorder
 	// ApprovalOrigin is the https origin of approval URLs; ApprovalTTL is
 	// how long an approval stays open.
 	ApprovalOrigin string
@@ -152,6 +156,7 @@ type conversation struct {
 	// endpointPacing keeps and paces this session's endpoint reports.
 	endpointPacing endpointPacing
 	lastPaths      time.Time // when the last PathStatsReport was stored
+	lastCaptive    time.Time // when the last CaptiveWindowReport was taken
 	// identity, browser and resync are the session's budgets for
 	// RegisterRequest and RotateNodeKey, browser approval URLs and
 	// MapResync (rate_budget.go); Receive is serial, so they need no lock.
@@ -448,6 +453,8 @@ func (conversation *conversation) Receive(ctx context.Context, _ sharedmtcp.Mess
 		return conversation.routeHealth(m)
 	case *mtcpv1.RouteSelectionReport:
 		return conversation.routeSelection(m)
+	case *mtcpv1.CaptiveWindowReport:
+		return conversation.captiveWindows(ctx, m)
 	case *mtcpv1.RegisterRequest:
 		if wait, ok := conversation.identity.spend(conversation.application.now(), 1); !ok {
 			conversation.application.options.Metrics.limited(limitIdentity)

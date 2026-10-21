@@ -44,6 +44,9 @@ type ExitPool struct {
 	Spread  bool
 	Salt    [16]byte
 	Serving []int64
+	// CaptiveOff refuses captive portal windows on the pool's consumers
+	// (schema 211); before it no pool does.
+	CaptiveOff bool
 }
 
 // ExitNode is one exit node of an active pool, with the facts that decide
@@ -84,6 +87,9 @@ type ExitPoolRoute struct {
 	// Draining are the candidates an administrator is taking out of the
 	// pool.
 	Draining []node.ID
+	// CaptiveOff refuses captive portal windows on the consumer while it
+	// uses the pool (exit node design §17.4).
+	CaptiveOff bool
 }
 
 // ServedExit is the Exit Pool an exit node forwards to the Internet for.
@@ -248,7 +254,7 @@ func (inner *networkPolicy) consumerExits(view *RouteView, self int64, now time.
 	for pool := range granted {
 		entry := index.pools[pool]
 		route := ExitPoolRoute{Ref: entry.pool.Ref, Name: entry.pool.Name, Generation: index.revision,
-			Status: RouteUnserved}
+			Status: RouteUnserved, CaptiveOff: entry.pool.CaptiveOff}
 		for _, exitNode := range entry.nodes {
 			route.Candidates = append(route.Candidates, exitNode.NodeID)
 			if !exitNode.Active {
@@ -385,13 +391,15 @@ func equalExitPool(first, second ExitPool) bool {
 		first.SMTPAllowed == second.SMTPAllowed && first.ConntrackPerConsumer == second.ConntrackPerConsumer &&
 		slices.Equal(first.DNSUpstreams, second.DNSUpstreams) && slices.Equal(first.Probes, second.Probes) &&
 		first.Elected == second.Elected && first.Primary == second.Primary && first.Spread == second.Spread &&
-		first.Salt == second.Salt && slices.Equal(first.Serving, second.Serving)
+		first.Salt == second.Salt && slices.Equal(first.Serving, second.Serving) &&
+		first.CaptiveOff == second.CaptiveOff
 }
 
 func equalExitPoolRoute(first, second ExitPoolRoute) bool {
 	return first.Ref == second.Ref && first.Name == second.Name && slices.Equal(first.Candidates, second.Candidates) &&
 		first.Primary == second.Primary && first.Generation == second.Generation && first.Status == second.Status &&
-		first.Spread == second.Spread && slices.Equal(first.Draining, second.Draining)
+		first.Spread == second.Spread && slices.Equal(first.Draining, second.Draining) &&
+		first.CaptiveOff == second.CaptiveOff
 }
 
 func equalServedExit(first, second ServedExit) bool {

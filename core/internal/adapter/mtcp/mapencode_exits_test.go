@@ -111,6 +111,24 @@ func TestEncodeSnapshotCarriesSpreadExitPools(t *testing.T) {
 	}
 }
 
+// TestEncodeSnapshotCarriesCaptiveOff: a pool that turns captive portal
+// windows off says so in its consumers' maps; others do not.
+func TestEncodeSnapshotCarriesCaptiveOff(t *testing.T) {
+	t.Parallel()
+	consumer := exitSnapshotFixtureWith(t, 702, func(params *mapsession.NetworkPolicyParams) {
+		params.ExitPools[0].CaptiveOff = true
+	})
+	message, err := encodeSnapshot(consumer, &mtcpv1.View{Epoch: 1, Seq: 1}, false, nil, dnsname.Default())
+	if err != nil || !message.GetExits().GetPools()[0].GetCaptiveOff() {
+		t.Fatalf("captive off = %v, %v", message.GetExits(), err)
+	}
+	allowed, err := encodeSnapshot(exitSnapshotFixture(t, 702), &mtcpv1.View{Epoch: 1, Seq: 1}, false, nil,
+		dnsname.Default())
+	if err != nil || allowed.GetExits().GetPools()[0].GetCaptiveOff() {
+		t.Fatalf("captive allowed = %v, %v", allowed.GetExits(), err)
+	}
+}
+
 func TestEncodeSnapshotCarriesExitPools(t *testing.T) {
 	t.Parallel()
 	consumer := exitSnapshotFixture(t, 702)

@@ -149,6 +149,9 @@ type request struct {
 	// per family), and CaptiveClose a window meshd asks to close early.
 	CaptivePortals []string `json:"captive_portals,omitempty"`
 	CaptiveClose   string   `json:"captive_close,omitempty"`
+	// CaptiveOff, with set_exit_route: the pool the host uses turns
+	// windows off; the helper refuses one and closes an open one.
+	CaptiveOff bool `json:"captive_off,omitempty"`
 }
 
 type response struct {
@@ -230,6 +233,9 @@ type ExitRouteRequest struct {
 	// CaptiveClose names a window to close before its time: the tunnel
 	// came back (§17.4). meshd never opens one.
 	CaptiveClose string
+	// CaptiveOff: the pool the host uses turns windows off (C5). It only
+	// ever narrows what root allowed.
+	CaptiveOff bool
 }
 
 // CaptiveWindow is a captive portal window the helper holds open.
@@ -391,7 +397,8 @@ func validateRequest(value request) (validatedRequest, error) {
 	if (value.Exit || value.ExitConntrack != 0 || value.ExitSMTP) && value.Operation != operationSetServedExit {
 		return validatedRequest{}, fmt.Errorf("%w: unexpected exit fields", ErrProtocol)
 	}
-	if (value.ExitRoute || value.ExitRouteIPv6 || value.CaptivePortals != nil || value.CaptiveClose != "") &&
+	if (value.ExitRoute || value.ExitRouteIPv6 || value.CaptivePortals != nil || value.CaptiveClose != "" ||
+		value.CaptiveOff) &&
 		value.Operation != operationSetExitRoute {
 		return validatedRequest{}, fmt.Errorf("%w: unexpected exit route fields", ErrProtocol)
 	}
@@ -914,13 +921,13 @@ func captiveWindowID(id string) bool {
 // only with the exit route in use, at most one canonical portal per family on
 // a port other than 80 and 443, never in the mesh, and a window id to close.
 func parseCaptiveRequest(value request, route *ExitRouteRequest) error {
-	if (value.CaptivePortals != nil || value.CaptiveClose != "") && !value.ExitRoute {
+	if (value.CaptivePortals != nil || value.CaptiveClose != "" || value.CaptiveOff) && !value.ExitRoute {
 		return fmt.Errorf("%w: captive fields without the exit route", ErrProtocol)
 	}
 	if value.CaptiveClose != "" && !captiveWindowID(value.CaptiveClose) {
 		return fmt.Errorf("%w: captive window id is invalid", ErrProtocol)
 	}
-	route.CaptiveClose = value.CaptiveClose
+	route.CaptiveClose, route.CaptiveOff = value.CaptiveClose, value.CaptiveOff
 	if value.CaptivePortals != nil && len(value.CaptivePortals) == 0 || len(value.CaptivePortals) > 2 {
 		return fmt.Errorf("%w: captive portals are invalid", ErrProtocol)
 	}

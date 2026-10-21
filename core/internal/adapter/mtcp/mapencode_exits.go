@@ -33,7 +33,7 @@ func encodeExits(snapshot mapsession.Snapshot) *mtcpv1.ExitConfig {
 	for _, pool := range pools {
 		encoded := &mtcpv1.ExitPool{PoolRef: pool.Ref, Name: pool.Name,
 			Generation: uint64(pool.Generation), Status: exitStatus(pool.Status), //nolint:gosec // positive
-			Mode: mtcpv1.ExitPool_FAILOVER}
+			Mode: mtcpv1.ExitPool_FAILOVER, CaptiveOff: pool.CaptiveOff}
 		if pool.Spread {
 			encoded.Mode = mtcpv1.ExitPool_SPREAD
 		}

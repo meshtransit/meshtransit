@@ -105,7 +105,7 @@ func (s *Server) applyExitRoute() {
 	if s.hasActiveTUN {
 		name = s.activeName
 	}
-	if settings.ExitCaptiveOff {
+	if settings.ExitCaptiveOff || (s.requestedExitRoute != nil && s.requestedExitRoute.CaptiveOff) {
 		s.dropCaptiveWindow()
 	}
 	key := fmt.Sprintf("%s %t %t %s %s", name, ipv6, settings.ExitAllowLAN, s.exitRouteConfigurer.Stamp(name),

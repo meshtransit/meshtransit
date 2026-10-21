@@ -182,6 +182,9 @@ type ExitPool struct {
 	// Spread: Primary is the exit node Core assigned to this node, and
 	// Candidates come in this node's own order (exit node design §16).
 	Spread bool
+	// CaptiveOff: root on this node may not open captive portal windows
+	// while it uses the pool (exit node design §17.4).
+	CaptiveOff bool
 }
 
 // validateExits checks exits as mtcp-v1 §7.7 requires: at most 64 pools,
@@ -303,4 +306,18 @@ func validateExitRoute(route *ExitRoute, exits []ExitPool) error {
 		return errors.New("the chosen exit node is not a candidate of its pool")
 	}
 	return nil
+}
+
+// ExitCaptiveOff reports whether the pool the node chose turns captive
+// portal windows off.
+func (s Snapshot) ExitCaptiveOff() bool {
+	if s.ExitRoute == nil {
+		return false
+	}
+	for _, pool := range s.Exits {
+		if pool.Ref == s.ExitRoute.Pool {
+			return pool.CaptiveOff
+		}
+	}
+	return false
 }

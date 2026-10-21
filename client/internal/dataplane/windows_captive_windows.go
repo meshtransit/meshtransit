@@ -99,6 +99,7 @@ func (o *WindowsTUNOpener) pollCaptiveLocked(now time.Time) {
 	// A window this run already opened whose file stayed (a delete that
 	// failed), or one older than any window lasts, never opens (again).
 	if err != nil || settings.ExitCaptiveOff || !o.exitRouting.Routing ||
+		(o.exitRequest != nil && o.exitRequest.CaptiveOff) ||
 		slices.Contains(o.captiveSeen, window.ID) || window.Stale(now) {
 		_ = captive.CloseWindow(o.captivePath)
 		return

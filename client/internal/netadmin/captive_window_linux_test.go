@@ -276,3 +276,27 @@ func TestCaptiveWindowRefusals(t *testing.T) {
 		t.Fatalf("a starting helper kept the window file: %v", err)
 	}
 }
+
+// A pool that turns captive portal windows off closes an open window and
+// refuses the next, whatever root opens (C5); meshd only ever narrows.
+func TestCaptiveWindowOffByTheExitPool(t *testing.T) {
+	t.Parallel()
+	h := newCaptiveHarness(t)
+	h.open(time.Minute)
+	if h.server.captiveWindow == nil {
+		t.Fatal("no window opened")
+	}
+	routing := h.ask(ExitRouteRequest{Use: true, CaptiveOff: true})
+	if h.server.captiveWindow != nil || routing.Captive != (CaptiveWindow{}) || !h.fileGone() {
+		t.Fatalf("the pool's captive off left the window: %+v", routing.Captive)
+	}
+	h.open(time.Minute)
+	if h.server.captiveWindow != nil || !h.fileGone() {
+		t.Fatal("a window opened while the pool turns them off")
+	}
+	h.ask(ExitRouteRequest{Use: true})
+	h.open(time.Minute)
+	if h.server.captiveWindow == nil {
+		t.Fatal("no window opened once the pool allowed them again")
+	}
+}

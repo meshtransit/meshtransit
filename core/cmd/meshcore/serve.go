@@ -613,6 +613,14 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			// Exit offers are stored only while Core offers router.exit.v1:
 			// then a node that no longer lists it withdraws its offer.
 			deps.exitOffers = exitOffers
+			// Consumers report the captive portal windows root opened
+			// (captive.audit1); each enters the Network's audit trail.
+			captiveWindows, captiveErr := postgresadapter.NewCaptiveWindowStore(storagePools.runtime)
+			if captiveErr != nil {
+				logger.ErrorContext(ctx, "startup failed", "error_code", "mtcp_composition_failure", "error", captiveErr)
+				return 1
+			}
+			deps.captiveWindows = captiveWindows
 		}
 		if len(browserControl) == 1 {
 			deps.browser, deps.origin = &browserControl[0], processConfig.BrowserRegistration.Origin

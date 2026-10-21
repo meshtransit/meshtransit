@@ -16288,7 +16288,8 @@
                               "version",
                               "created_at",
                               "updated_at",
-                              "mode"
+                              "mode",
+                              "captive_windows"
                             ],
                             "properties": {
                               "exit_pool_id": {
@@ -16422,6 +16423,14 @@
                                   "spread"
                                 ],
                                 "description": "failover: every consumer goes through the elected primary. spread: each consumer has its own exit node of the serving set, chosen by rendezvous hashing (exit node design §16)."
+                              },
+                              "captive_windows": {
+                                "type": "string",
+                                "enum": [
+                                  "allowed",
+                                  "off"
+                                ],
+                                "description": "allowed: root on each consumer may open a short captive portal window to sign in to a hotel or airport Wi-Fi. off: no consumer of this pool may (exit node design §17.4); Core can only turn windows off, never open one."
                               }
                             }
                           }
@@ -16583,6 +16592,14 @@
                       "spread"
                     ],
                     "description": "failover: every consumer goes through the elected primary. spread: each consumer has its own exit node of the serving set, chosen by rendezvous hashing (exit node design §16). Absent: a new pool is failover and an update keeps the stored mode. Becoming spread needs MESHTRANSIT_EXIT_SPREAD_ENABLED (409 exit_spread_disabled)."
+                  },
+                  "captive_windows": {
+                    "type": "string",
+                    "enum": [
+                      "allowed",
+                      "off"
+                    ],
+                    "description": "allowed: root on each consumer may open a short captive portal window to sign in to a hotel or airport Wi-Fi. off: no consumer of this pool may (exit node design §17.4); Core can only turn windows off, never open one. Absent: a new pool allows them and an update keeps the stored setting."
                   }
                 }
               }
@@ -16639,7 +16656,8 @@
                             "version",
                             "created_at",
                             "updated_at",
-                            "mode"
+                            "mode",
+                            "captive_windows"
                           ],
                           "properties": {
                             "exit_pool_id": {
@@ -16773,6 +16791,14 @@
                                 "spread"
                               ],
                               "description": "failover: every consumer goes through the elected primary. spread: each consumer has its own exit node of the serving set, chosen by rendezvous hashing (exit node design §16)."
+                            },
+                            "captive_windows": {
+                              "type": "string",
+                              "enum": [
+                                "allowed",
+                                "off"
+                              ],
+                              "description": "allowed: root on each consumer may open a short captive portal window to sign in to a hotel or airport Wi-Fi. off: no consumer of this pool may (exit node design §17.4); Core can only turn windows off, never open one."
                             }
                           }
                         },
@@ -16907,7 +16933,8 @@
                             "version",
                             "created_at",
                             "updated_at",
-                            "mode"
+                            "mode",
+                            "captive_windows"
                           ],
                           "properties": {
                             "exit_pool_id": {
@@ -17135,6 +17162,14 @@
                               ],
                               "description": "failover: every consumer goes through the elected primary. spread: each consumer has its own exit node of the serving set, chosen by rendezvous hashing (exit node design §16)."
                             },
+                            "captive_windows": {
+                              "type": "string",
+                              "enum": [
+                                "allowed",
+                                "off"
+                              ],
+                              "description": "allowed: root on each consumer may open a short captive portal window to sign in to a hotel or airport Wi-Fi. off: no consumer of this pool may (exit node design §17.4); Core can only turn windows off, never open one."
+                            },
                             "serving": {
                               "type": "object",
                               "additionalProperties": false,
@@ -17347,6 +17382,14 @@
                       "spread"
                     ],
                     "description": "failover: every consumer goes through the elected primary. spread: each consumer has its own exit node of the serving set, chosen by rendezvous hashing (exit node design §16). Absent: a new pool is failover and an update keeps the stored mode. Becoming spread needs MESHTRANSIT_EXIT_SPREAD_ENABLED (409 exit_spread_disabled)."
+                  },
+                  "captive_windows": {
+                    "type": "string",
+                    "enum": [
+                      "allowed",
+                      "off"
+                    ],
+                    "description": "allowed: root on each consumer may open a short captive portal window to sign in to a hotel or airport Wi-Fi. off: no consumer of this pool may (exit node design §17.4); Core can only turn windows off, never open one. Absent: a new pool allows them and an update keeps the stored setting."
                   }
                 }
               }
@@ -17403,7 +17446,8 @@
                             "version",
                             "created_at",
                             "updated_at",
-                            "mode"
+                            "mode",
+                            "captive_windows"
                           ],
                           "properties": {
                             "exit_pool_id": {
@@ -17537,6 +17581,14 @@
                                 "spread"
                               ],
                               "description": "failover: every consumer goes through the elected primary. spread: each consumer has its own exit node of the serving set, chosen by rendezvous hashing (exit node design §16)."
+                            },
+                            "captive_windows": {
+                              "type": "string",
+                              "enum": [
+                                "allowed",
+                                "off"
+                              ],
+                              "description": "allowed: root on each consumer may open a short captive portal window to sign in to a hotel or airport Wi-Fi. off: no consumer of this pool may (exit node design §17.4); Core can only turn windows off, never open one."
                             }
                           }
                         },
@@ -17690,7 +17742,8 @@
                             "version",
                             "created_at",
                             "updated_at",
-                            "mode"
+                            "mode",
+                            "captive_windows"
                           ],
                           "properties": {
                             "exit_pool_id": {
@@ -17824,6 +17877,14 @@
                                 "spread"
                               ],
                               "description": "failover: every consumer goes through the elected primary. spread: each consumer has its own exit node of the serving set, chosen by rendezvous hashing (exit node design §16)."
+                            },
+                            "captive_windows": {
+                              "type": "string",
+                              "enum": [
+                                "allowed",
+                                "off"
+                              ],
+                              "description": "allowed: root on each consumer may open a short captive portal window to sign in to a hotel or airport Wi-Fi. off: no consumer of this pool may (exit node design §17.4); Core can only turn windows off, never open one."
                             }
                           }
                         },
@@ -18012,7 +18073,8 @@
                             "version",
                             "created_at",
                             "updated_at",
-                            "mode"
+                            "mode",
+                            "captive_windows"
                           ],
                           "properties": {
                             "exit_pool_id": {
@@ -18146,6 +18208,14 @@
                                 "spread"
                               ],
                               "description": "failover: every consumer goes through the elected primary. spread: each consumer has its own exit node of the serving set, chosen by rendezvous hashing (exit node design §16)."
+                            },
+                            "captive_windows": {
+                              "type": "string",
+                              "enum": [
+                                "allowed",
+                                "off"
+                              ],
+                              "description": "allowed: root on each consumer may open a short captive portal window to sign in to a hotel or airport Wi-Fi. off: no consumer of this pool may (exit node design §17.4); Core can only turn windows off, never open one."
                             }
                           }
                         },
@@ -18305,7 +18375,8 @@
                             "version",
                             "created_at",
                             "updated_at",
-                            "mode"
+                            "mode",
+                            "captive_windows"
                           ],
                           "properties": {
                             "exit_pool_id": {
@@ -18439,6 +18510,14 @@
                                 "spread"
                               ],
                               "description": "failover: every consumer goes through the elected primary. spread: each consumer has its own exit node of the serving set, chosen by rendezvous hashing (exit node design §16)."
+                            },
+                            "captive_windows": {
+                              "type": "string",
+                              "enum": [
+                                "allowed",
+                                "off"
+                              ],
+                              "description": "allowed: root on each consumer may open a short captive portal window to sign in to a hotel or airport Wi-Fi. off: no consumer of this pool may (exit node design §17.4); Core can only turn windows off, never open one."
                             }
                           }
                         },

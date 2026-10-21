@@ -15,8 +15,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 210 {
-		t.Fatalf("len(Catalog()) = %d, want 210", len(catalog))
+	if len(catalog) != 212 {
+		t.Fatalf("len(Catalog()) = %d, want 212", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1611,8 +1611,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 210 {
-		t.Fatalf("LatestVersion() = %d, want 210", LatestVersion())
+	if LatestVersion() != 212 {
+		t.Fatalf("LatestVersion() = %d, want 212", LatestVersion())
 	}
 }
 
@@ -6039,5 +6039,61 @@ func TestMigration210SpreadsExitPools(t *testing.T) {
 	if strings.Count(migration.SQL, "exit_pool.spread_salt") != 1 ||
 		!strings.Contains(migration.SQL, "CASE WHEN exit_pool.mode = 'spread' THEN exit_pool.spread_salt END") {
 		t.Error("schema 210 returns the salt outside the map loader")
+	}
+}
+
+func TestMigration211TurnsCaptiveWindowsOff(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[210]
+	if migration.Version != 211 {
+		t.Fatalf("migration 211 = %+v", migration)
+	}
+	for _, want := range []string{
+		"ADD COLUMN captive_windows TEXT NOT NULL DEFAULT 'allowed'",
+		"CHECK (captive_windows IN ('allowed', 'off'))",
+		"CREATE FUNCTION mesh_ops.change_exit_pool_v3(",
+		"v_captive := COALESCE(p_captive_windows, v_pool.captive_windows);",
+		"AND v_pool.captive_windows = v_captive THEN",
+		"'captive_windows', v_pool.captive_windows, 'previous_captive_windows', v_previous_captive,",
+		"CREATE FUNCTION mesh_ops.change_exit_node_v3(",
+		"CREATE FUNCTION mesh_ops.list_exit_pools_v3(",
+		"CREATE FUNCTION mesh_ops.read_exit_pool_v4(",
+		"CREATE FUNCTION mesh_ops.load_map_network_exit_pool_captive_v1(p_limit INTEGER)",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_map_network_exit_pool_captive_v1(INTEGER) TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 211 lacks %q", want)
+		}
+	}
+	// A rollback Core's change_exit_pool_v2 keeps the stored setting.
+	if strings.Contains(migration.SQL, "CREATE OR REPLACE FUNCTION mesh_ops.change_exit_pool_v2") {
+		t.Error("schema 211 replaces change_exit_pool_v2")
+	}
+}
+
+func TestMigration212AuditsCaptiveWindows(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[211]
+	if migration.Version != 212 {
+		t.Fatalf("migration 212 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE TABLE mesh_ops.device_captive_window (",
+		"CONSTRAINT device_captive_window_once_uidx UNIQUE (workspace_id, network_id, device_public_id, window_id)",
+		"capture_authority_mutation('device_captive_window', 'public_id')",
+		"'format', 'device-captive-window/v1',",
+		"AND captive.recorded_at > v_now - INTERVAL '1 day') >= 48 THEN",
+		"'device.captive_window', 'system.reconcile', NULL::UUID, NULL::BYTEA,",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.prune_device_captive_windows_v1(UUID, INTEGER) TO mesh_worker;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 212 lacks %q", want)
+		}
+	}
+	// The portal's address never reaches Core.
+	for _, never := range []string{"portal", "host_name", "location"} {
+		if strings.Contains(strings.SplitN(migration.SQL, "CREATE TABLE", 2)[1], "'"+never) {
+			t.Errorf("schema 212 records %q", never)
+		}
 	}
 }

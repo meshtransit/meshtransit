@@ -1083,6 +1083,8 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					RouteHealth:         routeHealth,
 					RouteSelection:      routeSelection,
 					AnnounceGoingAway:   func() bool { return !restartExpected(s.restartMarkerPath, s.clock()) },
+					CaptiveWindows:      s.captiveWindowsToReport(),
+					CaptiveWindowsSent:  s.captive.windowsSent,
 					Hostname:            s.hostname,
 					Version:             "meshd/" + s.build.Version,
 					PinnedFingerprint:   record.ControlKeyFingerprint(),

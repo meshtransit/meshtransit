@@ -28,7 +28,7 @@ Actions are named `<object>.<verb>`, for example:
 | Groups, tags, guardrails | `device_group.*`, `identity_group.*`, `device_tag.*`, `guardrail.*`, `interchange.*` |
 | Resources and sharing | `resource.*`, `resource_group.*`, `share_offer.*`, `trust_contract.*`, `sharing.private_endpoint.published` |
 | Sign-in | `auth_transaction.*`, `account_session.*`, `account.signed_up` |
-| Evidence | `access_graph.recorded`, `device.enforcement_mismatch`, `device.enforcement_restored` |
+| Evidence | `access_graph.recorded`, `device.enforcement_mismatch`, `device.enforcement_restored`, `device.captive_window` |
 
 Only changes that happened are recorded: every event today has the result
 `succeeded`. A refused request changes nothing and writes nothing; a failure
@@ -137,6 +137,15 @@ The **enforcement ledger** (a worker job, off by default,
 Device's state at an instant at or before the server's time (default now),
 and a Device entering or leaving `mismatch` writes a sealed
 `device.enforcement_mismatch` or `device.enforcement_restored` event.
+
+A Device that uses an exit node and opened a captive portal window to sign
+in to a hotel or airport Wi-Fi reports it once it closed (MTCP 8.5): Core
+writes one sealed `device.captive_window` event per window, with the Device,
+when it opened and closed, how long it lasted and how it ended (`expired`,
+`closed` or `tunnel_back`), never the portal's address; at most 48 per Device
+per day. An Exit Pool can turn these windows off (`captive_windows: off`).
+The enforcement ledger worker removes the window records, not their audit
+events, after 13 months.
 
 ## Explaining access
 

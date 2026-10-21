@@ -341,6 +341,9 @@ message ExitPool {
   Status status = 6;
   bool managed = 7; // the administrator asks this node to use this pool
   Mode mode = 8; // how the pool serves its consumers; UNSPECIFIED reads as FAILOVER
+  // The node's root may not open captive portal windows while it uses the
+  // pool (section 7.7); Core can only refuse them, never open one.
+  bool captive_off = 9;
 
   enum Status {
     STATUS_UNSPECIFIED = 0;
@@ -610,6 +613,27 @@ message RouteSelectionReport {
       LOCAL_FAILOVER = 2; // another candidate this node chose while the primary does not answer
       NONE = 3; // the Site is not served: no router
     }
+  }
+}
+
+// CaptiveWindowReport is the captive portal windows root opened on this node
+// while it used an exit node (section 8.5), each once after it closed: when
+// it opened and closed and how it ended, never the portal's address.
+message CaptiveWindowReport {
+  repeated CaptiveWindow windows = 1; // 1 to 16; Core takes the first of a window_id listed twice
+}
+
+message CaptiveWindow {
+  string window_id = 1; // 32 lowercase hexadecimal characters, chosen by root's window file
+  int64 opened_ms = 2;
+  int64 closed_ms = 3; // at most 6 minutes after opened_ms
+  End end = 4;
+
+  enum End {
+    END_UNSPECIFIED = 0;
+    EXPIRED = 1; // its time ran out
+    CLOSED = 2; // root closed it, or the node stopped using the exit node or the pool turned windows off
+    TUNNEL_BACK = 3; // the node closed it once its tunnel was back
   }
 }
 

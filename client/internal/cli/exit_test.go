@@ -295,3 +295,24 @@ func TestExitCaptive(t *testing.T) {
 		t.Fatalf("delegated close = %d, %q", code, stdout.String())
 	}
 }
+
+// meshctl exit captive says at once, before asking for root, that the pool
+// in use turns captive portal windows off.
+func TestExitCaptiveRefusedByThePool(t *testing.T) {
+	t.Parallel()
+	options := testOptions(&fakeClient{status: localapi.Status{Exit: &localapi.ExitStatus{CaptiveOff: true}}})
+	asked := false
+	options.Captive = func(CaptiveRequest, io.Writer, io.Writer) (int, bool) {
+		asked = true
+		return 0, false
+	}
+	var stdout, stderr bytes.Buffer
+	if code := Run(t.Context(), []string{"exit", "captive"}, &stdout, &stderr, options); code != 1 || asked ||
+		!strings.Contains(stderr.String(), "turns captive portal windows off") {
+		t.Fatalf("exit captive = %d, asked %t: %s", code, asked, stderr.String())
+	}
+	// Closing is never refused.
+	if code := Run(t.Context(), []string{"exit", "captive", "--close"}, &stdout, &stderr, options); code != 0 || !asked {
+		t.Fatalf("exit captive --close = %d, asked %t", code, asked)
+	}
+}

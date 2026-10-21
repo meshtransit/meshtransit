@@ -102,6 +102,28 @@ type Definition struct {
 	// Mode is failover or spread; ModeKeep in an update keeps the stored
 	// one and in a new pool means failover.
 	Mode Mode
+	// CaptiveWindows lets consumers' root open captive portal windows, or
+	// turns them off; CaptiveKeep in an update keeps the stored one and in
+	// a new pool means allowed.
+	CaptiveWindows CaptiveWindows
+}
+
+// CaptiveWindows is whether consumers of a pool may open captive portal
+// windows (exit node design §17.4, C5): Core may only turn them off.
+type CaptiveWindows string
+
+const (
+	// CaptiveKeep is the setting of an update that keeps the stored one.
+	CaptiveKeep CaptiveWindows = ""
+	// CaptiveAllowed leaves windows to root on each consumer.
+	CaptiveAllowed CaptiveWindows = "allowed"
+	// CaptiveOff refuses windows on every consumer of the pool.
+	CaptiveOff CaptiveWindows = "off"
+)
+
+// IsKnown reports a setting a pool can store.
+func (setting CaptiveWindows) IsKnown() bool {
+	return setting == CaptiveAllowed || setting == CaptiveOff
 }
 
 // Validate accepts a trimmed, bounded name of plain text, a connection
@@ -116,6 +138,9 @@ func (definition Definition) Validate(limits Limits) error {
 		return ErrInvalid
 	}
 	if definition.Mode != ModeKeep && !definition.Mode.IsKnown() {
+		return ErrInvalid
+	}
+	if definition.CaptiveWindows != CaptiveKeep && !definition.CaptiveWindows.IsKnown() {
 		return ErrInvalid
 	}
 	if definition.ConntrackPerConsumer < MinimumConntrackPerConsumer ||

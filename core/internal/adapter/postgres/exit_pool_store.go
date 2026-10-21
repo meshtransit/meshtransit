@@ -24,22 +24,22 @@ import (
 
 const maximumExitPoolDocumentBytes = 1 << 20
 
-const listExitPoolsSQL = `SELECT mesh_ops.list_exit_pools_v2(` + sessionArguments + `,$10::UUID,$11::UUID,
+const listExitPoolsSQL = `SELECT mesh_ops.list_exit_pools_v3(` + sessionArguments + `,$10::UUID,$11::UUID,
  NULLIF($12::TEXT,'')::UUID,$13::INTEGER)::TEXT`
 
-const readExitPoolSQL = `SELECT mesh_ops.read_exit_pool_v3(` + sessionArguments + `,$10::UUID,$11::UUID,$12::UUID)::TEXT`
+const readExitPoolSQL = `SELECT mesh_ops.read_exit_pool_v4(` + sessionArguments + `,$10::UUID,$11::UUID,$12::UUID)::TEXT`
 
 const listExitPoolPrimaryChangesSQL = `SELECT mesh_ops.list_exit_pool_primary_changes_v1(` + sessionArguments +
 	`,$10::UUID,$11::UUID,$12::UUID,$13::UUID,$14::INTEGER)::TEXT`
 
-const changeExitPoolSQL = `SELECT mesh_ops.change_exit_pool_v2(` + sessionArguments + `,
+const changeExitPoolSQL = `SELECT mesh_ops.change_exit_pool_v3(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::TEXT,$13::UUID,$14::BIGINT,$15::TEXT,$16::BOOLEAN,$17::BOOLEAN,$18::INTEGER,
- $19::INET[],$20::JSONB,$21::TEXT,$22::BYTEA,$23::INTEGER,$24::UUID)::TEXT`
+ $19::INET[],$20::JSONB,$21::TEXT,$22::BYTEA,$23::TEXT,$24::INTEGER,$25::UUID)::TEXT`
 
 const listExitPoolServingChangesSQL = `SELECT mesh_ops.list_exit_pool_serving_changes_v1(` + sessionArguments +
 	`,$10::UUID,$11::UUID,$12::UUID,$13::UUID,$14::INTEGER)::TEXT`
 
-const changeExitNodeSQL = `SELECT mesh_ops.change_exit_node_v2(` + sessionArguments + `,
+const changeExitNodeSQL = `SELECT mesh_ops.change_exit_node_v3(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::TEXT,$13::UUID,$14::BIGINT,$15::UUID,$16::INTEGER,$17::TEXT,$18::INTEGER,
  $19::UUID,$20::UUID)::TEXT`
 
@@ -171,9 +171,23 @@ type exitPoolDocument struct {
 	CreatedAt            time.Time           `json:"created_at"`
 	UpdatedAt            time.Time           `json:"updated_at"`
 	Nodes                []exitNodeDocument  `json:"nodes"`
-	// Mode comes beside the document (schema 210), never inside it.
-	Mode string `json:"-"`
+	// Mode comes beside the document (schema 210), never inside it, and
+	// so does CaptiveWindows (schema 211).
+	Mode           string `json:"-"`
+	CaptiveWindows string `json:"-"`
 }
+
+// withCaptive sets the captive portal windows setting read beside a
+// document.
+func (document exitPoolDocument) withCaptive(setting string) exitPoolDocument {
+	document.CaptiveWindows = setting
+	return document
+}
+
+// exitPoolCaptive reads the setting; a reader without it (the policy
+// compiler's) leaves pools allowing windows.
+var exitPoolCaptive = map[string]exitpool.CaptiveWindows{"": exitpool.CaptiveAllowed,
+	"allowed": exitpool.CaptiveAllowed, "off": exitpool.CaptiveOff}
 
 // withMode sets the mode read beside a document; a reader without modes
 // leaves pools failover.
@@ -192,6 +206,9 @@ func (document exitPoolDocument) pool(allowDeleted bool) (exitpool.Pool, error) 
 	if _, known := exitPoolModes[document.Mode]; !known {
 		return exitpool.Pool{}, exitpool.ErrInvalid
 	}
+	if _, known := exitPoolCaptive[document.CaptiveWindows]; !known {
+		return exitpool.Pool{}, exitpool.ErrInvalid
+	}
 	if err != nil || (document.State != "active" && (!allowDeleted || document.State != "deleted")) ||
 		document.Version <= 0 || document.CreatedAt.IsZero() || document.UpdatedAt.Before(document.CreatedAt) {
 		return exitpool.Pool{}, exitpool.ErrInvalid
@@ -201,8 +218,9 @@ func (document exitPoolDocument) pool(allowDeleted bool) (exitpool.Pool, error) 
 		Definition: exitpool.Definition{
 			Name: document.Name, Failback: document.Failback, SMTPAllowed: document.SMTPAllowed,
 			ConntrackPerConsumer: document.ConntrackPerConsumer, Mode: exitPoolModes[document.Mode],
-			DNSUpstreams: make([]netip.Addr, 0, len(document.DNSUpstreams)),
-			Probes:       make([]exitpool.Probe, 0, len(document.Probes)),
+			CaptiveWindows: exitPoolCaptive[document.CaptiveWindows],
+			DNSUpstreams:   make([]netip.Addr, 0, len(document.DNSUpstreams)),
+			Probes:         make([]exitpool.Probe, 0, len(document.Probes)),
 		},
 		Nodes: make([]exitpool.Node, 0, len(document.Nodes)),
 	}
@@ -265,6 +283,7 @@ func (store *ExitPoolStore) List(ctx context.Context, session accountsession.Ses
 		CanManage bool               `json:"can_manage"`
 		CanDelete bool               `json:"can_delete"`
 		Modes     map[string]string  `json:"modes"`
+		Captive   map[string]string  `json:"captive_windows"`
 	}
 	if err := store.read(ctx, session, scope, listExitPoolsSQL, &envelope, afterText, limit); err != nil {
 		return exitpool.Listing{}, err
@@ -276,10 +295,11 @@ func (store *ExitPoolStore) List(ctx context.Context, session accountsession.Ses
 		Abilities: exitpool.Abilities{CanManage: envelope.CanManage, CanDelete: envelope.CanDelete}}
 	for _, document := range envelope.Pools {
 		mode, listed := envelope.Modes[document.ID]
-		if !listed {
+		captive, captiveListed := envelope.Captive[document.ID]
+		if !listed || !captiveListed {
 			return exitpool.Listing{}, exitpool.ErrInvalid
 		}
-		stored, err := document.withMode(mode).pool(false)
+		stored, err := document.withMode(mode).withCaptive(captive).pool(false)
 		if err != nil {
 			return exitpool.Listing{}, err
 		}
@@ -301,6 +321,7 @@ func (store *ExitPoolStore) Read(ctx context.Context, session accountsession.Ses
 		CanDelete bool                     `json:"can_delete"`
 		Mode      string                   `json:"mode"`
 		Serving   *exitPoolServingDocument `json:"serving"`
+		Captive   string                   `json:"captive_windows"`
 	}
 	if err := store.read(ctx, session, scope, readExitPoolSQL, &envelope, id.String()); err != nil {
 		return exitpool.Reading{}, err
@@ -308,7 +329,7 @@ func (store *ExitPoolStore) Read(ctx context.Context, session accountsession.Ses
 	if envelope.Mode == "" || (envelope.Serving != nil && envelope.Mode != "spread") {
 		return exitpool.Reading{}, exitpool.ErrInvalid
 	}
-	stored, err := envelope.Pool.withMode(envelope.Mode).pool(false)
+	stored, err := envelope.Pool.withMode(envelope.Mode).withCaptive(envelope.Captive).pool(false)
 	if err != nil || stored.ID != id {
 		return exitpool.Reading{}, exitpool.ErrInvalid
 	}
@@ -444,6 +465,10 @@ type exitPoolChangeRecord struct {
 	// (schema 210); an exit node change gives the mode only.
 	Mode         string  `json:"mode"`
 	PreviousMode *string `json:"previous_mode"`
+	// CaptiveWindows and PreviousCaptiveWindows are the pool's captive
+	// portal windows setting after and before the change (schema 211).
+	CaptiveWindows         string  `json:"captive_windows"`
+	PreviousCaptiveWindows *string `json:"previous_captive_windows"`
 }
 
 func exitProbesJSON(probes []exitpool.Probe) ([]byte, error) {
@@ -469,7 +494,7 @@ func (store *ExitPoolStore) Change(ctx context.Context, change exitpool.Change) 
 		!change.CorrelationID.IsValid() {
 		return exitpool.Result{}, exitpool.ErrInvalid
 	}
-	var expected, name, failback, smtp, conntrack, upstreams, probes, mode, limit any
+	var expected, name, failback, smtp, conntrack, upstreams, probes, mode, captive, limit any
 	if change.Operation != exitpool.OperationCreate {
 		expected = change.ExpectedVersion
 	} else {
@@ -487,6 +512,9 @@ func (store *ExitPoolStore) Change(ctx context.Context, change exitpool.Change) 
 		if definition.Mode != exitpool.ModeKeep {
 			mode = string(definition.Mode)
 		}
+		if definition.CaptiveWindows != exitpool.CaptiveKeep {
+			captive = string(definition.CaptiveWindows)
+		}
 	}
 	permission := "route.approve"
 	if change.Operation == exitpool.OperationDelete {
@@ -499,7 +527,7 @@ func (store *ExitPoolStore) Change(ctx context.Context, change exitpool.Change) 
 			err := tx.QueryRow(ctx, changeExitPoolSQL, append(sessionQueryArguments(change.Session),
 				change.Scope.WorkspaceID().String(), change.Scope.NetworkID().String(), string(change.Operation),
 				change.PoolID.String(), expected, name, failback, smtp, conntrack, upstreams, probes, mode,
-				change.SpreadSalt[:], limit, changeID.String())...).Scan(&encoded)
+				change.SpreadSalt[:], captive, limit, changeID.String())...).Scan(&encoded)
 			return encoded, err
 		})
 }
@@ -575,13 +603,16 @@ func (store *ExitPoolStore) commit(ctx context.Context, session accountsession.S
 		(record.Changed && (record.NetworkRevision <= 0 || record.RouteRevision <= 0)) || record.Mode == "" {
 		return exitpool.Result{}, exitpool.ErrInvalid
 	}
-	record.Pool = record.Pool.withMode(record.Mode)
+	record.Pool = record.Pool.withMode(record.Mode).withCaptive(record.CaptiveWindows)
 	if record.Previous != nil {
-		previousMode := record.Mode
+		previousMode, previousCaptive := record.Mode, record.CaptiveWindows
 		if record.PreviousMode != nil {
 			previousMode = *record.PreviousMode
 		}
-		previous := record.Previous.withMode(previousMode)
+		if record.PreviousCaptiveWindows != nil {
+			previousCaptive = *record.PreviousCaptiveWindows
+		}
+		previous := record.Previous.withMode(previousMode).withCaptive(previousCaptive)
 		record.Previous = &previous
 	}
 	saved, err := record.Pool.pool(deleted)
@@ -637,8 +668,11 @@ func exitPoolSemanticHash(document exitPoolDocument) ([32]byte, error) {
 		// Mode only when spread: failover pools hash as they did before
 		// modes (schema 210).
 		Mode string `json:"mode,omitempty"`
+		// CaptiveWindows only when off: pools hash as before (schema 211).
+		CaptiveWindows string `json:"captive_windows,omitempty"`
 	}{document.ID, document.Name, document.State, document.Failback, document.SMTPAllowed,
-		document.ConntrackPerConsumer, document.DNSUpstreams, document.Probes, nodes, spreadOnly(document.Mode)})
+		document.ConntrackPerConsumer, document.DNSUpstreams, document.Probes, nodes, spreadOnly(document.Mode),
+		captiveOffOnly(document.CaptiveWindows)})
 	return sha256.Sum256(encoded), err
 }
 
@@ -659,6 +693,8 @@ type exitPoolAuditPayload struct {
 	Probes               int                `json:"probe_count"`
 	Mode                 string             `json:"mode"`
 	PreviousMode         string             `json:"previous_mode,omitempty"`
+	CaptiveWindows       string             `json:"captive_windows"`
+	PreviousCaptive      string             `json:"previous_captive_windows,omitempty"`
 	Nodes                int                `json:"exit_node_count"`
 	Node                 *exitPoolNodeAudit `json:"exit_node,omitempty"`
 	// RemovedNodes are the Devices a deleted pool had as exit nodes.
@@ -706,7 +742,7 @@ func exitPoolAudit(session accountsession.Session, networkID string, record exit
 		Name: record.Pool.Name, Failback: record.Pool.Failback, SMTPAllowed: record.Pool.SMTPAllowed,
 		ConntrackPerConsumer: record.Pool.ConntrackPerConsumer, DNSUpstreams: record.Pool.DNSUpstreams,
 		Probes: len(record.Pool.Probes), Nodes: len(record.Pool.Nodes),
-		Mode: string(exitPoolModes[record.Pool.Mode]),
+		Mode: string(exitPoolModes[record.Pool.Mode]), CaptiveWindows: record.Pool.CaptiveWindows,
 	}
 	if record.Previous != nil {
 		if record.Previous.Name != record.Pool.Name {
@@ -718,6 +754,9 @@ func exitPoolAudit(session accountsession.Session, networkID string, record exit
 		}
 		if exitPoolModes[record.Previous.Mode] != exitPoolModes[record.Pool.Mode] {
 			audited.PreviousMode = string(exitPoolModes[record.Previous.Mode])
+		}
+		if record.Previous.CaptiveWindows != record.Pool.CaptiveWindows {
+			audited.PreviousCaptive = record.Previous.CaptiveWindows
 		}
 		if record.Previous.SMTPAllowed != record.Pool.SMTPAllowed {
 			previous := record.Previous.SMTPAllowed
@@ -904,3 +943,12 @@ func (store *ExitPoolStore) ServingChanges(ctx context.Context, session accounts
 }
 
 var _ exitpool.ServingHistoryStore = (*ExitPoolStore)(nil)
+
+// captiveOffOnly names a pool's captive portal windows setting only when it
+// turns them off.
+func captiveOffOnly(setting string) string {
+	if setting == "off" {
+		return setting
+	}
+	return ""
+}

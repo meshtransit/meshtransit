@@ -138,6 +138,9 @@ func (s *Server) captiveRefusal() string {
 	if settings.ExitCaptiveOff {
 		return "exit-captive is off"
 	}
+	if s.requestedExitRoute != nil && s.requestedExitRoute.CaptiveOff {
+		return "the Exit Pool turns captive portal windows off"
+	}
 	if wanted, _ := s.exitRouteWanted(settings); !wanted || s.exitRouteKey == "" {
 		return "the host does not use an exit node"
 	}

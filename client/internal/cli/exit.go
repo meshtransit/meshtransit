@@ -250,6 +250,11 @@ func runCaptive(
 		_, _ = fmt.Fprintln(stderr, "meshctl: this build cannot open a captive portal window")
 		return 1
 	}
+	if !request.Close && captiveOffByPool(ctx, options, global) {
+		_, _ = fmt.Fprintln(stderr, "meshctl: the Exit Pool this machine uses turns captive portal windows off; "+
+			"ask your administrator")
+		return 1
+	}
 	code, delegated := options.Captive(request, stdout, stderr)
 	if code != 0 || delegated {
 		return code
@@ -286,3 +291,15 @@ func runCaptive(
 
 // captiveWaitDefault bounds how long meshctl waits for meshd to see a window.
 const captiveWaitDefault = 5 * time.Second
+
+// captiveOffByPool reports whether meshd says the pool in use turns captive
+// portal windows off, before root is asked for: the helper would refuse the
+// window anyway. A meshd that cannot answer says nothing.
+func captiveOffByPool(ctx context.Context, options Options, global globalOptions) bool {
+	client, err := options.NewClient(global.socketPath, global.timeout)
+	if err != nil {
+		return false
+	}
+	status, err := client.Status(ctx)
+	return err == nil && status.Exit != nil && status.Exit.CaptiveOff
+}

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"log/slog"
+	"meshtransit.net/core/internal/domain/captivewindow"
 	"time"
 
 	mtcpadapter "meshtransit.net/core/internal/adapter/mtcp"
@@ -56,25 +57,36 @@ func exitCapabilities(exitNodes bool) []string {
 	return []string{"routes.exit.v1", "router.exit.v1"}
 }
 
+// captiveCapabilities offers captive.audit1, nodes reporting the captive
+// portal windows root opened (exit node design §17.12), when Core records
+// them.
+func captiveCapabilities(recorder captivewindow.Recorder) []string {
+	if recorder == nil {
+		return nil
+	}
+	return []string{"captive.audit1"}
+}
+
 // mtcpDependencies are the application services MTCP sessions use. The
 // browser fields are nil when browser registration is off.
 type mtcpDependencies struct {
-	streams       mtcpadapter.MapStreams
-	sessions      mtcpMapSessions
-	registrations mtcpadapter.Registrations
-	logout        mtcpadapter.DeviceLogout
-	paths         mtcpadapter.PathRecorder         // optional
-	connectivity  mtcpadapter.ConnectivityRecorder // optional
-	routeOffers   mtcpadapter.RouteOffers          // optional
-	exitOffers    mtcpadapter.ExitOffers           // optional
-	browser       *browserControlServices
-	origin        string
-	guard         mtcpadapter.TimestampGuard
-	logger        *slog.Logger
-	relayZones    bool           // offer relay.zones2 (MESHTRANSIT_RELAY_TICKET_ZONES_V2)
-	subnetRoutes  bool           // offer subnet routes (MESHTRANSIT_SUBNET_ROUTES_ENABLED)
-	exitNodes     bool           // offer exit nodes (MESHTRANSIT_EXIT_NODES_ENABLED)
-	dnsSuffix     dnsname.Suffix // MESHTRANSIT_DNS_SUFFIX; zero: the default
+	streams        mtcpadapter.MapStreams
+	sessions       mtcpMapSessions
+	registrations  mtcpadapter.Registrations
+	logout         mtcpadapter.DeviceLogout
+	paths          mtcpadapter.PathRecorder         // optional
+	connectivity   mtcpadapter.ConnectivityRecorder // optional
+	routeOffers    mtcpadapter.RouteOffers          // optional
+	exitOffers     mtcpadapter.ExitOffers           // optional
+	captiveWindows captivewindow.Recorder           // optional: offers captive.audit1
+	browser        *browserControlServices
+	origin         string
+	guard          mtcpadapter.TimestampGuard
+	logger         *slog.Logger
+	relayZones     bool           // offer relay.zones2 (MESHTRANSIT_RELAY_TICKET_ZONES_V2)
+	subnetRoutes   bool           // offer subnet routes (MESHTRANSIT_SUBNET_ROUTES_ENABLED)
+	exitNodes      bool           // offer exit nodes (MESHTRANSIT_EXIT_NODES_ENABLED)
+	dnsSuffix      dnsname.Suffix // MESHTRANSIT_DNS_SUFFIX; zero: the default
 }
 
 // mtcpMapSessions is mapsession.Service: endpoints and snapshot opening.
@@ -141,6 +153,7 @@ func composeMTCP(
 		Streams: deps.streams, Endpoints: deps.sessions, Snapshots: deps.sessions, ControlKeys: keys,
 		Logger: logger, Registrations: deps.registrations, RegistrationIDs: intake.PublicRegistrationIDGenerator{},
 		Logout: deps.logout, Paths: deps.paths, Connectivity: deps.connectivity, RouteOffers: deps.routeOffers, ExitOffers: deps.exitOffers,
+		CaptiveWindows:         deps.captiveWindows,
 		Metrics:                metrics,
 		DeniedEndpointPrefixes: controlConfig.MTCP.DeniedEndpointPrefixes(),
 		DNSSuffix:              deps.dnsSuffix,
@@ -160,8 +173,8 @@ func composeMTCP(
 		ClientIPs: clients,
 		Handler:   application,
 		Guard:     deps.guard,
-		Capabilities: append(mtcpCapabilities(controlConfig.Map.EnableDeviceAliases, deps.relayZones,
-			deps.subnetRoutes), exitCapabilities(deps.exitNodes)...),
+		Capabilities: append(append(mtcpCapabilities(controlConfig.Map.EnableDeviceAliases, deps.relayZones,
+			deps.subnetRoutes), exitCapabilities(deps.exitNodes)...), captiveCapabilities(deps.captiveWindows)...),
 		Logger:         logger,
 		Metrics:        metrics,
 		HandshakeRate:  controlConfig.MTCP.HandshakeRate,

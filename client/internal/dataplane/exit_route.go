@@ -37,9 +37,10 @@ type ExitRouteStatus struct {
 	Error string
 	// Captive is the captive portal window the helper holds open, and
 	// CaptiveUntil when it ends by the helper's last answer (exit node
-	// design §17.4).
+	// design §17.4); CaptiveOff, that the pool turns windows off.
 	Captive      netadmin.CaptiveWindow
 	CaptiveUntil time.Time
+	CaptiveOff   bool
 }
 
 // captiveAsk is what meshd asks of a captive portal window root opened: let
@@ -56,6 +57,8 @@ type exitRouteDesired struct {
 	ipv6    bool
 	dns     [2]netip.Addr
 	captive captiveAsk
+	// captiveOff: the pool turns captive portal windows off.
+	captiveOff bool
 }
 
 // syncExitRouteLocked has the helper route the Internet into the mesh while
@@ -71,8 +74,9 @@ func (e *WireGuardEngine) syncExitRouteLocked(routed *routedTable) {
 	if routed != nil && routed.exit != nil {
 		desired = exitRouteDesired{
 			use: true, ipv6: routed.exit.ipv6, dns: exitResolverPair(routed.exit.dns), captive: e.captiveAsk,
+			captiveOff: routed.exit.captiveOff,
 		}
-		status.Pool, status.IPv6 = routed.exit.pool, routed.exit.ipv6
+		status.Pool, status.IPv6, status.CaptiveOff = routed.exit.pool, routed.exit.ipv6, routed.exit.captiveOff
 		if routed.exit.served {
 			status.Node = routed.exit.nodeRef
 		}
@@ -105,6 +109,7 @@ func (e *WireGuardEngine) syncExitRouteLocked(routed *routedTable) {
 			return setter.SetExitRoute(ctx, netadmin.ExitRouteRequest{
 				Use: desired.use, IPv6: desired.ipv6, DNS: desired.dns,
 				CaptivePortals: desired.captive.portals, CaptiveClose: desired.captive.close,
+				CaptiveOff: desired.captiveOff,
 			})
 		},
 		record: e.recordExitRouteLocked,
@@ -142,9 +147,14 @@ func (e *WireGuardEngine) recordExitRouteLocked(desired exitRouteDesired, result
 		result = netadmin.ExitRouting{}
 	}
 	status.Routing, status.Refused, status.Tampered = result.Routing, result.Refused, result.Tampered
-	status.Captive, status.CaptiveUntil = result.Captive, time.Time{}
-	if result.Captive.ID != "" {
-		status.CaptiveUntil = time.Now().Add(result.Captive.Remaining)
+	switch {
+	case err != nil && previous.Captive.ID != "" && time.Now().Before(previous.CaptiveUntil):
+		// A failed exchange says nothing of the window: the helper still
+		// counts it, so meshd keeps following it until its end.
+	case result.Captive.ID != "":
+		status.Captive, status.CaptiveUntil = result.Captive, time.Now().Add(result.Captive.Remaining)
+	default:
+		status.Captive, status.CaptiveUntil = netadmin.CaptiveWindow{}, time.Time{}
 	}
 	e.exitRouteStatus = status
 	e.filter.SetExitRouted(desired.use && result.Routing)

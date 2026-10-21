@@ -190,7 +190,13 @@ type NetmapOptions struct {
 	// AnnounceGoingAway, with EnableSubnetRouter, reports whether a router
 	// that stops (its context ends with ErrStopping) tells Core with a last
 	// RouteHealthReport; false while a restart is expected.
-	AnnounceGoingAway  func() bool
+	AnnounceGoingAway func() bool
+	// CaptiveWindows, with EnableExits, lists the captive portal windows
+	// that closed and are still to report, oldest first; each goes in a
+	// CaptiveWindowReport when Core takes it (captive.audit1), and
+	// CaptiveWindowsSent is told which were sent.
+	CaptiveWindows     func() []CaptiveWindow
+	CaptiveWindowsSent func(ids []string)
 	Hostname           string
 	Version            string
 	PinnedFingerprint  string
@@ -329,6 +335,28 @@ type RouteSiteSelection struct {
 	Router string
 	Reason RouteSelectionReason
 }
+
+// CaptiveWindow is a captive portal window that closed (exit node design
+// §17.12): its helper ID (32 hex digits), when meshd saw it open and close,
+// and how it ended.
+type CaptiveWindow struct {
+	ID             string
+	Opened, Closed time.Time
+	End            CaptiveWindowEnd
+}
+
+// CaptiveWindowEnd is how a captive portal window ended.
+type CaptiveWindowEnd uint8
+
+const (
+	// CaptiveWindowExpired: its time ran out.
+	CaptiveWindowExpired CaptiveWindowEnd = iota + 1
+	// CaptiveWindowClosed: root closed it, or the host stopped using the
+	// exit node.
+	CaptiveWindowClosed
+	// CaptiveWindowTunnelBack: meshd closed it once the tunnel was back.
+	CaptiveWindowTunnelBack
+)
 
 // RouteExitSelection is the exit node a node sends its Internet traffic
 // to: Pool is empty when it uses none, ExitNode (a device ID) is empty with

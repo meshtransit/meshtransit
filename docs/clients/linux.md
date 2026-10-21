@@ -210,7 +210,12 @@ window also closes when root closes it, when the machine stops using an exit
 node, and 15 seconds after the tunnel is back (`meshd` asks for that); the
 system resolver's cache is emptied then. A starting `meshnetd` never opens a
 window again. `meshctl routes exit-captive off` refuses windows, for a
-managed machine.
+managed machine, and so does an Exit Pool whose administrator turned them
+off (`captive_windows: off`): `meshctl exit captive` says so before asking
+for root, and a window already open closes. `meshd` reports each window that
+closed to Core, which keeps it in the audit log (when it opened and closed
+and how it ended, never the portal); it keeps the last 32 in
+`captive-windows.json` in its state directory until reported.
 
 ## Install, upgrade, roll back
 

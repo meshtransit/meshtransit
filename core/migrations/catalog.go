@@ -577,6 +577,8 @@ func Catalog() []Migration {
 		newMigration(208, "The access ledger records rules to Exit Pools", accessLedgerExitEdgesSQL),
 		newMigration(209, "The Console reads the mesh addresses a Device holds", consoleDeviceAddressesSQL),
 		newMigration(210, "Exit Pools spread their consumers over their exit nodes", exitPoolSpreadSQL),
+		newMigration(211, "Exit Pools may turn captive portal windows off", exitPoolCaptiveWindowsSQL),
+		newMigration(212, "Captive portal windows enter the audit trail", deviceCaptiveWindowsSQL),
 	}
 }
 
@@ -986,3 +988,9 @@ var consoleDeviceAddressesSQL string
 
 //go:embed 000210_exit_pool_spread.up.sql
 var exitPoolSpreadSQL string
+
+//go:embed 000211_exit_pool_captive_windows.up.sql
+var exitPoolCaptiveWindowsSQL string
+
+//go:embed 000212_device_captive_windows.up.sql
+var deviceCaptiveWindowsSQL string

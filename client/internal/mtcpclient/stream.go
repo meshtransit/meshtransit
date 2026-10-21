@@ -44,7 +44,12 @@ const (
 	// reaches any (mtcp-v1 §8.3); Core takes a set older than 3 minutes as
 	// unknown.
 	routeSelectionHeartbeat = time.Minute
-	discoKeyPrefix          = "discokey:"
+	// captiveReportSpacing spaces this node's CaptiveWindowReports: Core
+	// takes one per session every 10 seconds.
+	captiveReportSpacing = 15 * time.Second
+	// maximumCaptiveReport is the most windows of one report.
+	maximumCaptiveReport = 16
+	discoKeyPrefix       = "discokey:"
 )
 
 // errSessionEnded reports a session that ended without a permanent cause;
@@ -400,6 +405,9 @@ func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, e
 	}
 	if stream.options.EnableExits {
 		capabilities = append(capabilities, "routes.exit.v1")
+		if stream.options.CaptiveWindows != nil {
+			capabilities = append(capabilities, "captive.audit1")
+		}
 		if !stream.options.EnableSubnetRoutes {
 			capabilities = append(capabilities, "routes.selection1")
 		}
@@ -476,6 +484,10 @@ type sessionRun struct {
 	selectionSentAt time.Time
 	// exitSelectionSent is the exit node sent with them; nil before.
 	exitSelectionSent *controlplane.RouteExitSelection
+	// captiveSent are the captive portal windows reported in this session,
+	// the last report at captiveSentAt.
+	captiveSent   map[string]bool
+	captiveSentAt time.Time
 	// unacked counts applied deltas not acknowledged yet, ackView is the
 	// latest applied view and ackTimer acknowledges it (mtcp-v1 §7.2).
 	unacked  int
@@ -543,6 +555,9 @@ func (run *sessionRun) loop(ctx context.Context, inbox <-chan incoming) (bool, t
 			}
 		case <-selectionBeat.C:
 			if err := run.sendRouteSelection(); err != nil {
+				return run.mapped, 0, err
+			}
+			if err := run.sendCaptiveWindows(); err != nil {
 				return run.mapped, 0, err
 			}
 		case <-keepalive.C:
@@ -746,6 +761,9 @@ func (run *sessionRun) sendReports(timer *time.Timer) error {
 	if err := run.sendRouteSelection(); err != nil {
 		return err
 	}
+	if err := run.sendCaptiveWindows(); err != nil {
+		return err
+	}
 	if run.supports("stats.path1") {
 		if paths := run.stream.reports.takePaths(); paths != nil {
 			if err := run.send(sharedmtcp.MessagePathStatsReport, pathStatsMessage(*paths)); err != nil {
@@ -932,6 +950,63 @@ func (run *sessionRun) sendRouteSelection() error {
 	}
 	run.selectionSent, run.selectionSentAt, run.exitSelectionSent = selection, time.Now(), exit
 	return nil
+}
+
+// sendCaptiveWindows reports the captive portal windows that closed (exit
+// node design §17.12, mtcp-v1 §8.5) once the session has a map, each once a
+// session and at most every captiveReportSpacing. Core keeps one record per
+// window, so a window reported again in a later session is no harm.
+func (run *sessionRun) sendCaptiveWindows() error {
+	options := run.stream.options
+	if !run.mapped || !options.EnableExits || options.CaptiveWindows == nil || !run.supports("captive.audit1") ||
+		(!run.captiveSentAt.IsZero() && time.Since(run.captiveSentAt) < captiveReportSpacing) {
+		return nil
+	}
+	report := &mtcpv1.CaptiveWindowReport{}
+	var ids []string
+	for _, window := range options.CaptiveWindows() {
+		end := captiveWindowEnd(window.End)
+		if run.captiveSent[window.ID] || slices.Contains(ids, window.ID) ||
+			end == mtcpv1.CaptiveWindow_END_UNSPECIFIED {
+			continue
+		}
+		report.Windows = append(report.Windows, &mtcpv1.CaptiveWindow{
+			WindowId: window.ID, OpenedMs: window.Opened.UnixMilli(), ClosedMs: window.Closed.UnixMilli(), End: end,
+		})
+		ids = append(ids, window.ID)
+		if len(ids) == maximumCaptiveReport {
+			break
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	if err := run.send(sharedmtcp.MessageCaptiveWindowReport, report); err != nil {
+		return err
+	}
+	if run.captiveSent == nil {
+		run.captiveSent = make(map[string]bool, len(ids))
+	}
+	for _, id := range ids {
+		run.captiveSent[id] = true
+	}
+	run.captiveSentAt = time.Now()
+	if options.CaptiveWindowsSent != nil {
+		options.CaptiveWindowsSent(ids)
+	}
+	return nil
+}
+
+func captiveWindowEnd(end controlplane.CaptiveWindowEnd) mtcpv1.CaptiveWindow_End {
+	switch end {
+	case controlplane.CaptiveWindowExpired:
+		return mtcpv1.CaptiveWindow_EXPIRED
+	case controlplane.CaptiveWindowClosed:
+		return mtcpv1.CaptiveWindow_CLOSED
+	case controlplane.CaptiveWindowTunnelBack:
+		return mtcpv1.CaptiveWindow_TUNNEL_BACK
+	}
+	return mtcpv1.CaptiveWindow_END_UNSPECIFIED
 }
 
 func equalExitSelection(first, second *controlplane.RouteExitSelection) bool {

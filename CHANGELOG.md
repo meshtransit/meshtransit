@@ -19,6 +19,15 @@ merge (2026-10-09) are kept below.
   process and the launchd job `net.meshtransit.meshnetd-captive`; Windows: a
   child holding a dynamic WFP session), when root closes it, and 15 seconds
   after the tunnel is back. `routes exit-captive off` refuses windows.
+- Core (captive portals, exit node design §17.12; schema 211, 212): an Exit
+  Pool's `captive_windows` (`allowed` by default, or `off`) reaches its
+  consumers in the map (`captive_off`), and a client with this release then
+  opens no captive portal window and closes one already open (older clients
+  ignore it). Clients that use exits report
+  each window that closed (MTCP `CaptiveWindowReport`, `captive.audit1`);
+  Core writes one sealed `device.captive_window` audit event per window, at
+  most 48 per Device per day, without the portal's address, and the
+  enforcement ledger worker removes the records after 13 months.
 - Relay: `--probe-http ADDRESS` (off by default; `0.0.0.0:80` in
   production) answers `GET /generate_204` with 204 and the client's nonce,
   rate limited, for the clients' captive portal check.
