@@ -302,8 +302,11 @@ func TestExitForwarderKeepsTheExitNetworksOwnNamesOfAnyType(t *testing.T) {
 		name string
 		kind dnsmessage.Type
 	}{
-		{"com", typeDS}, {"com", typeDNSKEY}, {"com", dnsmessage.TypeSOA},
-		{"www.corp.example.com", dnsmessage.TypeA}, {"corp.example.com", typeDS},
+		{"com", typeDS},
+		{"com", typeDNSKEY},
+		{"com", dnsmessage.TypeSOA},
+		{"www.corp.example.com", dnsmessage.TypeA},
+		{"corp.example.com", typeDS},
 		{"example.org", dnsmessage.TypeTXT},
 	} {
 		if _, refused := exitLocalRefusal(question.name, question.kind, []string{"corp.example.com", "lab"}); refused {
