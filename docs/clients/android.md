@@ -54,10 +54,20 @@ the network's. The card shows the exit node used, or why traffic is
 blocked, and an **Approve** button for exit nodes added since the pool was
 first used. For a kill switch while MeshTransit itself is off, turn on
 **Always-on VPN** and **Block connections without VPN** in Android's VPN
-settings; the app cannot.
+settings; the app cannot. Without an exit node the VPN carries only mesh
+traffic, so blocking connections without it leaves the phone without
+Internet.
+
+**Captive portals:** Android checks each Wi-Fi outside the VPN and shows its
+own **Sign in to Wi-Fi network** notification; its sign-in page reaches the
+portal over the Wi-Fi directly, also while an exit node is chosen and with
+**Block connections without VPN** on, while every other app stays behind the
+VPN. No window is needed on Android: sign in from that notification and the
+exit node carries the traffic again once the Wi-Fi lets it through. Tried on
+Android 12 (MIUI) on 2026-10-21 with a simulated portal.
 
 Not yet: MeshTransit DNS for mesh names (the VPN sets a DNS server only for an exit node), Device aliases, port
-mapping, always-on VPN, more than one profile. Logs are in `logcat` under the
+mapping, more than one profile. Logs are in `logcat` under the
 tags `MeshCore`, `MeshVpnService` and `VpnController`; release builds log
 warnings and errors only.
 
