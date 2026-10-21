@@ -35,11 +35,11 @@ type exitKillSwitch struct {
 var exitNeighbourTypes = []byte{133, 135, 136, 131, 143}
 
 // replaceExitKillSwitch installs the kill switch as one atomic transaction,
-// replacing the table when present.
-func replaceExitKillSwitch(ruleset exitKillSwitch) error {
+// replacing the table when present, and returns how many rules it holds.
+func replaceExitKillSwitch(ruleset exitKillSwitch) (int, error) {
 	conn, err := nftables.New()
 	if err != nil {
-		return fmt.Errorf("opening nftables: %w", err)
+		return 0, fmt.Errorf("opening nftables: %w", err)
 	}
 	table := &nftables.Table{Family: nftables.TableFamilyINet, Name: ruleset.Table}
 	conn.AddTable(table)
@@ -52,7 +52,7 @@ func replaceExitKillSwitch(ruleset exitKillSwitch) error {
 		ipv4 bool
 	}{{lan4, true}, {lan6, false}} {
 		if err := conn.AddSet(set.set, intervalElements(ruleset.LAN, set.ipv4)); err != nil {
-			return fmt.Errorf("adding kill switch set %s: %w", set.set.Name, err)
+			return 0, fmt.Errorf("adding kill switch set %s: %w", set.set.Name, err)
 		}
 	}
 	chains := []struct {
@@ -79,6 +79,7 @@ func replaceExitKillSwitch(ruleset exitKillSwitch) error {
 			exitForwardKillRules(ruleset, lan4, lan6),
 		},
 	}
+	count := 0
 	for _, definition := range chains {
 		chain := conn.AddChain(&nftables.Chain{
 			Name: definition.name, Table: table, Type: definition.kind, Hooknum: definition.hook,
@@ -86,12 +87,13 @@ func replaceExitKillSwitch(ruleset exitKillSwitch) error {
 		})
 		for _, exprs := range definition.rules {
 			conn.AddRule(&nftables.Rule{Table: table, Chain: chain, Exprs: exprs})
+			count++
 		}
 	}
 	if err := conn.Flush(); err != nil {
-		return fmt.Errorf("installing the exit kill switch: %w", err)
+		return 0, fmt.Errorf("installing the exit kill switch: %w", err)
 	}
-	return nil
+	return count, nil
 }
 
 // exitMarkInboundRules mark each connection opened from outside the host,

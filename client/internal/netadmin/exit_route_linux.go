@@ -43,6 +43,9 @@ type kernelExitRouteConfigurer struct {
 	uid     uint32
 	// sysctlRoot is /proc/sys.
 	sysctlRoot string
+	// installed is what the last Replace installed; nil before one, after
+	// Clear, and after a failed one.
+	installed *installedExit
 }
 
 // validMarkSetting makes the reverse path check of packets from outside use
@@ -177,6 +180,7 @@ func (configurer *kernelExitRouteConfigurer) Stamp(name string) string {
 // packet ever meets the table half built, and none leaves outside the mesh
 // but by the kill switch's exceptions.
 func (configurer *kernelExitRouteConfigurer) Replace(name string, ipv6, allowLAN bool) error {
+	configurer.installed = nil
 	host, err := readExitHost(name)
 	if err != nil {
 		return err
@@ -196,27 +200,31 @@ func (configurer *kernelExitRouteConfigurer) Replace(name string, ipv6, allowLAN
 		}
 		ruleset.LAN = append(ruleset.LAN, ExitLANMulticast...)
 	}
-	if err := replaceExitKillSwitch(ruleset); err != nil {
+	nftRules, err := replaceExitKillSwitch(ruleset)
+	if err != nil {
 		return err
 	}
 	if err := configurer.validateMarks(); err != nil {
 		return err
 	}
-	if err := replaceExitTable(configurer.options.ExitTable, host, lan, ipv6); err != nil {
+	routes, err := replaceExitTable(configurer.options.ExitTable, host, lan, ipv6)
+	if err != nil {
 		return err
 	}
 	rules := exitRules(configurer.options, configurer.uid, host.interfaces, host.own)
 	if err := replaceRulesAt(configurer.options.ExitPriority, exitRulePriorities, rules); err != nil {
 		return err
 	}
+	configurer.installed = &installedExit{rules: rules, routes: routes, nftRules: nftRules}
 	return nil
 }
 
 // replaceExitTable makes the exit table hold exactly the unreachable
 // defaults, the defaults into the mesh, and the routes that keep the local
-// bridges' and allowed LAN subnets on their interfaces. Routes are added
-// before stale ones go, so the table is never empty.
-func replaceExitTable(table int, host exitHost, lan []exitSubnet, ipv6 bool) error {
+// bridges' and allowed LAN subnets on their interfaces, and returns their
+// keys (exitRouteKey). Routes are added before stale ones go, so the table
+// is never empty.
+func replaceExitTable(table int, host exitHost, lan []exitSubnet, ipv6 bool) (map[string]bool, error) {
 	onLink := func(index int, destination *net.IPNet) *netlink.Route {
 		return &netlink.Route{
 			LinkIndex: index, Dst: destination, Table: table, Scope: netlink.SCOPE_LINK, Type: unix.RTN_UNICAST,
@@ -243,7 +251,7 @@ func replaceExitTable(table int, host exitHost, lan []exitSubnet, ipv6 bool) err
 			if family == netlink.FAMILY_V6 && familyUnsupported(err) {
 				continue // no IPv6 here: nothing of it can leak either
 			}
-			return fmt.Errorf("adding exit route %s: %w", route.Dst, err)
+			return nil, fmt.Errorf("adding exit route %s: %w", route.Dst, err)
 		}
 		kept[exitRouteKey(family, *route)] = true
 	}
@@ -253,18 +261,18 @@ func replaceExitTable(table int, host exitHost, lan []exitSubnet, ipv6 bool) err
 			continue
 		}
 		if err != nil {
-			return fmt.Errorf("listing exit routes: %w", err)
+			return nil, fmt.Errorf("listing exit routes: %w", err)
 		}
 		for index := range routes {
 			if kept[exitRouteKey(family, routes[index])] {
 				continue
 			}
 			if err := netlink.RouteDel(&routes[index]); err != nil && !errors.Is(err, unix.ESRCH) {
-				return fmt.Errorf("removing stale exit route: %w", err)
+				return nil, fmt.Errorf("removing stale exit route: %w", err)
 			}
 		}
 	}
-	return nil
+	return kept, nil
 }
 
 func exitUnreachable(table int, ipv6 bool) *netlink.Route {
@@ -370,26 +378,39 @@ func replaceRulesOf(family, priority int, wanted []*netlink.Rule) error {
 	if err != nil {
 		return fmt.Errorf("listing exit policy rules: %w", err)
 	}
-	kept := make([]bool, len(installed))
-	for _, rule := range wanted {
-		index := slices.IndexFunc(installed, func(other netlink.Rule) bool { return sameExitRule(other, *rule) })
-		if index >= 0 {
-			kept[index] = true
-			continue
+	// The kernel deletes the first rule at the priority that has every
+	// attribute of the one named, so a stale rule with fewer (another
+	// program's "lookup main") takes one of the wanted rules instead: each
+	// round adds what is missing, then deletes one stale rule, until none
+	// is left. Wanted rules are added before anything goes.
+	for range len(installed) + len(wanted) + 2 {
+		for _, rule := range wanted {
+			if slices.ContainsFunc(installed, func(other netlink.Rule) bool { return sameExitRule(other, *rule) }) {
+				continue
+			}
+			if err := netlink.RuleAdd(rule); err != nil {
+				return fmt.Errorf("adding exit policy rule %d: %w", rule.Priority, err)
+			}
 		}
-		if err := netlink.RuleAdd(rule); err != nil {
-			return fmt.Errorf("adding exit policy rule %d: %w", rule.Priority, err)
+		installed, err = netlink.RuleListFiltered(family, &netlink.Rule{Priority: priority}, netlink.RT_FILTER_PRIORITY)
+		if err != nil {
+			return fmt.Errorf("listing exit policy rules: %w", err)
 		}
-	}
-	for index := range installed {
-		if kept[index] {
-			continue
+		stale := slices.IndexFunc(installed, func(rule netlink.Rule) bool {
+			return !slices.ContainsFunc(wanted, func(other *netlink.Rule) bool { return sameExitRule(rule, *other) })
+		})
+		if stale < 0 {
+			return nil
 		}
-		if err := netlink.RuleDel(&installed[index]); err != nil && !errors.Is(err, unix.ENOENT) {
+		if err := netlink.RuleDel(&installed[stale]); err != nil && !errors.Is(err, unix.ENOENT) {
 			return fmt.Errorf("removing stale exit policy rule %d: %w", priority, err)
 		}
+		installed, err = netlink.RuleListFiltered(family, &netlink.Rule{Priority: priority}, netlink.RT_FILTER_PRIORITY)
+		if err != nil {
+			return fmt.Errorf("listing exit policy rules: %w", err)
+		}
 	}
-	return nil
+	return fmt.Errorf("exit policy rules at %d keep changing", priority)
 }
 
 // sameExitRule compares what the exit rules set.
@@ -455,15 +476,21 @@ func restoreValidMark(options RoutedOptions, sysctlRoot string) {
 	_ = os.Remove(record)
 }
 
-// Present reports whether the kill switch is installed.
+// Present reports whether the kill switch is installed and, after a
+// Replace, whether the kernel still holds what it installed.
 func (configurer *kernelExitRouteConfigurer) Present() (bool, error) {
-	return servedTablePresent(configurer.options.ExitNftTable)
+	present, err := servedTablePresent(configurer.options.ExitNftTable)
+	if err != nil || !present || configurer.installed == nil {
+		return present, err
+	}
+	return configurer.installed.intact(configurer.options)
 }
 
 // Clear removes the rule into the exit table first, then the other rules
 // and the table's routes, and the kill switch last, whatever a previous run
 // left: the priorities, table and nftables table are this helper's alone.
 func (configurer *kernelExitRouteConfigurer) Clear() error {
+	configurer.installed = nil
 	return clearExitRoute(configurer.options)
 }
 

@@ -200,6 +200,7 @@ type ExitStatus struct {
 	Routing      bool     `json:"routing"`
 	Refused      string   `json:"refused,omitempty"`
 	Error        string   `json:"error,omitempty"`
+	Tampered     bool     `json:"tampered,omitempty"`
 	Pending      []string `json:"pending,omitempty"`
 	PendingNames []string `json:"pending_names,omitempty"`
 	PendingPool  string   `json:"pending_pool,omitempty"`

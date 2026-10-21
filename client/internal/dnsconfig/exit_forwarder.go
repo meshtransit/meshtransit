@@ -107,8 +107,8 @@ func NewExitForwarder(logger *slog.Logger, local func() []netip.Prefix) *ExitFor
 	}
 	return &ExitForwarder{
 		logger: logger, local: local, buckets: map[netip.Addr]*exitBucket{}, held: map[netip.Addr]int{},
-		port: netadmin.ExitDNSPort, upstreamPort: 53, resolvConf: exitSystemResolvers,
-		resolvedConf: exitResolvedResolvers,
+		port: netadmin.ExitDNSPort, upstreamPort: 53,
+		resolvConf: exitSystemResolvers, resolvedConf: exitResolvedResolvers,
 		slots: make(chan struct{}, maxConcurrentQueries), tcpSlots: make(chan struct{}, maxTCPConnections),
 	}
 }

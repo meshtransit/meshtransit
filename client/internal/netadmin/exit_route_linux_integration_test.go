@@ -184,6 +184,31 @@ func TestKernelExitRouteConfigurerIntegration(t *testing.T) {
 	if present, err := configurer.Present(); err != nil || !present {
 		t.Fatalf("Present() = %t, %v", present, err)
 	}
+	// Another program changing the rules, the exit table or the kill switch
+	// is seen (exit_rule_tampered), and Replace installs them again.
+	for _, tamper := range [][]string{
+		{ip, "-4", "rule", "del", "priority", "5405"},
+		{ip, "-4", "rule", "add", "priority", "5404", "lookup", "main"},
+		{ip, "-4", "route", "add", "198.51.100.0/24", "dev", lan, "table", "5291"},
+		{nft, "flush", "chain", "inet", "meshtransit_kill_it", "output"},
+	} {
+		if output, err := exec.Command(tamper[0], tamper[1:]...).CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v: %s", tamper, err, output)
+		}
+		if present, err := configurer.Present(); err != nil || present {
+			t.Errorf("after %v: Present() = %t, %v", tamper[1:], present, err)
+		}
+		if err := configurer.Replace(name, true, true); err != nil {
+			t.Fatal(err)
+		}
+		if present, err := configurer.Present(); err != nil || !present {
+			rules4, _ := exec.Command(ip, "-4", "rule").CombinedOutput()
+			rules6, _ := exec.Command(ip, "-6", "rule").CombinedOutput()
+			count, _ := nftRuleCount("meshtransit_kill_it")
+			t.Fatalf("after %v reinstalling: Present() = %t, %v\nrules4:\n%s\nrules6:\n%s\ntable:\n%s\nnft %d want %d routes %v",
+				tamper[1:], present, err, rules4, rules6, routes(), count, configurer.installed.nftRules, configurer.installed.routes)
+		}
+	}
 	// Without IPv6 at the exit node, IPv6 stops at once; without the LAN,
 	// the LAN goes into the mesh.
 	if err := configurer.Replace(name, false, false); err != nil {
@@ -211,6 +236,10 @@ func TestKernelExitRouteConfigurerIntegration(t *testing.T) {
 	// through to the main table.
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
+	}
+	// The kernel took the TUN's route with it: no change by another program.
+	if present, err := configurer.Present(); err != nil || !present {
+		t.Errorf("Present() once the TUN is gone = %t, %v", present, err)
 	}
 	rules, err := exec.Command(ip, "-4", "rule", "show", "priority", "5402").CombinedOutput()
 	if err != nil || !strings.Contains(string(rules), "from 192.168.77.2 lookup main") ||

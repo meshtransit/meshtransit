@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"time"
 
 	"meshtransit.net/client/internal/routesettings"
 )
@@ -55,6 +56,7 @@ func (s *Server) setExitRoute(connection *net.UnixConn, requested ExitRouteReque
 	return writeResponse(connection, response{
 		Version: protocolVersion, OK: true,
 		ExitRouting: s.activeExitRoute.Routing, ExitRouteRefused: s.activeExitRoute.Refused,
+		ExitRouteTampered: s.activeExitRoute.Routing && s.exitTampered(),
 	}, nil)
 }
 
@@ -93,9 +95,11 @@ func (s *Server) applyExitRoute() {
 	}
 	key := fmt.Sprintf("%s %t %t %s", name, ipv6, settings.ExitAllowLAN, s.exitRouteConfigurer.Stamp(name))
 	if key == s.exitRouteKey {
-		if present, err := s.exitRouteConfigurer.Present(); err == nil && present {
+		present, err := s.exitRouteConfigurer.Present()
+		if err == nil && present {
 			return
 		}
+		s.noteExitTampered(err)
 	}
 	if err := s.exitRouteConfigurer.Replace(name, ipv6, settings.ExitAllowLAN); err != nil {
 		s.logger.Warn("routing the host through the exit node failed", "error", err)
@@ -146,9 +150,27 @@ func (s *Server) checkExitRoute() {
 	if err == nil && present {
 		return
 	}
-	s.logger.Warn("the exit kill switch is missing; installing it again", "error", err)
+	s.noteExitTampered(err)
 	s.exitRouteKey = ""
 	s.applyExitRoute()
+}
+
+// exitTamperedFor is how long status reports the exit routes changed by
+// another program after the helper installed them again.
+const exitTamperedFor = 10 * time.Minute
+
+// noteExitTampered records that the kill switch or the exit routes it
+// installed changed under it: a firewall reload, or a program sending the
+// host's traffic elsewhere (exit_rule_tampered).
+func (s *Server) noteExitTampered(err error) {
+	s.logger.Warn("the exit kill switch or routes changed under the helper; installing them again", "error", err)
+	s.exitTamperedAt = time.Now()
+}
+
+// exitTampered reports whether the helper installed the exit routes again
+// lately because they changed under it.
+func (s *Server) exitTampered() bool {
+	return !s.exitTamperedAt.IsZero() && time.Since(s.exitTamperedAt) < exitTamperedFor
 }
 
 // startExitRoute takes over what a previous run left: the kill switch stays

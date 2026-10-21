@@ -489,7 +489,7 @@ func (c *Client) SetExitRoute(ctx context.Context, route ExitRouteRequest) (Exit
 	if len(descriptors) != 0 {
 		return ExitRouting{}, fmt.Errorf("%w: exit route response included descriptors", ErrProtocol)
 	}
-	return ExitRouting{Routing: value.ExitRouting, Refused: value.ExitRouteRefused}, nil
+	return ExitRouting{Routing: value.ExitRouting, Refused: value.ExitRouteRefused, Tampered: value.ExitRouteTampered}, nil
 }
 
 func exitServingOf(value response) ExitServing {

@@ -198,9 +198,20 @@ func TestServerRepairsTheExitKillSwitch(t *testing.T) {
 	configurer.mu.Lock()
 	configurer.present = false
 	configurer.mu.Unlock()
+	if server.exitTampered() {
+		t.Fatal("tampered before anything changed")
+	}
 	server.checkExitRoute()
 	if replaced, _, present := configurer.state(); len(replaced) != 2 || !present {
 		t.Fatalf("repair installed %v", replaced)
+	}
+	// The repair is reported for a while (exit_rule_tampered).
+	if !server.exitTampered() {
+		t.Fatal("a repair was not reported")
+	}
+	server.exitTamperedAt = time.Now().Add(-exitTamperedFor)
+	if server.exitTampered() {
+		t.Fatal("a repair was reported for ever")
 	}
 	configurer.mu.Lock()
 	configurer.fail = errors.New("nft refused")

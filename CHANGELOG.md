@@ -12,6 +12,17 @@ merge (2026-10-09) are kept below.
   (TD-CLI-49). Approving exit nodes over the local API needs root, or an
   elevated administrator on Windows (`exit_approval_needs_root`); the
   operators group alone no longer suffices.
+- Clients (exit, TD-CLI-46): the exit node's DNS forwarder answers NXDOMAIN
+  without asking for the exit network's own names (single labels, the
+  host's search domains, `.local`, `.internal`, `.lan`, `.home.arpa`…),
+  asks the resolvers behind systemd-resolved's stub, and reports failing
+  without any resolver; a consumer whose settings name a pool resolves
+  Core's name from resolved's upstreams at once; pins are written outside
+  the failover lock and a full store forgets the pool used longest ago.
+  The Linux helper checks every 5 seconds that the exit rules, table and
+  kill switch are as it installed them, installs them again otherwise and
+  reports `tampered` in status for 10 minutes; removing a stale exit rule
+  with fewer attributes no longer deletes one of the helper's own.
 - Core, Console and clients: spread Exit Pools (schema 210, exit node design
   §16), behind `MESHTRANSIT_EXIT_SPREAD_ENABLED`. A pool's `mode` is
   `failover` (as before) or `spread`: the worker elects a serving set (the

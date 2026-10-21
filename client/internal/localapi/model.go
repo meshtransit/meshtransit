@@ -170,6 +170,9 @@ type exitStatus struct {
 	Routing      bool   `json:"routing"`
 	Refused      string `json:"refused,omitempty"`
 	Error        string `json:"error,omitempty"`
+	// Tampered: the helper installed the exit routes again lately because
+	// another program changed them.
+	Tampered bool `json:"tampered,omitempty"`
 	// Pending are exit nodes added to the pool that wait for meshctl exit
 	// approve, by device ID and name.
 	Pending      []string `json:"pending,omitempty"`

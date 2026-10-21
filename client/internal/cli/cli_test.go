@@ -951,6 +951,12 @@ func TestFormatExitStatus(t *testing.T) {
 			"via fra in pool Europe (chosen here: the primary waits for approval)",
 		},
 		{
+			&localapi.ExitStatus{
+				Use: "p1", Pool: "p1", ExitNode: "d1", Via: "primary", IPv6: true, Routing: true, Tampered: true,
+			},
+			"via d1 in pool p1; another program changed the exit routes, installed again",
+		},
+		{
 			&localapi.ExitStatus{Use: "p1", Pool: "p1", ExitNode: "d1", Via: "primary", Refused: "exit_use_off"},
 			"via d1 in pool p1; IPv6 blocked [helper: exit_use_off]",
 		},

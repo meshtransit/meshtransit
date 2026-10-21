@@ -202,12 +202,19 @@ to the exit node's forwarder, at the overlay address Core sends
 AAAA data without its IPv6. On the exit node the helper redirects port 53
 of its overlay addresses to `meshd`'s forwarder (port 1055), which the
 filter opens to the sources of the pool's rules; it asks the pool's
-`dns_upstreams` or the host's resolvers, drops every A, AAAA and SVCB/HTTPS
-hint that is no Internet for the consumer, bounds questions (256 at once,
-64 TCP connections, 64 a second per consumer) and logs no names. The
-exit nodes of a pool's first use are pinned (`exit-pins.json` in the state
-directory); a later one waits for `meshctl exit approve`, unless the host
-follows managed pools. `auto` takes the pool whose primary has the lowest
+`dns_upstreams` or the host's resolvers (past systemd-resolved's stub, to
+the resolvers behind it), answers NXDOMAIN without asking for a single
+label, the host's search domains and suffixes no public resolver serves
+(`.local`, `.internal`, `.lan`, `.home.arpa`…), drops every A, AAAA and
+SVCB/HTTPS hint that is no Internet for the consumer, bounds questions
+(256 at once, 64 TCP connections, 64 a second per consumer) and logs no
+names. The exit nodes of a pool's first use are pinned (`exit-pins.json`
+in the state directory); a later one waits for `meshctl exit approve` as
+root, also while no pool is used, unless the host follows managed pools.
+Every 5 seconds the helper compares the exit rules, the exit table and
+the kill switch with what it installed; another program's change is
+installed again and shown in status for 10 minutes (`tampered`,
+`exit_rule_tampered`). `auto` takes the pool whose primary has the lowest
 round trip once measured and keeps it; new TCP connections through the
 exit node left unanswered for 5 seconds move the node to the next
 candidate. The kill switch

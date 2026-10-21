@@ -730,6 +730,9 @@ func formatExitStatus(status *localapi.ExitStatus) string {
 	if status.PendingPool != "" {
 		summary += "; another pool now has this name: meshctl exit approve " + status.PendingPool
 	}
+	if status.Tampered {
+		summary += "; another program changed the exit routes, installed again"
+	}
 	switch {
 	case status.Error != "":
 		summary += "; error: " + status.Error

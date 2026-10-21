@@ -29,6 +29,9 @@ type ExitRouteStatus struct {
 	// the mesh, with its kill switch; Refused (helper reason) why not.
 	Routing bool
 	Refused string
+	// Tampered: the helper installed the exit routes again lately because
+	// another program changed them (exit_rule_tampered).
+	Tampered bool
 	// Error is the last failure to configure the helper.
 	Error string
 }
@@ -120,7 +123,7 @@ func (e *WireGuardEngine) recordExitRouteLocked(desired exitRouteDesired, result
 		status.Error = err.Error()
 		result = netadmin.ExitRouting{}
 	}
-	status.Routing, status.Refused = result.Routing, result.Refused
+	status.Routing, status.Refused, status.Tampered = result.Routing, result.Refused, result.Tampered
 	e.exitRouteStatus = status
 	e.filter.SetExitRouted(desired.use && result.Routing)
 	e.followExitLocked(desired.use || result.Routing)
@@ -131,8 +134,11 @@ func (e *WireGuardEngine) recordExitRouteLocked(desired exitRouteDesired, result
 		e.logger.Warn("routing the Internet through the exit node failed", "pool", status.Pool, "error", err)
 		return
 	}
+	if status.Tampered && !previous.Tampered {
+		e.logger.Warn("another program changed the exit routes; the helper installed them again", "pool", status.Pool)
+	}
 	e.logger.Info("exit route applied", "pool", status.Pool, "exit_node", status.Node, "routing", status.Routing,
-		"refused", status.Refused, "ipv6", status.IPv6)
+		"refused", status.Refused, "ipv6", status.IPv6, "tampered", status.Tampered)
 }
 
 // followExitLocked keeps the client's own sockets off the exit routes where

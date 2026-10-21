@@ -100,6 +100,9 @@ type Server struct {
 	// exitRouteKey identifies the exit route installed (interface,
 	// families, LAN and the host's networks); empty when none is.
 	exitRouteKey string
+	// exitTamperedAt is when the helper last found the exit routes it
+	// installed changed by another program.
+	exitTamperedAt time.Time
 	// loadSettings reads the route settings (routesettings.Load).
 	loadSettings func(string) (routesettings.Settings, error)
 	// mu serializes requests with background work (watchDNSLink on macOS).

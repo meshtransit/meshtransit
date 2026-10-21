@@ -175,6 +175,9 @@ type response struct {
 	// the mesh, or why not.
 	ExitRouting      bool   `json:"exit_routing,omitempty"`
 	ExitRouteRefused string `json:"exit_route_refused,omitempty"`
+	// ExitRouteTampered: the helper installed the exit routes again lately
+	// because another program changed them.
+	ExitRouteTampered bool `json:"exit_route_tampered,omitempty"`
 }
 
 // Reasons the helper does not forward as an exit node.
@@ -217,6 +220,9 @@ type ExitRouting struct {
 	// Refused is ExitRouteRefusedOff or ExitRouteRefusedFailed when not
 	// routing a requested exit; empty otherwise.
 	Refused string
+	// Tampered: while routing, the helper installed the routes again lately
+	// because another program changed them.
+	Tampered bool
 }
 
 // ExitRequest is what meshd asks of the helper for the Exit Pool it serves.
@@ -496,7 +502,10 @@ func validExitResponse(value response, operation string) bool {
 // routing, or a known reason it does not.
 func validExitRouteResponse(value response, operation string) bool {
 	if operation != operationSetExitRoute {
-		return !value.ExitRouting && value.ExitRouteRefused == ""
+		return !value.ExitRouting && value.ExitRouteRefused == "" && !value.ExitRouteTampered
+	}
+	if value.ExitRouteTampered && !value.ExitRouting {
+		return false
 	}
 	return value.ExitRouteRefused == "" || (!value.ExitRouting &&
 		(value.ExitRouteRefused == ExitRouteRefusedOff || value.ExitRouteRefused == ExitRouteRefusedFailed))
