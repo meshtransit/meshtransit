@@ -174,6 +174,9 @@ func (page *BrowserRegistrationPage) ServeHTTP(response http.ResponseWriter, req
 			}
 			view.Hostname = landing.Hostname
 			view.Path = request.URL.Path
+			// The browser may hold another person's or another account's
+			// session; the page always offers signing in with another one.
+			view.SwitchAccount = page.approval != nil
 			if page.approval != nil && view.NetworkCount > 0 {
 				session, err := page.management.management.sessions.Authenticate(ctx, token)
 				if err != nil || !page.management.activeSession(token, session, page.management.clock.Now()) {
@@ -221,6 +224,7 @@ type browserRegistrationChoiceView struct {
 	MoreWorkspaces bool
 	CSRF           string
 	Action         string
+	SwitchAccount  bool
 }
 
 // readChoices lists every Workspace the Session may enroll into together with
@@ -406,11 +410,12 @@ const browserRegistrationChoicesHTML = browserRegistrationHead + `<title>Connect
 {{range .Workspaces}}<fieldset class="workspace"><legend><span class="avatar" aria-hidden="true">{{.Initial}}</span><span>{{.Name}}</span></legend>
 {{if .Networks}}{{$workspace := .ID}}{{range .Networks}}<label class="choice"><input type="radio" name="network" value="{{.ID}}" data-workspace="{{$workspace}}" required><span class="choice__dot" aria-hidden="true"></span><span>{{.Name}}</span></label>{{end}}
 {{if .MoreNetworks}}<p class="muted">More Networks exist; manage them in Mesh Console.</p>{{end}}{{else}}<p class="muted empty">No Network you can join in this Workspace.</p>{{end}}</fieldset>{{end}}
-<button id="registration-confirm" class="button" type="submit">Connect device</button><p id="registration-status" role="status" aria-live="polite"></p></form><script src="/register/v1/client.js" defer></script>
+<button id="registration-confirm" class="button" type="submit">Connect device</button><p id="registration-status" role="status" aria-live="polite"></p></form>
 {{else}}{{range .Workspaces}}<section class="workspace"><h2><span class="avatar" aria-hidden="true">{{.Initial}}</span><span>{{.Name}}</span></h2>
 {{if .Networks}}<ul>{{range .Networks}}<li class="choice">{{.Name}}</li>{{end}}</ul>{{else}}<p class="muted empty">No Network you can join in this Workspace.</p>{{end}}</section>{{end}}{{end}}
 {{if .MoreWorkspaces}}<p class="muted">Only your first Workspaces are shown.</p>{{end}}
 {{else}}<p class="muted">No Workspace is available with this sign-in. Ask an owner to invite you, or sign in with another account.</p>{{end}}
+{{if .SwitchAccount}}<p class="switch muted">Not the right account? <button id="registration-switch" class="link" type="button">Use another account</button></p><p id="registration-switch-status" class="muted" role="status" aria-live="polite"></p><script src="/register/v1/client.js" defer></script>{{end}}
 </section></main></body></html>`
 
 //go:embed browser_registration_page.js
@@ -429,6 +434,6 @@ const browserRegistrationCSS = `:root{color-scheme:dark;--bg:#09090b;--surface:#
 	`ul{list-style:none;padding:0;margin:0}.choice{display:flex;align-items:center;gap:.75rem;min-height:48px;padding:.7rem 1rem;margin:.45rem 0;border:1px solid var(--line);border-radius:.7rem;background:var(--raised);font-weight:600;cursor:pointer;transition:border-color .15s,background .15s}` +
 	`.choice:hover{border-color:#3f3f46}.choice input{position:absolute;opacity:0;width:1px;height:1px}.choice__dot{flex:none;width:1.1rem;height:1.1rem;border:2px solid #52525b;border-radius:50%}.choice:has(input:checked){border-color:var(--accent);background:rgba(229,72,77,.08)}.choice:has(input:checked) .choice__dot{border-color:var(--accent);box-shadow:inset 0 0 0 3px var(--raised);background:var(--accent)}.choice:has(input:focus-visible){outline:3px solid var(--focus);outline-offset:2px}` +
 	`.empty{padding:.25rem 0 0 2.2rem}.button{display:inline-flex;align-items:center;justify-content:center;width:100%;min-height:46px;margin-top:.5rem;border:0;border-radius:.6rem;padding:.7rem 1rem;background:var(--accent);color:var(--accent-ink);font:inherit;font-weight:700;text-decoration:none;cursor:pointer}.button:disabled{opacity:.6;cursor:default}` +
-	`a{color:#fca5a5}a:focus-visible,.button:focus-visible{outline:3px solid var(--focus);outline-offset:3px}#registration-status{min-height:1.5rem;color:var(--muted)}.done{display:grid;place-items:center;width:2.5rem;height:2.5rem;margin-bottom:1rem;border-radius:50%;background:rgba(48,164,108,.15);color:#4cc38a;font-weight:800}`
+	`a{color:#fca5a5}a:focus-visible,.button:focus-visible{outline:3px solid var(--focus);outline-offset:3px}#registration-status{min-height:1.5rem;color:var(--muted)}.switch{margin-top:1rem;padding-top:1rem;border-top:1px solid var(--line)}.link{border:0;padding:0;background:none;color:#fca5a5;font:inherit;font-weight:600;text-decoration:underline;cursor:pointer}.link:disabled{opacity:.6;cursor:default}.link:focus-visible{outline:3px solid var(--focus);outline-offset:3px}.done{display:grid;place-items:center;width:2.5rem;height:2.5rem;margin-bottom:1rem;border-radius:50%;background:rgba(48,164,108,.15);color:#4cc38a;font-weight:800}`
 
 var _ http.Handler = (*BrowserRegistrationPage)(nil)

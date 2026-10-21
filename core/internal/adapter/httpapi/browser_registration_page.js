@@ -19,6 +19,54 @@
     return;
   }
 
+  // The browser may be signed in with the wrong account. End this browser's
+  // Session, then start sign-in again from Console, where the identity
+  // provider shows its account chooser. The request returns here as above.
+  const switcher = document.getElementById("registration-switch");
+  if (switcher) {
+    const note = document.getElementById("registration-switch-status");
+    let switching = false;
+    switcher.addEventListener("click", async () => {
+      const path = window.location.pathname;
+      if (switching || !intentPath.test(path)) return;
+      switching = true;
+      switcher.disabled = true;
+      if (note) note.textContent = "Signing out of this browser.";
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
+      const post = (destination, extra) => fetch(destination, {
+        method: "POST", mode: "same-origin", credentials: "same-origin",
+        redirect: "error", cache: "no-store", referrerPolicy: "no-referrer",
+        headers: { Accept: "application/json", "Content-Type": "application/json",
+          "X-MeshTransit-Session": "v1", ...extra },
+        body: "{}", signal: controller.signal,
+      });
+      try {
+        const prepared = await post("/auth/v1/session/prepare", {});
+        if (prepared.status !== 200 || prepared.redirected || prepared.type !== "basic") {
+          throw new Error("proof unavailable");
+        }
+        const proof = (await prepared.json())?.csrf_token;
+        if (typeof proof !== "string" || proof.length > 256 || !/^mtscsrf1\.[A-Za-z0-9._-]+$/.test(proof)) {
+          throw new Error("proof unavailable");
+        }
+        const ended = await post("/auth/v1/session/logout", { "X-MeshTransit-CSRF": proof });
+        if (ended.status !== 204 || ended.redirected || ended.type !== "basic") {
+          throw new Error("sign-out unavailable");
+        }
+        window.sessionStorage.setItem("meshtransit.registration.return",
+          JSON.stringify({ path, at: Date.now() }));
+        window.location.replace("/");
+      } catch {
+        switching = false;
+        switcher.disabled = false;
+        if (note) note.textContent = "Could not sign out. Sign out in Mesh Console, then reopen the link from Mesh Client.";
+      } finally {
+        clearTimeout(timer);
+      }
+    });
+  }
+
   const form = document.getElementById("registration-form");
   const button = document.getElementById("registration-confirm");
   const status = document.getElementById("registration-status");

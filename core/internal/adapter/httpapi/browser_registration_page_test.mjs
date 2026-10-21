@@ -196,3 +196,87 @@ test("signed-out landing ignores foreign or mismatched paths and blocked storage
     assert.deepEqual(instance.navigation, []);
   }
 });
+
+function switchHarness(replies, options = {}) {
+  const calls = [];
+  const timers = new Map();
+  let handler;
+  let replaced = null;
+  const stored = [];
+  const switcher = { disabled: false, addEventListener(name, listener) { assert.equal(name, "click"); handler = listener; } };
+  const note = { textContent: "" };
+  const document = { getElementById(id) {
+    return { "registration-switch": switcher, "registration-switch-status": note }[id] ?? null;
+  } };
+  Object.defineProperty(document, "cookie", { get() { assert.fail("cookie access"); } });
+  const window = {
+    location: { pathname: options.path ?? action, replace(destination) { replaced = destination; } },
+    sessionStorage: { setItem(key, value) { stored.push([key, JSON.parse(value)]); } },
+  };
+  const sandbox = { document, window, AbortController, URLSearchParams,
+    setTimeout(listener, delay) { assert.equal(delay, 15000); timers.set(1, listener); return 1; },
+    clearTimeout(id) { timers.delete(id); },
+    async fetch(destination, init) {
+      calls.push({ destination, init });
+      const reply = replies[calls.length - 1] ?? {};
+      if (reply.reject) throw new Error("private diagnostic");
+      return { status: reply.status, redirected: reply.redirected ?? false, type: reply.type ?? "basic",
+        async json() { return reply.json; } };
+    },
+  };
+  vm.runInNewContext(script, sandbox, { timeout: 1000 });
+  return { calls, timers, note, switcher, stored,
+    get replaced() { return replaced; },
+    click() { return handler(); },
+  };
+}
+
+const prepared = { status: 200, json: { csrf_token: "mtscsrf1.proof", expires_at: "2026-10-21T10:00:00Z" } };
+
+test("use another account ends this browser session then restarts sign-in", async () => {
+  const instance = switchHarness([prepared, { status: 204 }]);
+  await instance.click();
+  assert.deepEqual(instance.calls.map((call) => call.destination),
+    ["/auth/v1/session/prepare", "/auth/v1/session/logout"]);
+  for (const call of instance.calls) {
+    assert.equal(call.init.method, "POST");
+    assert.equal(call.init.mode, "same-origin");
+    assert.equal(call.init.credentials, "same-origin");
+    assert.equal(call.init.redirect, "error");
+    assert.equal(call.init.body, "{}");
+    assert.equal(call.init.headers["X-MeshTransit-Session"], "v1");
+  }
+  assert.equal(instance.calls[0].init.headers["X-MeshTransit-CSRF"], undefined);
+  assert.equal(instance.calls[1].init.headers["X-MeshTransit-CSRF"], "mtscsrf1.proof");
+  assert.equal(instance.stored.length, 1);
+  assert.equal(instance.stored[0][0], "meshtransit.registration.return");
+  assert.equal(instance.stored[0][1].path, action);
+  assert.equal(instance.replaced, "/");
+  assert.equal(instance.timers.size, 0);
+});
+
+for (const [name, replies] of [
+  ["prepare refused", [{ status: 401 }]],
+  ["malformed proof", [{ status: 200, json: { csrf_token: "forged proof" } }]],
+  ["logout refused", [prepared, { status: 403 }]],
+  ["logout redirected", [prepared, { status: 204, redirected: true }]],
+  ["network failure", [{ reject: true }]],
+]) {
+  test(`use another account stays put when ${name}`, async () => {
+    const instance = switchHarness(replies);
+    await instance.click();
+    assert.equal(instance.replaced, null);
+    assert.equal(instance.stored.length, 0);
+    assert.equal(instance.switcher.disabled, false);
+    assert.match(instance.note.textContent, /^Could not sign out/);
+    assert.equal(instance.note.textContent.includes("private"), false);
+    assert.equal(instance.timers.size, 0);
+  });
+}
+
+test("use another account ignores a page outside a registration request", async () => {
+  const instance = switchHarness([], { path: "/elsewhere" });
+  await instance.click();
+  assert.equal(instance.calls.length, 0);
+  assert.equal(instance.replaced, null);
+});

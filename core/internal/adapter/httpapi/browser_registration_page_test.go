@@ -217,6 +217,7 @@ func TestBrowserRegistrationPageApprovesOnlyWithCurrentSSOAndCSRF(t *testing.T) 
 		!strings.Contains(landing.Body.String(), `value="`+selected.String()+`" data-workspace="`+
 			reader.page.Choices.WorkspaceID.String()+`"`) ||
 		!strings.Contains(landing.Body.String(), `src="/register/v1/client.js"`) ||
+		!strings.Contains(landing.Body.String(), `<button id="registration-switch" class="link" type="button">`) ||
 		!strings.Contains(landing.Header().Get("Content-Security-Policy"), "form-action 'self'") ||
 		!strings.Contains(landing.Header().Get("Content-Security-Policy"), "script-src 'self'; connect-src 'self'") {
 		t.Fatalf("SSO choice form = (%d, %q)", landing.Code, landing.Body.String())
