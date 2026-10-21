@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -571,7 +572,7 @@ func runStatus(
 		formatSubnetRouteStatus(status.SubnetRoutes),
 		formatSubnetRouterStatus(status.SubnetRouter),
 		formatExitNodeStatus(status.ExitNode),
-		formatExitStatus(status.Exit),
+		formatExitStatus(status.Exit)+formatCaptive(status.Captive),
 		formatPathTransitionStatus(status.PeerPaths),
 		formatPathProbeStatus(status.PathProbes),
 		formatRelayStatus(status.Relay),
@@ -1171,4 +1172,25 @@ func writeProfileUsage(writer io.Writer) {
   meshctl profile create --name NAME --control-url HTTPS_URL
   meshctl profile use PROFILE_ID
   meshctl profile trust --fingerprint SHA256_FINGERPRINT`)
+}
+
+// formatCaptive says that a captive portal holds the host, and how to sign
+// in; empty when none does.
+func formatCaptive(status *localapi.CaptiveStatus) string {
+	if status == nil {
+		return ""
+	}
+	where := ""
+	if status.URL != "" {
+		where = ", sign in at " + status.URL + " (reported by the network)"
+	}
+	what := "a captive portal holds this network"
+	if status.State == "suspected" {
+		what = "this network looks like a captive portal"
+	}
+	command := "sudo meshctl exit captive"
+	if runtime.GOOS == "windows" {
+		command = "meshctl exit captive (as administrator)"
+	}
+	return "; " + what + where + ": " + command + " opens it for 2 minutes"
 }

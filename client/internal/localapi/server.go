@@ -504,6 +504,7 @@ func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request)
 		SubnetRouter:       mapSubnetRouterStatus(status.SubnetRouter),
 		ExitNode:           mapExitNodeStatus(status.ExitNode),
 		Exit:               mapExitStatus(status.Exit, status.ExitRoute),
+		Captive:            mapCaptiveStatus(status.Captive),
 		PathProbes:         mapPathProbeStatus(status.PathProbes),
 		Relay:              mapRelayStatus(status.Relay),
 		NetworkChanges:     mapNetworkChangeStatus(status.NetworkChanges),
@@ -1070,4 +1071,15 @@ func deviceExpiresAt(status daemon.Status) string {
 		return ""
 	}
 	return status.DeviceExpiresAt.UTC().Format(time.RFC3339)
+}
+
+func mapCaptiveStatus(view daemon.CaptiveView) *captiveStatus {
+	if view.State == "" || view.State == "none" {
+		return nil
+	}
+	status := &captiveStatus{State: view.State, URL: view.URL}
+	if !view.Since.IsZero() {
+		status.Since = view.Since.UTC().Format(time.RFC3339)
+	}
+	return status
 }

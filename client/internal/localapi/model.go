@@ -42,6 +42,7 @@ type statusResponse struct {
 	SubnetRouter      subnetRouterStatus    `json:"subnet_router"`
 	ExitNode          exitNodeStatus        `json:"exit_node"`
 	Exit              *exitStatus           `json:"exit,omitempty"`
+	Captive           *captiveStatus        `json:"captive,omitempty"`
 	PathProbes        pathProbeStatus       `json:"path_probes"`
 	Relay             relayStatus           `json:"relay"`
 	NetworkChanges    networkChangeStatus   `json:"network_changes"`
@@ -385,4 +386,12 @@ func mapProfile(item profile.Profile, activeID string) profileResponse {
 		UpdatedAt:  item.UpdatedAt,
 		IsActive:   item.ID == activeID,
 	}
+}
+
+// captiveStatus is a captive portal found while the host uses an exit node:
+// suspected or portal, the sign-in page the network named, and since when.
+type captiveStatus struct {
+	State string `json:"state"`
+	URL   string `json:"url,omitempty"`
+	Since string `json:"since,omitempty"`
 }

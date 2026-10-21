@@ -66,8 +66,11 @@ type routeFailover struct {
 	sites map[string]*failoverSite
 	// core is the last map from Core, unchanged.
 	core networkmap.Snapshot
-	// exit is the exit node chosen (exit_choice.go).
-	exit exitChoice
+	// exit is the exit node chosen (exit_choice.go); exitHeld, when it
+	// reports true, holds it (a captive portal: the network under the exit
+	// node is at fault, not the exit node).
+	exit     exitChoice
+	exitHeld func() bool
 }
 
 func newRouteFailover(clock func() time.Time) *routeFailover {

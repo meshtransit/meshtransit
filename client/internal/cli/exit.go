@@ -168,7 +168,7 @@ func runExitStatus(ctx context.Context, stdout, stderr io.Writer, client DaemonC
 	if err != nil {
 		return writeRuntimeError(stderr, err)
 	}
-	_, _ = fmt.Fprintf(stdout, "Exit: %s\n", formatExitStatus(status.Exit))
+	_, _ = fmt.Fprintf(stdout, "Exit: %s\n", formatExitStatus(status.Exit)+formatCaptive(status.Captive))
 	return 0
 }
 

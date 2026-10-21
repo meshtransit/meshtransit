@@ -36,6 +36,7 @@ type Status struct {
 	SubnetRouter       *SubnetRouterStatus    `json:"subnet_router,omitempty"`
 	ExitNode           *ExitNodeStatus        `json:"exit_node,omitempty"`
 	Exit               *ExitStatus            `json:"exit,omitempty"`
+	Captive            *CaptiveStatus         `json:"captive,omitempty"`
 	PathProbes         *PathProbeStatus       `json:"path_probes,omitempty"`
 	Relay              RelayStatus            `json:"relay"`
 	NetworkChanges     NetworkChangeStatus    `json:"network_changes"`
@@ -368,4 +369,11 @@ type errorResponse struct {
 	APIVersion string `json:"api_version"`
 	Code       string `json:"code"`
 	Message    string `json:"message"`
+}
+
+// CaptiveStatus is a captive portal found while the host uses an exit node.
+type CaptiveStatus struct {
+	State string `json:"state"`
+	URL   string `json:"url,omitempty"`
+	Since string `json:"since,omitempty"`
 }

@@ -986,3 +986,18 @@ func TestFormatExitNodeStatus(t *testing.T) {
 		t.Fatalf("refused = %q", got)
 	}
 }
+
+func TestFormatCaptive(t *testing.T) {
+	t.Parallel()
+	if got := formatCaptive(nil); got != "" {
+		t.Fatalf("no portal = %q", got)
+	}
+	got := formatCaptive(&localapi.CaptiveStatus{State: "portal", URL: "http://10.0.0.1:8880/guest"})
+	if !strings.Contains(got, "a captive portal holds this network, sign in at http://10.0.0.1:8880/guest (reported by the network)") ||
+		!strings.Contains(got, "meshctl exit captive") {
+		t.Fatalf("portal = %q", got)
+	}
+	if got := formatCaptive(&localapi.CaptiveStatus{State: "suspected"}); !strings.Contains(got, "looks like a captive portal") {
+		t.Fatalf("suspected = %q", got)
+	}
+}

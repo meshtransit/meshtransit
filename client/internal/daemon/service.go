@@ -19,6 +19,7 @@ import (
 	"meshtransit.net/shared/disco"
 	"meshtransit.net/shared/key"
 
+	"meshtransit.net/client/internal/captive"
 	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/client/internal/dnsconfig"
@@ -163,8 +164,10 @@ type Status struct {
 	ExitNode dataplane.ExitNodeStatus
 	// Exit is the exit node this node sends its Internet traffic to, nil
 	// when it uses none, and ExitRoute what the helper does with it.
-	Exit            *ExitView
-	ExitRoute       dataplane.ExitRouteStatus
+	Exit      *ExitView
+	ExitRoute dataplane.ExitRouteStatus
+	// Captive is a captive portal found while the host uses an exit node.
+	Captive         CaptiveView
 	PathProbes      PathProbeStatus
 	Relay           relay.HealthSnapshot
 	NetworkChanges  NetworkChangeStatus
@@ -387,8 +390,12 @@ type Service struct {
 	enableExits          bool
 	// exitForwarder answers an exit node's consumers' DNS; exitPins are
 	// the exit nodes users approved.
-	exitForwarder     *dnsconfig.ExitForwarder
-	exitPins          *exitPins
+	exitForwarder *dnsconfig.ExitForwarder
+	exitPins      *exitPins
+	// captive tracks a captive portal while the host uses an exit node,
+	// which captiveDetector finds (exit node design §17.3).
+	captive           *captiveTracker
+	captiveDetector   atomic.Pointer[captive.Detector]
 	routeSettingsPath string
 	restartMarkerPath string
 	// routeSites is the router of each Site of the current session, exit
@@ -410,9 +417,12 @@ type Service struct {
 	newDiscoKey         func() (key.DiscoPrivate, error)
 	localEndpointsMu    sync.Mutex
 	localEndpointSink   func(pathdiscovery.Set)
-	logger              *slog.Logger
-	networkChanges      <-chan struct{}
-	syncSignal          chan struct{}
+	// peerSession is the current map's peers and the session's probe
+	// runtime, for the connection test (peer_directory.go).
+	peerSession    peerSession
+	logger         *slog.Logger
+	networkChanges <-chan struct{}
+	syncSignal     chan struct{}
 	// loggingOut holds the session loop down while Logout runs; downAcks
 	// counts the times the loop has stopped the runtime for a down.
 	loggingOut        atomic.Bool
@@ -538,6 +548,7 @@ func New(
 		options.LoadRouteSettings = routesettings.Load
 	}
 	var pins *exitPins
+	var captiveRelays *captiveTracker
 	if options.EnableExits {
 		opened, err := openExitPins(options.ExitPinsDir)
 		if err != nil {
@@ -545,6 +556,7 @@ func New(
 		}
 		pins = opened
 		pins.logger = options.Logger
+		captiveRelays = newCaptiveTracker(options.ExitPinsDir)
 		// Before the first connection to Core: a kill switch root's
 		// settings hold already cuts the host's resolver off.
 		_, _ = exitPreferenceOf(options.LoadRouteSettings, options.RouteSettingsPath, nil)
@@ -593,6 +605,7 @@ func New(
 		enableExits:          options.EnableExits,
 		exitForwarder:        exitForwarderFor(options),
 		exitPins:             pins,
+		captive:              captiveRelays,
 		routeSettingsPath:    options.RouteSettingsPath,
 		restartMarkerPath:    options.RestartMarkerPath,
 		loadRouteSettings:    options.LoadRouteSettings,
@@ -630,6 +643,13 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 	}()
 	// The restart the marker announced has happened: a later stop is real.
 	clearRestartMarker(s.restartMarkerPath, s.logger)
+	if s.captive != nil {
+		detector := s.newCaptiveDetector()
+		s.captiveDetector.Store(detector)
+		captiveCtx, stopCaptive := context.WithCancel(ctx)
+		defer stopCaptive()
+		go detector.Run(captiveCtx)
+	}
 
 	// Signals raised before the supervisor starts are already reflected in the
 	// persisted stores that the first loop iteration reads.
@@ -809,6 +829,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		// Local router choices of this session (design §6.3), and the router
 		// of each Site reported to Core and shown in status.
 		failover := newRouteFailover(s.clock)
+		failover.exitHeld = s.captive.held
 		var routeSelection chan []controlplane.RouteSiteSelection
 		if s.enableSubnetRoutes {
 			routeSelection = make(chan []controlplane.RouteSiteSelection, 1)
@@ -883,6 +904,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			s.setLocalEndpointSink(func(candidates pathdiscovery.Set) {
 				runtime.SetLocalEndpoints(discoEndpoints(candidates), s.nat.get().NAT)
 			})
+			s.peerSession.setMeasurer(runtime)
 		}
 		// Path statistics (mtcp-v1 §8.3) follow the session's data plane.
 		var pathStats chan controlplane.PathStatsReport
@@ -977,6 +999,8 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			s.exitForwarder.Configure(nil, nil)
 			stopPathStats()
 			s.setLocalEndpointSink(nil)
+			s.peerSession.setMeasurer(nil)
+			s.peerSession.setDirectory(nil)
 			if probeRuntime != nil {
 				probeRuntime.Close()
 			}
@@ -1116,6 +1140,10 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 						state, err := s.dataPlane.Apply(callbackCtx, effective, privateKey)
 						if err == nil {
 							s.syncExitForwarder(snapshot)
+							if s.captive != nil {
+								s.captive.noteRelays(snapshot.Relays)
+							}
+							s.peerSession.setDirectory(newPeerDirectory(snapshot))
 							publishRouteSelection()
 							// Routers reached only through the relay still prove
 							// they are up, for local failover.
@@ -1740,6 +1768,9 @@ func (s *Service) runEndpointRefresh(
 			if s.cloud != nil {
 				s.cloud.NetworkChanged()
 			}
+			if detector := s.captiveDetector.Load(); detector != nil {
+				detector.NetworkChanged()
+			}
 			pendingNetwork = true
 			if deferEvent() {
 				continue
@@ -2294,6 +2325,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		ExitNode:           s.exitNodeStatus(),
 		Exit:               s.exitSnapshot(),
 		ExitRoute:          s.exitRouteStatus(),
+		Captive:            s.captiveView(),
 		PathProbes:         s.pathProbeStatus(),
 		Relay:              relayStatus,
 		NetworkChanges: NetworkChangeStatus{

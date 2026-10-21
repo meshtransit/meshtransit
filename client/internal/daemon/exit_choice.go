@@ -291,7 +291,8 @@ func (failover *routeFailover) exitAutoPoolLocked(now time.Time) (networkmap.Exi
 		return networkmap.ExitPool{}, false
 	}
 	index := slices.IndexFunc(served, func(pool networkmap.ExitPool) bool { return pool.Ref == choice.pool })
-	if index >= 0 && choice.autoSettled && !failover.silentLocked(served[index], now) {
+	held := failover.exitHeld != nil && failover.exitHeld()
+	if index >= 0 && choice.autoSettled && (held || !failover.silentLocked(served[index], now)) {
 		return served[index], true
 	}
 	peers := peerIDs(failover.core)
@@ -391,10 +392,15 @@ func (failover *routeFailover) chooseExitLocked(now time.Time) bool {
 	keeps := func(id string) bool {
 		return usable(id) && !failover.silentForLocked(id, exitLeaveAfter, now) && !failover.stuckLocked(id, now)
 	}
+	held := failover.exitHeld != nil && failover.exitHeld()
 	next := ""
 	switch {
 	case pool.Status != networkmap.ExitServed:
 	case choice.node != "" && keeps(choice.node):
+		next = choice.node
+	case choice.node != "" && held && usable(choice.node):
+		// A captive portal: every exit node looks silent or stuck behind
+		// it; leaving would only change the public address once it is gone.
 		next = choice.node
 	case choice.node != "" && usable(choice.node) && now.Before(choice.nextSwitch):
 		// Silent but still a working candidate: switches are spaced.

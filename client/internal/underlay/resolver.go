@@ -43,6 +43,9 @@ var (
 // mesh, so the client asks the upstreams directly from the start.
 func SetExitChosen(on bool) { exitChosen.Store(on) }
 
+// IsExitChosen reports what SetExitChosen last recorded.
+func IsExitChosen() bool { return exitChosen.Load() }
+
 // upstreamResolver resolves names for the client's own sockets with the
 // system resolver, as before, and, when that one times out or fails, or
 // while the client is bound off the exit routes, with systemd-resolved's

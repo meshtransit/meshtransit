@@ -653,3 +653,41 @@ func TestExitPinsKeepAnApprovalMadeWhileChoosing(t *testing.T) {
 		}
 	}
 }
+
+// Behind a captive portal every exit node looks silent: the node in use is
+// held, and left only once the portal no longer holds the host.
+func TestExitChoiceHoldsItsExitNodeBehindACaptivePortal(t *testing.T) {
+	t.Parallel()
+	h := newExitHarness(exitPreference{use: "pool-a"}, exitMap("exit-1"))
+	held := true
+	h.failover.exitHeld = func() bool { return held }
+	h.step(21, 22)
+	for range 30 {
+		if h.step(22) {
+			t.Fatalf("left exit-1 behind a portal: %+v", h.route())
+		}
+	}
+	held = false
+	if !h.step(22) || h.route().Node != "exit-2" {
+		t.Fatalf("route once the portal let go = %+v", h.route())
+	}
+}
+
+// The relays of a map are kept on disk for a start behind a portal, and a
+// map without relays forgets nothing.
+func TestCaptiveTrackerKeepsTheRelays(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	tracker := newCaptiveTracker(dir)
+	tracker.noteRelays(map[int]networkmap.RelayRegion{1: {ID: 1, Nodes: []networkmap.RelayNode{
+		{HostName: "relay-sgp1.example", IPv4: "198.51.100.200", IPv6: "2001:db8::200"},
+	}}})
+	tracker.noteRelays(nil)
+	reopened := newCaptiveTracker(dir).relaysSnapshot()
+	if len(reopened.Addresses) != 2 || reopened.Name != "relay-sgp1.example" {
+		t.Fatalf("relays after reopening = %+v", reopened)
+	}
+	if tracker.held() || (*captiveTracker)(nil).held() {
+		t.Fatal("held with no portal")
+	}
+}
