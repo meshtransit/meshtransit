@@ -602,7 +602,7 @@
               }
             },
             "addresses": {
-              "description": "The mesh addresses the Device holds now, IPv4 before IPv6, without a prefix length; empty for a Device that holds none (expired, revoked).",
+              "description": "The mesh addresses peers reach the Device by, IPv4 before IPv6, without a prefix length; empty unless the Device is active or suspended and has not expired.",
               "type": "array",
               "maxItems": 4,
               "items": {

@@ -410,11 +410,15 @@ type consoleDeviceWire struct {
 	Addresses []string `json:"addresses"`
 }
 
-// maximumDeviceAddresses bounds the addresses one Device holds: one primary
-// lease per family, with room for a lease being replaced.
+// maximumDeviceAddresses bounds the addresses one Device holds. A unique
+// index keeps one active primary lease per family, so two is the most today;
+// the bound leaves room for a second address per family without a new
+// contract.
 const maximumDeviceAddresses = 4
 
-// decodeDeviceAddresses reads canonical single addresses, IPv4 before IPv6.
+// decodeDeviceAddresses reads single addresses, IPv4 before IPv6. PostgreSQL
+// and Go write a few IPv6 forms differently (an IPv4-compatible ::/96
+// address), so the text need not match Go's; the API writes Go's form.
 func decodeDeviceAddresses(encoded []string) ([]netip.Addr, bool) {
 	if len(encoded) > maximumDeviceAddresses {
 		return nil, false
@@ -422,7 +426,7 @@ func decodeDeviceAddresses(encoded []string) ([]netip.Addr, bool) {
 	addresses := make([]netip.Addr, len(encoded))
 	for index, text := range encoded {
 		address, err := netip.ParseAddr(text)
-		if err != nil || address.String() != text || address.Zone() != "" ||
+		if err != nil || address.Zone() != "" ||
 			(index > 0 && address.Is4() && addresses[index-1].Is6()) {
 			return nil, false
 		}

@@ -252,7 +252,8 @@ func assertPostgreSQLDeviceLifecycle(ctx context.Context, t *testing.T, admin *p
 }
 
 // assertConsoleDeviceAddresses checks schema 209: one Device's read names the
-// mesh addresses it holds, exactly its active primary leases, IPv4 first.
+// mesh addresses peers reach it by, exactly the active primary leases of an
+// active Device that has not expired, IPv4 first.
 func assertConsoleDeviceAddresses(ctx context.Context, t *testing.T, admin *pgx.Conn,
 	store *postgresadapter.ConsoleDeviceInventoryStore, session accountsession.Session,
 	scope network.Scope, device node.ID,
@@ -263,7 +264,8 @@ func assertConsoleDeviceAddresses(ctx context.Context, t *testing.T, admin *pgx.
 	        ORDER BY lease.family, lease.address), ARRAY[]::TEXT[])
 	    FROM mesh.node_address_lease AS lease
 	    JOIN mesh.device AS device ON device.id = lease.device_id
-	    WHERE device.public_id = $1 AND lease.state = 'active' AND lease.lease_role = 'primary'`,
+	    WHERE device.public_id = $1 AND lease.state = 'active' AND lease.lease_role = 'primary'
+	      AND device.state IN ('active', 'suspended') AND device.expires_at > pg_catalog.now()`,
 		device.String()).Scan(&want); err != nil {
 		t.Fatal(err)
 	}

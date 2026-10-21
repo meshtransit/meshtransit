@@ -5994,6 +5994,8 @@ func TestMigration209ReadsConsoleDeviceAddresses(t *testing.T) {
 		"IF v_result IS NULL OR NOT v_result ? 'device' THEN",
 		"JOIN mesh.node_address_lease AS lease",
 		"lease.state = 'active' AND lease.lease_role = 'primary'",
+		"AND device.state IN ('active', 'suspended') AND device.deleted_at IS NULL",
+		"AND device.expires_at > p_evaluated_at",
 		") TO mesh_runtime;",
 	} {
 		if !strings.Contains(migration.SQL, want) {

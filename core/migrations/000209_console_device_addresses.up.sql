@@ -2,11 +2,14 @@
 -- administrator can reach it or match it to a log line.
 --
 -- read_console_device_v3 answers what read_console_device_v2 answers and,
--- for a Device the scope holds, adds addresses: the addresses the Device
--- holds now (its active primary leases), IPv4 before IPv6, as text without a
--- prefix length. A Device that holds none (expired, revoked) answers an
--- empty list. v2 authorizes the read and finds the Device; the leases are
--- read by the map reader's index on (workspace, network, Device, family).
+-- for a Device the scope holds, adds addresses: the addresses peers reach it
+-- by (its active primary leases), IPv4 before IPv6, as text without a prefix
+-- length. Only an active or suspended Device that has not expired answers
+-- them; an expired Device keeps its leases until it is revoked, and a Device
+-- revoked before schema 143 may still hold one, but no peer reaches either,
+-- so both answer an empty list. v2 authorizes the read and finds the Device;
+-- the leases are read by the map reader's index on (workspace, network,
+-- Device, family).
 -- The v2 function stays for Core replicas that predate this schema.
 
 CREATE FUNCTION mesh_ops.read_console_device_v3(
@@ -44,6 +47,8 @@ BEGIN
           ON lease.workspace_id = device.workspace_id AND lease.network_id = device.network_id
          AND lease.device_id = device.id
         WHERE device.public_id = p_device_public_id
+          AND device.state IN ('active', 'suspended') AND device.deleted_at IS NULL
+          AND device.expires_at > p_evaluated_at
           AND lease.state = 'active' AND lease.lease_role = 'primary'
     ), '[]'::JSONB));
 END;
