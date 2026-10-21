@@ -209,11 +209,15 @@ func addFilter(engine uintptr, index int, rule Rule, appID *fwpByteBlob, system 
 	if rule.Loopback {
 		add(conditionFlags, fwpMatchFlagsAllSet, fwpUint32, fwpConditionFlagIsLoopback)
 	}
+	interfaceField, remoteField := conditionIPLocalInterface, conditionIPRemoteAddress
+	if rule.Forward {
+		interfaceField, remoteField = conditionIPForwardInterface, conditionIPDestinationAddress
+	}
 	if rule.Adapter != 0 {
 		luid := new(uint64)
 		*luid = rule.Adapter
 		keep = append(keep, luid)
-		add(conditionIPLocalInterface, fwpMatchEqual, fwpUint64, uintptr(unsafe.Pointer(luid))) //nolint:gosec // G103: WFP keeps no reference past the call.
+		add(interfaceField, fwpMatchEqual, fwpUint64, uintptr(unsafe.Pointer(luid))) //nolint:gosec // G103: WFP keeps no reference past the call.
 	}
 	if rule.Protocol != 0 {
 		add(conditionIPProtocol, fwpMatchEqual, fwpUint8, uintptr(rule.Protocol))
@@ -236,16 +240,21 @@ func addFilter(engine uintptr, index int, rule Rule, appID *fwpByteBlob, system 
 			}
 			value := &fwpV4AddrAndMask{addr: binary.BigEndian.Uint32(address[:]), mask: mask}
 			keep = append(keep, value)
-			add(conditionIPRemoteAddress, fwpMatchEqual, fwpV4AddrMask, uintptr(unsafe.Pointer(value))) //nolint:gosec // G103: WFP keeps no reference past the call.
+			add(remoteField, fwpMatchEqual, fwpV4AddrMask, uintptr(unsafe.Pointer(value))) //nolint:gosec // G103: WFP keeps no reference past the call.
 			continue
 		}
 		value := &fwpV6AddrAndMask{addr: prefix.Addr().As16(), prefixLength: uint8(prefix.Bits())} //nolint:gosec // G115: at most 128
 		keep = append(keep, value)
-		add(conditionIPRemoteAddress, fwpMatchEqual, fwpV6AddrMask, uintptr(unsafe.Pointer(value))) //nolint:gosec // G103: WFP keeps no reference past the call.
+		add(remoteField, fwpMatchEqual, fwpV6AddrMask, uintptr(unsafe.Pointer(value))) //nolint:gosec // G103: WFP keeps no reference past the call.
 	}
 	name, description := display(rule.Name, "MeshTransit exit kill switch")
 	layer := layerALEAuthConnectV4
-	if rule.IPv6 {
+	switch {
+	case rule.Forward && rule.IPv6:
+		layer = layerIPForwardV6
+	case rule.Forward:
+		layer = layerIPForwardV4
+	case rule.IPv6:
 		layer = layerALEAuthConnectV6
 	}
 	action := fwpActionPermit

@@ -6,9 +6,17 @@ import (
 )
 
 func TestRulesPermitOnlyTheExceptionsBeforeBlocking(t *testing.T) {
-	rules := Rules(Config{Adapter: 42})
-	if len(rules) > maximumRules {
-		t.Fatalf("%d rules exceed %d", len(rules), maximumRules)
+	all := Rules(Config{Adapter: 42, LAN: []netip.Prefix{
+		netip.MustParsePrefix("192.168.1.0/24"), netip.MustParsePrefix("fd00:1::/64"),
+	}})
+	if len(all) > maximumRules {
+		t.Fatalf("%d rules exceed %d", len(all), maximumRules)
+	}
+	var rules []Rule
+	for _, rule := range all {
+		if !rule.Forward {
+			rules = append(rules, rule)
+		}
 	}
 	last := rules[len(rules)-2:]
 	for _, rule := range last {
@@ -38,6 +46,39 @@ func TestRulesPermitOnlyTheExceptionsBeforeBlocking(t *testing.T) {
 	}
 	if service != 2 || adapter != 2 || loopback != 2 {
 		t.Fatalf("service %d adapter %d loopback %d rules, want 2 each", service, adapter, loopback)
+	}
+}
+
+// What the host forwards for others leaves only into the adapter, or the
+// LAN when allowed; everything else forwarded is blocked in both families.
+func TestRulesForwardOnlyIntoTheAdapterOrTheLAN(t *testing.T) {
+	lan := []netip.Prefix{netip.MustParsePrefix("192.168.1.0/24")}
+	var permits, blocks []Rule
+	for _, rule := range Rules(Config{Adapter: 42, LAN: lan}) {
+		switch {
+		case !rule.Forward:
+		case rule.Block:
+			blocks = append(blocks, rule)
+		default:
+			permits = append(permits, rule)
+		}
+	}
+	if len(blocks) != 2 || blocks[0].IPv6 == blocks[1].IPv6 || blocks[0].Adapter != 0 || len(blocks[0].Remote) != 0 {
+		t.Fatalf("forwarding blocks %+v", blocks)
+	}
+	if len(permits) != 3 {
+		t.Fatalf("forwarding permits %+v, want the adapter twice and the IPv4 LAN", permits)
+	}
+	for _, rule := range permits {
+		if rule.Weight <= weightBlock || (rule.Adapter != 42 && len(rule.Remote) == 0) || rule.Service ||
+			rule.Loopback || rule.Protocol != 0 {
+			t.Fatalf("forwarding permit %+v", rule)
+		}
+	}
+	for _, rule := range Rules(Config{}) {
+		if rule.Forward && !rule.Block {
+			t.Fatalf("forwarding permitted without an adapter or LAN: %+v", rule)
+		}
 	}
 }
 
