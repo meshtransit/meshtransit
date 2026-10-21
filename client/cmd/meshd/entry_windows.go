@@ -5,14 +5,19 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"path/filepath"
+	"time"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 
+	"meshtransit.net/client/internal/captive"
+	"meshtransit.net/client/internal/netadmin"
 	"meshtransit.net/client/internal/privatefile"
 	"meshtransit.net/client/internal/routesettings/routescli"
 	"meshtransit.net/client/internal/windns"
@@ -38,6 +43,9 @@ func entry(args []string) int {
 	}
 	if len(args) > 0 && args[0] == "release-exit" {
 		return releaseExit(args[1:], os.Stdout, os.Stderr)
+	}
+	if len(args) > 1 && args[0] == "captive" && args[1] == "hold" {
+		return holdCaptive(args[2:], os.Stderr)
 	}
 	isService, err := svc.IsWindowsService()
 	if err != nil {
@@ -185,4 +193,76 @@ func isPlainFile(file *os.File) bool {
 	}
 
 	return info.NumberOfLinks == 1 && info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0
+}
+
+// holdCaptive is the child the service starts for a captive portal window
+// (exit node design §17.6): it holds the window's permits in a dynamic WFP
+// session until the window ends, or its file is gone or names another
+// window, then exits, and the permits go with it, whatever became of the
+// service.
+func holdCaptive(args []string, stderr io.Writer) int {
+	flags := flag.NewFlagSet("meshd captive hold", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	file := flags.String("file", "", "the window file")
+	id := flags.String("id", "", "the window")
+	after := flags.Duration("after", 0, "how long the window has left")
+	luid := flags.Uint64("interface", 0, "the LUID of the interface the window opens")
+	var addresses, portals []string
+	flags.Func("address", "an address of that interface; repeatable", func(value string) error {
+		addresses = append(addresses, value)
+		return nil
+	})
+	flags.Func("portal", "the portal's address and port; at most one per family", func(value string) error {
+		portals = append(portals, value)
+		return nil
+	})
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || *file == "" || *id == "" || *luid == 0 ||
+		*after <= 0 || *after > captive.MaximumWindow || len(addresses) == 0 || len(addresses) > 8 || len(portals) > 2 {
+		_, _ = fmt.Fprintln(stderr, "usage: meshd captive hold --file PATH --id ID --after D --interface LUID --address A... [--portal IP:PORT]")
+		return 2
+	}
+	if !elevated() {
+		_, _ = fmt.Fprintln(stderr, "meshd: captive hold needs administrator rights")
+		return 1
+	}
+	opening := winfw.CaptiveOpening{Interface: *luid}
+	for _, text := range addresses {
+		address, err := netip.ParseAddr(text)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "meshd: address %q: %v\n", text, err)
+			return 2
+		}
+		opening.Addresses = append(opening.Addresses, address)
+	}
+	holes := winfw.Captive{Openings: []winfw.CaptiveOpening{opening}}
+	for _, text := range portals {
+		portal, err := netip.ParseAddrPort(text)
+		if err != nil || !netadmin.CaptivePortalAllowed(portal) {
+			_, _ = fmt.Fprintf(stderr, "meshd: portal %q is not one a window lets through\n", text)
+			return 2
+		}
+		slot := 0
+		if portal.Addr().Is6() {
+			slot = 1
+		}
+		holes.Portals[slot] = portal
+	}
+	deadline := time.Now().Add(*after)
+	release, err := winfw.HoldCaptive(winfw.CaptiveRules(holes))
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "meshd: holding the captive portal window: %v\n", err)
+		return 1
+	}
+	defer release()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	// The monotonic clock: a wall clock that jumps does not move it.
+	for time.Now().Before(deadline) {
+		window, err := captive.ReadWindow(*file)
+		if err != nil || window.ID != *id {
+			return 0 // closed, or another window
+		}
+		<-ticker.C
+	}
+	return 0
 }

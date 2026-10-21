@@ -156,3 +156,30 @@ func TestRulesOpenTheWireServerOnItsPortsOnly(t *testing.T) {
 		t.Fatalf("%d WireServer rules, want %d", ports, len(azureWireServerPorts))
 	}
 }
+
+func TestCaptiveRulesOpenOnlyTheWindow(t *testing.T) {
+	t.Parallel()
+	rules := CaptiveRules(Captive{
+		Openings: []CaptiveOpening{{
+			Interface: 7,
+			Addresses: []netip.Addr{netip.MustParseAddr("192.168.1.20"), netip.MustParseAddr("2001:db8::20")},
+		}},
+		Portals: [2]netip.AddrPort{netip.MustParseAddrPort("10.0.0.1:8880")},
+	})
+	if len(rules) != 5 {
+		t.Fatalf("%d rules, want 80 and 443 per family and the IPv4 portal: %+v", len(rules), rules)
+	}
+	for _, rule := range rules {
+		if rule.Block || rule.Service || rule.Forward || rule.Adapter != 7 || rule.Protocol != protocolTCP ||
+			rule.Weight <= weightBlock || len(rule.Local) != 1 || rule.Local[0].Addr().Is6() != rule.IPv6 {
+			t.Errorf("rule %+v", rule)
+		}
+	}
+	portal := rules[2]
+	if portal.RemotePort != 8880 || len(portal.Remote) != 1 || portal.Remote[0] != netip.MustParsePrefix("10.0.0.1/32") {
+		t.Fatalf("portal rule %+v", portal)
+	}
+	if got := CaptiveRules(Captive{Openings: []CaptiveOpening{{Interface: 0}}}); len(got) != 0 {
+		t.Fatalf("a window without an interface opened %+v", got)
+	}
+}

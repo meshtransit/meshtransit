@@ -46,6 +46,7 @@ const (
 	weightAdapter  = 12
 	weightSystem   = 12
 	weightLAN      = 11
+	weightCaptive  = 10
 	weightBlock    = 0
 )
 
@@ -95,6 +96,8 @@ type Rule struct {
 	ICMPType  uint16
 	MatchICMP bool
 	Remote    []netip.Prefix
+	// Local holds when the connection's local address is in any prefix.
+	Local []netip.Prefix
 }
 
 // Rules returns the filters of config, permits first.
@@ -193,3 +196,64 @@ func splitFamilies(prefixes []netip.Prefix) (v4, v6 []netip.Prefix) {
 // maximumRules bounds the filters any config installs: the filter keys are
 // fixed, so the next install or a release removes every one of them.
 const maximumRules = 32
+
+// Captive is what a captive portal window lets out besides the kill switch
+// (exit node design §17.5): TCP from each opening's interface and own
+// addresses to ports 80 and 443 anywhere, and to the portals.
+type Captive struct {
+	Openings []CaptiveOpening
+	// Portals are the portal's address and port, IPv4 then IPv6, zero when
+	// unknown.
+	Portals [2]netip.AddrPort
+}
+
+// CaptiveOpening is one interface a window opens, by LUID, and its
+// addresses.
+type CaptiveOpening struct {
+	Interface uint64
+	Addresses []netip.Addr
+}
+
+// captivePorts are the ports a window opens to every destination.
+var captivePorts = []uint16{80, 443}
+
+// maximumCaptiveRules bounds the filters of a window.
+const maximumCaptiveRules = 24
+
+// CaptiveRules returns a window's filters, permits in the kill switch's
+// sublayer above its block: in one sublayer the highest weight decides.
+func CaptiveRules(captive Captive) []Rule {
+	var rules []Rule
+	for _, opening := range captive.Openings {
+		if opening.Interface == 0 {
+			continue
+		}
+		for slot, ipv6 := range []bool{false, true} {
+			var local []netip.Prefix
+			for _, address := range opening.Addresses {
+				if address.IsValid() && address.Is6() == ipv6 {
+					local = append(local, netip.PrefixFrom(address, address.BitLen()))
+				}
+			}
+			if len(local) == 0 {
+				continue
+			}
+			window := Rule{
+				Name: "Permit a captive portal window", IPv6: ipv6, Weight: weightCaptive,
+				Adapter: opening.Interface, Protocol: protocolTCP, Local: local,
+			}
+			for _, port := range captivePorts {
+				rule := window
+				rule.RemotePort = port
+				rules = append(rules, rule)
+			}
+			if portal := captive.Portals[slot]; portal.IsValid() && portal.Addr().Is6() == ipv6 {
+				rule := window
+				rule.Name, rule.RemotePort = "Permit a captive portal", portal.Port()
+				rule.Remote = []netip.Prefix{netip.PrefixFrom(portal.Addr(), portal.Addr().BitLen())}
+				rules = append(rules, rule)
+			}
+		}
+	}
+	return rules[:min(len(rules), maximumCaptiveRules)]
+}

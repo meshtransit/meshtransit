@@ -14,3 +14,6 @@ func Disable() error { return nil }
 
 // Installed reports none.
 func Installed() (bool, error) { return false, nil }
+
+// HoldCaptive fails: no kill switch to open a window in.
+func HoldCaptive([]Rule) (func(), error) { return nil, errUnsupported }

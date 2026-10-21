@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"net/netip"
 	"slices"
+	"time"
 
+	"meshtransit.net/client/internal/captive"
 	"meshtransit.net/client/internal/netadmin"
 	"meshtransit.net/client/internal/routesettings"
 	"meshtransit.net/client/internal/underlay"
@@ -35,7 +37,15 @@ func (o *WindowsTUNOpener) SetExitRoute(_ context.Context, requested netadmin.Ex
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.exitRequest = &requested
-	return o.applyExitLocked()
+	if o.captive != nil && requested.CaptiveClose == o.captive.id {
+		// The tunnel is back: the window has done its work.
+		o.closeCaptiveLocked()
+		_ = captive.CloseWindow(o.captivePath)
+	}
+	routing, err := o.applyExitLocked()
+	o.followPortalLocked(time.Now())
+	routing.Captive = o.captiveView(time.Now())
+	return routing, err
 }
 
 // applyExitLocked brings the kill switch and the exit routes to what the
@@ -49,6 +59,10 @@ func (o *WindowsTUNOpener) applyExitLocked() (netadmin.ExitRouting, error) {
 	wanted, _ := netadmin.ExitRouteWanted(settings, o.exitRequest)
 	asked := o.exitRequest != nil && o.exitRequest.Use
 	if !wanted {
+		if o.captive != nil {
+			o.closeCaptiveLocked()
+			_ = captive.CloseWindow(o.captivePath)
+		}
 		err := o.clearExitLocked()
 		o.exitRouting = netadmin.ExitRouting{}
 		if asked {
@@ -121,7 +135,7 @@ func (o *WindowsTUNOpener) setExitRoutesLocked(routed bool) error {
 	if err != nil {
 		return fmt.Errorf("dataplane: replacing the exit routes: %w", err)
 	}
-	if routed && slices.ContainsFunc(failed, func(route netip.Prefix) bool {
+	if routed && o.captive == nil && slices.ContainsFunc(failed, func(route netip.Prefix) bool {
 		return route.Addr().Is4() && slices.Contains(windowsExitRoutes, route)
 	}) {
 		return errors.New("dataplane: adding the IPv4 exit routes failed")
@@ -133,7 +147,7 @@ func (o *WindowsTUNOpener) setExitRoutesLocked(routed bool) error {
 // routes given and the exit routes while they are installed.
 func (o *WindowsTUNOpener) adapterRoutesLocked(routed []netip.Prefix) []netip.Prefix {
 	routes := routeUnion(o.overlay, routed)
-	if o.exitRouted {
+	if o.exitRouted && o.captive == nil {
 		routes = routeUnion(routes, windowsExitRoutes)
 	}
 	return routes
@@ -162,6 +176,11 @@ func windowsExitLAN(adapter uint64) []netip.Prefix {
 func (o *WindowsTUNOpener) startExit() {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	// A window an earlier run held is never opened again; its child sees
+	// the file gone and ends.
+	if o.captivePath != "" {
+		_ = captive.CloseWindow(o.captivePath)
+	}
 	_, _ = o.applyExitLocked()
 }
 

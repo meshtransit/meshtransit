@@ -37,6 +37,8 @@ const (
 )
 
 const (
+	// fwpmSessionFlagDynamic removes the session's objects when it closes.
+	fwpmSessionFlagDynamic     = 0x00000001
 	fwpConditionFlagIsLoopback = 0x00000001
 	fwpmFilterFlagPersistent   = 0x00000001
 	fwpmProviderFlagPersistent = 0x00000001
@@ -201,6 +203,11 @@ var (
 	conditionFlags = windows.GUID{
 		Data1: 0x632ce23b, Data2: 0x5167, Data3: 0x435c,
 		Data4: [8]byte{0x86, 0xd7, 0xe9, 0x03, 0x68, 0x4a, 0xa8, 0x0c},
+	}
+	// FWPM_CONDITION_IP_LOCAL_ADDRESS (fwpmu.h).
+	conditionIPLocalAddress = windows.GUID{
+		Data1: 0xd9ee00de, Data2: 0xc1ef, Data3: 0x4617,
+		Data4: [8]byte{0xbf, 0xe3, 0xff, 0xd8, 0xf5, 0xa0, 0x89, 0x57},
 	}
 	// The ICMP type is matched as the local port.
 	conditionICMPType = conditionIPLocalPort

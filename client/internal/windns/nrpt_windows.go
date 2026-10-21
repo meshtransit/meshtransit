@@ -120,3 +120,12 @@ func reloadPolicy(groupPolicy bool) error {
 
 	return nil
 }
+
+// FlushCache empties the DNS client's cache: answers a captive portal's
+// network gave during a window must not outlive it.
+func FlushCache() error {
+	if ok, _, err := procDnsFlushResolverCache.Call(); ok == 0 {
+		return fmt.Errorf("windns: flushing the DNS cache: %w", err)
+	}
+	return nil
+}

@@ -12,6 +12,7 @@ import (
 
 	"golang.zx2c4.com/wireguard/tun"
 
+	"meshtransit.net/client/internal/config"
 	"meshtransit.net/client/internal/netadmin"
 	"meshtransit.net/client/internal/winadapter"
 	"meshtransit.net/client/internal/winnet"
@@ -45,14 +46,21 @@ type WindowsTUNOpener struct {
 	// killSwitchUnknown is whether a kill switch may be in place: an
 	// earlier run's at start, or one this run installed.
 	killSwitchUnknown bool
+	// captivePath is the captive portal window file an administrator
+	// writes, captive the window open (windows_captive_windows.go).
+	captivePath string
+	captive     *windowsCaptive
 }
 
 // NewWindowsTUNOpener returns an opener for the service's adapter that
 // installs the subnet routes routeSettings admits.
 func NewWindowsTUNOpener(routeSettings string) *WindowsTUNOpener {
 	setTunnelType.Do(func() { tun.WintunTunnelType = winadapter.Name })
-	opener := &WindowsTUNOpener{routeSettings: routeSettings, killSwitchUnknown: true}
+	opener := &WindowsTUNOpener{
+		routeSettings: routeSettings, killSwitchUnknown: true, captivePath: config.DefaultCaptiveWindowPath,
+	}
 	opener.startExit()
+	go opener.watchCaptive()
 
 	return opener
 }

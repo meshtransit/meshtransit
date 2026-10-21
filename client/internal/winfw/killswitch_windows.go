@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"runtime"
 	"slices"
@@ -191,8 +192,14 @@ func deleteFilters(engine uintptr) error {
 	return nil
 }
 
-// addFilter installs rule as the filter at index.
+// addFilter installs rule as the kill switch's persistent filter at index.
 func addFilter(engine uintptr, index int, rule Rule, appID *fwpByteBlob, system []byte) error {
+	return addFilterAs(engine, filterKey(index), fwpmFilterFlagPersistent, rule, appID, system)
+}
+
+// addFilterAs installs rule with key (zero: one the engine chooses) and
+// flags; appID and system are needed only for a Service rule.
+func addFilterAs(engine uintptr, key windows.GUID, flags uint32, rule Rule, appID *fwpByteBlob, system []byte) error {
 	var keep []any
 	conditions := make([]fwpmFilterCondition0, 0, 8)
 	add := func(field windows.GUID, match fwpMatchType, kind fwpDataType, value uintptr) {
@@ -201,6 +208,9 @@ func addFilter(engine uintptr, index int, rule Rule, appID *fwpByteBlob, system 
 		})
 	}
 	if rule.Service {
+		if appID == nil || len(system) == 0 {
+			return errors.New("winfw: a service rule needs the service's identity")
+		}
 		add(conditionALEAppID, fwpMatchEqual, fwpByteBlobType, uintptr(unsafe.Pointer(appID))) //nolint:gosec // G103: WFP keeps no reference past the call.
 		descriptor := &fwpByteBlob{size: uint32(len(system)), data: &system[0]}                //nolint:gosec // G115: a small descriptor
 		keep = append(keep, descriptor)
@@ -241,7 +251,24 @@ func addFilter(engine uintptr, index int, rule Rule, appID *fwpByteBlob, system 
 	if rule.MatchICMP {
 		add(conditionICMPType, fwpMatchEqual, fwpUint16, uintptr(rule.ICMPType))
 	}
+	addresses := make([]struct {
+		field  windows.GUID
+		prefix netip.Prefix
+	}, 0, len(rule.Remote)+len(rule.Local))
 	for _, prefix := range rule.Remote {
+		addresses = append(addresses, struct {
+			field  windows.GUID
+			prefix netip.Prefix
+		}{remoteField, prefix})
+	}
+	for _, prefix := range rule.Local {
+		addresses = append(addresses, struct {
+			field  windows.GUID
+			prefix netip.Prefix
+		}{conditionIPLocalAddress, prefix})
+	}
+	for _, match := range addresses {
+		prefix, field := match.prefix, match.field
 		if prefix.Addr().Is4() {
 			address := prefix.Addr().As4()
 			mask := uint32(0)
@@ -250,12 +277,12 @@ func addFilter(engine uintptr, index int, rule Rule, appID *fwpByteBlob, system 
 			}
 			value := &fwpV4AddrAndMask{addr: binary.BigEndian.Uint32(address[:]), mask: mask}
 			keep = append(keep, value)
-			add(remoteField, fwpMatchEqual, fwpV4AddrMask, uintptr(unsafe.Pointer(value))) //nolint:gosec // G103: WFP keeps no reference past the call.
+			add(field, fwpMatchEqual, fwpV4AddrMask, uintptr(unsafe.Pointer(value))) //nolint:gosec // G103: WFP keeps no reference past the call.
 			continue
 		}
 		value := &fwpV6AddrAndMask{addr: prefix.Addr().As16(), prefixLength: uint8(prefix.Bits())} //nolint:gosec // G115: at most 128
 		keep = append(keep, value)
-		add(remoteField, fwpMatchEqual, fwpV6AddrMask, uintptr(unsafe.Pointer(value))) //nolint:gosec // G103: WFP keeps no reference past the call.
+		add(field, fwpMatchEqual, fwpV6AddrMask, uintptr(unsafe.Pointer(value))) //nolint:gosec // G103: WFP keeps no reference past the call.
 	}
 	name, description := display(rule.Name, "MeshTransit exit kill switch")
 	layer := layerALEAuthConnectV4
@@ -272,9 +299,9 @@ func addFilter(engine uintptr, index int, rule Rule, appID *fwpByteBlob, system 
 		action = fwpActionBlock
 	}
 	filter := fwpmFilter0{
-		filterKey:   filterKey(index),
+		filterKey:   key,
 		displayData: fwpmDisplayData0{name: name, description: description},
-		flags:       fwpmFilterFlagPersistent,
+		flags:       flags,
 		providerKey: &providerKey,
 		layerKey:    layer,
 		subLayerKey: sublayerKey,
@@ -357,4 +384,46 @@ func display(name, description string) (*uint16, *uint16) {
 		descriptionPointer = new(uint16)
 	}
 	return namePointer, descriptionPointer
+}
+
+// HoldCaptive installs a captive portal window's rules in the kill switch's
+// sublayer, in a dynamic session of this process: the filters go when
+// release closes it, or with the process, whatever ends it (exit node
+// design §17.6). It fails without a kill switch in place.
+func HoldCaptive(rules []Rule) (release func(), err error) {
+	if len(rules) == 0 || len(rules) > maximumCaptiveRules {
+		return nil, fmt.Errorf("winfw: %d captive portal filters", len(rules))
+	}
+	name, description := display("MeshTransit", "MeshTransit captive portal window")
+	session := fwpmSession0{
+		displayData: fwpmDisplayData0{name: name, description: description}, flags: fwpmSessionFlagDynamic,
+		txnWaitTimeoutInMSec: transactionWait,
+	}
+	var engine uintptr
+	if err := fwpmEngineOpen0(&session, &engine); err != nil {
+		return nil, fmt.Errorf("winfw: opening the filter engine: %w", err)
+	}
+	closeEngine := func() { _ = fwpmEngineClose0(engine) }
+	found, err := exists(procFwpmSubLayerGetByKey0, engine, &sublayerKey)
+	if err != nil || !found {
+		closeEngine()
+		return nil, errors.Join(errors.New("winfw: no kill switch to open a window in"), err)
+	}
+	if err := fwpmTransactionBegin0(engine); err != nil {
+		closeEngine()
+		return nil, fmt.Errorf("winfw: beginning a transaction: %w", err)
+	}
+	for _, rule := range rules {
+		if err := addFilterAs(engine, windows.GUID{}, 0, rule, nil, nil); err != nil {
+			_ = fwpmTransactionAbort0(engine)
+			closeEngine()
+			return nil, fmt.Errorf("winfw: adding %q: %w", rule.Name, err)
+		}
+	}
+	if err := fwpmTransactionCommit0(engine); err != nil {
+		_ = fwpmTransactionAbort0(engine)
+		closeEngine()
+		return nil, fmt.Errorf("winfw: committing: %w", err)
+	}
+	return closeEngine, nil
 }
