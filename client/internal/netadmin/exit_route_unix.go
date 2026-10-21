@@ -56,6 +56,9 @@ func (s *Server) setExitRoute(connection *net.UnixConn, requested ExitRouteReque
 		return errors.New("netadmin: exit route before the tun interface")
 	}
 	s.requestedExitRoute = &requested
+	// A window just opened or closed shows in this answer, not a second
+	// later: meshd asks at once after meshctl changed it.
+	s.pollCaptiveWindow()
 	s.closeCaptiveOnRequest(requested.CaptiveClose)
 	s.applyExitRoute()
 	window := s.captiveView()
