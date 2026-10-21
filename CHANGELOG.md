@@ -36,8 +36,12 @@ merge (2026-10-09) are kept below.
   macOS meshd binds its own sockets, WireGuard's included, to the physical
   interface and resolves Core and relays from the networks' resolvers while
   a pool is chosen. On macOS meshd also redials its relays when the host's
-  networks change under an exit node, and meshnetd logs a scoped default
-  route it could not keep.
+  networks change under an exit node, at most once every 2 s while they
+  keep changing, and meshnetd logs a scoped default route it could not
+  keep. meshd picks its IPv6 source by the address flags: never anycast,
+  tentative, duplicated or CLAT46, a stable address before a temporary one,
+  a deprecated one only as the last choice, and a unique local address only
+  towards a unique local destination.
 
 - Clients: Linux consumers of exit nodes, second part (exit node design
   E3). Names go through the exit node: meshd becomes the host's default

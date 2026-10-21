@@ -10,6 +10,7 @@ import (
 	"meshtransit.net/client/internal/netadmin"
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/packetmeta"
+	"meshtransit.net/client/internal/underlay"
 )
 
 // withExitRoute gives snapshot a pool whose only candidate is its first
@@ -128,7 +129,10 @@ func (o *exitRouteOpener) requested() []netadmin.ExitRouteRequest {
 }
 
 func TestWireGuardEngineRoutesTheInternetThroughTheHelper(t *testing.T) {
-	t.Parallel()
+	// Not parallel: asking for an exit route keeps the process's own sockets
+	// off the mesh routes (underlay.SetExitBound), and on macOS stops every
+	// engine's direct paths, the other tests' too.
+	t.Cleanup(func() { underlay.SetExitBound(underlay.ExitRequested|underlay.ExitHeld, false) })
 	privateKey, snapshot := testWireGuardSnapshot(t)
 	opener := &exitRouteOpener{}
 	engine, err := newWireGuardEngine(opener, 41641, &fakeWireGuardFactory{device: &fakeWireGuardDevice{}}, nil)
@@ -172,7 +176,10 @@ func TestWireGuardEngineRoutesTheInternetThroughTheHelper(t *testing.T) {
 }
 
 func TestWireGuardEngineStopsTheExitRoute(t *testing.T) {
-	t.Parallel()
+	// Not parallel: asking for an exit route keeps the process's own sockets
+	// off the mesh routes (underlay.SetExitBound), and on macOS stops every
+	// engine's direct paths, the other tests' too.
+	t.Cleanup(func() { underlay.SetExitBound(underlay.ExitRequested|underlay.ExitHeld, false) })
 	privateKey, snapshot := testWireGuardSnapshot(t)
 	opener := &exitRouteOpener{refused: netadmin.ExitRouteRefusedOff}
 	engine, err := newWireGuardEngine(opener, 41641, &fakeWireGuardFactory{device: &fakeWireGuardDevice{}}, nil)

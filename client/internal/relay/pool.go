@@ -27,6 +27,8 @@ const (
 	connectTimeout      = 10 * time.Second
 	receiveSilenceLimit = 2*time.Minute + 10*time.Second
 	stableConnectionAge = 30 * time.Second
+	// reconnectSpacing spaces the dials Reconnect asks for.
+	reconnectSpacing = 2 * time.Second
 )
 
 var (
@@ -594,6 +596,7 @@ func (p *Pool) runWorker(worker *regionWorker) {
 		p.wait.Done()
 	}()
 	attempt := 0
+	var reconnected time.Time
 	for {
 		if err := worker.ctx.Err(); err != nil {
 			return
@@ -625,18 +628,46 @@ func (p *Pool) runWorker(worker *regionWorker) {
 		}
 		if errors.Is(err, errReconnect) {
 			attempt = 0
+			p.markDisconnected(worker)
+			if reconnected, err = p.spaceReconnect(worker, reconnected); err != nil {
+				return
+			}
 			continue // dial again at once
 		}
 		p.markFailure(worker)
 		attempt = nextRetryAttempt(attempt, p.clock().Sub(connectedAt))
-		reconnected, alive := waitRetry(worker, p.retryDelay(attempt))
+		asked, alive := waitRetry(worker, p.retryDelay(attempt))
 		if !alive {
 			return
 		}
-		if reconnected {
+		if asked {
 			attempt = 0
+			if reconnected, err = p.spaceReconnect(worker, reconnected); err != nil {
+				return
+			}
 		}
 	}
+}
+
+// spaceReconnect holds a dial Reconnect asked for until reconnectSpacing
+// after the previous one, so networks that keep changing redial the relays
+// once a spacing, the last change included: a Reconnect asked for meanwhile
+// is answered by the dial that follows. It returns when that dial starts.
+func (p *Pool) spaceReconnect(worker *regionWorker, previous time.Time) (time.Time, error) {
+	if wait := reconnectSpacing - p.clock().Sub(previous); !previous.IsZero() && wait > 0 {
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		select {
+		case <-worker.ctx.Done():
+			return time.Time{}, worker.ctx.Err()
+		case <-timer.C:
+		}
+		select {
+		case <-worker.reconnect:
+		default:
+		}
+	}
+	return p.clock(), nil
 }
 
 func nextRetryAttempt(previous int, connectedFor time.Duration) int {
@@ -837,6 +868,16 @@ func (p *Pool) markActivity(worker *regionWorker, peerPacket bool) {
 	worker.health.LastActivity = now
 	if peerPacket {
 		worker.lastUsed = now
+	}
+}
+
+// markDisconnected notes a connection Reconnect dropped: no failure, but
+// nothing goes through the region until it is dialed again.
+func (p *Pool) markDisconnected(worker *regionWorker) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.workers[worker.region.ID] == worker {
+		worker.health.Connected = false
 	}
 }
 

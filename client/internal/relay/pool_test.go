@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -756,4 +757,114 @@ func TestPoolReconnectDialsAgainAtOnce(t *testing.T) {
 	wait("at first")
 	pool.Reconnect()
 	wait("after Reconnect")
+}
+
+func TestPoolReconnectsAreSpacedWhenNetworksChurn(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		dialer := &freshDialer{calls: make(chan int, 16)}
+		pool, err := New(t.Context(), testConfig(), dialer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = pool.Close() }()
+		pool.retryDelay = func(int) time.Duration { return time.Hour }
+		if err := pool.Open(); err != nil {
+			t.Fatal(err)
+		}
+		dials := func() int {
+			synctest.Wait()
+			return len(dialer.calls)
+		}
+		if got := dials(); got != 1 {
+			t.Fatalf("%d dials at first, want 1", got)
+		}
+		pool.Reconnect()
+		if got := dials(); got != 2 {
+			t.Fatalf("%d dials after one Reconnect, want 2: the first is at once", got)
+		}
+		// The networks churn: ten changes in 200 ms make one more dial,
+		// a reconnectSpacing after the last one.
+		for range 10 {
+			pool.Reconnect()
+			time.Sleep(20 * time.Millisecond)
+		}
+		if got := dials(); got != 2 {
+			t.Fatalf("%d dials during the churn, want 2", got)
+		}
+		if health := pool.Health(); len(health.Regions) != 1 || health.Regions[0].Connected {
+			t.Fatalf("Health() while the redial waits = %+v, want the region down", health)
+		}
+		time.Sleep(reconnectSpacing)
+		if got := dials(); got != 3 {
+			t.Fatalf("%d dials after the churn, want 3", got)
+		}
+		time.Sleep(10 * reconnectSpacing)
+		if got := dials(); got != 3 {
+			t.Fatalf("%d dials once the networks settled, want 3", got)
+		}
+	})
+}
+
+type refusingDialer struct{ calls chan int }
+
+func (d *refusingDialer) Dial(_ context.Context, _ Key, region Region) (Client, error) {
+	d.calls <- region.ID
+	return nil, errors.New("refused")
+}
+
+func TestPoolSpacesReconnectsDuringTheFailureBackoff(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		dialer := &refusingDialer{calls: make(chan int, 16)}
+		pool, err := New(t.Context(), testConfig(), dialer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = pool.Close() }()
+		pool.retryDelay = func(int) time.Duration { return time.Hour }
+		if err := pool.Open(); err != nil {
+			t.Fatal(err)
+		}
+		dials := func() int {
+			synctest.Wait()
+			return len(dialer.calls)
+		}
+		dials()
+		pool.Reconnect()
+		if got := dials(); got != 2 {
+			t.Fatalf("%d dials after one Reconnect in the backoff, want 2", got)
+		}
+		pool.Reconnect()
+		if got := dials(); got != 2 {
+			t.Fatalf("%d dials right after a second Reconnect, want 2 until the spacing ends", got)
+		}
+		time.Sleep(reconnectSpacing)
+		if got := dials(); got != 3 {
+			t.Fatalf("%d dials after the spacing, want 3", got)
+		}
+	})
+}
+
+func TestPoolClosesWhileARedialWaits(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		dialer := &freshDialer{calls: make(chan int, 16)}
+		pool, err := New(t.Context(), testConfig(), dialer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pool.retryDelay = func(int) time.Duration { return time.Hour }
+		if err := pool.Open(); err != nil {
+			t.Fatal(err)
+		}
+		pool.Reconnect()
+		synctest.Wait()
+		pool.Reconnect() // waits for the spacing
+		synctest.Wait()
+		start := time.Now()
+		if err := pool.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if waited := time.Since(start); waited != 0 {
+			t.Fatalf("Close() waited %v for the spacing", waited)
+		}
+	})
 }
