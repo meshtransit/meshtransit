@@ -1,11 +1,14 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 // The largest catalog page is 100 bounded approval projections. At the maximum
@@ -119,4 +122,36 @@ func readBrowserSessionCookie(headers http.Header) (accountsession.Token, error)
 		return accountsession.Token{}, ErrInvalidBrowserManagement
 	}
 	return token, nil
+}
+
+// answerRefusedBrowserManagement answers a request browser management refused
+// before admission (ErrBrowserManagementRefused) with a plain 400 naming no
+// reason, so a client sees a malformed request instead of a dropped
+// connection. It writes nothing and reports false unless the response is
+// still pristine; the caller then aborts as for any other failure.
+func answerRefusedBrowserManagement(response http.ResponseWriter) bool {
+	if response == nil || response.Header() == nil || len(response.Header()) != 0 {
+		return false
+	}
+	correlationID, err := publicid.New()
+	if err != nil {
+		return false
+	}
+	apiError := invalidManagementRequest()
+	body, err := json.Marshal(managementErrorResponse{Error: managementErrorBody{
+		Code: apiError.Code, Message: apiError.Message, CorrelationID: correlationID.String(),
+	}})
+	if err != nil {
+		return false
+	}
+	body = append(body, '\n')
+	header := response.Header()
+	setManagementSecurityHeaders(header, correlationID)
+	header.Set("Content-Type", "application/json")
+	header.Set("Content-Length", strconv.Itoa(len(body)))
+	// The request body was never read; the connection is not reused for it.
+	header.Set("Connection", "close")
+	response.WriteHeader(http.StatusBadRequest)
+	written, err := response.Write(body)
+	return err == nil && written == len(body)
 }

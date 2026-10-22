@@ -3,6 +3,8 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -64,4 +66,25 @@ func FuzzBrowserSessionCookie(f *testing.F) {
 			t.Fatal("unverified/unbounded cookie accepted")
 		}
 	})
+}
+
+func TestAnswerRefusedBrowserManagementOnlyWhenPristine(t *testing.T) {
+	t.Parallel()
+	staged := httptest.NewRecorder()
+	staged.Header().Set("X-Staged", "1")
+	if answerRefusedBrowserManagement(staged) || staged.Body.Len() != 0 || len(staged.Header()) != 1 {
+		t.Fatal("refusal answered over a staged response")
+	}
+	pristine := httptest.NewRecorder()
+	if !answerRefusedBrowserManagement(pristine) {
+		t.Fatal("pristine refusal not answered")
+	}
+	correlation := pristine.Header().Get("X-Correlation-ID")
+	if pristine.Code != http.StatusBadRequest || correlation == "" ||
+		pristine.Header().Get("Connection") != "close" || pristine.Header().Get("Cache-Control") != "no-store" ||
+		pristine.Header().Get("Content-Length") != strconv.Itoa(pristine.Body.Len()) ||
+		pristine.Body.String() != `{"error":{"code":"invalid_request","message":"the request is invalid",`+
+			`"correlation_id":"`+correlation+`","retryable":false}}`+"\n" {
+		t.Fatal("refusal answer changed", pristine.Code, pristine.Header(), pristine.Body.String())
+	}
 }

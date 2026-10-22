@@ -647,6 +647,46 @@ func TestBrowserManagementRejectsIngressBeforeEffects(t *testing.T) {
 			if invalid != "cookie duplicate" && fixture.budgets != 0 {
 				t.Fatal("structural rejection spent shared budget")
 			}
+			// Only a request refused before admission may be answered with a
+			// plain 400; one refused later is still aborted.
+			admitted := invalid == "cookie duplicate" || invalid == "prepare csrf"
+			if errors.Is(err, ErrBrowserManagementRefused) == admitted || !errors.Is(err, ErrInvalidBrowserManagement) {
+				t.Fatal("refusal classified wrongly", err)
+			}
+		})
+	}
+}
+
+func TestBrowserManagementAdmitsOnlyTheDNSZoneDeleteQuery(t *testing.T) {
+	t.Parallel()
+	zone := dnsZoneBase + "/01890f00-0000-7000-8000-000000000301"
+	for _, test := range []struct {
+		method, target string
+		valid          bool
+	}{
+		{http.MethodDelete, zone, true},
+		{http.MethodDelete, zone + "?with_names=true", true},
+		{http.MethodDelete, zone + "?with_names=false", false},
+		{http.MethodDelete, zone + "?with_names=true&with_names=true", false},
+		{http.MethodDelete, zone + "?with_names=true&x=1", false},
+		{http.MethodDelete, zone + "?x=1", false},
+		{http.MethodPatch, zone + "?with_names=true", false},
+		{http.MethodDelete, zone + "/names/01890f00-0000-7000-8000-000000000601?with_names=true", false},
+		{http.MethodDelete, dnsZoneBase + "?with_names=true", false},
+	} {
+		t.Run(test.method+" "+test.target, func(t *testing.T) {
+			browser, _ := newBrowserManagementFixture(t)
+			path, query, _ := strings.Cut(test.target, "?")
+			request := browserManagementRequest(t, path, "{}")
+			request.Method, request.URL.RawQuery, request.RequestURI = test.method, query, test.target
+			if test.method == http.MethodDelete {
+				request.Body, request.ContentLength = http.NoBody, 0
+				request.Header.Del("Content-Type")
+				request.Header.Del("Idempotency-Key")
+			}
+			if browser.validRequest(request) != test.valid {
+				t.Fatalf("validRequest(%s %s) = %t", test.method, test.target, !test.valid)
+			}
 		})
 	}
 }

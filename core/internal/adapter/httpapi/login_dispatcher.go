@@ -315,7 +315,7 @@ func (dispatcher *LoginDispatcher) validRequest(response http.ResponseWriter, re
 		registrationRead ||
 		resourceSharingCollectionRead || accessGraphRead || isAuditEventListRead(request) ||
 		isAuditEventExportRead(request) || isDeviceGroupRead(request) || isSiteRead(request) || isExitPoolRead(request) ||
-		isDNSZoneRead(request) || isIdentityCatalogRead(request) ||
+		isDNSZoneRead(request) || isDNSZoneDeleteWithNames(request) || isIdentityCatalogRead(request) ||
 		isNetworkMemberRead(request) || target.RawQuery == ""
 }
 

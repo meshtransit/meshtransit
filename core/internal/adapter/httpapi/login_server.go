@@ -234,6 +234,11 @@ func (owner *LoginServer) handle(response http.ResponseWriter, request *http.Req
 		return
 	}
 	if err := owner.dispatcher.Handle(response, request); err != nil {
+		// Browser management input refused before admission staged and spent
+		// nothing, so it gets a plain 400 while the response is still pristine.
+		if errors.Is(err, ErrBrowserManagementRefused) && answerRefusedBrowserManagement(response) {
+			return
+		}
 		// Returning would implicitly flush any staged cookies with status 200.
 		// Abort preserves partial-delivery uncertainty and never retries effects.
 		owner.abort(socket)

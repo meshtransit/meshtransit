@@ -205,6 +205,13 @@ func isDNSZoneOperation(request *http.Request) bool {
 	return ok && path.methods.allows(request.Method)
 }
 
+// isDNSZoneDeleteWithNames admits a zone DELETE with with_names=true, the one
+// write whose query the browser guards let through.
+func isDNSZoneDeleteWithNames(request *http.Request) bool {
+	return request != nil && request.Method == http.MethodDelete && request.URL != nil &&
+		request.URL.RawQuery == "with_names=true" && isDNSZoneOperation(request)
+}
+
 // isDNSZoneRead admits the list and one zone.
 func isDNSZoneRead(request *http.Request) bool {
 	return request != nil && request.Method == http.MethodGet && isDNSZoneOperation(request)

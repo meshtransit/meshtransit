@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -298,6 +299,94 @@ func TestLoginServerServesSessionPrepareOverOwnedTLS(t *testing.T) {
 	}
 }
 
+func TestLoginServerAnswersRefusedBrowserManagementWith400(t *testing.T) {
+	t.Parallel()
+	options, fixture, callback := loginServerTestOptions(t)
+	server, client := startLoginTestServer(t, options)
+	zone := dnsZoneBase + "/01890f00-0000-7000-8000-000000000301"
+	for _, test := range []struct{ name, method, target, contentType, body, origin string }{
+		{name: "prepare untyped", method: http.MethodPost, target: AccountSessionCSRFPreparePath, body: "{}"},
+		{name: "delete typed", method: http.MethodDelete, target: zone + "?with_names=true",
+			contentType: "application/json"},
+		{name: "delete foreign origin", method: http.MethodDelete, target: zone + "?with_names=true",
+			origin: "https://other.example.test"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := loginServerTestRequest(t, server, test.method, test.target)
+			if test.body != "" {
+				request.Body = io.NopCloser(strings.NewReader(test.body))
+				request.ContentLength = int64(len(test.body))
+			}
+			request.Header.Set("Origin", "https://console.example.test")
+			if test.origin != "" {
+				request.Header.Set("Origin", test.origin)
+			}
+			request.Header.Set("X-MeshTransit-Session", "v1")
+			if test.contentType != "" {
+				request.Header.Set("Content-Type", test.contentType)
+			}
+			request.AddCookie(&http.Cookie{
+				Name: AccountSessionCookieName, Value: managementTokenFixture, Path: "/",
+				Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode,
+			})
+			response, err := client.Do(request)
+			if err != nil {
+				t.Fatal("refused request was aborted instead of answered", err)
+			}
+			body, readErr := io.ReadAll(io.LimitReader(response.Body, 4096))
+			if closeErr := response.Body.Close(); readErr != nil || closeErr != nil {
+				t.Fatal("refusal not consumed/closed")
+			}
+			var payload struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			var shape map[string]map[string]json.RawMessage
+			if err := json.Unmarshal(body, &shape); err != nil || len(shape) != 1 || len(shape["error"]) != 4 {
+				t.Fatal("refusal body changed its shape", string(body))
+			}
+			if err := json.Unmarshal(body, &payload); err != nil || payload.Error.Code != "invalid_request" {
+				t.Fatal("refusal did not name the invalid request", string(body))
+			}
+			correlation := response.Header.Get("X-Correlation-ID")
+			if response.StatusCode != http.StatusBadRequest || correlation == "" ||
+				!bytes.Contains(body, []byte(`"correlation_id":"`+correlation+`"`)) ||
+				response.Header.Get("Content-Type") != "application/json" ||
+				response.Header.Get("Cache-Control") != servedNoStore || response.Header.Get("Set-Cookie") != "" ||
+				response.Header.Get("X-Frame-Options") != "DENY" || bytes.Contains(body, []byte(managementTokenFixture)) {
+				t.Fatal("refusal crossed its response boundary", response.StatusCode, response.Header, string(body))
+			}
+		})
+	}
+	if len(fixture.calls) != 0 || callback.calls != 0 {
+		t.Fatal("refused request reached dependency effects")
+	}
+}
+
+func TestLoginDispatcherAdmitsOnlyTheDNSZoneDeleteQuery(t *testing.T) {
+	t.Parallel()
+	dispatcher, _, _ := dispatcherTestGraph(t)
+	zone := dnsZoneBase + "/01890f00-0000-7000-8000-000000000301"
+	for _, test := range []struct {
+		method, target string
+		valid          bool
+	}{
+		{http.MethodDelete, zone + "?with_names=true", true},
+		{http.MethodDelete, zone + "?with_names=false", false},
+		{http.MethodDelete, zone + "?with_names=true&x=1", false},
+		{http.MethodPatch, zone + "?with_names=true", false},
+		{http.MethodDelete, zone + "/names/01890f00-0000-7000-8000-000000000601?with_names=true", false},
+	} {
+		request := httptest.NewRequestWithContext(t.Context(), test.method, test.target, nil)
+		request.Host = "console.example.test"
+		request.TLS = &tls.ConnectionState{Version: tls.VersionTLS13, HandshakeComplete: true}
+		if dispatcher.validRequest(newLoginHTTPRecorder(), request) != test.valid {
+			t.Errorf("dispatcher validRequest(%s %s) = %t", test.method, test.target, !test.valid)
+		}
+	}
+}
+
 func TestLoginServerRejectsTargetsWithoutImplicitSuccess(t *testing.T) {
 	t.Parallel()
 	options, fixture, callback := loginServerTestOptions(t)
@@ -407,6 +496,13 @@ func TestLoginServerAbortsStagedAndPartialDispatchFailure(t *testing.T) {
 			response.Header().Set("Set-Cookie", "synthetic-private-cookie")
 			return response
 		}},
+		{name: "refused with staged headers", writer: func() http.ResponseWriter {
+			// A header both pristine checks accept, so the refusal reaches the
+			// 400 answer and must still abort.
+			response := httptest.NewRecorder()
+			response.Header().Set("X-Staged", "1")
+			return response
+		}},
 		{name: "partial write", writer: func() http.ResponseWriter {
 			response := &loginPartialWriter{loginHTTPRecorder: newLoginHTTPRecorder()}
 			return response
@@ -426,6 +522,12 @@ func TestLoginServerAbortsStagedAndPartialDispatchFailure(t *testing.T) {
 				}
 			})
 			request := landingTestRequest()
+			if test.name == "refused with staged headers" {
+				request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, AccountSessionCSRFPreparePath,
+					strings.NewReader("{}"))
+				request.Host = "console.example.test"
+				request.TLS = &tls.ConnectionState{Version: tls.VersionTLS13, HandshakeComplete: true}
+			}
 			request = request.WithContext(loginConnectionContext(request.Context(), socket))
 			if err := peer.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
 				t.Fatal(err)
@@ -435,9 +537,13 @@ func TestLoginServerAbortsStagedAndPartialDispatchFailure(t *testing.T) {
 			if count, err := peer.Read(input[:]); count != 0 || !errors.Is(err, io.EOF) {
 				t.Fatal("failure did not abort the owned transport")
 			}
-			if test.name == "staged headers" {
+			if test.name != "partial write" {
 				staged, ok := response.(*httptest.ResponseRecorder)
-				if !ok || staged.Body.Len() != 0 || staged.Header().Get("Set-Cookie") != "synthetic-private-cookie" {
+				expected := http.Header{"Set-Cookie": {"synthetic-private-cookie"}}
+				if test.name == "refused with staged headers" {
+					expected = http.Header{"X-Staged": {"1"}}
+				}
+				if !ok || staged.Body.Len() != 0 || staged.Code != http.StatusOK || !reflect.DeepEqual(staged.Header(), expected) {
 					t.Fatal("abort rewrote staged response ownership")
 				}
 			} else {

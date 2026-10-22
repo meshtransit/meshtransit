@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -42,6 +43,10 @@ const (
 var (
 	// ErrInvalidBrowserManagement conceals invalid profile/input, never authority.
 	ErrInvalidBrowserManagement = errors.New("http api: invalid browser management")
+	// ErrBrowserManagementRefused is invalid input refused before admission:
+	// nothing was read, spent or staged, so the server may answer it with a
+	// plain 400 instead of aborting the connection.
+	ErrBrowserManagementRefused = fmt.Errorf("%w: refused before admission", ErrInvalidBrowserManagement)
 	// ErrBrowserManagementUnavailable conceals budget/authority/time failure.
 	ErrBrowserManagementUnavailable = errors.New("http api: browser management unavailable")
 	// ErrBrowserManagementLimited means a shared prepare budget denied input.
@@ -261,16 +266,18 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	started := time.Now()
 	browser.telemetry.opened()
 	defer func() { browser.telemetry.closed(operation, resultErr, time.Since(started)) }()
-	if response.Header() == nil || !pristineBrowserManagementResponse(response.Header()) ||
-		!browser.validRequest(request) {
+	if response.Header() == nil || !pristineBrowserManagementResponse(response.Header()) {
 		return ErrInvalidBrowserManagement
+	}
+	if !browser.validRequest(request) {
+		return ErrBrowserManagementRefused
 	}
 	prepare := request.URL.Path == AccountSessionCSRFPreparePath
 	logoutAll := request.URL.Path == AccountSessionLogoutAllPath
 	logout := request.URL.Path == AccountSessionLogoutPath || logoutAll
 	// Preparing and ending sessions are POSTs only; ending needs a proof.
 	if (prepare || logout) && request.Method != http.MethodPost {
-		return ErrInvalidBrowserManagement
+		return ErrBrowserManagementRefused
 	}
 	managementScopes := request.URL.Path == AccountSessionManagementScopesPath && request.Method == http.MethodGet
 	inventoryScope, inventoryMatched := parseDeviceInventoryPath(request)
@@ -308,7 +315,7 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		!enforcementRead &&
 		!deploymentCapabilities && !device && !policy && !simulation &&
 		!approval && !accessGraph && !accessGraphList && !policyRead && !workspaceRename && !workspaceRoles && !resourceSharing {
-		return ErrInvalidBrowserManagement
+		return ErrBrowserManagementRefused
 	}
 	operation = "mutation"
 	if prepare {
@@ -588,7 +595,7 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	}
 	queryAllowed := approvalRead && approvalPath.kind == policyApprovalPathCollection || managementScopeRead ||
 		inventoryRead || distributionRead || historyRead || enforcementRead ||
-		resourceSharingCollectionRead || accessGraphRead || auditRead
+		resourceSharingCollectionRead || accessGraphRead || auditRead || isDNSZoneDeleteWithNames(request)
 	if (!queryAllowed && target.RawQuery != "") || len(target.RawQuery) > maximumCallbackQueryBytes {
 		return false
 	}
