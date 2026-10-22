@@ -272,6 +272,11 @@ type ManagementHandlerOptions struct {
 	ExitPools ExitPoolManager
 	// DNSZones lists and changes the DNS zones of a Network.
 	DNSZones DNSZoneManager
+	// ServiceNames checks the service names a share offer suggests (DNS
+	// design D3); nil refuses an offer that suggests any.
+	ServiceNames ServiceNameChecker
+	// OfferServiceNames reads the service names of an offer; nil shows none.
+	OfferServiceNames OfferServiceNameReader
 	// SiteRouterObservations, when set, adds each router's health of the
 	// Site and its route enforcement to one Site's read.
 	SiteRouterObservations distribution.ObservationLoader
@@ -353,6 +358,8 @@ type ManagementHandler struct {
 	sites                     SiteManager
 	exitPools                 ExitPoolManager
 	dnsZones                  DNSZoneManager
+	serviceNames              ServiceNameChecker
+	offerServiceNames         OfferServiceNameReader
 	siteRouterObservations    distribution.ObservationLoader
 	siteRouterUse             SiteRouterUseCounter
 	exitNodeUse               ExitNodeUseCounter
@@ -437,6 +444,8 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		sites:                     options.Sites,
 		exitPools:                 options.ExitPools,
 		dnsZones:                  options.DNSZones,
+		serviceNames:              options.ServiceNames,
+		offerServiceNames:         options.OfferServiceNames,
 		siteRouterObservations:    options.SiteRouterObservations,
 		siteRouterUse:             options.SiteRouterUse,
 		exitNodeUse:               options.ExitNodeUse,

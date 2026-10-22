@@ -25,6 +25,10 @@ type ResourceSharingOptions struct {
 	LockTimeout      time.Duration
 	IdleTimeout      time.Duration
 	IdempotencyTTL   time.Duration
+	// ServiceNames turns approved service names into DNS names when an
+	// offer is accepted (DNS design D3). Without it an accept that approves
+	// one fails; declining every name still accepts.
+	ServiceNames ServiceNamePlanner
 }
 
 // ResourceSharingStore owns exact-scope sharing reads and atomic bilateral mutations.

@@ -15,8 +15,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 217 {
-		t.Fatalf("len(Catalog()) = %d, want 217", len(catalog))
+	if len(catalog) != 218 {
+		t.Fatalf("len(Catalog()) = %d, want 218", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1611,8 +1611,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 217 {
-		t.Fatalf("LatestVersion() = %d, want 217", LatestVersion())
+	if LatestVersion() != 218 {
+		t.Fatalf("LatestVersion() = %d, want 218", LatestVersion())
 	}
 }
 
@@ -6253,5 +6253,33 @@ func TestMigration217LetsDNSNamesPointAtShares(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "TO mesh_worker") || strings.Contains(migration.SQL, "TO mesh_observer") {
 		t.Error("schema 217 grants beyond mesh_runtime")
+	}
+}
+
+func TestMigration218AddsShareOfferServiceNames(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[217]
+	if migration.Version != 218 {
+		t.Fatalf("migration 218 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE TABLE mesh.share_offer_service_name (",
+		"CONSTRAINT share_offer_service_name_ordinal_check CHECK (ordinal BETWEEN 1 AND 8),",
+		"BEFORE UPDATE OR DELETE ON mesh.share_offer_service_name",
+		"ALTER TABLE mesh.share_offer_service_name FORCE ROW LEVEL SECURITY;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.add_share_offer_service_names_v1(UUID, TEXT[]) TO mesh_runtime;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.list_share_offer_service_names_v1(UUID) TO mesh_runtime;",
+		"WHERE zone.id = mesh_ops.dns_longest_zone_internal_v1(v_scope.workspace_id, v_scope.network_id, p_fqdn)",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 218 lacks %q", want)
+		}
+	}
+	if strings.Count(migration.SQL, "SECURITY DEFINER") != 3 ||
+		strings.Count(migration.SQL, "SET search_path = pg_catalog") != 4 {
+		t.Error("schema 218 functions are not pinned")
+	}
+	if strings.Contains(migration.SQL, "TO mesh_worker") || strings.Contains(migration.SQL, "TO mesh_observer") {
+		t.Error("schema 218 grants beyond mesh_runtime")
 	}
 }

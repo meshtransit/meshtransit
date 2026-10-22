@@ -20,7 +20,11 @@ type privateIdentityResourceServices struct {
 	exitPools compilation.ExitPoolResolver
 }
 
-func newPrivateIdentityResourceServices(pool *postgresadapter.Pool, options postgresadapter.AuthTransactionOptions) (privateIdentityResourceServices, error) {
+// serviceNames turns service names a consumer approves into DNS names of its
+// Network when it accepts a share offer (DNS design D3).
+func newPrivateIdentityResourceServices(pool *postgresadapter.Pool, options postgresadapter.AuthTransactionOptions,
+	serviceNames postgresadapter.ServiceNamePlanner,
+) (privateIdentityResourceServices, error) {
 	invalid := privateIdentityResourceServices{}
 	authorityStore, err := postgresadapter.NewResourceAuthorityStore(pool, postgresadapter.ResourceAuthorityOptions(options))
 	if err != nil {
@@ -49,7 +53,7 @@ func newPrivateIdentityResourceServices(pool *postgresadapter.Pool, options post
 	}
 	imports, err := postgresadapter.NewResourceSharingStore(pool, postgresadapter.ResourceSharingOptions{
 		StatementTimeout: options.StatementTimeout, LockTimeout: options.LockTimeout, IdleTimeout: options.IdleTimeout,
-		IdempotencyTTL: managementIdempotencyTTL,
+		IdempotencyTTL: managementIdempotencyTTL, ServiceNames: serviceNames,
 	})
 	if err != nil {
 		return invalid, errInvalidPrivateIdentityComposition

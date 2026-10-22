@@ -309,3 +309,7 @@ FROM mesh_ops.activate_resource_share_v4(
     $5::UUID, $6::BIGINT, $7::BIGINT, $8::BIGINT,
     $9::UUID, $10::UUID, $11::TIMESTAMPTZ
 )`
+
+// addShareOfferServiceNamesSQL records the service names of an offer the
+// transaction just created (schema 218).
+const addShareOfferServiceNamesSQL = `SELECT mesh_ops.add_share_offer_service_names_v1($1::UUID, $2::TEXT[])`

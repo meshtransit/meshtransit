@@ -584,6 +584,7 @@ func Catalog() []Migration {
 		newMigration(215, "DNS zones hold names an administrator sets", networkDNSNamesSQL),
 		newMigration(216, "Maps carry DNS names, and DNS changes reach them together", mapNetworkDNSNamesSQL),
 		newMigration(217, "DNS names can point at a share the Network imports", networkDNSShareNamesSQL),
+		newMigration(218, "Share offers suggest service names", shareOfferServiceNamesSQL),
 	}
 }
 
@@ -1014,3 +1015,6 @@ var mapNetworkDNSNamesSQL string
 
 //go:embed 000217_network_dns_share_names.up.sql
 var networkDNSShareNamesSQL string
+
+//go:embed 000218_share_offer_service_names.up.sql
+var shareOfferServiceNamesSQL string

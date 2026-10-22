@@ -121,7 +121,10 @@ type CreateOfferParams struct {
 	ExpiresAt      time.Time
 	// AccessLabel is the frozen first label of the consumer DNS name. The
 	// zero value derives it from the shared Resource name at creation.
-	AccessLabel    AccessLabel
+	AccessLabel AccessLabel
+	// ServiceNames are the names the provider suggests the consumer may give
+	// the Resource (DNS design D3): at most MaximumServiceNames, none twice.
+	ServiceNames   []ServiceName
 	AccountSession accountsession.Session
 	Reason         AuditReason
 	Idempotency    idempotency.Proof
@@ -135,6 +138,7 @@ func NewCreateOffer(params CreateOfferParams) (CreateOffer, error) {
 	// PostgreSQL timestamps retain microseconds. Canonicalize before hashing,
 	// persistence and result matching, rounding down so expiry never extends.
 	params.ExpiresAt = params.ExpiresAt.UTC().Truncate(time.Microsecond)
+	params.ServiceNames = slices.Clone(params.ServiceNames)
 	command := CreateOffer{params: params}
 	if !command.IsValid() {
 		return CreateOffer{}, ErrInvalidManagementRequest
@@ -163,6 +167,11 @@ func (command CreateOffer) ExpiresAt() time.Time { return command.params.Expires
 // AccessLabel returns the requested label; the zero value requests a default.
 func (command CreateOffer) AccessLabel() AccessLabel { return command.params.AccessLabel }
 
+// ServiceNames returns a copy of the suggested service names, in order.
+func (command CreateOffer) ServiceNames() []ServiceName {
+	return slices.Clone(command.params.ServiceNames)
+}
+
 // AccountSession returns the authenticated provider session.
 func (command CreateOffer) AccountSession() accountsession.Session {
 	return command.params.AccountSession
@@ -183,6 +192,7 @@ func (command CreateOffer) IsValid() bool {
 		params.ProviderScope != params.ConsumerScope && params.ResourceID.IsValid() &&
 		params.MaximumTraffic.IsValid() && !params.ExpiresAt.IsZero() &&
 		(params.AccessLabel == AccessLabel{} || params.AccessLabel.IsValid()) &&
+		validServiceNames(params.ServiceNames) &&
 		params.AccountSession.IsValid() && params.Reason.IsValid() && params.Idempotency.IsValid()
 }
 
@@ -216,9 +226,12 @@ type DecideOfferParams struct {
 	Action               DecisionAction
 	ImportedDisplayName  resource.DisplayName
 	AccessName           AccessName
-	AccountSession       accountsession.Session
-	Reason               AuditReason
-	Idempotency          idempotency.Proof
+	// ServiceNames answers each service name the offer suggests, on accept
+	// only; the store checks they are exactly the offer's.
+	ServiceNames   []ServiceNameDecision
+	AccountSession accountsession.Session
+	Reason         AuditReason
+	Idempotency    idempotency.Proof
 }
 
 // DecideOffer is immutable bilateral offer decision intent.
@@ -226,6 +239,7 @@ type DecideOffer struct{ params DecideOfferParams }
 
 // NewDecideOffer validates one exact two-scope terminal action.
 func NewDecideOffer(params DecideOfferParams) (DecideOffer, error) {
+	params.ServiceNames = slices.Clone(params.ServiceNames)
 	command := DecideOffer{params: params}
 	if !command.IsValid() {
 		return DecideOffer{}, ErrInvalidManagementRequest
@@ -262,6 +276,11 @@ func (command DecideOffer) ImportedDisplayName() resource.DisplayName {
 // offer's provider label determines the name; a supplied name must match it.
 func (command DecideOffer) AccessName() AccessName { return command.params.AccessName }
 
+// ServiceNames returns a copy of the answers to the offer's service names.
+func (command DecideOffer) ServiceNames() []ServiceNameDecision {
+	return slices.Clone(command.params.ServiceNames)
+}
+
 // AccountSession returns the authenticated decision session.
 func (command DecideOffer) AccountSession() accountsession.Session {
 	return command.params.AccountSession
@@ -287,7 +306,8 @@ func (command DecideOffer) IsValid() bool {
 	accept := params.Action == DecisionActionAccept
 	accessNameAbsent := params.AccessName == AccessName{}
 	return accept == params.ImportedDisplayName.IsValid() &&
-		(accessNameAbsent || accept && params.AccessName.IsValid())
+		(accessNameAbsent || accept && params.AccessName.IsValid()) &&
+		(accept || len(params.ServiceNames) == 0) && validServiceNameDecisions(params.ServiceNames)
 }
 
 // RevokeContractParams contains one version-bound bilateral revocation.

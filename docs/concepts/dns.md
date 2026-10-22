@@ -233,8 +233,9 @@ that route itself).
 
 ## Not yet
 
-- Names that point at a share: Core stores them, but maps do not carry them
-  to Devices yet, and providers cannot suggest names on an offer yet.
+- Names that point at a share: Core stores them, and a provider can suggest
+  them on a share offer for the consumer to approve, but maps do not carry
+  them to Devices yet.
 - Names and zone kinds on Android and iOS. A zone for every other name (the
   root).
 - Internet resolvers of a zone asked through the exit node itself (today the

@@ -329,6 +329,10 @@ func assertPostgreSQLResourceSharing(
 		ctx, t, admin, service, session, providerScope, consumerScope, foreignScope,
 		resourceID, maximumTraffic, reason,
 	)
+	assertShareServiceNames(
+		ctx, t, admin, runtimePool, session, providerScope, consumerScope, foreignScope,
+		resourceID, maximumTraffic, reason,
+	)
 	assertNetworkAliasRanges(ctx, t, admin, runtimePool, session, providerScope, consumerScope)
 	assertNetworkDeviceLifetime(ctx, t, admin, runtimePool, session, providerScope, consumerScope, foreignScope)
 	assertNetworkAddressUsage(ctx, t, admin, runtimePool, session, consumerScope)

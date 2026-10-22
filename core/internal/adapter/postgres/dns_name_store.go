@@ -349,10 +349,6 @@ func (store *DNSZoneStore) ChangeNames(ctx context.Context, change dnszone.NameC
 		len(change.Operations) > dnszone.MaximumNameOperations {
 		return dnszone.NameResult{}, dnszone.ErrInvalid
 	}
-	operations, err := dnsNameOperationsJSON(change.Operations)
-	if err != nil {
-		return dnszone.NameResult{}, dnszone.ErrInvalid
-	}
 	changeID, err := publicid.New()
 	if err != nil {
 		return dnszone.NameResult{}, dnszone.ErrUnavailable
@@ -368,6 +364,35 @@ func (store *DNSZoneStore) ChangeNames(ctx context.Context, change dnszone.NameC
 	}
 	if err != nil {
 		return dnszone.NameResult{}, err
+	}
+	result, err := applyDNSNameChange(ctx, tx, change, changeID)
+	if err != nil {
+		return dnszone.NameResult{}, err
+	}
+	if !result.Changed {
+		// Nothing changed: no evidence, no wakeup; the transaction rolls back.
+		return result, nil
+	}
+	if result.AppliesWithin, err = deferDNSChangeWakeup(ctx, tx, changeID); err != nil {
+		return dnszone.NameResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		committed = true
+		return dnszone.NameResult{}, errors.Join(dnszone.ErrUnavailable, err)
+	}
+	committed = true
+	return result, nil
+}
+
+// applyDNSNameChange runs one name change in tx, already in the change's
+// Network scope, and appends evidence for each name it changed. The caller
+// defers the change's wakeup and commits.
+func applyDNSNameChange(ctx context.Context, tx accountSessionTransaction, change dnszone.NameChange,
+	changeID publicid.ID,
+) (dnszone.NameResult, error) {
+	operations, err := dnsNameOperationsJSON(change.Operations)
+	if err != nil {
+		return dnszone.NameResult{}, dnszone.ErrInvalid
 	}
 	var encoded string
 	if err := tx.QueryRow(ctx, changeDNSNamesSQL, append(sessionQueryArguments(change.Session),
@@ -399,7 +424,6 @@ func (store *DNSZoneStore) ChangeNames(ctx context.Context, change dnszone.NameC
 		return dnszone.NameResult{}, dnszone.ErrInvalid
 	}
 	if !record.Changed {
-		// Nothing changed: no evidence, no wakeup; the transaction rolls back.
 		return result, nil
 	}
 	for _, item := range record.Results {
@@ -410,14 +434,6 @@ func (store *DNSZoneStore) ChangeNames(ctx context.Context, change dnszone.NameC
 			return dnszone.NameResult{}, errors.Join(dnszone.ErrUnavailable, err)
 		}
 	}
-	if result.AppliesWithin, err = deferDNSChangeWakeup(ctx, tx, changeID); err != nil {
-		return dnszone.NameResult{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		committed = true
-		return dnszone.NameResult{}, errors.Join(dnszone.ErrUnavailable, err)
-	}
-	committed = true
 	return result, nil
 }
 

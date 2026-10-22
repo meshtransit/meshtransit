@@ -391,6 +391,47 @@ func (store *DNSZoneStore) Change(ctx context.Context, change dnszone.Change) (_
 		!change.CorrelationID.IsValid() {
 		return dnszone.Result{}, dnszone.ErrInvalid
 	}
+	changeID, err := publicid.New()
+	if err != nil {
+		return dnszone.Result{}, dnszone.ErrUnavailable
+	}
+	tx, err := store.begin(ctx, change.Scope)
+	committed := false
+	if tx != nil {
+		defer func() {
+			if !committed {
+				resultErr = errors.Join(resultErr, rollbackAccountSessionTransaction(tx))
+			}
+		}()
+	}
+	if err != nil {
+		return dnszone.Result{}, err
+	}
+	result, err := applyDNSZoneChange(ctx, tx, change, changeID)
+	if err != nil {
+		return dnszone.Result{}, err
+	}
+	if !result.Changed {
+		// Nothing changed: no evidence, no wakeup; the transaction rolls back.
+		return result, nil
+	}
+	if result.AppliesWithin, err = deferDNSChangeWakeup(ctx, tx, changeID); err != nil {
+		return dnszone.Result{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		committed = true
+		return dnszone.Result{}, errors.Join(dnszone.ErrUnavailable, err)
+	}
+	committed = true
+	return result, nil
+}
+
+// applyDNSZoneChange runs one zone change in tx, already in the change's
+// Network scope, and appends its evidence when it changed something. The
+// caller defers the change's wakeup and commits.
+func applyDNSZoneChange(ctx context.Context, tx accountSessionTransaction, change dnszone.Change,
+	changeID publicid.ID,
+) (dnszone.Result, error) {
 	var expected, domain, other, mode, resolvers, groups, search, class, listVersion, confirmed, zoneLimit,
 		searchLimit, consumerLimit, hostLimit any
 	if change.Operation != dnszone.OperationCreate {
@@ -415,22 +456,6 @@ func (store *DNSZoneStore) Change(ctx context.Context, change dnszone.Change) (_
 		class, listVersion, confirmed = string(change.Class), change.ListVersion, change.Definition.PublicConfirmed
 		searchLimit, consumerLimit = change.Limits.SearchZonesPerNetwork, change.Limits.ConsumersPerResolver
 		hostLimit = change.Limits.HostNamesPerNetwork
-	}
-	changeID, err := publicid.New()
-	if err != nil {
-		return dnszone.Result{}, dnszone.ErrUnavailable
-	}
-	tx, err := store.begin(ctx, change.Scope)
-	committed := false
-	if tx != nil {
-		defer func() {
-			if !committed {
-				resultErr = errors.Join(resultErr, rollbackAccountSessionTransaction(tx))
-			}
-		}()
-	}
-	if err != nil {
-		return dnszone.Result{}, err
 	}
 	var encoded string
 	if err := tx.QueryRow(ctx, changeDNSZoneSQL, append(sessionQueryArguments(change.Session),
@@ -461,20 +486,11 @@ func (store *DNSZoneStore) Change(ctx context.Context, change dnszone.Change) (_
 		result.Previous = &previous
 	}
 	if !record.Changed {
-		// Nothing changed: no evidence, no wakeup; the transaction rolls back.
 		return result, nil
 	}
 	if err := appendDNSZoneEvidence(ctx, tx, change, changeID, record); err != nil {
 		return dnszone.Result{}, errors.Join(dnszone.ErrUnavailable, err)
 	}
-	if result.AppliesWithin, err = deferDNSChangeWakeup(ctx, tx, changeID); err != nil {
-		return dnszone.Result{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		committed = true
-		return dnszone.Result{}, errors.Join(dnszone.ErrUnavailable, err)
-	}
-	committed = true
 	return result, nil
 }
 

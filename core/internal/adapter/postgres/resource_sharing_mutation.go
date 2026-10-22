@@ -221,6 +221,16 @@ func (store *ResourceSharingStore) CreateOffer(
 	if exportVersion != 1 || offerVersion != 1 {
 		return sharing.MutationResult{}, sharing.ErrUnavailable
 	}
+	if names := serviceNameStrings(command.ServiceNames()); len(names) > 0 {
+		var written int
+		if err := transaction.QueryRow(ctx, addShareOfferServiceNamesSQL, ids.offerID.String(), names).
+			Scan(&written); err != nil {
+			return sharing.MutationResult{}, resourceSharingDatabaseError(ctx, err)
+		}
+		if written != len(names) {
+			return sharing.MutationResult{}, sharing.ErrUnavailable
+		}
+	}
 	projection, err := readResourceSharingOffer(ctx, transaction, ids.offerID)
 	if err != nil {
 		return sharing.MutationResult{}, err
@@ -498,6 +508,13 @@ func (store *ResourceSharingStore) DecideOffer(
 		evaluatedAt,
 	); err != nil {
 		return sharing.MutationResult{}, err
+	}
+	// Approved service names become DNS names in the same transaction, after
+	// the decision's evidence: their own evidence follows it on the stream.
+	if accept {
+		if err := store.applyServiceNames(ctx, transaction, command, ids.importedResourceID); err != nil {
+			return sharing.MutationResult{}, err
+		}
 	}
 	if err := transaction.Commit(ctx); err != nil {
 		return sharing.MutationResult{}, resourceSharingDatabaseError(ctx, err)
@@ -1321,16 +1338,28 @@ func resourceSharingCreateHash(command sharing.CreateOffer) ([sha256.Size]byte, 
 		TrafficHash   string `json:"traffic_hash"`
 		ExpiresAt     string `json:"expires_at"`
 		AccessLabel   string `json:"access_label,omitempty"`
-		Reason        string `json:"reason"`
+		// Left out when the offer suggests no name, so such a request hashes
+		// as it did before service names.
+		ServiceNames []string `json:"service_names,omitempty"`
+		Reason       string   `json:"reason"`
 	}{
 		Operation:     resourceSharingCreateOperation,
 		ProviderScope: resourceSharingScopeKey(command.ProviderScope()),
 		ConsumerScope: resourceSharingScopeKey(command.ConsumerScope()),
 		ResourceID:    command.ResourceID().String(), TrafficHash: hex.EncodeToString(trafficHash[:]),
-		ExpiresAt:   command.ExpiresAt().UTC().Format(time.RFC3339Nano),
-		AccessLabel: command.AccessLabel().String(),
-		Reason:      command.Reason().String(),
+		ExpiresAt:    command.ExpiresAt().UTC().Format(time.RFC3339Nano),
+		AccessLabel:  command.AccessLabel().String(),
+		ServiceNames: serviceNameStrings(command.ServiceNames()),
+		Reason:       command.Reason().String(),
 	})
+}
+
+func serviceNameStrings(names []sharing.ServiceName) []string {
+	values := make([]string, 0, len(names))
+	for _, name := range names {
+		values = append(values, name.String())
+	}
+	return values
 }
 
 func resourceSharingDecisionHash(command sharing.DecideOffer) ([sha256.Size]byte, error) {
@@ -1346,7 +1375,10 @@ func resourceSharingDecisionHash(command sharing.DecideOffer) ([sha256.Size]byte
 		Action          string `json:"action"`
 		ImportedName    string `json:"imported_name,omitempty"`
 		AccessName      string `json:"access_name,omitempty"`
-		Reason          string `json:"reason"`
+		// Each answer as "approve:" or "decline:" and the name; left out
+		// when there is none, so such a request hashes as before.
+		ServiceNames []string `json:"service_names,omitempty"`
+		Reason       string   `json:"reason"`
 	}{
 		Operation:     resourceSharingDecideOperation,
 		ProviderScope: resourceSharingScopeKey(command.ProviderScope()),
@@ -1356,8 +1388,21 @@ func resourceSharingDecisionHash(command sharing.DecideOffer) ([sha256.Size]byte
 		Action:       resourceSharingDecisionAction(command.Action()),
 		ImportedName: command.ImportedDisplayName().String(),
 		AccessName:   command.AccessName().String(),
+		ServiceNames: serviceNameDecisionStrings(command.ServiceNames()),
 		Reason:       command.Reason().String(),
 	})
+}
+
+func serviceNameDecisionStrings(decisions []sharing.ServiceNameDecision) []string {
+	values := make([]string, 0, len(decisions))
+	for _, decision := range decisions {
+		answer := "decline:"
+		if decision.Approve {
+			answer = "approve:"
+		}
+		values = append(values, answer+decision.Name.String())
+	}
+	return values
 }
 
 func resourceSharingRevocationHash(command sharing.RevokeContract) ([sha256.Size]byte, error) {

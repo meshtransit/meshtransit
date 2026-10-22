@@ -95,6 +95,11 @@ func assertPostgreSQLDNSZones(ctx context.Context, t *testing.T, admin *pgx.Conn
 	}
 	networkBefore, _ := fixtureNetworkRevisions(ctx, t, admin)
 	dnsBefore := fixtureDNSRevision(ctx, t, admin)
+	// Earlier tests (share service names) audit zones of other Networks too:
+	// these counts are changes, not totals.
+	createdBefore := countDNSZoneAudit(ctx, t, admin, "dns_zone.created")
+	updatedBefore := countDNSZoneAudit(ctx, t, admin, "dns_zone.updated")
+	deletedBefore := countDNSZoneAudit(ctx, t, admin, "dns_zone.deleted")
 	created, err := service.Create(ctx, owner, scope, corp, false, newCorrelationID(t))
 	if err != nil || created.Zone.Version != 1 || created.Zone.Domain != "corp.internal" ||
 		created.Zone.Class != dnszone.ClassPrivate || created.Zone.FailureMode != dnszone.FailClosed ||
@@ -103,7 +108,7 @@ func assertPostgreSQLDNSZones(ctx context.Context, t *testing.T, admin *pgx.Conn
 	}
 	zone := created.Zone.ID
 	if networkAfter, _ := fixtureNetworkRevisions(ctx, t, admin); networkAfter != networkBefore+1 ||
-		fixtureDNSRevision(ctx, t, admin) != dnsBefore+1 || countDNSZoneAudit(ctx, t, admin, "dns_zone.created") != 1 {
+		fixtureDNSRevision(ctx, t, admin) != dnsBefore+1 || countDNSZoneAudit(ctx, t, admin, "dns_zone.created") != createdBefore+1 {
 		t.Fatal("creating a DNS zone did not advance the revisions with one audit event")
 	}
 	var wakes bool
@@ -117,7 +122,7 @@ WHERE event_class = 'network.revision.advanced' AND payload->>'dns_zone_id' = $1
 		t.Fatalf("a second zone for the domain: %v", err)
 	}
 	if same, err := service.Update(ctx, owner, scope, zone, 1, corp, newCorrelationID(t)); err != nil ||
-		same.Changed || same.Zone.Version != 1 || countDNSZoneAudit(ctx, t, admin, "dns_zone.updated") != 0 {
+		same.Changed || same.Zone.Version != 1 || countDNSZoneAudit(ctx, t, admin, "dns_zone.updated") != updatedBefore {
 		t.Fatalf("no-op update = %+v, error = %v", same, err)
 	}
 
@@ -240,7 +245,7 @@ AND mesh_ops.dns_zone_resolvers_valid_internal_v1('[{"address":"2606:4700:4700::
 			t.Fatalf("delete DNS zone: %v", err)
 		}
 	}
-	if countDNSZoneAudit(ctx, t, admin, "dns_zone.deleted") != 2 {
+	if countDNSZoneAudit(ctx, t, admin, "dns_zone.deleted") != deletedBefore+2 {
 		t.Fatal("deleting zones was not audited once each")
 	}
 	if _, err := service.Read(ctx, owner, scope, zone); !errors.Is(err, dnszone.ErrNotFound) {

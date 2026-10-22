@@ -169,7 +169,17 @@ type createShareOfferRequest struct {
 	ExpiresAt           string                  `json:"expires_at"`
 	NeverExpires        bool                    `json:"never_expires"`
 	AccessLabel         string                  `json:"access_label,omitempty"`
-	Reason              string                  `json:"reason"`
+	// ServiceNames are names the consumer may give the Resource (DNS design
+	// D3): up to 8 fully qualified names, each a suggestion until the
+	// consumer approves it.
+	ServiceNames []string `json:"service_names,omitempty"`
+	Reason       string   `json:"reason"`
+}
+
+// serviceNameDecisionRequest answers one suggested service name on accept.
+type serviceNameDecisionRequest struct {
+	Name     string `json:"name"`
+	Decision string `json:"decision"`
 }
 
 type decideShareOfferRequest struct {
@@ -180,7 +190,17 @@ type decideShareOfferRequest struct {
 	OfferToken          string `json:"offer_token"`
 	ImportedDisplayName string `json:"imported_display_name,omitempty"`
 	AccessName          string `json:"access_name,omitempty"`
-	Reason              string `json:"reason"`
+	// ServiceNames answers each name the offer suggests exactly once, on
+	// accept: approve makes it a DNS name of the consumer Network.
+	ServiceNames []serviceNameDecisionRequest `json:"service_names,omitempty"`
+	Reason       string                       `json:"reason"`
+}
+
+// shareOfferServiceNameData is one suggested service name and whether it is
+// a name on the Internet.
+type shareOfferServiceNameData struct {
+	Name   string `json:"name"`
+	Public bool   `json:"public"`
 }
 
 type revokeTrustContractRequest struct {
@@ -223,14 +243,16 @@ type shareOfferData struct {
 	ConsumerNetworkCode     string               `json:"consumer_network_code,omitempty"`
 	AccessLabel             string               `json:"access_label,omitempty"`
 	AccessName              string               `json:"access_name,omitempty"`
-	CreatedAt               time.Time            `json:"created_at"`
-	ExpiresAt               time.Time            `json:"expires_at"`
-	ShareExpiresAt          time.Time            `json:"share_expires_at"`
-	ProviderNetworkRevision int64                `json:"provider_network_revision,omitempty"`
-	ProviderSharingRevision int64                `json:"provider_sharing_revision,omitempty"`
-	ConsumerNetworkRevision int64                `json:"consumer_network_revision,omitempty"`
-	ConsumerSharingRevision int64                `json:"consumer_sharing_revision,omitempty"`
-	OfferToken              string               `json:"offer_token,omitempty"`
+	// ServiceNames are the names the provider suggests (DNS design D3).
+	ServiceNames            []shareOfferServiceNameData `json:"service_names,omitempty"`
+	CreatedAt               time.Time                   `json:"created_at"`
+	ExpiresAt               time.Time                   `json:"expires_at"`
+	ShareExpiresAt          time.Time                   `json:"share_expires_at"`
+	ProviderNetworkRevision int64                       `json:"provider_network_revision,omitempty"`
+	ProviderSharingRevision int64                       `json:"provider_sharing_revision,omitempty"`
+	ConsumerNetworkRevision int64                       `json:"consumer_network_revision,omitempty"`
+	ConsumerSharingRevision int64                       `json:"consumer_sharing_revision,omitempty"`
+	OfferToken              string                      `json:"offer_token,omitempty"`
 }
 
 // shareOfferContract is the lifecycle of the contract an offer was accepted
@@ -364,9 +386,14 @@ func (handler *ManagementHandler) createShareOffer(
 			return handler.writeSharingRequestError(ctx, response, correlationID)
 		}
 	}
+	serviceNames, nameErr := handler.parseOfferServiceNames(body.ServiceNames)
+	if nameErr != nil {
+		writeManagementError(ctx, handler.logger, response, correlationID, *nameErr)
+		return nameErr.Code
+	}
 	command, err := sharing.NewCreateOffer(sharing.CreateOfferParams{
 		ProviderScope: providerScope, ConsumerScope: consumerScope, ResourceID: resourceID,
-		MaximumTraffic: traffic, ExpiresAt: expiresAt, AccessLabel: accessLabel,
+		MaximumTraffic: traffic, ExpiresAt: expiresAt, AccessLabel: accessLabel, ServiceNames: serviceNames,
 		AccountSession: session, Reason: reason, Idempotency: proof,
 	})
 	if err != nil {
@@ -391,6 +418,7 @@ func (handler *ManagementHandler) createShareOffer(
 		return handler.writeSharingInternalError(ctx, response, correlationID)
 	}
 	data := shareOfferDataFromSnapshot(offer, handler.dnsSuffix)
+	data.ServiceNames = handler.serviceNameData(command.ServiceNames())
 	data.ProviderNetworkRevision = result.ProviderNetworkRevision()
 	data.ProviderSharingRevision = result.ProviderSharingRevision()
 	data.ConsumerNetworkRevision = result.ConsumerNetworkRevision()
@@ -486,10 +514,14 @@ func (handler *ManagementHandler) decideShareOffer(
 	if err != nil {
 		return handler.writeSharingRequestError(ctx, response, correlationID)
 	}
+	decisions, ok := parseServiceNameDecisions(body.ServiceNames)
+	if !ok {
+		return handler.writeSharingRequestError(ctx, response, correlationID)
+	}
 	command, err := sharing.NewDecideOffer(sharing.DecideOfferParams{
 		ProviderScope: providerScope, ConsumerScope: consumerScope, OfferID: offerID,
 		ExpectedOfferVersion: expectedVersion, Token: token, Action: action,
-		ImportedDisplayName: importedName, AccessName: accessName,
+		ImportedDisplayName: importedName, AccessName: accessName, ServiceNames: decisions,
 		AccountSession: session, Reason: reason,
 		Idempotency: proof,
 	})
@@ -670,9 +702,17 @@ func (handler *ManagementHandler) getShareOffer(
 		(scope != snapshot.Offer().ProviderScope() && scope != snapshot.Offer().ConsumerScope()) {
 		return handler.writeSharingInternalError(ctx, response, correlationID)
 	}
+	data := shareOfferDataFromSnapshot(snapshot, handler.dnsSuffix)
+	if handler.offerServiceNames != nil {
+		names, err := handler.offerServiceNames.OfferServiceNames(ctx, scope, offerID)
+		if err != nil {
+			return handler.writeSharingError(ctx, response, correlationID, err)
+		}
+		data.ServiceNames = handler.serviceNameData(names)
+	}
 	response.Header().Set("ETag", strongVersionETag(snapshot.Offer().Version()))
 	writeManagementJSON(ctx, handler.logger, response, http.StatusOK, shareOfferEnvelope{
-		Data: shareOfferDataFromSnapshot(snapshot, handler.dnsSuffix), CorrelationID: correlationID.String(),
+		Data: data, CorrelationID: correlationID.String(),
 	})
 	return "success"
 }
@@ -1084,7 +1124,20 @@ func classifySharingError(err error) managementError {
 	if violation, ok := guardrailViolation(err); ok {
 		return violation
 	}
+	// An approved service name that cannot become a DNS name: its DNS
+	// reason, and its place in the decisions.
+	if failure := (*sharing.ServiceNameError)(nil); errors.As(err, &failure) {
+		classified := classifyDNSNameError(failure.Err)
+		index := failure.Index
+		classified.OperationIndex = &index
+		return classified
+	}
 	switch {
+	case errors.Is(err, sharing.ErrServiceNameDecisions):
+		return managementError{
+			Status: http.StatusBadRequest, Code: "dns_service_name_decision_missing",
+			Message: "Answer each service name the offer suggests exactly once: approve or decline",
+		}
 	case errors.Is(err, sharing.ErrInvalidManagementRequest):
 		return *invalidManagementRequest()
 	case errors.Is(err, sharing.ErrForbidden):

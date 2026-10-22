@@ -5,6 +5,16 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core (DNS design D3a, schema 218): a share offer can suggest up to 8
+  service names (`service_names`), the real names a provider's web app
+  serves, such as `app.corp.com`. A suggestion resolves nowhere and reserves
+  nothing in the consumer Network. The consumer answers each one when it
+  accepts (`service_names: [{name, decision}]`, `approve` or `decline`); an
+  approved name becomes a DNS name of its Network that points at the share,
+  in the longest zone that covers it or in a zone of its own whose other
+  names go to each Device's own DNS, in the same transaction. Approving needs
+  `dns.manage`; a name that cannot be made fails the whole accept with its
+  DNS error and `operation_index`. Offers show their names with `public`.
 - Core (DNS design D3a, schema 217): a DNS name can point at a share its
   Network imports (`share_id`, the imported resource): it answers the
   share's alias, so a provider's web app opens under its real name. A new

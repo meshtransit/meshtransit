@@ -141,6 +141,10 @@ func assertPostgreSQLDNSNames(ctx context.Context, t *testing.T, admin *pgx.Conn
 	}
 	networkBefore, _ := fixtureNetworkRevisions(ctx, t, admin)
 	dnsBefore := fixtureDNSRevision(ctx, t, admin)
+	// Earlier tests (share service names) audit names of other Networks too:
+	// these counts are changes, not totals.
+	createdBefore := countDNSNameAudit(ctx, t, admin, "dns_name.created")
+	updatedBefore := countDNSNameAudit(ctx, t, admin, "dns_name.updated")
 	applied, err := service.ApplyNames(ctx, owner, scope, corp, first, newCorrelationID(t))
 	if err != nil || !applied.Changed || len(applied.Outcomes) != 4 {
 		t.Fatalf("apply = %+v, error = %v", applied, err)
@@ -152,7 +156,7 @@ func assertPostgreSQLDNSNames(ctx context.Context, t *testing.T, admin *pgx.Conn
 		t.Fatalf("names = %+v", applied.Outcomes)
 	}
 	if networkAfter, _ := fixtureNetworkRevisions(ctx, t, admin); networkAfter != networkBefore+1 ||
-		fixtureDNSRevision(ctx, t, admin) != dnsBefore+1 || countDNSNameAudit(ctx, t, admin, "dns_name.created") != 4 {
+		fixtureDNSRevision(ctx, t, admin) != dnsBefore+1 || countDNSNameAudit(ctx, t, admin, "dns_name.created") != createdBefore+4 {
 		t.Fatal("one apply did not advance the revisions once with one audit event per name")
 	}
 	var wakes bool
@@ -248,7 +252,7 @@ WHERE aggregate_kind = 'network_dns_name' AND payload->>'dns_name_id' = $2::TEXT
 	moved, err := service.UpdateName(ctx, owner, scope, corp, git.ID, 1, dnszone.NameDefinition{
 		Kind: dnszone.NameAddress, Target: address("10.0.5.50")}, newCorrelationID(t))
 	if err != nil || !moved.Changed || moved.Name.Version != 2 || moved.Previous == nil ||
-		countDNSNameAudit(ctx, t, admin, "dns_name.updated") != 1 {
+		countDNSNameAudit(ctx, t, admin, "dns_name.updated") != updatedBefore+1 {
 		t.Fatalf("update = %+v, error = %v", moved, err)
 	}
 	if _, err := service.DeleteName(ctx, owner, scope, corp, git.ID, 1, newCorrelationID(t)); !errors.Is(err,
