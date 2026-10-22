@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -124,7 +125,8 @@ func TestPrivateIdentityRuntimeProcessIntegration(t *testing.T) {
 		t.Fatal("real TLS landing granted authority or failed")
 	}
 	// Synthetic query canaries enter the actual compiled TLS dispatcher without
-	// browser possession. No response or durable authority may be released.
+	// browser possession. Only the fixed refusal page may be released: no
+	// cookie, redirect, query material or durable authority.
 	privateRuntimeQueryCanaries(
 		t,
 		client,
@@ -218,7 +220,7 @@ func TestPrivateIdentityRuntimeProcessIntegration(t *testing.T) {
 	capturesObserved := false
 	for _, line := range strings.Split(string(body), "\n") {
 		if strings.HasPrefix(line, "meshtransit_browser_login_dispatch_requests_total{") &&
-			strings.Contains(line, `operation="capture"`) && strings.Contains(line, `result="handler_error"`) &&
+			strings.Contains(line, `operation="capture_refused"`) && strings.Contains(line, `result="delegated"`) &&
 			strings.HasSuffix(line, "} 3") {
 			capturesObserved = true
 		}
@@ -273,7 +275,7 @@ func privateRuntimeCanaryFree(contents []byte) bool {
 func privateRuntimeQueryCanaries(t *testing.T, client *http.Client, target, issuer string) {
 	t.Helper()
 	// Request.Close prevents subsequent reuse, not reuse of the landing socket.
-	// Discard existing idle sockets before the first no-response GET.
+	// Discard existing idle sockets before the first canary GET.
 	client.CloseIdleConnections()
 	state := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x71}, 32))
 	for _, query := range []string{
@@ -294,17 +296,38 @@ func privateRuntimeQueryCanaries(t *testing.T, client *http.Client, target, issu
 		// Use a fresh owned connection, with no transport retry on a reused one.
 		request.Close = true
 		response, err := client.Do(request)
-		if response != nil {
-			if closeErr := response.Body.Close(); closeErr != nil {
-				t.Fatal("close unexpected custody response")
-			}
-			t.Fatal("query without possession released response")
+		if err != nil {
+			t.Fatal("query without possession dropped the connection")
 		}
-		if !errors.Is(err, io.EOF) {
-			t.Fatal("query rejection did not close before response")
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, privateRuntimeRefusalMaxBytes+1))
+		if closeErr := response.Body.Close(); readErr != nil || closeErr != nil {
+			t.Fatal("refusal page not consumed/closed")
+		}
+		// Since 8239c47c a failed callback answers the static expired-link page
+		// instead of aborting the connection; it must stay that page alone.
+		var header bytes.Buffer
+		if response.Header.Write(&header) != nil {
+			t.Fatal("serialize refusal headers")
+		}
+		refused := response.StatusCode == http.StatusBadRequest && len(response.Cookies()) == 0 &&
+			response.Header.Get("Location") == "" && slices.Contains(
+			strings.Split(strings.ReplaceAll(response.Header.Get("Cache-Control"), " ", ""), ","), "no-store")
+		if !refused {
+			t.Fatalf("query without possession answered %d: cookies=%d location=%t cache-control=%q",
+				response.StatusCode, len(response.Cookies()), response.Header.Get("Location") != "",
+				response.Header.Get("Cache-Control"))
+		}
+		if len(body) > privateRuntimeRefusalMaxBytes || !bytes.Contains(body, []byte(privateRuntimeRefusalTitle)) ||
+			!privateRuntimeCanaryFree(body) || !privateRuntimeCanaryFree(header.Bytes()) {
+			t.Fatal("query without possession released more than the refusal page")
 		}
 	}
 }
+
+const (
+	privateRuntimeRefusalTitle    = "This sign-in link has expired"
+	privateRuntimeRefusalMaxBytes = 32 * 1024
+)
 
 func TestPrivateRuntimeCanaryTransportDoesNotRetry(t *testing.T) {
 	t.Cleanup(func() { goleak.VerifyNone(t) })
@@ -315,7 +338,9 @@ func TestPrivateRuntimeCanaryTransportDoesNotRetry(t *testing.T) {
 			return
 		}
 		captures.Add(1)
-		panic(http.ErrAbortHandler)
+		response.Header().Set("Cache-Control", "no-store")
+		response.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(response, privateRuntimeRefusalTitle)
 	}))
 	t.Cleanup(server.Close)
 	certificate := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
