@@ -412,6 +412,9 @@ func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, e
 			capabilities = append(capabilities, "routes.selection1")
 		}
 	}
+	if stream.options.EnableDNSForward {
+		capabilities = append(capabilities, "dns.forward1")
+	}
 	if stream.options.EnableExitNode {
 		capabilities = append(capabilities, "router.exit.v1")
 		if !stream.options.EnableSubnetRouter {

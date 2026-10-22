@@ -163,6 +163,10 @@ type NetmapOptions struct {
 	// (mtcp-v1 §7.7, router.exit.v1): it reports whether its settings offer
 	// to be one, and its exit health.
 	EnableExitNode bool
+	// EnableDNSForward advertises that the node's resolver applies forward
+	// DNS zones (mtcp-v1 §7.3, dns.forward1): routes with resolvers and
+	// ports, routes no resolver can serve, and their failure modes.
+	EnableDNSForward bool
 	// HostOffers, with EnableSubnetRouter or EnableExitNode, carries what the
 	// host's local settings offer: the subnets it forwards to and whether it
 	// may be an exit node; each offer is sent to Core in a HostinfoReport,

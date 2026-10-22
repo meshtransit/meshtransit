@@ -327,3 +327,56 @@ func TestValidateAndClone_BoundsDNSRecords(t *testing.T) {
 		}
 	}
 }
+
+// Only a route's resolvers (a forward zone's resolver Devices) take a port
+// other than 53, and only 1024-65535; an unavailable route has none.
+func TestValidateAndClone_ForwardZoneRoutes(t *testing.T) {
+	t.Parallel()
+	device := netip.MustParseAddr("100.64.0.7")
+	for name, test := range map[string]struct {
+		change func(*DNSConfig)
+		valid  bool
+	}{
+		"route port 5335": {func(config *DNSConfig) {
+			config.Routes = []DNSRoute{{
+				Suffix: "corp", FailOpen: true,
+				Resolvers: []DNSResolver{{Address: netip.AddrPortFrom(device, 5335)}},
+			}}
+		}, true},
+		"unavailable": {func(config *DNSConfig) {
+			config.Routes = []DNSRoute{{Suffix: "corp", Unavailable: true}}
+		}, true},
+		"route port 80": {func(config *DNSConfig) {
+			config.Routes = []DNSRoute{{Suffix: "corp", Resolvers: []DNSResolver{{Address: netip.AddrPortFrom(device, 80)}}}}
+		}, false},
+		"LAN port 5335": {func(config *DNSConfig) {
+			config.Routes = []DNSRoute{{Suffix: "corp", Resolvers: []DNSResolver{
+				{Address: netip.MustParseAddrPort("192.168.1.2:5335")},
+			}}}
+		}, false},
+		"global port 5335": {func(config *DNSConfig) {
+			config.Resolvers = []DNSResolver{{Address: netip.AddrPortFrom(device, 5335)}}
+		}, false},
+		"unavailable with resolvers": {func(config *DNSConfig) {
+			config.Routes = []DNSRoute{{
+				Suffix: "corp", Unavailable: true,
+				Resolvers: []DNSResolver{{Address: netip.AddrPortFrom(device, 53)}},
+			}}
+		}, false},
+		"unavailable root": {func(config *DNSConfig) {
+			config.Routes = []DNSRoute{{Suffix: ".", Unavailable: true}}
+		}, false},
+	} {
+		snapshot := validSnapshot()
+		test.change(snapshot.DNS)
+		cloned, err := ValidateAndClone(snapshot, time.Now())
+		if (err == nil) != test.valid {
+			t.Errorf("%s: error = %v", name, err)
+			continue
+		}
+		if err == nil && (cloned.DNS.Routes[0].Unavailable != snapshot.DNS.Routes[0].Unavailable ||
+			cloned.DNS.Routes[0].FailOpen != snapshot.DNS.Routes[0].FailOpen) {
+			t.Errorf("%s: clone lost the route's mode", name)
+		}
+	}
+}

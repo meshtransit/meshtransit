@@ -75,11 +75,20 @@ func exitDNSOf(snapshot networkmap.Snapshot) *ExitDNS {
 }
 
 // Route is one canonical suffix and its ordered resolver set. An empty
-// Resolvers slice marks a locally authoritative suffix.
+// Resolvers slice marks a locally authoritative suffix, unless Unavailable:
+// a forward zone none of whose resolvers can be used now. FailOpen sends a
+// forward zone's names to the host's own resolvers (the exit node's
+// forwarder while one is in use) when no resolver answers or none can be
+// used; otherwise they are answered SERVFAIL (DNS design D1 §5.3).
 type Route struct {
-	Suffix    string
-	Resolvers []netip.AddrPort
+	Suffix      string
+	Resolvers   []netip.AddrPort
+	Unavailable bool
+	FailOpen    bool
 }
+
+// local reports whether the node answers the route's names itself.
+func (route Route) local() bool { return len(route.Resolvers) == 0 && !route.Unavailable }
 
 // Host groups all address records for one canonical DNS name.
 type Host struct {
@@ -110,13 +119,18 @@ func Compile(snapshot networkmap.Snapshot) (Plan, error) {
 	plan.FallbackResolvers = resolverAddresses(config.FallbackResolvers)
 	plan.Routes = make([]Route, 0, len(config.Routes))
 	for _, route := range config.Routes {
-		if len(route.Resolvers) == 0 && (route.Suffix == "." || !strings.Contains(route.Suffix, ".")) {
+		// A forward zone keeps its route even on one label, so a zone that
+		// fails closed never falls to the host's DNS.
+		if len(route.Resolvers) == 0 && !route.Unavailable &&
+			(route.Suffix == "." || !strings.Contains(route.Suffix, ".")) {
 			plan.IgnoredRoutes++
 			continue
 		}
 		plan.Routes = append(plan.Routes, Route{
-			Suffix:    route.Suffix,
-			Resolvers: resolverAddresses(route.Resolvers),
+			Suffix:      route.Suffix,
+			Resolvers:   resolverAddresses(route.Resolvers),
+			Unavailable: route.Unavailable,
+			FailOpen:    route.FailOpen,
 		})
 	}
 	plan.SearchDomains = append([]string(nil), config.SearchDomains...)
@@ -273,7 +287,7 @@ func locallyAuthoritative(routes []Route, name string) bool {
 			continue
 		}
 		bestLength = len(route.Suffix)
-		local = len(route.Resolvers) == 0
+		local = route.local()
 	}
 
 	return bestLength >= 0 && local

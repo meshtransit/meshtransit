@@ -18,7 +18,6 @@ import (
 
 	"meshtransit.net/client/internal/overlayframe"
 	"meshtransit.net/client/internal/underlay"
-	"meshtransit.net/shared/internet"
 )
 
 const (
@@ -50,11 +49,16 @@ type resolverEngine struct {
 	// §17.5).
 	captive          atomic.Bool
 	networkResolvers func() []netip.AddrPort
+	// breaker skips forward zone resolvers that keep failing.
+	breaker *resolverBreaker
+	// network caches networkResolvers for zones that fail open.
+	network networkResolverCache
 }
 
 func newResolverEngine() *resolverEngine {
 	return &resolverEngine{
 		forwardSlots: make(chan struct{}, maxForwardQueries), networkResolvers: underlay.NetworkResolvers,
+		breaker: newResolverBreaker(time.Now),
 	}
 }
 
@@ -94,7 +98,7 @@ func (e *resolverEngine) resolve(
 	}
 
 	route, routed := mostSpecificRoute(plan.Routes, name)
-	if routed && len(route.Resolvers) == 0 {
+	if routed && route.local() {
 		response, err := negativeResponse(message, question, dnsmessage.RCodeNameError, route.Suffix, plan)
 		if err != nil {
 			return nil, err
@@ -102,21 +106,20 @@ func (e *resolverEngine) resolve(
 
 		return limitUDPResponse(query, response, transport)
 	}
-	resolvers := plan.DefaultResolvers
 	if routed {
-		resolvers = route.Resolvers
+		return e.resolveZone(ctx, zoneQuery{
+			plan: plan, route: route, query: query, message: message,
+			question: question, transport: transport,
+		})
 	}
+	resolvers := plan.DefaultResolvers
 	captiveWindow := false
 	if exit := plan.Exit; exit != nil {
-		// A suffix routed to a resolver of a Site or LAN keeps it; every
-		// other name goes to the exit node, never to a resolver on the
-		// Internet through the host's own network.
-		private := slices.DeleteFunc(slices.Clone(resolvers), func(resolver netip.AddrPort) bool {
-			return internet.Contains(resolver.Addr())
-		})
+		// Every name no route covers goes to the exit node, never to a
+		// resolver on the Internet through the host's own network.
+		var private []netip.AddrPort
 		network := e.captiveResolvers()
 		switch {
-		case routed && len(private) != 0:
 		case len(network) != 0:
 			// A captive portal window: the network's resolvers, from the
 			// client's own sockets, and answers that soon expire.
@@ -146,7 +149,7 @@ func (e *resolverEngine) resolve(
 	}
 	forwardCtx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
-	response, err := forwardQuery(forwardCtx, query, question, resolvers, transport)
+	response, err := forwardQuery(forwardCtx, query, question, resolvers, transport, nil)
 	if err != nil {
 		return failureResponse(query, message, question, plan, transport, err)
 	}
@@ -422,7 +425,7 @@ func mostSpecificRoute(routes []Route, name string) (Route, bool) {
 
 func authoritativeZone(routes []Route, name string) string {
 	route, found := mostSpecificRoute(routes, name)
-	if found && len(route.Resolvers) == 0 {
+	if found && route.local() {
 		return route.Suffix
 	}
 
@@ -473,12 +476,23 @@ func parseReverseName(name string) (netip.Addr, bool) {
 	return netip.Addr{}, false
 }
 
+// trialGate decides which resolvers forwardQuery asks and learns how each
+// trial went (resolverBreaker through zoneGate).
+type trialGate interface {
+	allow(netip.AddrPort) bool
+	record(netip.AddrPort, error)
+	release(netip.AddrPort)
+}
+
+// forwardQuery asks resolvers in order until one answers; gate, when not
+// nil, skips resolvers and learns from each trial.
 func forwardQuery(
 	ctx context.Context,
 	query []byte,
 	question dnsmessage.Question,
 	resolvers []netip.AddrPort,
 	transport string,
+	gate trialGate,
 ) ([]byte, error) {
 	forwarded := append([]byte(nil), query...)
 	originalID := binary.BigEndian.Uint16(forwarded[:2])
@@ -492,14 +506,31 @@ func forwardQuery(
 		if err := ctx.Err(); err != nil {
 			return nil, errors.Join(append(failures, err)...)
 		}
+		if gate != nil && !gate.allow(resolver) {
+			continue
+		}
 		attemptCtx, cancel := context.WithTimeout(ctx, resolverAttemptTimeout)
 		response, err := exchangeDNS(attemptCtx, forwarded, resolver, transport)
 		cancel()
-		if err != nil {
-			failures = append(failures, fmt.Errorf("resolver %s: %w", resolver, err))
-			continue
+		if err == nil {
+			err = validateForwardResponse(response, binary.BigEndian.Uint16(randomID[:]), question)
 		}
-		if err := validateForwardResponse(response, binary.BigEndian.Uint16(randomID[:]), question); err != nil {
+		if gate != nil {
+			switch {
+			case err == nil || errors.Is(err, errUpstreamServerFailure) || errors.Is(err, errUpstreamRefused):
+				// It answered: SERVFAIL or REFUSED is about the name or the
+				// type (DNSSEC, views), not the resolver.
+				gate.record(resolver, nil)
+			case ctx.Err() != nil || transport == "tcp":
+				// The question was given up or ran out of its budget, or
+				// only TCP failed (policy may admit UDP alone): not the
+				// resolver's fault.
+				gate.release(resolver)
+			default:
+				gate.record(resolver, err)
+			}
+		}
+		if err != nil {
 			failures = append(failures, fmt.Errorf("resolver %s: %w", resolver, err))
 			continue
 		}
@@ -528,7 +559,11 @@ func exchangeDNS(
 		return nil, err
 	}
 	if isTruncated(response) {
-		return exchangeTCP(ctx, query, resolver)
+		// Without TCP to the resolver (a rule may admit UDP alone), the
+		// truncated answer still tells the client to ask over TCP.
+		if full, tcpErr := exchangeTCP(ctx, query, resolver); tcpErr == nil {
+			return full, nil
+		}
 	}
 
 	return response, nil

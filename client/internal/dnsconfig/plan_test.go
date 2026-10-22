@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 	"testing"
 
 	"meshtransit.net/client/internal/networkmap"
@@ -332,5 +333,34 @@ func TestCompileSkipsLocalRoutesForTheRootAndSingleLabels(t *testing.T) {
 	if plan.IgnoredRoutes != 2 || len(plan.Routes) != 2 || plan.Routes[0].Suffix != "corp" ||
 		plan.Routes[1].Suffix != "mesh.internal" || locallyAuthoritative(plan.Routes, "www.example.com") {
 		t.Fatalf("routes = %#v, ignored %d", plan.Routes, plan.IgnoredRoutes)
+	}
+}
+
+// A forward zone's route stays even on a single label: unavailable, it is
+// not answered locally, so its names follow the zone's failure mode.
+func TestCompileKeepsForwardZoneRoutes(t *testing.T) {
+	t.Parallel()
+
+	snapshot := coreSnapshot()
+	snapshot.DNS.Routes = append(snapshot.DNS.Routes,
+		networkmap.DNSRoute{Suffix: "lab", Unavailable: true, FailOpen: true},
+		networkmap.DNSRoute{Suffix: "corp", Resolvers: []networkmap.DNSResolver{
+			{Address: netip.MustParseAddrPort("100.64.0.7:5335")},
+		}},
+	)
+	plan, err := Compile(snapshot)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	lab, found := mostSpecificRoute(plan.Routes, "wiki.lab")
+	if !found || lab.Suffix != "lab" || !lab.Unavailable || !lab.FailOpen || lab.local() ||
+		locallyAuthoritative(plan.Routes, "wiki.lab") || plan.IgnoredRoutes != 0 {
+		t.Fatalf("routes = %#v, ignored %d", plan.Routes, plan.IgnoredRoutes)
+	}
+	if cloned := clonePlan(plan); !slices.EqualFunc(cloned.Routes, plan.Routes, func(left, right Route) bool {
+		return left.Suffix == right.Suffix && left.Unavailable == right.Unavailable &&
+			left.FailOpen == right.FailOpen && slices.Equal(left.Resolvers, right.Resolvers)
+	}) {
+		t.Fatal("a cloned plan loses route modes")
 	}
 }

@@ -62,8 +62,45 @@ map shows a consumer Device only under a placeholder that does not resolve.
 Core sends the names in each map (MTCP §7.3): an address record per name and
 address, the suffix as a route the node answers itself, and the Network's
 zone as search domain. The node replaces its whole DNS configuration with
-every map and derives the reverse records itself. Core does not yet send
-upstream resolvers, and there is no API to configure DNS for a Network.
+every map and derives the reverse records itself. With DNS zones, Core also
+sends forward zones (below).
+
+## Forward zones
+
+A Network admin can send a domain to chosen resolvers: a DNS zone, created
+through the management API with `dns.manage` when the deployment sets
+`MESHTRANSIT_DNS_ZONES_ENABLED`. Its resolvers are, in order, Devices of the
+Network (port 53 or 1024-65535) or addresses on the Internet (port 53); it
+goes to every Device or to Device Groups. A node on Linux, macOS or Windows
+with DNS on applies zones (MTCP `dns.forward1`); Android and iOS do not yet.
+
+- The host routes the zone's domain to the node's resolver, which asks the
+  zone's resolvers in order (1.5 s each). A resolver Device is listed only
+  while the active policy has a rule from this Device to it over UDP on its
+  port; add TCP too for large answers.
+- A zone none of whose resolvers can be used now still has its route, so
+  its names never fall to the host's DNS by accident; a single-label domain
+  (`corp`) is routed too.
+- **Failure mode.** When no resolver answers, or none can be used, a zone
+  that fails `closed` answers `SERVFAIL`; one that fails `open` asks the
+  host's network resolvers from the node's own sockets (the exit node's
+  DNS forwarder while one is in use), with its own 2 seconds after 3 seconds
+  for the zone's resolvers.
+- A resolver that fails 3 times in a row (no answer, a broken answer) is
+  skipped for 30 seconds; then the next question tries it again. `SERVFAIL`
+  and `REFUSED` are about the name and never count. A truncated answer from
+  a resolver the node cannot reach over TCP is passed on truncated.
+- A zone that fails `closed` never reaches the host's network, not even in a
+  captive portal window.
+- A resolver Device may listen on port 53 or 1024-65535; the node asks no
+  other address on a port other than 53.
+- While the node uses an exit node, Device resolvers keep their place and an
+  Internet resolver is replaced by the exit node's DNS forwarder: no question
+  leaves through the host's own network.
+- Zones with a search position are search domains after the Network's zone,
+  at most 8 in all.
+- Zones apply only while the node is connected to Core: when the control
+  session ends the node removes its DNS from the host, `closed` included.
 
 ## How the resolver answers
 
@@ -72,6 +109,7 @@ upstream resolvers, and there is no API to configure DNS for a Network.
 | A known name, type A, AAAA or ANY | Authoritative answer with its addresses |
 | A known name, any other type or a missing family | `NODATA` with an SOA |
 | An unknown name under a name the resolver owns | `NXDOMAIN` with an SOA |
+| A name under a forward zone | The zone's resolvers' answer, or its failure mode |
 | Any other name | Not asked: the host sends it to its own resolvers |
 
 - Answers live 5 seconds, negative answers 10 seconds.
@@ -80,11 +118,12 @@ upstream resolvers, and there is no API to configure DNS for a Network.
   version `BADVERS`. EDNS0 is answered with a 4096-byte buffer.
 - At most 256 UDP queries and 64 TCP connections at once; a query is at most
   4096 bytes. Query names are never logged.
-- The resolver can also forward a domain to upstream resolvers, trying them
-  in order (1.5 s each, 5 s in all), with a random transaction ID, accepting
-  only an answer to the same question, and retrying a truncated UDP answer
-  over TCP. Core does not configure forwarding yet. Encrypted upstreams (DoH,
-  DoT) are not supported: a resolver given as a URL is ignored.
+- The resolver forwards a forward zone's names to its resolvers, trying them
+  in order (1.5 s each, 5 s in all, 3 s when the zone fails open), with a
+  random transaction ID, accepting only an answer to the same question, and
+  retrying a truncated UDP answer over TCP. Encrypted upstreams (DoH, DoT)
+  are not supported: a resolver given as a URL is ignored, and a zone left
+  without resolvers is unavailable.
 - A UDP answer larger than 512 bytes, or than the size the client announced
   with EDNS0, is truncated and marked so.
 
@@ -137,11 +176,9 @@ that route itself).
 
 ## Not yet
 
-- Custom records. Resolvers and routes configured in Core: DNS zones (a
-  domain and up to four resolvers, a Device of the Network or an address on
-  the Internet, sent to all Devices or to Device Groups) can be created and
-  changed through the management API with `dns.manage` when the deployment
-  sets `MESHTRANSIT_DNS_ZONES_ENABLED`, but maps do not carry them yet.
+- Custom records, and a zone for every other name (the root).
+- Internet resolvers of a zone asked through the exit node itself (today the
+  exit node's DNS forwarder answers instead).
 - The search domain on Windows: the NRPT routes the zone to the resolver, but
   short names are not completed.
 - Reverse lookups through the host's resolver: the node's resolver answers

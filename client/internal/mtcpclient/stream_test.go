@@ -745,3 +745,30 @@ func TestStreamNetmapReportsExitHealth(t *testing.T) {
 		t.Fatal("no exit health reached Core")
 	}
 }
+
+// A node whose resolver applies forward zones declares dns.forward1; one
+// without it does not.
+func TestStreamNetmapDeclaresDNSForward(t *testing.T) {
+	t.Parallel()
+	for _, enabled := range []bool{true, false} {
+		core := newStreamCore(t, func(core *streamCore, s *coreSession, _ int32) {
+			core.keyUpdate(s)
+			_ = s.send(sharedmtcp.MessageMapSnapshot, core.snapshot(1))
+			_ = s.send(sharedmtcp.MessageLifecycle, &mtcpv1.Lifecycle{State: mtcpv1.Lifecycle_REVOKED})
+			answerPings(s)
+		})
+		material, options := core.options(t)
+		options.EnableDNSForward = enabled
+		err := core.client().StreamNetmap(t.Context(), core.origin(), material, options,
+			func(context.Context, networkmap.Snapshot) error { return nil })
+		if !errors.Is(err, controlplane.ErrNetmapAuthorityRevoked) {
+			t.Fatalf("StreamNetmap = %v", err)
+		}
+		declared := slices.ContainsFunc(core.hello, func(hello *mtcpv1.ClientHello) bool {
+			return slices.Contains(hello.GetCapabilities(), "dns.forward1")
+		})
+		if declared != enabled {
+			t.Fatalf("dns.forward1 declared %t with EnableDNSForward %t", declared, enabled)
+		}
+	}
+}

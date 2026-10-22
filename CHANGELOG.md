@@ -5,6 +5,15 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Clients (DNS design D1a.3, MTCP `dns.forward1`): `meshd` with DNS on
+  (Linux, macOS, Windows) applies the DNS zones Core sends: each zone's
+  domain, single labels included, goes to its resolvers in order, on their
+  ports. When no resolver answers or none can be used, a zone that fails
+  `closed` answers `SERVFAIL` and one that fails `open` asks the host's
+  network resolvers (the exit node's forwarder while one is in use). A
+  resolver that fails 3 times in a row is skipped for 30 seconds. While an
+  exit node is in use, a zone's Internet resolvers are replaced by the exit
+  node's forwarder.
 - Core (DNS design D1a.2, schema 214, MTCP `dns.forward1`): maps carry DNS
   zones to nodes that declare `dns.split`, `dns.forward1` and `map.large1`:
   one route per zone sent to the Device, its resolvers in order with their

@@ -159,6 +159,12 @@ func validateDNSConfig(config DNSConfig) error {
 		if len(route.Resolvers) > maxDNSRouteResolvers {
 			return fmt.Errorf("route %d resolver count exceeds %d", index, maxDNSRouteResolvers)
 		}
+		if route.Unavailable && len(route.Resolvers) != 0 {
+			return fmt.Errorf("route %d is unavailable but has resolvers", index)
+		}
+		if route.Unavailable && route.Suffix == "." {
+			return fmt.Errorf("route %d is an unavailable root", index)
+		}
 		if err := validateDNSResolvers("route", route.Resolvers); err != nil {
 			return fmt.Errorf("route %d: %w", index, err)
 		}
@@ -209,7 +215,7 @@ func validateDNSResolvers(kind string, resolvers []DNSResolver) error {
 	for index, resolver := range resolvers {
 		endpoint := resolver.Address
 		address := endpoint.Addr()
-		if !endpoint.IsValid() || endpoint.Port() != 53 || address.Is4In6() ||
+		if !endpoint.IsValid() || !validDNSResolverPort(kind, endpoint) || address.Is4In6() ||
 			!address.IsGlobalUnicast() || address.IsLoopback() ||
 			address.IsLinkLocalUnicast() || address.Zone() != "" {
 			return fmt.Errorf("%s resolver %d is invalid or unsupported", kind, index)
@@ -221,6 +227,15 @@ func validateDNSResolvers(kind string, resolvers []DNSResolver) error {
 	}
 
 	return nil
+}
+
+// validDNSResolverPort accepts port 53, and for a route's resolver in the
+// mesh (a resolver Device of a forward zone) also 1024-65535: control never
+// points the node's own sockets at another port of a LAN or Internet host.
+func validDNSResolverPort(kind string, endpoint netip.AddrPort) bool {
+	address := endpoint.Addr()
+	return endpoint.Port() == 53 || (kind == "route" && endpoint.Port() >= 1024 &&
+		overlayframe.Contains(netip.PrefixFrom(address, address.BitLen())))
 }
 
 func validCanonicalDNSName(value string, allowRoot bool) bool {
@@ -557,8 +572,10 @@ func cloneDNSConfig(config *DNSConfig) *DNSConfig {
 	cloned.Routes = make([]DNSRoute, len(config.Routes))
 	for index, route := range config.Routes {
 		cloned.Routes[index] = DNSRoute{
-			Suffix:    route.Suffix,
-			Resolvers: append([]DNSResolver(nil), route.Resolvers...),
+			Suffix:      route.Suffix,
+			Resolvers:   append([]DNSResolver(nil), route.Resolvers...),
+			Unavailable: route.Unavailable,
+			FailOpen:    route.FailOpen,
 		}
 	}
 	cloned.SearchDomains = append([]string(nil), config.SearchDomains...)

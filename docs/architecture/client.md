@@ -363,9 +363,11 @@ local address and the host routes only the mesh names to it (split DNS);
 other names keep using the host's resolvers. The map carries an address
 record for each name (the node's own, its same-Network peers' and its
 imported shares'), the suffix as a locally answered route and the Network's
-zone as search domain. The node derives reverse (PTR) records itself from the
-records of the zone its own name is in. On Android and iOS, DNS is not
-implemented. See [DNS](../concepts/dns.md).
+zone as search domain, and with `dns.forward1` the Network's forward zones,
+whose names the resolver asks the zones' resolvers (with a failure mode and a
+circuit breaker per resolver). The node derives reverse (PTR) records itself
+from the records of the zone its own name is in. On Android and iOS, DNS is
+not implemented. See [DNS](../concepts/dns.md).
 
 ### Device aliases
 

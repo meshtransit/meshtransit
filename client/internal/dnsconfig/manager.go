@@ -188,8 +188,10 @@ func clonePlan(plan Plan) Plan {
 	cloned.Routes = make([]Route, len(plan.Routes))
 	for index, route := range plan.Routes {
 		cloned.Routes[index] = Route{
-			Suffix:    route.Suffix,
-			Resolvers: append([]netip.AddrPort(nil), route.Resolvers...),
+			Suffix:      route.Suffix,
+			Resolvers:   append([]netip.AddrPort(nil), route.Resolvers...),
+			Unavailable: route.Unavailable,
+			FailOpen:    route.FailOpen,
 		}
 	}
 	cloned.SearchDomains = append([]string(nil), plan.SearchDomains...)

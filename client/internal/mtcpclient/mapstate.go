@@ -17,6 +17,7 @@ import (
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
 	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/networkmap"
+	"meshtransit.net/client/internal/overlayframe"
 	"meshtransit.net/shared/key"
 	sharedmtcp "meshtransit.net/shared/mtcp"
 	"meshtransit.net/shared/mtrp"
@@ -515,31 +516,60 @@ func convertSelector(selector policydigest.Selector) (networkmap.Selector, error
 	}
 }
 
-// convertDNS keeps classic IP resolvers on port 53 and drops URL
-// resolvers, which the product's DNS model does not run yet.
+// convertDNS keeps classic IP resolvers and drops URL resolvers, which the
+// product's DNS model does not run yet. A resolver's port 0 is 53; only a
+// route's resolver in the mesh (dns.forward1) may use another port, 1024 or
+// above, and any other is dropped. A route of a forward zone whose resolvers
+// were all dropped, or that says it is unavailable, is kept unavailable, so
+// its names follow its failure mode instead of the host's DNS, and one odd
+// route never stops the map.
 func convertDNS(config *mtcpv1.DnsConfig) (*networkmap.DNSConfig, error) {
 	if config == nil {
 		return nil, nil
 	}
 	out := &networkmap.DNSConfig{}
-	resolvers := func(raw []*mtcpv1.Resolver) []networkmap.DNSResolver {
+	resolvers := func(raw []*mtcpv1.Resolver, route bool) []networkmap.DNSResolver {
 		converted := []networkmap.DNSResolver{}
 		for _, resolver := range raw {
 			address, ok := netip.AddrFromSlice(resolver.GetIp())
 			if !ok || resolver.GetUrl() != "" {
 				continue
 			}
-			converted = append(converted, networkmap.DNSResolver{Address: netip.AddrPortFrom(address.Unmap(), 53)})
+			address = address.Unmap()
+			port := resolver.GetPort()
+			if port == 0 {
+				port = 53
+			}
+			if port != 53 && (!route || port < 1024 || port > 65535 ||
+				!overlayframe.Contains(netip.PrefixFrom(address, address.BitLen()))) {
+				continue
+			}
+			converted = append(converted, networkmap.DNSResolver{
+				Address: netip.AddrPortFrom(address, uint16(port)),
+			})
 		}
 		return converted
 	}
-	out.Resolvers = resolvers(config.GetResolvers())
+	out.Resolvers = resolvers(config.GetResolvers(), false)
 	for _, route := range config.GetRoutes() {
+		// The root as a zone (DNS design D1b) is not applied yet; the node
+		// never answers every name itself either.
+		if route.GetSuffix() == "." {
+			continue
+		}
 		suffix, err := canonicalDNSName(route.GetSuffix())
 		if err != nil {
 			return nil, err
 		}
-		out.Routes = append(out.Routes, networkmap.DNSRoute{Suffix: suffix, Resolvers: resolvers(route.GetResolvers())})
+		routeResolvers := resolvers(route.GetResolvers(), true)
+		unavailable := route.GetUnavailable() || (len(route.GetResolvers()) != 0 && len(routeResolvers) == 0)
+		if unavailable {
+			routeResolvers = []networkmap.DNSResolver{}
+		}
+		out.Routes = append(out.Routes, networkmap.DNSRoute{
+			Suffix: suffix, Resolvers: routeResolvers,
+			Unavailable: unavailable, FailOpen: route.GetFailOpen(),
+		})
 	}
 	for _, domain := range config.GetSearchDomains() {
 		canonical, err := canonicalDNSName(domain)

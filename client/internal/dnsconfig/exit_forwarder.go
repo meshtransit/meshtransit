@@ -360,7 +360,7 @@ func (f *ExitForwarder) answer(ctx context.Context, query []byte, transport stri
 	}
 	forwardCtx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
-	response, err := forwardQuery(forwardCtx, query, question, upstreams, transport)
+	response, err := forwardQuery(forwardCtx, query, question, upstreams, transport, nil)
 	f.noteUpstream(err == nil)
 	if err == nil {
 		response, err = withoutPrivateAnswers(response, func(address netip.Addr) bool {

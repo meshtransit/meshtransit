@@ -340,3 +340,55 @@ func TestMapStateDropsEndpointsANodeMustNotProbe(t *testing.T) {
 		t.Fatalf("peer endpoints = %v, want only the public one", got)
 	}
 }
+
+// Forward zones (dns.forward1): a resolver's port (0 is 53), routes no
+// resolver can serve, failure modes; a route whose resolvers this client
+// cannot run (URLs) stays as an unavailable route.
+func TestConvertDNSCarriesForwardZones(t *testing.T) {
+	t.Parallel()
+	device := netip.MustParseAddr("100.64.0.7")
+	config, err := convertDNS(&mtcpv1.DnsConfig{Routes: []*mtcpv1.DnsRoute{
+		{Suffix: "corp.internal.", FailOpen: true, Resolvers: []*mtcpv1.Resolver{
+			{Ip: device.AsSlice(), Port: 5335}, {Ip: netip.MustParseAddr("1.1.1.1").AsSlice()},
+		}},
+		{Suffix: "lab", Unavailable: true},
+		{Suffix: "doh.example", Resolvers: []*mtcpv1.Resolver{{Url: "https://dns.example/dns-query"}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := config.Routes
+	if len(routes) != 3 || !routes[0].FailOpen || routes[0].Unavailable ||
+		routes[0].Resolvers[0].Address != netip.AddrPortFrom(device, 5335) ||
+		routes[0].Resolvers[1].Address != netip.MustParseAddrPort("1.1.1.1:53") ||
+		!routes[1].Unavailable || routes[1].FailOpen || !routes[2].Unavailable || len(routes[2].Resolvers) != 0 {
+		t.Fatalf("routes = %+v", routes)
+	}
+	// A resolver no node may ask is dropped, never the map: its route is
+	// then unavailable.
+	for name, route := range map[string]*mtcpv1.DnsRoute{
+		"port out of range": {Suffix: "a.lan", Resolvers: []*mtcpv1.Resolver{{Ip: device.AsSlice(), Port: 70000}}},
+		"low port":          {Suffix: "a.lan", Resolvers: []*mtcpv1.Resolver{{Ip: device.AsSlice(), Port: 80}}},
+		"LAN high port": {Suffix: "a.lan", Resolvers: []*mtcpv1.Resolver{
+			{Ip: netip.MustParseAddr("192.168.1.2").AsSlice(), Port: 5335},
+		}},
+		"unavailable with resolvers": {
+			Suffix: "a.lan", Unavailable: true,
+			Resolvers: []*mtcpv1.Resolver{{Ip: device.AsSlice()}},
+		},
+	} {
+		config, err := convertDNS(&mtcpv1.DnsConfig{Routes: []*mtcpv1.DnsRoute{route}})
+		if err != nil || len(config.Routes) != 1 || !config.Routes[0].Unavailable ||
+			len(config.Routes[0].Resolvers) != 0 {
+			t.Errorf("%s: %+v, %v", name, config, err)
+		}
+	}
+	// The root as a zone waits for D1b; a global resolver keeps port 53.
+	config, err = convertDNS(&mtcpv1.DnsConfig{
+		Routes:    []*mtcpv1.DnsRoute{{Suffix: ".", Unavailable: true}},
+		Resolvers: []*mtcpv1.Resolver{{Ip: device.AsSlice(), Port: 5335}},
+	})
+	if err != nil || len(config.Routes) != 0 || len(config.Resolvers) != 0 {
+		t.Fatalf("root zone and global port = %+v, %v", config, err)
+	}
+}

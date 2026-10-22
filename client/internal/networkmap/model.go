@@ -145,18 +145,25 @@ type DNSConfig struct {
 	Records           []DNSRecord
 }
 
-// DNSResolver is a classic UDP/TCP DNS endpoint. The initial implementation
-// deliberately accepts only IP addresses on port 53; URL-based resolvers stay
-// outside the trusted network-map model until their transport is implemented.
+// DNSResolver is a classic UDP/TCP DNS endpoint: an IP address on port 53,
+// or, for a route's resolver (a resolver Device of a forward zone), on port
+// 53 or 1024-65535. URL-based resolvers stay outside the trusted network-map
+// model until their transport is implemented.
 type DNSResolver struct {
 	Address netip.AddrPort
 }
 
 // DNSRoute sends one canonical DNS suffix to an ordered resolver set. An empty
-// resolver set means the suffix is answered by the local MeshTransit resolver.
+// resolver set means the suffix is answered by the local MeshTransit resolver,
+// unless Unavailable: then it is a forward zone none of whose resolvers can
+// be used now (mtcp-v1 §7.3), and its names follow FailOpen. FailOpen asks
+// the host's own resolvers (the exit node's forwarder while one is in use)
+// when no resolver can answer; otherwise such names are answered SERVFAIL.
 type DNSRoute struct {
-	Suffix    string
-	Resolvers []DNSResolver
+	Suffix      string
+	Resolvers   []DNSResolver
+	Unavailable bool
+	FailOpen    bool
 }
 
 // DNSRecordType is one supported local DNS record type.
