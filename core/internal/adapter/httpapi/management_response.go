@@ -42,6 +42,8 @@ type managementError struct {
 	// PeerEstimate comes with simulation_too_large: the peer counts need no
 	// Device-by-Device expansion.
 	PeerEstimate *peerEstimateBody
+	// OperationIndex names the operation of a batch that failed, from 0.
+	OperationIndex *int
 }
 
 type guardrailFindingBody struct {
@@ -62,6 +64,7 @@ type managementErrorBody struct {
 	Retryable         bool                   `json:"retryable"`
 	GuardrailFindings []guardrailFindingBody `json:"guardrail_findings,omitempty"`
 	PeerEstimate      *peerEstimateBody      `json:"peer_estimate,omitempty"`
+	OperationIndex    *int                   `json:"operation_index,omitempty"`
 }
 
 func classifyAuthenticationError(err error) managementError {
@@ -165,6 +168,7 @@ func writeManagementError(
 			CorrelationID: correlationID.String(), Retryable: apiError.Retryable,
 			GuardrailFindings: apiError.GuardrailFindings,
 			PeerEstimate:      apiError.PeerEstimate,
+			OperationIndex:    apiError.OperationIndex,
 		},
 	})
 }

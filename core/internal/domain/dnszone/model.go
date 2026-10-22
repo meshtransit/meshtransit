@@ -28,6 +28,14 @@ const (
 	MaximumConsumersPerResolver = 9744
 	// MaximumSearchPosition bounds the order of search domains.
 	MaximumSearchPosition = 1000
+	// MaximumNamesPerZone and MaximumNamesPerNetwork bound the names an
+	// administrator sets (DNS design D2 §3.4): every map of the Network
+	// carries those its Device may see.
+	MaximumNamesPerZone    = 2000
+	MaximumNamesPerNetwork = 10000
+	// MaximumHostNamesPerNetwork bounds the names in zones of kind host:
+	// each is a domain the host routes to its resolver, among at most 256.
+	MaximumHostNamesPerNetwork = 200
 )
 
 // DNSPort is the port of a resolver on the Internet and the default of a
@@ -44,13 +52,17 @@ type Limits struct {
 	ZonesPerNetwork       int
 	SearchZonesPerNetwork int
 	ConsumersPerResolver  int
+	NamesPerZone          int
+	NamesPerNetwork       int
+	HostNamesPerNetwork   int
 }
 
 // DefaultLimits returns the technical ceilings.
 func DefaultLimits() Limits {
 	return Limits{
 		ZonesPerNetwork: MaximumZonesPerNetwork, SearchZonesPerNetwork: MaximumSearchZonesPerNetwork,
-		ConsumersPerResolver: MaximumConsumersPerResolver,
+		ConsumersPerResolver: MaximumConsumersPerResolver, NamesPerZone: MaximumNamesPerZone,
+		NamesPerNetwork: MaximumNamesPerNetwork, HostNamesPerNetwork: MaximumHostNamesPerNetwork,
 	}
 }
 
@@ -58,7 +70,10 @@ func DefaultLimits() Limits {
 func (limits Limits) Validate() error {
 	if limits.ZonesPerNetwork < 1 || limits.ZonesPerNetwork > MaximumZonesPerNetwork ||
 		limits.SearchZonesPerNetwork < 0 || limits.SearchZonesPerNetwork > MaximumSearchZonesPerNetwork ||
-		limits.ConsumersPerResolver < 1 || limits.ConsumersPerResolver > MaximumConsumersPerResolver {
+		limits.ConsumersPerResolver < 1 || limits.ConsumersPerResolver > MaximumConsumersPerResolver ||
+		limits.NamesPerZone < 1 || limits.NamesPerZone > MaximumNamesPerZone ||
+		limits.NamesPerNetwork < 1 || limits.NamesPerNetwork > MaximumNamesPerNetwork ||
+		limits.HostNamesPerNetwork < 0 || limits.HostNamesPerNetwork > MaximumHostNamesPerNetwork {
 		return ErrInvalid
 	}
 	return nil
@@ -98,6 +113,27 @@ const (
 // IsKnown reports a failure mode a zone can store.
 func (mode FailureMode) IsKnown() bool { return mode == FailOpen || mode == FailClosed }
 
+// OtherNames is what a zone answers for the names it does not hold (DNS
+// design D2 §3.1).
+type OtherNames string
+
+// What other names get.
+const (
+	// OtherForward asks the zone's resolvers (D1).
+	OtherForward OtherNames = "forward"
+	// OtherNXDomain answers that no such name exists, on the Device: a
+	// private domain whose mistyped names never leave.
+	OtherNXDomain OtherNames = "nxdomain"
+	// OtherHost leaves them to the host's own DNS: a domain on the Internet
+	// where a few names are set.
+	OtherHost OtherNames = "host"
+)
+
+// IsKnown reports a kind a zone can store.
+func (other OtherNames) IsKnown() bool {
+	return other == OtherForward || other == OtherNXDomain || other == OtherHost
+}
+
 // Resolver is one resolver of a zone: a Device of the Network, or an
 // address on the Internet; exactly one is set.
 type Resolver struct {
@@ -129,9 +165,11 @@ func (resolver Resolver) Validate() error {
 
 // Definition is what a create or update sends: the whole zone each time.
 // Groups empty sends the zone to every Device of the Network. A nil
-// SearchPosition keeps the domain out of the search domains.
+// SearchPosition keeps the domain out of the search domains. Only a forward
+// zone has resolvers and a failure mode; the others keep none and fail open.
 type Definition struct {
 	Domain          string
+	OtherNames      OtherNames
 	FailureMode     FailureMode
 	Resolvers       []Resolver
 	Groups          []devicegroup.ID
@@ -141,8 +179,19 @@ type Definition struct {
 
 // Validate checks everything but the domain, which ParseDomain checks.
 func (definition Definition) Validate(limits Limits) error {
-	if !definition.FailureMode.IsKnown() || len(definition.Resolvers) == 0 ||
-		len(definition.Resolvers) > MaximumResolversPerZone || len(definition.Groups) > MaximumGroupsPerZone {
+	switch definition.OtherNames {
+	case OtherForward:
+		if !definition.FailureMode.IsKnown() || len(definition.Resolvers) == 0 {
+			return ErrInvalid
+		}
+	case OtherNXDomain, OtherHost:
+		if len(definition.Resolvers) != 0 || (definition.FailureMode != "" && definition.FailureMode != FailOpen) {
+			return ErrInvalid
+		}
+	default:
+		return ErrInvalid
+	}
+	if len(definition.Resolvers) > MaximumResolversPerZone || len(definition.Groups) > MaximumGroupsPerZone {
 		return ErrInvalid
 	}
 	for index, resolver := range definition.Resolvers {
@@ -168,9 +217,13 @@ func (definition Definition) Validate(limits Limits) error {
 }
 
 // Canonical returns the definition with its groups in a stable order:
-// resolvers keep the order the admin chose.
+// resolvers keep the order the admin chose. A zone that is not forward
+// fails open.
 func (definition Definition) Canonical() Definition {
 	canonical := definition
+	if definition.OtherNames != OtherForward {
+		canonical.FailureMode = FailOpen
+	}
 	canonical.Resolvers = slices.Clone(definition.Resolvers)
 	canonical.Groups = slices.Clone(definition.Groups)
 	slices.SortFunc(canonical.Groups, func(left, right devicegroup.ID) int {
@@ -215,6 +268,7 @@ type Group struct {
 type Zone struct {
 	ID              ID
 	Domain          Domain
+	OtherNames      OtherNames
 	FailureMode     FailureMode
 	Resolvers       []ZoneResolver
 	Groups          []Group
@@ -222,8 +276,10 @@ type Zone struct {
 	Class           Class
 	ListVersion     string
 	PublicConfirmed bool
-	Deleted         bool
-	Version         int64
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// NameCount is how many names the zone holds.
+	NameCount int
+	Deleted   bool
+	Version   int64
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }

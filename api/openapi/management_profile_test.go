@@ -50,7 +50,7 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, err := openapi.ManagementDocument(openapi.ManagementProfileConsoleCookiePrivateV1)
-	if err != nil || len(body) > 1<<20 {
+	if err != nil || len(body) > 2<<20 {
 		t.Fatal("private document did not compose within its bound", err)
 	}
 	base, console := profileObject(t, baseBytes), profileObject(t, body)
@@ -66,14 +66,14 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 	}
 	basePaths, paths := profileMap(t, base, "paths"), profileMap(t, console, "paths")
 	// The private document holds 23 bearer operations moved onto the cookie
-	// and 86 cookie-only Console operations (9 of them the Exit Pools, 5 the
-	// DNS zones); another count means an API was added or dropped without
-	// review.
+	// and 92 cookie-only Console operations (9 of them the Exit Pools, 5 the
+	// DNS zones, 6 their names); another count means an API was added or
+	// dropped without review.
 	operations := 0
 	for _, item := range paths {
 		operations += len(item.(map[string]any))
 	}
-	if len(basePaths) != 33 || operations != 109 {
+	if len(basePaths) != 33 || operations != 115 {
 		t.Fatal("private profile introduced another product resource API", len(basePaths), operations)
 	}
 	for path, raw := range paths {
@@ -401,7 +401,7 @@ func FuzzManagementDocumentProfile(f *testing.F) {
 			}
 			return
 		}
-		completeDocument := len(body) <= 1<<20 && json.Valid(body)
+		completeDocument := len(body) <= 2<<20 && json.Valid(body)
 		if err != nil || !completeDocument {
 			t.Fatal("known profile returned an incomplete or unbounded document", err)
 		}

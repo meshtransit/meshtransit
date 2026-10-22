@@ -24,14 +24,15 @@ import (
 
 const maximumDNSZoneDocumentBytes = 1 << 20
 
-const listDNSZonesSQL = `SELECT mesh_ops.list_dns_zones_v1(` + sessionArguments + `,$10::UUID,$11::UUID,
+const listDNSZonesSQL = `SELECT mesh_ops.list_dns_zones_v2(` + sessionArguments + `,$10::UUID,$11::UUID,
  NULLIF($12::TEXT,'')::UUID,$13::INTEGER)::TEXT`
 
-const readDNSZoneSQL = `SELECT mesh_ops.read_dns_zone_v1(` + sessionArguments + `,$10::UUID,$11::UUID,$12::UUID)::TEXT`
+const readDNSZoneSQL = `SELECT mesh_ops.read_dns_zone_v2(` + sessionArguments + `,$10::UUID,$11::UUID,$12::UUID)::TEXT`
 
-const changeDNSZoneSQL = `SELECT mesh_ops.change_dns_zone_v1(` + sessionArguments + `,
- $10::UUID,$11::UUID,$12::TEXT,$13::UUID,$14::BIGINT,$15::TEXT,$16::TEXT,$17::JSONB,$18::UUID[],$19::INTEGER,
- $20::TEXT,$21::TEXT,$22::BOOLEAN,$23::INTEGER,$24::INTEGER,$25::INTEGER,$26::UUID)::TEXT`
+const changeDNSZoneSQL = `SELECT mesh_ops.change_dns_zone_v2(` + sessionArguments + `,
+ $10::UUID,$11::UUID,$12::TEXT,$13::UUID,$14::BIGINT,$15::TEXT,$16::TEXT,$17::TEXT,$18::JSONB,$19::UUID[],
+ $20::INTEGER,$21::TEXT,$22::TEXT,$23::BOOLEAN,$24::INTEGER,$25::INTEGER,$26::INTEGER,$27::INTEGER,$28::BOOLEAN,
+ $29::UUID)::TEXT`
 
 const appendDNSZoneEvidenceSQL = `SELECT mesh_audit.append_authority_evidence(
  $1::BIGINT,$2::UUID,$3::UUID,$4::BIGINT,$5::BYTEA,$6::BYTEA,
@@ -82,6 +83,22 @@ func dnsZoneDatabaseError(err error) error {
 			return dnszone.ErrSearchLimit
 		case "MTZ06":
 			return dnszone.ErrResolverPeerLimit
+		case "MTZ07":
+			return dnszone.ErrZoneHoldsNames
+		case "MTZ0E":
+			return dnszone.ErrNXDomainPublic
+		case "MTZ08":
+			return dnszone.ErrNameTaken
+		case "MTZ09":
+			return dnszone.ErrNameInOtherZone
+		case "MTZ0A":
+			return dnszone.ErrNameLimit
+		case "MTZ0B":
+			return dnszone.ErrNameTargetInvalid
+		case "MTZ0C":
+			return dnszone.ErrCNAMEAtApex
+		case "MTZ0D":
+			return dnszone.ErrCNAMELoop
 		case "22023", "22P02", "23514":
 			return dnszone.ErrInvalid
 		}
@@ -152,6 +169,7 @@ type dnsZoneDocument struct {
 	PublicClass       string                    `json:"public_class"`
 	PublicListVersion string                    `json:"public_list_version"`
 	PublicConfirmed   bool                      `json:"public_confirmed"`
+	NameCount         int                       `json:"name_count"`
 	State             string                    `json:"state"`
 	Version           int64                     `json:"version"`
 	CreatedAt         time.Time                 `json:"created_at"`
@@ -191,17 +209,20 @@ func (document dnsZoneDocument) zone(allowDeleted bool) (dnszone.Zone, error) {
 	id, err := dnszone.ParseID(document.ID)
 	class, known := dnsZoneClasses[document.PublicClass]
 	mode := dnszone.FailureMode(document.FailureMode)
-	if err != nil || !known || !mode.IsKnown() || document.OtherNames != "forward" || document.Version <= 0 ||
-		len(document.Resolvers) == 0 || len(document.Resolvers) > dnszone.MaximumResolversPerZone ||
+	other := dnszone.OtherNames(document.OtherNames)
+	forward := other == dnszone.OtherForward
+	if err != nil || !known || !mode.IsKnown() || !other.IsKnown() || document.Version <= 0 ||
+		(len(document.Resolvers) == 0) == forward || len(document.Resolvers) > dnszone.MaximumResolversPerZone ||
+		document.NameCount < 0 || document.NameCount > dnszone.MaximumNamesPerZone ||
 		len(document.Groups) > dnszone.MaximumGroupsPerZone || document.PublicListVersion == "" ||
 		document.CreatedAt.IsZero() || document.UpdatedAt.Before(document.CreatedAt) ||
 		(document.State != "active" && (document.State != "deleted" || !allowDeleted)) {
 		return dnszone.Zone{}, dnszone.ErrInvalid
 	}
 	zone := dnszone.Zone{
-		ID: id, Domain: dnszone.Domain(document.Domain), FailureMode: mode, Class: class,
+		ID: id, Domain: dnszone.Domain(document.Domain), OtherNames: other, FailureMode: mode, Class: class,
 		ListVersion: document.PublicListVersion, PublicConfirmed: document.PublicConfirmed,
-		Deleted: document.State == "deleted", Version: document.Version,
+		NameCount: document.NameCount, Deleted: document.State == "deleted", Version: document.Version,
 		CreatedAt: document.CreatedAt.UTC(), UpdatedAt: document.UpdatedAt.UTC(),
 	}
 	if document.SearchPosition != nil {
@@ -318,12 +339,14 @@ func (store *DNSZoneStore) read(ctx context.Context, scope network.Scope,
 }
 
 type dnsZoneChangeRecord struct {
-	Zone            dnsZoneDocument  `json:"zone"`
-	Previous        *dnsZoneDocument `json:"previous"`
-	Changed         bool             `json:"changed"`
-	NetworkRevision int64            `json:"network_revision"`
-	DNSRevision     int64            `json:"dns_revision"`
-	RoleBindingID   *string          `json:"role_binding_id"`
+	Zone     dnsZoneDocument  `json:"zone"`
+	Previous *dnsZoneDocument `json:"previous"`
+	Changed  bool             `json:"changed"`
+	// Names a new zone took from shorter zones, or a deleted zone deleted.
+	Names           int     `json:"names"`
+	NetworkRevision int64   `json:"network_revision"`
+	DNSRevision     int64   `json:"dns_revision"`
+	RoleBindingID   *string `json:"role_binding_id"`
 }
 
 // dnsZoneResolversJSON encodes resolvers in the order the admin chose, the
@@ -366,8 +389,8 @@ func (store *DNSZoneStore) Change(ctx context.Context, change dnszone.Change) (_
 		!change.CorrelationID.IsValid() {
 		return dnszone.Result{}, dnszone.ErrInvalid
 	}
-	var expected, domain, mode, resolvers, groups, search, class, listVersion, confirmed, zoneLimit,
-		searchLimit, consumerLimit any
+	var expected, domain, other, mode, resolvers, groups, search, class, listVersion, confirmed, zoneLimit,
+		searchLimit, consumerLimit, hostLimit any
 	if change.Operation != dnszone.OperationCreate {
 		expected = change.ExpectedVersion
 	} else {
@@ -382,13 +405,14 @@ func (store *DNSZoneStore) Change(ctx context.Context, change dnszone.Change) (_
 		for _, group := range change.Definition.Groups {
 			groupTexts = append(groupTexts, group.String())
 		}
-		domain, mode, resolvers, groups = change.Domain.String(), string(change.Definition.FailureMode), encoded,
-			groupTexts
+		domain, other, mode, resolvers, groups = change.Domain.String(), string(change.Definition.OtherNames),
+			string(change.Definition.FailureMode), encoded, groupTexts
 		if change.Definition.SearchPosition != nil {
 			search = *change.Definition.SearchPosition
 		}
 		class, listVersion, confirmed = string(change.Class), change.ListVersion, change.Definition.PublicConfirmed
 		searchLimit, consumerLimit = change.Limits.SearchZonesPerNetwork, change.Limits.ConsumersPerResolver
+		hostLimit = change.Limits.HostNamesPerNetwork
 	}
 	changeID, err := publicid.New()
 	if err != nil {
@@ -409,13 +433,15 @@ func (store *DNSZoneStore) Change(ctx context.Context, change dnszone.Change) (_
 	var encoded string
 	if err := tx.QueryRow(ctx, changeDNSZoneSQL, append(sessionQueryArguments(change.Session),
 		change.Scope.WorkspaceID().String(), change.Scope.NetworkID().String(), string(change.Operation),
-		change.ZoneID.String(), expected, domain, mode, resolvers, groups, search, class, listVersion, confirmed,
-		zoneLimit, searchLimit, consumerLimit, changeID.String())...).Scan(&encoded); err != nil {
+		change.ZoneID.String(), expected, domain, other, mode, resolvers, groups, search, class, listVersion,
+		confirmed, zoneLimit, searchLimit, consumerLimit, hostLimit, change.WithNames,
+		changeID.String())...).Scan(&encoded); err != nil {
 		return dnszone.Result{}, dnsZoneDatabaseError(err)
 	}
 	var record dnsZoneChangeRecord
 	if err := decodeDNSZoneJSON([]byte(encoded), &record); err != nil ||
-		(record.Changed && (record.NetworkRevision <= 0 || record.DNSRevision <= 0)) {
+		(record.Changed && (record.NetworkRevision <= 0 || record.DNSRevision <= 0)) ||
+		record.Names < 0 || (record.Names > 0 && !change.WithNames) {
 		return dnszone.Result{}, dnszone.ErrInvalid
 	}
 	deleted := change.Operation == dnszone.OperationDelete
@@ -424,7 +450,7 @@ func (store *DNSZoneStore) Change(ctx context.Context, change dnszone.Change) (_
 		(record.Previous == nil) != (change.Operation == dnszone.OperationCreate) {
 		return dnszone.Result{}, dnszone.ErrInvalid
 	}
-	result := dnszone.Result{Zone: saved, Changed: record.Changed}
+	result := dnszone.Result{Zone: saved, Changed: record.Changed, Names: record.Names}
 	if record.Previous != nil {
 		previous, err := record.Previous.zone(false)
 		if err != nil || previous.Version != change.ExpectedVersion {
@@ -501,6 +527,8 @@ type dnsZoneAuditPayload struct {
 	RoleBindingID           string                 `json:"role_binding_id,omitempty"`
 	ZoneID                  string                 `json:"dns_zone_id"`
 	Domain                  string                 `json:"domain"`
+	OtherNames              string                 `json:"other_names"`
+	PreviousOtherNames      string                 `json:"previous_other_names,omitempty"`
 	FailureMode             string                 `json:"failure_mode"`
 	PreviousFailureMode     string                 `json:"previous_failure_mode,omitempty"`
 	Resolvers               []dnsZoneAuditResolver `json:"resolvers"`
@@ -512,6 +540,9 @@ type dnsZoneAuditPayload struct {
 	PublicClass             string                 `json:"public_class"`
 	PublicConfirmed         bool                   `json:"public_confirmed"`
 	PreviousPublicConfirmed *bool                  `json:"previous_public_confirmed,omitempty"`
+	// Names a new zone took from shorter zones, or a deleted zone deleted
+	// with it: each name's row change carries this change's ID.
+	Names int `json:"names,omitempty"`
 }
 
 func dnsZoneAuditResolvers(document dnsZoneDocument) []dnsZoneAuditResolver {
@@ -531,11 +562,15 @@ func dnsZoneAudit(session accountsession.Session, networkID string, record dnsZo
 	zone := record.Zone
 	audited := dnsZoneAuditPayload{
 		NetworkID: networkID, SessionID: session.ID().String(), RoleBindingID: binding, ZoneID: zone.ID,
-		Domain: zone.Domain, FailureMode: zone.FailureMode, Resolvers: dnsZoneAuditResolvers(zone),
+		Domain: zone.Domain, OtherNames: zone.OtherNames, FailureMode: zone.FailureMode,
+		Resolvers: dnsZoneAuditResolvers(zone), Names: record.Names,
 		Groups: dnsZoneGroupIDs(zone), SearchPosition: zone.SearchPosition, PublicClass: zone.PublicClass,
 		PublicConfirmed: zone.PublicConfirmed,
 	}
 	if previous := record.Previous; previous != nil {
+		if previous.OtherNames != zone.OtherNames {
+			audited.PreviousOtherNames = previous.OtherNames
+		}
 		if previous.FailureMode != zone.FailureMode {
 			audited.PreviousFailureMode = previous.FailureMode
 		}

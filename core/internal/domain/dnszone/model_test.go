@@ -55,7 +55,7 @@ func TestDefinitionValidate(t *testing.T) {
 	group := devicegroup.ID(mustDevice(t))
 	one := 1
 	valid := Definition{
-		Domain: "corp.internal", FailureMode: FailOpen,
+		Domain: "corp.internal", OtherNames: OtherForward, FailureMode: FailOpen,
 		Resolvers: []Resolver{{DeviceID: device, Port: 53}, {Address: netip.MustParseAddr("1.1.1.1"), Port: 53}},
 		Groups:    []devicegroup.ID{group}, SearchPosition: &one,
 	}
@@ -100,6 +100,31 @@ func TestDefinitionValidate(t *testing.T) {
 	}
 }
 
+func TestDefinitionValidateZoneKinds(t *testing.T) {
+	t.Parallel()
+	limits := DefaultLimits()
+	resolvers := []Resolver{{Address: netip.MustParseAddr("1.1.1.1"), Port: 53}}
+	for name, test := range map[string]struct {
+		definition Definition
+		valid      bool
+	}{
+		"nxdomain":                  {Definition{OtherNames: OtherNXDomain}, true},
+		"host failing open":         {Definition{OtherNames: OtherHost, FailureMode: FailOpen}, true},
+		"host failing closed":       {Definition{OtherNames: OtherHost, FailureMode: FailClosed}, false},
+		"nxdomain with a resolver":  {Definition{OtherNames: OtherNXDomain, Resolvers: resolvers}, false},
+		"forward without resolvers": {Definition{OtherNames: OtherForward, FailureMode: FailOpen}, false},
+		"no kind":                   {Definition{FailureMode: FailOpen, Resolvers: resolvers}, false},
+		"unknown kind":              {Definition{OtherNames: "refuse", FailureMode: FailOpen}, false},
+	} {
+		if err := test.definition.Validate(limits); (err == nil) != test.valid {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if canonical := (Definition{OtherNames: OtherHost}).Canonical(); canonical.FailureMode != FailOpen {
+		t.Errorf("a host zone fails %q", canonical.FailureMode)
+	}
+}
+
 func TestCanonicalSortsGroupsKeepsResolverOrder(t *testing.T) {
 	t.Parallel()
 	first, second := devicegroup.ID(mustDevice(t)), devicegroup.ID(mustDevice(t))
@@ -110,7 +135,8 @@ func TestCanonicalSortsGroupsKeepsResolverOrder(t *testing.T) {
 		{Address: netip.MustParseAddr("9.9.9.9"), Port: 53}, {Address: netip.MustParseAddr("1.1.1.1"), Port: 53},
 	}
 	position := 3
-	definition := Definition{Resolvers: resolvers, Groups: []devicegroup.ID{second, first}, SearchPosition: &position}
+	definition := Definition{OtherNames: OtherForward, Resolvers: resolvers, Groups: []devicegroup.ID{second, first},
+		SearchPosition: &position}
 	canonical := definition.Canonical()
 	position = 4
 	if canonical.Groups[0] != first || canonical.Resolvers[0] != resolvers[0] || *canonical.SearchPosition != 3 {

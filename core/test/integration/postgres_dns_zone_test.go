@@ -90,12 +90,12 @@ func assertPostgreSQLDNSZones(ctx context.Context, t *testing.T, admin *pgx.Conn
 	}
 	internetResolver := []dnszone.Resolver{{Address: netip.MustParseAddr("1.1.1.1"), Port: dnszone.DNSPort}}
 	corp := dnszone.Definition{Domain: "corp.internal", FailureMode: dnszone.FailClosed, Resolvers: internetResolver}
-	if _, err := service.Create(ctx, member, scope, corp, newCorrelationID(t)); !errors.Is(err, dnszone.ErrForbidden) {
+	if _, err := service.Create(ctx, member, scope, corp, false, newCorrelationID(t)); !errors.Is(err, dnszone.ErrForbidden) {
 		t.Fatalf("plain member created a DNS zone: %v", err)
 	}
 	networkBefore, _ := fixtureNetworkRevisions(ctx, t, admin)
 	dnsBefore := fixtureDNSRevision(ctx, t, admin)
-	created, err := service.Create(ctx, owner, scope, corp, newCorrelationID(t))
+	created, err := service.Create(ctx, owner, scope, corp, false, newCorrelationID(t))
 	if err != nil || created.Zone.Version != 1 || created.Zone.Domain != "corp.internal" ||
 		created.Zone.Class != dnszone.ClassPrivate || created.Zone.FailureMode != dnszone.FailClosed ||
 		len(created.Zone.Resolvers) != 1 || created.Zone.Resolvers[0].Device != nil {
@@ -112,7 +112,7 @@ WHERE event_class = 'network.revision.advanced' AND payload->>'dns_zone_id' = $1
 		zone.String()).Scan(&wakes); err != nil || !wakes {
 		t.Fatalf("the DNS zone change does not wake map sessions: %v", err)
 	}
-	if _, err := service.Create(ctx, owner, scope, corp, newCorrelationID(t)); !errors.Is(err,
+	if _, err := service.Create(ctx, owner, scope, corp, false, newCorrelationID(t)); !errors.Is(err,
 		dnszone.ErrDomainTaken) {
 		t.Fatalf("a second zone for the domain: %v", err)
 	}
@@ -185,28 +185,29 @@ ORDER BY event_identity_id DESC LIMIT 1`).Scan(&auditedResolver); err != nil || 
 	}
 
 	// The database holds the search domain and resolver limits.
-	strict := newIntegrationDNSZoneService(t, runtimePool, dnszone.Limits{ZonesPerNetwork: 2,
-		SearchZonesPerNetwork: 1, ConsumersPerResolver: 1})
+	strictLimits := dnszone.DefaultLimits()
+	strictLimits.ZonesPerNetwork, strictLimits.SearchZonesPerNetwork, strictLimits.ConsumersPerResolver = 2, 1, 1
+	strict := newIntegrationDNSZoneService(t, runtimePool, strictLimits)
 	lab := dnszone.Definition{Domain: "lab.internal", FailureMode: dnszone.FailOpen, Resolvers: internetResolver,
 		SearchPosition: &position}
-	if _, err := strict.Create(ctx, owner, scope, lab, newCorrelationID(t)); !errors.Is(err, dnszone.ErrSearchLimit) {
+	if _, err := strict.Create(ctx, owner, scope, lab, false, newCorrelationID(t)); !errors.Is(err, dnszone.ErrSearchLimit) {
 		t.Fatalf("a search domain over the limit: %v", err)
 	}
 	lab.SearchPosition = nil
 	lab.Resolvers = []dnszone.Resolver{{DeviceID: resolver, Port: dnszone.DNSPort}}
-	if _, err := strict.Create(ctx, owner, scope, lab, newCorrelationID(t)); !errors.Is(err,
+	if _, err := strict.Create(ctx, owner, scope, lab, false, newCorrelationID(t)); !errors.Is(err,
 		dnszone.ErrResolverPeerLimit) {
 		t.Fatalf("a resolver Device serving more Devices than allowed: %v", err)
 	}
 
 	// A public domain needs confirming; zones page in domain order.
 	public := dnszone.Definition{Domain: "corp.com", FailureMode: dnszone.FailOpen, Resolvers: internetResolver}
-	if _, err := service.Create(ctx, owner, scope, public, newCorrelationID(t)); !errors.Is(err,
+	if _, err := service.Create(ctx, owner, scope, public, false, newCorrelationID(t)); !errors.Is(err,
 		dnszone.ErrPublicUnconfirmed) {
 		t.Fatalf("an unconfirmed public zone: %v", err)
 	}
 	public.PublicConfirmed = true
-	second, err := service.Create(ctx, owner, scope, public, newCorrelationID(t))
+	second, err := service.Create(ctx, owner, scope, public, false, newCorrelationID(t))
 	if err != nil || second.Zone.Class != dnszone.ClassPublic || !second.Zone.PublicConfirmed {
 		t.Fatalf("create public zone = %+v, error = %v", second, err)
 	}
@@ -235,7 +236,7 @@ AND mesh_ops.dns_zone_resolvers_valid_internal_v1('[{"address":"2606:4700:4700::
 		id      dnszone.ID
 		version int64
 	}{{zone, 2}, {second.Zone.ID, 1}} {
-		if _, err := service.Delete(ctx, owner, scope, target.id, target.version, newCorrelationID(t)); err != nil {
+		if _, err := service.Delete(ctx, owner, scope, target.id, target.version, false, newCorrelationID(t)); err != nil {
 			t.Fatalf("delete DNS zone: %v", err)
 		}
 	}

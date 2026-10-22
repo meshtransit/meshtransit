@@ -58,4 +58,41 @@ var (
 	ErrGroupNotFound = errors.New("dnszone: Device Group not found")
 	// ErrUnavailable reports an unavailable or uncertain durable operation.
 	ErrUnavailable = errors.New("dnszone: unavailable")
+	// ErrNXDomainPublic reports a zone on the Internet that would answer
+	// nxdomain: every Device it is sent to would lose the domain.
+	ErrNXDomainPublic = errors.New("dnszone: a domain on the Internet is never nxdomain")
+	// ErrZoneHoldsNames reports a zone deleted while it holds names, or
+	// created over names a shorter zone holds, without saying what happens
+	// to them.
+	ErrZoneHoldsNames = errors.New("dnszone: zone holds names")
+	// ErrNameNotFound reports an unknown or deleted name of the zone.
+	ErrNameNotFound = errors.New("dnszone: name not found")
+	// ErrNameTaken reports another active name of the Network.
+	ErrNameTaken = errors.New("dnszone: name taken")
+	// ErrNameInOtherZone reports a name a longer zone of the Network holds.
+	ErrNameInOtherZone = errors.New("dnszone: a longer zone holds the name")
+	// ErrNameLimit reports a zone, a Network or the host zones of a Network
+	// that already hold the most names.
+	ErrNameLimit = errors.New("dnszone: name limit reached")
+	// ErrNameTargetInvalid reports a target no name may point at: a Device
+	// that is not an active Device of the Network, an address no answer may
+	// carry, or a CNAME to a mesh or special-use name.
+	ErrNameTargetInvalid = errors.New("dnszone: invalid name target")
+	// ErrCNAMEAtApex reports a CNAME at a zone's own domain.
+	ErrCNAMEAtApex = errors.New("dnszone: CNAME at the zone's own domain")
+	// ErrCNAMELoop reports CNAMEs among the Network's names that loop or
+	// chain more than MaximumCNAMEChain times.
+	ErrCNAMELoop = errors.New("dnszone: CNAME chain loops or is too long")
 )
+
+// OperationError is the error of one operation of a name change: Index is
+// its position in the request, from 0.
+type OperationError struct {
+	Index int
+	Err   error
+}
+
+func (failure *OperationError) Error() string { return failure.Err.Error() }
+
+// Unwrap returns the operation's error.
+func (failure *OperationError) Unwrap() error { return failure.Err }

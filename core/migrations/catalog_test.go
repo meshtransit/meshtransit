@@ -15,8 +15,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 214 {
-		t.Fatalf("len(Catalog()) = %d, want 214", len(catalog))
+	if len(catalog) != 215 {
+		t.Fatalf("len(Catalog()) = %d, want 215", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1611,8 +1611,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 214 {
-		t.Fatalf("LatestVersion() = %d, want 214", LatestVersion())
+	if LatestVersion() != 215 {
+		t.Fatalf("LatestVersion() = %d, want 215", LatestVersion())
 	}
 }
 
@@ -6151,5 +6151,47 @@ func TestMigration214AddsMapDNSZoneReaders(t *testing.T) {
 	if strings.Count(migration.SQL, "SECURITY DEFINER") != 2 ||
 		strings.Count(migration.SQL, "SET search_path = pg_catalog, mesh, mesh_ops") != 2 {
 		t.Error("schema 214 readers are not pinned SECURITY DEFINER functions")
+	}
+}
+
+func TestMigration215AddsNetworkDNSNames(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[214]
+	if migration.Version != 215 {
+		t.Fatalf("migration 215 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE TABLE mesh.network_dns_name (",
+		"ON mesh.network_dns_name (workspace_id, network_id, fqdn)\n    WHERE state = 'active';",
+		"capture_authority_mutation('network_dns_name', 'public_id')",
+		"(other_names = 'forward' AND mesh_ops.dns_zone_resolvers_valid_internal_v1(resolvers))",
+		"AND domain <> '.' AND (other_names = 'host' OR public_class = 'private'))",
+		"CREATE CONSTRAINT TRIGGER network_dns_name_placed",
+		"CREATE CONSTRAINT TRIGGER network_dns_zone_names_placed",
+		"DEFERRABLE INITIALLY DEFERRED",
+		"'100.64.0.0/10', '198.18.0.0/15',",
+		// Schema 213's change sees forward zones only and moves no name.
+		"CREATE OR REPLACE FUNCTION mesh_ops.change_dns_zone_v1(",
+		"RAISE EXCEPTION USING ERRCODE = CASE WHEN p_legacy THEN 'MTZ01' ELSE 'MTZ07' END,",
+		"AND (NOT p_legacy OR zone.other_names = 'forward')",
+		// Schema 214's map readers keep to forward zones.
+		"CREATE OR REPLACE FUNCTION mesh_ops.load_map_network_dns_zones_v1(p_limit INTEGER)",
+		"CREATE OR REPLACE FUNCTION mesh_ops.load_map_network_dns_resolvers_v1(p_limit INTEGER)",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.change_dns_zone_v2(",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.change_dns_names_v1(",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.list_dns_names_v1(",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_dns_name_v1(",
+		"RAISE EXCEPTION USING ERRCODE = 'MTZ0D',",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 215 lacks %q", want)
+		}
+	}
+	if strings.Count(migration.SQL, "AND zone.other_names = 'forward'") != 2 {
+		t.Error("schema 215 does not keep both map readers to forward zones")
+	}
+	// Only the runtime role reads and changes names.
+	if strings.Contains(migration.SQL, "TO mesh_worker") || strings.Contains(migration.SQL, "TO mesh_observer") {
+		t.Error("schema 215 grants DNS names beyond mesh_runtime")
 	}
 }

@@ -25,7 +25,7 @@ Actions are named `<object>.<verb>`, for example:
 | Registration | `registration.requested`, `registration.browser.requested`, `registration.browser.approved`, `registration.expired` |
 | Members | `member.invited`, `member.invitation_accepted`, `member.invitation_revoked`, `member.suspended`, `member.reactivated`, `member.removed`, `network.member.added`, `network.member.removed` |
 | Workspaces and Networks | `workspace.created`, `workspace.renamed`, `workspace_role.assigned`, `workspace_role.revoked`, `network.created`, `network.alias_range.updated` |
-| DNS | `dns_zone.created`, `dns_zone.updated`, `dns_zone.deleted` |
+| DNS | `dns_zone.created`, `dns_zone.updated`, `dns_zone.deleted`, `dns_name.created`, `dns_name.updated`, `dns_name.deleted` |
 | Groups, tags, guardrails | `device_group.*`, `identity_group.*`, `device_tag.*`, `guardrail.*`, `interchange.*` |
 | Resources and sharing | `resource.*`, `resource_group.*`, `share_offer.*`, `trust_contract.*`, `sharing.private_endpoint.published` |
 | Sign-in | `auth_transaction.*`, `account_session.*`, `account.signed_up` |

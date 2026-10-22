@@ -19,8 +19,9 @@ const (
 	// Rendering it mounts no handler or documentation endpoint and enables no SSO.
 	ManagementProfileConsoleCookiePrivateV1 ManagementProfile = "console-cookie-csrf-private-v1"
 	// Bounds every compiled document; the composed Console contract passed
-	// 512 KiB with member suspension and invitations (schemas 127 and 128).
-	maximumManagementDocumentBytes     = 1 << 20
+	// 512 KiB with member suspension and invitations (schemas 127 and 128)
+	// and 1 MiB with DNS names (schema 215).
+	maximumManagementDocumentBytes     = 2 << 20
 	consoleSessionPreparePath          = "/auth/v1/session/prepare"
 	consoleSessionLogoutPath           = "/auth/v1/session/logout"
 	consoleSessionLogoutAllPath        = "/auth/v1/session/logout-all"

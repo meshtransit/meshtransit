@@ -62,15 +62,20 @@ type Reading struct {
 }
 
 // Result is a zone after a change. Changed is false when the change asked
-// for what was already stored: nothing was written.
+// for what was already stored: nothing was written. Names is how many names
+// a new zone took from shorter zones, or a deleted zone deleted.
 type Result struct {
 	Zone     Zone
 	Previous *Zone
 	Changed  bool
+	Names    int
 }
 
 // Change is one validated zone change. Domain, Class and ListVersion are
-// set on create and must match the stored zone on update.
+// set on create and must match the stored zone on update. WithNames lets a
+// new zone take the names shorter zones hold under its domain, and a
+// deleted zone delete the names it holds; without it either fails with
+// ErrZoneHoldsNames.
 type Change struct {
 	Session         accountsession.Session
 	Scope           network.Scope
@@ -82,15 +87,22 @@ type Change struct {
 	ListVersion     string
 	Definition      Definition
 	Limits          Limits
+	WithNames       bool
 	CorrelationID   publicid.ID
 }
 
-// Store reads and changes zones; PostgreSQL authorizes each call, checks the
-// resolver Devices and Device Groups, and decides it on the database clock.
+// Store reads and changes zones and their names; PostgreSQL authorizes each
+// call, checks the resolver and target Devices and the Device Groups, and
+// decides it on the database clock.
 type Store interface {
 	List(ctx context.Context, session accountsession.Session, scope network.Scope, after ID, limit int) (Listing, error)
 	Read(ctx context.Context, session accountsession.Session, scope network.Scope, zone ID) (Reading, error)
 	Change(ctx context.Context, change Change) (Result, error)
+	ListNames(ctx context.Context, session accountsession.Session, scope network.Scope, zone ID, after NameID,
+		prefix string, limit int) (NameListing, error)
+	ReadName(ctx context.Context, session accountsession.Session, scope network.Scope, zone ID,
+		name NameID) (NameReading, error)
+	ChangeNames(ctx context.Context, change NameChange) (NameResult, error)
 }
 
 // Clock supplies this host's time for the early session gate only.
@@ -189,11 +201,15 @@ func (service *Service) Read(ctx context.Context, session accountsession.Session
 	return service.store.Read(ctx, session, scope, zone)
 }
 
-// Create adds a zone.
+// Create adds a zone; a definition without OtherNames forwards them (D1).
+// adoptNames lets it take the names shorter zones hold under its domain.
 func (service *Service) Create(ctx context.Context, session accountsession.Session, scope network.Scope,
-	definition Definition, correlationID publicid.ID) (Result, error) {
+	definition Definition, adoptNames bool, correlationID publicid.ID) (Result, error) {
 	if err := service.admitWrite(ctx, session, scope, correlationID); err != nil {
 		return Result{}, err
+	}
+	if definition.OtherNames == "" {
+		definition.OtherNames = OtherForward
 	}
 	domain, class, err := ParseDomain(definition.Domain, service.options.Names)
 	if err != nil {
@@ -210,13 +226,13 @@ func (service *Service) Create(ctx context.Context, session accountsession.Sessi
 	return service.store.Change(ctx, Change{
 		Session: session, Scope: scope, Operation: OperationCreate, ZoneID: ID(id), Domain: domain,
 		Class: class, ListVersion: PublicListVersion(), Definition: definition.Canonical(),
-		Limits: service.limits, CorrelationID: correlationID,
+		Limits: service.limits, WithNames: adoptNames, CorrelationID: correlationID,
 	})
 }
 
-// Update replaces a zone's resolvers, Device Groups, failure mode, search
-// position and confirmation at the expected version; its domain never
-// changes.
+// Update replaces a zone's kind, resolvers, Device Groups, failure mode,
+// search position and confirmation at the expected version; its domain
+// never changes. A definition without OtherNames keeps the zone's kind.
 func (service *Service) Update(ctx context.Context, session accountsession.Session, scope network.Scope,
 	zone ID, expectedVersion int64, definition Definition, correlationID publicid.ID) (Result, error) {
 	if err := service.admitWrite(ctx, session, scope, correlationID); err != nil {
@@ -233,6 +249,9 @@ func (service *Service) Update(ctx context.Context, session accountsession.Sessi
 	if definition.Domain != "" && definition.Domain != stored.Domain.String() {
 		return Result{}, ErrInvalid
 	}
+	if definition.OtherNames == "" {
+		definition.OtherNames = stored.OtherNames
+	}
 	if err := service.check(stored.Domain, stored.Class, definition); err != nil {
 		return Result{}, err
 	}
@@ -245,9 +264,9 @@ func (service *Service) Update(ctx context.Context, session accountsession.Sessi
 	})
 }
 
-// Delete removes a zone.
+// Delete removes a zone; withNames deletes the names it holds with it.
 func (service *Service) Delete(ctx context.Context, session accountsession.Session, scope network.Scope,
-	zone ID, expectedVersion int64, correlationID publicid.ID) (Result, error) {
+	zone ID, expectedVersion int64, withNames bool, correlationID publicid.ID) (Result, error) {
 	if err := service.admitWrite(ctx, session, scope, correlationID); err != nil {
 		return Result{}, err
 	}
@@ -256,15 +275,22 @@ func (service *Service) Delete(ctx context.Context, session accountsession.Sessi
 	}
 	return service.store.Change(ctx, Change{
 		Session: session, Scope: scope, Operation: OperationDelete, ZoneID: zone,
-		ExpectedVersion: expectedVersion, CorrelationID: correlationID,
+		ExpectedVersion: expectedVersion, WithNames: withNames, CorrelationID: correlationID,
 	})
 }
 
 // check validates a definition for a domain of class: the root only where
-// offered and never a search domain, a public domain only when confirmed.
+// offered, never a search domain and always forward; a public domain only
+// when confirmed and never nxdomain.
 func (service *Service) check(domain Domain, class Class, definition Definition) error {
 	if err := definition.Validate(service.limits); err != nil {
 		return err
+	}
+	if domain.IsRoot() && definition.OtherNames != OtherForward {
+		return ErrInvalid
+	}
+	if class == ClassPublic && definition.OtherNames == OtherNXDomain {
+		return ErrNXDomainPublic
 	}
 	if domain.IsRoot() && (!service.options.Root || definition.SearchPosition != nil) {
 		if !service.options.Root {

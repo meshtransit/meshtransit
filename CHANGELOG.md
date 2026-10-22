@@ -5,6 +5,25 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core (DNS design D2a, schema 215): names in DNS zones. A zone now says
+  what the names it does not hold get (`other_names`): `forward` (its
+  resolvers, as before), `nxdomain` (answered on the Device; never on a
+  domain on the Internet) or `host` (the host's own DNS); only a forward
+  zone has resolvers. A Network admin with `dns.manage` sets names under
+  `/dns/zones/{zone}/names`: an address name points at one Device of the
+  Network (its mesh addresses) or at 1 to 8 fixed addresses outside the
+  overlay frame and special ranges, a `cname` name at another name outside
+  the mesh names; the zone's own domain is `@` and never a CNAME. A name
+  belongs to the longest zone that covers it. `POST .../names/actions/apply`
+  changes up to 100 names in one transaction and names the failing operation
+  (`operation_index`). Limits: 2,000 names per zone, 10,000 per Network, 200
+  in `host` zones. A new zone over names a shorter zone holds takes them only
+  with `adopt_names`; a zone that holds names is deleted with them only with
+  `?with_names=true` (409 `dns_zone_holds_names` otherwise). Every name
+  change is audited (`dns_name.*`), shares the person's zone write budget and
+  advances the Network's revisions once per request. A Core with schema 213
+  or 214 sees and sends forward zones only and never moves or deletes a
+  name. Maps do not carry names yet (D2b).
 - Clients (DNS design D1a.3, MTCP `dns.forward1`): `meshd` with DNS on
   (Linux, macOS, Windows) applies the DNS zones Core sends: each zone's
   domain, single labels included, goes to its resolvers in order, on their

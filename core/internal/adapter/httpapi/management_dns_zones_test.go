@@ -22,6 +22,7 @@ const dnsZoneBase = "/api/v1/workspaces/01890f00-0000-7000-8000-000000000101/net
 func TestParseDNSZonePath(t *testing.T) {
 	t.Parallel()
 	zone := "/01890f00-0000-7000-8000-000000000301"
+	name := "/01890f00-0000-7000-8000-000000000601"
 	for _, test := range []struct {
 		method, target, operation string
 		ok                        bool
@@ -41,6 +42,22 @@ func TestParseDNSZonePath(t *testing.T) {
 		{http.MethodGet, dnsZoneBase + zone + "/records", "", false},
 		{http.MethodGet, strings.Replace(dnsZoneBase, "/dns/zones", "/dns/zone", 1), "", false},
 		{http.MethodGet, strings.ToUpper(dnsZoneBase[:5]) + dnsZoneBase[5:], "", false},
+		{http.MethodDelete, dnsZoneBase + zone + "?with_names=true", dnsZoneDeleteOperation, true},
+		{http.MethodDelete, dnsZoneBase + zone + "?with_names=false", dnsZoneDeleteOperation, false},
+		{http.MethodPatch, dnsZoneBase + zone + "?with_names=true", dnsZoneUpdateOperation, false},
+		{http.MethodGet, dnsZoneBase + zone + "/names", dnsNameListOperation, true},
+		{http.MethodGet, dnsZoneBase + zone + "/names?q=wiki&limit=50&after=" + name[1:], dnsNameListOperation, true},
+		{http.MethodGet, dnsZoneBase + zone + "/names?after=not-an-id", "", false},
+		{http.MethodGet, dnsZoneBase + "?q=wiki", "", false},
+		{http.MethodPost, dnsZoneBase + zone + "/names", dnsNameCreateOperation, true},
+		{http.MethodGet, dnsZoneBase + zone + "/names" + name, dnsNameReadOperation, true},
+		{http.MethodPatch, dnsZoneBase + zone + "/names" + name, dnsNameUpdateOperation, true},
+		{http.MethodDelete, dnsZoneBase + zone + "/names" + name, dnsNameDeleteOperation, true},
+		{http.MethodPost, dnsZoneBase + zone + "/names/actions/apply", dnsNameApplyOperation, true},
+		{http.MethodGet, dnsZoneBase + zone + "/names/actions/apply", "", true},
+		{http.MethodPost, dnsZoneBase + zone + "/names/actions/import", "", false},
+		{http.MethodGet, dnsZoneBase + zone + "/names/not-an-id", "", false},
+		{http.MethodGet, dnsZoneBase + "/not-an-id/names", "", false},
 	} {
 		path, ok := parseDNSZonePath(httptest.NewRequestWithContext(t.Context(), test.method, test.target, nil))
 		if ok != test.ok || (ok && path.operation != test.operation) {
@@ -58,7 +75,8 @@ func TestParseDNSZoneDefinition(t *testing.T) {
 	parse := func(body string, create bool) (dnszone.Definition, bool) {
 		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, dnsZoneBase, strings.NewReader(body))
 		request.Header.Set("Content-Type", "application/json")
-		return parseDNSZoneDefinition(httptest.NewRecorder(), request, create)
+		definition, _, ok := parseDNSZoneDefinition(httptest.NewRecorder(), request, create)
+		return definition, ok
 	}
 	definition, ok := parse(`{"domain":"corp.internal","failure_mode":"closed","resolvers":[`+
 		`{"device_id":"01890f00-0000-7000-8000-000000000401","port":5335},{"address":"1.1.1.1","port":53}],`+
@@ -86,8 +104,24 @@ func TestParseDNSZoneDefinition(t *testing.T) {
 		}
 	}
 	if update, ok := parse(`{"failure_mode":"open","resolvers":[{"address":"1.1.1.1","port":53}],`+
-		`"device_groups":[]}`, false); !ok || update.Domain != "" {
+		`"device_groups":[]}`, false); !ok || update.Domain != "" || update.OtherNames != "" {
 		t.Errorf("update without a domain = %+v, %v", update, ok)
+	}
+	nxdomain, ok := parse(`{"domain":"corp.internal","other_names":"nxdomain","resolvers":[],"device_groups":[]}`, true)
+	if !ok || nxdomain.OtherNames != dnszone.OtherNXDomain || nxdomain.FailureMode != "" {
+		t.Errorf("an nxdomain zone = %+v, %v", nxdomain, ok)
+	}
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, dnsZoneBase, strings.NewReader(
+		`{"domain":"dev.corp.internal","other_names":"host","adopt_names":true,"resolvers":[],"device_groups":[]}`))
+	request.Header.Set("Content-Type", "application/json")
+	if _, adopt, ok := parseDNSZoneDefinition(httptest.NewRecorder(), request, true); !ok || !adopt {
+		t.Errorf("adopt_names on create = %v, %v", adopt, ok)
+	}
+	if _, ok := parse(`{"other_names":"host","adopt_names":true,"resolvers":[],"device_groups":[]}`, false); ok {
+		t.Error("adopt_names on update accepted")
+	}
+	if _, ok := parse(`{"domain":"a.lan","other_names":"refuse","resolvers":[],"device_groups":[]}`, true); ok {
+		t.Error("an unknown kind accepted")
 	}
 }
 
@@ -111,6 +145,15 @@ func TestClassifyDNSZoneError(t *testing.T) {
 		dnszone.ErrDomainPublicSuffix:                        "dns_zone_public_suffix",
 		dnszone.ErrDomainMeshSuffix:                          "dns_zone_mesh_suffix",
 		dnszone.ErrResolverNotInternet:                       "dns_resolver_not_internet",
+		dnszone.ErrNXDomainPublic:                            "dns_zone_other_names_public",
+		dnszone.ErrZoneHoldsNames:                            "dns_zone_holds_names",
+		dnszone.ErrNameNotFound:                              "dns_name_not_found",
+		dnszone.ErrNameTaken:                                 "dns_name_conflict",
+		dnszone.ErrNameInOtherZone:                           "dns_name_in_other_zone",
+		dnszone.ErrNameLimit:                                 "dns_name_limit",
+		dnszone.ErrNameTargetInvalid:                         "dns_name_target_invalid",
+		dnszone.ErrCNAMEAtApex:                               "dns_cname_at_apex",
+		dnszone.ErrCNAMELoop:                                 "dns_cname_loop",
 		dnszone.ErrInvalid:                                   "invalid_request",
 		errors.Join(dnszone.ErrUnavailable, errors.New("x")): "temporarily_unavailable",
 	} {
@@ -136,7 +179,7 @@ func (zones *countingDNSZones) Read(context.Context, accountsession.Session, net
 }
 
 func (zones *countingDNSZones) Create(context.Context, accountsession.Session, network.Scope, dnszone.Definition,
-	publicid.ID) (dnszone.Result, error) {
+	bool, publicid.ID) (dnszone.Result, error) {
 	zones.calls++
 	return dnszone.Result{}, dnszone.ErrDisabled
 }
@@ -148,9 +191,45 @@ func (zones *countingDNSZones) Update(context.Context, accountsession.Session, n
 }
 
 func (zones *countingDNSZones) Delete(context.Context, accountsession.Session, network.Scope, dnszone.ID, int64,
-	publicid.ID) (dnszone.Result, error) {
+	bool, publicid.ID) (dnszone.Result, error) {
 	zones.calls++
 	return dnszone.Result{}, dnszone.ErrDisabled
+}
+
+func (zones *countingDNSZones) ListNames(context.Context, accountsession.Session, network.Scope, dnszone.ID,
+	dnszone.NameID, string, int) (dnszone.NameListing, error) {
+	zones.calls++
+	return dnszone.NameListing{}, nil
+}
+
+func (zones *countingDNSZones) ReadName(context.Context, accountsession.Session, network.Scope, dnszone.ID,
+	dnszone.NameID) (dnszone.NameReading, error) {
+	zones.calls++
+	return dnszone.NameReading{}, dnszone.ErrNameNotFound
+}
+
+func (zones *countingDNSZones) CreateName(context.Context, accountsession.Session, network.Scope, dnszone.ID,
+	dnszone.NameDefinition, publicid.ID) (dnszone.NameOutcome, error) {
+	zones.calls++
+	return dnszone.NameOutcome{}, dnszone.ErrDisabled
+}
+
+func (zones *countingDNSZones) UpdateName(context.Context, accountsession.Session, network.Scope, dnszone.ID,
+	dnszone.NameID, int64, dnszone.NameDefinition, publicid.ID) (dnszone.NameOutcome, error) {
+	zones.calls++
+	return dnszone.NameOutcome{}, dnszone.ErrDisabled
+}
+
+func (zones *countingDNSZones) DeleteName(context.Context, accountsession.Session, network.Scope, dnszone.ID,
+	dnszone.NameID, int64, publicid.ID) (dnszone.NameOutcome, error) {
+	zones.calls++
+	return dnszone.NameOutcome{}, dnszone.ErrDisabled
+}
+
+func (zones *countingDNSZones) ApplyNames(context.Context, accountsession.Session, network.Scope, dnszone.ID,
+	[]dnszone.NameOperation, publicid.ID) (dnszone.NameResult, error) {
+	zones.calls++
+	return dnszone.NameResult{}, &dnszone.OperationError{Index: 1, Err: dnszone.ErrNameTaken}
 }
 
 // TestDNSZoneWritesAreLimitedPerNetworkAndPerson: every change takes one
@@ -197,19 +276,33 @@ func TestDNSZoneWritesAreLimitedPerNetworkAndPerson(t *testing.T) {
 	if len(changes) != 3 || zones.calls != 4 {
 		t.Fatalf("budget taken %d times, service called %d times", len(changes), zones.calls)
 	}
+	// Name changes take the same budget; name reads take none.
+	nameBody := `{"label":"git","kind":"address","addresses":["10.0.5.20"]}`
+	send(http.MethodGet, zone+"/names", "")
+	send(http.MethodPost, zone+"/names", nameBody)
+	applied := send(http.MethodPost, zone+"/names/actions/apply", `{"operations":[`+
+		`{"op":"create","label":"wiki","kind":"cname","cname":"corp.atlassian.net"},`+
+		`{"op":"delete","dns_name_id":"01890f00-0000-7000-8000-000000000601","version":2}]}`)
+	if !strings.Contains(applied.Body.String(), `"operation_index":1`) ||
+		!strings.Contains(applied.Body.String(), `"dns_name_conflict"`) {
+		t.Fatalf("apply = %d %s", applied.Code, applied.Body.String())
+	}
+	if len(changes) != 5 || zones.calls != 7 || changes[4].DigestString() != changes[0].DigestString() {
+		t.Fatalf("with names: budget taken %d times, service called %d times", len(changes), zones.calls)
+	}
 	if changes[0].DigestString() != changes[1].DigestString() || changes[1].DigestString() != changes[2].DigestString() {
 		t.Fatal("changes of one person to one Network use different budgets")
 	}
 	deny = true
 	limited := send(http.MethodPost, dnsZoneBase, body)
 	if limited.Code != http.StatusTooManyRequests || !strings.Contains(limited.Body.String(), `"rate_limited"`) ||
-		limited.Header().Get("Retry-After") != "6" || zones.calls != 4 {
+		limited.Header().Get("Retry-After") != "6" || zones.calls != 7 {
 		t.Fatalf("limited = %d %s %v; service calls %d", limited.Code, limited.Body.String(), limited.Header(),
 			zones.calls)
 	}
 	// A malformed change is refused before it takes a token.
 	if malformed := send(http.MethodPost, dnsZoneBase, `{}`); malformed.Code != http.StatusBadRequest ||
-		len(changes) != 4 {
+		len(changes) != 6 {
 		t.Fatalf("malformed = %d, budget taken %d times", malformed.Code, len(changes))
 	}
 }

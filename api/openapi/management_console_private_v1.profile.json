@@ -19012,12 +19012,14 @@
                               "dns_zone_id",
                               "domain",
                               "kind",
+                              "other_names",
                               "failure_mode",
                               "resolvers",
                               "device_groups",
                               "search_position",
                               "public",
                               "public_confirmed",
+                              "name_count",
                               "version",
                               "created_at",
                               "updated_at"
@@ -19041,6 +19043,15 @@
                                 ],
                                 "description": "forward: names under the domain; root: every name no other zone holds"
                               },
+                              "other_names": {
+                                "type": "string",
+                                "enum": [
+                                  "forward",
+                                  "nxdomain",
+                                  "host"
+                                ],
+                                "description": "What names the zone does not hold get"
+                              },
                               "failure_mode": {
                                 "type": "string",
                                 "enum": [
@@ -19051,7 +19062,6 @@
                               },
                               "resolvers": {
                                 "type": "array",
-                                "minItems": 1,
                                 "maxItems": 4,
                                 "items": {
                                   "type": "object",
@@ -19090,7 +19100,8 @@
                                     }
                                   }
                                 },
-                                "description": "Asked in this order"
+                                "description": "1 to 4 for a forward zone, none otherwise",
+                                "minItems": 0
                               },
                               "device_groups": {
                                 "type": "array",
@@ -19135,6 +19146,12 @@
                               },
                               "public_confirmed": {
                                 "type": "boolean"
+                              },
+                              "name_count": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 2000,
+                                "description": "How many names the zone holds"
                               },
                               "version": {
                                 "type": "integer",
@@ -19251,7 +19268,6 @@
                 "type": "object",
                 "additionalProperties": false,
                 "required": [
-                  "failure_mode",
                   "resolvers",
                   "device_groups"
                 ],
@@ -19262,16 +19278,30 @@
                     "maxLength": 253,
                     "description": "Required to create; to update, absent or the zone's own domain. Unicode labels are converted to A-labels. . is every other name, where the deployment offers it"
                   },
+                  "other_names": {
+                    "type": "string",
+                    "enum": [
+                      "forward",
+                      "nxdomain",
+                      "host"
+                    ],
+                    "description": "What names the zone does not hold get: forward asks its resolvers, nxdomain answers that they do not exist (never on a domain on the Internet), host leaves them to the host's own DNS. Only a forward zone has resolvers and a failure mode. Absent: forward."
+                  },
+                  "adopt_names": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Move the names shorter zones hold under the domain into the new zone, in the same change; without it a zone over such names fails with dns_zone_holds_names"
+                  },
                   "failure_mode": {
                     "type": "string",
                     "enum": [
                       "open",
                       "closed"
-                    ]
+                    ],
+                    "description": "Required for a forward zone; a zone that is not forward fails open"
                   },
                   "resolvers": {
                     "type": "array",
-                    "minItems": 1,
                     "maxItems": 4,
                     "items": {
                       "type": "object",
@@ -19295,7 +19325,8 @@
                         }
                       },
                       "description": "Exactly one of device_id (port 53 or 1024-65535; an active Device owned by the Workspace, no exit node) and address (on the Internet, port 53)"
-                    }
+                    },
+                    "minItems": 0
                   },
                   "device_groups": {
                     "type": "array",
@@ -19357,7 +19388,8 @@
                       "additionalProperties": false,
                       "required": [
                         "dns_zone",
-                        "deleted"
+                        "deleted",
+                        "names"
                       ],
                       "properties": {
                         "dns_zone": {
@@ -19367,12 +19399,14 @@
                             "dns_zone_id",
                             "domain",
                             "kind",
+                            "other_names",
                             "failure_mode",
                             "resolvers",
                             "device_groups",
                             "search_position",
                             "public",
                             "public_confirmed",
+                            "name_count",
                             "version",
                             "created_at",
                             "updated_at"
@@ -19396,6 +19430,15 @@
                               ],
                               "description": "forward: names under the domain; root: every name no other zone holds"
                             },
+                            "other_names": {
+                              "type": "string",
+                              "enum": [
+                                "forward",
+                                "nxdomain",
+                                "host"
+                              ],
+                              "description": "What names the zone does not hold get"
+                            },
                             "failure_mode": {
                               "type": "string",
                               "enum": [
@@ -19406,7 +19449,6 @@
                             },
                             "resolvers": {
                               "type": "array",
-                              "minItems": 1,
                               "maxItems": 4,
                               "items": {
                                 "type": "object",
@@ -19445,7 +19487,8 @@
                                   }
                                 }
                               },
-                              "description": "Asked in this order"
+                              "description": "1 to 4 for a forward zone, none otherwise",
+                              "minItems": 0
                             },
                             "device_groups": {
                               "type": "array",
@@ -19491,6 +19534,12 @@
                             "public_confirmed": {
                               "type": "boolean"
                             },
+                            "name_count": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 2000,
+                              "description": "How many names the zone holds"
+                            },
                             "version": {
                               "type": "integer",
                               "minimum": 1
@@ -19508,6 +19557,11 @@
                         "deleted": {
                           "type": "boolean",
                           "const": false
+                        },
+                        "names": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "description": "Names a new zone took from shorter zones, or a deleted zone deleted with it"
                         }
                       }
                     },
@@ -19527,7 +19581,7 @@
             "description": "device_group_not_found"
           },
           "409": {
-            "description": "dns_zone_exists, dns_zone_limit, dns_search_limit, dns_zone_public_unconfirmed, dns_zone_covers_control, dns_resolver_not_eligible, dns_resolver_peer_limit, dns_zones_disabled or dns_root_zone_unavailable"
+            "description": "dns_zone_exists, dns_zone_limit, dns_search_limit, dns_zone_public_unconfirmed, dns_zone_covers_control, dns_resolver_not_eligible, dns_resolver_peer_limit, dns_zones_disabled or dns_root_zone_unavailable, dns_zone_other_names_public, dns_zone_holds_names, dns_name_limit"
           },
           "422": {
             "description": "dns_zone_special_use, dns_zone_public_suffix, dns_zone_mesh_suffix or dns_resolver_not_internet"
@@ -19631,12 +19685,14 @@
                             "dns_zone_id",
                             "domain",
                             "kind",
+                            "other_names",
                             "failure_mode",
                             "resolvers",
                             "device_groups",
                             "search_position",
                             "public",
                             "public_confirmed",
+                            "name_count",
                             "version",
                             "created_at",
                             "updated_at"
@@ -19660,6 +19716,15 @@
                               ],
                               "description": "forward: names under the domain; root: every name no other zone holds"
                             },
+                            "other_names": {
+                              "type": "string",
+                              "enum": [
+                                "forward",
+                                "nxdomain",
+                                "host"
+                              ],
+                              "description": "What names the zone does not hold get"
+                            },
                             "failure_mode": {
                               "type": "string",
                               "enum": [
@@ -19670,7 +19735,6 @@
                             },
                             "resolvers": {
                               "type": "array",
-                              "minItems": 1,
                               "maxItems": 4,
                               "items": {
                                 "type": "object",
@@ -19709,7 +19773,8 @@
                                   }
                                 }
                               },
-                              "description": "Asked in this order"
+                              "description": "1 to 4 for a forward zone, none otherwise",
+                              "minItems": 0
                             },
                             "device_groups": {
                               "type": "array",
@@ -19754,6 +19819,12 @@
                             },
                             "public_confirmed": {
                               "type": "boolean"
+                            },
+                            "name_count": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 2000,
+                              "description": "How many names the zone holds"
                             },
                             "version": {
                               "type": "integer",
@@ -19862,7 +19933,6 @@
                 "type": "object",
                 "additionalProperties": false,
                 "required": [
-                  "failure_mode",
                   "resolvers",
                   "device_groups"
                 ],
@@ -19873,16 +19943,25 @@
                     "maxLength": 253,
                     "description": "Required to create; to update, absent or the zone's own domain. Unicode labels are converted to A-labels. . is every other name, where the deployment offers it"
                   },
+                  "other_names": {
+                    "type": "string",
+                    "enum": [
+                      "forward",
+                      "nxdomain",
+                      "host"
+                    ],
+                    "description": "What names the zone does not hold get: forward asks its resolvers, nxdomain answers that they do not exist (never on a domain on the Internet), host leaves them to the host's own DNS. Only a forward zone has resolvers and a failure mode. Absent: the zone keeps its kind."
+                  },
                   "failure_mode": {
                     "type": "string",
                     "enum": [
                       "open",
                       "closed"
-                    ]
+                    ],
+                    "description": "Required for a forward zone; a zone that is not forward fails open"
                   },
                   "resolvers": {
                     "type": "array",
-                    "minItems": 1,
                     "maxItems": 4,
                     "items": {
                       "type": "object",
@@ -19906,7 +19985,8 @@
                         }
                       },
                       "description": "Exactly one of device_id (port 53 or 1024-65535; an active Device owned by the Workspace, no exit node) and address (on the Internet, port 53)"
-                    }
+                    },
+                    "minItems": 0
                   },
                   "device_groups": {
                     "type": "array",
@@ -19968,7 +20048,8 @@
                       "additionalProperties": false,
                       "required": [
                         "dns_zone",
-                        "deleted"
+                        "deleted",
+                        "names"
                       ],
                       "properties": {
                         "dns_zone": {
@@ -19978,12 +20059,14 @@
                             "dns_zone_id",
                             "domain",
                             "kind",
+                            "other_names",
                             "failure_mode",
                             "resolvers",
                             "device_groups",
                             "search_position",
                             "public",
                             "public_confirmed",
+                            "name_count",
                             "version",
                             "created_at",
                             "updated_at"
@@ -20007,6 +20090,15 @@
                               ],
                               "description": "forward: names under the domain; root: every name no other zone holds"
                             },
+                            "other_names": {
+                              "type": "string",
+                              "enum": [
+                                "forward",
+                                "nxdomain",
+                                "host"
+                              ],
+                              "description": "What names the zone does not hold get"
+                            },
                             "failure_mode": {
                               "type": "string",
                               "enum": [
@@ -20017,7 +20109,6 @@
                             },
                             "resolvers": {
                               "type": "array",
-                              "minItems": 1,
                               "maxItems": 4,
                               "items": {
                                 "type": "object",
@@ -20056,7 +20147,8 @@
                                   }
                                 }
                               },
-                              "description": "Asked in this order"
+                              "description": "1 to 4 for a forward zone, none otherwise",
+                              "minItems": 0
                             },
                             "device_groups": {
                               "type": "array",
@@ -20102,6 +20194,12 @@
                             "public_confirmed": {
                               "type": "boolean"
                             },
+                            "name_count": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 2000,
+                              "description": "How many names the zone holds"
+                            },
                             "version": {
                               "type": "integer",
                               "minimum": 1
@@ -20119,6 +20217,11 @@
                         "deleted": {
                           "type": "boolean",
                           "const": false
+                        },
+                        "names": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "description": "Names a new zone took from shorter zones, or a deleted zone deleted with it"
                         }
                       }
                     },
@@ -20138,7 +20241,7 @@
             "description": "dns_zone_not_found or device_group_not_found"
           },
           "409": {
-            "description": "dns_zone_exists, dns_zone_limit, dns_search_limit, dns_zone_public_unconfirmed, dns_zone_covers_control, dns_resolver_not_eligible, dns_resolver_peer_limit, dns_zones_disabled or dns_root_zone_unavailable"
+            "description": "dns_zone_exists, dns_zone_limit, dns_search_limit, dns_zone_public_unconfirmed, dns_zone_covers_control, dns_resolver_not_eligible, dns_resolver_peer_limit, dns_zones_disabled or dns_root_zone_unavailable, dns_zone_other_names_public, dns_zone_holds_names, dns_name_limit"
           },
           "412": {
             "description": "version_conflict"
@@ -20208,6 +20311,16 @@
             "$ref": "#/components/parameters/ConsoleSessionProof"
           },
           {
+            "name": "with_names",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "const": "true"
+            },
+            "description": "Delete the names the zone holds with it; without it a zone that holds names fails with dns_zone_holds_names"
+          },
+          {
             "name": "If-Match",
             "in": "header",
             "required": true,
@@ -20249,7 +20362,8 @@
                       "additionalProperties": false,
                       "required": [
                         "dns_zone",
-                        "deleted"
+                        "deleted",
+                        "names"
                       ],
                       "properties": {
                         "dns_zone": {
@@ -20259,12 +20373,14 @@
                             "dns_zone_id",
                             "domain",
                             "kind",
+                            "other_names",
                             "failure_mode",
                             "resolvers",
                             "device_groups",
                             "search_position",
                             "public",
                             "public_confirmed",
+                            "name_count",
                             "version",
                             "created_at",
                             "updated_at"
@@ -20288,6 +20404,15 @@
                               ],
                               "description": "forward: names under the domain; root: every name no other zone holds"
                             },
+                            "other_names": {
+                              "type": "string",
+                              "enum": [
+                                "forward",
+                                "nxdomain",
+                                "host"
+                              ],
+                              "description": "What names the zone does not hold get"
+                            },
                             "failure_mode": {
                               "type": "string",
                               "enum": [
@@ -20298,7 +20423,6 @@
                             },
                             "resolvers": {
                               "type": "array",
-                              "minItems": 1,
                               "maxItems": 4,
                               "items": {
                                 "type": "object",
@@ -20337,7 +20461,8 @@
                                   }
                                 }
                               },
-                              "description": "Asked in this order"
+                              "description": "1 to 4 for a forward zone, none otherwise",
+                              "minItems": 0
                             },
                             "device_groups": {
                               "type": "array",
@@ -20383,6 +20508,12 @@
                             "public_confirmed": {
                               "type": "boolean"
                             },
+                            "name_count": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 2000,
+                              "description": "How many names the zone holds"
+                            },
                             "version": {
                               "type": "integer",
                               "minimum": 1
@@ -20400,6 +20531,11 @@
                         "deleted": {
                           "type": "boolean",
                           "const": true
+                        },
+                        "names": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "description": "Names a new zone took from shorter zones, or a deleted zone deleted with it"
                         }
                       }
                     },
@@ -20416,7 +20552,7 @@
             "description": "dns_zone_not_found"
           },
           "409": {
-            "description": "dns_zones_disabled"
+            "description": "dns_zones_disabled, dns_zone_holds_names"
           },
           "412": {
             "description": "version_conflict"
@@ -20426,6 +20562,1723 @@
           },
           "403": {
             "description": "permission_denied"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/dns/zones/{dns_zone_id}/names": {
+      "get": {
+        "operationId": "listNetworkDNSNames",
+        "summary": "List a DNS zone's names",
+        "description": "Requires network.read on the Network. Pages in name order with the zone.",
+        "security": [
+          {
+            "accountSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "dns_zone_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The last DNS name of the previous page (next_after)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 10
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 253,
+              "pattern": "^[A-Za-z0-9.-]+$"
+            },
+            "description": "Names that start with it, letters in any case"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Active names of the zone",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "dns_zone",
+                        "dns_names",
+                        "can_manage"
+                      ],
+                      "properties": {
+                        "dns_zone": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "dns_zone_id",
+                            "domain",
+                            "kind",
+                            "other_names",
+                            "failure_mode",
+                            "resolvers",
+                            "device_groups",
+                            "search_position",
+                            "public",
+                            "public_confirmed",
+                            "name_count",
+                            "version",
+                            "created_at",
+                            "updated_at"
+                          ],
+                          "properties": {
+                            "dns_zone_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "domain": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253,
+                              "description": "Lowercase A-labels without a trailing dot; . for every other name"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "forward",
+                                "root"
+                              ],
+                              "description": "forward: names under the domain; root: every name no other zone holds"
+                            },
+                            "other_names": {
+                              "type": "string",
+                              "enum": [
+                                "forward",
+                                "nxdomain",
+                                "host"
+                              ],
+                              "description": "What names the zone does not hold get"
+                            },
+                            "failure_mode": {
+                              "type": "string",
+                              "enum": [
+                                "open",
+                                "closed"
+                              ],
+                              "description": "open: when no resolver can answer, names go to the host's own DNS (the exit node's while one is used); closed: they get SERVFAIL"
+                            },
+                            "resolvers": {
+                              "type": "array",
+                              "maxItems": 4,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "port"
+                                ],
+                                "description": "A resolver Device (device_id, with its name, state and whether it can serve) or an address on the Internet",
+                                "properties": {
+                                  "device_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "device_name": {
+                                    "type": "string",
+                                    "maxLength": 255
+                                  },
+                                  "device_state": {
+                                    "type": "string",
+                                    "maxLength": 32,
+                                    "description": "The Device's lifecycle state, or removed"
+                                  },
+                                  "eligible": {
+                                    "type": "boolean",
+                                    "description": "An active Device owned by the Workspace and no exit node: it can serve"
+                                  },
+                                  "address": {
+                                    "type": "string",
+                                    "maxLength": 39,
+                                    "description": "A canonical IPv4 or IPv6 address on the Internet"
+                                  },
+                                  "port": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 65535
+                                  }
+                                }
+                              },
+                              "description": "1 to 4 for a forward zone, none otherwise",
+                              "minItems": 0
+                            },
+                            "device_groups": {
+                              "type": "array",
+                              "maxItems": 16,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "device_group_id",
+                                  "name",
+                                  "state"
+                                ],
+                                "properties": {
+                                  "device_group_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "maxLength": 64
+                                  },
+                                  "state": {
+                                    "type": "string",
+                                    "maxLength": 32
+                                  }
+                                }
+                              },
+                              "description": "The Device Groups the zone is sent to; empty: every Device of the Network"
+                            },
+                            "search_position": {
+                              "type": [
+                                "integer",
+                                "null"
+                              ],
+                              "minimum": 1,
+                              "maximum": 1000,
+                              "description": "Order among the Network's search domains; null: not a search domain"
+                            },
+                            "public": {
+                              "type": "boolean",
+                              "description": "The domain exists on the Internet"
+                            },
+                            "public_confirmed": {
+                              "type": "boolean"
+                            },
+                            "name_count": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 2000,
+                              "description": "How many names the zone holds"
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updated_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "dns_names": {
+                          "type": "array",
+                          "maxItems": 100,
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "dns_name_id",
+                              "dns_zone_id",
+                              "name",
+                              "label",
+                              "kind",
+                              "source",
+                              "editable",
+                              "version",
+                              "created_at",
+                              "updated_at"
+                            ],
+                            "properties": {
+                              "dns_name_id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "dns_zone_id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "name": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 253,
+                                "description": "The full name in A-labels"
+                              },
+                              "label": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 253,
+                                "description": "The name relative to its zone; @ for the zone's own domain"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "address",
+                                  "cname"
+                                ]
+                              },
+                              "source": {
+                                "type": "string",
+                                "enum": [
+                                  "admin"
+                                ],
+                                "description": "admin: set here"
+                              },
+                              "editable": {
+                                "type": "boolean"
+                              },
+                              "device_id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "device_name": {
+                                "type": "string"
+                              },
+                              "device_state": {
+                                "type": "string",
+                                "description": "The target Device's state; removed once it is gone (the name then answers nothing)"
+                              },
+                              "addresses": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 8,
+                                "uniqueItems": true,
+                                "items": {
+                                  "type": "string",
+                                  "maxLength": 39
+                                },
+                                "description": "Fixed addresses, canonical text, outside the overlay frame and the loopback, link-local, multicast and reserved ranges"
+                              },
+                              "cname": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 253
+                              },
+                              "version": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "created_at": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "updated_at": {
+                                "type": "string",
+                                "format": "date-time"
+                              }
+                            }
+                          }
+                        },
+                        "next_after": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "can_manage": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "dns_zone_not_found, dns_name_not_found"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createNetworkDNSName",
+        "summary": "Create a DNS name",
+        "description": "Requires dns.manage on the Network and MESHTRANSIT_DNS_ZONES_ENABLED (dns_zones_disabled otherwise). An address name sends exactly one of device_id and addresses; a cname name sends cname. Policy still decides which Devices see a name that points at a Device.",
+        "security": [
+          {
+            "accountSessionCookie": [],
+            "sessionCSRF": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "dns_zone_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionProof"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "label",
+                  "kind"
+                ],
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 253,
+                    "description": "The name relative to the zone, @ for its own domain; Unicode labels are converted to A-labels. The longest zone that covers the name holds it"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "address",
+                      "cname"
+                    ]
+                  },
+                  "device_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "An active Device of the Network: the name answers its mesh addresses"
+                  },
+                  "addresses": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 8,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "maxLength": 39
+                    },
+                    "description": "Fixed addresses, canonical text, outside the overlay frame and the loopback, link-local, multicast and reserved ranges"
+                  },
+                  "cname": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 253,
+                    "description": "Another name outside the mesh names and special-use names; never the zone's own domain"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The new name",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "dns_name",
+                        "deleted"
+                      ],
+                      "properties": {
+                        "dns_name": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "dns_name_id",
+                            "dns_zone_id",
+                            "name",
+                            "label",
+                            "kind",
+                            "source",
+                            "editable",
+                            "version",
+                            "created_at",
+                            "updated_at"
+                          ],
+                          "properties": {
+                            "dns_name_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "dns_zone_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253,
+                              "description": "The full name in A-labels"
+                            },
+                            "label": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253,
+                              "description": "The name relative to its zone; @ for the zone's own domain"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "address",
+                                "cname"
+                              ]
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "admin"
+                              ],
+                              "description": "admin: set here"
+                            },
+                            "editable": {
+                              "type": "boolean"
+                            },
+                            "device_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "device_name": {
+                              "type": "string"
+                            },
+                            "device_state": {
+                              "type": "string",
+                              "description": "The target Device's state; removed once it is gone (the name then answers nothing)"
+                            },
+                            "addresses": {
+                              "type": "array",
+                              "minItems": 1,
+                              "maxItems": 8,
+                              "uniqueItems": true,
+                              "items": {
+                                "type": "string",
+                                "maxLength": 39
+                              },
+                              "description": "Fixed addresses, canonical text, outside the overlay frame and the loopback, link-local, multicast and reserved ranges"
+                            },
+                            "cname": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updated_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "deleted": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "404": {
+            "description": "dns_zone_not_found, dns_name_not_found"
+          },
+          "409": {
+            "description": "dns_zones_disabled, dns_name_conflict, dns_name_in_other_zone, dns_name_limit"
+          },
+          "422": {
+            "description": "dns_name_target_invalid, dns_cname_at_apex, dns_cname_loop"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/dns/zones/{dns_zone_id}/names/{dns_name_id}": {
+      "get": {
+        "operationId": "readNetworkDNSName",
+        "summary": "Read a DNS name",
+        "description": "Requires network.read on the Network.",
+        "security": [
+          {
+            "accountSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "dns_zone_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "dns_name_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The name",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "dns_name",
+                        "can_manage"
+                      ],
+                      "properties": {
+                        "dns_name": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "dns_name_id",
+                            "dns_zone_id",
+                            "name",
+                            "label",
+                            "kind",
+                            "source",
+                            "editable",
+                            "version",
+                            "created_at",
+                            "updated_at"
+                          ],
+                          "properties": {
+                            "dns_name_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "dns_zone_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253,
+                              "description": "The full name in A-labels"
+                            },
+                            "label": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253,
+                              "description": "The name relative to its zone; @ for the zone's own domain"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "address",
+                                "cname"
+                              ]
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "admin"
+                              ],
+                              "description": "admin: set here"
+                            },
+                            "editable": {
+                              "type": "boolean"
+                            },
+                            "device_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "device_name": {
+                              "type": "string"
+                            },
+                            "device_state": {
+                              "type": "string",
+                              "description": "The target Device's state; removed once it is gone (the name then answers nothing)"
+                            },
+                            "addresses": {
+                              "type": "array",
+                              "minItems": 1,
+                              "maxItems": 8,
+                              "uniqueItems": true,
+                              "items": {
+                                "type": "string",
+                                "maxLength": 39
+                              },
+                              "description": "Fixed addresses, canonical text, outside the overlay frame and the loopback, link-local, multicast and reserved ranges"
+                            },
+                            "cname": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updated_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "can_manage": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "dns_zone_not_found, dns_name_not_found"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateNetworkDNSName",
+        "summary": "Replace a DNS name's kind and target",
+        "description": "Requires dns.manage on the Network and MESHTRANSIT_DNS_ZONES_ENABLED (dns_zones_disabled otherwise). An address name sends exactly one of device_id and addresses; a cname name sends cname. A name never moves: create another one instead.",
+        "security": [
+          {
+            "accountSessionCookie": [],
+            "sessionCSRF": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "dns_zone_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "dns_name_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionProof"
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\"[1-9][0-9]*\"$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "address",
+                      "cname"
+                    ]
+                  },
+                  "device_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "An active Device of the Network: the name answers its mesh addresses"
+                  },
+                  "addresses": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 8,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "maxLength": 39
+                    },
+                    "description": "Fixed addresses, canonical text, outside the overlay frame and the loopback, link-local, multicast and reserved ranges"
+                  },
+                  "cname": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 253,
+                    "description": "Another name outside the mesh names and special-use names; never the zone's own domain"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The name",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "dns_name",
+                        "deleted"
+                      ],
+                      "properties": {
+                        "dns_name": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "dns_name_id",
+                            "dns_zone_id",
+                            "name",
+                            "label",
+                            "kind",
+                            "source",
+                            "editable",
+                            "version",
+                            "created_at",
+                            "updated_at"
+                          ],
+                          "properties": {
+                            "dns_name_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "dns_zone_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253,
+                              "description": "The full name in A-labels"
+                            },
+                            "label": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253,
+                              "description": "The name relative to its zone; @ for the zone's own domain"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "address",
+                                "cname"
+                              ]
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "admin"
+                              ],
+                              "description": "admin: set here"
+                            },
+                            "editable": {
+                              "type": "boolean"
+                            },
+                            "device_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "device_name": {
+                              "type": "string"
+                            },
+                            "device_state": {
+                              "type": "string",
+                              "description": "The target Device's state; removed once it is gone (the name then answers nothing)"
+                            },
+                            "addresses": {
+                              "type": "array",
+                              "minItems": 1,
+                              "maxItems": 8,
+                              "uniqueItems": true,
+                              "items": {
+                                "type": "string",
+                                "maxLength": 39
+                              },
+                              "description": "Fixed addresses, canonical text, outside the overlay frame and the loopback, link-local, multicast and reserved ranges"
+                            },
+                            "cname": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updated_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "deleted": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "404": {
+            "description": "dns_zone_not_found, dns_name_not_found"
+          },
+          "409": {
+            "description": "dns_zones_disabled, dns_name_conflict, dns_name_in_other_zone, dns_name_limit"
+          },
+          "422": {
+            "description": "dns_name_target_invalid, dns_cname_at_apex, dns_cname_loop"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          },
+          "412": {
+            "description": "version_conflict"
+          },
+          "428": {
+            "description": "precondition_required"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteNetworkDNSName",
+        "summary": "Delete a DNS name",
+        "description": "Requires dns.manage on the Network and MESHTRANSIT_DNS_ZONES_ENABLED (dns_zones_disabled otherwise).",
+        "security": [
+          {
+            "accountSessionCookie": [],
+            "sessionCSRF": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "dns_zone_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "dns_name_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionProof"
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\"[1-9][0-9]*\"$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The deleted name",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "dns_name",
+                        "deleted"
+                      ],
+                      "properties": {
+                        "dns_name": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "dns_name_id",
+                            "dns_zone_id",
+                            "name",
+                            "label",
+                            "kind",
+                            "source",
+                            "editable",
+                            "version",
+                            "created_at",
+                            "updated_at"
+                          ],
+                          "properties": {
+                            "dns_name_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "dns_zone_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253,
+                              "description": "The full name in A-labels"
+                            },
+                            "label": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253,
+                              "description": "The name relative to its zone; @ for the zone's own domain"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "address",
+                                "cname"
+                              ]
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "admin"
+                              ],
+                              "description": "admin: set here"
+                            },
+                            "editable": {
+                              "type": "boolean"
+                            },
+                            "device_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "device_name": {
+                              "type": "string"
+                            },
+                            "device_state": {
+                              "type": "string",
+                              "description": "The target Device's state; removed once it is gone (the name then answers nothing)"
+                            },
+                            "addresses": {
+                              "type": "array",
+                              "minItems": 1,
+                              "maxItems": 8,
+                              "uniqueItems": true,
+                              "items": {
+                                "type": "string",
+                                "maxLength": 39
+                              },
+                              "description": "Fixed addresses, canonical text, outside the overlay frame and the loopback, link-local, multicast and reserved ranges"
+                            },
+                            "cname": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updated_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "deleted": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "404": {
+            "description": "dns_zone_not_found, dns_name_not_found"
+          },
+          "409": {
+            "description": "dns_zones_disabled, dns_name_conflict, dns_name_in_other_zone, dns_name_limit"
+          },
+          "422": {
+            "description": "dns_name_target_invalid, dns_cname_at_apex, dns_cname_loop"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          },
+          "412": {
+            "description": "version_conflict"
+          },
+          "428": {
+            "description": "precondition_required"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/dns/zones/{dns_zone_id}/names/actions/apply": {
+      "post": {
+        "operationId": "applyNetworkDNSNames",
+        "summary": "Change many DNS names at once",
+        "description": "Requires dns.manage on the Network and MESHTRANSIT_DNS_ZONES_ENABLED (dns_zones_disabled otherwise). Up to 100 operations, each on its own name, in one transaction: the checks see the zone as the request leaves it, so a name can be deleted and created again as another kind. A failing operation fails all; error.operation_index names it (from 0). One rate-limit token, one revision, one audit event per changed name.",
+        "security": [
+          {
+            "accountSessionCookie": [],
+            "sessionCSRF": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "dns_zone_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionProof"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "operations"
+                ],
+                "properties": {
+                  "operations": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 100,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "op"
+                      ],
+                      "properties": {
+                        "op": {
+                          "type": "string",
+                          "enum": [
+                            "create",
+                            "update",
+                            "delete"
+                          ]
+                        },
+                        "dns_name_id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "description": "Update and delete only"
+                        },
+                        "version": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "description": "Update and delete only: the version the change expects"
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 253,
+                          "description": "Create only. The name relative to the zone, @ for its own domain; Unicode labels are converted to A-labels. The longest zone that covers the name holds it"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "address",
+                            "cname"
+                          ]
+                        },
+                        "device_id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "description": "An active Device of the Network: the name answers its mesh addresses"
+                        },
+                        "addresses": {
+                          "type": "array",
+                          "minItems": 1,
+                          "maxItems": 8,
+                          "uniqueItems": true,
+                          "items": {
+                            "type": "string",
+                            "maxLength": 39
+                          },
+                          "description": "Fixed addresses, canonical text, outside the overlay frame and the loopback, link-local, multicast and reserved ranges"
+                        },
+                        "cname": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 253,
+                          "description": "Another name outside the mesh names and special-use names; never the zone's own domain"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Each operation's name in request order",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "results",
+                        "changed"
+                      ],
+                      "properties": {
+                        "results": {
+                          "type": "array",
+                          "maxItems": 100,
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "op",
+                              "dns_name",
+                              "changed",
+                              "deleted"
+                            ],
+                            "properties": {
+                              "op": {
+                                "type": "string",
+                                "enum": [
+                                  "create",
+                                  "update",
+                                  "delete"
+                                ]
+                              },
+                              "dns_name": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "dns_name_id",
+                                  "dns_zone_id",
+                                  "name",
+                                  "label",
+                                  "kind",
+                                  "source",
+                                  "editable",
+                                  "version",
+                                  "created_at",
+                                  "updated_at"
+                                ],
+                                "properties": {
+                                  "dns_name_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "dns_zone_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 253,
+                                    "description": "The full name in A-labels"
+                                  },
+                                  "label": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 253,
+                                    "description": "The name relative to its zone; @ for the zone's own domain"
+                                  },
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "address",
+                                      "cname"
+                                    ]
+                                  },
+                                  "source": {
+                                    "type": "string",
+                                    "enum": [
+                                      "admin"
+                                    ],
+                                    "description": "admin: set here"
+                                  },
+                                  "editable": {
+                                    "type": "boolean"
+                                  },
+                                  "device_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "device_name": {
+                                    "type": "string"
+                                  },
+                                  "device_state": {
+                                    "type": "string",
+                                    "description": "The target Device's state; removed once it is gone (the name then answers nothing)"
+                                  },
+                                  "addresses": {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "maxItems": 8,
+                                    "uniqueItems": true,
+                                    "items": {
+                                      "type": "string",
+                                      "maxLength": 39
+                                    },
+                                    "description": "Fixed addresses, canonical text, outside the overlay frame and the loopback, link-local, multicast and reserved ranges"
+                                  },
+                                  "cname": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 253
+                                  },
+                                  "version": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  },
+                                  "created_at": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  },
+                                  "updated_at": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              },
+                              "changed": {
+                                "type": "boolean"
+                              },
+                              "deleted": {
+                                "type": "boolean"
+                              }
+                            }
+                          }
+                        },
+                        "changed": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "404": {
+            "description": "dns_zone_not_found, dns_name_not_found"
+          },
+          "409": {
+            "description": "dns_zones_disabled, dns_name_conflict, dns_name_in_other_zone, dns_name_limit"
+          },
+          "422": {
+            "description": "dns_name_target_invalid, dns_cname_at_apex, dns_cname_loop"
           },
           "429": {
             "description": "rate_limited"

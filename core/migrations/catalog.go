@@ -581,6 +581,7 @@ func Catalog() []Migration {
 		newMigration(212, "Captive portal windows enter the audit trail", deviceCaptiveWindowsSQL),
 		newMigration(213, "Networks send chosen domains to chosen DNS resolvers", networkDNSZonesSQL),
 		newMigration(214, "Maps carry a Network's DNS zones", mapNetworkDNSZonesSQL),
+		newMigration(215, "DNS zones hold names an administrator sets", networkDNSNamesSQL),
 	}
 }
 
@@ -1002,3 +1003,6 @@ var networkDNSZonesSQL string
 
 //go:embed 000214_map_network_dns_zones.up.sql
 var mapNetworkDNSZonesSQL string
+
+//go:embed 000215_network_dns_names.up.sql
+var networkDNSNamesSQL string

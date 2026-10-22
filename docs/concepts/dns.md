@@ -176,7 +176,10 @@ that route itself).
 
 ## Not yet
 
-- Custom records, and a zone for every other name (the root).
+- Names set in zones reach Devices: Core stores them (an address name to a
+  Device or fixed addresses, a CNAME, in zones whose other names are
+  forwarded, answered `NXDOMAIN` or left to the host), but maps do not carry
+  them yet. A zone for every other name (the root).
 - Internet resolvers of a zone asked through the exit node itself (today the
   exit node's DNS forwarder answers instead).
 - The search domain on Windows: the NRPT routes the zone to the resolver, but
