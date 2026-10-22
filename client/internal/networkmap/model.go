@@ -172,12 +172,16 @@ type DNSRecordType string
 const (
 	DNSRecordA    DNSRecordType = "A"
 	DNSRecordAAAA DNSRecordType = "AAAA"
+	// DNSRecordCNAME points a name at another (MTCP dns.records1).
+	DNSRecordCNAME DNSRecordType = "CNAME"
 )
 
-// DNSRecord is one validated local address record. Names are lowercase,
-// absolute-by-convention, and stored without a trailing dot.
+// DNSRecord is one validated local record: an address (A, AAAA) or, for a
+// CNAME, the Target name. Names are lowercase, absolute-by-convention, and
+// stored without a trailing dot.
 type DNSRecord struct {
 	Name    string
 	Type    DNSRecordType
 	Address netip.Addr
+	Target  string
 }

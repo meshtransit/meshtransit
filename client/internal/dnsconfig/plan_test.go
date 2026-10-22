@@ -200,8 +200,9 @@ func TestCompileRoutesSharedNamesAsOneZone(t *testing.T) {
 	}
 }
 
-// A shared.mesh route Core configures itself is kept; names under it are not
-// re-routed locally.
+// A shared.mesh route Core configures itself is kept; names under it need no
+// route of their own: the node answers them, and asks the route's resolvers
+// for anything else (DNS design D2 §5.2).
 func TestCompileKeepsACoreSharedRoute(t *testing.T) {
 	t.Parallel()
 
@@ -228,7 +229,8 @@ func TestCompileKeepsACoreSharedRoute(t *testing.T) {
 			}
 		}
 	}
-	if routes != 1 || !locallyAuthoritative(plan.Routes, "db.ws01.net01.shared.mesh") {
+	if _, found := findHost(plan.Hosts, "db.ws01.net01.shared.mesh"); routes != 1 || !found ||
+		hasRouteSuffix(plan.Routes, "db.ws01.net01.shared.mesh") {
 		t.Fatalf("routes = %#v", plan.Routes)
 	}
 }
@@ -315,35 +317,42 @@ func TestCompileKeepsTheSharedMeshFallbackBesideTheSuffixRoute(t *testing.T) {
 	}
 }
 
-// A locally answered route for the root or a single label from control
-// would hide names the host resolves elsewhere: it is skipped, not fatal.
-func TestCompileSkipsLocalRoutesForTheRootAndSingleLabels(t *testing.T) {
+// A locally answered route for the root or an Internet suffix from control
+// would hide names the host resolves elsewhere: it is skipped, not fatal. A
+// private single label (an nxdomain zone) is kept.
+func TestCompileSkipsLocalRoutesForTheRootAndInternetSuffixes(t *testing.T) {
 	t.Parallel()
 
 	snapshot := coreSnapshot()
 	snapshot.DNS.Routes = append(snapshot.DNS.Routes,
 		networkmap.DNSRoute{Suffix: ".", Resolvers: []networkmap.DNSResolver{}},
 		networkmap.DNSRoute{Suffix: "com", Resolvers: []networkmap.DNSResolver{}},
+		networkmap.DNSRoute{Suffix: "co.uk", Resolvers: []networkmap.DNSResolver{}},
+		networkmap.DNSRoute{Suffix: "lan", Resolvers: []networkmap.DNSResolver{}},
 		networkmap.DNSRoute{Suffix: "corp", Resolvers: []networkmap.DNSResolver{{Address: netip.MustParseAddrPort("192.0.2.53:53")}}},
 	)
 	plan, err := Compile(snapshot)
 	if err != nil {
 		t.Fatalf("Compile() error = %v", err)
 	}
-	if plan.IgnoredRoutes != 2 || len(plan.Routes) != 2 || plan.Routes[0].Suffix != "corp" ||
-		plan.Routes[1].Suffix != "mesh.internal" || locallyAuthoritative(plan.Routes, "www.example.com") {
+	if plan.IgnoredRoutes != 3 || len(plan.Routes) != 3 || plan.Routes[0].Suffix != "corp" ||
+		plan.Routes[1].Suffix != "lan" || !plan.Routes[1].local() ||
+		plan.Routes[2].Suffix != "mesh.internal" || locallyAuthoritative(plan.Routes, "www.example.com") {
 		t.Fatalf("routes = %#v, ignored %d", plan.Routes, plan.IgnoredRoutes)
 	}
 }
 
-// A forward zone's route stays even on a single label: unavailable, it is
-// not answered locally, so its names follow the zone's failure mode.
+// A forward zone's route stays even on a single label: one that fails closed
+// keeps its route unavailable, so its names never fall to the host's DNS;
+// one that fails open with no resolver left, like a zone that leaves its
+// names to the host, is not routed to the node at all.
 func TestCompileKeepsForwardZoneRoutes(t *testing.T) {
 	t.Parallel()
 
 	snapshot := coreSnapshot()
 	snapshot.DNS.Routes = append(snapshot.DNS.Routes,
-		networkmap.DNSRoute{Suffix: "lab", Unavailable: true, FailOpen: true},
+		networkmap.DNSRoute{Suffix: "lab", Unavailable: true},
+		networkmap.DNSRoute{Suffix: "open", Unavailable: true, FailOpen: true},
 		networkmap.DNSRoute{Suffix: "corp", Resolvers: []networkmap.DNSResolver{
 			{Address: netip.MustParseAddrPort("100.64.0.7:5335")},
 		}},
@@ -353,8 +362,9 @@ func TestCompileKeepsForwardZoneRoutes(t *testing.T) {
 		t.Fatalf("Compile() error = %v", err)
 	}
 	lab, found := mostSpecificRoute(plan.Routes, "wiki.lab")
-	if !found || lab.Suffix != "lab" || !lab.Unavailable || !lab.FailOpen || lab.local() ||
-		locallyAuthoritative(plan.Routes, "wiki.lab") || plan.IgnoredRoutes != 0 {
+	if !found || lab.Suffix != "lab" || !lab.Unavailable || lab.FailOpen || lab.local() ||
+		locallyAuthoritative(plan.Routes, "wiki.lab") || plan.IgnoredRoutes != 0 ||
+		hasRouteSuffix(plan.Routes, "open") {
 		t.Fatalf("routes = %#v, ignored %d", plan.Routes, plan.IgnoredRoutes)
 	}
 	if cloned := clonePlan(plan); !slices.EqualFunc(cloned.Routes, plan.Routes, func(left, right Route) bool {

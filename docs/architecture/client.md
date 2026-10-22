@@ -365,7 +365,11 @@ record for each name (the node's own, its same-Network peers' and its
 imported shares'), the suffix as a locally answered route and the Network's
 zone as search domain, and with `dns.forward1` the Network's forward zones,
 whose names the resolver asks the zones' resolvers (with a failure mode and a
-circuit breaker per resolver). The node derives reverse (PTR) records itself
+circuit breaker per resolver). With `dns.records1` it also carries the names
+an admin set, CNAMEs included, and zones that answer `NXDOMAIN` or leave
+their other names to the host (whose names alone are routed to the node).
+The resolver follows CNAMEs and keeps any answer from outside from speaking
+for a name it holds. The node derives reverse (PTR) records itself
 from the records of the zone its own name is in. On Android and iOS, DNS is
 not implemented. See [DNS](../concepts/dns.md).
 

@@ -5,6 +5,22 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Clients (DNS design D2c, MTCP `dns.records1`): `meshd` with DNS on
+  (Linux, macOS, Windows) applies DNS names and every zone kind.
+  - A zone that answers `NXDOMAIN` is routed to the node, a private single
+    label (`lan`) included. A zone that leaves its other names to the host is
+    not routed as a whole: each of its names is, and the host's own DNS
+    answers the rest. A forward zone that fails open with no resolver it can
+    use is left to the host the same way.
+  - The node answers A, AAAA, ANY and CNAME of the names it holds. HTTPS and
+    SVCB get no data. Other types of a name in a host or forward zone go on
+    to the zone's resolvers or the host's DNS. A name that only holds other
+    names gets no data.
+  - The node follows CNAMEs, at most 8 steps, asking outside names of the
+    resolvers they would go to, in one 5-second budget. No answer from
+    outside speaks for a name the node holds: only the asked chain stays,
+    and every TTL is at most 5 seconds.
+  - On Linux, DNSSEC validation is turned off on the mesh link.
 - Core (DNS design D2b, schema 216, MTCP `dns.records1`): maps carry DNS
   names and every zone kind to nodes that declare `dns.records1` with
   `dns.forward1`. A zone whose other names are `nxdomain` is a route the node

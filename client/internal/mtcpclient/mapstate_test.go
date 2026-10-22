@@ -392,3 +392,27 @@ func TestConvertDNSCarriesForwardZones(t *testing.T) {
 		t.Fatalf("root zone and global port = %+v, %v", config, err)
 	}
 }
+
+// Names (dns.records1): a CNAME record carries its target, no value; an
+// unknown record type fails the map, never passes as an address.
+func TestConvertDNSCarriesCNAMEs(t *testing.T) {
+	t.Parallel()
+	config, err := convertDNS(&mtcpv1.DnsConfig{Records: []*mtcpv1.DnsRecord{
+		{Name: "Wiki.Corp.LAN.", Type: mtcpv1.DnsRecord_CNAME, Target: "Corp.Atlassian.NET."},
+		{Name: "git.corp.lan", Type: mtcpv1.DnsRecord_A, Value: netip.MustParseAddr("10.0.5.20").AsSlice()},
+	}})
+	if err != nil || len(config.Records) != 2 || config.Records[0].Type != networkmap.DNSRecordCNAME ||
+		config.Records[0].Name != "wiki.corp.lan" || config.Records[0].Target != "corp.atlassian.net" ||
+		config.Records[0].Address.IsValid() {
+		t.Fatalf("records = %+v, %v", config, err)
+	}
+	for name, record := range map[string]*mtcpv1.DnsRecord{
+		"CNAME with a value":     {Name: "a.lan", Type: mtcpv1.DnsRecord_CNAME, Target: "b.lan", Value: []byte{1, 2, 3, 4}},
+		"CNAME without a target": {Name: "a.lan", Type: mtcpv1.DnsRecord_CNAME},
+		"unknown type":           {Name: "a.lan", Type: mtcpv1.DnsRecord_Type(16), Value: []byte{1, 2, 3, 4}},
+	} {
+		if _, err := convertDNS(&mtcpv1.DnsConfig{Records: []*mtcpv1.DnsRecord{record}}); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

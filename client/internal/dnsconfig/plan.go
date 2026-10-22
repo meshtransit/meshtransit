@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 
+	"golang.org/x/net/publicsuffix"
+
 	"meshtransit.net/client/internal/networkmap"
 )
 
@@ -35,10 +37,17 @@ type Plan struct {
 	Routes            []Route
 	SearchDomains     []string
 	Hosts             []Host
-	Reverse           []Reverse
+	// Aliases are the CNAMEs of names an administrator set (DNS design D2),
+	// sorted by name.
+	Aliases []Alias
+	// Interior are the names, sorted, that only hold other names under a
+	// route the node answers itself: they exist, so they get no data, not
+	// NXDOMAIN (RFC 8020).
+	Interior []string
+	Reverse  []Reverse
 	// IgnoredRoutes counts locally answered routes control sent for the
-	// root or a single-label suffix, which would hide names the host
-	// resolves elsewhere; they are not installed.
+	// root, which would hide every name the host resolves elsewhere; they
+	// are not installed.
 	IgnoredRoutes int
 	// Exit, while the node sends its Internet traffic through an exit node,
 	// makes this resolver the host's default and sends every name it does
@@ -96,6 +105,19 @@ type Host struct {
 	Addresses []netip.Addr
 }
 
+// Alias is one CNAME: Name answers with Target.
+type Alias struct {
+	Name   string
+	Target string
+}
+
+// hostZone reports a route of a zone that leaves the names it does not
+// hold to the host (DNS design D2 §5.2), or of a forward zone that fails
+// open with no resolver left: neither is routed to the node as a whole.
+func (route Route) hostZone() bool {
+	return route.Unavailable && route.FailOpen && len(route.Resolvers) == 0
+}
+
 // Reverse maps one address to its canonical name. The node derives them from
 // the address records of its own Network's zone (the zone its own name is
 // in): Core sends forward records only.
@@ -118,12 +140,25 @@ func Compile(snapshot networkmap.Snapshot) (Plan, error) {
 	plan.DefaultResolvers = resolverAddresses(config.Resolvers)
 	plan.FallbackResolvers = resolverAddresses(config.FallbackResolvers)
 	plan.Routes = make([]Route, 0, len(config.Routes))
+	var hostZones []string
 	for _, route := range config.Routes {
-		// A forward zone keeps its route even on one label, so a zone that
-		// fails closed never falls to the host's DNS.
-		if len(route.Resolvers) == 0 && !route.Unavailable &&
-			(route.Suffix == "." || !strings.Contains(route.Suffix, ".")) {
+		// The root, or a suffix of the Internet (com, co.uk), answered
+		// locally would hide every name under it, which Core never asks
+		// for. A private zone keeps its route on one label (lan, corp): a
+		// zone that answers NXDOMAIN, or fails closed, never falls to the
+		// host's DNS.
+		if len(route.Resolvers) == 0 && !route.Unavailable && internetSuffix(route.Suffix) {
 			plan.IgnoredRoutes++
+			continue
+		}
+		// A zone that leaves its other names to the host is not routed to
+		// the node: each of its names gets a route of its own below, and
+		// the host's own DNS (per link) answers the rest.
+		if candidate := (Route{
+			Unavailable: route.Unavailable, FailOpen: route.FailOpen,
+			Resolvers: resolverAddresses(route.Resolvers),
+		}); candidate.hostZone() {
+			hostZones = append(hostZones, route.Suffix)
 			continue
 		}
 		plan.Routes = append(plan.Routes, Route{
@@ -137,10 +172,15 @@ func Compile(snapshot networkmap.Snapshot) (Plan, error) {
 
 	hosts := make(map[string][]netip.Addr)
 	for _, record := range config.Records {
+		if record.Type == networkmap.DNSRecordCNAME {
+			plan.Aliases = append(plan.Aliases, Alias{Name: record.Name, Target: record.Target})
+			continue
+		}
 		if err := addHostAddress(hosts, record.Name, record.Address); err != nil {
 			return Plan{}, err
 		}
 	}
+	slices.SortFunc(plan.Aliases, func(left, right Alias) int { return strings.Compare(left.Name, right.Name) })
 
 	hostNames := make([]string, 0, len(hosts))
 	for name := range hosts {
@@ -166,17 +206,15 @@ func Compile(snapshot networkmap.Snapshot) (Plan, error) {
 			!hasRouteSuffix(plan.Routes, sharedZone) {
 			plan.Routes = append(plan.Routes, Route{Suffix: sharedZone, Resolvers: []netip.AddrPort{}})
 		}
-		if !locallyAuthoritative(plan.Routes, name) {
-			if _, ownName := pointed[name]; ownName {
-				return Plan{}, fmt.Errorf(
-					"%w: name %q of the node's own zone has no locally authoritative route",
-					ErrInvalid,
-					name,
-				)
-			}
-			plan.Routes = append(plan.Routes, Route{Suffix: name, Resolvers: []netip.AddrPort{}})
+		if _, ownName := pointed[name]; ownName && !locallyAuthoritative(plan.Routes, name) {
+			return Plan{}, fmt.Errorf(
+				"%w: name %q of the node's own zone has no locally authoritative route",
+				ErrInvalid,
+				name,
+			)
 		}
 	}
+	routeNames(&plan, hostNames, hostZones)
 	sort.Slice(plan.Routes, func(left, right int) bool {
 		return plan.Routes[left].Suffix < plan.Routes[right].Suffix
 	})
@@ -193,7 +231,7 @@ func Compile(snapshot networkmap.Snapshot) (Plan, error) {
 		}
 	}
 	plan.Enabled = len(plan.DefaultResolvers) != 0 || len(plan.Routes) != 0 ||
-		len(plan.SearchDomains) != 0 || len(plan.Hosts) != 0 || plan.Exit != nil
+		len(plan.SearchDomains) != 0 || len(plan.Hosts) != 0 || len(plan.Aliases) != 0 || plan.Exit != nil
 
 	return plan, nil
 }
@@ -305,4 +343,135 @@ func hasRoute(routes []Route, name string) bool {
 	return slices.ContainsFunc(routes, func(route Route) bool {
 		return dnsSuffixContains(route.Suffix, name)
 	})
+}
+
+// routeNames gives the names the node answers the routes they need, and
+// finds the interior names. A name under a route of the node needs none of
+// its own (DNS design D2 §5.2), however many names a zone holds. A name of
+// a zone that leaves its other names to the host gets a route of its own,
+// unavailable and failing open, so the node answers it and the host's DNS
+// the types the node does not hold. Any other name gets a route the node
+// answers itself.
+func routeNames(plan *Plan, hostNames, hostZones []string) {
+	names := make([]string, 0, len(hostNames)+len(plan.Aliases))
+	names = append(names, hostNames...)
+	for _, alias := range plan.Aliases {
+		names = append(names, alias.Name)
+	}
+	slices.Sort(names)
+	hostZones = splitHostZones(plan, hostZones, names)
+	routed := make(map[string]struct{}, len(plan.Routes))
+	for _, route := range plan.Routes {
+		routed[route.Suffix] = struct{}{}
+	}
+	var added []Route
+	for _, name := range names {
+		route, covered := mostSpecificRoute(plan.Routes, name)
+		inHostZone := slices.ContainsFunc(hostZones, func(zone string) bool {
+			return dnsSuffixContains(zone, name) && (!covered || len(zone) > len(route.Suffix))
+		})
+		if _, exists := routed[name]; exists || (covered && !inHostZone) {
+			continue
+		}
+		routed[name] = struct{}{}
+		if inHostZone {
+			added = append(added, Route{Suffix: name, Resolvers: []netip.AddrPort{}, Unavailable: true, FailOpen: true})
+			continue
+		}
+		added = append(added, Route{Suffix: name, Resolvers: []netip.AddrPort{}})
+	}
+	plan.Routes = append(plan.Routes, added...)
+	plan.Interior = interiorNames(plan.Routes, names)
+}
+
+// interiorNames are the ancestors of names, down to the route the node
+// answers itself that covers them, that are not names themselves.
+func interiorNames(routes []Route, names []string) []string {
+	own := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		own[name] = struct{}{}
+	}
+	interior := make(map[string]struct{})
+	for _, name := range names {
+		route, covered := mostSpecificRoute(routes, name)
+		if !covered || !route.local() || route.Suffix == "." {
+			continue
+		}
+		for parent := name; parent != route.Suffix; {
+			_, rest, found := strings.Cut(parent, ".")
+			if !found {
+				break
+			}
+			parent = rest
+			if _, isName := own[parent]; !isName {
+				interior[parent] = struct{}{}
+			}
+		}
+	}
+	sorted := make([]string, 0, len(interior))
+	for name := range interior {
+		sorted = append(sorted, name)
+	}
+	slices.Sort(sorted)
+	return sorted
+}
+
+// internetSuffix reports the root or a public suffix ICANN delegates,
+// wildcard rules included (ck under *.ck): the suffix of a name just below
+// it is itself, or that name. home.arpa is the home network's (RFC 8375).
+func internetSuffix(suffix string) bool {
+	if suffix == "." {
+		return true
+	}
+	if suffix == "home.arpa" || strings.HasSuffix(suffix, ".home.arpa") {
+		return false
+	}
+	probe := "probe." + suffix
+	public, icann := publicsuffix.PublicSuffix(probe)
+	return icann && (public == suffix || public == probe)
+}
+
+// maxNameRoutedDomains bounds the domains a plan asks the host to route
+// once zones that leave their other names to the host route their names one
+// by one: every platform takes at most 256, search domains included (DNS
+// design D2 §3.4).
+const maxNameRoutedDomains = 200
+
+// splitHostZones returns the zones that leave their other names to the host
+// whose names alone are routed to the node; every other one keeps a route
+// of its own, unavailable and failing open (as a forward zone that lost its
+// resolvers in D1): the node answers its names and asks the host's network
+// resolvers for the rest. A zone keeps its route when another route already
+// covers it (its other names would get that route's answer), when it is or
+// holds a search domain (the host routes searched domains to the node
+// anyway), or when its names would pass maxNameRoutedDomains: a forward
+// zone of 2,000 names that lost its resolvers must not fail the host's
+// whole DNS.
+func splitHostZones(plan *Plan, hostZones, names []string) []string {
+	slices.Sort(hostZones)
+	budget := maxNameRoutedDomains - len(plan.Routes) - len(plan.SearchDomains)
+	var split []string
+	for _, zone := range hostZones {
+		inZone := 0
+		for _, name := range names {
+			if dnsSuffixContains(zone, name) {
+				inZone++
+			}
+		}
+		_, covered := mostSpecificRoute(plan.Routes, zone)
+		searched := slices.ContainsFunc(plan.SearchDomains, func(domain string) bool {
+			return dnsSuffixContains(zone, domain) || dnsSuffixContains(domain, zone)
+		})
+		if covered || searched || inZone > budget {
+			plan.Routes = append(plan.Routes, Route{
+				Suffix: zone, Resolvers: []netip.AddrPort{}, Unavailable: true,
+				FailOpen: true,
+			})
+			budget--
+			continue
+		}
+		budget -= inZone
+		split = append(split, zone)
+	}
+	return split
 }

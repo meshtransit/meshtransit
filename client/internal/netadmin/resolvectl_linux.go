@@ -55,6 +55,10 @@ func (c *resolvectlConfigurator) Apply(ctx context.Context, config DNSConfig) er
 		{"default-route", config.Endpoint.InterfaceName, strconv.FormatBool(config.DefaultRoute)},
 		{"llmnr", config.Endpoint.InterfaceName, "no"},
 		{"mdns", config.Endpoint.InterfaceName, "no"},
+		// The node answers names a Network sets, of domains on the Internet
+		// too, unsigned: resolved must not judge them by the domain's
+		// signatures (DNS design D2 §5.2).
+		{"dnssec", config.Endpoint.InterfaceName, "no"},
 	}
 	for _, args := range commands {
 		if _, err := c.run(ctx, args...); err != nil {

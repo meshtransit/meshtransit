@@ -202,6 +202,8 @@ func clonePlan(plan Plan) Plan {
 			Addresses: append([]netip.Addr(nil), host.Addresses...),
 		}
 	}
+	cloned.Aliases = append([]Alias(nil), plan.Aliases...)
+	cloned.Interior = append([]string(nil), plan.Interior...)
 	cloned.Reverse = append([]Reverse(nil), plan.Reverse...)
 	if plan.Exit != nil {
 		exit := ExitDNS{Resolvers: append([]netip.AddrPort{}, plan.Exit.Resolvers...), IPv6: plan.Exit.IPv6}

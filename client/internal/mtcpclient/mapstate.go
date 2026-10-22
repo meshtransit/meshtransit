@@ -583,6 +583,20 @@ func convertDNS(config *mtcpv1.DnsConfig) (*networkmap.DNSConfig, error) {
 		if err != nil {
 			return nil, err
 		}
+		if record.GetType() == mtcpv1.DnsRecord_CNAME {
+			target, err := canonicalDNSName(record.GetTarget())
+			if err != nil || len(record.GetValue()) != 0 {
+				return nil, fmt.Errorf("%w: dns cname record", controlplane.ErrNetmapInvalid)
+			}
+			out.Records = append(out.Records, networkmap.DNSRecord{
+				Name: name, Type: networkmap.DNSRecordCNAME,
+				Target: target,
+			})
+			continue
+		}
+		if record.GetType() != mtcpv1.DnsRecord_A && record.GetType() != mtcpv1.DnsRecord_AAAA {
+			return nil, fmt.Errorf("%w: dns record type", controlplane.ErrNetmapInvalid)
+		}
 		address, ok := netip.AddrFromSlice(record.GetValue())
 		if !ok {
 			return nil, fmt.Errorf("%w: dns record address", controlplane.ErrNetmapInvalid)

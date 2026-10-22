@@ -413,7 +413,8 @@ func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, e
 		}
 	}
 	if stream.options.EnableDNSForward {
-		capabilities = append(capabilities, "dns.forward1")
+		// Names and every zone kind (DNS design D2) need forward zones.
+		capabilities = append(capabilities, "dns.forward1", "dns.records1")
 	}
 	if stream.options.EnableExitNode {
 		capabilities = append(capabilities, "router.exit.v1")

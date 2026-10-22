@@ -66,7 +66,13 @@ func (e *resolverEngine) resolveZone(ctx context.Context, zone zoneQuery) ([]byt
 	if !zone.route.FailOpen || ctx.Err() != nil {
 		return zone.failure(err)
 	}
-	fallbackCtx, cancel := context.WithTimeout(ctx, failOpenFallbackBudget)
+	// A route without resolvers (a name of a zone that leaves the rest to
+	// the host) asks the host first, with the whole budget.
+	fallbackBudget := failOpenFallbackBudget
+	if len(targets) == 0 {
+		fallbackBudget = queryTimeout
+	}
+	fallbackCtx, cancel := context.WithTimeout(ctx, fallbackBudget)
 	defer cancel()
 	fallback, captiveFallback, noData := e.failOpenTargets(zone.plan, zone.question)
 	if noData {
@@ -156,8 +162,11 @@ func (e *resolverEngine) failOpenTargets(plan Plan, question dnsmessage.Question
 }
 
 func (zone zoneQuery) answer(response []byte, captiveWindow bool) ([]byte, error) {
+	var err error
+	if response, err = sanitizeAnswer(zone.plan, zone.question, response); err != nil {
+		return zone.failure(err)
+	}
 	if captiveWindow {
-		var err error
 		if response, err = capTTLs(response, uint32(positiveTTL/time.Second)); err != nil {
 			return zone.failure(err)
 		}

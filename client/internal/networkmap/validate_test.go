@@ -380,3 +380,36 @@ func TestValidateAndClone_ForwardZoneRoutes(t *testing.T) {
 		}
 	}
 }
+
+// A CNAME is the only record of its name, has a target other than itself
+// and no address.
+func TestValidateAndClone_DNSCNAMEs(t *testing.T) {
+	t.Parallel()
+	cname := DNSRecord{Name: "wiki.corp.lan", Type: DNSRecordCNAME, Target: "git.corp.lan"}
+	address := DNSRecord{Name: "git.corp.lan", Type: DNSRecordA, Address: netip.MustParseAddr("10.0.5.20")}
+	for name, test := range map[string]struct {
+		records []DNSRecord
+		valid   bool
+	}{
+		"CNAME and address": {[]DNSRecord{cname, address}, true},
+		"to itself":         {[]DNSRecord{{Name: "a.lan", Type: DNSRecordCNAME, Target: "a.lan"}}, false},
+		"twice":             {[]DNSRecord{cname, cname}, false},
+		"beside an address": {[]DNSRecord{address, {Name: "git.corp.lan", Type: DNSRecordCNAME, Target: "x.lan"}}, false},
+		"before an address": {[]DNSRecord{{Name: "git.corp.lan", Type: DNSRecordCNAME, Target: "x.lan"}, address}, false},
+		"with an address": {[]DNSRecord{{
+			Name: "a.lan", Type: DNSRecordCNAME, Target: "b.lan",
+			Address: netip.MustParseAddr("10.0.0.1"),
+		}}, false},
+		"bad target": {[]DNSRecord{{Name: "a.lan", Type: DNSRecordCNAME, Target: "B..lan"}}, false},
+		"address with a target": {[]DNSRecord{{
+			Name: "a.lan", Type: DNSRecordA,
+			Address: netip.MustParseAddr("10.0.0.1"), Target: "b.lan",
+		}}, false},
+	} {
+		snapshot := validSnapshot()
+		snapshot.DNS.Records = test.records
+		if _, err := ValidateAndClone(snapshot, time.Now()); (err == nil) != test.valid {
+			t.Errorf("%s: error = %v, valid %v", name, err, test.valid)
+		}
+	}
+}

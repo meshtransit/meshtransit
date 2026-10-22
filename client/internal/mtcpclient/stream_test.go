@@ -765,10 +765,11 @@ func TestStreamNetmapDeclaresDNSForward(t *testing.T) {
 			t.Fatalf("StreamNetmap = %v", err)
 		}
 		declared := slices.ContainsFunc(core.hello, func(hello *mtcpv1.ClientHello) bool {
-			return slices.Contains(hello.GetCapabilities(), "dns.forward1")
+			return slices.Contains(hello.GetCapabilities(), "dns.forward1") &&
+				slices.Contains(hello.GetCapabilities(), "dns.records1")
 		})
 		if declared != enabled {
-			t.Fatalf("dns.forward1 declared %t with EnableDNSForward %t", declared, enabled)
+			t.Fatalf("dns.forward1 and dns.records1 declared %t with EnableDNSForward %t", declared, enabled)
 		}
 	}
 }

@@ -102,6 +102,62 @@ with DNS on applies zones (MTCP `dns.forward1`); Android and iOS do not yet.
 - Zones apply only while the node is connected to Core: when the control
   session ends the node removes its DNS from the host, `closed` included.
 
+## Names and zone kinds
+
+A zone may also hold names an admin sets: a name to a Device (its mesh
+addresses), to fixed addresses, or a CNAME. A zone also says what the names
+it does not hold get:
+- `forward`: the zone's resolvers, as above;
+- `nxdomain`: `NXDOMAIN`, answered by the node;
+- `host`: the host's own DNS.
+
+A node on Linux, macOS or Windows with DNS on applies them (MTCP
+`dns.records1`).
+
+- **Who sees a name.** Core sends a name to a Device only while a rule of
+  the active policy lets that Device reach the target Device. A rule the
+  other way is not enough, and a Device always sees its own names. Changes
+  of zones and names reach Devices together, at most 30 seconds after the
+  first.
+- **Routing.** The host routes an `nxdomain` or `forward` zone's domain to
+  the node, a single label (`lan`) included but never the root or a suffix
+  of the Internet (`com`, `co.uk`). A `host` zone is not routed as a whole:
+  each of its names is routed to the node, and the host's own DNS, per link,
+  answers the rest. A `forward` zone that fails open with no resolver it can
+  use is left to the host the same way.
+- **Types the node answers.** For a name it holds, the node answers A, AAAA,
+  ANY and CNAME itself. HTTPS and SVCB get no data, so a browser takes no
+  hint past the name. Any other type (MX, TXT…) of a name in a `host` or
+  `forward` zone goes on to the zone's resolvers or the host's DNS; in an
+  `nxdomain` zone it gets no data. A name that only holds other names gets
+  no data, not `NXDOMAIN`.
+- **CNAMEs.** The node follows a CNAME, at most 8 steps, and answers the
+  whole chain. A chain that leaves the node's names is asked of the
+  resolvers that name would go to:
+  - a zone's resolvers;
+  - the exit node's forwarder while one is in use;
+  - the Network's resolvers;
+  - otherwise the host's network resolvers.
+
+  The chase uses one 5-second budget.
+- **No answer from outside speaks for a name the node holds.** From every
+  answer it forwards, the node keeps only the chain the question asked for.
+  - It drops records and CNAMEs that would answer for names it holds, and
+    answers those names itself.
+  - It turns `NXDOMAIN` for a name it holds into no data.
+  - It drops authority and additional records and the authenticated flag,
+    and keeps every TTL at 5 seconds at most.
+- On Linux the node turns DNSSEC validation off on its link: the names it
+  answers, of domains on the Internet too, are unsigned. While the node uses
+  an exit node or the Network's resolvers, its link is the host's default
+  route, so systemd-resolved then validates no name at all.
+- A zone that leaves its other names to the host keeps a route of its own,
+  unavailable and failing open, when it is a search domain, lies under
+  another route, or holds more names than the host can route one by one
+  (200 domains in all): the node then answers its names and asks the host's
+  network resolvers for the rest. A name set at the zone's own domain (`@`)
+  routes the whole zone through the node.
+
 ## How the resolver answers
 
 | Query | Answer |
@@ -176,11 +232,8 @@ that route itself).
 
 ## Not yet
 
-- Names set in zones on clients: Core stores them (an address name to a
-  Device or fixed addresses, a CNAME, in zones whose other names are
-  forwarded, answered `NXDOMAIN` or left to the host) and sends them to
-  clients that declare `dns.records1`, but no client applies them yet. A
-  zone for every other name (the root).
+- Names and zone kinds on Android and iOS. A zone for every other name (the
+  root).
 - Internet resolvers of a zone asked through the exit node itself (today the
   exit node's DNS forwarder answers instead).
 - The search domain on Windows: the NRPT routes the zone to the resolver, but

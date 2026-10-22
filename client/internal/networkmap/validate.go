@@ -187,10 +187,27 @@ func validateDNSConfig(config DNSConfig) error {
 		address netip.Addr
 	}
 	seenRecords := make(map[recordKey]struct{}, len(config.Records))
+	// A CNAME is the only record of its name (RFC 1034 §3.6.2).
+	aliases := make(map[string]struct{})
+	addressed := make(map[string]struct{}, len(config.Records))
 	for index, record := range config.Records {
 		if !validCanonicalDNSName(record.Name, false) {
 			return fmt.Errorf("record %d name is invalid", index)
 		}
+		if record.Type == DNSRecordCNAME {
+			_, taken := aliases[record.Name]
+			_, holdsAddresses := addressed[record.Name]
+			if record.Address.IsValid() || !validCanonicalDNSName(record.Target, false) ||
+				record.Target == record.Name || taken || holdsAddresses {
+				return fmt.Errorf("record %d is not a valid CNAME", index)
+			}
+			aliases[record.Name] = struct{}{}
+			continue
+		}
+		if _, alias := aliases[record.Name]; alias || record.Target != "" {
+			return fmt.Errorf("record %d shares its name with a CNAME", index)
+		}
+		addressed[record.Name] = struct{}{}
 		address := record.Address
 		if !address.IsValid() || address.Is4In6() || address.Zone() != "" || address.IsMulticast() {
 			return fmt.Errorf("record %d address is invalid", index)

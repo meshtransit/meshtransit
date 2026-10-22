@@ -77,12 +77,24 @@ func (e *resolverEngine) resolve(
 		return formatError(query), nil
 	}
 	if host, found := findHost(plan.Hosts, name); found {
+		if route, pass := passesThrough(plan, name, question.Type); pass {
+			return e.resolveZone(ctx, zoneQuery{
+				plan: plan, route: route, query: query, message: message,
+				question: question, transport: transport,
+			})
+		}
 		response, err := hostResponse(message, question, host, plan)
 		if err != nil {
 			return nil, err
 		}
 
 		return limitUDPResponse(query, response, transport)
+	}
+	if _, found := findAlias(plan.Aliases, name); found {
+		return e.resolveAlias(ctx, aliasQuery{
+			plan: plan, query: query, message: message, question: question,
+			name: name, transport: transport,
+		})
 	}
 	if question.Type == dnsmessage.TypePTR {
 		if address, ok := parseReverseName(name); ok {
@@ -99,7 +111,12 @@ func (e *resolverEngine) resolve(
 
 	route, routed := mostSpecificRoute(plan.Routes, name)
 	if routed && route.local() {
-		response, err := negativeResponse(message, question, dnsmessage.RCodeNameError, route.Suffix, plan)
+		// A name that holds other names exists: no data, not NXDOMAIN.
+		rcode := dnsmessage.RCodeNameError
+		if isInterior(plan, name) {
+			rcode = dnsmessage.RCodeSuccess
+		}
+		response, err := negativeResponse(message, question, rcode, route.Suffix, plan)
 		if err != nil {
 			return nil, err
 		}
@@ -151,6 +168,9 @@ func (e *resolverEngine) resolve(
 	defer cancel()
 	response, err := forwardQuery(forwardCtx, query, question, resolvers, transport, nil)
 	if err != nil {
+		return failureResponse(query, message, question, plan, transport, err)
+	}
+	if response, err = sanitizeAnswer(plan, question, response); err != nil {
 		return failureResponse(query, message, question, plan, transport, err)
 	}
 	if captiveWindow {

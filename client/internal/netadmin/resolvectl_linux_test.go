@@ -29,6 +29,7 @@ func TestResolvectlApplyAndReset(t *testing.T) {
 		{"default-route", "meshdns0", "true"},
 		{"llmnr", "meshdns0", "no"},
 		{"mdns", "meshdns0", "no"},
+		{"dnssec", "meshdns0", "no"},
 		{"revert", "meshdns0"},
 	}
 	if !equalCommandCalls(runner.calls, want) {
