@@ -32,6 +32,7 @@ func TestParseDomainCanonicalizesAndClassifies(t *testing.T) {
 		{"ad.corp.co.uk", "ad.corp.co.uk", ClassPublic},
 		{"bücher.de", "xn--bcher-kva.de", ClassPublic},
 		{"intranet.xn--p1ai", "intranet.xn--p1ai", ClassPublic},
+		{"a.b.ck", "a.b.ck", ClassPublic},
 	} {
 		domain, class, err := ParseDomain(test.input, names)
 		if err != nil || domain != test.domain || class != test.class {
@@ -66,6 +67,8 @@ func TestParseDomainRefuses(t *testing.T) {
 		{"com", ErrDomainPublicSuffix},
 		{"co.uk", ErrDomainPublicSuffix},
 		{"vn", ErrDomainPublicSuffix},
+		{"ck", ErrDomainPublicSuffix},
+		{"x.ck", ErrDomainPublicSuffix},
 		{"github.io", ErrDomainPublicSuffix},
 		{"xn--p1ai", ErrDomainPublicSuffix},
 		{"рф", ErrDomainPublicSuffix},

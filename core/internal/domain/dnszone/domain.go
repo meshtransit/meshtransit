@@ -106,8 +106,10 @@ func classify(domain string) (Class, error) {
 	if domain == homeArpa || strings.HasSuffix(domain, "."+homeArpa) {
 		return ClassPrivate, nil
 	}
+	// A name just below the top-level domain tells a delegated one by its
+	// rule, wildcard rules included (ck has only *.ck).
 	topLevel := domain[strings.LastIndexByte(domain, '.')+1:]
-	if _, icann := publicsuffix.PublicSuffix(topLevel); !icann {
+	if _, icann := publicsuffix.PublicSuffix("probe." + topLevel); !icann {
 		return ClassPrivate, nil
 	}
 	if suffix, _ := publicsuffix.PublicSuffix(domain); suffix == domain {
