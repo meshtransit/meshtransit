@@ -505,7 +505,7 @@ and ICMP). At most 10,000 rules. Rules are node-reduced: they mention only
 traffic this node can receive. For a router that includes traffic to the
 subnets it serves (7.6): their rules name those prefixes as destinations.
 
-**DNS** (`DnsConfig`): `records` (name, A/AAAA, value) for Device names and
+**DNS** (`DnsConfig`): `records` (name, A/AAAA with `value` or CNAME with `target`) for Device names and
 imported shares, `resolvers` (IP and optional DoH/DoT URL), `search_domains`,
 `routes` (name suffix → resolvers, for split DNS; a route without resolvers is
 answered by the node itself). At most 50,000 records. Core sends an A or AAAA
@@ -540,6 +540,35 @@ the route is unavailable or no resolver answers: ask its own system resolver
 answering `SERVFAIL`. Zones that are search domains follow the Network's zone
 by their position, at most 8 search domains in all. A node without
 `dns.forward1` receives none of this.
+
+**Names and zone kinds** (`dns.records1`, sent only to a node that also
+lists `dns.split`, `dns.forward1` and `map.large1`). A zone may say what the
+names it does not hold get. A zone that answers them `NXDOMAIN` is a route
+without resolvers and not `unavailable`, which the node answers itself, as
+the suffix route. A zone that leaves them to the host is a route without
+resolvers, `unavailable` and `fail_open`. A node needs no route of its own
+for a name under any route it answers.
+
+Core also sends the names an administrator set in those zones, after the
+names above, in name order:
+- A name that points at a Device: its A and AAAA records hold the Device's
+  mesh addresses. Core sends it while the active release has a rule from
+  this node to that live Device (any protocol, any port; one the other way
+  is not enough) and the map holds the Device as a peer, or while the
+  Device is this node.
+- A name with fixed addresses: A and AAAA records.
+- A `CNAME` record (type 5) with `target`, the name without a trailing dot.
+  Core leaves it out when its chain through the Network's own names reaches
+  a Device name this node may not see.
+
+A name already taken by a record above is left out. So is a whole name past
+the 50,000 records, or past 1 MiB of these names encoded. A limited map
+keeps the Devices names point at after explicit shares and before other
+peers.
+
+A node without `dns.records1` receives no name and no zone of another kind.
+Core holds the wakeups of a Network's DNS changes so they reach maps
+together, at most 30 seconds after the first one.
 
 ### 7.4 Device alias grants
 
@@ -1100,6 +1129,7 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `device-alias.v1` | Node implements device alias grants (7.4) |
 | `dns.split` | Node applies split DNS routes |
 | `dns.forward1` | Node applies forward zones (7.3): routes with resolvers and `port`, `unavailable` and `fail_open`; only with `dns.split` and `map.large1` |
+| `dns.records1` | Node applies names and zone kinds (7.3): `CNAME` records, routes it answers or leaves to the host, names under a route without a route of their own; only with `dns.forward1` |
 | `stats.path1` | Node sends `PathStatsReport` |
 | `nat.report1` | Node sends NAT classification in `EndpointReport` |
 | `map.large1` | Node applies maps of up to 10,000 peers; without it Core sends at most 256 |

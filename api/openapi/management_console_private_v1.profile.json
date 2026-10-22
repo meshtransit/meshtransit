@@ -19562,6 +19562,12 @@
                           "type": "integer",
                           "minimum": 0,
                           "description": "Names a new zone took from shorter zones, or a deleted zone deleted with it"
+                        },
+                        "applies_within_seconds": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 60,
+                          "description": "Maps carry the change at the latest this many seconds from now: a Network's DNS changes reach maps together. Absent when nothing changed"
                         }
                       }
                     },
@@ -20222,6 +20228,12 @@
                           "type": "integer",
                           "minimum": 0,
                           "description": "Names a new zone took from shorter zones, or a deleted zone deleted with it"
+                        },
+                        "applies_within_seconds": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 60,
+                          "description": "Maps carry the change at the latest this many seconds from now: a Network's DNS changes reach maps together. Absent when nothing changed"
                         }
                       }
                     },
@@ -20536,6 +20548,12 @@
                           "type": "integer",
                           "minimum": 0,
                           "description": "Names a new zone took from shorter zones, or a deleted zone deleted with it"
+                        },
+                        "applies_within_seconds": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 60,
+                          "description": "Maps carry the change at the latest this many seconds from now: a Network's DNS changes reach maps together. Absent when nothing changed"
                         }
                       }
                     },
@@ -21200,6 +21218,12 @@
                         },
                         "deleted": {
                           "type": "boolean"
+                        },
+                        "applies_within_seconds": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 60,
+                          "description": "Maps carry the change at the latest this many seconds from now: a Network's DNS changes reach maps together. Absent when nothing changed"
                         }
                       }
                     },
@@ -21686,6 +21710,12 @@
                         },
                         "deleted": {
                           "type": "boolean"
+                        },
+                        "applies_within_seconds": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 60,
+                          "description": "Maps carry the change at the latest this many seconds from now: a Network's DNS changes reach maps together. Absent when nothing changed"
                         }
                       }
                     },
@@ -21924,6 +21954,12 @@
                         },
                         "deleted": {
                           "type": "boolean"
+                        },
+                        "applies_within_seconds": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 60,
+                          "description": "Maps carry the change at the latest this many seconds from now: a Network's DNS changes reach maps together. Absent when nothing changed"
                         }
                       }
                     },
@@ -22253,6 +22289,12 @@
                         },
                         "changed": {
                           "type": "boolean"
+                        },
+                        "applies_within_seconds": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 60,
+                          "description": "Maps carry the change at the latest this many seconds from now: a Network's DNS changes reach maps together. Absent when nothing changed"
                         }
                       }
                     },

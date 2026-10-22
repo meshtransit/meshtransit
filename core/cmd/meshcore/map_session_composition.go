@@ -30,6 +30,7 @@ func composeMapSession(
 	exitNodes bool, // MESHTRANSIT_EXIT_NODES_ENABLED
 	exitSpread bool, // MESHTRANSIT_EXIT_SPREAD_ENABLED
 	dnsZones bool, // MESHTRANSIT_DNS_ZONES_ENABLED
+	dnsProtectedNames []string, // MESHTRANSIT_DNS_PROTECTED_NAMES and the deployment's own hosts
 ) (*mapsession.Service, prometheus.Collector, error) {
 	if runtimePool == nil || endpoints == nil || connectivity == nil || !relayDirectory.IsValid() {
 		return nil, nil, errInvalidMapSessionComposition
@@ -52,11 +53,12 @@ func composeMapSession(
 			ShareStatementTimeout:     mapConfig.ShareStatementTimeout,
 			// Routes come with the shared Network policy, cut at the
 			// sessions' own peer limit.
-			SubnetRoutes:   subnetRoutes && mapConfig.SharedInventory,
-			ExitNodes:      exitNodes && mapConfig.SharedInventory,
-			ExitSpread:     exitSpread,
-			DNSZones:       dnsZones && mapConfig.SharedInventory,
-			RoutePeerLimit: mapConfig.PeerLimit,
+			SubnetRoutes:      subnetRoutes && mapConfig.SharedInventory,
+			ExitNodes:         exitNodes && mapConfig.SharedInventory,
+			ExitSpread:        exitSpread,
+			DNSZones:          dnsZones && mapConfig.SharedInventory,
+			DNSProtectedNames: dnsProtectedNames,
+			RoutePeerLimit:    mapConfig.PeerLimit,
 		},
 	)
 	if err != nil {

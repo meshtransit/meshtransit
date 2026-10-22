@@ -517,13 +517,29 @@ func encodeDNS(names mapsession.DNSView) *mtcpv1.DnsConfig {
 			})
 		}
 	}
+	// CNAME records reach only nodes that declared dns.records1: the map
+	// session leaves the names out of the others' routes.
+	for _, alias := range names.Aliases() {
+		config.Records = append(config.Records, &mtcpv1.DnsRecord{
+			Name: alias.Name, Type: mtcpv1.DnsRecord_CNAME, Target: alias.Target,
+		})
+	}
 	if suffix := names.LocalSuffix(); suffix != "" {
 		config.Routes = []*mtcpv1.DnsRoute{{Suffix: suffix}}
 	}
-	// Forward zones reach only nodes that declared dns.forward1: the map
-	// session leaves them out of the others' routes (mtcp-v1 §7.3).
+	// Forward zones reach only nodes that declared dns.forward1, and the
+	// other kinds only those that declared dns.records1: the map session
+	// leaves them out of the others' routes (mtcp-v1 §7.3). A zone that
+	// answers its other names NXDOMAIN is the node's own, as the mesh
+	// suffix; one that leaves them to the host is unavailable and fails open.
 	for _, zone := range names.Zones() {
 		route := &mtcpv1.DnsRoute{Suffix: zone.Domain, Unavailable: len(zone.Resolvers) == 0, FailOpen: zone.FailOpen}
+		switch zone.OtherNames {
+		case mapsession.DNSOtherNXDomain:
+			route.Unavailable, route.FailOpen = false, false
+		case mapsession.DNSOtherHost:
+			route.Unavailable, route.FailOpen = true, true
+		}
 		for _, resolver := range zone.Resolvers {
 			port := uint32(resolver.Port)
 			if port == 53 {

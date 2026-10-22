@@ -85,6 +85,9 @@ type NetworkPolicyParams struct {
 	// forward zones and their resolvers, at the same peer limit. Whether a
 	// rule admits a Device to a resolver comes from Rules.
 	DNSZones []DNSZone
+	// DNS names (DNS design D2) of those zones; whether a Device sees a
+	// name that points at a Device comes from Rules.
+	DNSNames []DNSName
 }
 
 // NetworkPolicy is one Network's packet policy at selector level, shared by

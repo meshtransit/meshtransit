@@ -505,11 +505,15 @@ func (handler *ManagementHandler) writeDNSZoneResult(ctx context.Context, respon
 			// Names a new zone took from shorter zones, or a deleted zone
 			// deleted with it.
 			Names int `json:"names"`
+			// AppliesWithinSeconds: maps carry the change at the latest
+			// then; absent when nothing changed.
+			AppliesWithinSeconds int `json:"applies_within_seconds,omitempty"`
 		} `json:"data"`
 		CorrelationID string `json:"correlation_id"`
 	}
 	output.Data.Zone, output.Data.Deleted, output.Data.Names, output.CorrelationID = newDNSZoneBody(result.Zone),
 		deleted, result.Names, correlationID.String()
+	output.Data.AppliesWithinSeconds = int(result.AppliesWithin / time.Second)
 	response.Header().Set("ETag", strongVersionETag(result.Zone.Version))
 	writeManagementJSON(ctx, handler.logger, response, status, output)
 	return "success"

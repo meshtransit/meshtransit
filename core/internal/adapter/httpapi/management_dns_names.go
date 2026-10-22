@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/netip"
+	"time"
 
 	"meshtransit.net/core/internal/domain/dnszone"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
@@ -281,12 +282,14 @@ func (handler *ManagementHandler) writeDNSNameOutcome(ctx context.Context, respo
 	}
 	var output struct {
 		Data struct {
-			Name    dnsNameBody `json:"dns_name"`
-			Deleted bool        `json:"deleted"`
+			Name                 dnsNameBody `json:"dns_name"`
+			Deleted              bool        `json:"deleted"`
+			AppliesWithinSeconds int         `json:"applies_within_seconds,omitempty"`
 		} `json:"data"`
 		CorrelationID string `json:"correlation_id"`
 	}
 	output.Data.Name, output.Data.Deleted = newDNSNameBody(outcome.Name, !outcome.Name.Deleted), outcome.Name.Deleted
+	output.Data.AppliesWithinSeconds = int(outcome.AppliesWithin / time.Second)
 	output.CorrelationID = correlationID.String()
 	response.Header().Set("ETag", strongVersionETag(outcome.Name.Version))
 	writeManagementJSON(ctx, handler.logger, response, status, output)
@@ -305,8 +308,9 @@ func (handler *ManagementHandler) writeDNSNameResults(ctx context.Context, respo
 	}
 	var output struct {
 		Data struct {
-			Results []outcomeBody `json:"results"`
-			Changed bool          `json:"changed"`
+			Results              []outcomeBody `json:"results"`
+			Changed              bool          `json:"changed"`
+			AppliesWithinSeconds int           `json:"applies_within_seconds,omitempty"`
 		} `json:"data"`
 		CorrelationID string `json:"correlation_id"`
 	}
@@ -317,6 +321,7 @@ func (handler *ManagementHandler) writeDNSNameResults(ctx context.Context, respo
 			Deleted: outcome.Name.Deleted})
 	}
 	output.Data.Changed, output.CorrelationID = result.Changed, correlationID.String()
+	output.Data.AppliesWithinSeconds = int(result.AppliesWithin / time.Second)
 	writeManagementJSON(ctx, handler.logger, response, http.StatusOK, output)
 	return "success"
 }

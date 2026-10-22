@@ -296,6 +296,9 @@ func (conversation *conversation) serve(ctx context.Context, nodeKey node.Key) e
 	}
 	if conversation.session.Supports("dns.forward1") && conversation.session.Supports("dns.split") {
 		request = request.WithDNSForward()
+		if conversation.session.Supports("dns.records1") {
+			request = request.WithDNSRecords()
+		}
 	}
 	return conversation.application.options.Streams.Serve(ctx, machine, request, conversation.sink)
 }

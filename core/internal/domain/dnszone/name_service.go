@@ -181,7 +181,9 @@ func singleOutcome(result NameResult, err error) (NameOutcome, error) {
 	if len(result.Outcomes) != 1 {
 		return NameOutcome{}, ErrInvalid
 	}
-	return result.Outcomes[0], nil
+	outcome := result.Outcomes[0]
+	outcome.AppliesWithin = result.AppliesWithin
+	return outcome, nil
 }
 
 // CreateName adds one name to a zone.

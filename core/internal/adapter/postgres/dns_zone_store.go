@@ -465,12 +465,31 @@ func (store *DNSZoneStore) Change(ctx context.Context, change dnszone.Change) (_
 	if err := appendDNSZoneEvidence(ctx, tx, change, changeID, record); err != nil {
 		return dnszone.Result{}, errors.Join(dnszone.ErrUnavailable, err)
 	}
+	if result.AppliesWithin, err = deferDNSChangeWakeup(ctx, tx, changeID); err != nil {
+		return dnszone.Result{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		committed = true
 		return dnszone.Result{}, errors.Join(dnszone.ErrUnavailable, err)
 	}
 	committed = true
 	return result, nil
+}
+
+const deferDNSChangeWakeupSQL = `SELECT mesh_ops.defer_dns_change_wakeup_v1($1::UUID)`
+
+// deferDNSChangeWakeup holds the change's map wakeups until the Network's
+// DNS window ends (schema 216) and returns how long that is.
+func deferDNSChangeWakeup(ctx context.Context, tx accountSessionTransaction, changeID publicid.ID) (time.Duration,
+	error) {
+	var seconds int
+	if err := tx.QueryRow(ctx, deferDNSChangeWakeupSQL, changeID.String()).Scan(&seconds); err != nil {
+		return 0, errors.Join(dnszone.ErrUnavailable, err)
+	}
+	if seconds < 1 || seconds > 30 {
+		return 0, dnszone.ErrUnavailable
+	}
+	return time.Duration(seconds) * time.Second, nil
 }
 
 // dnsZoneResolverKeys are the resolvers of a zone as they decide its

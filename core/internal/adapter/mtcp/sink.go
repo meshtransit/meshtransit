@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"log/slog"
 	"net/netip"
@@ -52,7 +53,9 @@ type mapSink struct {
 	keyNonce   []byte
 	ticket     []byte
 	relayMap   []byte
-	dns        *mtcpv1.DnsConfig    // the DNS configuration the node holds
+	// dnsDigest identifies the DNS configuration the node holds: with DNS
+	// names a map's DNS reaches a megabyte, too much to keep per session.
+	dnsDigest  [sha256.Size]byte
 	routes     *mtcpv1.RouteConfig  // the routes the node holds; nil: none
 	served     *mtcpv1.ServedRoutes // the Sites the node serves; nil: none
 	exits      *mtcpv1.ExitConfig   // the Exit Pools the node holds; nil: none
@@ -106,7 +109,9 @@ func (sink *mapSink) sendSnapshotLocked(_ context.Context, snapshot mapsession.S
 	if err := sink.session.Send(sharedmtcp.MessageMapSnapshot, message); err != nil {
 		return err
 	}
-	sink.dns = message.GetDns()
+	if sink.dnsDigest, err = dnsDigest(message.GetDns()); err != nil {
+		return err
+	}
 	if !proto.Equal(sink.routes, message.GetRoutes()) || !proto.Equal(sink.served, message.GetServed()) {
 		sink.metrics.routesSent(message.GetRoutes(), snapshot.Routes().Omitted())
 	}
@@ -167,7 +172,12 @@ func (sink *mapSink) SendAuthorityDelta(ctx context.Context, delta mapsession.Au
 		return err
 	}
 	// DNS is sent only when it changed; an absent one means "unchanged".
-	if dns := encodeDNS(names); !proto.Equal(dns, sink.dns) {
+	dns := encodeDNS(names)
+	digest, err := dnsDigest(dns)
+	if err != nil {
+		return err
+	}
+	if digest != sink.dnsDigest {
 		message.Dns = dns
 	}
 	// So are routes; a present, empty message clears them (mtcp-v1 §7.6).
@@ -195,7 +205,7 @@ func (sink *mapSink) SendAuthorityDelta(ctx context.Context, delta mapsession.Au
 		return err
 	}
 	if message.Dns != nil {
-		sink.dns = message.Dns
+		sink.dnsDigest = digest
 	}
 	if message.Routes != nil {
 		sink.routes = routes
@@ -218,7 +228,7 @@ func (sink *mapSink) SendAuthorityDelta(ctx context.Context, delta mapsession.Au
 func (sink *mapSink) SendConnectivityDelta(ctx context.Context, delta mapsession.ConnectivityDelta) error {
 	sink.mu.Lock()
 	defer sink.mu.Unlock()
-	names, err := sink.names(delta.Snapshot())
+	names, err := sink.peerNames(delta.Snapshot())
 	if err != nil {
 		return err
 	}
@@ -304,6 +314,25 @@ func (sink *mapSink) SendRelayGrant(ctx context.Context, snapshot mapsession.Sna
 // SendKeepAlive sends a Ping.
 func (sink *mapSink) SendKeepAlive(context.Context) error {
 	return sink.session.Send(sharedmtcp.MessagePing, &mtcpv1.Ping{})
+}
+
+// dnsDigest hashes a DNS configuration's deterministic encoding.
+func dnsDigest(config *mtcpv1.DnsConfig) ([sha256.Size]byte, error) {
+	encoded, err := proto.MarshalOptions{Deterministic: true}.Marshal(config)
+	if err != nil {
+		return [sha256.Size]byte{}, errors.Join(ErrMapEncoding, err)
+	}
+	return sha256.Sum256(encoded), nil
+}
+
+// peerNames computes the names a connectivity delta gives peers: without
+// the names an administrator set, which only the DNS configuration carries.
+func (sink *mapSink) peerNames(snapshot mapsession.Snapshot) (mapsession.DNSView, error) {
+	names, err := snapshot.DNSPeerNames(sink.suffix)
+	if err != nil {
+		return mapsession.DNSView{}, errors.Join(ErrMapEncoding, err)
+	}
+	return names, nil
 }
 
 // names computes the map's names and reports any it left out.

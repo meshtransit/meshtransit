@@ -646,7 +646,7 @@ func (service *StreamService) deliver(
 		}
 		return delta.SelfChanged(), nil
 	}
-	if next.NetworkRevision() == current.NetworkRevision()+1 {
+	if next.NetworkRevision() > current.NetworkRevision() {
 		delta, deltaErr := NewAuthorityDelta(current, next)
 		if deltaErr == nil {
 			if err := sink.SendAuthorityDelta(ctx, delta); err != nil {

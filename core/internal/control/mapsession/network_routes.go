@@ -137,6 +137,12 @@ type RouteView struct {
 	dnsZones     []DNSZoneRoute
 	resolvers    []node.ID
 	dnsConsumers []node.ID
+	// DNS names (DNS design D2): the positions of the names it may see in
+	// the Network's name table, shared by every map of one read, and the
+	// Devices they point at, which a limited map keeps after shares.
+	nameTable   []DNSNameRoute
+	dnsNames    []int32
+	nameTargets []node.ID
 	// omitted counts Sites, Exit Pools and DNS zones left out by the bounds
 	// of one map.
 	omitted int
@@ -183,14 +189,25 @@ func (view RouteView) ForCapabilities(capabilities RouteCapabilities) RouteView 
 	if !capabilities.DNSForward {
 		view.dnsZones, view.resolvers = nil, nil
 	}
+	// Zones that are not forward and names reach only clients that apply
+	// them (dns.records1): another would answer their names wrongly.
+	if !capabilities.DNSRecords {
+		view.nameTable, view.dnsNames, view.nameTargets = nil, nil, nil
+		view.dnsZones = slices.DeleteFunc(slices.Clone(view.dnsZones), func(zone DNSZoneRoute) bool {
+			return zone.OtherNames != DNSOtherForward
+		})
+		if len(view.dnsZones) == 0 {
+			view.dnsZones = nil
+		}
+	}
 	return view
 }
 
 // RouteCapabilities are the route capabilities of a session (Request.Routes,
-// Request.Router, Request.Exits, Request.ExitRouter and
-// Request.DNSForward).
+// Request.Router, Request.Exits, Request.ExitRouter, Request.DNSForward and
+// Request.DNSRecords).
 type RouteCapabilities struct {
-	Routes, Router, Exits, ExitRouter, DNSForward bool
+	Routes, Router, Exits, ExitRouter, DNSForward, DNSRecords bool
 }
 
 // forCapabilities keeps what a session can use: the Sites to reach when it
@@ -215,7 +232,7 @@ func (view RouteView) IsEmpty() bool {
 		len(view.routers) == 0 && len(view.consumers) == 0 && len(view.exits) == 0 &&
 		len(view.servedExits) == 0 && len(view.exitInbound) == 0 && len(view.exitNodes) == 0 &&
 		len(view.exitConsumers) == 0 && len(view.dnsZones) == 0 && len(view.resolvers) == 0 &&
-		len(view.dnsConsumers) == 0
+		len(view.dnsConsumers) == 0 && len(view.dnsNames) == 0 && len(view.nameTargets) == 0
 }
 
 // Equal reports whether two views carry the same routes.
@@ -230,6 +247,7 @@ func (view RouteView) Equal(other RouteView) bool {
 		slices.Equal(view.exitNodes, other.exitNodes) && slices.Equal(view.exitConsumers, other.exitConsumers) &&
 		slices.EqualFunc(view.dnsZones, other.dnsZones, equalDNSZoneRoute) &&
 		slices.Equal(view.resolvers, other.resolvers) && slices.Equal(view.dnsConsumers, other.dnsConsumers) &&
+		view.equalDNSNames(other) && slices.Equal(view.nameTargets, other.nameTargets) &&
 		view.omitted == other.omitted
 }
 
@@ -264,6 +282,14 @@ type routeIndex struct {
 	zoneList      []DNSZone
 	resolverZones map[int64][]int
 	resolverRules map[int64]map[selectorKey][]int // resolver -> rule source -> rule positions
+	// DNS names: as read and sorted by name, each name's zone position, the
+	// names by name, and every rule's position by its source.
+	nameList      []DNSName
+	nameRoutes    []DNSNameRoute  // what each name sends, for every map
+	nameKeys      [][]selectorKey // a Device name's target selectors, whatever their deadlines
+	nameZone      []int
+	nameByFQDN    map[string]int
+	rulesBySource map[selectorKey][]int
 }
 
 type routeSiteEntry struct {
@@ -280,7 +306,7 @@ func newRouteIndex(params NetworkPolicyParams, members func(SelectorKind, int64)
 	keysOf func(int64) []selectorKey) (*routeIndex, bool) {
 	if len(params.Sites) == 0 && len(params.RouteRouters) == 0 && len(params.RouteRules) == 0 &&
 		len(params.ExitPools) == 0 && len(params.ExitNodes) == 0 && len(params.ExitRules) == 0 &&
-		len(params.DNSZones) == 0 {
+		len(params.DNSZones) == 0 && len(params.DNSNames) == 0 {
 		return nil, true
 	}
 	if params.RouteRevision <= 0 || params.RoutePeerLimit <= 0 || len(params.Sites) > MaximumRouteSites {
@@ -322,7 +348,7 @@ func newRouteIndex(params NetworkPolicyParams, members func(SelectorKind, int64)
 		})
 		entry.primary = siteRoutePrimary(entry.site, entry.routers)
 	}
-	if !index.indexExits(params) || !index.indexDNSZones(params, keysOf) {
+	if !index.indexExits(params) || !index.indexDNSZones(params, keysOf) || !index.indexDNSNames(params, keysOf) {
 		return nil, false
 	}
 	for position, rule := range index.ruleList {
@@ -398,7 +424,7 @@ func (index *routeIndex) equal(other *routeIndex) bool {
 		slices.EqualFunc(index.siteList, other.siteList, equalRouteSite) &&
 		slices.EqualFunc(index.routers, other.routers, equalRouteRouter) &&
 		slices.EqualFunc(index.ruleList, other.ruleList, equalRouteRule) && index.equalExits(other) &&
-		index.equalDNSZones(other)
+		index.equalDNSZones(other) && index.equalDNSNames(other)
 }
 
 // serves reports whether a router can serve its Site now: its Device is
@@ -421,8 +447,9 @@ func (inner *networkPolicy) routesFor(self int64, now time.Time) RouteView {
 	inner.servedExits(&view, self, now)
 	inner.consumerDNSZones(&view, self, now, routers)
 	inner.servedDNS(&view, self, now)
+	inner.consumerDNSNames(&view, self, now)
 	for _, peers := range []*[]node.ID{&view.routers, &view.consumers, &view.exitNodes, &view.exitConsumers,
-		&view.resolvers, &view.dnsConsumers} {
+		&view.resolvers, &view.dnsConsumers, &view.nameTargets} {
 		slices.SortFunc(*peers, compareNodeIDs)
 		*peers = slices.Compact(*peers)
 	}
@@ -758,7 +785,7 @@ func cloneRouteRules(rules []RouteRule) []RouteRule {
 // refresh can filter before it builds (Snapshot.RouteCapabilities).
 func (snapshot Snapshot) withRouteCapabilities(request Request) (Snapshot, error) {
 	capabilities := RouteCapabilities{Routes: request.Routes(), Router: request.Router(), Exits: request.Exits(),
-		ExitRouter: request.ExitRouter(), DNSForward: request.DNSForward()}
+		ExitRouter: request.ExitRouter(), DNSForward: request.DNSForward(), DNSRecords: request.DNSRecords()}
 	routes := snapshot.routes.ForCapabilities(capabilities)
 	if routes.Equal(snapshot.routes) {
 		snapshot.routeCapabilities, snapshot.routeCapabilitiesKnown = capabilities, true

@@ -114,13 +114,19 @@ func TestNewAuthorityDeltaRejectsUnsafeTransitions(t *testing.T) {
 		t.Fatalf("NewSnapshot(renamed) error = %v", err)
 	}
 
+	// Changes that committed between two complete projections are one
+	// delta: a revision gap is no reason for a full snapshot.
+	if delta, err := NewAuthorityDelta(current, gap); err != nil || !delta.IsValid() ||
+		delta.Snapshot().NetworkRevision() != gap.NetworkRevision() {
+		t.Fatalf("revision gap delta = %+v, error = %v", delta, err)
+	}
+
 	for _, test := range []struct {
 		name    string
 		current Snapshot
 		next    Snapshot
 	}{
 		{name: "same revision", current: current, next: current},
-		{name: "revision gap", current: current, next: gap},
 		{name: "self authority changed", current: current, next: renamed},
 		{
 			name:    "revision only",

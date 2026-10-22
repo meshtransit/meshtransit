@@ -69,6 +69,9 @@ type Result struct {
 	Previous *Zone
 	Changed  bool
 	Names    int
+	// AppliesWithin is when maps carry the change at the latest: DNS
+	// changes of a Network reach maps together (DNS design D2 §3.5).
+	AppliesWithin time.Duration
 }
 
 // Change is one validated zone change. Domain, Class and ListVersion are

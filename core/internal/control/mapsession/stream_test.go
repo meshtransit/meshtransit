@@ -190,7 +190,10 @@ func TestStreamServiceUsesAuthorityDeltaForContiguousRevision(t *testing.T) {
 	})
 }
 
-func TestStreamServiceUsesFullSnapshotAfterRevisionGap(t *testing.T) {
+// TestStreamServiceSendsADeltaAcrossARevisionGap: changes committed while a
+// wakeup was held (a Network's DNS changes, a paced stream) reach the node as
+// one delta.
+func TestStreamServiceSendsADeltaAcrossARevisionGap(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		initial, advanced, _ := authorityDeltaSnapshotsFixture(t)
 		gapParams := advanced.params()
@@ -225,9 +228,9 @@ func TestStreamServiceUsesFullSnapshotAfterRevisionGap(t *testing.T) {
 		synctest.Wait()
 
 		snapshots, _ := sink.state()
-		if len(snapshots) != 2 || len(sink.authorityDeltaSnapshots()) != 0 ||
-			snapshots[1].NetworkRevision() != gap.NetworkRevision() {
-			t.Fatalf("gap refresh snapshots = %+v, want full replacement", snapshots)
+		deltas := sink.authorityDeltaSnapshots()
+		if len(snapshots) != 1 || len(deltas) != 1 || deltas[0].Snapshot().NetworkRevision() != gap.NetworkRevision() {
+			t.Fatalf("gap refresh: %d snapshots, %d deltas, want one delta", len(snapshots), len(deltas))
 		}
 
 		cancel()

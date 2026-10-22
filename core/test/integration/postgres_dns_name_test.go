@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -111,7 +112,8 @@ func assertPostgreSQLDNSNames(ctx context.Context, t *testing.T, admin *pgx.Conn
 	if err != nil {
 		t.Fatal(err)
 	}
-	device := activeFixtureDevices(ctx, t, admin, 1)[0]
+	fixtureDevices := activeFixtureDevices(ctx, t, admin, 2)
+	device := fixtureDevices[0]
 
 	created, err := service.Create(ctx, owner, scope, dnszone.Definition{Domain: "corp.internal",
 		OtherNames: dnszone.OtherNXDomain}, false, newCorrelationID(t))
@@ -177,6 +179,24 @@ WHERE event_class = 'network.revision.advanced' AND payload->>'dns_name_id' = $1
 	if reading, err := service.ReadName(ctx, owner, scope, corp, git.ID); err != nil || reading.Name.Version != 1 {
 		t.Fatalf("read a name = %+v, error = %v", reading, err)
 	}
+	assertDNSNameMaps(ctx, t, admin, runtimePool, device, fixtureDevices[1])
+
+	// DNS changes reach maps together: the apply's wakeups wait for the
+	// window it opened, and the next change shares it.
+	var window time.Time
+	var held int64
+	if err := admin.QueryRow(ctx, `SELECT min(available_at), count(*) FILTER (WHERE available_at > occurred + INTERVAL '1 second')
+FROM (SELECT event.available_at, identity.occurred_at AS occurred
+      FROM mesh_ops.outbox_event AS event
+      JOIN mesh_audit.audit_event_identity AS identity ON identity.change_public_id = event.change_public_id
+      WHERE event.aggregate_kind = 'network_dns_name' AND event.payload->>'dns_name_id' = $1::TEXT) AS events`,
+		git.ID.String()).Scan(&window, &held); err != nil || held == 0 {
+		t.Fatalf("the name's wakeup is not held: %d held, error = %v", held, err)
+	}
+	// Zone changes earlier in this test may have opened the window.
+	if applied.AppliesWithin < time.Second || applied.AppliesWithin > 30*time.Second {
+		t.Fatalf("applies within %s", applied.AppliesWithin)
+	}
 
 	// The database refuses what Go would: a name twice, a Device of no
 	// Network, a CNAME chain that loops; a refused apply writes nothing.
@@ -212,6 +232,12 @@ WHERE event_class = 'network.revision.advanced' AND payload->>'dns_name_id' = $1
 	}, newCorrelationID(t))
 	if err != nil || !swapped.Outcomes[1].Name.Deleted || swapped.Outcomes[0].Name.Kind != dnszone.NameAddress {
 		t.Fatalf("delete and create one name = %+v, error = %v", swapped, err)
+	}
+	var shared bool
+	if err := admin.QueryRow(ctx, `SELECT bool_and(available_at = $1) FROM mesh_ops.outbox_event
+WHERE aggregate_kind = 'network_dns_name' AND payload->>'dns_name_id' = $2::TEXT`, window,
+		wiki.ID.String()).Scan(&shared); err != nil || !shared {
+		t.Fatalf("the next DNS change does not share the window: %v", err)
 	}
 	dnsBefore = fixtureDNSRevision(ctx, t, admin)
 	if same, err := service.UpdateName(ctx, owner, scope, corp, git.ID, 1, dnszone.NameDefinition{

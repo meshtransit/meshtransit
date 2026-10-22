@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -72,6 +74,25 @@ type Options struct {
 	// DNSZones reads each Network's DNS zones with its shared policy
 	// (MESHTRANSIT_DNS_ZONES_ENABLED), at the same peer limit.
 	DNSZones bool
+	// DNSProtectedNames are host names no zone a map carries may hold
+	// (MESHTRANSIT_DNS_PROTECTED_NAMES): a zone that does is left out of
+	// every map, with its names, so names added after the zone (a new
+	// relay) stay reachable. The relay directory's host names are added.
+	DNSProtectedNames []string
+}
+
+// protectedDNSNames are the configured protected names and the relay
+// directory's host names.
+func (options Options) protectedDNSNames() []string {
+	names := slices.Clone(options.DNSProtectedNames)
+	for _, region := range options.RelayDirectory.Regions() {
+		for _, relayNode := range region.Nodes() {
+			if host := strings.ToLower(strings.TrimSuffix(relayNode.HostName(), ".")); host != "" {
+				names = append(names, host)
+			}
+		}
+	}
+	return names
 }
 
 // Store loads exact-scope snapshots in read-only repeatable-read transactions.

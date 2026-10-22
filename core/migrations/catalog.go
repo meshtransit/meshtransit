@@ -582,6 +582,7 @@ func Catalog() []Migration {
 		newMigration(213, "Networks send chosen domains to chosen DNS resolvers", networkDNSZonesSQL),
 		newMigration(214, "Maps carry a Network's DNS zones", mapNetworkDNSZonesSQL),
 		newMigration(215, "DNS zones hold names an administrator sets", networkDNSNamesSQL),
+		newMigration(216, "Maps carry DNS names, and DNS changes reach them together", mapNetworkDNSNamesSQL),
 	}
 }
 
@@ -1006,3 +1007,6 @@ var mapNetworkDNSZonesSQL string
 
 //go:embed 000215_network_dns_names.up.sql
 var networkDNSNamesSQL string
+
+//go:embed 000216_map_network_dns_names.up.sql
+var mapNetworkDNSNamesSQL string

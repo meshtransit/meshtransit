@@ -368,6 +368,9 @@ func (store *DNSZoneStore) ChangeNames(ctx context.Context, change dnszone.NameC
 			return dnszone.NameResult{}, errors.Join(dnszone.ErrUnavailable, err)
 		}
 	}
+	if result.AppliesWithin, err = deferDNSChangeWakeup(ctx, tx, changeID); err != nil {
+		return dnszone.NameResult{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		committed = true
 		return dnszone.NameResult{}, errors.Join(dnszone.ErrUnavailable, err)

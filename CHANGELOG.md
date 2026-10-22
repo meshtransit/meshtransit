@@ -5,6 +5,26 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core (DNS design D2b, schema 216, MTCP `dns.records1`): maps carry DNS
+  names and every zone kind to nodes that declare `dns.records1` with
+  `dns.forward1`. A zone whose other names are `nxdomain` is a route the node
+  answers itself. One whose other names go to the host is an unavailable
+  route that fails open.
+
+  A name that points at a Device answers that Device's mesh addresses, and
+  only to Devices a rule of the active release lets reach that live Device.
+  A rule the other way is not enough, and a Device always sees its own
+  names. Fixed-address names are A/AAAA records. A CNAME is a `CNAME`
+  record, left out when its chain reaches a Device name the node may not
+  see.
+
+  Names come after the names MeshTransit gives, within 50,000 records and
+  1 MiB. A limited map keeps the Devices names point at after explicit
+  shares.
+
+  Zone and name changes of a Network wake map sessions together: their
+  outbox events wait for the end of a 30-second window the first change
+  opens. Writes answer `applies_within_seconds`.
 - Core (DNS design D2a, schema 215): names in DNS zones. A zone now says
   what the names it does not hold get (`other_names`): `forward` (its
   resolvers, as before), `nxdomain` (answered on the Device; never on a

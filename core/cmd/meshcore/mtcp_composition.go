@@ -68,12 +68,13 @@ func captiveCapabilities(recorder captivewindow.Recorder) []string {
 }
 
 // dnsCapabilities offers dns.forward1, forward DNS zones in maps (DNS design
-// D1 §4.1), when the deployment has them.
+// D1 §4.1), and dns.records1, names and every zone kind (D2 §4.1), when the
+// deployment has them.
 func dnsCapabilities(dnsZones bool) []string {
 	if !dnsZones {
 		return nil
 	}
-	return []string{"dns.forward1"}
+	return []string{"dns.forward1", "dns.records1"}
 }
 
 // mtcpDependencies are the application services MTCP sessions use. The

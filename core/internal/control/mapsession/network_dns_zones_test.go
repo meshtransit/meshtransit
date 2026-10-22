@@ -50,11 +50,12 @@ func newDNSFixture(t *testing.T) *dnsFixture {
 		},
 		RouteRevision: 9, RoutePeerLimit: 10_000,
 		DNSZones: []DNSZone{
-			{Zone: 901, Domain: "lab.lan", FailOpen: true, Resolvers: []DNSZoneResolver{
+			{Zone: 901, Domain: "lab.lan", OtherNames: DNSOtherForward, FailOpen: true, Resolvers: []DNSZoneResolver{
 				{Device: 8, NodeID: ids[8], Eligible: true, Port: 53}}},
-			{Zone: 900, Domain: "corp.internal", Groups: []int64{10}, SearchPosition: 1, Resolvers: []DNSZoneResolver{
-				{Device: 7, NodeID: ids[7], Eligible: true, Port: 5335},
-				{Address: netip.MustParseAddr("1.1.1.1"), Port: 53}}},
+			{Zone: 900, Domain: "corp.internal", OtherNames: DNSOtherForward, Groups: []int64{10}, SearchPosition: 1,
+				Resolvers: []DNSZoneResolver{
+					{Device: 7, NodeID: ids[7], Eligible: true, Port: 5335},
+					{Address: netip.MustParseAddr("1.1.1.1"), Port: 53}}},
 		},
 	}}
 }

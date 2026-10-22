@@ -147,3 +147,52 @@ func dnsRuleIntent(t *testing.T, scope network.Scope, source devicegroup.ID, res
 	}
 	return intent
 }
+
+// assertDNSNameMaps qualifies schema 216 through the shared map store for
+// the nxdomain zone corp.internal and its names: the map of target sees its
+// own name, and another Device's map, which no rule lets reach target, does
+// not; both see the fixed-address names and the CNAME, and the zone with its
+// kind.
+func assertDNSNameMaps(ctx context.Context, t *testing.T, admin *pgx.Conn, runtimePool *postgresadapter.Pool,
+	target, other node.ID) {
+	t.Helper()
+	store, err := postgresadapter.NewMapSessionStore(runtimePool, postgresadapter.MapSessionOptions{
+		StatementTimeout: 5 * time.Second, IdleTimeout: 5 * time.Second,
+		PeerCandidateLimit: mapsession.MaximumPeerCandidates, PolicyRuleLimit: mapsession.MaximumPacketPolicyRules,
+		RelayDirectory: integrationRelayDirectory(t), SharedInventory: true,
+		InventoryStatementTimeout: 30 * time.Second, InventoryMaxAge: 30 * time.Second,
+		DNSZones: true, RoutePeerLimit: mapsession.DefaultPeerLimit,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := func(device node.ID) []string {
+		t.Helper()
+		snapshot, err := store.Load(ctx, fixtureDeviceIdentity(ctx, t, admin, device))
+		if err != nil {
+			t.Fatal(err)
+		}
+		kind := mapsession.DNSOtherUnknown
+		for _, zone := range snapshot.Routes().DNSZones() {
+			if zone.Domain == "corp.internal" {
+				kind = zone.OtherNames
+			}
+		}
+		if kind != mapsession.DNSOtherNXDomain {
+			t.Fatalf("corp.internal in the map of %s: %v", device, kind)
+		}
+		var fqdns []string
+		for _, name := range snapshot.Routes().DNSNames() {
+			fqdns = append(fqdns, name.FQDN)
+		}
+		return fqdns
+	}
+	if own := names(target); !slices.Equal(own, []string{"corp.internal", "git.corp.internal",
+		"printer.corp.internal", "wiki.corp.internal"}) {
+		t.Fatalf("the target's names = %v", own)
+	}
+	if seen := names(other); !slices.Equal(seen, []string{"corp.internal", "printer.corp.internal",
+		"wiki.corp.internal"}) {
+		t.Fatalf("another Device's names = %v", seen)
+	}
+}

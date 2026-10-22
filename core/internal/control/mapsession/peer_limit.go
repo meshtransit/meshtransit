@@ -55,18 +55,22 @@ func (snapshot Snapshot) withSessionLimit(limit int) (Snapshot, error) {
 
 // peerRank orders peers for a limited map: the peers subnet routes need (a
 // consumer's routers, a router's consumers within its limit), then explicit
-// Device shares, then peers online now, then the rest.
-func (snapshot Snapshot) peerRank(peer PeerCandidate, shared, routed map[node.ID]struct{}) int {
+// Device shares, then the Devices the map's DNS names point at (so a name
+// does not come and go with presence), then peers online now, then the rest.
+func (snapshot Snapshot) peerRank(peer PeerCandidate, shared, routed, named map[node.ID]struct{}) int {
 	if _, needed := routed[peer.nodeID]; needed {
 		return -1
 	}
 	if _, explicit := shared[peer.nodeID]; explicit {
 		return 0
 	}
-	if connectivity, found := snapshot.ConnectivityFor(peer.nodeID); found && connectivity.Online() {
+	if _, target := named[peer.nodeID]; target {
 		return 1
 	}
-	return 2
+	if connectivity, found := snapshot.ConnectivityFor(peer.nodeID); found && connectivity.Online() {
+		return 2
+	}
+	return 3
 }
 
 // withPeerLimit returns the snapshot with at most limit authorized peers,
@@ -86,13 +90,18 @@ func (snapshot Snapshot) withPeerLimit(limit int) Snapshot {
 	for _, peer := range routePeers {
 		routed[peer] = struct{}{}
 	}
+	nameTargets := snapshot.routes.NameTargets()
+	named := make(map[node.ID]struct{}, len(nameTargets))
+	for _, peer := range nameTargets {
+		named[peer] = struct{}{}
+	}
 	type ranked struct {
 		peer PeerCandidate
 		rank int
 	}
 	peers := make([]ranked, len(snapshot.authorized))
 	for index, peer := range snapshot.authorized {
-		peers[index] = ranked{peer: peer, rank: snapshot.peerRank(peer, shared, routed)}
+		peers[index] = ranked{peer: peer, rank: snapshot.peerRank(peer, shared, routed, named)}
 	}
 	slices.SortFunc(peers, func(left, right ranked) int {
 		return cmp.Or(cmp.Compare(left.rank, right.rank), cmp.Compare(left.peer.numericNodeID, right.peer.numericNodeID))

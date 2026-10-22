@@ -10,8 +10,18 @@ import (
 	"meshtransit.net/core/internal/domain/node"
 )
 
-// MaximumDNSRecords bounds the address records of one map (mtcp-v1 §7.3).
+// MaximumDNSRecords bounds the address records of one map (mtcp-v1 §7.3),
+// CNAME records included.
 const MaximumDNSRecords = 50_000
+
+// MaximumDNSNameBytes bounds what the names an administrator set add to one
+// map's DNS, encoded (DNS design D2 §3.4): every map of the Network carries
+// them again on each DNS change.
+const MaximumDNSNameBytes = 1 << 20
+
+// dnsRecordOverhead approximates the encoding of one record besides its name
+// and value: field tags, lengths and its type.
+const dnsRecordOverhead = 8
 
 // ErrDNSView reports a snapshot whose names cannot be computed at all.
 var ErrDNSView = errors.New("map session: invalid DNS view")
@@ -48,17 +58,26 @@ type DNSView struct {
 	// Network's zone.
 	zones         []DNSForwardZone
 	searchDomains []string
-	unnamed       int
-	dropped       int
+	// CNAME records of the names an administrator set (DNS design D2).
+	aliases []DNSAlias
+	unnamed int
+	dropped int
+}
+
+// DNSAlias is one CNAME record: Name answers with Target.
+type DNSAlias struct {
+	Name   string
+	Target string
 }
 
 // DNSForwardZone is one zone the node asks its resolvers for, each a peer's
 // mesh address or an Internet address with its port. No resolver: the zone
 // is unavailable and the node applies its failure mode.
 type DNSForwardZone struct {
-	Domain    string
-	FailOpen  bool
-	Resolvers []DNSResolver
+	Domain     string
+	OtherNames DNSOtherNames
+	FailOpen   bool
+	Resolvers  []DNSResolver
 }
 
 // DNSResolver is one address and port a zone's questions go to.
@@ -76,6 +95,17 @@ const placeholderZone = "invalid"
 // can never shadow a Device. It fails only for an invalid snapshot or share
 // evidence.
 func (snapshot Snapshot) DNSView(suffix dnsname.Suffix) (DNSView, error) {
+	return snapshot.dnsView(suffix, true)
+}
+
+// DNSPeerNames is DNSView for naming peers only (a connectivity delta): it
+// leaves out the names an administrator set and the zones, which only the
+// DNS configuration carries.
+func (snapshot Snapshot) DNSPeerNames(suffix dnsname.Suffix) (DNSView, error) {
+	return snapshot.dnsView(suffix, false)
+}
+
+func (snapshot Snapshot) dnsView(suffix dnsname.Suffix, full bool) (DNSView, error) {
 	if !snapshot.valid {
 		return DNSView{}, ErrDNSView
 	}
@@ -117,9 +147,14 @@ func (snapshot Snapshot) DNSView(suffix dnsname.Suffix) (DNSView, error) {
 		}
 		candidates = append(candidates, DNSRecord{Name: name, Addresses: slices.Clone(record.Addresses)})
 	}
-	view.keep(candidates)
+	taken, total := view.keep(candidates)
+	if full {
+		view.adminNames(snapshot, taken, total)
+	}
 	slices.SortFunc(view.records, func(left, right DNSRecord) int { return strings.Compare(left.Name, right.Name) })
-	view.forwardZones(snapshot)
+	if full {
+		view.forwardZones(snapshot)
+	}
 	return view, nil
 }
 
@@ -130,7 +165,7 @@ func (snapshot Snapshot) DNSView(suffix dnsname.Suffix) (DNSView, error) {
 func (view *DNSView) forwardZones(snapshot Snapshot) {
 	routes := snapshot.routes.dnsZones
 	for _, route := range routes {
-		zone := DNSForwardZone{Domain: route.Domain, FailOpen: route.FailOpen}
+		zone := DNSForwardZone{Domain: route.Domain, OtherNames: route.OtherNames, FailOpen: route.FailOpen}
 		for _, resolver := range route.Resolvers {
 			if resolver.Address.IsValid() {
 				zone.Resolvers = append(zone.Resolvers, DNSResolver{Address: resolver.Address, Port: resolver.Port})
@@ -161,8 +196,9 @@ func (view *DNSView) forwardZones(snapshot Snapshot) {
 }
 
 // keep adds candidates in order, leaving out a name already taken and any
-// record past MaximumDNSRecords addresses.
-func (view *DNSView) keep(candidates []DNSRecord) {
+// record past MaximumDNSRecords addresses. It returns the names taken and
+// the records kept.
+func (view *DNSView) keep(candidates []DNSRecord) (map[string]struct{}, int) {
 	taken := make(map[string]struct{}, len(candidates))
 	total := 0
 	for _, record := range candidates {
@@ -174,6 +210,57 @@ func (view *DNSView) keep(candidates []DNSRecord) {
 		total += len(record.Addresses)
 		view.records = append(view.records, record)
 	}
+	return taken, total
+}
+
+// adminNames adds the names an administrator set that the map's routes let
+// the Device see (DNS design D2 §3.4, §4.2), in name order after the names
+// MeshTransit gives: a name another record took is left out, and so is a
+// whole name past MaximumDNSRecords records or MaximumDNSNameBytes. A name
+// that points at a Device answers that Device's addresses while the map
+// holds it (or it is the Device itself); one the peer limit left out is
+// left out too.
+func (view *DNSView) adminNames(snapshot Snapshot, taken map[string]struct{}, total int) {
+	used := 0
+	snapshot.routes.eachDNSName(func(name DNSNameRoute) {
+		if _, duplicate := taken[name.FQDN]; duplicate {
+			view.dropped++
+			return
+		}
+		if name.CNAME != "" {
+			size := len(name.FQDN) + len(name.CNAME) + dnsRecordOverhead
+			if total+1 > MaximumDNSRecords || used+size > MaximumDNSNameBytes {
+				view.dropped++
+				return
+			}
+			taken[name.FQDN] = struct{}{}
+			total, used = total+1, used+size
+			view.aliases = append(view.aliases, DNSAlias{Name: name.FQDN, Target: name.CNAME})
+			return
+		}
+		addresses := slices.Clone(name.Addresses)
+		if name.NodeID.IsValid() {
+			if name.NodeID == snapshot.nodeID {
+				addresses = recordOf(name.FQDN, snapshot.addresses).Addresses
+			} else if peer, found := snapshot.authorizedPeer(name.NodeID); found {
+				addresses = recordOf(name.FQDN, peer.addresses).Addresses
+			} else {
+				view.dropped++
+				return
+			}
+		}
+		size := 0
+		for _, address := range addresses {
+			size += len(name.FQDN) + len(address.AsSlice()) + dnsRecordOverhead
+		}
+		if len(addresses) == 0 || total+len(addresses) > MaximumDNSRecords || used+size > MaximumDNSNameBytes {
+			view.dropped++
+			return
+		}
+		taken[name.FQDN] = struct{}{}
+		total, used = total+len(addresses), used+size
+		view.records = append(view.records, DNSRecord{Name: name.FQDN, Addresses: addresses})
+	})
 }
 
 // zone returns the Network's zone when the store gave its display codes.
@@ -245,7 +332,10 @@ func (view DNSView) SearchDomains() []string {
 	return append([]string{view.searchDomain}, view.searchDomains...)
 }
 
-// Zones returns the forward zones sorted by domain.
+// Aliases returns the CNAME records sorted by name.
+func (view DNSView) Aliases() []DNSAlias { return slices.Clone(view.aliases) }
+
+// Zones returns the zones sorted by domain.
 func (view DNSView) Zones() []DNSForwardZone {
 	zones := make([]DNSForwardZone, len(view.zones))
 	for index, zone := range view.zones {

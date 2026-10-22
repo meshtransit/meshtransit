@@ -24,11 +24,13 @@ const (
 // dnsPort is the port of Internet resolvers and the default of Devices.
 const dnsPort = 53
 
-// DNSZone is one active forward zone of the Network as maps see it.
+// DNSZone is one active zone of the Network as maps see it. Only a forward
+// zone has resolvers.
 type DNSZone struct {
-	Zone     int64 // internal reference
-	Domain   string
-	FailOpen bool
+	Zone       int64 // internal reference
+	Domain     string
+	OtherNames DNSOtherNames
+	FailOpen   bool
 	// Groups are the Device Groups the zone is sent to; empty: every
 	// Device of the Network.
 	Groups []int64
@@ -53,6 +55,7 @@ type DNSZoneResolver struct {
 // mode.
 type DNSZoneRoute struct {
 	Domain         string
+	OtherNames     DNSOtherNames
 	FailOpen       bool
 	SearchPosition int
 	Resolvers      []DNSResolverRoute // in the zone's order
@@ -253,7 +256,8 @@ func (inner *networkPolicy) consumerDNSZones(view *RouteView, self int64, now ti
 			view.omitted++
 			continue
 		}
-		route := DNSZoneRoute{Domain: zone.Domain, FailOpen: zone.FailOpen, SearchPosition: zone.SearchPosition}
+		route := DNSZoneRoute{Domain: zone.Domain, OtherNames: zone.OtherNames, FailOpen: zone.FailOpen,
+			SearchPosition: zone.SearchPosition}
 		for _, resolver := range zone.Resolvers {
 			if resolver.Address.IsValid() {
 				route.Resolvers = append(route.Resolvers, DNSResolverRoute{Address: resolver.Address, Port: resolver.Port})
@@ -331,6 +335,8 @@ func coversPort(ranges []policy.PortRange, port uint16) bool {
 // keeps its route, unavailable.
 func validDNSZone(zone DNSZone) bool {
 	if zone.Zone <= 0 || zone.Domain == "" || len(zone.Domain) > 253 || zone.SearchPosition < 0 ||
+		zone.OtherNames < DNSOtherForward || zone.OtherNames > DNSOtherHost ||
+		(zone.OtherNames != DNSOtherForward && (len(zone.Resolvers) != 0 || zone.Domain == ".")) ||
 		len(zone.Resolvers) > MaximumDNSZoneResolvers ||
 		len(zone.Groups) > MaximumDNSZoneGroups || slices.ContainsFunc(zone.Groups, func(group int64) bool {
 		return group <= 0
@@ -363,14 +369,15 @@ func validDNSZone(zone DNSZone) bool {
 
 func (index *routeIndex) equalDNSZones(other *routeIndex) bool {
 	return slices.EqualFunc(index.zoneList, other.zoneList, func(first, second DNSZone) bool {
-		return first.Zone == second.Zone && first.Domain == second.Domain && first.FailOpen == second.FailOpen &&
+		return first.Zone == second.Zone && first.Domain == second.Domain && first.OtherNames == second.OtherNames &&
+			first.FailOpen == second.FailOpen &&
 			slices.Equal(first.Groups, second.Groups) && first.SearchPosition == second.SearchPosition &&
 			slices.Equal(first.Resolvers, second.Resolvers)
 	})
 }
 
 func equalDNSZoneRoute(first, second DNSZoneRoute) bool {
-	return first.Domain == second.Domain && first.FailOpen == second.FailOpen &&
+	return first.Domain == second.Domain && first.OtherNames == second.OtherNames && first.FailOpen == second.FailOpen &&
 		first.SearchPosition == second.SearchPosition && slices.Equal(first.Resolvers, second.Resolvers)
 }
 

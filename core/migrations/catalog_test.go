@@ -15,8 +15,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 215 {
-		t.Fatalf("len(Catalog()) = %d, want 215", len(catalog))
+	if len(catalog) != 216 {
+		t.Fatalf("len(Catalog()) = %d, want 216", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1611,8 +1611,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 215 {
-		t.Fatalf("LatestVersion() = %d, want 215", LatestVersion())
+	if LatestVersion() != 216 {
+		t.Fatalf("LatestVersion() = %d, want 216", LatestVersion())
 	}
 }
 
@@ -6193,5 +6193,34 @@ func TestMigration215AddsNetworkDNSNames(t *testing.T) {
 	// Only the runtime role reads and changes names.
 	if strings.Contains(migration.SQL, "TO mesh_worker") || strings.Contains(migration.SQL, "TO mesh_observer") {
 		t.Error("schema 215 grants DNS names beyond mesh_runtime")
+	}
+}
+
+func TestMigration216AddsMapDNSNameReaders(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[215]
+	if migration.Version != 216 {
+		t.Fatalf("migration 216 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.load_map_network_dns_zones_v2(p_limit INTEGER)",
+		"CREATE FUNCTION mesh_ops.load_map_network_dns_names_v1(p_limit INTEGER)",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_map_network_dns_zones_v2(INTEGER) TO mesh_runtime;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_map_network_dns_names_v1(INTEGER) TO mesh_runtime;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.defer_dns_change_wakeup_v1(UUID) TO mesh_runtime;",
+		"AND event.aggregate_kind IN ('network_dns_zone', 'network_dns_name')",
+		"v_due := LEAST(COALESCE(v_due, v_now + INTERVAL '30 seconds'), v_now + INTERVAL '30 seconds');",
+		"AND event.completed_at IS NULL AND event.state = 'pending' AND event.attempt_count = 0",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 216 lacks %q", want)
+		}
+	}
+	if strings.Count(migration.SQL, "SET search_path = pg_catalog, mesh, mesh_ops") != 2 ||
+		strings.Count(migration.SQL, "SECURITY DEFINER") != 3 {
+		t.Error("schema 216 functions are not pinned SECURITY DEFINER functions")
+	}
+	if strings.Contains(migration.SQL, "TO mesh_worker") || strings.Contains(migration.SQL, "TO mesh_observer") {
+		t.Error("schema 216 grants beyond mesh_runtime")
 	}
 }

@@ -176,7 +176,8 @@ func (store *Store) readInventory(
 	if store.options.SubnetRoutes || store.options.ExitNodes || store.options.DNSZones {
 		routes = networkRoutes{revision: routeRevision, peerLimit: store.options.RoutePeerLimit,
 			sites: store.options.SubnetRoutes, exits: store.options.ExitNodes,
-			spread: store.options.ExitNodes && store.options.ExitSpread, dnsZones: store.options.DNSZones}
+			spread: store.options.ExitNodes && store.options.ExitSpread, dnsZones: store.options.DNSZones,
+			protected: store.options.protectedDNSNames()}
 	}
 	cached.policy, err = readNetworkPolicy(ctx, transaction, scope, policyRevision, releaseActive, routes)
 	if err != nil {
@@ -379,6 +380,7 @@ type networkRoutes struct {
 	exits     bool
 	spread    bool
 	dnsZones  bool
+	protected []string // host names no zone may hold
 }
 
 // readNetworkPolicy reads one Network's policy at selector level within the
@@ -407,7 +409,7 @@ func readNetworkPolicy(
 			}
 		}
 		if routes.dnsZones {
-			if err := readNetworkDNSZones(ctx, transaction, &params); err != nil {
+			if err := readNetworkDNSZones(ctx, transaction, &params, routes.protected); err != nil {
 				return appmapsession.NetworkPolicy{}, err
 			}
 		}

@@ -535,6 +535,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			processConfig.ExitNodes,
 			processConfig.ExitSpread,
 			processConfig.DNSZones.Enabled,
+			processConfig.DNSProtectedNames(),
 		)
 		if composeErr != nil {
 			logger.ErrorContext(

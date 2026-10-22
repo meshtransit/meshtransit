@@ -462,11 +462,15 @@ message DnsConfig {
 message DnsRecord {
   string name = 1;
   Type type = 2;
-  bytes value = 3;
+  bytes value = 3; // A and AAAA: the address
+  // dns.records1, CNAME: the name the record points at, without a trailing
+  // dot (mtcp-v1 §7.3).
+  string target = 4;
 
   enum Type {
     TYPE_UNSPECIFIED = 0;
     A = 1;
+    CNAME = 5;
     AAAA = 28;
   }
 }

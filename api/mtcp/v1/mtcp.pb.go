@@ -619,6 +619,7 @@ type DnsRecord_Type int32
 const (
 	DnsRecord_TYPE_UNSPECIFIED DnsRecord_Type = 0
 	DnsRecord_A                DnsRecord_Type = 1
+	DnsRecord_CNAME            DnsRecord_Type = 5
 	DnsRecord_AAAA             DnsRecord_Type = 28
 )
 
@@ -627,11 +628,13 @@ var (
 	DnsRecord_Type_name = map[int32]string{
 		0:  "TYPE_UNSPECIFIED",
 		1:  "A",
+		5:  "CNAME",
 		28: "AAAA",
 	}
 	DnsRecord_Type_value = map[string]int32{
 		"TYPE_UNSPECIFIED": 0,
 		"A":                1,
+		"CNAME":            5,
 		"AAAA":             28,
 	}
 )
@@ -4195,6 +4198,7 @@ type DnsRecord struct {
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	Type          DnsRecord_Type         `protobuf:"varint,2,opt,name=type,proto3,enum=meshtransit.mtcp.v1.DnsRecord_Type" json:"type,omitempty"`
 	Value         []byte                 `protobuf:"bytes,3,opt,name=value,proto3" json:"value,omitempty"`
+	Target        string                 `protobuf:"bytes,4,opt,name=target,proto3" json:"target,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4248,6 +4252,13 @@ func (x *DnsRecord) GetValue() []byte {
 		return x.Value
 	}
 	return nil
+}
+
+func (x *DnsRecord) GetTarget() string {
+	if x != nil {
+		return x.Target
+	}
+	return ""
 }
 
 type Resolver struct {
@@ -6688,14 +6699,16 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\arecords\x18\x01 \x03(\v2\x1e.meshtransit.mtcp.v1.DnsRecordR\arecords\x12;\n" +
 	"\tresolvers\x18\x02 \x03(\v2\x1d.meshtransit.mtcp.v1.ResolverR\tresolvers\x12%\n" +
 	"\x0esearch_domains\x18\x03 \x03(\tR\rsearchDomains\x125\n" +
-	"\x06routes\x18\x04 \x03(\v2\x1d.meshtransit.mtcp.v1.DnsRouteR\x06routes\"\x9d\x01\n" +
+	"\x06routes\x18\x04 \x03(\v2\x1d.meshtransit.mtcp.v1.DnsRouteR\x06routes\"\xc0\x01\n" +
 	"\tDnsRecord\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x127\n" +
 	"\x04type\x18\x02 \x01(\x0e2#.meshtransit.mtcp.v1.DnsRecord.TypeR\x04type\x12\x14\n" +
-	"\x05value\x18\x03 \x01(\fR\x05value\"-\n" +
+	"\x05value\x18\x03 \x01(\fR\x05value\x12\x16\n" +
+	"\x06target\x18\x04 \x01(\tR\x06target\"8\n" +
 	"\x04Type\x12\x14\n" +
 	"\x10TYPE_UNSPECIFIED\x10\x00\x12\x05\n" +
-	"\x01A\x10\x01\x12\b\n" +
+	"\x01A\x10\x01\x12\t\n" +
+	"\x05CNAME\x10\x05\x12\b\n" +
 	"\x04AAAA\x10\x1c\"@\n" +
 	"\bResolver\x12\x0e\n" +
 	"\x02ip\x18\x01 \x01(\fR\x02ip\x12\x10\n" +

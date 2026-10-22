@@ -24,6 +24,10 @@ func TestRequestValidatesNodeKey(t *testing.T) {
 		!request.WithDNSForward().WithLargeMap().DNSForward() {
 		t.Fatal("dns.forward1 is not recorded only when declared with large maps")
 	}
+	if request.WithDNSRecords().WithLargeMap().DNSRecords() ||
+		!request.WithDNSRecords().WithDNSForward().WithLargeMap().DNSRecords() {
+		t.Fatal("dns.records1 is not recorded only with dns.forward1 on large maps")
+	}
 	if _, err := NewRequest(node.Key{}); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("NewRequest() without a Node key error = %v, want ErrInvalidRequest", err)
 	}

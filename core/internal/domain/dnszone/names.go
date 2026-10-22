@@ -258,6 +258,9 @@ type NameOutcome struct {
 	Name      Name
 	Previous  *Name
 	Changed   bool
+	// AppliesWithin, for a one-operation change, is when maps carry it at
+	// the latest.
+	AppliesWithin time.Duration
 }
 
 // NameResult is what a name change did, in request order. Changed is false
@@ -265,6 +268,8 @@ type NameOutcome struct {
 type NameResult struct {
 	Outcomes []NameOutcome
 	Changed  bool
+	// AppliesWithin is when maps carry the change at the latest.
+	AppliesWithin time.Duration
 }
 
 // NameListing is one page of a zone's names in name order, with the zone.
