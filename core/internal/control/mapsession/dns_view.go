@@ -8,6 +8,7 @@ import (
 
 	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/sharing"
 )
 
 // MaximumDNSRecords bounds the address records of one map (mtcp-v1 §7.3),
@@ -62,6 +63,9 @@ type DNSView struct {
 	aliases []DNSAlias
 	unnamed int
 	dropped int
+	// overBudget counts zones, search domains and names left out by the
+	// route budget of one map (DNS design D3 §4.3).
+	overBudget int
 }
 
 // DNSAlias is one CNAME record: Name answers with Target.
@@ -149,12 +153,11 @@ func (snapshot Snapshot) dnsView(suffix dnsname.Suffix, full bool) (DNSView, err
 	}
 	taken, total := view.keep(candidates)
 	if full {
-		view.adminNames(snapshot, taken, total)
+		view.forwardZones(snapshot)
+		config, left := view.routeBudget()
+		view.keepAdminNames(config, left, view.adminNames(snapshot, taken, total))
 	}
 	slices.SortFunc(view.records, func(left, right DNSRecord) int { return strings.Compare(left.Name, right.Name) })
-	if full {
-		view.forwardZones(snapshot)
-	}
 	return view, nil
 }
 
@@ -216,13 +219,24 @@ func (view *DNSView) keep(candidates []DNSRecord) (map[string]struct{}, int) {
 // adminNames adds the names an administrator set that the map's routes let
 // the Device see (DNS design D2 §3.4, §4.2), in name order after the names
 // MeshTransit gives: a name another record took is left out, and so is a
-// whole name past MaximumDNSRecords records or MaximumDNSNameBytes. A name
-// that points at a Device answers that Device's addresses while the map
-// holds it (or it is the Device itself); one the peer limit left out is
-// left out too.
-func (view *DNSView) adminNames(snapshot Snapshot, taken map[string]struct{}, total int) {
+// whole name past MaximumDNSRecords records or MaximumDNSNameBytes, or past
+// the route budget. A name that points at a Device answers that Device's
+// addresses while the map holds it (or it is the Device itself); one the
+// peer limit left out is left out too. A name that points at a share
+// answers the share's alias while the map projects the share (DNS design D3
+// §4.1); else it is left out, and so is a CNAME whose chain reaches it.
+func (view *DNSView) adminNames(snapshot Snapshot, taken map[string]struct{}, total int) []adminName {
 	used := 0
+	var names []adminName
+	shares := snapshot.shareAnswers()
+	unshared, cnames := snapshot.unsharedNames(shares)
 	snapshot.routes.eachDNSName(func(name DNSNameRoute) {
+		if _, hidden := unshared[name.FQDN]; hidden {
+			return
+		}
+		if name.CNAME != "" && reachesUnshared(name, unshared, cnames) {
+			return
+		}
 		if _, duplicate := taken[name.FQDN]; duplicate {
 			view.dropped++
 			return
@@ -235,11 +249,13 @@ func (view *DNSView) adminNames(snapshot Snapshot, taken map[string]struct{}, to
 			}
 			taken[name.FQDN] = struct{}{}
 			total, used = total+1, used+size
-			view.aliases = append(view.aliases, DNSAlias{Name: name.FQDN, Target: name.CNAME})
+			names = append(names, adminName{alias: &DNSAlias{Name: name.FQDN, Target: name.CNAME}})
 			return
 		}
 		addresses := slices.Clone(name.Addresses)
-		if name.NodeID.IsValid() {
+		if name.Share.IsValid() {
+			addresses = slices.Clone(shares[name.Share])
+		} else if name.NodeID.IsValid() {
 			if name.NodeID == snapshot.nodeID {
 				addresses = recordOf(name.FQDN, snapshot.addresses).Addresses
 			} else if peer, found := snapshot.authorizedPeer(name.NodeID); found {
@@ -259,8 +275,9 @@ func (view *DNSView) adminNames(snapshot Snapshot, taken map[string]struct{}, to
 		}
 		taken[name.FQDN] = struct{}{}
 		total, used = total+len(addresses), used+size
-		view.records = append(view.records, DNSRecord{Name: name.FQDN, Addresses: addresses})
+		names = append(names, adminName{record: DNSRecord{Name: name.FQDN, Addresses: addresses}})
 	})
+	return names
 }
 
 // zone returns the Network's zone when the store gave its display codes.
@@ -352,3 +369,61 @@ func (view DNSView) Unnamed() int { return view.unnamed }
 // Dropped returns how many records were left out: a name another record
 // took, a share name in the Network's zone, or past MaximumDNSRecords.
 func (view DNSView) Dropped() int { return view.dropped }
+
+// OverBudget returns how many zones, search domains and names the route
+// budget of one map left out.
+func (view DNSView) OverBudget() int { return view.overBudget }
+
+// unsharedNames returns the share names the map's routes let the Device
+// see whose share the map does not project (no rule to it, an ended
+// contract, or the peer limit) and, when there is one, the CNAMEs the
+// Device sees, to follow chains to them. shares are the map's
+// shareAnswers.
+func (snapshot Snapshot) unsharedNames(shares map[sharing.ImportedResourceID][]netip.Addr) (map[string]struct{},
+	map[string]string) {
+	var unshared map[string]struct{}
+	snapshot.routes.eachDNSName(func(name DNSNameRoute) {
+		if !name.Share.IsValid() {
+			return
+		}
+		if _, projected := shares[name.Share]; projected {
+			return
+		}
+		if unshared == nil {
+			unshared = make(map[string]struct{})
+		}
+		unshared[name.FQDN] = struct{}{}
+	})
+	if len(unshared) == 0 {
+		return nil, nil
+	}
+	cnames := make(map[string]string)
+	snapshot.routes.eachDNSName(func(name DNSNameRoute) {
+		if name.CNAME != "" {
+			cnames[name.FQDN] = name.CNAME
+		}
+	})
+	return unshared, cnames
+}
+
+// reachesUnshared reports whether a CNAME's chain through the names the
+// Device sees reaches a share name the map does not project: the CNAME
+// stays hidden like the name (DNS design D3 §4.1). The routes already hid
+// the chains through names the Device does not see.
+func reachesUnshared(name DNSNameRoute, unshared map[string]struct{}, cnames map[string]string) bool {
+	if len(unshared) == 0 {
+		return false
+	}
+	target := name.CNAME
+	for range maximumDNSCNAMEChain {
+		if _, hidden := unshared[target]; hidden {
+			return true
+		}
+		next, found := cnames[target]
+		if !found {
+			return false
+		}
+		target = next
+	}
+	return false
+}

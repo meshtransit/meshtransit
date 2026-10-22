@@ -585,6 +585,7 @@ func Catalog() []Migration {
 		newMigration(216, "Maps carry DNS names, and DNS changes reach them together", mapNetworkDNSNamesSQL),
 		newMigration(217, "DNS names can point at a share the Network imports", networkDNSShareNamesSQL),
 		newMigration(218, "Share offers suggest service names", shareOfferServiceNamesSQL),
+		newMigration(219, "Maps read the DNS names that point at a share", mapNetworkDNSShareNamesSQL),
 	}
 }
 
@@ -1018,3 +1019,6 @@ var networkDNSShareNamesSQL string
 
 //go:embed 000218_share_offer_service_names.up.sql
 var shareOfferServiceNamesSQL string
+
+//go:embed 000219_map_network_dns_share_names.up.sql
+var mapNetworkDNSShareNamesSQL string

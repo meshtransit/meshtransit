@@ -39,18 +39,46 @@ func (snapshot Snapshot) SharedDNSRecords() ([]SharedDNSRecord, error) {
 		if !name.IsValid() {
 			return nil, ErrInvalidDirectDeviceProjection
 		}
-		prefixes := projection.peer.Addresses()
-		if projection.aliases.IsValid() {
-			prefixes = projection.aliases.RemoteAddresses()
-		}
-		addresses := make([]netip.Addr, 0, len(prefixes))
-		for _, prefix := range prefixes {
-			addresses = append(addresses, prefix.Addr())
-		}
-		records = append(records, SharedDNSRecord{Name: name.String(), Addresses: addresses})
+		records = append(records, SharedDNSRecord{Name: name.String(), Addresses: projection.answers()})
 	}
 	slices.SortStableFunc(records, func(left, right SharedDNSRecord) int { return strings.Compare(left.Name, right.Name) })
 	return records, nil
+}
+
+// answers returns the addresses a name of the projected share answers: the
+// Resource Alias, or a legacy direct share's provider address.
+func (projection DirectDeviceProjection) answers() []netip.Addr {
+	prefixes := projection.peer.Addresses()
+	if projection.aliases.IsValid() {
+		prefixes = projection.aliases.RemoteAddresses()
+	}
+	addresses := make([]netip.Addr, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		addresses = append(addresses, prefix.Addr().Unmap())
+	}
+	return addresses
+}
+
+// shareAnswers returns the addresses a service name of each share this map
+// imports answers (DNS design D3 §4.1): the consumer side holds a projection
+// of it, one per rule, all of one contract and one alias. A share the map
+// does not import is absent.
+func (snapshot Snapshot) shareAnswers() map[sharing.ImportedResourceID][]netip.Addr {
+	var shares map[sharing.ImportedResourceID][]netip.Addr
+	for _, projection := range snapshot.directDeviceProjections {
+		if snapshot.Scope() != projection.authority.Contract.ConsumerScope() {
+			continue
+		}
+		share := projection.authority.Contract.ImportedResourceID()
+		if _, done := shares[share]; done {
+			continue
+		}
+		if shares == nil {
+			shares = make(map[sharing.ImportedResourceID][]netip.Addr)
+		}
+		shares[share] = projection.answers()
+	}
+	return shares
 }
 
 // ImportedPeerName returns the consumer-local name under which this map

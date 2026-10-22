@@ -379,6 +379,8 @@ func (rows *genericRows) Scan(destinations ...any) error {
 			*destination = value.(int64)
 		case *[]int32:
 			*destination = append([]int32(nil), value.([]int32)...)
+		case *[]string:
+			*destination = append([]string(nil), value.([]string)...)
 		case *time.Time:
 			*destination = value.(time.Time)
 		case **time.Time:

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/sharing"
 )
 
 // Bounds of a Network's DNS names (DNS design D2 §3.4).
@@ -32,8 +33,8 @@ const (
 )
 
 // DNSName is one name an administrator set in a zone: one Device of the
-// Network (its internal reference, 0 once it is gone), fixed addresses, or
-// a CNAME; exactly one is set.
+// Network (its internal reference, 0 once it is gone), fixed addresses, a
+// CNAME, or a share the Network imports (DNS design D3); exactly one is set.
 type DNSName struct {
 	Zone      int64
 	FQDN      string
@@ -41,20 +42,23 @@ type DNSName struct {
 	NodeID    node.ID
 	Addresses []netip.Addr
 	CNAME     string
+	Share     sharing.ImportedResourceID
 }
 
 // DNSNameRoute is one name a map may carry: a Device target by NodeID (its
-// addresses come from the map's peer, or self), fixed addresses, or a CNAME.
+// addresses come from the map's peer, or self), fixed addresses, a CNAME,
+// or a share (its addresses come from the map's projection of it).
 type DNSNameRoute struct {
 	FQDN      string
 	NodeID    node.ID
 	Addresses []netip.Addr
 	CNAME     string
+	Share     sharing.ImportedResourceID
 }
 
 func equalDNSNameRoute(first, second DNSNameRoute) bool {
 	return first.FQDN == second.FQDN && first.NodeID == second.NodeID && first.CNAME == second.CNAME &&
-		slices.Equal(first.Addresses, second.Addresses)
+		first.Share == second.Share && slices.Equal(first.Addresses, second.Addresses)
 }
 
 // DNSNames returns the names the Device may see, sorted by name.
@@ -94,8 +98,9 @@ func (view RouteView) NameTargets() []node.ID { return slices.Clone(view.nameTar
 
 // indexDNSNames validates and indexes the Network's names: each in an
 // active zone that is not the root and covers it, sorted by name, once
-// each; and the rules by source, to find the destinations a Device may
-// reach. Names come after indexDNSZones.
+// each; the zones kind host that hold one name, at their apex; and the
+// rules by source, to find the destinations a Device may reach. Names come
+// after indexDNSZones.
 func (index *routeIndex) indexDNSNames(params NetworkPolicyParams, keysOf func(int64) []selectorKey) bool {
 	if len(params.DNSNames) > MaximumDNSNames {
 		return false
@@ -121,7 +126,7 @@ func (index *routeIndex) indexDNSNames(params NetworkPolicyParams, keysOf func(i
 		index.nameZone[position] = zone
 		index.nameByFQDN[name.FQDN] = position
 		index.nameRoutes[position] = DNSNameRoute{FQDN: name.FQDN, NodeID: name.NodeID, Addresses: name.Addresses,
-			CNAME: name.CNAME}
+			CNAME: name.CNAME, Share: name.Share}
 		if name.Device > 0 {
 			index.nameKeys[position] = append([]selectorKey{{kind: SelectorDevice, id: name.Device}},
 				keysOf(name.Device)...)
@@ -130,12 +135,33 @@ func (index *routeIndex) indexDNSNames(params NetworkPolicyParams, keysOf func(i
 	if len(index.nameList) == 0 {
 		return true
 	}
+	index.indexNameZones()
 	index.rulesBySource = make(map[selectorKey][]int)
 	for position, rule := range params.Rules {
 		source := selectorKey{kind: rule.SourceKind, id: rule.SourceRef}
 		index.rulesBySource[source] = append(index.rulesBySource[source], position)
 	}
 	return true
+}
+
+// indexNameZones finds the zones kind host whose only name is their apex:
+// the zone of its own a share's service name gets (DNS design D3 §3.3).
+func (index *routeIndex) indexNameZones() {
+	count := make([]int, len(index.zoneList))
+	apex := make([]bool, len(index.zoneList))
+	for position, name := range index.nameList {
+		zone := index.nameZone[position]
+		count[zone]++
+		apex[zone] = apex[zone] || name.FQDN == index.zoneList[zone].Domain
+	}
+	for position, zone := range index.zoneList {
+		if zone.OtherNames == DNSOtherHost && count[position] == 1 && apex[position] {
+			if index.nameZones == nil {
+				index.nameZones = make(map[string]struct{})
+			}
+			index.nameZones[zone.Domain] = struct{}{}
+		}
+	}
 }
 
 // validDNSName checks one name as read: a name in its zone's domain (the
@@ -146,10 +172,13 @@ func validDNSName(name DNSName, domain string) bool {
 		return false
 	}
 	device := name.NodeID.IsValid()
+	share := name.Share.IsValid()
 	switch {
 	case name.CNAME != "":
-		return !device && name.Device == 0 && len(name.Addresses) == 0 && name.CNAME != name.FQDN &&
+		return !device && !share && name.Device == 0 && len(name.Addresses) == 0 && name.CNAME != name.FQDN &&
 			len(name.CNAME) <= maximumDNSNameBytes
+	case share:
+		return !device && name.Device == 0 && len(name.Addresses) == 0
 	case device:
 		return name.Device >= 0 && len(name.Addresses) == 0
 	default:
@@ -200,8 +229,10 @@ func (inner *networkPolicy) reachable(self, target int64, keys []selectorKey, de
 // consumerDNSNames adds the names self may see (DNS design D2 §4.2): those of
 // the zones sent to it; a name pointing at a Device only while a rule from
 // self reaches that live Device (one the other way is not enough); a CNAME
-// unless its chain through the Network's names ends at a Device name self
-// may not see. The Device targets are kept for the peer limit.
+// unless its chain through the Network's names ends at a Device or share
+// name self may not see. The Device targets are kept for the peer limit. A
+// share name stays while its zone is sent: the map's projection of the
+// share decides (DNS design D3 §4.1).
 func (inner *networkPolicy) consumerDNSNames(view *RouteView, self int64, now time.Time) {
 	index := inner.routes
 	if len(index.nameList) == 0 {
@@ -241,9 +272,10 @@ func (inner *networkPolicy) consumerDNSNames(view *RouteView, self int64, now ti
 }
 
 // chainVisible follows a CNAME through the Network's own names: it hides
-// the name when a step is a Device name self may not see. A chain that
-// leaves the Network's names, or runs past the bound, is the client's to
-// resolve.
+// the name when a step is a Device or share name self may not see. A chain
+// that leaves the Network's names, or runs past the bound, is the client's
+// to resolve. The DNS view checks the share names left against the map's
+// projections.
 func (inner *networkPolicy) chainVisible(name DNSName, hidden func(int) bool) bool {
 	index := inner.routes
 	target := name.CNAME
@@ -253,7 +285,7 @@ func (inner *networkPolicy) chainVisible(name DNSName, hidden func(int) bool) bo
 			return true
 		}
 		next := index.nameList[position]
-		if next.NodeID.IsValid() && hidden(position) {
+		if (next.NodeID.IsValid() || next.Share.IsValid()) && hidden(position) {
 			return false
 		}
 		if next.CNAME == "" {
@@ -267,7 +299,7 @@ func (inner *networkPolicy) chainVisible(name DNSName, hidden func(int) bool) bo
 func (index *routeIndex) equalDNSNames(other *routeIndex) bool {
 	return slices.EqualFunc(index.nameList, other.nameList, func(first, second DNSName) bool {
 		return first.Zone == second.Zone && first.FQDN == second.FQDN && first.Device == second.Device &&
-			first.NodeID == second.NodeID && first.CNAME == second.CNAME &&
+			first.NodeID == second.NodeID && first.CNAME == second.CNAME && first.Share == second.Share &&
 			slices.Equal(first.Addresses, second.Addresses)
 	})
 }

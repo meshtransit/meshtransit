@@ -15,8 +15,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 218 {
-		t.Fatalf("len(Catalog()) = %d, want 218", len(catalog))
+	if len(catalog) != 219 {
+		t.Fatalf("len(Catalog()) = %d, want 219", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1611,8 +1611,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 218 {
-		t.Fatalf("LatestVersion() = %d, want 218", LatestVersion())
+	if LatestVersion() != 219 {
+		t.Fatalf("LatestVersion() = %d, want 219", LatestVersion())
 	}
 }
 
@@ -6281,5 +6281,32 @@ func TestMigration218AddsShareOfferServiceNames(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "TO mesh_worker") || strings.Contains(migration.SQL, "TO mesh_observer") {
 		t.Error("schema 218 grants beyond mesh_runtime")
+	}
+}
+
+func TestMigration219LetsMapsReadShareNames(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[218]
+	if migration.Version != 219 {
+		t.Fatalf("migration 219 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.load_map_network_dns_names_v2(p_limit INTEGER)",
+		"           COALESCE(name.share_public_id::TEXT, '')\n    FROM mesh.network_dns_name AS name",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_map_network_dns_names_v2(INTEGER) TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 219 lacks %q", want)
+		}
+	}
+	if strings.Contains(migration.SQL, "share_public_id IS NULL") {
+		t.Error("schema 219 leaves share names out")
+	}
+	if strings.Count(migration.SQL, "SECURITY DEFINER") != 1 ||
+		strings.Count(migration.SQL, "SET search_path = pg_catalog, mesh, mesh_ops") != 1 {
+		t.Error("schema 219 function is not pinned")
+	}
+	if strings.Contains(migration.SQL, "TO mesh_worker") || strings.Contains(migration.SQL, "TO mesh_observer") {
+		t.Error("schema 219 grants beyond mesh_runtime")
 	}
 }

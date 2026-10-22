@@ -10,6 +10,7 @@ import (
 
 	appmapsession "meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/sharing"
 	"meshtransit.net/shared/internet"
 )
 
@@ -32,8 +33,15 @@ FROM mesh_ops.load_map_network_dns_resolvers_v1($1::INTEGER)`
     pg_catalog.to_regprocedure('mesh_ops.load_map_network_dns_names_v1(integer)'), 'EXECUTE'), FALSE)`
 	loadNetworkDNSZonesV2SQL = `SELECT zone_id, domain, other_names, failure_mode, group_ids, search_position
 FROM mesh_ops.load_map_network_dns_zones_v2($1::INTEGER)`
-	loadNetworkDNSNamesSQL = `SELECT zone_id, fqdn, kind, device_id, device_public_id, addresses, cname
+	loadNetworkDNSNamesSQL = `SELECT zone_id, fqdn, kind, device_id, device_public_id, addresses, cname, ''
 FROM mesh_ops.load_map_network_dns_names_v1($1::INTEGER)`
+
+	// Schema 219: the names that point at a share too.
+	dnsShareNamesGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
+    pg_catalog.to_regprocedure('mesh_ops.load_map_network_dns_names_v2(integer)'), 'EXECUTE'), FALSE)`
+	loadNetworkDNSShareNamesSQL = `SELECT zone_id, fqdn, kind, device_id, device_public_id, addresses, cname,
+    share_public_id
+FROM mesh_ops.load_map_network_dns_names_v2($1::INTEGER)`
 
 	// Technical ceilings: zones of one Network (200 forward zones and the
 	// root) and their resolvers.
@@ -50,7 +58,8 @@ var dnsOtherNames = map[string]appmapsession.DNSOtherNames{
 // readNetworkDNSZones adds the Network's DNS zones, and from schema 216 the
 // names they hold, to params, in the inventory transaction. Before schema
 // 214 is installed there are none: maps carry no zones rather than failing;
-// before 216, forward zones only.
+// before 216, forward zones only; before 219, no name that points at a
+// share.
 func readNetworkDNSZones(ctx context.Context, transaction databaseTransaction,
 	params *appmapsession.NetworkPolicyParams, protected []string) error {
 	granted, err := functionGranted(ctx, transaction, dnsZonesGrantedSQL)
@@ -216,7 +225,15 @@ func readNetworkDNSResolvers(ctx context.Context, transaction databaseTransactio
 // is evidence of a broken read.
 func readNetworkDNSNames(ctx context.Context, transaction databaseTransaction,
 	zones []appmapsession.DNSZone) ([]appmapsession.DNSName, error) {
-	rows, err := transaction.Query(ctx, loadNetworkDNSNamesSQL, maximumNetworkDNSNames+1)
+	shares, err := functionGranted(ctx, transaction, dnsShareNamesGrantedSQL)
+	if err != nil {
+		return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("check DNS share name reader: %w", err))
+	}
+	query := loadNetworkDNSNamesSQL
+	if shares {
+		query = loadNetworkDNSShareNamesSQL
+	}
+	rows, err := transaction.Query(ctx, query, maximumNetworkDNSNames+1)
 	if err != nil || rows == nil {
 		return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("read network DNS names: %w", nonNil(err)))
 	}
@@ -233,23 +250,29 @@ func readNetworkDNSNames(ctx context.Context, transaction databaseTransaction,
 		}
 		read++
 		var name appmapsession.DNSName
-		var kind, publicID, cname string
+		var kind, publicID, cname, share string
 		var addresses []string
 		if err := rows.Scan(&name.Zone, &name.FQDN, &kind, &name.Device, &publicID, &addresses,
-			&cname); err != nil {
+			&cname, &share); err != nil {
 			return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("scan network DNS name: %w", err))
 		}
 		if _, found := known[name.Zone]; !found || name.Device < 0 {
 			return nil, ErrSnapshotEvidence
 		}
 		switch {
-		case kind == "cname" && cname != "" && publicID == "" && len(addresses) == 0:
+		case kind == "cname" && cname != "" && publicID == "" && len(addresses) == 0 && share == "":
 			name.CNAME = cname
-		case kind == "address" && publicID != "" && len(addresses) == 0 && cname == "":
+		case kind == "address" && share != "" && publicID == "" && len(addresses) == 0 && cname == "" &&
+			name.Device == 0:
+			if name.Share, err = sharing.ParseImportedResourceID(share); err != nil {
+				return nil, ErrSnapshotEvidence
+			}
+		case kind == "address" && share == "" && publicID != "" && len(addresses) == 0 && cname == "":
 			if name.NodeID, err = node.ParseID(publicID); err != nil {
 				return nil, ErrSnapshotEvidence
 			}
-		case kind == "address" && publicID == "" && len(addresses) > 0 && cname == "" && name.Device == 0:
+		case kind == "address" && share == "" && publicID == "" && len(addresses) > 0 && cname == "" &&
+			name.Device == 0:
 			name.Addresses = make([]netip.Addr, 0, len(addresses))
 			for _, text := range addresses {
 				address, err := netip.ParseAddr(text)

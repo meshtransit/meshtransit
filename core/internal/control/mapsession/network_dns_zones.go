@@ -244,7 +244,8 @@ func (inner *networkPolicy) resolverServes(resolver DNSZoneResolver, now time.Ti
 // it serves, a rule admits UDP from self to its port, its map holds self
 // within the peer limit, and self's map holds it: resolver Devices share the
 // routers' part of the peer limit with the Sites' routers and the exit nodes
-// in routers. They are then needed peers. The root zone waits for D1b.
+// in routers. They are then needed peers. The root zone waits for D1b. A
+// zone of one name another zone sent holds is answered in that one.
 func (inner *networkPolicy) consumerDNSZones(view *RouteView, self int64, now time.Time,
 	routers map[node.ID]struct{}) {
 	index := inner.routes
@@ -279,6 +280,41 @@ func (inner *networkPolicy) consumerDNSZones(view *RouteView, self int64, now ti
 		}
 		view.dnsZones = append(view.dnsZones, route)
 	}
+	view.dnsZones = index.withoutNestedNameZones(view.dnsZones)
+}
+
+// withoutNestedNameZones leaves out the route of a zone kind host whose only
+// name is its apex when another of routes holds its domain (DNS design D3
+// §4.2): its name is answered in that zone, so the name's other types go to
+// that zone's resolvers, never to the host's DNS. Zones kind host of several
+// names keep their routes (TD-CORE-83).
+func (index *routeIndex) withoutNestedNameZones(routes []DNSZoneRoute) []DNSZoneRoute {
+	if len(index.nameZones) == 0 || len(routes) < 2 {
+		return routes
+	}
+	domains := make(map[string]struct{}, len(routes))
+	for _, route := range routes {
+		domains[route.Domain] = struct{}{}
+	}
+	nested := func(route DNSZoneRoute) bool {
+		if _, single := index.nameZones[route.Domain]; !single {
+			return false
+		}
+		for parent := route.Domain; ; {
+			_, rest, found := strings.Cut(parent, ".")
+			if !found {
+				return false
+			}
+			if _, held := domains[rest]; held {
+				return true
+			}
+			parent = rest
+		}
+	}
+	if !slices.ContainsFunc(routes, nested) {
+		return routes
+	}
+	return slices.DeleteFunc(slices.Clone(routes), nested)
 }
 
 // servedDNS adds the consumers self answers as a resolver Device: those of

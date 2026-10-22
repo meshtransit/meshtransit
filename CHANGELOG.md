@@ -5,6 +5,17 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core (DNS design D3b, schema 219): maps carry the DNS names that point at
+  a share. Such a name answers the share's alias on each consumer Device
+  whose map holds the share (a rule reaches it, the contract runs) and is
+  left out anywhere else, with any CNAME that reaches it; it goes at once
+  when the share or the rule ends. A `host` zone whose only name is its own
+  domain sends no route where another zone the Device receives holds it.
+  Each map now keeps its DNS routes within what a node routes (248 domains,
+  15.5 KiB): a zone or name past it is left out whole and counted as
+  `route_budget` in `meshtransit_mtcp_map_names_degraded_total`; before, a
+  Network with that many zones and `host` names made the node refuse its
+  whole DNS configuration.
 - Core (DNS design D3a, schema 218): a share offer can suggest up to 8
   service names (`service_names`), the real names a provider's web app
   serves, such as `app.corp.com`. A suggestion resolves nowhere and reserves

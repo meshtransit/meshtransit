@@ -341,12 +341,13 @@ func (sink *mapSink) names(snapshot mapsession.Snapshot) (mapsession.DNSView, er
 	if err != nil {
 		return mapsession.DNSView{}, err
 	}
-	if names.Unnamed() > 0 || names.Dropped() > 0 {
+	if names.Unnamed() > 0 || names.Dropped() > 0 || names.OverBudget() > 0 {
 		sink.metrics.namesDegraded(namesUnlabeled, names.Unnamed())
 		sink.metrics.namesDegraded(namesDropped, names.Dropped())
+		sink.metrics.namesDegraded(namesOverBudget, names.OverBudget())
 		if sink.logger != nil {
 			sink.logger.Debug("map names degraded", "unlabeled_devices", names.Unnamed(),
-				"dropped_records", names.Dropped())
+				"dropped_records", names.Dropped(), "over_route_budget", names.OverBudget())
 		}
 	}
 	return names, nil

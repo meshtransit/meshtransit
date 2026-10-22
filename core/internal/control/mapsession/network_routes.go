@@ -289,6 +289,7 @@ type routeIndex struct {
 	nameKeys      [][]selectorKey // a Device name's target selectors, whatever their deadlines
 	nameZone      []int
 	nameByFQDN    map[string]int
+	nameZones     map[string]struct{} // domains of the zones kind host whose only name is their apex
 	rulesBySource map[selectorKey][]int
 }
 

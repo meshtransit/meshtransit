@@ -50,6 +50,9 @@ const (
 	namesUnlabeled = "unlabeled_device"
 	// namesDropped: a record was left out (a taken name or past the limit).
 	namesDropped = "dropped_record"
+	// namesOverBudget: a zone, search domain or name was left out by the
+	// route budget of one map (DNS design D3 §4.3).
+	namesOverBudget = "route_budget"
 )
 
 // The closed set of per-session limits (rate_budget.go).
@@ -134,7 +137,8 @@ func NewMetrics() *Metrics {
 			Help: "MTCP messages refused, or sessions ended, by the per-session limit they exceeded.",
 		}, []string{"limit"}),
 		// Watch: a Device without a DNS label (a write path that bypassed the
-		// label trigger) or names that collide; the maps themselves still flow.
+		// label trigger), names that collide, or a Network whose zones and
+		// names pass what one client routes; the maps themselves still flow.
 		mapNames: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "meshtransit_mtcp_map_names_degraded_total",
 			Help: "Device names and DNS records left out of encoded maps, by bounded cause.",
@@ -173,7 +177,7 @@ func NewMetrics() *Metrics {
 	for _, reason := range streamEndReasons {
 		metrics.streamEnds.WithLabelValues(reason)
 	}
-	for _, reason := range []string{namesUnlabeled, namesDropped} {
+	for _, reason := range []string{namesUnlabeled, namesDropped, namesOverBudget} {
 		metrics.mapNames.WithLabelValues(reason)
 	}
 	for _, result := range []string{routeOfferChanged, routeOfferUnchanged, routeOfferFailed} {

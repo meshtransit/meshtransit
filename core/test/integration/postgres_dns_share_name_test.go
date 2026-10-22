@@ -146,6 +146,14 @@ FROM mesh_ops.load_map_network_dns_names_v1(10001) AS name WHERE name.fqdn = 'ap
 		counted != "0" {
 		t.Fatalf("the v1 map reader read a share name: %s (%s)", counted, code)
 	}
+	// Maps read it from schema 219, with its share (DNS design D3b).
+	if read, code := legacyDNSCall(ctx, t, admin, scope, `SELECT COALESCE(pg_catalog.string_agg(
+    name.kind || ',' || name.device_public_id || ',' || pg_catalog.cardinality(name.addresses) || ',' ||
+    name.cname || ',' || name.share_public_id, ';'), '')
+FROM mesh_ops.load_map_network_dns_names_v2(10001) AS name WHERE name.fqdn = 'app.apps.share.internal'`); code != "" ||
+		read != "address,,0,,"+liveShare {
+		t.Fatalf("the v2 map reader read the share name as %q (%s)", read, code)
+	}
 	var mapRows int
 	if err := admin.QueryRow(ctx, `SELECT pg_catalog.count(*)
 FROM mesh.network_dns_name AS name

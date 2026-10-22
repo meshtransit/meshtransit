@@ -120,12 +120,20 @@ A node on Linux, macOS or Windows with DNS on applies them (MTCP
   other way is not enough, and a Device always sees its own names. Changes
   of zones and names reach Devices together, at most 30 seconds after the
   first.
+- **Names of a share.** A name that points at a share answers the share's
+  alias, and only on a consumer Device whose map holds the share: a rule
+  reaches it, the contract runs, and the peer limit kept it. Anywhere else
+  the name, and any CNAME whose chain reaches it, is left out. Revoking the
+  share or changing the rule takes the name away at once, without the
+  30-second window. The provider's Devices never get the consumer's names.
 - **Routing.** The host routes an `nxdomain` or `forward` zone's domain to
   the node, a single label (`lan`) included but never the root or a suffix
   of the Internet (`com`, `co.uk`). A `host` zone is not routed as a whole:
   each of its names is routed to the node, and the host's own DNS, per link,
   answers the rest. A `forward` zone that fails open with no resolver it can
-  use is left to the host the same way.
+  use is left to the host the same way. A `host` zone whose only name is its
+  own domain (the zone a service name gets) is not sent to a Device that
+  receives another zone holding it: the name is answered in that zone.
 - **Types the node answers.** For a name it holds, the node answers A, AAAA,
   ANY and CNAME itself. HTTPS and SVCB get no data, so a browser takes no
   hint past the name. Any other type (MX, TXT…) of a name in a `host` or
@@ -223,6 +231,18 @@ The packages enable DNS (`--enable-dns`).
 | Addresses per name | 32 |
 | Domains routed to the resolver | 256, and 16 KiB of names, on Linux and macOS (the helper); 256 NRPT namespaces on Windows |
 
+Core keeps each map within 248 domains and 15.5 KiB of them, counted the
+way the node routes them, which leaves room for the routes the node adds
+itself. The node routes a `host` zone whole when another route or a search
+domain covers it, or when its names would pass 200 routed domains;
+otherwise each of its names gets a route. Core keeps, in order: the mesh
+suffix and the Network's zone, the zones routed as a whole by domain, the
+other search domains, then the names that need a route of their own by
+name, and last the `host` zones. A zone past the budget is left out with its
+search domain and names, a name past it whole;
+`meshtransit_mtcp_map_names_degraded_total{reason="route_budget"}` counts
+them.
+
 The suffix is routed to the resolver as one domain, so neither the number of
 Devices nor the number of shares counts against the host's limit. The
 resolver owns that zone: a name under the suffix that is not a Device or
@@ -233,9 +253,6 @@ that route itself).
 
 ## Not yet
 
-- Names that point at a share: Core stores them, and a provider can suggest
-  them on a share offer for the consumer to approve, but maps do not carry
-  them to Devices yet.
 - Names and zone kinds on Android and iOS. A zone for every other name (the
   root).
 - Internet resolvers of a zone asked through the exit node itself (today the
