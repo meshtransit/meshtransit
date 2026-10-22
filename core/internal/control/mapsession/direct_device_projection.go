@@ -307,11 +307,20 @@ func validDirectDeviceProjections(params SnapshotParams, candidates snapshotCand
 		add(peer)
 		return true
 	})
+	// The projections of one contract (one per rule) share its endpoint and
+	// name: the map names each share once (TD-CORE-80).
+	contracts := make(map[sharing.ContractID]DirectDeviceProjection, len(params.DirectDeviceProjections))
 	for index, projection := range params.DirectDeviceProjections {
 		if !projection.matchesSelf(params) || index > 0 &&
 			compareDirectDeviceProjections(params.DirectDeviceProjections[index-1], projection) >= 0 {
 			return false
 		}
+		if previous, exists := contracts[projection.ContractID()]; exists &&
+			(previous.authority.Endpoint.ID() != projection.authority.Endpoint.ID() ||
+				previous.authority.Endpoint.AccessName() != projection.authority.Endpoint.AccessName()) {
+			return false
+		}
+		contracts[projection.ContractID()] = projection
 		if _, collision := ruleIDs[projection.ConsumerRuleID()]; collision {
 			return false
 		}

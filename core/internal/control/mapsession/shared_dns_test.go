@@ -5,7 +5,9 @@ import (
 	"slices"
 	"testing"
 
+	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/policy"
+	"meshtransit.net/core/internal/domain/policy/publication"
 )
 
 func TestSharedDNSRecordsNameConsumerAliasesOnly(t *testing.T) {
@@ -101,5 +103,41 @@ func TestImportedPeerNameIsConsumerSideOnly(t *testing.T) {
 		if _, found := mapped.ImportedPeerName(self.NodeID()); found {
 			t.Fatal("self is not an imported peer")
 		}
+	}
+}
+
+// Two rules from one Device to one share give two projections of the same
+// contract: the share keeps one name, and the map keeps building (TD-CORE-80).
+func TestSharedDNSRecordsNameEachShareOnceAcrossRules(t *testing.T) {
+	t.Parallel()
+	provider, consumer, evidence := deviceAliasFixture(t)
+	first := must(NewDirectDeviceProjection(deviceAliasProjectionParams(t, consumer, provider, consumer, evidence)))
+	params := deviceAliasProjectionParams(t, consumer, provider, consumer, evidence)
+	ruleID := must(policy.ParseRuleID("01890f00-0000-7000-8000-00000000a0a2"))
+	params.ConsumerRule = must(publication.NewImportedResourceDestination(publication.ImportedResourceDestinationParams{
+		RuleID: ruleID, SourceNodeID: evidence.Rule.SourceNodeID(), Resolution: evidence.Rule.Resolution(),
+		Protocol: evidence.Rule.Protocol(), DestinationPortRanges: evidence.Rule.DestinationPortRanges(),
+	}))
+	second := must(NewDirectDeviceProjection(params))
+	if first.ConsumerRuleID() == second.ConsumerRuleID() || first.ContractID() != second.ContractID() {
+		t.Fatal("fixture is not two rules of one contract")
+	}
+	mapped := must(consumer.WithDirectDeviceProjections([]DirectDeviceProjection{first, second}))
+	records, err := mapped.SharedDNSRecords()
+	if err != nil {
+		t.Fatalf("two rules to one share failed the names: %v", err)
+	}
+	if len(records) != 1 || records[0].Name != evidence.Authority.Endpoint.AccessName().String() {
+		t.Fatalf("records = %+v, want the share once", records)
+	}
+	if _, err := mapped.DNSView(dnsname.Default()); err != nil {
+		t.Fatalf("two rules to one share failed the map's DNS: %v", err)
+	}
+	peers := mapped.AuthorizedPeers()
+	if len(peers) != 1 {
+		t.Fatalf("two rules to one share listed %d peers, want 1", len(peers))
+	}
+	if _, ok := mapped.DeviceAliasFor(peers[0].NodeID()); !ok {
+		t.Fatal("two rules to one share lost the alias grant")
 	}
 }

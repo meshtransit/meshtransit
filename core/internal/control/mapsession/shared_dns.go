@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/sharing"
 )
 
 // SharedDNSRecord maps one consumer-local imported Resource name to the
@@ -17,15 +18,23 @@ type SharedDNSRecord struct {
 }
 
 // SharedDNSRecords returns caller-owned records for every share this map
-// imports, sorted by name. Only the consumer side receives names. Alias shares
-// resolve to the Resource Alias; legacy direct shares to the provider's
-// canonical address. A duplicate or invalid name fails the whole map closed.
+// imports, sorted by name, one per share: a share the map imports through
+// several rules has one projection per rule, all of one contract and one
+// name. Only the consumer side receives names. Alias shares resolve to the
+// Resource Alias; legacy direct shares to the provider's canonical address.
+// An invalid name fails the whole map closed; two shares under one name are
+// both kept here, and the DNS view keeps the first (TD-CORE-80).
 func (snapshot Snapshot) SharedDNSRecords() ([]SharedDNSRecord, error) {
 	records := make([]SharedDNSRecord, 0, len(snapshot.directDeviceProjections))
+	named := make(map[sharing.ContractID]struct{}, len(snapshot.directDeviceProjections))
 	for _, projection := range snapshot.directDeviceProjections {
 		if snapshot.Scope() != projection.authority.Contract.ConsumerScope() {
 			continue
 		}
+		if _, done := named[projection.ContractID()]; done {
+			continue
+		}
+		named[projection.ContractID()] = struct{}{}
 		name := projection.authority.Endpoint.AccessName()
 		if !name.IsValid() {
 			return nil, ErrInvalidDirectDeviceProjection
@@ -40,12 +49,7 @@ func (snapshot Snapshot) SharedDNSRecords() ([]SharedDNSRecord, error) {
 		}
 		records = append(records, SharedDNSRecord{Name: name.String(), Addresses: addresses})
 	}
-	slices.SortFunc(records, func(left, right SharedDNSRecord) int { return strings.Compare(left.Name, right.Name) })
-	for index := 1; index < len(records); index++ {
-		if records[index].Name == records[index-1].Name {
-			return nil, ErrInvalidDirectDeviceProjection
-		}
-	}
+	slices.SortStableFunc(records, func(left, right SharedDNSRecord) int { return strings.Compare(left.Name, right.Name) })
 	return records, nil
 }
 
