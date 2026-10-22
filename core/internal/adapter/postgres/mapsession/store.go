@@ -69,6 +69,9 @@ type Options struct {
 	// their own exit nodes (MESHTRANSIT_EXIT_SPREAD_ENABLED); off, every
 	// pool is read as failover.
 	ExitSpread bool
+	// DNSZones reads each Network's DNS zones with its shared policy
+	// (MESHTRANSIT_DNS_ZONES_ENABLED), at the same peer limit.
+	DNSZones bool
 }
 
 // Store loads exact-scope snapshots in read-only repeatable-read transactions.
@@ -688,8 +691,9 @@ func validOptions(options Options) bool {
 		(!options.SharedInventory || options.InventoryStatementTimeout >= time.Millisecond &&
 			options.InventoryStatementTimeout <= maximumStatementTimeout &&
 			options.InventoryMaxAge >= time.Second && options.InventoryMaxAge <= maximumInventoryMaxAge) &&
-		(!options.SubnetRoutes && !options.ExitNodes || options.SharedInventory && options.RoutePeerLimit > 0 &&
-			options.RoutePeerLimit <= appmapsession.DefaultPeerLimit)
+		(!options.SubnetRoutes && !options.ExitNodes && !options.DNSZones ||
+			options.SharedInventory && options.RoutePeerLimit > 0 &&
+				options.RoutePeerLimit <= appmapsession.DefaultPeerLimit)
 }
 
 // relayDirectory returns the Network's relay directory.

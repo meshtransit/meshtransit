@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,10 @@ import (
 	"testing"
 
 	"meshtransit.net/core/internal/domain/dnszone"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/platform/ratelimit"
 )
 
 const dnsZoneBase = "/api/v1/workspaces/01890f00-0000-7000-8000-000000000101/networks/" +
@@ -112,5 +117,99 @@ func TestClassifyDNSZoneError(t *testing.T) {
 		if got := classifyDNSZoneError(err).Code; got != want {
 			t.Errorf("%v = %q, want %q", err, got, want)
 		}
+	}
+}
+
+// countingDNSZones counts the calls that reach the zone service.
+type countingDNSZones struct{ calls int }
+
+func (zones *countingDNSZones) List(context.Context, accountsession.Session, network.Scope, dnszone.ID,
+	int) (dnszone.Listing, error) {
+	zones.calls++
+	return dnszone.Listing{}, nil
+}
+
+func (zones *countingDNSZones) Read(context.Context, accountsession.Session, network.Scope,
+	dnszone.ID) (dnszone.Reading, error) {
+	zones.calls++
+	return dnszone.Reading{}, dnszone.ErrNotFound
+}
+
+func (zones *countingDNSZones) Create(context.Context, accountsession.Session, network.Scope, dnszone.Definition,
+	publicid.ID) (dnszone.Result, error) {
+	zones.calls++
+	return dnszone.Result{}, dnszone.ErrDisabled
+}
+
+func (zones *countingDNSZones) Update(context.Context, accountsession.Session, network.Scope, dnszone.ID, int64,
+	dnszone.Definition, publicid.ID) (dnszone.Result, error) {
+	zones.calls++
+	return dnszone.Result{}, dnszone.ErrDisabled
+}
+
+func (zones *countingDNSZones) Delete(context.Context, accountsession.Session, network.Scope, dnszone.ID, int64,
+	publicid.ID) (dnszone.Result, error) {
+	zones.calls++
+	return dnszone.Result{}, dnszone.ErrDisabled
+}
+
+// TestDNSZoneWritesAreLimitedPerNetworkAndPerson: every change takes one
+// token of the person's own budget for the Network (10, one back each 6 s)
+// before it reaches the service; an exhausted budget answers 429; reads
+// take none.
+func TestDNSZoneWritesAreLimitedPerNetworkAndPerson(t *testing.T) {
+	t.Parallel()
+	zones := &countingDNSZones{}
+	var changes []ratelimit.Subject
+	deny := false
+	options := validManagementHandlerOptions(t)
+	options.DNSZones = zones
+	options.RateLimiter = managementRateLimiterFunc(func(_ context.Context, subject ratelimit.Subject,
+		policy ratelimit.Policy) (ratelimit.Decision, error) {
+		if subject.Kind() != ratelimit.SubjectNetworkChange {
+			return ratelimit.NewDecision(true, policy.Capacity(), policy.Capacity()-1, 0)
+		}
+		if policy.Capacity() != 10 || policy.RefillInterval() != dnsZoneWriteRefill {
+			t.Errorf("zone write policy = %d per %s", policy.Capacity(), policy.RefillInterval())
+		}
+		changes = append(changes, subject)
+		if deny {
+			return ratelimit.NewDecision(false, policy.Capacity(), 0, dnsZoneWriteRefill)
+		}
+		return ratelimit.NewDecision(true, policy.Capacity(), policy.Capacity()-1, 0)
+	})
+	handler, err := NewManagementHandler(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"domain":"corp.internal","failure_mode":"open","resolvers":[{"address":"1.1.1.1","port":53}],` +
+		`"device_groups":[]}`
+	zone := dnsZoneBase + "/01890f00-0000-7000-8000-000000000301"
+	send := func(method, target, body string) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, newManagementRequest(t, method, target, body))
+		return recorder
+	}
+	send(http.MethodGet, dnsZoneBase, "")
+	send(http.MethodPost, dnsZoneBase, body)
+	send(http.MethodPatch, zone, body)
+	send(http.MethodDelete, zone, "")
+	if len(changes) != 3 || zones.calls != 4 {
+		t.Fatalf("budget taken %d times, service called %d times", len(changes), zones.calls)
+	}
+	if changes[0].DigestString() != changes[1].DigestString() || changes[1].DigestString() != changes[2].DigestString() {
+		t.Fatal("changes of one person to one Network use different budgets")
+	}
+	deny = true
+	limited := send(http.MethodPost, dnsZoneBase, body)
+	if limited.Code != http.StatusTooManyRequests || !strings.Contains(limited.Body.String(), `"rate_limited"`) ||
+		limited.Header().Get("Retry-After") != "6" || zones.calls != 4 {
+		t.Fatalf("limited = %d %s %v; service calls %d", limited.Code, limited.Body.String(), limited.Header(),
+			zones.calls)
+	}
+	// A malformed change is refused before it takes a token.
+	if malformed := send(http.MethodPost, dnsZoneBase, `{}`); malformed.Code != http.StatusBadRequest ||
+		len(changes) != 4 {
+		t.Fatalf("malformed = %d, budget taken %d times", malformed.Code, len(changes))
 	}
 }

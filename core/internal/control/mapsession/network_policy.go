@@ -81,6 +81,10 @@ type NetworkPolicyParams struct {
 	ExitPools []ExitPool
 	ExitNodes []ExitNode
 	ExitRules []ExitRule
+	// DNS zones (DNS design D1), when the deployment has them: the active
+	// forward zones and their resolvers, at the same peer limit. Whether a
+	// rule admits a Device to a resolver comes from Rules.
+	DNSZones []DNSZone
 }
 
 // NetworkPolicy is one Network's packet policy at selector level, shared by
@@ -181,6 +185,12 @@ func NewNetworkPolicy(params NetworkPolicyParams) (NetworkPolicy, error) {
 			devices[index] = entry.device
 		}
 		return devices
+	}, func(device int64) []selectorKey {
+		keys := make([]selectorKey, 0, len(inner.memberOf[device])+1)
+		for key := range inner.memberOf[device] {
+			keys = append(keys, key)
+		}
+		return keys
 	})
 	if !ok || (!params.ReleaseActive && (len(params.RouteRules) != 0 || len(params.ExitRules) != 0)) {
 		return NetworkPolicy{}, ErrInvalidNetworkPolicy

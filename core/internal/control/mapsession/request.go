@@ -22,6 +22,7 @@ type Request struct {
 	router             bool
 	exits              bool
 	exitRouter         bool
+	dnsForward         bool
 	endpointSet        node.EndpointSet
 	hasEndpointSet     bool
 	preferredRelay     int
@@ -167,3 +168,16 @@ func (request Request) WithExitRouter() Request {
 
 // ExitRouter reports whether the client can be an exit node on a large map.
 func (request Request) ExitRouter() bool { return request.exitRouter && request.largeMap }
+
+// WithDNSForward records that the client applies forward DNS zones (MTCP
+// dns.forward1 with dns.split): routes with resolvers and ports, routes no
+// resolver can serve, and their failure modes. Zones reach only clients
+// that also declared large maps: their resolver Devices are needed peers.
+func (request Request) WithDNSForward() Request {
+	request.dnsForward = true
+	return request
+}
+
+// DNSForward reports whether the client applies forward DNS zones on a
+// large map.
+func (request Request) DNSForward() bool { return request.dnsForward && request.largeMap }

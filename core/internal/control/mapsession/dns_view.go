@@ -44,8 +44,27 @@ type DNSView struct {
 	records      []DNSRecord
 	localSuffix  string
 	searchDomain string
-	unnamed      int
-	dropped      int
+	// Forward zones (DNS design D1) and the search domains after the
+	// Network's zone.
+	zones         []DNSForwardZone
+	searchDomains []string
+	unnamed       int
+	dropped       int
+}
+
+// DNSForwardZone is one zone the node asks its resolvers for, each a peer's
+// mesh address or an Internet address with its port. No resolver: the zone
+// is unavailable and the node applies its failure mode.
+type DNSForwardZone struct {
+	Domain    string
+	FailOpen  bool
+	Resolvers []DNSResolver
+}
+
+// DNSResolver is one address and port a zone's questions go to.
+type DNSResolver struct {
+	Address netip.Addr
+	Port    uint16
 }
 
 // placeholderZone never resolves (RFC 2606); it names the peers a map has
@@ -100,7 +119,45 @@ func (snapshot Snapshot) DNSView(suffix dnsname.Suffix) (DNSView, error) {
 	}
 	view.keep(candidates)
 	slices.SortFunc(view.records, func(left, right DNSRecord) int { return strings.Compare(left.Name, right.Name) })
+	view.forwardZones(snapshot)
 	return view, nil
+}
+
+// forwardZones adds the zones of the map's routes. A resolver Device is
+// asked at the first IPv4 address of its peer: one the peer limit left out
+// of the map is not asked. Search domains follow the Network's zone by
+// position, then domain, up to MaximumDNSSearchDomains in all.
+func (view *DNSView) forwardZones(snapshot Snapshot) {
+	routes := snapshot.routes.dnsZones
+	for _, route := range routes {
+		zone := DNSForwardZone{Domain: route.Domain, FailOpen: route.FailOpen}
+		for _, resolver := range route.Resolvers {
+			if resolver.Address.IsValid() {
+				zone.Resolvers = append(zone.Resolvers, DNSResolver{Address: resolver.Address, Port: resolver.Port})
+				continue
+			}
+			peer, found := snapshot.authorizedPeer(resolver.NodeID)
+			if !found {
+				continue
+			}
+			if index := slices.IndexFunc(peer.addresses, func(prefix netip.Prefix) bool {
+				return prefix.Addr().Unmap().Is4()
+			}); index >= 0 {
+				zone.Resolvers = append(zone.Resolvers, DNSResolver{Address: peer.addresses[index].Addr().Unmap(),
+					Port: resolver.Port})
+			}
+		}
+		view.zones = append(view.zones, zone)
+	}
+	search := slices.DeleteFunc(slices.Clone(routes), func(route DNSZoneRoute) bool { return route.SearchPosition == 0 })
+	slices.SortFunc(search, compareSearchZones)
+	room := MaximumDNSSearchDomains
+	if view.searchDomain != "" {
+		room--
+	}
+	for _, route := range search[:min(len(search), room)] {
+		view.searchDomains = append(view.searchDomains, route.Domain)
+	}
 }
 
 // keep adds candidates in order, leaving out a name already taken and any
@@ -178,6 +235,25 @@ func (view DNSView) LocalSuffix() string { return view.localSuffix }
 
 // SearchDomain returns the Network's zone ("" when the map names no Device).
 func (view DNSView) SearchDomain() string { return view.searchDomain }
+
+// SearchDomains returns every search domain in order: the Network's zone,
+// then the forward zones that are search domains.
+func (view DNSView) SearchDomains() []string {
+	if view.searchDomain == "" {
+		return slices.Clone(view.searchDomains)
+	}
+	return append([]string{view.searchDomain}, view.searchDomains...)
+}
+
+// Zones returns the forward zones sorted by domain.
+func (view DNSView) Zones() []DNSForwardZone {
+	zones := make([]DNSForwardZone, len(view.zones))
+	for index, zone := range view.zones {
+		zone.Resolvers = slices.Clone(zone.Resolvers)
+		zones[index] = zone
+	}
+	return zones
+}
 
 // Unnamed returns how many Devices of the Network the map lists without a
 // name because they hold no DNS label.

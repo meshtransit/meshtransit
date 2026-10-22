@@ -534,6 +534,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			processConfig.SubnetRoutes,
 			processConfig.ExitNodes,
 			processConfig.ExitSpread,
+			processConfig.DNSZones.Enabled,
 		)
 		if composeErr != nil {
 			logger.ErrorContext(
@@ -609,7 +610,8 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			registrations: registrationService, logout: logout, paths: redisClient, connectivity: redisClient, guard: timestamps, logger: logger,
 			dnsSuffix: processConfig.DNSSuffix, routeOffers: routeOffers,
 			subnetRoutes: processConfig.SubnetRoutes && processConfig.Control.Map.SharedInventory,
-			exitNodes:    processConfig.ExitNodes && processConfig.Control.Map.SharedInventory}
+			exitNodes:    processConfig.ExitNodes && processConfig.Control.Map.SharedInventory,
+			dnsZones:     processConfig.DNSZones.Enabled && processConfig.Control.Map.SharedInventory}
 		if deps.exitNodes {
 			// Exit offers are stored only while Core offers router.exit.v1:
 			// then a node that no longer lists it withdraws its offer.

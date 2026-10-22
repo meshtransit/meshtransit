@@ -36,6 +36,11 @@ func TestDigesterSeparatesKindsAndRedactsMaterial(t *testing.T) {
 		auth.DigestString() == source.DigestString() || auth.DigestString() == session.DigestString() {
 		t.Fatal("auth transaction budget lost purpose separation")
 	}
+	change, err := digester.Subject(SubjectNetworkChange, "192.0.2.10")
+	if err != nil || !change.IsValid() || change.Kind() != SubjectNetworkChange ||
+		change.DigestString() == auth.DigestString() || change.DigestString() == session.DigestString() {
+		t.Fatal("network change budget lost purpose separation")
+	}
 	if got := fmt.Sprintf("%s|%#v|%s", digester, digester, digester.LogValue().String()); got != "[REDACTED]|ratelimit.Digester([REDACTED])|[REDACTED]" {
 		t.Fatalf("redaction = %q", got)
 	}

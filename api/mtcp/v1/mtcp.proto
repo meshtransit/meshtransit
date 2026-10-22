@@ -474,11 +474,18 @@ message DnsRecord {
 message Resolver {
   bytes ip = 1;
   string url = 2; // optional DoH (https://) or DoT (tls://) URL
+  uint32 port = 3; // dns.forward1: UDP and TCP port; 0 is 53
 }
 
 message DnsRoute {
   string suffix = 1;
   repeated Resolver resolvers = 2;
+  // dns.forward1: the zone exists but none of its resolvers can be used
+  // now; the node keeps the route and applies fail_open (mtcp-v1 §7.3).
+  bool unavailable = 3;
+  // dns.forward1: when no resolver answers, ask the system's own DNS (or
+  // the exit's forwarder while an exit is in use) instead of SERVFAIL.
+  bool fail_open = 4;
 }
 
 message Settings {

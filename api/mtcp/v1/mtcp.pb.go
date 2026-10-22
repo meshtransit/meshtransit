@@ -4254,6 +4254,7 @@ type Resolver struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Ip            []byte                 `protobuf:"bytes,1,opt,name=ip,proto3" json:"ip,omitempty"`
 	Url           string                 `protobuf:"bytes,2,opt,name=url,proto3" json:"url,omitempty"`
+	Port          uint32                 `protobuf:"varint,3,opt,name=port,proto3" json:"port,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4302,10 +4303,19 @@ func (x *Resolver) GetUrl() string {
 	return ""
 }
 
+func (x *Resolver) GetPort() uint32 {
+	if x != nil {
+		return x.Port
+	}
+	return 0
+}
+
 type DnsRoute struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Suffix        string                 `protobuf:"bytes,1,opt,name=suffix,proto3" json:"suffix,omitempty"`
 	Resolvers     []*Resolver            `protobuf:"bytes,2,rep,name=resolvers,proto3" json:"resolvers,omitempty"`
+	Unavailable   bool                   `protobuf:"varint,3,opt,name=unavailable,proto3" json:"unavailable,omitempty"`
+	FailOpen      bool                   `protobuf:"varint,4,opt,name=fail_open,json=failOpen,proto3" json:"fail_open,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4352,6 +4362,20 @@ func (x *DnsRoute) GetResolvers() []*Resolver {
 		return x.Resolvers
 	}
 	return nil
+}
+
+func (x *DnsRoute) GetUnavailable() bool {
+	if x != nil {
+		return x.Unavailable
+	}
+	return false
+}
+
+func (x *DnsRoute) GetFailOpen() bool {
+	if x != nil {
+		return x.FailOpen
+	}
+	return false
 }
 
 type Settings struct {
@@ -6672,13 +6696,16 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\x04Type\x12\x14\n" +
 	"\x10TYPE_UNSPECIFIED\x10\x00\x12\x05\n" +
 	"\x01A\x10\x01\x12\b\n" +
-	"\x04AAAA\x10\x1c\",\n" +
+	"\x04AAAA\x10\x1c\"@\n" +
 	"\bResolver\x12\x0e\n" +
 	"\x02ip\x18\x01 \x01(\fR\x02ip\x12\x10\n" +
-	"\x03url\x18\x02 \x01(\tR\x03url\"_\n" +
+	"\x03url\x18\x02 \x01(\tR\x03url\x12\x12\n" +
+	"\x04port\x18\x03 \x01(\rR\x04port\"\x9e\x01\n" +
 	"\bDnsRoute\x12\x16\n" +
 	"\x06suffix\x18\x01 \x01(\tR\x06suffix\x12;\n" +
-	"\tresolvers\x18\x02 \x03(\v2\x1d.meshtransit.mtcp.v1.ResolverR\tresolvers\"\x86\x01\n" +
+	"\tresolvers\x18\x02 \x03(\v2\x1d.meshtransit.mtcp.v1.ResolverR\tresolvers\x12 \n" +
+	"\vunavailable\x18\x03 \x01(\bR\vunavailable\x12\x1b\n" +
+	"\tfail_open\x18\x04 \x01(\bR\bfailOpen\"\x86\x01\n" +
 	"\bSettings\x12*\n" +
 	"\x11endpoint_report_s\x18\x01 \x01(\rR\x0fendpointReportS\x12 \n" +
 	"\fpath_stats_s\x18\x02 \x01(\rR\n" +

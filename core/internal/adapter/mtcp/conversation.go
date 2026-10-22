@@ -294,6 +294,9 @@ func (conversation *conversation) serve(ctx context.Context, nodeKey node.Key) e
 	if conversation.session.Supports("router.exit.v1") {
 		request = request.WithExitRouter()
 	}
+	if conversation.session.Supports("dns.forward1") && conversation.session.Supports("dns.split") {
+		request = request.WithDNSForward()
+	}
 	return conversation.application.options.Streams.Serve(ctx, machine, request, conversation.sink)
 }
 

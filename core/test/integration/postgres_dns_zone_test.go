@@ -63,7 +63,8 @@ WHERE workspace_id = 103 AND network_id = 203`).Scan(&revision); err != nil {
 // Groups a zone is sent to cannot be deleted; the search domain and resolver
 // limits hold in the database; every change advances the Network and DNS
 // revisions with one audit event that wakes map sessions; a no-op writes
-// nothing. It leaves no zone or group behind.
+// nothing; maps carry the zone (assertDNSZoneMaps). It leaves no zone or
+// group behind.
 func assertPostgreSQLDNSZones(ctx context.Context, t *testing.T, admin *pgx.Conn, runtimePool *postgresadapter.Pool) {
 	t.Helper()
 	service := newIntegrationDNSZoneService(t, runtimePool, dnszone.DefaultLimits())
@@ -149,6 +150,7 @@ WHERE target_kind = 'network_dns_zone' AND action = 'dns_zone.updated'
 ORDER BY event_identity_id DESC LIMIT 1`).Scan(&auditedResolver); err != nil || auditedResolver != resolver.String() {
 		t.Fatalf("the audit names resolver %q, error = %v", auditedResolver, err)
 	}
+	assertDNSZoneMaps(ctx, t, admin, runtimePool, owner, scope, group.Group.ID, resolver, consumer)
 	if _, err := service.Update(ctx, owner, scope, zone, 1, withDevice, newCorrelationID(t)); !errors.Is(err,
 		dnszone.ErrVersionConflict) {
 		t.Fatalf("stale update: %v", err)

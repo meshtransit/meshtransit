@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"meshtransit.net/core/internal/domain/devicegroup"
 	"meshtransit.net/core/internal/domain/dnszone"
@@ -16,6 +17,7 @@ import (
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/domain/workspace"
+	"meshtransit.net/core/internal/platform/ratelimit"
 )
 
 const (
@@ -292,6 +294,9 @@ func (handler *ManagementHandler) handleDNSZones(ctx context.Context, response h
 		if !valid {
 			return fail(*invalidManagementRequest())
 		}
+		if limited := handler.limitDNSZoneWrite(ctx, response, path, session); limited != nil {
+			return fail(*limited)
+		}
 		result, err := handler.dnsZones.Create(ctx, session, path.scope, definition, correlationID)
 		return handler.writeDNSZoneResult(ctx, response, correlationID, http.StatusCreated, result, false, err, fail)
 	}
@@ -307,15 +312,44 @@ func (handler *ManagementHandler) handleDNSZones(ctx context.Context, response h
 		if !valid {
 			return fail(*invalidManagementRequest())
 		}
+		if limited := handler.limitDNSZoneWrite(ctx, response, path, session); limited != nil {
+			return fail(*limited)
+		}
 		result, err = handler.dnsZones.Update(ctx, session, path.scope, path.zoneID, expectedVersion, definition,
 			correlationID)
 	case dnsZoneDeleteOperation:
+		if limited := handler.limitDNSZoneWrite(ctx, response, path, session); limited != nil {
+			return fail(*limited)
+		}
 		result, err = handler.dnsZones.Delete(ctx, session, path.scope, path.zoneID, expectedVersion, correlationID)
 		return handler.writeDNSZoneResult(ctx, response, correlationID, http.StatusOK, result, true, err, fail)
 	default:
 		return fail(*invalidManagementRequest())
 	}
 	return handler.writeDNSZoneResult(ctx, response, correlationID, http.StatusOK, result, false, err, fail)
+}
+
+// Zone changes one person may make to one Network (DNS design D1 §3.6):
+// each rebuilds the DNS of every map of the Network, so a burst of edits
+// must not resend it to every Device without end. The budget is the
+// person's own, so someone who may not change zones cannot spend an
+// administrator's.
+const (
+	dnsZoneWriteBurst  = 10
+	dnsZoneWriteRefill = 6 * time.Second
+)
+
+// limitDNSZoneWrite takes one zone change from the person's budget for the
+// Network, before the change reaches the store.
+func (handler *ManagementHandler) limitDNSZoneWrite(ctx context.Context, response http.ResponseWriter,
+	path dnsZonePath, session accountsession.Session) *managementError {
+	policy, err := ratelimit.NewPolicy(dnsZoneWriteBurst, dnsZoneWriteRefill)
+	if err != nil {
+		return &managementError{Status: http.StatusInternalServerError, Code: "internal_failure",
+			Message: "the request could not be completed"}
+	}
+	return handler.enforceRateLimit(ctx, response, ratelimit.SubjectNetworkChange,
+		"dns_zone:"+path.scope.NetworkID().String()+":"+session.PrincipalID().String(), policy)
 }
 
 func (handler *ManagementHandler) readDNSZones(ctx context.Context, response http.ResponseWriter,

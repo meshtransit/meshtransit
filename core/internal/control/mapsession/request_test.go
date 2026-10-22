@@ -20,6 +20,10 @@ func TestRequestValidatesNodeKey(t *testing.T) {
 	if !request.IsValid() || request.NodeKey() != nodeKey {
 		t.Fatalf("request = %+v, want valid immutable request", request)
 	}
+	if request.DNSForward() || request.WithDNSForward().DNSForward() ||
+		!request.WithDNSForward().WithLargeMap().DNSForward() {
+		t.Fatal("dns.forward1 is not recorded only when declared with large maps")
+	}
 	if _, err := NewRequest(node.Key{}); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("NewRequest() without a Node key error = %v, want ErrInvalidRequest", err)
 	}

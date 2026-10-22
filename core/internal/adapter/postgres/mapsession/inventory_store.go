@@ -173,10 +173,10 @@ func (store *Store) readInventory(
 		return cachedInventory{}, err
 	}
 	routes := networkRoutes{}
-	if store.options.SubnetRoutes || store.options.ExitNodes {
+	if store.options.SubnetRoutes || store.options.ExitNodes || store.options.DNSZones {
 		routes = networkRoutes{revision: routeRevision, peerLimit: store.options.RoutePeerLimit,
 			sites: store.options.SubnetRoutes, exits: store.options.ExitNodes,
-			spread: store.options.ExitNodes && store.options.ExitSpread}
+			spread: store.options.ExitNodes && store.options.ExitSpread, dnsZones: store.options.DNSZones}
 	}
 	cached.policy, err = readNetworkPolicy(ctx, transaction, scope, policyRevision, releaseActive, routes)
 	if err != nil {
@@ -369,15 +369,16 @@ func (store *Store) readNetworkDevices(
 	return devices, nil
 }
 
-// networkRoutes says whether a policy read also reads subnet routes (sites)
-// and Exit Pools (exits): at route revision, cut at peerLimit; zero reads
-// none.
+// networkRoutes says whether a policy read also reads subnet routes (sites),
+// Exit Pools (exits) and DNS zones: at route revision, cut at peerLimit;
+// zero reads none.
 type networkRoutes struct {
 	revision  int64
 	peerLimit int
 	sites     bool
 	exits     bool
 	spread    bool
+	dnsZones  bool
 }
 
 // readNetworkPolicy reads one Network's policy at selector level within the
@@ -402,6 +403,11 @@ func readNetworkPolicy(
 		}
 		if routes.exits {
 			if err := readNetworkExits(ctx, transaction, &params, routes.spread); err != nil {
+				return appmapsession.NetworkPolicy{}, err
+			}
+		}
+		if routes.dnsZones {
+			if err := readNetworkDNSZones(ctx, transaction, &params); err != nil {
 				return appmapsession.NetworkPolicy{}, err
 			}
 		}

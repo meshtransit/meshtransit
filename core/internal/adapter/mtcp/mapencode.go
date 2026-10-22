@@ -520,8 +520,19 @@ func encodeDNS(names mapsession.DNSView) *mtcpv1.DnsConfig {
 	if suffix := names.LocalSuffix(); suffix != "" {
 		config.Routes = []*mtcpv1.DnsRoute{{Suffix: suffix}}
 	}
-	if domain := names.SearchDomain(); domain != "" {
-		config.SearchDomains = []string{domain}
+	// Forward zones reach only nodes that declared dns.forward1: the map
+	// session leaves them out of the others' routes (mtcp-v1 §7.3).
+	for _, zone := range names.Zones() {
+		route := &mtcpv1.DnsRoute{Suffix: zone.Domain, Unavailable: len(zone.Resolvers) == 0, FailOpen: zone.FailOpen}
+		for _, resolver := range zone.Resolvers {
+			port := uint32(resolver.Port)
+			if port == 53 {
+				port = 0
+			}
+			route.Resolvers = append(route.Resolvers, &mtcpv1.Resolver{Ip: resolver.Address.AsSlice(), Port: port})
+		}
+		config.Routes = append(config.Routes, route)
 	}
+	config.SearchDomains = names.SearchDomains()
 	return config
 }

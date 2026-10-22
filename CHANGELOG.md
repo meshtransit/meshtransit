@@ -5,6 +5,17 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core (DNS design D1a.2, schema 214, MTCP `dns.forward1`): maps carry DNS
+  zones to nodes that declare `dns.split`, `dns.forward1` and `map.large1`:
+  one route per zone sent to the Device, its resolvers in order with their
+  ports, whether no resolver can be used now (`unavailable`) and whether the
+  zone fails open. A resolver Device is listed only while it may serve, a rule
+  of the active release admits UDP from the Device to its port, and both maps
+  hold the pair; it is then a peer both maps keep. Zones with a search
+  position follow the Network's zone as search domains. A resolver Device
+  serves at most 9,744 Devices (was 10,000). One person may change one
+  Network's zones 10 times in a row, then once every 6 seconds (429
+  `rate_limited`).
 - Core (DNS design D1a, schema 213): DNS zones. A Network admin with
   `dns.manage` creates, changes and deletes zones through
   `/api/v1/workspaces/{ws}/networks/{net}/dns/zones`: a domain, up to four
@@ -17,7 +28,7 @@ merge (2026-10-09) are kept below.
   are refused. A resolver Device never becomes an exit node, and a Device
   Group a zone is sent to cannot be deleted. Every change is audited
   (`dns_zone.*`) and advances the Network's revisions. Off unless
-  `MESHTRANSIT_DNS_ZONES_ENABLED`; maps do not carry zones yet (D1a.2).
+  `MESHTRANSIT_DNS_ZONES_ENABLED`.
 - Clients (exit, captive portals, exit node design §17): `meshd` finds a
   captive portal while the control session is down (the network's RFC 8908
   API on Linux, an HTTP probe of a relay that echoes a nonce, the network

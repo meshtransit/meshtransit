@@ -67,6 +67,15 @@ func captiveCapabilities(recorder captivewindow.Recorder) []string {
 	return []string{"captive.audit1"}
 }
 
+// dnsCapabilities offers dns.forward1, forward DNS zones in maps (DNS design
+// D1 §4.1), when the deployment has them.
+func dnsCapabilities(dnsZones bool) []string {
+	if !dnsZones {
+		return nil
+	}
+	return []string{"dns.forward1"}
+}
+
 // mtcpDependencies are the application services MTCP sessions use. The
 // browser fields are nil when browser registration is off.
 type mtcpDependencies struct {
@@ -86,6 +95,7 @@ type mtcpDependencies struct {
 	relayZones     bool           // offer relay.zones2 (MESHTRANSIT_RELAY_TICKET_ZONES_V2)
 	subnetRoutes   bool           // offer subnet routes (MESHTRANSIT_SUBNET_ROUTES_ENABLED)
 	exitNodes      bool           // offer exit nodes (MESHTRANSIT_EXIT_NODES_ENABLED)
+	dnsZones       bool           // offer dns.forward1 (MESHTRANSIT_DNS_ZONES_ENABLED)
 	dnsSuffix      dnsname.Suffix // MESHTRANSIT_DNS_SUFFIX; zero: the default
 }
 
@@ -174,7 +184,8 @@ func composeMTCP(
 		Handler:   application,
 		Guard:     deps.guard,
 		Capabilities: append(append(mtcpCapabilities(controlConfig.Map.EnableDeviceAliases, deps.relayZones,
-			deps.subnetRoutes), exitCapabilities(deps.exitNodes)...), captiveCapabilities(deps.captiveWindows)...),
+			deps.subnetRoutes), exitCapabilities(deps.exitNodes)...), append(captiveCapabilities(deps.captiveWindows),
+			dnsCapabilities(deps.dnsZones)...)...),
 		Logger:         logger,
 		Metrics:        metrics,
 		HandshakeRate:  controlConfig.MTCP.HandshakeRate,

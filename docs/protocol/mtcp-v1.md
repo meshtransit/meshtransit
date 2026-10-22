@@ -512,11 +512,34 @@ answered by the node itself). At most 50,000 records. Core sends an A or AAAA
 record for each address of self and of each same-Network peer under its name,
 and one for each address of each imported share under its share name; one
 route for the suffix with no resolvers, so the node answers every name under
-it and an unknown one is `NXDOMAIN`; and the Network's zone as the only
+it and an unknown one is `NXDOMAIN`; and the Network's zone as the first
 search domain. A node ignores a route without resolvers for the root or a
-single-label suffix. Core sends no pointer records: the node answers PTR queries
-for the addresses of the records under its own zone (the zone its own name is
-in). Within a stream, Core sends `dns` in a delta only when it changed.
+single-label suffix, unless it declared `dns.forward1`. Core sends no pointer
+records: the node answers PTR queries for the addresses of the records under
+its own zone (the zone its own name is in). Within a stream, Core sends `dns`
+in a delta only when it changed.
+
+**Forward zones** (`dns.forward1`, sent only to a node that lists
+`dns.split`, `dns.forward1` and `map.large1`). After the suffix route, one
+route per DNS zone of the Network sent to this Device, sorted by suffix: up
+to 256, at most 4 resolvers each, in the order the node asks them. A resolver
+is a peer's IPv4 mesh address or an Internet address, with `port` (0 is 53).
+Core lists a peer as a resolver only while it may serve (an active,
+Workspace-owned Device of the Network, no exit node, live), the active
+release has a rule from this node to it over UDP on that port, this node is
+among the resolver's first 9,744 consumers in Device order (fewer with a
+lower configured peer limit), and this node's map has room for it in the 256
+peers it keeps for Site routers, exit nodes and resolvers; the peer is then a
+needed peer of both maps. A resolver Device whose own client lacks
+`map.large1` keeps only 256 peers, so it should serve no more Devices than
+that. A zone is never sent to its own resolver Devices. `unavailable` is set when none of a zone's
+resolvers can be used now: the node keeps the route, single-label and all, so
+the zone never falls back silently. `fail_open` says what the node does when
+the route is unavailable or no resolver answers: ask its own system resolver
+(or the exit's DNS forwarder while it uses an exit node), instead of
+answering `SERVFAIL`. Zones that are search domains follow the Network's zone
+by their position, at most 8 search domains in all. A node without
+`dns.forward1` receives none of this.
 
 ### 7.4 Device alias grants
 
@@ -1076,6 +1099,7 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `relay.mtrp1` | Node speaks MTRP v1 (UDP, TLS, WebSocket) |
 | `device-alias.v1` | Node implements device alias grants (7.4) |
 | `dns.split` | Node applies split DNS routes |
+| `dns.forward1` | Node applies forward zones (7.3): routes with resolvers and `port`, `unavailable` and `fail_open`; only with `dns.split` and `map.large1` |
 | `stats.path1` | Node sends `PathStatsReport` |
 | `nat.report1` | Node sends NAT classification in `EndpointReport` |
 | `map.large1` | Node applies maps of up to 10,000 peers; without it Core sends at most 256 |

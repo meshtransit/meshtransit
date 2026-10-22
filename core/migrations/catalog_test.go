@@ -15,8 +15,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 213 {
-		t.Fatalf("len(Catalog()) = %d, want 213", len(catalog))
+	if len(catalog) != 214 {
+		t.Fatalf("len(Catalog()) = %d, want 214", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1611,8 +1611,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 213 {
-		t.Fatalf("LatestVersion() = %d, want 213", LatestVersion())
+	if LatestVersion() != 214 {
+		t.Fatalf("LatestVersion() = %d, want 214", LatestVersion())
 	}
 }
 
@@ -6127,5 +6127,29 @@ func TestMigration213AddsNetworkDNSZones(t *testing.T) {
 	// Only the runtime role reads and changes zones.
 	if strings.Contains(migration.SQL, "TO mesh_worker") || strings.Contains(migration.SQL, "TO mesh_observer") {
 		t.Error("schema 213 grants DNS zones beyond mesh_runtime")
+	}
+}
+
+func TestMigration214AddsMapDNSZoneReaders(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[213]
+	if migration.Version != 214 {
+		t.Fatalf("migration 214 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.load_map_network_dns_zones_v1(p_limit INTEGER)",
+		"CREATE FUNCTION mesh_ops.load_map_network_dns_resolvers_v1(p_limit INTEGER)",
+		"scoped_network_id BIGINT := mesh_ops.current_network_id();",
+		"COALESCE(device.state = 'active' AND device.ownership = 'workspace', FALSE)",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_map_network_dns_zones_v1(INTEGER) TO mesh_runtime;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_map_network_dns_resolvers_v1(INTEGER) TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 214 lacks %q", want)
+		}
+	}
+	if strings.Count(migration.SQL, "SECURITY DEFINER") != 2 ||
+		strings.Count(migration.SQL, "SET search_path = pg_catalog, mesh, mesh_ops") != 2 {
+		t.Error("schema 214 readers are not pinned SECURITY DEFINER functions")
 	}
 }

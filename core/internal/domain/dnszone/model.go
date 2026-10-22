@@ -21,8 +21,11 @@ const (
 	MaximumGroupsPerZone         = 16
 	MaximumSearchZonesPerNetwork = 7
 	// MaximumConsumersPerResolver is the most Devices one resolver Device
-	// serves: it is a peer of each, and a map holds 10,000 peers.
-	MaximumConsumersPerResolver = 10000
+	// serves: it is a peer of each, and a map holds 10,000 peers, 256 of
+	// them kept for the routers, exit nodes and resolvers it uses itself.
+	// Maps cut a resolver's consumers at the same place (with a lower
+	// configured peer limit, earlier).
+	MaximumConsumersPerResolver = 9744
 	// MaximumSearchPosition bounds the order of search domains.
 	MaximumSearchPosition = 1000
 )

@@ -131,7 +131,14 @@ type RouteView struct {
 	exitInbound   []ExitInbound
 	exitNodes     []node.ID
 	exitConsumers []node.ID
-	// omitted counts Sites and Exit Pools left out by the bounds of one map.
+	// DNS zones (DNS design D1): the zones it asks resolvers for, and the
+	// peers they add: a consumer's resolver Devices, a resolver Device's
+	// consumers.
+	dnsZones     []DNSZoneRoute
+	resolvers    []node.ID
+	dnsConsumers []node.ID
+	// omitted counts Sites, Exit Pools and DNS zones left out by the bounds
+	// of one map.
 	omitted int
 }
 
@@ -152,10 +159,12 @@ func (view RouteView) Inbound() []RoutedInbound {
 	return cloned
 }
 
-// Peers returns the Devices routes and Exit Pools add to the map, sorted.
+// Peers returns the Devices routes, Exit Pools and DNS zones add to the
+// map, sorted.
 func (view RouteView) Peers() []node.ID {
 	peers := append(slices.Clone(view.routers), view.consumers...)
 	peers = append(append(peers, view.exitNodes...), view.exitConsumers...)
+	peers = append(append(peers, view.resolvers...), view.dnsConsumers...)
 	slices.SortFunc(peers, compareNodeIDs)
 	return slices.Compact(peers)
 }
@@ -170,13 +179,18 @@ func (view RouteView) ForCapabilities(capabilities RouteCapabilities) RouteView 
 	if !capabilities.ExitRouter {
 		view.servedExits, view.exitInbound, view.exitConsumers = nil, nil, nil
 	}
+	// A resolver Device answers whatever its client: its consumers stay.
+	if !capabilities.DNSForward {
+		view.dnsZones, view.resolvers = nil, nil
+	}
 	return view
 }
 
 // RouteCapabilities are the route capabilities of a session (Request.Routes,
-// Request.Router, Request.Exits and Request.ExitRouter).
+// Request.Router, Request.Exits, Request.ExitRouter and
+// Request.DNSForward).
 type RouteCapabilities struct {
-	Routes, Router, Exits, ExitRouter bool
+	Routes, Router, Exits, ExitRouter, DNSForward bool
 }
 
 // forCapabilities keeps what a session can use: the Sites to reach when it
@@ -200,7 +214,8 @@ func (view RouteView) IsEmpty() bool {
 	return len(view.sites) == 0 && len(view.served) == 0 && len(view.inbound) == 0 &&
 		len(view.routers) == 0 && len(view.consumers) == 0 && len(view.exits) == 0 &&
 		len(view.servedExits) == 0 && len(view.exitInbound) == 0 && len(view.exitNodes) == 0 &&
-		len(view.exitConsumers) == 0
+		len(view.exitConsumers) == 0 && len(view.dnsZones) == 0 && len(view.resolvers) == 0 &&
+		len(view.dnsConsumers) == 0
 }
 
 // Equal reports whether two views carry the same routes.
@@ -213,6 +228,8 @@ func (view RouteView) Equal(other RouteView) bool {
 		slices.EqualFunc(view.servedExits, other.servedExits, equalServedExit) &&
 		slices.EqualFunc(view.exitInbound, other.exitInbound, equalExitInbound) &&
 		slices.Equal(view.exitNodes, other.exitNodes) && slices.Equal(view.exitConsumers, other.exitConsumers) &&
+		slices.EqualFunc(view.dnsZones, other.dnsZones, equalDNSZoneRoute) &&
+		slices.Equal(view.resolvers, other.resolvers) && slices.Equal(view.dnsConsumers, other.dnsConsumers) &&
 		view.omitted == other.omitted
 }
 
@@ -241,6 +258,12 @@ type routeIndex struct {
 	poolList  []ExitPool
 	exitNodes []ExitNode
 	exitRules []ExitRule
+	// DNS zones: as read and sorted by domain, the zones of each resolver
+	// Device, and the positions of the policy rules that may admit UDP to
+	// it.
+	zoneList      []DNSZone
+	resolverZones map[int64][]int
+	resolverRules map[int64]map[selectorKey][]int // resolver -> rule source -> rule positions
 }
 
 type routeSiteEntry struct {
@@ -251,9 +274,13 @@ type routeSiteEntry struct {
 
 // newRouteIndex validates and indexes one Network's routes. Rules naming an
 // unknown Site grant nothing; routers of an unknown Site are ignored.
-func newRouteIndex(params NetworkPolicyParams, members func(SelectorKind, int64) []int64) (*routeIndex, bool) {
+// members lists a selector's Devices and keysOf a Device's selectors,
+// whatever their deadlines.
+func newRouteIndex(params NetworkPolicyParams, members func(SelectorKind, int64) []int64,
+	keysOf func(int64) []selectorKey) (*routeIndex, bool) {
 	if len(params.Sites) == 0 && len(params.RouteRouters) == 0 && len(params.RouteRules) == 0 &&
-		len(params.ExitPools) == 0 && len(params.ExitNodes) == 0 && len(params.ExitRules) == 0 {
+		len(params.ExitPools) == 0 && len(params.ExitNodes) == 0 && len(params.ExitRules) == 0 &&
+		len(params.DNSZones) == 0 {
 		return nil, true
 	}
 	if params.RouteRevision <= 0 || params.RoutePeerLimit <= 0 || len(params.Sites) > MaximumRouteSites {
@@ -295,7 +322,7 @@ func newRouteIndex(params NetworkPolicyParams, members func(SelectorKind, int64)
 		})
 		entry.primary = siteRoutePrimary(entry.site, entry.routers)
 	}
-	if !index.indexExits(params) {
+	if !index.indexExits(params) || !index.indexDNSZones(params, keysOf) {
 		return nil, false
 	}
 	for position, rule := range index.ruleList {
@@ -339,6 +366,14 @@ func newRouteIndex(params NetworkPolicyParams, members func(SelectorKind, int64)
 	for device, pool := range index.exitOf {
 		serving[device] = append(serving[device], byPoolConsumers[pool])
 	}
+	devices := make([]int64, len(params.Devices))
+	for position, device := range params.Devices {
+		devices[position] = device.Device
+	}
+	slices.Sort(devices)
+	for device, consumers := range index.dnsConsumers(devices) {
+		serving[device] = append(serving[device], consumers)
+	}
 	for device, lists := range serving {
 		if len(lists) == 1 {
 			index.static[device] = lists[0]
@@ -362,7 +397,8 @@ func (index *routeIndex) equal(other *routeIndex) bool {
 	return index.revision == other.revision && index.limit == other.limit &&
 		slices.EqualFunc(index.siteList, other.siteList, equalRouteSite) &&
 		slices.EqualFunc(index.routers, other.routers, equalRouteRouter) &&
-		slices.EqualFunc(index.ruleList, other.ruleList, equalRouteRule) && index.equalExits(other)
+		slices.EqualFunc(index.ruleList, other.ruleList, equalRouteRule) && index.equalExits(other) &&
+		index.equalDNSZones(other)
 }
 
 // serves reports whether a router can serve its Site now: its Device is
@@ -383,7 +419,10 @@ func (inner *networkPolicy) routesFor(self int64, now time.Time) RouteView {
 	inner.servedRoutes(&view, self, now)
 	inner.consumerExits(&view, self, now, routers)
 	inner.servedExits(&view, self, now)
-	for _, peers := range []*[]node.ID{&view.routers, &view.consumers, &view.exitNodes, &view.exitConsumers} {
+	inner.consumerDNSZones(&view, self, now, routers)
+	inner.servedDNS(&view, self, now)
+	for _, peers := range []*[]node.ID{&view.routers, &view.consumers, &view.exitNodes, &view.exitConsumers,
+		&view.resolvers, &view.dnsConsumers} {
 		slices.SortFunc(*peers, compareNodeIDs)
 		*peers = slices.Compact(*peers)
 	}
@@ -719,7 +758,7 @@ func cloneRouteRules(rules []RouteRule) []RouteRule {
 // refresh can filter before it builds (Snapshot.RouteCapabilities).
 func (snapshot Snapshot) withRouteCapabilities(request Request) (Snapshot, error) {
 	capabilities := RouteCapabilities{Routes: request.Routes(), Router: request.Router(), Exits: request.Exits(),
-		ExitRouter: request.ExitRouter()}
+		ExitRouter: request.ExitRouter(), DNSForward: request.DNSForward()}
 	routes := snapshot.routes.ForCapabilities(capabilities)
 	if routes.Equal(snapshot.routes) {
 		snapshot.routeCapabilities, snapshot.routeCapabilitiesKnown = capabilities, true
