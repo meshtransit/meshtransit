@@ -584,8 +584,11 @@ func classifyDNSZoneError(err error) managementError {
 		return conflict("dns_name_limit", "The zone or the Network already has the most names it can have")
 	case errors.Is(err, dnszone.ErrNameTargetInvalid):
 		return unprocessable("dns_name_target_invalid",
-			"A name points at an active Device of this Network, addresses outside the mesh and special ranges, "+
-				"or a name outside the mesh names")
+			"A name points at an active Device of this Network, a share it imports, addresses outside the mesh "+
+				"and special ranges, or a name outside the mesh names")
+	case errors.Is(err, dnszone.ErrShareTargetInvalid):
+		return unprocessable("dns_share_target_invalid",
+			"A name points at a share this Network imports while its contract runs")
 	case errors.Is(err, dnszone.ErrCNAMEAtApex):
 		return unprocessable("dns_cname_at_apex", "The zone's own domain cannot be a CNAME")
 	case errors.Is(err, dnszone.ErrCNAMELoop):

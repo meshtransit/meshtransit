@@ -152,6 +152,7 @@ func TestClassifyDNSZoneError(t *testing.T) {
 		dnszone.ErrNameInOtherZone:                           "dns_name_in_other_zone",
 		dnszone.ErrNameLimit:                                 "dns_name_limit",
 		dnszone.ErrNameTargetInvalid:                         "dns_name_target_invalid",
+		dnszone.ErrShareTargetInvalid:                        "dns_share_target_invalid",
 		dnszone.ErrCNAMEAtApex:                               "dns_cname_at_apex",
 		dnszone.ErrCNAMELoop:                                 "dns_cname_loop",
 		dnszone.ErrInvalid:                                   "invalid_request",

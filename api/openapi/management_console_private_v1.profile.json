@@ -20938,6 +20938,28 @@
                                 },
                                 "description": "Fixed addresses, canonical text, outside the overlay frame and the loopback, link-local, multicast and reserved ranges"
                               },
+                              "share_id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "description": "A share the Network imports: the name answers its alias"
+                              },
+                              "share_name": {
+                                "type": "string",
+                                "description": "The share's name in this Network"
+                              },
+                              "contract_id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "description": "The share's contract"
+                              },
+                              "share_state": {
+                                "type": "string",
+                                "enum": [
+                                  "active",
+                                  "ended"
+                                ],
+                                "description": "ended once the share has (the name then answers nothing)"
+                              },
                               "cname": {
                                 "type": "string",
                                 "minLength": 1,
@@ -20990,7 +21012,7 @@
       "post": {
         "operationId": "createNetworkDNSName",
         "summary": "Create a DNS name",
-        "description": "Requires dns.manage on the Network and MESHTRANSIT_DNS_ZONES_ENABLED (dns_zones_disabled otherwise). An address name sends exactly one of device_id and addresses; a cname name sends cname. Policy still decides which Devices see a name that points at a Device.",
+        "description": "Requires dns.manage on the Network and MESHTRANSIT_DNS_ZONES_ENABLED (dns_zones_disabled otherwise). An address name sends exactly one of device_id, addresses and share_id; a cname name sends cname. Policy still decides which Devices see a name that points at a Device or a share.",
         "security": [
           {
             "accountSessionCookie": [],
@@ -21075,6 +21097,11 @@
                       "maxLength": 39
                     },
                     "description": "Fixed addresses, canonical text, outside the overlay frame and the loopback, link-local, multicast and reserved ranges"
+                  },
+                  "share_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "A share the Network imports now (its imported resource ID): the name answers its alias"
                   },
                   "cname": {
                     "type": "string",
@@ -21196,6 +21223,28 @@
                                 "maxLength": 39
                               },
                               "description": "Fixed addresses, canonical text, outside the overlay frame and the loopback, link-local, multicast and reserved ranges"
+                            },
+                            "share_id": {
+                              "type": "string",
+                              "format": "uuid",
+                              "description": "A share the Network imports: the name answers its alias"
+                            },
+                            "share_name": {
+                              "type": "string",
+                              "description": "The share's name in this Network"
+                            },
+                            "contract_id": {
+                              "type": "string",
+                              "format": "uuid",
+                              "description": "The share's contract"
+                            },
+                            "share_state": {
+                              "type": "string",
+                              "enum": [
+                                "active",
+                                "ended"
+                              ],
+                              "description": "ended once the share has (the name then answers nothing)"
                             },
                             "cname": {
                               "type": "string",
@@ -21424,6 +21473,28 @@
                               },
                               "description": "Fixed addresses, canonical text, outside the overlay frame and the loopback, link-local, multicast and reserved ranges"
                             },
+                            "share_id": {
+                              "type": "string",
+                              "format": "uuid",
+                              "description": "A share the Network imports: the name answers its alias"
+                            },
+                            "share_name": {
+                              "type": "string",
+                              "description": "The share's name in this Network"
+                            },
+                            "contract_id": {
+                              "type": "string",
+                              "format": "uuid",
+                              "description": "The share's contract"
+                            },
+                            "share_state": {
+                              "type": "string",
+                              "enum": [
+                                "active",
+                                "ended"
+                              ],
+                              "description": "ended once the share has (the name then answers nothing)"
+                            },
                             "cname": {
                               "type": "string",
                               "minLength": 1,
@@ -21471,7 +21542,7 @@
       "patch": {
         "operationId": "updateNetworkDNSName",
         "summary": "Replace a DNS name's kind and target",
-        "description": "Requires dns.manage on the Network and MESHTRANSIT_DNS_ZONES_ENABLED (dns_zones_disabled otherwise). An address name sends exactly one of device_id and addresses; a cname name sends cname. A name never moves: create another one instead.",
+        "description": "Requires dns.manage on the Network and MESHTRANSIT_DNS_ZONES_ENABLED (dns_zones_disabled otherwise). An address name sends exactly one of device_id, addresses and share_id; a cname name sends cname. A name never moves: create another one instead.",
         "security": [
           {
             "accountSessionCookie": [],
@@ -21567,6 +21638,11 @@
                       "maxLength": 39
                     },
                     "description": "Fixed addresses, canonical text, outside the overlay frame and the loopback, link-local, multicast and reserved ranges"
+                  },
+                  "share_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "A share the Network imports now (its imported resource ID): the name answers its alias"
                   },
                   "cname": {
                     "type": "string",
@@ -21688,6 +21764,28 @@
                                 "maxLength": 39
                               },
                               "description": "Fixed addresses, canonical text, outside the overlay frame and the loopback, link-local, multicast and reserved ranges"
+                            },
+                            "share_id": {
+                              "type": "string",
+                              "format": "uuid",
+                              "description": "A share the Network imports: the name answers its alias"
+                            },
+                            "share_name": {
+                              "type": "string",
+                              "description": "The share's name in this Network"
+                            },
+                            "contract_id": {
+                              "type": "string",
+                              "format": "uuid",
+                              "description": "The share's contract"
+                            },
+                            "share_state": {
+                              "type": "string",
+                              "enum": [
+                                "active",
+                                "ended"
+                              ],
+                              "description": "ended once the share has (the name then answers nothing)"
                             },
                             "cname": {
                               "type": "string",
@@ -21933,6 +22031,28 @@
                               },
                               "description": "Fixed addresses, canonical text, outside the overlay frame and the loopback, link-local, multicast and reserved ranges"
                             },
+                            "share_id": {
+                              "type": "string",
+                              "format": "uuid",
+                              "description": "A share the Network imports: the name answers its alias"
+                            },
+                            "share_name": {
+                              "type": "string",
+                              "description": "The share's name in this Network"
+                            },
+                            "contract_id": {
+                              "type": "string",
+                              "format": "uuid",
+                              "description": "The share's contract"
+                            },
+                            "share_state": {
+                              "type": "string",
+                              "enum": [
+                                "active",
+                                "ended"
+                              ],
+                              "description": "ended once the share has (the name then answers nothing)"
+                            },
                             "cname": {
                               "type": "string",
                               "minLength": 1,
@@ -22120,6 +22240,11 @@
                           },
                           "description": "Fixed addresses, canonical text, outside the overlay frame and the loopback, link-local, multicast and reserved ranges"
                         },
+                        "share_id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "description": "A share the Network imports now (its imported resource ID): the name answers its alias"
+                        },
                         "cname": {
                           "type": "string",
                           "minLength": 1,
@@ -22258,6 +22383,28 @@
                                       "maxLength": 39
                                     },
                                     "description": "Fixed addresses, canonical text, outside the overlay frame and the loopback, link-local, multicast and reserved ranges"
+                                  },
+                                  "share_id": {
+                                    "type": "string",
+                                    "format": "uuid",
+                                    "description": "A share the Network imports: the name answers its alias"
+                                  },
+                                  "share_name": {
+                                    "type": "string",
+                                    "description": "The share's name in this Network"
+                                  },
+                                  "contract_id": {
+                                    "type": "string",
+                                    "format": "uuid",
+                                    "description": "The share's contract"
+                                  },
+                                  "share_state": {
+                                    "type": "string",
+                                    "enum": [
+                                      "active",
+                                      "ended"
+                                    ],
+                                    "description": "ended once the share has (the name then answers nothing)"
                                   },
                                   "cname": {
                                     "type": "string",

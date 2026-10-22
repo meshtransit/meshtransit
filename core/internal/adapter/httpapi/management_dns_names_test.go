@@ -31,6 +31,11 @@ func TestParseDNSNameDefinition(t *testing.T) {
 		fixed.Target.Addresses[1] != netip.MustParseAddr("2001:db8::1") {
 		t.Fatalf("an update to fixed addresses = %+v, %v", fixed, ok)
 	}
+	if share, ok := parse(`{"label":"app","kind":"address","share_id":"01890f00-0000-7000-8000-00000000a201"}`,
+		true); !ok || share.Target.ShareID.String() != "01890f00-0000-7000-8000-00000000a201" ||
+		share.Target.DeviceID.IsValid() {
+		t.Fatalf("a share name = %+v, %v", share, ok)
+	}
 	if alias, ok := parse(`{"label":"wiki","kind":"cname","cname":"Corp.Atlassian.net"}`, true); !ok ||
 		alias.Target.CNAME != "Corp.Atlassian.net" {
 		t.Fatalf("a CNAME = %+v, %v", alias, ok)
@@ -47,6 +52,8 @@ func TestParseDNSNameDefinition(t *testing.T) {
 		"nine addresses":        {`{"label":"git","kind":"address","addresses":["10.0.0.1"` + strings.Repeat(`,"10.0.0.1"`, 8) + `]}`, true},
 		"uncanonical Device ID": {`{"label":"git","kind":"address","device_id":"01890F00-0000-7000-8000-000000000401"}`, true},
 		"empty CNAME":           {`{"label":"git","kind":"cname","cname":""}`, true},
+		"uncanonical share ID":  {`{"label":"app","kind":"address","share_id":"01890F00-0000-7000-8000-00000000A201"}`, true},
+		"not a share ID":        {`{"label":"app","kind":"address","share_id":"share-1"}`, true},
 		"unknown field":         {`{"label":"git","kind":"cname","cname":"a.example.com","ttl":5}`, true},
 	} {
 		if _, ok := parse(test.body, test.create); ok {
@@ -77,6 +84,7 @@ func TestParseDNSNameOperations(t *testing.T) {
 		"an update without a version": `{"operations":[{"op":"update","dns_name_id":"01890f00-0000-7000-8000-000000000601","kind":"cname","cname":"a.example.com"}]}`,
 		"an update with a label":      `{"operations":[{"op":"update","dns_name_id":"01890f00-0000-7000-8000-000000000601","version":1,"label":"a","kind":"cname","cname":"a.example.com"}]}`,
 		"a delete with a target":      `{"operations":[{"op":"delete","dns_name_id":"01890f00-0000-7000-8000-000000000601","version":1,"kind":"cname"}]}`,
+		"a delete with a share":       `{"operations":[{"op":"delete","dns_name_id":"01890f00-0000-7000-8000-000000000601","version":1,"share_id":"01890f00-0000-7000-8000-00000000a201"}]}`,
 		"101 operations": `{"operations":[` + strings.Repeat(`{"op":"delete","dns_name_id":"01890f00-0000-7000-8000-000000000601","version":1},`, 100) +
 			`{"op":"delete","dns_name_id":"01890f00-0000-7000-8000-000000000601","version":1}]}`,
 	} {

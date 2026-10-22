@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"meshtransit.net/core/internal/domain/dnsname"
+	"meshtransit.net/core/internal/domain/sharing"
 )
 
 func TestParseLabel(t *testing.T) {
@@ -78,6 +79,10 @@ func TestParseCNAME(t *testing.T) {
 func TestNameDefinitionValidate(t *testing.T) {
 	t.Parallel()
 	device := mustDevice(t)
+	share, err := sharing.ParseImportedResourceID("01890f00-0000-7000-8000-00000000a201")
+	if err != nil {
+		t.Fatal(err)
+	}
 	addresses := func(values ...string) []netip.Addr {
 		parsed := make([]netip.Addr, 0, len(values))
 		for _, value := range values {
@@ -98,8 +103,10 @@ func TestNameDefinitionValidate(t *testing.T) {
 		"both":      {NameDefinition{Kind: NameAddress, Target: NameTarget{Addresses: addresses("2001:db8::1", "192.0.2.1")}}, nil},
 		"cname":     {NameDefinition{Kind: NameCNAME, Target: NameTarget{CNAME: "corp.atlassian.net"}}, nil},
 		"no target": {NameDefinition{Kind: NameAddress}, ErrInvalid},
-		"device and address": {NameDefinition{Kind: NameAddress, Target: NameTarget{DeviceID: device,
-			Addresses: addresses("10.0.5.20")}}, ErrInvalid},
+		"device and address": {NameDefinition{Kind: NameAddress, Target: NameTarget{
+			DeviceID:  device,
+			Addresses: addresses("10.0.5.20"),
+		}}, ErrInvalid},
 		"nine":             {NameDefinition{Kind: NameAddress, Target: NameTarget{Addresses: addresses(nine...)}}, ErrInvalid},
 		"twice":            {NameDefinition{Kind: NameAddress, Target: NameTarget{Addresses: addresses("10.0.5.20", "10.0.5.20")}}, ErrInvalid},
 		"mesh":             {NameDefinition{Kind: NameAddress, Target: NameTarget{Addresses: addresses("100.64.1.2")}}, ErrNameTargetInvalid},
@@ -112,8 +119,15 @@ func TestNameDefinitionValidate(t *testing.T) {
 		"unspecified":      {NameDefinition{Kind: NameAddress, Target: NameTarget{Addresses: addresses("::")}}, ErrNameTargetInvalid},
 		"IPv4-mapped":      {NameDefinition{Kind: NameAddress, Target: NameTarget{Addresses: addresses("::ffff:10.0.0.1")}}, ErrNameTargetInvalid},
 		"cname and device": {NameDefinition{Kind: NameCNAME, Target: NameTarget{CNAME: "a.example.com", DeviceID: device}}, ErrInvalid},
-		"empty cname":      {NameDefinition{Kind: NameCNAME}, ErrInvalid},
-		"unknown kind":     {NameDefinition{Kind: "txt", Target: NameTarget{CNAME: "a.example.com"}}, ErrInvalid},
+		"share":            {NameDefinition{Kind: NameAddress, Target: NameTarget{ShareID: share}}, nil},
+		"share and device": {NameDefinition{Kind: NameAddress, Target: NameTarget{ShareID: share, DeviceID: device}}, ErrInvalid},
+		"share and address": {NameDefinition{Kind: NameAddress, Target: NameTarget{
+			ShareID:   share,
+			Addresses: addresses("10.0.5.20"),
+		}}, ErrInvalid},
+		"cname and share": {NameDefinition{Kind: NameCNAME, Target: NameTarget{CNAME: "a.example.com", ShareID: share}}, ErrInvalid},
+		"empty cname":     {NameDefinition{Kind: NameCNAME}, ErrInvalid},
+		"unknown kind":    {NameDefinition{Kind: "txt", Target: NameTarget{CNAME: "a.example.com"}}, ErrInvalid},
 	} {
 		if err := test.definition.Validate(); !errors.Is(err, test.want) {
 			t.Errorf("%s: %v, want %v", name, err, test.want)

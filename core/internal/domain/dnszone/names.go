@@ -10,6 +10,7 @@ import (
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/sharing"
 )
 
 // Apex is the label of a zone's own domain.
@@ -56,10 +57,12 @@ const (
 func (kind NameKind) IsKnown() bool { return kind == NameAddress || kind == NameCNAME }
 
 // NameTarget is what a name points at: one Device of the Network, 1 to 8
-// fixed addresses, or one other name; exactly one is set.
+// fixed addresses, a share the Network imports (its alias, DNS design D3),
+// or one other name; exactly one is set.
 type NameTarget struct {
 	DeviceID  node.ID
 	Addresses []netip.Addr
+	ShareID   sharing.ImportedResourceID
 	CNAME     string
 }
 
@@ -175,10 +178,16 @@ func (definition NameDefinition) Validate() error {
 	target := definition.Target
 	switch definition.Kind {
 	case NameAddress:
-		if target.CNAME != "" || target.DeviceID.IsValid() == (len(target.Addresses) > 0) {
+		set := 0
+		for _, present := range []bool{target.DeviceID.IsValid(), len(target.Addresses) > 0, target.ShareID.IsValid()} {
+			if present {
+				set++
+			}
+		}
+		if target.CNAME != "" || set != 1 {
 			return ErrInvalid
 		}
-		if target.DeviceID.IsValid() {
+		if target.DeviceID.IsValid() || target.ShareID.IsValid() {
 			return nil
 		}
 		if len(target.Addresses) > MaximumAddressesPerName {
@@ -194,7 +203,7 @@ func (definition NameDefinition) Validate() error {
 		}
 		return nil
 	case NameCNAME:
-		if target.DeviceID.IsValid() || len(target.Addresses) != 0 || target.CNAME == "" {
+		if target.DeviceID.IsValid() || len(target.Addresses) != 0 || target.ShareID.IsValid() || target.CNAME == "" {
 			return ErrInvalid
 		}
 		return nil
@@ -210,6 +219,14 @@ type NameDevice struct {
 	State string
 }
 
+// NameShare is what Core knows of a target share: its name in the Network,
+// its contract, and whether it still runs (Active false once it has ended).
+type NameShare struct {
+	Name       string
+	ContractID sharing.ContractID
+	Active     bool
+}
+
 // Name is one stored name.
 type Name struct {
 	ID     NameID
@@ -219,8 +236,9 @@ type Name struct {
 	Label  string
 	Kind   NameKind
 	Target NameTarget
-	// Device is set for a Device target.
+	// Device is set for a Device target, Share for a share target.
 	Device    *NameDevice
+	Share     *NameShare
 	Deleted   bool
 	Version   int64
 	CreatedAt time.Time

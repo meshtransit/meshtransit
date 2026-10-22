@@ -18,15 +18,16 @@ import (
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/sharing"
 )
 
-const listDNSNamesSQL = `SELECT mesh_ops.list_dns_names_v1(` + sessionArguments + `,$10::UUID,$11::UUID,$12::UUID,
+const listDNSNamesSQL = `SELECT mesh_ops.list_dns_names_v2(` + sessionArguments + `,$10::UUID,$11::UUID,$12::UUID,
  NULLIF($13::TEXT,'')::UUID,NULLIF($14::TEXT,''),$15::INTEGER)::TEXT`
 
-const readDNSNameSQL = `SELECT mesh_ops.read_dns_name_v1(` + sessionArguments + `,$10::UUID,$11::UUID,$12::UUID,
+const readDNSNameSQL = `SELECT mesh_ops.read_dns_name_v2(` + sessionArguments + `,$10::UUID,$11::UUID,$12::UUID,
  $13::UUID)::TEXT`
 
-const changeDNSNamesSQL = `SELECT mesh_ops.change_dns_names_v1(` + sessionArguments + `,$10::UUID,$11::UUID,
+const changeDNSNamesSQL = `SELECT mesh_ops.change_dns_names_v2(` + sessionArguments + `,$10::UUID,$11::UUID,
  $12::UUID,$13::JSONB,$14::INTEGER,$15::INTEGER,$16::INTEGER,$17::UUID)::TEXT`
 
 const appendDNSNameEvidenceSQL = `SELECT mesh_audit.append_authority_evidence(
@@ -57,7 +58,7 @@ func dnsNameDatabaseError(err error) error {
 }
 
 // dnsNameDocument is one name as stored, with its label in its zone and
-// what Core knows of a target Device.
+// what Core knows of a target Device or share (schema 217 v2 documents).
 type dnsNameDocument struct {
 	ID          string    `json:"name_id"`
 	ZoneID      string    `json:"zone_id"`
@@ -69,6 +70,10 @@ type dnsNameDocument struct {
 	DeviceState *string   `json:"device_state"`
 	Addresses   []string  `json:"addresses"`
 	CNAME       *string   `json:"cname"`
+	ShareID     *string   `json:"share_id"`
+	ShareName   *string   `json:"share_name"`
+	ContractID  *string   `json:"contract_id"`
+	ShareState  *string   `json:"share_state"`
 	State       string    `json:"state"`
 	Version     int64     `json:"version"`
 	CreatedAt   time.Time `json:"created_at"`
@@ -111,6 +116,27 @@ func (document dnsNameDocument) name(allowDeleted bool) (dnszone.Name, error) {
 	if document.CNAME != nil {
 		name.Target.CNAME = *document.CNAME
 	}
+	if document.ShareID != nil {
+		share, err := sharing.ParseImportedResourceID(*document.ShareID)
+		if err != nil || share.String() != *document.ShareID || document.ShareState == nil ||
+			(*document.ShareState != "active" && *document.ShareState != "ended") {
+			return dnszone.Name{}, dnszone.ErrInvalid
+		}
+		name.Target.ShareID = share
+		name.Share = &dnszone.NameShare{Active: *document.ShareState == "active"}
+		if document.ShareName != nil {
+			name.Share.Name = *document.ShareName
+		}
+		if document.ContractID != nil {
+			contract, err := sharing.ParseContractID(*document.ContractID)
+			if err != nil || contract.String() != *document.ContractID {
+				return dnszone.Name{}, dnszone.ErrInvalid
+			}
+			name.Share.ContractID = contract
+		}
+	} else if document.ShareState != nil || document.ShareName != nil || document.ContractID != nil {
+		return dnszone.Name{}, dnszone.ErrInvalid
+	}
 	// The stored target is one the database's checks accept.
 	if (dnszone.NameDefinition{Kind: kind, Target: name.Target}).Validate() != nil {
 		return dnszone.Name{}, dnszone.ErrInvalid
@@ -120,7 +146,8 @@ func (document dnsNameDocument) name(allowDeleted bool) (dnszone.Name, error) {
 
 // ListNames returns one page of a zone's active names (network.read).
 func (store *DNSZoneStore) ListNames(ctx context.Context, session accountsession.Session, scope network.Scope,
-	zoneID dnszone.ID, after dnszone.NameID, prefix string, limit int) (dnszone.NameListing, error) {
+	zoneID dnszone.ID, after dnszone.NameID, prefix string, limit int,
+) (dnszone.NameListing, error) {
 	if !session.IsValid() || !scope.IsValid() || !zoneID.IsValid() || limit < 1 || limit > dnszone.MaximumPage {
 		return dnszone.NameListing{}, dnszone.ErrInvalid
 	}
@@ -149,8 +176,10 @@ func (store *DNSZoneStore) ListNames(ctx context.Context, session accountsession
 	if err != nil || zone.ID != zoneID {
 		return dnszone.NameListing{}, dnszone.ErrInvalid
 	}
-	listing := dnszone.NameListing{Zone: zone, Names: make([]dnszone.Name, 0, len(document.Names)),
-		HasMore: document.HasMore, Abilities: dnszone.Abilities{CanManage: document.CanManage}}
+	listing := dnszone.NameListing{
+		Zone: zone, Names: make([]dnszone.Name, 0, len(document.Names)),
+		HasMore: document.HasMore, Abilities: dnszone.Abilities{CanManage: document.CanManage},
+	}
 	for _, item := range document.Names {
 		name, err := item.name(false)
 		if err != nil || name.ZoneID != zoneID {
@@ -163,7 +192,8 @@ func (store *DNSZoneStore) ListNames(ctx context.Context, session accountsession
 
 // ReadName returns one active name of a zone (network.read).
 func (store *DNSZoneStore) ReadName(ctx context.Context, session accountsession.Session, scope network.Scope,
-	zoneID dnszone.ID, nameID dnszone.NameID) (dnszone.NameReading, error) {
+	zoneID dnszone.ID, nameID dnszone.NameID,
+) (dnszone.NameReading, error) {
 	if !session.IsValid() || !scope.IsValid() || !zoneID.IsValid() || !nameID.IsValid() {
 		return dnszone.NameReading{}, dnszone.ErrInvalid
 	}
@@ -191,7 +221,8 @@ func (store *DNSZoneStore) ReadName(ctx context.Context, session accountsession.
 
 // readNames runs one read-only query in the Network scope and rolls back.
 func (store *DNSZoneStore) readNames(ctx context.Context, scope network.Scope,
-	query func(accountSessionTransaction) error) (resultErr error) {
+	query func(accountSessionTransaction) error,
+) (resultErr error) {
 	tx, err := store.begin(ctx, scope)
 	if tx != nil {
 		defer func() { resultErr = errors.Join(resultErr, rollbackAccountSessionTransaction(tx)) }()
@@ -222,6 +253,7 @@ type dnsNameOperationDocument struct {
 	DeviceID        string   `json:"device_id,omitempty"`
 	Addresses       []string `json:"addresses,omitempty"`
 	CNAME           string   `json:"cname,omitempty"`
+	ShareID         string   `json:"share_id,omitempty"`
 }
 
 func dnsNameOperationsJSON(operations []dnszone.NameOperation) ([]byte, error) {
@@ -235,6 +267,9 @@ func dnsNameOperationsJSON(operations []dnszone.NameOperation) ([]byte, error) {
 		}
 		if definition.Target.DeviceID.IsValid() {
 			document.DeviceID = definition.Target.DeviceID.String()
+		}
+		if definition.Target.ShareID.IsValid() {
+			document.ShareID = definition.Target.ShareID.String()
 		}
 		for _, address := range definition.Target.Addresses {
 			document.Addresses = append(document.Addresses, address.String())
@@ -263,7 +298,8 @@ type dnsNameChangeRecord struct {
 // outcome checks one result against the operation it answers: the same
 // name, deleted by a delete, one version past the expected one when changed.
 func (document dnsNameOutcomeDocument) outcome(index int, operation dnszone.NameOperation) (dnszone.NameOutcome,
-	error) {
+	error,
+) {
 	deleted := operation.Operation == dnszone.OperationDelete
 	name, err := document.Name.name(deleted)
 	if err != nil || document.Index != index || document.Operation != string(operation.Operation) ||
@@ -280,8 +316,10 @@ func (document dnsNameOutcomeDocument) outcome(index int, operation dnszone.Name
 	if operation.Operation == dnszone.OperationCreate && name.Label != operation.Definition.Label {
 		return dnszone.NameOutcome{}, dnszone.ErrInvalid
 	}
-	outcome := dnszone.NameOutcome{Index: index, Operation: operation.Operation, Name: name,
-		Changed: document.Changed}
+	outcome := dnszone.NameOutcome{
+		Index: index, Operation: operation.Operation, Name: name,
+		Changed: document.Changed,
+	}
 	if document.Previous != nil {
 		previous, err := document.Previous.name(false)
 		if err != nil || previous.ID != name.ID || previous.Version != operation.ExpectedVersion ||
@@ -297,13 +335,15 @@ func (document dnsNameOutcomeDocument) outcome(index int, operation dnszone.Name
 // definition asks for.
 func sameNameTarget(name dnszone.Name, definition dnszone.NameDefinition) bool {
 	return name.Kind == definition.Kind && name.Target.DeviceID == definition.Target.DeviceID &&
+		name.Target.ShareID == definition.Target.ShareID &&
 		name.Target.CNAME == definition.Target.CNAME && slices.Equal(name.Target.Addresses, definition.Target.Addresses)
 }
 
 // ChangeNames authorizes dns.manage, applies the operations and commits
 // them with one audit event per changed name.
 func (store *DNSZoneStore) ChangeNames(ctx context.Context, change dnszone.NameChange) (_ dnszone.NameResult,
-	resultErr error) {
+	resultErr error,
+) {
 	if !change.Session.IsValid() || !change.Scope.IsValid() || !change.ZoneID.IsValid() ||
 		!change.CorrelationID.IsValid() || len(change.Operations) == 0 ||
 		len(change.Operations) > dnszone.MaximumNameOperations {
@@ -342,8 +382,10 @@ func (store *DNSZoneStore) ChangeNames(ctx context.Context, change dnszone.NameC
 		(record.Changed && (record.NetworkRevision <= 0 || record.DNSRevision <= 0)) {
 		return dnszone.NameResult{}, dnszone.ErrInvalid
 	}
-	result := dnszone.NameResult{Outcomes: make([]dnszone.NameOutcome, 0, len(record.Results)),
-		Changed: record.Changed}
+	result := dnszone.NameResult{
+		Outcomes: make([]dnszone.NameOutcome, 0, len(record.Results)),
+		Changed:  record.Changed,
+	}
 	anyChanged := false
 	for index, item := range record.Results {
 		outcome, err := item.outcome(index, change.Operations[index])
@@ -397,6 +439,9 @@ type dnsNameTarget struct {
 	DeviceID  string   `json:"device_id,omitempty"`
 	Addresses []string `json:"addresses,omitempty"`
 	CNAME     string   `json:"cname,omitempty"`
+	// ShareID is left out for every other target, so the evidence of names
+	// made before schema 217 encodes as it did.
+	ShareID string `json:"share_id,omitempty"`
 }
 
 func dnsNameTargetOf(document dnsNameDocument) dnsNameTarget {
@@ -406,6 +451,9 @@ func dnsNameTargetOf(document dnsNameDocument) dnsNameTarget {
 	}
 	if document.CNAME != nil {
 		target.CNAME = *document.CNAME
+	}
+	if document.ShareID != nil {
+		target.ShareID = *document.ShareID
 	}
 	return target
 }
@@ -436,7 +484,8 @@ type dnsNameAuditPayload struct {
 }
 
 func appendDNSNameEvidence(ctx context.Context, tx accountSessionTransaction, change dnszone.NameChange,
-	changeID publicid.ID, record dnsNameChangeRecord, item dnsNameOutcomeDocument) error {
+	changeID publicid.ID, record dnsNameChangeRecord, item dnsNameOutcomeDocument,
+) error {
 	var streamID, sequence int64
 	var previous []byte
 	if err := tx.QueryRow(ctx, `SELECT stream_internal_id,next_sequence,latest_event_hash

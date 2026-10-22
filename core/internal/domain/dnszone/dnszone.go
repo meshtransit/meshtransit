@@ -78,6 +78,9 @@ var (
 	// that is not an active Device of the Network, an address no answer may
 	// carry, or a CNAME to a mesh or special-use name.
 	ErrNameTargetInvalid = errors.New("dnszone: invalid name target")
+	// ErrShareTargetInvalid reports a share no name may point at now: one
+	// the Network does not import, or whose contract no longer runs.
+	ErrShareTargetInvalid = errors.New("dnszone: invalid share target")
 	// ErrCNAMEAtApex reports a CNAME at a zone's own domain.
 	ErrCNAMEAtApex = errors.New("dnszone: CNAME at the zone's own domain")
 	// ErrCNAMELoop reports CNAMEs among the Network's names that loop or

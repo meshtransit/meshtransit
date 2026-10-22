@@ -15,6 +15,7 @@ import (
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/sharing"
 	"meshtransit.net/core/internal/domain/workspace"
 )
 
@@ -299,6 +300,7 @@ func TestServiceAppliesCanonicalNames(t *testing.T) {
 	zone := dnszone.ID(newID(t))
 	f.store.stored = dnszone.Zone{ID: zone, Domain: "corp.internal", OtherNames: dnszone.OtherNXDomain}
 	device := node.ID(newID(t))
+	share := sharing.ImportedResourceID(newID(t))
 	existing := dnszone.NameID(newID(t))
 	correlation := newID(t)
 	result, err := f.service.ApplyNames(ctx, f.session, f.scope, zone, []dnszone.NameOperation{
@@ -307,8 +309,10 @@ func TestServiceAppliesCanonicalNames(t *testing.T) {
 			Target: dnszone.NameTarget{CNAME: "Corp.Atlassian.NET."}}},
 		{Operation: dnszone.OperationCreate, Definition: dnszone.NameDefinition{Label: "@", Kind: dnszone.NameAddress,
 			Target: dnszone.NameTarget{DeviceID: device}}},
+		{Operation: dnszone.OperationCreate, Definition: dnszone.NameDefinition{Label: "app", Kind: dnszone.NameAddress,
+			Target: dnszone.NameTarget{ShareID: share}}},
 	}, correlation)
-	if err != nil || !result.Changed || len(result.Outcomes) != 3 {
+	if err != nil || !result.Changed || len(result.Outcomes) != 4 {
 		t.Fatalf("ApplyNames = %+v, %v", result, err)
 	}
 	change := f.store.names
@@ -316,7 +320,8 @@ func TestServiceAppliesCanonicalNames(t *testing.T) {
 	if change.ZoneID != zone || change.CorrelationID != correlation || change.Limits != dnszone.DefaultLimits() ||
 		!created.NameID.IsValid() || created.Definition.Label != "wiki" ||
 		created.Definition.Target.CNAME != "corp.atlassian.net" || change.Operations[2].Definition.Label != "@" ||
-		change.Operations[0].NameID != existing || change.Operations[0].ExpectedVersion != 2 {
+		change.Operations[0].NameID != existing || change.Operations[0].ExpectedVersion != 2 ||
+		change.Operations[3].Definition.Target.ShareID != share {
 		t.Fatalf("change = %+v", change)
 	}
 }

@@ -150,6 +150,7 @@ func (service *Service) checkNameOperation(operation NameOperation, domain Domai
 func (service *Service) canonicalName(definition NameDefinition, fqdn string) (NameDefinition, error) {
 	canonical := NameDefinition{Kind: definition.Kind, Target: NameTarget{
 		DeviceID: definition.Target.DeviceID, Addresses: slices.Clone(definition.Target.Addresses),
+		ShareID: definition.Target.ShareID,
 	}}
 	if definition.Kind == NameCNAME {
 		target, err := ParseCNAME(definition.Target.CNAME, service.options.Names)

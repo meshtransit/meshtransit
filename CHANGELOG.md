@@ -5,6 +5,19 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core (DNS design D3a, schema 217): a DNS name can point at a share its
+  Network imports (`share_id`, the imported resource): it answers the
+  share's alias, so a provider's web app opens under its real name. A new
+  target must be a share whose contract runs now (else 422
+  `dns_share_target_invalid`); a name keeps a share that has ended and
+  answers nothing then. Names read back with `share_name`, `contract_id` and
+  `share_state`. The schema 215 name functions and the schema 216 map reader
+  leave such names out, so an older Core never reads or writes one by name;
+  its zone writes still count, move and delete them with their zone. Maps do
+  not carry them yet.
+- Core (TD-CORE-80): a Device that reaches one share through several rules
+  (ICMP and TCP 443, say) no longer fails its whole map: the share keeps one
+  name.
 - Clients (DNS design D2c, MTCP `dns.records1`): `meshd` with DNS on
   (Linux, macOS, Windows) applies DNS names and every zone kind.
   - A zone that answers `NXDOMAIN` is routed to the node, a private single

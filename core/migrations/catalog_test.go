@@ -15,8 +15,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 216 {
-		t.Fatalf("len(Catalog()) = %d, want 216", len(catalog))
+	if len(catalog) != 217 {
+		t.Fatalf("len(Catalog()) = %d, want 217", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1611,8 +1611,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 216 {
-		t.Fatalf("LatestVersion() = %d, want 216", LatestVersion())
+	if LatestVersion() != 217 {
+		t.Fatalf("LatestVersion() = %d, want 217", LatestVersion())
 	}
 }
 
@@ -6222,5 +6222,36 @@ func TestMigration216AddsMapDNSNameReaders(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "TO mesh_worker") || strings.Contains(migration.SQL, "TO mesh_observer") {
 		t.Error("schema 216 grants beyond mesh_runtime")
+	}
+}
+
+func TestMigration217LetsDNSNamesPointAtShares(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[216]
+	if migration.Version != 217 {
+		t.Fatalf("migration 217 = %+v", migration)
+	}
+	for _, want := range []string{
+		"ALTER TABLE mesh.network_dns_name ADD COLUMN share_public_id UUID;",
+		"OR (device_public_id IS NULL AND addresses IS NULL AND share_public_id IS NOT NULL)))",
+		"CREATE FUNCTION mesh_ops.change_dns_names_internal_v2(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.change_dns_names_v1(",
+		"CREATE FUNCTION mesh_ops.change_dns_names_v2(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.list_dns_names_v1(",
+		"CREATE FUNCTION mesh_ops.list_dns_names_v2(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.read_dns_name_v1(",
+		"CREATE FUNCTION mesh_ops.read_dns_name_v2(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.load_map_network_dns_names_v1(p_limit INTEGER)",
+		"      AND name.share_public_id IS NULL\n    ORDER BY name.fqdn",
+		"AND (p_share_aware OR name.share_public_id IS NULL)",
+		"RAISE EXCEPTION USING ERRCODE = 'MTZ10', MESSAGE = 'Share cannot be a DNS name target',",
+		") NOT VALID;\nALTER TABLE mesh.network_dns_name VALIDATE CONSTRAINT network_dns_name_target_check;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 217 lacks %q", want)
+		}
+	}
+	if strings.Contains(migration.SQL, "TO mesh_worker") || strings.Contains(migration.SQL, "TO mesh_observer") {
+		t.Error("schema 217 grants beyond mesh_runtime")
 	}
 }

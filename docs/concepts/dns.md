@@ -105,8 +105,9 @@ with DNS on applies zones (MTCP `dns.forward1`); Android and iOS do not yet.
 ## Names and zone kinds
 
 A zone may also hold names an admin sets: a name to a Device (its mesh
-addresses), to fixed addresses, or a CNAME. A zone also says what the names
-it does not hold get:
+addresses), to fixed addresses, to a share the Network imports (its alias,
+so a provider's web app opens under its real name), or a CNAME. A zone also
+says what the names it does not hold get:
 - `forward`: the zone's resolvers, as above;
 - `nxdomain`: `NXDOMAIN`, answered by the node;
 - `host`: the host's own DNS.
@@ -232,6 +233,8 @@ that route itself).
 
 ## Not yet
 
+- Names that point at a share: Core stores them, but maps do not carry them
+  to Devices yet, and providers cannot suggest names on an offer yet.
 - Names and zone kinds on Android and iOS. A zone for every other name (the
   root).
 - Internet resolvers of a zone asked through the exit node itself (today the

@@ -99,6 +99,8 @@ func dnsZoneDatabaseError(err error) error {
 			return dnszone.ErrCNAMEAtApex
 		case "MTZ0D":
 			return dnszone.ErrCNAMELoop
+		case "MTZ10":
+			return dnszone.ErrShareTargetInvalid
 		case "22023", "22P02", "23514":
 			return dnszone.ErrInvalid
 		}

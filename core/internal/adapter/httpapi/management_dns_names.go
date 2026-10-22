@@ -11,6 +11,7 @@ import (
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/sharing"
 )
 
 // dnsNameBody is one name of a zone (DNS design D2 §6): source is admin for
@@ -27,11 +28,16 @@ type dnsNameBody struct {
 	Source   string `json:"source"`
 	Editable bool   `json:"editable"`
 	// A Device target, with its name and state (removed once it is gone);
-	// fixed addresses; or a CNAME.
+	// fixed addresses; a share the Network imports, with its name, contract
+	// and state (ended once it has); or a CNAME.
 	DeviceID    string   `json:"device_id,omitempty"`
 	DeviceName  string   `json:"device_name,omitempty"`
 	DeviceState string   `json:"device_state,omitempty"`
 	Addresses   []string `json:"addresses,omitempty"`
+	ShareID     string   `json:"share_id,omitempty"`
+	ShareName   string   `json:"share_name,omitempty"`
+	ContractID  string   `json:"contract_id,omitempty"`
+	ShareState  string   `json:"share_state,omitempty"`
 	CNAME       string   `json:"cname,omitempty"`
 	Version     int64    `json:"version"`
 	CreatedAt   string   `json:"created_at"`
@@ -53,15 +59,29 @@ func newDNSNameBody(stored dnszone.Name, editable bool) dnsNameBody {
 	for _, address := range stored.Target.Addresses {
 		body.Addresses = append(body.Addresses, address.String())
 	}
+	if stored.Target.ShareID.IsValid() {
+		body.ShareID, body.ShareState = stored.Target.ShareID.String(), "ended"
+		if stored.Share != nil {
+			body.ShareName = stored.Share.Name
+			if stored.Share.ContractID.IsValid() {
+				body.ContractID = stored.Share.ContractID.String()
+			}
+			if stored.Share.Active {
+				body.ShareState = "active"
+			}
+		}
+	}
 	return body
 }
 
 // dnsNameTargetBody is the kind and target a create, update or apply sends:
-// device_id, addresses or cname. IDs and addresses must be canonical text.
+// device_id, addresses, share_id (an imported share of the Network) or
+// cname. IDs and addresses must be canonical text.
 type dnsNameTargetBody struct {
 	Kind      *string   `json:"kind"`
 	DeviceID  *string   `json:"device_id"`
 	Addresses *[]string `json:"addresses"`
+	ShareID   *string   `json:"share_id"`
 	CNAME     *string   `json:"cname"`
 }
 
@@ -89,6 +109,13 @@ func (body dnsNameTargetBody) definition() (dnszone.NameDefinition, bool) {
 			definition.Target.Addresses = append(definition.Target.Addresses, address)
 		}
 	}
+	if body.ShareID != nil {
+		share, err := sharing.ParseImportedResourceID(*body.ShareID)
+		if err != nil || share.String() != *body.ShareID {
+			return dnszone.NameDefinition{}, false
+		}
+		definition.Target.ShareID = share
+	}
 	if body.CNAME != nil {
 		if *body.CNAME == "" {
 			return dnszone.NameDefinition{}, false
@@ -102,7 +129,8 @@ func (body dnsNameTargetBody) definition() (dnszone.NameDefinition, bool) {
 // and target always. PATCH replaces the kind and target; a name never
 // moves, so an update sends no label.
 func parseDNSNameDefinition(response http.ResponseWriter, request *http.Request,
-	create bool) (dnszone.NameDefinition, bool) {
+	create bool,
+) (dnszone.NameDefinition, bool) {
 	var body struct {
 		Label *string `json:"label"`
 		dnsNameTargetBody
@@ -162,7 +190,8 @@ func parseDNSNameOperations(response http.ResponseWriter, request *http.Request)
 				return nil, false
 			}
 			operation.Definition = definition
-		} else if item.Kind != nil || item.DeviceID != nil || item.Addresses != nil || item.CNAME != nil {
+		} else if item.Kind != nil || item.DeviceID != nil || item.Addresses != nil || item.ShareID != nil ||
+			item.CNAME != nil {
 			return nil, false
 		}
 		if item.Label != nil {
@@ -175,7 +204,8 @@ func parseDNSNameOperations(response http.ResponseWriter, request *http.Request)
 
 func (handler *ManagementHandler) handleDNSNames(ctx context.Context, response http.ResponseWriter,
 	request *http.Request, correlationID publicid.ID, path dnsZonePath, session accountsession.Session,
-	fail func(managementError) string) string {
+	fail func(managementError) string,
+) string {
 	switch path.operation {
 	case dnsNameListOperation:
 		listing, err := handler.dnsZones.ListNames(ctx, session, path.scope, path.zoneID, path.afterName,
@@ -276,7 +306,8 @@ func (handler *ManagementHandler) handleDNSNames(ctx context.Context, response h
 
 func (handler *ManagementHandler) writeDNSNameOutcome(ctx context.Context, response http.ResponseWriter,
 	correlationID publicid.ID, status int, outcome dnszone.NameOutcome, err error,
-	fail func(managementError) string) string {
+	fail func(managementError) string,
+) string {
 	if err != nil {
 		return fail(classifyDNSNameError(err))
 	}
@@ -299,7 +330,8 @@ func (handler *ManagementHandler) writeDNSNameOutcome(ctx context.Context, respo
 // writeDNSNameResults answers an apply with each operation's name in
 // request order.
 func (handler *ManagementHandler) writeDNSNameResults(ctx context.Context, response http.ResponseWriter,
-	correlationID publicid.ID, result dnszone.NameResult) string {
+	correlationID publicid.ID, result dnszone.NameResult,
+) string {
 	type outcomeBody struct {
 		Operation string      `json:"op"`
 		Name      dnsNameBody `json:"dns_name"`
@@ -316,9 +348,11 @@ func (handler *ManagementHandler) writeDNSNameResults(ctx context.Context, respo
 	}
 	output.Data.Results = make([]outcomeBody, 0, len(result.Outcomes))
 	for _, outcome := range result.Outcomes {
-		output.Data.Results = append(output.Data.Results, outcomeBody{Operation: string(outcome.Operation),
-			Name: newDNSNameBody(outcome.Name, !outcome.Name.Deleted), Changed: outcome.Changed,
-			Deleted: outcome.Name.Deleted})
+		output.Data.Results = append(output.Data.Results, outcomeBody{
+			Operation: string(outcome.Operation),
+			Name:      newDNSNameBody(outcome.Name, !outcome.Name.Deleted), Changed: outcome.Changed,
+			Deleted: outcome.Name.Deleted,
+		})
 	}
 	output.Data.Changed, output.CorrelationID = result.Changed, correlationID.String()
 	output.Data.AppliesWithinSeconds = int(result.AppliesWithin / time.Second)
