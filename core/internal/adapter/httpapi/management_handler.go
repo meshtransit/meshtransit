@@ -270,6 +270,8 @@ type ManagementHandlerOptions struct {
 	// ExitPools lists and changes Network Exit Pools and their exit nodes;
 	// nil answers 503.
 	ExitPools ExitPoolManager
+	// DNSZones lists and changes the DNS zones of a Network.
+	DNSZones DNSZoneManager
 	// SiteRouterObservations, when set, adds each router's health of the
 	// Site and its route enforcement to one Site's read.
 	SiteRouterObservations distribution.ObservationLoader
@@ -350,6 +352,7 @@ type ManagementHandler struct {
 	deviceGroups              DeviceGroupManager
 	sites                     SiteManager
 	exitPools                 ExitPoolManager
+	dnsZones                  DNSZoneManager
 	siteRouterObservations    distribution.ObservationLoader
 	siteRouterUse             SiteRouterUseCounter
 	exitNodeUse               ExitNodeUseCounter
@@ -433,6 +436,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		deviceGroups:              options.DeviceGroups,
 		sites:                     options.Sites,
 		exitPools:                 options.ExitPools,
+		dnsZones:                  options.DNSZones,
 		siteRouterObservations:    options.SiteRouterObservations,
 		siteRouterUse:             options.SiteRouterUse,
 		exitNodeUse:               options.ExitNodeUse,
@@ -556,6 +560,7 @@ func (handler *ManagementHandler) serveHTTP(
 	deviceGroupPathValue, deviceGroupMatched := parseDeviceGroupPath(request)
 	sitePathValue, siteMatched := parseSitePath(request)
 	exitPoolPathValue, exitPoolMatched := parseExitPoolPath(request)
+	dnsZonePathValue, dnsZoneMatched := parseDNSZonePath(request)
 	identityCatalogPathValue, identityCatalogMatched := parseIdentityCatalogPath(request)
 	deviceLifecyclePathValue, deviceLifecycleMatched := parseDeviceLifecyclePath(request)
 	memberLifecyclePathValue, memberLifecycleMatched := parseMemberLifecyclePath(request)
@@ -567,7 +572,7 @@ func (handler *ManagementHandler) serveHTTP(
 		!workspaceRoleMatched && !workspaceCollectionMatched && !networkCollectionMatched && !sessionWorkspaceMatched &&
 		!shareTargetMatched && !aliasRangeMatched && !deviceLifetimeMatched && !addressUsageMatched && !auditEventMatched &&
 		!auditExportMatched && !guardrailMatched && !interchangeMatched && !deviceGroupMatched && !siteMatched && !exitPoolMatched &&
-		!identityCatalogMatched &&
+		!dnsZoneMatched && !identityCatalogMatched &&
 		!deviceLifecycleMatched && !memberLifecycleMatched && !networkMemberMatched && !invitationMatched &&
 		!enrollmentKeyMatched {
 		resultCode = "not_found"
@@ -611,6 +616,8 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = sitePathValue.operation
 	} else if exitPoolMatched {
 		operation = exitPoolPathValue.operation
+	} else if dnsZoneMatched {
+		operation = dnsZonePathValue.operation
 	} else if identityCatalogMatched {
 		operation = identityCatalogPathValue.operation()
 	} else if deviceLifecycleMatched {
@@ -673,6 +680,8 @@ func (handler *ManagementHandler) serveHTTP(
 		allowedMethod = sitePathValue.methods.allowedMethod(request.Method)
 	} else if exitPoolMatched {
 		allowedMethod = exitPoolPathValue.methods.allowedMethod(request.Method)
+	} else if dnsZoneMatched {
+		allowedMethod = dnsZonePathValue.methods.allowedMethod(request.Method)
 	} else if identityCatalogMatched {
 		allowedMethod = identityCatalogPathValue.methods.allowedMethod(request.Method)
 	} else if networkMemberMatched {
@@ -711,6 +720,8 @@ func (handler *ManagementHandler) serveHTTP(
 			response.Header().Set("Allow", sitePathValue.methods.header())
 		} else if exitPoolMatched {
 			response.Header().Set("Allow", exitPoolPathValue.methods.header())
+		} else if dnsZoneMatched {
+			response.Header().Set("Allow", dnsZonePathValue.methods.header())
 		} else if guardrailMatched {
 			response.Header().Set("Allow", guardrailPathValue.methods.header())
 		} else if interchangeMatched {
@@ -839,6 +850,10 @@ func (handler *ManagementHandler) serveHTTP(
 	}
 	if exitPoolMatched {
 		resultCode = handler.handleExitPools(ctx, response, request, correlationID, exitPoolPathValue, session)
+		return
+	}
+	if dnsZoneMatched {
+		resultCode = handler.handleDNSZones(ctx, response, request, correlationID, dnsZonePathValue, session)
 		return
 	}
 	if identityCatalogMatched {

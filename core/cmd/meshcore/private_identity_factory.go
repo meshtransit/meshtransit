@@ -18,6 +18,7 @@ import (
 	"meshtransit.net/core/internal/domain/devicelifecycle"
 	"meshtransit.net/core/internal/domain/devicetag"
 	"meshtransit.net/core/internal/domain/dnsname"
+	"meshtransit.net/core/internal/domain/dnszone"
 	"meshtransit.net/core/internal/domain/exitpool"
 	"meshtransit.net/core/internal/domain/guardrail"
 	"meshtransit.net/core/internal/domain/identity/oidcauth"
@@ -81,6 +82,11 @@ type privateIdentityFactoryDependencies struct {
 	// ExitSpread lets Exit Pools become spread
 	// (MESHTRANSIT_EXIT_SPREAD_ENABLED).
 	ExitSpread bool
+	// DNSZones lets Network admins change DNS zones
+	// (MESHTRANSIT_DNS_ZONES_ENABLED).
+	DNSZones bool
+	// DNSProtectedNames are the host names no DNS zone may hold.
+	DNSProtectedNames []string
 	// SubnetRoutes lets Access Rules name Sites
 	// (MESHTRANSIT_SUBNET_ROUTES_ENABLED).
 	SubnetRoutes bool
@@ -279,6 +285,20 @@ func composePrivateIdentityFactory(
 	if exitPools, err = exitPools.WithSpread(dependencies.ExitSpread); err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
+	dnsZoneStore, err := postgresadapter.NewDNSZoneStore(dependencies.Runtime, postgresadapter.AccountSessionOptions{StatementTimeout: managementOptions.StatementTimeout, IdleTimeout: managementOptions.IdleTimeout})
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
+	dnsSuffix := dependencies.DNSSuffix
+	if !dnsSuffix.IsValid() {
+		dnsSuffix = dnsname.Default()
+	}
+	dnsZones, err := dnszone.NewService(dnsZoneStore, clock, dnszone.SystemIDs{}, dnszone.DefaultLimits(),
+		dnszone.Options{Enabled: dependencies.DNSZones,
+			Names: dnszone.Names{Suffix: dnsSuffix, Protected: dependencies.DNSProtectedNames}})
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
 	catalogOptions := postgresadapter.AccountSessionOptions{StatementTimeout: managementOptions.StatementTimeout, IdleTimeout: managementOptions.IdleTimeout}
 	identityGroupStore, err := postgresadapter.NewIdentityGroupStore(dependencies.Runtime, catalogOptions)
 	if err != nil {
@@ -470,7 +490,7 @@ func composePrivateIdentityFactory(
 		ClaimIDs: oidcauth.SystemClaimIDs{}, IssueMaterial: oidcauth.SystemIssueMaterial{},
 		Revocations: revocations, PolicyPublications: policies, PolicyCompilations: policyCompiler,
 		PolicyExplanations: policyExplainer, AccessGraphs: policyExplainer, PolicySimulations: policySimulator,
-		ActivePolicies: activePolicies, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations, AliasRanges: aliasRanges, DeviceLifetimes: deviceLifetimes, AddressUsage: addressUsage, AuditHistory: auditHistory, AuditExports: auditExports, Guardrails: guardrails, Interchanges: interchanges, InterchangeTrust: interchangeTrust, DeviceGroups: deviceGroups, Sites: sites, ExitPools: exitPools, SiteRouterObservations: dependencies.Redis, SiteRouterUse: dependencies.Redis, ExitNodeUse: dependencies.Redis, Countries: dependencies.Countries, IdentityGroups: identityGroups, DeviceTags: deviceTags, DeviceLifecycle: deviceLifecycle, MemberLifecycle: memberLifecycle, NetworkMembers: networkMembers, EnrollmentKeys: dependencies.EnrollmentKeys, Invitations: invitations, InvitationPreviews: invitations, InvitationAcceptor: invitationStore, AccountSignups: signups,
+		ActivePolicies: activePolicies, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations, AliasRanges: aliasRanges, DeviceLifetimes: deviceLifetimes, AddressUsage: addressUsage, AuditHistory: auditHistory, AuditExports: auditExports, Guardrails: guardrails, Interchanges: interchanges, InterchangeTrust: interchangeTrust, DeviceGroups: deviceGroups, Sites: sites, ExitPools: exitPools, DNSZones: dnsZones, SiteRouterObservations: dependencies.Redis, SiteRouterUse: dependencies.Redis, ExitNodeUse: dependencies.Redis, Countries: dependencies.Countries, IdentityGroups: identityGroups, DeviceTags: deviceTags, DeviceLifecycle: deviceLifecycle, MemberLifecycle: memberLifecycle, NetworkMembers: networkMembers, EnrollmentKeys: dependencies.EnrollmentKeys, Invitations: invitations, InvitationPreviews: invitations, InvitationAcceptor: invitationStore, AccountSignups: signups,
 		SessionWorkspaces: sessionWorkspaces, ShareTargets: shareTargets,
 		PolicyApprovals: policyApprovals, PolicyApprovalCatalog: policyApprovalCatalog,
 		ResourceCreations: resources.creations, ResourceCatalog: resources.catalog, ResourceSharing: resources.sharing,

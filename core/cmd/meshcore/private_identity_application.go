@@ -98,6 +98,7 @@ type privateIdentityPorts struct {
 	DeviceGroups        httpapi.DeviceGroupManager
 	Sites               httpapi.SiteManager
 	ExitPools           httpapi.ExitPoolManager
+	DNSZones            httpapi.DNSZoneManager
 	// SiteRouterObservations reads routers' delivery records for one Site's read.
 	SiteRouterObservations distribution.ObservationLoader
 	// SiteRouterUse counts the Devices using each router of a Site.
@@ -235,6 +236,7 @@ func composePrivateIdentity(
 		DeviceGroups:           ports.DeviceGroups,
 		Sites:                  ports.Sites,
 		ExitPools:              ports.ExitPools,
+		DNSZones:               ports.DNSZones,
 		SiteRouterObservations: ports.SiteRouterObservations,
 		SiteRouterUse:          ports.SiteRouterUse,
 		ExitNodeUse:            ports.ExitNodeUse,

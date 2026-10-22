@@ -235,6 +235,7 @@ func isBrowserManagementOperation(request *http.Request) bool {
 		isNetworkAddressUsageRead(request) ||
 		isAuditEventListRead(request) || isAuditEventExportRead(request) || isGuardrailOperation(request) || isInterchangeOperation(request) ||
 		isDeviceGroupOperation(request) || isSiteOperation(request) || isExitPoolOperation(request) ||
+		isDNSZoneOperation(request) ||
 		isIdentityCatalogOperation(request) || isDeviceLifecycleOperation(request) ||
 		isMemberLifecycleOperation(request) || isNetworkMemberOperation(request) || isEnrollmentKeyOperation(request) ||
 		isInvitationOperation(request) {
@@ -314,7 +315,7 @@ func (dispatcher *LoginDispatcher) validRequest(response http.ResponseWriter, re
 		registrationRead ||
 		resourceSharingCollectionRead || accessGraphRead || isAuditEventListRead(request) ||
 		isAuditEventExportRead(request) || isDeviceGroupRead(request) || isSiteRead(request) || isExitPoolRead(request) ||
-		isIdentityCatalogRead(request) ||
+		isDNSZoneRead(request) || isIdentityCatalogRead(request) ||
 		isNetworkMemberRead(request) || target.RawQuery == ""
 }
 

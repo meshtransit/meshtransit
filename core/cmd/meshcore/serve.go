@@ -340,7 +340,8 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 				Mailer: mailer, Signup: processConfig.Signup, Interchange: processConfig.Interchange,
 				DNSSuffix: processConfig.DNSSuffix, EnrollmentKeys: enrollmentKeys,
 				SubnetRoutes: processConfig.SubnetRoutes, SiteDenied: processConfig.SiteDenied,
-				ExitNodes: processConfig.ExitNodes, ExitSpread: processConfig.ExitSpread, Countries: countries},
+				ExitNodes: processConfig.ExitNodes, ExitSpread: processConfig.ExitSpread, Countries: countries,
+				DNSZones: processConfig.DNSZones.Enabled, DNSProtectedNames: processConfig.DNSProtectedNames()},
 			browserRuntime...,
 		)
 		if composeErr != nil {

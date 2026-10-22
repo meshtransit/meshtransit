@@ -689,6 +689,9 @@ func classifyExitPoolError(err error) managementError {
 	case errors.Is(err, exitpool.ErrNodeInOtherPool):
 		return managementError{Status: http.StatusConflict, Code: "exit_node_in_other_pool",
 			Message: "The Device is already an exit node of another Exit Pool. Remove it there first."}
+	case errors.Is(err, exitpool.ErrNodeIsDNSResolver):
+		return managementError{Status: http.StatusConflict, Code: "device_is_dns_resolver",
+			Message: "The Device is a DNS resolver of a DNS zone. Choose another resolver for the zone first."}
 	case errors.Is(err, exitpool.ErrInUse):
 		return managementError{Status: http.StatusConflict, Code: "exit_pool_in_use",
 			Message: "Active rules name this Exit Pool. Change those rules first."}

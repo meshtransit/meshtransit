@@ -137,8 +137,11 @@ that route itself).
 
 ## Not yet
 
-- Custom records, and resolvers and routes configured in Core (`dns.manage`
-  has no operation yet).
+- Custom records. Resolvers and routes configured in Core: DNS zones (a
+  domain and up to four resolvers, a Device of the Network or an address on
+  the Internet, sent to all Devices or to Device Groups) can be created and
+  changed through the management API with `dns.manage` when the deployment
+  sets `MESHTRANSIT_DNS_ZONES_ENABLED`, but maps do not carry them yet.
 - The search domain on Windows: the NRPT routes the zone to the resolver, but
   short names are not completed.
 - Reverse lookups through the host's resolver: the node's resolver answers

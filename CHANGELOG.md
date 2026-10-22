@@ -5,6 +5,19 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core (DNS design D1a, schema 213): DNS zones. A Network admin with
+  `dns.manage` creates, changes and deletes zones through
+  `/api/v1/workspaces/{ws}/networks/{net}/dns/zones`: a domain, up to four
+  resolvers in order (a Workspace-owned Device of the Network on port 53 or
+  1024-65535, or an address on the Internet on port 53), the Device Groups it
+  is sent to (or every Device), what its names get when no resolver answers
+  (`open` or `closed`), a search position, and a confirmation for domains
+  that exist on the Internet. Special-use names, public suffixes, the mesh
+  names and the deployment's own host names (`MESHTRANSIT_DNS_PROTECTED_NAMES`)
+  are refused. A resolver Device never becomes an exit node, and a Device
+  Group a zone is sent to cannot be deleted. Every change is audited
+  (`dns_zone.*`) and advances the Network's revisions. Off unless
+  `MESHTRANSIT_DNS_ZONES_ENABLED`; maps do not carry zones yet (D1a.2).
 - Clients (exit, captive portals, exit node design §17): `meshd` finds a
   captive portal while the control session is down (the network's RFC 8908
   API on Linux, an HTTP probe of a relay that echoes a nonce, the network

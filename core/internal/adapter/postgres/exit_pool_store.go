@@ -92,6 +92,8 @@ func exitPoolDatabaseError(err error) error {
 			return exitpool.ErrNodeInOtherPool
 		case "MTX06":
 			return exitpool.ErrInUse
+		case "MTX07":
+			return exitpool.ErrNodeIsDNSResolver
 		case "22023", "22P02", "23514":
 			return exitpool.ErrInvalid
 		}

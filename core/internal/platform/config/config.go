@@ -65,6 +65,9 @@ type Config struct {
 	ExitNodes bool
 	// ExitSpread lets Exit Pools become spread (MESHTRANSIT_EXIT_SPREAD_ENABLED).
 	ExitSpread bool
+	// DNSZones are the DNS zone settings (MESHTRANSIT_DNS_ZONES_ENABLED,
+	// MESHTRANSIT_DNS_PROTECTED_NAMES).
+	DNSZones DNSZonesConfig
 	// GeoIPCountryFile is the country table Console Device reads place
 	// public addresses with (MESHTRANSIT_GEOIP_COUNTRY_FILE); empty: none.
 	GeoIPCountryFile string
@@ -199,6 +202,10 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, err
 	}
 	exitSpread, err := loadExitSpread(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+	dnsZones, err := loadDNSZones(lookup)
 	if err != nil {
 		return Config{}, err
 	}
@@ -353,6 +360,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		SiteDenied:              siteDenied,
 		ExitNodes:               exitNodes,
 		ExitSpread:              exitSpread,
+		DNSZones:                dnsZones,
 		GeoIPCountryFile:        geoIPCountryFile,
 		Dependencies:            dependencyConfig,
 		Storage:                 storageConfig,

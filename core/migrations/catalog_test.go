@@ -15,8 +15,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 212 {
-		t.Fatalf("len(Catalog()) = %d, want 212", len(catalog))
+	if len(catalog) != 213 {
+		t.Fatalf("len(Catalog()) = %d, want 213", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1611,8 +1611,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 212 {
-		t.Fatalf("LatestVersion() = %d, want 212", LatestVersion())
+	if LatestVersion() != 213 {
+		t.Fatalf("LatestVersion() = %d, want 213", LatestVersion())
 	}
 }
 
@@ -6095,5 +6095,37 @@ func TestMigration212AuditsCaptiveWindows(t *testing.T) {
 		if strings.Contains(strings.SplitN(migration.SQL, "CREATE TABLE", 2)[1], "'"+never) {
 			t.Errorf("schema 212 records %q", never)
 		}
+	}
+}
+
+func TestMigration213AddsNetworkDNSZones(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[212]
+	if migration.Version != 213 {
+		t.Fatalf("migration 213 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE TABLE mesh.network_dns_zone (",
+		"ON mesh.network_dns_zone (workspace_id, network_id, domain)\n    WHERE state = 'active';",
+		"capture_authority_mutation('network_dns_zone', 'public_id')",
+		"p_permission NOT IN ('network.read', 'dns.manage')",
+		"CREATE TRIGGER device_group_not_used_by_dns_zone",
+		"AND device.public_id = (v_item ->> 'device_id')::UUID AND device.deleted_at IS NULL",
+		"CREATE TRIGGER network_exit_node_not_dns_resolver",
+		"RAISE EXCEPTION USING ERRCODE = 'MTZ06',",
+		"SET network_revision = revision.network_revision + 1, dns_revision = revision.dns_revision + 1,",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.change_dns_zone_v1(",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 213 lacks %q", want)
+		}
+	}
+	// DNS zones never count as rules of a Device Group.
+	if strings.Contains(migration.SQL, "device_group_rule_count_internal_v1") {
+		t.Error("schema 213 changes the Device Group rule count")
+	}
+	// Only the runtime role reads and changes zones.
+	if strings.Contains(migration.SQL, "TO mesh_worker") || strings.Contains(migration.SQL, "TO mesh_observer") {
+		t.Error("schema 213 grants DNS zones beyond mesh_runtime")
 	}
 }

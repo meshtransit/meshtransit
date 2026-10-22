@@ -9603,7 +9603,7 @@
       "delete": {
         "operationId": "deleteNetworkDeviceGroup",
         "summary": "Delete a Device Group",
-        "description": "Requires device_group.manage. A group the active policy still selects cannot be deleted (409 device_group_in_use).",
+        "description": "Requires device_group.manage. A group the active policy still selects cannot be deleted (409 device_group_in_use), nor one a DNS zone is sent to (409 device_group_in_use_by_dns).",
         "security": [
           {
             "accountSessionCookie": [],
@@ -18240,7 +18240,7 @@
             "description": "exit_pool_not_found"
           },
           "409": {
-            "description": "exit_node_limit, exit_node_not_eligible or exit_node_in_other_pool"
+            "description": "exit_node_limit, exit_node_not_eligible exit_node_in_other_pool or device_is_dns_resolver"
           },
           "412": {
             "description": "version_conflict"
@@ -18905,6 +18905,1527 @@
           },
           "404": {
             "description": "exit_pool_not_found"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/dns/zones": {
+      "get": {
+        "operationId": "listNetworkDNSZones",
+        "summary": "List the Network's DNS zones",
+        "description": "Requires network.read on the Network. Pages in domain order, the zone for every other name (.) first, and names the Network's system zones: its Devices' names and the names of the shares it receives, which MeshTransit answers itself.",
+        "security": [
+          {
+            "accountSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The last DNS zone of the previous page (next_after)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 10
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Active DNS zones",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "dns_zones",
+                        "system_zones",
+                        "can_manage"
+                      ],
+                      "properties": {
+                        "dns_zones": {
+                          "type": "array",
+                          "maxItems": 100,
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "dns_zone_id",
+                              "domain",
+                              "kind",
+                              "failure_mode",
+                              "resolvers",
+                              "device_groups",
+                              "search_position",
+                              "public",
+                              "public_confirmed",
+                              "version",
+                              "created_at",
+                              "updated_at"
+                            ],
+                            "properties": {
+                              "dns_zone_id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "domain": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 253,
+                                "description": "Lowercase A-labels without a trailing dot; . for every other name"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "forward",
+                                  "root"
+                                ],
+                                "description": "forward: names under the domain; root: every name no other zone holds"
+                              },
+                              "failure_mode": {
+                                "type": "string",
+                                "enum": [
+                                  "open",
+                                  "closed"
+                                ],
+                                "description": "open: when no resolver can answer, names go to the host's own DNS (the exit node's while one is used); closed: they get SERVFAIL"
+                              },
+                              "resolvers": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 4,
+                                "items": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "port"
+                                  ],
+                                  "description": "A resolver Device (device_id, with its name, state and whether it can serve) or an address on the Internet",
+                                  "properties": {
+                                    "device_id": {
+                                      "type": "string",
+                                      "format": "uuid"
+                                    },
+                                    "device_name": {
+                                      "type": "string",
+                                      "maxLength": 255
+                                    },
+                                    "device_state": {
+                                      "type": "string",
+                                      "maxLength": 32,
+                                      "description": "The Device's lifecycle state, or removed"
+                                    },
+                                    "eligible": {
+                                      "type": "boolean",
+                                      "description": "An active Device owned by the Workspace and no exit node: it can serve"
+                                    },
+                                    "address": {
+                                      "type": "string",
+                                      "maxLength": 39,
+                                      "description": "A canonical IPv4 or IPv6 address on the Internet"
+                                    },
+                                    "port": {
+                                      "type": "integer",
+                                      "minimum": 1,
+                                      "maximum": 65535
+                                    }
+                                  }
+                                },
+                                "description": "Asked in this order"
+                              },
+                              "device_groups": {
+                                "type": "array",
+                                "maxItems": 16,
+                                "items": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "device_group_id",
+                                    "name",
+                                    "state"
+                                  ],
+                                  "properties": {
+                                    "device_group_id": {
+                                      "type": "string",
+                                      "format": "uuid"
+                                    },
+                                    "name": {
+                                      "type": "string",
+                                      "maxLength": 64
+                                    },
+                                    "state": {
+                                      "type": "string",
+                                      "maxLength": 32
+                                    }
+                                  }
+                                },
+                                "description": "The Device Groups the zone is sent to; empty: every Device of the Network"
+                              },
+                              "search_position": {
+                                "type": [
+                                  "integer",
+                                  "null"
+                                ],
+                                "minimum": 1,
+                                "maximum": 1000,
+                                "description": "Order among the Network's search domains; null: not a search domain"
+                              },
+                              "public": {
+                                "type": "boolean",
+                                "description": "The domain exists on the Internet"
+                              },
+                              "public_confirmed": {
+                                "type": "boolean"
+                              },
+                              "version": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "created_at": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "updated_at": {
+                                "type": "string",
+                                "format": "date-time"
+                              }
+                            }
+                          }
+                        },
+                        "next_after": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "system_zones": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "network",
+                            "shared"
+                          ],
+                          "properties": {
+                            "network": {
+                              "type": "string",
+                              "maxLength": 253,
+                              "description": "The zone of the Network's Device names"
+                            },
+                            "shared": {
+                              "type": "string",
+                              "maxLength": 253,
+                              "description": "The zone of the names of shares the Network receives"
+                            }
+                          }
+                        },
+                        "can_manage": {
+                          "type": "boolean",
+                          "description": "dns.manage"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createNetworkDNSZone",
+        "summary": "Create a DNS zone",
+        "description": "Requires dns.manage on the Network and MESHTRANSIT_DNS_ZONES_ENABLED (dns_zones_disabled otherwise). Devices the zone is sent to ask its resolvers for names under its domain. Policy still decides whether a Device may reach a resolver Device.",
+        "security": [
+          {
+            "accountSessionCookie": [],
+            "sessionCSRF": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionProof"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "failure_mode",
+                  "resolvers",
+                  "device_groups"
+                ],
+                "properties": {
+                  "domain": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 253,
+                    "description": "Required to create; to update, absent or the zone's own domain. Unicode labels are converted to A-labels. . is every other name, where the deployment offers it"
+                  },
+                  "failure_mode": {
+                    "type": "string",
+                    "enum": [
+                      "open",
+                      "closed"
+                    ]
+                  },
+                  "resolvers": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "port"
+                      ],
+                      "properties": {
+                        "device_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "address": {
+                          "type": "string",
+                          "maxLength": 39
+                        },
+                        "port": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 65535
+                        }
+                      },
+                      "description": "Exactly one of device_id (port 53 or 1024-65535; an active Device owned by the Workspace, no exit node) and address (on the Internet, port 53)"
+                    }
+                  },
+                  "device_groups": {
+                    "type": "array",
+                    "maxItems": 16,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "description": "Empty: every Device of the Network"
+                  },
+                  "search_position": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 1000
+                  },
+                  "public_confirmed": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Required true for a domain that exists on the Internet: Devices then ask the zone's resolvers instead of public DNS for its names"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The zone",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "dns_zone",
+                        "deleted"
+                      ],
+                      "properties": {
+                        "dns_zone": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "dns_zone_id",
+                            "domain",
+                            "kind",
+                            "failure_mode",
+                            "resolvers",
+                            "device_groups",
+                            "search_position",
+                            "public",
+                            "public_confirmed",
+                            "version",
+                            "created_at",
+                            "updated_at"
+                          ],
+                          "properties": {
+                            "dns_zone_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "domain": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253,
+                              "description": "Lowercase A-labels without a trailing dot; . for every other name"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "forward",
+                                "root"
+                              ],
+                              "description": "forward: names under the domain; root: every name no other zone holds"
+                            },
+                            "failure_mode": {
+                              "type": "string",
+                              "enum": [
+                                "open",
+                                "closed"
+                              ],
+                              "description": "open: when no resolver can answer, names go to the host's own DNS (the exit node's while one is used); closed: they get SERVFAIL"
+                            },
+                            "resolvers": {
+                              "type": "array",
+                              "minItems": 1,
+                              "maxItems": 4,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "port"
+                                ],
+                                "description": "A resolver Device (device_id, with its name, state and whether it can serve) or an address on the Internet",
+                                "properties": {
+                                  "device_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "device_name": {
+                                    "type": "string",
+                                    "maxLength": 255
+                                  },
+                                  "device_state": {
+                                    "type": "string",
+                                    "maxLength": 32,
+                                    "description": "The Device's lifecycle state, or removed"
+                                  },
+                                  "eligible": {
+                                    "type": "boolean",
+                                    "description": "An active Device owned by the Workspace and no exit node: it can serve"
+                                  },
+                                  "address": {
+                                    "type": "string",
+                                    "maxLength": 39,
+                                    "description": "A canonical IPv4 or IPv6 address on the Internet"
+                                  },
+                                  "port": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 65535
+                                  }
+                                }
+                              },
+                              "description": "Asked in this order"
+                            },
+                            "device_groups": {
+                              "type": "array",
+                              "maxItems": 16,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "device_group_id",
+                                  "name",
+                                  "state"
+                                ],
+                                "properties": {
+                                  "device_group_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "maxLength": 64
+                                  },
+                                  "state": {
+                                    "type": "string",
+                                    "maxLength": 32
+                                  }
+                                }
+                              },
+                              "description": "The Device Groups the zone is sent to; empty: every Device of the Network"
+                            },
+                            "search_position": {
+                              "type": [
+                                "integer",
+                                "null"
+                              ],
+                              "minimum": 1,
+                              "maximum": 1000,
+                              "description": "Order among the Network's search domains; null: not a search domain"
+                            },
+                            "public": {
+                              "type": "boolean",
+                              "description": "The domain exists on the Internet"
+                            },
+                            "public_confirmed": {
+                              "type": "boolean"
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updated_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "deleted": {
+                          "type": "boolean",
+                          "const": false
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request"
+          },
+          "404": {
+            "description": "device_group_not_found"
+          },
+          "409": {
+            "description": "dns_zone_exists, dns_zone_limit, dns_search_limit, dns_zone_public_unconfirmed, dns_zone_covers_control, dns_resolver_not_eligible, dns_resolver_peer_limit, dns_zones_disabled or dns_root_zone_unavailable"
+          },
+          "422": {
+            "description": "dns_zone_special_use, dns_zone_public_suffix, dns_zone_mesh_suffix or dns_resolver_not_internet"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/dns/zones/{dns_zone_id}": {
+      "get": {
+        "operationId": "readNetworkDNSZone",
+        "summary": "Read a DNS zone",
+        "description": "Requires network.read on the Network.",
+        "security": [
+          {
+            "accountSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "dns_zone_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The zone",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "dns_zone",
+                        "can_manage"
+                      ],
+                      "properties": {
+                        "dns_zone": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "dns_zone_id",
+                            "domain",
+                            "kind",
+                            "failure_mode",
+                            "resolvers",
+                            "device_groups",
+                            "search_position",
+                            "public",
+                            "public_confirmed",
+                            "version",
+                            "created_at",
+                            "updated_at"
+                          ],
+                          "properties": {
+                            "dns_zone_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "domain": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253,
+                              "description": "Lowercase A-labels without a trailing dot; . for every other name"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "forward",
+                                "root"
+                              ],
+                              "description": "forward: names under the domain; root: every name no other zone holds"
+                            },
+                            "failure_mode": {
+                              "type": "string",
+                              "enum": [
+                                "open",
+                                "closed"
+                              ],
+                              "description": "open: when no resolver can answer, names go to the host's own DNS (the exit node's while one is used); closed: they get SERVFAIL"
+                            },
+                            "resolvers": {
+                              "type": "array",
+                              "minItems": 1,
+                              "maxItems": 4,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "port"
+                                ],
+                                "description": "A resolver Device (device_id, with its name, state and whether it can serve) or an address on the Internet",
+                                "properties": {
+                                  "device_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "device_name": {
+                                    "type": "string",
+                                    "maxLength": 255
+                                  },
+                                  "device_state": {
+                                    "type": "string",
+                                    "maxLength": 32,
+                                    "description": "The Device's lifecycle state, or removed"
+                                  },
+                                  "eligible": {
+                                    "type": "boolean",
+                                    "description": "An active Device owned by the Workspace and no exit node: it can serve"
+                                  },
+                                  "address": {
+                                    "type": "string",
+                                    "maxLength": 39,
+                                    "description": "A canonical IPv4 or IPv6 address on the Internet"
+                                  },
+                                  "port": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 65535
+                                  }
+                                }
+                              },
+                              "description": "Asked in this order"
+                            },
+                            "device_groups": {
+                              "type": "array",
+                              "maxItems": 16,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "device_group_id",
+                                  "name",
+                                  "state"
+                                ],
+                                "properties": {
+                                  "device_group_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "maxLength": 64
+                                  },
+                                  "state": {
+                                    "type": "string",
+                                    "maxLength": 32
+                                  }
+                                }
+                              },
+                              "description": "The Device Groups the zone is sent to; empty: every Device of the Network"
+                            },
+                            "search_position": {
+                              "type": [
+                                "integer",
+                                "null"
+                              ],
+                              "minimum": 1,
+                              "maximum": 1000,
+                              "description": "Order among the Network's search domains; null: not a search domain"
+                            },
+                            "public": {
+                              "type": "boolean",
+                              "description": "The domain exists on the Internet"
+                            },
+                            "public_confirmed": {
+                              "type": "boolean"
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updated_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "can_manage": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "dns_zone_not_found"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateNetworkDNSZone",
+        "summary": "Change a DNS zone",
+        "description": "Requires dns.manage on the Network and MESHTRANSIT_DNS_ZONES_ENABLED (dns_zones_disabled otherwise). Replaces the resolvers, Device Groups, failure mode, search position and confirmation; the domain never changes. A change that changes nothing keeps the version.",
+        "security": [
+          {
+            "accountSessionCookie": [],
+            "sessionCSRF": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "dns_zone_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionProof"
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\"[1-9][0-9]*\"$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "failure_mode",
+                  "resolvers",
+                  "device_groups"
+                ],
+                "properties": {
+                  "domain": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 253,
+                    "description": "Required to create; to update, absent or the zone's own domain. Unicode labels are converted to A-labels. . is every other name, where the deployment offers it"
+                  },
+                  "failure_mode": {
+                    "type": "string",
+                    "enum": [
+                      "open",
+                      "closed"
+                    ]
+                  },
+                  "resolvers": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "port"
+                      ],
+                      "properties": {
+                        "device_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "address": {
+                          "type": "string",
+                          "maxLength": 39
+                        },
+                        "port": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 65535
+                        }
+                      },
+                      "description": "Exactly one of device_id (port 53 or 1024-65535; an active Device owned by the Workspace, no exit node) and address (on the Internet, port 53)"
+                    }
+                  },
+                  "device_groups": {
+                    "type": "array",
+                    "maxItems": 16,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "description": "Empty: every Device of the Network"
+                  },
+                  "search_position": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 1000
+                  },
+                  "public_confirmed": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Required true for a domain that exists on the Internet: Devices then ask the zone's resolvers instead of public DNS for its names"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The zone",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "dns_zone",
+                        "deleted"
+                      ],
+                      "properties": {
+                        "dns_zone": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "dns_zone_id",
+                            "domain",
+                            "kind",
+                            "failure_mode",
+                            "resolvers",
+                            "device_groups",
+                            "search_position",
+                            "public",
+                            "public_confirmed",
+                            "version",
+                            "created_at",
+                            "updated_at"
+                          ],
+                          "properties": {
+                            "dns_zone_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "domain": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253,
+                              "description": "Lowercase A-labels without a trailing dot; . for every other name"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "forward",
+                                "root"
+                              ],
+                              "description": "forward: names under the domain; root: every name no other zone holds"
+                            },
+                            "failure_mode": {
+                              "type": "string",
+                              "enum": [
+                                "open",
+                                "closed"
+                              ],
+                              "description": "open: when no resolver can answer, names go to the host's own DNS (the exit node's while one is used); closed: they get SERVFAIL"
+                            },
+                            "resolvers": {
+                              "type": "array",
+                              "minItems": 1,
+                              "maxItems": 4,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "port"
+                                ],
+                                "description": "A resolver Device (device_id, with its name, state and whether it can serve) or an address on the Internet",
+                                "properties": {
+                                  "device_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "device_name": {
+                                    "type": "string",
+                                    "maxLength": 255
+                                  },
+                                  "device_state": {
+                                    "type": "string",
+                                    "maxLength": 32,
+                                    "description": "The Device's lifecycle state, or removed"
+                                  },
+                                  "eligible": {
+                                    "type": "boolean",
+                                    "description": "An active Device owned by the Workspace and no exit node: it can serve"
+                                  },
+                                  "address": {
+                                    "type": "string",
+                                    "maxLength": 39,
+                                    "description": "A canonical IPv4 or IPv6 address on the Internet"
+                                  },
+                                  "port": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 65535
+                                  }
+                                }
+                              },
+                              "description": "Asked in this order"
+                            },
+                            "device_groups": {
+                              "type": "array",
+                              "maxItems": 16,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "device_group_id",
+                                  "name",
+                                  "state"
+                                ],
+                                "properties": {
+                                  "device_group_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "maxLength": 64
+                                  },
+                                  "state": {
+                                    "type": "string",
+                                    "maxLength": 32
+                                  }
+                                }
+                              },
+                              "description": "The Device Groups the zone is sent to; empty: every Device of the Network"
+                            },
+                            "search_position": {
+                              "type": [
+                                "integer",
+                                "null"
+                              ],
+                              "minimum": 1,
+                              "maximum": 1000,
+                              "description": "Order among the Network's search domains; null: not a search domain"
+                            },
+                            "public": {
+                              "type": "boolean",
+                              "description": "The domain exists on the Internet"
+                            },
+                            "public_confirmed": {
+                              "type": "boolean"
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updated_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "deleted": {
+                          "type": "boolean",
+                          "const": false
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request"
+          },
+          "404": {
+            "description": "dns_zone_not_found or device_group_not_found"
+          },
+          "409": {
+            "description": "dns_zone_exists, dns_zone_limit, dns_search_limit, dns_zone_public_unconfirmed, dns_zone_covers_control, dns_resolver_not_eligible, dns_resolver_peer_limit, dns_zones_disabled or dns_root_zone_unavailable"
+          },
+          "412": {
+            "description": "version_conflict"
+          },
+          "422": {
+            "description": "dns_zone_special_use, dns_zone_public_suffix, dns_zone_mesh_suffix or dns_resolver_not_internet"
+          },
+          "428": {
+            "description": "precondition_required"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteNetworkDNSZone",
+        "summary": "Delete a DNS zone",
+        "description": "Requires dns.manage on the Network and MESHTRANSIT_DNS_ZONES_ENABLED (dns_zones_disabled otherwise).",
+        "security": [
+          {
+            "accountSessionCookie": [],
+            "sessionCSRF": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "dns_zone_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionProof"
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\"[1-9][0-9]*\"$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The deleted zone",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "dns_zone",
+                        "deleted"
+                      ],
+                      "properties": {
+                        "dns_zone": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "dns_zone_id",
+                            "domain",
+                            "kind",
+                            "failure_mode",
+                            "resolvers",
+                            "device_groups",
+                            "search_position",
+                            "public",
+                            "public_confirmed",
+                            "version",
+                            "created_at",
+                            "updated_at"
+                          ],
+                          "properties": {
+                            "dns_zone_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "domain": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253,
+                              "description": "Lowercase A-labels without a trailing dot; . for every other name"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "forward",
+                                "root"
+                              ],
+                              "description": "forward: names under the domain; root: every name no other zone holds"
+                            },
+                            "failure_mode": {
+                              "type": "string",
+                              "enum": [
+                                "open",
+                                "closed"
+                              ],
+                              "description": "open: when no resolver can answer, names go to the host's own DNS (the exit node's while one is used); closed: they get SERVFAIL"
+                            },
+                            "resolvers": {
+                              "type": "array",
+                              "minItems": 1,
+                              "maxItems": 4,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "port"
+                                ],
+                                "description": "A resolver Device (device_id, with its name, state and whether it can serve) or an address on the Internet",
+                                "properties": {
+                                  "device_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "device_name": {
+                                    "type": "string",
+                                    "maxLength": 255
+                                  },
+                                  "device_state": {
+                                    "type": "string",
+                                    "maxLength": 32,
+                                    "description": "The Device's lifecycle state, or removed"
+                                  },
+                                  "eligible": {
+                                    "type": "boolean",
+                                    "description": "An active Device owned by the Workspace and no exit node: it can serve"
+                                  },
+                                  "address": {
+                                    "type": "string",
+                                    "maxLength": 39,
+                                    "description": "A canonical IPv4 or IPv6 address on the Internet"
+                                  },
+                                  "port": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 65535
+                                  }
+                                }
+                              },
+                              "description": "Asked in this order"
+                            },
+                            "device_groups": {
+                              "type": "array",
+                              "maxItems": 16,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "device_group_id",
+                                  "name",
+                                  "state"
+                                ],
+                                "properties": {
+                                  "device_group_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "maxLength": 64
+                                  },
+                                  "state": {
+                                    "type": "string",
+                                    "maxLength": 32
+                                  }
+                                }
+                              },
+                              "description": "The Device Groups the zone is sent to; empty: every Device of the Network"
+                            },
+                            "search_position": {
+                              "type": [
+                                "integer",
+                                "null"
+                              ],
+                              "minimum": 1,
+                              "maximum": 1000,
+                              "description": "Order among the Network's search domains; null: not a search domain"
+                            },
+                            "public": {
+                              "type": "boolean",
+                              "description": "The domain exists on the Internet"
+                            },
+                            "public_confirmed": {
+                              "type": "boolean"
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updated_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "deleted": {
+                          "type": "boolean",
+                          "const": true
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "dns_zone_not_found"
+          },
+          "409": {
+            "description": "dns_zones_disabled"
+          },
+          "412": {
+            "description": "version_conflict"
+          },
+          "428": {
+            "description": "precondition_required"
+          },
+          "403": {
+            "description": "permission_denied"
           },
           "429": {
             "description": "rate_limited"

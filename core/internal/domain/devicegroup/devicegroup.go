@@ -35,6 +35,8 @@ var (
 	ErrNameTaken = errors.New("device group: name taken")
 	// ErrInUse reports a group the active policy release still selects.
 	ErrInUse = errors.New("device group: selected by active rules")
+	// ErrInUseByDNS reports a group a DNS zone is sent to.
+	ErrInUseByDNS = errors.New("device group: used by DNS zones")
 	// ErrEdgeBudget reports a change that would give one Device more rule
 	// edges than its map can carry.
 	ErrEdgeBudget = errors.New("device group: a Device would exceed its rule edge limit")

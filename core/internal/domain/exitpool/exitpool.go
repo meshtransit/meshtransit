@@ -33,6 +33,10 @@ var (
 	// ErrNodeInOtherPool reports a Device that is already an exit node of
 	// another pool: a Device is an exit node of one pool at most.
 	ErrNodeInOtherPool = errors.New("exitpool: Device is an exit node of another pool")
+	// ErrNodeIsDNSResolver reports a Device that is a resolver of a DNS
+	// zone: an exit node takes port 53 on its mesh addresses for its own
+	// DNS forwarder.
+	ErrNodeIsDNSResolver = errors.New("exitpool: Device is a DNS resolver")
 	// ErrInUse reports a pool that rules of the active policy release name.
 	ErrInUse = errors.New("exitpool: named by active rules")
 	// ErrUnavailable reports an unavailable or uncertain durable operation.

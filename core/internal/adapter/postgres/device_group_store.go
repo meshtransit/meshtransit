@@ -81,6 +81,8 @@ func deviceGroupDatabaseError(err error) error {
 			return devicegroup.ErrInUse
 		case "MTD06":
 			return devicegroup.ErrEdgeBudget
+		case "MTD07":
+			return devicegroup.ErrInUseByDNS
 		case "22023", "22P02", "23514":
 			return devicegroup.ErrInvalid
 		}

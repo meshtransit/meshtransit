@@ -579,6 +579,7 @@ func Catalog() []Migration {
 		newMigration(210, "Exit Pools spread their consumers over their exit nodes", exitPoolSpreadSQL),
 		newMigration(211, "Exit Pools may turn captive portal windows off", exitPoolCaptiveWindowsSQL),
 		newMigration(212, "Captive portal windows enter the audit trail", deviceCaptiveWindowsSQL),
+		newMigration(213, "Networks send chosen domains to chosen DNS resolvers", networkDNSZonesSQL),
 	}
 }
 
@@ -994,3 +995,6 @@ var exitPoolCaptiveWindowsSQL string
 
 //go:embed 000212_device_captive_windows.up.sql
 var deviceCaptiveWindowsSQL string
+
+//go:embed 000213_network_dns_zones.up.sql
+var networkDNSZonesSQL string
