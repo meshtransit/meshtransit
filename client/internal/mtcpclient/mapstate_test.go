@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"net/netip"
+	"slices"
 	"testing"
 	"time"
 
@@ -414,5 +415,38 @@ func TestConvertDNSCarriesCNAMEs(t *testing.T) {
 		if _, err := convertDNS(&mtcpv1.DnsConfig{Records: []*mtcpv1.DnsRecord{record}}); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+// A map whose share alias expired (or a clock ahead of Core's) still builds:
+// that peer is left out and counted, the rest of the map stays.
+func TestMapStateLeavesOutAnExpiredAliasPeer(t *testing.T) {
+	t.Parallel()
+	aliasPeer := func(id string, seed byte, address, masquerade string, expires time.Time) *mtcpv1.Device {
+		peer := device(id, seed, address)
+		peer.Alias = &mtcpv1.AliasGrant{
+			ContractId: "01890f00-0000-7000-8000-000000000a01", EndpointId: "01890f00-0000-7000-8000-0000000000" + id[len(id)-2:],
+			Generation: 1, GrantRevision: 1, RecoveryEpoch: 1, Role: mtcpv1.AliasGrant_CONSUMER,
+			ExpiresMs:    expires.UnixMilli(),
+			Services:     []*mtcpv1.AliasService{{Protocol: 1}},
+			MasqueradeV4: netip.MustParseAddr(masquerade).AsSlice(),
+		}
+		return peer
+	}
+	message := snapshotMessage(9)
+	message.Peers = append(message.Peers,
+		aliasPeer("share-c1", 4, "198.18.0.7", "198.18.0.17", time.Now().Add(-time.Minute)),
+		aliasPeer("share-d2", 5, "198.18.0.8", "198.18.0.18", time.Now().Add(time.Hour)))
+	state := newMapState(false)
+	if err := state.applySnapshot(message); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := build(t, state)
+	var kept []string
+	for _, peer := range snapshot.Peers {
+		kept = append(kept, peer.StableID)
+	}
+	if !slices.Equal(kept, []string{"peer-a", "peer-b", "share-d2"}) || snapshot.DroppedAliasPeers != 1 {
+		t.Fatalf("peers %v, dropped %d", kept, snapshot.DroppedAliasPeers)
 	}
 }

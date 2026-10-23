@@ -65,7 +65,13 @@ type policyFilter struct {
 	maximumFlows  int
 	lastFullPurge time.Time
 	aliases       map[netip.Addr]aliasPacketGrant
-	suspended     bool
+	// aliasMarks is the newest grant accepted for each alias endpoint and
+	// pair of keys, kept when the peer leaves the map: an older grant of it
+	// must never come back (aliasGrantKey). aliasMarkLimit bounds it; zero
+	// is maxAliasMarks.
+	aliasMarks     map[aliasGrantKey]aliasMark
+	aliasMarkLimit int
+	suspended      bool
 	// enforced is the digest of rules, recomputed whenever they change.
 	enforced EnforcedPolicy
 	// dropLastRule makes the filter deliberately enforce one rule fewer
@@ -117,6 +123,7 @@ func newPolicyFilter() *policyFilter {
 		clock:        time.Now,
 		maximumFlows: defaultMaximumTrackedFlows,
 		aliases:      map[netip.Addr]aliasPacketGrant{},
+		aliasMarks:   map[aliasGrantKey]aliasMark{},
 		unreachable:  newUnreachableAnswerer(time.Now),
 		selfTest:     newSelfTester(),
 	}
@@ -135,17 +142,17 @@ func (f *policyFilter) updateNetwork(snapshot networkmap.Snapshot, routed *route
 	if f == nil {
 		return
 	}
+	aliasTime := time.Time{}
+	if f.clock != nil {
+		aliasTime = f.clock().UTC()
+	}
 	if snapshotHasAliases(snapshot) {
-		aliasTime := time.Time{}
-		if f.clock != nil {
-			aliasTime = f.clock().UTC()
-		}
 		snapshot, _ = networkmap.WithoutUnusableAliases(snapshot, aliasTime)
 		validated, err := networkmap.ValidateAndClone(snapshot, aliasTime)
 		if err != nil {
 			snapshot = networkmap.Snapshot{}
 		} else {
-			snapshot = validated
+			snapshot, _ = f.withoutRegressedAliases(validated)
 		}
 	}
 	aliases := aliasPacketGrants(snapshot)
@@ -201,6 +208,7 @@ func (f *policyFilter) updateNetwork(snapshot networkmap.Snapshot, routed *route
 	f.peers = peers
 	f.rules = rules
 	f.aliases = aliases
+	f.markAliasGrantsLocked(snapshot, aliasTime)
 	f.routed = routed
 	f.pruneRoutedActivityLocked()
 	if exitNode := routed.exitNodeRef(); exitNode != f.exitActivity.Node {

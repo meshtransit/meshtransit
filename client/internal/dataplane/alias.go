@@ -1,6 +1,9 @@
 package dataplane
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
+	"fmt"
 	"maps"
 	"net/netip"
 	"slices"
@@ -176,8 +179,162 @@ func (f *policyFilter) validateAliasTransitionLocked(snapshot networkmap.Snapsho
 				return err
 			}
 		}
+		// The endpoint's newest grant, also when its peer left the map.
+		if peer.Alias != nil {
+			if err := f.checkAliasMarkLocked(*peer.Alias); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
+}
+
+// aliasGrantKey names one alias endpoint grant between two node keys: a
+// provider endpoint has a grant per consumer, and a new key of either node
+// starts a new grant (a grant for an old self key is never usable again).
+// It is a digest of the contract, endpoint and both keys, to keep marks small.
+type aliasGrantKey [sha256.Size]byte
+
+func aliasGrantKeyOf(binding networkmap.AliasBinding) aliasGrantKey {
+	parts := [...]string{binding.ContractID, binding.EndpointID, binding.SelfKey, binding.PeerKey}
+	size := 0
+	for _, part := range parts {
+		size += 8 + len(part)
+	}
+	encoded := make([]byte, 0, size)
+	for _, part := range parts {
+		encoded = binary.BigEndian.AppendUint64(encoded, uint64(len(part)))
+		encoded = append(encoded, part...)
+	}
+	return sha256.Sum256(encoded)
+}
+
+// aliasMark is what a grant's successor is checked against: the grant less
+// its identity (in the key) and with its services as a digest.
+type aliasMark struct {
+	generation, revision, epoch uint64
+	role                        networkmap.AliasRole
+	selfIPv4, selfIPv6          netip.Addr
+	expiresAt                   time.Time
+	services                    [sha256.Size]byte
+}
+
+func aliasMarkOf(binding networkmap.AliasBinding) aliasMark {
+	return aliasMark{
+		generation: binding.Generation, revision: binding.GrantRevision, epoch: binding.RecoveryEpoch,
+		role: binding.Role, selfIPv4: binding.SelfIPv4, selfIPv6: binding.SelfIPv6,
+		expiresAt: binding.ExpiresAt, services: aliasServicesDigest(binding.Services),
+	}
+}
+
+func aliasServicesDigest(services []networkmap.AliasService) [sha256.Size]byte {
+	encoded := make([]byte, 0, 5*len(services))
+	for _, service := range services {
+		encoded = append(encoded, service.Protocol)
+		encoded = binary.BigEndian.AppendUint16(encoded, service.PortFrom)
+		encoded = binary.BigEndian.AppendUint16(encoded, service.PortTo)
+	}
+	return sha256.Sum256(encoded)
+}
+
+// checkAliasMarkLocked refuses a grant older than, or differing at the same
+// revision from, the newest one accepted for its endpoint and keys.
+func (f *policyFilter) checkAliasMarkLocked(next networkmap.AliasBinding) error {
+	mark, exists := f.aliasMarks[aliasGrantKeyOf(next)]
+	if !exists {
+		return nil
+	}
+	services := next.Services
+	previous := next
+	previous.Generation, previous.GrantRevision, previous.RecoveryEpoch = mark.generation, mark.revision, mark.epoch
+	previous.Role, previous.SelfIPv4, previous.SelfIPv6 = mark.role, mark.selfIPv4, mark.selfIPv6
+	previous.ExpiresAt = mark.expiresAt
+	previous.Services, next.Services = nil, nil
+	if err := networkmap.ValidateAliasAdvance(&previous, &next); err != nil {
+		return err
+	}
+	if mark.generation == next.Generation && mark.revision == next.GrantRevision &&
+		mark.services != aliasServicesDigest(services) {
+		return fmt.Errorf("%w: same alias grant changed", networkmap.ErrInvalid)
+	}
+	return nil
+}
+
+// withoutRegressedAliases leaves out the alias peers whose grant the marks
+// refuse, as WithoutUnusableAliases does for expired ones: the older grant is
+// never used, and the rest of the map stays up. It returns how many it left
+// out.
+func (f *policyFilter) withoutRegressedAliases(snapshot networkmap.Snapshot) (networkmap.Snapshot, int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	kept := make([]networkmap.Node, 0, len(snapshot.Peers))
+	for _, peer := range snapshot.Peers {
+		if peer.Alias != nil && f.checkAliasMarkLocked(*peer.Alias) != nil {
+			continue
+		}
+		kept = append(kept, peer)
+	}
+	dropped := len(snapshot.Peers) - len(kept)
+	if dropped != 0 {
+		snapshot.Peers = kept
+	}
+	return snapshot, dropped
+}
+
+// maxAliasMarks bounds the grants remembered, twice Core's largest map.
+// Past it, marks go until a tenth of the room is free again, so the next
+// maps do not each pay for a sort.
+const maxAliasMarks = 20_000
+
+// markAliasGrantsLocked records the grants of an accepted map. An empty or
+// refused map records nothing and forgets nothing. The map's grants are
+// recorded although applying the map may still fail later: they are Core's
+// grants all the same. Past the bound, expired marks go first, then those
+// ending soonest, never the map's own. Only there can an older grant of an
+// evicted mark be accepted again (one that outlives the newer grant).
+func (f *policyFilter) markAliasGrantsLocked(snapshot networkmap.Snapshot, now time.Time) {
+	if f.aliasMarks == nil {
+		f.aliasMarks = make(map[aliasGrantKey]aliasMark)
+	}
+	current := make(map[aliasGrantKey]struct{})
+	for _, peer := range snapshot.Peers {
+		if peer.Alias == nil {
+			continue
+		}
+		key := aliasGrantKeyOf(*peer.Alias)
+		f.aliasMarks[key] = aliasMarkOf(*peer.Alias)
+		current[key] = struct{}{}
+	}
+	limit := f.aliasMarkLimit
+	if limit <= 0 {
+		limit = maxAliasMarks
+	}
+	if len(f.aliasMarks) <= limit {
+		return
+	}
+	limit -= limit / 10
+	type candidate struct {
+		key       aliasGrantKey
+		expiresAt time.Time
+	}
+	candidates := make([]candidate, 0, len(f.aliasMarks)-len(current))
+	for key, mark := range f.aliasMarks {
+		if _, kept := current[key]; kept {
+			continue
+		}
+		if !now.Before(mark.expiresAt) {
+			delete(f.aliasMarks, key)
+			continue
+		}
+		candidates = append(candidates, candidate{key: key, expiresAt: mark.expiresAt})
+	}
+	slices.SortFunc(candidates, func(left, right candidate) int { return left.expiresAt.Compare(right.expiresAt) })
+	for _, evicted := range candidates {
+		if len(f.aliasMarks) <= limit {
+			break
+		}
+		delete(f.aliasMarks, evicted.key)
+	}
 }
 
 func (f *policyFilter) trackAliasFlow(header packetmeta.Header, now time.Time) bool {

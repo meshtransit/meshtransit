@@ -436,6 +436,13 @@ func (e *WireGuardEngine) Apply(
 			return StateFailed, err
 		}
 		snapshot = validated
+		// A grant older than one already accepted for its endpoint leaves
+		// out its peer the same way.
+		var regressed int
+		snapshot, regressed = e.filter.withoutRegressedAliases(snapshot)
+		if regressed != 0 && e.logger != nil {
+			e.logger.Warn("shared Devices left out: Core sent an older grant than one already used", "peers", regressed)
+		}
 	}
 	if err := e.filter.validateAliasTransition(snapshot); err != nil {
 		_ = e.closeLocked()
