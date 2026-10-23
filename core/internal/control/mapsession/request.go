@@ -24,6 +24,7 @@ type Request struct {
 	exitRouter         bool
 	dnsForward         bool
 	dnsRecords         bool
+	dnsRoot            bool
 	endpointSet        node.EndpointSet
 	hasEndpointSet     bool
 	preferredRelay     int
@@ -195,3 +196,15 @@ func (request Request) WithDNSRecords() Request {
 // DNSRecords reports whether the client applies DNS names: only with
 // forward zones on a large map.
 func (request Request) DNSRecords() bool { return request.dnsRecords && request.DNSForward() }
+
+// WithDNSRoot records that the client applies the root zone, every name no
+// other zone holds (MTCP dns.root1, DNS design D1b §3.2), and reports what
+// DNS it applied.
+func (request Request) WithDNSRoot() Request {
+	request.dnsRoot = true
+	return request
+}
+
+// DNSRoot reports whether the client applies the root zone: only with
+// forward zones on a large map.
+func (request Request) DNSRoot() bool { return request.dnsRoot && request.DNSForward() }

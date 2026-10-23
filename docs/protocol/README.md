@@ -14,6 +14,7 @@ ships test vectors that any implementation must reproduce.
 | [mtcp-v1.md](mtcp-v1.md) | Draft 1 | MeshTransit Control Protocol; schema in `api/mtcp/v1` |
 | [policy-digest-v1.md](policy-digest-v1.md) | Draft 1 | Semantic digest of a packet filter, for enforcement evidence |
 | [route-digest-v1.md](route-digest-v1.md) | Draft 1 | Digest of the subnets a router forwards into (enforcement evidence) |
+| [dns-digest-v1.md](dns-digest-v1.md) | Draft 1 | Digest of the DNS routes and search domains a node applies (enforcement evidence) |
 | [device-alias-v1.md](device-alias-v1.md) | Draft 2 | Device alias grants carried by MTCP §7.4, and how nodes apply them |
 | [audit-record-v2.md](audit-record-v2.md) | Draft 1 | Audit records, the seal chain and verifiable exports |
 

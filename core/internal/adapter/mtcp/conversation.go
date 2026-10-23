@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"meshtransit.net/core/internal/domain/captivewindow"
 	"net/netip"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -15,6 +15,7 @@ import (
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
 	"meshtransit.net/core/internal/control"
 	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/captivewindow"
 	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/node/distribution"
@@ -155,8 +156,10 @@ type conversation struct {
 
 	// endpointPacing keeps and paces this session's endpoint reports.
 	endpointPacing endpointPacing
-	lastPaths      time.Time // when the last PathStatsReport was stored
-	lastCaptive    time.Time // when the last CaptiveWindowReport was taken
+	lastPaths      time.Time   // when the last PathStatsReport was stored
+	lastCaptive    time.Time   // when the last CaptiveWindowReport was taken
+	lastDNSHealth  time.Time   // when the last DnsHealthReport was taken
+	dnsRoot        atomic.Bool // the session gets the root zone (Request.DNSRoot)
 	// identity, browser and resync are the session's budgets for
 	// RegisterRequest and RotateNodeKey, browser approval URLs and
 	// MapResync (rate_budget.go); Receive is serial, so they need no lock.
@@ -299,7 +302,14 @@ func (conversation *conversation) serve(ctx context.Context, nodeKey node.Key) e
 		if conversation.session.Supports("dns.records1") {
 			request = request.WithDNSRecords()
 		}
+		if conversation.session.Supports("dns.root1") {
+			request = request.WithDNSRoot()
+		}
 	}
+	// What the session reports on DNS counts only where it gets the root
+	// zone (mtcp-v1 §8.4, §8.6).
+	conversation.dnsRoot.Store(request.DNSRoot())
+	conversation.sink.reportDNS(request.DNSRoot())
 	return conversation.application.options.Streams.Serve(ctx, machine, request, conversation.sink)
 }
 
@@ -461,6 +471,8 @@ func (conversation *conversation) Receive(ctx context.Context, _ sharedmtcp.Mess
 		return conversation.routeSelection(m)
 	case *mtcpv1.CaptiveWindowReport:
 		return conversation.captiveWindows(ctx, m)
+	case *mtcpv1.DnsHealthReport:
+		return conversation.dnsHealth(ctx, m)
 	case *mtcpv1.RegisterRequest:
 		if wait, ok := conversation.identity.spend(conversation.application.now(), 1); !ok {
 			conversation.application.options.Metrics.limited(limitIdentity)
@@ -504,8 +516,10 @@ func (conversation *conversation) enforcement(ctx context.Context, report *mtcpv
 	if err != nil {
 		return
 	}
+	dns, reason := conversation.dnsEvidence(report)
 	if err := conversation.application.options.Streams.ReportEnforcement(ctx, machine, mapsession.ClientEnforcement{
 		NodeKey: nodeKey, Filter: filter, AppliedAt: time.UnixMilli(report.GetAppliedMs()), Routes: routes,
+		DNS: dns, DNSReason: reason,
 	}); err != nil {
 		conversation.application.options.Logger.DebugContext(ctx, "mtcp enforcement report not stored", "error", err)
 	}

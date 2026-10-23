@@ -377,3 +377,57 @@ func TestSinkSendsMapsWithUnlabeledDevicesAndCountsThem(t *testing.T) {
 	}
 	t.Fatal("the unlabeled Device was not counted")
 }
+
+// TestSinkKeepsTheDNSDigestOfWhatItSent: for a session that reports the DNS
+// it applied, the sink's DNS digest is the digest of the configuration it
+// sent, kept while deltas carry no DNS; for another session it is zero.
+func TestSinkKeepsTheDNSDigestOfWhatItSent(t *testing.T) {
+	for _, reports := range []bool{false, true} {
+		session, node, control := testSession(t)
+		sink := newMapSink(session, false, []ControlKey{{Private: control, NotAfter: time.Now().Add(time.Hour)}}, time.Now)
+		sink.reportDNS(reports)
+		scope := snapshotFixture(t, 1).Scope()
+		connected := func(revision int64, keyByte byte) mapsession.Snapshot {
+			snapshot := snapshotFixture(t, revision,
+				peerFixture(t, scope, "01890f00-0000-7000-8000-000000000702", 702, "100.64.0.2", keyByte))
+			connectivity := []mapsession.Connectivity{must(mapsession.NewConnectivity(mapsession.ConnectivityParams{
+				Key: must(mapsession.NewConnectivityKey(snapshot.NodeID(), snapshot.SessionGeneration())), Online: true,
+			}))}
+			for _, peer := range snapshot.AuthorizedPeers() {
+				connectivity = append(connectivity, must(mapsession.NewConnectivity(mapsession.ConnectivityParams{
+					Key: must(mapsession.NewConnectivityKey(peer.NodeID(), peer.SessionGeneration())), Online: true,
+				})))
+			}
+			return must(snapshot.WithConnectivity(connectivity))
+		}
+		initial := connected(7, 2)
+		if err := sink.SendSnapshot(t.Context(), initial); err != nil {
+			t.Fatal(err)
+		}
+		node.read() // KeyUpdate
+		_, message, _ := node.read()
+		sent, ok := message.(*mtcpv1.MapSnapshot)
+		if !ok {
+			t.Fatalf("sent %T", message)
+		}
+		want := mapsession.DNSDigest{}
+		if reports {
+			var err error
+			if want, err = digestDNSConfig(sent.GetDns()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := sink.SentDNSDigest(); got != want || got.IsValid() != reports {
+			t.Fatalf("reports %t: digest %+v, want %+v", reports, got, want)
+		}
+		// A delta that changes no DNS keeps the digest.
+		next := connected(8, 9)
+		if err := sink.SendAuthorityDelta(t.Context(), must(mapsession.NewAuthorityDelta(initial, next))); err != nil {
+			t.Fatal(err)
+		}
+		node.messages()
+		if got := sink.SentDNSDigest(); got != want {
+			t.Fatalf("reports %t: digest after a delta %+v, want %+v", reports, got, want)
+		}
+	}
+}

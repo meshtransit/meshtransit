@@ -65,6 +65,30 @@ func TestEncodeSnapshotCarriesDNSZones(t *testing.T) {
 	}
 }
 
+// TestEncodeSnapshotCarriesTheRootZone: the root zone is a route "."
+// with its resolvers and failure mode (mtcp-v1 §7.3, dns.root1), never a
+// search domain.
+func TestEncodeSnapshotCarriesTheRootZone(t *testing.T) {
+	t.Parallel()
+	consumer := exitSnapshotFixtureWith(t, 702, func(params *mapsession.NetworkPolicyParams) {
+		params.ExitPools, params.ExitNodes, params.ExitRules = nil, nil, nil
+		params.DNSZones = []mapsession.DNSZone{
+			{Zone: 1, Domain: ".", OtherNames: mapsession.DNSOtherForward, FailOpen: true,
+				Resolvers: []mapsession.DNSZoneResolver{{Address: netip.MustParseAddr("1.1.1.1"), Port: 53}}},
+		}
+	})
+	message, err := encodeSnapshot(consumer, &mtcpv1.View{Epoch: 1, Seq: 1}, false, nil, dnsname.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dns := message.GetDns()
+	routes := dns.GetRoutes()
+	if len(routes) != 2 || routes[1].GetSuffix() != "." || routes[1].GetUnavailable() || !routes[1].GetFailOpen() ||
+		len(routes[1].GetResolvers()) != 1 || slices.Contains(dns.GetSearchDomains(), ".") {
+		t.Fatalf("routes = %v, search domains = %v", routes, dns.GetSearchDomains())
+	}
+}
+
 // TestEncodeSnapshotCarriesDNSNames: zone corp.lan answers its other names
 // NXDOMAIN (the node's own route, as the mesh suffix) and corp.com leaves
 // them to the host (unavailable, failing open); a name to the Device itself

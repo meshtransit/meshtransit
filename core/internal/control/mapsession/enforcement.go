@@ -61,6 +61,11 @@ type ClientEnforcement struct {
 	// Routes is the route digest of what a router serves; zero from a node
 	// that does not route.
 	Routes RouteDigest
+	// DNS is the DNS digest of what the node applied to its host; zero
+	// from a node that does not report it, or applies none, with DNSReason
+	// saying why (dns.root1).
+	DNS       DNSDigest
+	DNSReason string
 }
 
 // Enforcement is one enforcement report, bound to the authenticated node
@@ -70,6 +75,8 @@ type Enforcement struct {
 	MachineFingerprint [32]byte
 	Filter             FilterDigest
 	Routes             RouteDigest
+	DNS                DNSDigest
+	DNSReason          string
 	AppliedAt          time.Time
 	ReportedAt         time.Time
 }
@@ -120,7 +127,8 @@ func (service *StreamService) ReportEnforcement(
 		return ErrEnforcementUnavailable
 	}
 	identity, err := machine.BindNodeKey(report.NodeKey)
-	if err != nil || !report.Filter.IsValid() || report.AppliedAt.IsZero() {
+	if err != nil || !report.Filter.IsValid() || report.AppliedAt.IsZero() ||
+		!validDNSEvidence(report.DNS, report.DNSReason) {
 		return ErrInvalidEnforcementReport
 	}
 	now := time.Now().UTC()
@@ -135,7 +143,8 @@ func (service *StreamService) ReportEnforcement(
 	defer cancel()
 	stored, err := service.enforcement.RecordEnforcement(operationCtx, Enforcement{
 		NodeKey: identity.NodeKey(), MachineFingerprint: identity.MachineFingerprint(),
-		Filter: report.Filter, Routes: report.Routes, AppliedAt: appliedAt, ReportedAt: now,
+		Filter: report.Filter, Routes: report.Routes, DNS: report.DNS, DNSReason: report.DNSReason,
+		AppliedAt: appliedAt, ReportedAt: now,
 	})
 	if err != nil {
 		return errors.Join(ErrEnforcementUnavailable, err)

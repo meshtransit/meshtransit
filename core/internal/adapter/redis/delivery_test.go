@@ -119,8 +119,10 @@ func TestClientLoadsObservationsInOrder(t *testing.T) {
 				`[["prod","failed","forward_blocked"]]`, "1759924803000",
 				`[["prod","01890f00-0000-7000-8000-000000000402","local_failover"],["uat","","none"]]`, "1759924804000",
 				`["01890f00-0000-7000-8000-000000000501","degraded","no_ipv6","v4"]`,
+				"", "", "", "", "", "", "", "4",
 				"1",
-				"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "0",
+				"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+				"", "", "", "", "", "", "", "", "0",
 			}, nil
 		},
 		metrics: newRedisMetrics(1, nil),
@@ -625,10 +627,55 @@ func TestClientRecordsRouteSelectionAndCountsRouters(t *testing.T) {
 func TestDecodeObservationDropsExitHealthWithoutItsTime(t *testing.T) {
 	t.Parallel()
 	fields := []string{"4", "9", "3", "1759924800000", "1759924860000", "", "", "", "", "", "", "", "", "",
-		"", "", "", "", "", "", "", "", `["pool","ok","ok","v4"]`, "1"}
+		"", "", "", "", "", "", "", "", `["pool","ok","ok","v4"]`, "", "", "", "", "", "", "", "", "1"}
 	observation, err := decodeObservation(fields)
 	if err != nil || !observation.Known || observation.ExitHealth != nil {
 		t.Fatalf("decodeObservation() = %+v, %v", observation, err)
+	}
+}
+
+// The DNS evidence of a Device that declared dns.root1 is read back: both
+// digests, the reason, and resolver health with its time.
+func TestDecodeObservationReadsDNSEvidence(t *testing.T) {
+	t.Parallel()
+	fields := make([]string, deliveryFieldCount)
+	copy(fields, []string{"4", "9", "3", "1759924800000", "1759924860000"})
+	fields[23], fields[24] = testDigestText, "3"
+	fields[25], fields[26] = testDigestText, "3"
+	fields[28] = `[["100.64.0.21:5335","ok","1759924850000"],["192.0.2.53:53","refusing","0"]]`
+	fields[29] = "1759924855000"
+	fields[30] = "4"
+	fields[presenceField] = "1"
+	observation, err := decodeObservation(fields)
+	if err != nil || observation.DNS.IsZero() || observation.DNS != observation.EnforcedDNS ||
+		observation.DNS.Routes != 3 || len(observation.DNSHealth) != 2 ||
+		observation.DNSHealth[1].State != distribution.ResolverRefusing || !observation.DNSHealth[1].LastOK.IsZero() ||
+		observation.DNSHealthAt.IsZero() {
+		t.Fatalf("decodeObservation() = %+v, %v", observation, err)
+	}
+	fields[25], fields[26], fields[27] = "", "", distribution.DNSReasonUserOff
+	if observation, err := decodeObservation(fields); err != nil || observation.DNSReason != distribution.DNSReasonUserOff {
+		t.Fatalf("with a reason = %+v, %v", observation, err)
+	}
+	// Evidence of another generation (an older Core started this one) is
+	// none.
+	stale := append([]string(nil), fields...)
+	stale[30] = "3"
+	if observation, err := decodeObservation(stale); err != nil || !observation.DNS.IsZero() ||
+		observation.DNSReason != "" || observation.DNSHealth != nil || !observation.DNSHealthAt.IsZero() {
+		t.Fatalf("another generation = %+v, %v", observation, err)
+	}
+	for name, change := range map[string]func([]string){
+		"reason and digest": func(f []string) { f[25], f[26], f[27] = testDigestText, "3", distribution.DNSReasonUserOff },
+		"unknown reason":    func(f []string) { f[27] = "made_up" },
+		"half a digest":     func(f []string) { f[23] = "" },
+		"bad health":        func(f []string) { f[28] = `[["100.64.0.21:5335","teleport","0"]]` },
+	} {
+		broken := append([]string(nil), fields...)
+		change(broken)
+		if _, err := decodeObservation(broken); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
 	}
 }
 

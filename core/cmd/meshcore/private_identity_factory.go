@@ -294,7 +294,7 @@ func composePrivateIdentityFactory(
 		dnsSuffix = dnsname.Default()
 	}
 	dnsZones, err := dnszone.NewService(dnsZoneStore, clock, dnszone.SystemIDs{}, dnszone.DefaultLimits(),
-		dnszone.Options{Enabled: dependencies.DNSZones,
+		dnszone.Options{Enabled: dependencies.DNSZones, Root: dependencies.DNSZones,
 			Names: dnszone.Names{Suffix: dnsSuffix, Protected: dependencies.DNSProtectedNames}})
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition

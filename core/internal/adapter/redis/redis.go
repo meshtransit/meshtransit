@@ -62,6 +62,8 @@ type Client struct {
 	recordConnectivity func(ctx context.Context, key string, generation int64, encoded string, ttl time.Duration) (int64, error)
 	recordRouteHealth  func(ctx context.Context, key string, generation int64, encoded string, reportedAt int64,
 		ttl time.Duration, failed bool, exit string) (int64, error)
+	recordDNSHealth func(ctx context.Context, key string, generation int64, encoded string, reportedAt int64,
+		ttl time.Duration) (int64, error)
 	loadSession loadSessionFunc
 	// recordRouteSelection runs recordRouteSelectionScript; loadSiteSelection
 	// reads a Site's selection hash; pruneSiteSelection deletes its fields.
@@ -234,7 +236,7 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 			return recordDeliveryScript.Run(recordCtx, client, []string{deliveryKey, sessionKey},
 				record.generation, record.networkRevision, record.policyRevision, record.deliveredAt,
 				ttl.Milliseconds(), record.filterDigest, record.filterGrants, record.nodeID, record.machine,
-				record.peerLimit, record.routeDigest, record.routeEntries).Int64()
+				record.peerLimit, record.routeDigest, record.routeEntries, record.dnsDigest, record.dnsRoutes).Int64()
 		},
 		loadSession: func(loadCtx context.Context, key string) ([]any, error) {
 			return client.HMGet(loadCtx, key, "node_id", "generation", "machine").Result()
@@ -247,7 +249,7 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 		) (int64, error) {
 			return recordEnforcementScript.Run(recordCtx, client, []string{key}, record.generation,
 				record.digest, record.grants, record.appliedAt, record.reportedAt, ttl.Milliseconds(),
-				record.routeDigest, record.routeEntries).Int64()
+				record.routeDigest, record.routeEntries, record.dnsDigest, record.dnsRoutes, record.dnsReason).Int64()
 		},
 		recordRouteSelection: func(recordCtx context.Context, key string, generation int64, encoded string,
 			reportedAt int64, nodeID string) (int64, error) {
@@ -275,6 +277,11 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 			}
 			return recordRouteHealthScript.Run(recordCtx, client, []string{key}, generation, encoded, reportedAt,
 				ttl.Milliseconds(), flag, siteHealthFailedChannel, siteHealthFailedPayload, exit).Int64()
+		},
+		recordDNSHealth: func(recordCtx context.Context, key string, generation int64, encoded string,
+			reportedAt int64, ttl time.Duration) (int64, error) {
+			return recordDNSHealthScript.Run(recordCtx, client, []string{key}, generation, encoded, reportedAt,
+				ttl.Milliseconds()).Int64()
 		},
 		recordPaths: func(recordCtx context.Context, key string, generation int64, encoded string,
 			ttl time.Duration) (int64, error) {

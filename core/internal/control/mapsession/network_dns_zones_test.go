@@ -165,17 +165,53 @@ func TestRoutesForDNSZoneResolverStates(t *testing.T) {
 	if peers := fixture.policy(t).RoutesFor(ids[7], policyNow).Peers(); !slices.Equal(peers, sortedIDs(ids[1], ids[2])) {
 		t.Errorf("capacity: resolver peers = %v", peers)
 	}
-	// The root zone waits for D1b.
-	fixture = newDNSFixture(t)
+}
+
+// The root zone is computed like any zone and reaches only clients that
+// apply it (dns.root1): for another, it goes with the resolver Devices only
+// it uses (DNS design D1b §3.2).
+func TestRoutesForRootZone(t *testing.T) {
+	t.Parallel()
+	fixture := newDNSFixture(t)
 	fixture.params.DNSZones[0].Domain = "."
-	if zones := fixture.policy(t).RoutesFor(ids[4], policyNow).DNSZones(); len(zones) != 0 {
-		t.Errorf("root zone sent: %+v", zones)
+	view := fixture.policy(t).RoutesFor(fixture.ids[4], policyNow)
+	zones := view.DNSZones()
+	if len(zones) == 0 || zones[0].Domain != "." || len(zones[0].Resolvers) == 0 {
+		t.Fatalf("root zone not computed: %+v", zones)
+	}
+	full := view.ForCapabilities(RouteCapabilities{DNSForward: true, DNSRecords: true, DNSRoot: true})
+	if !slices.EqualFunc(full.DNSZones(), zones, equalDNSZoneRoute) || !slices.Equal(full.Peers(), view.Peers()) {
+		t.Fatalf("with dns.root1: zones %+v, peers %v", full.DNSZones(), full.Peers())
+	}
+	without := view.ForCapabilities(RouteCapabilities{DNSForward: true, DNSRecords: true})
+	var kept []node.ID
+	for _, zone := range without.DNSZones() {
+		if zone.Domain == "." {
+			t.Fatalf("root zone sent without dns.root1: %+v", without.DNSZones())
+		}
+		for _, resolver := range zone.Resolvers {
+			if resolver.NodeID.IsValid() {
+				kept = append(kept, resolver.NodeID)
+			}
+		}
+	}
+	for _, resolver := range zones[0].Resolvers {
+		if resolver.NodeID.IsValid() && !slices.Contains(kept, resolver.NodeID) &&
+			slices.Contains(without.Peers(), resolver.NodeID) {
+			t.Fatalf("a resolver Device only the root zone uses is still a peer: %v", without.Peers())
+		}
+	}
+	if len(without.DNSZones()) != len(zones)-1 {
+		t.Fatalf("without dns.root1: %+v", without.DNSZones())
 	}
 }
 
 func TestNewNetworkPolicyRefusesInvalidDNSZones(t *testing.T) {
 	t.Parallel()
 	for name, change := range map[string]func(*NetworkPolicyParams){
+		"root as a search domain": func(params *NetworkPolicyParams) {
+			params.DNSZones[1].Domain = "."
+		},
 		"private address": func(params *NetworkPolicyParams) {
 			params.DNSZones[1].Resolvers[1].Address = netip.MustParseAddr("10.0.0.2")
 		},

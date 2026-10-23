@@ -123,7 +123,7 @@ func TestMTCPCapabilities(t *testing.T) {
 		!slices.Contains(mtcpCapabilities(false, false, true), "router.subnet.v1") ||
 		len(exitCapabilities(false)) != 0 || !slices.Contains(exitCapabilities(true), "router.exit.v1") ||
 		!slices.Contains(exitCapabilities(true), "routes.exit.v1") ||
-		len(dnsCapabilities(false)) != 0 || !slices.Equal(dnsCapabilities(true), []string{"dns.forward1", "dns.records1"}) {
+		len(dnsCapabilities(false)) != 0 || !slices.Equal(dnsCapabilities(true), []string{"dns.forward1", "dns.records1", "dns.root1"}) {
 		t.Fatal("capabilities do not follow the deployment")
 	}
 }

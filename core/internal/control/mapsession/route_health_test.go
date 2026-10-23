@@ -137,7 +137,7 @@ func TestRouteDigestOfCoversWhatARouterIsSent(t *testing.T) {
 	if routes := routeDigestOf(snapshot); routes.Digest() != empty || routes.Entries() != 0 {
 		t.Fatalf("empty served = %v/%d", routes.Digest(), routes.Entries())
 	}
-	if delivery := deliveryOf(snapshot, FilterDigest{}, time.Now()); delivery.Routes.Digest() != empty {
+	if delivery := deliveryOf(snapshot, FilterDigest{}, DNSDigest{}, time.Now()); delivery.Routes.Digest() != empty {
 		t.Fatal("the delivery does not carry the route digest")
 	}
 }

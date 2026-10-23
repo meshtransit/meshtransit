@@ -30,6 +30,7 @@ const (
 	redisCommandRecordPaths          redisCommand = "paths_record"
 	redisCommandRecordConnectivity   redisCommand = "connectivity_record"
 	redisCommandRecordRouteHealth    redisCommand = "route_health_record"
+	redisCommandRecordDNSHealth      redisCommand = "dns_health_record"
 	redisCommandRecordRouteSelection redisCommand = "route_selection_record"
 	redisCommandLoadSiteSelection    redisCommand = "site_selection_load"
 	redisCommandReplicaLoad          redisCommand = "replica_load"
@@ -55,6 +56,7 @@ var redisCommands = [...]redisCommand{
 	redisCommandRecordPaths,
 	redisCommandRecordConnectivity,
 	redisCommandRecordRouteHealth,
+	redisCommandRecordDNSHealth,
 	redisCommandRecordRouteSelection,
 	redisCommandLoadSiteSelection,
 	redisCommandReplicaLoad,

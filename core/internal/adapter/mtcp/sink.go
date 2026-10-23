@@ -55,12 +55,21 @@ type mapSink struct {
 	relayMap   []byte
 	// dnsDigest identifies the DNS configuration the node holds: with DNS
 	// names a map's DNS reaches a megabyte, too much to keep per session.
-	dnsDigest  [sha256.Size]byte
-	routes     *mtcpv1.RouteConfig  // the routes the node holds; nil: none
-	served     *mtcpv1.ServedRoutes // the Sites the node serves; nil: none
-	exits      *mtcpv1.ExitConfig   // the Exit Pools the node holds; nil: none
-	exitServed *mtcpv1.ServedExits  // the Exit Pool the node serves; nil: none
-	authorized bool                 // a registration awaits its RegisterResponse
+	dnsDigest [sha256.Size]byte
+	// dnsResolvers are the resolvers of the DNS configuration the node
+	// holds, the only ones its health reports may name. The map is
+	// replaced, never changed, so a reader may keep it outside mu.
+	dnsResolvers map[netip.AddrPort]struct{}
+	// dnsEvidence is set for a session that reports the DNS it applied
+	// (dns.root1); sentDNS is then the DNS digest of the configuration the
+	// node holds.
+	dnsEvidence bool
+	sentDNS     mapsession.DNSDigest
+	routes      *mtcpv1.RouteConfig  // the routes the node holds; nil: none
+	served      *mtcpv1.ServedRoutes // the Sites the node serves; nil: none
+	exits       *mtcpv1.ExitConfig   // the Exit Pools the node holds; nil: none
+	exitServed  *mtcpv1.ServedExits  // the Exit Pool the node serves; nil: none
+	authorized  bool                 // a registration awaits its RegisterResponse
 }
 
 func newMapSink(session *Session, aliases bool, controlKeys []ControlKey, now func() time.Time) *mapSink {
@@ -112,6 +121,7 @@ func (sink *mapSink) sendSnapshotLocked(_ context.Context, snapshot mapsession.S
 	if sink.dnsDigest, err = dnsDigest(message.GetDns()); err != nil {
 		return err
 	}
+	sink.adoptDNSLocked(message.GetDns())
 	if !proto.Equal(sink.routes, message.GetRoutes()) || !proto.Equal(sink.served, message.GetServed()) {
 		sink.metrics.routesSent(message.GetRoutes(), snapshot.Routes().Omitted())
 	}
@@ -206,6 +216,7 @@ func (sink *mapSink) SendAuthorityDelta(ctx context.Context, delta mapsession.Au
 	}
 	if message.Dns != nil {
 		sink.dnsDigest = digest
+		sink.adoptDNSLocked(message.Dns)
 	}
 	if message.Routes != nil {
 		sink.routes = routes
@@ -314,6 +325,49 @@ func (sink *mapSink) SendRelayGrant(ctx context.Context, snapshot mapsession.Sna
 // SendKeepAlive sends a Ping.
 func (sink *mapSink) SendKeepAlive(context.Context) error {
 	return sink.session.Send(sharedmtcp.MessagePing, &mtcpv1.Ping{})
+}
+
+var _ mapsession.DNSDigestSink = (*mapSink)(nil)
+
+// reportDNS records whether the session reports the DNS it applied.
+func (sink *mapSink) reportDNS(on bool) {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	sink.dnsEvidence = on
+}
+
+// SentDNSDigest returns the DNS digest of the configuration the node holds,
+// for a session that reports the DNS it applied; the zero value otherwise.
+func (sink *mapSink) SentDNSDigest() mapsession.DNSDigest {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	return sink.sentDNS
+}
+
+// adoptDNSLocked records the DNS configuration just sent: its resolvers, and
+// its DNS digest when the session reports what it applied. A digest that
+// cannot be computed is counted and left zero: the Device then shows no DNS
+// comparison rather than losing its map.
+func (sink *mapSink) adoptDNSLocked(config *mtcpv1.DnsConfig) {
+	sink.dnsResolvers = resolversOf(config)
+	sink.sentDNS = mapsession.DNSDigest{}
+	if !sink.dnsEvidence {
+		return
+	}
+	digest, err := digestDNSConfig(config)
+	if err != nil {
+		sink.metrics.namesDegraded(namesDNSDigestFailed, 1)
+		return
+	}
+	sink.sentDNS = digest
+}
+
+// sentResolvers returns the resolvers of the DNS configuration the node
+// holds, and whether it holds a map.
+func (sink *mapSink) sentResolvers() (map[netip.AddrPort]struct{}, bool) {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	return sink.dnsResolvers, sink.hasCurrent
 }
 
 // dnsDigest hashes a DNS configuration's deterministic encoding.

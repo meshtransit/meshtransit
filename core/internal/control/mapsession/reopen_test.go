@@ -55,7 +55,7 @@ func TestRecordDeliveryOutlivesTheStreamContext(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	service.recordDelivery(ctx, initial, FilterDigest{})
+	service.recordDelivery(ctx, initial, FilterDigest{}, DNSDigest{})
 	if recorder.calls != 1 || recorder.canceled {
 		t.Fatalf("record calls = %d, canceled = %t; want one live record", recorder.calls, recorder.canceled)
 	}

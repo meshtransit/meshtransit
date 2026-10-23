@@ -42,6 +42,7 @@ type fakeStreams struct {
 	requests  []mapsession.Request
 	reports   []mapsession.ClientEnforcement
 	health    [][]mapsession.SiteHealth
+	dnsHealth [][]mapsession.ResolverHealth
 	exits     []*mapsession.ExitHealth
 	selection [][]mapsession.SiteSelection
 	// exitSelections are the exit selections stored, one per report.
@@ -87,6 +88,14 @@ func (streams *fakeStreams) ReportRouteHealth(_ context.Context, _ control.Authe
 	defer streams.mu.Unlock()
 	streams.health = append(streams.health, slices.Clone(sites))
 	streams.exits = append(streams.exits, exit)
+	return nil
+}
+
+func (streams *fakeStreams) ReportDNSHealth(_ context.Context, _ control.AuthenticatedMachine, _ node.Key,
+	resolvers []mapsession.ResolverHealth) error {
+	streams.mu.Lock()
+	defer streams.mu.Unlock()
+	streams.dnsHealth = append(streams.dnsHealth, slices.Clone(resolvers))
 	return nil
 }
 

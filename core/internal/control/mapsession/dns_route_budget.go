@@ -186,6 +186,9 @@ func (view *DNSView) routeBudget() (config clientDNSRoutes, left map[string]stru
 	}
 	view.zones = slices.DeleteFunc(view.zones, func(zone DNSForwardZone) bool {
 		switch {
+		case zone.Domain == ".":
+			// The root zone is the client's own default route, from the
+			// room left for it (DNS design D1b §3.2): never a domain.
 		case zone.leavesToHost():
 			config.host = append(config.host, zone.Domain)
 		case add(zone.Domain):

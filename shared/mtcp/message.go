@@ -36,6 +36,7 @@ const (
 	MessageRouteHealthReport     MessageType = 0x35
 	MessageRouteSelectionReport  MessageType = 0x36
 	MessageCaptiveWindowReport   MessageType = 0x37
+	MessageDNSHealthReport       MessageType = 0x38
 	MessageRelayTicket           MessageType = 0x40
 	MessageLifecycle             MessageType = 0x50
 	MessageKeyUpdate             MessageType = 0x51
@@ -96,10 +97,12 @@ var specs = map[MessageType]messageSpec{
 	MessageRouteSelectionReport: {NodeToCore, 128 * kib, func() proto.Message { return &mtcpv1.RouteSelectionReport{} }},
 	// 16 windows of a 32-byte ID and three numbers each.
 	MessageCaptiveWindowReport: {NodeToCore, 4 * kib, func() proto.Message { return &mtcpv1.CaptiveWindowReport{} }},
-	MessageRelayTicket:         {CoreToNode, 256 * kib, func() proto.Message { return &mtcpv1.RelayTicket{} }}, // MTT2 zones: 17 bytes × 10,001
-	MessageLifecycle:           {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.Lifecycle{} }},
-	MessageKeyUpdate:           {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.KeyUpdate{} }},
-	MessageNotice:              {CoreToNode, 8 * kib, func() proto.Message { return &mtcpv1.Notice{} }},
+	// 64 resolvers of a 16-byte address and three numbers each.
+	MessageDNSHealthReport: {NodeToCore, 4 * kib, func() proto.Message { return &mtcpv1.DnsHealthReport{} }},
+	MessageRelayTicket:     {CoreToNode, 256 * kib, func() proto.Message { return &mtcpv1.RelayTicket{} }}, // MTT2 zones: 17 bytes × 10,001
+	MessageLifecycle:       {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.Lifecycle{} }},
+	MessageKeyUpdate:       {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.KeyUpdate{} }},
+	MessageNotice:          {CoreToNode, 8 * kib, func() proto.Message { return &mtcpv1.Notice{} }},
 }
 
 // Limit returns the decoded size limit of a message type, or 0 if unknown.

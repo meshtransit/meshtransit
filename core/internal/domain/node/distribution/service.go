@@ -90,6 +90,15 @@ type Observation struct {
 	// ExitSelection is the exit node the consumer last reported using,
 	// received with its Site routers; nil: none.
 	ExitSelection *ExitSelection
+	// DNS is the DNS digest last delivered to a Device that reports what it
+	// applied (dns.root1), EnforcedDNS the one it reports, and DNSReason why
+	// it applies none (DNS design D1b §8).
+	DNS, EnforcedDNS DNSSummary
+	DNSReason        string
+	// DNSHealth is how the Device's resolver last saw the zones' resolvers
+	// and DNSHealthAt when Core received it.
+	DNSHealth   []ResolverHealth
+	DNSHealthAt time.Time
 }
 
 // PeerLimit is how many peers a limited map carried and how many the
@@ -115,7 +124,9 @@ func (observation Observation) IsValid() bool {
 			observation.Connectivity == nil && observation.Platform == nil && observation.PeerLimit.IsZero() &&
 			observation.Routes.IsZero() && observation.EnforcedRoutes.IsZero() &&
 			observation.RouteHealth == nil && observation.RouteHealthAt.IsZero() && observation.ExitHealth == nil &&
-			observation.RouteSelection == nil && observation.RouteSelectionAt.IsZero() && observation.ExitSelection == nil
+			observation.RouteSelection == nil && observation.RouteSelectionAt.IsZero() && observation.ExitSelection == nil &&
+			observation.DNS.IsZero() && observation.EnforcedDNS.IsZero() && observation.DNSReason == "" &&
+			observation.DNSHealth == nil && observation.DNSHealthAt.IsZero()
 	}
 	if !observation.PeerLimit.IsZero() && !observation.PeerLimit.IsValid() {
 		return false
@@ -133,7 +144,7 @@ func (observation Observation) IsValid() bool {
 		observation.PolicyRevision >= 0 && !observation.DeliveredAt.IsZero() &&
 		!observation.SeenAt.Before(observation.DeliveredAt) && validEnforcement(observation) &&
 		validRoutes(observation) && validExitHealth(observation) &&
-		validExitSelection(observation)
+		validExitSelection(observation) && validDNS(observation)
 }
 
 // TargetDevice is a Device that should hold the current revision.
@@ -187,6 +198,14 @@ type Device struct {
 	// ExitSelection is the exit node the Device uses, nil when it reported
 	// none within RouteSelectionStale.
 	ExitSelection *ExitSelection
+	// DNSEnforcement compares the DNS digest a Device reports with the one
+	// it was delivered (DNS design D1b §8); empty for a Device without DNS
+	// evidence. DNSHealth is its current resolver health, empty when it has
+	// none or it is older than DNSHealthStale, and DNSHealthAt when Core
+	// received it, zero then.
+	DNSEnforcement DNSEnforcement
+	DNSHealth      []ResolverHealth
+	DNSHealthAt    time.Time
 }
 
 // Report is one Device's standing against the Network's current revisions.
@@ -249,6 +268,10 @@ func (service *Service) ReadDevice(ctx context.Context, session accountsession.S
 	report.Device.RouteSelection, _ = CurrentRouteSelection(observations[0], now)
 	if exit, current := CurrentExitSelection(observations[0], now); current {
 		report.Device.ExitSelection = &exit
+	}
+	report.Device.DNSEnforcement = ClassifyDNSEnforcement(observations[0], now)
+	if health, current := CurrentDNSHealth(observations[0], now); current {
+		report.Device.DNSHealth, report.Device.DNSHealthAt = health, observations[0].DNSHealthAt
 	}
 	report.ObservationsAvailable = true
 	return report, nil

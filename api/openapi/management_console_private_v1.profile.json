@@ -1094,6 +1094,115 @@
                   },
                   "description": "Present for a subnet router: its route enforcement and current Site health."
                 },
+                "dns": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "enforcement",
+                    "delivered_digest",
+                    "delivered_routes",
+                    "enforced_digest",
+                    "enforced_routes",
+                    "resolvers",
+                    "health_reported_at"
+                  ],
+                  "description": "Present for a Device that reports the DNS it applied (dns.root1, DNS design D1b §8).",
+                  "properties": {
+                    "enforcement": {
+                      "type": "string",
+                      "enum": [
+                        "enforced",
+                        "applying",
+                        "mismatch",
+                        "not_reported",
+                        "user_off",
+                        "apply_failed",
+                        "unknown"
+                      ],
+                      "description": "Whether the Device applies the DNS routes and search domains it was last delivered, compared by DNS digest v1, or why it applies none."
+                    },
+                    "delivered_digest": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^sha256:[0-9a-f]{64}$"
+                    },
+                    "delivered_routes": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 0,
+                      "maximum": 1024
+                    },
+                    "enforced_digest": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^sha256:[0-9a-f]{64}$"
+                    },
+                    "enforced_routes": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 0,
+                      "maximum": 1024
+                    },
+                    "resolvers": {
+                      "type": "array",
+                      "maxItems": 64,
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "address",
+                          "port",
+                          "state",
+                          "last_ok_at"
+                        ],
+                        "properties": {
+                          "address": {
+                            "type": "string",
+                            "minLength": 2,
+                            "maxLength": 45
+                          },
+                          "port": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 65535
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "ok",
+                              "broken",
+                              "stopped",
+                              "refusing",
+                              "idle"
+                            ]
+                          },
+                          "last_ok_at": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    },
+                    "health_reported_at": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "date-time"
+                    }
+                  }
+                },
                 "subnet_routes": {
                   "type": "array",
                   "maxItems": 1024,

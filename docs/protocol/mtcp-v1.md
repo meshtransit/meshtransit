@@ -245,6 +245,7 @@ payload     bytes[...]
 | 0x35 | `RouteHealthReport` | N→C | 160 KiB |
 | 0x36 | `RouteSelectionReport` | N→C | 128 KiB |
 | 0x37 | `CaptiveWindowReport` | N→C | 4 KiB |
+| 0x38 | `DnsHealthReport` | N→C | 4 KiB |
 | 0x40 | `RelayTicket` | C→N | 256 KiB (4 KiB without `relay.zones2`) |
 | 0x50 | `Lifecycle` | C→N | 4 KiB |
 | 0x51 | `KeyUpdate` | C→N | 4 KiB |
@@ -565,6 +566,16 @@ A name already taken by a record above is left out. So is a whole name past
 the 50,000 records, or past 1 MiB of these names encoded. A limited map
 keeps the Devices names point at after explicit shares and before other
 peers.
+
+**The root zone** (`dns.root1`, sent only to a node that also lists
+`dns.split`, `dns.forward1` and `map.large1`). The Network's zone for every
+name no other route holds is a route with suffix `.`, with resolvers,
+`unavailable` and `fail_open` as a forward zone; it sorts before the other
+zones and is never a search domain. The node keeps every name at its own
+resolver while it has the route, `unavailable` or not, so a zone that fails
+closed never falls back to the host silently; a root zone's resolvers answer
+only names no other route holds. A node without `dns.root1` receives no root
+zone, and its resolver Devices are no peers of its map for it.
 
 A node without `dns.records1` receives no name and no zone of another kind.
 Core holds the wakeups of a Network's DNS changes so they reach maps
@@ -1013,6 +1024,15 @@ Core compares it with the digest of the filter it sent at that view and shows
 the Device as enforced, applying (within 60 s) or mismatch. The report is
 evidence from the node, not attestation (policy digest §6).
 
+With `dns.root1` it also carries `dns_digest` and `dns_routes`: the
+[DNS digest](dns-digest-v1.md) of the DNS routes and search domains the node
+applied to its host after validating the map, and how many routes it covers,
+or, when it applies none, an empty `dns_digest` and `dns_reason`: `user_off`
+(turned off on the Device) or `apply_failed` (the host refused it). Sent
+after each DNS apply or failed apply too. Core compares it with the digest
+of the DNS it last sent the node. A digest of another length, a digest with
+a reason, or an unknown reason is left out; the policy evidence still counts.
+
 ### 8.5 Captive portal windows
 
 To sign in to a hotel or airport Wi-Fi while it uses an exit, a node's root
@@ -1041,6 +1061,23 @@ days old). It drops a report sooner than 10 s after the last of the session
 or before the session has a map; a window it could not record (the daily
 budget, another session of the Device recording, a database error) is not
 audited unless a later session reports it again.
+
+### 8.6 Resolver health
+
+With `dns.root1` a node sends `DnsHealthReport{resolvers}`: how its resolver
+sees each resolver of the zones it applies, at most 64, the root zone's
+first. Each is `ip` (4 or 16 bytes, as the map sent it), `port` (0 is 53),
+`state` (`OK`; `BROKEN`, its circuit breaker skips it; `STOPPED`, a resolver
+Device that stopped answering the node's pings, asked last; `REFUSING`, its
+last answer was `SERVFAIL` or `REFUSED`; `IDLE`, not asked since the zones
+were applied) and `last_ok_ms` (its last answer, 0 for none). The node sends
+the whole set on change, at least 30 s apart, and at least every 5 minutes
+while unchanged. Core keeps only resolvers it sent the node, drops a report
+sooner than 20 s after the last of the session or before the session has a
+map, and keeps the latest per session. More than 64 resolvers, one listed
+twice, an address of another length, a port over 65535, an unknown `state`,
+or a report on a session without `dns.root1` is `INVALID`. A new `state`
+therefore comes with a new capability.
 
 ## 9. Relay access
 
@@ -1130,6 +1167,7 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `dns.split` | Node applies split DNS routes |
 | `dns.forward1` | Node applies forward zones (7.3): routes with resolvers and `port`, `unavailable` and `fail_open`; only with `dns.split` and `map.large1` |
 | `dns.records1` | Node applies names and zone kinds (7.3): `CNAME` records, routes it answers or leaves to the host, names under a route without a route of their own; only with `dns.forward1` |
+| `dns.root1` | Node applies the root zone (7.3), reports the DNS digest it applied (8.4) and sends `DnsHealthReport` (8.6); only with `dns.forward1` |
 | `stats.path1` | Node sends `PathStatsReport` |
 | `nat.report1` | Node sends NAT classification in `EndpointReport` |
 | `map.large1` | Node applies maps of up to 10,000 peers; without it Core sends at most 256 |
@@ -1162,6 +1200,7 @@ Unknown names are ignored. Core sends a feature only when both sides list it.
 | `EnforcementReport` per session (8.4) | 4 at once, then 1 per second; over it the latest report is kept, replacing any kept before, and stored when the budget allows |
 | `RouteHealthReport` per session (8.3) | 2 at once, then 1 per 2 s; over it the latest report is kept, replacing any kept before, and stored when the budget allows |
 | `RouteSelectionReport` per session (8.3) | 2 at once, then 1 per 5 s; over it the latest report is kept, replacing any kept before, and stored when the budget allows |
+| `DnsHealthReport` per session (8.6) | 1 per 20 s; a sooner one is dropped, the node's next one counts |
 | Offers of `HostinfoReport` stored per session (8.2) | 4 at once, then 1 per 10 s; over it the latest offer is kept, replacing any kept before, and stored when the budget allows. An offer sent before the session serves a Device is stored once it does |
 | A Device's live presence lease moving to another Core replica | 10 per minute; past it the stream ends with `Lifecycle{RECONNECT, retry_after_ms}` until the minute is over. Two processes sharing one machine key are bounded to that rate, not stopped; a reconnect after a replica ended, a rolling update or a rebalance moves it once. A refused attempt still costs Core the snapshot and relay ticket it prepared, but not their delivery |
 | Everything a node sends, per session | 200 messages at once, then 50 per second, and 1 MiB of records at once, then 256 KiB per second; over either, fatal `Error{OVERLOADED, retry_after_ms}`. `MapAck` counts only as bytes: it answers map messages Core chose to send, and nodes that ack every message (7.2) must not reach the limit |

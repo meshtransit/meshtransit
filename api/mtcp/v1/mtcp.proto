@@ -657,6 +657,35 @@ message EnforcementReport {
   int64 applied_ms = 4;
   bytes route_digest = 5; // 32 bytes: route digest v1 of the served routes forwarded into; empty without router.subnet.v1
   uint32 route_entries = 6;
+  // dns.root1: DNS digest v1 (docs/protocol/dns-digest-v1.md) of the DNS
+  // routes and search domains the node applied to its host; empty when it
+  // applies none, with dns_reason saying why.
+  bytes dns_digest = 7; // 32 bytes
+  uint32 dns_routes = 8;
+  string dns_reason = 9; // empty, "user_off" or "apply_failed"; at most 32 bytes
+}
+
+// DnsHealthReport is how the node's resolver sees the resolvers of the DNS
+// zones it applies (dns.root1, section 8.6): the whole set, on change and
+// at least every 5 minutes while it applies any.
+message DnsHealthReport {
+  repeated ResolverHealth resolvers = 1; // at most 64, the root zone's first
+}
+
+message ResolverHealth {
+  bytes ip = 1; // 4 or 16 bytes: as the map sent it
+  uint32 port = 2; // 0 is 53
+  State state = 3;
+  int64 last_ok_ms = 4; // the last answer from it; 0: none since applied
+
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    OK = 1; // it answers
+    BROKEN = 2; // the circuit breaker skips it
+    STOPPED = 3; // a resolver Device that stopped answering pings: asked last
+    REFUSING = 4; // its last answer was SERVFAIL or REFUSED
+    IDLE = 5; // not asked since the zones were applied
+  }
 }
 
 message PathStatsReport {

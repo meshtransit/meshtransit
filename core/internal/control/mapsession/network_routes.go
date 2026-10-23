@@ -200,14 +200,33 @@ func (view RouteView) ForCapabilities(capabilities RouteCapabilities) RouteView 
 			view.dnsZones = nil
 		}
 	}
+	// The root zone reaches only clients that apply it (dns.root1): another
+	// drops it, so failing closed would quietly be open. Its resolver
+	// Devices stay peers only for the zones still sent.
+	if !capabilities.DNSRoot && slices.ContainsFunc(view.dnsZones, DNSZoneRoute.isRoot) {
+		view.dnsZones = slices.DeleteFunc(slices.Clone(view.dnsZones), DNSZoneRoute.isRoot)
+		var resolvers []node.ID
+		for _, zone := range view.dnsZones {
+			for _, resolver := range zone.Resolvers {
+				if resolver.NodeID.IsValid() {
+					resolvers = append(resolvers, resolver.NodeID)
+				}
+			}
+		}
+		slices.SortFunc(resolvers, compareNodeIDs)
+		view.resolvers = slices.Compact(resolvers)
+		if len(view.dnsZones) == 0 {
+			view.dnsZones = nil
+		}
+	}
 	return view
 }
 
 // RouteCapabilities are the route capabilities of a session (Request.Routes,
-// Request.Router, Request.Exits, Request.ExitRouter, Request.DNSForward and
-// Request.DNSRecords).
+// Request.Router, Request.Exits, Request.ExitRouter, Request.DNSForward,
+// Request.DNSRecords and Request.DNSRoot).
 type RouteCapabilities struct {
-	Routes, Router, Exits, ExitRouter, DNSForward, DNSRecords bool
+	Routes, Router, Exits, ExitRouter, DNSForward, DNSRecords, DNSRoot bool
 }
 
 // forCapabilities keeps what a session can use: the Sites to reach when it
@@ -786,7 +805,8 @@ func cloneRouteRules(rules []RouteRule) []RouteRule {
 // refresh can filter before it builds (Snapshot.RouteCapabilities).
 func (snapshot Snapshot) withRouteCapabilities(request Request) (Snapshot, error) {
 	capabilities := RouteCapabilities{Routes: request.Routes(), Router: request.Router(), Exits: request.Exits(),
-		ExitRouter: request.ExitRouter(), DNSForward: request.DNSForward(), DNSRecords: request.DNSRecords()}
+		ExitRouter: request.ExitRouter(), DNSForward: request.DNSForward(), DNSRecords: request.DNSRecords(),
+		DNSRoot: request.DNSRoot()}
 	routes := snapshot.routes.ForCapabilities(capabilities)
 	if routes.Equal(snapshot.routes) {
 		snapshot.routeCapabilities, snapshot.routeCapabilitiesKnown = capabilities, true

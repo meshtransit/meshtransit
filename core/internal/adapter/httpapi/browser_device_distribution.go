@@ -155,6 +155,10 @@ type deviceDistributionItem struct {
 	// SubnetRoutes is the router the Device uses for each Site it reaches,
 	// as it last reported (within three minutes).
 	SubnetRoutes []deviceSiteRouteItem `json:"subnet_routes,omitempty"`
+	// DNS is present for a Device that reports the DNS it applied
+	// (dns.root1): whether it applies what it was sent, and how its resolver
+	// sees the zones' resolvers.
+	DNS *deviceDNSItem `json:"dns,omitempty"`
 	// Exit is the exit node the Device sends its Internet traffic through,
 	// as it last reported (within three minutes).
 	Exit *deviceExitItem `json:"exit,omitempty"`
@@ -490,6 +494,7 @@ func newDeviceDistributionItem(device distribution.Device, countries CountryLook
 			item.PeerLimit = &devicePeerLimitItem{Sent: limit.Sent, Authorized: limit.Authorized}
 		}
 		item.Router = newDeviceRouterItem(device)
+		item.DNS = newDeviceDNSItem(device)
 		for _, site := range device.RouteSelection {
 			route := deviceSiteRouteItem{SiteID: site.Ref, Via: site.Via}
 			if site.Router != "" {

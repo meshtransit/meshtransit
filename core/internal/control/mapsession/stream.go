@@ -222,7 +222,7 @@ func (service *StreamService) Serve(
 	if err := sink.SendSnapshot(ctx, snapshot); err != nil {
 		return errors.Join(ErrStreamWrite, err)
 	}
-	service.recordDelivery(ctx, snapshot, service.filterDigest(snapshot))
+	service.recordDelivery(ctx, snapshot, service.filterDigest(snapshot), sentDNSDigest(sink))
 	err = service.run(
 		ctx,
 		machine,
@@ -307,26 +307,31 @@ func (service *StreamService) run(
 	current := initial
 	delivered := initial.NetworkRevision()
 	deliveredFilter := service.filterDigest(initial)
+	deliveredDNS := sentDNSDigest(sink)
 	lastTouch := time.Now()
 	// advance adopts a refreshed snapshot and records it when the client now
-	// holds a newer Network revision, or a different packet filter, than it
-	// was last known to have. Only a revision or projection change can change
-	// the filter, so the digest is not recomputed for connectivity changes.
+	// holds a newer Network revision, a different packet filter, or a
+	// different DNS configuration than it was last known to have. Only a
+	// revision or projection change can change the filter, so its digest is
+	// not recomputed for connectivity changes. The DNS digest is the sink's,
+	// of the configuration it last sent (a resolver Device going offline
+	// changes it without a new revision).
 	advance := func(next Snapshot) {
 		previous := current
 		current = next
 		watch.followInterest(current)
 		revisionChanged := current.NetworkRevision() != delivered
-		if !revisionChanged &&
-			equalDirectDeviceProjections(previous.directDeviceProjections, current.directDeviceProjections) {
+		dns := sentDNSDigest(sink)
+		filter := deliveredFilter
+		if revisionChanged ||
+			!equalDirectDeviceProjections(previous.directDeviceProjections, current.directDeviceProjections) {
+			filter = service.filterDigest(current)
+		}
+		if !revisionChanged && filter == deliveredFilter && dns == deliveredDNS {
 			return
 		}
-		filter := service.filterDigest(current)
-		if !revisionChanged && filter == deliveredFilter {
-			return
-		}
-		delivered, deliveredFilter = current.NetworkRevision(), filter
-		service.recordDelivery(ctx, current, filter)
+		delivered, deliveredFilter, deliveredDNS = current.NetworkRevision(), filter, dns
+		service.recordDelivery(ctx, current, filter, dns)
 	}
 	// fullRefresh runs one full refresh and records it for pacing.
 	fullRefresh := func(refresh func(context.Context, control.AuthenticatedMachine, Request, StreamSink,

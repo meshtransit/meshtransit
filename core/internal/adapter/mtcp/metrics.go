@@ -53,6 +53,9 @@ const (
 	// namesOverBudget: a zone, search domain or name was left out by the
 	// route budget of one map (DNS design D3 §4.3).
 	namesOverBudget = "route_budget"
+	// namesDNSDigestFailed: the DNS digest of a map sent to a node that
+	// reports the DNS it applied could not be computed (DNS design D1b §8).
+	namesDNSDigestFailed = "dns_digest_failed"
 )
 
 // The closed set of per-session limits (rate_budget.go).
@@ -64,13 +67,14 @@ const (
 	limitIdentity       = "identity"
 	limitRouteOffer     = "route_offer"
 	limitRouteHealth    = "route_health"
+	limitDNSHealth      = "dns_health"
 	limitRouteSelection = "route_selection"
 	// limitSendDeadline: a message was not sent by its send deadline.
 	limitSendDeadline = "send_deadline"
 )
 
 var sessionLimits = []string{limitInbound, limitResync, limitEnforcement, limitBrowser, limitIdentity,
-	limitRouteOffer, limitRouteHealth, limitRouteSelection, limitSendDeadline}
+	limitRouteOffer, limitRouteHealth, limitDNSHealth, limitRouteSelection, limitSendDeadline}
 
 // streamEndReasons is the closed set of map stream end causes.
 var streamEndReasons = []string{
@@ -141,7 +145,7 @@ func NewMetrics() *Metrics {
 		// names pass what one client routes; the maps themselves still flow.
 		mapNames: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "meshtransit_mtcp_map_names_degraded_total",
-			Help: "Device names and DNS records left out of encoded maps, by bounded cause.",
+			Help: "Device names and DNS records left out of encoded maps, or DNS evidence lost, by bounded cause.",
 		}, []string{"reason"}),
 		// Watch: failed means routers may keep serving with an old offer;
 		// dropped prefixes are entries clients should not send.
@@ -177,7 +181,7 @@ func NewMetrics() *Metrics {
 	for _, reason := range streamEndReasons {
 		metrics.streamEnds.WithLabelValues(reason)
 	}
-	for _, reason := range []string{namesUnlabeled, namesDropped, namesOverBudget} {
+	for _, reason := range []string{namesUnlabeled, namesDropped, namesOverBudget, namesDNSDigestFailed} {
 		metrics.mapNames.WithLabelValues(reason)
 	}
 	for _, result := range []string{routeOfferChanged, routeOfferUnchanged, routeOfferFailed} {

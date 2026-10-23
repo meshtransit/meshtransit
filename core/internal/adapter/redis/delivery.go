@@ -27,7 +27,7 @@ const (
 	deliveryTTL = 30 * 24 * time.Hour
 	// maximumDeliveryLoad bounds one read to one distribution page.
 	maximumDeliveryLoad = distribution.MaximumObservationBatch
-	deliveryFieldCount  = 24
+	deliveryFieldCount  = 32
 	presenceField       = deliveryFieldCount - 1
 )
 
@@ -69,12 +69,14 @@ end
 redis.call('HSET', KEYS[1], 'generation', ARGV[1], 'network_revision', ARGV[2],
     'policy_revision', ARGV[3], 'delivered_at', ARGV[4], 'seen_at', ARGV[4],
     'filter_digest', ARGV[6], 'filter_grants', ARGV[7], 'peer_limit', ARGV[10],
-    'route_digest', ARGV[11], 'route_entries', ARGV[12])
+    'route_digest', ARGV[11], 'route_entries', ARGV[12], 'dns_digest', ARGV[13], 'dns_routes', ARGV[14],
+    'dns_generation', ARGV[1])
 if not same_generation then
     redis.call('HSET', KEYS[1], 'enforced_digest', '', 'enforced_grants', '',
         'applied_at', '', 'reported_at', '', 'paths', '', 'connectivity', '',
         'enforced_route_digest', '', 'enforced_route_entries', '', 'route_health', '', 'route_health_at', '',
-        'route_selection', '', 'route_selection_at', '', 'exit_health', '')
+        'route_selection', '', 'route_selection_at', '', 'exit_health', '',
+        'enforced_dns_digest', '', 'enforced_dns_routes', '', 'dns_reason', '', 'dns_health', '', 'dns_health_at', '')
 end
 redis.call('PEXPIRE', KEYS[1], ARGV[5])
 redis.call('HSET', KEYS[2], 'node_id', ARGV[8], 'generation', ARGV[1], 'machine', ARGV[9])
@@ -89,7 +91,8 @@ if redis.call('HGET', KEYS[1], 'generation') ~= ARGV[1] then
 end
 redis.call('HSET', KEYS[1], 'enforced_digest', ARGV[2], 'enforced_grants', ARGV[3],
     'applied_at', ARGV[4], 'reported_at', ARGV[5],
-    'enforced_route_digest', ARGV[7], 'enforced_route_entries', ARGV[8])
+    'enforced_route_digest', ARGV[7], 'enforced_route_entries', ARGV[8],
+    'enforced_dns_digest', ARGV[9], 'enforced_dns_routes', ARGV[10], 'dns_reason', ARGV[11])
 redis.call('PEXPIRE', KEYS[1], ARGV[6])
 return 1
 `)
@@ -110,6 +113,16 @@ redis.call('PEXPIRE', KEYS[1], ARGV[4])
 if ARGV[5] == '1' and previous ~= ARGV[2] then
     redis.pcall('PUBLISH', ARGV[6], ARGV[7])
 end
+return 1
+`)
+	// A resolver health report is stored only for the session generation
+	// that currently owns the delivery record.
+	recordDNSHealthScript = redisclient.NewScript(`
+if redis.call('HGET', KEYS[1], 'generation') ~= ARGV[1] then
+    return 0
+end
+redis.call('HSET', KEYS[1], 'dns_health', ARGV[2], 'dns_health_at', ARGV[3])
+redis.call('PEXPIRE', KEYS[1], ARGV[4])
 return 1
 `)
 	// A path report is stored only for the session generation that
@@ -142,7 +155,7 @@ redis.call('PEXPIRE', KEYS[1], ARGV[3])
 return 1
 `)
 	// KEYS alternate delivery and presence keys; each pair yields
-	// twenty-three fields (empty when absent) and whether a presence lease
+	// thirty-one fields (empty when absent) and whether a presence lease
 	// exists.
 	loadDeliveriesScript = redisclient.NewScript(`
 local result = {}
@@ -151,8 +164,10 @@ for index = 1, #KEYS, 2 do
         'policy_revision', 'delivered_at', 'seen_at', 'filter_digest', 'filter_grants',
         'enforced_digest', 'enforced_grants', 'applied_at', 'reported_at', 'paths', 'connectivity',
         'peer_limit', 'route_digest', 'route_entries', 'enforced_route_digest', 'enforced_route_entries',
-        'route_health', 'route_health_at', 'route_selection', 'route_selection_at', 'exit_health')
-    for field = 1, 23 do
+        'route_health', 'route_health_at', 'route_selection', 'route_selection_at', 'exit_health',
+        'dns_digest', 'dns_routes', 'enforced_dns_digest', 'enforced_dns_routes', 'dns_reason',
+        'dns_health', 'dns_health_at', 'dns_generation')
+    for field = 1, 31 do
         result[#result + 1] = fields[field] or ''
     end
     result[#result + 1] = tostring(redis.call('EXISTS', KEYS[index + 1]))
@@ -176,6 +191,9 @@ type deliveryRecord struct {
 	// routeDigest and routeEntries describe a router's served routes;
 	// empty for a session that does not route.
 	routeDigest, routeEntries string
+	// dnsDigest and dnsRoutes describe the DNS configuration sent; empty
+	// for a session that does not report what it applied.
+	dnsDigest, dnsRoutes string
 }
 
 // enforcementRecord is one enforcement report as its script stores it.
@@ -187,6 +205,9 @@ type enforcementRecord struct {
 	reportedAt int64
 	// routeDigest and routeEntries are empty without a route digest.
 	routeDigest, routeEntries string
+	// dnsDigest and dnsRoutes are empty without a DNS digest, dnsReason
+	// without a reason.
+	dnsDigest, dnsRoutes, dnsReason string
 }
 
 type recordDeliveryFunc func(ctx context.Context, deliveryKey, sessionKey string, record deliveryRecord,
@@ -228,6 +249,10 @@ func (client *Client) RecordDelivery(ctx context.Context, delivery mapsession.De
 	if delivery.Routes.IsValid() {
 		record.routeDigest = delivery.Routes.Digest().String()
 		record.routeEntries = strconv.Itoa(delivery.Routes.Entries())
+	}
+	if delivery.DNS.IsValid() {
+		record.dnsDigest = delivery.DNS.Digest().String()
+		record.dnsRoutes = strconv.Itoa(delivery.DNS.Routes())
 	}
 	if delivery.PeersAuthorized > delivery.PeersSent && delivery.PeersSent > 0 {
 		record.peerLimit = strconv.Itoa(delivery.PeersSent) + ":" + strconv.Itoa(delivery.PeersAuthorized)
@@ -286,6 +311,11 @@ func (client *Client) recordEnforcementForSession(ctx context.Context,
 		record.routeDigest = enforcement.Routes.Digest().String()
 		record.routeEntries = strconv.Itoa(enforcement.Routes.Entries())
 	}
+	if enforcement.DNS.IsValid() {
+		record.dnsDigest = enforcement.DNS.Digest().String()
+		record.dnsRoutes = strconv.Itoa(enforcement.DNS.Routes())
+	}
+	record.dnsReason = enforcement.DNSReason
 	result, err := client.recordEnforcement(ctx, deliveryKeyForNode(nodeID), record, deliveryTTL)
 	if err == nil && result != 0 && result != 1 {
 		err = errors.New("unexpected enforcement record result")
@@ -396,7 +426,8 @@ func decodeObservations(raw []any, count int) ([]distribution.Observation, error
 // connectivity, peer_limit, route_digest, route_entries,
 // enforced_route_digest, enforced_route_entries, route_health,
 // route_health_at, route_selection, route_selection_at, exit_health,
-// presence.
+// dns_digest, dns_routes, enforced_dns_digest, enforced_dns_routes,
+// dns_reason, dns_health, dns_health_at, dns_generation, presence.
 func decodeObservation(fields []string) (distribution.Observation, error) {
 	online := fields[presenceField] == "1"
 	if fields[presenceField] != "0" && fields[presenceField] != "1" {
@@ -479,6 +510,34 @@ func decodeObservation(fields []string) (distribution.Observation, error) {
 	if routeHealthAt.IsZero() {
 		exitHealth = nil
 	}
+	dns, err := decodeDNSSummary(fields[23], fields[24])
+	if err != nil {
+		return distribution.Observation{}, err
+	}
+	enforcedDNS, err := decodeDNSSummary(fields[25], fields[26])
+	if err != nil {
+		return distribution.Observation{}, err
+	}
+	dnsHealth, err := decodeDNSHealth(fields[28])
+	if err != nil {
+		return distribution.Observation{}, err
+	}
+	dnsHealthAt, err := decodeOptionalTime(fields[29])
+	if err != nil {
+		return distribution.Observation{}, err
+	}
+	// Likewise for DNS health a Core without it never cleared.
+	if dnsHealthAt.IsZero() {
+		dnsHealth = nil
+	}
+	// DNS evidence belongs to the session generation whose delivery wrote
+	// it: a Core without it (a rolling update) starts a new generation
+	// without clearing it, and it is then none.
+	dnsReason := fields[27]
+	if fields[30] != fields[0] {
+		dns, enforcedDNS, dnsReason, dnsHealth, dnsHealthAt = distribution.DNSSummary{},
+			distribution.DNSSummary{}, "", nil, time.Time{}
+	}
 	observation := distribution.Observation{
 		Known:             true,
 		SessionGeneration: numbers[0],
@@ -503,6 +562,11 @@ func decodeObservation(fields []string) (distribution.Observation, error) {
 		RouteSelectionAt:  routeSelectionAt,
 		ExitSelection:     exitSelection,
 		ExitHealth:        exitHealth,
+		DNS:               dns,
+		EnforcedDNS:       enforcedDNS,
+		DNSReason:         dnsReason,
+		DNSHealth:         dnsHealth,
+		DNSHealthAt:       dnsHealthAt,
 	}
 	if !observation.IsValid() {
 		return distribution.Observation{}, errors.New("inconsistent delivery record")

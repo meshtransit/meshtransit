@@ -69,6 +69,10 @@ type DNSResolverRoute struct {
 	Port    uint16
 }
 
+// isRoot reports the root zone, every name no other zone holds (DNS design
+// D1b).
+func (route DNSZoneRoute) isRoot() bool { return route.Domain == "." }
+
 // DNSZones returns the zones the Device asks resolvers for, sorted by
 // domain.
 func (view RouteView) DNSZones() []DNSZoneRoute {
@@ -142,7 +146,7 @@ func (index *routeIndex) indexDNSZones(params NetworkPolicyParams, keysOf func(i
 func (index *routeIndex) dnsConsumers(devices []int64) map[int64][]int64 {
 	byZone := make([][]int64, len(index.zoneList))
 	for position, zone := range index.zoneList {
-		if zone.Domain == "." || !slices.ContainsFunc(zone.Resolvers, func(resolver DNSZoneResolver) bool {
+		if !slices.ContainsFunc(zone.Resolvers, func(resolver DNSZoneResolver) bool {
 			return resolver.Device > 0
 		}) {
 			continue
@@ -244,13 +248,14 @@ func (inner *networkPolicy) resolverServes(resolver DNSZoneResolver, now time.Ti
 // it serves, a rule admits UDP from self to its port, its map holds self
 // within the peer limit, and self's map holds it: resolver Devices share the
 // routers' part of the peer limit with the Sites' routers and the exit nodes
-// in routers. They are then needed peers. The root zone waits for D1b. A
-// zone of one name another zone sent holds is answered in that one.
+// in routers. They are then needed peers; the root zone sorts first, so
+// its resolvers come first. A zone of one name another zone sent holds is
+// answered in that one.
 func (inner *networkPolicy) consumerDNSZones(view *RouteView, self int64, now time.Time,
 	routers map[node.ID]struct{}) {
 	index := inner.routes
 	for _, zone := range index.zoneList {
-		if zone.Domain == "." || !inner.receives(zone, self, now) {
+		if !inner.receives(zone, self, now) {
 			continue
 		}
 		if len(view.dnsZones) == MaximumDNSZones {
@@ -333,9 +338,6 @@ func (inner *networkPolicy) servedDNS(view *RouteView, self int64, now time.Time
 	var serving []served
 	for _, position := range zones {
 		zone := index.zoneList[position]
-		if zone.Domain == "." {
-			continue
-		}
 		for _, resolver := range zone.Resolvers {
 			if resolver.Device == self && inner.resolverServes(resolver, now) {
 				serving = append(serving, served{zone: zone, port: resolver.Port})
@@ -365,12 +367,14 @@ func coversPort(ranges []policy.PortRange, port uint16) bool {
 	})
 }
 
-// validDNSZone checks one zone as read: a domain, up to 4 distinct
+// validDNSZone checks one zone as read: a domain (the root never a search
+// domain), up to 4 distinct
 // resolvers each a Device on port 53 or 1024-65535 or an Internet address
 // on port 53, up to 16 groups. A zone whose resolvers the store dropped
 // keeps its route, unavailable.
 func validDNSZone(zone DNSZone) bool {
 	if zone.Zone <= 0 || zone.Domain == "" || len(zone.Domain) > 253 || zone.SearchPosition < 0 ||
+		(zone.Domain == "." && zone.SearchPosition != 0) ||
 		zone.OtherNames < DNSOtherForward || zone.OtherNames > DNSOtherHost ||
 		(zone.OtherNames != DNSOtherForward && (len(zone.Resolvers) != 0 || zone.Domain == ".")) ||
 		len(zone.Resolvers) > MaximumDNSZoneResolvers ||

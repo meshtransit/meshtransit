@@ -68,13 +68,14 @@ func captiveCapabilities(recorder captivewindow.Recorder) []string {
 }
 
 // dnsCapabilities offers dns.forward1, forward DNS zones in maps (DNS design
-// D1 §4.1), and dns.records1, names and every zone kind (D2 §4.1), when the
-// deployment has them.
+// D1 §4.1), dns.records1, names and every zone kind (D2 §4.1), and
+// dns.root1, the root zone with DNS digests and resolver health (D1b §3.2),
+// when the deployment has them.
 func dnsCapabilities(dnsZones bool) []string {
 	if !dnsZones {
 		return nil
 	}
-	return []string{"dns.forward1", "dns.records1"}
+	return []string{"dns.forward1", "dns.records1", "dns.root1"}
 }
 
 // mtcpDependencies are the application services MTCP sessions use. The
@@ -220,3 +221,7 @@ func composeDeviceLogout(mapConfig config.ControlMapConfig, runtime *postgresada
 	}
 	return service, nil
 }
+
+// The map stream service takes resolver health reports (mtcp-v1 §8.6): the
+// MTCP adapter finds it by this interface, and drops the reports without it.
+var _ mtcpadapter.DNSHealthStreams = (*mapsession.StreamService)(nil)

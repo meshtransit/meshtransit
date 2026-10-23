@@ -28,6 +28,9 @@ type Delivery struct {
 	// Routes is the route digest of the served routes sent, for a session
 	// that can route.
 	Routes RouteDigest
+	// DNS is the DNS digest of the DNS configuration sent, for a session
+	// that reports what it applied (dns.root1).
+	DNS DNSDigest
 	// PeersSent and PeersAuthorized differ when a peer limit cut the map.
 	PeersSent       int
 	PeersAuthorized int
@@ -41,7 +44,7 @@ func (delivery Delivery) IsValid() bool {
 		delivery.PeersSent >= 0 && delivery.PeersAuthorized >= delivery.PeersSent
 }
 
-func deliveryOf(snapshot Snapshot, filter FilterDigest, at time.Time) Delivery {
+func deliveryOf(snapshot Snapshot, filter FilterDigest, dns DNSDigest, at time.Time) Delivery {
 	delivery := Delivery{
 		NodeID:             snapshot.NodeID(),
 		NodeKey:            snapshot.NodeKey(),
@@ -52,6 +55,7 @@ func deliveryOf(snapshot Snapshot, filter FilterDigest, at time.Time) Delivery {
 		DeliveredAt:        at.UTC(),
 		Filter:             filter,
 		Routes:             routeDigestOf(snapshot),
+		DNS:                dns,
 	}
 	delivery.PeersSent, delivery.PeersAuthorized = snapshot.PeerLimit()
 	return delivery
@@ -85,7 +89,9 @@ func (service *StreamService) WithDeliveryRecorder(recorder DeliveryRecorder) (*
 // recordDelivery notes a frame that was written and flushed. Errors are
 // deliberately dropped: the recorder counts them, and distribution status
 // must never cost a Device its map.
-func (service *StreamService) recordDelivery(ctx context.Context, snapshot Snapshot, filter FilterDigest) {
+func (service *StreamService) recordDelivery(ctx context.Context, snapshot Snapshot, filter FilterDigest,
+	dns DNSDigest,
+) {
 	if service.delivery == nil {
 		return
 	}
@@ -93,7 +99,7 @@ func (service *StreamService) recordDelivery(ctx context.Context, snapshot Snaps
 	// client may disconnect right after its first map) but stays bounded.
 	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), service.options.CoordinationTimeout)
 	defer cancel()
-	_ = service.delivery.RecordDelivery(recordCtx, deliveryOf(snapshot, filter, time.Now()))
+	_ = service.delivery.RecordDelivery(recordCtx, deliveryOf(snapshot, filter, dns, time.Now()))
 }
 
 // filterDigest returns the digest of the filter snapshot sends, or the zero
