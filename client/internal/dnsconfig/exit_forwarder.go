@@ -65,6 +65,9 @@ type ExitForwarder struct {
 	upstreamPort uint16
 	resolvConf   string
 	resolvedConf string
+	// relayUpstream, set only by tests, is asked in place of every resolver
+	// relayed to.
+	relayUpstream netip.AddrPort
 
 	// lifecycle serializes Configure and owns the listeners.
 	lifecycle sync.Mutex
@@ -92,6 +95,17 @@ type ExitForwarder struct {
 	startFailed bool
 	// held counts each consumer's questions and connections in flight.
 	held map[netip.Addr]int
+	// relayTargets, relayServed and uplinkDown are what SetRelay set;
+	// relayHeld, relayStalled and relayTimedOut track the resolvers relayed
+	// to (exit_relay.go).
+	relayTargets  map[netip.Addr]struct{}
+	relayServed   []netip.Prefix
+	uplinkDown    bool
+	relayHeld     map[netip.Addr]int
+	relayStalled  map[netip.Addr]int
+	relayTimedOut map[netip.Addr]time.Time
+	// relayAnsweredAt is the last answer of a resolver relayed to.
+	relayAnsweredAt time.Time
 }
 
 type exitBucket struct {
@@ -107,7 +121,9 @@ func NewExitForwarder(logger *slog.Logger, local func() []netip.Prefix) *ExitFor
 	}
 	return &ExitForwarder{
 		logger: logger, local: local, buckets: map[netip.Addr]*exitBucket{}, held: map[netip.Addr]int{},
-		port: netadmin.ExitDNSPort, upstreamPort: 53,
+		relayHeld: map[netip.Addr]int{}, relayStalled: map[netip.Addr]int{},
+		relayTimedOut: map[netip.Addr]time.Time{},
+		port:          netadmin.ExitDNSPort, upstreamPort: 53,
 		resolvConf: exitSystemResolvers, resolvedConf: exitResolvedResolvers,
 		slots: make(chan struct{}, maxConcurrentQueries), tcpSlots: make(chan struct{}, maxTCPConnections),
 	}
@@ -227,7 +243,7 @@ func (f *ExitForwarder) serveUDP(ctx context.Context, listener *net.UDPConn) {
 		query := append([]byte(nil), buffer[:count]...)
 		consumer := remote.Addr().Unmap()
 		if !f.hold(consumer, maxExitConsumerQuestions) {
-			_, _ = listener.WriteToUDPAddrPort(busyResponse(query), remote)
+			_, _ = listener.WriteToUDPAddrPort(withRelayStatus(query, busyResponse(query), relayBusy), remote)
 			continue
 		}
 		select {
@@ -243,7 +259,7 @@ func (f *ExitForwarder) serveUDP(ctx context.Context, listener *net.UDPConn) {
 			}()
 		default:
 			f.release(consumer)
-			_, _ = listener.WriteToUDPAddrPort(busyResponse(query), remote)
+			_, _ = listener.WriteToUDPAddrPort(withRelayStatus(query, busyResponse(query), relayBusy), remote)
 		}
 	}
 }
@@ -332,11 +348,18 @@ func (f *ExitForwarder) answer(ctx context.Context, query []byte, transport stri
 	if err != nil {
 		if errors.Is(err, errUnsupportedEDNSVersion) {
 			response, _ := unsupportedEDNSVersionResponse(message)
-			return response
+			return withRelayStatus(query, response, relayNotAllowed)
 		}
-		return formatError(query)
+		return withRelayStatus(query, formatError(query), relayNotAllowed)
 	}
 	upstreams, private, domains, admitted := f.prepare(consumer, time.Now())
+	if target, present, relayErr := relayOption(message); present {
+		// A zone's resolver, asked through this exit node (DNS design D1c).
+		if relayErr != nil {
+			target = netip.AddrPort{}
+		}
+		return f.relay(ctx, query, message, question, transport, target, admitted, private)
+	}
 	name := strings.TrimSuffix(strings.ToLower(question.Name.String()), ".")
 	if rcode, refused := exitLocalRefusal(name, question.Type, domains); refused && question.Type != dnsmessage.TypePTR {
 		// The exit network's own names stay its own: asking its resolver

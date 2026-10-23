@@ -795,6 +795,13 @@ func convertServedExits(config *mtcpv1.ServedExits) ([]networkmap.ServedExit, er
 			}
 			converted.DNSUpstreams = append(converted.DNSUpstreams, address)
 		}
+		for _, raw := range pool.GetDnsRelayTargets() {
+			address, ok := netip.AddrFromSlice(raw)
+			if !ok || address.Is4In6() {
+				return nil, fmt.Errorf("%w: malformed exit relay target", controlplane.ErrNetmapInvalid)
+			}
+			converted.DNSRelayTargets = append(converted.DNSRelayTargets, address)
+		}
 		rules, err := convertFilter(&mtcpv1.PacketFilter{Rules: pool.GetRules()})
 		if err != nil {
 			return nil, err

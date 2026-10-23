@@ -19,6 +19,7 @@ const (
 	maxExitReference   = 64
 	maxExitProbes      = 8
 	maxExitUpstreams   = 4
+	maxRelayTargets    = 256
 	minExitConntrack   = 1024
 	maxExitConntrack   = 262144
 	maxServedExitRules = 1024
@@ -39,6 +40,9 @@ type ServedExit struct {
 	SMTPAllowed bool
 	// DNSUpstreams are Internet resolvers, tried in order.
 	DNSUpstreams []netip.Addr
+	// DNSRelayTargets are the Internet resolvers of the Network's zones the
+	// node's DNS forwarder relays consumers' questions to (DNS design D1c).
+	DNSRelayTargets []netip.Addr
 	// Rules admit the pool's consumers to the Internet: their destinations
 	// are 0.0.0.0/0 and ::/0 only, and the exit node subtracts what is not
 	// the Internet itself.
@@ -50,7 +54,8 @@ var internetDestinations = [...]netip.Prefix{netip.MustParsePrefix("0.0.0.0/0"),
 
 // validateServedExits checks served as mtcp-v1 §7.7 requires: at most one
 // pool with a valid reference, at most 8 Internet probes with a port, at most
-// 4 distinct Internet resolvers, a connection limit within bounds and rules
+// 4 distinct Internet resolvers, at most 256 distinct Internet relay targets,
+// a connection limit within bounds and rules
 // whose destinations are 0.0.0.0/0 or ::/0.
 func validateServedExits(served []ServedExit) error {
 	if len(served) > maxServedExits {
@@ -77,6 +82,14 @@ func validateServedExits(served []ServedExit) error {
 		for index, upstream := range pool.DNSUpstreams {
 			if !internet.Contains(upstream) || slices.Contains(pool.DNSUpstreams[:index], upstream) {
 				return fmt.Errorf("served Exit Pool %q has a resolver off the Internet", pool.Ref)
+			}
+		}
+		if len(pool.DNSRelayTargets) > maxRelayTargets {
+			return fmt.Errorf("served Exit Pool %q has more than %d relay targets", pool.Ref, maxRelayTargets)
+		}
+		for index, target := range pool.DNSRelayTargets {
+			if !internet.Contains(target) || slices.Contains(pool.DNSRelayTargets[:index], target) {
+				return fmt.Errorf("served Exit Pool %q has a relay target off the Internet", pool.Ref)
 			}
 		}
 		if len(pool.Rules) > maxServedExitRules {
@@ -111,6 +124,7 @@ func cloneServedExits(served []ServedExit) []ServedExit {
 		cloned[index] = pool
 		cloned[index].Probes = slices.Clone(pool.Probes)
 		cloned[index].DNSUpstreams = slices.Clone(pool.DNSUpstreams)
+		cloned[index].DNSRelayTargets = slices.Clone(pool.DNSRelayTargets)
 		cloned[index].Rules = make([]Rule, len(pool.Rules))
 		for position, rule := range pool.Rules {
 			cloned[index].Rules[position] = Rule{

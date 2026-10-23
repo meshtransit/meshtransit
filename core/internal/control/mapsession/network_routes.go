@@ -273,15 +273,20 @@ func (view RouteView) Equal(other RouteView) bool {
 // routeIndex is a Network's routes, indexed once per read for every map.
 type routeIndex struct {
 	revision int64
-	sites    map[int64]*routeSiteEntry
-	bySite   map[int64][]int   // site -> rule indexes
-	routes   map[int64][]int64 // router device -> sites it is a router of
-	nodes    map[int64]node.ID // router device -> public identity
-	static   map[int64][]int64 // router device -> its consumers, sorted
-	ruleList []RouteRule       // as read, for Equal
-	routers  []RouteRouter     // as read, for Equal
-	siteList []RouteSite       // as read, for Equal
-	limit    int               // peer limit the consumer cut uses
+	// relayTargets are the Internet resolvers of the Network's DNS zones an
+	// exit node's forwarder may relay to; relayTargetsDropped counts those
+	// past MaximumDNSRelayTargets (DNS design D1c §4.1).
+	relayTargets        []netip.Addr
+	relayTargetsDropped int
+	sites               map[int64]*routeSiteEntry
+	bySite              map[int64][]int   // site -> rule indexes
+	routes              map[int64][]int64 // router device -> sites it is a router of
+	nodes               map[int64]node.ID // router device -> public identity
+	static              map[int64][]int64 // router device -> its consumers, sorted
+	ruleList            []RouteRule       // as read, for Equal
+	routers             []RouteRouter     // as read, for Equal
+	siteList            []RouteSite       // as read, for Equal
+	limit               int               // peer limit the consumer cut uses
 	// routerLimit is how many routers one map reaches, and consumers how
 	// many consumers a router keeps: together at most the peer limit, so a
 	// peer limit never cuts a peer routes need.

@@ -44,6 +44,8 @@ func exitSnapshotFixtureWith(t *testing.T, self int64, change func(*mapsession.N
 		Scope: scope, Revision: 5, ReleaseActive: true, Devices: devices,
 		Members:       []mapsession.SelectorMember{{Kind: mapsession.SelectorDeviceGroup, Selector: 10, Device: 702}},
 		RouteRevision: 9, RoutePeerLimit: 10_000,
+		DNSZones: []mapsession.DNSZone{{Zone: 1, Domain: "corp.example", OtherNames: mapsession.DNSOtherForward,
+			Resolvers: []mapsession.DNSZoneResolver{{Address: netip.MustParseAddr("9.9.9.9"), Port: 53}}}},
 		ExitPools: []mapsession.ExitPool{{Pool: 1, Ref: "p-main", Name: "Main", ConntrackPerConsumer: 4096,
 			DNSUpstreams: []netip.Addr{netip.MustParseAddr("1.1.1.1")},
 			Probes:       []mapsession.ExitProbe{{Address: netip.MustParseAddr("9.9.9.9"), Port: 443}}}},
@@ -166,7 +168,8 @@ func TestEncodeSnapshotCarriesExitPools(t *testing.T) {
 	served := message.GetServedExits().GetPools()
 	if len(served) != 1 || served[0].GetPoolRef() != "p-main" || served[0].GetConntrackPerConsumer() != 4096 ||
 		served[0].GetSmtpAllowed() || len(served[0].GetProbes()) != 1 || served[0].GetProbes()[0].GetPort() != 443 ||
-		len(served[0].GetDnsUpstreams()) != 1 {
+		len(served[0].GetDnsUpstreams()) != 1 || len(served[0].GetDnsRelayTargets()) != 1 ||
+		!slices.Equal(served[0].GetDnsRelayTargets()[0], []byte{9, 9, 9, 9}) {
 		t.Fatalf("served exits = %v", message.GetServedExits())
 	}
 	ports := []*mtcpv1.PortRange{{First: 443, Last: 443}}

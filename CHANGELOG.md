@@ -5,6 +5,17 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- DNS through an exit node (DNS design D1c): while a Device uses an exit
+  node, a zone's Internet resolvers (the root zone's among them) are asked
+  through the exit node's DNS forwarder, which relays the question to that
+  resolver from its own network, instead of answering from its own
+  upstreams. Turning an exit node on no longer skips a filtering root zone.
+  Core sends each exit node the resolvers it may relay to
+  (`ServedExit.dns_relay_targets`, at most 256); questions and answers carry
+  the EDNS option 65432 between the two nodes (mtcp-v1, DNS relay). An exit
+  node with an older client answers from its own upstreams: a zone that
+  fails open takes that answer, one that fails closed answers SERVFAIL
+  (NXDOMAIN on Android). Update exit nodes before the Devices that use them.
 - Core (DNS design D1b.3): `GET …/dns/zones/{zone}/status` counts the
   Devices that hold a zone by how they apply it (applied, applying, not
   matching, not reported, turned off, could not apply, offline) and, per

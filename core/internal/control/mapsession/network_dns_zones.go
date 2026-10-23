@@ -96,6 +96,7 @@ func (index *routeIndex) indexDNSZones(params NetworkPolicyParams, keysOf func(i
 	slices.SortFunc(index.zoneList, func(first, second DNSZone) int { return strings.Compare(first.Domain, second.Domain) })
 	index.resolverZones = make(map[int64][]int)
 	seen := make(map[int64]struct{}, len(index.zoneList))
+	index.relayTargets = nil
 	for position, zone := range index.zoneList {
 		if !validDNSZone(zone) {
 			return false
@@ -107,9 +108,12 @@ func (index *routeIndex) indexDNSZones(params NetworkPolicyParams, keysOf func(i
 		for _, resolver := range zone.Resolvers {
 			if resolver.Device > 0 {
 				index.resolverZones[resolver.Device] = append(index.resolverZones[resolver.Device], position)
+			} else if resolver.Address.IsValid() {
+				index.relayTargets = append(index.relayTargets, resolver.Address.Unmap())
 			}
 		}
 	}
+	index.relayTargets, index.relayTargetsDropped = relayTargets(index.relayTargets)
 	// The rules that may admit UDP to a resolver Device: found through the
 	// selectors resolvers belong to, not by expanding every rule.
 	byKey := make(map[selectorKey][]int64)
@@ -435,4 +439,19 @@ func cloneDNSZones(zones []DNSZone) []DNSZone {
 func compareSearchZones(first, second DNSZoneRoute) int {
 	return cmp.Or(cmp.Compare(first.SearchPosition, second.SearchPosition),
 		strings.Compare(first.Domain, second.Domain))
+}
+
+// MaximumDNSRelayTargets bounds the resolvers an exit node's forwarder may
+// relay to (mtcp-v1 §7, DNS design D1c §4.1).
+const MaximumDNSRelayTargets = 256
+
+// relayTargets orders the Internet resolvers of the zones by address, each
+// once, and keeps the first MaximumDNSRelayTargets; dropped counts the rest.
+func relayTargets(addresses []netip.Addr) (targets []netip.Addr, dropped int) {
+	slices.SortFunc(addresses, func(first, second netip.Addr) int { return first.Compare(second) })
+	addresses = slices.Compact(addresses)
+	if len(addresses) > MaximumDNSRelayTargets {
+		return addresses[:MaximumDNSRelayTargets:MaximumDNSRelayTargets], len(addresses) - MaximumDNSRelayTargets
+	}
+	return addresses, 0
 }

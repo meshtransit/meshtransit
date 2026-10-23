@@ -99,6 +99,10 @@ type ServedExit struct {
 	ConntrackPerConsumer int
 	SMTPAllowed          bool
 	DNSUpstreams         []netip.Addr
+	// DNSRelayTargets are the Internet resolvers of the Network's DNS zones,
+	// the only ones the exit node's forwarder relays a consumer's question
+	// to (DNS design D1c §4.1).
+	DNSRelayTargets []netip.Addr
 }
 
 // ExitInbound admits the consumers of one rule to the Internet through the
@@ -131,6 +135,7 @@ func (view RouteView) ServedExits() []ServedExit {
 	cloned := make([]ServedExit, len(view.servedExits))
 	for index, served := range view.servedExits {
 		served.Probes, served.DNSUpstreams = slices.Clone(served.Probes), slices.Clone(served.DNSUpstreams)
+		served.DNSRelayTargets = slices.Clone(served.DNSRelayTargets)
 		cloned[index] = served
 	}
 	return cloned
@@ -330,7 +335,7 @@ func (inner *networkPolicy) servedExits(view *RouteView, self int64, now time.Ti
 	value := entry.pool
 	view.servedExits = []ServedExit{{Ref: value.Ref, Probes: slices.Clone(value.Probes),
 		ConntrackPerConsumer: value.ConntrackPerConsumer, SMTPAllowed: value.SMTPAllowed,
-		DNSUpstreams: slices.Clone(value.DNSUpstreams)}}
+		DNSUpstreams: slices.Clone(value.DNSUpstreams), DNSRelayTargets: slices.Clone(index.relayTargets)}}
 	static := index.static[self]
 	for _, position := range index.byPool[pool] {
 		rule := index.exitRules[position]
@@ -405,7 +410,7 @@ func equalExitPoolRoute(first, second ExitPoolRoute) bool {
 func equalServedExit(first, second ServedExit) bool {
 	return first.Ref == second.Ref && slices.Equal(first.Probes, second.Probes) &&
 		first.ConntrackPerConsumer == second.ConntrackPerConsumer && first.SMTPAllowed == second.SMTPAllowed &&
-		slices.Equal(first.DNSUpstreams, second.DNSUpstreams)
+		slices.Equal(first.DNSUpstreams, second.DNSUpstreams) && slices.Equal(first.DNSRelayTargets, second.DNSRelayTargets)
 }
 
 func equalExitInbound(first, second ExitInbound) bool {

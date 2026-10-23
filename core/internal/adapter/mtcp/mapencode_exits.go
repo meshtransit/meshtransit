@@ -95,6 +95,9 @@ func encodeServedExits(snapshot mapsession.Snapshot) (*mtcpv1.ServedExits, error
 		for _, upstream := range pool.DNSUpstreams {
 			encoded.DnsUpstreams = append(encoded.DnsUpstreams, upstream.Unmap().AsSlice())
 		}
+		for _, target := range pool.DNSRelayTargets {
+			encoded.DnsRelayTargets = append(encoded.DnsRelayTargets, target.Unmap().AsSlice())
+		}
 		served.Pools = append(served.Pools, encoded)
 	}
 	return served, nil

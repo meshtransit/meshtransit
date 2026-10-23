@@ -32,7 +32,8 @@ type zoneQuery struct {
 }
 
 // resolveZone answers a name of a forward zone (a route with resolvers, or
-// unavailable) from the zone's resolvers that the breaker does not skip.
+// unavailable) from the zone's resolvers that the breaker does not skip,
+// Internet ones through the exit node while one is in use.
 // SERVFAIL or REFUSED from one moves on to the next; when none answers
 // otherwise, the first such answer is the zone's. When none answers at all
 // or none can be used, a zone that fails open asks the
@@ -58,9 +59,14 @@ func (e *resolverEngine) resolveZone(ctx context.Context, zone zoneQuery) ([]byt
 	if len(targets) != 0 {
 		forwardCtx, cancel := context.WithTimeout(ctx, budget)
 		var response []byte
-		response, err = forwardQuery(forwardCtx, zone.query, zone.question,
-			e.byLiveness(targets, zone.route.Resolvers), zone.transport,
-			zoneGate{breaker: e.breaker, own: zone.route.Resolvers, health: e.health})
+		via := netip.AddrPort{}
+		if !captiveWindow {
+			// In a captive portal window the network's resolvers are asked
+			// directly.
+			via = e.relayVia(zone.plan)
+		}
+		response, err = forwardVia(forwardCtx, zone.query, zone.question,
+			e.byLiveness(targets, zone.route.Resolvers), zone.transport, e.zoneGate(zone.route.Resolvers, via), via)
 		cancel()
 		if err == nil {
 			return e.zoneAnswer(zone, response, captiveWindow)
@@ -74,6 +80,12 @@ func (e *resolverEngine) resolveZone(ctx context.Context, zone zoneQuery) ([]byt
 				return e.zoneFailure(zone, err)
 			}
 			return zone.answer(answered, captiveWindow)
+		}
+		// An exit node that does not relay answered from its own upstreams:
+		// a zone that fails open takes it, one that fails closed does not
+		// (DNS design D1c Q3).
+		if old, ok := oldExitAnswer(err); ok && zone.route.FailOpen {
+			return e.zoneAnswer(zone, old, captiveWindow)
 		}
 	}
 	if !zone.route.FailOpen || ctx.Err() != nil {
@@ -91,8 +103,8 @@ func (e *resolverEngine) resolveZone(ctx context.Context, zone zoneQuery) ([]byt
 	if noData {
 		return zone.noData()
 	}
-	// Resolvers that just failed (the exit node's forwarder in place of
-	// Internet resolvers) are not asked twice.
+	// Resolvers that just failed (the network's in a captive portal window)
+	// are not asked twice.
 	fallback = slices.DeleteFunc(fallback, func(resolver netip.AddrPort) bool {
 		return slices.Contains(targets, resolver)
 	})
@@ -106,14 +118,15 @@ func (e *resolverEngine) resolveZone(ctx context.Context, zone zoneQuery) ([]byt
 	return e.zoneAnswer(zone, response, captiveFallback)
 }
 
-// zoneTargets are the resolvers a zone's question goes to first. Without an
-// exit node they are the zone's own. While one is in use, resolvers in the
-// mesh or a private network keep their place and every Internet resolver
-// is replaced by the exit node's forwarder (D1a: Internet resolvers are
-// asked through the exit in D1c), so no question leaves through the host's
-// own network; a zone with Internet resolvers only is asked like any name
-// the exit node answers: the network's resolvers in a captive portal
-// window, no data for AAAA when the exit node carries no IPv6.
+// zoneTargets are the resolvers a zone's question goes to first, in the
+// zone's order. Without an exit node they are the zone's own. While one is
+// in use, resolvers in the mesh or a private network are asked directly and
+// Internet resolvers through the exit node's forwarder (DNS design D1c §5),
+// so no question leaves through the host's own network; an IPv6 one is
+// left out when the exit node carries no IPv6. A zone with Internet
+// resolvers only is asked like any name the exit node answers: the
+// network's resolvers in a captive portal window, no data for AAAA when the
+// exit node carries no IPv6.
 func (e *resolverEngine) zoneTargets(plan Plan, route Route, question dnsmessage.Question) (
 	targets []netip.AddrPort, captiveWindow, noData bool,
 ) {
@@ -121,43 +134,38 @@ func (e *resolverEngine) zoneTargets(plan Plan, route Route, question dnsmessage
 	if e.exitPending(plan) {
 		// Only the zone's resolvers in the mesh or a private network.
 		return slices.DeleteFunc(slices.Clone(route.Resolvers), func(resolver netip.AddrPort) bool {
-			return internet.Contains(resolver.Addr())
+			return internet.Contains(resolver.Addr().Unmap())
 		}), false, false
 	}
 	if exit == nil || len(route.Resolvers) == 0 {
 		return slices.Clone(route.Resolvers), false, false
 	}
-	var private []netip.AddrPort
-	viaExit := false
+	internetOnly := !slices.ContainsFunc(route.Resolvers, func(resolver netip.AddrPort) bool {
+		return !internet.Contains(resolver.Addr().Unmap())
+	})
+	if internetOnly {
+		// A captive portal window lends the network's resolvers to a zone
+		// that fails open only: a closed zone's names never reach the
+		// network.
+		if network := e.captiveResolvers(); len(network) != 0 {
+			if !route.FailOpen {
+				return nil, false, false
+			}
+			return network, true, false
+		}
+		if question.Type == dnsmessage.TypeAAAA && !exit.IPv6 {
+			return nil, false, true
+		}
+	}
+	via := e.relayVia(plan)
 	for _, resolver := range route.Resolvers {
-		if internet.Contains(resolver.Addr()) {
-			viaExit = true
+		address := resolver.Addr().Unmap()
+		if internet.Contains(address) && (!via.IsValid() || (address.Is6() && !exit.IPv6)) {
 			continue
 		}
-		private = append(private, resolver)
+		targets = append(targets, resolver)
 	}
-	if len(private) != 0 {
-		if viaExit {
-			for _, forwarder := range exit.Resolvers {
-				if !slices.Contains(private, forwarder) {
-					private = append(private, forwarder)
-				}
-			}
-		}
-		return private, false, false
-	}
-	// A captive portal window lends the network's resolvers to a zone that
-	// fails open only: a closed zone's names never reach the network.
-	if network := e.captiveResolvers(); len(network) != 0 {
-		if !route.FailOpen {
-			return nil, false, false
-		}
-		return network, true, false
-	}
-	if question.Type == dnsmessage.TypeAAAA && !exit.IPv6 {
-		return nil, false, true
-	}
-	return slices.Clone(exit.Resolvers), false, false
+	return targets, false, false
 }
 
 // failOpenTargets are the resolvers a zone that fails open falls back to:
@@ -212,15 +220,33 @@ func (zone zoneQuery) failure(cause error) ([]byte, error) {
 }
 
 // zoneGate puts the breaker in front of the zone's own resolvers only: the
-// exit node's forwarder and the network's resolvers are always asked.
+// exit node's forwarder and the network's resolvers are always asked. A
+// resolver asked through the exit node (via) has a breaker and health of
+// its own, apart from the same resolver asked directly (DNS design D1c §5).
 type zoneGate struct {
-	breaker *resolverBreaker
-	own     []netip.AddrPort
-	health  *resolverHealthTracker
+	engine *resolverEngine
+	own    []netip.AddrPort
+	via    netip.AddrPort
+}
+
+// zoneGate is the gate of a zone whose resolvers are own.
+func (e *resolverEngine) zoneGate(own []netip.AddrPort, via netip.AddrPort) zoneGate {
+	return zoneGate{engine: e, own: own, via: via}
+}
+
+func (gate zoneGate) path(resolver netip.AddrPort) (*resolverBreaker, *resolverHealthTracker) {
+	if relayed(resolver, gate.via) {
+		return gate.engine.relayBreaker, gate.engine.relayHealth
+	}
+	return gate.engine.breaker, gate.engine.health
 }
 
 func (gate zoneGate) allow(resolver netip.AddrPort) bool {
-	return !slices.Contains(gate.own, resolver) || gate.breaker.allow(resolver)
+	if !slices.Contains(gate.own, resolver) {
+		return true
+	}
+	breaker, _ := gate.path(resolver)
+	return breaker.allow(resolver)
 }
 
 // record ends one trial of resolver: an answer (SERVFAIL and REFUSED
@@ -229,17 +255,19 @@ func (gate zoneGate) record(resolver netip.AddrPort, err error) {
 	if !slices.Contains(gate.own, resolver) {
 		return
 	}
+	breaker, health := gate.path(resolver)
 	if err == nil || answeredWith(err) {
-		gate.breaker.record(resolver, nil)
-		gate.health.answered(resolver, err != nil)
+		breaker.record(resolver, nil)
+		health.answered(resolver, err != nil)
 		return
 	}
-	gate.breaker.record(resolver, err)
+	breaker.record(resolver, err)
 }
 
 func (gate zoneGate) release(resolver netip.AddrPort) {
 	if slices.Contains(gate.own, resolver) {
-		gate.breaker.release(resolver)
+		breaker, _ := gate.path(resolver)
+		breaker.release(resolver)
 	}
 }
 

@@ -432,6 +432,7 @@ func (e *resolverEngine) askOutside(ctx context.Context, plan Plan, name string,
 	}
 	var targets, fallback []netip.AddrPort
 	var gate trialGate
+	var via netip.AddrPort
 	route, routed := mostSpecificRoute(plan.Routes, name)
 	infrastructure := !routed && plan.Root != nil && e.infrastructureName(name)
 	if !routed && plan.Root != nil && !infrastructure {
@@ -450,13 +451,16 @@ func (e *resolverEngine) askOutside(ctx context.Context, plan Plan, name string,
 			return nil, nil
 		}
 	case routed:
-		var noData bool
-		targets, _, noData = e.zoneTargets(plan, route, question)
+		var captiveWindow, noData bool
+		targets, captiveWindow, noData = e.zoneTargets(plan, route, question)
 		if noData {
 			return nil, nil
 		}
 		targets = e.byLiveness(targets, route.Resolvers)
-		gate = zoneGate{breaker: e.breaker, own: route.Resolvers, health: e.health}
+		if !captiveWindow {
+			via = e.relayVia(plan)
+		}
+		gate = e.zoneGate(route.Resolvers, via)
 		if route.FailOpen {
 			fallback, _, _ = e.failOpenTargets(plan, question)
 		}
@@ -475,7 +479,14 @@ func (e *resolverEngine) askOutside(ctx context.Context, plan Plan, name string,
 	default:
 		targets = e.networkTargets()
 	}
-	response, err := forwardQuery(ctx, query, question, targets, transport, gate)
+	response, err := forwardVia(ctx, query, question, targets, transport, gate, via)
+	if _, answered := upstreamAnswer(err); !answered {
+		if old, ok := oldExitAnswer(err); ok && route.FailOpen {
+			// An exit node that does not relay: as for the name itself (D1c
+			// Q3), never past a resolver's SERVFAIL or REFUSED.
+			response, err = old, nil
+		}
+	}
 	// A zone never fails open past a resolver that answered SERVFAIL or
 	// REFUSED (DNS design D1b §5.3): the chase fails instead.
 	if _, answered := upstreamAnswer(err); err != nil && !answered && len(fallback) != 0 && ctx.Err() == nil {

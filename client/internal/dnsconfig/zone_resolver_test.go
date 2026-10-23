@@ -111,28 +111,38 @@ func TestResolverEngineSkipsAFailingZoneResolver(t *testing.T) {
 	}
 }
 
-// While an exit node is in use a zone keeps its resolvers in the mesh or a
-// private network and asks the exit node's forwarder instead of its
-// Internet resolvers.
+// While an exit node is in use a zone keeps its resolvers in their order:
+// those in the mesh or a private network asked directly, Internet ones
+// through the exit node's forwarder (DNS design D1c §5), an IPv6 one left
+// out when the exit node carries no IPv6.
 func TestZoneTargetsWhileUsingAnExitNode(t *testing.T) {
 	t.Parallel()
 	device := netip.MustParseAddrPort("100.64.0.7:5335")
 	forwarder := netip.MustParseAddrPort("100.64.0.9:53")
+	cloudflare := netip.MustParseAddrPort("1.1.1.1:53")
+	cloudflare6 := netip.MustParseAddrPort("[2606:4700:4700::1111]:53")
 	plan := Plan{Exit: &ExitDNS{Resolvers: []netip.AddrPort{forwarder}}}
 	engine := zoneEngine(t)
 	question := dnsmessage.Question{Type: dnsmessage.TypeA}
-	route := Route{Suffix: "corp.internal", Resolvers: []netip.AddrPort{
-		device,
-		netip.MustParseAddrPort("1.1.1.1:53"),
-	}}
+	route := Route{Suffix: "corp.internal", Resolvers: []netip.AddrPort{cloudflare6, device, cloudflare}}
 	if targets, _, _ := engine.zoneTargets(plan, route, question); !slices.Equal(targets,
-		[]netip.AddrPort{device, forwarder}) {
+		[]netip.AddrPort{device, cloudflare}) {
 		t.Fatalf("targets = %v", targets)
 	}
-	route.Resolvers = []netip.AddrPort{netip.MustParseAddrPort("1.1.1.1:53")}
-	if targets, _, _ := engine.zoneTargets(plan, route, question); !slices.Equal(targets,
-		[]netip.AddrPort{forwarder}) {
+	plan.Exit.IPv6 = true
+	if targets, _, _ := engine.zoneTargets(plan, route, question); !slices.Equal(targets, route.Resolvers) {
+		t.Fatalf("targets with IPv6 = %v", targets)
+	}
+	if via := engine.relayVia(plan); via != forwarder {
+		t.Fatalf("relayed via %s", via)
+	}
+	route.Resolvers = []netip.AddrPort{cloudflare}
+	if targets, _, _ := engine.zoneTargets(plan, route, question); !slices.Equal(targets, route.Resolvers) {
 		t.Fatalf("Internet-only targets = %v", targets)
+	}
+	plan.Exit.Resolvers = nil // chosen, no exit node carrying the traffic
+	if targets, _, _ := engine.zoneTargets(plan, route, question); len(targets) != 0 {
+		t.Fatalf("targets without a forwarder = %v", targets)
 	}
 	if targets, _, _ := engine.zoneTargets(plan, Route{Suffix: "corp", Unavailable: true}, question); len(targets) != 0 {
 		t.Fatalf("unavailable targets = %v", targets)

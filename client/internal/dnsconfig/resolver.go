@@ -76,6 +76,10 @@ type resolverEngine struct {
 	networkResolvers func() []netip.AddrPort
 	// breaker skips forward zone resolvers that keep failing.
 	breaker *resolverBreaker
+	// relayBreaker and relayHealth are breaker and health of the zones'
+	// resolvers asked through an exit node (zone_relay.go).
+	relayBreaker *resolverBreaker
+	relayHealth  *resolverHealthTracker
 	// network caches networkResolvers for zones that fail open.
 	network networkResolverCache
 	// fullResolver answers every name, not only the mesh's: names no route
@@ -122,6 +126,7 @@ func newResolverEngine() *resolverEngine {
 	return &resolverEngine{
 		forwardSlots: make(chan struct{}, maxForwardQueries), networkResolvers: underlay.NetworkResolvers,
 		breaker: newResolverBreaker(time.Now), health: newResolverHealthTracker(time.Now),
+		relayBreaker: newResolverBreaker(time.Now), relayHealth: newResolverHealthTracker(time.Now),
 	}
 }
 
@@ -138,6 +143,16 @@ func (e *resolverEngine) resolve(
 		}
 
 		return formatError(query), nil
+	}
+	if _, present, _ := relayOption(message); present {
+		// Only the node asks an exit node to relay (DNS design D1c §5): an
+		// application's own relay option goes nowhere.
+		if query, err = withoutRelayOption(query); err != nil {
+			return formatError(query), nil
+		}
+		if message, question, name, err = parseQuery(query); err != nil {
+			return formatError(query), nil
+		}
 	}
 	if response, own, err := ownNameAnswer(plan, message, question, name); own {
 		if err != nil {
@@ -597,6 +612,22 @@ func forwardQuery(
 	transport string,
 	gate trialGate,
 ) ([]byte, error) {
+	return forwardVia(ctx, query, question, resolvers, transport, gate, netip.AddrPort{})
+}
+
+// forwardVia is forwardQuery asking every Internet resolver through via,
+// the exit node's forwarder, when valid (DNS design D1c §5). Once the
+// forwarder answers a relayed question itself (an exit node that does not
+// relay), the other Internet resolvers are not asked through it.
+func forwardVia(
+	ctx context.Context,
+	query []byte,
+	question dnsmessage.Question,
+	resolvers []netip.AddrPort,
+	transport string,
+	gate trialGate,
+	via netip.AddrPort,
+) ([]byte, error) {
 	forwarded := append([]byte(nil), query...)
 	originalID := binary.BigEndian.Uint16(forwarded[:2])
 	var randomID [2]byte
@@ -605,21 +636,53 @@ func forwardQuery(
 	}
 	binary.BigEndian.PutUint16(forwarded[:2], binary.BigEndian.Uint16(randomID[:]))
 	var failures []error
+	oldExit := false
 	for _, resolver := range resolvers {
 		if err := ctx.Err(); err != nil {
 			return nil, errors.Join(append(failures, err)...)
 		}
-		if gate != nil && !gate.allow(resolver) {
+		viaExit := relayed(resolver, via) && zoneResolver(gate, resolver)
+		if (viaExit && oldExit) || (gate != nil && !gate.allow(resolver)) {
 			continue
 		}
+		attempt, asked, addedOPT := forwarded, resolver, false
+		if viaExit {
+			var err error
+			if attempt, addedOPT, err = relayQuery(forwarded, resolver); err != nil {
+				if gate != nil {
+					gate.release(resolver)
+				}
+				failures = append(failures, fmt.Errorf("resolver %s: %w", resolver, err))
+				continue
+			}
+			asked = via
+		}
 		attemptCtx, cancel := context.WithTimeout(ctx, resolverAttemptTimeout)
-		response, err := exchangeDNS(attemptCtx, forwarded, resolver, transport)
+		response, err := exchangeDNS(attemptCtx, attempt, asked, transport)
 		cancel()
 		if err == nil {
 			err = validateForwardResponse(response, binary.BigEndian.Uint16(randomID[:]), question)
 		}
+		if viaExit && (err == nil || answeredWith(err)) {
+			// The forwarder's answer says what became of the question; X's
+			// own SERVFAIL or REFUSED is X's answer.
+			var relayErr error
+			if response, relayErr = relayedAnswer(response, addedOPT); relayErr != nil {
+				err = relayErr
+			}
+			if _, old := oldExitAnswer(err); old {
+				oldExit = true
+			}
+		}
 		if gate != nil {
 			switch {
+			case viaExit && errors.Is(err, errRelayNoAnswer):
+				gate.record(resolver, err)
+			case viaExit && err != nil && !answeredWith(err):
+				// The exit node did not ask X (not allowed, busy, its way
+				// out down, an old exit node) or could not be reached:
+				// nothing is known of X.
+				gate.release(resolver)
 			case err == nil || answeredWith(err):
 				// It answered: SERVFAIL or REFUSED is about the name or the
 				// type (DNSSEC, views), not the resolver.
@@ -634,7 +697,9 @@ func forwardQuery(
 			}
 		}
 		if err != nil {
-			if errors.Is(err, errUpstreamServerFailure) || errors.Is(err, errUpstreamRefused) {
+			if old, ok := oldExitAnswer(err); ok {
+				binary.BigEndian.PutUint16(old[:2], originalID)
+			} else if errors.Is(err, errUpstreamServerFailure) || errors.Is(err, errUpstreamRefused) {
 				binary.BigEndian.PutUint16(response[:2], originalID)
 				err = &upstreamAnswerError{response: response, err: err}
 			}

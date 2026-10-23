@@ -3747,6 +3747,7 @@ type ServedExit struct {
 	SmtpAllowed          bool                   `protobuf:"varint,4,opt,name=smtp_allowed,json=smtpAllowed,proto3" json:"smtp_allowed,omitempty"`
 	DnsUpstreams         [][]byte               `protobuf:"bytes,5,rep,name=dns_upstreams,json=dnsUpstreams,proto3" json:"dns_upstreams,omitempty"`
 	Rules                []*FilterRule          `protobuf:"bytes,6,rep,name=rules,proto3" json:"rules,omitempty"`
+	DnsRelayTargets      [][]byte               `protobuf:"bytes,7,rep,name=dns_relay_targets,json=dnsRelayTargets,proto3" json:"dns_relay_targets,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -3819,6 +3820,13 @@ func (x *ServedExit) GetDnsUpstreams() [][]byte {
 func (x *ServedExit) GetRules() []*FilterRule {
 	if x != nil {
 		return x.Rules
+	}
+	return nil
+}
+
+func (x *ServedExit) GetDnsRelayTargets() [][]byte {
+	if x != nil {
+		return x.DnsRelayTargets
 	}
 	return nil
 }
@@ -6837,7 +6845,7 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\x02V6\x10\x02\x12\b\n" +
 	"\x04BOTH\x10\x03\"D\n" +
 	"\vServedExits\x125\n" +
-	"\x05pools\x18\x01 \x03(\v2\x1f.meshtransit.mtcp.v1.ServedExitR\x05pools\"\x94\x02\n" +
+	"\x05pools\x18\x01 \x03(\v2\x1f.meshtransit.mtcp.v1.ServedExitR\x05pools\"\xc0\x02\n" +
 	"\n" +
 	"ServedExit\x12\x19\n" +
 	"\bpool_ref\x18\x01 \x01(\tR\apoolRef\x126\n" +
@@ -6845,7 +6853,8 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\x16conntrack_per_consumer\x18\x03 \x01(\rR\x14conntrackPerConsumer\x12!\n" +
 	"\fsmtp_allowed\x18\x04 \x01(\bR\vsmtpAllowed\x12#\n" +
 	"\rdns_upstreams\x18\x05 \x03(\fR\fdnsUpstreams\x125\n" +
-	"\x05rules\x18\x06 \x03(\v2\x1f.meshtransit.mtcp.v1.FilterRuleR\x05rules\"/\n" +
+	"\x05rules\x18\x06 \x03(\v2\x1f.meshtransit.mtcp.v1.FilterRuleR\x05rules\x12*\n" +
+	"\x11dns_relay_targets\x18\a \x03(\fR\x0fdnsRelayTargets\"/\n" +
 	"\tExitProbe\x12\x0e\n" +
 	"\x02ip\x18\x01 \x01(\fR\x02ip\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\rR\x04port\"C\n" +

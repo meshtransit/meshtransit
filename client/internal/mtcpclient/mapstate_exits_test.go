@@ -12,8 +12,9 @@ func servedExits(ref string) *mtcpv1.ServedExits {
 	ports := []*mtcpv1.PortRange{{First: 443, Last: 443}}
 	return &mtcpv1.ServedExits{Pools: []*mtcpv1.ServedExit{{
 		PoolRef: ref, ConntrackPerConsumer: 4096,
-		Probes:       []*mtcpv1.ExitProbe{{Ip: []byte{9, 9, 9, 9}, Port: 443}},
-		DnsUpstreams: [][]byte{{1, 1, 1, 1}},
+		Probes:          []*mtcpv1.ExitProbe{{Ip: []byte{9, 9, 9, 9}, Port: 443}},
+		DnsUpstreams:    [][]byte{{1, 1, 1, 1}},
+		DnsRelayTargets: [][]byte{{9, 9, 9, 9}},
 		Rules: []*mtcpv1.FilterRule{{
 			Sources: []*mtcpv1.Prefix{sharedmtcp.AppendPrefix(netip.MustParsePrefix("100.64.0.2/32"))},
 			Destinations: []*mtcpv1.Destination{
@@ -38,6 +39,7 @@ func TestMapStateKeepsServedExitsAcrossDeltas(t *testing.T) {
 	if len(served) != 1 || served[0].Ref != "p-main" || served[0].ConntrackPerConsumer != 4096 ||
 		served[0].SMTPAllowed || len(served[0].Probes) != 1 ||
 		served[0].Probes[0] != netip.MustParseAddrPort("9.9.9.9:443") || len(served[0].DNSUpstreams) != 1 ||
+		len(served[0].DNSRelayTargets) != 1 || served[0].DNSRelayTargets[0] != netip.MustParseAddr("9.9.9.9") ||
 		len(served[0].Rules) != 1 || len(served[0].Rules[0].Destinations) != 2 {
 		t.Fatalf("served exits = %+v", served)
 	}
@@ -73,7 +75,22 @@ func TestMapStateServedExitsNeedTheCapabilityAndTheInternet(t *testing.T) {
 		"probe port 0":  func(pool *mtcpv1.ServedExit) { pool.Probes[0].Port = 0 },
 		"metadata DNS":  func(pool *mtcpv1.ServedExit) { pool.DnsUpstreams = [][]byte{{169, 254, 169, 254}} },
 		"low conntrack": func(pool *mtcpv1.ServedExit) { pool.ConntrackPerConsumer = 10 },
-		"no reference":  func(pool *mtcpv1.ServedExit) { pool.PoolRef = "" },
+		"private relay target": func(pool *mtcpv1.ServedExit) {
+			pool.DnsRelayTargets = [][]byte{{10, 0, 0, 53}}
+		},
+		"relay target twice": func(pool *mtcpv1.ServedExit) {
+			pool.DnsRelayTargets = [][]byte{{9, 9, 9, 9}, {9, 9, 9, 9}}
+		},
+		"mapped relay target": func(pool *mtcpv1.ServedExit) {
+			pool.DnsRelayTargets = [][]byte{netip.MustParseAddr("::ffff:9.9.9.9").AsSlice()}
+		},
+		"too many relay targets": func(pool *mtcpv1.ServedExit) {
+			pool.DnsRelayTargets = nil
+			for index := range 257 {
+				pool.DnsRelayTargets = append(pool.DnsRelayTargets, []byte{9, 9, byte(index >> 8), byte(index)})
+			}
+		},
+		"no reference": func(pool *mtcpv1.ServedExit) { pool.PoolRef = "" },
 		"rule to the LAN": func(pool *mtcpv1.ServedExit) {
 			pool.Rules[0].Destinations[0].Prefix = sharedmtcp.AppendPrefix(netip.MustParsePrefix("10.0.0.0/8"))
 		},

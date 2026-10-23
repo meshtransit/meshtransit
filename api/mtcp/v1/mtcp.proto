@@ -393,6 +393,7 @@ message ServedExit {
   bool smtp_allowed = 4; // a local setting may only refuse it
   repeated bytes dns_upstreams = 5; // IPv4 or IPv6 addresses on the Internet, tried in order
   repeated FilterRule rules = 6; // the pool's rules: sources and traffic; destinations are always 0/0 and ::/0
+  repeated bytes dns_relay_targets = 7; // Internet resolvers (port 53) of the Network's DNS zones the forwarder may relay to, at most 256
 }
 
 // ExitProbe is an Internet address and TCP port an exit node connects to,

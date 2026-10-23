@@ -117,6 +117,7 @@ func (e *resolverEngine) adoptHealth(plan Plan) {
 		zones[resolver] = struct{}{}
 	}
 	e.health.retain(zones)
+	e.relayHealth.retain(zones)
 }
 
 // resolverHealth returns how the resolver sees the resolvers of plan's
@@ -128,16 +129,20 @@ func (e *resolverEngine) resolverHealth(plan Plan, maximum int) []controlplane.R
 	health := make([]controlplane.ResolverHealth, 0, min(len(resolvers), maximum))
 	seen := make(map[netip.AddrPort]struct{}, len(resolvers))
 	liveness := e.liveness.Load()
+	// What is reported is the way the resolver is asked now: through the
+	// exit node while one is in use (DNS design D1c §5).
+	gate := e.zoneGate(nil, e.relayVia(plan))
 	for _, resolver := range resolvers {
 		if _, dup := seen[resolver]; dup || len(health) == maximum {
 			continue
 		}
 		seen[resolver] = struct{}{}
-		outcome, asked := e.health.outcome(resolver)
+		breaker, tracker := gate.path(resolver)
+		outcome, asked := tracker.outcome(resolver)
 		state := controlplane.ResolverOK
 		address := resolver.Addr().Unmap()
 		switch {
-		case e.breaker.open(resolver):
+		case breaker.open(resolver):
 			state = controlplane.ResolverBroken
 		case liveness != nil && overlayframe.Contains(netip.PrefixFrom(address, address.BitLen())) &&
 			(*liveness).Stopped(address):

@@ -253,3 +253,51 @@ func TestRoutesForRouterAndExitNodeShareConsumers(t *testing.T) {
 		t.Fatalf("Site consumer = %+v / %+v", consumer.Sites(), consumer.Exits())
 	}
 }
+
+// An exit node gets the Internet resolvers of the Network's zones as the
+// only resolvers its forwarder relays to, each once, in address order; a
+// change of them is a change of what it serves (DNS design D1c §4.1).
+func TestServedExitCarriesDNSRelayTargets(t *testing.T) {
+	t.Parallel()
+	fixture := newExitFixture(t)
+	fixture.params.DNSZones = []DNSZone{
+		{Zone: 901, Domain: "corp.example", OtherNames: DNSOtherForward, Resolvers: []DNSZoneResolver{
+			{Address: netip.MustParseAddr("9.9.9.9"), Port: 53},
+			{Address: netip.MustParseAddr("8.8.8.8"), Port: 53},
+		}},
+		{Zone: 902, Domain: "lab.example", OtherNames: DNSOtherForward, FailOpen: true, Resolvers: []DNSZoneResolver{
+			{Address: netip.MustParseAddr("2606:4700:4700::1111"), Port: 53},
+			{Address: netip.MustParseAddr("9.9.9.9"), Port: 53},
+			{Device: 3, NodeID: fixture.ids[3], Eligible: true, Port: 53},
+		}},
+	}
+	served := fixture.policy(t).RoutesFor(fixture.ids[7], policyNow).ServedExits()
+	want := []netip.Addr{netip.MustParseAddr("8.8.8.8"), netip.MustParseAddr("9.9.9.9"),
+		netip.MustParseAddr("2606:4700:4700::1111")}
+	if len(served) != 1 || !slices.Equal(served[0].DNSRelayTargets, want) {
+		t.Fatalf("relay targets = %+v", served)
+	}
+	changed := served[0]
+	changed.DNSRelayTargets = want[:2]
+	if equalServedExit(served[0], changed) {
+		t.Fatal("a change of relay targets is no change of what the exit node serves")
+	}
+	consumer := fixture.policy(t).RoutesFor(fixture.ids[1], policyNow)
+	if len(consumer.ServedExits()) != 0 {
+		t.Fatalf("a consumer got relay targets: %+v", consumer.ServedExits())
+	}
+}
+
+func TestRelayTargetsAreBounded(t *testing.T) {
+	t.Parallel()
+	addresses := make([]netip.Addr, 0, MaximumDNSRelayTargets+10)
+	for index := range MaximumDNSRelayTargets + 10 {
+		addresses = append(addresses, netip.AddrFrom4([4]byte{1, 0, byte(index >> 8), byte(index)}))
+	}
+	addresses = append(addresses, addresses[0])
+	targets, dropped := relayTargets(addresses)
+	if len(targets) != MaximumDNSRelayTargets || dropped != 10 || targets[0] != netip.MustParseAddr("1.0.0.0") ||
+		!slices.IsSortedFunc(targets, func(first, second netip.Addr) int { return first.Compare(second) }) {
+		t.Fatalf("%d targets, %d dropped", len(targets), dropped)
+	}
+}

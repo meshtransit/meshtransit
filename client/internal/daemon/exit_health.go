@@ -55,6 +55,11 @@ func (s *Service) exitNodeStatus() dataplane.ExitNodeStatus {
 		status = reporter.ExitNode()
 	}
 	s.dataPlaneMu.Unlock()
+	// A relayed question to a zone's resolver that does not answer is the
+	// exit node's own fault while its probes find no way out (DNS design
+	// D1c §4.2); other failures (rules, forwarding) leave the host's own
+	// sockets working.
+	s.exitForwarder.SetUplinkDown(status.Health != nil && status.Health.Code == dataplane.ExitCodeEgressFailed)
 	if health := status.Health; health != nil && health.State == dataplane.SiteHealthOK && s.exitForwarder.Failing() {
 		degraded := *health
 		degraded.State, degraded.Code = dataplane.SiteHealthDegraded, exitCodeDNSFailed
@@ -70,6 +75,7 @@ func (s *Service) syncExitForwarder(snapshot networkmap.Snapshot) {
 		return
 	}
 	if len(snapshot.ServedExits) == 0 {
+		s.exitForwarder.SetRelay(nil, nil)
 		s.exitForwarder.Configure(nil, nil)
 		return
 	}
@@ -77,6 +83,13 @@ func (s *Service) syncExitForwarder(snapshot networkmap.Snapshot) {
 	for _, prefix := range snapshot.Self.Addresses {
 		addresses = append(addresses, prefix.Addr().Unmap())
 	}
+	// The zones' Internet resolvers consumers may ask through this exit
+	// node, never into a Site it serves (DNS design D1c §4).
+	var served []netip.Prefix
+	for _, site := range snapshot.Served {
+		served = append(served, site.Prefixes...)
+	}
+	s.exitForwarder.SetRelay(snapshot.ServedExits[0].DNSRelayTargets, served)
 	s.exitForwarder.Configure(addresses, snapshot.ServedExits[0].DNSUpstreams)
 }
 
