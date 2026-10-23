@@ -454,6 +454,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertPostgreSQLDNSZones(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLDNSNames(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLDNSShareNames(ctx, t, adminConnection, runtimePool)
+	assertPostgreSQLDNSSettings(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLConsoleDeviceSearch(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLMemberSuspension(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLMemberRemoval(ctx, t, adminConnection, runtimePool)

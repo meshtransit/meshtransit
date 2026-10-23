@@ -33,6 +33,9 @@ const (
 	dnsNameUpdateOperation = "dns_name_update"
 	dnsNameDeleteOperation = "dns_name_delete"
 	dnsNameApplyOperation  = "dns_name_apply"
+	// The Network's DNS settings (DNS design D5b).
+	dnsSettingsReadOperation   = "dns_settings_read"
+	dnsSettingsUpdateOperation = "dns_settings_update"
 )
 
 // DNSZoneManager lists and changes the DNS zones of a Network and the
@@ -58,6 +61,9 @@ type DNSZoneManager interface {
 		publicid.ID) (dnszone.NameOutcome, error)
 	ApplyNames(context.Context, accountsession.Session, network.Scope, dnszone.ID, []dnszone.NameOperation,
 		publicid.ID) (dnszone.NameResult, error)
+	ReadSettings(context.Context, accountsession.Session, network.Scope) (dnszone.Settings, error)
+	ChangeSettings(context.Context, accountsession.Session, network.Scope, int64, []devicegroup.ID,
+		publicid.ID) (dnszone.SettingsResult, error)
 }
 
 type dnsZonePath struct {
@@ -84,6 +90,7 @@ type dnsZonePath struct {
 //	GET|POST         dns/zones/{zone}/names                   list, create
 //	GET|PATCH|DELETE dns/zones/{zone}/names/{name}            read, update, delete
 //	POST             dns/zones/{zone}/names/actions/apply     apply
+//	GET|PUT          dns/settings                             read, replace
 //
 // Only the lists take a query (after and limit, and q for names) and a zone
 // DELETE with_names=true, once each.
@@ -92,8 +99,10 @@ func parseDNSZonePath(request *http.Request) (dnsZonePath, bool) {
 		return dnsZonePath{}, false
 	}
 	segments := strings.Split(strings.TrimPrefix(request.URL.Path, "/"), "/")
+	settings := len(segments) == 8 && segments[7] == "settings"
 	if len(segments) < 8 || len(segments) > 12 || segments[0] != "api" || segments[1] != "v1" ||
-		segments[2] != "workspaces" || segments[4] != "networks" || segments[6] != "dns" || segments[7] != "zones" ||
+		segments[2] != "workspaces" || segments[4] != "networks" || segments[6] != "dns" ||
+		(segments[7] != "zones" && !settings) ||
 		(len(segments) > 9 && segments[9] != "names" && (len(segments) != 10 || segments[9] != "status")) {
 		return dnsZonePath{}, false
 	}
@@ -119,6 +128,9 @@ func parseDNSZonePath(request *http.Request) (dnsZonePath, bool) {
 	}
 	var operations map[string]string
 	switch {
+	case settings:
+		path.methods = restMethods{http.MethodGet, http.MethodPut}
+		operations = map[string]string{http.MethodGet: dnsSettingsReadOperation, http.MethodPut: dnsSettingsUpdateOperation}
 	case len(segments) == 8:
 		path.methods = collectionMethods
 		operations = map[string]string{http.MethodGet: dnsZoneListOperation, http.MethodPost: dnsZoneCreateOperation}
@@ -388,6 +400,8 @@ func (handler *ManagementHandler) handleDNSZones(ctx context.Context, response h
 		return handler.readDNSZones(ctx, response, correlationID, path, session, fail)
 	case dnsZoneStatusOperation:
 		return handler.readDNSZoneStatus(ctx, response, correlationID, path, session, fail)
+	case dnsSettingsReadOperation, dnsSettingsUpdateOperation:
+		return handler.handleDNSSettings(ctx, response, request, correlationID, path, session, fail)
 	case dnsNameListOperation, dnsNameReadOperation, dnsNameCreateOperation, dnsNameUpdateOperation,
 		dnsNameDeleteOperation, dnsNameApplyOperation:
 		return handler.handleDNSNames(ctx, response, request, correlationID, path, session, fail)

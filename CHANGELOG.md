@@ -5,6 +5,13 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- DNS D5b (Core, schema 221): a Network's DNS settings name up to 16
+  Device Groups whose Devices get no DNS from MeshTransit (machines that
+  keep a company's DNS or another VPN's): their maps carry no DNS
+  configuration, mesh names included. `GET|PUT …/dns/settings` (If-Match
+  carries the version, "0" before the first change); a Device Group named
+  there cannot be deleted; each change is audited (`network_dns.updated`)
+  and maps are rebuilt at once.
 - DNS D5 (client): `meshctl dns query NAME [TYPE]` shows where MeshTransit
   DNS sends a name (mesh, zone, root zone, exit node, network) with its
   resolvers, through the exit node or skipped, and the answer. Windows puts

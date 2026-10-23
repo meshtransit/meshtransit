@@ -212,3 +212,27 @@ func TestEncodeSnapshotCarriesExitPools(t *testing.T) {
 		t.Fatalf("a map without a served pool encoded %v, %v", served, err)
 	}
 }
+
+// A Device of an unmanaged Device Group gets an empty DNS configuration; the
+// others keep their zones (DNS design D5b).
+func TestEncodeSnapshotLeavesUnmanagedDevicesWithoutDNS(t *testing.T) {
+	t.Parallel()
+	managed, err := encodeSnapshot(exitSnapshotFixture(t, 702), &mtcpv1.View{Epoch: 1, Seq: 1}, false, nil,
+		dnsname.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(managed.GetDns().GetRoutes()) < 2 {
+		t.Fatalf("managed DNS = %v", managed.GetDns())
+	}
+	unmanaged, err := encodeSnapshot(exitSnapshotFixtureWith(t, 702, func(params *mapsession.NetworkPolicyParams) {
+		params.DNSUnmanagedGroups = []int64{10}
+	}), &mtcpv1.View{Epoch: 1, Seq: 1}, false, nil, dnsname.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dns := unmanaged.GetDns(); dns == nil || len(dns.GetRoutes()) != 0 || len(dns.GetRecords()) != 0 ||
+		len(dns.GetSearchDomains()) != 0 {
+		t.Fatalf("unmanaged DNS = %v", dns)
+	}
+}

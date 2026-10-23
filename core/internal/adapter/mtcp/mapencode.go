@@ -93,7 +93,7 @@ func encodeNamedSnapshot(snapshot mapsession.Snapshot, view *mtcpv1.View, aliase
 	}
 	return &mtcpv1.MapSnapshot{
 		View: view, NetworkRevisions: networkRevisions(snapshot), Self: self, Peers: peers,
-		PacketFilter: filter, Dns: encodeDNS(names), RelayMap: grant.relayMap, Settings: settings(),
+		PacketFilter: filter, Dns: encodeDeviceDNS(snapshot, names), RelayMap: grant.relayMap, Settings: settings(),
 		Routes: encodeRoutes(snapshot.Routes(), endpoints), Served: encodeServed(snapshot.Routes(), endpoints),
 		Exits: encodeExits(snapshot), ServedExits: servedExits,
 	}, nil
@@ -498,6 +498,16 @@ func trafficKey(destinations []*mtcpv1.Destination, protocols []uint32) string {
 		builder.WriteByte(';')
 	}
 	return builder.String()
+}
+
+// encodeDeviceDNS is the Device's DNS: none for a Device of an unmanaged
+// Device Group, whose host keeps its own DNS (DNS design D5b); the peers'
+// names in the map stay.
+func encodeDeviceDNS(snapshot mapsession.Snapshot, names mapsession.DNSView) *mtcpv1.DnsConfig {
+	if snapshot.Routes().DNSUnmanaged() {
+		return &mtcpv1.DnsConfig{}
+	}
+	return encodeDNS(names)
 }
 
 // encodeDNS publishes the names of names as A/AAAA records, the suffix as a

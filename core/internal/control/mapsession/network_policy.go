@@ -88,6 +88,9 @@ type NetworkPolicyParams struct {
 	// DNS names (DNS design D2) of those zones; whether a Device sees a
 	// name that points at a Device comes from Rules.
 	DNSNames []DNSName
+	// DNSUnmanagedGroups are the Device Groups whose Devices get no DNS
+	// configuration in their maps (DNS design D5b, schema 221).
+	DNSUnmanagedGroups []int64
 }
 
 // NetworkPolicy is one Network's packet policy at selector level, shared by

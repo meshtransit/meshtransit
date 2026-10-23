@@ -587,6 +587,7 @@ func Catalog() []Migration {
 		newMigration(218, "Share offers suggest service names", shareOfferServiceNamesSQL),
 		newMigration(219, "Maps read the DNS names that point at a share", mapNetworkDNSShareNamesSQL),
 		newMigration(220, "Running shares keep service names of their own", trustContractServiceNamesSQL),
+		newMigration(221, "Device Groups whose Devices get no DNS from MeshTransit", networkDNSUnmanagedSQL),
 	}
 }
 
@@ -1026,3 +1027,6 @@ var mapNetworkDNSShareNamesSQL string
 
 //go:embed 000220_trust_contract_service_names.up.sql
 var trustContractServiceNamesSQL string
+
+//go:embed 000221_network_dns_unmanaged.up.sql
+var networkDNSUnmanagedSQL string

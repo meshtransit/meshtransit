@@ -146,6 +146,9 @@ type RouteView struct {
 	// omitted counts Sites, Exit Pools and DNS zones left out by the bounds
 	// of one map.
 	omitted int
+	// dnsUnmanaged is a Device of an unmanaged Device Group: its map carries
+	// no DNS configuration (DNS design D5b).
+	dnsUnmanaged bool
 }
 
 // Sites returns the Sites the Device may reach, sorted by reference.
@@ -267,7 +270,7 @@ func (view RouteView) Equal(other RouteView) bool {
 		slices.EqualFunc(view.dnsZones, other.dnsZones, equalDNSZoneRoute) &&
 		slices.Equal(view.resolvers, other.resolvers) && slices.Equal(view.dnsConsumers, other.dnsConsumers) &&
 		view.equalDNSNames(other) && slices.Equal(view.nameTargets, other.nameTargets) &&
-		view.omitted == other.omitted
+		view.dnsUnmanaged == other.dnsUnmanaged && view.omitted == other.omitted
 }
 
 // routeIndex is a Network's routes, indexed once per read for every map.
@@ -281,15 +284,18 @@ type routeIndex struct {
 	relayTargets        []netip.Addr
 	relayScopes         []relayScope
 	relayTargetsDropped int
-	sites               map[int64]*routeSiteEntry
-	bySite              map[int64][]int   // site -> rule indexes
-	routes              map[int64][]int64 // router device -> sites it is a router of
-	nodes               map[int64]node.ID // router device -> public identity
-	static              map[int64][]int64 // router device -> its consumers, sorted
-	ruleList            []RouteRule       // as read, for Equal
-	routers             []RouteRouter     // as read, for Equal
-	siteList            []RouteSite       // as read, for Equal
-	limit               int               // peer limit the consumer cut uses
+	// unmanagedGroups are the Device Groups whose Devices get no DNS
+	// configuration (DNS design D5b).
+	unmanagedGroups []int64
+	sites           map[int64]*routeSiteEntry
+	bySite          map[int64][]int   // site -> rule indexes
+	routes          map[int64][]int64 // router device -> sites it is a router of
+	nodes           map[int64]node.ID // router device -> public identity
+	static          map[int64][]int64 // router device -> its consumers, sorted
+	ruleList        []RouteRule       // as read, for Equal
+	routers         []RouteRouter     // as read, for Equal
+	siteList        []RouteSite       // as read, for Equal
+	limit           int               // peer limit the consumer cut uses
 	// routerLimit is how many routers one map reaches, and consumers how
 	// many consumers a router keeps: together at most the peer limit, so a
 	// peer limit never cuts a peer routes need.
@@ -334,7 +340,7 @@ func newRouteIndex(params NetworkPolicyParams, members func(SelectorKind, int64)
 	keysOf func(int64) []selectorKey) (*routeIndex, bool) {
 	if len(params.Sites) == 0 && len(params.RouteRouters) == 0 && len(params.RouteRules) == 0 &&
 		len(params.ExitPools) == 0 && len(params.ExitNodes) == 0 && len(params.ExitRules) == 0 &&
-		len(params.DNSZones) == 0 && len(params.DNSNames) == 0 {
+		len(params.DNSZones) == 0 && len(params.DNSNames) == 0 && len(params.DNSUnmanagedGroups) == 0 {
 		return nil, true
 	}
 	if params.RouteRevision <= 0 || params.RoutePeerLimit <= 0 || len(params.Sites) > MaximumRouteSites {
@@ -473,9 +479,15 @@ func (inner *networkPolicy) routesFor(self int64, now time.Time) RouteView {
 	inner.servedRoutes(&view, self, now)
 	inner.consumerExits(&view, self, now, routers)
 	inner.servedExits(&view, self, now)
-	inner.consumerDNSZones(&view, self, now, routers)
+	// A Device of an unmanaged Device Group keeps its host's DNS: no zone or
+	// name reaches it (DNS design D5b); it may still serve as a resolver.
+	if view.dnsUnmanaged = inner.dnsUnmanaged(self, now); !view.dnsUnmanaged {
+		inner.consumerDNSZones(&view, self, now, routers)
+	}
 	inner.servedDNS(&view, self, now)
-	inner.consumerDNSNames(&view, self, now)
+	if !view.dnsUnmanaged {
+		inner.consumerDNSNames(&view, self, now)
+	}
 	for _, peers := range []*[]node.ID{&view.routers, &view.consumers, &view.exitNodes, &view.exitConsumers,
 		&view.resolvers, &view.dnsConsumers, &view.nameTargets} {
 		slices.SortFunc(*peers, compareNodeIDs)

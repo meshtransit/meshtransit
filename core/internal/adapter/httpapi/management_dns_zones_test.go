@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"meshtransit.net/core/internal/domain/devicegroup"
 	"meshtransit.net/core/internal/domain/dnszone"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
@@ -169,7 +170,29 @@ func TestClassifyDNSZoneError(t *testing.T) {
 }
 
 // countingDNSZones counts the calls that reach the zone service.
-type countingDNSZones struct{ calls int }
+type countingDNSZones struct {
+	calls int
+	// settingsExpected and settingsGroups are the last settings change.
+	settingsExpected int64
+	settingsGroups   []devicegroup.ID
+}
+
+func (zones *countingDNSZones) ReadSettings(context.Context, accountsession.Session, network.Scope) (
+	dnszone.Settings, error,
+) {
+	zones.calls++
+	group, _ := devicegroup.ParseID("01890f00-0000-7000-8000-000000000701")
+	return dnszone.Settings{Version: 3, UnmanagedGroups: []dnszone.Group{{ID: group, Name: "Contractors",
+		State: "active"}}}, nil
+}
+
+func (zones *countingDNSZones) ChangeSettings(_ context.Context, _ accountsession.Session, _ network.Scope,
+	expected int64, groups []devicegroup.ID, _ publicid.ID,
+) (dnszone.SettingsResult, error) {
+	zones.calls++
+	zones.settingsExpected, zones.settingsGroups = expected, groups
+	return dnszone.SettingsResult{Settings: dnszone.Settings{Version: expected + 1}, Changed: true}, nil
+}
 
 func (zones *countingDNSZones) List(context.Context, accountsession.Session, network.Scope, dnszone.ID,
 	int) (dnszone.Listing, error) {
@@ -309,5 +332,57 @@ func TestDNSZoneWritesAreLimitedPerNetworkAndPerson(t *testing.T) {
 	if malformed := send(http.MethodPost, dnsZoneBase, `{}`); malformed.Code != http.StatusBadRequest ||
 		len(changes) != 6 {
 		t.Fatalf("malformed = %d, budget taken %d times", malformed.Code, len(changes))
+	}
+}
+
+// The Network's DNS settings: GET reads them with their version as ETag,
+// PUT replaces the unmanaged Device Groups at the version If-Match names,
+// "0" before the first change, and takes a write token (DNS design D5b).
+func TestDNSSettingsReadAndReplace(t *testing.T) {
+	t.Parallel()
+	zones := &countingDNSZones{}
+	options := validManagementHandlerOptions(t)
+	options.DNSZones = zones
+	handler, err := NewManagementHandler(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := strings.TrimSuffix(dnsZoneBase, "/zones") + "/settings"
+	send := func(method, ifMatch, body string) *httptest.ResponseRecorder {
+		request := newManagementRequest(t, method, settings, body)
+		if ifMatch == "" {
+			request.Header.Del("If-Match")
+		} else {
+			request.Header.Set("If-Match", ifMatch)
+		}
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder
+	}
+	read := send(http.MethodGet, "", "")
+	if read.Code != http.StatusOK || read.Header().Get("ETag") != `"3"` ||
+		!strings.Contains(read.Body.String(), `"unmanaged_device_groups":[{"device_group_id":"01890f00-0000-7000-8000-000000000701","name":"Contractors","state":"active"}]`) {
+		t.Fatalf("read = %d %v %s", read.Code, read.Header(), read.Body.String())
+	}
+	body := `{"unmanaged_device_group_ids":["01890f00-0000-7000-8000-000000000701"]}`
+	replaced := send(http.MethodPut, `"0"`, body)
+	if replaced.Code != http.StatusOK || replaced.Header().Get("ETag") != `"1"` || zones.settingsExpected != 0 ||
+		len(zones.settingsGroups) != 1 || !strings.Contains(replaced.Body.String(), `"changed":true`) {
+		t.Fatalf("replace = %d %v %s", replaced.Code, replaced.Header(), replaced.Body.String())
+	}
+	calls := zones.calls
+	for name, failing := range map[string]*httptest.ResponseRecorder{
+		"no precondition": send(http.MethodPut, "", body),
+		"unknown field":   send(http.MethodPut, `"1"`, `{"unmanaged_device_group_ids":[],"x":1}`),
+		"no groups field": send(http.MethodPut, `"1"`, `{}`),
+		"not a group id":  send(http.MethodPut, `"1"`, `{"unmanaged_device_group_ids":["x"]}`),
+		"wrong method":    send(http.MethodPatch, `"1"`, body),
+	} {
+		if failing.Code < 400 || failing.Code >= 500 {
+			t.Errorf("%s: %d %s", name, failing.Code, failing.Body.String())
+		}
+	}
+	if zones.calls != calls {
+		t.Fatalf("refused requests reached the service: %d calls", zones.calls-calls)
 	}
 }

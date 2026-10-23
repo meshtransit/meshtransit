@@ -182,7 +182,7 @@ func (sink *mapSink) SendAuthorityDelta(ctx context.Context, delta mapsession.Au
 		return err
 	}
 	// DNS is sent only when it changed; an absent one means "unchanged".
-	dns := encodeDNS(names)
+	dns := encodeDeviceDNS(snapshot, names)
 	digest, err := dnsDigest(dns)
 	if err != nil {
 		return err

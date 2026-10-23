@@ -91,9 +91,11 @@ func (view RouteView) DNSZones() []DNSZoneRoute {
 // Devices each zone is sent to, as consumers of its resolvers. keysOf lists
 // the selectors a Device belongs to, whatever their deadlines.
 func (index *routeIndex) indexDNSZones(params NetworkPolicyParams, keysOf func(int64) []selectorKey) bool {
-	if len(params.DNSZones) > MaximumDNSZones {
+	if len(params.DNSZones) > MaximumDNSZones || len(params.DNSUnmanagedGroups) > MaximumDNSZoneGroups ||
+		slices.ContainsFunc(params.DNSUnmanagedGroups, func(group int64) bool { return group <= 0 }) {
 		return false
 	}
+	index.unmanagedGroups = slices.Clone(params.DNSUnmanagedGroups)
 	index.zoneList = cloneDNSZones(params.DNSZones)
 	slices.SortFunc(index.zoneList, func(first, second DNSZone) int { return strings.Compare(first.Domain, second.Domain) })
 	index.resolverZones = make(map[int64][]int)
@@ -202,6 +204,17 @@ func (index *routeIndex) dnsConsumers(devices []int64) map[int64][]int64 {
 		byResolver[resolver] = consumers[:min(len(consumers), index.consumers)]
 	}
 	return byResolver
+}
+
+// DNSUnmanaged reports a Device of an unmanaged Device Group: its map carries
+// no DNS configuration, so its host keeps its own DNS (DNS design D5b).
+func (view RouteView) DNSUnmanaged() bool { return view.dnsUnmanaged }
+
+// dnsUnmanaged reports whether self is in an unmanaged Device Group at now.
+func (inner *networkPolicy) dnsUnmanaged(self int64, now time.Time) bool {
+	return slices.ContainsFunc(inner.routes.unmanagedGroups, func(group int64) bool {
+		return inner.selects(SelectorDeviceGroup, group, self, now)
+	})
 }
 
 // resolves reports whether device is one of the zone's resolver Devices.

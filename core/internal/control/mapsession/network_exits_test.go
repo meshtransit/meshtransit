@@ -404,3 +404,45 @@ func TestServedExitRelayScopeFollowsMembershipDeadlines(t *testing.T) {
 		t.Fatal("a membership deadline left the exit node's view unchanged")
 	}
 }
+
+// A Device of an unmanaged Device Group gets no zone, and its view says so;
+// the others keep theirs (DNS design D5b).
+func TestUnmanagedDevicesGetNoDNS(t *testing.T) {
+	t.Parallel()
+	fixture := newExitFixture(t)
+	fixture.params.DNSZones = []DNSZone{{Zone: 901, Domain: "corp.example", OtherNames: DNSOtherForward,
+		Resolvers: []DNSZoneResolver{{Address: netip.MustParseAddr("9.9.9.9"), Port: 53}}}}
+	fixture.params.Members = append(fixture.params.Members,
+		SelectorMember{Kind: SelectorDeviceGroup, Selector: 13, Device: 2, ValidUntil: policyNow.Add(time.Hour)})
+	fixture.params.DNSUnmanagedGroups = []int64{13}
+	networkPolicy := fixture.policy(t)
+	unmanaged := networkPolicy.RoutesFor(fixture.ids[2], policyNow)
+	if !unmanaged.DNSUnmanaged() || len(unmanaged.DNSZones()) != 0 {
+		t.Fatalf("unmanaged: %v, zones %+v", unmanaged.DNSUnmanaged(), unmanaged.DNSZones())
+	}
+	managed := networkPolicy.RoutesFor(fixture.ids[1], policyNow)
+	if managed.DNSUnmanaged() || len(managed.DNSZones()) != 1 {
+		t.Fatalf("managed: %v, zones %+v", managed.DNSUnmanaged(), managed.DNSZones())
+	}
+	later := networkPolicy.RoutesFor(fixture.ids[2], policyNow.Add(2*time.Hour))
+	if later.DNSUnmanaged() || len(later.DNSZones()) != 1 || later.Equal(unmanaged) {
+		t.Fatalf("after the membership ends: %v, zones %+v", later.DNSUnmanaged(), later.DNSZones())
+	}
+	fixture.params.DNSUnmanagedGroups = []int64{0}
+	if _, err := NewNetworkPolicy(fixture.params); err == nil {
+		t.Fatal("an invalid unmanaged group was taken")
+	}
+}
+
+// Unmanaged Device Groups apply without any zone: the Device's map then
+// carries no DNS either, not even the mesh's names (DNS design D5b).
+func TestUnmanagedDevicesGetNoDNSWithoutZones(t *testing.T) {
+	t.Parallel()
+	fixture := newExitFixture(t)
+	fixture.params.ExitPools, fixture.params.ExitNodes, fixture.params.ExitRules = nil, nil, nil
+	fixture.params.DNSUnmanagedGroups = []int64{10}
+	view := fixture.policy(t).RoutesFor(fixture.ids[1], policyNow)
+	if !view.DNSUnmanaged() {
+		t.Fatal("a Device of an unmanaged group in a Network without zones got DNS")
+	}
+}

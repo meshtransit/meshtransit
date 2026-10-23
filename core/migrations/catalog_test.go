@@ -15,8 +15,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 220 {
-		t.Fatalf("len(Catalog()) = %d, want 220", len(catalog))
+	if len(catalog) != 221 {
+		t.Fatalf("len(Catalog()) = %d, want 221", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1611,8 +1611,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 220 {
-		t.Fatalf("LatestVersion() = %d, want 220", LatestVersion())
+	if LatestVersion() != 221 {
+		t.Fatalf("LatestVersion() = %d, want 221", LatestVersion())
 	}
 }
 
@@ -6342,5 +6342,33 @@ func TestMigration220KeepsContractServiceNames(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "TO mesh_worker") || strings.Contains(migration.SQL, "TO mesh_observer") {
 		t.Error("schema 220 grants beyond mesh_runtime")
+	}
+}
+
+func TestMigration221KeepsUnmanagedDNSGroups(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[220]
+	if migration.Version != 221 {
+		t.Fatalf("migration 221 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE TABLE mesh.network_dns_setting (",
+		"CONSTRAINT network_dns_setting_network_uidx UNIQUE (workspace_id, network_id)",
+		"FOR EACH ROW EXECUTE FUNCTION mesh_audit.capture_authority_mutation('network_dns_setting', 'public_id');",
+		"ALTER TABLE mesh.network_dns_setting FORCE ROW LEVEL SECURITY;",
+		"p_workspace_public_id, p_network_public_id, 'dns.manage'",
+		"p_workspace_public_id, p_network_public_id, 'network.read'",
+		"SET network_revision = revision.network_revision + 1, dns_revision = revision.dns_revision + 1,",
+		"RAISE EXCEPTION USING ERRCODE = 'MTD07', MESSAGE = 'Device Group is used by DNS settings';",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_map_network_dns_unmanaged_v1() TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 221 lacks %q", want)
+		}
+	}
+	for _, forbidden := range []string{"TO mesh_worker", "TO mesh_observer", "BYPASSRLS", "DROP "} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 221 contains %q", forbidden)
+		}
 	}
 }

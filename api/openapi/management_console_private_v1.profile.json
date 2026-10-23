@@ -19027,6 +19027,325 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/dns/settings": {
+      "get": {
+        "operationId": "readNetworkDNSSettings",
+        "summary": "Read a Network's DNS settings",
+        "description": "Requires network.read on the Network. The Device Groups whose Devices get no DNS from MeshTransit (DNS design D5b). ETag carries the version, \"0\" before the first change.",
+        "security": [
+          {
+            "accountSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The Network's DNS settings",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"(0|[1-9][0-9]*)\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "dns_settings"
+                      ],
+                      "properties": {
+                        "dns_settings": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "unmanaged_device_groups",
+                            "version"
+                          ],
+                          "properties": {
+                            "unmanaged_device_groups": {
+                              "type": "array",
+                              "maxItems": 16,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "device_group_id",
+                                  "name",
+                                  "state"
+                                ],
+                                "properties": {
+                                  "device_group_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "state": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "description": "Device Groups whose Devices get no DNS from MeshTransit: their maps carry no DNS configuration, so the host keeps its own DNS"
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "description": "0 before the first change"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      },
+      "put": {
+        "operationId": "replaceNetworkDNSSettings",
+        "summary": "Replace a Network's unmanaged Device Groups",
+        "description": "Requires dns.manage. At most 16 active Device Groups of the Network, each once; their Devices' maps carry no DNS configuration. If-Match carries the settings' version, \"0\" before the first change. A Device Group named here cannot be deleted. Maps are rebuilt at once.",
+        "security": [
+          {
+            "accountSessionCookie": [],
+            "sessionCSRF": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionProof"
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\"(0|[1-9][0-9]*)\"$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "unmanaged_device_group_ids"
+                ],
+                "properties": {
+                  "unmanaged_device_group_ids": {
+                    "type": "array",
+                    "maxItems": 16,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The Network's DNS settings after the change",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"(0|[1-9][0-9]*)\"$"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "dns_settings",
+                        "changed"
+                      ],
+                      "properties": {
+                        "dns_settings": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "unmanaged_device_groups",
+                            "version"
+                          ],
+                          "properties": {
+                            "unmanaged_device_groups": {
+                              "type": "array",
+                              "maxItems": 16,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "device_group_id",
+                                  "name",
+                                  "state"
+                                ],
+                                "properties": {
+                                  "device_group_id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "state": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "description": "Device Groups whose Devices get no DNS from MeshTransit: their maps carry no DNS configuration, so the host keeps its own DNS"
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "description": "0 before the first change"
+                            }
+                          }
+                        },
+                        "changed": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request"
+          },
+          "412": {
+            "description": "version_conflict"
+          },
+          "404": {
+            "description": "device_group_not_found"
+          },
+          "428": {
+            "description": "precondition_required"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/dns/zones": {
       "get": {
         "operationId": "listNetworkDNSZones",

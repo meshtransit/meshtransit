@@ -43,6 +43,10 @@ FROM mesh_ops.load_map_network_dns_names_v1($1::INTEGER)`
     share_public_id
 FROM mesh_ops.load_map_network_dns_names_v2($1::INTEGER)`
 
+	dnsUnmanagedGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
+    pg_catalog.to_regprocedure('mesh_ops.load_map_network_dns_unmanaged_v1()'), 'EXECUTE'), FALSE)`
+	loadNetworkDNSUnmanagedSQL = `SELECT mesh_ops.load_map_network_dns_unmanaged_v1()`
+
 	// Technical ceilings: zones of one Network (200 forward zones and the
 	// root) and their resolvers.
 	maximumNetworkDNSZones     = appmapsession.MaximumDNSZones
@@ -69,6 +73,9 @@ func readNetworkDNSZones(ctx context.Context, transaction databaseTransaction,
 	if !granted {
 		return nil
 	}
+	if err := readNetworkDNSUnmanaged(ctx, transaction, params); err != nil {
+		return err
+	}
 	names, err := functionGranted(ctx, transaction, dnsNamesGrantedSQL)
 	if err != nil {
 		return errors.Join(ErrLoadSnapshot, fmt.Errorf("check DNS name readers: %w", err))
@@ -87,6 +94,29 @@ func readNetworkDNSZones(ctx context.Context, transaction databaseTransaction,
 		}
 	}
 	params.DNSZones, params.DNSNames = withoutProtectedZones(params.DNSZones, params.DNSNames, protected)
+	return nil
+}
+
+// readNetworkDNSUnmanaged adds the Device Groups whose Devices get no DNS
+// (schema 221, DNS design D5b); before 221 there are none.
+func readNetworkDNSUnmanaged(ctx context.Context, transaction databaseTransaction,
+	params *appmapsession.NetworkPolicyParams,
+) error {
+	granted, err := functionGranted(ctx, transaction, dnsUnmanagedGrantedSQL)
+	if err != nil {
+		return errors.Join(ErrLoadSnapshot, fmt.Errorf("check DNS settings reader: %w", err))
+	}
+	if !granted {
+		return nil
+	}
+	var groups []int64
+	if err := transaction.QueryRow(ctx, loadNetworkDNSUnmanagedSQL).Scan(&groups); err != nil {
+		return errors.Join(ErrLoadSnapshot, fmt.Errorf("load DNS unmanaged groups: %w", err))
+	}
+	if len(groups) > appmapsession.MaximumDNSZoneGroups {
+		return errors.Join(ErrLoadSnapshot, errors.New("too many DNS unmanaged groups"))
+	}
+	params.DNSUnmanagedGroups = groups
 	return nil
 }
 
