@@ -3,6 +3,7 @@ package mobile
 import (
 	"context"
 	"log/slog"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -12,6 +13,11 @@ import (
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/underlay"
 )
+
+// failuresAsNXDOMAIN answers a zone's failures NXDOMAIN on Android, whose
+// MIUI builds ask Google's DNS after SERVFAIL or REFUSED (DNS design D1b §20);
+// iOS keeps them. Tests change it.
+var failuresAsNXDOMAIN = runtime.GOOS == "android"
 
 // dnsReapplyTimeout bounds applying the last map again after a local change.
 const dnsReapplyTimeout = 10 * time.Second
@@ -42,6 +48,9 @@ func newDNSController(opener *platformTUN, logger *slog.Logger) (*dnsController,
 		MaxUDPResponse:    opener.mtu - 28,
 		ExitRouted:        opener.exitRouted.Load,
 		NetworkGeneration: underlay.ReportedGeneration,
+		// Some Android builds ask Google's DNS after SERVFAIL or REFUSED,
+		// skipping a filter or a zone that fails closed (DNS design D1b §20).
+		FailuresAsNXDOMAIN: failuresAsNXDOMAIN,
 	})
 	manager, err := dnsconfig.NewManager(
 		&choiceResolver{resolver: resolver, use: use},

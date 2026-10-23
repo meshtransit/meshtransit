@@ -6,6 +6,7 @@ import (
 	"context"
 	"log/slog"
 	"net/netip"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -277,5 +278,13 @@ func TestPlatformTUNKeepsTheInterfaceForAnotherExitNode(t *testing.T) {
 	}
 	if fixture.opened() != 2 {
 		t.Fatalf("%d interfaces for one exit route", fixture.opened())
+	}
+}
+
+// Only Android answers a zone's failures NXDOMAIN (DNS design D1b §20).
+func TestFailuresAsNXDOMAINOnlyOnAndroid(t *testing.T) {
+	t.Parallel()
+	if failuresAsNXDOMAIN != (runtime.GOOS == "android") {
+		t.Fatalf("failuresAsNXDOMAIN = %t on %s", failuresAsNXDOMAIN, runtime.GOOS)
 	}
 }

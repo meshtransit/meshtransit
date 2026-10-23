@@ -82,6 +82,10 @@ type resolverEngine struct {
 	// covers go to networkResolvers when the plan names no resolver for
 	// them (PacketResolver, a platform without split DNS).
 	fullResolver bool
+	// failuresAsNXDOMAIN answers a zone's failures NXDOMAIN with an
+	// Extended DNS Error instead of SERVFAIL or a resolver's REFUSED
+	// (Android; failure.go).
+	failuresAsNXDOMAIN bool
 	// exitRouted, when set, reports whether the host's Internet routes go
 	// into the mesh now; until the plan has the exit node's resolvers, no
 	// question may then leave through the host's own network.

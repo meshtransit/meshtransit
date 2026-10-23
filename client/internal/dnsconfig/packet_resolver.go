@@ -31,6 +31,10 @@ type PacketResolverOptions struct {
 	// NetworkGeneration changes whenever NetworkResolvers would return
 	// other resolvers; nil keeps them for networkResolverTTL.
 	NetworkGeneration func() uint64
+	// FailuresAsNXDOMAIN answers a zone's failures NXDOMAIN, with the reason
+	// as an Extended DNS Error: some Android builds ask other DNS servers
+	// after SERVFAIL or REFUSED, never after NXDOMAIN (DNS design D1b §20).
+	FailuresAsNXDOMAIN bool
 }
 
 // PacketResolverStats counts the questions a PacketResolver answered.
@@ -62,6 +66,7 @@ var _ Resolver = (*PacketResolver)(nil)
 func NewPacketResolver(options PacketResolverOptions) *PacketResolver {
 	engine := newResolverEngine()
 	engine.fullResolver = true
+	engine.failuresAsNXDOMAIN = options.FailuresAsNXDOMAIN
 	engine.exitRouted = options.ExitRouted
 	engine.networkGeneration = options.NetworkGeneration
 	if options.NetworkResolvers != nil {

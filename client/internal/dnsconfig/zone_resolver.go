@@ -48,7 +48,7 @@ func (e *resolverEngine) resolveZone(ctx context.Context, zone zoneQuery) ([]byt
 	case e.forwardSlots <- struct{}{}:
 		defer func() { <-e.forwardSlots }()
 	default:
-		return zone.failure(errForwardBusy)
+		return e.zoneFailure(zone, errForwardBusy)
 	}
 	budget := queryTimeout
 	if zone.route.FailOpen {
@@ -63,18 +63,21 @@ func (e *resolverEngine) resolveZone(ctx context.Context, zone zoneQuery) ([]byt
 			zoneGate{breaker: e.breaker, own: zone.route.Resolvers, health: e.health})
 		cancel()
 		if err == nil {
-			return zone.answer(response, captiveWindow)
+			return e.zoneAnswer(zone, response, captiveWindow)
 		}
 		// Every resolver asked, one at least answered SERVFAIL or REFUSED:
 		// that is the zone's answer (DNS design D1b §5.3). Failing open past
 		// it would send a name a filter blocks, or DNSSEC failed, to the
 		// network.
 		if answered, ok := upstreamAnswer(err); ok {
+			if e.failuresAsNXDOMAIN {
+				return e.zoneFailure(zone, err)
+			}
 			return zone.answer(answered, captiveWindow)
 		}
 	}
 	if !zone.route.FailOpen || ctx.Err() != nil {
-		return zone.failure(err)
+		return e.zoneFailure(zone, err)
 	}
 	// A route without resolvers (a name of a zone that leaves the rest to
 	// the host) asks the host first, with the whole budget.
@@ -94,13 +97,13 @@ func (e *resolverEngine) resolveZone(ctx context.Context, zone zoneQuery) ([]byt
 		return slices.Contains(targets, resolver)
 	})
 	if len(fallback) == 0 {
-		return zone.failure(errors.Join(err, errNoResolver))
+		return e.zoneFailure(zone, errors.Join(err, errNoResolver))
 	}
 	response, fallbackErr := forwardQuery(fallbackCtx, zone.query, zone.question, fallback, zone.transport, nil)
 	if fallbackErr != nil {
-		return zone.failure(errors.Join(err, fallbackErr))
+		return e.zoneFailure(zone, errors.Join(err, fallbackErr))
 	}
-	return zone.answer(response, captiveFallback)
+	return e.zoneAnswer(zone, response, captiveFallback)
 }
 
 // zoneTargets are the resolvers a zone's question goes to first. Without an

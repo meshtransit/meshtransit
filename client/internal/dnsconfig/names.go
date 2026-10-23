@@ -316,7 +316,8 @@ type aliasQuery struct {
 func (e *resolverEngine) resolveAlias(ctx context.Context, alias aliasQuery) ([]byte, error) {
 	response := baseResponse(alias.message, alias.plan)
 	fail := func(cause error) ([]byte, error) {
-		return failureResponse(alias.query, alias.message, alias.question, alias.plan, alias.transport, cause)
+		return e.failure(alias.query, alias.message, alias.question, alias.plan, alias.transport,
+			authoritativeZone(alias.plan.Routes, alias.name), cause)
 	}
 	if alias.question.Type == dnsmessage.TypeCNAME {
 		target, _ := findAlias(alias.plan.Aliases, alias.name)
@@ -374,6 +375,9 @@ func (e *resolverEngine) resolveAlias(ctx context.Context, alias aliasQuery) ([]
 			break
 		}
 		current = held
+	}
+	if e.failuresAsNXDOMAIN && failureRCode(rcode) {
+		return fail(upstreamRCodeError{rcode: rcode})
 	}
 	capTTL(response.Answers)
 	response.RCode = rcode
