@@ -140,6 +140,7 @@ func (f *policyFilter) updateNetwork(snapshot networkmap.Snapshot, routed *route
 		if f.clock != nil {
 			aliasTime = f.clock().UTC()
 		}
+		snapshot, _ = networkmap.WithoutUnusableAliases(snapshot, aliasTime)
 		validated, err := networkmap.ValidateAndClone(snapshot, aliasTime)
 		if err != nil {
 			snapshot = networkmap.Snapshot{}

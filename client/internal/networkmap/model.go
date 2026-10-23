@@ -36,6 +36,10 @@ type Snapshot struct {
 	// a local choice among Exits (exit node design §9), never part of
 	// Core's map; nil when it uses none.
 	ExitRoute *ExitRoute
+	// DroppedAliasPeers counts the shared Devices the client left out of
+	// this map because their alias could not be used (expired, invalid or
+	// colliding); for the log, never for authority.
+	DroppedAliasPeers int
 }
 
 // Interchange is a verified relay grant: the ticket this node presents to

@@ -49,13 +49,8 @@ func validateAliases(snapshot Snapshot, now time.Time) error {
 	if snapshot.Self.Alias != nil {
 		return errors.New("self node cannot carry a peer alias binding")
 	}
-	occupied := make(map[netip.Addr]struct{})
-	for _, node := range append([]Node{snapshot.Self}, snapshot.Peers...) {
-		for _, address := range node.Addresses {
-			occupied[address.Addr()] = struct{}{}
-		}
-	}
 	owners := make(map[netip.Addr]AliasBinding)
+	occupied := mappedAddresses(snapshot)
 	count := 0
 	for _, peer := range snapshot.Peers {
 		if peer.Alias == nil {
@@ -65,25 +60,83 @@ func validateAliases(snapshot Snapshot, now time.Time) error {
 		if count > maxAliasPeers {
 			return errors.New("alias peer count exceeds profile limit")
 		}
-		binding := *peer.Alias
-		if err := validateAliasBinding(snapshot.Self, peer, binding, now); err != nil {
+		if err := claimAlias(snapshot.Self, peer, occupied, owners, now); err != nil {
 			return err
 		}
-		for _, address := range []netip.Addr{binding.SelfIPv4, binding.SelfIPv6} {
-			if !address.IsValid() {
-				continue
+	}
+	return nil
+}
+
+// WithoutUnusableAliases returns snapshot without the alias peers whose
+// binding cannot be used at now: expired, invalid, or claiming a local
+// alias a mapped address or an earlier peer holds. It reports how many it
+// left out. An alias that ends must not take the rest of the map down: a
+// phone that wakes with an earlier map, or a clock a little ahead, would
+// otherwise lose every peer. A binding on Self and too many alias peers
+// are left for validation to refuse, as only Core's mistake makes them; a
+// binding Core got wrong otherwise costs its peer, not the map.
+func WithoutUnusableAliases(snapshot Snapshot, now time.Time) (Snapshot, int) {
+	if snapshot.Self.Alias != nil || len(snapshot.Peers) > maxPeers {
+		return snapshot, 0
+	}
+	owners := make(map[netip.Addr]AliasBinding)
+	occupied := mappedAddresses(snapshot)
+	kept := make([]Node, 0, len(snapshot.Peers))
+	for _, peer := range snapshot.Peers {
+		if peer.Alias != nil && claimAlias(snapshot.Self, peer, occupied, owners, now) != nil {
+			continue
+		}
+		kept = append(kept, peer)
+	}
+	dropped := len(snapshot.Peers) - len(kept)
+	if dropped == 0 {
+		return snapshot, 0
+	}
+	snapshot.Peers = kept
+	return snapshot, dropped
+}
+
+// mappedAddresses are the addresses of every node of the map.
+func mappedAddresses(snapshot Snapshot) map[netip.Addr]struct{} {
+	occupied := make(map[netip.Addr]struct{}, 2*len(snapshot.Peers)+2)
+	for _, address := range snapshot.Self.Addresses {
+		occupied[address.Addr()] = struct{}{}
+	}
+	for index := range snapshot.Peers {
+		for _, address := range snapshot.Peers[index].Addresses {
+			occupied[address.Addr()] = struct{}{}
+		}
+	}
+	return occupied
+}
+
+// claimAlias checks peer's binding and records its local aliases in owners,
+// which it changes only when the binding is usable.
+func claimAlias(self, peer Node, occupied map[netip.Addr]struct{}, owners map[netip.Addr]AliasBinding,
+	now time.Time,
+) error {
+	binding := *peer.Alias
+	if err := validateAliasBinding(self, peer, binding, now); err != nil {
+		return err
+	}
+	for _, address := range []netip.Addr{binding.SelfIPv4, binding.SelfIPv6} {
+		if !address.IsValid() {
+			continue
+		}
+		if _, exists := occupied[address]; exists {
+			return errors.New("local alias collides with mapped address")
+		}
+		if owner, exists := owners[address]; exists {
+			sameProviderEndpoint := binding.Role == AliasProvider && owner.Role == AliasProvider &&
+				binding.ContractID == owner.ContractID && binding.EndpointID == owner.EndpointID &&
+				binding.Generation == owner.Generation && binding.RecoveryEpoch == owner.RecoveryEpoch
+			if !sameProviderEndpoint {
+				return errors.New("local alias has incompatible endpoint owners")
 			}
-			if _, exists := occupied[address]; exists {
-				return errors.New("local alias collides with mapped address")
-			}
-			if owner, exists := owners[address]; exists {
-				sameProviderEndpoint := binding.Role == AliasProvider && owner.Role == AliasProvider &&
-					binding.ContractID == owner.ContractID && binding.EndpointID == owner.EndpointID &&
-					binding.Generation == owner.Generation && binding.RecoveryEpoch == owner.RecoveryEpoch
-				if !sameProviderEndpoint {
-					return errors.New("local alias has incompatible endpoint owners")
-				}
-			}
+		}
+	}
+	for _, address := range []netip.Addr{binding.SelfIPv4, binding.SelfIPv6} {
+		if address.IsValid() {
 			owners[address] = binding
 		}
 	}

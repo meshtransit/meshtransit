@@ -5,6 +5,10 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Client: a shared Device whose alias is expired, invalid or colliding is
+  left out of the map on its own, and the log says how many were; before,
+  it failed the whole map and the data plane, so a phone waking with an
+  earlier map, or a clock ahead of Core's, lost every peer.
 - Mobile client (DNS design D4 §11): the engine declares `device-alias.v1`,
   so phones receive shares: a shared Device is reached at its alias address,
   its share name and service names resolve, and a phone can be shared too.

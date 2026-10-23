@@ -1136,6 +1136,10 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 							return fmt.Errorf("pausing path endpoint controller: %w", err)
 						}
 					}
+					if snapshot.DroppedAliasPeers != 0 && s.logger != nil {
+						s.logger.Warn("shared Devices left out of the map: their alias is expired or unusable",
+							"peers", snapshot.DroppedAliasPeers)
+					}
 					probeSocket := pathdiscovery.Socket{}
 					var probeAttachErr error
 					// The map with the local router and exit choices: DNS

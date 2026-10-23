@@ -420,7 +420,16 @@ func (e *WireGuardEngine) Apply(
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if snapshotHasAliases(snapshot) {
-		validated, err := networkmap.ValidateAndClone(snapshot, e.clock().UTC())
+		// An alias that ended since the map arrived leaves out its peer, not
+		// the data plane. One instant for both: an alias must not expire
+		// between them.
+		now := e.clock().UTC()
+		var dropped int
+		snapshot, dropped = networkmap.WithoutUnusableAliases(snapshot, now)
+		if dropped != 0 && e.logger != nil {
+			e.logger.Warn("shared Devices left out: their alias is expired or unusable", "peers", dropped)
+		}
+		validated, err := networkmap.ValidateAndClone(snapshot, now)
 		if err != nil {
 			_ = e.closeLocked()
 			e.filter.UpdateNetwork(networkmap.Snapshot{})

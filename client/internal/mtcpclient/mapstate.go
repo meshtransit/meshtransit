@@ -303,7 +303,11 @@ func (state *mapState) build(input snapshotInput) (networkmap.Snapshot, error) {
 	if interchange, regions, ok := state.interchange(input.now); ok {
 		snapshot.Interchange, snapshot.Relays = interchange, regions
 	}
-	return networkmap.ValidateAndClone(networkmap.WithUsableEndpoints(snapshot), input.now)
+	// A share whose alias cannot be used now (expired, invalid, colliding,
+	// or a clock ahead of Core's) is left out, not the whole map.
+	usable, dropped := networkmap.WithoutUnusableAliases(networkmap.WithUsableEndpoints(snapshot), input.now)
+	usable.DroppedAliasPeers = dropped
+	return networkmap.ValidateAndClone(usable, input.now)
 }
 
 // interchange verifies the relay map with the grant's signing keys and
