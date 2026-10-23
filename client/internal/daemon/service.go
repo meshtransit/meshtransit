@@ -429,6 +429,7 @@ type Service struct {
 	downAcks          atomic.Uint64
 	registrationGate  chan struct{}
 	dataPlaneMu       sync.Mutex
+	dnsApplyMu        sync.Mutex // orders DNS applies (applyNewestDNS)
 	supervisorMu      sync.Mutex
 	supervisorRunning bool
 	syncMu            sync.RWMutex
@@ -959,7 +960,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					append([]any{"choices", failover.choices()}, failover.exitLogAttrs()...)...)
 				if s.dns != nil && s.enableExits {
 					// The exit node's forwarder answers the names now.
-					if _, _, err := s.applyMapDNS(failoverCtx, current); err != nil {
+					if _, _, err := s.applyNewestDNS(failoverCtx, failover, current); err != nil {
 						return err
 					}
 				}
@@ -1237,7 +1238,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 						// apply this map again until a newer one arrives.
 						var dnsErr, lastDNSFailure error
 						dnsRetries.apply(func() bool {
-							dnsState, lastDNSFailure, dnsErr = s.applyMapDNS(callbackCtx, effective)
+							dnsState, lastDNSFailure, dnsErr = s.applyNewestDNS(callbackCtx, failover, effective)
 							return dnsErr == nil && dnsState != DNSFailed
 						})
 						if dnsErr != nil {
@@ -1255,7 +1256,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 						// A map the plan refuses fails the same way every time.
 						if dnsState == DNSFailed && !errors.Is(lastDNSFailure, dnsconfig.ErrInvalid) {
 							retryDNS = func() bool {
-								state, _, err := s.applyMapDNS(streamCtx, effective)
+								state, _, err := s.applyNewestDNS(streamCtx, failover, effective)
 								if streamCtx.Err() != nil {
 									return true
 								}
@@ -2987,6 +2988,22 @@ func (s *Service) currentDNSState() string {
 
 func (s *Service) stopRuntime() error {
 	return errors.Join(s.resetDNS(), s.stopDataPlane())
+}
+
+// applyNewestDNS applies the DNS of the newest map with the newest local
+// router and exit choices, or of snapshot when the failover has none as new:
+// a map callback and a local exit change apply DNS concurrently, and the
+// older of the two must never land last (an exit route whose resolvers the
+// plan lacks answers every Internet name SERVFAIL).
+func (s *Service) applyNewestDNS(ctx context.Context, failover *routeFailover, snapshot networkmap.Snapshot) (
+	string, error, error,
+) {
+	s.dnsApplyMu.Lock()
+	defer s.dnsApplyMu.Unlock()
+	if newest := failover.current(); newest.Revision >= snapshot.Revision && newest.Revision != 0 {
+		snapshot = newest
+	}
+	return s.applyMapDNS(ctx, snapshot)
 }
 
 // applyMapDNS applies a map's DNS. When the host refuses it, the mesh names

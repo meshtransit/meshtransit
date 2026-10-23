@@ -10,12 +10,14 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"golang.zx2c4.com/wireguard/tun"
 
 	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/client/internal/netadmin"
 	"meshtransit.net/client/internal/overlayframe"
+	"meshtransit.net/client/internal/underlay"
 )
 
 // tunName names the platform TUN in status and logs; the platform owns the
@@ -57,6 +59,16 @@ type platformTUN struct {
 	routed    []netip.Prefix
 	// exit is what the interface carries for an exit node (SetExitRoute).
 	exit mobileExit
+	// answer, when set, is the in-process resolver the interface's DNS
+	// goes to (DNS design D4); dnsWanted is the DNS the host configurator
+	// wants and dnsInstalled the DNS the open interface has. Both change
+	// under change only.
+	answer       answerFunc
+	dnsWanted    mobileDNS
+	dnsInstalled mobileDNS
+	// exitRouted is whether the Internet's routes are, or are about to be,
+	// on the interface: the resolver then sends no name outside the mesh.
+	exitRouted atomic.Bool
 }
 
 func newPlatformTUN(provider TunProvider, mtu int, logger *slog.Logger, routeSettings string,
@@ -76,11 +88,11 @@ func (opener *platformTUN) OpenTUN(ctx context.Context, config netadmin.TUNConfi
 	defer opener.change.Unlock()
 	routes := stableRoutes(config.Routes)
 	opener.mu.Lock()
-	exit := opener.exit
+	exit, wanted := opener.exit, opener.dnsWanted
 	opener.mu.Unlock()
 	// An exit route in use stays: the Internet never leaves outside the
 	// mesh while a new interface comes up.
-	device, err := opener.openDevice(ctx, config.Addresses, routes, nil, exit)
+	device, err := opener.openDevice(ctx, config.Addresses, routes, nil, exit, wanted)
 	if err != nil {
 		return netadmin.TUN{}, err
 	}
@@ -88,10 +100,16 @@ func (opener *platformTUN) OpenTUN(ctx context.Context, config netadmin.TUNConfi
 	opener.mu.Lock()
 	// A new interface carries no subnet routes: the data plane asks again.
 	opener.open, opener.routes, opener.routed = replaceable, routes, nil
+	underlay.SetMeshRoutes(nil)
 	opener.addresses = slices.Clone(config.Addresses)
 	opener.mu.Unlock()
+	opener.recordInstalled(replaceable, exit)
+	var given tun.Device = replaceable
+	if opener.answer != nil {
+		given = newDNSTUN(replaceable, opener.answer)
+	}
 	return netadmin.TUN{
-		Device:    replaceable,
+		Device:    given,
 		Name:      tunName,
 		MTU:       opener.mtu,
 		Addresses: append([]netip.Prefix(nil), config.Addresses...),
@@ -110,7 +128,8 @@ func (opener *platformTUN) ConfigureTUNRoutes(ctx context.Context, config netadm
 	defer opener.change.Unlock()
 	routes := stableRoutes(config.Routes)
 	opener.mu.Lock()
-	current, unchanged, routed, exit := opener.open, slices.Equal(opener.routes, routes), opener.routed, opener.exit
+	current, unchanged, routed, exit, wanted := opener.open, slices.Equal(opener.routes, routes), opener.routed,
+		opener.exit, opener.dnsWanted
 	opener.mu.Unlock()
 	if current == nil || current.isClosed() {
 		return fmt.Errorf("%w: no open TUN to change", errNoTUN)
@@ -119,10 +138,11 @@ func (opener *platformTUN) ConfigureTUNRoutes(ctx context.Context, config netadm
 		return nil
 	}
 	if err := current.Replace(func() (tun.Device, error) {
-		return opener.openDevice(ctx, config.Addresses, routes, routed, exit)
+		return opener.openDevice(ctx, config.Addresses, routes, routed, exit, wanted)
 	}); err != nil {
 		return err
 	}
+	opener.recordInstalled(current, exit)
 	opener.mu.Lock()
 	if opener.open == current {
 		opener.routes, opener.addresses = routes, slices.Clone(config.Addresses)
@@ -134,7 +154,7 @@ func (opener *platformTUN) ConfigureTUNRoutes(ctx context.Context, config netadm
 // openDevice asks the platform for a configured interface and adopts its
 // descriptor.
 func (opener *platformTUN) openDevice(ctx context.Context, addresses, routes, routed []netip.Prefix,
-	exit mobileExit,
+	exit mobileExit, wanted mobileDNS,
 ) (tun.Device, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -151,14 +171,20 @@ func (opener *platformTUN) openDevice(ctx context.Context, addresses, routes, ro
 	if err := exit.validate(); err != nil {
 		return nil, err
 	}
+	dns, servers := opener.interfaceDNS(exit, wanted)
 	interfaceRoutes := slices.Clone(routes)
 	for _, prefix := range slices.Concat(routed, exit.routes) {
 		if !slices.Contains(interfaceRoutes, prefix) {
 			interfaceRoutes = append(interfaceRoutes, prefix)
 		}
 	}
+	if dns.on {
+		// The resolver's address is outside the overlay frame: its own
+		// route, which the overlay check never sees.
+		interfaceRoutes = append(interfaceRoutes, netip.PrefixFrom(resolverAddress, resolverAddress.BitLen()))
+	}
 	fd, err := opener.provider.OpenTUN(joinPrefixes(addresses), joinPrefixes(interfaceRoutes),
-		joinAddresses(exit.dns), opener.mtu)
+		joinAddresses(servers), joinDomains(dns.search), joinDomains(dns.match), opener.mtu)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", errNoTUN, err)
 	}

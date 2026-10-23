@@ -10,6 +10,7 @@ import (
 
 	"meshtransit.net/client/internal/netadmin"
 	"meshtransit.net/client/internal/routesettings"
+	"meshtransit.net/client/internal/underlay"
 )
 
 // maximumReportedRefusals matches what the desktop helper reports.
@@ -46,21 +47,23 @@ func (opener *platformTUN) SetRoutedRoutes(ctx context.Context, requested []neti
 		refused = append(refused, conflicts...)
 	}
 	opener.mu.Lock()
-	current, addresses, routes, installed, exit := opener.open, opener.addresses, opener.routes, opener.routed,
-		opener.exit
+	current, addresses, routes, installed, exit, wanted := opener.open, opener.addresses, opener.routes,
+		opener.routed, opener.exit, opener.dnsWanted
 	opener.mu.Unlock()
 	if current == nil || current.isClosed() {
 		return netadmin.RoutedResult{}, fmt.Errorf("%w: no open TUN for subnet routes", errNoTUN)
 	}
 	if !slices.Equal(installed, accepted) {
 		if err := current.Replace(func() (tun.Device, error) {
-			return opener.openDevice(ctx, addresses, routes, accepted, exit)
+			return opener.openDevice(ctx, addresses, routes, accepted, exit, wanted)
 		}); err != nil {
 			return netadmin.RoutedResult{}, fmt.Errorf("mobile: changing subnet routes: %w", err)
 		}
+		opener.recordInstalled(current, exit)
 		opener.mu.Lock()
 		if opener.open == current {
 			opener.routed = slices.Clone(accepted)
+			underlay.SetMeshRoutes(accepted)
 		}
 		opener.mu.Unlock()
 	}

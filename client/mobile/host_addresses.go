@@ -3,8 +3,13 @@ package mobile
 import (
 	"fmt"
 	"net/netip"
+	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
+
+	"meshtransit.net/client/internal/overlayframe"
+	"meshtransit.net/client/internal/underlay"
 )
 
 // maxHostAddresses bounds the addresses the platform may report.
@@ -36,6 +41,12 @@ func (list *hostAddressList) attached() []netip.Prefix {
 		return *networks
 	}
 	return nil
+}
+
+// onAttachedNetwork reports whether address is on a network the device is
+// attached to: a private resolver there is asked over it.
+func (list *hostAddressList) onAttachedNetwork(address netip.Addr) bool {
+	return slices.ContainsFunc(list.attached(), func(network netip.Prefix) bool { return network.Contains(address) })
 }
 
 func (list *hostAddressList) load() []netip.Addr {
@@ -71,4 +82,61 @@ func parseHostAddresses(value string) ([]netip.Addr, []netip.Prefix, error) {
 		addresses = append(addresses, address)
 	}
 	return addresses, networks, nil
+}
+
+const (
+	// maxResolversPerNetwork and maxResolverNetworks bound the networks'
+	// DNS servers MeshTransit's resolver asks (DNS design D4 §3.5).
+	maxResolversPerNetwork = 3
+	maxResolverNetworks    = 3
+)
+
+// parseHostResolvers reads SetHostResolvers' list, keeping the servers a
+// socket of the client can ask: never a link-local one (its zone is lost),
+// a loopback, multicast or unspecified address, one in the mesh, or the
+// resolver itself.
+func parseHostResolvers(value string) ([]underlay.NetworkResolver, error) {
+	resolvers := []underlay.NetworkResolver{}
+	perNetwork := map[int64]int{}
+	for entry := range strings.SplitSeq(value, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		addressText, networkText, hasNetwork := strings.Cut(entry, "@")
+		address, err := netip.ParseAddr(strings.TrimSpace(addressText))
+		if err != nil {
+			return nil, fmt.Errorf("%w: %q is not an IP address", errInvalidConfig, entry)
+		}
+		var network int64
+		if hasNetwork {
+			network, err = strconv.ParseInt(strings.TrimSpace(networkText), 10, 64)
+			if err != nil || network < 0 {
+				return nil, fmt.Errorf("%w: %q has no network handle", errInvalidConfig, entry)
+			}
+		}
+		address = address.Unmap().WithZone("")
+		if !usableHostResolver(address) {
+			continue
+		}
+		if _, seen := perNetwork[network]; !seen && len(perNetwork) == maxResolverNetworks {
+			continue
+		}
+		if perNetwork[network] == maxResolversPerNetwork {
+			continue
+		}
+		resolver := underlay.NetworkResolver{Address: netip.AddrPortFrom(address, dnsPort), Network: network}
+		if slices.Contains(resolvers, resolver) {
+			continue
+		}
+		perNetwork[network]++
+		resolvers = append(resolvers, resolver)
+	}
+	return resolvers, nil
+}
+
+func usableHostResolver(address netip.Addr) bool {
+	return address.IsValid() && !address.IsUnspecified() && !address.IsLoopback() && !address.IsMulticast() &&
+		!address.IsLinkLocalUnicast() && address != resolverAddress &&
+		!overlayframe.Contains(netip.PrefixFrom(address, address.BitLen()))
 }

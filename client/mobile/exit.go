@@ -93,8 +93,8 @@ func (opener *platformTUN) SetExitRoute(ctx context.Context, requested netadmin.
 		}
 	}
 	opener.mu.Lock()
-	current, addresses, routes, routed, installed := opener.open, opener.addresses, opener.routes, opener.routed,
-		opener.exit
+	current, addresses, routes, routed, installed, wantedDNS := opener.open, opener.addresses, opener.routes,
+		opener.routed, opener.exit, opener.dnsWanted
 	opener.mu.Unlock()
 	result := netadmin.ExitRouting{Routing: wanted}
 	if requested.Use && !wanted {
@@ -104,17 +104,33 @@ func (opener *platformTUN) SetExitRoute(ctx context.Context, requested netadmin.
 		opener.mu.Lock()
 		opener.exit = desired
 		opener.mu.Unlock()
+		opener.exitRouted.Store(len(desired.routes) != 0)
 		return netadmin.ExitRouting{Refused: result.Refused}, nil
 	}
-	if installed.equal(desired) {
+	if installed.equal(desired) || (opener.answer != nil && slices.Equal(installed.routes, desired.routes)) {
+		// With the in-process resolver the interface's DNS is always it: a
+		// new exit node alone changes nothing on the interface.
+		opener.mu.Lock()
+		if opener.open == current {
+			opener.exit = desired
+		}
+		opener.mu.Unlock()
 		return result, nil
 	}
+	if len(desired.routes) != 0 {
+		// Before the routes: no name may leave outside the mesh once the
+		// Internet goes into it.
+		opener.exitRouted.Store(true)
+	}
 	if err := current.Replace(func() (tun.Device, error) {
-		return opener.openDevice(ctx, addresses, routes, routed, desired)
+		return opener.openDevice(ctx, addresses, routes, routed, desired, wantedDNS)
 	}); err != nil {
+		opener.exitRouted.Store(len(installed.routes) != 0)
 		return netadmin.ExitRouting{Refused: netadmin.ExitRouteRefusedFailed},
 			fmt.Errorf("mobile: changing the exit route: %w", err)
 	}
+	opener.exitRouted.Store(len(desired.routes) != 0)
+	opener.recordInstalled(current, desired)
 	opener.mu.Lock()
 	if opener.open == current {
 		opener.exit = desired

@@ -34,16 +34,19 @@ type fakeTUN struct {
 	addresses string
 	routes    string
 	dns       string
+	search    string
+	match     string
 	mtu       int
 	fd        int
 	err       error
 	next      func() (int, error) // when set, gives each call's descriptor
 }
 
-func (tun *fakeTUN) OpenTUN(addresses, routes, dns string, mtu int) (int, error) {
+func (tun *fakeTUN) OpenTUN(addresses, routes, dns, searchDomains, matchDomains string, mtu int) (int, error) {
 	tun.mu.Lock()
 	defer tun.mu.Unlock()
 	tun.addresses, tun.routes, tun.dns, tun.mtu = addresses, routes, dns, mtu
+	tun.search, tun.match = searchDomains, matchDomains
 	if tun.next != nil {
 		return tun.next()
 	}
@@ -403,6 +406,16 @@ type fakeProtector struct {
 	mu    sync.Mutex
 	fds   []int
 	allow bool
+	// bound records BindSocket's networks; refuse fails it.
+	bound  []int64
+	refuse bool
+}
+
+func (protector *fakeProtector) BindSocket(_ int, network int64) bool {
+	protector.mu.Lock()
+	defer protector.mu.Unlock()
+	protector.bound = append(protector.bound, network)
+	return !protector.refuse
 }
 
 func (protector *fakeProtector) Protect(fd int) bool {

@@ -18,6 +18,7 @@ import (
 
 	"meshtransit.net/client/internal/overlayframe"
 	"meshtransit.net/client/internal/underlay"
+	"meshtransit.net/shared/internet"
 )
 
 const (
@@ -38,6 +39,7 @@ var (
 	errUnsupportedEDNSVersion = errors.New("dnsconfig: unsupported EDNS version")
 	errNoResolver             = errors.New("dnsconfig: no resolver for query")
 	errForwardBusy            = errors.New("dnsconfig: forward queue is full")
+	errUnreachableResolver    = errors.New("dnsconfig: resolver not reachable from this network")
 	errUpstreamServerFailure  = errors.New("dnsconfig: upstream returned server failure")
 	errUpstreamRefused        = errors.New("dnsconfig: upstream refused query")
 )
@@ -53,6 +55,33 @@ type resolverEngine struct {
 	breaker *resolverBreaker
 	// network caches networkResolvers for zones that fail open.
 	network networkResolverCache
+	// fullResolver answers every name, not only the mesh's: names no route
+	// covers go to networkResolvers when the plan names no resolver for
+	// them (PacketResolver, a platform without split DNS).
+	fullResolver bool
+	// exitRouted, when set, reports whether the host's Internet routes go
+	// into the mesh now; until the plan has the exit node's resolvers, no
+	// question may then leave through the host's own network.
+	exitRouted func() bool
+	// networkGeneration, when set, changes whenever networkResolvers would
+	// return other resolvers: the cache is then refreshed at once.
+	networkGeneration func() uint64
+}
+
+// networkTargets are the host's network resolvers, from the cache.
+func (e *resolverEngine) networkTargets() []netip.AddrPort {
+	var generation uint64
+	if e.networkGeneration != nil {
+		generation = e.networkGeneration()
+	}
+	return e.network.resolvers(e.networkResolvers, generation)
+}
+
+// exitPending reports a host routing the Internet into the mesh before the
+// plan knows the exit node's resolvers: names the exit node would answer
+// get none, and none goes to a resolver on the Internet or the network.
+func (e *resolverEngine) exitPending(plan Plan) bool {
+	return plan.Exit == nil && e.exitRouted != nil && e.exitRouted()
 }
 
 func newResolverEngine() *resolverEngine {
@@ -153,6 +182,14 @@ func (e *resolverEngine) resolve(
 			private = exit.Resolvers
 		}
 		resolvers = private
+	} else if e.exitPending(plan) {
+		// Only resolvers in the mesh, which the exit route never carries.
+		resolvers = slices.DeleteFunc(slices.Clone(resolvers), func(resolver netip.AddrPort) bool {
+			address := resolver.Addr().Unmap()
+			return !overlayframe.Contains(netip.PrefixFrom(address, address.BitLen()))
+		})
+	} else if len(resolvers) == 0 && e.fullResolver {
+		resolvers = e.networkTargets()
 	}
 	if len(resolvers) == 0 {
 		return failureResponse(query, message, question, plan, transport, errNoResolver)
@@ -571,6 +608,9 @@ func exchangeDNS(
 	resolver netip.AddrPort,
 	transport string,
 ) ([]byte, error) {
+	if unreachableResolver(resolver.Addr()) {
+		return nil, errUnreachableResolver
+	}
 	if transport == "tcp" {
 		return exchangeTCP(ctx, query, resolver)
 	}
@@ -589,11 +629,23 @@ func exchangeDNS(
 	return response, nil
 }
 
+// unreachableResolver reports a resolver at a private address outside the
+// mesh the platform says the client cannot reach (underlay.SetPrivateReach).
+func unreachableResolver(address netip.Addr) bool {
+	address = address.Unmap()
+	if overlayframe.Contains(netip.PrefixFrom(address, address.BitLen())) || internet.Contains(address) {
+		return false
+	}
+	return !underlay.PrivateReachable(address)
+}
+
 // dialerFor keeps a socket to a resolver on the physical network, except
 // to one in the mesh (an exit node's forwarder), which only the mesh
-// reaches.
+// reaches, and, on a mobile VPN, to one inside a subnet route on its
+// interface (a zone's resolver in a Site), reached through the Site.
 func dialerFor(resolver netip.AddrPort) *net.Dialer {
-	if overlayframe.Contains(netip.PrefixFrom(resolver.Addr().Unmap(), resolver.Addr().Unmap().BitLen())) {
+	address := resolver.Addr().Unmap()
+	if overlayframe.Contains(netip.PrefixFrom(address, address.BitLen())) || underlay.ThroughMesh(address) {
 		return &net.Dialer{}
 	}
 	return underlay.Dialer(0)
@@ -707,6 +759,13 @@ func limitUDPResponse(query, response []byte, transport string) ([]byte, error) 
 	if transport != "udp" || len(response) <= udpResponseLimit(query) {
 		return response, nil
 	}
+
+	return truncatedResponse(response)
+}
+
+// truncatedResponse is response without its records, marked truncated: the
+// asker should ask again over TCP.
+func truncatedResponse(response []byte) ([]byte, error) {
 	var message dnsmessage.Message
 	if err := message.Unpack(response); err != nil {
 		return nil, fmt.Errorf("dnsconfig: parsing oversized response: %w", err)

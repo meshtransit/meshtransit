@@ -55,6 +55,26 @@ func TCPSegment(source, destination netip.Addr, sourcePort, destinationPort uint
 	return packet
 }
 
+// UDPDatagram builds a UDP datagram carrying payload from source to
+// destination, both of one family; it returns nil when the datagram would
+// not fit an IP packet.
+func UDPDatagram(source, destination netip.Addr, sourcePort, destinationPort uint16, payload []byte) []byte {
+	if len(payload) > 65535-40-8 {
+		return nil
+	}
+	packet, header, transport := probePacket(source, destination, ProtocolUDP, 8+len(payload))
+	binary.BigEndian.PutUint16(transport[0:2], sourcePort)
+	binary.BigEndian.PutUint16(transport[2:4], destinationPort)
+	binary.BigEndian.PutUint16(transport[4:6], uint16(len(transport))) //nolint:gosec // G115: bounded above
+	copy(transport[8:], payload)
+	checksum := ^transportChecksum(header, transport)
+	if checksum == 0 {
+		checksum = 0xffff // zero means no checksum over IPv4 (RFC 768)
+	}
+	binary.BigEndian.PutUint16(transport[6:8], checksum)
+	return packet
+}
+
 // probePacket lays out an IP packet of one family with a zeroed transport
 // of size bytes, and returns it with its header and transport.
 func probePacket(source, destination netip.Addr, protocol uint8, size int) ([]byte, Header, []byte) {
@@ -62,7 +82,7 @@ func probePacket(source, destination netip.Addr, protocol uint8, size int) ([]by
 	if source.Is4() {
 		packet := make([]byte, 20+size)
 		packet[0] = 0x45
-		binary.BigEndian.PutUint16(packet[2:4], uint16(len(packet))) //nolint:gosec // G115: at most 40 bytes
+		binary.BigEndian.PutUint16(packet[2:4], uint16(len(packet))) //nolint:gosec // G115: bounded by the callers
 		packet[6] = 0x40                                             // do not fragment
 		packet[8], packet[9] = probeHopLimit, protocol
 		from, to := source.As4(), destination.As4()
@@ -74,7 +94,7 @@ func probePacket(source, destination netip.Addr, protocol uint8, size int) ([]by
 	}
 	packet := make([]byte, 40+size)
 	packet[0] = 0x60
-	binary.BigEndian.PutUint16(packet[4:6], uint16(size)) //nolint:gosec // G115: at most 20 bytes
+	binary.BigEndian.PutUint16(packet[4:6], uint16(size)) //nolint:gosec // G115: bounded by the callers
 	packet[6], packet[7] = protocol, probeHopLimit
 	from, to := source.As16(), destination.As16()
 	copy(packet[8:24], from[:])

@@ -440,6 +440,8 @@ func (e *resolverEngine) askOutside(ctx context.Context, plan Plan, name string,
 		if route.FailOpen {
 			fallback, _, _ = e.failOpenTargets(plan, question)
 		}
+	case e.exitPending(plan):
+		// No target: the chase fails.
 	case plan.Exit != nil:
 		if network := e.captiveResolvers(); len(network) != 0 {
 			targets = network
@@ -451,7 +453,7 @@ func (e *resolverEngine) askOutside(ctx context.Context, plan Plan, name string,
 	case len(plan.DefaultResolvers) != 0:
 		targets = slices.Clone(plan.DefaultResolvers)
 	default:
-		targets = e.network.resolvers(e.networkResolvers)
+		targets = e.networkTargets()
 	}
 	response, err := forwardQuery(ctx, query, question, targets, transport, gate)
 	if err != nil && len(fallback) != 0 && ctx.Err() == nil {

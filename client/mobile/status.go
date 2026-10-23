@@ -48,6 +48,24 @@ type status struct {
 	Exit *exitStatus `json:"exit,omitempty"`
 	// ExitSettings is the app's choice (SetExitNode).
 	ExitSettings exitSettings `json:"exitSettings"`
+	// Resolver is MeshTransit's resolver on the device (DNS design D4).
+	Resolver resolverStatus `json:"resolver"`
+}
+
+// resolverStatus is whether the device's names go to MeshTransit's resolver
+// and what it answered.
+type resolverStatus struct {
+	// Use is the app's choice (SetUseDNS).
+	Use bool `json:"use"`
+	// Interface is whether the VPN interface sends the device's names to
+	// the resolver now.
+	Interface bool `json:"interface"`
+	// NetworkResolvers counts the networks' DNS servers it asks the names
+	// outside the mesh (SetHostResolvers).
+	NetworkResolvers int    `json:"networkResolvers"`
+	Queries          uint64 `json:"queries"`
+	Failures         uint64 `json:"failures"`
+	Truncated        uint64 `json:"truncated"`
 }
 
 // exitSettings is the Exit Pool the app chose and whether the LAN stays

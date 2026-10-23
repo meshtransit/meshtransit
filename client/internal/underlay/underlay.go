@@ -82,7 +82,14 @@ func Control(_, address string, raw syscall.RawConn) error {
 	if err := raw.Control(func(fd uintptr) { protectErr = Protect(fd) }); err != nil {
 		return fmt.Errorf("underlay: reaching the socket: %w", err)
 	}
-	return protectErr
+	if protectErr != nil {
+		return protectErr
+	}
+	if destination, err := netip.ParseAddrPort(address); err == nil {
+		// A network's resolver is asked over that network.
+		return bindNetwork(raw, destination)
+	}
+	return nil
 }
 
 // Dialer returns a dialer with the given timeout (0 for none) whose sockets

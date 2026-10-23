@@ -138,3 +138,25 @@ func cloneDNSConfig(config netadmin.DNSConfig) netadmin.DNSConfig {
 
 	return cloned
 }
+
+// MatchDomains returns the names a platform with split DNS sends the
+// resolver for plan, as the desktop host does (its search and route
+// domains), or nil when the resolver answers every name (an exit node or
+// resolvers for every name).
+func MatchDomains(plan Plan) []string {
+	if len(plan.DefaultResolvers) != 0 || plan.Exit != nil {
+		return nil
+	}
+	domains := make([]string, 0, len(plan.SearchDomains)+len(plan.Routes))
+	for _, domain := range plan.SearchDomains {
+		if !slices.Contains(domains, domain) {
+			domains = append(domains, domain)
+		}
+	}
+	for _, route := range plan.Routes {
+		if !slices.Contains(domains, route.Suffix) {
+			domains = append(domains, route.Suffix)
+		}
+	}
+	return domains
+}

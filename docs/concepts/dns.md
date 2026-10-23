@@ -71,8 +71,8 @@ A Network admin can send a domain to chosen resolvers: a DNS zone, created
 through the management API with `dns.manage` when the deployment sets
 `MESHTRANSIT_DNS_ZONES_ENABLED`. Its resolvers are, in order, Devices of the
 Network (port 53 or 1024-65535) or addresses on the Internet (port 53); it
-goes to every Device or to Device Groups. A node on Linux, macOS or Windows
-with DNS on applies zones (MTCP `dns.forward1`); Android and iOS do not yet.
+goes to every Device or to Device Groups. A node on Linux, macOS, Windows or
+Android with DNS on applies zones (MTCP `dns.forward1`); iOS does not yet.
 
 - The host routes the zone's domain to the node's resolver, which asks the
   zone's resolvers in order (1.5 s each). A resolver Device is listed only
@@ -208,7 +208,20 @@ routed to it:
 | Linux | `192.0.2.53:1053` on the link `meshdns0`, created by `meshnetd` | `systemd-resolved`, per link: the mesh names as route domains, LLMNR and mDNS off |
 | macOS | `192.0.2.53:1053`, an address on `lo0` | A supplemental resolver in `scutil` for the mesh names |
 | Windows | `127.53.53.53:53`, in the service | One NRPT rule for the mesh names; the DNS cache is flushed |
-| Android, iOS | not yet | — |
+| Android | `192.0.2.53:53`, inside the app: questions to it are taken out of the VPN interface's packets | The VPN interface's only DNS server, with a route to it and the search domains. Android has no split DNS, so every name comes to it: the mesh's are answered as above, any other is asked of the DNS servers of the phone's networks, each over its own network |
+| iOS | not yet | — |
+
+On Android the interface takes this DNS only once the app has reported its
+networks' DNS servers, and loses it when the map has no DNS or the person
+turns "Use MeshTransit DNS" off. While the Internet goes through an exit
+node it always has it, and no name leaves outside the mesh: the Internet's
+names go to the exit node, or are answered `SERVFAIL` until its resolvers
+are known. A zone's resolver at a private address is asked only when the
+phone routes to it through a Site or is on its network. Answers over UDP
+stay within the interface MTU (1,252 bytes, then truncated); DNS over TCP to
+the resolver is reset, as is Android's Private DNS probe on port 853. With
+Private DNS set to a hostname ("strict"), Android sends no name to the
+resolver, and the mesh names do not resolve.
 
 On Linux, DNS needs `systemd-resolved`: with `--enable-dns`, `meshnetd`
 refuses to start unless `/usr/bin/resolvectl` is a root-owned file that only
@@ -259,8 +272,7 @@ that route itself).
 
 ## Not yet
 
-- Names and zone kinds on Android and iOS. A zone for every other name (the
-  root).
+- Names and zone kinds on iOS. A zone for every other name (the root).
 - Internet resolvers of a zone asked through the exit node itself (today the
   exit node's DNS forwarder answers instead).
 - The search domain on Windows: the NRPT routes the zone to the resolver, but
@@ -269,4 +281,5 @@ that route itself).
   PTR queries sent to it, but reverse zones are not routed to it.
 - Encrypted upstream resolvers.
 - "DNS for all names" on macOS and Windows.
-- DNS on Android and iOS.
+- DNS on iOS.
+- DNS over TCP and encrypted upstreams on Android.

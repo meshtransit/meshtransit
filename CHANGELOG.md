@@ -5,6 +5,21 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Mobile client (DNS design D4): the engine answers the device's names. An
+  in-process resolver at 192.0.2.53 takes the VPN interface's DNS: the
+  mesh's names, shares, zones and service names as on the desktop, any other
+  name from the DNS servers of the phone's networks (Android has no split
+  DNS), each asked over its own network. The engine now declares
+  `dns.forward1` and `dns.records1`, so Core sends it every DNS feature. While
+  the Internet goes through an exit node no name leaves outside the mesh, and
+  the resolver on the interface replaces the exit node's own resolvers.
+  Breaking for the apps (`APIVersion` 2): `TunProvider.OpenTUN` takes search
+  and match domains, `SocketProtector` gains `BindSocket`, and new
+  `SetHostResolvers` and `SetUseDNS` report the networks' DNS servers and the
+  person's choice. The status JSON gains `resolver`.
+- Client: a map and a local exit change applying DNS at once now always
+  leave the newest map's DNS, with the newest exit choice, in place.
+
 - Core (DNS design D3 §19, schema 220): a running share's service names have
   their own routes under `trust-contracts/{id}/service-names`: `GET` for the
   provider or the consumer (`share.read`; the consumer also gets the DNS

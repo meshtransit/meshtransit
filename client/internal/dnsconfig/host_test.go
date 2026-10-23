@@ -149,3 +149,17 @@ func (f *fakeDNSAdministrator) ResetDNS(context.Context) error {
 
 	return nil
 }
+
+func TestMatchDomainsFollowTheDesktopRoutingDomains(t *testing.T) {
+	t.Parallel()
+	plan := Plan{Enabled: true, SearchDomains: []string{"corp.internal"}, Routes: []Route{
+		{Suffix: "corp.internal"}, {Suffix: "app.example.com"},
+	}}
+	if got := MatchDomains(plan); !slices.Equal(got, []string{"corp.internal", "app.example.com"}) {
+		t.Fatalf("MatchDomains() = %v", got)
+	}
+	plan.Exit = &ExitDNS{}
+	if got := MatchDomains(plan); got != nil {
+		t.Fatalf("MatchDomains() with an exit = %v, want every name", got)
+	}
+}

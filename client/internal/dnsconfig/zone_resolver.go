@@ -105,6 +105,12 @@ func (e *resolverEngine) zoneTargets(plan Plan, route Route, question dnsmessage
 	targets []netip.AddrPort, captiveWindow, noData bool,
 ) {
 	exit := plan.Exit
+	if e.exitPending(plan) {
+		// Only the zone's resolvers in the mesh or a private network.
+		return slices.DeleteFunc(slices.Clone(route.Resolvers), func(resolver netip.AddrPort) bool {
+			return internet.Contains(resolver.Addr())
+		}), false, false
+	}
 	if exit == nil || len(route.Resolvers) == 0 {
 		return slices.Clone(route.Resolvers), false, false
 	}
@@ -149,8 +155,11 @@ func (e *resolverEngine) failOpenTargets(plan Plan, question dnsmessage.Question
 	targets []netip.AddrPort, captiveWindow, noData bool,
 ) {
 	exit := plan.Exit
+	if e.exitPending(plan) {
+		return nil, false, false
+	}
 	if exit == nil {
-		return e.network.resolvers(e.networkResolvers), false, false
+		return e.networkTargets(), false, false
 	}
 	if network := e.captiveResolvers(); len(network) != 0 {
 		return network, true, false
@@ -217,16 +226,19 @@ const networkResolverTTL = 10 * time.Second
 // networkResolverCache keeps the last lookup of the host's network
 // resolvers, an empty one included. Its zero value is ready.
 type networkResolverCache struct {
-	mu     sync.Mutex
-	at     time.Time
-	cached []netip.AddrPort
+	mu         sync.Mutex
+	at         time.Time
+	generation uint64
+	cached     []netip.AddrPort
 }
 
-func (cache *networkResolverCache) resolvers(lookup func() []netip.AddrPort) []netip.AddrPort {
+// resolvers returns lookup's resolvers, looked up again once they are
+// networkResolverTTL old or generation differs from theirs.
+func (cache *networkResolverCache) resolvers(lookup func() []netip.AddrPort, generation uint64) []netip.AddrPort {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	if cache.at.IsZero() || time.Since(cache.at) >= networkResolverTTL {
-		cache.cached, cache.at = lookup(), time.Now()
+	if cache.at.IsZero() || time.Since(cache.at) >= networkResolverTTL || cache.generation != generation {
+		cache.cached, cache.at, cache.generation = lookup(), time.Now(), generation
 	}
 	return slices.Clone(cache.cached)
 }

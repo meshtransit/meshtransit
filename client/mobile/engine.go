@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -38,7 +39,7 @@ import (
 
 // APIVersion versions this package's API and its status JSON. The apps check
 // it; a change that removes or renames anything increments it.
-const APIVersion = 1
+const APIVersion = 2
 
 const (
 	actionTimeout = 30 * time.Second
@@ -88,6 +89,10 @@ type Engine struct {
 	routeSettings string
 	// stopWait bounds how long Stop and Close wait for the runtime.
 	stopWait time.Duration
+	// dns answers the device's names; tun is the VPN interface it points
+	// them at.
+	dns *dnsController
+	tun *platformTUN
 
 	// lifecycle serializes Start, Stop and Close, including Stop's wait.
 	lifecycle sync.Mutex
@@ -146,8 +151,13 @@ func build(resolved Config, tun TunProvider, keys KeyStore, queue *asyncLog) (*E
 	}
 	hosts := &hostAddressList{}
 	routeSettings := filepath.Join(resolved.StateDir, routeSettingsFile)
+	opener := newPlatformTUN(tun, DefaultMTU, logger.With("component", "tun"), routeSettings, hosts)
+	dns, err := newDNSController(opener, logger.With("component", "dns"))
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("mobile: create dns: %w", err), closeStores(profiles, identities))
+	}
 	packets, err := dataplane.NewWireGuardWithObserver(
-		newPlatformTUN(tun, DefaultMTU, logger.With("component", "tun"), routeSettings, hosts),
+		opener,
 		uint16(resolved.ListenPort), //nolint:gosec // validated to 1024-65535
 		nil,
 	)
@@ -171,13 +181,17 @@ func build(resolved Config, tun TunProvider, keys KeyStore, queue *asyncLog) (*E
 		ExitPinsDir:       resolved.StateDir,
 		RouteSettingsPath: routeSettings,
 		LoadRouteSettings: loadRouteSettings,
+		// The in-process resolver answers the device's names (DNS design
+		// D4); Core sends it every DNS feature.
+		DNS: dns,
 	})
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("mobile: create runtime: %w", err), closeStores(profiles, identities))
 	}
 	return &Engine{
 		service: service, serve: service.Run, profiles: profiles, identities: identities, logger: logger, logs: queue,
-		network: network, stopWait: stopTimeout, hosts: hosts, routeSettings: routeSettings,
+		network: network, stopWait: stopTimeout, hosts: hosts, routeSettings: routeSettings, dns: dns,
+		tun: opener,
 	}, nil
 }
 
@@ -326,7 +340,10 @@ func (engine *Engine) Close() (err error) {
 	}
 	engine.closed = true
 	releaseProtector(engine)
-	err = closeStores(engine.profiles, engine.identities)
+	if engine.dns != nil {
+		err = engine.dns.shutdown()
+	}
+	err = errors.Join(err, closeStores(engine.profiles, engine.identities))
 	if engine.logs != nil {
 		engine.logs.close()
 	}
@@ -361,6 +378,13 @@ func (engine *Engine) SetSocketProtector(protector SocketProtector) (err error) 
 			return errProtectRefused
 		}
 		return nil
+	}, func(fd uintptr, network int64) error {
+		if !protector.BindSocket(int(fd), network) {
+			// A network Android does not let the app use (a background
+			// one): the protected socket goes through the default network.
+			engine.logger.Debug("a socket to a network's DNS server could not be bound to it", "network", network)
+		}
+		return nil
 	})
 }
 
@@ -372,13 +396,17 @@ var protectorOwner struct {
 	engine *Engine
 }
 
-func installProtector(engine *Engine, protect underlay.Protector) error {
+func installProtector(engine *Engine, protect underlay.Protector, bind underlay.NetworkBinder) error {
 	protectorOwner.Lock()
 	defer protectorOwner.Unlock()
 	if protectorOwner.engine != nil && protectorOwner.engine != engine {
 		return errProtectorInUse
 	}
 	underlay.SetProtector(protect)
+	underlay.SetNetworkBinder(bind)
+	// A private resolver outside the mesh is asked only on a network the
+	// phone is on or through a Site it routes to (DNS design D4 §4).
+	underlay.SetPrivateReach(engine.hosts.onAttachedNetwork)
 	protectorOwner.engine = engine
 	return nil
 }
@@ -388,6 +416,11 @@ func releaseProtector(engine *Engine) {
 	defer protectorOwner.Unlock()
 	if protectorOwner.engine == engine {
 		underlay.SetProtector(nil)
+		underlay.SetNetworkBinder(nil)
+		underlay.SetPrivateReach(nil)
+		// What this Engine's platform reported is not the next one's.
+		underlay.SetReportedResolvers(nil)
+		underlay.SetMeshRoutes(nil)
 		protectorOwner.engine = nil
 	}
 }
@@ -461,6 +494,61 @@ func (engine *Engine) SetHostServers(addresses string) (err error) {
 	return nil
 }
 
+// SetHostResolvers tells the runtime the DNS servers of the device's
+// networks other than the app's VPN, best network first (call it before
+// Start too: the runtime's own lookups use them): a comma-separated
+// list of "address@network", network being the handle BindSocket receives
+// (Android Network.getNetworkHandle()), or a bare address. MeshTransit's
+// resolver asks them the names outside the mesh (DNS design D4 §3.5); until
+// some are known, the VPN interface takes no DNS. It never blocks.
+func (engine *Engine) SetHostResolvers(entries string) (err error) {
+	defer recoverPanic(&err)
+	if engine == nil {
+		return errEngineClosed
+	}
+	resolvers, err := parseHostResolvers(entries)
+	if err != nil {
+		return err
+	}
+	if slices.Equal(resolvers, underlay.ReportedResolvers()) {
+		return nil
+	}
+	known := len(underlay.ReportedResolvers()) != 0
+	underlay.SetReportedResolvers(resolvers)
+	if !known && len(resolvers) != 0 && engine.dns != nil {
+		go engine.dns.reapply()
+	}
+	return nil
+}
+
+// SetUseDNS sets whether MeshTransit answers the device's names (on by
+// default): off, the mesh's names are not answered, and the device asks its
+// networks' DNS servers, except while it routes the Internet through an
+// exit node. The app keeps the choice and sets it before Start. It never
+// blocks.
+func (engine *Engine) SetUseDNS(on bool) (err error) {
+	defer recoverPanic(&err)
+	if engine == nil {
+		return errEngineClosed
+	}
+	if engine.dns != nil {
+		engine.dns.setUse(on)
+	}
+	return nil
+}
+
+func (engine *Engine) resolverStatus() resolverStatus {
+	if engine.dns == nil {
+		return resolverStatus{}
+	}
+	stats := engine.dns.stats()
+	return resolverStatus{
+		Use: engine.dns.use.Load(), Interface: engine.tun.dnsOnInterface(),
+		NetworkResolvers: len(underlay.ReportedResolvers()),
+		Queries:          stats.Queries, Failures: stats.Failures, Truncated: stats.Truncated,
+	}
+}
+
 // StatusJSON returns the current status as the versioned JSON of status.
 func (engine *Engine) StatusJSON() (value string, err error) {
 	defer recoverPanic(&err)
@@ -474,6 +562,7 @@ func (engine *Engine) StatusJSON() (value string, err error) {
 		settings, _ := loadRouteSettings(engine.routeSettings)
 		reported.SubnetRoutes.Accepted = settings.AcceptRoutes
 		reported.ExitSettings = exitSettings{Use: settings.ExitUse, AllowLAN: settings.ExitAllowLAN}
+		reported.Resolver = engine.resolverStatus()
 		value, statusErr = reported.marshal()
 		return statusErr
 	})
