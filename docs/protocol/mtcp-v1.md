@@ -802,9 +802,13 @@ TCP ports the exit node connects to through its own forwarding path),
 `conntrack_per_consumer`, `smtp_allowed`, `dns_upstreams` (at most 4
 Internet addresses, tried in order), `rules`: the pool's rules as filter
 rules whose destinations are `0.0.0.0/0` and `::/0`, and `dns_relay_targets`:
-the Internet resolvers (port 53) of the Network's DNS zones, at most 256,
-distinct and in address order, the only resolvers the exit node's DNS
-forwarder relays a consumer's question to (DNS relay below). An exit node forwards
+the Internet resolvers (port 53) of the Network's DNS zones sent to every
+Device, distinct and in address order, which the exit node's DNS forwarder
+relays any consumer's question to, and `dns_relay_scopes`: at most 64, each
+the Internet resolvers of zones sent to some Device Groups (`targets`) and the
+mesh addresses of the pool's consumers in them (`sources`, host prefixes),
+which it relays to for those consumers only; at most 256 resolvers in all
+(DNS relay below). An exit node forwards
 only when its own configuration offers to be one (`exit_offered`, 8.2) and
 only what those rules admit to the Internet; its local limits may lower
 `conntrack_per_consumer` and refuse SMTP whatever Core sends.
@@ -818,12 +822,15 @@ RFC 6891): version 1 (1 byte), address family 1 IPv4 or 2 IPv6 (1 byte), port
 every question carrying the option with the option too, version 1 and a
 status byte, added after the answer is fitted to the UDP size: 0 the
 resolver answered (its answer as it is), 1 the resolver did not answer
-(SERVFAIL), 2 not relayed (the resolver is not in `dns_relay_targets`, is not
+(SERVFAIL), 2 not relayed (the resolver is not in `dns_relay_targets` nor in a
+scope naming the consumer's address, is not
 on the Internet or belongs to the exit's own networks, or the question holds
 the option twice; REFUSED), 3 the forwarder is busy (SERVFAIL), 4 the exit
 node's own way to the Internet is down (SERVFAIL). The forwarder removes the
 option before asking the resolver. An answer without the option comes from a
-forwarder that does not relay (DNS design D1c).
+forwarder that does not relay (DNS design D1c). A consumer never answers a
+zone's name from another resolver after status 2, even for a zone that fails
+open (DNS design D1c.5).
 
 #### Validity
 
@@ -833,8 +840,10 @@ has more pools than allowed; in `exits`, has no candidate, more than 16,
 duplicate candidates, the node itself as a candidate, a `primary` outside
 `candidates`, `SERVED` with an empty `primary` or an unknown status or state;
 in `served_exits`, has more than one pool, a probe, upstream or relay target
-that is not an Internet address, more than 256 relay targets or a relay target
-twice, a probe port of 0, or a rule whose destination is not `0.0.0.0/0` or
+that is not an Internet address, more than 256 relay targets in all or a relay
+target twice in `dns_relay_targets` or in one scope, more than 64 relay scopes,
+a scope without targets or sources or with a source that is not a host
+prefix, a probe port of 0, or a rule whose destination is not `0.0.0.0/0` or
 `::/0`.
 
 ## 8. Node reports

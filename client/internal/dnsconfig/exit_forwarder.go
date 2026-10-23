@@ -98,7 +98,10 @@ type ExitForwarder struct {
 	// relayTargets, relayServed and uplinkDown are what SetRelay set;
 	// relayHeld, relayStalled and relayTimedOut track the resolvers relayed
 	// to (exit_relay.go).
-	relayTargets  map[netip.Addr]struct{}
+	relayTargets map[netip.Addr]struct{}
+	// relayScoped are the resolvers relayed to for some consumers only,
+	// each with their addresses (DNS design D1c.5).
+	relayScoped   map[netip.Addr]map[netip.Addr]struct{}
 	relayServed   []netip.Prefix
 	uplinkDown    bool
 	relayHeld     map[netip.Addr]int
@@ -358,7 +361,7 @@ func (f *ExitForwarder) answer(ctx context.Context, query []byte, transport stri
 		if relayErr != nil {
 			target = netip.AddrPort{}
 		}
-		return f.relay(ctx, query, message, question, transport, target, admitted, private)
+		return f.relay(ctx, query, message, question, transport, target, consumer, admitted, private)
 	}
 	name := strings.TrimSuffix(strings.ToLower(question.Name.String()), ".")
 	if rcode, refused := exitLocalRefusal(name, question.Type, domains); refused && question.Type != dnsmessage.TypePTR {

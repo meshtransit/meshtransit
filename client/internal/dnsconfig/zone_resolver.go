@@ -88,7 +88,10 @@ func (e *resolverEngine) resolveZone(ctx context.Context, zone zoneQuery) ([]byt
 			return e.zoneAnswer(zone, old, captiveWindow)
 		}
 	}
-	if !zone.route.FailOpen || ctx.Err() != nil {
+	// An exit node that may not ask a resolver the admins chose: the names
+	// stay off other resolvers, as for a zone that fails closed (DNS design
+	// D1c.5 §4).
+	if !zone.route.FailOpen || ctx.Err() != nil || errors.Is(err, errRelayNotAllowed) {
 		return e.zoneFailure(zone, err)
 	}
 	// A route without resolvers (a name of a zone that leaves the rest to

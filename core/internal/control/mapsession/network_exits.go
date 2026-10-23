@@ -99,10 +99,19 @@ type ServedExit struct {
 	ConntrackPerConsumer int
 	SMTPAllowed          bool
 	DNSUpstreams         []netip.Addr
-	// DNSRelayTargets are the Internet resolvers of the Network's DNS zones,
-	// the only ones the exit node's forwarder relays a consumer's question
-	// to (DNS design D1c §4.1).
+	// DNSRelayTargets are the Internet resolvers of the Network's DNS zones
+	// sent to every Device, which the exit node's forwarder relays any
+	// consumer's question to (DNS design D1c §4.1); DNSRelayScopes those it
+	// relays to for some consumers only (D1c.5).
 	DNSRelayTargets []netip.Addr
+	DNSRelayScopes  []DNSRelayScope
+}
+
+// DNSRelayScope is the Internet resolvers of the DNS zones sent to some
+// Device Groups and the consumers of the pool in them.
+type DNSRelayScope struct {
+	Targets []netip.Addr
+	Sources []node.ID // sorted
 }
 
 // ExitInbound admits the consumers of one rule to the Internet through the
@@ -136,6 +145,7 @@ func (view RouteView) ServedExits() []ServedExit {
 	for index, served := range view.servedExits {
 		served.Probes, served.DNSUpstreams = slices.Clone(served.Probes), slices.Clone(served.DNSUpstreams)
 		served.DNSRelayTargets = slices.Clone(served.DNSRelayTargets)
+		served.DNSRelayScopes = cloneRelayScopes(served.DNSRelayScopes)
 		cloned[index] = served
 	}
 	return cloned
@@ -337,6 +347,7 @@ func (inner *networkPolicy) servedExits(view *RouteView, self int64, now time.Ti
 		ConntrackPerConsumer: value.ConntrackPerConsumer, SMTPAllowed: value.SMTPAllowed,
 		DNSUpstreams: slices.Clone(value.DNSUpstreams), DNSRelayTargets: slices.Clone(index.relayTargets)}}
 	static := index.static[self]
+	consumers := make(map[int64]struct{})
 	for _, position := range index.byPool[pool] {
 		rule := index.exitRules[position]
 		var sources []node.ID
@@ -344,6 +355,7 @@ func (inner *networkPolicy) servedExits(view *RouteView, self int64, now time.Ti
 			at, found := slices.BinarySearch(static, consumer)
 			if consumer != self && found && at < index.consumers && inner.live(consumer, now) {
 				sources = append(sources, inner.devices[consumer].NodeID)
+				consumers[consumer] = struct{}{}
 			}
 			return nil
 		})
@@ -356,6 +368,43 @@ func (inner *networkPolicy) servedExits(view *RouteView, self int64, now time.Ti
 			Ports: slices.Clone(rule.Ports)})
 		view.exitConsumers = append(view.exitConsumers, sources...)
 	}
+	view.servedExits[0].DNSRelayScopes = inner.relayScopes(consumers, now)
+}
+
+// MaximumDNSRelaySources bounds the consumers of all relay scopes of one
+// exit node's map, so it stays within the MTCP message limits.
+const MaximumDNSRelaySources = 16384
+
+// relayScopes are the scoped resolvers of the zones, each with the
+// consumers in one of its zones' Device Groups now, found through the
+// Groups' members; a scope none of them is in is left out, and so are the
+// scopes past MaximumDNSRelaySources consumers in all: their resolvers are
+// refused (DNS design D1c.5 §2).
+func (inner *networkPolicy) relayScopes(consumers map[int64]struct{}, now time.Time) []DNSRelayScope {
+	var scopes []DNSRelayScope
+	total := 0
+	for _, scope := range inner.routes.relayScopes {
+		var sources []node.ID
+		for _, group := range scope.groups {
+			_ = inner.eachSelected(SelectorDeviceGroup, group, now, func(device int64) error {
+				if _, consumer := consumers[device]; consumer {
+					sources = append(sources, inner.devices[device].NodeID)
+				}
+				return nil
+			})
+		}
+		if len(sources) == 0 {
+			continue
+		}
+		slices.SortFunc(sources, compareNodeIDs)
+		sources = slices.Compact(sources)
+		if total+len(sources) > MaximumDNSRelaySources {
+			continue
+		}
+		total += len(sources)
+		scopes = append(scopes, DNSRelayScope{Targets: slices.Clone(scope.targets), Sources: sources})
+	}
+	return scopes
 }
 
 // exitPoolPrimary is the elected exit node while it is an active exit node
@@ -410,7 +459,18 @@ func equalExitPoolRoute(first, second ExitPoolRoute) bool {
 func equalServedExit(first, second ServedExit) bool {
 	return first.Ref == second.Ref && slices.Equal(first.Probes, second.Probes) &&
 		first.ConntrackPerConsumer == second.ConntrackPerConsumer && first.SMTPAllowed == second.SMTPAllowed &&
-		slices.Equal(first.DNSUpstreams, second.DNSUpstreams) && slices.Equal(first.DNSRelayTargets, second.DNSRelayTargets)
+		slices.Equal(first.DNSUpstreams, second.DNSUpstreams) && slices.Equal(first.DNSRelayTargets, second.DNSRelayTargets) &&
+		slices.EqualFunc(first.DNSRelayScopes, second.DNSRelayScopes, func(left, right DNSRelayScope) bool {
+			return slices.Equal(left.Targets, right.Targets) && slices.Equal(left.Sources, right.Sources)
+		})
+}
+
+func cloneRelayScopes(scopes []DNSRelayScope) []DNSRelayScope {
+	cloned := slices.Clone(scopes)
+	for index, scope := range cloned {
+		cloned[index] = DNSRelayScope{Targets: slices.Clone(scope.Targets), Sources: slices.Clone(scope.Sources)}
+	}
+	return cloned
 }
 
 func equalExitInbound(first, second ExitInbound) bool {

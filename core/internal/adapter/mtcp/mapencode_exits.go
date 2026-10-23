@@ -98,9 +98,45 @@ func encodeServedExits(snapshot mapsession.Snapshot) (*mtcpv1.ServedExits, error
 		for _, target := range pool.DNSRelayTargets {
 			encoded.DnsRelayTargets = append(encoded.DnsRelayTargets, target.Unmap().AsSlice())
 		}
+		encoded.DnsRelayScopes = encodeRelayScopes(snapshot, pool.DNSRelayScopes)
 		served.Pools = append(served.Pools, encoded)
 	}
 	return served, nil
+}
+
+// encodeRelayScopes encodes the scoped resolvers of the zones with their
+// consumers' overlay addresses; a scope no consumer of which is a peer of
+// the map is left out (DNS design D1c.5 §2).
+func encodeRelayScopes(snapshot mapsession.Snapshot, scopes []mapsession.DNSRelayScope) []*mtcpv1.DNSRelayScope {
+	if len(scopes) == 0 {
+		return nil
+	}
+	candidates := make(map[node.ID]mapsession.PeerCandidate)
+	for _, candidate := range snapshot.AuthorizedPeers() {
+		candidates[candidate.NodeID()] = candidate
+	}
+	encoded := make([]*mtcpv1.DNSRelayScope, 0, len(scopes))
+	for _, scope := range scopes {
+		next := &mtcpv1.DNSRelayScope{}
+		for _, sourceID := range scope.Sources {
+			candidate, ok := candidates[sourceID]
+			if !ok {
+				continue
+			}
+			for _, source := range candidate.Addresses() {
+				address := source.Addr().Unmap()
+				next.Sources = append(next.Sources, sharedmtcp.AppendPrefix(netip.PrefixFrom(address, address.BitLen())))
+			}
+		}
+		if len(next.Sources) == 0 {
+			continue
+		}
+		for _, target := range scope.Targets {
+			next.Targets = append(next.Targets, target.Unmap().AsSlice())
+		}
+		encoded = append(encoded, next)
+	}
+	return encoded
 }
 
 func exitFilterRules(snapshot mapsession.Snapshot) ([]*mtcpv1.FilterRule, error) {

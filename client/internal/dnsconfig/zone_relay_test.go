@@ -147,7 +147,9 @@ func TestResolverEngineCountsASilentResolverBehindTheExitNode(t *testing.T) {
 	}
 }
 
-// The forwarder that does not relay to X (not listed) says nothing of X.
+// The forwarder that does not relay to X (not listed) says nothing of X,
+// and the zone does not fail open past it, open or not (DNS design D1c.5
+// §4).
 func TestResolverEngineDoesNotCountAResolverTheExitNodeDidNotAsk(t *testing.T) {
 	t.Parallel()
 	system := startCountingUpstream(t, dnsmessage.RCodeSuccess, netip.MustParseAddr("93.184.216.34"), false)
@@ -162,9 +164,14 @@ func TestResolverEngineDoesNotCountAResolverTheExitNodeDidNotAsk(t *testing.T) {
 	if engine.relayBreaker.open(zoneResolverX) {
 		t.Fatal("X's breaker opened on questions the exit node did not ask")
 	}
-	if got := firstA(t, resolveName(t, engine, exitZonePlan(via, true), "wiki.corp.example.", dnsmessage.TypeA)); got !=
-		netip.MustParseAddr("93.184.216.34") {
-		t.Fatalf("open zone answer %s", got)
+	if message := resolveName(t, engine, exitZonePlan(via, true), "wiki.corp.example.", dnsmessage.TypeA); message.RCode !=
+		dnsmessage.RCodeServerFailure || system.asked.Load() != 0 {
+		t.Fatalf("open zone %v, the exit node's upstream asked %d times", message.RCode, system.asked.Load())
+	}
+	// A CNAME chase does not fail open past it either.
+	if _, err := engine.askOutside(t.Context(), exitZonePlan(via, true), "app.corp.example", dnsmessage.TypeA,
+		"udp"); err == nil || system.asked.Load() != 0 {
+		t.Fatalf("chase: %v, upstream asked %d times", err, system.asked.Load())
 	}
 }
 

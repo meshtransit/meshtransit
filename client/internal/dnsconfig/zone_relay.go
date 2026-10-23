@@ -26,6 +26,9 @@ var (
 	// errRelaySkipped: the forwarder did not ask X (not allowed, busy, its
 	// own way out down); it says nothing of X.
 	errRelaySkipped = errors.New("dnsconfig: the exit node did not ask the zone's resolver")
+	// errRelayNotAllowed: the exit node may not ask X (not yet, or not for
+	// this node); a zone never fails open past it (DNS design D1c.5 §4).
+	errRelayNotAllowed = fmt.Errorf("%w: not allowed", errRelaySkipped)
 )
 
 // oldExitError is an answer of an exit node that does not relay: its
@@ -113,6 +116,8 @@ func relayedAnswer(response []byte, addedOPT bool) ([]byte, error) {
 	switch {
 	case marked && status == relayNoAnswer:
 		return nil, errRelayNoAnswer
+	case marked && status == relayNotAllowed:
+		return nil, errRelayNotAllowed
 	case marked && status != relayAnswered:
 		return nil, fmt.Errorf("%w (status %d)", errRelaySkipped, status)
 	}

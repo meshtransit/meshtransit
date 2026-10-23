@@ -5,6 +5,12 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- DNS through an exit node, by Device Groups (DNS design D1c.5): the exit
+  node relays to the resolvers of a zone sent to some Device Groups only for
+  the pool's consumers in those Groups (`ServedExit.dns_relay_scopes`); an
+  exit node with the D1c client refuses them. A Device never answers a zone's
+  name from another resolver after the exit node refuses to relay, even for a
+  zone that fails open.
 - DNS through an exit node (DNS design D1c): while a Device uses an exit
   node, a zone's Internet resolvers (the root zone's among them) are asked
   through the exit node's DNS forwarder, which relays the question to that

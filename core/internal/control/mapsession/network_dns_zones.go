@@ -2,6 +2,8 @@ package mapsession
 
 import (
 	"cmp"
+	"fmt"
+	"maps"
 	"net/netip"
 	"slices"
 	"strings"
@@ -96,7 +98,8 @@ func (index *routeIndex) indexDNSZones(params NetworkPolicyParams, keysOf func(i
 	slices.SortFunc(index.zoneList, func(first, second DNSZone) int { return strings.Compare(first.Domain, second.Domain) })
 	index.resolverZones = make(map[int64][]int)
 	seen := make(map[int64]struct{}, len(index.zoneList))
-	index.relayTargets = nil
+	index.relayTargets, index.relayScopes = nil, nil
+	scoped := make(map[string]*relayScope)
 	for position, zone := range index.zoneList {
 		if !validDNSZone(zone) {
 			return false
@@ -108,12 +111,21 @@ func (index *routeIndex) indexDNSZones(params NetworkPolicyParams, keysOf func(i
 		for _, resolver := range zone.Resolvers {
 			if resolver.Device > 0 {
 				index.resolverZones[resolver.Device] = append(index.resolverZones[resolver.Device], position)
-			} else if resolver.Address.IsValid() {
+			} else if resolver.Address.IsValid() && len(zone.Groups) == 0 {
 				index.relayTargets = append(index.relayTargets, resolver.Address.Unmap())
+			} else if resolver.Address.IsValid() {
+				groups := slices.Clone(zone.Groups)
+				slices.Sort(groups)
+				groups = slices.Compact(groups)
+				key := fmt.Sprint(groups)
+				if scoped[key] == nil {
+					scoped[key] = &relayScope{groups: groups}
+				}
+				scoped[key].targets = append(scoped[key].targets, resolver.Address.Unmap())
 			}
 		}
 	}
-	index.relayTargets, index.relayTargetsDropped = relayTargets(index.relayTargets)
+	index.relayTargets, index.relayScopes, index.relayTargetsDropped = relayTargets(index.relayTargets, scoped)
 	// The rules that may admit UDP to a resolver Device: found through the
 	// selectors resolvers belong to, not by expanding every rule.
 	byKey := make(map[selectorKey][]int64)
@@ -441,17 +453,64 @@ func compareSearchZones(first, second DNSZoneRoute) int {
 		strings.Compare(first.Domain, second.Domain))
 }
 
-// MaximumDNSRelayTargets bounds the resolvers an exit node's forwarder may
-// relay to (mtcp-v1 §7, DNS design D1c §4.1).
-const MaximumDNSRelayTargets = 256
+// Bounds of what an exit node's forwarder may relay to (mtcp-v1 §7, DNS
+// design D1c §4.1, D1c.5 §2): resolvers, counted once whether for every
+// consumer or some, and scopes of Device Groups.
+const (
+	MaximumDNSRelayTargets = 256
+	MaximumDNSRelayScopes  = 64
+)
 
-// relayTargets orders the Internet resolvers of the zones by address, each
-// once, and keeps the first MaximumDNSRelayTargets; dropped counts the rest.
-func relayTargets(addresses []netip.Addr) (targets []netip.Addr, dropped int) {
-	slices.SortFunc(addresses, func(first, second netip.Addr) int { return first.Compare(second) })
-	addresses = slices.Compact(addresses)
-	if len(addresses) > MaximumDNSRelayTargets {
-		return addresses[:MaximumDNSRelayTargets:MaximumDNSRelayTargets], len(addresses) - MaximumDNSRelayTargets
+// relayScope is the Internet resolvers of the zones sent to one set of
+// Device Groups.
+type relayScope struct {
+	groups  []int64 // sorted
+	targets []netip.Addr
+}
+
+// relayTargets orders the Internet resolvers of the zones sent to every
+// Device by address, each once, and the scopes by their Groups, each
+// without those: a resolver any Device may be relayed to needs no scope. It
+// keeps MaximumDNSRelayTargets resolvers in all, the open ones first, and
+// MaximumDNSRelayScopes scopes; dropped counts the resolvers no Device may
+// be relayed to any more.
+func relayTargets(addresses []netip.Addr, scoped map[string]*relayScope) (
+	targets []netip.Addr, scopes []relayScope, dropped int,
+) {
+	byAddress := func(first, second netip.Addr) int { return first.Compare(second) }
+	slices.SortFunc(addresses, byAddress)
+	targets = slices.Compact(addresses)
+	wanted := make(map[netip.Addr]struct{}, len(targets))
+	for _, target := range targets {
+		wanted[target] = struct{}{}
 	}
-	return addresses, 0
+	if len(targets) > MaximumDNSRelayTargets {
+		targets = targets[:MaximumDNSRelayTargets:MaximumDNSRelayTargets]
+	}
+	counted := make(map[netip.Addr]struct{}, len(targets))
+	for _, target := range targets {
+		counted[target] = struct{}{}
+	}
+	ordered := slices.Collect(maps.Values(scoped))
+	slices.SortFunc(ordered, func(first, second *relayScope) int { return slices.Compare(first.groups, second.groups) })
+	for _, scope := range ordered {
+		slices.SortFunc(scope.targets, byAddress)
+		kept := scope.targets[:0]
+		for _, target := range slices.Compact(scope.targets) {
+			wanted[target] = struct{}{}
+			if _, open := slices.BinarySearchFunc(targets, target, byAddress); open {
+				continue
+			}
+			_, known := counted[target]
+			if len(scopes) == MaximumDNSRelayScopes || (!known && len(counted) == MaximumDNSRelayTargets) {
+				continue
+			}
+			counted[target] = struct{}{}
+			kept = append(kept, target)
+		}
+		if len(kept) != 0 {
+			scopes = append(scopes, relayScope{groups: scope.groups, targets: slices.Clip(kept)})
+		}
+	}
+	return targets, scopes, len(wanted) - len(counted)
 }

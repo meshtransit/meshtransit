@@ -393,7 +393,15 @@ message ServedExit {
   bool smtp_allowed = 4; // a local setting may only refuse it
   repeated bytes dns_upstreams = 5; // IPv4 or IPv6 addresses on the Internet, tried in order
   repeated FilterRule rules = 6; // the pool's rules: sources and traffic; destinations are always 0/0 and ::/0
-  repeated bytes dns_relay_targets = 7; // Internet resolvers (port 53) of the Network's DNS zones the forwarder may relay to, at most 256
+  repeated bytes dns_relay_targets = 7; // Internet resolvers (port 53) of the Network's DNS zones the forwarder may relay to for any consumer
+  repeated DNSRelayScope dns_relay_scopes = 8; // resolvers it may relay to for some consumers only; at most 64, at most 256 resolvers with dns_relay_targets
+}
+
+// DNSRelayScope is resolvers of DNS zones sent to some Device Groups only:
+// the forwarder relays to them for the consumers in sources alone.
+message DNSRelayScope {
+  repeated bytes targets = 1; // Internet resolvers (port 53), each once
+  repeated Prefix sources = 2; // consumers' mesh addresses, as host prefixes
 }
 
 // ExitProbe is an Internet address and TCP port an exit node connects to,

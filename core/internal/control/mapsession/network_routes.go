@@ -273,10 +273,13 @@ func (view RouteView) Equal(other RouteView) bool {
 // routeIndex is a Network's routes, indexed once per read for every map.
 type routeIndex struct {
 	revision int64
-	// relayTargets are the Internet resolvers of the Network's DNS zones an
-	// exit node's forwarder may relay to; relayTargetsDropped counts those
-	// past MaximumDNSRelayTargets (DNS design D1c §4.1).
+	// relayTargets are the Internet resolvers of the Network's DNS zones
+	// sent to every Device, which an exit node's forwarder may relay to for
+	// any consumer; relayScopes those of zones sent to some Device Groups
+	// only; relayTargetsDropped counts those past MaximumDNSRelayTargets or
+	// MaximumDNSRelayScopes (DNS design D1c §4.1, D1c.5).
 	relayTargets        []netip.Addr
+	relayScopes         []relayScope
 	relayTargetsDropped int
 	sites               map[int64]*routeSiteEntry
 	bySite              map[int64][]int   // site -> rule indexes

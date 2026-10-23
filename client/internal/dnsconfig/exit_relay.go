@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/net/dns/dnsmessage"
 
+	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/shared/internet"
 )
 
@@ -193,9 +194,10 @@ func relayStatusOf(response []byte) (byte, bool) {
 }
 
 // SetRelay sets what the forwarder relays to: Core's list of the Network
-// zones' Internet resolvers, and the Sites the node serves, never asked or
-// told about (DNS design D1c §4).
-func (f *ExitForwarder) SetRelay(targets []netip.Addr, served []netip.Prefix) {
+// zones' Internet resolvers for any consumer, those for the consumers of
+// scopes only (zones sent to some Device Groups), and the Sites the node
+// serves, never asked or told about (DNS design D1c §4, D1c.5).
+func (f *ExitForwarder) SetRelay(targets []netip.Addr, scopes []networkmap.RelayScope, served []netip.Prefix) {
 	if f == nil {
 		return
 	}
@@ -205,17 +207,37 @@ func (f *ExitForwarder) SetRelay(targets []netip.Addr, served []netip.Prefix) {
 			allowed[target.Unmap()] = struct{}{}
 		}
 	}
+	scoped := make(map[netip.Addr]map[netip.Addr]struct{})
+	for _, scope := range scopes {
+		for _, target := range scope.Targets {
+			target = target.Unmap()
+			if !internet.Contains(target) {
+				continue
+			}
+			if scoped[target] == nil {
+				scoped[target] = make(map[netip.Addr]struct{}, len(scope.Sources))
+			}
+			for _, source := range scope.Sources {
+				scoped[target][source.Addr().Unmap()] = struct{}{}
+			}
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.relayTargets, f.relayServed = allowed, slices.Clone(served)
+	f.relayTargets, f.relayScoped, f.relayServed = allowed, scoped, slices.Clone(served)
 	// What is known of resolvers no longer listed is forgotten.
+	listed := func(address netip.Addr) bool {
+		_, open := allowed[address]
+		_, some := scoped[address]
+		return open || some
+	}
 	for address := range f.relayStalled {
-		if _, listed := allowed[address]; !listed {
+		if !listed(address) {
 			delete(f.relayStalled, address)
 		}
 	}
 	for address := range f.relayTimedOut {
-		if _, listed := allowed[address]; !listed {
+		if !listed(address) {
 			delete(f.relayTimedOut, address)
 		}
 	}
@@ -232,13 +254,17 @@ func (f *ExitForwarder) SetUplinkDown(down bool) {
 	f.uplinkDown = down
 }
 
-// relayAllowed reports whether target may be relayed to: listed by Core, on
-// the Internet, port 53, outside the exit's own networks and the Sites it
+// relayAllowed reports whether target may be relayed to for consumer:
+// listed by Core for any consumer or for a scope consumer is in, on the
+// Internet, port 53, outside the exit's own networks and the Sites it
 // serves, IPv6 only where the host has IPv6.
-func (f *ExitForwarder) relayAllowed(target netip.AddrPort, private []netip.Prefix) bool {
+func (f *ExitForwarder) relayAllowed(target netip.AddrPort, consumer netip.Addr, private []netip.Prefix) bool {
 	address := target.Addr().Unmap()
 	f.mu.Lock()
 	_, listed := f.relayTargets[address]
+	if !listed {
+		_, listed = f.relayScoped[address][consumer.Unmap()]
+	}
 	served := slices.Clone(f.relayServed)
 	own := slices.Clone(f.addresses)
 	f.mu.Unlock()
@@ -274,7 +300,8 @@ func relayedAnswerHides(private, served []netip.Prefix) func(netip.Addr) bool {
 
 // relay answers a question the consumer asks to relay to target.
 func (f *ExitForwarder) relay(ctx context.Context, query []byte, message dnsmessage.Message,
-	question dnsmessage.Question, transport string, target netip.AddrPort, admitted bool, private []netip.Prefix,
+	question dnsmessage.Question, transport string, target netip.AddrPort, consumer netip.Addr, admitted bool,
+	private []netip.Prefix,
 ) []byte {
 	answer := func(response []byte, status byte) []byte {
 		return markRelayed(query, response, transport, status)
@@ -291,7 +318,7 @@ func (f *ExitForwarder) relay(ctx context.Context, query []byte, message dnsmess
 		}
 		return answer(packed, status)
 	}
-	if !f.relayAllowed(target, private) {
+	if !f.relayAllowed(target, consumer, private) {
 		return refused(relayNotAllowed)
 	}
 	if !admitted || !f.holdRelay(target.Addr()) {

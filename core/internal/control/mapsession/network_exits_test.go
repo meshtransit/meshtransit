@@ -1,6 +1,7 @@
 package mapsession
 
 import (
+	"fmt"
 	"net/netip"
 	"slices"
 	"testing"
@@ -295,9 +296,111 @@ func TestRelayTargetsAreBounded(t *testing.T) {
 		addresses = append(addresses, netip.AddrFrom4([4]byte{1, 0, byte(index >> 8), byte(index)}))
 	}
 	addresses = append(addresses, addresses[0])
-	targets, dropped := relayTargets(addresses)
+	targets, _, dropped := relayTargets(addresses, nil)
 	if len(targets) != MaximumDNSRelayTargets || dropped != 10 || targets[0] != netip.MustParseAddr("1.0.0.0") ||
 		!slices.IsSortedFunc(targets, func(first, second netip.Addr) int { return first.Compare(second) }) {
 		t.Fatalf("%d targets, %d dropped", len(targets), dropped)
+	}
+	// Scoped resolvers share the bound with the open ones, which come first;
+	// a resolver in two scopes counts once.
+	open := addresses[:MaximumDNSRelayTargets-4]
+	scoped := map[string]*relayScope{
+		"[1]": {groups: []int64{1}, targets: []netip.Addr{
+			netip.MustParseAddr("2.0.0.1"), netip.MustParseAddr("2.0.0.2"), netip.MustParseAddr("2.0.0.3"), open[0],
+		}},
+		"[2]": {groups: []int64{2}, targets: []netip.Addr{
+			netip.MustParseAddr("2.0.0.1"), netip.MustParseAddr("2.0.0.4"), netip.MustParseAddr("2.0.0.5"),
+		}},
+	}
+	targets, scopes, dropped := relayTargets(slices.Clone(open), scoped)
+	if len(targets) != MaximumDNSRelayTargets-4 || len(scopes) != 2 || len(scopes[0].targets) != 3 ||
+		!slices.Equal(scopes[1].targets, []netip.Addr{netip.MustParseAddr("2.0.0.1"), netip.MustParseAddr("2.0.0.4")}) ||
+		dropped != 1 {
+		t.Fatalf("%d open, scopes %+v, %d dropped", len(targets), scopes, dropped)
+	}
+	many := make(map[string]*relayScope)
+	for index := range MaximumDNSRelayScopes + 1 {
+		key := fmt.Sprintf("[%03d]", index)
+		many[key] = &relayScope{groups: []int64{int64(index)}, targets: []netip.Addr{netip.AddrFrom4([4]byte{3, 0, 0, byte(index)})}}
+	}
+	if _, scopes, dropped := relayTargets(nil, many); len(scopes) != MaximumDNSRelayScopes || dropped != 1 {
+		t.Fatalf("%d scopes, %d dropped", len(scopes), dropped)
+	}
+}
+
+// Resolvers of zones sent to some Device Groups are relayed for the pool's
+// consumers in those Groups only; one also in a zone sent to every Device
+// is relayed for all (DNS design D1c.5).
+func TestServedExitScopesRelayTargetsByGroups(t *testing.T) {
+	t.Parallel()
+	fixture := newExitFixture(t)
+	fixture.params.Members = append(fixture.params.Members,
+		SelectorMember{Kind: SelectorDeviceGroup, Selector: 11, Device: 2},
+		SelectorMember{Kind: SelectorDeviceGroup, Selector: 11, Device: 4},
+		SelectorMember{Kind: SelectorDeviceGroup, Selector: 12, Device: 5})
+	resolver := func(address string) DNSZoneResolver {
+		return DNSZoneResolver{Address: netip.MustParseAddr(address), Port: 53}
+	}
+	fixture.params.DNSZones = []DNSZone{
+		{Zone: 901, Domain: "corp.example", OtherNames: DNSOtherForward, Resolvers: []DNSZoneResolver{resolver("9.9.9.9")}},
+		{Zone: 903, Domain: "hr.example", OtherNames: DNSOtherForward, Groups: []int64{11},
+			Resolvers: []DNSZoneResolver{resolver("8.8.8.8"), resolver("9.9.9.9")}},
+		{Zone: 904, Domain: "eng.example", OtherNames: DNSOtherForward, Groups: []int64{11, 11},
+			Resolvers: []DNSZoneResolver{resolver("1.0.0.1")}},
+		{Zone: 905, Domain: "ops.example", OtherNames: DNSOtherForward, Groups: []int64{10},
+			Resolvers: []DNSZoneResolver{resolver("4.4.4.4")}},
+		{Zone: 906, Domain: "none.example", OtherNames: DNSOtherForward, Groups: []int64{12},
+			Resolvers: []DNSZoneResolver{resolver("5.5.5.5")}},
+	}
+	served := fixture.policy(t).RoutesFor(fixture.ids[7], policyNow).ServedExits()
+	if len(served) != 1 || !slices.Equal(served[0].DNSRelayTargets, []netip.Addr{netip.MustParseAddr("9.9.9.9")}) {
+		t.Fatalf("open targets = %+v", served)
+	}
+	sorted := func(devices ...int64) []node.ID {
+		ids := make([]node.ID, 0, len(devices))
+		for _, device := range devices {
+			ids = append(ids, fixture.ids[device])
+		}
+		slices.SortFunc(ids, compareNodeIDs)
+		return ids
+	}
+	want := []DNSRelayScope{
+		{Targets: []netip.Addr{netip.MustParseAddr("4.4.4.4")}, Sources: sorted(1, 2, 3)},
+		{Targets: []netip.Addr{netip.MustParseAddr("1.0.0.1"), netip.MustParseAddr("8.8.8.8")}, Sources: sorted(2, 4)},
+	}
+	if !equalServedExit(served[0], ServedExit{Ref: served[0].Ref, Probes: served[0].Probes,
+		ConntrackPerConsumer: served[0].ConntrackPerConsumer, DNSUpstreams: served[0].DNSUpstreams,
+		DNSRelayTargets: served[0].DNSRelayTargets, DNSRelayScopes: want}) {
+		t.Fatalf("scopes = %+v", served[0].DNSRelayScopes)
+	}
+	changed := served[0]
+	changed.DNSRelayScopes = want[:1]
+	if equalServedExit(served[0], changed) {
+		t.Fatal("a change of relay scopes is no change of what the exit node serves")
+	}
+}
+
+// A consumer whose Group membership ends leaves the scope at its deadline:
+// the exit node's view changes then.
+func TestServedExitRelayScopeFollowsMembershipDeadlines(t *testing.T) {
+	t.Parallel()
+	fixture := newExitFixture(t)
+	fixture.params.Members = append(fixture.params.Members,
+		SelectorMember{Kind: SelectorDeviceGroup, Selector: 11, Device: 2},
+		SelectorMember{Kind: SelectorDeviceGroup, Selector: 11, Device: 4, ValidUntil: policyNow.Add(time.Hour)})
+	fixture.params.DNSZones = []DNSZone{{Zone: 903, Domain: "hr.example", OtherNames: DNSOtherForward,
+		Groups: []int64{11}, Resolvers: []DNSZoneResolver{{Address: netip.MustParseAddr("8.8.8.8"), Port: 53}}}}
+	networkPolicy := fixture.policy(t)
+	before := networkPolicy.RoutesFor(fixture.ids[7], policyNow)
+	after := networkPolicy.RoutesFor(fixture.ids[7], policyNow.Add(2*time.Hour))
+	if scopes := before.ServedExits()[0].DNSRelayScopes; len(scopes) != 1 || len(scopes[0].Sources) != 2 {
+		t.Fatalf("before the deadline: %+v", scopes)
+	}
+	if scopes := after.ServedExits()[0].DNSRelayScopes; len(scopes) != 1 ||
+		!slices.Equal(scopes[0].Sources, []node.ID{fixture.ids[2]}) {
+		t.Fatalf("after the deadline: %+v", scopes)
+	}
+	if before.Equal(after) {
+		t.Fatal("a membership deadline left the exit node's view unchanged")
 	}
 }

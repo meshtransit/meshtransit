@@ -15,6 +15,10 @@ func servedExits(ref string) *mtcpv1.ServedExits {
 		Probes:          []*mtcpv1.ExitProbe{{Ip: []byte{9, 9, 9, 9}, Port: 443}},
 		DnsUpstreams:    [][]byte{{1, 1, 1, 1}},
 		DnsRelayTargets: [][]byte{{9, 9, 9, 9}},
+		DnsRelayScopes: []*mtcpv1.DNSRelayScope{{
+			Targets: [][]byte{{8, 8, 4, 4}},
+			Sources: []*mtcpv1.Prefix{sharedmtcp.AppendPrefix(netip.MustParsePrefix("100.64.0.2/32"))},
+		}},
 		Rules: []*mtcpv1.FilterRule{{
 			Sources: []*mtcpv1.Prefix{sharedmtcp.AppendPrefix(netip.MustParsePrefix("100.64.0.2/32"))},
 			Destinations: []*mtcpv1.Destination{
@@ -40,6 +44,8 @@ func TestMapStateKeepsServedExitsAcrossDeltas(t *testing.T) {
 		served[0].SMTPAllowed || len(served[0].Probes) != 1 ||
 		served[0].Probes[0] != netip.MustParseAddrPort("9.9.9.9:443") || len(served[0].DNSUpstreams) != 1 ||
 		len(served[0].DNSRelayTargets) != 1 || served[0].DNSRelayTargets[0] != netip.MustParseAddr("9.9.9.9") ||
+		len(served[0].DNSRelayScopes) != 1 || served[0].DNSRelayScopes[0].Targets[0] != netip.MustParseAddr("8.8.4.4") ||
+		served[0].DNSRelayScopes[0].Sources[0] != netip.MustParsePrefix("100.64.0.2/32") ||
 		len(served[0].Rules) != 1 || len(served[0].Rules[0].Destinations) != 2 {
 		t.Fatalf("served exits = %+v", served)
 	}
@@ -75,6 +81,13 @@ func TestMapStateServedExitsNeedTheCapabilityAndTheInternet(t *testing.T) {
 		"probe port 0":  func(pool *mtcpv1.ServedExit) { pool.Probes[0].Port = 0 },
 		"metadata DNS":  func(pool *mtcpv1.ServedExit) { pool.DnsUpstreams = [][]byte{{169, 254, 169, 254}} },
 		"low conntrack": func(pool *mtcpv1.ServedExit) { pool.ConntrackPerConsumer = 10 },
+		"relay scope from a range": func(pool *mtcpv1.ServedExit) {
+			pool.DnsRelayScopes[0].Sources[0] = sharedmtcp.AppendPrefix(netip.MustParsePrefix("100.64.0.0/24"))
+		},
+		"private scoped target": func(pool *mtcpv1.ServedExit) {
+			pool.DnsRelayScopes[0].Targets = [][]byte{{10, 0, 0, 53}}
+		},
+		"empty relay scope": func(pool *mtcpv1.ServedExit) { pool.DnsRelayScopes[0].Targets = nil },
 		"private relay target": func(pool *mtcpv1.ServedExit) {
 			pool.DnsRelayTargets = [][]byte{{10, 0, 0, 53}}
 		},

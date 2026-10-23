@@ -20,6 +20,7 @@ const (
 	maxExitProbes      = 8
 	maxExitUpstreams   = 4
 	maxRelayTargets    = 256
+	maxRelayScopes     = 64
 	minExitConntrack   = 1024
 	maxExitConntrack   = 262144
 	maxServedExitRules = 1024
@@ -41,12 +42,22 @@ type ServedExit struct {
 	// DNSUpstreams are Internet resolvers, tried in order.
 	DNSUpstreams []netip.Addr
 	// DNSRelayTargets are the Internet resolvers of the Network's zones the
-	// node's DNS forwarder relays consumers' questions to (DNS design D1c).
+	// node's DNS forwarder relays any consumer's questions to (DNS design
+	// D1c); DNSRelayScopes those it relays to for some consumers only
+	// (D1c.5).
 	DNSRelayTargets []netip.Addr
+	DNSRelayScopes  []RelayScope
 	// Rules admit the pool's consumers to the Internet: their destinations
 	// are 0.0.0.0/0 and ::/0 only, and the exit node subtracts what is not
 	// the Internet itself.
 	Rules []Rule
+}
+
+// RelayScope is Internet resolvers of zones sent to some Device Groups and
+// the mesh addresses of the pool's consumers in them.
+type RelayScope struct {
+	Targets []netip.Addr
+	Sources []netip.Prefix // host prefixes
 }
 
 // internetDestinations are the only destinations an exit rule names.
@@ -92,6 +103,9 @@ func validateServedExits(served []ServedExit) error {
 				return fmt.Errorf("served Exit Pool %q has a relay target off the Internet", pool.Ref)
 			}
 		}
+		if err := validateRelayScopes(pool); err != nil {
+			return err
+		}
 		if len(pool.Rules) > maxServedExitRules {
 			return fmt.Errorf("served Exit Pool %q has too many rules", pool.Ref)
 		}
@@ -115,6 +129,39 @@ func validateServedExits(served []ServedExit) error {
 	return nil
 }
 
+// validateRelayScopes checks a pool's relay scopes: at most 64, each with
+// distinct Internet resolvers and single consumer addresses, at most 256
+// resolvers in all with the pool's other relay targets.
+func validateRelayScopes(pool ServedExit) error {
+	if len(pool.DNSRelayScopes) > maxRelayScopes {
+		return fmt.Errorf("served Exit Pool %q has more than %d relay scopes", pool.Ref, maxRelayScopes)
+	}
+	all := make(map[netip.Addr]struct{}, len(pool.DNSRelayTargets))
+	for _, target := range pool.DNSRelayTargets {
+		all[target] = struct{}{}
+	}
+	for _, scope := range pool.DNSRelayScopes {
+		if len(scope.Targets) == 0 || len(scope.Sources) == 0 {
+			return fmt.Errorf("served Exit Pool %q has an empty relay scope", pool.Ref)
+		}
+		for index, target := range scope.Targets {
+			if !internet.Contains(target) || slices.Contains(scope.Targets[:index], target) {
+				return fmt.Errorf("served Exit Pool %q has a relay target off the Internet", pool.Ref)
+			}
+			all[target] = struct{}{}
+		}
+		for _, source := range scope.Sources {
+			if !source.IsValid() || !source.IsSingleIP() {
+				return fmt.Errorf("served Exit Pool %q has a relay scope from a range", pool.Ref)
+			}
+		}
+	}
+	if len(all) > maxRelayTargets {
+		return fmt.Errorf("served Exit Pool %q has more than %d relay targets", pool.Ref, maxRelayTargets)
+	}
+	return nil
+}
+
 func cloneServedExits(served []ServedExit) []ServedExit {
 	if served == nil {
 		return nil
@@ -125,6 +172,12 @@ func cloneServedExits(served []ServedExit) []ServedExit {
 		cloned[index].Probes = slices.Clone(pool.Probes)
 		cloned[index].DNSUpstreams = slices.Clone(pool.DNSUpstreams)
 		cloned[index].DNSRelayTargets = slices.Clone(pool.DNSRelayTargets)
+		cloned[index].DNSRelayScopes = make([]RelayScope, len(pool.DNSRelayScopes))
+		for position, scope := range pool.DNSRelayScopes {
+			cloned[index].DNSRelayScopes[position] = RelayScope{
+				Targets: slices.Clone(scope.Targets), Sources: slices.Clone(scope.Sources),
+			}
+		}
 		cloned[index].Rules = make([]Rule, len(pool.Rules))
 		for position, rule := range pool.Rules {
 			cloned[index].Rules[position] = Rule{

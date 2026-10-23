@@ -75,7 +75,7 @@ func (s *Service) syncExitForwarder(snapshot networkmap.Snapshot) {
 		return
 	}
 	if len(snapshot.ServedExits) == 0 {
-		s.exitForwarder.SetRelay(nil, nil)
+		s.exitForwarder.SetRelay(nil, nil, nil)
 		s.exitForwarder.Configure(nil, nil)
 		return
 	}
@@ -89,7 +89,7 @@ func (s *Service) syncExitForwarder(snapshot networkmap.Snapshot) {
 	for _, site := range snapshot.Served {
 		served = append(served, site.Prefixes...)
 	}
-	s.exitForwarder.SetRelay(snapshot.ServedExits[0].DNSRelayTargets, served)
+	s.exitForwarder.SetRelay(snapshot.ServedExits[0].DNSRelayTargets, snapshot.ServedExits[0].DNSRelayScopes, served)
 	s.exitForwarder.Configure(addresses, snapshot.ServedExits[0].DNSUpstreams)
 }
 

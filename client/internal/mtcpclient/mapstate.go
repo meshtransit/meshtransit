@@ -802,6 +802,24 @@ func convertServedExits(config *mtcpv1.ServedExits) ([]networkmap.ServedExit, er
 			}
 			converted.DNSRelayTargets = append(converted.DNSRelayTargets, address)
 		}
+		for _, scope := range pool.GetDnsRelayScopes() {
+			next := networkmap.RelayScope{}
+			for _, raw := range scope.GetTargets() {
+				address, ok := netip.AddrFromSlice(raw)
+				if !ok || address.Is4In6() {
+					return nil, fmt.Errorf("%w: malformed exit relay target", controlplane.ErrNetmapInvalid)
+				}
+				next.Targets = append(next.Targets, address)
+			}
+			for _, encoded := range scope.GetSources() {
+				source, err := exactPrefix(encoded)
+				if err != nil {
+					return nil, err
+				}
+				next.Sources = append(next.Sources, source)
+			}
+			converted.DNSRelayScopes = append(converted.DNSRelayScopes, next)
+		}
 		rules, err := convertFilter(&mtcpv1.PacketFilter{Rules: pool.GetRules()})
 		if err != nil {
 			return nil, err

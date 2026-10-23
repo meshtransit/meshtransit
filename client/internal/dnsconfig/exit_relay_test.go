@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"golang.org/x/net/dns/dnsmessage"
+
+	"meshtransit.net/client/internal/networkmap"
 )
 
 // relayForwarder is a forwarder on an exit node whose own network is
@@ -21,7 +23,7 @@ func relayForwarder(t *testing.T, upstream netip.AddrPort, listed ...string) *Ex
 	for _, address := range listed {
 		targets = append(targets, netip.MustParseAddr(address))
 	}
-	forwarder.SetRelay(targets, []netip.Prefix{netip.MustParsePrefix("52.10.0.0/24")})
+	forwarder.SetRelay(targets, nil, []netip.Prefix{netip.MustParsePrefix("52.10.0.0/24")})
 	return forwarder
 }
 
@@ -166,10 +168,11 @@ func TestExitForwarderRelaysOverIPv6WhereTheHostHasIt(t *testing.T) {
 	t.Parallel()
 	forwarder := relayForwarder(t, netip.AddrPort{}, "2606:4700:4700::1111")
 	target := netip.MustParseAddrPort("[2606:4700:4700::1111]:53")
-	if forwarder.relayAllowed(target, []netip.Prefix{netip.MustParsePrefix("45.76.10.8/29")}) {
+	consumer := netip.MustParseAddr("100.64.0.4")
+	if forwarder.relayAllowed(target, consumer, []netip.Prefix{netip.MustParsePrefix("45.76.10.8/29")}) {
 		t.Fatal("relayed over IPv6 from a host without it")
 	}
-	if !forwarder.relayAllowed(target, []netip.Prefix{netip.MustParsePrefix("2600:1f18::5/128")}) {
+	if !forwarder.relayAllowed(target, consumer, []netip.Prefix{netip.MustParsePrefix("2600:1f18::5/128")}) {
 		t.Fatal("did not relay over IPv6 from a host with it")
 	}
 }
@@ -230,7 +233,7 @@ func TestExitForwarderHoldsBackAResolverThatKeepsNotAnswering(t *testing.T) {
 	message := unpackMessage(t, packRelayQuery(t, "a.example.", dnsmessage.TypeA, netip.MustParseAddrPort("9.9.9.9:53")))
 	busy := forwarder.relay(t.Context(), packRelayQuery(t, "a.example.", dnsmessage.TypeA,
 		netip.MustParseAddrPort("9.9.9.9:53")), message, message.Questions[0], "udp",
-		netip.MustParseAddrPort("9.9.9.9:53"), false, nil)
+		netip.MustParseAddrPort("9.9.9.9:53"), netip.MustParseAddr("100.64.0.4"), false, nil)
 	if status, _ := relayStatusOf(busy); status != relayBusy || unpackMessage(t, busy).RCode != dnsmessage.RCodeServerFailure {
 		t.Fatalf("not admitted: status %d", status)
 	}
@@ -295,7 +298,7 @@ func TestExitForwarderTellsADeadResolverFromADeadUplink(t *testing.T) {
 	if forwarder.noteRelay(first, false) || forwarder.noteRelay(second, false) {
 		t.Fatal("dead resolvers took the uplink down while another answered")
 	}
-	forwarder.SetRelay([]netip.Addr{second}, nil)
+	forwarder.SetRelay([]netip.Addr{second}, nil, nil)
 	forwarder.mu.Lock()
 	_, kept := forwarder.relayStalled[first]
 	forwarder.mu.Unlock()
@@ -341,5 +344,29 @@ func TestRelayStatusFitsTheAskersUDPSize(t *testing.T) {
 			}
 			return
 		}
+	}
+}
+
+// A resolver of zones sent to some Device Groups is relayed to for the
+// consumers Core names in its scope only (DNS design D1c.5).
+func TestExitForwarderRelaysScopedResolversForTheirConsumersOnly(t *testing.T) {
+	t.Parallel()
+	x := startCountingUpstream(t, dnsmessage.RCodeSuccess, netip.MustParseAddr("10.20.0.5"), false)
+	forwarder := relayForwarder(t, x.address)
+	forwarder.SetRelay(nil, []networkmap.RelayScope{{
+		Targets: []netip.Addr{netip.MustParseAddr("9.9.9.9")},
+		Sources: []netip.Prefix{netip.MustParsePrefix("100.64.0.4/32"), netip.MustParsePrefix("fd7a:115c:a1e0::4/128")},
+	}}, nil)
+	query := packRelayQuery(t, "wiki.corp.", dnsmessage.TypeA, netip.MustParseAddrPort("9.9.9.9:53"))
+	for consumer, want := range map[string]byte{
+		"100.64.0.4": relayAnswered, "fd7a:115c:a1e0::4": relayAnswered, "100.64.0.5": relayNotAllowed,
+	} {
+		response := forwarder.answer(t.Context(), query, "udp", netip.MustParseAddr(consumer))
+		if status, ok := relayStatusOf(response); !ok || status != want {
+			t.Fatalf("%s: status %d %v, want %d", consumer, status, ok, want)
+		}
+	}
+	if x.asked.Load() != 2 {
+		t.Fatalf("X asked %d times", x.asked.Load())
 	}
 }
