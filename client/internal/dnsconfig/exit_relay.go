@@ -11,6 +11,7 @@ import (
 	"golang.org/x/net/dns/dnsmessage"
 
 	"meshtransit.net/client/internal/networkmap"
+	"meshtransit.net/client/internal/overlayframe"
 	"meshtransit.net/shared/internet"
 )
 
@@ -49,7 +50,20 @@ const (
 	// that keeps not answering, so it cannot take every slot.
 	relayStalledAfter        = 3
 	maxStalledRelayQuestions = 16
+	// relayRetireGrace is how long a resolver Core stopped listing is still
+	// relayed to, for the consumers that had it: a consumer's map may carry
+	// the zone it belongs to that much longer than the exit node's, through
+	// the Network's DNS window and a map refresh (TD-CORE-89).
+	relayRetireGrace = 2 * time.Minute
 )
+
+// retiredRelay is a resolver Core no longer lists for some consumers,
+// relayed to until a deadline: for any consumer until openUntil, when it
+// was listed for any, and for each source until its own.
+type retiredRelay struct {
+	openUntil time.Time
+	sources   map[netip.Addr]time.Time
+}
 
 var errRelayOption = errors.New("dnsconfig: malformed relay option")
 
@@ -130,19 +144,26 @@ func withoutRelayOption(query []byte) ([]byte, error) {
 // withRelayStatus adds the relay option with status to response, when query
 // asked to relay; any other response is left as it is.
 func withRelayStatus(query, response []byte, status byte) []byte {
+	marked, _ := markRelayStatus(query, response, status)
+	return marked
+}
+
+// markRelayStatus is withRelayStatus that reports whether the status was
+// added: response comes back unchanged when it was not.
+func markRelayStatus(query, response []byte, status byte) ([]byte, bool) {
 	if len(response) == 0 {
-		return response
+		return response, false
 	}
 	var asked dnsmessage.Message
 	if asked.Unpack(query) != nil {
-		return response
+		return response, false
 	}
 	if _, present, _ := relayOption(asked); !present {
-		return response
+		return response, false
 	}
 	var message dnsmessage.Message
 	if message.Unpack(response) != nil {
-		return response
+		return response, false
 	}
 	option := dnsmessage.Option{Code: ednsOptionRelay, Data: []byte{relayVersion, status}}
 	found := false
@@ -158,7 +179,7 @@ func withRelayStatus(query, response []byte, status byte) []byte {
 	if !found {
 		header := dnsmessage.ResourceHeader{}
 		if header.SetEDNS0(maxUDPSize, dnsmessage.RCodeSuccess, false) != nil {
-			return response
+			return response, false
 		}
 		message.Additionals = append(message.Additionals, dnsmessage.Resource{
 			Header: header, Body: &dnsmessage.OPTResource{Options: []dnsmessage.Option{option}},
@@ -166,9 +187,9 @@ func withRelayStatus(query, response []byte, status byte) []byte {
 	}
 	packed, err := message.Pack()
 	if err != nil {
-		return response
+		return response, false
 	}
-	return packed
+	return packed, true
 }
 
 // relayStatusOf reads the relay option of an answer; false when it has none,
@@ -224,12 +245,14 @@ func (f *ExitForwarder) SetRelay(targets []netip.Addr, scopes []networkmap.Relay
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.relayRetired = retireRelays(f.relayRetired, f.relayTargets, f.relayScoped, allowed, scoped, f.clock())
 	f.relayTargets, f.relayScoped, f.relayServed = allowed, scoped, slices.Clone(served)
 	// What is known of resolvers no longer listed is forgotten.
 	listed := func(address netip.Addr) bool {
 		_, open := allowed[address]
 		_, some := scoped[address]
-		return open || some
+		_, retired := f.relayRetired[address]
+		return open || some || retired
 	}
 	for address := range f.relayStalled {
 		if !listed(address) {
@@ -241,6 +264,86 @@ func (f *ExitForwarder) SetRelay(targets []netip.Addr, scopes []networkmap.Relay
 			delete(f.relayTimedOut, address)
 		}
 	}
+}
+
+// retireRelays returns the resolvers still relayed to past Core's new list
+// (allowed, scoped) at now: what was retired before, until its deadline,
+// unless the new list covers it; and, for relayRetireGrace, what the old
+// list (targets, scopedBefore) allowed that the new one does not, for any
+// consumer or for each source that lost it. Deadlines are never extended:
+// only the old list retires anything.
+func retireRelays(retired map[netip.Addr]retiredRelay, targets map[netip.Addr]struct{},
+	scopedBefore map[netip.Addr]map[netip.Addr]struct{}, allowed map[netip.Addr]struct{},
+	scoped map[netip.Addr]map[netip.Addr]struct{}, now time.Time,
+) map[netip.Addr]retiredRelay {
+	next := make(map[netip.Addr]retiredRelay)
+	put := func(address netip.Addr, relay retiredRelay) {
+		if !relay.openUntil.IsZero() || len(relay.sources) != 0 {
+			next[address] = relay
+		}
+	}
+	for address, relay := range retired {
+		if _, open := allowed[address]; open {
+			continue
+		}
+		kept := retiredRelay{sources: map[netip.Addr]time.Time{}}
+		if now.Before(relay.openUntil) {
+			kept.openUntil = relay.openUntil
+		}
+		for source, until := range relay.sources {
+			if _, listed := scoped[address][source]; !listed && now.Before(until) {
+				kept.sources[source] = until
+			}
+		}
+		put(address, kept)
+	}
+	until := now.Add(relayRetireGrace)
+	for address := range targets {
+		if _, open := allowed[address]; !open {
+			relay := next[address]
+			relay.openUntil = until
+			put(address, relay)
+		}
+	}
+	for address, sources := range scopedBefore {
+		if _, open := allowed[address]; open {
+			continue
+		}
+		relay := next[address]
+		for source := range sources {
+			if _, listed := scoped[address][source]; listed {
+				continue
+			}
+			if relay.sources == nil {
+				relay.sources = map[netip.Addr]time.Time{}
+			}
+			relay.sources[source] = until
+		}
+		put(address, relay)
+	}
+	return next
+}
+
+// clock is the forwarder's time.
+func (f *ExitForwarder) clock() time.Time {
+	if f.now == nil {
+		return time.Now()
+	}
+	return f.now()
+}
+
+// ClearRelay forgets every resolver the forwarder relays to, retired ones
+// too: the node no longer serves an Exit Pool.
+func (f *ExitForwarder) ClearRelay() {
+	if f == nil {
+		return
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.relayTargets, f.relayScoped, f.relayServed = nil, nil, nil
+	f.relayRetired = map[netip.Addr]retiredRelay{}
+	clear(f.relayStalled)
+	clear(f.relayTimedOut)
 }
 
 // SetUplinkDown records whether the exit node's own way to the Internet is
@@ -265,6 +368,10 @@ func (f *ExitForwarder) relayAllowed(target netip.AddrPort, consumer netip.Addr,
 	if !listed {
 		_, listed = f.relayScoped[address][consumer.Unmap()]
 	}
+	if retired, known := f.relayRetired[address]; !listed && known {
+		now := f.clock()
+		listed = now.Before(retired.openUntil) || now.Before(retired.sources[consumer.Unmap()])
+	}
 	served := slices.Clone(f.relayServed)
 	own := slices.Clone(f.addresses)
 	f.mu.Unlock()
@@ -284,15 +391,31 @@ func (f *ExitForwarder) relayAllowed(target netip.AddrPort, consumer netip.Addr,
 	}
 }
 
+// meshRanges hold the mesh's IPv4 overlay and alias ranges and its own
+// IPv6 /48: an answer from the Internet naming one would point the consumer
+// into its own mesh (TD-CLI-72). Workspace /48s are added per exit node
+// (relayedAnswerHides); the rest of fd00::/8 is ULA a resolver may name.
+var meshRanges = append(slices.DeleteFunc(overlayframe.Prefixes(), func(prefix netip.Prefix) bool {
+	return prefix.Addr().Is6()
+}), netip.MustParsePrefix("fd00::/48"))
+
 // relayedAnswerHides reports an address a relayed answer may not tell: the
-// exit's own networks and the Sites it serves, loopback, link-local (cloud
-// metadata among them), unspecified and multicast. Other private addresses
-// stay: Core lists only resolvers admins chose (DNS design D1c Q2).
-func relayedAnswerHides(private, served []netip.Prefix) func(netip.Addr) bool {
+// exit's own networks and the Sites it serves, the mesh's ranges, loopback,
+// link-local (cloud metadata among them), unspecified and multicast. Other
+// private addresses stay: Core lists only resolvers admins chose (DNS design
+// D1c Q2).
+func relayedAnswerHides(private, served []netip.Prefix, own []netip.Addr) func(netip.Addr) bool {
+	mesh := slices.Clone(meshRanges)
+	for _, address := range own {
+		if address.Is6() {
+			mesh = append(mesh, netip.PrefixFrom(address, 48).Masked())
+		}
+	}
 	return func(address netip.Addr) bool {
 		address = address.Unmap()
 		return address.IsLoopback() || address.IsLinkLocalUnicast() || address.IsLinkLocalMulticast() ||
 			address.IsMulticast() || address.IsUnspecified() ||
+			slices.ContainsFunc(mesh, func(prefix netip.Prefix) bool { return prefix.Contains(address) }) ||
 			slices.ContainsFunc(private, func(prefix netip.Prefix) bool { return prefix.Contains(address) }) ||
 			slices.ContainsFunc(served, func(prefix netip.Prefix) bool { return prefix.Contains(address) })
 	}
@@ -348,27 +471,53 @@ func (f *ExitForwarder) relay(ctx context.Context, query []byte, message dnsmess
 	}
 	f.noteRelay(target.Addr(), true)
 	f.mu.Lock()
-	served := slices.Clone(f.relayServed)
+	served, own := slices.Clone(f.relayServed), slices.Clone(f.addresses)
 	f.mu.Unlock()
-	if response, err = withoutPrivateAnswers(response, relayedAnswerHides(private, served)); err != nil {
+	if response, err = withoutPrivateAnswers(response, relayedAnswerHides(private, served, own)); err != nil {
 		return refused(relayNoAnswer)
 	}
 	return answer(response, relayAnswered)
 }
 
 // markRelayed is response limited to the asker's UDP size with the relay
-// status, which counts within that size (§3).
+// status, which counts within that size (§3). An answer that cannot carry
+// the status (unreadable, too large for TCP) becomes a SERVFAIL that does:
+// without it the consumer would take the exit node for one that does not
+// relay (TD-CLI-72).
 func markRelayed(query, response []byte, transport string, status byte) []byte {
+	if marked := markRelayedAnswer(query, response, transport, status); marked != nil {
+		return marked
+	}
+	var message dnsmessage.Message
+	if message.Unpack(query) != nil {
+		return nil
+	}
+	failure := baseResponse(message, Plan{})
+	failure.RCode = dnsmessage.RCodeServerFailure
+	packed, err := failure.Pack()
+	if err != nil {
+		return nil
+	}
+	if marked, ok := markRelayStatus(query, packed, status); ok {
+		return marked
+	}
+	return nil
+}
+
+func markRelayedAnswer(query, response []byte, transport string, status byte) []byte {
 	limited, err := limitUDPResponse(query, response, transport)
 	if err != nil {
 		return nil
 	}
-	marked := withRelayStatus(query, limited, status)
-	if transport == "udp" && len(marked) > udpResponseLimit(query) {
+	marked, ok := markRelayStatus(query, limited, status)
+	if ok && transport == "udp" && len(marked) > udpResponseLimit(query) {
 		if limited, err = truncatedResponse(limited); err != nil {
 			return nil
 		}
-		marked = withRelayStatus(query, limited, status)
+		marked, ok = markRelayStatus(query, limited, status)
+	}
+	if !ok || len(marked) > maxDNSMessageBytes {
+		return nil
 	}
 	return marked
 }

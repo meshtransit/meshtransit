@@ -463,3 +463,27 @@ func TestResolverConsumersLeaveOutUnmanagedDevices(t *testing.T) {
 		t.Fatalf("resolver consumers %v, before %v", after, before)
 	}
 }
+
+// The resolvers an exit node's map leaves out by its bounds are counted on
+// its view, for the metric (TD-CORE-88); a consumer's view counts none.
+func TestServedExitCountsDroppedRelayTargets(t *testing.T) {
+	t.Parallel()
+	fixture := newExitFixture(t)
+	for zone := range 70 {
+		resolvers := make([]DNSZoneResolver, 0, 4)
+		for index := range 4 {
+			resolvers = append(resolvers, DNSZoneResolver{
+				Address: netip.AddrFrom4([4]byte{1, 2, byte(zone), byte(index + 1)}), Port: 53})
+		}
+		fixture.params.DNSZones = append(fixture.params.DNSZones, DNSZone{Zone: int64(1000 + zone),
+			Domain: fmt.Sprintf("z%02d.example", zone), OtherNames: DNSOtherForward, Resolvers: resolvers})
+	}
+	view := fixture.policy(t).RoutesFor(fixture.ids[7], policyNow)
+	if served := view.ServedExits(); len(served) != 1 || len(served[0].DNSRelayTargets) != MaximumDNSRelayTargets ||
+		view.DNSRelayTargetsDropped() != 70*4-MaximumDNSRelayTargets {
+		t.Fatalf("%d dropped", view.DNSRelayTargetsDropped())
+	}
+	if consumer := fixture.policy(t).RoutesFor(fixture.ids[1], policyNow); consumer.DNSRelayTargetsDropped() != 0 {
+		t.Fatalf("a consumer's view counts %d dropped", consumer.DNSRelayTargetsDropped())
+	}
+}

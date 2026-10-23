@@ -101,7 +101,12 @@ type ExitForwarder struct {
 	relayTargets map[netip.Addr]struct{}
 	// relayScoped are the resolvers relayed to for some consumers only,
 	// each with their addresses (DNS design D1c.5).
-	relayScoped   map[netip.Addr]map[netip.Addr]struct{}
+	relayScoped map[netip.Addr]map[netip.Addr]struct{}
+	// relayRetired are resolvers Core stopped listing, still relayed to
+	// until their deadline (exit_relay.go).
+	relayRetired map[netip.Addr]retiredRelay
+	// now, set only by tests, is the forwarder's clock (clock).
+	now           func() time.Time
 	relayServed   []netip.Prefix
 	uplinkDown    bool
 	relayHeld     map[netip.Addr]int
@@ -125,8 +130,8 @@ func NewExitForwarder(logger *slog.Logger, local func() []netip.Prefix) *ExitFor
 	return &ExitForwarder{
 		logger: logger, local: local, buckets: map[netip.Addr]*exitBucket{}, held: map[netip.Addr]int{},
 		relayHeld: map[netip.Addr]int{}, relayStalled: map[netip.Addr]int{},
-		relayTimedOut: map[netip.Addr]time.Time{},
-		port:          netadmin.ExitDNSPort, upstreamPort: 53,
+		relayTimedOut: map[netip.Addr]time.Time{}, relayRetired: map[netip.Addr]retiredRelay{},
+		port: netadmin.ExitDNSPort, upstreamPort: 53,
 		resolvConf: exitSystemResolvers, resolvedConf: exitResolvedResolvers,
 		slots: make(chan struct{}, maxConcurrentQueries), tcpSlots: make(chan struct{}, maxTCPConnections),
 	}

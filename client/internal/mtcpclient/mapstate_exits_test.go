@@ -2,6 +2,7 @@ package mtcpclient
 
 import (
 	"net/netip"
+	"slices"
 	"testing"
 
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
@@ -83,19 +84,6 @@ func TestMapStateServedExitsNeedTheCapabilityAndTheInternet(t *testing.T) {
 		"low conntrack": func(pool *mtcpv1.ServedExit) { pool.ConntrackPerConsumer = 10 },
 		"relay scope from a range": func(pool *mtcpv1.ServedExit) {
 			pool.DnsRelayScopes[0].Sources[0] = sharedmtcp.AppendPrefix(netip.MustParsePrefix("100.64.0.0/24"))
-		},
-		"private scoped target": func(pool *mtcpv1.ServedExit) {
-			pool.DnsRelayScopes[0].Targets = [][]byte{{10, 0, 0, 53}}
-		},
-		"empty relay scope": func(pool *mtcpv1.ServedExit) { pool.DnsRelayScopes[0].Targets = nil },
-		"private relay target": func(pool *mtcpv1.ServedExit) {
-			pool.DnsRelayTargets = [][]byte{{10, 0, 0, 53}}
-		},
-		"relay target twice": func(pool *mtcpv1.ServedExit) {
-			pool.DnsRelayTargets = [][]byte{{9, 9, 9, 9}, {9, 9, 9, 9}}
-		},
-		"mapped relay target": func(pool *mtcpv1.ServedExit) {
-			pool.DnsRelayTargets = [][]byte{netip.MustParseAddr("::ffff:9.9.9.9").AsSlice()}
 		},
 		"too many relay targets": func(pool *mtcpv1.ServedExit) {
 			pool.DnsRelayTargets = nil
@@ -190,5 +178,29 @@ func TestMapStateReadsExitPools(t *testing.T) {
 		if _, err := state.build(snapshotInput{revision: 1}); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+// A relay target the node cannot use (off the Internet as it sees it,
+// listed twice, malformed) is left out alone and counted: the pool and its
+// other targets stay (TD-CLI-72).
+func TestMapStateLeavesOutUnusableRelayTargetsAlone(t *testing.T) {
+	t.Parallel()
+	message := snapshotMessage(7)
+	message.ServedExits = servedExits("p-main")
+	pool := message.ServedExits.Pools[0]
+	pool.DnsRelayTargets = [][]byte{{9, 9, 9, 9}, {10, 0, 0, 53}, {9, 9, 9, 9},
+		netip.MustParseAddr("::ffff:1.1.1.1").AsSlice(), {1, 2, 3}, {1, 1, 1, 1}}
+	pool.DnsRelayScopes[0].Targets = [][]byte{{192, 168, 1, 53}}
+	state := newMapState(false)
+	state.takesServedExits = true
+	if err := state.applySnapshot(message); err != nil {
+		t.Fatal(err)
+	}
+	served := build(t, state).ServedExits
+	if len(served) != 1 || !slices.Equal(served[0].DNSRelayTargets,
+		[]netip.Addr{netip.MustParseAddr("9.9.9.9"), netip.MustParseAddr("1.1.1.1")}) ||
+		served[0].DroppedRelayTargets != 5 || len(served[0].DNSRelayScopes) != len(pool.DnsRelayScopes)-1 {
+		t.Fatalf("served exits = %+v", served)
 	}
 }

@@ -391,6 +391,11 @@ type Service struct {
 	// exitForwarder answers an exit node's consumers' DNS; exitPins are
 	// the exit nodes users approved.
 	exitForwarder *dnsconfig.ExitForwarder
+	// exitRelayDropped is the count of unusable relay targets last logged
+	// (syncExitForwarder, under dataPlaneMu).
+	exitRelayDropped int
+	// exitRelayPool is the Exit Pool whose relay list the forwarder holds.
+	exitRelayPool string
 	exitPins      *exitPins
 	// captive tracks a captive portal while the host uses an exit node,
 	// which captiveDetector finds (exit node design §17.3).
@@ -662,6 +667,13 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		defer stopCaptive()
 		go detector.Run(captiveCtx)
 		go s.runCaptiveWindow(captiveCtx)
+	}
+	if s.enableExitNode {
+		// The exit node's own way out is followed whether or not Core's
+		// stream is up: its forwarder tells consumers (TD-CLI-72).
+		uplinkCtx, stopUplink := context.WithCancel(ctx)
+		defer stopUplink()
+		go watchExitUplink(uplinkCtx, s.exitNodeStatus, routeHealthPoll)
 	}
 
 	// Signals raised before the supervisor starts are already reflected in the

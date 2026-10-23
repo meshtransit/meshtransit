@@ -139,6 +139,9 @@ func (view RouteView) Exits() []ExitPoolRoute {
 	return cloned
 }
 
+// ServesExit reports whether the Device serves an Exit Pool.
+func (view RouteView) ServesExit() bool { return len(view.servedExits) != 0 }
+
 // ServedExits returns the Exit Pool the Device serves: at most one.
 func (view RouteView) ServedExits() []ServedExit {
 	cloned := make([]ServedExit, len(view.servedExits))
@@ -368,7 +371,9 @@ func (inner *networkPolicy) servedExits(view *RouteView, self int64, now time.Ti
 			Ports: slices.Clone(rule.Ports)})
 		view.exitConsumers = append(view.exitConsumers, sources...)
 	}
-	view.servedExits[0].DNSRelayScopes = inner.relayScopes(consumers, now)
+	var dropped int
+	view.servedExits[0].DNSRelayScopes, dropped = inner.relayScopes(consumers, now)
+	view.relayDropped = index.relayTargetsDropped + dropped
 }
 
 // MaximumDNSRelaySources bounds the consumers of all relay scopes of one
@@ -379,9 +384,10 @@ const MaximumDNSRelaySources = 16384
 // consumers in one of its zones' Device Groups now, found through the
 // Groups' members; a scope none of them is in is left out, and so are the
 // scopes past MaximumDNSRelaySources consumers in all: their resolvers are
-// refused (DNS design D1c.5 §2).
-func (inner *networkPolicy) relayScopes(consumers map[int64]struct{}, now time.Time) []DNSRelayScope {
-	var scopes []DNSRelayScope
+// refused (DNS design D1c.5 §2); dropped counts their resolvers.
+func (inner *networkPolicy) relayScopes(consumers map[int64]struct{}, now time.Time) (
+	scopes []DNSRelayScope, dropped int,
+) {
 	total := 0
 	for _, scope := range inner.routes.relayScopes {
 		var sources []node.ID
@@ -399,13 +405,20 @@ func (inner *networkPolicy) relayScopes(consumers map[int64]struct{}, now time.T
 		slices.SortFunc(sources, compareNodeIDs)
 		sources = slices.Compact(sources)
 		if total+len(sources) > MaximumDNSRelaySources {
+			dropped += len(scope.targets)
 			continue
 		}
 		total += len(sources)
 		scopes = append(scopes, DNSRelayScope{Targets: slices.Clone(scope.targets), Sources: sources})
 	}
-	return scopes
+	return scopes, dropped
 }
+
+// DNSRelayTargetsDropped counts the zones' Internet resolvers the exit
+// node's map leaves out by its bounds (MaximumDNSRelayTargets,
+// MaximumDNSRelayScopes, MaximumDNSRelaySources): consumers asking them
+// through it are refused (TD-CORE-88).
+func (view RouteView) DNSRelayTargetsDropped() int { return view.relayDropped }
 
 // exitPoolPrimary is the elected exit node while it is an active exit node
 // of the pool, none when Core elected none, and otherwise the first active

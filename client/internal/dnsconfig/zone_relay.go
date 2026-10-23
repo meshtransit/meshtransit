@@ -52,6 +52,21 @@ func oldExitAnswer(err error) ([]byte, bool) {
 // relayVia returns the exit node's forwarder that relays to a zone's
 // Internet resolvers; not valid without an exit node carrying traffic.
 func (e *resolverEngine) relayVia(plan Plan) netip.AddrPort {
+	via := e.relayForwarder(plan)
+	if !via.IsValid() {
+		return via
+	}
+	if last := e.relayExit.Load(); last == nil || *last != via {
+		if previous := e.relayExit.Swap(&via); previous != nil && *previous != via {
+			e.relayBreaker.reset()
+		}
+	}
+	return via
+}
+
+// relayForwarder is relayVia without its effect on the relay breaker, for
+// reading.
+func (e *resolverEngine) relayForwarder(plan Plan) netip.AddrPort {
 	if plan.Exit == nil || len(plan.Exit.Resolvers) == 0 || e.exitPending(plan) {
 		return netip.AddrPort{}
 	}

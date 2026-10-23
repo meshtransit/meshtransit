@@ -19,6 +19,9 @@ const (
 	OperationObserveClientVersion
 	// OperationLoadInventory reads one Network's whole live inventory.
 	OperationLoadInventory
+	// OperationReadNetworkRevision reads one Network's revision for an exit
+	// node's stream.
+	OperationReadNetworkRevision
 )
 
 // Observer records bounded operation latency and outcome without identity labels.

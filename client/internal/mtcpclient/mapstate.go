@@ -18,6 +18,7 @@ import (
 	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/overlayframe"
+	"meshtransit.net/shared/internet"
 	"meshtransit.net/shared/key"
 	sharedmtcp "meshtransit.net/shared/mtcp"
 	"meshtransit.net/shared/mtrp"
@@ -771,6 +772,20 @@ func convertExits(config *mtcpv1.ExitConfig) ([]networkmap.ExitPool, error) {
 	return exits, nil
 }
 
+// relayTargetsOf reads relay targets, leaving out and counting those that
+// are malformed, off the Internet or listed before.
+func relayTargetsOf(raw [][]byte) (targets []netip.Addr, dropped int) {
+	for _, encoded := range raw {
+		address, ok := netip.AddrFromSlice(encoded)
+		if !ok || address.Is4In6() || !internet.Contains(address) || slices.Contains(targets, address) {
+			dropped++
+			continue
+		}
+		targets = append(targets, address)
+	}
+	return targets, dropped
+}
+
 // convertServedExits reads the Exit Pool the node serves (mtcp-v1 §7.7);
 // networkmap validates the rest. Its rules are read as the packet filter's.
 func convertServedExits(config *mtcpv1.ServedExits) ([]networkmap.ServedExit, error) {
@@ -795,22 +810,16 @@ func convertServedExits(config *mtcpv1.ServedExits) ([]networkmap.ServedExit, er
 			}
 			converted.DNSUpstreams = append(converted.DNSUpstreams, address)
 		}
-		for _, raw := range pool.GetDnsRelayTargets() {
-			address, ok := netip.AddrFromSlice(raw)
-			if !ok || address.Is4In6() {
-				return nil, fmt.Errorf("%w: malformed exit relay target", controlplane.ErrNetmapInvalid)
-			}
-			converted.DNSRelayTargets = append(converted.DNSRelayTargets, address)
-		}
+		// A relay target this client does not take (off the Internet as it
+		// sees it, or listed twice) is left out alone: the pool and the
+		// other targets stay (TD-CLI-72).
+		var dropped int
+		converted.DNSRelayTargets, dropped = relayTargetsOf(pool.GetDnsRelayTargets())
+		converted.DroppedRelayTargets += dropped
 		for _, scope := range pool.GetDnsRelayScopes() {
 			next := networkmap.RelayScope{}
-			for _, raw := range scope.GetTargets() {
-				address, ok := netip.AddrFromSlice(raw)
-				if !ok || address.Is4In6() {
-					return nil, fmt.Errorf("%w: malformed exit relay target", controlplane.ErrNetmapInvalid)
-				}
-				next.Targets = append(next.Targets, address)
-			}
+			next.Targets, dropped = relayTargetsOf(scope.GetTargets())
+			converted.DroppedRelayTargets += dropped
 			for _, encoded := range scope.GetSources() {
 				source, err := exactPrefix(encoded)
 				if err != nil {
@@ -818,7 +827,9 @@ func convertServedExits(config *mtcpv1.ServedExits) ([]networkmap.ServedExit, er
 				}
 				next.Sources = append(next.Sources, source)
 			}
-			converted.DNSRelayScopes = append(converted.DNSRelayScopes, next)
+			if len(next.Targets) != 0 {
+				converted.DNSRelayScopes = append(converted.DNSRelayScopes, next)
+			}
 		}
 		rules, err := convertFilter(&mtcpv1.PacketFilter{Rules: pool.GetRules()})
 		if err != nil {

@@ -20,5 +20,7 @@ func validStreamOptions(options StreamOptions) bool {
 		options.KeepAliveInterval >= minimumStreamInterval &&
 		options.KeepAliveInterval <= maximumStreamInterval &&
 		options.ReconcileInterval >= minimumStreamInterval &&
-		options.ReconcileInterval <= maximumStreamInterval
+		options.ReconcileInterval <= maximumStreamInterval &&
+		(options.ExitRevisionPoll == 0 || options.ExitRevisionPoll >= minimumStreamInterval &&
+			options.ExitRevisionPoll <= maximumStreamInterval)
 }

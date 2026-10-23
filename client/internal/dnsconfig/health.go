@@ -131,7 +131,7 @@ func (e *resolverEngine) resolverHealth(plan Plan, maximum int) []controlplane.R
 	liveness := e.liveness.Load()
 	// What is reported is the way the resolver is asked now: through the
 	// exit node while one is in use (DNS design D1c §5).
-	gate := e.zoneGate(nil, e.relayVia(plan))
+	gate := e.zoneGate(nil, e.relayForwarder(plan))
 	for _, resolver := range resolvers {
 		if _, dup := seen[resolver]; dup || len(health) == maximum {
 			continue

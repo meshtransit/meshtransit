@@ -75,7 +75,8 @@ func (s *Service) syncExitForwarder(snapshot networkmap.Snapshot) {
 		return
 	}
 	if len(snapshot.ServedExits) == 0 {
-		s.exitForwarder.SetRelay(nil, nil, nil)
+		s.exitForwarder.ClearRelay()
+		s.exitRelayPool, s.exitRelayDropped = "", 0
 		s.exitForwarder.Configure(nil, nil)
 		return
 	}
@@ -89,8 +90,38 @@ func (s *Service) syncExitForwarder(snapshot networkmap.Snapshot) {
 	for _, site := range snapshot.Served {
 		served = append(served, site.Prefixes...)
 	}
+	// Another pool's consumers get none of the old pool's resolvers, not
+	// even retired ones.
+	if pool := snapshot.ServedExits[0].Ref; pool != s.exitRelayPool {
+		s.exitForwarder.ClearRelay()
+		s.exitRelayPool, s.exitRelayDropped = pool, 0
+	}
+	if dropped := snapshot.ServedExits[0].DroppedRelayTargets; dropped != s.exitRelayDropped {
+		s.exitRelayDropped = dropped
+		if dropped > 0 && s.logger != nil {
+			s.logger.Warn("exit node: DNS relay targets left out as unusable (malformed, off the Internet or listed twice)",
+				"targets", dropped)
+		}
+	}
 	s.exitForwarder.SetRelay(snapshot.ServedExits[0].DNSRelayTargets, snapshot.ServedExits[0].DNSRelayScopes, served)
 	s.exitForwarder.Configure(addresses, snapshot.ServedExits[0].DNSUpstreams)
+}
+
+// watchExitUplink reads the exit node's status every poll until ctx ends,
+// which keeps the forwarder's view of its way out current (exitNodeStatus)
+// between map streams too.
+func watchExitUplink(ctx context.Context, read func() dataplane.ExitNodeStatus, poll time.Duration) {
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+	read()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			read()
+		}
+	}
 }
 
 // watchExitHealth hands each new exit health to the map session, until ctx

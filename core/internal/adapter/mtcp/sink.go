@@ -126,6 +126,9 @@ func (sink *mapSink) sendSnapshotLocked(_ context.Context, snapshot mapsession.S
 		sink.metrics.routesSent(message.GetRoutes(), snapshot.Routes().Omitted())
 	}
 	sink.routes, sink.served = message.GetRoutes(), message.GetServed()
+	if !proto.Equal(sink.exitServed, message.GetServedExits()) {
+		sink.metrics.servedExitsSent(snapshot.Routes().DNSRelayTargetsDropped())
+	}
 	sink.exits, sink.exitServed = message.GetExits(), message.GetServedExits()
 	// A map was authorized for this session: it serves a Device now.
 	sink.session.proveDevice()
@@ -230,6 +233,7 @@ func (sink *mapSink) SendAuthorityDelta(ctx context.Context, delta mapsession.Au
 	}
 	if message.ServedExits != nil {
 		sink.exitServed = exitServed
+		sink.metrics.servedExitsSent(snapshot.Routes().DNSRelayTargetsDropped())
 	}
 	return nil
 }

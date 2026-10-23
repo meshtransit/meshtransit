@@ -126,8 +126,10 @@ type RouteView struct {
 	// Exit Pools (mtcp-v1 §7.7): the pools it may use as a consumer, the
 	// pool it serves as an exit node with the traffic it admits, and the
 	// peers they add: a consumer's candidates, an exit node's consumers.
-	exits         []ExitPoolRoute
-	servedExits   []ServedExit
+	exits       []ExitPoolRoute
+	servedExits []ServedExit
+	// relayDropped counts the relay resolvers servedExits leaves out.
+	relayDropped  int
 	exitInbound   []ExitInbound
 	exitNodes     []node.ID
 	exitConsumers []node.ID
@@ -186,7 +188,7 @@ func (view RouteView) ForCapabilities(capabilities RouteCapabilities) RouteView 
 		view.exits, view.exitNodes = nil, nil
 	}
 	if !capabilities.ExitRouter {
-		view.servedExits, view.exitInbound, view.exitConsumers = nil, nil, nil
+		view.servedExits, view.exitInbound, view.exitConsumers, view.relayDropped = nil, nil, nil, 0
 	}
 	// A resolver Device answers whatever its client: its consumers stay.
 	if !capabilities.DNSForward {

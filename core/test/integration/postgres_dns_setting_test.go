@@ -118,6 +118,10 @@ WHERE event_class = 'network.revision.advanced' AND aggregate_kind = 'network_dn
 	if err != nil {
 		t.Fatal(err)
 	}
+	// An exit node's stream reads the revision the change advanced to.
+	if revision, err := store.NetworkRevision(ctx, scope); err != nil || revision != networkBefore+1 {
+		t.Fatalf("NetworkRevision() = %d, error = %v, want %d", revision, err, networkBefore+1)
+	}
 	snapshot, err := store.Load(ctx, fixtureDeviceIdentity(ctx, t, admin, consumer))
 	if err != nil || !snapshot.Routes().DNSUnmanaged() {
 		t.Fatalf("a Device of an unmanaged group: unmanaged %v, error = %v", snapshot.Routes().DNSUnmanaged(), err)

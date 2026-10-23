@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net/netip"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -432,4 +435,82 @@ func TestSinkKeepsTheDNSDigestOfWhatItSent(t *testing.T) {
 			t.Fatalf("reports %t: digest after a delta %+v, want %+v", reports, got, want)
 		}
 	}
+}
+
+// TestSinkSendsAnExitNodeItsNewRelayTargets: changing a zone's resolver
+// reaches the exit node as a delta with the new relay list, and resolvers
+// its map leaves out by its bounds are counted (TD-CORE-88).
+func TestSinkSendsAnExitNodeItsNewRelayTargets(t *testing.T) {
+	session, node, control := testSession(t)
+	sink := newMapSink(session, false, []ControlKey{{Private: control, NotAfter: time.Now().Add(time.Hour)}}, time.Now)
+	sink.metrics = NewMetrics()
+	connectedExit := func(t *testing.T, self, revision int64,
+		change func(*mapsession.NetworkPolicyParams)) mapsession.Snapshot {
+		snapshot := exitSnapshotAt(t, self, revision, change)
+		connectivity := []mapsession.Connectivity{must(mapsession.NewConnectivity(mapsession.ConnectivityParams{
+			Key: must(mapsession.NewConnectivityKey(snapshot.NodeID(), snapshot.SessionGeneration())), Online: true,
+		}))}
+		for _, peer := range snapshot.AuthorizedPeers() {
+			connectivity = append(connectivity, must(mapsession.NewConnectivity(mapsession.ConnectivityParams{
+				Key: must(mapsession.NewConnectivityKey(peer.NodeID(), peer.SessionGeneration())), Online: true,
+			})))
+		}
+		return must(snapshot.WithConnectivity(connectivity))
+	}
+	initial := connectedExit(t, 701, 7, nil)
+	if err := sink.SendSnapshot(t.Context(), initial); err != nil {
+		t.Fatal(err)
+	}
+	node.messages()
+	resolvers := func(addresses ...string) []mapsession.DNSZoneResolver {
+		listed := make([]mapsession.DNSZoneResolver, 0, len(addresses))
+		for _, address := range addresses {
+			listed = append(listed, mapsession.DNSZoneResolver{Address: netip.MustParseAddr(address), Port: 53})
+		}
+		return listed
+	}
+	changed := connectedExit(t, 701, 8, func(params *mapsession.NetworkPolicyParams) {
+		params.DNSZones[0].Resolvers = resolvers("1.0.0.1")
+	})
+	if err := sink.SendAuthorityDelta(t.Context(), must(mapsession.NewAuthorityDelta(initial, changed))); err != nil {
+		t.Fatal(err)
+	}
+	_, message, _ := node.read()
+	delta, ok := message.(*mtcpv1.MapDelta)
+	if !ok || len(delta.GetServedExits().GetPools()) != 1 {
+		t.Fatalf("delta = %v", message)
+	}
+	if targets := delta.GetServedExits().GetPools()[0].GetDnsRelayTargets(); len(targets) != 1 ||
+		!slices.Equal(targets[0], []byte{1, 0, 0, 1}) {
+		t.Fatalf("relay targets = %v", targets)
+	}
+	// Past 256 resolvers in all, the rest are left out and counted.
+	crowded := connectedExit(t, 701, 9, func(params *mapsession.NetworkPolicyParams) {
+		for zone := range 70 {
+			params.DNSZones = append(params.DNSZones, mapsession.DNSZone{Zone: int64(100 + zone),
+				Domain: fmt.Sprintf("z%02d.example", zone), OtherNames: mapsession.DNSOtherForward,
+				Resolvers: resolvers(fmt.Sprintf("1.2.%d.1", zone), fmt.Sprintf("1.2.%d.2", zone),
+					fmt.Sprintf("1.2.%d.3", zone), fmt.Sprintf("1.2.%d.4", zone))})
+		}
+	})
+	if err := sink.SendAuthorityDelta(t.Context(), must(mapsession.NewAuthorityDelta(changed, crowded))); err != nil {
+		t.Fatal(err)
+	}
+	node.read()
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(sink.metrics.Collectors()...)
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := float64(crowded.Routes().DNSRelayTargetsDropped())
+	for _, family := range families {
+		if family.GetName() == "meshtransit_mtcp_dns_relay_targets_dropped_total" {
+			if got := family.GetMetric()[0].GetCounter().GetValue(); want <= 0 || got != want {
+				t.Fatalf("dropped relay targets counted %v, want %v", got, want)
+			}
+			return
+		}
+	}
+	t.Fatal("dropped relay targets were not counted")
 }

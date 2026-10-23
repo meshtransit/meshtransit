@@ -80,6 +80,10 @@ type resolverEngine struct {
 	// resolvers asked through an exit node (zone_relay.go).
 	relayBreaker *resolverBreaker
 	relayHealth  *resolverHealthTracker
+	// relayExit is the exit node's forwarder last relayed through: another
+	// one starts relayBreaker afresh, as what failed through the old one
+	// says nothing of the new (TD-CLI-72).
+	relayExit atomic.Pointer[netip.AddrPort]
 	// network caches networkResolvers for zones that fail open.
 	network networkResolverCache
 	// fullResolver answers every name, not only the mesh's: names no route

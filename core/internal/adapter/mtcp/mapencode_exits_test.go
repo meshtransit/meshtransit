@@ -31,6 +31,12 @@ func exitSnapshotFixture(t *testing.T, self int64) mapsession.Snapshot {
 // first.
 func exitSnapshotFixtureWith(t *testing.T, self int64, change func(*mapsession.NetworkPolicyParams)) mapsession.Snapshot {
 	t.Helper()
+	return exitSnapshotAt(t, self, 7, change)
+}
+
+// exitSnapshotAt is exitSnapshotFixtureWith at Network revision revision.
+func exitSnapshotAt(t *testing.T, self, revision int64, change func(*mapsession.NetworkPolicyParams)) mapsession.Snapshot {
+	t.Helper()
 	scope := snapshotFixture(t, 1).Scope()
 	now := time.Date(2026, time.October, 20, 4, 0, 0, 0, time.UTC)
 	ids := map[int64]node.ID{}
@@ -75,7 +81,7 @@ func exitSnapshotFixtureWith(t *testing.T, self int64, change func(*mapsession.N
 	createdAt := time.Date(2026, time.October, 20, 3, 0, 0, 0, time.UTC)
 	return must(mapsession.NewSnapshot(mapsession.SnapshotParams{
 		Scope: scope, NetworkName: must(network.ParseDisplayName("Development Mesh")),
-		NetworkRevision: 7, RecoveryEpoch: 2, SessionGeneration: 3, NumericNodeID: self, NumericOwnerID: 11,
+		NetworkRevision: revision, RecoveryEpoch: 2, SessionGeneration: 3, NumericNodeID: self, NumericOwnerID: 11,
 		NodeID: ids[self], Hostname: must(node.ParseHostname("node-one.example")),
 		DNSLabel: must(node.ParseDNSLabel("node-one")), WorkspaceCode: must(identity.ParseDisplayCode("000000000101")),
 		NetworkCode: must(identity.ParseDisplayCode("000000000201")),

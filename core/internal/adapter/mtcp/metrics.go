@@ -32,6 +32,9 @@ type Metrics struct {
 	// routes counts the Sites of routes sent to nodes by status, and those
 	// the bounds of one map left out (mtcp-v1 §7.6, §14).
 	routes *prometheus.CounterVec
+	// dnsRelayDropped counts the zones' Internet resolvers left out of the
+	// relay lists sent to exit nodes by a map's bounds (TD-CORE-88).
+	dnsRelayDropped prometheus.Counter
 }
 
 // The closed set of route statuses and cut Sites counted when sent.
@@ -167,6 +170,12 @@ func NewMetrics() *Metrics {
 			Name: "meshtransit_mtcp_map_route_sites_total",
 			Help: "Sites in subnet routes sent to nodes, by status, and Sites left out by a map's bounds.",
 		}, []string{"result"}),
+		// Watch: above zero means consumers are refused resolvers admins
+		// chose (more than 256 resolvers, 64 Group sets or 16,384 consumers).
+		dnsRelayDropped: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "meshtransit_mtcp_dns_relay_targets_dropped_total",
+			Help: "DNS zone resolver listings left out of the relay lists sent to exit nodes by a map's bounds, counted per list sent; above zero since start means some were.",
+		}),
 		keyExpiry: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "meshtransit_mtcp_control_key_not_after_timestamp_seconds",
 			Help: "Expiry of the latest control key this replica answers with (Unix seconds).",
@@ -198,7 +207,7 @@ func NewMetrics() *Metrics {
 func (metrics *Metrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{metrics.handshakes, metrics.sessions, metrics.messages, metrics.streamEnds,
 		metrics.sheds, metrics.unproven, metrics.forwarding, metrics.keyExpiry, metrics.limits, metrics.mapNames,
-		metrics.expiring, metrics.routeOffers, metrics.exitOffers, metrics.routeOfferDropped, metrics.routes, routedFilterOmitted,
+		metrics.expiring, metrics.routeOffers, metrics.exitOffers, metrics.routeOfferDropped, metrics.routes, metrics.dnsRelayDropped, routedFilterOmitted,
 		exitFilterOmitted}
 }
 
@@ -292,6 +301,14 @@ func (metrics *Metrics) routesSent(routes *mtcpv1.RouteConfig, omitted int) {
 	if omitted > 0 {
 		metrics.routes.WithLabelValues("omitted").Add(float64(omitted))
 	}
+}
+
+// servedExitsSent counts the relay resolvers an exit node's map leaves out.
+func (metrics *Metrics) servedExitsSent(dropped int) {
+	if metrics == nil || dropped <= 0 {
+		return
+	}
+	metrics.dnsRelayDropped.Add(float64(dropped))
 }
 
 // routeOfferPrefixesDropped counts ignored offered prefixes.

@@ -1,6 +1,7 @@
 package mapsession
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -43,6 +44,15 @@ type SnapshotOpener interface {
 // session, skipping the once-per-session writes of Open.
 type SnapshotReopener interface {
 	Reopen(context.Context, control.AuthenticatedMachine, Request) (Snapshot, error)
+}
+
+// NetworkRevisionReader reads a Network's current revision. An exit
+// node's stream asks it every ExitRevisionPoll so the resolvers its
+// consumers may ask through it reach it within seconds, not at the end of
+// the Network's DNS window (TD-CORE-89): a consumer's map refreshed for
+// another reason carries a DNS change early.
+type NetworkRevisionReader interface {
+	NetworkRevision(ctx context.Context, scope network.Scope) (int64, error)
 }
 
 // SnapshotRefresher refreshes a running stream's snapshot from current to a
@@ -113,6 +123,10 @@ type StreamOptions struct {
 	CoordinationTimeout time.Duration
 	KeepAliveInterval   time.Duration
 	ReconcileInterval   time.Duration
+	// ExitRevisionPoll is how often the stream of an exit node reads its
+	// Network's revision (NetworkRevisionReader); zero is
+	// DefaultExitRevisionPoll.
+	ExitRevisionPoll time.Duration
 	// RelayAccess, when set, issues each node's Interchange grant.
 	RelayAccess RelayAccess
 	// FilterDigest, when set, records the digest of each delivered packet
@@ -289,6 +303,9 @@ func (service *StreamService) run(
 	defer keepAlive.Stop()
 	reconcile := time.NewTicker(service.options.ReconcileInterval)
 	defer reconcile.Stop()
+	exitPoll := time.NewTicker(cmp.Or(service.options.ExitRevisionPoll, DefaultExitRevisionPoll))
+	defer exitPoll.Stop()
+	revisionReader, readsRevisions := service.snapshots.(NetworkRevisionReader)
 	authorityExpiry := time.NewTimer(initial.untilDeadline(initial.KeyExpiry()))
 	defer authorityExpiry.Stop()
 	expiry := initial.KeyExpiry()
@@ -425,9 +442,24 @@ func (service *StreamService) run(
 		} else {
 			relayRenewal.Stop()
 		}
+		var exitPollDue <-chan time.Time
+		if readsRevisions && current.Routes().ServesExit() {
+			exitPollDue = exitPoll.C
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-exitPollDue:
+			revision, err := service.readNetworkRevision(ctx, revisionReader, current)
+			if errors.Is(err, ErrNoRevisionReader) {
+				readsRevisions = false
+			}
+			// A newer revision is a wakeup the stream missed, paced like one.
+			if revision > current.NetworkRevision() && !pacer.hold(time.Now(), revision) {
+				if err := fullRefresh(service.refreshTo(max(revision, pacer.pendingRevision))); err != nil {
+					return err
+				}
+			}
 		case <-relayRenewalDue:
 			if err := fullRefresh(service.refresh); err != nil {
 				return err
@@ -493,6 +525,29 @@ func (service *StreamService) run(
 			}
 		}
 	}
+}
+
+// DefaultExitRevisionPoll is how often an exit node's stream reads its
+// Network's revision by default.
+const DefaultExitRevisionPoll = 5 * time.Second
+
+// ErrNoRevisionReader reports a NetworkRevisionReader over a store that
+// reads no revisions: the stream stops asking.
+var ErrNoRevisionReader = errors.New("map session: no network revision reader")
+
+// readNetworkRevision reads current's Network revision; zero with the error
+// when it cannot (the reconcile still refreshes the stream, and the store
+// observes the failure).
+func (service *StreamService) readNetworkRevision(ctx context.Context, reader NetworkRevisionReader,
+	current Snapshot,
+) (int64, error) {
+	operationCtx, cancel := context.WithTimeout(ctx, service.options.SnapshotTimeout)
+	defer cancel()
+	revision, err := reader.NetworkRevision(operationCtx, current.Scope())
+	if err != nil {
+		return 0, err
+	}
+	return revision, nil
 }
 
 func (service *StreamService) refresh(

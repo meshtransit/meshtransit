@@ -47,6 +47,9 @@ type ServedExit struct {
 	// (D1c.5).
 	DNSRelayTargets []netip.Addr
 	DNSRelayScopes  []RelayScope
+	// DroppedRelayTargets counts the relay targets of Core's map this node
+	// left out as unusable (off the Internet as it sees it, listed twice).
+	DroppedRelayTargets int
 	// Rules admit the pool's consumers to the Internet: their destinations
 	// are 0.0.0.0/0 and ::/0 only, and the exit node subtracts what is not
 	// the Internet itself.

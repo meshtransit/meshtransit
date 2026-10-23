@@ -134,6 +134,16 @@ type SnapshotViewChecker interface {
 	Unchanged(ctx context.Context, current Snapshot, minRevision int64) (bool, error)
 }
 
+// NetworkRevision implements NetworkRevisionReader through the store, when
+// it reads revisions.
+func (service *Service) NetworkRevision(ctx context.Context, scope network.Scope) (int64, error) {
+	reader, ok := service.store.(NetworkRevisionReader)
+	if !ok {
+		return 0, ErrNoRevisionReader
+	}
+	return reader.NetworkRevision(ctx, scope)
+}
+
 // Refresh implements SnapshotRefresher: it derives the stream's next
 // snapshot from shared Network state when the store can, and otherwise
 // re-reads authority like Reopen. A derived snapshot belongs to the same

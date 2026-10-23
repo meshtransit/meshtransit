@@ -4,6 +4,7 @@ import (
 	"net/netip"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
 
@@ -298,6 +299,12 @@ func TestExitForwarderTellsADeadResolverFromADeadUplink(t *testing.T) {
 	if forwarder.noteRelay(first, false) || forwarder.noteRelay(second, false) {
 		t.Fatal("dead resolvers took the uplink down while another answered")
 	}
+	// A resolver no longer listed is tracked while it is retired, and
+	// forgotten after.
+	now := time.Now()
+	forwarder.now = func() time.Time { return now }
+	forwarder.SetRelay([]netip.Addr{second}, nil, nil)
+	now = now.Add(relayRetireGrace + time.Second)
 	forwarder.SetRelay([]netip.Addr{second}, nil, nil)
 	forwarder.mu.Lock()
 	_, kept := forwarder.relayStalled[first]

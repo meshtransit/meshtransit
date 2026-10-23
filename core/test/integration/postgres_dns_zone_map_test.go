@@ -187,6 +187,21 @@ func assertDNSNameMaps(ctx context.Context, t *testing.T, admin *pgx.Conn, runti
 		}
 		return fqdns
 	}
+	// While the zone's wakeup is still held, an exit node's stream already
+	// reads the revision the change advanced to (TD-CORE-89).
+	var held int
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM mesh_ops.outbox_event
+WHERE aggregate_kind IN ('network_dns_zone', 'network_dns_name') AND completed_at IS NULL
+  AND available_at > pg_catalog.clock_timestamp()`).Scan(&held); err != nil || held == 0 {
+		t.Fatalf("held DNS wakeups = %d, error = %v", held, err)
+	}
+	loaded, err := store.Load(ctx, fixtureDeviceIdentity(ctx, t, admin, target))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revision, err := store.NetworkRevision(ctx, loaded.Scope()); err != nil || revision != loaded.NetworkRevision() {
+		t.Fatalf("NetworkRevision() = %d, error = %v, want %d", revision, err, loaded.NetworkRevision())
+	}
 	if own := names(target); !slices.Equal(own, []string{"corp.internal", "git.corp.internal",
 		"printer.corp.internal", "wiki.corp.internal"}) {
 		t.Fatalf("the target's names = %v", own)
