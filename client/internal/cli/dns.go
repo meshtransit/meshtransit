@@ -78,6 +78,11 @@ func writeDNSQuery(stdout io.Writer, result localapi.DNSQuery) {
 		}
 		_, _ = fmt.Fprintf(stdout, "Resolver: %s%s\n", resolver.Address, notes)
 	}
+	if result.Path == "host" {
+		_, _ = fmt.Fprintln(stdout, "Answer: not asked here; the machine's own DNS answers it")
+
+		return
+	}
 	if result.RCode == "" {
 		_, _ = fmt.Fprintf(stdout, "Answer: none (%d ms)\n", result.ElapsedMillis)
 		if result.Error != "" {

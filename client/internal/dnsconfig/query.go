@@ -86,6 +86,7 @@ func (e *resolverEngine) query(ctx context.Context, plan Plan, name, typeName st
 	if !known || name == "" || len(name) > maxQueryNameBytes {
 		return QueryReport{}, ErrQueryName
 	}
+	name = e.expandShortName(plan, name)
 	questionName, err := dnsName(name)
 	if err != nil {
 		return QueryReport{}, ErrQueryName
@@ -109,6 +110,11 @@ func (e *resolverEngine) query(ctx context.Context, plan Plan, name, typeName st
 	}
 	report := e.describe(plan, message, message.Questions[0], name)
 	report.Name, report.Type = name, typeName
+	if report.Path == PathHost {
+		// The host never sends it here: what MeshTransit would answer
+		// tells nothing.
+		return report, nil
+	}
 	started := time.Now()
 	response, err := e.resolve(ctx, plan, packed, "udp")
 	report.Elapsed = time.Since(started)
@@ -127,6 +133,27 @@ func (e *resolverEngine) query(ctx context.Context, plan Plan, name, typeName st
 		report.Answers = append(report.Answers, answerText(resource))
 	}
 	return report, nil
+}
+
+// expandShortName tries a name of one label under the search domains, as
+// the host would: the first under which MeshTransit takes it, or the name.
+func (e *resolverEngine) expandShortName(plan Plan, name string) string {
+	if strings.Contains(name, ".") {
+		return name
+	}
+	for _, domain := range plan.SearchDomains {
+		candidate := name + "." + strings.TrimSuffix(domain, ".")
+		questionName, err := dnsName(candidate)
+		if err != nil {
+			continue
+		}
+		question := dnsmessage.Question{Name: questionName, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET}
+		message := dnsmessage.Message{Questions: []dnsmessage.Question{question}}
+		if e.describe(plan, message, question, candidate).Path != PathHost {
+			return candidate
+		}
+	}
+	return name
 }
 
 // describe tells where resolve sends question, without asking anyone.
