@@ -63,6 +63,15 @@ func digestDNSConfig(config *mtcpv1.DnsConfig) (mapsession.DNSDigest, error) {
 	return mapsession.NewDNSDigest(digest, count)
 }
 
+// suffixesOf returns the suffix of each route of a DNS configuration.
+func suffixesOf(config *mtcpv1.DnsConfig) []string {
+	suffixes := make([]string, 0, len(config.GetRoutes()))
+	for _, route := range config.GetRoutes() {
+		suffixes = append(suffixes, route.GetSuffix())
+	}
+	return suffixes
+}
+
 // resolversOf returns each resolver of a DNS configuration as an address
 // and port, 0 being 53.
 func resolversOf(config *mtcpv1.DnsConfig) map[netip.AddrPort]struct{} {

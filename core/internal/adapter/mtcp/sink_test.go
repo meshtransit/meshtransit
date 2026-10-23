@@ -416,8 +416,10 @@ func TestSinkKeepsTheDNSDigestOfWhatItSent(t *testing.T) {
 			if want, err = digestDNSConfig(sent.GetDns()); err != nil {
 				t.Fatal(err)
 			}
+			want = want.WithZones(suffixesOf(sent.GetDns()))
 		}
-		if got := sink.SentDNSDigest(); got != want || got.IsValid() != reports {
+		if got := sink.SentDNSDigest(); !got.Equal(want) || got.IsValid() != reports ||
+			(reports && len(got.Zones()) == 0) {
 			t.Fatalf("reports %t: digest %+v, want %+v", reports, got, want)
 		}
 		// A delta that changes no DNS keeps the digest.
@@ -426,7 +428,7 @@ func TestSinkKeepsTheDNSDigestOfWhatItSent(t *testing.T) {
 			t.Fatal(err)
 		}
 		node.messages()
-		if got := sink.SentDNSDigest(); got != want {
+		if got := sink.SentDNSDigest(); !got.Equal(want) {
 			t.Fatalf("reports %t: digest after a delta %+v, want %+v", reports, got, want)
 		}
 	}

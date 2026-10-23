@@ -10,6 +10,7 @@ import (
 
 	redisadapter "meshtransit.net/core/internal/adapter/redis"
 	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/node/distribution"
 	"meshtransit.net/shared/dnsdigest"
@@ -35,10 +36,15 @@ func assertRedisDNSEvidence(ctx context.Context, t *testing.T, client *redisadap
 	if err != nil {
 		t.Fatal(err)
 	}
+	networkID, err := network.ParseID("01890f00-0000-7000-8000-000000013502")
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest = digest.WithZones([]string{".", "corp.internal"})
 	at := time.Now().UTC().Truncate(time.Millisecond)
 	deliver := func(generation int64, dns mapsession.DNSDigest) {
 		t.Helper()
-		if err := client.RecordDelivery(ctx, mapsession.Delivery{NodeID: nodeID, NodeKey: nodeKey,
+		if err := client.RecordDelivery(ctx, mapsession.Delivery{Network: networkID, NodeID: nodeID, NodeKey: nodeKey,
 			MachineFingerprint: machine, SessionGeneration: generation, NetworkRevision: 3, PolicyRevision: 1,
 			DeliveredAt: at, DNS: dns}); err != nil {
 			t.Fatalf("RecordDelivery(%d) error = %v", generation, err)
@@ -81,8 +87,61 @@ func assertRedisDNSEvidence(ctx context.Context, t *testing.T, client *redisadap
 	if observation := load(); !observation.EnforcedDNS.IsZero() || observation.DNSReason != distribution.DNSReasonUserOff {
 		t.Fatalf("after user_off = %+v", observation)
 	}
+	// The DNS index counts the Device in each zone it holds and its
+	// resolver's state (DNS design D1b §8, §9).
+	count := func(suffix string) distribution.DNSZoneApplication {
+		t.Helper()
+		counts, err := client.LoadDNSZoneApplication(ctx, networkID, suffix, at)
+		if err != nil {
+			t.Fatalf("LoadDNSZoneApplication(%s) error = %v", suffix, err)
+		}
+		return counts
+	}
+	if root, corp := count("."), count("corp.internal"); root != (distribution.DNSZoneApplication{UserOff: 1}) ||
+		corp != root {
+		t.Fatalf("zone counts . %+v, corp.internal %+v", root, corp)
+	}
+	health, err := client.CountResolverHealth(ctx, networkID, []netip.AddrPort{resolver}, at)
+	if err != nil || len(health) != 1 || health[0].Refusing != 1 || health[0].OK != 0 {
+		t.Fatalf("CountResolverHealth() = %+v, %v", health, err)
+	}
+	ipv6 := netip.MustParseAddrPort("[fd07:d4de:9d87::9]:5335")
+	if stored, err := client.RecordDNSHealth(ctx, mapsession.DNSHealth{NodeKey: nodeKey, MachineFingerprint: machine,
+		ReportedAt: at, Resolvers: []mapsession.ResolverHealth{
+			{Resolver: resolver, State: mapsession.ResolverOK}, {Resolver: ipv6, State: mapsession.ResolverBroken},
+		},
+	}); err != nil || !stored {
+		t.Fatalf("RecordDNSHealth(ok) = %t, %v", stored, err)
+	}
+	if health, err := client.CountResolverHealth(ctx, networkID, []netip.AddrPort{resolver, ipv6}, at); err != nil ||
+		health[0].OK != 1 || health[0].Refusing != 0 || health[1].Broken != 1 {
+		t.Fatalf("CountResolverHealth() after ok = %+v, %v", health, err)
+	}
+	// A resolver the next report leaves out is no longer counted.
+	if stored, err := client.RecordDNSHealth(ctx, mapsession.DNSHealth{NodeKey: nodeKey, MachineFingerprint: machine,
+		ReportedAt: at, Resolvers: []mapsession.ResolverHealth{{Resolver: resolver, State: mapsession.ResolverOK}},
+	}); err != nil || !stored {
+		t.Fatalf("RecordDNSHealth(one) = %t, %v", stored, err)
+	}
+	if health, err := client.CountResolverHealth(ctx, networkID, []netip.AddrPort{ipv6}, at); err != nil ||
+		health[0].Broken != 0 {
+		t.Fatalf("a resolver left out is still counted: %+v, %v", health, err)
+	}
+	// A delivery without a zone takes the Device out of that zone's count.
+	deliver(4, digest.WithZones([]string{"."}))
+	if root, corp := count("."), count("corp.internal"); root.Total() != 1 || corp.Total() != 0 {
+		t.Fatalf("after leaving corp.internal: . %+v, corp.internal %+v", root, corp)
+	}
 	// A new generation starts without the node's evidence.
 	deliver(5, mapsession.DNSDigest{})
+	if root := count("."); root.Total() != 0 {
+		t.Fatalf("a Device without DNS evidence is still counted: %+v", root)
+	}
+	// The last session's resolver health leaves the index with it.
+	if health, err := client.CountResolverHealth(ctx, networkID, []netip.AddrPort{resolver}, at); err != nil ||
+		health[0].OK != 0 {
+		t.Fatalf("a new session kept the last one's health: %+v, %v", health, err)
+	}
 	if observation := load(); !observation.DNS.IsZero() || !observation.EnforcedDNS.IsZero() ||
 		observation.DNSReason != "" || observation.DNSHealth != nil {
 		t.Fatalf("new generation kept DNS evidence = %+v", observation)

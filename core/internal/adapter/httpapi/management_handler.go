@@ -289,6 +289,11 @@ type ManagementHandlerOptions struct {
 	// SiteRouterUse, when set, adds how many Devices use each router to one
 	// Site's read (mtcp-v1 §8.3).
 	SiteRouterUse SiteRouterUseCounter
+	// DNSZoneStatus counts how Devices apply a zone and see its resolvers;
+	// DNSResolverDevices reads a resolver Device's mesh address. Without
+	// either a zone's status is unavailable.
+	DNSZoneStatus      DNSZoneStatusCounter
+	DNSResolverDevices DNSResolverDeviceReader
 	// ExitNodeUse, when set, adds how many Devices use each exit node to one
 	// Exit Pool's read (mtcp-v1 §8.3).
 	ExitNodeUse ExitNodeUseCounter
@@ -369,6 +374,8 @@ type ManagementHandler struct {
 	contractServiceNames      ContractServiceNameManager
 	siteRouterObservations    distribution.ObservationLoader
 	siteRouterUse             SiteRouterUseCounter
+	dnsZoneStatus             DNSZoneStatusCounter
+	dnsResolverDevices        DNSResolverDeviceReader
 	exitNodeUse               ExitNodeUseCounter
 	countries                 CountryLookup
 	identityGroups            IdentityGroupManager
@@ -456,6 +463,8 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		contractServiceNames:      options.ContractServiceNames,
 		siteRouterObservations:    options.SiteRouterObservations,
 		siteRouterUse:             options.SiteRouterUse,
+		dnsZoneStatus:             options.DNSZoneStatus,
+		dnsResolverDevices:        options.DNSResolverDevices,
 		exitNodeUse:               options.ExitNodeUse,
 		countries:                 options.Countries,
 		identityGroups:            options.IdentityGroups,

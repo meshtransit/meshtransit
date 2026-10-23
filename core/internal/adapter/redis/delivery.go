@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -42,7 +43,7 @@ var (
 	// generation clears the enforcement report of the previous session.
 	// Fields are cleared by writing empty values, so the script needs no
 	// command beyond HGET, HSET and PEXPIRE.
-	recordDeliveryScript = redisclient.NewScript(`
+	recordDeliveryScript = redisclient.NewScript(dnsIndexLua + `
 local stored_generation = redis.call('HGET', KEYS[1], 'generation')
 local requested_generation = tonumber(ARGV[1])
 local requested_revision = tonumber(ARGV[2])
@@ -72,6 +73,8 @@ redis.call('HSET', KEYS[1], 'generation', ARGV[1], 'network_revision', ARGV[2],
     'route_digest', ARGV[11], 'route_entries', ARGV[12], 'dns_digest', ARGV[13], 'dns_routes', ARGV[14],
     'dns_generation', ARGV[1])
 if not same_generation then
+    -- The resolvers the last session saw leave the health index with it.
+    dns_health(KEYS[1], ARGV[8], redis.call('HGET', KEYS[1], 'dns_health'), '[]', ARGV[4], ARGV[17], ARGV[18], '0')
     redis.call('HSET', KEYS[1], 'enforced_digest', '', 'enforced_grants', '',
         'applied_at', '', 'reported_at', '', 'paths', '', 'connectivity', '',
         'enforced_route_digest', '', 'enforced_route_entries', '', 'route_health', '', 'route_health_at', '',
@@ -81,11 +84,13 @@ end
 redis.call('PEXPIRE', KEYS[1], ARGV[5])
 redis.call('HSET', KEYS[2], 'node_id', ARGV[8], 'generation', ARGV[1], 'machine', ARGV[9])
 redis.call('PEXPIRE', KEYS[2], ARGV[5])
+dns_zones(KEYS[1], ARGV[8], ARGV[15], ARGV[16], ARGV[4], ARGV[17], ARGV[18])
+dns_apply(KEYS[1], ARGV[8], ARGV[17], ARGV[18])
 return 1
 `)
 	// An enforcement report is stored only for the session generation that
 	// currently owns the delivery record.
-	recordEnforcementScript = redisclient.NewScript(`
+	recordEnforcementScript = redisclient.NewScript(dnsIndexLua + `
 if redis.call('HGET', KEYS[1], 'generation') ~= ARGV[1] then
     return 0
 end
@@ -94,6 +99,7 @@ redis.call('HSET', KEYS[1], 'enforced_digest', ARGV[2], 'enforced_grants', ARGV[
     'enforced_route_digest', ARGV[7], 'enforced_route_entries', ARGV[8],
     'enforced_dns_digest', ARGV[9], 'enforced_dns_routes', ARGV[10], 'dns_reason', ARGV[11])
 redis.call('PEXPIRE', KEYS[1], ARGV[6])
+dns_apply(KEYS[1], ARGV[12], ARGV[13], ARGV[14])
 return 1
 `)
 	// A router's Site health, with an exit node's pool health (ARGV[8],
@@ -117,12 +123,14 @@ return 1
 `)
 	// A resolver health report is stored only for the session generation
 	// that currently owns the delivery record.
-	recordDNSHealthScript = redisclient.NewScript(`
+	recordDNSHealthScript = redisclient.NewScript(dnsIndexLua + `
 if redis.call('HGET', KEYS[1], 'generation') ~= ARGV[1] then
     return 0
 end
+local previous = redis.call('HGET', KEYS[1], 'dns_health')
 redis.call('HSET', KEYS[1], 'dns_health', ARGV[2], 'dns_health_at', ARGV[3])
 redis.call('PEXPIRE', KEYS[1], ARGV[4])
+dns_health(KEYS[1], ARGV[5], previous, ARGV[2], ARGV[3], ARGV[6], ARGV[7], ARGV[8])
 return 1
 `)
 	// A path report is stored only for the session generation that
@@ -146,12 +154,13 @@ redis.call('PEXPIRE', KEYS[1], ARGV[3])
 return 1
 `)
 	// A touch only refreshes the record of the same session generation.
-	touchDeliveryScript = redisclient.NewScript(`
+	touchDeliveryScript = redisclient.NewScript(dnsIndexLua + `
 if redis.call('HGET', KEYS[1], 'generation') ~= ARGV[1] then
     return 0
 end
 redis.call('HSET', KEYS[1], 'seen_at', ARGV[2])
 redis.call('PEXPIRE', KEYS[1], ARGV[3])
+dns_apply(KEYS[1], ARGV[4], ARGV[5], ARGV[6])
 return 1
 `)
 	// KEYS alternate delivery and presence keys; each pair yields
@@ -192,12 +201,14 @@ type deliveryRecord struct {
 	// empty for a session that does not route.
 	routeDigest, routeEntries string
 	// dnsDigest and dnsRoutes describe the DNS configuration sent; empty
-	// for a session that does not report what it applied.
-	dnsDigest, dnsRoutes string
+	// for a session that does not report what it applied. dnsNetwork and
+	// dnsZones (a JSON list of the routes' suffixes) are then empty too.
+	dnsDigest, dnsRoutes, dnsNetwork, dnsZones string
 }
 
 // enforcementRecord is one enforcement report as its script stores it.
 type enforcementRecord struct {
+	nodeID     string
 	generation int64
 	digest     string
 	grants     int64
@@ -218,7 +229,8 @@ type recordEnforcementFunc func(context.Context, string, enforcementRecord, time
 // loadSessionFunc reads node_id, generation and machine of a session index.
 type loadSessionFunc func(context.Context, string) ([]any, error)
 
-type touchDeliveryFunc func(context.Context, string, int64, int64, time.Duration) (int64, error)
+type touchDeliveryFunc func(ctx context.Context, key, nodeID string, generation, seenAt int64,
+	ttl time.Duration) (int64, error)
 
 type loadDeliveriesFunc func(context.Context, []string) ([]any, error)
 
@@ -253,6 +265,13 @@ func (client *Client) RecordDelivery(ctx context.Context, delivery mapsession.De
 	if delivery.DNS.IsValid() {
 		record.dnsDigest = delivery.DNS.Digest().String()
 		record.dnsRoutes = strconv.Itoa(delivery.DNS.Routes())
+		if delivery.Network.IsValid() {
+			zones, err := json.Marshal(append([]string{}, delivery.DNS.Zones()...))
+			if err != nil {
+				return errors.Join(ErrInvalidOptions, err)
+			}
+			record.dnsNetwork, record.dnsZones = delivery.Network.String(), string(zones)
+		}
 	}
 	if delivery.PeersAuthorized > delivery.PeersSent && delivery.PeersSent > 0 {
 		record.peerLimit = strconv.Itoa(delivery.PeersSent) + ":" + strconv.Itoa(delivery.PeersAuthorized)
@@ -301,6 +320,7 @@ func (client *Client) recordEnforcementForSession(ctx context.Context,
 		return false, nil
 	}
 	record := enforcementRecord{
+		nodeID:     nodeID.String(),
 		generation: generation,
 		digest:     enforcement.Filter.Digest().String(),
 		grants:     int64(enforcement.Filter.Grants()),
@@ -357,8 +377,8 @@ func (client *Client) TouchDelivery(ctx context.Context, nodeID node.ID, session
 		return ErrInvalidOptions
 	}
 	startedAt := time.Now()
-	result, err := client.touchDelivery(ctx, deliveryKeyForNode(nodeID), sessionGeneration, seenAt.UnixMilli(),
-		deliveryTTL)
+	result, err := client.touchDelivery(ctx, deliveryKeyForNode(nodeID), nodeID.String(), sessionGeneration,
+		seenAt.UnixMilli(), deliveryTTL)
 	if err == nil && result != 0 && result != 1 {
 		err = errors.New("unexpected delivery touch result")
 	}

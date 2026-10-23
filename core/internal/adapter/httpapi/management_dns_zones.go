@@ -23,6 +23,7 @@ import (
 const (
 	dnsZoneListOperation   = "dns_zone_list"
 	dnsZoneReadOperation   = "dns_zone_read"
+	dnsZoneStatusOperation = "dns_zone_status"
 	dnsZoneCreateOperation = "dns_zone_create"
 	dnsZoneUpdateOperation = "dns_zone_update"
 	dnsZoneDeleteOperation = "dns_zone_delete"
@@ -79,6 +80,7 @@ type dnsZonePath struct {
 //
 //	GET|POST         dns/zones                                list, create
 //	GET|PATCH|DELETE dns/zones/{zone}                         read, update, delete
+//	GET              dns/zones/{zone}/status                  how Devices apply it
 //	GET|POST         dns/zones/{zone}/names                   list, create
 //	GET|PATCH|DELETE dns/zones/{zone}/names/{name}            read, update, delete
 //	POST             dns/zones/{zone}/names/actions/apply     apply
@@ -92,7 +94,7 @@ func parseDNSZonePath(request *http.Request) (dnsZonePath, bool) {
 	segments := strings.Split(strings.TrimPrefix(request.URL.Path, "/"), "/")
 	if len(segments) < 8 || len(segments) > 12 || segments[0] != "api" || segments[1] != "v1" ||
 		segments[2] != "workspaces" || segments[4] != "networks" || segments[6] != "dns" || segments[7] != "zones" ||
-		(len(segments) > 9 && segments[9] != "names") {
+		(len(segments) > 9 && segments[9] != "names" && (len(segments) != 10 || segments[9] != "status")) {
 		return dnsZonePath{}, false
 	}
 	workspaceID, err := workspace.ParseID(segments[3])
@@ -124,6 +126,9 @@ func parseDNSZonePath(request *http.Request) (dnsZonePath, bool) {
 		path.methods = restMethods{http.MethodGet, http.MethodPatch, http.MethodDelete}
 		operations = map[string]string{http.MethodGet: dnsZoneReadOperation, http.MethodPatch: dnsZoneUpdateOperation,
 			http.MethodDelete: dnsZoneDeleteOperation}
+	case len(segments) == 10 && segments[9] == "status":
+		path.methods = restMethods{http.MethodGet}
+		operations = map[string]string{http.MethodGet: dnsZoneStatusOperation}
 	case len(segments) == 10:
 		path.methods = collectionMethods
 		operations = map[string]string{http.MethodGet: dnsNameListOperation, http.MethodPost: dnsNameCreateOperation}
@@ -381,6 +386,8 @@ func (handler *ManagementHandler) handleDNSZones(ctx context.Context, response h
 	switch path.operation {
 	case dnsZoneListOperation, dnsZoneReadOperation:
 		return handler.readDNSZones(ctx, response, correlationID, path, session, fail)
+	case dnsZoneStatusOperation:
+		return handler.readDNSZoneStatus(ctx, response, correlationID, path, session, fail)
 	case dnsNameListOperation, dnsNameReadOperation, dnsNameCreateOperation, dnsNameUpdateOperation,
 		dnsNameDeleteOperation, dnsNameApplyOperation:
 		return handler.handleDNSNames(ctx, response, request, correlationID, path, session, fail)

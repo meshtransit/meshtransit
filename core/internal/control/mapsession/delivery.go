@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 )
 
@@ -17,6 +18,8 @@ const DeliveryTouchInterval = time.Minute
 // the adapter computes one. NodeKey and MachineFingerprint identify the
 // session, so a later enforcement report can be tied to it.
 type Delivery struct {
+	// Network is the Device's Network, for the Network's DNS counts.
+	Network            network.ID
 	NodeID             node.ID
 	NodeKey            node.Key
 	MachineFingerprint [32]byte
@@ -46,6 +49,7 @@ func (delivery Delivery) IsValid() bool {
 
 func deliveryOf(snapshot Snapshot, filter FilterDigest, dns DNSDigest, at time.Time) Delivery {
 	delivery := Delivery{
+		Network:            snapshot.Scope().NetworkID(),
 		NodeID:             snapshot.NodeID(),
 		NodeKey:            snapshot.NodeKey(),
 		MachineFingerprint: snapshot.MachineKey().Fingerprint(),

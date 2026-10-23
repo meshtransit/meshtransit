@@ -20702,6 +20702,230 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/dns/zones/{dns_zone_id}/status": {
+      "get": {
+        "operationId": "readNetworkDNSZoneStatus",
+        "summary": "Read how Devices apply a DNS zone",
+        "description": "Requires network.read on the Network. Counts the Devices that hold the zone and report what they apply (clients with dns.root1), and per resolver the Devices whose resolver saw it in each state within 15 minutes. A resolver Device is counted at its mesh IPv4 address when the caller may read the Device. available is false when the counts cannot be read.",
+        "security": [
+          {
+            "accountSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "dns_zone_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The zone status",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "dns_zone_id",
+                        "available",
+                        "observed_at",
+                        "devices",
+                        "resolvers"
+                      ],
+                      "properties": {
+                        "dns_zone_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "available": {
+                          "type": "boolean"
+                        },
+                        "observed_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "devices": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "enforced",
+                            "applying",
+                            "mismatch",
+                            "not_reported",
+                            "unknown",
+                            "user_off",
+                            "apply_failed",
+                            "offline",
+                            "total"
+                          ],
+                          "properties": {
+                            "enforced": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "applying": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "mismatch": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "not_reported": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "unknown": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "user_off": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "apply_failed": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "offline": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "total": {
+                              "type": "integer",
+                              "minimum": 0
+                            }
+                          }
+                        },
+                        "resolvers": {
+                          "type": "array",
+                          "maxItems": 4,
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "port",
+                              "counted",
+                              "ok",
+                              "broken",
+                              "stopped",
+                              "refusing",
+                              "idle"
+                            ],
+                            "properties": {
+                              "device_id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "address": {
+                                "type": "string",
+                                "minLength": 2,
+                                "maxLength": 45,
+                                "description": "The address counted; absent for a resolver Device the caller may not read"
+                              },
+                              "port": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 65535
+                              },
+                              "counted": {
+                                "type": "boolean"
+                              },
+                              "ok": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "broken": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "stopped": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "refusing": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "idle": {
+                                "type": "integer",
+                                "minimum": 0
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "dns_zone_not_found"
+          },
+          "403": {
+            "description": "permission_denied"
+          },
+          "429": {
+            "description": "rate_limited"
+          },
+          "503": {
+            "description": "temporarily_unavailable"
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/dns/zones/{dns_zone_id}/names": {
       "get": {
         "operationId": "listNetworkDNSNames",

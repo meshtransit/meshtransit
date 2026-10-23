@@ -33,6 +33,7 @@ const (
 	redisCommandRecordDNSHealth      redisCommand = "dns_health_record"
 	redisCommandRecordRouteSelection redisCommand = "route_selection_record"
 	redisCommandLoadSiteSelection    redisCommand = "site_selection_load"
+	redisCommandLoadDNSIndex         redisCommand = "dns_index_load"
 	redisCommandReplicaLoad          redisCommand = "replica_load"
 )
 
@@ -59,6 +60,7 @@ var redisCommands = [...]redisCommand{
 	redisCommandRecordDNSHealth,
 	redisCommandRecordRouteSelection,
 	redisCommandLoadSiteSelection,
+	redisCommandLoadDNSIndex,
 	redisCommandReplicaLoad,
 }
 

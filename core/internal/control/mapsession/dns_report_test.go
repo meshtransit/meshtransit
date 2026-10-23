@@ -215,7 +215,7 @@ func TestStreamServiceRecordsTheDNSDigestTheSinkSent(t *testing.T) {
 		wake()
 		wake() // the digest stays: nothing more is recorded
 		recorded, _ := deliveries.state()
-		if len(recorded) != 2 || recorded[0].DNS != first || recorded[1].DNS != second ||
+		if len(recorded) != 2 || !recorded[0].DNS.Equal(first) || !recorded[1].DNS.Equal(second) ||
 			recorded[1].NetworkRevision != recorded[0].NetworkRevision {
 			t.Fatalf("deliveries = %+v", recorded)
 		}

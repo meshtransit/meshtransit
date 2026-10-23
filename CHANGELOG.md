@@ -5,6 +5,16 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core (DNS design D1b.3): `GET …/dns/zones/{zone}/status` counts the
+  Devices that hold a zone by how they apply it (applied, applying, not
+  matching, not reported, turned off, could not apply, offline) and, per
+  resolver, the Devices that saw it answer, refuse, fail or stop in the last
+  15 minutes. The counts come from a DNS index Core keeps in Redis under
+  `meshtransit:v1:dns-index:*`, never from every Device's record. The Core
+  Redis ACL must allow that key pattern and `+hscan +zadd +zrem +zcount
+  +zremrangebyscore` (docs/operations/deployment.md) before upgrading;
+  without them a Device's delivery is still recorded, and the counts stay
+  empty.
 - Core: the device approval page (`/register/v1/…`) asks a browser whose
   Console Session ended to sign in again, instead of answering Not Found;
   a live Session the link is not for still gets Not Found, and a Session

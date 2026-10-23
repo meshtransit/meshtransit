@@ -110,6 +110,10 @@ type privateIdentityPorts struct {
 	SiteRouterUse httpapi.SiteRouterUseCounter
 	// ExitNodeUse counts the Devices using each exit node of a pool.
 	ExitNodeUse httpapi.ExitNodeUseCounter
+	// DNSZoneStatus counts how Devices apply a DNS zone and see its
+	// resolvers; DNSResolverDevices reads a resolver Device's address.
+	DNSZoneStatus      httpapi.DNSZoneStatusCounter
+	DNSResolverDevices httpapi.DNSResolverDeviceReader
 	// Countries places Devices' public addresses in countries; nil: none.
 	Countries       httpapi.CountryLookup
 	IdentityGroups  httpapi.IdentityGroupManager
@@ -248,6 +252,8 @@ func composePrivateIdentity(
 		SiteRouterObservations: ports.SiteRouterObservations,
 		SiteRouterUse:          ports.SiteRouterUse,
 		ExitNodeUse:            ports.ExitNodeUse,
+		DNSZoneStatus:          ports.DNSZoneStatus,
+		DNSResolverDevices:     ports.DNSResolverDevices,
 		Countries:              ports.Countries,
 		IdentityGroups:         ports.IdentityGroups,
 		DeviceTags:             ports.DeviceTags,

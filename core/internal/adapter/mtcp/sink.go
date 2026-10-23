@@ -359,7 +359,7 @@ func (sink *mapSink) adoptDNSLocked(config *mtcpv1.DnsConfig) {
 		sink.metrics.namesDegraded(namesDNSDigestFailed, 1)
 		return
 	}
-	sink.sentDNS = digest
+	sink.sentDNS = digest.WithZones(suffixesOf(config))
 }
 
 // sentResolvers returns the resolvers of the DNS configuration the node

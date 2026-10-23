@@ -327,7 +327,7 @@ func (service *StreamService) run(
 			!equalDirectDeviceProjections(previous.directDeviceProjections, current.directDeviceProjections) {
 			filter = service.filterDigest(current)
 		}
-		if !revisionChanged && filter == deliveredFilter && dns == deliveredDNS {
+		if !revisionChanged && filter == deliveredFilter && dns.Equal(deliveredDNS) {
 			return
 		}
 		delivered, deliveredFilter, deliveredDNS = current.NetworkRevision(), filter, dns

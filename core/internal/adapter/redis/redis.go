@@ -62,9 +62,16 @@ type Client struct {
 	recordConnectivity func(ctx context.Context, key string, generation int64, encoded string, ttl time.Duration) (int64, error)
 	recordRouteHealth  func(ctx context.Context, key string, generation int64, encoded string, reportedAt int64,
 		ttl time.Duration, failed bool, exit string) (int64, error)
-	recordDNSHealth func(ctx context.Context, key string, generation int64, encoded string, reportedAt int64,
-		ttl time.Duration) (int64, error)
-	loadSession loadSessionFunc
+	recordDNSHealth func(ctx context.Context, key, nodeID string, generation int64, encoded string,
+		reportedAt int64, ttl time.Duration) (int64, error)
+	// loadDNSZone and loadDNSApply read the DNS index (dns_index.go);
+	// countDNSHealth counts one resolver's states; pruneDNSIndex deletes
+	// stale fields of an index hash.
+	loadDNSZone    func(ctx context.Context, key string, cursor uint64, count int) ([]string, uint64, error)
+	loadDNSApply   func(ctx context.Context, key string, fields []string) ([]any, error)
+	countDNSHealth func(ctx context.Context, keys []string, since int64) ([]int64, error)
+	pruneDNSIndex  func(ctx context.Context, zoneKey, applyKey string, entries []dnsIndexEntry) error
+	loadSession    loadSessionFunc
 	// recordRouteSelection runs recordRouteSelectionScript; loadSiteSelection
 	// reads a Site's selection hash; pruneSiteSelection deletes its fields.
 	recordRouteSelection func(ctx context.Context, key string, generation int64, encoded string, reportedAt int64,
@@ -236,7 +243,8 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 			return recordDeliveryScript.Run(recordCtx, client, []string{deliveryKey, sessionKey},
 				record.generation, record.networkRevision, record.policyRevision, record.deliveredAt,
 				ttl.Milliseconds(), record.filterDigest, record.filterGrants, record.nodeID, record.machine,
-				record.peerLimit, record.routeDigest, record.routeEntries, record.dnsDigest, record.dnsRoutes).Int64()
+				record.peerLimit, record.routeDigest, record.routeEntries, record.dnsDigest, record.dnsRoutes,
+				record.dnsNetwork, record.dnsZones, dnsIndexPrefix, dnsIndexTTL.Milliseconds()).Int64()
 		},
 		loadSession: func(loadCtx context.Context, key string) ([]any, error) {
 			return client.HMGet(loadCtx, key, "node_id", "generation", "machine").Result()
@@ -249,7 +257,8 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 		) (int64, error) {
 			return recordEnforcementScript.Run(recordCtx, client, []string{key}, record.generation,
 				record.digest, record.grants, record.appliedAt, record.reportedAt, ttl.Milliseconds(),
-				record.routeDigest, record.routeEntries, record.dnsDigest, record.dnsRoutes, record.dnsReason).Int64()
+				record.routeDigest, record.routeEntries, record.dnsDigest, record.dnsRoutes, record.dnsReason,
+				record.nodeID, dnsIndexPrefix, dnsIndexTTL.Milliseconds()).Int64()
 		},
 		recordRouteSelection: func(recordCtx context.Context, key string, generation int64, encoded string,
 			reportedAt int64, nodeID string) (int64, error) {
@@ -278,10 +287,48 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 			return recordRouteHealthScript.Run(recordCtx, client, []string{key}, generation, encoded, reportedAt,
 				ttl.Milliseconds(), flag, siteHealthFailedChannel, siteHealthFailedPayload, exit).Int64()
 		},
-		recordDNSHealth: func(recordCtx context.Context, key string, generation int64, encoded string,
+		recordDNSHealth: func(recordCtx context.Context, key, nodeID string, generation int64, encoded string,
 			reportedAt int64, ttl time.Duration) (int64, error) {
 			return recordDNSHealthScript.Run(recordCtx, client, []string{key}, generation, encoded, reportedAt,
-				ttl.Milliseconds()).Int64()
+				ttl.Milliseconds(), nodeID, dnsIndexPrefix, dnsIndexTTL.Milliseconds(),
+				reportedAt-dnsHealthPruneAfter.Milliseconds()).Int64()
+		},
+		loadDNSZone: func(loadCtx context.Context, key string, cursor uint64, count int) ([]string, uint64, error) {
+			pairs, next, err := client.HScan(loadCtx, key, cursor, "", int64(count)).Result()
+			if err != nil {
+				return nil, 0, err
+			}
+			nodes := make([]string, 0, len(pairs)/2)
+			for index := 0; index+1 < len(pairs); index += 2 {
+				nodes = append(nodes, pairs[index])
+			}
+			return nodes, next, nil
+		},
+		loadDNSApply: func(loadCtx context.Context, key string, fields []string) ([]any, error) {
+			return client.HMGet(loadCtx, key, fields...).Result()
+		},
+		countDNSHealth: func(countCtx context.Context, keys []string, since int64) ([]int64, error) {
+			pipe := client.Pipeline()
+			counts := make([]*redisclient.IntCmd, len(keys))
+			minimum := strconv.FormatInt(since, 10)
+			for index, key := range keys {
+				counts[index] = pipe.ZCount(countCtx, key, minimum, "+inf")
+			}
+			if _, err := pipe.Exec(countCtx); err != nil {
+				return nil, err
+			}
+			values := make([]int64, len(keys))
+			for index, count := range counts {
+				values[index] = count.Val()
+			}
+			return values, nil
+		},
+		pruneDNSIndex: func(pruneCtx context.Context, zoneKey, applyKey string, entries []dnsIndexEntry) error {
+			args := make([]any, 0, len(entries)*2)
+			for _, entry := range entries {
+				args = append(args, entry.node, entry.apply)
+			}
+			return pruneDNSIndexScript.Run(pruneCtx, client, []string{zoneKey, applyKey}, args...).Err()
 		},
 		recordPaths: func(recordCtx context.Context, key string, generation int64, encoded string,
 			ttl time.Duration) (int64, error) {
@@ -296,12 +343,13 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 		touchDelivery: func(
 			touchCtx context.Context,
 			key string,
+			nodeID string,
 			generation int64,
 			seenAt int64,
 			ttl time.Duration,
 		) (int64, error) {
 			return touchDeliveryScript.Run(touchCtx, client, []string{key}, generation, seenAt,
-				ttl.Milliseconds()).Int64()
+				ttl.Milliseconds(), nodeID, dnsIndexPrefix, dnsIndexTTL.Milliseconds()).Int64()
 		},
 		loadDeliveries: func(loadCtx context.Context, keys []string) ([]any, error) {
 			return loadDeliveriesScript.Run(loadCtx, client, keys).Slice()

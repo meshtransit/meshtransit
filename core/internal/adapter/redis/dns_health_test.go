@@ -20,7 +20,7 @@ func TestClientRecordsDNSHealthForItsSession(t *testing.T) {
 	var gotGeneration, gotAt int64
 	client := &Client{
 		loadSession: func(context.Context, string) ([]any, error) { return session, nil },
-		recordDNSHealth: func(_ context.Context, key string, generation int64, encoded string, at int64,
+		recordDNSHealth: func(_ context.Context, key, _ string, generation int64, encoded string, at int64,
 			ttl time.Duration) (int64, error) {
 			if ttl != deliveryTTL {
 				t.Errorf("ttl = %s", ttl)

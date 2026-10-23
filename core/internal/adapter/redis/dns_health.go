@@ -63,7 +63,7 @@ func (client *Client) recordDNSHealthForSession(ctx context.Context, health maps
 	if err != nil || !found || machine != hex.EncodeToString(health.MachineFingerprint[:]) {
 		return false, err
 	}
-	result, err := client.recordDNSHealth(ctx, deliveryKeyForNode(nodeID), generation, encoded,
+	result, err := client.recordDNSHealth(ctx, deliveryKeyForNode(nodeID), nodeID.String(), generation, encoded,
 		health.ReportedAt.UnixMilli(), deliveryTTL)
 	if err == nil && result != 0 && result != 1 {
 		err = errors.New("unexpected dns health record result")

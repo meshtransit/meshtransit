@@ -42,7 +42,7 @@ func TestClientRecordsAndTouchesDeliveryUnderOneKey(t *testing.T) {
 			gotKey, gotSessionKey, gotTTL, gotRecord = key, sessionKey, ttl, record
 			return 1, nil
 		},
-		touchDelivery: func(_ context.Context, key string, generation, seenAt int64, _ time.Duration) (int64, error) {
+		touchDelivery: func(_ context.Context, key, _ string, generation, seenAt int64, _ time.Duration) (int64, error) {
 			touchKey, touchArgs = key, []int64{generation, seenAt}
 			return 0, nil
 		},
@@ -294,8 +294,8 @@ func TestClientRecordsEnforcementForItsSession(t *testing.T) {
 	enforcement := mapsession.Enforcement{NodeKey: testNodeKey, MachineFingerprint: testMachine,
 		Filter: testFilterDigest(t, 3), AppliedAt: applied, ReportedAt: applied.Add(time.Second)}
 	stored, err := client.RecordEnforcement(t.Context(), enforcement)
-	want := enforcementRecord{generation: 4, digest: testDigestText, grants: 3, appliedAt: applied.UnixMilli(),
-		reportedAt: applied.Add(time.Second).UnixMilli()}
+	want := enforcementRecord{nodeID: nodeID.String(), generation: 4, digest: testDigestText, grants: 3,
+		appliedAt: applied.UnixMilli(), reportedAt: applied.Add(time.Second).UnixMilli()}
 	if err != nil || !stored || gotSessionKey != sessionKeyForNodeKey(testNodeKey) ||
 		gotKey != deliveryKeyForNode(nodeID) || gotRecord != want {
 		t.Fatalf("RecordEnforcement() = %t, %v; %s %+v", stored, err, gotKey, gotRecord)

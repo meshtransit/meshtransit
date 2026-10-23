@@ -35,6 +35,9 @@ const MaximumResolverHealth = 64
 type DNSDigest struct {
 	digest dnsdigest.Digest
 	routes int
+	// zones are the suffixes of the routes sent, sorted: which zones the
+	// node holds, for counting by zone (DNS design D1b §8).
+	zones []string
 }
 
 // NewDNSDigest validates a computed DNS digest.
@@ -44,6 +47,24 @@ func NewDNSDigest(digest dnsdigest.Digest, routes int) (DNSDigest, error) {
 	}
 	return DNSDigest{digest: digest, routes: routes}, nil
 }
+
+// WithZones returns the digest with the suffixes of the routes sent,
+// sorted and each once; none beyond dnsdigest.MaximumRoutes.
+func (digest DNSDigest) WithZones(suffixes []string) DNSDigest {
+	zones := slices.Clone(suffixes)
+	slices.Sort(zones)
+	zones = slices.Compact(zones)
+	digest.zones = zones[:min(len(zones), dnsdigest.MaximumRoutes)]
+	return digest
+}
+
+// Equal reports the same digest over the same zones.
+func (digest DNSDigest) Equal(other DNSDigest) bool {
+	return digest.digest == other.digest && digest.routes == other.routes && slices.Equal(digest.zones, other.zones)
+}
+
+// Zones returns the suffixes of the routes sent, sorted.
+func (digest DNSDigest) Zones() []string { return slices.Clone(digest.zones) }
 
 // Digest returns the digest value.
 func (digest DNSDigest) Digest() dnsdigest.Digest { return digest.digest }
