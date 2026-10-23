@@ -15,7 +15,7 @@ import (
 // them, such as the routers of a Site it routes through.
 const (
 	// maxRelayLivenessPeers bounds the peers pinged through the relay.
-	maxRelayLivenessPeers = 64
+	maxRelayLivenessPeers = MaxRelayLivenessPeers
 	// relayLivenessTick is how often due peers are pinged; each peer at most
 	// every relayLivenessSpacing, so one lost PING or PONG still leaves a
 	// fresh answer within the 4 s route failover allows.
@@ -36,6 +36,9 @@ const (
 	maxRelayLivenessPending = maxRelayLivenessPeers * (1 + int(relayPongWithin/relayLivenessSpacing))
 	maxRelayPending         = maxRelayLivenessPending + maxConcurrentMeasurements*(1+int(relayPongWithin/time.Second))
 )
+
+// MaxRelayLivenessPeers bounds the peers pinged through the relay.
+const MaxRelayLivenessPeers = 64
 
 // RelayLivenessObserver learns that a peer answered a PING through the
 // relay. It must return immediately.
@@ -63,16 +66,22 @@ type relayLiveness struct {
 }
 
 // SetRelayLiveness replaces the peers to ping through the relay while no
-// direct path to them is proven; at most maxRelayLivenessPeers are kept.
+// direct path to them is proven; at most maxRelayLivenessPeers are kept,
+// the first ones of peerIDs, which lists them in order of need.
 func (r *Runtime) SetRelayLiveness(peerIDs []uint64) {
 	if r == nil {
 		return
 	}
-	targets := slices.Clone(peerIDs)
+	targets := make([]uint64, 0, min(len(peerIDs), maxRelayLivenessPeers))
+	for _, id := range peerIDs {
+		if len(targets) == maxRelayLivenessPeers {
+			break
+		}
+		if id != 0 && !slices.Contains(targets, id) {
+			targets = append(targets, id)
+		}
+	}
 	slices.Sort(targets)
-	targets = slices.Compact(targets)
-	targets = slices.DeleteFunc(targets, func(id uint64) bool { return id == 0 })
-	targets = targets[:min(len(targets), maxRelayLivenessPeers)]
 	r.relayMu.Lock()
 	defer r.relayMu.Unlock()
 	r.relay.targets = targets

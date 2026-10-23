@@ -1,5 +1,3 @@
-//go:build (linux && !android) || (darwin && !ios) || windows
-
 package underlay
 
 import "net/netip"

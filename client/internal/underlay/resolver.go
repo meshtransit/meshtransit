@@ -93,7 +93,9 @@ func (conn *watchedConn) Read(buffer []byte) (int, error) {
 }
 
 // readUpstreams returns the nameservers of path, other than any in the
-// mesh, which the client cannot reach before the mesh is up.
+// mesh, which the client cannot reach before the mesh is up, and
+// MeshTransit's own resolver (TEST-NET-1), which would answer the client's
+// own lookups from the zones it applies, a loop.
 func readUpstreams(path string) []netip.AddrPort {
 	file, err := os.Open(path) //nolint:gosec // G304: a fixed system path
 	if err != nil {
@@ -112,7 +114,7 @@ func readUpstreams(path string) []netip.AddrPort {
 			continue // a link-local server with a zone is left to resolved
 		}
 		address = address.Unmap()
-		if overlayframe.Contains(netip.PrefixFrom(address, address.BitLen())) {
+		if overlayframe.Contains(netip.PrefixFrom(address, address.BitLen())) || testNet.Contains(address) {
 			continue
 		}
 		servers = append(servers, netip.AddrPortFrom(address, upstreamPort))

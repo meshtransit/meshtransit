@@ -269,6 +269,116 @@ func TestResolverEngineBreakerIgnoresAnswersAboutTheName(t *testing.T) {
 	}
 }
 
+// A zone resolver that answers SERVFAIL or REFUSED (a filter blocking the
+// name, DNSSEC) is the zone's answer once no other resolver of the zone
+// answers better: the next resolver is still asked, but a zone that fails
+// open never asks the network past it (DNS design D1b §5.3).
+func TestResolverEngineZoneNeverFailsOpenPastAnAnswer(t *testing.T) {
+	t.Parallel()
+	for _, rcode := range []dnsmessage.RCode{dnsmessage.RCodeServerFailure, dnsmessage.RCodeRefused} {
+		for name, test := range map[string]struct {
+			resolvers func(answering, good netip.AddrPort) []netip.AddrPort
+			want      dnsmessage.RCode
+		}{
+			"only resolver": {func(answering, _ netip.AddrPort) []netip.AddrPort {
+				return []netip.AddrPort{answering}
+			}, rcode},
+			"after a dead one": {func(answering, _ netip.AddrPort) []netip.AddrPort {
+				return []netip.AddrPort{deadResolver, answering}
+			}, rcode},
+			"before a dead one": {func(answering, _ netip.AddrPort) []netip.AddrPort {
+				return []netip.AddrPort{answering, deadResolver}
+			}, rcode},
+			"before a good one": {func(answering, good netip.AddrPort) []netip.AddrPort {
+				return []netip.AddrPort{answering, good}
+			}, dnsmessage.RCodeSuccess},
+		} {
+			t.Run(fmt.Sprintf("%v %s", rcode, name), func(t *testing.T) {
+				t.Parallel()
+				answering := startCountingUpstream(t, rcode, netip.Addr{}, false)
+				good := startCountingUpstream(t, dnsmessage.RCodeSuccess, netip.MustParseAddr("192.0.2.70"), false)
+				network := startCountingUpstream(t, dnsmessage.RCodeSuccess, netip.MustParseAddr("192.0.2.71"), false)
+				plan := Plan{Enabled: true, Routes: []Route{{
+					Suffix: "corp.internal", Resolvers: test.resolvers(answering.address, good.address), FailOpen: true,
+				}}}
+				message := resolveName(t, zoneEngine(t, network.address), plan, "blocked.corp.internal.", dnsmessage.TypeA)
+				if message.RCode != test.want || network.asked.Load() != 0 || answering.asked.Load() != 1 {
+					t.Fatalf("rcode %v (want %v), network asked %d, answering resolver asked %d",
+						message.RCode, test.want, network.asked.Load(), answering.asked.Load())
+				}
+			})
+		}
+	}
+}
+
+// fakeLiveness reports the addresses in stopped and records those asked.
+type fakeLiveness struct {
+	mu      sync.Mutex
+	stopped map[netip.Addr]bool
+	asked   []netip.Addr
+}
+
+func (l *fakeLiveness) Stopped(address netip.Addr) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.stopped[address]
+}
+
+func (l *fakeLiveness) Asked(address netip.Addr) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.asked = append(l.asked, address)
+}
+
+// The zone's own resolvers the liveness reports stopped are asked last, in
+// their order, never dropped; the exit node's forwarder keeps its place and
+// is not noted as asked (DNS design D1b §5.6).
+func TestByLivenessAsksStoppedResolversLast(t *testing.T) {
+	t.Parallel()
+	stoppedA := netip.MustParseAddrPort("100.64.0.1:53")
+	alive := netip.MustParseAddrPort("100.64.0.2:53")
+	stoppedB := netip.MustParseAddrPort("100.64.0.3:5335")
+	forwarder := netip.MustParseAddrPort("100.64.0.9:53")
+	engine := zoneEngine(t)
+	own := []netip.AddrPort{stoppedA, alive, stoppedB}
+	if got := engine.byLiveness([]netip.AddrPort{stoppedA, alive, stoppedB, forwarder}, own); !slices.Equal(got,
+		[]netip.AddrPort{stoppedA, alive, stoppedB, forwarder}) {
+		t.Fatalf("without liveness = %v", got)
+	}
+	liveness := &fakeLiveness{stopped: map[netip.Addr]bool{stoppedA.Addr(): true, stoppedB.Addr(): true, forwarder.Addr(): true}}
+	engine.setLiveness(liveness)
+	if got := engine.byLiveness([]netip.AddrPort{stoppedA, alive, stoppedB, forwarder}, own); !slices.Equal(got,
+		[]netip.AddrPort{alive, forwarder, stoppedA, stoppedB}) {
+		t.Fatalf("ordered = %v", got)
+	}
+	if !slices.Equal(liveness.asked, []netip.Addr{stoppedA.Addr(), alive.Addr(), stoppedB.Addr()}) {
+		t.Fatalf("noted as asked = %v", liveness.asked)
+	}
+}
+
+// A zone whose first resolver Device stopped answers from the next one at
+// once; the stopped one is not asked.
+func TestResolverEngineAsksAStoppedResolverDeviceLast(t *testing.T) {
+	t.Parallel()
+	// A mesh address nothing answers on: asking it would cost the attempt
+	// timeout.
+	stopped := netip.MustParseAddrPort("100.64.0.99:53")
+	next := startCountingUpstream(t, dnsmessage.RCodeSuccess, netip.MustParseAddr("192.0.2.81"), false)
+	engine := zoneEngine(t)
+	engine.setLiveness(&fakeLiveness{stopped: map[netip.Addr]bool{stopped.Addr(): true}})
+	plan := Plan{Enabled: true, Routes: []Route{{
+		Suffix: "corp.internal", Resolvers: []netip.AddrPort{stopped, next.address},
+	}}}
+	started := time.Now()
+	if got := firstA(t, resolveName(t, engine, plan, "a.corp.internal.", dnsmessage.TypeA)); got !=
+		netip.MustParseAddr("192.0.2.81") {
+		t.Fatalf("answer %s", got)
+	}
+	if elapsed := time.Since(started); elapsed >= resolverAttemptTimeout {
+		t.Fatalf("the stopped resolver was asked first: %s", elapsed)
+	}
+}
+
 // A truncated UDP answer from a resolver the node cannot reach over TCP is
 // passed on truncated (the client asks again over TCP) and never skips
 // the resolver.

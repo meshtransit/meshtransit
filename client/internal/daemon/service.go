@@ -832,6 +832,11 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		// of each Site reported to Core and shown in status.
 		failover := newRouteFailover(s.clock)
 		failover.exitHeld = s.captive.held
+		if live, ok := s.dns.(dnsLivenessController); ok {
+			// The resolver asks last the resolver Devices this session saw
+			// stop.
+			live.SetResolverLiveness(failoverLiveness{failover: failover})
+		}
 		s.captive.setExitAnswered(failover.exitAnsweredAfter)
 		var routeSelection chan []controlplane.RouteSiteSelection
 		if s.enableSubnetRoutes {
@@ -981,6 +986,11 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					return activityPlane.RoutedActivity()
 				}, readExit, applyLocalChoices)
 			})
+			if probeRuntime != nil {
+				failoverWorkers.Go(func() {
+					watchResolverLiveness(failoverCtx, failover, probeRuntime.SetRelayLiveness)
+				})
+			}
 			if s.enableExits {
 				failoverWorkers.Go(func() {
 					watchExitPreference(failoverCtx, failover, readExitPreference, routeOfferPoll, applyLocalChoices)
@@ -995,6 +1005,11 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		cleanupSession := func() error {
 			// Before the runtime resets DNS: no retry may apply it again.
 			dnsRetries.stop()
+			// The session's pings end: no resolver Device is judged by them.
+			if live, ok := s.dns.(dnsLivenessController); ok {
+				live.SetResolverLiveness(nil)
+			}
+			failover.closeLiveness()
 			// Before the private key is cleared: it applies maps with it.
 			stopFailover()
 			s.setRouteSites(nil)
@@ -1156,9 +1171,10 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 							}
 							s.peerSession.setDirectory(newPeerDirectory(snapshot))
 							publishRouteSelection()
-							// Routers reached only through the relay still prove
-							// they are up, for local failover.
-							probeRuntime.SetRelayLiveness(failover.routerPeers())
+							// Routers and resolver Devices reached only through
+							// the relay still prove they are up, for local
+							// failover and DNS.
+							failover.syncRelayLiveness(probeRuntime.SetRelayLiveness, true)
 						}
 						if err == nil && reportsEnforcement {
 							if enforced, known := enforcedPolicy.EnforcedPolicy(); known {
@@ -3174,3 +3190,6 @@ func discoEndpoints(candidates pathdiscovery.Set) []disco.Endpoint {
 	}
 	return out
 }
+
+// The DNS controllers of every platform order resolver Devices by liveness.
+var _ dnsLivenessController = (*dnsconfig.Manager)(nil)

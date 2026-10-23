@@ -108,6 +108,12 @@ func (c *dnsController) reapply() {
 	}
 }
 
+// SetResolverLiveness makes the resolver ask last the resolver Devices that
+// stopped answering (DNS design D1b §5.6).
+func (c *dnsController) SetResolverLiveness(liveness dnsconfig.ResolverLiveness) {
+	c.manager.SetResolverLiveness(liveness)
+}
+
 // stats returns the resolver's counts.
 func (c *dnsController) stats() dnsconfig.PacketResolverStats { return c.resolver.Stats() }
 
@@ -128,6 +134,10 @@ func (r *choiceResolver) Apply(ctx context.Context, plan dnsconfig.Plan) error {
 }
 
 func (r *choiceResolver) Close(ctx context.Context) error { return r.resolver.Close(ctx) }
+
+func (r *choiceResolver) SetResolverLiveness(liveness dnsconfig.ResolverLiveness) {
+	r.resolver.SetResolverLiveness(liveness)
+}
 
 // mobileDNSHost points the VPN interface's DNS at the resolver (DNS design
 // D4 §3.4): while the plan is enabled, the person uses MeshTransit DNS, and
@@ -157,3 +167,14 @@ func (h *mobileDNSHost) Apply(ctx context.Context, plan dnsconfig.Plan) error {
 	}
 	return h.opener.setDNS(ctx, wanted)
 }
+
+// The phone's resolver orders resolver Devices by liveness, as the desktop's
+// does: a refactor that loses a link fails the build.
+var (
+	_ interface {
+		SetResolverLiveness(dnsconfig.ResolverLiveness)
+	} = (*dnsController)(nil)
+	_ interface {
+		SetResolverLiveness(dnsconfig.ResolverLiveness)
+	} = (*choiceResolver)(nil)
+)

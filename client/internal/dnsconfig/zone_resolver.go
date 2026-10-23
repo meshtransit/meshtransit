@@ -33,7 +33,9 @@ type zoneQuery struct {
 
 // resolveZone answers a name of a forward zone (a route with resolvers, or
 // unavailable) from the zone's resolvers that the breaker does not skip.
-// When none answers or none can be used, a zone that fails open asks the
+// SERVFAIL or REFUSED from one moves on to the next; when none answers
+// otherwise, the first such answer is the zone's. When none answers at all
+// or none can be used, a zone that fails open asks the
 // host's own resolvers (the exit node's forwarder while one is in use, never
 // the host's network then); one that fails closed answers SERVFAIL (DNS
 // design D1 §5.3).
@@ -56,11 +58,19 @@ func (e *resolverEngine) resolveZone(ctx context.Context, zone zoneQuery) ([]byt
 	if len(targets) != 0 {
 		forwardCtx, cancel := context.WithTimeout(ctx, budget)
 		var response []byte
-		response, err = forwardQuery(forwardCtx, zone.query, zone.question, targets, zone.transport,
+		response, err = forwardQuery(forwardCtx, zone.query, zone.question,
+			e.byLiveness(targets, zone.route.Resolvers), zone.transport,
 			zoneGate{breaker: e.breaker, own: zone.route.Resolvers})
 		cancel()
 		if err == nil {
 			return zone.answer(response, captiveWindow)
+		}
+		// Every resolver asked, one at least answered SERVFAIL or REFUSED:
+		// that is the zone's answer (DNS design D1b §5.3). Failing open past
+		// it would send a name a filter blocks, or DNSSEC failed, to the
+		// network.
+		if answered, ok := upstreamAnswer(err); ok {
+			return zone.answer(answered, captiveWindow)
 		}
 	}
 	if !zone.route.FailOpen || ctx.Err() != nil {

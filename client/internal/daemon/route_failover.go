@@ -71,12 +71,28 @@ type routeFailover struct {
 	// node is at fault, not the exit node).
 	exit     exitChoice
 	exitHeld func() bool
+	// resolverPeers are the resolver Devices of the map's DNS zones with
+	// another resolver, by mesh address, resolverOrder those peers in the
+	// zones' order, askedAt their last question, pinged since when each
+	// peer is pinged through the relay, livenessList the peers pinged,
+	// livenessWake a nudge to ping a resolver newly asked, and
+	// livenessClosed set once the session ends (dns_liveness.go).
+	resolverPeers  map[netip.Addr]uint64
+	resolverOrder  []uint64
+	askedAt        map[uint64]time.Time
+	pinged         map[uint64]time.Time
+	livenessList   []uint64
+	livenessWake   chan struct{}
+	livenessClosed bool
+	// livenessSetMu orders the lists handed to the relay
+	// (syncRelayLiveness).
+	livenessSetMu sync.Mutex
 }
 
 func newRouteFailover(clock func() time.Time) *routeFailover {
 	return &routeFailover{
 		clock: clock, pongs: map[uint64]time.Time{}, rtts: map[uint64][]time.Duration{},
-		sites: map[string]*failoverSite{},
+		sites: map[string]*failoverSite{}, askedAt: map[uint64]time.Time{}, livenessWake: make(chan struct{}, 1),
 	}
 }
 
@@ -168,6 +184,7 @@ func (failover *routeFailover) effective(snapshot networkmap.Snapshot) networkma
 	failover.mu.Lock()
 	defer failover.mu.Unlock()
 	failover.core = snapshot
+	failover.resolverPeers, failover.resolverOrder = resolverPeersOf(snapshot)
 	now := failover.clock()
 	peers := peerIDs(snapshot)
 	for ref, site := range failover.sites {
@@ -202,6 +219,11 @@ func (failover *routeFailover) effective(snapshot networkmap.Snapshot) networkma
 	for id := range failover.rtts {
 		if _, kept := current[id]; !kept {
 			delete(failover.rtts, id)
+		}
+	}
+	for id := range failover.askedAt {
+		if !slices.Contains(failover.resolverOrder, id) {
+			delete(failover.askedAt, id)
 		}
 	}
 	failover.chooseExitLocked(now)

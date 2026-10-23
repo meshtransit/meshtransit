@@ -436,6 +436,7 @@ func (e *resolverEngine) askOutside(ctx context.Context, plan Plan, name string,
 		if noData {
 			return nil, nil
 		}
+		targets = e.byLiveness(targets, route.Resolvers)
 		gate = zoneGate{breaker: e.breaker, own: route.Resolvers}
 		if route.FailOpen {
 			fallback, _, _ = e.failOpenTargets(plan, question)
@@ -456,7 +457,9 @@ func (e *resolverEngine) askOutside(ctx context.Context, plan Plan, name string,
 		targets = e.networkTargets()
 	}
 	response, err := forwardQuery(ctx, query, question, targets, transport, gate)
-	if err != nil && len(fallback) != 0 && ctx.Err() == nil {
+	// A zone never fails open past a resolver that answered SERVFAIL or
+	// REFUSED (DNS design D1b §5.3): the chase fails instead.
+	if _, answered := upstreamAnswer(err); err != nil && !answered && len(fallback) != 0 && ctx.Err() == nil {
 		response, err = forwardQuery(ctx, query, question, fallback, transport, nil)
 	}
 	if err != nil {

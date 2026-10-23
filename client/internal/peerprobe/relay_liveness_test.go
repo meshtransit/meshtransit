@@ -3,6 +3,7 @@ package peerprobe
 import (
 	"errors"
 	"net/netip"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -170,5 +171,25 @@ func TestRegistryRefusesDirectPongWithoutSource(t *testing.T) {
 	if _, err := runtime.registry.Open(packet, netip.MustParseAddrPort("198.51.100.9:41641"), generation,
 		time.Now()); !errors.Is(err, ErrInvalidPacket) {
 		t.Fatalf("direct PONG without a source: %v", err)
+	}
+}
+
+// Past the bound the first peers of the list, the most needed (routers
+// before resolver Devices), are kept, not the lowest IDs.
+func TestSetRelayLivenessKeepsTheFirstPeers(t *testing.T) {
+	t.Parallel()
+	runtime := &Runtime{}
+	var ids []uint64
+	for id := uint64(MaxRelayLivenessPeers + 10); id > 0; id-- {
+		ids = append(ids, id)
+	}
+	runtime.SetRelayLiveness(append([]uint64{0, ids[0]}, ids...))
+	runtime.relayMu.Lock()
+	targets := slices.Clone(runtime.relay.targets)
+	runtime.relayMu.Unlock()
+	want := slices.Clone(ids[:MaxRelayLivenessPeers])
+	slices.Sort(want)
+	if !slices.Equal(targets, want) {
+		t.Fatalf("targets = %v, want %v", targets, want)
 	}
 }

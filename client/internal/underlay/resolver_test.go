@@ -21,7 +21,7 @@ func TestUpstreamResolverAsksResolvedUpstreamsWhenBypassing(t *testing.T) {
 	defer func() { _ = server.Close() }()
 	go answerA(server, [4]byte{203, 0, 113, 7})
 	path := filepath.Join(t.TempDir(), "resolv.conf")
-	content := "# resolved\nnameserver 100.64.0.9\nnameserver 127.0.0.1\nnameserver fe80::1%eth0\n"
+	content := "# resolved\nnameserver 100.64.0.9\nnameserver 192.0.2.53\nnameserver 127.0.0.1\nnameserver fe80::1%eth0\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}

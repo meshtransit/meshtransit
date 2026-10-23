@@ -44,6 +44,29 @@ var (
 	errUpstreamRefused        = errors.New("dnsconfig: upstream refused query")
 )
 
+// upstreamAnswerError is a resolver's SERVFAIL or REFUSED answer, kept with
+// the error forwardQuery returns: the resolver answered, about the name (a
+// filter blocking it, DNSSEC), so a zone never fails open past it (DNS
+// design D1b §5.3).
+type upstreamAnswerError struct {
+	response []byte
+	err      error
+}
+
+func (e *upstreamAnswerError) Error() string { return e.err.Error() }
+
+func (e *upstreamAnswerError) Unwrap() error { return e.err }
+
+// upstreamAnswer returns the first SERVFAIL or REFUSED answer in err, its
+// ID the client's.
+func upstreamAnswer(err error) ([]byte, bool) {
+	var answered *upstreamAnswerError
+	if errors.As(err, &answered) {
+		return answered.response, true
+	}
+	return nil, false
+}
+
 type resolverEngine struct {
 	forwardSlots chan struct{}
 	// captive is set while a captive portal window is open: names the exit
@@ -63,6 +86,8 @@ type resolverEngine struct {
 	// into the mesh now; until the plan has the exit node's resolvers, no
 	// question may then leave through the host's own network.
 	exitRouted func() bool
+	// liveness, when set, orders the zones' resolver Devices (liveness.go).
+	liveness atomic.Pointer[ResolverLiveness]
 	// networkGeneration, when set, changes whenever networkResolvers would
 	// return other resolvers: the cache is then refreshed at once.
 	networkGeneration func() uint64
@@ -588,6 +613,10 @@ func forwardQuery(
 			}
 		}
 		if err != nil {
+			if errors.Is(err, errUpstreamServerFailure) || errors.Is(err, errUpstreamRefused) {
+				binary.BigEndian.PutUint16(response[:2], originalID)
+				err = &upstreamAnswerError{response: response, err: err}
+			}
 			failures = append(failures, fmt.Errorf("resolver %s: %w", resolver, err))
 			continue
 		}

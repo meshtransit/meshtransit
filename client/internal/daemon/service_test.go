@@ -24,6 +24,7 @@ import (
 
 	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/dataplane"
+	"meshtransit.net/client/internal/dnsconfig"
 	"meshtransit.net/client/internal/identity"
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/pathdiscovery"
@@ -919,6 +920,9 @@ func TestService_RunPublishesLatestValidatedSnapshot(t *testing.T) {
 	if !latestStreamOptions(t, control).EnableDeviceAliases {
 		t.Fatal("daemon lost explicit alias declaration")
 	}
+	if calls := dns.livenessCalls(); !slices.Equal(calls, []bool{true}) {
+		t.Fatalf("resolver liveness during the session = %v", calls)
+	}
 	status, err := service.Status(t.Context())
 	if err != nil {
 		t.Fatalf("Status() error = %v", err)
@@ -951,6 +955,10 @@ func TestService_RunPublishesLatestValidatedSnapshot(t *testing.T) {
 	}
 	if applies, resets, closes := dns.calls(); applies != 1 || resets != 0 || closes != 1 {
 		t.Fatalf("dns calls apply=%d reset=%d close=%d, want 1/0/1", applies, resets, closes)
+	}
+	// The session's pings ended with it: no resolver is judged by them.
+	if calls := dns.livenessCalls(); !slices.Equal(calls, []bool{true, false}) {
+		t.Fatalf("resolver liveness after the session = %v", calls)
 	}
 }
 
@@ -2649,6 +2657,20 @@ type fakeDNS struct {
 	configured  bool
 	applyErr    error
 	applyErrors []error
+	// liveness records each SetResolverLiveness: whether one was set.
+	liveness []bool
+}
+
+func (f *fakeDNS) SetResolverLiveness(liveness dnsconfig.ResolverLiveness) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.liveness = append(f.liveness, liveness != nil)
+}
+
+func (f *fakeDNS) livenessCalls() []bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.liveness)
 }
 
 func (f *fakeDNS) Apply(context.Context, networkmap.Snapshot) (bool, error) {

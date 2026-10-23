@@ -226,6 +226,24 @@ func TestResolverEngineFollowsACNAMEOutside(t *testing.T) {
 	}
 }
 
+// A chase into a zone whose resolver answers REFUSED fails: it never falls
+// open to the network past that answer (DNS design D1b §5.3).
+func TestResolverEngineChaseNeverFailsOpenPastAnAnswer(t *testing.T) {
+	t.Parallel()
+	refusing := startCountingUpstream(t, dnsmessage.RCodeRefused, netip.Addr{}, false)
+	network := startCountingUpstream(t, dnsmessage.RCodeSuccess, netip.MustParseAddr("203.0.113.9"), false)
+	plan, engine := namesPlan(t, network.address)
+	plan.Routes = append(plan.Routes, Route{
+		Suffix: "example.com", Resolvers: []netip.AddrPort{refusing.address}, FailOpen: true,
+	})
+	help := resolveName(t, engine, plan, "help.corp.lan.", dnsmessage.TypeA)
+	if refusing.asked.Load() == 0 || network.asked.Load() != 0 ||
+		slices.Contains(answerSummary(help), "support.example.com A 203.0.113.9") {
+		t.Fatalf("help = %v %v, refusing asked %d, network asked %d", help.RCode, answerSummary(help),
+			refusing.asked.Load(), network.asked.Load())
+	}
+}
+
 // A type the node does not hold for a name of a host zone comes from the
 // host's DNS, cleaned: no CNAME of the name, and NXDOMAIN becomes no data.
 func TestResolverEnginePassesOtherTypesThrough(t *testing.T) {
