@@ -101,6 +101,9 @@ type privateIdentityPorts struct {
 	DNSZones            httpapi.DNSZoneManager
 	ServiceNames        httpapi.ServiceNameChecker
 	OfferServiceNames   httpapi.OfferServiceNameReader
+	// ContractServiceNames reads, replaces and uses a running share's
+	// service names.
+	ContractServiceNames httpapi.ContractServiceNameManager
 	// SiteRouterObservations reads routers' delivery records for one Site's read.
 	SiteRouterObservations distribution.ObservationLoader
 	// SiteRouterUse counts the Devices using each router of a Site.
@@ -241,6 +244,7 @@ func composePrivateIdentity(
 		DNSZones:               ports.DNSZones,
 		ServiceNames:           ports.ServiceNames,
 		OfferServiceNames:      ports.OfferServiceNames,
+		ContractServiceNames:   ports.ContractServiceNames,
 		SiteRouterObservations: ports.SiteRouterObservations,
 		SiteRouterUse:          ports.SiteRouterUse,
 		ExitNodeUse:            ports.ExitNodeUse,

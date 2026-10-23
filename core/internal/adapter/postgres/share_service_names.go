@@ -143,38 +143,12 @@ func (store *ResourceSharingStore) applyServiceNames(ctx context.Context,
 	tx := shareDNSTransaction{tx: transaction}
 	changed := false
 	for _, position := range order {
-		name := approved[position]
-		failed := func(err error) error { return &sharing.ServiceNameError{Index: places[position], Err: err} }
-		zone, err := findServiceNameZone(ctx, tx, session, scope, name.String())
+		made, err := applyServiceName(ctx, tx, planner, session, scope, approved[position].String(), share,
+			correlationID, changeID)
 		if err != nil {
-			return failed(err)
+			return &sharing.ServiceNameError{Index: places[position], Err: err}
 		}
-		if zone == nil {
-			plan, err := planner.PlanServiceNameZone(session, scope, name.String(), correlationID)
-			if err != nil {
-				return failed(err)
-			}
-			created, err := applyDNSZoneChange(ctx, tx, plan, changeID)
-			if err != nil {
-				return failed(err)
-			}
-			zone, changed = &created.Zone, changed || created.Changed
-		}
-		operation, err := planner.PlanServiceName(zone.Domain, name.String(), share)
-		if err != nil {
-			return failed(err)
-		}
-		result, err := applyDNSNameChange(ctx, tx, dnszone.NameChange{
-			Session: session, Scope: scope, ZoneID: zone.ID, ZoneClass: zone.Class,
-			Operations: []dnszone.NameOperation{operation}, Limits: planner.Limits(), CorrelationID: correlationID,
-		}, changeID)
-		if failure := (*dnszone.OperationError)(nil); errors.As(err, &failure) {
-			return failed(failure.Err)
-		}
-		if err != nil {
-			return failed(err)
-		}
-		changed = changed || result.Changed
+		changed = changed || made.Changed
 	}
 	if changed {
 		if _, err := deferDNSChangeWakeup(ctx, tx, changeID); err != nil {
@@ -182,6 +156,60 @@ func (store *ResourceSharingStore) applyServiceNames(ctx context.Context,
 		}
 	}
 	return nil
+}
+
+// madeServiceName is a service name made a DNS name of the consumer
+// Network: the name, the zone holding it, and whether anything was written.
+type madeServiceName struct {
+	Name    dnszone.Name
+	Zone    dnszone.Zone
+	Changed bool
+}
+
+// applyServiceName makes name a DNS name of the Network in tx's scope that
+// points at share: in the longest zone that covers it or, when none does, in
+// a zone of its own made for it. The DNS functions authorize the session for
+// dns.manage and append the evidence; the caller defers the wakeup of
+// changeID and commits. An error is the DNS reason.
+func applyServiceName(ctx context.Context, tx accountSessionTransaction, planner ServiceNamePlanner,
+	session accountsession.Session, scope network.Scope, name string, share sharing.ImportedResourceID,
+	correlationID, changeID publicid.ID,
+) (madeServiceName, error) {
+	made := madeServiceName{}
+	zone, err := findServiceNameZone(ctx, tx, session, scope, name)
+	if err != nil {
+		return made, err
+	}
+	if zone == nil {
+		plan, err := planner.PlanServiceNameZone(session, scope, name, correlationID)
+		if err != nil {
+			return made, err
+		}
+		created, err := applyDNSZoneChange(ctx, tx, plan, changeID)
+		if err != nil {
+			return made, err
+		}
+		zone, made.Changed = &created.Zone, created.Changed
+	}
+	operation, err := planner.PlanServiceName(zone.Domain, name, share)
+	if err != nil {
+		return made, err
+	}
+	result, err := applyDNSNameChange(ctx, tx, dnszone.NameChange{
+		Session: session, Scope: scope, ZoneID: zone.ID, ZoneClass: zone.Class,
+		Operations: []dnszone.NameOperation{operation}, Limits: planner.Limits(), CorrelationID: correlationID,
+	}, changeID)
+	if failure := (*dnszone.OperationError)(nil); errors.As(err, &failure) {
+		return made, failure.Err
+	}
+	if err != nil {
+		return made, err
+	}
+	if len(result.Outcomes) != 1 {
+		return made, dnszone.ErrInvalid
+	}
+	made.Name, made.Zone, made.Changed = result.Outcomes[0].Name, *zone, made.Changed || result.Changed
+	return made, nil
 }
 
 // findServiceNameZone returns the zone of the Network that would hold name,

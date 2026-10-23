@@ -34,6 +34,10 @@ const (
 	resourceSharingOfferAction
 	resourceSharingContractAction
 	resourceSharingContractItem
+	// The service names of a running share (DNS design D3 §19): read or
+	// replaced, and one made a DNS name of the consumer Network.
+	resourceSharingContractServiceNames
+	resourceSharingContractServiceNameUse
 )
 
 type resourceSharingPath struct {
@@ -49,7 +53,7 @@ func parseResourceSharingPath(request *http.Request) (resourceSharingPath, bool)
 		return resourceSharingPath{}, false
 	}
 	segments := strings.Split(strings.TrimPrefix(request.URL.Path, "/"), "/")
-	if (len(segments) != 7 && len(segments) != 8 && len(segments) != 10) ||
+	if (len(segments) < 7 || len(segments) > 11) ||
 		segments[0] != "api" || segments[1] != "v1" || segments[2] != "workspaces" ||
 		segments[4] != "networks" {
 		return resourceSharingPath{}, false
@@ -57,6 +61,9 @@ func parseResourceSharingPath(request *http.Request) (resourceSharingPath, bool)
 	path := resourceSharingPath{workspaceID: segments[3], networkID: segments[5]}
 	switch segments[6] {
 	case "share-offers":
+		if len(segments) == 9 || len(segments) == 11 {
+			return resourceSharingPath{}, false
+		}
 		path.kind = resourceSharingOfferCollection
 		if len(segments) >= 8 {
 			path.kind = resourceSharingOfferItem
@@ -74,6 +81,17 @@ func parseResourceSharingPath(request *http.Request) (resourceSharingPath, bool)
 		if len(segments) == 8 {
 			path.kind = resourceSharingContractItem
 			path.publicID = segments[7]
+			break
+		}
+		if len(segments) == 9 || len(segments) == 11 {
+			if segments[8] != "service-names" ||
+				(len(segments) == 11 && (segments[9] != "actions" || segments[10] != "use")) {
+				return resourceSharingPath{}, false
+			}
+			path.kind, path.publicID = resourceSharingContractServiceNames, segments[7]
+			if len(segments) == 11 {
+				path.kind, path.action = resourceSharingContractServiceNameUse, "use"
+			}
 			break
 		}
 		if len(segments) != 10 || segments[8] != "actions" ||
@@ -106,7 +124,8 @@ func (path resourceSharingPath) isCollection() bool {
 }
 
 func (path resourceSharingPath) isAction() bool {
-	return path.kind == resourceSharingOfferAction || path.kind == resourceSharingContractAction
+	return path.kind == resourceSharingOfferAction || path.kind == resourceSharingContractAction ||
+		path.kind == resourceSharingContractServiceNameUse
 }
 
 func (path resourceSharingPath) allowedMethod(requestMethod string) string {
@@ -118,6 +137,9 @@ func (path resourceSharingPath) allowedMethod(requestMethod string) string {
 	}
 	if path.isAction() {
 		return http.MethodPost
+	}
+	if path.kind == resourceSharingContractServiceNames && requestMethod == http.MethodPut {
+		return http.MethodPut
 	}
 	return http.MethodGet
 }
@@ -133,6 +155,13 @@ func (path resourceSharingPath) operation(requestMethod string) string {
 		return shareOfferGetOperation
 	case resourceSharingContractItem:
 		return shareContractGetOperation
+	case resourceSharingContractServiceNames:
+		if requestMethod == http.MethodPut {
+			return shareContractServiceNamesReplaceOperation
+		}
+		return shareContractServiceNamesGetOperation
+	case resourceSharingContractServiceNameUse:
+		return shareContractServiceNameUseOperation
 	case resourceSharingContractAction:
 		if path.action == "activate" {
 			return shareContractActivateOperation
@@ -318,6 +347,13 @@ func (handler *ManagementHandler) handleResourceSharing(
 		return handler.getTrustContract(ctx, response, request, correlationID, path, session)
 	case resourceSharingContractAction:
 		return handler.changeTrustContract(ctx, response, request, correlationID, path, session, browser)
+	case resourceSharingContractServiceNames:
+		if request.Method == http.MethodPut {
+			return handler.replaceContractServiceNames(ctx, response, request, correlationID, path, session, browser)
+		}
+		return handler.getContractServiceNames(ctx, response, request, correlationID, path, session)
+	case resourceSharingContractServiceNameUse:
+		return handler.useContractServiceName(ctx, response, request, correlationID, path, session, browser)
 	default:
 		return handler.writeSharingRequestError(ctx, response, correlationID)
 	}
@@ -1137,6 +1173,21 @@ func classifySharingError(err error) managementError {
 		return managementError{
 			Status: http.StatusBadRequest, Code: "dns_service_name_decision_missing",
 			Message: "Answer each service name the offer suggests exactly once: approve or decline",
+		}
+	case errors.Is(err, sharing.ErrServiceNamesChanged):
+		return managementError{
+			Status: http.StatusPreconditionFailed, Code: "precondition_failed",
+			Message: "the service names changed; read them again",
+		}
+	case errors.Is(err, sharing.ErrContractEnded):
+		return managementError{
+			Status: http.StatusConflict, Code: "trust_contract_ended",
+			Message: "the share has ended; its service names no longer change",
+		}
+	case errors.Is(err, sharing.ErrServiceNameNotSuggested):
+		return managementError{
+			Status: http.StatusConflict, Code: "dns_service_name_not_suggested",
+			Message: "the provider does not suggest this service name",
 		}
 	case errors.Is(err, sharing.ErrInvalidManagementRequest):
 		return *invalidManagementRequest()

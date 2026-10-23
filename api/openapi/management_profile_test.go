@@ -65,15 +65,15 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 		t.Fatal("private document retained deployment topology")
 	}
 	basePaths, paths := profileMap(t, base, "paths"), profileMap(t, console, "paths")
-	// The private document holds 23 bearer operations moved onto the cookie
-	// and 92 cookie-only Console operations (9 of them the Exit Pools, 5 the
-	// DNS zones, 6 their names); another count means an API was added or
-	// dropped without review.
+	// The private document holds 26 bearer operations moved onto the cookie
+	// (3 of them a running share's service names) and 92 cookie-only Console
+	// operations (9 of them the Exit Pools, 5 the DNS zones, 6 their names);
+	// another count means an API was added or dropped without review.
 	operations := 0
 	for _, item := range paths {
 		operations += len(item.(map[string]any))
 	}
-	if len(basePaths) != 33 || operations != 115 {
+	if len(basePaths) != 35 || operations != 118 {
 		t.Fatal("private profile introduced another product resource API", len(basePaths), operations)
 	}
 	for path, raw := range paths {
@@ -86,7 +86,7 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 			baseOperation := profileMap(t, profileMap(t, basePaths, path), method)
 			security := map[string]any{"accountSessionCookie": []any{}}
 			additional := 2
-			if method == "post" {
+			if method != "get" {
 				security["sessionCSRF"] = []any{}
 				additional = 3
 			}

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"slices"
 	"testing"
 	"time"
 
@@ -188,6 +189,9 @@ WHERE zone.domain = 'app.meshtransit-d3.com' AND zone.state = 'active' AND zone.
 		t.Fatalf("the approved name in its own zone = %+v, error = %v", own, err)
 	}
 
+	assertContractServiceNames(ctx, t, admin, runtimePool, dnsZones, session, providerScope, consumerScope,
+		contract.ID(), share)
+
 	// Leave no share or names behind for the steps that follow.
 	revoke, err := sharing.NewRevokeContract(sharing.RevokeContractParams{
 		ProviderScope: providerScope, ConsumerScope: consumerScope, ContractID: contract.ID(),
@@ -200,7 +204,35 @@ WHERE zone.domain = 'app.meshtransit-d3.com' AND zone.state = 'active' AND zone.
 	if _, err := service.RevokeContract(ctx, revoke); err != nil {
 		t.Fatalf("revoke the share with service names: %v", err)
 	}
-	for _, id := range []dnszone.ID{zone.Zone.ID, ownZone} {
+	contractNames, err := postgresadapter.NewContractServiceNameStore(runtimePool, postgresadapter.AccountSessionOptions{
+		StatementTimeout: 5 * time.Second, IdleTimeout: 10 * time.Second}, dnsZones)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ended, err := contractNames.ContractServiceNames(ctx, session, providerScope, contract.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := contractNames.ReplaceContractServiceNames(ctx, session, providerScope, contract.ID(),
+		ended.Version, nil, newCorrelationID(t)); !errors.Is(err, sharing.ErrContractEnded) {
+		t.Fatalf("a revoked contract's suggestions changed: %v", err)
+	}
+	if len(ended.Names) == 0 {
+		t.Fatal("the revoked contract lost its suggestions")
+	}
+	if _, _, err := contractNames.UseContractServiceName(ctx, session, consumerScope, contract.ID(), ended.Names[0],
+		newCorrelationID(t)); !errors.Is(err, sharing.ErrContractEnded) {
+		t.Fatalf("a revoked contract's name was used: %v", err)
+	}
+	read, err := dnsZones.Read(ctx, session, consumerScope, zone.Zone.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dnsZones.Delete(ctx, session, consumerScope, zone.Zone.ID, read.Zone.Version, true,
+		newCorrelationID(t)); err != nil {
+		t.Fatalf("delete zone %s with its names: %v", zone.Zone.ID, err)
+	}
+	for _, id := range ownZones(ctx, t, admin, consumerScope) {
 		read, err := dnsZones.Read(ctx, session, consumerScope, id)
 		if err != nil {
 			t.Fatal(err)
@@ -209,5 +241,141 @@ WHERE zone.domain = 'app.meshtransit-d3.com' AND zone.state = 'active' AND zone.
 			newCorrelationID(t)); err != nil {
 			t.Fatalf("delete zone %s with its names: %v", id, err)
 		}
+	}
+}
+
+// ownZones lists the active zones of the scope's Network.
+func ownZones(ctx context.Context, t *testing.T, admin *pgx.Conn, scope network.Scope) []dnszone.ID {
+	t.Helper()
+	rows, err := admin.Query(ctx, `SELECT zone.public_id::TEXT FROM mesh.network_dns_zone AS zone
+JOIN mesh.network AS net ON net.id = zone.network_id
+WHERE net.public_id = $1::UUID AND zone.state = 'active' ORDER BY zone.id`, scope.NetworkID().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var zones []dnszone.ID
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			t.Fatal(err)
+		}
+		id, err := dnszone.ParseID(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		zones = append(zones, id)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return zones
+}
+
+// assertContractServiceNames checks the service names of a running share
+// (DNS design D3 §19, schema 220), right after an accept that approved
+// app.meshtransit-d3.com and wiki.svc.internal and declined
+// taken.svc.internal: both sides read the suggestions, only the consumer its
+// names; the provider replaces them at the version it read, which never
+// touches the consumer's names and is audited; the consumer makes a current
+// suggestion a DNS name of its Network, and nothing else.
+func assertContractServiceNames(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	runtimePool *postgresadapter.Pool, dnsZones *dnszone.Service, session accountsession.Session,
+	providerScope, consumerScope network.Scope, contractID sharing.ContractID, share sharing.ImportedResourceID,
+) {
+	t.Helper()
+	store, err := postgresadapter.NewContractServiceNameStore(runtimePool, postgresadapter.AccountSessionOptions{
+		StatementTimeout: 5 * time.Second, IdleTimeout: 10 * time.Second}, dnsZones)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := func(value string) sharing.ServiceName {
+		parsed, err := sharing.ParseServiceName(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return parsed
+	}
+	fqdns := func(names []sharing.ContractDNSName) []string {
+		values := make([]string, 0, len(names))
+		for _, item := range names {
+			values = append(values, item.FQDN)
+		}
+		return values
+	}
+	consumer, err := store.ContractServiceNames(ctx, session, consumerScope, contractID)
+	if err != nil || consumer.Provider || consumer.Version != 0 || len(consumer.Names) != 3 ||
+		consumer.ShareID != share || !slices.Equal(fqdns(consumer.DNSNames),
+		[]string{"app.meshtransit-d3.com", "wiki.svc.internal"}) || !consumer.Running(time.Now()) {
+		t.Fatalf("the consumer's read = %+v, error = %v", consumer, err)
+	}
+	provider, err := store.ContractServiceNames(ctx, session, providerScope, contractID)
+	if err != nil || !provider.Provider || provider.Version != 0 || len(provider.Names) != 3 ||
+		provider.ShareID.IsValid() || len(provider.DNSNames) != 0 {
+		t.Fatalf("the provider's read = %+v, error = %v", provider, err)
+	}
+
+	next := []sharing.ServiceName{name("app.meshtransit-d3.com"), name("shop.svc.internal")}
+	replaced, changed, err := store.ReplaceContractServiceNames(ctx, session, providerScope, contractID, 0, next,
+		newCorrelationID(t))
+	if err != nil || !changed || replaced.Version != 1 || !slices.Equal(replaced.Names, next) {
+		t.Fatalf("replace at version 0 = %+v, %v, error = %v", replaced, changed, err)
+	}
+	if _, changed, err := store.ReplaceContractServiceNames(ctx, session, providerScope, contractID, 1, next,
+		newCorrelationID(t)); err != nil || changed {
+		t.Fatalf("the same names again: changed %v, error = %v", changed, err)
+	}
+	// A second change updates the set, one version on.
+	reordered := []sharing.ServiceName{next[1], next[0]}
+	if replaced, changed, err := store.ReplaceContractServiceNames(ctx, session, providerScope, contractID, 1,
+		reordered, newCorrelationID(t)); err != nil || !changed || replaced.Version != 2 {
+		t.Fatalf("replace at version 1 = %+v, %v, error = %v", replaced, changed, err)
+	}
+	if replaced, _, err := store.ReplaceContractServiceNames(ctx, session, providerScope, contractID, 2, next,
+		newCorrelationID(t)); err != nil || replaced.Version != 3 || !slices.Equal(replaced.Names, next) {
+		t.Fatalf("replace at version 2 = %+v, error = %v", replaced, err)
+	}
+	var revisions int
+	if err := admin.QueryRow(ctx, `SELECT pg_catalog.count(DISTINCT (event.payload ->> 'version'))
+FROM mesh_audit.audit_event AS event
+WHERE event.action = 'trust_contract.service_names_changed' AND event.payload ->> 'trust_contract_id' = $1`,
+		contractID.String()).Scan(&revisions); err != nil || revisions != 3 {
+		t.Fatalf("audited versions = %d, error = %v", revisions, err)
+	}
+	if _, _, err := store.ReplaceContractServiceNames(ctx, session, providerScope, contractID, 0, nil,
+		newCorrelationID(t)); !errors.Is(err, sharing.ErrServiceNamesChanged) {
+		t.Fatalf("a replace at a stale version: %v", err)
+	}
+	if _, _, err := store.ReplaceContractServiceNames(ctx, session, consumerScope, contractID, 1, nil,
+		newCorrelationID(t)); !errors.Is(err, sharing.ErrForbidden) {
+		t.Fatalf("the consumer replaced the suggestions: %v", err)
+	}
+	// The consumer's names stay; the read shows the new suggestions.
+	consumer, err = store.ContractServiceNames(ctx, session, consumerScope, contractID)
+	if err != nil || consumer.Version != 3 || !slices.Equal(consumer.Names, next) || len(consumer.DNSNames) != 2 {
+		t.Fatalf("the consumer's read after the replace = %+v, error = %v", consumer, err)
+	}
+
+	if _, _, err := store.UseContractServiceName(ctx, session, consumerScope, contractID, name("wiki.svc.internal"),
+		newCorrelationID(t)); !errors.Is(err, sharing.ErrServiceNameNotSuggested) {
+		t.Fatalf("a name no longer suggested was used: %v", err)
+	}
+	made, zone, err := store.UseContractServiceName(ctx, session, consumerScope, contractID,
+		name("shop.svc.internal"), newCorrelationID(t))
+	if err != nil || made.FQDN != "shop.svc.internal" || zone.Domain.String() != "svc.internal" ||
+		made.Target.ShareID != share {
+		t.Fatalf("use shop.svc.internal = %+v in %+v, error = %v", made, zone, err)
+	}
+	if _, _, err := store.UseContractServiceName(ctx, session, consumerScope, contractID, name("shop.svc.internal"),
+		newCorrelationID(t)); !errors.Is(err, dnszone.ErrNameTaken) {
+		t.Fatalf("a name used twice: %v", err)
+	}
+	if _, _, err := store.UseContractServiceName(ctx, session, providerScope, contractID, name("shop.svc.internal"),
+		newCorrelationID(t)); !errors.Is(err, sharing.ErrForbidden) {
+		t.Fatalf("the provider used a name: %v", err)
+	}
+	consumer, err = store.ContractServiceNames(ctx, session, consumerScope, contractID)
+	if err != nil || len(consumer.DNSNames) != 3 {
+		t.Fatalf("the consumer's names after a use = %+v, error = %v", consumer, err)
 	}
 }

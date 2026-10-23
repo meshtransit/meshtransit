@@ -126,6 +126,12 @@ A node on Linux, macOS or Windows with DNS on applies them (MTCP
   the name, and any CNAME whose chain reaches it, is left out. Revoking the
   share or changing the rule takes the name away at once, without the
   30-second window. The provider's Devices never get the consumer's names.
+- **Service names.** A provider can suggest up to 8 names on a share offer,
+  and change them while the share runs; the consumer approves each one when
+  it accepts, or uses one later from the share's page. Using a name makes it
+  a name of the consumer Network that points at the share. A changed
+  suggestion never removes a name the consumer already uses, and the
+  provider never sees which names the consumer uses.
 - **Routing.** The host routes an `nxdomain` or `forward` zone's domain to
   the node, a single label (`lan`) included but never the root or a suffix
   of the Internet (`com`, `co.uk`). A `host` zone is not routed as a whole:

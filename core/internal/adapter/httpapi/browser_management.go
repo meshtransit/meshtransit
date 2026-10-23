@@ -529,11 +529,11 @@ var browserManagementMethods = map[string]bool{
 }
 
 // browserManagementMethod admits the request's method: one of
-// browserManagementMethods, or PUT on a route that takes it: a Site's router
-// or an Exit Pool's exit node.
+// browserManagementMethods, or PUT on a route that takes it: a Site's router,
+// an Exit Pool's exit node, or a running share's service names.
 func browserManagementMethod(request *http.Request) bool {
 	if request.Method == http.MethodPut {
-		return isSiteOperation(request) || isExitPoolOperation(request)
+		return isSiteOperation(request) || isExitPoolOperation(request) || isContractServiceNamesOperation(request)
 	}
 	return browserManagementMethods[request.Method]
 }

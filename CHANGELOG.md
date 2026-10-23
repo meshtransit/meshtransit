@@ -5,6 +5,16 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core (DNS design D3 §19, schema 220): a running share's service names have
+  their own routes under `trust-contracts/{id}/service-names`: `GET` for the
+  provider or the consumer (`share.read`; the consumer also gets the DNS
+  names of its Network that point at the share), `PUT` for the provider to
+  replace its suggestions (`share.offer`, If-Match on the version, `"0"`
+  while they are still the offer's, audited as
+  `trust_contract.service_names_changed`), and `POST .../actions/use` for the
+  consumer to make one suggestion a DNS name of its Network (`dns.manage`),
+  as an accept does. A changed suggestion never removes a name the consumer
+  made.
 - Core (DNS design D3b, schema 219): maps carry the DNS names that point at
   a share. Such a name answers the share's alias on each consumer Device
   whose map holds the share (a rule reaches it, the contract runs) and is

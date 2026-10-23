@@ -1457,17 +1457,20 @@
     "getResource",
     "getShareOffer",
     "getTrustContract",
+    "getTrustContractServiceNames",
     "listAccessGraph",
     "listEnrollmentKeys",
     "listPolicyApprovalRequests",
     "listResources",
     "listShareOffers",
     "publishPolicy",
+    "replaceTrustContractServiceNames",
     "requestPolicyApproval",
     "revokeDevice",
     "revokeEnrollmentKey",
     "revokeTrustContract",
-    "simulatePolicy"
+    "simulatePolicy",
+    "useTrustContractServiceName"
   ],
   "paths": {
     "/api/v1/workspaces": {

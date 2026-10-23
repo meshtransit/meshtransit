@@ -15,8 +15,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 219 {
-		t.Fatalf("len(Catalog()) = %d, want 219", len(catalog))
+	if len(catalog) != 220 {
+		t.Fatalf("len(Catalog()) = %d, want 220", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1611,8 +1611,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 219 {
-		t.Fatalf("LatestVersion() = %d, want 219", LatestVersion())
+	if LatestVersion() != 220 {
+		t.Fatalf("LatestVersion() = %d, want 220", LatestVersion())
 	}
 }
 
@@ -6308,5 +6308,39 @@ func TestMigration219LetsMapsReadShareNames(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "TO mesh_worker") || strings.Contains(migration.SQL, "TO mesh_observer") {
 		t.Error("schema 219 grants beyond mesh_runtime")
+	}
+}
+
+func TestMigration220KeepsContractServiceNames(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[219]
+	if migration.Version != 220 {
+		t.Fatalf("migration 220 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE TABLE mesh.trust_contract_service_name_set (",
+		"CONSTRAINT trust_contract_service_name_set_contract_uidx UNIQUE (trust_contract_id)",
+		"FOR EACH ROW EXECUTE FUNCTION mesh_audit.capture_authority_mutation('trust_contract_service_name_set', 'public_id');",
+		"ALTER TABLE mesh.trust_contract_service_name_set FORCE ROW LEVEL SECURITY;",
+		"OR p_permission NOT IN ('share.read', 'share.offer') THEN",
+		"    END IF;\n    SELECT * INTO STRICT v_contract FROM mesh.trust_contract AS contract\n    WHERE contract.id = v_scope.contract_id\n    FOR UPDATE;",
+		"IF v_scope.side <> 'provider' THEN",
+		"RAISE EXCEPTION USING ERRCODE = 'MTZ20', MESSAGE = 'contract service names changed';",
+		"RAISE EXCEPTION USING ERRCODE = 'MTZ21', MESSAGE = 'trust contract has ended';",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_contract_service_names_v1(",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.replace_contract_service_names_v1(",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 220 lacks %q", want)
+		}
+	}
+	if strings.Count(migration.SQL, "SECURITY DEFINER") != 2 {
+		t.Error("schema 220 has other than two definer functions")
+	}
+	if strings.Contains(migration.SQL, "network_revision = revision.network_revision + 1") {
+		t.Error("schema 220 advances a revision: suggestions are no part of a map")
+	}
+	if strings.Contains(migration.SQL, "TO mesh_worker") || strings.Contains(migration.SQL, "TO mesh_observer") {
+		t.Error("schema 220 grants beyond mesh_runtime")
 	}
 }

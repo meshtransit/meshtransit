@@ -38,3 +38,10 @@ func (handler *ManagementHandler) validateBrowserResourceMutation(ctx context.Co
 	}
 	return ""
 }
+
+// isContractServiceNamesOperation reports the service names of a running
+// share, the one sharing route that takes PUT.
+func isContractServiceNamesOperation(request *http.Request) bool {
+	path, matched := parseResourceSharingPath(request)
+	return matched && path.kind == resourceSharingContractServiceNames
+}

@@ -38,58 +38,61 @@ import (
 )
 
 const (
-	workspaceRenameOperation                = "workspace_rename"
-	workspaceMembersReadOperation           = "workspace_members_read"
-	workspaceRoleAssignOperation            = "workspace_role_assign"
-	workspaceRoleRevokeOperation            = "workspace_role_revoke"
-	workspaceCreateOperation                = "workspace_create"
-	sessionWorkspaceListOperation           = "session_workspace_list"
-	sessionWorkspaceSwitchOperation         = "session_workspace_switch"
-	shareTargetResolveOperation             = "share_target_resolve"
-	networkCreateOperation                  = "network_create"
-	deviceRevokeOperation                   = "device_revoke"
-	policyPublishOperation                  = "policy_publish"
-	policySimulateOperation                 = "policy_simulate"
-	policyReadOperation                     = "policy_read"
-	policyExplainOperation                  = "policy_explain"
-	accessGraphListOperation                = "access_graph_list"
-	policyApprovalRequestOperation          = "policy_approval_request"
-	policyApprovalListOperation             = "policy_approval_list"
-	policyApprovalGetOperation              = "policy_approval_get"
-	policyApprovalApproveOperation          = "policy_approval_approve"
-	resourceCreateOperation                 = "resource_create"
-	resourceGetOperation                    = "resource_get"
-	resourceListOperation                   = "resource_list"
-	resourceGroupCreateOperation            = "resource_group_create"
-	resourceGroupGetOperation               = "resource_group_get"
-	resourceGroupListOperation              = "resource_group_list"
-	resourceSuspendOperation                = "resource_suspend"
-	resourceResumeOperation                 = "resource_resume"
-	resourceDeleteOperation                 = "resource_delete"
-	resourceGroupSuspendOperation           = "resource_group_suspend"
-	resourceGroupResumeOperation            = "resource_group_resume"
-	resourceGroupDeleteOperation            = "resource_group_delete"
-	resourceRebindPreviewOperation          = "resource_rebind_preview"
-	resourceRebindOperation                 = "resource_rebind"
-	resourceGroupReplacePreviewOperation    = "resource_group_replace_preview"
-	resourceGroupReplaceOperation           = "resource_group_replace"
-	resourceAuthorityChangePreviewOperation = "resource_authority_change_preview"
-	resourceAuthorityChangeRequestOperation = "resource_authority_change_request"
-	resourceAuthorityChangeConfirmOperation = "resource_authority_change_confirm"
-	shareOfferCreateOperation               = "share_offer_create"
-	shareOfferGetOperation                  = "share_offer_get"
-	shareOfferListOperation                 = "share_offer_list"
-	shareOfferAcceptOperation               = "share_offer_accept"
-	shareOfferRejectOperation               = "share_offer_reject"
-	shareOfferRevokeOperation               = "share_offer_revoke"
-	shareContractRevokeOperation            = "share_contract_revoke"
-	shareContractActivateOperation          = "share_contract_activate"
-	shareContractGetOperation               = "share_contract_get"
-	unknownManagementOperation              = "unknown"
-	maximumManagementBodyBytes              = 64 * 1024
-	maximumManagementRequests               = 4096
-	minimumManagementTimeout                = 100 * time.Millisecond
-	maximumManagementTimeout                = 30 * time.Second
+	workspaceRenameOperation                  = "workspace_rename"
+	workspaceMembersReadOperation             = "workspace_members_read"
+	workspaceRoleAssignOperation              = "workspace_role_assign"
+	workspaceRoleRevokeOperation              = "workspace_role_revoke"
+	workspaceCreateOperation                  = "workspace_create"
+	sessionWorkspaceListOperation             = "session_workspace_list"
+	sessionWorkspaceSwitchOperation           = "session_workspace_switch"
+	shareTargetResolveOperation               = "share_target_resolve"
+	networkCreateOperation                    = "network_create"
+	deviceRevokeOperation                     = "device_revoke"
+	policyPublishOperation                    = "policy_publish"
+	policySimulateOperation                   = "policy_simulate"
+	policyReadOperation                       = "policy_read"
+	policyExplainOperation                    = "policy_explain"
+	accessGraphListOperation                  = "access_graph_list"
+	policyApprovalRequestOperation            = "policy_approval_request"
+	policyApprovalListOperation               = "policy_approval_list"
+	policyApprovalGetOperation                = "policy_approval_get"
+	policyApprovalApproveOperation            = "policy_approval_approve"
+	resourceCreateOperation                   = "resource_create"
+	resourceGetOperation                      = "resource_get"
+	resourceListOperation                     = "resource_list"
+	resourceGroupCreateOperation              = "resource_group_create"
+	resourceGroupGetOperation                 = "resource_group_get"
+	resourceGroupListOperation                = "resource_group_list"
+	resourceSuspendOperation                  = "resource_suspend"
+	resourceResumeOperation                   = "resource_resume"
+	resourceDeleteOperation                   = "resource_delete"
+	resourceGroupSuspendOperation             = "resource_group_suspend"
+	resourceGroupResumeOperation              = "resource_group_resume"
+	resourceGroupDeleteOperation              = "resource_group_delete"
+	resourceRebindPreviewOperation            = "resource_rebind_preview"
+	resourceRebindOperation                   = "resource_rebind"
+	resourceGroupReplacePreviewOperation      = "resource_group_replace_preview"
+	resourceGroupReplaceOperation             = "resource_group_replace"
+	resourceAuthorityChangePreviewOperation   = "resource_authority_change_preview"
+	resourceAuthorityChangeRequestOperation   = "resource_authority_change_request"
+	resourceAuthorityChangeConfirmOperation   = "resource_authority_change_confirm"
+	shareOfferCreateOperation                 = "share_offer_create"
+	shareOfferGetOperation                    = "share_offer_get"
+	shareOfferListOperation                   = "share_offer_list"
+	shareOfferAcceptOperation                 = "share_offer_accept"
+	shareOfferRejectOperation                 = "share_offer_reject"
+	shareOfferRevokeOperation                 = "share_offer_revoke"
+	shareContractRevokeOperation              = "share_contract_revoke"
+	shareContractActivateOperation            = "share_contract_activate"
+	shareContractGetOperation                 = "share_contract_get"
+	shareContractServiceNamesGetOperation     = "share_contract_service_names_get"
+	shareContractServiceNamesReplaceOperation = "share_contract_service_names_replace"
+	shareContractServiceNameUseOperation      = "share_contract_service_name_use"
+	unknownManagementOperation                = "unknown"
+	maximumManagementBodyBytes                = 64 * 1024
+	maximumManagementRequests                 = 4096
+	minimumManagementTimeout                  = 100 * time.Millisecond
+	maximumManagementTimeout                  = 30 * time.Second
 )
 
 var (
@@ -277,6 +280,9 @@ type ManagementHandlerOptions struct {
 	ServiceNames ServiceNameChecker
 	// OfferServiceNames reads the service names of an offer; nil shows none.
 	OfferServiceNames OfferServiceNameReader
+	// ContractServiceNames reads, replaces and uses the service names of a
+	// running share; nil answers those routes unavailable.
+	ContractServiceNames ContractServiceNameManager
 	// SiteRouterObservations, when set, adds each router's health of the
 	// Site and its route enforcement to one Site's read.
 	SiteRouterObservations distribution.ObservationLoader
@@ -360,6 +366,7 @@ type ManagementHandler struct {
 	dnsZones                  DNSZoneManager
 	serviceNames              ServiceNameChecker
 	offerServiceNames         OfferServiceNameReader
+	contractServiceNames      ContractServiceNameManager
 	siteRouterObservations    distribution.ObservationLoader
 	siteRouterUse             SiteRouterUseCounter
 	exitNodeUse               ExitNodeUseCounter
@@ -446,6 +453,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		dnsZones:                  options.DNSZones,
 		serviceNames:              options.ServiceNames,
 		offerServiceNames:         options.OfferServiceNames,
+		contractServiceNames:      options.ContractServiceNames,
 		siteRouterObservations:    options.SiteRouterObservations,
 		siteRouterUse:             options.SiteRouterUse,
 		exitNodeUse:               options.ExitNodeUse,
