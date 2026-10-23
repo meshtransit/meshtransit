@@ -189,9 +189,9 @@ func (h *NRPTHost) syncSearchList(domains []string) {
 		return
 	}
 	h.search, h.searchSet, h.searchFailed = slices.Clone(domains), true, false
-	if len(domains) != 0 && !h.searchWarned && machineSearchListSet() {
+	if len(domains) != 0 && !h.searchWarned && policySearchListSet() {
 		h.searchWarned = true
-		h.logger.Warn("this machine sets its own DNS search list, so Windows does not use MeshTransit's: " +
+		h.logger.Warn("Group Policy sets this machine's DNS search list, so Windows does not use MeshTransit's: " +
 			"short mesh names resolve only in full")
 	}
 }
