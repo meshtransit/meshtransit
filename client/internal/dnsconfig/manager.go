@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"meshtransit.net/client/internal/networkmap"
@@ -39,6 +40,17 @@ type Manager struct {
 	current  Plan
 	closed   bool
 	logger   *slog.Logger
+	// off is root's choice to keep the host's own DNS (DNS design D5b);
+	// last is the map last applied, applied again when it changes, and
+	// reapplied learns of that.
+	off       atomic.Bool
+	keeping   atomic.Bool // the last map left the host its own DNS
+	last      *networkmap.Snapshot
+	reapplied func(networkmap.Snapshot, error)
+	// appliedOff is the choice the last successful apply followed;
+	// reapplying is set while a change of choice applies the last map.
+	appliedOff bool
+	reapplying bool
 }
 
 // SetLogger reports, from now on, routes from control a plan ignored.
@@ -67,16 +79,27 @@ func (m *Manager) Apply(ctx context.Context, snapshot networkmap.Snapshot) (bool
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	plan, err := Compile(snapshot)
-	if err != nil {
-		return false, err
-	}
-
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
 		return false, ErrClosed
 	}
+	kept := snapshot
+	m.last = &kept
+
+	return m.applyLocked(ctx, snapshot)
+}
+
+// applyLocked is Apply with m.mu held.
+func (m *Manager) applyLocked(ctx context.Context, snapshot networkmap.Snapshot) (bool, error) {
+	plan, err := Compile(snapshot)
+	if err != nil {
+		return false, err
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	off := m.off.Load()
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -85,8 +108,26 @@ func (m *Manager) Apply(ctx context.Context, snapshot networkmap.Snapshot) (bool
 			"routes", plan.IgnoredRoutes)
 	}
 	previous := clonePlan(m.current)
+	keeping := plan.Enabled && off && plan.Exit == nil
+	m.keeping.Store(keeping)
 	if !plan.Enabled {
-		return false, m.disableLocked(ctx, previous, plan)
+		err := m.disableLocked(ctx, previous, plan)
+		if err == nil {
+			m.appliedOff = off
+		}
+		return false, err
+	}
+	if keeping {
+		// The host keeps its own DNS; the mesh's names are still answered
+		// on the resolver's address for whoever asks it.
+		if err := m.host.Apply(ctx, Plan{}); err != nil {
+			return false, fmt.Errorf("restoring host dns: %w", err)
+		}
+		if err := m.resolver.Apply(ctx, clonePlan(plan)); err != nil {
+			return false, fmt.Errorf("configuring local dns resolver: %w", err)
+		}
+		m.current, m.appliedOff = Plan{}, off
+		return false, nil
 	}
 
 	if err := m.resolver.Apply(ctx, clonePlan(plan)); err != nil {
@@ -101,9 +142,59 @@ func (m *Manager) Apply(ctx context.Context, snapshot networkmap.Snapshot) (bool
 			wrapRollbackError("local resolver", rollbackErr),
 		)
 	}
-	m.current = clonePlan(plan)
+	m.current, m.appliedOff = clonePlan(plan), off
 
 	return true, nil
+}
+
+// SetUse sets root's choice (on by default): off, the host keeps its own
+// DNS unless an exit node carries the Internet, whose kill switch admits no
+// other DNS. While the last map was applied under the other choice, it is
+// applied again, the newest map under the lock, so an older one never lands
+// last; a failure is tried again on the next call.
+func (m *Manager) SetUse(on bool) {
+	if m == nil {
+		return
+	}
+	m.off.Store(!on)
+	m.mu.Lock()
+	due := m.last != nil && !m.closed && !m.reapplying && m.appliedOff != !on
+	if due {
+		m.reapplying = true
+	}
+	reapplied := m.reapplied
+	m.mu.Unlock()
+	if !due {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), rollbackTimeout)
+		defer cancel()
+		m.mu.Lock()
+		var snapshot networkmap.Snapshot
+		var err error
+		applied := m.last != nil && !m.closed
+		if applied {
+			snapshot = *m.last
+			_, err = m.applyLocked(ctx, snapshot)
+		}
+		m.reapplying = false
+		m.mu.Unlock()
+		if applied && reapplied != nil {
+			reapplied(snapshot, err)
+		}
+	}()
+}
+
+// UsesMeshDNS reports whether MeshTransit answers the host's names: not
+// when root turned it off, unless an exit node is in use.
+func (m *Manager) UsesMeshDNS() bool { return m == nil || !m.keeping.Load() }
+
+// OnReapply sets what learns of applying the last map again after SetUse.
+func (m *Manager) OnReapply(reapplied func(networkmap.Snapshot, error)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reapplied = reapplied
 }
 
 func (m *Manager) disableLocked(ctx context.Context, previous, disabled Plan) error {
@@ -137,6 +228,7 @@ func (m *Manager) Reset(ctx context.Context) error {
 		return ErrClosed
 	}
 	disabled := Plan{Revision: m.current.Revision}
+	m.last = nil
 
 	return m.disableLocked(ctx, clonePlan(m.current), disabled)
 }
@@ -153,6 +245,7 @@ func (m *Manager) Close(ctx context.Context) error {
 	if m.closed {
 		return nil
 	}
+	m.last = nil
 	disabled := Plan{Revision: m.current.Revision}
 	if err := m.host.Apply(ctx, disabled); err != nil {
 		return fmt.Errorf("restoring host dns during close: %w", err)

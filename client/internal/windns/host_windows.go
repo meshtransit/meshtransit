@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 
 	"meshtransit.net/client/internal/dnsconfig"
@@ -27,6 +28,13 @@ type NRPTHost struct {
 	// dirty means a write or removal failed, so the registry may hold a rule
 	// although active is false.
 	dirty bool
+	// search is the adapter's search list as last set; searchSet whether it
+	// was set (searchlist_windows.go); searchWarned whether the machine's
+	// own search list was reported.
+	search       []string
+	searchSet    bool
+	searchFailed bool
+	searchWarned bool
 }
 
 // NewNRPTHost removes any MeshTransit rule a previous run left behind.
@@ -40,8 +48,11 @@ func NewNRPTHost(endpoint dnsconfig.EndpointSource, logger *slog.Logger) (*NRPTH
 	if err := removeRules(); err != nil {
 		return nil, fmt.Errorf("windns: removing a stale rule: %w", err)
 	}
+	host := &NRPTHost{endpoint: endpoint, logger: logger}
+	// A search list a previous run left on the adapter goes too.
+	host.syncSearchList(nil)
 
-	return &NRPTHost{endpoint: endpoint, logger: logger}, nil
+	return host, nil
 }
 
 // Apply installs the rule for an enabled plan, or removes it for a disabled
@@ -64,6 +75,7 @@ func (h *NRPTHost) Apply(ctx context.Context, plan dnsconfig.Plan) error {
 		h.current = Rule{}
 		h.active = false
 		h.dirty = false
+		h.syncSearchList(nil)
 
 		return nil
 	}
@@ -78,6 +90,8 @@ func (h *NRPTHost) Apply(ctx context.Context, plan dnsconfig.Plan) error {
 	if h.active && h.current.Equal(rule) {
 		intact, err := ruleIntact(rule)
 		if intact {
+			h.syncSearchList(plan.SearchDomains)
+
 			return nil
 		}
 		// A missing or unreadable copy is written again in full.
@@ -100,6 +114,7 @@ func (h *NRPTHost) Apply(ctx context.Context, plan dnsconfig.Plan) error {
 	h.current = rule
 	h.active = true
 	h.dirty = false
+	h.syncSearchList(plan.SearchDomains)
 	if groupPolicyPresent() {
 		h.logger.Warn("Group Policy NRPT is in force: MeshTransit names resolve only after machine policy with NRPT settings is applied again")
 	}
@@ -150,6 +165,35 @@ func ruleIntact(rule Rule) (bool, error) {
 	}
 
 	return true, nil
+}
+
+// syncSearchList puts domains on the adapter's search list when they
+// changed. A failure is logged and tried again with the next plan: names
+// still resolve in full.
+func (h *NRPTHost) syncSearchList(domains []string) {
+	if h.searchSet && slices.Equal(h.search, domains) {
+		return
+	}
+	exists, err := setSearchList(domains)
+	switch {
+	case err != nil:
+		if !h.searchFailed {
+			h.logger.Warn("setting the DNS search list failed; short names may not resolve", "error", err)
+		}
+		h.searchFailed, h.searchSet = true, false
+
+		return
+	case !exists:
+		h.searchSet = false
+
+		return
+	}
+	h.search, h.searchSet, h.searchFailed = slices.Clone(domains), true, false
+	if len(domains) != 0 && !h.searchWarned && machineSearchListSet() {
+		h.searchWarned = true
+		h.logger.Warn("this machine sets its own DNS search list, so Windows does not use MeshTransit's: " +
+			"short mesh names resolve only in full")
+	}
 }
 
 func rollbackError(err error) error {

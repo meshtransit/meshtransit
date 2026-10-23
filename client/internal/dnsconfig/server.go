@@ -377,5 +377,5 @@ func (s *Server) SetCaptiveWindow(open bool) {
 	if s == nil {
 		return
 	}
-	s.engine.captive.Store(open)
+	s.engine.setCaptiveWindow(open)
 }

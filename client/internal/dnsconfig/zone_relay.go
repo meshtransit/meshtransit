@@ -66,8 +66,8 @@ func relayed(resolver, via netip.AddrPort) bool {
 // zoneResolver reports a resolver of the zone gate is for: only those are
 // relayed through an exit node.
 func zoneResolver(gate trialGate, resolver netip.AddrPort) bool {
-	zone, ok := gate.(zoneGate)
-	return ok && slices.Contains(zone.own, resolver)
+	zone, ok := gate.(interface{ owns(netip.AddrPort) bool })
+	return ok && zone.owns(resolver)
 }
 
 // relayQuery is query asking the forwarder to relay to resolver: any relay

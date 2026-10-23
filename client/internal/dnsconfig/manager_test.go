@@ -192,3 +192,39 @@ func (f *fakeHost) Apply(_ context.Context, plan Plan) error {
 
 	return nil
 }
+
+// Root turning DNS off keeps the host's own DNS and reports it; on again
+// applies the map; the choice is ignored while an exit node is in use
+// (DNS design D5b).
+func TestManagerKeepsTheHostsDNSWhenTurnedOff(t *testing.T) {
+	t.Parallel()
+	calls := []string{}
+	manager, err := NewManager(&fakeResolver{calls: &calls}, &fakeHost{calls: &calls})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reapplied := make(chan error, 2)
+	manager.OnReapply(func(_ networkmap.Snapshot, err error) { reapplied <- err })
+	manager.SetUse(false) // no map yet: nothing to apply
+	configured, err := manager.Apply(t.Context(), dnsSnapshot())
+	if err != nil || configured || manager.UsesMeshDNS() {
+		t.Fatalf("off: configured %v, uses %v, %v", configured, manager.UsesMeshDNS(), err)
+	}
+	if got, want := calls, []string{"host:off", "resolver:on"}; !slices.Equal(got, want) {
+		t.Fatalf("off calls = %v, want %v", got, want)
+	}
+	calls = calls[:0]
+	manager.SetUse(true)
+	if err := <-reapplied; err != nil || !manager.UsesMeshDNS() {
+		t.Fatalf("on again: %v, uses %v", err, manager.UsesMeshDNS())
+	}
+	if got, want := calls, []string{"resolver:on", "host:on"}; !slices.Equal(got, want) {
+		t.Fatalf("on calls = %v, want %v", got, want)
+	}
+	manager.SetUse(true) // no change: nothing applied
+	select {
+	case err := <-reapplied:
+		t.Fatalf("an unchanged choice applied the map again: %v", err)
+	default:
+	}
+}

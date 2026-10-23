@@ -214,7 +214,7 @@ func (service *Service) Create(ctx context.Context, session accountsession.Sessi
 	if definition.OtherNames == "" {
 		definition.OtherNames = OtherForward
 	}
-	domain, class, err := ParseDomain(definition.Domain, service.options.Names)
+	domain, class, err := ParseZoneDomain(definition.Domain, service.options.Names)
 	if err != nil {
 		return Result{}, err
 	}
@@ -290,6 +290,10 @@ func (service *Service) check(domain Domain, class Class, definition Definition)
 		return err
 	}
 	if domain.IsRoot() && definition.OtherNames != OtherForward {
+		return ErrInvalid
+	}
+	// A reverse zone only forwards, and is no search domain (DNS design D5c).
+	if domain.IsReverse() && (definition.OtherNames != OtherForward || definition.SearchPosition != nil) {
 		return ErrInvalid
 	}
 	if class == ClassPublic && definition.OtherNames == OtherNXDomain {

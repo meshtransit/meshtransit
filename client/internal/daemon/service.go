@@ -1102,6 +1102,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			exitHealth = make(chan controlplane.RouteExitHealth)
 			go watchExitHealth(streamCtx, s.exitNodeStatus, routeHealthPoll, exitHealth)
 		}
+		if controller, ok := s.dns.(dnsSwitch); ok && s.loadRouteSettings != nil && s.routeSettingsPath != "" {
+			go watchDNSSwitch(streamCtx, s.loadRouteSettings, s.routeSettingsPath, routeOfferPoll, controller)
+		}
 		if s.enableSubnetRouter || s.enableExitNode {
 			hostOffers = make(chan controlplane.HostOffer)
 			go watchRouteOffer(streamCtx, s.loadRouteSettings, s.routeSettingsPath, routeOfferPoll, s.logger,

@@ -72,7 +72,8 @@ func (service *Service) ApplyNames(ctx context.Context, session accountsession.S
 	if err != nil {
 		return NameResult{}, err
 	}
-	if stored.Zone.Domain.IsRoot() {
+	// The root zone and reverse zones (DNS design D5c) hold no names.
+	if stored.Zone.Domain.IsRoot() || stored.Zone.Domain.IsReverse() {
 		return NameResult{}, ErrInvalid
 	}
 	canonical := make([]NameOperation, 0, len(operations))

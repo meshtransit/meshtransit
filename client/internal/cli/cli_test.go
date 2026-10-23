@@ -786,6 +786,7 @@ func TestRun_UsageError(t *testing.T) {
 }
 
 type fakeClient struct {
+	dnsQuery        localapi.DNSQuery
 	status          localapi.Status
 	profiles        localapi.Profiles
 	created         localapi.Profile
@@ -1003,3 +1004,34 @@ func TestFormatCaptive(t *testing.T) {
 }
 
 func (*fakeClient) CheckCaptiveWindow(context.Context) error { return nil }
+
+func (client *fakeClient) QueryDNS(_ context.Context, name, recordType string) (localapi.DNSQuery, error) {
+	if client.dnsQuery.Name == "" {
+		return localapi.DNSQuery{}, errors.New("no DNS query in this test")
+	}
+	query := client.dnsQuery
+	query.Name, query.Type = name, recordType
+	return query, nil
+}
+
+func TestDNSQueryShowsThePathAndTheAnswer(t *testing.T) {
+	t.Parallel()
+	client := &fakeClient{dnsQuery: localapi.DNSQuery{
+		Name: "x", Path: "root_zone", Zone: ".", Resolvers: []localapi.DNSQueryResolver{
+			{Address: "9.9.9.9:53", ViaExit: true}, {Address: "1.1.1.1:53", Skipped: true},
+		}, RCode: "NOERROR", Answers: []string{"93.184.216.34"}, ElapsedMillis: 12,
+	}}
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	code := runDNS(t.Context(), []string{"query", "www.example.org"}, stdout, stderr, false, client)
+	want := "Name: www.example.org A\nAsked: the root DNS zone\n" +
+		"When its resolvers do not answer: fails closed: no other DNS answers\n" +
+		"Resolver: 9.9.9.9:53 (through the exit node)\n" +
+		"Resolver: 1.1.1.1:53 (skipped: it stopped answering, tried again in 30 s)\n" +
+		"Answer: NOERROR (12 ms)\n  93.184.216.34\n"
+	if code != 0 || stdout.String() != want {
+		t.Fatalf("code %d, stdout:\n%s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+	if code := runDNS(t.Context(), []string{"lookup", "x"}, stdout, stderr, false, client); code != 2 {
+		t.Fatalf("bad usage exit %d", code)
+	}
+}

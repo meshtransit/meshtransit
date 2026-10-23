@@ -115,6 +115,16 @@ func (e *resolverEngine) networkTargets() []netip.AddrPort {
 	return e.network.resolvers(e.networkResolvers, generation)
 }
 
+// setCaptiveWindow opens or closes a captive portal window. Resolvers that
+// failed while it was open (behind the portal) are asked again at once once
+// it closes, not after their cooldown (TD-CLI-66 L7).
+func (e *resolverEngine) setCaptiveWindow(open bool) {
+	if e.captive.Swap(open) && !open {
+		e.breaker.reset()
+		e.relayBreaker.reset()
+	}
+}
+
 // exitPending reports a host routing the Internet into the mesh before the
 // plan knows the exit node's resolvers: names the exit node would answer
 // get none, and none goes to a resolver on the Internet or the network.
@@ -612,7 +622,7 @@ func forwardQuery(
 	transport string,
 	gate trialGate,
 ) ([]byte, error) {
-	return forwardVia(ctx, query, question, resolvers, transport, gate, netip.AddrPort{})
+	return forwardWithin(ctx, query, question, resolvers, transport, gate, netip.AddrPort{}, resolverAttemptTimeout)
 }
 
 // forwardVia is forwardQuery asking every Internet resolver through via,
@@ -628,7 +638,24 @@ func forwardVia(
 	gate trialGate,
 	via netip.AddrPort,
 ) ([]byte, error) {
+	return forwardWithin(ctx, query, question, resolvers, transport, gate, via, resolverAttemptTimeout)
+}
+
+// forwardWithin is forwardVia giving each resolver attempt at most.
+func forwardWithin(
+	ctx context.Context,
+	query []byte,
+	question dnsmessage.Question,
+	resolvers []netip.AddrPort,
+	transport string,
+	gate trialGate,
+	via netip.AddrPort,
+	attemptTimeout time.Duration,
+) ([]byte, error) {
 	forwarded := append([]byte(nil), query...)
+	if transport == "udp" {
+		forwarded = clampEDNSSize(forwarded)
+	}
 	originalID := binary.BigEndian.Uint16(forwarded[:2])
 	var randomID [2]byte
 	if _, err := io.ReadFull(rand.Reader, randomID[:]); err != nil {
@@ -645,10 +672,10 @@ func forwardVia(
 		if (viaExit && oldExit) || (gate != nil && !gate.allow(resolver)) {
 			continue
 		}
-		attempt, asked, addedOPT := forwarded, resolver, false
+		attemptQuery, asked, addedOPT := forwarded, resolver, false
 		if viaExit {
 			var err error
-			if attempt, addedOPT, err = relayQuery(forwarded, resolver); err != nil {
+			if attemptQuery, addedOPT, err = relayQuery(forwarded, resolver); err != nil {
 				if gate != nil {
 					gate.release(resolver)
 				}
@@ -657,8 +684,11 @@ func forwardVia(
 			}
 			asked = via
 		}
-		attemptCtx, cancel := context.WithTimeout(ctx, resolverAttemptTimeout)
-		response, err := exchangeDNS(attemptCtx, attempt, asked, transport)
+		attemptCtx, cancel := context.WithTimeout(ctx, attemptTimeout)
+		response, err := exchangeDNS(attemptCtx, attemptQuery, asked, transport)
+		// An attempt cut short to share a budget (TD-CLI-66 L4) that runs
+		// out says nothing of a slow resolver.
+		shortened := attemptTimeout < resolverAttemptTimeout && errors.Is(attemptCtx.Err(), context.DeadlineExceeded)
 		cancel()
 		if err == nil {
 			err = validateForwardResponse(response, binary.BigEndian.Uint16(randomID[:]), question)
@@ -678,6 +708,8 @@ func forwardVia(
 			switch {
 			case viaExit && errors.Is(err, errRelayNoAnswer):
 				gate.record(resolver, err)
+			case err != nil && !answeredWith(err) && shortened:
+				gate.release(resolver)
 			case viaExit && err != nil && !answeredWith(err):
 				// The exit node did not ask X (not allowed, busy, its way
 				// out down, an old exit node) or could not be reached:
@@ -715,6 +747,35 @@ func forwardVia(
 	}
 
 	return nil, errors.Join(failures...)
+}
+
+// forwardUDPSize is the largest UDP answer a forwarded question asks for
+// (DNS flag day 2020): larger answers come truncated and are asked again
+// over TCP, rather than fragmented on the way (DNS design D5d).
+const forwardUDPSize = 1232
+
+// clampEDNSSize lowers the UDP size a question's EDNS asks for to
+// forwardUDPSize; any other question is left as it is.
+func clampEDNSSize(query []byte) []byte {
+	var message dnsmessage.Message
+	if message.Unpack(query) != nil {
+		return query
+	}
+	changed := false
+	for index, additional := range message.Additionals {
+		if additional.Header.Type == dnsmessage.TypeOPT && additional.Header.Class > forwardUDPSize {
+			message.Additionals[index].Header.Class = forwardUDPSize
+			changed = true
+		}
+	}
+	if !changed {
+		return query
+	}
+	packed, err := message.Pack()
+	if err != nil {
+		return query
+	}
+	return packed
 }
 
 func exchangeDNS(

@@ -92,6 +92,29 @@ type Netcheck struct {
 	Cloud       *CloudStatus       `json:"cloud,omitempty"`
 }
 
+// DNSQuery is where meshd's resolver sent a diagnostic question and what came
+// back (meshctl dns query).
+type DNSQuery struct {
+	APIVersion    string             `json:"api_version"`
+	Name          string             `json:"name"`
+	Type          string             `json:"type"`
+	Path          string             `json:"path"`
+	Zone          string             `json:"zone,omitempty"`
+	FailOpen      bool               `json:"fail_open,omitempty"`
+	Resolvers     []DNSQueryResolver `json:"resolvers,omitempty"`
+	RCode         string             `json:"rcode,omitempty"`
+	Answers       []string           `json:"answers,omitempty"`
+	ElapsedMillis int64              `json:"elapsed_ms"`
+	Error         string             `json:"error,omitempty"`
+}
+
+// DNSQueryResolver is one resolver a diagnostic question may go to.
+type DNSQueryResolver struct {
+	Address string `json:"address"`
+	ViaExit bool   `json:"via_exit,omitempty"`
+	Skipped bool   `json:"skipped,omitempty"`
+}
+
 // PathStatus summarizes the selected transport for visible peers.
 type PathStatus struct {
 	Available                 bool   `json:"available"`

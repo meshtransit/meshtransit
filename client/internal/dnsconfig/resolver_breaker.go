@@ -45,21 +45,36 @@ func newResolverBreaker(now func() time.Time) *resolverBreaker {
 // allow reports whether to ask resolver now. Each true is a trial the
 // caller must end with record.
 func (b *resolverBreaker) allow(resolver netip.AddrPort) bool {
+	allowed, _ := b.allowTrial(resolver)
+	return allowed
+}
+
+// allowTrial is allow, and reports whether the resolver is open and this is
+// the one trial after its cooldown.
+func (b *resolverBreaker) allowTrial(resolver netip.AddrPort) (allowed, trial bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	state, found := b.states[resolver]
 	if !found || state.openUntil.IsZero() {
-		return true
+		return true, false
 	}
 	now := b.now()
 	if now.Before(state.openUntil) {
-		return false
+		return false, false
 	}
 	if !state.probeAt.IsZero() && now.Sub(state.probeAt) < breakerProbeLimit {
-		return false
+		return false, false
 	}
 	state.probeAt, state.touched = now, now
-	return true
+	return true, true
+}
+
+// reset forgets every failure: what was learned no longer holds (a captive
+// portal window closed).
+func (b *resolverBreaker) reset() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	clear(b.states)
 }
 
 // record ends one trial of resolver: nil closes its breaker, an error counts

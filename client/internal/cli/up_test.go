@@ -287,3 +287,7 @@ func TestUpStopsWhenTheServerKeyDoesNotMatch(t *testing.T) {
 }
 
 func (*upFakeClient) CheckCaptiveWindow(context.Context) error { return nil }
+
+func (*upFakeClient) QueryDNS(context.Context, string, string) (localapi.DNSQuery, error) {
+	return localapi.DNSQuery{}, nil
+}

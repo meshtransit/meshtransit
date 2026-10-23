@@ -17,6 +17,7 @@ import (
 	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/daemon"
 	"meshtransit.net/client/internal/dataplane"
+	"meshtransit.net/client/internal/dnsconfig"
 	"meshtransit.net/client/internal/profile"
 	"meshtransit.net/client/internal/relay"
 	"meshtransit.net/client/internal/runtimehealth"
@@ -47,6 +48,7 @@ type service interface {
 	CheckCaptiveWindow()
 	Peers(context.Context) ([]daemon.PeerView, error)
 	PingPeer(context.Context, string) (daemon.PeerPing, error)
+	QueryDNS(context.Context, string, string) (dnsconfig.QueryReport, error)
 }
 
 // Server serves the local control API with bounded HTTP resources.
@@ -177,6 +179,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/v1/exit/captive/check", s.handleCaptiveCheck)
 	mux.HandleFunc("/v1/peers", s.handlePeers)
 	mux.HandleFunc("/v1/peers/{id}/ping", s.handlePeerPing)
+	mux.HandleFunc("/v1/dns/query", s.handleDNSQuery)
 
 	bounded := http.MaxBytesHandler(mux, maxRequestBodyBytes)
 

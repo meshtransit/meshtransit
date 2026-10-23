@@ -460,7 +460,7 @@ func (e *resolverEngine) askOutside(ctx context.Context, plan Plan, name string,
 		if !captiveWindow {
 			via = e.relayVia(plan)
 		}
-		gate = e.zoneGate(route.Resolvers, via)
+		gate = e.zoneGate(route.Resolvers, via).probing(zoneDomain(route))
 		if route.FailOpen {
 			fallback, _, _ = e.failOpenTargets(plan, question)
 		}

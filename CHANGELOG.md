@@ -5,6 +5,22 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- DNS D5 (client): `meshctl dns query NAME [TYPE]` shows where MeshTransit
+  DNS sends a name (mesh, zone, root zone, exit node, network) with its
+  resolvers, through the exit node or skipped, and the answer. Windows puts
+  the Network's search domains on the MeshTransit adapter, so short names
+  resolve (a machine or Group Policy search list still wins). Root can turn
+  MeshTransit DNS off on a desktop host with `routes dns off` (kept while an
+  exit node is in use); Core sees the Device turned it off. A zone's
+  resolver that stopped answering is tried again by the node's own question
+  after its cooldown, not an application's; a zone that fails open gives
+  each resolver a share of its time; resolvers that failed during a captive
+  portal window are asked again once it closes; forwarded questions ask
+  for at most 1232 bytes over UDP.
+- DNS D5c (Core, Console): a zone may forward the reverse names (PTR) of an
+  address range: `10.in-addr.arpa`, or an IPv6 range by nibbles, typed in
+  the Console as `10.0.0.0/8`. Reverse zones only forward, hold no names
+  and are no search domains; the mesh's own ranges cannot be covered.
 - DNS through an exit node, by Device Groups (DNS design D1c.5): the exit
   node relays to the resolvers of a zone sent to some Device Groups only for
   the pool's consumers in those Groups (`ServedExit.dns_relay_scopes`); an

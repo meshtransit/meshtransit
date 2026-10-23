@@ -99,6 +99,16 @@ func ParseDomain(input string, names Names) (Domain, Class, error) {
 	return domain, class, nil
 }
 
+// ParseZoneDomain is ParseDomain, and also takes a reverse domain under
+// in-addr.arpa or ip6.arpa a zone may forward (DNS design D5c).
+func ParseZoneDomain(input string, names Names) (Domain, Class, error) {
+	canonical := Domain(strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input), ".")))
+	if canonical.IsReverse() && hostname(string(canonical)) {
+		return parseReverse(canonical)
+	}
+	return ParseDomain(input, names)
+}
+
 // classify finds a domain's class: private under a top-level domain ICANN
 // does not delegate (internal, lan, corp) and under home.arpa; public under
 // one ICANN delegates, unless it is itself a public suffix.

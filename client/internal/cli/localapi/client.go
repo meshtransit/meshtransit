@@ -283,6 +283,20 @@ func (c *Client) RefreshNAT(ctx context.Context) (Netcheck, error) {
 	return response, nil
 }
 
+// QueryDNS asks meshd's resolver a diagnostic question.
+func (c *Client) QueryDNS(ctx context.Context, name, recordType string) (DNSQuery, error) {
+	response := DNSQuery{}
+	request := map[string]string{"name": name, "type": recordType}
+	if err := c.do(ctx, http.MethodPost, "/v1/dns/query", request, http.StatusOK, &response); err != nil {
+		return DNSQuery{}, err
+	}
+	if response.APIVersion != apiVersion {
+		return DNSQuery{}, fmt.Errorf("localapi: unsupported api version %q", response.APIVersion)
+	}
+
+	return response, nil
+}
+
 func (c *Client) do(
 	ctx context.Context,
 	method string,

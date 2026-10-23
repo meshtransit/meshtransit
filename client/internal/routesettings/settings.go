@@ -88,6 +88,11 @@ type Settings struct {
 	// ExitAllowLAN) root's: the meshtransit group may no longer change them
 	// through the helper (package operator). A managed host turns it on.
 	OperatorsOff bool
+	// DNSOff turns MeshTransit DNS off on this host (DNS design D5b): the
+	// host keeps its own DNS, and Core sees the Device turned it off. It is
+	// ignored while the host uses an exit node, whose kill switch admits no
+	// other DNS.
+	DNSOff bool
 }
 
 // ExitUseAuto picks the nearest pool Core grants and keeps it.
@@ -110,6 +115,7 @@ type document struct {
 	ExitAllowManaged            bool     `json:"exit_allow_managed,omitempty"`
 	ExitCaptiveOff              bool     `json:"exit_captive_off,omitempty"`
 	OperatorsOff                bool     `json:"operators_off,omitempty"`
+	DNSOff                      bool     `json:"dns_off,omitempty"`
 }
 
 // ExitConntrackLimit is the connections one consumer may hold through this
@@ -218,7 +224,7 @@ func Decode(encoded []byte) (Settings, error) {
 		RouterMode: value.RouterMode, ExitMode: value.ExitMode, ExitSMTPAllowed: value.ExitSMTPAllowed,
 		ExitConntrackPerConsumerMax: value.ExitConntrackPerConsumerMax, ExitMaxConsumers: value.ExitMaxConsumers,
 		ExitUse: value.ExitUse, ExitAllowLAN: value.ExitAllowLAN, ExitAllowManaged: value.ExitAllowManaged,
-		ExitCaptiveOff: value.ExitCaptiveOff, OperatorsOff: value.OperatorsOff,
+		ExitCaptiveOff: value.ExitCaptiveOff, OperatorsOff: value.OperatorsOff, DNSOff: value.DNSOff,
 	}
 	for _, text := range value.AdvertiseRoutes {
 		prefix, err := netip.ParsePrefix(text)
@@ -245,7 +251,7 @@ func Encode(settings Settings) ([]byte, error) {
 		ExitMode: settings.ExitMode, ExitSMTPAllowed: settings.ExitSMTPAllowed,
 		ExitConntrackPerConsumerMax: settings.ExitConntrackPerConsumerMax, ExitMaxConsumers: settings.ExitMaxConsumers,
 		ExitUse: settings.ExitUse, ExitAllowLAN: settings.ExitAllowLAN, ExitAllowManaged: settings.ExitAllowManaged,
-		ExitCaptiveOff: settings.ExitCaptiveOff, OperatorsOff: settings.OperatorsOff,
+		ExitCaptiveOff: settings.ExitCaptiveOff, OperatorsOff: settings.OperatorsOff, DNSOff: settings.DNSOff,
 	}
 	for index, prefix := range settings.AdvertiseRoutes {
 		value.AdvertiseRoutes[index] = prefix.String()

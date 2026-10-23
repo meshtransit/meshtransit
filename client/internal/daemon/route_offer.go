@@ -58,3 +58,28 @@ func watchRouteOffer(ctx context.Context, load func(string) (routesettings.Setti
 		}
 	}
 }
+
+// dnsSwitch is a DNS controller root can turn off on the host (DNS design
+// D5b).
+type dnsSwitch interface {
+	SetUse(on bool)
+}
+
+// watchDNSSwitch applies root's DNS choice from the host's settings, read
+// every interval; an unreadable file keeps the last choice.
+func watchDNSSwitch(ctx context.Context, load func(string) (routesettings.Settings, error), path string,
+	interval time.Duration, controller dnsSwitch,
+) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if settings, err := load(path); err == nil {
+			controller.SetUse(!settings.DNSOff)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}

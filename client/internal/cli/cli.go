@@ -49,6 +49,7 @@ type DaemonClient interface {
 	RefreshNAT(context.Context) (localapi.Netcheck, error)
 	ApproveExitNodes(context.Context, []string) (localapi.ExitApproval, error)
 	CheckCaptiveWindow(context.Context) error
+	QueryDNS(context.Context, string, string) (localapi.DNSQuery, error)
 }
 
 // ClientFactory constructs the local daemon client after global flags are parsed.
@@ -159,6 +160,9 @@ func Run(
 	case "logout", "down":
 		// meshd first stops the control session; logout then waits for Core.
 		timeout = max(timeout, connectionTimeout)
+	case "dns":
+		// A zone whose resolvers do not answer takes its whole budget.
+		timeout = max(timeout, dnsQueryTimeout)
 	}
 	client, err := options.NewClient(global.socketPath, timeout)
 	if err != nil {
@@ -190,6 +194,8 @@ func Run(
 		return runIdentity(ctx, commandArgs[1:], stdout, stderr, global.isJSON, client)
 	case "netcheck":
 		return runNetcheck(ctx, commandArgs[1:], stdout, stderr, global.isJSON, client)
+	case "dns":
+		return runDNS(ctx, commandArgs[1:], stdout, stderr, global.isJSON, client)
 	case "down":
 		return runDown(ctx, commandArgs[1:], stdout, stderr, global.isJSON, client)
 	case "logout":
@@ -1145,6 +1151,10 @@ func writeRuntimeError(stderr io.Writer, err error) int {
 	return 1
 }
 
+// dnsQueryTimeout outlasts a zone's budget (5 s) and the resolver's own
+// failure, within the local API's write timeout.
+const dnsQueryTimeout = 9 * time.Second
+
 func writeUsage(writer io.Writer) {
 	_, _ = fmt.Fprintln(writer, `Usage:
   meshctl [--socket PATH] [--timeout DURATION] [--json] COMMAND
@@ -1163,6 +1173,7 @@ Commands:
   login complete                          Recover a pending browser authorization
   identity rotate-node-key                Rotate the active profile Node key
   netcheck                                Classify the NAT in front of this machine now
+  dns query NAME [TYPE]                   Ask MeshTransit DNS for a name and show where it went
   exit use POOL|auto|off                  Send this machine's Internet traffic through an Exit Pool (needs root or administrator)
   exit serve on|off                       Offer to be an exit node for other Devices (needs root or administrator)
   exit status                             Show this machine's exit choice and the exit node in use

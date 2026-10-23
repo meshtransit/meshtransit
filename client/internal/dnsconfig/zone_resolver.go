@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/netip"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -65,8 +66,14 @@ func (e *resolverEngine) resolveZone(ctx context.Context, zone zoneQuery) ([]byt
 			// directly.
 			via = e.relayVia(zone.plan)
 		}
-		response, err = forwardVia(forwardCtx, zone.query, zone.question,
-			e.byLiveness(targets, zone.route.Resolvers), zone.transport, e.zoneGate(zone.route.Resolvers, via), via)
+		ordered := e.byLiveness(targets, zone.route.Resolvers)
+		gate := e.zoneGate(zone.route.Resolvers, via).probing(zoneDomain(zone.route))
+		attempt := resolverAttemptTimeout
+		if zone.route.FailOpen {
+			attempt = attemptWithin(budget, len(ordered))
+		}
+		response, err = forwardWithin(forwardCtx, zone.query, zone.question, ordered, zone.transport, gate, via,
+			attempt)
 		cancel()
 		if err == nil {
 			return e.zoneAnswer(zone, response, captiveWindow)
@@ -119,6 +126,29 @@ func (e *resolverEngine) resolveZone(ctx context.Context, zone zoneQuery) ([]byt
 		return e.zoneFailure(zone, errors.Join(err, fallbackErr))
 	}
 	return e.zoneAnswer(zone, response, captiveFallback)
+}
+
+// minAttemptTimeout is the least one resolver of a zone is given when its
+// zone's budget is shared among several.
+const minAttemptTimeout = 500 * time.Millisecond
+
+// attemptWithin shares budget among count resolvers, so a zone that fails
+// open asks each of them before its fallback, not only the first two
+// (TD-CLI-66 L4); each still gets at most resolverAttemptTimeout.
+func attemptWithin(budget time.Duration, count int) time.Duration {
+	if count <= 1 {
+		return resolverAttemptTimeout
+	}
+	return min(resolverAttemptTimeout, max(minAttemptTimeout, budget/time.Duration(count)))
+}
+
+// zoneDomain is the domain a zone's resolvers answer for, "." for the root
+// zone.
+func zoneDomain(route Route) string {
+	if route.Suffix == "" {
+		return "."
+	}
+	return route.Suffix
 }
 
 // zoneTargets are the resolvers a zone's question goes to first, in the
@@ -230,12 +260,26 @@ type zoneGate struct {
 	engine *resolverEngine
 	own    []netip.AddrPort
 	via    netip.AddrPort
+	// zone, when set, has a resolver's trial after its cooldown made by a
+	// question of the node's own about the zone, not an application's
+	// (TD-CLI-66 L6).
+	zone string
 }
 
 // zoneGate is the gate of a zone whose resolvers are own.
 func (e *resolverEngine) zoneGate(own []netip.AddrPort, via netip.AddrPort) zoneGate {
 	return zoneGate{engine: e, own: own, via: via}
 }
+
+// probing is gate making a resolver's trial after its cooldown in the
+// background, with a question about zone.
+func (gate zoneGate) probing(zone string) zoneGate {
+	gate.zone = zone
+	return gate
+}
+
+// owns reports a resolver of the zone.
+func (gate zoneGate) owns(resolver netip.AddrPort) bool { return slices.Contains(gate.own, resolver) }
 
 func (gate zoneGate) path(resolver netip.AddrPort) (*resolverBreaker, *resolverHealthTracker) {
 	if relayed(resolver, gate.via) {
@@ -249,8 +293,59 @@ func (gate zoneGate) allow(resolver netip.AddrPort) bool {
 		return true
 	}
 	breaker, _ := gate.path(resolver)
-	return breaker.allow(resolver)
+	allowed, trial := breaker.allowTrial(resolver)
+	// A zone's only resolver carries the trial in the application's
+	// question: there is no other to answer it meanwhile.
+	if trial && gate.zone != "" && len(gate.own) > 1 {
+		// The application's question skips it; the node asks for itself.
+		go gate.engine.probeResolver(gate, resolver)
+		return false
+	}
+	return allowed
 }
+
+// probeResolver is a resolver's trial after its cooldown: the zone's SOA,
+// asked as a question of the zone would be, whose outcome closes the
+// breaker or keeps it open.
+func (e *resolverEngine) probeResolver(gate zoneGate, resolver netip.AddrPort) {
+	release := func() { gate.release(resolver) }
+	name, err := dnsName(strings.TrimSuffix(gate.zone, "."))
+	if gate.zone == "." {
+		name, err = dnsmessage.NewName(".")
+	}
+	if err != nil {
+		release()
+		return
+	}
+	question := dnsmessage.Question{Name: name, Type: dnsmessage.TypeSOA, Class: dnsmessage.ClassINET}
+	var opt dnsmessage.ResourceHeader
+	_ = opt.SetEDNS0(relayOPTSize, dnsmessage.RCodeSuccess, false)
+	query, err := (&dnsmessage.Message{
+		Header:      dnsmessage.Header{RecursionDesired: true},
+		Questions:   []dnsmessage.Question{question},
+		Additionals: []dnsmessage.Resource{{Header: opt, Body: &dnsmessage.OPTResource{}}},
+	}).Pack()
+	if err != nil {
+		release()
+		return
+	}
+	// Longer than the attempt, so a resolver that does not answer is
+	// recorded as failing, not given up.
+	ctx, cancel := context.WithTimeout(context.Background(), resolverAttemptTimeout+probeMargin)
+	defer cancel()
+	trial := gate
+	trial.zone = ""
+	_, _ = forwardVia(ctx, query, question, []netip.AddrPort{resolver}, "udp", trialOnly{trial}, gate.via)
+}
+
+// probeMargin keeps a background trial's question alive past its attempt.
+const probeMargin = 500 * time.Millisecond
+
+// trialOnly is a gate that asks its resolver whatever the breaker says: it
+// carries the trial the breaker already granted.
+type trialOnly struct{ zoneGate }
+
+func (trialOnly) allow(netip.AddrPort) bool { return true }
 
 // record ends one trial of resolver: an answer (SERVFAIL and REFUSED
 // included) closes its breaker, a failure counts against it.
