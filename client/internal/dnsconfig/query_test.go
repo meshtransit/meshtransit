@@ -53,8 +53,10 @@ func TestQueryExpandsShortNamesAndLeavesTheHostsAlone(t *testing.T) {
 	t.Parallel()
 	zone := startCountingUpstream(t, dnsmessage.RCodeSuccess, netip.MustParseAddr("10.35.0.7"), false)
 	engine := zoneEngine(t)
-	plan := Plan{Enabled: true, SearchDomains: []string{"lab.example", "corp.example"},
-		Routes: []Route{{Suffix: "corp.example", Resolvers: []netip.AddrPort{zone.address}}}}
+	plan := Plan{
+		Enabled: true, SearchDomains: []string{"lab.example", "corp.example"},
+		Routes: []Route{{Suffix: "corp.example", Resolvers: []netip.AddrPort{zone.address}}},
+	}
 	report, err := engine.query(t.Context(), plan, "wiki", "A")
 	if err != nil || report.Name != "wiki.corp.example" || report.Path != PathZone || report.RCode != "NOERROR" {
 		t.Fatalf("short name: %+v %v", report, err)
