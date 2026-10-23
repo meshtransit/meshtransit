@@ -427,7 +427,7 @@ func classifyDeviceGroupError(err error) managementError {
 			Message: "Active rules still select this Device Group. Change those rules first."}
 	case errors.Is(err, devicegroup.ErrInUseByDNS):
 		return managementError{Status: http.StatusConflict, Code: "device_group_in_use_by_dns",
-			Message: "DNS zones are sent to this Device Group. Change those zones first."}
+			Message: "DNS uses this Device Group: a DNS zone is sent to it, or its Devices keep their own DNS. Change that first."}
 	case errors.Is(err, devicegroup.ErrEdgeBudget):
 		return managementError{Status: http.StatusConflict, Code: "device_policy_edge_limit",
 			Message: "A Device in this group would reach more than 10,000 rule edges. Narrow the rules or split the group."}

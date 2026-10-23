@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"slices"
 
 	"meshtransit.net/core/internal/domain/audit"
 	"meshtransit.net/core/internal/domain/devicegroup"
@@ -161,6 +162,8 @@ func dnsSettingHash(document dnsSettingDocument) ([32]byte, error) {
 	for _, group := range document.UnmanagedGroups {
 		groups = append(groups, group.ID)
 	}
+	// By ID: renaming a group changes no setting.
+	slices.Sort(groups)
 	encoded, err := json.Marshal(struct {
 		Version         int64    `json:"version"`
 		UnmanagedGroups []string `json:"unmanaged_group_ids"`

@@ -446,3 +446,20 @@ func TestUnmanagedDevicesGetNoDNSWithoutZones(t *testing.T) {
 		t.Fatal("a Device of an unmanaged group in a Network without zones got DNS")
 	}
 }
+
+// A resolver Device does not count Devices of unmanaged groups among its
+// consumers: they never ask it (DNS design D5b).
+func TestResolverConsumersLeaveOutUnmanagedDevices(t *testing.T) {
+	t.Parallel()
+	fixture := newExitFixture(t)
+	fixture.params.DNSZones = []DNSZone{{Zone: 901, Domain: "corp.example", OtherNames: DNSOtherForward,
+		Resolvers: []DNSZoneResolver{{Device: 6, NodeID: fixture.ids[6], Eligible: true, Port: 53}}}}
+	fixture.params.Members = append(fixture.params.Members,
+		SelectorMember{Kind: SelectorDeviceGroup, Selector: 13, Device: 2})
+	before := fixture.policy(t).inner.routes.static[6]
+	fixture.params.DNSUnmanagedGroups = []int64{13}
+	after := fixture.policy(t).inner.routes.static[6]
+	if !slices.Contains(before, 2) || slices.Contains(after, 2) || len(after) != len(before)-1 {
+		t.Fatalf("resolver consumers %v, before %v", after, before)
+	}
+}

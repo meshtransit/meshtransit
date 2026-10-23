@@ -38,9 +38,8 @@ type SettingsChange struct {
 // SettingsResult is a settings change: the settings after it, and whether
 // anything changed.
 type SettingsResult struct {
-	Settings      Settings
-	Changed       bool
-	AppliesWithin int
+	Settings Settings
+	Changed  bool
 }
 
 // SettingsStore reads and changes a Network's DNS settings.

@@ -30,8 +30,11 @@ const sharedZone = "shared.mesh"
 // Plan is an immutable-by-convention DNS configuration ready for a local
 // resolver and an operating-system configurator.
 type Plan struct {
-	Revision         uint64
-	Enabled          bool
+	Revision uint64
+	Enabled  bool
+	// Configured is a map that carries DNS, perhaps none at all: Core
+	// leaves this Device's DNS to its host (DNS design D5b).
+	Configured       bool
 	DefaultResolvers []netip.AddrPort
 	// Root is the root zone (DNS design D1b): every name no route holds goes
 	// to its resolvers, with its failure mode. It is not among Routes, which
@@ -150,6 +153,7 @@ func Compile(snapshot networkmap.Snapshot) (Plan, error) {
 	}
 
 	config := snapshot.DNS
+	plan.Configured = true
 	plan.DefaultResolvers = resolverAddresses(config.Resolvers)
 	plan.FallbackResolvers = resolverAddresses(config.FallbackResolvers)
 	plan.Routes = make([]Route, 0, len(config.Routes))

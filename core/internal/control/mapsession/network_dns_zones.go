@@ -162,6 +162,18 @@ func (index *routeIndex) indexDNSZones(params NetworkPolicyParams, keysOf func(i
 // truncated there: the first entries of a sorted union come only from the
 // first entries of each list. devices is sorted.
 func (index *routeIndex) dnsConsumers(devices []int64) map[int64][]int64 {
+	// Devices of unmanaged Device Groups get no zone (DNS design D5b): they
+	// take no resolver's place within the cut.
+	unmanaged := make(map[int64]struct{})
+	for _, group := range index.unmanagedGroups {
+		for _, device := range index.members(SelectorDeviceGroup, group) {
+			unmanaged[device] = struct{}{}
+		}
+	}
+	isUnmanaged := func(device int64) bool {
+		_, found := unmanaged[device]
+		return found
+	}
 	byZone := make([][]int64, len(index.zoneList))
 	for position, zone := range index.zoneList {
 		if !slices.ContainsFunc(zone.Resolvers, func(resolver DNSZoneResolver) bool {
@@ -176,7 +188,7 @@ func (index *routeIndex) dnsConsumers(devices []int64) map[int64][]int64 {
 				if len(consumers) == index.consumers {
 					break
 				}
-				if !zone.resolves(device) {
+				if !zone.resolves(device) && !isUnmanaged(device) {
 					consumers = append(consumers, device)
 				}
 			}
@@ -185,7 +197,9 @@ func (index *routeIndex) dnsConsumers(devices []int64) map[int64][]int64 {
 				consumers = append(consumers, index.members(SelectorDeviceGroup, group)...)
 			}
 			slices.Sort(consumers)
-			consumers = slices.DeleteFunc(slices.Compact(consumers), zone.resolves)
+			consumers = slices.DeleteFunc(slices.Compact(consumers), func(device int64) bool {
+				return zone.resolves(device) || isUnmanaged(device)
+			})
 		}
 		byZone[position] = consumers[:min(len(consumers), index.consumers)]
 	}
@@ -224,7 +238,7 @@ func (zone DNSZone) resolves(device int64) bool {
 
 // receives reports whether the zone is sent to device at now.
 func (inner *networkPolicy) receives(zone DNSZone, device int64, now time.Time) bool {
-	if zone.resolves(device) {
+	if zone.resolves(device) || inner.dnsUnmanaged(device, now) {
 		return false
 	}
 	if len(zone.Groups) == 0 {

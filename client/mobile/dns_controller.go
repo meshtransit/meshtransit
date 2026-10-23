@@ -208,7 +208,12 @@ func (h *mobileDNSHost) Apply(ctx context.Context, plan dnsconfig.Plan) error {
 	if !plan.Enabled {
 		// A map without DNS, or the runtime stopping: the interface keeps
 		// its DNS rather than being made again just before it closes, and
-		// the resolver, without a plan, asks the networks' DNS servers.
+		// the resolver, without a plan, asks the networks' DNS servers. A
+		// map that carries empty DNS (the Device is unmanaged, D5b) takes
+		// it off the interface: the phone keeps its own DNS.
+		if plan.Configured {
+			return h.opener.setDNS(ctx, mobileDNS{})
+		}
 		return nil
 	}
 	h.opener.mu.Lock()
