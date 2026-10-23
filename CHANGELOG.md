@@ -5,6 +5,10 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: the device approval page (`/register/v1/…`) asks a browser whose
+  Console Session ended to sign in again, instead of answering Not Found;
+  a live Session the link is not for still gets Not Found, and a Session
+  store that cannot answer gets 503.
 - Client: a shared Device whose alias is expired, invalid or colliding is
   left out of the map on its own, and the log says how many were; before,
   it failed the whole map and the data plane, so a phone waking with an

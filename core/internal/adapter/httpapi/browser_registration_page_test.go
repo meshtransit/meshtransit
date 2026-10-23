@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/base64"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -266,6 +267,52 @@ func TestBrowserRegistrationPageApprovesOnlyWithCurrentSSOAndCSRF(t *testing.T) 
 				t.Fatalf("invalid %s approved: status=%d calls=%d", test.name, denied.Code, approval.calls)
 			}
 		})
+	}
+}
+
+// A browser that still holds a Console Session that ended is asked to sign
+// in again, not told the device's link does not exist (TD-CORE-85); a live
+// Session that cannot see the link still gets Not Found.
+func TestBrowserRegistrationPageAsksAnEndedSessionToSignIn(t *testing.T) {
+	t.Parallel()
+	page, reader, _ := browserRegistrationPageFixture(t)
+	management, sessions := newBrowserManagementFixture(t)
+	token, err := accountsession.ParseToken(managementTokenFixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := page.keys.ActiveDigest(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Storage finds no link for a Session that ended, nor for a live one
+	// the link is not for.
+	reader.want, reader.found = digest, false
+	page, err = NewBrowserRegistrationPage(BrowserRegistrationPageOptions{
+		Origin: management.origin, SessionKeys: page.keys,
+		Choices: reader, Management: management, Approval: &browserPageApprovalFake{wantDigest: digest},
+		Timeout: 5 * time.Second, Concurrency: 8,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := browserRegistrationPagePrefix + browserPageTestToken
+	sessions.sessionRevoked = true
+	ended := serveBrowserRegistrationPage(page, path, token.Encoded())
+	if ended.Code != http.StatusOK ||
+		!strings.Contains(ended.Body.String(), `id="registration-signin" data-path="`+path+`"`) ||
+		strings.Contains(ended.Body.String(), "<form") {
+		t.Fatalf("ended Session landing = (%d, %q)", ended.Code, ended.Body.String())
+	}
+	sessions.sessionRevoked = false
+	if missing := serveBrowserRegistrationPage(page, path, token.Encoded()); missing.Code != http.StatusNotFound {
+		t.Fatalf("live Session without the link = %d", missing.Code)
+	}
+	// A store that cannot say is no reason to sign in: the Console would
+	// send the browser straight back, and round it goes.
+	sessions.sessionUnavailable = errors.New("session store down")
+	if unavailable := serveBrowserRegistrationPage(page, path, token.Encoded()); unavailable.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unavailable Session store = %d", unavailable.Code)
 	}
 }
 

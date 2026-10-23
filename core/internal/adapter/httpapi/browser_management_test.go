@@ -41,6 +41,7 @@ type browserManagementFixture struct {
 	approvalGet, approvalList                       int
 	capabilityReads                                 int
 	sessionRevoked                                  bool
+	sessionUnavailable                              error
 	logoutAll                                       int
 	logoutAllErr                                    error
 	enrollmentKeys                                  *enrollmentKeyStub
@@ -1168,6 +1169,9 @@ func browserManagementTestOptions(t *testing.T) (BrowserManagementOptions, *brow
 		}
 		if fixture.sessionRevoked {
 			return accountsession.Session{}, accountsession.ErrUnauthenticated
+		}
+		if fixture.sessionUnavailable != nil {
+			return accountsession.Session{}, fixture.sessionUnavailable
 		}
 		return managementSessionFixture(t), nil
 	})

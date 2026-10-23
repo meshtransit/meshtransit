@@ -145,10 +145,7 @@ func (page *BrowserRegistrationPage) ServeHTTP(response http.ResponseWriter, req
 		return
 	}
 	if len(request.Header.Values("Cookie")) == 0 {
-		page.render(response, page.loginPage, struct {
-			Path      string
-			AutoStart bool
-		}{Path: request.URL.Path, AutoStart: page.approval != nil})
+		page.renderSignIn(response, request)
 		return
 	}
 	token, err := readBrowserSessionCookie(request.Header)
@@ -200,7 +197,49 @@ func (page *BrowserRegistrationPage) ServeHTTP(response http.ResponseWriter, req
 			return
 		}
 	}
+	// A Console Session that ended sees no link: the browser signs in again
+	// rather than being told the device's link does not exist (TD-CORE-85).
+	// Only an ended Session: a store that cannot answer is not a reason to
+	// sign in, which the Console would send straight back here.
+	if page.approval != nil {
+		ended, err := page.sessionEnded(ctx, token)
+		if err != nil {
+			http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			return
+		}
+		if ended {
+			page.renderSignIn(response, request)
+			return
+		}
+	}
 	http.Error(response, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+}
+
+// renderSignIn shows the page that signs the browser in and comes back.
+func (page *BrowserRegistrationPage) renderSignIn(response http.ResponseWriter, request *http.Request) {
+	page.render(response, page.loginPage, struct {
+		Path      string
+		AutoStart bool
+	}{Path: request.URL.Path, AutoStart: page.approval != nil})
+}
+
+// sessionEnded reports whether token is no Console Session of this
+// deployment that is active now; an error means it could not be told.
+func (page *BrowserRegistrationPage) sessionEnded(ctx context.Context, token accountsession.Token) (bool, error) {
+	if page.management == nil || page.management.management == nil || page.management.management.sessions == nil {
+		return false, ErrInvalidBrowserRegistrationPage
+	}
+	if token.DeploymentID() != page.management.deploymentID {
+		return true, nil // another deployment's cookie: no query needed
+	}
+	session, err := page.management.management.sessions.Authenticate(ctx, token)
+	if errors.Is(err, accountsession.ErrUnauthenticated) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return !page.management.activeSession(token, session, page.management.clock.Now()), nil
 }
 
 type browserRegistrationNetworkView struct {
