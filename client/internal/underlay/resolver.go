@@ -36,7 +36,20 @@ var (
 	bypassUntil atomic.Int64
 	// exitChosen is whether root's settings name a pool (SetExitChosen).
 	exitChosen atomic.Bool
+	// rootZone is whether the host sends every name to MeshTransit's
+	// resolver for a root zone (SetRootZone).
+	rootZone atomic.Bool
 )
+
+// SetRootZone records whether the host sends every name to MeshTransit's
+// resolver for a root zone (DNS design D1b §5.8): the client's own lookups
+// (Core, relays, STUN) then ask the network's resolvers directly, since the
+// root zone's resolver may filter them or be reachable only through the
+// mesh they bring up.
+func SetRootZone(on bool) { rootZone.Store(on) }
+
+// RootZone reports what SetRootZone last recorded.
+func RootZone() bool { return rootZone.Load() }
 
 // SetExitChosen records whether root's settings name a pool: the helper's
 // kill switch then drops the system resolver's own queries outside the
@@ -57,9 +70,10 @@ var upstreamResolver = &net.Resolver{PreferGo: true, Dial: dialResolver}
 
 // usesUpstreamsNow reports whether names go to the upstreams directly: while
 // root's settings name a pool, whose kill switch drops resolved's own
-// queries, or for a while after the system resolver failed.
+// queries, while a root zone takes every name, or for a while after the
+// system resolver failed.
 func usesUpstreamsNow() bool {
-	return exitChosen.Load() || ExitBound() || time.Now().UnixNano() < bypassUntil.Load()
+	return exitChosen.Load() || ExitBound() || rootZone.Load() || time.Now().UnixNano() < bypassUntil.Load()
 }
 
 func dialResolver(ctx context.Context, network, address string) (net.Conn, error) {

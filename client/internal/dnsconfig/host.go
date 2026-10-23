@@ -112,7 +112,7 @@ func buildResolvedConfig(plan Plan, endpoint netadmin.DNSEndpoint) (netadmin.DNS
 		seen[route.Suffix] = struct{}{}
 		config.RouteDomains = append(config.RouteDomains, route.Suffix)
 	}
-	if len(plan.DefaultResolvers) != 0 || plan.Exit != nil {
+	if plan.RoutesAllNames() {
 		if _, exists := seen["."]; !exists {
 			config.RouteDomains = append(config.RouteDomains, ".")
 		}
@@ -144,7 +144,7 @@ func cloneDNSConfig(config netadmin.DNSConfig) netadmin.DNSConfig {
 // domains), or nil when the resolver answers every name (an exit node or
 // resolvers for every name).
 func MatchDomains(plan Plan) []string {
-	if len(plan.DefaultResolvers) != 0 || plan.Exit != nil {
+	if plan.RoutesAllNames() {
 		return nil
 	}
 	domains := make([]string, 0, len(plan.SearchDomains)+len(plan.Routes))

@@ -391,6 +391,24 @@ func TestCompileKeepsAHostZoneRouteWhenItMustRoute(t *testing.T) {
 		route.Suffix != "dev.corp.lan" || route.local() {
 		t.Fatalf("a host zone under an nxdomain zone = %#v", nested.Routes)
 	}
+	// Under a root zone the host sends the node every name: the zone's
+	// other names must reach the network's resolvers, not the root zone's
+	// (DNS design D1b §5.1).
+	rootResolver := startCountingUpstream(t, dnsmessage.RCodeNameError, netip.Addr{}, false)
+	lan := startCountingUpstream(t, dnsmessage.RCodeSuccess, netip.MustParseAddr("192.0.2.98"), false)
+	rooted := build(t, func(snapshot *networkmap.Snapshot) {
+		snapshot.DNS.Routes = append(snapshot.DNS.Routes, networkmap.DNSRoute{
+			Suffix: ".", Resolvers: []networkmap.DNSResolver{{Address: rootResolver.address}},
+		})
+	})
+	if route, found := mostSpecificRoute(rooted.Routes, "other.corp.com"); !found || !route.hostZone() {
+		t.Fatalf("a host zone under a root zone = %#v", rooted.Routes)
+	}
+	if got := firstA(t, resolveName(t, zoneEngine(t, lan.address), rooted, "other.corp.com.",
+		dnsmessage.TypeA)); got != netip.MustParseAddr("192.0.2.98") || rootResolver.asked.Load() != 0 {
+		t.Fatalf("another name of a host zone under a root zone got %s, root asked %d", got,
+			rootResolver.asked.Load())
+	}
 }
 
 func TestInternetSuffix(t *testing.T) {

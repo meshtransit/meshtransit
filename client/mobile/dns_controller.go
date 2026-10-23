@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/dnsconfig"
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/underlay"
@@ -28,6 +29,8 @@ type dnsController struct {
 	logger   *slog.Logger
 	// use is the person's choice: MeshTransit answers the device's names.
 	use *atomic.Bool
+	// reapplied, when set, learns what came of applying the last map again.
+	reapplied func(networkmap.Snapshot, error)
 }
 
 // newDNSController builds the resolver and the host side for opener.
@@ -96,22 +99,57 @@ func (c *dnsController) setUse(on bool) {
 
 // reapply applies the last map again, for a change of local state.
 func (c *dnsController) reapply() {
+	snapshot, reapplied, ok, err := c.applyLastAgain()
+	if ok && reapplied != nil {
+		// Outside the lock: the daemon hands the evidence to the session.
+		reapplied(snapshot, err)
+	}
+}
+
+// applyLastAgain applies the last map again; ok is false without one.
+func (c *dnsController) applyLastAgain() (networkmap.Snapshot, func(networkmap.Snapshot, error), bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.last == nil {
-		return
+		return networkmap.Snapshot{}, nil, false, nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), dnsReapplyTimeout)
 	defer cancel()
-	if _, err := c.manager.Apply(ctx, *c.last); err != nil {
+	_, err := c.manager.Apply(ctx, *c.last)
+	if err != nil {
 		c.logger.Warn("applying dns again failed; the next map retries", "error", err)
 	}
+	return *c.last, c.reapplied, true, err
+}
+
+// OnReapply sets what learns of applying the last map again: the daemon,
+// which reports the DNS now applied to Core (DNS design D1b Q7).
+func (c *dnsController) OnReapply(reapplied func(networkmap.Snapshot, error)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reapplied = reapplied
 }
 
 // SetResolverLiveness makes the resolver ask last the resolver Devices that
 // stopped answering (DNS design D1b §5.6).
 func (c *dnsController) SetResolverLiveness(liveness dnsconfig.ResolverLiveness) {
 	c.manager.SetResolverLiveness(liveness)
+}
+
+// ResolverHealth returns how the resolver sees the zones' resolvers (DNS
+// design D1b §9).
+func (c *dnsController) ResolverHealth() ([]controlplane.ResolverHealth, bool) {
+	return c.manager.ResolverHealth()
+}
+
+// UsesMeshDNS reports the person's choice: MeshTransit answers the device's
+// names (DNS design D1b Q7: off is reported to Core as user_off).
+func (c *dnsController) UsesMeshDNS() bool { return c.use.Load() }
+
+// SetInfrastructureNames names MeshTransit's own infrastructure for the
+// root zone to leave to the network (DNS design D1b §5.8).
+func (c *dnsController) SetInfrastructureNames(names []string) {
+	c.manager.SetInfrastructureNames(names)
 }
 
 // stats returns the resolver's counts.
@@ -137,6 +175,14 @@ func (r *choiceResolver) Close(ctx context.Context) error { return r.resolver.Cl
 
 func (r *choiceResolver) SetResolverLiveness(liveness dnsconfig.ResolverLiveness) {
 	r.resolver.SetResolverLiveness(liveness)
+}
+
+func (r *choiceResolver) SetInfrastructureNames(names []string) {
+	r.resolver.SetInfrastructureNames(names)
+}
+
+func (r *choiceResolver) ResolverHealth() []controlplane.ResolverHealth {
+	return r.resolver.ResolverHealth()
 }
 
 // mobileDNSHost points the VPN interface's DNS at the resolver (DNS design
@@ -177,4 +223,13 @@ var (
 	_ interface {
 		SetResolverLiveness(dnsconfig.ResolverLiveness)
 	} = (*choiceResolver)(nil)
+	_ interface{ SetInfrastructureNames([]string) } = (*dnsController)(nil)
+	_ interface{ UsesMeshDNS() bool }               = (*dnsController)(nil)
+	_ interface {
+		ResolverHealth() ([]controlplane.ResolverHealth, bool)
+	} = (*dnsController)(nil)
+	_ interface{ SetInfrastructureNames([]string) } = (*choiceResolver)(nil)
+	_ interface {
+		OnReapply(func(networkmap.Snapshot, error))
+	} = (*dnsController)(nil)
 )

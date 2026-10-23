@@ -30,9 +30,13 @@ const sharedZone = "shared.mesh"
 // Plan is an immutable-by-convention DNS configuration ready for a local
 // resolver and an operating-system configurator.
 type Plan struct {
-	Revision          uint64
-	Enabled           bool
-	DefaultResolvers  []netip.AddrPort
+	Revision         uint64
+	Enabled          bool
+	DefaultResolvers []netip.AddrPort
+	// Root is the root zone (DNS design D1b): every name no route holds goes
+	// to its resolvers, with its failure mode. It is not among Routes, which
+	// the host routes by domain.
+	Root              *Route
 	FallbackResolvers []netip.AddrPort
 	Routes            []Route
 	SearchDomains     []string
@@ -99,6 +103,15 @@ type Route struct {
 // local reports whether the node answers the route's names itself.
 func (route Route) local() bool { return len(route.Resolvers) == 0 && !route.Unavailable }
 
+// RoutesAllNames reports a plan whose resolver answers every name the host
+// has: a root zone, an exit node, or default resolvers. The host then sends
+// it every name, whether the root zone can be used now or not, so a zone
+// that fails closed never falls back to the host silently (DNS design D1b
+// §4).
+func (plan Plan) RoutesAllNames() bool {
+	return plan.Root != nil || plan.Exit != nil || len(plan.DefaultResolvers) != 0
+}
+
 // Host groups all address records for one canonical DNS name.
 type Host struct {
 	Name      string
@@ -142,6 +155,20 @@ func Compile(snapshot networkmap.Snapshot) (Plan, error) {
 	plan.Routes = make([]Route, 0, len(config.Routes))
 	var hostZones []string
 	for _, route := range config.Routes {
+		// The root zone: forwarded, or unavailable; one the node would
+		// answer itself would hide every name the host resolves elsewhere.
+		if route.Suffix == "." {
+			root := Route{
+				Suffix: ".", Resolvers: resolverAddresses(route.Resolvers),
+				Unavailable: route.Unavailable, FailOpen: route.FailOpen,
+			}
+			if root.local() {
+				plan.IgnoredRoutes++
+				continue
+			}
+			plan.Root = &root
+			continue
+		}
 		// The root, or a suffix of the Internet (com, co.uk), answered
 		// locally would hide every name under it, which Core never asks
 		// for. A private zone keeps its route on one label (lan, corp): a
@@ -222,7 +249,7 @@ func Compile(snapshot networkmap.Snapshot) (Plan, error) {
 		return plan.Reverse[left].Address.Compare(plan.Reverse[right].Address) < 0
 	})
 	for _, domain := range plan.SearchDomains {
-		if len(plan.DefaultResolvers) == 0 && plan.Exit == nil && !hasRoute(plan.Routes, domain) {
+		if !plan.RoutesAllNames() && !hasRoute(plan.Routes, domain) {
 			return Plan{}, fmt.Errorf(
 				"%w: search domain %q has no resolver route",
 				ErrInvalid,
@@ -230,7 +257,7 @@ func Compile(snapshot networkmap.Snapshot) (Plan, error) {
 			)
 		}
 	}
-	plan.Enabled = len(plan.DefaultResolvers) != 0 || len(plan.Routes) != 0 ||
+	plan.Enabled = plan.RoutesAllNames() || len(plan.Routes) != 0 ||
 		len(plan.SearchDomains) != 0 || len(plan.Hosts) != 0 || len(plan.Aliases) != 0 || plan.Exit != nil
 
 	return plan, nil
@@ -444,9 +471,11 @@ const maxNameRoutedDomains = 200
 // resolvers for the rest. A zone keeps its route when another route already
 // covers it (its other names would get that route's answer), when it is or
 // holds a search domain (the host routes searched domains to the node
-// anyway), or when its names would pass maxNameRoutedDomains: a forward
-// zone of 2,000 names that lost its resolvers must not fail the host's
-// whole DNS.
+// anyway), when its names would pass maxNameRoutedDomains (a forward zone
+// of 2,000 names that lost its resolvers must not fail the host's whole
+// DNS), or under a root zone: the host sends the node every name then, and
+// the zone's other names must reach the network's resolvers, not the root
+// zone's (DNS design D1b §5.1).
 func splitHostZones(plan *Plan, hostZones, names []string) []string {
 	slices.Sort(hostZones)
 	budget := maxNameRoutedDomains - len(plan.Routes) - len(plan.SearchDomains)
@@ -462,7 +491,7 @@ func splitHostZones(plan *Plan, hostZones, names []string) []string {
 		searched := slices.ContainsFunc(plan.SearchDomains, func(domain string) bool {
 			return dnsSuffixContains(zone, domain) || dnsSuffixContains(domain, zone)
 		})
-		if covered || searched || inZone > budget {
+		if covered || searched || inZone > budget || plan.Root != nil {
 			plan.Routes = append(plan.Routes, Route{
 				Suffix: zone, Resolvers: []netip.AddrPort{}, Unavailable: true,
 				FailOpen: true,

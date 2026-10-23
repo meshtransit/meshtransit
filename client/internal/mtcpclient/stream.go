@@ -86,7 +86,8 @@ func (c *Client) StreamNetmap(ctx context.Context, controlURL string, material c
 	var forwarders sync.WaitGroup
 	forwarders.Go(func() {
 		reports.forward(streamCtx, options.EndpointUpdates, options.EnforcementReports, options.PathStats,
-			options.HostOffers, options.RouteHealth, options.ExitHealth, options.RouteSelection, options.ExitSelection)
+			options.HostOffers, options.RouteHealth, options.ExitHealth, options.RouteSelection, options.ExitSelection,
+			options.DNSHealth)
 	})
 	defer func() {
 		cancel()
@@ -129,6 +130,8 @@ type reportBox struct {
 	routeHealth []controlplane.RouteSiteHealth
 	// exitHealth is the latest exit health; nil until it is measured.
 	exitHealth *controlplane.RouteExitHealth
+	// dnsHealth is the latest resolver health; nil until it is measured.
+	dnsHealth []controlplane.ResolverHealth
 	// routeSelection is the latest Site routers; nil until the first map.
 	routeSelection []controlplane.RouteSiteSelection
 	// exitSelection is the latest exit node used; nil until the first map.
@@ -145,6 +148,7 @@ func (box *reportBox) forward(ctx context.Context, endpoints <-chan controlplane
 	advertised <-chan controlplane.HostOffer, routeHealth <-chan []controlplane.RouteSiteHealth,
 	exitHealth <-chan controlplane.RouteExitHealth,
 	routeSelection <-chan []controlplane.RouteSiteSelection, exitSelection <-chan controlplane.RouteExitSelection,
+	dnsHealth <-chan []controlplane.ResolverHealth,
 ) {
 	for {
 		select {
@@ -215,6 +219,14 @@ func (box *reportBox) forward(ctx context.Context, endpoints <-chan controlplane
 			box.mu.Lock()
 			box.exitSelection = &selection
 			box.mu.Unlock()
+		case health, ok := <-dnsHealth:
+			if !ok {
+				dnsHealth = nil
+				continue
+			}
+			box.mu.Lock()
+			box.dnsHealth = append([]controlplane.ResolverHealth{}, health...)
+			box.mu.Unlock()
 		}
 		select {
 		case box.changed <- struct{}{}:
@@ -251,6 +263,14 @@ func (box *reportBox) exit() *controlplane.RouteExitHealth {
 	}
 	health := *box.exitHealth
 	return &health
+}
+
+// resolverHealth returns the latest resolver health, nil before it was
+// measured.
+func (box *reportBox) resolverHealth() []controlplane.ResolverHealth {
+	box.mu.Lock()
+	defer box.mu.Unlock()
+	return slices.Clone(box.dnsHealth)
 }
 
 func (box *reportBox) health() []controlplane.RouteSiteHealth {
@@ -413,8 +433,9 @@ func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, e
 		}
 	}
 	if stream.options.EnableDNSForward {
-		// Names and every zone kind (DNS design D2) need forward zones.
-		capabilities = append(capabilities, "dns.forward1", "dns.records1")
+		// Names and every zone kind (DNS design D2), and the root zone with
+		// DNS evidence (D1b), need forward zones.
+		capabilities = append(capabilities, "dns.forward1", "dns.records1", "dns.root1")
 	}
 	if stream.options.EnableExitNode {
 		capabilities = append(capabilities, "router.exit.v1")
@@ -482,6 +503,10 @@ type sessionRun struct {
 	healthSentAt time.Time
 	// exitSent is the exit health sent in this session; nil before.
 	exitSent *controlplane.RouteExitHealth
+	// dnsHealthSent is the resolver health sent in this session and
+	// dnsHealthSentAt when; nil before the first.
+	dnsHealthSent   []controlplane.ResolverHealth
+	dnsHealthSentAt time.Time
 	// selectionSent is the Site routers sent in this session and
 	// selectionSentAt when; nil before the first.
 	selectionSent   []controlplane.RouteSiteSelection
@@ -750,6 +775,14 @@ func (run *sessionRun) sendReports(timer *time.Timer) error {
 			report.RouteDigest = enforcement.RouteDigest[:]
 			report.RouteEntries = uint32(max(enforcement.RouteEntries, 0)) //nolint:gosec // G115: at most 4,096
 		}
+		if enforcement.DNSKnown && run.supports("dns.root1") {
+			if enforcement.DNSReason != "" {
+				report.DnsReason = enforcement.DNSReason
+			} else {
+				report.DnsDigest = enforcement.DNSDigest[:]
+				report.DnsRoutes = uint32(max(enforcement.DNSRoutes, 0)) //nolint:gosec // G115: at most 1,024
+			}
+		}
 		if err := run.send(sharedmtcp.MessageEnforcementReport, report); err != nil {
 			return err
 		}
@@ -763,6 +796,9 @@ func (run *sessionRun) sendReports(timer *time.Timer) error {
 		return err
 	}
 	if err := run.sendRouteSelection(); err != nil {
+		return err
+	}
+	if err := run.sendDNSHealth(); err != nil {
 		return err
 	}
 	if err := run.sendCaptiveWindows(); err != nil {

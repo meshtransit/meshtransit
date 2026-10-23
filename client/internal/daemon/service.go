@@ -425,11 +425,18 @@ type Service struct {
 	syncSignal     chan struct{}
 	// loggingOut holds the session loop down while Logout runs; downAcks
 	// counts the times the loop has stopped the runtime for a down.
-	loggingOut        atomic.Bool
-	downAcks          atomic.Uint64
-	registrationGate  chan struct{}
-	dataPlaneMu       sync.Mutex
-	dnsApplyMu        sync.Mutex // orders DNS applies (applyNewestDNS)
+	loggingOut       atomic.Bool
+	downAcks         atomic.Uint64
+	registrationGate chan struct{}
+	dataPlaneMu      sync.Mutex
+	dnsApplyMu       sync.Mutex // orders DNS applies (applyNewestDNS)
+	// dnsEvidence is the DNS last applied, and dnsRepublish how the session
+	// hands it to Core; dnsControlURL names the session's Core for the root
+	// zone to leave to the network (dns_evidence.go).
+	dnsEvidenceMu     sync.Mutex
+	dnsEvidence       dnsEvidence
+	dnsRepublish      func()
+	dnsControlURL     string
 	supervisorMu      sync.Mutex
 	supervisorRunning bool
 	syncMu            sync.RWMutex
@@ -590,7 +597,7 @@ func New(
 	registrationGate := make(chan struct{}, 1)
 	registrationGate <- struct{}{}
 
-	return &Service{
+	service := &Service{
 		profiles:             profiles,
 		identities:           identities,
 		build:                build,
@@ -627,7 +634,11 @@ func New(
 			dataPlane: initialDataPlane,
 			dns:       DNSInactive,
 		},
-	}, nil
+	}
+	if reapplier, ok := options.DNS.(dnsReapplier); ok {
+		reapplier.OnReapply(service.reappliedDNS)
+	}
+	return service, nil
 }
 
 // Run supervises the registered active profile's network-map stream. It keeps
@@ -1005,6 +1016,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		cleanupSession := func() error {
 			// Before the runtime resets DNS: no retry may apply it again.
 			dnsRetries.stop()
+			// What the session hands Core about DNS ends with it.
+			s.setDNSRepublish(nil)
+			s.recordDNSEvidence(dnsEvidence{})
 			// The session's pings end: no resolver Device is judged by them.
 			if live, ok := s.dns.(dnsLivenessController); ok {
 				live.SetResolverLiveness(nil)
@@ -1058,15 +1072,30 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		lastRefreshRequest := endpointRefreshRequest{}
 		hasRefreshRequest := false
 		var enforcementReports chan controlplane.EnforcementReport
+		var enforcement *enforcementPublisher
 		enforcedPolicy, reportsEnforcement := s.dataPlane.(enforcedPolicyDataPlane)
 		if reportsEnforcement {
 			enforcementReports = make(chan controlplane.EnforcementReport, 1)
-			if changing, ok := s.dataPlane.(enforcementChangesDataPlane); ok {
-				go republishEnforcement(streamCtx, changing.EnforcementChanges(), enforcedPolicy, enforcementReports)
+			enforcement = &enforcementPublisher{
+				reports: enforcementReports, enforced: enforcedPolicy, dns: s.currentDNSEvidence,
 			}
+			if changing, ok := s.dataPlane.(enforcementChangesDataPlane); ok {
+				go republishEnforcement(streamCtx, changing.EnforcementChanges(), enforcement)
+			}
+			// New DNS evidence goes to Core at once, with the filter's.
+			s.setDNSRepublish(enforcement.publish)
 		}
+		s.dnsEvidenceMu.Lock()
+		s.dnsControlURL = active.ControlURL
+		s.dnsEvidenceMu.Unlock()
 		nextControlKey, _ := record.NextControlKey()
 		var hostOffers chan controlplane.HostOffer
+		// How the resolver sees the zones' resolvers (DNS design D1b §9).
+		var dnsHealth chan []controlplane.ResolverHealth
+		if measured, ok := s.dns.(dnsHealthController); ok {
+			dnsHealth = make(chan []controlplane.ResolverHealth, 1)
+			go publishDNSHealth(streamCtx, measured, dnsHealth)
+		}
 		var routeHealth chan []controlplane.RouteSiteHealth
 		var exitHealth chan controlplane.RouteExitHealth
 		if s.enableExitNode {
@@ -1099,6 +1128,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					HostOffers:         hostOffers,
 					ExitHealth:         exitHealth,
 					RouteHealth:        routeHealth,
+					DNSHealth:          dnsHealth,
 					RouteSelection:     routeSelection,
 					AnnounceGoingAway:  func() bool { return !restartExpected(s.restartMarkerPath, s.clock()) },
 					CaptiveWindows:     s.captiveWindowsToReport(),
@@ -1177,9 +1207,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 							failover.syncRelayLiveness(probeRuntime.SetRelayLiveness, true)
 						}
 						if err == nil && reportsEnforcement {
-							if enforced, known := enforcedPolicy.EnforcedPolicy(); known {
-								publishEnforcement(enforcementReports, enforced)
-							}
+							enforcement.publish()
 						}
 						if err == nil && probeDataPlane != nil {
 							if len(snapshot.Peers) == 0 {
@@ -3031,19 +3059,30 @@ func (s *Service) applyNewestDNS(ctx context.Context, failover *routeFailover, s
 // belong to someone else, and the state is DNSFailed with the failure. The
 // last error means the context ended or the names could not be removed.
 func (s *Service) applyMapDNS(ctx context.Context, snapshot networkmap.Snapshot) (string, error, error) {
+	if infrastructure, ok := s.dns.(dnsInfrastructureController); ok {
+		s.dnsEvidenceMu.Lock()
+		controlURL := s.dnsControlURL
+		s.dnsEvidenceMu.Unlock()
+		infrastructure.SetInfrastructureNames(infrastructureNames(controlURL, snapshot))
+	}
 	configured, err := s.dns.Apply(ctx, snapshot)
 	switch {
 	case err != nil && ctx.Err() != nil:
 		return DNSFailed, err, fmt.Errorf("applying dns configuration: %w", err)
 	case err != nil:
+		s.recordDNSEvidence(dnsEvidence{known: true, reason: dnsReasonApplyFailed})
 		s.logControlSessionFailure("applying dns configuration failed; mesh names are off", err)
 		if resetErr := s.resetDNS(); resetErr != nil {
 			return DNSFailed, err, fmt.Errorf("applying dns configuration: %w", errors.Join(err, resetErr))
 		}
 		return DNSFailed, err, nil
 	case configured:
+		s.recordDNSEvidence(s.appliedDNSEvidence(snapshot))
 		return DNSConfigured, nil, nil
 	default:
+		// Nothing for the host to apply: the digest of what the map holds,
+		// none being the empty configuration's.
+		s.recordDNSEvidence(s.appliedDNSEvidence(snapshot))
 		return DNSInactive, nil, nil
 	}
 }
@@ -3117,29 +3156,48 @@ type enforcementChangesDataPlane interface {
 
 // republishEnforcement sends the enforced policy again after each change
 // signalled outside a map update, until ctx ends.
-func republishEnforcement(ctx context.Context, changes <-chan struct{}, enforced enforcedPolicyDataPlane,
-	reports chan controlplane.EnforcementReport,
-) {
+func republishEnforcement(ctx context.Context, changes <-chan struct{}, enforcement *enforcementPublisher) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-changes:
-			if policy, known := enforced.EnforcedPolicy(); known {
-				publishEnforcement(reports, policy)
-			}
+			enforcement.publish()
 		}
 	}
 }
 
+// enforcementPublisher hands the map session the enforced policy with the
+// DNS evidence. The map callback, the data plane's changes and new DNS
+// evidence each publish; reading both and offering the report under one
+// lock keeps an older report from replacing a newer one.
+type enforcementPublisher struct {
+	mu       sync.Mutex
+	reports  chan controlplane.EnforcementReport
+	enforced enforcedPolicyDataPlane
+	dns      func() dnsEvidence
+}
+
+// publish offers the latest enforced policy and DNS evidence, when the
+// filter's is known.
+func (p *enforcementPublisher) publish() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if enforced, known := p.enforced.EnforcedPolicy(); known {
+		publishEnforcement(p.reports, enforced, p.dns())
+	}
+}
+
 // publishEnforcement hands the latest enforced policy to the map session,
-// replacing a report that was not sent yet. Only the map callback sends.
-func publishEnforcement(reports chan controlplane.EnforcementReport, enforced dataplane.EnforcedPolicy) {
-	report := controlplane.EnforcementReport{
+// replacing a report that was not sent yet.
+func publishEnforcement(reports chan controlplane.EnforcementReport, enforced dataplane.EnforcedPolicy,
+	dns dnsEvidence,
+) {
+	report := withDNSEvidence(controlplane.EnforcementReport{
 		Digest: enforced.Digest, Grants: enforced.Grants,
 		AppliedAt:   enforced.AppliedAt,
 		RouteDigest: enforced.RouteDigest, RouteEntries: enforced.RouteEntries,
-	}
+	}, dns)
 	select {
 	case reports <- report:
 		return

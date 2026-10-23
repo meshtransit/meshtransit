@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"meshtransit.net/client/internal/dnsconfig"
 	"meshtransit.net/client/internal/netadmin"
@@ -218,6 +219,40 @@ func TestDNSControllerOutlivesARun(t *testing.T) {
 	}
 	if _, err := controller.Apply(t.Context(), snapshot); err == nil {
 		t.Fatal("a shut down controller applied a map")
+	}
+}
+
+// Turning MeshTransit DNS off or on applies the last map again and tells
+// the daemon, which reports user_off or the digest to Core (DNS design D1b
+// Q7).
+func TestDNSControllerReportsAChoiceApplied(t *testing.T) {
+	t.Parallel()
+	_, opener := newPlatformFixture(t)
+	controller, err := newDNSController(opener, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = controller.shutdown() })
+	reapplied := make(chan networkmap.Snapshot, 2)
+	controller.OnReapply(func(snapshot networkmap.Snapshot, err error) {
+		if err != nil {
+			t.Errorf("applying again: %v", err)
+		}
+		reapplied <- snapshot
+	})
+	if _, err := controller.Apply(t.Context(), networkmap.Snapshot{Revision: 4}); err != nil {
+		t.Fatal(err)
+	}
+	for _, on := range []bool{false, true} {
+		controller.setUse(on)
+		select {
+		case snapshot := <-reapplied:
+			if snapshot.Revision != 4 || controller.UsesMeshDNS() != on {
+				t.Fatalf("reapplied revision %d with DNS %t", snapshot.Revision, controller.UsesMeshDNS())
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("turning DNS %t was not reported", on)
+		}
 	}
 }
 

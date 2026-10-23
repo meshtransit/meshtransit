@@ -88,6 +88,11 @@ type resolverEngine struct {
 	exitRouted func() bool
 	// liveness, when set, orders the zones' resolver Devices (liveness.go).
 	liveness atomic.Pointer[ResolverLiveness]
+	// infrastructure are the names of MeshTransit's own infrastructure the
+	// root zone leaves to the network (root.go).
+	infrastructure atomic.Pointer[map[string]struct{}]
+	// health is what the zones' resolvers last answered (health.go).
+	health *resolverHealthTracker
 	// networkGeneration, when set, changes whenever networkResolvers would
 	// return other resolvers: the cache is then refreshed at once.
 	networkGeneration func() uint64
@@ -112,7 +117,7 @@ func (e *resolverEngine) exitPending(plan Plan) bool {
 func newResolverEngine() *resolverEngine {
 	return &resolverEngine{
 		forwardSlots: make(chan struct{}, maxForwardQueries), networkResolvers: underlay.NetworkResolvers,
-		breaker: newResolverBreaker(time.Now),
+		breaker: newResolverBreaker(time.Now), health: newResolverHealthTracker(time.Now),
 	}
 }
 
@@ -129,6 +134,12 @@ func (e *resolverEngine) resolve(
 		}
 
 		return formatError(query), nil
+	}
+	if response, own, err := ownNameAnswer(plan, message, question, name); own {
+		if err != nil {
+			return nil, err
+		}
+		return limitUDPResponse(query, response, transport)
 	}
 	if host, found := findHost(plan.Hosts, name); found {
 		if route, pass := passesThrough(plan, name, question.Type); pass {
@@ -182,6 +193,12 @@ func (e *resolverEngine) resolve(
 			plan: plan, route: route, query: query, message: message,
 			question: question, transport: transport,
 		})
+	}
+	if plan.RoutesAllNames() {
+		unrouted := zoneQuery{plan: plan, query: query, message: message, question: question, transport: transport}
+		if response, handled, err := e.resolveUnrouted(ctx, unrouted, name); handled {
+			return response, err
+		}
 	}
 	resolvers := plan.DefaultResolvers
 	captiveWindow := false
@@ -515,7 +532,7 @@ func authoritativeZone(routes []Route, name string) string {
 }
 
 func hasForwardResolvers(plan Plan) bool {
-	if len(plan.DefaultResolvers) != 0 {
+	if len(plan.DefaultResolvers) != 0 || (plan.Root != nil && len(plan.Root.Resolvers) != 0) {
 		return true
 	}
 	return slices.ContainsFunc(plan.Routes, func(route Route) bool {
@@ -599,10 +616,10 @@ func forwardQuery(
 		}
 		if gate != nil {
 			switch {
-			case err == nil || errors.Is(err, errUpstreamServerFailure) || errors.Is(err, errUpstreamRefused):
+			case err == nil || answeredWith(err):
 				// It answered: SERVFAIL or REFUSED is about the name or the
 				// type (DNSSEC, views), not the resolver.
-				gate.record(resolver, nil)
+				gate.record(resolver, err)
 			case ctx.Err() != nil || transport == "tcp":
 				// The question was given up or ran out of its budget, or
 				// only TCP failed (policy may admit UDP alone): not the

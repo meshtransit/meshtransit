@@ -136,9 +136,10 @@ func containsAddrPort(servers []netip.AddrPort, server netip.AddrPort) bool {
 }
 
 // resolver is the resolver of the client's own dials: the system one, or
-// physicalResolver while the host routes the Internet into the mesh.
+// physicalResolver while the host routes the Internet into the mesh or
+// sends every name to a root zone (SetRootZone).
 func resolver() *net.Resolver {
-	if ExitBound() {
+	if ExitBound() || RootZone() {
 		return physicalResolver
 	}
 	return nil
@@ -146,7 +147,7 @@ func resolver() *net.Resolver {
 
 // Resolver returns the resolver of the client's own lookups.
 func Resolver() *net.Resolver {
-	if ExitBound() {
+	if ExitBound() || RootZone() {
 		return physicalResolver
 	}
 	return net.DefaultResolver

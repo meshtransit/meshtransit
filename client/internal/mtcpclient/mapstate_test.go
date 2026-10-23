@@ -384,13 +384,24 @@ func TestConvertDNSCarriesForwardZones(t *testing.T) {
 			t.Errorf("%s: %+v, %v", name, config, err)
 		}
 	}
-	// The root as a zone waits for D1b; a global resolver keeps port 53.
+	// The root zone (D1b) is kept as ".", unavailable and all, and keeps
+	// its resolvers' ports; a global resolver keeps port 53 only.
 	config, err = convertDNS(&mtcpv1.DnsConfig{
-		Routes:    []*mtcpv1.DnsRoute{{Suffix: ".", Unavailable: true}},
+		Routes: []*mtcpv1.DnsRoute{
+			{Suffix: ".", Unavailable: true},
+		},
 		Resolvers: []*mtcpv1.Resolver{{Ip: device.AsSlice(), Port: 5335}},
 	})
-	if err != nil || len(config.Routes) != 0 || len(config.Resolvers) != 0 {
+	if err != nil || len(config.Routes) != 1 || config.Routes[0].Suffix != "." || !config.Routes[0].Unavailable ||
+		len(config.Resolvers) != 0 {
 		t.Fatalf("root zone and global port = %+v, %v", config, err)
+	}
+	config, err = convertDNS(&mtcpv1.DnsConfig{Routes: []*mtcpv1.DnsRoute{
+		{Suffix: ".", FailOpen: true, Resolvers: []*mtcpv1.Resolver{{Ip: device.AsSlice(), Port: 5335}}},
+	}})
+	if err != nil || len(config.Routes) != 1 || len(config.Routes[0].Resolvers) != 1 ||
+		config.Routes[0].Resolvers[0].Address.Port() != 5335 || !config.Routes[0].FailOpen {
+		t.Fatalf("root zone with a resolver Device = %+v, %v", config, err)
 	}
 }
 

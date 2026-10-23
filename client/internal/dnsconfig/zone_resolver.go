@@ -60,7 +60,7 @@ func (e *resolverEngine) resolveZone(ctx context.Context, zone zoneQuery) ([]byt
 		var response []byte
 		response, err = forwardQuery(forwardCtx, zone.query, zone.question,
 			e.byLiveness(targets, zone.route.Resolvers), zone.transport,
-			zoneGate{breaker: e.breaker, own: zone.route.Resolvers})
+			zoneGate{breaker: e.breaker, own: zone.route.Resolvers, health: e.health})
 		cancel()
 		if err == nil {
 			return zone.answer(response, captiveWindow)
@@ -165,14 +165,17 @@ func (e *resolverEngine) failOpenTargets(plan Plan, question dnsmessage.Question
 	targets []netip.AddrPort, captiveWindow, noData bool,
 ) {
 	exit := plan.Exit
-	if e.exitPending(plan) {
-		return nil, false, false
-	}
-	if exit == nil {
+	pending := e.exitPending(plan)
+	if exit == nil && !pending {
 		return e.networkTargets(), false, false
 	}
+	// A captive portal window wins: the portal's names must resolve to
+	// sign in, also while the exit node is chosen but not yet in the plan.
 	if network := e.captiveResolvers(); len(network) != 0 {
 		return network, true, false
+	}
+	if pending {
+		return nil, false, false
 	}
 	if question.Type == dnsmessage.TypeAAAA && !exit.IPv6 {
 		return nil, false, true
@@ -210,16 +213,25 @@ func (zone zoneQuery) failure(cause error) ([]byte, error) {
 type zoneGate struct {
 	breaker *resolverBreaker
 	own     []netip.AddrPort
+	health  *resolverHealthTracker
 }
 
 func (gate zoneGate) allow(resolver netip.AddrPort) bool {
 	return !slices.Contains(gate.own, resolver) || gate.breaker.allow(resolver)
 }
 
+// record ends one trial of resolver: an answer (SERVFAIL and REFUSED
+// included) closes its breaker, a failure counts against it.
 func (gate zoneGate) record(resolver netip.AddrPort, err error) {
-	if slices.Contains(gate.own, resolver) {
-		gate.breaker.record(resolver, err)
+	if !slices.Contains(gate.own, resolver) {
+		return
 	}
+	if err == nil || answeredWith(err) {
+		gate.breaker.record(resolver, nil)
+		gate.health.answered(resolver, err != nil)
+		return
+	}
+	gate.breaker.record(resolver, err)
 }
 
 func (gate zoneGate) release(resolver netip.AddrPort) {

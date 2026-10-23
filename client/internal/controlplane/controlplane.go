@@ -14,6 +14,7 @@ import (
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/pathdiscovery"
 	"meshtransit.net/shared/disco"
+	"meshtransit.net/shared/dnsdigest"
 	"meshtransit.net/shared/policydigest"
 	"meshtransit.net/shared/routedigest"
 )
@@ -181,6 +182,11 @@ type NetmapOptions struct {
 	// RouteHealthReport when Core takes it (router.health1 and
 	// router.exit.v1), again every 10 seconds while the node serves one.
 	ExitHealth <-chan RouteExitHealth
+	// DNSHealth, with EnableDNSForward, carries how the node's resolver sees
+	// the resolvers of the zones it applies, the root zone's first; it is
+	// sent in a DnsHealthReport when Core takes it (dns.root1), on change
+	// and at least every 5 minutes (mtcp-v1 §8.6).
+	DNSHealth <-chan []ResolverHealth
 	// RouteSelection, with EnableSubnetRoutes, carries the router this node
 	// sends each Site's traffic to; each set is sent in a
 	// RouteSelectionReport when Core takes it (routes.selection1), again
@@ -378,6 +384,27 @@ type RouteSiteHealth struct {
 	Code string
 }
 
+// ResolverState is how the node's resolver sees one resolver (mtcp-v1
+// §8.6).
+type ResolverState int
+
+// Resolver states.
+const (
+	ResolverOK ResolverState = iota + 1
+	ResolverBroken
+	ResolverStopped
+	ResolverRefusing
+	ResolverIdle
+)
+
+// ResolverHealth is one resolver of the zones the node applies; LastOK is
+// zero when it has not answered.
+type ResolverHealth struct {
+	Resolver netip.AddrPort
+	State    ResolverState
+	LastOK   time.Time
+}
+
 // ExitFamilies are the address families an exit node reaches the Internet
 // in (mtcp-v1 §7.7); zero is not known.
 type ExitFamilies int
@@ -408,6 +435,12 @@ type EnforcementReport struct {
 	// forwards into (mtcp-v1 §8.4); sent only with router.subnet.v1.
 	RouteDigest  routedigest.Digest
 	RouteEntries int
+	// DNSKnown carries the DNS the host applied (mtcp-v1 §8.4, dns.root1):
+	// its DNSDigest over DNSRoutes routes, or DNSReason why it applies none.
+	DNSKnown  bool
+	DNSDigest dnsdigest.Digest
+	DNSRoutes int
+	DNSReason string
 }
 
 // NetmapHandler consumes one fully validated, defensive network snapshot.

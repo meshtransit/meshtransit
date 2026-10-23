@@ -162,9 +162,6 @@ func validateDNSConfig(config DNSConfig) error {
 		if route.Unavailable && len(route.Resolvers) != 0 {
 			return fmt.Errorf("route %d is unavailable but has resolvers", index)
 		}
-		if route.Unavailable && route.Suffix == "." {
-			return fmt.Errorf("route %d is an unavailable root", index)
-		}
 		if err := validateDNSResolvers("route", route.Resolvers); err != nil {
 			return fmt.Errorf("route %d: %w", index, err)
 		}

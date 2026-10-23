@@ -556,14 +556,14 @@ func convertDNS(config *mtcpv1.DnsConfig) (*networkmap.DNSConfig, error) {
 	}
 	out.Resolvers = resolvers(config.GetResolvers(), false)
 	for _, route := range config.GetRoutes() {
-		// The root as a zone (DNS design D1b) is not applied yet; the node
-		// never answers every name itself either.
-		if route.GetSuffix() == "." {
-			continue
-		}
-		suffix, err := canonicalDNSName(route.GetSuffix())
-		if err != nil {
-			return nil, err
+		// The root zone (dns.root1, DNS design D1b): every name no other
+		// route holds. It has no labels to canonicalize.
+		suffix := "."
+		if route.GetSuffix() != "." {
+			var err error
+			if suffix, err = canonicalDNSName(route.GetSuffix()); err != nil {
+				return nil, err
+			}
 		}
 		routeResolvers := resolvers(route.GetResolvers(), true)
 		unavailable := route.GetUnavailable() || (len(route.GetResolvers()) != 0 && len(routeResolvers) == 0)

@@ -185,6 +185,11 @@ func clonePlan(plan Plan) Plan {
 	cloned := plan
 	cloned.DefaultResolvers = append([]netip.AddrPort(nil), plan.DefaultResolvers...)
 	cloned.FallbackResolvers = append([]netip.AddrPort(nil), plan.FallbackResolvers...)
+	if plan.Root != nil {
+		root := *plan.Root
+		root.Resolvers = append([]netip.AddrPort(nil), plan.Root.Resolvers...)
+		cloned.Root = &root
+	}
 	cloned.Routes = make([]Route, len(plan.Routes))
 	for index, route := range plan.Routes {
 		cloned.Routes[index] = Route{

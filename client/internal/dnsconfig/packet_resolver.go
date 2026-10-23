@@ -99,6 +99,7 @@ func (r *PacketResolver) Apply(ctx context.Context, plan Plan) error {
 	}
 	published := clonePlan(plan)
 	r.plan.Store(&published)
+	r.engine.adoptHealth(published)
 	return nil
 }
 

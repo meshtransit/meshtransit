@@ -429,7 +429,22 @@ func (e *resolverEngine) askOutside(ctx context.Context, plan Plan, name string,
 	var targets, fallback []netip.AddrPort
 	var gate trialGate
 	route, routed := mostSpecificRoute(plan.Routes, name)
+	infrastructure := !routed && plan.Root != nil && e.infrastructureName(name)
+	if !routed && plan.Root != nil && !infrastructure {
+		// A name no route holds is the root zone's (DNS design D1b §5.1),
+		// failing open in a captive portal window (Q6).
+		route, routed = *plan.Root, true
+		if (plan.Exit != nil || e.exitPending(plan)) && len(e.captiveResolvers()) != 0 {
+			route.FailOpen = true
+		}
+	}
 	switch {
+	case infrastructure:
+		// MeshTransit's own names stay beside the root zone (§5.8).
+		var noData bool
+		if targets, _, noData = e.failOpenTargets(plan, question); noData {
+			return nil, nil
+		}
 	case routed:
 		var noData bool
 		targets, _, noData = e.zoneTargets(plan, route, question)
@@ -437,7 +452,7 @@ func (e *resolverEngine) askOutside(ctx context.Context, plan Plan, name string,
 			return nil, nil
 		}
 		targets = e.byLiveness(targets, route.Resolvers)
-		gate = zoneGate{breaker: e.breaker, own: route.Resolvers}
+		gate = zoneGate{breaker: e.breaker, own: route.Resolvers, health: e.health}
 		if route.FailOpen {
 			fallback, _, _ = e.failOpenTargets(plan, question)
 		}

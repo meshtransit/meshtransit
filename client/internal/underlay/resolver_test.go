@@ -50,6 +50,14 @@ func TestUpstreamResolverAsksResolvedUpstreamsWhenBypassing(t *testing.T) {
 		t.Fatal("a client whose settings name a pool asked the system resolver first")
 	}
 	SetExitChosen(false)
+	// A root zone takes every name, its resolvers may filter Core's name:
+	// meshd asks the network's resolvers (DNS design D1b §5.8).
+	SetRootZone(true)
+	t.Cleanup(func() { SetRootZone(false) })
+	if !usesUpstreamsNow() || !RootZone() {
+		t.Fatal("a root zone left meshd's own names to the system resolver")
+	}
+	SetRootZone(false)
 	if usesUpstreamsNow() {
 		t.Fatal("a client neither bound nor bypassing skipped the system resolver")
 	}

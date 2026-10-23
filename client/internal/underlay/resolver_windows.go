@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/netip"
 	"slices"
+	"sync/atomic"
 
 	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
@@ -18,17 +19,28 @@ import (
 // the Internet into the mesh, the system resolver follows the NRPT rule to
 // the MeshTransit resolver, which cannot answer before the mesh is up, and
 // the kill switch drops every other process's queries.
+// It asks only the servers of the host's own adapters (NetworkResolvers):
+// one Go would take from MeshTransit's adapter is replaced.
 var physicalResolver = &net.Resolver{
 	PreferGo: true,
 	Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+		if servers := NetworkResolvers(); len(servers) != 0 {
+			if target, err := netip.ParseAddrPort(address); err != nil || !slices.Contains(servers, target) {
+				address = servers[physicalRotation.Add(1)%uint32(len(servers))].String()
+			}
+		}
 		return (&net.Dialer{Control: Control}).DialContext(ctx, network, address)
 	},
 }
 
+// physicalRotation spreads the replaced dials over the adapters' servers.
+var physicalRotation atomic.Uint32
+
 // resolver is the resolver of the client's own dials: the system one, or
-// physicalResolver while the host routes the Internet into the mesh.
+// physicalResolver while the host routes the Internet into the mesh or
+// sends every name to a root zone (SetRootZone).
 func resolver() *net.Resolver {
-	if ExitBound() {
+	if ExitBound() || RootZone() {
 		return physicalResolver
 	}
 	return nil
@@ -36,7 +48,7 @@ func resolver() *net.Resolver {
 
 // Resolver returns the resolver of the client's own lookups.
 func Resolver() *net.Resolver {
-	if ExitBound() {
+	if ExitBound() || RootZone() {
 		return physicalResolver
 	}
 	return net.DefaultResolver

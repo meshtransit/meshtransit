@@ -39,10 +39,10 @@ const rootNamespace = "."
 
 // RuleFromPlan turns an enabled DNS plan into the NRPT rule that sends its
 // route and search domains to server, and every name while the host uses
-// an exit node (exit node design §7.1): removing the rule gives the host
-// its own resolvers back.
+// an exit node (exit node design §7.1) or has a root zone (DNS design D1b
+// §4.3): removing the rule gives the host its own resolvers back.
 func RuleFromPlan(plan dnsconfig.Plan, server netip.Addr) (Rule, error) {
-	if len(plan.DefaultResolvers) != 0 && plan.Exit == nil {
+	if len(plan.DefaultResolvers) != 0 && plan.Exit == nil && plan.Root == nil {
 		return Rule{}, ErrAllNames
 	}
 	if !server.Is4() {
@@ -60,7 +60,7 @@ func RuleFromPlan(plan dnsconfig.Plan, server netip.Addr) (Rule, error) {
 		}
 		namespaces = append(namespaces, "."+domain)
 	}
-	if plan.Exit != nil {
+	if plan.Exit != nil || plan.Root != nil {
 		namespaces = append(namespaces, rootNamespace)
 	}
 	slices.Sort(namespaces)

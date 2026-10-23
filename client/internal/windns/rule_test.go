@@ -42,12 +42,19 @@ func TestRuleFromPlanRefusesAllNames(t *testing.T) {
 	}
 }
 
-func TestRuleFromPlanSendsEveryNameWhileUsingAnExitNode(t *testing.T) {
+func TestRuleFromPlanSendsEveryNameWithAnExitNodeOrARootZone(t *testing.T) {
 	t.Parallel()
 	for _, plan := range []dnsconfig.Plan{
 		{Enabled: true, Exit: &dnsconfig.ExitDNS{}},
 		{
 			Enabled: true, Exit: &dnsconfig.ExitDNS{IPv6: true}, Routes: []dnsconfig.Route{{Suffix: "shared.mesh"}},
+			DefaultResolvers: []netip.AddrPort{netip.MustParseAddrPort("1.1.1.1:53")},
+		},
+		// A root zone takes every name too (DNS design D1b §5.1), whatever
+		// the host's own resolvers.
+		{Enabled: true, Root: &dnsconfig.Route{Suffix: ".", Unavailable: true}},
+		{
+			Enabled: true, Root: &dnsconfig.Route{Suffix: ".", Resolvers: []netip.AddrPort{netip.MustParseAddrPort("9.9.9.9:53")}},
 			DefaultResolvers: []netip.AddrPort{netip.MustParseAddrPort("1.1.1.1:53")},
 		},
 	} {

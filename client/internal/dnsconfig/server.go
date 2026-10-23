@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"meshtransit.net/client/internal/netadmin"
+	"meshtransit.net/client/internal/underlay"
 )
 
 const (
@@ -64,6 +65,11 @@ func NewServer(opener dnsLinkOpener) (*Server, error) {
 		querySlots: make(chan struct{}, maxConcurrentQueries),
 		tcpSlots:   make(chan struct{}, maxTCPConnections),
 	}
+	// While root's settings name a pool the helper's kill switch takes the
+	// host's Internet into the mesh before the plan has the exit node's
+	// resolvers: no question leaves through the host's network then (DNS
+	// design D1b §5.4).
+	server.engine.exitRouted = underlay.IsExitChosen
 	disabled := Plan{}
 	server.plan.Store(&disabled)
 
@@ -87,6 +93,8 @@ func (s *Server) Apply(ctx context.Context, plan Plan) error {
 	if !plan.Enabled {
 		disabled := clonePlan(plan)
 		s.plan.Store(&disabled)
+		s.engine.adoptHealth(disabled)
+		underlay.SetRootZone(false)
 
 		return s.stopLocked()
 	}
@@ -106,6 +114,8 @@ func (s *Server) Apply(ctx context.Context, plan Plan) error {
 	}
 	published := clonePlan(plan)
 	s.plan.Store(&published)
+	s.engine.adoptHealth(published)
+	underlay.SetRootZone(published.Root != nil)
 
 	return nil
 }
@@ -139,6 +149,7 @@ func (s *Server) Close(_ context.Context) error {
 	s.isClosed = true
 	disabled := Plan{}
 	s.plan.Store(&disabled)
+	underlay.SetRootZone(false)
 	err := s.stopLocked()
 	s.lifecycleMu.Unlock()
 	if err != nil {
@@ -333,7 +344,8 @@ func closeLinkFile(link netadmin.DNSLink) {
 
 func resolverLoop(plan Plan, endpoint netip.AddrPort) bool {
 	if slices.Contains(plan.DefaultResolvers, endpoint) ||
-		slices.Contains(plan.FallbackResolvers, endpoint) {
+		slices.Contains(plan.FallbackResolvers, endpoint) ||
+		(plan.Root != nil && slices.Contains(plan.Root.Resolvers, endpoint)) {
 		return true
 	}
 	return slices.ContainsFunc(plan.Routes, func(route Route) bool {

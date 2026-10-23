@@ -363,9 +363,10 @@ func TestValidateAndClone_ForwardZoneRoutes(t *testing.T) {
 				Resolvers: []DNSResolver{{Address: netip.AddrPortFrom(device, 53)}},
 			}}
 		}, false},
+		// A root zone none of whose resolvers can be used (DNS design D1b).
 		"unavailable root": {func(config *DNSConfig) {
 			config.Routes = []DNSRoute{{Suffix: ".", Unavailable: true}}
-		}, false},
+		}, true},
 	} {
 		snapshot := validSnapshot()
 		test.change(snapshot.DNS)
