@@ -25,6 +25,12 @@ func TestStableRoutesWidenOverlayRoutesToTheirBlock(t *testing.T) {
 			routes: prefixes("100.64.0.2/32", "100.65.3.4/32"),
 			want:   prefixes("100.64.0.0/15"),
 		},
+		// Exact: Wi-Fi routers that answer names with fake addresses from
+		// 198.18.0.0/16 (Clash) would otherwise lose the Internet.
+		"shared Devices at alias addresses": {
+			routes: prefixes("100.64.0.2/32", "198.18.0.4/32", "198.19.7.1/32", "fd7a:1::4/128"),
+			want:   prefixes("100.64.0.0/16", "198.18.0.4/32", "198.19.7.1/32", "fd7a:1::/64"),
+		},
 		"wider routes stay": {
 			routes: prefixes("100.64.0.0/10"),
 			want:   prefixes("100.64.0.0/10"),

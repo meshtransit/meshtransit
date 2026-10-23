@@ -167,7 +167,24 @@ func build(resolved Config, tun TunProvider, keys KeyStore, queue *asyncLog) (*E
 	packets.SetLogger(logger.With("component", "data_plane"))
 	packets.SetHostAddressSource(hosts.load)
 	network := make(chan struct{}, 1)
-	service, err := daemon.New(profiles, identities, version.Current(), mtcpclient.New(), daemon.Options{
+	service, err := daemon.New(profiles, identities, version.Current(), mtcpclient.New(),
+		runtimeOptions(resolved, packets, logger, network, routeSettings, dns))
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("mobile: create runtime: %w", err), closeStores(profiles, identities))
+	}
+	return &Engine{
+		service: service, serve: service.Run, profiles: profiles, identities: identities, logger: logger, logs: queue,
+		network: network, stopWait: stopTimeout, hosts: hosts, routeSettings: routeSettings, dns: dns,
+		tun: opener,
+	}, nil
+}
+
+// runtimeOptions are the runtime's options on a phone: what the device
+// declares to Core and takes from its maps.
+func runtimeOptions(resolved Config, packets daemon.DataPlaneController, logger *slog.Logger,
+	network <-chan struct{}, routeSettings string, dns daemon.DNSController,
+) daemon.Options {
+	return daemon.Options{
 		Hostname:       hostnameFor(resolved.DeviceName),
 		DataPlane:      packets,
 		Logger:         logger.With("component", "daemon"),
@@ -177,22 +194,17 @@ func build(resolved Config, tun TunProvider, keys KeyStore, queue *asyncLog) (*E
 		EnableSubnetRoutes: true,
 		// The device uses an Exit Pool once the person picks one
 		// (SetExitNode).
-		EnableExits:       true,
-		ExitPinsDir:       resolved.StateDir,
-		RouteSettingsPath: routeSettings,
-		LoadRouteSettings: loadRouteSettings,
+		EnableExits: true,
+		// Shared Devices reach the phone at alias addresses, and the phone
+		// can be shared (DNS design D4 §11); the data plane translates.
+		EnableDeviceAliases: true,
+		ExitPinsDir:         resolved.StateDir,
+		RouteSettingsPath:   routeSettings,
+		LoadRouteSettings:   loadRouteSettings,
 		// The in-process resolver answers the device's names (DNS design
 		// D4); Core sends it every DNS feature.
 		DNS: dns,
-	})
-	if err != nil {
-		return nil, errors.Join(fmt.Errorf("mobile: create runtime: %w", err), closeStores(profiles, identities))
 	}
-	return &Engine{
-		service: service, serve: service.Run, profiles: profiles, identities: identities, logger: logger, logs: queue,
-		network: network, stopWait: stopTimeout, hosts: hosts, routeSettings: routeSettings, dns: dns,
-		tun: opener,
-	}, nil
 }
 
 // openStores opens the profile store and the identity store sealed with the

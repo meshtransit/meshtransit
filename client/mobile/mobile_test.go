@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/netip"
 	"path/filepath"
 	"runtime"
@@ -594,5 +595,17 @@ func TestEngineSetHostAddressesFeedsTheDataPlane(t *testing.T) {
 	}
 	if got := engine.hosts.load(); len(got) != 2 {
 		t.Fatalf("an invalid list replaced the addresses: %v", got)
+	}
+}
+
+// A phone declares what Core sends it: Sites, exits, shares (device-alias.v1)
+// and every DNS feature (DNS design D4).
+func TestRuntimeOptionsDeclareThePhonesFeatures(t *testing.T) {
+	t.Parallel()
+	dns := &dnsController{}
+	options := runtimeOptions(Config{DeviceName: "Pixel", StateDir: t.TempDir()}, nil,
+		slog.New(slog.DiscardHandler), make(chan struct{}), "routes.json", dns)
+	if !options.EnableDeviceAliases || !options.EnableSubnetRoutes || !options.EnableExits || options.DNS != dns {
+		t.Fatalf("options = %+v", options)
 	}
 }

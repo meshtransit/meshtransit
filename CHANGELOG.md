@@ -5,6 +5,11 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Mobile client (DNS design D4 §11): the engine declares `device-alias.v1`,
+  so phones receive shares: a shared Device is reached at its alias address,
+  its share name and service names resolve, and a phone can be shared too.
+  Alias routes stay exact on the VPN interface: Wi-Fi routers that answer
+  names with fake addresses from 198.18.0.0/16 keep working.
 - Mobile client (DNS design D4): the engine answers the device's names. An
   in-process resolver at 192.0.2.53 takes the VPN interface's DNS: the
   mesh's names, shares, zones and service names as on the desktop, any other
