@@ -189,8 +189,14 @@ func TestMapStateLeavesOutUnusableRelayTargetsAlone(t *testing.T) {
 	message := snapshotMessage(7)
 	message.ServedExits = servedExits("p-main")
 	pool := message.ServedExits.Pools[0]
-	pool.DnsRelayTargets = [][]byte{{9, 9, 9, 9}, {10, 0, 0, 53}, {9, 9, 9, 9},
-		netip.MustParseAddr("::ffff:1.1.1.1").AsSlice(), {1, 2, 3}, {1, 1, 1, 1}}
+	pool.DnsRelayTargets = [][]byte{
+		{9, 9, 9, 9},
+		{10, 0, 0, 53},
+		{9, 9, 9, 9},
+		netip.MustParseAddr("::ffff:1.1.1.1").AsSlice(),
+		{1, 2, 3},
+		{1, 1, 1, 1},
+	}
 	pool.DnsRelayScopes[0].Targets = [][]byte{{192, 168, 1, 53}}
 	state := newMapState(false)
 	state.takesServedExits = true

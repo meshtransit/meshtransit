@@ -25,8 +25,10 @@ func TestExitNodeStatusTakesTheUplinkDownOnlyOnEgressFailure(t *testing.T) {
 		dataplane.ExitCodeForwardingOff: false,
 		"":                              false,
 	} {
-		plane := &exitStatusDataPlane{status: dataplane.ExitNodeStatus{Pool: "world", Serving: true,
-			Health: &dataplane.ExitHealth{State: dataplane.SiteHealthFailed, Code: code}}}
+		plane := &exitStatusDataPlane{status: dataplane.ExitNodeStatus{
+			Pool: "world", Serving: true,
+			Health: &dataplane.ExitHealth{State: dataplane.SiteHealthFailed, Code: code},
+		}}
 		service := &Service{dataPlane: plane, exitForwarder: dnsconfig.NewExitForwarder(nil, nil)}
 		service.exitNodeStatus()
 		if got := service.exitForwarder.UplinkDown(); got != down {

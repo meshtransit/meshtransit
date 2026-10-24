@@ -26,7 +26,8 @@ func validPlatformRoutedOptions(options RoutedOptions) bool {
 }
 
 func validRoutingTable(table int) bool {
-	return table > 0 && table < 1<<31 && (table < 253 || table > 255)
+	// As int64: 1<<31 overflows int on 32-bit builds (TD-CLI-68).
+	return table > 0 && int64(table) < 1<<31 && (table < 253 || table > 255)
 }
 
 // validExitRouteOptions requires, when the host may use an exit node, a

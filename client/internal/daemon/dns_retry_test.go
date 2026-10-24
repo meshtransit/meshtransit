@@ -137,8 +137,10 @@ func TestDNSRetryKeepsOneChain(t *testing.T) {
 func retrySnapshot(revision uint64, search string) networkmap.Snapshot {
 	return networkmap.Snapshot{
 		Revision: revision,
-		Self: networkmap.Node{ID: 1, Name: "node-a.example.mesh.",
-			Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.0.1/32")}},
+		Self: networkmap.Node{
+			ID: 1, Name: "node-a.example.mesh.",
+			Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.0.1/32")},
+		},
 		DNS: &networkmap.DNSConfig{
 			Routes: []networkmap.DNSRoute{
 				{Suffix: "example.mesh", Resolvers: []networkmap.DNSResolver{}},

@@ -500,7 +500,7 @@ func skipWhenTheNetworkAnswers(t *testing.T, resolver netip.AddrPort) {
 	if err != nil {
 		return
 	}
-	defer connection.Close()
+	defer func() { _ = connection.Close() }()
 	query, err := (&dnsmessage.Message{Header: dnsmessage.Header{ID: 7}, Questions: []dnsmessage.Question{{
 		Name: dnsmessage.MustNewName("probe.invalid."), Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET,
 	}}}).Pack()

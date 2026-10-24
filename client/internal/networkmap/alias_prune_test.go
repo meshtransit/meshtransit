@@ -145,3 +145,43 @@ func TestWithoutUnusableAliasesKeepsSharedEndpointsAndFreesClaims(t *testing.T) 
 		t.Fatal(err)
 	}
 }
+
+// The names pointing at a left-out share go with it, and NXDOMAIN replaces
+// an address no peer holds; names of kept nodes stay, and the caller's DNS
+// is not changed (TD-CLI-68).
+func TestWithoutUnusableAliasesDropsTheirNames(t *testing.T) {
+	t.Parallel()
+	snapshot, now := aliasTestSnapshot()
+	bad := secondAliasPeer(snapshot)
+	bad.Alias.ExpiresAt = time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	snapshot.Peers = append(snapshot.Peers, bad, ordinaryTestPeer(now))
+	kept := snapshot.Peers[0].Addresses[0].Addr()
+	snapshot.DNS = &DNSConfig{Records: []DNSRecord{
+		{Name: "gone.shared.mesh", Type: DNSRecordA, Address: netip.MustParseAddr("100.96.0.3")},
+		{Name: "gone.shared.mesh", Type: DNSRecordAAAA, Address: netip.MustParseAddr("fd00:2::3")},
+		{Name: "kept.shared.mesh", Type: DNSRecordA, Address: kept},
+		{Name: "app.corp.example", Type: DNSRecordCNAME, Target: "gone.shared.mesh"},
+		{Name: "www.corp.example", Type: DNSRecordCNAME, Target: "app.corp.example"},
+		{Name: "keep.corp.example", Type: DNSRecordCNAME, Target: "kept.shared.mesh"},
+		{Name: "loop-a.corp.example", Type: DNSRecordCNAME, Target: "loop-b.corp.example"},
+		{Name: "loop-b.corp.example", Type: DNSRecordCNAME, Target: "loop-a.corp.example"},
+		{Name: "ordinary.example.test", Type: DNSRecordA, Address: netip.MustParseAddr("100.64.10.4")},
+	}}
+	before := len(snapshot.DNS.Records)
+	pruned, dropped := WithoutUnusableAliases(snapshot, now)
+	if dropped != 1 {
+		t.Fatalf("dropped %d", dropped)
+	}
+	names := make([]string, 0, len(pruned.DNS.Records))
+	for _, record := range pruned.DNS.Records {
+		names = append(names, record.Name)
+	}
+	if !slices.Equal(names, []string{
+		"kept.shared.mesh", "keep.corp.example", "loop-a.corp.example", "loop-b.corp.example", "ordinary.example.test",
+	}) {
+		t.Fatalf("names left = %v", names)
+	}
+	if len(snapshot.DNS.Records) != before {
+		t.Fatal("the caller's DNS changed")
+	}
+}

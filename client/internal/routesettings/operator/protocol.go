@@ -1,3 +1,5 @@
+//go:build linux || darwin
+
 // Package operator lets the members of the meshtransit group change the
 // host's own route choices without root: which Exit Pool its Internet
 // traffic uses, whether it installs the Site routes Core grants, and whether

@@ -174,18 +174,34 @@ func (s *Server) startLocked(ctx context.Context) error {
 	if address.Addr().Is6() {
 		networkSuffix = "6"
 	}
-	tcpListener, err := net.ListenTCP("tcp"+networkSuffix, net.TCPAddrFromAddrPort(address))
+	var listen net.ListenConfig
+	tcpSocket, err := listen.Listen(ctx, "tcp"+networkSuffix, address.String())
 	if err != nil {
 		closeLinkFile(link)
 
-		return fmt.Errorf("dnsconfig: listening for tcp dns: %w", err)
+		return listenError("tcp", address, err)
 	}
-	udpListener, err := net.ListenUDP("udp"+networkSuffix, net.UDPAddrFromAddrPort(address))
-	if err != nil {
-		_ = tcpListener.Close()
+	tcpListener, ok := tcpSocket.(*net.TCPListener)
+	if !ok {
+		_ = tcpSocket.Close()
 		closeLinkFile(link)
 
-		return fmt.Errorf("dnsconfig: listening for udp dns: %w", err)
+		return fmt.Errorf("dnsconfig: listening for tcp dns: %T is no TCP listener", tcpSocket)
+	}
+	udpSocket, err := listen.ListenPacket(ctx, "udp"+networkSuffix, address.String())
+	if err != nil {
+		_ = tcpSocket.Close()
+		closeLinkFile(link)
+
+		return listenError("udp", address, err)
+	}
+	udpListener, ok := udpSocket.(*net.UDPConn)
+	if !ok {
+		_ = udpSocket.Close()
+		_ = tcpSocket.Close()
+		closeLinkFile(link)
+
+		return fmt.Errorf("dnsconfig: listening for udp dns: %T is no UDP socket", udpSocket)
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
 	s.link = link
@@ -198,6 +214,18 @@ func (s *Server) startLocked(ctx context.Context) error {
 	go s.serveUDP(runCtx, udpListener)
 
 	return nil
+}
+
+// ErrResolverAddressTaken reports another program holding the address
+// MeshTransit's resolver listens on (TD-SEC-25): DNS stays off until it
+// lets go.
+var ErrResolverAddressTaken = errors.New("dnsconfig: another program holds the resolver's address, or the system keeps it")
+
+func listenError(transport string, address netip.AddrPort, err error) error {
+	if addressTaken(err) {
+		return fmt.Errorf("%w (%s %s): %w", ErrResolverAddressTaken, transport, address, err)
+	}
+	return fmt.Errorf("dnsconfig: listening for %s dns: %w", transport, err)
 }
 
 func (s *Server) stopLocked() error {

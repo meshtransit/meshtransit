@@ -92,8 +92,83 @@ func WithoutUnusableAliases(snapshot Snapshot, now time.Time) (Snapshot, int) {
 	if dropped == 0 {
 		return snapshot, 0
 	}
+	// The names that point at a left-out share go with it: an address no
+	// peer holds would take the packets nowhere (TD-CLI-68). One a kept
+	// node holds stays.
+	gone := make(map[netip.Addr]struct{})
+	for _, peer := range snapshot.Peers {
+		for _, address := range peer.Addresses {
+			gone[address.Addr()] = struct{}{}
+		}
+	}
 	snapshot.Peers = kept
+	for address := range mappedAddresses(snapshot) {
+		delete(gone, address)
+	}
+	snapshot.DNS = withoutRecordsAt(snapshot.DNS, gone)
 	return snapshot, dropped
+}
+
+// withoutRecordsAt is config without the address records at gone; config
+// is not changed.
+func withoutRecordsAt(config *DNSConfig, gone map[netip.Addr]struct{}) *DNSConfig {
+	if config == nil || len(gone) == 0 {
+		return config
+	}
+	at := func(record DNSRecord) bool {
+		_, held := gone[record.Address.Unmap()]
+		return (record.Type == DNSRecordA || record.Type == DNSRecordAAAA) && held
+	}
+	if !slices.ContainsFunc(config.Records, at) {
+		return config
+	}
+	cloned := cloneDNSConfig(config)
+	var empty []string // names whose records all went
+	for _, record := range cloned.Records {
+		if at(record) {
+			empty = append(empty, record.Name)
+		}
+	}
+	cloned.Records = slices.DeleteFunc(cloned.Records, at)
+	// A CNAME whose chain reaches a name left with no record goes too, as
+	// Core leaves out one that reaches a name the node may not see: walked
+	// out from those names, once per record.
+	held := make(map[string]int, len(cloned.Records))
+	pointing := make(map[string][]int)
+	for index, record := range cloned.Records {
+		held[record.Name]++
+		if record.Type == DNSRecordCNAME {
+			pointing[record.Target] = append(pointing[record.Target], index)
+		}
+	}
+	drop := make([]bool, len(cloned.Records))
+	for len(empty) > 0 {
+		name := empty[len(empty)-1]
+		empty = empty[:len(empty)-1]
+		if held[name] > 0 {
+			continue
+		}
+		for _, index := range pointing[name] {
+			if drop[index] {
+				continue
+			}
+			drop[index] = true
+			owner := cloned.Records[index].Name
+			if held[owner]--; held[owner] == 0 {
+				empty = append(empty, owner)
+			}
+		}
+		delete(pointing, name)
+	}
+	kept := cloned.Records[:0]
+	for index, record := range cloned.Records {
+		if !drop[index] {
+			kept = append(kept, record)
+		}
+	}
+	clear(cloned.Records[len(kept):])
+	cloned.Records = kept
+	return cloned
 }
 
 // mappedAddresses are the addresses of every node of the map.

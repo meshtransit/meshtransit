@@ -30,7 +30,7 @@ type dnsRetry struct {
 // that retry and its backoff instead (same is asked only then): applying it at once would ask a host
 // that keeps failing every map, not every 1–30 s (TD-CLI-33). The retry
 // applies the newest map. It reports whether it applied.
-func (r *dnsRetry) apply(same func() bool, apply func() bool) bool {
+func (r *dnsRetry) apply(same, apply func() bool) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.pending && !r.stopped && same() {

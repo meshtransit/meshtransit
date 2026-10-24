@@ -123,8 +123,10 @@ func TestMarkRelayedFallsBackToAMarkedFailure(t *testing.T) {
 	large.Response = true
 	for index := range 4500 {
 		large.Answers = append(large.Answers, dnsmessage.Resource{
-			Header: dnsmessage.ResourceHeader{Name: large.Questions[0].Name, Type: dnsmessage.TypeA,
-				Class: dnsmessage.ClassINET, TTL: 30},
+			Header: dnsmessage.ResourceHeader{
+				Name: large.Questions[0].Name, Type: dnsmessage.TypeA,
+				Class: dnsmessage.ClassINET, TTL: 30,
+			},
 			Body: &dnsmessage.AResource{A: [4]byte{93, 184, byte(index >> 8), byte(index)}},
 		})
 	}
@@ -225,8 +227,10 @@ func TestClampEDNSSizeLeavesSignedQuestions(t *testing.T) {
 		Questions: []dnsmessage.Question{{Name: dnsmessage.MustNewName("a.example."), Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET}},
 		Additionals: []dnsmessage.Resource{
 			{Header: opt, Body: &dnsmessage.OPTResource{}},
-			{Header: dnsmessage.ResourceHeader{Name: dnsmessage.MustNewName("key.example."), Type: typeTSIG,
-				Class: dnsmessage.ClassANY}, Body: &dnsmessage.UnknownResource{Type: typeTSIG, Data: []byte{1, 2, 3}}},
+			{Header: dnsmessage.ResourceHeader{
+				Name: dnsmessage.MustNewName("key.example."), Type: typeTSIG,
+				Class: dnsmessage.ClassANY,
+			}, Body: &dnsmessage.UnknownResource{Type: typeTSIG, Data: []byte{1, 2, 3}}},
 		},
 	}
 	signedQuery, err := message.Pack()
