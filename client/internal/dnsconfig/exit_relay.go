@@ -346,6 +346,16 @@ func (f *ExitForwarder) ClearRelay() {
 	clear(f.relayTimedOut)
 }
 
+// UplinkDown reports what SetUplinkDown last set.
+func (f *ExitForwarder) UplinkDown() bool {
+	if f == nil {
+		return false
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.uplinkDown
+}
+
 // SetUplinkDown records whether the exit node's own way to the Internet is
 // down, as its probes measure.
 func (f *ExitForwarder) SetUplinkDown(down bool) {

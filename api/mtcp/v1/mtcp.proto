@@ -466,6 +466,11 @@ message DnsConfig {
   repeated Resolver resolvers = 2;
   repeated string search_domains = 3;
   repeated DnsRoute routes = 4;
+  // Host names of the deployment's own services (its Console, identity
+  // provider, names the operator protects) a root zone leaves to the
+  // host's network, as it does the control host and the relays' hosts
+  // (dns.root1, mtcp-v1 §7.3). Sent only with a root zone; at most 64.
+  repeated string infrastructure_names = 5;
 }
 
 message DnsRecord {

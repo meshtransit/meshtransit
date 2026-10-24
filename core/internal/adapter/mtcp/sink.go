@@ -36,6 +36,9 @@ type mapSink struct {
 	deniedEndpoints []netip.Prefix
 	// suffix is the deployment's DNS suffix the map names Devices under.
 	suffix dnsname.Suffix
+	// infrastructure are the deployment's own host names a root zone
+	// leaves to the node's network.
+	infrastructure []string
 	// logger and metrics, when set, report names a map left out.
 	logger  *slog.Logger
 	metrics *Metrics
@@ -115,6 +118,7 @@ func (sink *mapSink) sendSnapshotLocked(_ context.Context, snapshot mapsession.S
 	if err != nil {
 		return err
 	}
+	message.Dns = withInfrastructure(message.Dns, sink.infrastructure)
 	if err := sink.session.Send(sharedmtcp.MessageMapSnapshot, message); err != nil {
 		return err
 	}
@@ -185,7 +189,7 @@ func (sink *mapSink) SendAuthorityDelta(ctx context.Context, delta mapsession.Au
 		return err
 	}
 	// DNS is sent only when it changed; an absent one means "unchanged".
-	dns := encodeDeviceDNS(snapshot, names)
+	dns := withInfrastructure(encodeDeviceDNS(snapshot, names), sink.infrastructure)
 	digest, err := dnsDigest(dns)
 	if err != nil {
 		return err

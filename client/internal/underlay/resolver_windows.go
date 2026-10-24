@@ -2,6 +2,7 @@ package underlay
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/netip"
 	"slices"
@@ -28,10 +29,18 @@ var physicalResolver = &net.Resolver{
 			if target, err := netip.ParseAddrPort(address); err != nil || !slices.Contains(servers, target) {
 				address = servers[physicalRotation.Add(1)%uint32(len(servers))].String()
 			}
+		} else if target, err := netip.ParseAddrPort(address); err != nil || meshResolver(target.Addr()) {
+			// No adapter of the host's has a server: the one Go took is
+			// MeshTransit's own, which cannot answer for it (TD-CLI-70).
+			return nil, errNoNetworkResolver
 		}
 		return (&net.Dialer{Control: Control}).DialContext(ctx, network, address)
 	},
 }
+
+// errNoNetworkResolver reports a host none of whose own adapters has a DNS
+// server.
+var errNoNetworkResolver = errors.New("underlay: no DNS server on the host's own adapters")
 
 // physicalRotation spreads the replaced dials over the adapters' servers.
 var physicalRotation atomic.Uint32

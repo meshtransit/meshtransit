@@ -594,6 +594,7 @@ func cloneDNSConfig(config *DNSConfig) *DNSConfig {
 	}
 	cloned.SearchDomains = append([]string(nil), config.SearchDomains...)
 	cloned.Records = append([]DNSRecord(nil), config.Records...)
+	cloned.InfrastructureNames = append([]string(nil), config.InfrastructureNames...)
 
 	return &cloned
 }

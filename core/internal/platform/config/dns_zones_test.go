@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"slices"
 	"testing"
 )
@@ -43,7 +44,24 @@ func TestDNSProtectedNamesAddsTheDeploymentsOwnHosts(t *testing.T) {
 		Interchange:         &InterchangeConfig{CoreURL: "https://core.example.net:8443"},
 	}
 	if names := config.DNSProtectedNames(); !slices.Equal(names,
-		[]string{"control.example.net", "id.example.net", "core.example.net"}) {
+		[]string{"id.example.net", "control.example.net", "core.example.net"}) {
 		t.Fatalf("DNSProtectedNames() = %v", names)
+	}
+}
+
+// The deployment's own hosts come first, so 64 configured names never push
+// them past a map's bound (TD-CLI-70).
+func TestDNSProtectedNamesPutTheDeploymentsHostsFirst(t *testing.T) {
+	t.Parallel()
+	configured := make([]string, 0, 64)
+	for index := range 64 {
+		configured = append(configured, fmt.Sprintf("name%d.example.net", index))
+	}
+	config := Config{
+		DNSZones: DNSZonesConfig{ProtectedNames: configured},
+		Identity: &IdentityConfig{Issuer: "https://id.example.net/dex"},
+	}
+	if names := config.DNSProtectedNames(); len(names) != 65 || names[0] != "id.example.net" {
+		t.Fatalf("DNSProtectedNames() = %d names, first %q", len(names), names[0])
 	}
 }

@@ -4252,13 +4252,14 @@ func (x *RouteProbe) GetPort() uint32 {
 }
 
 type DnsConfig struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Records       []*DnsRecord           `protobuf:"bytes,1,rep,name=records,proto3" json:"records,omitempty"`
-	Resolvers     []*Resolver            `protobuf:"bytes,2,rep,name=resolvers,proto3" json:"resolvers,omitempty"`
-	SearchDomains []string               `protobuf:"bytes,3,rep,name=search_domains,json=searchDomains,proto3" json:"search_domains,omitempty"`
-	Routes        []*DnsRoute            `protobuf:"bytes,4,rep,name=routes,proto3" json:"routes,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	Records             []*DnsRecord           `protobuf:"bytes,1,rep,name=records,proto3" json:"records,omitempty"`
+	Resolvers           []*Resolver            `protobuf:"bytes,2,rep,name=resolvers,proto3" json:"resolvers,omitempty"`
+	SearchDomains       []string               `protobuf:"bytes,3,rep,name=search_domains,json=searchDomains,proto3" json:"search_domains,omitempty"`
+	Routes              []*DnsRoute            `protobuf:"bytes,4,rep,name=routes,proto3" json:"routes,omitempty"`
+	InfrastructureNames []string               `protobuf:"bytes,5,rep,name=infrastructure_names,json=infrastructureNames,proto3" json:"infrastructure_names,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *DnsConfig) Reset() {
@@ -4315,6 +4316,13 @@ func (x *DnsConfig) GetSearchDomains() []string {
 func (x *DnsConfig) GetRoutes() []*DnsRoute {
 	if x != nil {
 		return x.Routes
+	}
+	return nil
+}
+
+func (x *DnsConfig) GetInfrastructureNames() []string {
+	if x != nil {
+		return x.InfrastructureNames
 	}
 	return nil
 }
@@ -6961,12 +6969,13 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\x04Kind\x12\x14\n" +
 	"\x10KIND_UNSPECIFIED\x10\x00\x12\b\n" +
 	"\x04ICMP\x10\x01\x12\a\n" +
-	"\x03TCP\x10\x02\"\xe0\x01\n" +
+	"\x03TCP\x10\x02\"\x93\x02\n" +
 	"\tDnsConfig\x128\n" +
 	"\arecords\x18\x01 \x03(\v2\x1e.meshtransit.mtcp.v1.DnsRecordR\arecords\x12;\n" +
 	"\tresolvers\x18\x02 \x03(\v2\x1d.meshtransit.mtcp.v1.ResolverR\tresolvers\x12%\n" +
 	"\x0esearch_domains\x18\x03 \x03(\tR\rsearchDomains\x125\n" +
-	"\x06routes\x18\x04 \x03(\v2\x1d.meshtransit.mtcp.v1.DnsRouteR\x06routes\"\xc0\x01\n" +
+	"\x06routes\x18\x04 \x03(\v2\x1d.meshtransit.mtcp.v1.DnsRouteR\x06routes\x121\n" +
+	"\x14infrastructure_names\x18\x05 \x03(\tR\x13infrastructureNames\"\xc0\x01\n" +
 	"\tDnsRecord\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x127\n" +
 	"\x04type\x18\x02 \x01(\x0e2#.meshtransit.mtcp.v1.DnsRecord.TypeR\x04type\x12\x14\n" +

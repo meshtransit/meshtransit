@@ -179,6 +179,15 @@ func infrastructureNames(controlURL string, snapshot networkmap.Snapshot) []stri
 			}
 		}
 	}
+	// And those Core names: its Console, identity provider and the names
+	// the operator protects (TD-CLI-70).
+	if snapshot.DNS != nil {
+		for _, name := range snapshot.DNS.InfrastructureNames {
+			if !slices.Contains(names, name) {
+				names = append(names, name)
+			}
+		}
+	}
 	return names
 }
 

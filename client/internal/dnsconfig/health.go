@@ -18,6 +18,11 @@ import (
 // are forgotten first.
 const maxHealthEntries = 1024
 
+// refusingQuiet is how long a resolver must have given no good answer to be
+// reported refusing: one that filters names answers REFUSED for the names it
+// blocks and well for the rest (TD-CLI-70).
+const refusingQuiet = 5 * time.Minute
+
 // resolverOutcome is what the node last saw of one resolver.
 type resolverOutcome struct {
 	lastOK   time.Time // its last answer of any kind but SERVFAIL or REFUSED
@@ -123,7 +128,8 @@ func (e *resolverEngine) adoptHealth(plan Plan) {
 // resolverHealth returns how the resolver sees the resolvers of plan's
 // zones, the root zone's first then each route's in order, each once, at
 // most maximum: skipped by its breaker, a resolver Device that stopped
-// answering, its last answer SERVFAIL or REFUSED, never asked, or fine.
+// answering, answering SERVFAIL or REFUSED with no good answer for
+// refusingQuiet, never asked, or fine.
 func (e *resolverEngine) resolverHealth(plan Plan, maximum int) []controlplane.ResolverHealth {
 	resolvers := zoneResolvers(plan)
 	health := make([]controlplane.ResolverHealth, 0, min(len(resolvers), maximum))
@@ -149,7 +155,7 @@ func (e *resolverEngine) resolverHealth(plan Plan, maximum int) []controlplane.R
 			state = controlplane.ResolverStopped
 		case !asked:
 			state = controlplane.ResolverIdle
-		case outcome.refusing:
+		case outcome.refusing && (outcome.lastOK.IsZero() || tracker.now().Sub(outcome.lastOK) > refusingQuiet):
 			state = controlplane.ResolverRefusing
 		}
 		health = append(health, controlplane.ResolverHealth{Resolver: resolver, State: state, LastOK: outcome.lastOK})

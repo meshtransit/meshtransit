@@ -99,6 +99,10 @@ type mtcpDependencies struct {
 	exitNodes      bool           // offer exit nodes (MESHTRANSIT_EXIT_NODES_ENABLED)
 	dnsZones       bool           // offer dns.forward1 (MESHTRANSIT_DNS_ZONES_ENABLED)
 	dnsSuffix      dnsname.Suffix // MESHTRANSIT_DNS_SUFFIX; zero: the default
+	// dnsInfrastructure are the deployment's own host names a root zone
+	// leaves to a node's network (MESHTRANSIT_DNS_PROTECTED_NAMES, the
+	// Console and identity hosts).
+	dnsInfrastructure []string
 }
 
 // mtcpMapSessions is mapsession.Service: endpoints and snapshot opening.
@@ -169,6 +173,7 @@ func composeMTCP(
 		Metrics:                metrics,
 		DeniedEndpointPrefixes: controlConfig.MTCP.DeniedEndpointPrefixes(),
 		DNSSuffix:              deps.dnsSuffix,
+		DNSInfrastructureNames: deps.dnsInfrastructure,
 	}
 	if deps.browser != nil {
 		applicationOptions.BrowserIssuer = deps.browser.issuer

@@ -67,10 +67,12 @@ func protectableName(name string) bool {
 	return true
 }
 
-// DNSProtectedNames are the configured protected names and the hosts of the
-// identity issuer, the browser registration origin and the interchange URL.
+// DNSProtectedNames are the hosts of the identity issuer, the browser
+// registration origin and the interchange URL, then the configured protected
+// names: the hosts first, so a bound on how many reach a map never drops
+// them (TD-CLI-70).
 func (config Config) DNSProtectedNames() []string {
-	names := slices.Clone(config.DNSZones.ProtectedNames)
+	var names []string
 	add := func(raw string) {
 		parsed, err := url.Parse(raw)
 		if err != nil || parsed.Hostname() == "" {
@@ -89,6 +91,11 @@ func (config Config) DNSProtectedNames() []string {
 	}
 	if config.Interchange != nil {
 		add(config.Interchange.CoreURL)
+	}
+	for _, name := range config.DNSZones.ProtectedNames {
+		if !slices.Contains(names, name) {
+			names = append(names, name)
+		}
 	}
 	return names
 }

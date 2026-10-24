@@ -575,7 +575,15 @@ zones and is never a search domain. The node keeps every name at its own
 resolver while it has the route, `unavailable` or not, so a zone that fails
 closed never falls back to the host silently; a root zone's resolvers answer
 only names no other route holds. A node without `dns.root1` receives no root
-zone, and its resolver Devices are no peers of its map for it.
+zone, and its resolver Devices are no peers of its map for it. With a root
+zone, `infrastructure_names` (at most 64) lists the host names of the
+deployment's own services (the identity issuer's host, which may be a third
+party's, the Console's origin, the Private Interchange host, then the names
+the operator protects), each exactly, that the node leaves to its network
+like the control host and the relays' hosts; a filtering root zone does not
+see them;
+it is empty without a root zone, and a name the node cannot read is left
+out.
 
 A node without `dns.records1` receives no name and no zone of another kind.
 Core holds the wakeups of a Network's DNS changes so they reach maps

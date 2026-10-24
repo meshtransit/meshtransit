@@ -147,6 +147,9 @@ type DNSConfig struct {
 	Routes            []DNSRoute
 	SearchDomains     []string
 	Records           []DNSRecord
+	// InfrastructureNames are host names of the deployment's own services
+	// a root zone leaves to the host's network (TD-CLI-70).
+	InfrastructureNames []string
 }
 
 // Empty reports a DNS view with nothing in it, as for a Device of an

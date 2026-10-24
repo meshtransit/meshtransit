@@ -609,7 +609,8 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		}
 		deps := mtcpDependencies{streams: mapStreamService, sessions: mapSessionService,
 			registrations: registrationService, logout: logout, paths: redisClient, connectivity: redisClient, guard: timestamps, logger: logger,
-			dnsSuffix: processConfig.DNSSuffix, routeOffers: routeOffers,
+			dnsSuffix: processConfig.DNSSuffix, dnsInfrastructure: processConfig.DNSProtectedNames(),
+			routeOffers:  routeOffers,
 			subnetRoutes: processConfig.SubnetRoutes && processConfig.Control.Map.SharedInventory,
 			exitNodes:    processConfig.ExitNodes && processConfig.Control.Map.SharedInventory,
 			dnsZones:     processConfig.DNSZones.Enabled && processConfig.Control.Map.SharedInventory}

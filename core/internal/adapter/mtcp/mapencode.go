@@ -510,6 +510,54 @@ func encodeDeviceDNS(snapshot mapsession.Snapshot, names mapsession.DNSView) *mt
 	return encodeDNS(names)
 }
 
+// withInfrastructure adds the deployment's own host names to a DNS
+// configuration with a root zone, which leaves them to the node's network
+// (TD-CLI-70); without one the field means nothing.
+func withInfrastructure(config *mtcpv1.DnsConfig, infrastructure []string) *mtcpv1.DnsConfig {
+	if config == nil || len(infrastructure) == 0 ||
+		!slices.ContainsFunc(config.GetRoutes(), func(route *mtcpv1.DnsRoute) bool { return route.GetSuffix() == "." }) {
+		return config
+	}
+	for _, name := range infrastructure {
+		if len(config.InfrastructureNames) == MaximumDNSInfrastructureNames {
+			break
+		}
+		if infrastructureName(name) && !slices.Contains(config.InfrastructureNames, name) {
+			config.InfrastructureNames = append(config.InfrastructureNames, name)
+		}
+	}
+	return config
+}
+
+// infrastructureName reports a host name a node can take: lowercase labels
+// of 1 to 63 letters, digits and inner hyphens, at least two of them, no
+// address literal and no trailing dot.
+func infrastructureName(name string) bool {
+	if len(name) > 253 || strings.HasSuffix(name, ".") {
+		return false
+	}
+	if _, err := netip.ParseAddr(name); err == nil {
+		return false
+	}
+	labels := strings.Split(name, ".")
+	if len(labels) < 2 {
+		return false
+	}
+	for _, label := range labels {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' ||
+			strings.IndexFunc(label, func(character rune) bool {
+				return (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '-'
+			}) >= 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// MaximumDNSInfrastructureNames bounds the infrastructure names one map
+// carries (mtcp-v1 §7.3).
+const MaximumDNSInfrastructureNames = 64
+
 // encodeDNS publishes the names of names as A/AAAA records, the suffix as a
 // locally answered route (no resolvers) and the Network's zone as the search
 // domain (mtcp-v1 §7.3). It is never nil: within a stream an absent DNS

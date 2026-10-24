@@ -576,6 +576,16 @@ func convertDNS(config *mtcpv1.DnsConfig) (*networkmap.DNSConfig, error) {
 			Unavailable: unavailable, FailOpen: route.GetFailOpen(),
 		})
 	}
+	// A name the node cannot read is left out: only a root zone uses them,
+	// and its other names go to its resolvers anyway.
+	for _, raw := range config.GetInfrastructureNames() {
+		name, err := canonicalDNSName(raw)
+		if err != nil || len(out.InfrastructureNames) == maxInfrastructureNames ||
+			slices.Contains(out.InfrastructureNames, name) {
+			continue
+		}
+		out.InfrastructureNames = append(out.InfrastructureNames, name)
+	}
 	for _, domain := range config.GetSearchDomains() {
 		canonical, err := canonicalDNSName(domain)
 		if err != nil {
@@ -771,6 +781,10 @@ func convertExits(config *mtcpv1.ExitConfig) ([]networkmap.ExitPool, error) {
 	}
 	return exits, nil
 }
+
+// maxInfrastructureNames bounds the infrastructure names a map carries
+// (mtcp-v1 §7.3).
+const maxInfrastructureNames = 64
 
 // relayTargetsOf reads relay targets, leaving out and counting those that
 // are malformed, off the Internet or listed before.

@@ -83,6 +83,10 @@ type ApplicationOptions struct {
 	// DNSSuffix is the deployment's DNS suffix maps name Devices and shares
 	// under; the zero value is dnsname.DefaultSuffix.
 	DNSSuffix dnsname.Suffix
+	// DNSInfrastructureNames are the host names of the deployment's own
+	// services a root zone leaves to a node's network (TD-CLI-70); at most
+	// MaximumDNSInfrastructureNames are sent.
+	DNSInfrastructureNames []string
 }
 
 // Application turns established sessions into registrations and map
@@ -136,6 +140,7 @@ func (application *Application) Open(session *Session) Conversation {
 		application.now)
 	sink.deniedEndpoints = application.options.DeniedEndpointPrefixes
 	sink.suffix = application.options.DNSSuffix
+	sink.infrastructure = application.options.DNSInfrastructureNames
 	sink.logger, sink.metrics = application.options.Logger, application.options.Metrics
 	return &conversation{application: application, session: session, sink: sink,
 		wake: make(chan struct{}, 1), approvals: make(chan approval, 1),
