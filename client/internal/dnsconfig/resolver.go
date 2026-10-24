@@ -753,6 +753,21 @@ func forwardWithin(
 	return nil, errors.Join(failures...)
 }
 
+// signed reports a question with a TSIG or a SIG(0): written again, it would
+// no longer match its signature (TD-CLI-73).
+func signed(message dnsmessage.Message) bool {
+	return slices.ContainsFunc(message.Additionals, func(additional dnsmessage.Resource) bool {
+		return additional.Header.Type == typeTSIG || additional.Header.Type == typeSIG
+	})
+}
+
+// typeTSIG and typeSIG are the TSIG (RFC 8945) and SIG(0) (RFC 2931) record
+// types.
+const (
+	typeTSIG dnsmessage.Type = 250
+	typeSIG  dnsmessage.Type = 24
+)
+
 // forwardUDPSize is the largest UDP answer a forwarded question asks for
 // (DNS flag day 2020): larger answers come truncated and are asked again
 // over TCP, rather than fragmented on the way (DNS design D5d).
@@ -762,7 +777,7 @@ const forwardUDPSize = 1232
 // forwardUDPSize; any other question is left as it is.
 func clampEDNSSize(query []byte) []byte {
 	var message dnsmessage.Message
-	if message.Unpack(query) != nil {
+	if message.Unpack(query) != nil || signed(message) {
 		return query
 	}
 	changed := false

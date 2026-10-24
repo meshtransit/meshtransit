@@ -182,11 +182,11 @@ func (definition Definition) Validate(limits Limits) error {
 	switch definition.OtherNames {
 	case OtherForward:
 		if !definition.FailureMode.IsKnown() || len(definition.Resolvers) == 0 {
-			return ErrInvalid
+			return ErrOtherNamesInvalid
 		}
 	case OtherNXDomain, OtherHost:
 		if len(definition.Resolvers) != 0 || (definition.FailureMode != "" && definition.FailureMode != FailOpen) {
-			return ErrInvalid
+			return ErrOtherNamesInvalid
 		}
 	default:
 		return ErrInvalid

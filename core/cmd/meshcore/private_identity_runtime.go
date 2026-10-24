@@ -89,7 +89,7 @@ func composePrivateIdentityRuntime(
 	}
 	service, err := composePrivateIdentityLoginService(factory, privateIdentityLoginServiceOptions{
 		Address: profile.Address(), CertificatePEM: material.CertificatePEM,
-		PrivateKeyPEM: material.PrivateKeyPEM, MaxConnections: 64,
+		PrivateKeyPEM: material.PrivateKeyPEM, MaxConnections: 64, Logger: dependencies.Logger,
 	})
 	if err != nil || candidate.CheckCurrent(ctx) != nil || ctx.Err() != nil {
 		factory.Close()

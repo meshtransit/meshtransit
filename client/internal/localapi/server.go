@@ -495,6 +495,7 @@ func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request)
 		State:              status.State,
 		DataPlane:          status.DataPlane,
 		DNS:                status.DNS,
+		DNSError:           status.DNSError,
 		ActiveProfileID:    status.ActiveProfileID,
 		ProfileCount:       status.ProfileCount,
 		ControlTrust:       status.ControlTrust,

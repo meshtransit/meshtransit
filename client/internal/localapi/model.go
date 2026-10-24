@@ -20,6 +20,7 @@ type statusResponse struct {
 	State              string       `json:"state"`
 	DataPlane          string       `json:"data_plane"`
 	DNS                string       `json:"dns"`
+	DNSError           string       `json:"dns_error,omitempty"`
 	ActiveProfileID    string       `json:"active_profile_id"`
 	ProfileCount       int          `json:"profile_count"`
 	ControlTrust       string       `json:"control_trust"`

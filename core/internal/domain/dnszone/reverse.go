@@ -116,9 +116,9 @@ func parseReverse(domain Domain) (Domain, Class, error) {
 	}
 	switch {
 	case overlaps(reverseMesh[:]):
-		return "", "", ErrDomainMeshSuffix
+		return "", "", ErrReverseMeshRange
 	case overlaps(reverseSpecial[:]):
-		return "", "", ErrDomainSpecialUse
+		return "", "", ErrReverseReservedRange
 	case slices.ContainsFunc(reversePrivate[:], func(private netip.Prefix) bool {
 		return private.Bits() <= prefix.Bits() && private.Contains(prefix.Addr())
 	}):

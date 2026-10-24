@@ -204,7 +204,7 @@ func TestManagerKeepsTheHostsDNSWhenTurnedOff(t *testing.T) {
 		t.Fatal(err)
 	}
 	reapplied := make(chan error, 2)
-	manager.OnReapply(func(_ networkmap.Snapshot, err error) { reapplied <- err })
+	manager.OnReapply(func(_ networkmap.Snapshot, _ bool, err error) { reapplied <- err })
 	manager.SetUse(false) // no map yet: nothing to apply
 	configured, err := manager.Apply(t.Context(), dnsSnapshot())
 	if err != nil || configured || manager.UsesMeshDNS() {

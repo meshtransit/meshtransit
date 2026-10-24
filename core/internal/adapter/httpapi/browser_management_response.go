@@ -129,20 +129,20 @@ func readBrowserSessionCookie(headers http.Header) (accountsession.Token, error)
 // reason, so a client sees a malformed request instead of a dropped
 // connection. It writes nothing and reports false unless the response is
 // still pristine; the caller then aborts as for any other failure.
-func answerRefusedBrowserManagement(response http.ResponseWriter) bool {
+func answerRefusedBrowserManagement(response http.ResponseWriter) (string, bool) {
 	if response == nil || response.Header() == nil || len(response.Header()) != 0 {
-		return false
+		return "", false
 	}
 	correlationID, err := publicid.New()
 	if err != nil {
-		return false
+		return "", false
 	}
 	apiError := invalidManagementRequest()
 	body, err := json.Marshal(managementErrorResponse{Error: managementErrorBody{
 		Code: apiError.Code, Message: apiError.Message, CorrelationID: correlationID.String(),
 	}})
 	if err != nil {
-		return false
+		return "", false
 	}
 	body = append(body, '\n')
 	header := response.Header()
@@ -153,5 +153,5 @@ func answerRefusedBrowserManagement(response http.ResponseWriter) bool {
 	header.Set("Connection", "close")
 	response.WriteHeader(http.StatusBadRequest)
 	written, err := response.Write(body)
-	return err == nil && written == len(body)
+	return correlationID.String(), err == nil && written == len(body)
 }

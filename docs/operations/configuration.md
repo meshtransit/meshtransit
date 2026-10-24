@@ -79,7 +79,7 @@ Generating keys:
 | `MESHTRANSIT_SHUTDOWN_TIMEOUT` | `15s` | 1s–5m | Deadline for a graceful stop |
 | `MESHTRANSIT_DEPENDENCY_CHECK_TIMEOUT` | `2s` | 100ms–30s, below the interval | Deadline of one dependency check |
 | `MESHTRANSIT_DEPENDENCY_CHECK_INTERVAL` | `10s` | 1s–5m | How often readiness checks dependencies |
-| `MESHTRANSIT_DNS_SUFFIX` | `mesh.internal` | DNS name of at least two labels, at most 155 bytes; labels of `a-z`, `0-9` and `-`, the last not all digits; not `local`, `localhost`, `arpa`, `invalid`, `test`, `onion`, `example`, `example.com/net/org` or under them; lowercased | Suffix of Device names (`<label>.<Workspace code>.<Network code>.<suffix>`) and share names (`….shared.<suffix>`) in maps and API responses. Set the same value on every role. Changing it renames every Device and share at the next map; see [DNS](../concepts/dns.md) |
+| `MESHTRANSIT_DNS_SUFFIX` | `mesh.internal` | DNS name of at least two labels, at most 155 bytes; labels of `a-z`, `0-9` and `-`, the last not all digits; not `local`, `localhost`, `arpa`, `invalid`, `test`, `onion`, `example`, `example.com/net/org` or under them; not itself a public suffix (`co.uk`, `github.io`); lowercased. A registered domain must be one you own: every node answers the whole suffix itself | Suffix of Device names (`<label>.<Workspace code>.<Network code>.<suffix>`) and share names (`….shared.<suffix>`) in maps and API responses. Set the same value on every role. Changing it renames every Device and share at the next map; see [DNS](../concepts/dns.md) |
 
 The API, control, identity and Console login listeners may not share a port
 with each other or with the health listener; a wildcard host on the same port

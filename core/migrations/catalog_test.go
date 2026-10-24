@@ -15,8 +15,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 221 {
-		t.Fatalf("len(Catalog()) = %d, want 221", len(catalog))
+	if len(catalog) != 222 {
+		t.Fatalf("len(Catalog()) = %d, want 222", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1611,8 +1611,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 221 {
-		t.Fatalf("LatestVersion() = %d, want 221", LatestVersion())
+	if LatestVersion() != 222 {
+		t.Fatalf("LatestVersion() = %d, want 222", LatestVersion())
 	}
 }
 
@@ -6369,6 +6369,32 @@ func TestMigration221KeepsUnmanagedDNSGroups(t *testing.T) {
 	for _, forbidden := range []string{"TO mesh_worker", "TO mesh_observer", "BYPASSRLS", "DROP "} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 221 contains %q", forbidden)
+		}
+	}
+}
+
+func TestMigration222SerializesDeviceDNSLabels(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[221]
+	if migration.Version != 222 {
+		t.Fatalf("migration 222 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE OR REPLACE FUNCTION mesh_ops.assign_device_dns_label_internal_v1(",
+		"PERFORM pg_catalog.pg_advisory_xact_lock(",
+		"'meshtransit:device_dns_label:' || p_workspace_id::TEXT || ':' || p_network_id::TEXT, 0));",
+		"FROM PUBLIC, mesh_runtime, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;",
+		"CREATE OR REPLACE FUNCTION mesh_ops.dns_resolver_consumers_internal_v1(",
+		"FROM mesh.network_dns_setting AS setting",
+		"AND unmanaged.device_group_id = ANY (v_unmanaged))));",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 222 lacks %q", want)
+		}
+	}
+	for _, forbidden := range []string{"GRANT ", "BYPASSRLS", "DROP "} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 222 contains %q", forbidden)
 		}
 	}
 }

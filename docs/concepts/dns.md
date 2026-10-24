@@ -234,11 +234,15 @@ macOS and Windows, stale entries left by a crash are removed at the next
 start.
 
 `meshctl status` shows the DNS state: `inactive`, `configured`, `failed` or
-`not_implemented`. A failure to apply DNS sets DNS to `failed` and turns the
-mesh names off on the host, so no name keeps pointing at an address from an
-earlier map; the control session and data plane stay up, and the next map
-from Core tries again. Names then go to the host's own resolvers. Only if
-turning DNS off fails as well does the node leave the mesh and reconnect.
+`not_implemented`; a failed state also shows why the host refused, for
+example `failed (resolved refused the link)`. A failure to apply DNS sets DNS
+to `failed` and turns the mesh names off on the host, so no name keeps
+pointing at an address from an earlier map; the control session and data
+plane stay up. The node tries the same map again after 1 s, then doubling up
+to 30 s, until it applies or a map with other DNS arrives; a map whose DNS is
+unchanged keeps that backoff. Names meanwhile go to the host's own resolvers.
+Only if turning DNS off fails as well does the node leave the mesh and
+reconnect.
 
 The packages enable DNS (`--enable-dns`).
 

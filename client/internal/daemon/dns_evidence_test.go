@@ -154,20 +154,24 @@ func TestReappliedDNSRecordsTheChoice(t *testing.T) {
 	t.Parallel()
 	dns := &userChoiceDNS{meshDNS: false}
 	service := &Service{dns: dns}
+	service.syncState.state = ControlSessionSynchronized
 	republished := 0
 	service.setDNSRepublish(func() { republished++ })
 	snapshot := networkmap.Snapshot{DNS: &networkmap.DNSConfig{SearchDomains: []string{"corp.internal"}}}
-	service.reappliedDNS(snapshot, nil)
-	if got := service.currentDNSEvidence(); got != (dnsEvidence{known: true, reason: dnsReasonUserOff}) {
-		t.Fatalf("turned off: %+v", got)
+	service.reappliedDNS(snapshot, false, nil)
+	if got := service.currentDNSEvidence(); got != (dnsEvidence{known: true, reason: dnsReasonUserOff}) ||
+		service.syncState.dns != DNSInactive {
+		t.Fatalf("turned off: %+v, status %q", got, service.syncState.dns)
 	}
 	dns.meshDNS = true
-	service.reappliedDNS(snapshot, nil)
-	if got := service.currentDNSEvidence(); !got.known || got.digest.IsZero() || got.reason != "" {
-		t.Fatalf("turned on: %+v", got)
+	service.reappliedDNS(snapshot, true, nil)
+	if got := service.currentDNSEvidence(); !got.known || got.digest.IsZero() || got.reason != "" ||
+		service.syncState.dns != DNSConfigured {
+		t.Fatalf("turned on: %+v, status %q", got, service.syncState.dns)
 	}
-	service.reappliedDNS(snapshot, errors.New("host refused"))
-	if got := service.currentDNSEvidence(); got.reason != dnsReasonApplyFailed || republished != 3 {
-		t.Fatalf("failed: %+v, republished %d", got, republished)
+	service.reappliedDNS(snapshot, false, errors.New("host refused"))
+	if got := service.currentDNSEvidence(); got.reason != dnsReasonApplyFailed || republished != 3 ||
+		service.syncState.dns != DNSFailed || service.currentDNSFailure(DNSFailed) != "host refused" {
+		t.Fatalf("failed: %+v, republished %d, status %q", got, republished, service.syncState.dns)
 	}
 }

@@ -19,6 +19,19 @@ var (
 	// ErrDomainMeshSuffix reports a domain that is, holds or lies under the
 	// names MeshTransit gives Devices and shares.
 	ErrDomainMeshSuffix = errors.New("dnszone: domain overlaps the mesh names")
+	// ErrReverseMeshRange reports a reverse zone of the mesh's own ranges,
+	// whose reverse names every Device answers (TD-CLI-73).
+	ErrReverseMeshRange = errors.New("dnszone: reverse zone of the mesh's ranges")
+	// ErrReverseReservedRange reports a reverse zone of a range no resolver
+	// holds: this host, link-local, multicast, reserved.
+	ErrReverseReservedRange = errors.New("dnszone: reverse zone of a reserved range")
+	// ErrOtherNamesInvalid reports a kind of zone sent with what only
+	// another kind takes: resolvers or a failure mode for nxdomain or host,
+	// none for forward (TD-CORE-77).
+	ErrOtherNamesInvalid = errors.New("dnszone: other names do not match the resolvers")
+	// ErrReverseKind reports a reverse zone that does not only forward, or
+	// that is a search domain.
+	ErrReverseKind = errors.New("dnszone: a reverse zone only forwards")
 	// ErrDomainCoversControl reports a domain that holds a name of the
 	// deployment's own services: Devices must always reach them.
 	ErrDomainCoversControl = errors.New("dnszone: domain covers the deployment's own names")

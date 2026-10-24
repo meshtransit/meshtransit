@@ -36,7 +36,7 @@ type dnsController struct {
 	// use is the person's choice: MeshTransit answers the device's names.
 	use *atomic.Bool
 	// reapplied, when set, learns what came of applying the last map again.
-	reapplied func(networkmap.Snapshot, error)
+	reapplied func(networkmap.Snapshot, bool, error)
 }
 
 // newDNSController builds the resolver and the host side for opener.
@@ -108,32 +108,34 @@ func (c *dnsController) setUse(on bool) {
 
 // reapply applies the last map again, for a change of local state.
 func (c *dnsController) reapply() {
-	snapshot, reapplied, ok, err := c.applyLastAgain()
+	snapshot, reapplied, configured, ok, err := c.applyLastAgain()
 	if ok && reapplied != nil {
 		// Outside the lock: the daemon hands the evidence to the session.
-		reapplied(snapshot, err)
+		reapplied(snapshot, configured, err)
 	}
 }
 
 // applyLastAgain applies the last map again; ok is false without one.
-func (c *dnsController) applyLastAgain() (networkmap.Snapshot, func(networkmap.Snapshot, error), bool, error) {
+func (c *dnsController) applyLastAgain() (networkmap.Snapshot, func(networkmap.Snapshot, bool, error), bool, bool,
+	error,
+) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.last == nil {
-		return networkmap.Snapshot{}, nil, false, nil
+		return networkmap.Snapshot{}, nil, false, false, nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), dnsReapplyTimeout)
 	defer cancel()
-	_, err := c.manager.Apply(ctx, *c.last)
+	configured, err := c.manager.Apply(ctx, *c.last)
 	if err != nil {
 		c.logger.Warn("applying dns again failed; the next map retries", "error", err)
 	}
-	return *c.last, c.reapplied, true, err
+	return *c.last, c.reapplied, configured, true, err
 }
 
 // OnReapply sets what learns of applying the last map again: the daemon,
 // which reports the DNS now applied to Core (DNS design D1b Q7).
-func (c *dnsController) OnReapply(reapplied func(networkmap.Snapshot, error)) {
+func (c *dnsController) OnReapply(reapplied func(networkmap.Snapshot, bool, error)) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.reapplied = reapplied
@@ -244,6 +246,6 @@ var (
 	} = (*dnsController)(nil)
 	_ interface{ SetInfrastructureNames([]string) } = (*choiceResolver)(nil)
 	_ interface {
-		OnReapply(func(networkmap.Snapshot, error))
+		OnReapply(func(networkmap.Snapshot, bool, error))
 	} = (*dnsController)(nil)
 )

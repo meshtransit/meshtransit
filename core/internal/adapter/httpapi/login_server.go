@@ -38,6 +38,9 @@ type LoginServerOptions struct {
 	PrivateKeyPEM  []byte
 	Dispatcher     *LoginDispatcher
 	MaxConnections int
+	// Logger, when set, records requests refused before admission by their
+	// correlation ID and method only (TD-CORE-79).
+	Logger *slog.Logger
 }
 
 // LoginServer owns a direct TLS listener and joins every connection handler
@@ -47,6 +50,7 @@ type LoginServer struct {
 	server       *http.Server
 	tlsConfig    *tls.Config
 	dispatcher   *LoginDispatcher
+	logger       *slog.Logger
 	address      string
 	connections  int
 	connectionWG sync.WaitGroup
@@ -97,7 +101,8 @@ func NewLoginServer(options LoginServerOptions) (*LoginServer, error) {
 		return nil, ErrInvalidLoginServer
 	}
 	owner := &LoginServer{
-		dispatcher: options.Dispatcher, address: options.Address, connections: options.MaxConnections,
+		dispatcher: options.Dispatcher, logger: options.Logger, address: options.Address,
+		connections: options.MaxConnections,
 		tlsConfig: &tls.Config{
 			MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}, NextProtos: []string{"http/1.1"},
 			// Browser auth has no TLS-resumption requirement or shared ticket-key owner.
@@ -236,8 +241,20 @@ func (owner *LoginServer) handle(response http.ResponseWriter, request *http.Req
 	if err := owner.dispatcher.Handle(response, request); err != nil {
 		// Browser management input refused before admission staged and spent
 		// nothing, so it gets a plain 400 while the response is still pristine.
-		if errors.Is(err, ErrBrowserManagementRefused) && answerRefusedBrowserManagement(response) {
-			return
+		if errors.Is(err, ErrBrowserManagementRefused) {
+			if correlationID, answered := answerRefusedBrowserManagement(response); answered {
+				if owner.logger != nil {
+					// Neither path nor query: they may carry what a client
+					// mistyped. The correlation ID is in the answer.
+					method := request.Method
+					if len(method) > 16 {
+						method = method[:16]
+					}
+					owner.logger.Info("browser management request refused before admission",
+						"correlation_id", correlationID, "method", method)
+				}
+				return
+			}
 		}
 		// Returning would implicitly flush any staged cookies with status 200.
 		// Abort preserves partial-delivery uncertainty and never retries effects.

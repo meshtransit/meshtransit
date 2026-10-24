@@ -442,7 +442,7 @@ func tunnelInterface(name string) bool {
 }
 
 // replaceScopedDefaults gives each physical default route a scoped copy on
-// its interface (RTF_IFSCOPE), as NetBird does, and removes the copies of
+// its interface (RTF_IFSCOPE), and removes the copies of
 // defaults that are gone. One macOS already holds is used as it is. Each
 // one is tried apart: the failures are returned together.
 func replaceScopedDefaults(table []hostroute.Route) error {

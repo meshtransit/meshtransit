@@ -72,15 +72,17 @@ func TestAnswerRefusedBrowserManagementOnlyWhenPristine(t *testing.T) {
 	t.Parallel()
 	staged := httptest.NewRecorder()
 	staged.Header().Set("X-Staged", "1")
-	if answerRefusedBrowserManagement(staged) || staged.Body.Len() != 0 || len(staged.Header()) != 1 {
+	if _, answered := answerRefusedBrowserManagement(staged); answered || staged.Body.Len() != 0 ||
+		len(staged.Header()) != 1 {
 		t.Fatal("refusal answered over a staged response")
 	}
 	pristine := httptest.NewRecorder()
-	if !answerRefusedBrowserManagement(pristine) {
+	logged, answered := answerRefusedBrowserManagement(pristine)
+	if !answered {
 		t.Fatal("pristine refusal not answered")
 	}
 	correlation := pristine.Header().Get("X-Correlation-ID")
-	if pristine.Code != http.StatusBadRequest || correlation == "" ||
+	if logged != correlation || pristine.Code != http.StatusBadRequest || correlation == "" ||
 		pristine.Header().Get("Connection") != "close" || pristine.Header().Get("Cache-Control") != "no-store" ||
 		pristine.Header().Get("Content-Length") != strconv.Itoa(pristine.Body.Len()) ||
 		pristine.Body.String() != `{"error":{"code":"invalid_request","message":"the request is invalid",`+

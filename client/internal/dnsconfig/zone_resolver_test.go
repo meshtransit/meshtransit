@@ -417,6 +417,7 @@ func TestResolverEngineKeepsATruncatedAnswerWithoutTCP(t *testing.T) {
 func TestResolverEngineClosedZonesNeverAskTheNetwork(t *testing.T) {
 	t.Parallel()
 	internetResolver := netip.MustParseAddrPort("192.0.2.1:53") // documentation range: never answers
+	skipWhenTheNetworkAnswers(t, internetResolver)
 	for _, withExit := range []bool{false, true} {
 		for _, captive := range []bool{false, true} {
 			for name, resolvers := range map[string][]netip.AddrPort{
@@ -487,5 +488,30 @@ func TestResolverBreakerUnderConcurrency(t *testing.T) {
 	breaker.record(resolver, nil)
 	if breaker.open(resolver) || !breaker.allow(resolver) {
 		t.Fatal("a success does not close it")
+	}
+}
+
+// skipWhenTheNetworkAnswers skips a test that needs resolver to stay silent
+// on a network that answers every DNS question itself (a router that
+// intercepts port 53).
+func skipWhenTheNetworkAnswers(t *testing.T, resolver netip.AddrPort) {
+	t.Helper()
+	connection, err := net.DialUDP("udp", nil, net.UDPAddrFromAddrPort(resolver))
+	if err != nil {
+		return
+	}
+	defer connection.Close()
+	query, err := (&dnsmessage.Message{Header: dnsmessage.Header{ID: 7}, Questions: []dnsmessage.Question{{
+		Name: dnsmessage.MustNewName("probe.invalid."), Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET,
+	}}}).Pack()
+	if err != nil {
+		return
+	}
+	_ = connection.SetDeadline(time.Now().Add(300 * time.Millisecond))
+	if _, err := connection.Write(query); err != nil {
+		return
+	}
+	if _, err := connection.Read(make([]byte, 512)); err == nil {
+		t.Skipf("this network answers DNS sent to %s: the test needs it silent", resolver)
 	}
 }

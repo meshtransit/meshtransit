@@ -4404,7 +4404,7 @@
           "share_expires_at": {"type": "string", "format": "date-time", "description": "Share grant deadline after acceptance; 2200-01-01T00:00:00Z represents until revoked."},
           "provider_network_revision": {"type": "integer", "format": "int64", "minimum": 1},
           "provider_sharing_revision": {"type": "integer", "format": "int64", "minimum": 1},
-          "consumer_network_revision": {"type": "integer", "format": "int64", "minimum": 1},
+          "consumer_network_revision": {"type": "integer", "format": "int64", "minimum": 1, "description": "The consumer Network revision the acceptance committed; DNS service names created with it advance the revision further, so wait for maps by a later read, not by this value."},
           "consumer_sharing_revision": {"type": "integer", "format": "int64", "minimum": 1},
           "offer_token": {"type": "string", "minLength": 43, "maxLength": 43, "pattern": "^[A-Za-z0-9_-]{43}$", "writeOnly": true}
         }

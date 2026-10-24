@@ -81,6 +81,8 @@ func (h *ResolvedHost) Apply(ctx context.Context, plan Plan) error {
 			rollbackCtx, cancel := rollbackContext(ctx)
 			rollbackErr = h.admin.ConfigureDNS(rollbackCtx, previous)
 			cancel()
+			// The link holds the previous state again (TD-CLI-31).
+			h.dirty = rollbackErr != nil
 		}
 
 		return errors.Join(

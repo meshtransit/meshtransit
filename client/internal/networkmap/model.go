@@ -149,6 +149,13 @@ type DNSConfig struct {
 	Records           []DNSRecord
 }
 
+// Empty reports a DNS view with nothing in it, as for a Device of an
+// unmanaged Device Group (DNS design D5b): nothing to configure.
+func (config *DNSConfig) Empty() bool {
+	return config == nil || len(config.Resolvers) == 0 && len(config.FallbackResolvers) == 0 &&
+		len(config.Routes) == 0 && len(config.SearchDomains) == 0 && len(config.Records) == 0
+}
+
 // DNSResolver is a classic UDP/TCP DNS endpoint: an IP address on port 53,
 // or, for a route's resolver (a resolver Device of a forward zone), on port
 // 53 or 1024-65535. URL-based resolvers stay outside the trusted network-map

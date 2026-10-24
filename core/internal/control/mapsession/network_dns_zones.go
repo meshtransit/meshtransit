@@ -313,12 +313,19 @@ func (inner *networkPolicy) consumerDNSZones(view *RouteView, self int64, now ti
 				continue
 			}
 			position, found := slices.BinarySearch(index.static[resolver.Device], self)
-			if !inner.resolverServes(resolver, now) || !found || position >= index.consumers ||
+			if !inner.resolverServes(resolver, now) || !found ||
 				!inner.admitsDNS(self, resolver.Device, resolver.Port, now) {
+				continue
+			}
+			// A resolver the bounds of one map leave out is counted, like a
+			// zone past MaximumDNSZones (TD-CORE-76).
+			if position >= index.consumers {
+				view.omitted++
 				continue
 			}
 			if _, known := routers[resolver.NodeID]; !known {
 				if len(routers) >= index.routerLimit {
+					view.omitted++
 					continue
 				}
 				routers[resolver.NodeID] = struct{}{}

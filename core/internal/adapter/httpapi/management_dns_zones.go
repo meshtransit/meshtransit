@@ -621,6 +621,19 @@ func classifyDNSZoneError(err error) managementError {
 			"The domain is a public suffix such as com or co.uk. Use the zone for every other name instead.")
 	case errors.Is(err, dnszone.ErrDomainMeshSuffix):
 		return unprocessable("dns_zone_mesh_suffix", "The domain overlaps the names MeshTransit gives Devices")
+	case errors.Is(err, dnszone.ErrReverseMeshRange):
+		return unprocessable("dns_zone_reverse_mesh_range",
+			"The range is the mesh's own: every Device answers the reverse names of its addresses")
+	case errors.Is(err, dnszone.ErrReverseReservedRange):
+		return unprocessable("dns_zone_reverse_reserved_range",
+			"No resolver holds the reverse names of that range (this host, link-local, multicast or reserved)")
+	case errors.Is(err, dnszone.ErrReverseKind):
+		return unprocessable("dns_zone_reverse_kind",
+			"A reverse zone only forwards to resolvers, and is no search domain")
+	case errors.Is(err, dnszone.ErrOtherNamesInvalid):
+		return unprocessable("dns_zone_other_names_invalid",
+			"A forward zone needs resolvers and a failure mode; a zone that answers NXDOMAIN or leaves names "+
+				"to the host takes neither")
 	case errors.Is(err, dnszone.ErrResolverNotInternet):
 		return unprocessable("dns_resolver_not_internet",
 			"A resolver address is not on the Internet. Use a Device of the Network for a private resolver.")

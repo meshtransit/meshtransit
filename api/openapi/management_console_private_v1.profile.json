@@ -20021,7 +20021,7 @@
             "description": "dns_zone_exists, dns_zone_limit, dns_search_limit, dns_zone_public_unconfirmed, dns_zone_covers_control, dns_resolver_not_eligible, dns_resolver_peer_limit, dns_zones_disabled or dns_root_zone_unavailable, dns_zone_other_names_public, dns_zone_holds_names, dns_name_limit"
           },
           "422": {
-            "description": "dns_zone_special_use, dns_zone_public_suffix, dns_zone_mesh_suffix or dns_resolver_not_internet"
+            "description": "dns_zone_special_use, dns_zone_public_suffix, dns_zone_mesh_suffix, dns_zone_reverse_mesh_range, dns_zone_reverse_reserved_range, dns_zone_reverse_kind, dns_zone_other_names_invalid or dns_resolver_not_internet"
           },
           "403": {
             "description": "permission_denied"
@@ -20690,7 +20690,7 @@
             "description": "version_conflict"
           },
           "422": {
-            "description": "dns_zone_special_use, dns_zone_public_suffix, dns_zone_mesh_suffix or dns_resolver_not_internet"
+            "description": "dns_zone_special_use, dns_zone_public_suffix, dns_zone_mesh_suffix, dns_zone_reverse_mesh_range, dns_zone_reverse_reserved_range, dns_zone_reverse_kind, dns_zone_other_names_invalid or dns_resolver_not_internet"
           },
           "428": {
             "description": "precondition_required"

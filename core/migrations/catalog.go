@@ -588,6 +588,7 @@ func Catalog() []Migration {
 		newMigration(219, "Maps read the DNS names that point at a share", mapNetworkDNSShareNamesSQL),
 		newMigration(220, "Running shares keep service names of their own", trustContractServiceNamesSQL),
 		newMigration(221, "Device Groups whose Devices get no DNS from MeshTransit", networkDNSUnmanagedSQL),
+		newMigration(222, "DNS debt close-out: Device DNS labels taken one writer at a time", dnsDebtCloseoutSQL),
 	}
 }
 
@@ -1030,3 +1031,6 @@ var trustContractServiceNamesSQL string
 
 //go:embed 000221_network_dns_unmanaged.up.sql
 var networkDNSUnmanagedSQL string
+
+//go:embed 000222_dns_debt_closeout.up.sql
+var dnsDebtCloseoutSQL string

@@ -12,6 +12,7 @@ type privateIdentityLoginServiceOptions struct {
 	CertificatePEM []byte
 	PrivateKeyPEM  []byte
 	MaxConnections int
+	Logger         *slog.Logger
 }
 
 // composePrivateIdentityLoginService serves only this concrete factory's graph.
@@ -26,7 +27,7 @@ func composePrivateIdentityLoginService(
 	}
 	service, err := httpapi.NewLoginServer(httpapi.LoginServerOptions{
 		Address: options.Address, CertificatePEM: options.CertificatePEM, PrivateKeyPEM: options.PrivateKeyPEM,
-		Dispatcher: factory.identity.dispatcher, MaxConnections: options.MaxConnections,
+		Dispatcher: factory.identity.dispatcher, MaxConnections: options.MaxConnections, Logger: options.Logger,
 	})
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition

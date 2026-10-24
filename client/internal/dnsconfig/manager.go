@@ -46,7 +46,7 @@ type Manager struct {
 	off       atomic.Bool
 	keeping   atomic.Bool // the last map left the host its own DNS
 	last      *networkmap.Snapshot
-	reapplied func(networkmap.Snapshot, error)
+	reapplied func(networkmap.Snapshot, bool, error)
 	// appliedOff is the choice the last successful apply followed;
 	// reapplying is set while a change of choice applies the last map.
 	appliedOff bool
@@ -173,15 +173,16 @@ func (m *Manager) SetUse(on bool) {
 		m.mu.Lock()
 		var snapshot networkmap.Snapshot
 		var err error
+		configured := false
 		applied := m.last != nil && !m.closed
 		if applied {
 			snapshot = *m.last
-			_, err = m.applyLocked(ctx, snapshot)
+			configured, err = m.applyLocked(ctx, snapshot)
 		}
 		m.reapplying = false
 		m.mu.Unlock()
 		if applied && reapplied != nil {
-			reapplied(snapshot, err)
+			reapplied(snapshot, configured, err)
 		}
 	}()
 }
@@ -191,7 +192,7 @@ func (m *Manager) SetUse(on bool) {
 func (m *Manager) UsesMeshDNS() bool { return m == nil || !m.keeping.Load() }
 
 // OnReapply sets what learns of applying the last map again after SetUse.
-func (m *Manager) OnReapply(reapplied func(networkmap.Snapshot, error)) {
+func (m *Manager) OnReapply(reapplied func(networkmap.Snapshot, bool, error)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.reapplied = reapplied

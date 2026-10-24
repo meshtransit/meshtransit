@@ -134,10 +134,13 @@ const (
 
 // Status is the daemon-owned status model before it is mapped to a wire format.
 type Status struct {
-	Build              version.Info
-	State              string
-	DataPlane          string
-	DNS                string
+	Build     version.Info
+	State     string
+	DataPlane string
+	DNS       string
+	// DNSError is why the host refused the last map's DNS, while DNS is
+	// failed (TD-CLI-31).
+	DNSError           string
 	ActiveProfileID    string
 	ProfileCount       int
 	CompatibilityNote  string
@@ -1025,6 +1028,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			}
 		}
 		dnsRetries := &dnsRetry{}
+		// lastDNS is the map whose DNS was last applied or kept (TD-CLI-33).
+		var lastDNS networkmap.Snapshot
+		hasLastDNS := false
 		cleanupSession := func() error {
 			// Before the runtime resets DNS: no retry may apply it again.
 			dnsRetries.stop()
@@ -1300,10 +1306,28 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 						// runtime would fetch the same map. Retries with backoff
 						// apply this map again until a newer one arrives.
 						var dnsErr, lastDNSFailure error
-						dnsRetries.apply(func() bool {
+						previous, hadPrevious := lastDNS, hasLastDNS
+						// Without a data plane the retry has no newer map to
+						// apply, so each map applies at once.
+						same := func() bool {
+							s.dnsEvidenceMu.Lock()
+							controlURL := s.dnsControlURL
+							s.dnsEvidenceMu.Unlock()
+							// A reapply that succeeded since ended the failure.
+							return s.dataPlane != nil && hadPrevious &&
+								s.currentDNSEvidence().reason == dnsReasonApplyFailed &&
+								sameDNS(previous, effective, controlURL)
+						}
+						kept := !dnsRetries.apply(same, func() bool {
 							dnsState, lastDNSFailure, dnsErr = s.applyNewestDNS(callbackCtx, failover, effective)
 							return dnsErr == nil && dnsState != DNSFailed
 						})
+						lastDNS, hasLastDNS = effective, true
+						if kept {
+							// The pending retry applies this map with its
+							// backoff; it is the only retry.
+							dnsState = DNSFailed
+						}
 						if dnsErr != nil {
 							if callbackCtx.Err() == nil {
 								s.setSyncStatus(syncStatus{
@@ -1317,7 +1341,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 							return dnsErr
 						}
 						// A map the plan refuses fails the same way every time.
-						if dnsState == DNSFailed && !errors.Is(lastDNSFailure, dnsconfig.ErrInvalid) {
+						if !kept && dnsState == DNSFailed && !errors.Is(lastDNSFailure, dnsconfig.ErrInvalid) {
 							retryDNS = func() bool {
 								state, _, err := s.applyNewestDNS(streamCtx, failover, effective)
 								if streamCtx.Err() != nil {
@@ -1330,7 +1354,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 								return state != DNSFailed
 							}
 						}
-					} else if snapshot.DNS != nil {
+					} else if !snapshot.DNS.Empty() {
+						// An empty DNS view asks nothing of a node without DNS
+						// (TD-CLI-23).
 						dnsState = DNSPending
 					}
 					s.recordRuntimeRecovery()
@@ -2374,6 +2400,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		State:              daemonState,
 		DataPlane:          dataPlaneState,
 		DNS:                dnsState,
+		DNSError:           s.currentDNSFailure(dnsState),
 		ActiveProfileID:    snapshot.ActiveProfileID,
 		ProfileCount:       len(snapshot.Profiles),
 		CompatibilityNote:  compatibilityNote,
@@ -3085,7 +3112,7 @@ func (s *Service) applyMapDNS(ctx context.Context, snapshot networkmap.Snapshot)
 	case err != nil && ctx.Err() != nil:
 		return DNSFailed, err, fmt.Errorf("applying dns configuration: %w", err)
 	case err != nil:
-		s.recordDNSEvidence(dnsEvidence{known: true, reason: dnsReasonApplyFailed})
+		s.recordDNSEvidence(dnsEvidence{known: true, reason: dnsReasonApplyFailed, failure: err.Error()})
 		s.logControlSessionFailure("applying dns configuration failed; mesh names are off", err)
 		if resetErr := s.resetDNS(); resetErr != nil {
 			return DNSFailed, err, fmt.Errorf("applying dns configuration: %w", errors.Join(err, resetErr))

@@ -571,7 +571,7 @@ func runStatus(
 		status.Daemon.Version,
 		status.State,
 		status.DataPlane,
-		status.DNS,
+		formatDNSStatus(status.DNS, status.DNSError),
 		formatNetworkChangeStatus(status.NetworkChanges),
 		formatRuntimeRecoveryStatus(status.RuntimeRecovery),
 		formatRuntimeStatus(status.Runtime),
@@ -602,6 +602,14 @@ func runStatus(
 	)
 
 	return 0
+}
+
+// formatDNSStatus is the DNS state, with the host's refusal when it failed.
+func formatDNSStatus(state, failure string) string {
+	if failure == "" {
+		return state
+	}
+	return state + " (" + failure + ")"
 }
 
 func formatPathProbeStatus(status *localapi.PathProbeStatus) string {

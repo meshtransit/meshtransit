@@ -235,7 +235,7 @@ func TestDNSControllerReportsAChoiceApplied(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = controller.shutdown() })
 	reapplied := make(chan networkmap.Snapshot, 2)
-	controller.OnReapply(func(snapshot networkmap.Snapshot, err error) {
+	controller.OnReapply(func(snapshot networkmap.Snapshot, _ bool, err error) {
 		if err != nil {
 			t.Errorf("applying again: %v", err)
 		}

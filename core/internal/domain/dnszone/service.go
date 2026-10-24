@@ -294,7 +294,7 @@ func (service *Service) check(domain Domain, class Class, definition Definition)
 	}
 	// A reverse zone only forwards, and is no search domain (DNS design D5c).
 	if domain.IsReverse() && (definition.OtherNames != OtherForward || definition.SearchPosition != nil) {
-		return ErrInvalid
+		return ErrReverseKind
 	}
 	if class == ClassPublic && definition.OtherNames == OtherNXDomain {
 		return ErrNXDomainPublic

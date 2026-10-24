@@ -103,6 +103,7 @@ type Store struct {
 	observer    Observer
 	inventories *inventoryCache // nil unless SharedInventory
 	stats       inventoryStats
+	revisions   revisionReads
 }
 
 // InventoryStats counts how map snapshots got their candidates.

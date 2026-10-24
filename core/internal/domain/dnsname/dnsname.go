@@ -9,6 +9,8 @@
 package dnsname
 
 import (
+	"golang.org/x/net/publicsuffix"
+
 	"errors"
 	"strings"
 
@@ -76,6 +78,13 @@ func ParseSuffix(value string) (Suffix, error) {
 		if canonical == zone || strings.HasSuffix(canonical, "."+zone) {
 			return Suffix{}, ErrInvalidSuffix
 		}
+	}
+	// A public suffix (co.uk, or github.io of the list's private part) would
+	// have every node answer names that belong to others (TD-SEC-48). A
+	// registered domain is the operator's to own. A suffix the list does not
+	// know comes back as its last label, never the whole suffix.
+	if suffix, _ := publicsuffix.PublicSuffix(canonical); suffix == canonical {
+		return Suffix{}, ErrInvalidSuffix
 	}
 	return Suffix{value: canonical}, nil
 }

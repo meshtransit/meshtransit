@@ -5,6 +5,17 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- **Upgrade note:** `MESHTRANSIT_DNS_SUFFIX` may no longer be a public
+  suffix itself (`co.uk`, `github.io`); Core with such a value stops at
+  configuration load. Use a domain you own or a private name.
+- DNS debt close-out (schema 222): Device DNS labels are allocated under a
+  Network lock; a resolver Device's consumer limit leaves out unmanaged
+  Devices; reverse zones and zone kinds get their own errors
+  (`dns_zone_reverse_mesh_range`, `dns_zone_reverse_reserved_range`,
+  `dns_zone_reverse_kind`, `dns_zone_other_names_invalid`). Clients keep the
+  DNS retry backoff for a map with unchanged DNS, show why the host refused
+  DNS (`meshctl status`: `failed (…)`), and update DNS status when DNS is
+  turned off or on.
 - DNS D5b (Core, schema 221): a Network's DNS settings name up to 16
   Device Groups whose Devices get no DNS from MeshTransit (machines that
   keep a company's DNS or another VPN's): their maps carry no DNS

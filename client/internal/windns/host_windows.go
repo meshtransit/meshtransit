@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"slices"
 	"sync"
+	"time"
 
 	"meshtransit.net/client/internal/dnsconfig"
 )
@@ -31,8 +32,12 @@ type NRPTHost struct {
 	// search is the adapter's search list as last set; searchSet whether it
 	// was set (searchlist_windows.go); searchWarned whether the machine's
 	// own search list was reported.
-	search       []string
-	searchSet    bool
+	search    []string
+	searchSet bool
+	// searchAt is when the search list was last set: an adapter made again
+	// with the same list gets it at the first apply past searchRecheck
+	// (TD-CLI-73).
+	searchAt     time.Time
 	searchFailed bool
 	searchWarned bool
 }
@@ -167,11 +172,14 @@ func ruleIntact(rule Rule) (bool, error) {
 	return true, nil
 }
 
+// searchRecheck is how long an unchanged search list is taken as still set.
+const searchRecheck = time.Minute
+
 // syncSearchList puts domains on the adapter's search list when they
 // changed. A failure is logged and tried again with the next plan: names
 // still resolve in full.
 func (h *NRPTHost) syncSearchList(domains []string) {
-	if h.searchSet && slices.Equal(h.search, domains) {
+	if h.searchSet && slices.Equal(h.search, domains) && time.Since(h.searchAt) < searchRecheck {
 		return
 	}
 	exists, err := setSearchList(domains)
@@ -188,7 +196,7 @@ func (h *NRPTHost) syncSearchList(domains []string) {
 
 		return
 	}
-	h.search, h.searchSet, h.searchFailed = slices.Clone(domains), true, false
+	h.search, h.searchSet, h.searchFailed, h.searchAt = slices.Clone(domains), true, false, time.Now()
 	if len(domains) != 0 && !h.searchWarned && policySearchListSet() {
 		h.searchWarned = true
 		h.logger.Warn("Group Policy sets this machine's DNS search list, so Windows does not use MeshTransit's: " +

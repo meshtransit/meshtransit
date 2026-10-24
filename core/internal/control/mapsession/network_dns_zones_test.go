@@ -301,6 +301,10 @@ func TestRoutesForDNSZoneResolversShareTheRouterBudget(t *testing.T) {
 		!slices.Equal(view.Peers(), []node.ID{ids[7]}) {
 		t.Fatalf("zones = %+v, peers %v", zones, view.Peers())
 	}
+	// The resolver the router budget leaves out is counted (TD-CORE-76).
+	if view.Omitted() != 1 {
+		t.Fatalf("omitted = %d, want the resolver past the router budget", view.Omitted())
+	}
 }
 
 // Zone writes refuse a resolver Device more consumers than its map keeps.

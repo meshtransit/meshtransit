@@ -212,3 +212,36 @@ func TestMarkRelayedMarksAFailureOverUDP(t *testing.T) {
 		t.Fatalf("status %d %v", status, ok)
 	}
 }
+
+// A signed question keeps its bytes: clamping its EDNS would break the TSIG.
+func TestClampEDNSSizeLeavesSignedQuestions(t *testing.T) {
+	t.Parallel()
+	var opt dnsmessage.ResourceHeader
+	if err := opt.SetEDNS0(4096, dnsmessage.RCodeSuccess, false); err != nil {
+		t.Fatal(err)
+	}
+	message := dnsmessage.Message{
+		Header:    dnsmessage.Header{ID: 9},
+		Questions: []dnsmessage.Question{{Name: dnsmessage.MustNewName("a.example."), Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET}},
+		Additionals: []dnsmessage.Resource{
+			{Header: opt, Body: &dnsmessage.OPTResource{}},
+			{Header: dnsmessage.ResourceHeader{Name: dnsmessage.MustNewName("key.example."), Type: typeTSIG,
+				Class: dnsmessage.ClassANY}, Body: &dnsmessage.UnknownResource{Type: typeTSIG, Data: []byte{1, 2, 3}}},
+		},
+	}
+	signedQuery, err := message.Pack()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clamped := clampEDNSSize(signedQuery); string(clamped) != string(signedQuery) {
+		t.Fatal("a signed question was written again")
+	}
+	message.Additionals = message.Additionals[:1]
+	plain, err := message.Pack()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clamped := clampEDNSSize(plain); string(clamped) == string(plain) {
+		t.Fatal("an unsigned question kept its 4096-byte EDNS")
+	}
+}

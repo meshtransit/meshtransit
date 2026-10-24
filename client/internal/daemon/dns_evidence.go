@@ -5,6 +5,7 @@ import (
 	"math/rand/v2"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	"meshtransit.net/client/internal/controlplane"
@@ -30,6 +31,29 @@ type dnsEvidence struct {
 	digest dnsdigest.Digest
 	routes int
 	reason string
+	// failure is the host's error, when it refused the DNS.
+	failure string
+}
+
+// maxDNSFailure bounds the host error status shows.
+const maxDNSFailure = 240
+
+// currentDNSFailure is why the host refused the last DNS, while state is
+// failed.
+func (s *Service) currentDNSFailure(state string) string {
+	if state != DNSFailed {
+		return ""
+	}
+	evidence := s.currentDNSEvidence()
+	// Only the host's refusal: DNS also fails when the session ends.
+	if evidence.reason != dnsReasonApplyFailed {
+		return ""
+	}
+	failure := evidence.failure
+	if len(failure) > maxDNSFailure {
+		failure = strings.ToValidUTF8(failure[:maxDNSFailure], "") + "…"
+	}
+	return failure
 }
 
 // dnsUserChoice is a DNS controller the person can turn off on the Device
@@ -48,17 +72,25 @@ type dnsInfrastructureController interface {
 // change of its own (Android: the person turns MeshTransit DNS off or on)
 // and reports what came of it.
 type dnsReapplier interface {
-	OnReapply(func(snapshot networkmap.Snapshot, err error))
+	OnReapply(func(snapshot networkmap.Snapshot, configured bool, err error))
 }
 
 // reappliedDNS records the evidence of a DNS controller applying the last
 // map again, as applyMapDNS does for a map (DNS design D1b Q7).
-func (s *Service) reappliedDNS(snapshot networkmap.Snapshot, err error) {
+// Status follows at once, not at the next map (TD-CLI-73).
+func (s *Service) reappliedDNS(snapshot networkmap.Snapshot, configured bool, err error) {
 	if err != nil {
-		s.recordDNSEvidence(dnsEvidence{known: true, reason: dnsReasonApplyFailed})
+		s.recordDNSEvidence(dnsEvidence{known: true, reason: dnsReasonApplyFailed, failure: err.Error()})
+		s.setDNSState(DNSFailed)
 		return
 	}
 	s.recordDNSEvidence(s.appliedDNSEvidence(snapshot))
+	// As for a map (applyMapDNS): what the host now holds.
+	state := DNSInactive
+	if configured {
+		state = DNSConfigured
+	}
+	s.setDNSState(state)
 }
 
 // appliedDNSEvidence is the evidence of applying snapshot's DNS: its digest,
@@ -96,7 +128,10 @@ func digestDNS(config *networkmap.DNSConfig) (dnsdigest.Digest, int, error) {
 // filter's digest at once.
 func (s *Service) recordDNSEvidence(evidence dnsEvidence) {
 	s.dnsEvidenceMu.Lock()
-	changed := s.dnsEvidence != evidence
+	// Core is told of the reason, not the host's words.
+	previous, next := s.dnsEvidence, evidence
+	previous.failure, next.failure = "", ""
+	changed := previous != next
 	s.dnsEvidence = evidence
 	republish := s.dnsRepublish
 	s.dnsEvidenceMu.Unlock()
