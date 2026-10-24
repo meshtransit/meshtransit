@@ -1,8 +1,11 @@
 package distribution
 
 import (
+	"context"
 	"net/netip"
 	"time"
+
+	"meshtransit.net/core/internal/domain/node"
 )
 
 // DNSOfflineAfter is how long without a touch a Device counts as offline in
@@ -22,6 +25,19 @@ func (counts DNSZoneApplication) Total() int {
 		counts.UserOff + counts.ApplyFailed + counts.Offline
 }
 
+// DNSZoneReceivers answers which of up to DNSZoneReceiversBatch Devices a
+// zone is still sent to, for the counts to leave out the Devices that hold
+// it only in a stale index entry (TD-CORE-87).
+type DNSZoneReceivers func(ctx context.Context, devices []node.ID) (map[node.ID]struct{}, error)
+
+// DNSZoneReceiversBatch is how many Devices one DNSZoneReceivers call takes.
+const DNSZoneReceiversBatch = 1_000
+
+// IsOffline reports whether a Device was not seen within DNSOfflineAfter.
+func (application DNSApplication) IsOffline(now time.Time) bool {
+	return application.SeenAt.IsZero() || now.Sub(application.SeenAt) > DNSOfflineAfter
+}
+
 // DNSApplication is what Core holds of one Device's DNS for the counts: the
 // digest sent, the digest it applied or why it applies none, when the
 // current DNS was delivered and when the Device was last seen.
@@ -36,7 +52,7 @@ type DNSApplication struct {
 // Count adds one Device's application to the counts: offline when it was
 // not seen within DNSOfflineAfter, otherwise as ClassifyDNSEnforcement.
 func (counts *DNSZoneApplication) Count(application DNSApplication, now time.Time) {
-	if application.SeenAt.IsZero() || now.Sub(application.SeenAt) > DNSOfflineAfter {
+	if application.IsOffline(now) {
 		counts.Offline++
 		return
 	}

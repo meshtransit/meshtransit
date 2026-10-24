@@ -35,13 +35,30 @@ func (zones *statusDNSZones) Read(context.Context, accountsession.Session, netwo
 type fakeDNSZoneStatus struct {
 	suffix    string
 	resolvers []netip.AddrPort
+	receivers distribution.DNSZoneReceivers
 	err       error
 }
 
 func (status *fakeDNSZoneStatus) LoadDNSZoneApplication(_ context.Context, _ network.ID, suffix string,
-	_ time.Time) (distribution.DNSZoneApplication, error) {
-	status.suffix = suffix
+	_ time.Time, receivers distribution.DNSZoneReceivers) (distribution.DNSZoneApplication, error) {
+	status.suffix, status.receivers = suffix, receivers
 	return distribution.DNSZoneApplication{Enforced: 4, UserOff: 1, Offline: 2}, status.err
+}
+
+// fakeZoneReceivers keeps every Device but the first it is asked about.
+type fakeZoneReceivers struct {
+	zoneID dnszone.ID
+	scope  network.Scope
+}
+
+func (receivers *fakeZoneReceivers) ZoneReceivers(_ context.Context, _ accountsession.Session, scope network.Scope,
+	zoneID dnszone.ID, devices []node.ID) (map[node.ID]struct{}, error) {
+	receivers.zoneID, receivers.scope = zoneID, scope
+	kept := make(map[node.ID]struct{})
+	for _, device := range devices[1:] {
+		kept[device] = struct{}{}
+	}
+	return kept, nil
 }
 
 func (status *fakeDNSZoneStatus) CountResolverHealth(_ context.Context, _ network.ID, resolvers []netip.AddrPort,
@@ -84,10 +101,15 @@ func TestReadDNSZoneStatus(t *testing.T) {
 			Resolvers []dnsResolverHealthBody `json:"resolvers"`
 		} `json:"data"`
 	}
-	read := func(status DNSZoneStatusCounter, devices DNSResolverDeviceReader) (int, body) {
+	read := func(status DNSZoneStatusCounter, devices DNSResolverDeviceReader, receivers ...DNSZoneReceiverReader) (
+		int, body,
+	) {
 		t.Helper()
 		options := validManagementHandlerOptions(t)
 		options.DNSZones, options.DNSZoneStatus, options.DNSResolverDevices = zones, status, devices
+		if len(receivers) == 1 {
+			options.DNSZoneReceivers = receivers[0]
+		}
 		handler, err := NewManagementHandler(options)
 		if err != nil {
 			t.Fatal(err)
@@ -129,5 +151,20 @@ func TestReadDNSZoneStatus(t *testing.T) {
 	code, got = read(nil, nil)
 	if code != http.StatusOK || got.Data.Available {
 		t.Fatalf("no counter: %d %+v", code, got.Data)
+	}
+	// Without a receiver reader the index counts alone; with one, the
+	// count asks it, for this zone in this Network (TD-CORE-87).
+	if status.receivers != nil {
+		t.Fatal("receivers without a reader")
+	}
+	reader := &fakeZoneReceivers{}
+	status = &fakeDNSZoneStatus{}
+	_, _ = read(status, fakeResolverDevices{}, reader)
+	if status.receivers == nil {
+		t.Fatal("no receivers with a reader")
+	}
+	kept, err := status.receivers(t.Context(), []node.ID{deviceID, deviceID})
+	if err != nil || len(kept) != 1 || reader.zoneID != zones.zone.ID || !reader.scope.IsValid() {
+		t.Fatalf("receivers %v %v; zone %v scope %v", kept, err, reader.zoneID, reader.scope)
 	}
 }

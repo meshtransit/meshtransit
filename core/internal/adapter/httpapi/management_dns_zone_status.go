@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"time"
 
+	"meshtransit.net/core/internal/domain/dnszone"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
@@ -19,9 +20,16 @@ import (
 // in each state (DNS design D1b §8, §9).
 type DNSZoneStatusCounter interface {
 	LoadDNSZoneApplication(ctx context.Context, networkID network.ID, suffix string,
-		now time.Time) (distribution.DNSZoneApplication, error)
+		now time.Time, receivers distribution.DNSZoneReceivers) (distribution.DNSZoneApplication, error)
 	CountResolverHealth(ctx context.Context, networkID network.ID, resolvers []netip.AddrPort,
 		now time.Time) ([]distribution.ResolverHealthCount, error)
+}
+
+// DNSZoneReceiverReader answers, under the caller's network.read, which of
+// up to distribution.DNSZoneReceiversBatch Devices a zone is still sent to.
+type DNSZoneReceiverReader interface {
+	ZoneReceivers(ctx context.Context, session accountsession.Session, scope network.Scope,
+		zoneID dnszone.ID, devices []node.ID) (map[node.ID]struct{}, error)
 }
 
 // DNSResolverDeviceReader reads a resolver Device under the caller's
@@ -102,8 +110,23 @@ func (handler *ManagementHandler) readDNSZoneStatus(ctx context.Context, respons
 	}
 	if !nilContinuationDependency(handler.dnsZoneStatus) {
 		networkID := path.scope.NetworkID()
+		var receivers distribution.DNSZoneReceivers
+		var receiversErr error
+		if !nilContinuationDependency(handler.dnsZoneReceivers) {
+			receivers = func(ctx context.Context, devices []node.ID) (map[node.ID]struct{}, error) {
+				kept, err := handler.dnsZoneReceivers.ZoneReceivers(ctx, session, path.scope, reading.Zone.ID,
+					devices)
+				receiversErr = err
+				return kept, err
+			}
+		}
 		application, applicationErr := handler.dnsZoneStatus.LoadDNSZoneApplication(ctx, networkID,
-			reading.Zone.Domain.String(), now)
+			reading.Zone.Domain.String(), now, receivers)
+		if receiversErr != nil {
+			// The counts stand, with Devices the zone may no longer reach.
+			handler.logger.WarnContext(ctx, "dns zone receivers unavailable",
+				"correlation_id", correlationID.String(), "error", receiversErr)
+		}
 		health, healthErr := handler.dnsZoneStatus.CountResolverHealth(ctx, networkID, addresses, now)
 		if applicationErr == nil && healthErr == nil && len(health) == len(addresses) {
 			output.Data.Available = true

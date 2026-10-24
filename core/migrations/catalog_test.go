@@ -3,11 +3,13 @@ package migrations
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"regexp"
 	"slices"
 	"strings"
 	"testing"
 
+	"meshtransit.net/core/internal/domain/node/distribution"
 	"meshtransit.net/shared/internet"
 )
 
@@ -15,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 222 {
-		t.Fatalf("len(Catalog()) = %d, want 222", len(catalog))
+	if len(catalog) != 223 {
+		t.Fatalf("len(Catalog()) = %d, want 223", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1611,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 222 {
-		t.Fatalf("LatestVersion() = %d, want 222", LatestVersion())
+	if LatestVersion() != 223 {
+		t.Fatalf("LatestVersion() = %d, want 223", LatestVersion())
 	}
 }
 
@@ -6395,6 +6397,33 @@ func TestMigration222SerializesDeviceDNSLabels(t *testing.T) {
 	for _, forbidden := range []string{"GRANT ", "BYPASSRLS", "DROP "} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 222 contains %q", forbidden)
+		}
+	}
+}
+
+func TestMigration223CountsOnlyZoneReceivers(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[222]
+	if migration.Version != 223 {
+		t.Fatalf("migration 223 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.dns_zone_receivers_v1(",
+		fmt.Sprintf("OR pg_catalog.cardinality(p_device_ids) > %d THEN", distribution.DNSZoneReceiversBatch),
+		"p_workspace_public_id, p_network_public_id, 'network.read'",
+		"AND device.deleted_at IS NULL AND device.state = 'active'",
+		"AND member.device_group_id = ANY (v_zone.distribution_group_ids)))",
+		"AND unmanaged.device_group_id = ANY (v_unmanaged)));",
+		") FROM PUBLIC, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;",
+		") TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 223 lacks %q", want)
+		}
+	}
+	for _, forbidden := range []string{"BYPASSRLS", "DROP ", "ALTER TABLE"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 223 contains %q", forbidden)
 		}
 	}
 }

@@ -156,6 +156,21 @@ ORDER BY event_identity_id DESC LIMIT 1`).Scan(&auditedResolver); err != nil || 
 		t.Fatalf("the audit names resolver %q, error = %v", auditedResolver, err)
 	}
 	assertDNSZoneMaps(ctx, t, admin, runtimePool, owner, scope, group.Group.ID, resolver, consumer)
+	// The zone's counts keep only the Devices it is still sent to: the group's
+	// Device, neither its resolver Device nor one outside the Network (schema 223).
+	receiverStore, err := postgresadapter.NewDNSZoneStore(runtimePool,
+		postgresadapter.AccountSessionOptions{StatementTimeout: 3 * time.Second, IdleTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stranger, err := node.ParseID("01890f00-0000-7000-8000-0000000d0e01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	receivers, err := receiverStore.ZoneReceivers(ctx, owner, scope, zone, []node.ID{resolver, consumer, stranger})
+	if _, kept := receivers[consumer]; err != nil || len(receivers) != 1 || !kept {
+		t.Fatalf("zone receivers = %v, error = %v", receivers, err)
+	}
 	if _, err := service.Update(ctx, owner, scope, zone, 1, withDevice, newCorrelationID(t)); !errors.Is(err,
 		dnszone.ErrVersionConflict) {
 		t.Fatalf("stale update: %v", err)

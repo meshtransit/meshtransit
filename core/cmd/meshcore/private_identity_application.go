@@ -114,6 +114,8 @@ type privateIdentityPorts struct {
 	// resolvers; DNSResolverDevices reads a resolver Device's address.
 	DNSZoneStatus      httpapi.DNSZoneStatusCounter
 	DNSResolverDevices httpapi.DNSResolverDeviceReader
+	// DNSZoneReceivers keeps Devices a zone no longer reaches out of its counts.
+	DNSZoneReceivers httpapi.DNSZoneReceiverReader
 	// Countries places Devices' public addresses in countries; nil: none.
 	Countries       httpapi.CountryLookup
 	IdentityGroups  httpapi.IdentityGroupManager
@@ -254,6 +256,7 @@ func composePrivateIdentity(
 		ExitNodeUse:            ports.ExitNodeUse,
 		DNSZoneStatus:          ports.DNSZoneStatus,
 		DNSResolverDevices:     ports.DNSResolverDevices,
+		DNSZoneReceivers:       ports.DNSZoneReceivers,
 		Countries:              ports.Countries,
 		IdentityGroups:         ports.IdentityGroups,
 		DeviceTags:             ports.DeviceTags,

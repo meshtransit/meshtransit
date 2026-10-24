@@ -11,6 +11,7 @@ import (
 	redisclient "github.com/redis/go-redis/v9"
 
 	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/node/distribution"
 )
 
@@ -176,16 +177,18 @@ func dnsHealthKey(networkID network.ID, resolver netip.AddrPort, state string) s
 // LoadDNSZoneApplication counts the Devices of the Network that hold the
 // zone of suffix by how the DNS they apply compares with what they were
 // sent. Entries of Devices that left the index are deleted as it reads, a
-// bounded number at a time.
+// bounded number at a time. With receivers, a Device it would count offline
+// counts only while the zone is still sent to it: a Device deleted, or no
+// longer in the zone's Device Groups, stays in the index until it expires.
 func (client *Client) LoadDNSZoneApplication(ctx context.Context, networkID network.ID, suffix string,
-	now time.Time,
+	now time.Time, receivers distribution.DNSZoneReceivers,
 ) (distribution.DNSZoneApplication, error) {
 	if ctx == nil || client == nil || client.loadDNSZone == nil || client.loadDNSApply == nil ||
 		!networkID.IsValid() || suffix == "" || now.IsZero() {
 		return distribution.DNSZoneApplication{}, ErrInvalidOptions
 	}
 	startedAt := time.Now()
-	counts, err := client.countDNSZone(ctx, networkID, suffix, now)
+	counts, err := client.countDNSZone(ctx, networkID, suffix, now, receivers)
 	client.metrics.observeCommand(redisCommandLoadDNSIndex, startedAt, err)
 	if err != nil {
 		return distribution.DNSZoneApplication{}, errors.Join(ErrLoadDNSIndex, err)
@@ -194,7 +197,7 @@ func (client *Client) LoadDNSZoneApplication(ctx context.Context, networkID netw
 }
 
 func (client *Client) countDNSZone(ctx context.Context, networkID network.ID, suffix string,
-	now time.Time,
+	now time.Time, receivers distribution.DNSZoneReceivers,
 ) (distribution.DNSZoneApplication, error) {
 	zoneKey, applyKey := dnsZoneKey(networkID, suffix), dnsApplyKey(networkID)
 	var counts distribution.DNSZoneApplication
@@ -221,6 +224,7 @@ func (client *Client) countDNSZone(ctx context.Context, networkID network.ID, su
 			if err != nil || len(values) != len(fresh) {
 				return distribution.DNSZoneApplication{}, errors.Join(errors.New("unexpected dns index read"), err)
 			}
+			var offline []offlineDNSEntry
 			for index, value := range values {
 				text, present := value.(string)
 				application, valid := decodeDNSApplication(text)
@@ -232,9 +236,21 @@ func (client *Client) countDNSZone(ctx context.Context, networkID network.ID, su
 					// Written by another version: leave it, uncounted.
 				case now.Sub(application.SeenAt) > dnsIndexTTL:
 					stale = append(stale, dnsIndexEntry{node: fresh[index], apply: text})
+				case receivers != nil && application.IsOffline(now):
+					id, err := node.ParseID(fresh[index])
+					if err != nil {
+						// Not a Device ID Core wrote: counted, as before receivers.
+						counts.Count(application, now)
+						continue
+					}
+					offline = append(offline, offlineDNSEntry{node: id, application: application})
 				default:
 					counts.Count(application, now)
 				}
+			}
+			if !countReceivers(ctx, &counts, offline, receivers, now) {
+				// A filter that failed once fails the rest of the count too.
+				receivers = nil
 			}
 		}
 		if next == 0 || len(seen) > maximumDNSIndexEntries {
@@ -246,6 +262,43 @@ func (client *Client) countDNSZone(ctx context.Context, networkID network.ID, su
 		}
 		cursor = next
 	}
+}
+
+// offlineDNSEntry is a Device a count would call offline, until the zone's
+// receivers say whether it still gets the zone.
+type offlineDNSEntry struct {
+	node        node.ID
+	application distribution.DNSApplication
+}
+
+// countReceivers counts the offline entries of one page whose Devices the
+// zone is still sent to, false once the receivers could not be read: every
+// entry left then counts, as before them. Its entries stay in the index:
+// the application entry serves every zone of the Device, and expires on
+// its own.
+func countReceivers(ctx context.Context, counts *distribution.DNSZoneApplication, entries []offlineDNSEntry,
+	receivers distribution.DNSZoneReceivers, now time.Time,
+) bool {
+	for start := 0; start < len(entries); start += distribution.DNSZoneReceiversBatch {
+		batch := entries[start:min(len(entries), start+distribution.DNSZoneReceiversBatch)]
+		ids := make([]node.ID, len(batch))
+		for index, entry := range batch {
+			ids[index] = entry.node
+		}
+		kept, err := receivers(ctx, ids)
+		if err != nil {
+			for _, entry := range entries[start:] {
+				counts.Count(entry.application, now)
+			}
+			return false
+		}
+		for _, entry := range batch {
+			if _, receives := kept[entry.node]; receives {
+				counts.Count(entry.application, now)
+			}
+		}
+	}
+	return true
 }
 
 // dnsIndexEntry is a Device to drop from a zone's hash: apply is the

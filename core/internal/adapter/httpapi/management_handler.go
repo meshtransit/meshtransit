@@ -294,6 +294,9 @@ type ManagementHandlerOptions struct {
 	// either a zone's status is unavailable.
 	DNSZoneStatus      DNSZoneStatusCounter
 	DNSResolverDevices DNSResolverDeviceReader
+	// DNSZoneReceivers leaves out of a zone's counts the Devices it is no
+	// longer sent to; without it they count as before (TD-CORE-87).
+	DNSZoneReceivers DNSZoneReceiverReader
 	// ExitNodeUse, when set, adds how many Devices use each exit node to one
 	// Exit Pool's read (mtcp-v1 §8.3).
 	ExitNodeUse ExitNodeUseCounter
@@ -376,6 +379,7 @@ type ManagementHandler struct {
 	siteRouterUse             SiteRouterUseCounter
 	dnsZoneStatus             DNSZoneStatusCounter
 	dnsResolverDevices        DNSResolverDeviceReader
+	dnsZoneReceivers          DNSZoneReceiverReader
 	exitNodeUse               ExitNodeUseCounter
 	countries                 CountryLookup
 	identityGroups            IdentityGroupManager
@@ -465,6 +469,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		siteRouterUse:             options.SiteRouterUse,
 		dnsZoneStatus:             options.DNSZoneStatus,
 		dnsResolverDevices:        options.DNSResolverDevices,
+		dnsZoneReceivers:          options.DNSZoneReceivers,
 		exitNodeUse:               options.ExitNodeUse,
 		countries:                 options.Countries,
 		identityGroups:            options.IdentityGroups,

@@ -65,7 +65,7 @@ func (store *Store) NetworkRevision(ctx context.Context, scope network.Scope) (i
 		reads.entries[scope] = read
 		// The read is every waiting stream's, the first caller's too: it runs
 		// on its own deadline, and a caller that gives up only stops waiting.
-		go store.shareRevisionRead(reads, scope, read)
+		go store.shareRevisionRead(reads, scope, read) //nolint:gosec // G118: shared by every waiting caller, bounded by StatementTimeout.
 	}
 	reads.mu.Unlock()
 	select {

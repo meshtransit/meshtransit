@@ -91,7 +91,7 @@ func assertRedisDNSEvidence(ctx context.Context, t *testing.T, client *redisadap
 	// resolver's state (DNS design D1b §8, §9).
 	count := func(suffix string) distribution.DNSZoneApplication {
 		t.Helper()
-		counts, err := client.LoadDNSZoneApplication(ctx, networkID, suffix, at)
+		counts, err := client.LoadDNSZoneApplication(ctx, networkID, suffix, at, nil)
 		if err != nil {
 			t.Fatalf("LoadDNSZoneApplication(%s) error = %v", suffix, err)
 		}

@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
 	"slices"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/node/distribution"
+	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/shared/dnsdigest"
 )
 
@@ -82,6 +84,95 @@ func applicationEntry(sent, enforced, reason string, delivered, seen time.Time) 
 // A zone's count reads the Devices that hold it from its hash, a page at a
 // time, and their application from the Network's; it drops the entries of
 // Devices that left the index, and leaves alone what it cannot read.
+// A Device the count would call offline counts only while the zone is
+// still sent to it; when that cannot be read, it counts as before, and its
+// entries stay in the index either way (TD-CORE-87).
+func TestLoadDNSZoneApplicationAsksReceivers(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	settled := now.Add(-time.Hour)
+	stillThere, err := node.ParseID("01890f00-0000-7000-8000-00000000d1c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone, err := node.ParseID("01890f00-0000-7000-8000-00000000d1c2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := map[string]any{
+		"online":            applicationEntry(testDigestText, testDigestText, "", settled, now),
+		stillThere.String(): applicationEntry(testDigestText, testDigestText, "", settled, now.Add(-time.Hour)),
+		gone.String():       applicationEntry(testDigestText, testDigestText, "", settled, now.Add(-time.Hour)),
+	}
+	pruned := false
+	client := &Client{
+		loadDNSZone: func(context.Context, string, uint64, int) ([]string, uint64, error) {
+			return []string{"online", stillThere.String(), gone.String()}, 0, nil
+		},
+		loadDNSApply: func(_ context.Context, _ string, fields []string) ([]any, error) {
+			values := make([]any, len(fields))
+			for index, field := range fields {
+				values[index] = entries[field]
+			}
+			return values, nil
+		},
+		pruneDNSIndex: func(context.Context, string, string, []dnsIndexEntry) error {
+			pruned = true
+			return nil
+		},
+		metrics: newRedisMetrics(1, nil),
+	}
+	var asked []node.ID
+	receivers := func(_ context.Context, devices []node.ID) (map[node.ID]struct{}, error) {
+		asked = devices
+		return map[node.ID]struct{}{stillThere: {}}, nil
+	}
+	counts, err := client.LoadDNSZoneApplication(t.Context(), testNetworkID(t), ".", now, receivers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts != (distribution.DNSZoneApplication{Enforced: 1, Offline: 1}) || len(asked) != 2 || pruned {
+		t.Fatalf("counts %+v, asked %v, pruned %v", counts, asked, pruned)
+	}
+	failing := func(context.Context, []node.ID) (map[node.ID]struct{}, error) {
+		return nil, errors.New("database down")
+	}
+	counts, err = client.LoadDNSZoneApplication(t.Context(), testNetworkID(t), ".", now, failing)
+	if err != nil || counts != (distribution.DNSZoneApplication{Enforced: 1, Offline: 2}) {
+		t.Fatalf("receivers down: %+v %v", counts, err)
+	}
+}
+
+// Receivers are asked a batch at a time, and not again once they failed.
+func TestCountReceiversBatches(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	offline := distribution.DNSApplication{SeenAt: now.Add(-time.Hour)}
+	entries := make([]offlineDNSEntry, distribution.DNSZoneReceiversBatch+500)
+	for index := range entries {
+		entries[index] = offlineDNSEntry{node: node.ID(testPublicID(t, index)), application: offline}
+	}
+	var sizes []int
+	keepNone := func(_ context.Context, devices []node.ID) (map[node.ID]struct{}, error) {
+		sizes = append(sizes, len(devices))
+		return map[node.ID]struct{}{}, nil
+	}
+	var counts distribution.DNSZoneApplication
+	if !countReceivers(t.Context(), &counts, entries, keepNone, now) ||
+		!slices.Equal(sizes, []int{distribution.DNSZoneReceiversBatch, 500}) || counts.Offline != 0 {
+		t.Fatalf("sizes %v counts %+v", sizes, counts)
+	}
+	calls := 0
+	failing := func(context.Context, []node.ID) (map[node.ID]struct{}, error) {
+		calls++
+		return nil, errors.New("database down")
+	}
+	counts = distribution.DNSZoneApplication{}
+	if countReceivers(t.Context(), &counts, entries, failing, now) || calls != 1 || counts.Offline != len(entries) {
+		t.Fatalf("calls %d counts %+v", calls, counts)
+	}
+}
+
 func TestLoadDNSZoneApplication(t *testing.T) {
 	t.Parallel()
 	now := time.Now().UTC()
@@ -126,7 +217,7 @@ func TestLoadDNSZoneApplication(t *testing.T) {
 		metrics: newRedisMetrics(1, nil),
 	}
 	networkID := testNetworkID(t)
-	counts, err := client.LoadDNSZoneApplication(t.Context(), networkID, ".", now)
+	counts, err := client.LoadDNSZoneApplication(t.Context(), networkID, ".", now, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,10 +234,10 @@ func TestLoadDNSZoneApplication(t *testing.T) {
 	client.loadDNSZone = func(context.Context, string, uint64, int) ([]string, uint64, error) {
 		return nil, 0, errors.New("redis down")
 	}
-	if _, err := client.LoadDNSZoneApplication(t.Context(), networkID, ".", now); !errors.Is(err, ErrLoadDNSIndex) {
+	if _, err := client.LoadDNSZoneApplication(t.Context(), networkID, ".", now, nil); !errors.Is(err, ErrLoadDNSIndex) {
 		t.Fatalf("redis down: %v", err)
 	}
-	if _, err := client.LoadDNSZoneApplication(t.Context(), network.ID{}, ".", now); !errors.Is(err, ErrInvalidOptions) {
+	if _, err := client.LoadDNSZoneApplication(t.Context(), network.ID{}, ".", now, nil); !errors.Is(err, ErrInvalidOptions) {
 		t.Fatalf("no Network: %v", err)
 	}
 }
@@ -185,4 +276,14 @@ func TestCountResolverHealth(t *testing.T) {
 		[]netip.AddrPort{netip.AddrPortFrom(netip.MustParseAddr("1.1.1.1"), 0)}, now); !errors.Is(err, ErrInvalidOptions) {
 		t.Fatalf("no port: %v", err)
 	}
+}
+
+// testPublicID is a distinct UUIDv7 for index.
+func testPublicID(t *testing.T, index int) publicid.ID {
+	t.Helper()
+	id, err := publicid.Parse(fmt.Sprintf("01890f00-0000-7000-8000-%012x", index+1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }

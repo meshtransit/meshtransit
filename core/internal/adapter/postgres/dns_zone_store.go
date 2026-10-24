@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/netip"
 	"slices"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node/distribution"
 	"meshtransit.net/core/internal/domain/publicid"
 )
 
@@ -28,6 +30,9 @@ const listDNSZonesSQL = `SELECT mesh_ops.list_dns_zones_v2(` + sessionArguments 
  NULLIF($12::TEXT,'')::UUID,$13::INTEGER)::TEXT`
 
 const readDNSZoneSQL = `SELECT mesh_ops.read_dns_zone_v2(` + sessionArguments + `,$10::UUID,$11::UUID,$12::UUID)::TEXT`
+
+const dnsZoneReceiversSQL = `SELECT mesh_ops.dns_zone_receivers_v1(` + sessionArguments +
+	`,$10::UUID,$11::UUID,$12::UUID,$13::UUID[])::TEXT[]`
 
 const changeDNSZoneSQL = `SELECT mesh_ops.change_dns_zone_v2(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::TEXT,$13::UUID,$14::BIGINT,$15::TEXT,$16::TEXT,$17::TEXT,$18::JSONB,$19::UUID[],
@@ -322,6 +327,45 @@ func (store *DNSZoneStore) Read(ctx context.Context, session accountsession.Sess
 		return dnszone.Reading{}, dnszone.ErrInvalid
 	}
 	return dnszone.Reading{Zone: zone, Abilities: dnszone.Abilities{CanManage: document.CanManage}}, nil
+}
+
+// ZoneReceivers returns which of devices, up to
+// distribution.DNSZoneReceiversBatch, the zone is still sent to: active
+// Devices of the Network in its Device Groups, neither its resolver Devices
+// nor in an unmanaged Device Group (network.read, schema 223).
+func (store *DNSZoneStore) ZoneReceivers(ctx context.Context, session accountsession.Session,
+	scope network.Scope, zoneID dnszone.ID, devices []node.ID,
+) (map[node.ID]struct{}, error) {
+	if !session.IsValid() || !scope.IsValid() || !zoneID.IsValid() ||
+		len(devices) > distribution.DNSZoneReceiversBatch {
+		return nil, dnszone.ErrInvalid
+	}
+	receivers := make(map[node.ID]struct{}, len(devices))
+	if len(devices) == 0 {
+		return receivers, nil
+	}
+	ids := make([]string, 0, len(devices))
+	for _, device := range devices {
+		if !device.IsValid() {
+			return nil, dnszone.ErrInvalid
+		}
+		ids = append(ids, device.String())
+	}
+	var found []string
+	if err := store.read(ctx, scope, func(tx accountSessionTransaction) error {
+		return tx.QueryRow(ctx, dnsZoneReceiversSQL, append(sessionQueryArguments(session),
+			scope.WorkspaceID().String(), scope.NetworkID().String(), zoneID.String(), ids)...).Scan(&found)
+	}); err != nil {
+		return nil, fmt.Errorf("dns zone receivers: %w", err)
+	}
+	for _, text := range found {
+		id, err := node.ParseID(text)
+		if err != nil {
+			return nil, dnszone.ErrInvalid
+		}
+		receivers[id] = struct{}{}
+	}
+	return receivers, nil
 }
 
 // read runs one read-only query in the Network scope and rolls back.
