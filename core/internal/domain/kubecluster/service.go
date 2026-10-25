@@ -2,11 +2,13 @@ package kubecluster
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"time"
 
 	"meshtransit.net/core/internal/domain/enrollment"
+	"meshtransit.net/core/internal/domain/enrollment/registration"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
@@ -371,8 +373,11 @@ func (attempt JoinAttempt) IsValid() bool {
 type JoinTicket struct {
 	Request   ReplicaRequestView
 	ClusterID ID
-	Nonce     [32]byte
-	Created   bool
+	// Scope is the cluster's Network, where the session completes the
+	// request.
+	Scope   network.Scope
+	Nonce   [32]byte
+	Created bool
 }
 
 // JoinStore opens requests for replicas' sessions: it verifies the key's
@@ -398,4 +403,40 @@ func (SystemSecrets) NewCredentialID() (enrollment.CredentialID, error) {
 		return enrollment.CredentialID{}, err
 	}
 	return enrollment.CredentialID(id), nil
+}
+
+// NewRequestID returns a new request ID.
+func (SystemSecrets) NewRequestID() (RequestID, error) {
+	id, err := publicid.New()
+	if err != nil {
+		return RequestID{}, err
+	}
+	return RequestID(id), nil
+}
+
+// NewRequestNonce returns the 32 random bytes a request's code binds.
+func (SystemSecrets) NewRequestNonce() ([32]byte, error) {
+	var nonce [32]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return [32]byte{}, err
+	}
+	return nonce, nil
+}
+
+// Completion is where a replica's request stands for its session: still
+// waiting, or completed with the gateway Device (Result).
+type Completion struct {
+	State  RequestState
+	Result registration.Result
+}
+
+// JoinCompletionStore completes an approved request into its gateway Device
+// in one transaction, bound to the session's machine key and node key, and
+// returns the Device again for a request already completed. A request that
+// waits returns RequestPending; one rejected or cancelled ErrNotWaiting;
+// one past its deadline ErrExpired; one whose key was revoked
+// ErrKeyNotUsable.
+type JoinCompletionStore interface {
+	CompleteReplicaRequest(ctx context.Context, scope network.Scope, requestID RequestID,
+		identity node.RegistrationIdentity) (Completion, error)
 }

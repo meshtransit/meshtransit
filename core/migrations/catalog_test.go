@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 224 {
-		t.Fatalf("len(Catalog()) = %d, want 224", len(catalog))
+	if len(catalog) != 225 {
+		t.Fatalf("len(Catalog()) = %d, want 225", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 224 {
-		t.Fatalf("LatestVersion() = %d, want 224", LatestVersion())
+	if LatestVersion() != 225 {
+		t.Fatalf("LatestVersion() = %d, want 225", LatestVersion())
 	}
 }
 
@@ -6479,5 +6479,45 @@ func TestMigration224KubernetesClusters(t *testing.T) {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 224 contains %q", forbidden)
 		}
+	}
+}
+
+// Schema 225 writes gateway Devices only through a migrator-owned function,
+// completes only an approved request within its deadline whose key is not
+// revoked, and never counts the key's use twice.
+func TestMigration225KubernetesReplicaCompletion(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[224]
+	if migration.Version != 225 {
+		t.Fatalf("migration 225 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE OR REPLACE FUNCTION mesh_ops.open_kubernetes_replica_request_v1(",
+		"AND request.state IN ('pending', 'approved', 'completed')",
+		"CREATE FUNCTION mesh_ops.insert_kubernetes_gateway_device_v1(",
+		"'credential', v_request.enrollment_credential_id, p_hostname, p_hostname, FALSE,",
+		"mesh_ops.device_never_expires_v1(), 'active', 'workspace', TRUE, 'kubernetes_gateway',",
+		"WHERE credential.id = v_request.enrollment_credential_id AND credential.state = 'active';",
+		"v_request.id, p_device_internal_id, v_request.machine_key_fingerprint, 'created', p_occurred_at,",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 225 lacks %q", want)
+		}
+	}
+	for _, forbidden := range []string{"BYPASSRLS", "DROP TABLE", "DROP FUNCTION", "DROP COLUMN", "used_count + 1"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 225 contains %q", forbidden)
+		}
+	}
+	for _, required := range []string{"the Device does not hold the approved machine key",
+		"the Device does not hold the approved node key", "the gateway Device is no longer active",
+		"gateway Device name is not the reserved one", "v_request.state := 'expired';"} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 225 lacks %q", required)
+		}
+	}
+	if strings.Count(migration.SQL, "DROP TRIGGER") != 1 ||
+		!strings.Contains(migration.SQL, "DROP TRIGGER device_dns_label_kubernetes_gateway ON mesh.device_dns_label;") {
+		t.Error("schema 225 drops another trigger than the gateway DNS label guard")
 	}
 }

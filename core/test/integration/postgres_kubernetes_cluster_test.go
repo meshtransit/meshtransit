@@ -243,6 +243,11 @@ WHERE workspace_id = 103 AND network_id = 203 ORDER BY id LIMIT 1`).Scan(&heldMa
 		t.Fatalf("another machine with the same node key: %v", err)
 	}
 	assertNoGatewayDevice(ctx, t, admin, clusterID)
+	completions := newIntegrationJoinCompletions(t, runtimePool)
+	if waiting, err := completions.CompleteReplicaRequest(ctx, ticket.Scope, ticket.Request.ID(),
+		registrationIdentity(t, first)); err != nil || waiting.State != kubecluster.RequestPending {
+		t.Fatalf("completing a waiting request = %+v, %v", waiting, err)
+	}
 
 	// Another Network's scope sees nothing of this one's requests.
 	otherNetwork, err := network.NewScope(scope.WorkspaceID(), network.ID(mustPublicID(t)))
@@ -287,6 +292,17 @@ WHERE workspace_id = 103 AND network_id = 203 ORDER BY id LIMIT 1`).Scan(&heldMa
 		t.Fatalf("approving twice: %v", err)
 	}
 	assertNoGatewayDevice(ctx, t, admin, clusterID)
+	// Past its completion deadline the request answers expired, and the
+	// answer writes nothing: open and approve move such rows.
+	shiftReplicaRequest(ctx, t, admin, ticket.Request.ID().String(), "-1 hour")
+	if _, err := completions.CompleteReplicaRequest(ctx, ticket.Scope, ticket.Request.ID(),
+		registrationIdentity(t, first)); !errors.Is(err, kubecluster.ErrExpired) {
+		t.Fatalf("completing past the deadline: %v", err)
+	}
+	assertReplicaRequestState(ctx, t, admin, ticket.Request.ID().String(), "approved")
+	assertNoGatewayDevice(ctx, t, admin, clusterID)
+	shiftReplicaRequest(ctx, t, admin, ticket.Request.ID().String(), "1 hour")
+	gatewayDevice := assertReplicaCompletes(ctx, t, admin, completions, ticket, first)
 
 	// A second replica: its own code does not approve the first's request,
 	// and it is rejected.
@@ -375,8 +391,16 @@ WHERE kubernetes_cluster_id = (SELECT id FROM mesh.kubernetes_cluster WHERE publ
 		t.Fatalf("a revoked key opened a request: %v", err)
 	}
 	detail, err := service.Read(ctx, owner, scope, clusterID)
-	if err != nil || len(detail.Keys) != 1 || len(detail.Requests) < 3 || len(detail.Replicas) != 0 {
+	if err != nil || len(detail.Keys) != 1 || len(detail.Requests) < 3 || len(detail.Replicas) != 1 ||
+		detail.Replicas[0].DeviceID.String() != gatewayDevice || detail.Replicas[0].Name != "prod-0" ||
+		detail.Replicas[0].Ordinal != 0 || detail.Cluster.Replicas() != 1 {
 		t.Fatalf("Read() = %+v, %v", detail, err)
+	}
+	removeGatewayDevice(ctx, t, admin, gatewayDevice)
+	// A pod whose gateway is gone gets a final answer, not its Device again.
+	if _, err := completions.CompleteReplicaRequest(ctx, ticket.Scope, ticket.Request.ID(),
+		registrationIdentity(t, first)); !errors.Is(err, kubecluster.ErrNotWaiting) {
+		t.Fatalf("completing a request whose Device is gone: %v", err)
 	}
 	deleted, err := service.Delete(ctx, kubecluster.Deletion{Session: owner, Scope: scope, ClusterID: clusterID,
 		CorrelationID: newCorrelationID(t)})
@@ -575,6 +599,7 @@ func assertGatewayReferenceCoverage(ctx context.Context, t *testing.T, admin *pg
 		"mesh.compiled_policy_route_rule":                    "compiled Policy: publication refuses gateways (K1a2)",
 		"mesh.compiled_policy_rule":                          "compiled Policy: publication refuses gateways (K1a2)",
 		"mesh.device_alias_client_version":                   "what its client supports, reported on every map open",
+		"mesh.device_dns_label":                              "the Device's own mesh name, written when it is created",
 		"mesh.device_machine_key_epoch":                      "a gateway has key epochs like any Device",
 		"mesh.device_node_key_epoch":                         "a gateway has key epochs like any Device",
 		"mesh.enrollment_credential_use":                     "a gateway uses its join key like any Device",
@@ -646,6 +671,130 @@ func assertDatabaseChecksTheCode(ctx context.Context, t *testing.T, admin *pgx.C
 		int64(12345), mustPublicID(t).String())
 	if err == nil || !strings.Contains(err.Error(), "MTK09") {
 		t.Fatalf("the database approved a wrong code: %v", err)
+	}
+}
+
+func newIntegrationJoinCompletions(t *testing.T,
+	runtimePool *postgresadapter.Pool) *postgresadapter.KubernetesJoinCompletionStore {
+	t.Helper()
+	store, err := postgresadapter.NewKubernetesJoinCompletionStore(runtimePool,
+		postgresadapter.RegistrationTransactionOptions{StatementTimeout: 5 * time.Second, LockTimeout: time.Second,
+			IdleTimeout: 10 * time.Second, AddressCandidateLimit: 256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+func registrationIdentity(t *testing.T, keys replicaKeys) node.RegistrationIdentity {
+	t.Helper()
+	identity, err := node.NewRegistrationIdentity(keys.machine, keys.node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return identity
+}
+
+// assertReplicaCompletes: the approved request completes into a gateway
+// Device that belongs to the Workspace, never expires, has the reserved
+// name and ordinal and an address, without counting its key's use twice;
+// completing again returns the same Device; other keys find nothing.
+func assertReplicaCompletes(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	completions *postgresadapter.KubernetesJoinCompletionStore, ticket kubecluster.JoinTicket,
+	keys replicaKeys) string {
+	t.Helper()
+	completion, err := completions.CompleteReplicaRequest(ctx, ticket.Scope, ticket.Request.ID(),
+		registrationIdentity(t, keys))
+	if err != nil || completion.State != kubecluster.RequestCompleted ||
+		completion.Result.Hostname().String() != "prod-0" {
+		t.Fatalf("CompleteReplicaRequest() = %+v, %v", completion, err)
+	}
+	deviceID := completion.Result.NodeID().String()
+	var kind, ownership, hostname string
+	var ordinal int
+	var neverExpires, locked bool
+	var leases, uses, used int
+	if err := admin.QueryRow(ctx, `SELECT device.kind, device.ownership, device.hostname, device.kubernetes_ordinal,
+    device.expires_at = mesh_ops.device_never_expires_v1(), device.hostname_locked,
+    (SELECT pg_catalog.count(*) FROM mesh.node_address_lease AS lease WHERE lease.device_id = device.id),
+    (SELECT pg_catalog.count(*) FROM mesh.enrollment_credential_use AS credential_use
+     WHERE credential_use.device_id = device.id AND credential_use.kubernetes_replica_request_id IS NOT NULL),
+    (SELECT credential.used_count FROM mesh.enrollment_credential AS credential
+     WHERE credential.id = device.registered_by_credential_id)
+FROM mesh.device AS device WHERE device.public_id = $1::UUID`, deviceID).Scan(&kind, &ownership, &hostname,
+		&ordinal, &neverExpires, &locked, &leases, &uses, &used); err != nil {
+		t.Fatalf("read the gateway Device: %v", err)
+	}
+	if kind != "kubernetes_gateway" || ownership != "workspace" || hostname != "prod-0" || ordinal != 0 ||
+		!neverExpires || !locked || leases == 0 || uses != 1 || used != 1 {
+		t.Fatalf("gateway Device = %s %s %s ordinal %d never %t locked %t leases %d uses %d used %d", kind,
+			ownership, hostname, ordinal, neverExpires, locked, leases, uses, used)
+	}
+	again, err := completions.CompleteReplicaRequest(ctx, ticket.Scope, ticket.Request.ID(),
+		registrationIdentity(t, keys))
+	if err != nil || again.State != kubecluster.RequestCompleted || again.Result.NodeID() != completion.Result.NodeID() {
+		t.Fatalf("completing again = %+v, %v", again, err)
+	}
+	if _, err := completions.CompleteReplicaRequest(ctx, ticket.Scope, ticket.Request.ID(),
+		registrationIdentity(t, newReplicaKeys(t))); !errors.Is(err, kubecluster.ErrNotFound) {
+		t.Fatalf("other keys completed the request: %v", err)
+	}
+	assertKubernetesEvent(ctx, t, admin, "device", deviceID, "kubernetes_replica.enrolled")
+	return deviceID
+}
+
+// shiftReplicaRequest moves a request's times by interval, skipping
+// triggers: its deadline passes without waiting.
+func shiftReplicaRequest(ctx context.Context, t *testing.T, admin *pgx.Conn, requestID, interval string) {
+	t.Helper()
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SET LOCAL session_replication_role = replica`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE mesh.kubernetes_replica_request
+SET created_at = created_at + $2::INTERVAL, updated_at = updated_at + $2::INTERVAL,
+    approved_at = approved_at + $2::INTERVAL, completion_deadline = completion_deadline + $2::INTERVAL
+WHERE public_id = $1::UUID`, requestID, interval); err != nil {
+		t.Fatalf("shift the request: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertReplicaRequestState(ctx context.Context, t *testing.T, admin *pgx.Conn, requestID, want string) {
+	t.Helper()
+	var state string
+	if err := admin.QueryRow(ctx, `SELECT state FROM mesh.kubernetes_replica_request WHERE public_id = $1::UUID`,
+		requestID).Scan(&state); err != nil || state != want {
+		t.Fatalf("request state = %q, %v; want %q", state, err, want)
+	}
+}
+
+// removeGatewayDevice deletes the test's gateway Device so its cluster can
+// be deleted.
+func removeGatewayDevice(ctx context.Context, t *testing.T, admin *pgx.Conn, deviceID string) {
+	t.Helper()
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// Device deletion is not this test's subject: skip its triggers and
+	// evidence, and leave only the state the cluster's deletion reads.
+	if _, err := tx.Exec(ctx, `SET LOCAL session_replication_role = replica`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE mesh.device SET state = 'deleted', deleted_at = pg_catalog.now(),
+    version = version + 1 WHERE public_id = $1::UUID`, deviceID); err != nil {
+		t.Fatalf("delete the gateway Device: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -14,10 +14,16 @@ merge (2026-10-09) are kept below.
   (`…/replica-requests/{id}/actions/approve`, `{"code":"XXXXX-XXXXX"}`),
   checked by Core and by the database; five wrong codes cancel it. Join keys
   never enroll through the ordinary enrollment path, older Core included.
-  Gateway Devices (from K1a1.3) belong to the Workspace, never expire, keep
-  their name and owner, and cannot join groups, tags, shares, routes, exits,
-  Sites or DNS names. The replica side (MTCP `cluster_join`) is not
-  available yet.
+  Gateway Devices belong to the Workspace, never expire, keep their name and
+  owner, and cannot join groups, tags, shares, routes, exits, Sites or DNS
+  names other than their own mesh name.
+- Kubernetes gateways K1a1.3 (Core, schema 225): a replica joins over MTCP
+  with `RegisterRequest.auth.cluster_join` (mtcp-v1 §6.6). Core opens its
+  request, answers `pending{admin_approval}` with the cluster, the request
+  and the nonce the code binds, and once an administrator approves it
+  creates the gateway Device `<cluster>-<ordinal>` and sends `authorized`
+  on the same session. Off unless `MESHTRANSIT_KUBERNETES_JOIN=true`; leave
+  it off until K1a1.4 and K1a1.6 are deployed.
 - **Upgrade note:** `MESHTRANSIT_DNS_SUFFIX` may no longer be a public
   suffix itself (`co.uk`, `github.io`); Core with such a value stops at
   configuration load. Use a domain you own or a private name.

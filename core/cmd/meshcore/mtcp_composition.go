@@ -12,6 +12,7 @@ import (
 	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/enrollment/registration/intake"
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/platform/clientip"
 	"meshtransit.net/core/internal/platform/config"
 )
@@ -103,6 +104,9 @@ type mtcpDependencies struct {
 	// leaves to a node's network (MESHTRANSIT_DNS_PROTECTED_NAMES, the
 	// Console and identity hosts).
 	dnsInfrastructure []string
+	// clusterJoins, when set, accepts Kubernetes cluster joins
+	// (MESHTRANSIT_KUBERNETES_JOIN).
+	clusterJoins mtcpadapter.ClusterJoins
 }
 
 // mtcpMapSessions is mapsession.Service: endpoints and snapshot opening.
@@ -180,6 +184,10 @@ func composeMTCP(
 		applicationOptions.BrowserApproval = deps.browser.completion
 		applicationOptions.ApprovalOrigin = deps.origin
 		applicationOptions.ApprovalTTL = min(browserRegistrationTTL, mtcpApprovalTTL)
+	}
+	if deps.clusterJoins != nil {
+		applicationOptions.ClusterJoins = deps.clusterJoins
+		applicationOptions.ClusterJoinSecrets = kubecluster.SystemSecrets{}
 	}
 	application, err := mtcpadapter.NewApplication(applicationOptions)
 	if err != nil {

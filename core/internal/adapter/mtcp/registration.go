@@ -70,6 +70,9 @@ type approval struct {
 	hostname node.Hostname
 	url      string
 	expires  time.Time
+	// join, when set, is a Kubernetes cluster join's request, which an
+	// administrator approves instead of a browser (mtcp-v1 §6.6).
+	join *clusterJoinWait
 }
 
 // rejection is a RegisterResponse{rejected} outcome.
@@ -82,7 +85,7 @@ type rejection struct {
 // RegisterResponse messages; only dependency failures send an Error.
 func (conversation *conversation) register(ctx context.Context, request *mtcpv1.RegisterRequest) error {
 	options := conversation.application.options
-	if options.Registrations == nil && options.BrowserIssuer == nil {
+	if options.Registrations == nil && options.BrowserIssuer == nil && options.ClusterJoins == nil {
 		return conversation.sendError(mtcpv1.Error_UNSUPPORTED, "registration is not available", 0)
 	}
 	conversation.wait(approval{}) // a new request replaces any pending approval
@@ -102,6 +105,8 @@ func (conversation *conversation) register(ctx context.Context, request *mtcpv1.
 	case *mtcpv1.RegisterRequest_Auth_Interactive:
 		return conversation.registerInteractively(ctx, machine, keys, hostname,
 			method.Interactive.GetResumeHandle())
+	case *mtcpv1.RegisterRequest_Auth_ClusterJoin:
+		return conversation.registerWithClusterJoin(ctx, machine, keys, hostname, method.ClusterJoin)
 	case *mtcpv1.RegisterRequest_Auth_Resume:
 		// Renewal without a person would let a machine key keep a Device
 		// alive indefinitely; until a Network policy allows it, renewal
@@ -365,7 +370,11 @@ func (conversation *conversation) awaitApprovals(ctx context.Context) {
 				continue
 			}
 			if !conversation.application.now().Before(current.expires) {
-				_ = conversation.reject(expiredApproval)
+				// A cluster join's replica asks again on its own past
+				// expires_ms (mtcp-v1 §6.6); a browser approval expired.
+				if current.join == nil {
+					_ = conversation.reject(expiredApproval)
+				}
 				current = approval{}
 				continue
 			}
@@ -377,6 +386,9 @@ func (conversation *conversation) awaitApprovals(ctx context.Context) {
 }
 
 func (conversation *conversation) checkApproval(ctx context.Context, pending approval) bool {
+	if pending.join != nil {
+		return conversation.checkClusterJoin(ctx, pending.keys, *pending.join)
+	}
 	ctx, cancel := context.WithTimeout(ctx, registrationTimeout)
 	defer cancel()
 	result, found, err := conversation.application.options.BrowserApproval.CompleteBrowser(ctx, pending.machine,

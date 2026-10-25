@@ -291,6 +291,7 @@ simpler and also re-checks admission.
 | `auth.enrollment_key` | An enrollment credential `mtc1.<id>.<secret>` |
 | `auth.interactive` | Ask for a browser approval URL |
 | `auth.resume` | Renew the Device this machine key already owns, before it expires (6.2) |
+| `auth.cluster_join` | Join a Kubernetes cluster as a gateway replica with a join key `mtk1.<id>.<secret>` and what the pod reports about itself (6.6) |
 
 Core MUST evaluate an enrollment key in constant time with respect to the
 secret, count it against the credential's use limit only on success, and never
@@ -388,6 +389,57 @@ out; otherwise Core answers `Error{code: NOT_AUTHORIZED}`. The Device must
 enroll again. A Network policy MAY
 forbid self-logout for managed Devices; Core then answers
 `Error{code: NOT_PERMITTED}`.
+
+### 6.6 Kubernetes cluster join
+
+A Kubernetes gateway replica (meshgw) sends `RegisterRequest` with
+`auth.cluster_join`: a join key of one cluster (`mtk1.<id>.<secret>`; Core
+never accepts it as `auth.enrollment_key`, nor an enrollment key here) and
+`reported`, a JSON object of at most 16 strings (keys up to 64 bytes,
+values up to 256, 2 KiB in all) that Core stores for display only.
+
+The key does not authorize a Device. Core opens a request bound to the
+session's machine key and node key, which holds no Device, and answers
+`pending` with `admin_approval` (the cluster ID, the request ID and a
+32-byte nonce Core chose) and no `approval_url`. The node prints the code
+
+```
+digest = SHA-256("meshtransit/kube-join-code/v1" || 0x00 || machine_key(32)
+                 || node_key(32) || cluster_id(16) || request_nonce(32))
+code   = the first 50 bits of digest, RFC 4648 base32 upper case: "XXXXX-XXXXX"
+```
+
+(`shared/kubejoin`), and an administrator approves the request by typing
+the code read from the replica's log. Core and its database each compute the
+code from the keys they received, so a request made with other keys has
+another code. Approval consumes one use of the key and gives the replica
+15 minutes to complete.
+
+The session stays open while the request waits: `expires_ms` is the earlier
+of the key's expiry and 10 minutes ahead. When the request is approved Core
+creates the Device and sends `authorized` on the same session; the node
+never polls. After the session drops or `expires_ms` passes, the node sends
+the same request again (same join key, same keys) and gets the same request
+back, or `authorized` once completed. A request rejected or cancelled
+(five wrong codes, or the key revoked) is answered `rejected{NOT_PERMITTED}`;
+one approved but not completed by its deadline `rejected{EXPIRED}` on the
+session that waited (a node asking again afterwards finds the key's use
+spent: `rejected{CREDENTIAL_EXHAUSTED}`, or a new request if uses remain); a
+completed one whose Device was revoked or deleted `rejected{NOT_PERMITTED}`.
+While a request is approved, `expires_ms` is the earlier of its completion
+deadline and 10 minutes ahead. A key that is unknown, of another kind or
+with a wrong secret is `rejected{CREDENTIAL_INVALID}`; one revoked, expired
+or used up `rejected{CREDENTIAL_EXHAUSTED}`, checked before the keys; keys a
+Device or another registration holds `rejected{CONFLICT}`; a full queue
+(twice the key's uses waiting) `rejected{NOT_PERMITTED}`.
+
+The Device belongs to the Workspace, never expires, keeps the name
+`<cluster>-<ordinal>` (or `<cluster>-<ordinal>-<n>` when another Device took
+that name while the request was approved, its stem shortened to keep 63
+bytes; the database accepts no other)
+and holds exactly the keys the code bound. It cannot be transferred,
+renamed, suspended or shared. A deployment that has not enabled cluster joins answers
+`rejected{NOT_PERMITTED}`.
 
 ## 7. Map
 
@@ -1303,6 +1355,7 @@ secrets or other tenants' data, and is at most 512 bytes.
 | C19 | One Device floods its Network with endpoint changes, each costing one map delta per peer | At most one announced change per Device per announce interval, gated atomically in Redis across sessions and replicas; the latest change is still delivered (section 8.1) |
 | C20 | A Device announces endpoints that point its peers' probes at a victim: the overlay, a relay, Core | Core drops overlay, special-purpose, relay and operator-denied addresses, also through NAT64, when a report arrives and when it sends a map; nodes refuse overlay and relay addresses as candidates; each node's pings to a peer's unanswered candidates are bounded by a backoff and a per-Device budget: at most 144 at once and 0.4/s in the long run, so a victim named by M Devices receives at most 0.4 × M pings/s from each node that has them in its map (section 8.1, disco-v2 §4.4) |
 | C21 | One session makes Core work in a loop with cheap messages: map resyncs that each encode the whole map, enforcement reports that each write Redis, browser approvals that each write the database, or a flood of any message | Per-session budgets for each, and one for all messages and bytes (section 14); a node that follows the protocol stays well inside them, and reconnecting is bounded by the per-source handshake rate |
+| C22 | A leaked cluster join key makes its holder a Kubernetes gateway, which sees who connects and carries kubectl traffic | The key opens only a request with no Device; an administrator approves it by a code bound to the replica's own keys, read from the real pod's log and checked by Core and its database; five wrong codes cancel; at most twice the key's uses wait; the key lives an hour at most (6.6) |
 
 ## 17. Test vectors
 

@@ -96,7 +96,16 @@ message RegisterRequest {
       string enrollment_key = 1; // mtc1.<id>.<secret>; never logged
       Interactive interactive = 2;
       Resume resume = 3;
+      ClusterJoin cluster_join = 4; // a Kubernetes gateway replica (mtcp-v1 §6.6)
     }
+  }
+
+  // ClusterJoin asks to join a Kubernetes cluster with its join key. Core
+  // answers Pending{admin_approval} until an administrator approves the
+  // request by the code the replica prints, then Authorized on the session.
+  message ClusterJoin {
+    string join_key = 1; // mtk1.<id>.<secret>; never logged
+    bytes reported = 2;  // JSON object of up to 16 short strings, display only
   }
 
   message Interactive {
@@ -124,6 +133,14 @@ message RegisterResponse {
     string approval_url = 1;
     string resume_handle = 2; // bound to this machine key and node key
     int64 expires_ms = 3;
+    AdminApproval admin_approval = 4; // a cluster join waits for an administrator, no URL
+  }
+
+  // AdminApproval is what a replica needs to print its code (mtcp-v1 §6.6).
+  message AdminApproval {
+    string cluster_id = 1;    // the cluster's public ID
+    string request_id = 2;    // the request's public ID
+    bytes request_nonce = 3;  // 32 bytes Core chose
   }
 
   message Rejected {

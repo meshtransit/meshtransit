@@ -260,3 +260,24 @@ func TestCanonicalReported(t *testing.T) {
 		}
 	}
 }
+
+func TestSystemSecretsProposeRequests(t *testing.T) {
+	t.Parallel()
+	secrets := kubecluster.SystemSecrets{}
+	first, err := secrets.NewRequestID()
+	if err != nil || !first.IsValid() {
+		t.Fatalf("NewRequestID() = %v, %v", first, err)
+	}
+	second, err := secrets.NewRequestID()
+	if err != nil || second == first {
+		t.Fatalf("NewRequestID() repeated %v, %v", second, err)
+	}
+	nonce, err := secrets.NewRequestNonce()
+	if err != nil || nonce == ([32]byte{}) {
+		t.Fatalf("NewRequestNonce() = %x, %v", nonce, err)
+	}
+	other, err := secrets.NewRequestNonce()
+	if err != nil || other == nonce {
+		t.Fatalf("NewRequestNonce() repeated %x, %v", other, err)
+	}
+}

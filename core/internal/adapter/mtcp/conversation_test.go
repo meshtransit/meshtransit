@@ -20,6 +20,7 @@ import (
 	"meshtransit.net/core/internal/domain/enrollment/registration"
 	"meshtransit.net/core/internal/domain/enrollment/registration/intake"
 	"meshtransit.net/core/internal/domain/ipam"
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/node/distribution"
 	"meshtransit.net/core/internal/domain/node/keyrotation"
@@ -391,6 +392,7 @@ type conversationFixture struct {
 	// routeHealthTimer is the route health pacing's timer.
 	routeHealthTimer *fakeTimer
 	routeOffers      *fakeRouteOffers
+	clusterJoins     *fakeClusterJoins
 }
 
 func newConversationFixture(t *testing.T, openedBy sharedmtcp.MessageType) *conversationFixture {
@@ -407,13 +409,15 @@ func newConversationFixture(t *testing.T, openedBy sharedmtcp.MessageType) *conv
 		endpoints: &fakeEndpoints{}, snapshots: &fakeSnapshots{current: map[node.Key]bool{}, snapshot: snapshot},
 		registrations: &fakeRegistrations{result: result}, browser: &fakeBrowser{result: result},
 		logout: &fakeLogout{}, paths: &fakePaths{}, connectivity: &fakeConnectivity{},
-		routeOffers: &fakeRouteOffers{}, clock: time.Unix(1_800_000_000, 0)}
+		routeOffers: &fakeRouteOffers{}, clock: time.Unix(1_800_000_000, 0),
+		clusterJoins: &fakeClusterJoins{scope: snapshot.Scope(), result: result, openState: kubecluster.RequestPending}}
 	application, err := NewApplication(ApplicationOptions{
 		Streams: f.streams, Endpoints: f.endpoints, Snapshots: f.snapshots,
 		ControlKeys: []ControlKey{{Private: controlKey, NotAfter: f.clock.Add(time.Hour)}},
 		Logger:      slog.New(slog.DiscardHandler), Registrations: f.registrations, RegistrationIDs: sequentialIDs{},
 		BrowserIssuer: f.browser, BrowserApproval: f.browser, Logout: f.logout, Paths: f.paths, Connectivity: f.connectivity,
-		RouteOffers:    f.routeOffers,
+		RouteOffers:  f.routeOffers,
+		ClusterJoins: f.clusterJoins, ClusterJoinSecrets: fixedJoinSecrets{},
 		ApprovalOrigin: testApprovalOrigin,
 		ApprovalTTL:    10 * time.Minute,
 	})

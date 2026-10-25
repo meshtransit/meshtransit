@@ -922,8 +922,8 @@ func (store *KubernetesClusterStore) OpenReplicaRequest(ctx context.Context, att
 		if err != nil || nonceErr != nil || len(nonce) != 32 {
 			return false, kubecluster.ErrInvalid
 		}
-		ticket = kubecluster.JoinTicket{Request: view, ClusterID: view.ClusterID(), Nonce: [32]byte(nonce),
-			Created: opened.Created}
+		ticket = kubecluster.JoinTicket{Request: view, ClusterID: view.ClusterID(), Scope: scope,
+			Nonce: [32]byte(nonce), Created: opened.Created}
 		if !opened.Created {
 			return false, nil
 		}

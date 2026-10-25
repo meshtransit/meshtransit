@@ -591,6 +591,7 @@ func Catalog() []Migration {
 		newMigration(222, "DNS debt close-out: Device DNS labels taken one writer at a time", dnsDebtCloseoutSQL),
 		newMigration(223, "A DNS zone's page counts only the Devices that still receive it", dnsZoneReceiversSQL),
 		newMigration(224, "Kubernetes clusters, join keys and replica requests approved by code", kubernetesClustersSQL),
+		newMigration(225, "A replica's session completes its approved request into a gateway Device", kubernetesReplicaCompletionSQL),
 	}
 }
 
@@ -1042,3 +1043,6 @@ var dnsZoneReceiversSQL string
 
 //go:embed 000224_kubernetes_clusters.up.sql
 var kubernetesClustersSQL string
+
+//go:embed 000225_kubernetes_replica_completion.up.sql
+var kubernetesReplicaCompletionSQL string

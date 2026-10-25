@@ -61,9 +61,14 @@ type ApplicationOptions struct {
 	RegistrationIDs RegistrationIDs
 	BrowserIssuer   BrowserIssuer
 	BrowserApproval BrowserApproval
-	Logout          DeviceLogout
-	Paths           PathRecorder
-	Connectivity    ConnectivityRecorder
+	// ClusterJoins, when set with ClusterJoinSecrets, accepts Kubernetes
+	// cluster joins (MESHTRANSIT_KUBERNETES_JOIN); without it they are
+	// refused.
+	ClusterJoins       ClusterJoins
+	ClusterJoinSecrets ClusterJoinSecrets
+	Logout             DeviceLogout
+	Paths              PathRecorder
+	Connectivity       ConnectivityRecorder
 	// RouteOffers, when set, stores the subnets Devices offer to forward.
 	RouteOffers RouteOffers
 	// ExitOffers, when set, stores whether Devices offer to be exit nodes.
@@ -112,7 +117,8 @@ func NewApplication(options ApplicationOptions) (*Application, error) {
 	if options.Streams == nil || options.Endpoints == nil || options.Snapshots == nil ||
 		len(options.ControlKeys) == 0 || options.Logger == nil ||
 		(options.Registrations != nil) != (options.RegistrationIDs != nil) ||
-		(options.BrowserIssuer != nil) != (options.BrowserApproval != nil) {
+		(options.BrowserIssuer != nil) != (options.BrowserApproval != nil) ||
+		(options.ClusterJoins != nil) != (options.ClusterJoinSecrets != nil) {
 		return nil, ErrInvalidServer
 	}
 	if options.BrowserIssuer != nil && (options.ApprovalOrigin == "" || options.ApprovalTTL <= 0 ||

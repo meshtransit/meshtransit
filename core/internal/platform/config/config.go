@@ -65,6 +65,9 @@ type Config struct {
 	ExitNodes bool
 	// ExitSpread lets Exit Pools become spread (MESHTRANSIT_EXIT_SPREAD_ENABLED).
 	ExitSpread bool
+	// KubernetesJoin lets gateway replicas join their clusters over MTCP
+	// (MESHTRANSIT_KUBERNETES_JOIN).
+	KubernetesJoin bool
 	// DNSZones are the DNS zone settings (MESHTRANSIT_DNS_ZONES_ENABLED,
 	// MESHTRANSIT_DNS_PROTECTED_NAMES).
 	DNSZones DNSZonesConfig
@@ -198,6 +201,10 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, err
 	}
 	exitNodes, err := loadExitNodes(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+	kubernetesJoin, err := loadKubernetesJoin(lookup)
 	if err != nil {
 		return Config{}, err
 	}
@@ -360,6 +367,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		SiteDenied:              siteDenied,
 		ExitNodes:               exitNodes,
 		ExitSpread:              exitSpread,
+		KubernetesJoin:          kubernetesJoin,
 		DNSZones:                dnsZones,
 		GeoIPCountryFile:        geoIPCountryFile,
 		Dependencies:            dependencyConfig,
