@@ -1,5 +1,5 @@
-// Package identitygroup holds Workspace Identity Groups (G2): named sets of
-// Workspace members that Access Rules select as a source. A Device belongs to
+// Package identitygroup holds Network Identity Groups (G2n): named sets of
+// a Network's members that the Network's Access Rules select as a source. A Device belongs to
 // the groups of its owner while it carries no tag; a tagged Device is a
 // service Device that matches rules by tag alone. Membership is resolved when
 // maps are built, so a change reaches maps without republishing policy.
@@ -17,21 +17,20 @@ import (
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/publicid"
-	"meshtransit.net/core/internal/domain/workspace"
 )
 
 var (
 	// ErrInvalid reports a malformed group, change or result.
 	ErrInvalid = errors.New("identity group: invalid request or result")
-	// ErrForbidden conceals missing authority or an unavailable Workspace.
+	// ErrForbidden conceals missing authority or an unavailable Network.
 	ErrForbidden = errors.New("identity group: permission denied")
 	// ErrNotFound reports an unknown or deleted group.
 	ErrNotFound = errors.New("identity group: not found")
 	// ErrVersionConflict reports a stale expected version.
 	ErrVersionConflict = errors.New("identity group: version conflict")
-	// ErrIneligibleMember reports a principal that is not an active member of the Workspace.
-	ErrIneligibleMember = errors.New("identity group: principal is not an active member of this Workspace")
-	// ErrGroupLimit reports a Workspace that already has the maximum groups.
+	// ErrIneligibleMember reports a principal that is not an active member of the Network.
+	ErrIneligibleMember = errors.New("identity group: principal is not an active member of this Network")
+	// ErrGroupLimit reports a Network that already has the maximum groups.
 	ErrGroupLimit = errors.New("identity group: group limit reached")
 	// ErrMemberLimit reports a group that would exceed the maximum members.
 	ErrMemberLimit = errors.New("identity group: member limit reached")
@@ -122,7 +121,7 @@ func (group Group) IsValid() bool {
 		!group.CreatedAt.IsZero() && !group.UpdatedAt.Before(group.CreatedAt) && group.Definition.IsValid()
 }
 
-// Listing is a Workspace's groups and whether the reader may change them.
+// Listing is a Network's groups and whether the reader may change them.
 type Listing struct {
 	Groups    []Group
 	CanManage bool
@@ -187,7 +186,7 @@ const (
 // Change is one validated definition change.
 type Change struct {
 	Session         accountsession.Session
-	WorkspaceID     workspace.ID
+	Scope           network.Scope
 	Operation       Operation
 	GroupID         ID
 	ExpectedVersion int64
@@ -199,7 +198,7 @@ type Change struct {
 // the identity its membership row gets.
 type MembershipChange struct {
 	Session         accountsession.Session
-	WorkspaceID     workspace.ID
+	Scope           network.Scope
 	GroupID         ID
 	ExpectedVersion int64
 	Add             []publicid.ID

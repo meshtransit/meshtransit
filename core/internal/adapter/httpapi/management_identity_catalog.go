@@ -17,29 +17,30 @@ import (
 	"meshtransit.net/core/internal/domain/workspace"
 )
 
-// IdentityGroupManager lists and changes Workspace Identity Groups.
+// IdentityGroupManager lists and changes a Network's Identity Groups.
 type IdentityGroupManager interface {
-	List(context.Context, accountsession.Session, workspace.ID) (identitygroup.Listing, error)
-	Members(context.Context, accountsession.Session, workspace.ID, identitygroup.ID, publicid.ID,
+	List(context.Context, accountsession.Session, network.Scope) (identitygroup.Listing, error)
+	Members(context.Context, accountsession.Session, network.Scope, identitygroup.ID, publicid.ID,
 		int) (identitygroup.MemberPage, error)
-	Create(context.Context, accountsession.Session, workspace.ID, identitygroup.Definition,
+	Create(context.Context, accountsession.Session, network.Scope, identitygroup.Definition,
 		publicid.ID) (identitygroup.Result, error)
-	Update(context.Context, accountsession.Session, workspace.ID, identitygroup.ID, int64, identitygroup.Definition,
+	Update(context.Context, accountsession.Session, network.Scope, identitygroup.ID, int64, identitygroup.Definition,
 		publicid.ID) (identitygroup.Result, error)
-	Delete(context.Context, accountsession.Session, workspace.ID, identitygroup.ID, int64,
+	Delete(context.Context, accountsession.Session, network.Scope, identitygroup.ID, int64,
 		publicid.ID) (identitygroup.Result, error)
-	ChangeMembers(context.Context, accountsession.Session, workspace.ID, identitygroup.ID, int64, []publicid.ID,
+	ChangeMembers(context.Context, accountsession.Session, network.Scope, identitygroup.ID, int64, []publicid.ID,
 		[]publicid.ID, publicid.ID) (identitygroup.MembershipResult, error)
 }
 
-// DeviceTagManager lists and changes the device tag catalog and Device tags.
+// DeviceTagManager lists and changes a Network's tag catalog and its
+// Devices' tags.
 type DeviceTagManager interface {
-	List(context.Context, accountsession.Session, workspace.ID) (devicetag.Listing, error)
-	Create(context.Context, accountsession.Session, workspace.ID, devicetag.Definition,
+	List(context.Context, accountsession.Session, network.Scope) (devicetag.Listing, error)
+	Create(context.Context, accountsession.Session, network.Scope, devicetag.Definition,
 		publicid.ID) (devicetag.Result, error)
-	Update(context.Context, accountsession.Session, workspace.ID, devicetag.ID, int64, devicetag.Definition,
+	Update(context.Context, accountsession.Session, network.Scope, devicetag.ID, int64, devicetag.Definition,
 		publicid.ID) (devicetag.Result, error)
-	Delete(context.Context, accountsession.Session, workspace.ID, devicetag.ID, int64,
+	Delete(context.Context, accountsession.Session, network.Scope, devicetag.ID, int64,
 		publicid.ID) (devicetag.Result, error)
 	NetworkTags(context.Context, accountsession.Session, network.Scope) ([]devicetag.DeviceTags, error)
 	NetworkOptions(context.Context, accountsession.Session, network.Scope) (devicetag.NetworkOptions, error)
@@ -60,12 +61,11 @@ const (
 )
 
 type identityCatalogPath struct {
-	kind        identityCatalogKind
-	workspaceID workspace.ID
-	scope       network.Scope
-	groupID     identitygroup.ID
-	tagID       devicetag.ID
-	deviceID    node.ID
+	kind     identityCatalogKind
+	scope    network.Scope
+	groupID  identitygroup.ID
+	tagID    devicetag.ID
+	deviceID node.ID
 	// methods are the methods the path accepts; action is what the request's
 	// method does there: "" to list, "members", "create", "update",
 	// "delete", "change-members" or "change-tags", and "" when the path does
@@ -81,33 +81,43 @@ func canonicalPublicID(text string) (publicid.ID, bool) {
 	return id, err == nil && id.String() == text
 }
 
-// parseIdentityCatalogPath matches, under /api/v1/workspaces/{ws}:
+// parseIdentityCatalogPath matches, under /api/v1/workspaces/{ws}/networks/{net}:
 //
 //	GET|POST     identity-groups               list, create
 //	PATCH|DELETE identity-groups/{id}          update, delete
 //	GET|PATCH    identity-groups/{id}/members  page[?after=&limit=], change
 //	GET|POST     device-tags                   list, create
 //	PATCH|DELETE device-tags/{id}              update, delete
-//	GET          networks/{net}/device-tags    the Network's Device tags
-//	GET          networks/{net}/assignable-device-tags
-//	PATCH        networks/{net}/devices/{device}/tags
+//	GET          tagged-devices                the tags of the Network's tagged Devices
+//	GET          assignable-device-tags
+//	PATCH        devices/{device}/tags
 //
-// A path matched with a method it does not accept carries no action, for a
-// 405. Only the member page takes a query, and only after and limit once each.
+// Groups and tags belong to one Network, so every path names it. A path
+// matched with a method it does not accept carries no action, for a 405.
+// Only the member page takes a query, and only after and limit once each.
 func parseIdentityCatalogPath(request *http.Request) (identityCatalogPath, bool) {
 	if request == nil || request.URL == nil || request.URL.RawPath != "" {
 		return identityCatalogPath{}, false
 	}
 	segments := strings.Split(strings.TrimPrefix(request.URL.Path, "/"), "/")
-	if len(segments) < 5 || segments[0] != "api" || segments[1] != "v1" || segments[2] != "workspaces" {
+	if len(segments) < 7 || segments[0] != "api" || segments[1] != "v1" || segments[2] != "workspaces" ||
+		segments[4] != "networks" {
 		return identityCatalogPath{}, false
 	}
 	workspaceText, ok := canonicalPublicID(segments[3])
 	if !ok {
 		return identityCatalogPath{}, false
 	}
-	path := identityCatalogPath{workspaceID: workspace.ID(workspaceText)}
-	rest := segments[4:]
+	networkText, ok := canonicalPublicID(segments[5])
+	if !ok {
+		return identityCatalogPath{}, false
+	}
+	scope, err := network.NewScope(workspace.ID(workspaceText), network.ID(networkText))
+	if err != nil {
+		return identityCatalogPath{}, false
+	}
+	path := identityCatalogPath{scope: scope}
+	rest := segments[6:]
 	switch rest[0] {
 	case "identity-groups":
 		path.kind = identityCatalogGroups
@@ -119,12 +129,10 @@ func parseIdentityCatalogPath(request *http.Request) (identityCatalogPath, bool)
 		if !path.matchCatalog(rest[1:], request.Method, false) {
 			return identityCatalogPath{}, false
 		}
-	case "networks":
-		if !path.matchNetwork(rest[1:], request.Method) {
+	default:
+		if !path.matchNetwork(rest, request.Method) {
 			return identityCatalogPath{}, false
 		}
-	default:
-		return identityCatalogPath{}, false
 	}
 	if path.action != "members" {
 		return path, request.URL.RawQuery == ""
@@ -165,28 +173,17 @@ func (path *identityCatalogPath) matchCatalog(rest []string, method string, grou
 	return true
 }
 
+// matchNetwork reads the Network's Device tag paths.
 func (path *identityCatalogPath) matchNetwork(rest []string, method string) bool {
-	if len(rest) < 2 {
-		return false
-	}
-	networkText, ok := canonicalPublicID(rest[0])
-	if !ok {
-		return false
-	}
-	scope, err := network.NewScope(path.workspaceID, network.ID(networkText))
-	if err != nil {
-		return false
-	}
-	path.scope = scope
 	switch {
-	case len(rest) == 2 && rest[1] == "device-tags":
+	case len(rest) == 1 && rest[0] == "tagged-devices":
 		path.kind, path.methods = identityCatalogNetworkTags, readMethods
 		return true
-	case len(rest) == 2 && rest[1] == "assignable-device-tags":
+	case len(rest) == 1 && rest[0] == "assignable-device-tags":
 		path.kind, path.methods = identityCatalogTagOptions, readMethods
 		return true
-	case len(rest) == 4 && rest[1] == "devices" && rest[3] == "tags":
-		device, ok := canonicalPublicID(rest[2])
+	case len(rest) == 3 && rest[0] == "devices" && rest[2] == "tags":
+		device, ok := canonicalPublicID(rest[1])
 		if !ok {
 			return false
 		}
@@ -304,7 +301,7 @@ func classifyIdentityGroupError(err error) managementError {
 	switch {
 	case errors.Is(err, identitygroup.ErrForbidden):
 		return managementError{Status: http.StatusForbidden, Code: "permission_denied",
-			Message: "You cannot view or change user groups in this Workspace"}
+			Message: "You cannot view or change user groups in this Network"}
 	case errors.Is(err, identitygroup.ErrNotFound):
 		return managementError{Status: http.StatusNotFound, Code: "identity_group_not_found",
 			Message: "The user group no longer exists"}
@@ -313,16 +310,16 @@ func classifyIdentityGroupError(err error) managementError {
 			Message: "The user group changed. Reload and review it again."}
 	case errors.Is(err, identitygroup.ErrIneligibleMember):
 		return managementError{Status: http.StatusUnprocessableEntity, Code: "member_not_eligible",
-			Message: "A chosen person is not an active member of this Workspace"}
+			Message: "A chosen person is not an active member of this Network"}
 	case errors.Is(err, identitygroup.ErrGroupLimit):
 		return managementError{Status: http.StatusConflict, Code: "identity_group_limit",
-			Message: "This Workspace already has the maximum number of user groups"}
+			Message: "This Network already has the maximum number of user groups"}
 	case errors.Is(err, identitygroup.ErrMemberLimit):
 		return managementError{Status: http.StatusConflict, Code: "identity_group_member_limit",
 			Message: "The user group would exceed the maximum number of members"}
 	case errors.Is(err, identitygroup.ErrNameTaken):
 		return managementError{Status: http.StatusConflict, Code: "identity_group_name_taken",
-			Message: "Another user group in this Workspace has that name"}
+			Message: "Another user group in this Network has that name"}
 	case errors.Is(err, identitygroup.ErrInUse):
 		return managementError{Status: http.StatusConflict, Code: "identity_group_in_use",
 			Message: "Active rules select this user group or it owns tags. Change those first."}
@@ -349,13 +346,13 @@ func classifyDeviceTagError(err error) managementError {
 			Message: "The tag changed. Reload and review it again."}
 	case errors.Is(err, devicetag.ErrTagLimit):
 		return managementError{Status: http.StatusConflict, Code: "device_tag_limit",
-			Message: "This Workspace already has the maximum number of tags"}
+			Message: "This Network already has the maximum number of tags"}
 	case errors.Is(err, devicetag.ErrUnknownOwner):
 		return managementError{Status: http.StatusUnprocessableEntity, Code: "device_tag_owner_unknown",
-			Message: "A chosen tag owner is not in this Workspace"}
+			Message: "A chosen tag owner is not a user group of this Network"}
 	case errors.Is(err, devicetag.ErrNameTaken):
 		return managementError{Status: http.StatusConflict, Code: "device_tag_name_taken",
-			Message: "Another tag in this Workspace has that name"}
+			Message: "Another tag in this Network has that name"}
 	case errors.Is(err, devicetag.ErrInUse):
 		return managementError{Status: http.StatusConflict, Code: "device_tag_in_use",
 			Message: "Active rules select this tag. Change those rules first."}

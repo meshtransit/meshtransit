@@ -96,7 +96,7 @@ func assertPostgreSQLExitPolicy(ctx context.Context, t *testing.T, admin *pgx.Co
 		t.Fatal(err)
 	}
 	identityGroups, _ := newIntegrationIdentityCatalog(t, runtimePool)
-	travellers, err := identityGroups.Create(ctx, owner, workspaceID,
+	travellers, err := identityGroups.Create(ctx, owner, scope,
 		identitygroup.Definition{Name: "Exit travellers"}, newCorrelationID(t))
 	if err != nil {
 		t.Fatal(err)
@@ -188,7 +188,7 @@ JOIN mesh.policy_release AS release ON release.id = rule.policy_release_id WHERE
 	}
 	// A member joining an Identity Group that only exit rules name rebuilds
 	// the maps of their Network (schema 202).
-	joined, err := identityGroups.ChangeMembers(ctx, owner, workspaceID, travellers.Group.ID, 1,
+	joined, err := identityGroups.ChangeMembers(ctx, owner, scope, travellers.Group.ID, 1,
 		[]publicid.ID{publicid.ID(owner.PrincipalID())}, nil, newCorrelationID(t))
 	if err != nil || len(joined.Networks) != 1 {
 		t.Fatalf("an exit rule's Identity Group gained a member = %+v, error = %v", joined, err)
@@ -231,7 +231,7 @@ JOIN mesh.policy_release AS release ON release.id = rule.policy_release_id WHERE
 	if _, err := groups.Delete(ctx, owner, scope, clients.Group.ID, 2, newCorrelationID(t)); err != nil {
 		t.Fatalf("delete the source group: %v", err)
 	}
-	if _, err := identityGroups.Delete(ctx, owner, workspaceID, travellers.Group.ID, 2, newCorrelationID(t)); err != nil {
+	if _, err := identityGroups.Delete(ctx, owner, scope, travellers.Group.ID, 2, newCorrelationID(t)); err != nil {
 		t.Fatalf("delete the source Identity Group: %v", err)
 	}
 }

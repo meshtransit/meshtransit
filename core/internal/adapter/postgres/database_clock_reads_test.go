@@ -173,7 +173,6 @@ func TestGroupTagAndRangeStoresDecideOnTheDatabaseClock(t *testing.T) {
 	t.Parallel()
 	session := policyApprovalSessionFixture(t, 401, 601)
 	scope := postgresPolicySimulationScope(t)
-	workspaceID := scope.WorkspaceID()
 	correlation := databaseClockTestID(t, "01890f00-0000-7000-8000-000000000901")
 	groupID := databaseClockTestID(t, "01890f00-0000-7000-8000-000000000902")
 	memberID := databaseClockTestID(t, "01890f00-0000-7000-8000-000000000903")
@@ -212,17 +211,17 @@ func TestGroupTagAndRangeStoresDecideOnTheDatabaseClock(t *testing.T) {
 		}},
 		{"identity groups list", listIdentityGroupsSQL, func(database accountSessionDatabase) error {
 			store := &IdentityGroupStore{database: database, options: databaseClockAccountSessionOptions()}
-			_, err := store.List(t.Context(), session, workspaceID)
+			_, err := store.List(t.Context(), session, scope)
 			return err
 		}},
 		{"identity group members", readIdentityGroupMembersSQL, func(database accountSessionDatabase) error {
 			store := &IdentityGroupStore{database: database, options: databaseClockAccountSessionOptions()}
-			_, err := store.Members(t.Context(), session, workspaceID, identitygroup.ID(groupID), publicid.ID{}, 10)
+			_, err := store.Members(t.Context(), session, scope, identitygroup.ID(groupID), publicid.ID{}, 10)
 			return err
 		}},
 		{"identity group change", changeIdentityGroupSQL, func(database accountSessionDatabase) error {
 			store := &IdentityGroupStore{database: database, options: databaseClockAccountSessionOptions()}
-			_, err := store.Change(t.Context(), identitygroup.Change{Session: session, WorkspaceID: workspaceID,
+			_, err := store.Change(t.Context(), identitygroup.Change{Session: session, Scope: scope,
 				Operation: identitygroup.OperationDelete, GroupID: identitygroup.ID(groupID), ExpectedVersion: 1,
 				CorrelationID: correlation})
 			return err
@@ -230,18 +229,18 @@ func TestGroupTagAndRangeStoresDecideOnTheDatabaseClock(t *testing.T) {
 		{"identity group members change", changeIdentityGroupMembersSQL, func(database accountSessionDatabase) error {
 			store := &IdentityGroupStore{database: database, options: databaseClockAccountSessionOptions()}
 			_, err := store.ChangeMembers(t.Context(), identitygroup.MembershipChange{Session: session,
-				WorkspaceID: workspaceID, GroupID: identitygroup.ID(groupID), ExpectedVersion: 1,
+				Scope: scope, GroupID: identitygroup.ID(groupID), ExpectedVersion: 1,
 				Add: []publicid.ID{memberID}, AddMemberIDs: []publicid.ID{correlation}, CorrelationID: correlation})
 			return err
 		}},
 		{"device tags list", listDeviceTagsSQL, func(database accountSessionDatabase) error {
 			store := &DeviceTagStore{database: database, options: databaseClockAccountSessionOptions()}
-			_, err := store.List(t.Context(), session, workspaceID)
+			_, err := store.List(t.Context(), session, scope)
 			return err
 		}},
 		{"device tag change", changeDeviceTagSQL, func(database accountSessionDatabase) error {
 			store := &DeviceTagStore{database: database, options: databaseClockAccountSessionOptions()}
-			_, err := store.Change(t.Context(), devicetag.Change{Session: session, WorkspaceID: workspaceID,
+			_, err := store.Change(t.Context(), devicetag.Change{Session: session, Scope: scope,
 				Operation: devicetag.OperationDelete, TagID: devicetag.ID(groupID), ExpectedVersion: 1,
 				CorrelationID: correlation})
 			return err

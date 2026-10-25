@@ -15,25 +15,24 @@ import (
 	"meshtransit.net/core/internal/domain/identitygroup"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/publicid"
-	"meshtransit.net/core/internal/domain/workspace"
 )
 
-const listIdentityGroupsSQL = `SELECT mesh_ops.list_identity_groups_v1(` + sessionArguments + `,
- $10::UUID,$11::TIMESTAMPTZ)::TEXT`
+const listIdentityGroupsSQL = `SELECT mesh_ops.list_identity_groups_v2(` + sessionArguments + `,
+ $10::UUID,$11::UUID,$12::TIMESTAMPTZ)::TEXT`
 
-const readIdentityGroupMembersSQL = `SELECT mesh_ops.read_identity_group_members_v1(` + sessionArguments + `,
- $10::UUID,$11::UUID,NULLIF($12::TEXT,'')::UUID,$13::INTEGER,$14::TIMESTAMPTZ)::TEXT`
+const readIdentityGroupMembersSQL = `SELECT mesh_ops.read_identity_group_members_v2(` + sessionArguments + `,
+ $10::UUID,$11::UUID,$12::UUID,NULLIF($13::TEXT,'')::UUID,$14::INTEGER,$15::TIMESTAMPTZ)::TEXT`
 
-const changeIdentityGroupSQL = `SELECT mesh_ops.change_identity_group_v1(` + sessionArguments + `,
- $10::UUID,$11::TEXT,$12::UUID,$13::BIGINT,$14::TEXT,$15::TEXT,$16::UUID,$17::TIMESTAMPTZ)::TEXT`
+const changeIdentityGroupSQL = `SELECT mesh_ops.change_identity_group_v2(` + sessionArguments + `,
+ $10::UUID,$11::UUID,$12::TEXT,$13::UUID,$14::BIGINT,$15::TEXT,$16::TEXT,$17::UUID,$18::TIMESTAMPTZ)::TEXT`
 
-const changeIdentityGroupMembersSQL = `SELECT mesh_ops.change_identity_group_members_v1(` + sessionArguments + `,
- $10::UUID,$11::UUID,$12::BIGINT,$13::JSONB,$14::UUID[],$15::UUID,$16::TIMESTAMPTZ)::TEXT`
+const changeIdentityGroupMembersSQL = `SELECT mesh_ops.change_identity_group_members_v2(` + sessionArguments + `,
+ $10::UUID,$11::UUID,$12::UUID,$13::BIGINT,$14::JSONB,$15::UUID[],$16::UUID,$17::TIMESTAMPTZ)::TEXT`
 
-// IdentityGroupStore reads and changes Workspace Identity Groups through the
-// runtime pool. Each change commits with evidence on the Workspace stream; a
-// membership change that rebuilds Networks also records the wakeup on each
-// Network's stream.
+// IdentityGroupStore reads and changes the Identity Groups of one Network
+// through the runtime pool, in that Network's exact scope. Each change
+// commits with evidence on the Workspace stream; a membership change that
+// rebuilds the Network also records the wakeup on the Network's stream.
 type IdentityGroupStore struct {
 	database accountSessionDatabase
 	options  AccountSessionOptions
@@ -82,9 +81,10 @@ func identityGroupDatabaseError(err error) error {
 	return errors.Join(identitygroup.ErrUnavailable, err)
 }
 
-// begin starts one unit of work and reads its time on the database clock,
-// which authorizes it and stamps everything it writes.
-func (store *IdentityGroupStore) begin(ctx context.Context) (accountSessionTransaction, time.Time, error) {
+// begin starts one unit of work in the Network scope and reads its time on
+// the database clock, which authorizes it and stamps everything it writes.
+func (store *IdentityGroupStore) begin(ctx context.Context, scope network.Scope) (accountSessionTransaction,
+	time.Time, error) {
 	if ctx == nil || store == nil || store.database == nil || !validAccountSessionOptions(store.options) {
 		return nil, time.Time{}, identitygroup.ErrInvalid
 	}
@@ -95,6 +95,14 @@ func (store *IdentityGroupStore) begin(ctx context.Context) (accountSessionTrans
 	if err := tx.Exec(ctx, configureAccountSessionTransactionSQL,
 		postgresTimeout(store.options.StatementTimeout), postgresTimeout(store.options.IdleTimeout)); err != nil {
 		return tx, time.Time{}, errors.Join(identitygroup.ErrUnavailable, err)
+	}
+	var workspaceInternal, networkInternal int64
+	if err := tx.QueryRow(ctx, setResourceAuthorityScopeSQL, scope.WorkspaceID().String(),
+		scope.NetworkID().String()).Scan(&workspaceInternal, &networkInternal); err != nil {
+		return tx, time.Time{}, identityGroupDatabaseError(err)
+	}
+	if workspaceInternal <= 0 || networkInternal <= 0 {
+		return tx, time.Time{}, identitygroup.ErrForbidden
 	}
 	at, err := readTransactionTime(ctx, tx.QueryRow)
 	if err != nil {
@@ -131,13 +139,13 @@ func (document identityGroupDocument) group(allowDeleted bool) (identitygroup.Gr
 	return group, nil
 }
 
-// List authorizes identity_group.read and returns the active groups.
+// List authorizes identity_group.read and returns the Network's active groups.
 func (store *IdentityGroupStore) List(ctx context.Context, session accountsession.Session,
-	workspaceID workspace.ID) (_ identitygroup.Listing, resultErr error) {
-	if !session.IsValid() || !workspaceID.IsValid() {
+	scope network.Scope) (_ identitygroup.Listing, resultErr error) {
+	if !session.IsValid() || !scope.IsValid() {
 		return identitygroup.Listing{}, identitygroup.ErrInvalid
 	}
-	tx, at, err := store.begin(ctx)
+	tx, at, err := store.begin(ctx, scope)
 	if tx != nil {
 		defer func() { resultErr = errors.Join(resultErr, rollbackAccountSessionTransaction(tx)) }()
 	}
@@ -146,7 +154,7 @@ func (store *IdentityGroupStore) List(ctx context.Context, session accountsessio
 	}
 	var encoded string
 	if err := tx.QueryRow(ctx, listIdentityGroupsSQL, append(sessionQueryArguments(session),
-		workspaceID.String(), at)...).Scan(&encoded); err != nil {
+		scope.WorkspaceID().String(), scope.NetworkID().String(), at)...).Scan(&encoded); err != nil {
 		return identitygroup.Listing{}, identityGroupDatabaseError(err)
 	}
 	var envelope struct {
@@ -171,13 +179,13 @@ func (store *IdentityGroupStore) List(ctx context.Context, session accountsessio
 
 // Members authorizes identity_group.read and returns one page of members.
 func (store *IdentityGroupStore) Members(ctx context.Context, session accountsession.Session,
-	workspaceID workspace.ID, group identitygroup.ID, after publicid.ID,
+	scope network.Scope, group identitygroup.ID, after publicid.ID,
 	limit int) (_ identitygroup.MemberPage, resultErr error) {
-	if !session.IsValid() || !workspaceID.IsValid() || !group.IsValid() || limit < 1 ||
+	if !session.IsValid() || !scope.IsValid() || !group.IsValid() || limit < 1 ||
 		limit > identitygroup.MaximumMemberPage {
 		return identitygroup.MemberPage{}, identitygroup.ErrInvalid
 	}
-	tx, at, err := store.begin(ctx)
+	tx, at, err := store.begin(ctx, scope)
 	if tx != nil {
 		defer func() { resultErr = errors.Join(resultErr, rollbackAccountSessionTransaction(tx)) }()
 	}
@@ -190,7 +198,8 @@ func (store *IdentityGroupStore) Members(ctx context.Context, session accountses
 	}
 	var encoded string
 	if err := tx.QueryRow(ctx, readIdentityGroupMembersSQL, append(sessionQueryArguments(session),
-		workspaceID.String(), group.String(), afterText, limit, at)...).Scan(&encoded); err != nil {
+		scope.WorkspaceID().String(), scope.NetworkID().String(), group.String(), afterText, limit, at)...).
+		Scan(&encoded); err != nil {
 		return identitygroup.MemberPage{}, identityGroupDatabaseError(err)
 	}
 	var envelope struct {
@@ -280,9 +289,9 @@ func identityGroupSemanticHash(document identityGroupDocument, members []byte) (
 	return sha256.Sum256(encoded), err
 }
 
-func (store *IdentityGroupStore) transact(ctx context.Context,
+func (store *IdentityGroupStore) transact(ctx context.Context, scope network.Scope,
 	run func(tx accountSessionTransaction, evaluatedAt time.Time) (bool, error)) (resultErr error) {
-	tx, evaluatedAt, err := store.begin(ctx)
+	tx, evaluatedAt, err := store.begin(ctx, scope)
 	committed := false
 	if tx != nil {
 		defer func() {
@@ -305,11 +314,11 @@ func (store *IdentityGroupStore) transact(ctx context.Context,
 	return nil
 }
 
-// Change authorizes identity_group.manage, applies the definition change and
-// commits it with evidence on the Workspace stream.
+// Change authorizes identity_group.manage in the Network, applies the
+// definition change and commits it with evidence on the Workspace stream.
 func (store *IdentityGroupStore) Change(ctx context.Context, change identitygroup.Change) (
 	identitygroup.Result, error) {
-	if !change.Session.IsValid() || !change.WorkspaceID.IsValid() || !change.GroupID.IsValid() ||
+	if !change.Session.IsValid() || !change.Scope.IsValid() || !change.GroupID.IsValid() ||
 		!change.CorrelationID.IsValid() {
 		return identitygroup.Result{}, identitygroup.ErrInvalid
 	}
@@ -325,11 +334,12 @@ func (store *IdentityGroupStore) Change(ctx context.Context, change identitygrou
 		name, description = change.Definition.Name, change.Definition.Description
 	}
 	var result identitygroup.Result
-	err = store.transact(ctx, func(tx accountSessionTransaction, evaluatedAt time.Time) (bool, error) {
+	err = store.transact(ctx, change.Scope, func(tx accountSessionTransaction, evaluatedAt time.Time) (bool, error) {
 		var encoded string
 		if err := tx.QueryRow(ctx, changeIdentityGroupSQL, append(sessionQueryArguments(change.Session),
-			change.WorkspaceID.String(), string(change.Operation), change.GroupID.String(), expected, name,
-			description, changeID.String(), evaluatedAt)...).Scan(&encoded); err != nil {
+			change.Scope.WorkspaceID().String(), change.Scope.NetworkID().String(), string(change.Operation),
+			change.GroupID.String(), expected, name, description, changeID.String(), evaluatedAt)...).
+			Scan(&encoded); err != nil {
 			return false, identityGroupDatabaseError(err)
 		}
 		var record identityGroupChangeRecord
@@ -381,21 +391,23 @@ func (store *IdentityGroupStore) Change(ctx context.Context, change identitygrou
 		}
 		event.payload = struct {
 			WorkspaceID  string           `json:"workspace_id"`
+			NetworkID    string           `json:"network_id"`
 			SessionID    string           `json:"session_id"`
 			GroupID      string           `json:"group_id"`
 			Name         string           `json:"display_name"`
 			PreviousName string           `json:"previous_display_name,omitempty"`
 			MemberCount  int              `json:"member_count"`
 			Authority    catalogAuthority `json:"authority"`
-		}{change.WorkspaceID.String(), change.Session.ID().String(), saved.ID.String(), saved.Name, previousName,
-			saved.MemberCount, record.Authority}
+		}{change.Scope.WorkspaceID().String(), change.Scope.NetworkID().String(), change.Session.ID().String(),
+			saved.ID.String(), saved.Name, previousName, saved.MemberCount, record.Authority}
 		event.outboxClass = event.action
 		event.outbox = struct {
 			WorkspaceID string `json:"workspace_id"`
+			NetworkID   string `json:"network_id"`
 			GroupID     string `json:"group_id"`
 			Version     int64  `json:"version"`
-		}{change.WorkspaceID.String(), saved.ID.String(), saved.Version}
-		if err := appendWorkspaceCatalogEvent(ctx, tx, change.WorkspaceID, event); err != nil {
+		}{change.Scope.WorkspaceID().String(), change.Scope.NetworkID().String(), saved.ID.String(), saved.Version}
+		if err := appendWorkspaceCatalogEvent(ctx, tx, change.Scope.WorkspaceID(), event); err != nil {
 			return false, errors.Join(identitygroup.ErrUnavailable, err)
 		}
 		return true, nil
@@ -406,12 +418,12 @@ func (store *IdentityGroupStore) Change(ctx context.Context, change identitygrou
 	return result, nil
 }
 
-// ChangeMembers authorizes identity_group.manage and applies the membership
-// change. Evidence goes on the Workspace stream, and on the stream of each
-// Network the change rebuilt, with its revision wakeup.
+// ChangeMembers authorizes identity_group.manage in the Network and applies
+// the membership change. Evidence goes on the Workspace stream, and on the
+// Network's stream with its revision wakeup when the change rebuilt it.
 func (store *IdentityGroupStore) ChangeMembers(ctx context.Context, change identitygroup.MembershipChange) (
 	identitygroup.MembershipResult, error) {
-	if !change.Session.IsValid() || !change.WorkspaceID.IsValid() || !change.GroupID.IsValid() ||
+	if !change.Session.IsValid() || !change.Scope.IsValid() || !change.GroupID.IsValid() ||
 		change.ExpectedVersion <= 0 || len(change.Add) != len(change.AddMemberIDs) ||
 		!change.CorrelationID.IsValid() {
 		return identitygroup.MembershipResult{}, identitygroup.ErrInvalid
@@ -439,11 +451,11 @@ func (store *IdentityGroupStore) ChangeMembers(ctx context.Context, change ident
 		return identitygroup.MembershipResult{}, identitygroup.ErrUnavailable
 	}
 	var result identitygroup.MembershipResult
-	err = store.transact(ctx, func(tx accountSessionTransaction, evaluatedAt time.Time) (bool, error) {
+	err = store.transact(ctx, change.Scope, func(tx accountSessionTransaction, evaluatedAt time.Time) (bool, error) {
 		var encoded string
 		if err := tx.QueryRow(ctx, changeIdentityGroupMembersSQL, append(sessionQueryArguments(change.Session),
-			change.WorkspaceID.String(), change.GroupID.String(), change.ExpectedVersion, addJSON, removed,
-			changeID.String(), evaluatedAt)...).Scan(&encoded); err != nil {
+			change.Scope.WorkspaceID().String(), change.Scope.NetworkID().String(), change.GroupID.String(),
+			change.ExpectedVersion, addJSON, removed, changeID.String(), evaluatedAt)...).Scan(&encoded); err != nil {
 			return false, identityGroupDatabaseError(err)
 		}
 		var record identityGroupChangeRecord
@@ -456,7 +468,8 @@ func (store *IdentityGroupStore) ChangeMembers(ctx context.Context, change ident
 			return false, identitygroup.ErrInvalid
 		}
 		networks, err := advancedNetworks(record.Networks)
-		if err != nil || (!*record.Changed && len(networks) > 0) {
+		if err != nil || (!*record.Changed && len(networks) > 0) || len(networks) > 1 ||
+			(len(networks) == 1 && networks[0].NetworkID != change.Scope.NetworkID()) {
 			return false, identitygroup.ErrInvalid
 		}
 		result = identitygroup.MembershipResult{
@@ -497,22 +510,24 @@ func (store *IdentityGroupStore) ChangeMembers(ctx context.Context, change ident
 			before: &beforeHash, after: afterHash,
 			payload: struct {
 				WorkspaceID     string           `json:"workspace_id"`
+				NetworkID       string           `json:"network_id"`
 				SessionID       string           `json:"session_id"`
 				Change          any              `json:"change"`
 				MemberCount     int              `json:"member_count"`
 				RuleCount       int              `json:"rule_count"`
 				AccessAffecting bool             `json:"access_affecting"`
 				Authority       catalogAuthority `json:"authority"`
-			}{change.WorkspaceID.String(), change.Session.ID().String(), reason, saved.MemberCount, saved.RuleCount,
-				result.AccessAffecting(), record.Authority},
+			}{change.Scope.WorkspaceID().String(), change.Scope.NetworkID().String(), change.Session.ID().String(),
+				reason, saved.MemberCount, saved.RuleCount, result.AccessAffecting(), record.Authority},
 			outboxClass: "identity_group.members_changed",
 			outbox: struct {
 				WorkspaceID string `json:"workspace_id"`
+				NetworkID   string `json:"network_id"`
 				GroupID     string `json:"group_id"`
 				Version     int64  `json:"version"`
-			}{change.WorkspaceID.String(), saved.ID.String(), saved.Version},
+			}{change.Scope.WorkspaceID().String(), change.Scope.NetworkID().String(), saved.ID.String(), saved.Version},
 		}
-		if err := appendWorkspaceCatalogEvent(ctx, tx, change.WorkspaceID, event); err != nil {
+		if err := appendWorkspaceCatalogEvent(ctx, tx, change.Scope.WorkspaceID(), event); err != nil {
 			return false, errors.Join(identitygroup.ErrUnavailable, err)
 		}
 		if err := appendNetworkWakeEvents(ctx, tx, networks, event, reason); err != nil {

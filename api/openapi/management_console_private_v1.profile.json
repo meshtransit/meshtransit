@@ -2557,11 +2557,11 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_id}/device-tags": {
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/device-tags": {
       "get": {
-        "operationId": "listWorkspaceDeviceTags",
-        "summary": "List the Workspace's device tags",
-        "description": "Requires device_tag.read. Rules select tags as source or destination; a tagged Device matches rules by tag only, not through its owner's user groups.",
+        "operationId": "listNetworkDeviceTags",
+        "summary": "List the Network's device tags",
+        "description": "Requires device_tag.read in the Network. A tag acts only in its Network. Rules select tags as source or destination; a tagged Device matches rules by tag only, not through its owner's user groups.",
         "security": [
           {
             "accountSessionCookie": []
@@ -2576,6 +2576,15 @@
           },
           {
             "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
             "in": "path",
             "required": true,
             "schema": {
@@ -2720,9 +2729,9 @@
         }
       },
       "post": {
-        "operationId": "createWorkspaceDeviceTag",
+        "operationId": "createNetworkDeviceTag",
         "summary": "Create a device tag",
-        "description": "Requires device_tag.manage. At most 200 tags per Workspace. Owners may apply the tag to Devices they own or in Networks where they hold device.manage.",
+        "description": "Requires device_tag.manage in the Network. At most 200 tags per Network. Owners are user groups of the same Network or built-in roles; an owner may apply the tag to Devices it owns in the Network, or to any of its Devices while holding device.manage there.",
         "security": [
           {
             "accountSessionCookie": [],
@@ -2738,6 +2747,15 @@
           },
           {
             "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
             "in": "path",
             "required": true,
             "schema": {
@@ -2766,7 +2784,7 @@
                   "name": {
                     "type": "string",
                     "pattern": "^[a-z0-9]([a-z0-9-]{0,46}[a-z0-9])?$",
-                    "description": "Unique in the Workspace"
+                    "description": "Unique in the Network"
                   },
                   "description": {
                     "type": "string",
@@ -2950,11 +2968,11 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_id}/device-tags/{tag_id}": {
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/device-tags/{tag_id}": {
       "patch": {
-        "operationId": "updateWorkspaceDeviceTag",
+        "operationId": "updateNetworkDeviceTag",
         "summary": "Change a device tag",
-        "description": "Requires device_tag.manage, at the version in If-Match. Replaces the name, description and owners.",
+        "description": "Requires device_tag.manage in the Network, at the version in If-Match. Replaces the name, description and owners.",
         "security": [
           {
             "accountSessionCookie": [],
@@ -2970,6 +2988,15 @@
           },
           {
             "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
             "in": "path",
             "required": true,
             "schema": {
@@ -3016,7 +3043,7 @@
                   "name": {
                     "type": "string",
                     "pattern": "^[a-z0-9]([a-z0-9-]{0,46}[a-z0-9])?$",
-                    "description": "Unique in the Workspace"
+                    "description": "Unique in the Network"
                   },
                   "description": {
                     "type": "string",
@@ -3209,9 +3236,9 @@
         }
       },
       "delete": {
-        "operationId": "deleteWorkspaceDeviceTag",
+        "operationId": "deleteNetworkDeviceTag",
         "summary": "Delete a device tag",
-        "description": "Requires device_tag.manage, at the version in If-Match. A tag that active rules select cannot be deleted (409 device_tag_in_use); otherwise it is removed from every Device and those Networks rebuild their maps.",
+        "description": "Requires device_tag.manage in the Network, at the version in If-Match. A tag that active rules select cannot be deleted (409 device_tag_in_use); otherwise it is removed from every Device and the Network rebuilds its maps.",
         "security": [
           {
             "accountSessionCookie": [],
@@ -3227,6 +3254,15 @@
           },
           {
             "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
             "in": "path",
             "required": true,
             "schema": {
@@ -5112,11 +5148,11 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_id}/identity-groups": {
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/identity-groups": {
       "get": {
-        "operationId": "listWorkspaceIdentityGroups",
-        "summary": "List the Workspace's user groups",
-        "description": "Requires identity_group.read. A user group is a set of Workspace members; rules may select it as a source, meaning every untagged Device its members own in that Network.",
+        "operationId": "listNetworkIdentityGroups",
+        "summary": "List the Network's user groups",
+        "description": "Requires identity_group.read in the Network. A user group is a set of the Network's members; the Network's rules may select it as a source, meaning every untagged Device its members own in the Network.",
         "security": [
           {
             "accountSessionCookie": []
@@ -5131,6 +5167,15 @@
           },
           {
             "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
             "in": "path",
             "required": true,
             "schema": {
@@ -5206,7 +5251,7 @@
                               "rule_count": {
                                 "type": "integer",
                                 "minimum": 0,
-                                "description": "Rules of active policies, in any Network of the Workspace, that select this group"
+                                "description": "Rules of the Network's active policy that select this group"
                               },
                               "version": {
                                 "type": "integer",
@@ -5250,9 +5295,9 @@
         }
       },
       "post": {
-        "operationId": "createWorkspaceIdentityGroup",
+        "operationId": "createNetworkIdentityGroup",
         "summary": "Create an empty user group",
-        "description": "Requires identity_group.manage. At most 500 groups per Workspace.",
+        "description": "Requires identity_group.manage in the Network. At most 500 groups per Network.",
         "security": [
           {
             "accountSessionCookie": [],
@@ -5268,6 +5313,15 @@
           },
           {
             "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
             "in": "path",
             "required": true,
             "schema": {
@@ -5295,7 +5349,7 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 64,
-                    "description": "Unique in the Workspace, ignoring case; no leading or trailing spaces"
+                    "description": "Unique in the Network, ignoring case; no leading or trailing spaces"
                   },
                   "description": {
                     "type": "string",
@@ -5376,7 +5430,7 @@
                             "rule_count": {
                               "type": "integer",
                               "minimum": 0,
-                              "description": "Rules of active policies, in any Network of the Workspace, that select this group"
+                              "description": "Rules of the Network's active policy that select this group"
                             },
                             "version": {
                               "type": "integer",
@@ -5424,11 +5478,11 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_id}/identity-groups/{group_id}": {
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/identity-groups/{group_id}": {
       "patch": {
-        "operationId": "updateWorkspaceIdentityGroup",
+        "operationId": "updateNetworkIdentityGroup",
         "summary": "Rename a user group",
-        "description": "Requires identity_group.manage, at the version in If-Match.",
+        "description": "Requires identity_group.manage in the Network, at the version in If-Match.",
         "security": [
           {
             "accountSessionCookie": [],
@@ -5444,6 +5498,15 @@
           },
           {
             "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
             "in": "path",
             "required": true,
             "schema": {
@@ -5489,7 +5552,7 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 64,
-                    "description": "Unique in the Workspace, ignoring case; no leading or trailing spaces"
+                    "description": "Unique in the Network, ignoring case; no leading or trailing spaces"
                   },
                   "description": {
                     "type": "string",
@@ -5570,7 +5633,7 @@
                             "rule_count": {
                               "type": "integer",
                               "minimum": 0,
-                              "description": "Rules of active policies, in any Network of the Workspace, that select this group"
+                              "description": "Rules of the Network's active policy that select this group"
                             },
                             "version": {
                               "type": "integer",
@@ -5627,9 +5690,9 @@
         }
       },
       "delete": {
-        "operationId": "deleteWorkspaceIdentityGroup",
+        "operationId": "deleteNetworkIdentityGroup",
         "summary": "Delete a user group",
-        "description": "Requires identity_group.manage, at the version in If-Match. A group that active rules select or that owns a tag cannot be deleted (409 identity_group_in_use).",
+        "description": "Requires identity_group.manage in the Network, at the version in If-Match. A group that active rules select or that owns a tag cannot be deleted (409 identity_group_in_use).",
         "security": [
           {
             "accountSessionCookie": [],
@@ -5645,6 +5708,15 @@
           },
           {
             "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
             "in": "path",
             "required": true,
             "schema": {
@@ -5744,7 +5816,7 @@
                             "rule_count": {
                               "type": "integer",
                               "minimum": 0,
-                              "description": "Rules of active policies, in any Network of the Workspace, that select this group"
+                              "description": "Rules of the Network's active policy that select this group"
                             },
                             "version": {
                               "type": "integer",
@@ -5798,11 +5870,11 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_id}/identity-groups/{group_id}/members": {
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/identity-groups/{group_id}/members": {
       "get": {
-        "operationId": "listWorkspaceIdentityGroupMembers",
+        "operationId": "listNetworkIdentityGroupMembers",
         "summary": "One page of a user group's members",
-        "description": "Requires identity_group.read. Members are ordered by principal ID; pass next_after as after for the next page. A member whose membership is not active grants nothing.",
+        "description": "Requires identity_group.read in the Network. Members are ordered by principal ID; pass next_after as after for the next page. A member whose Workspace or Network membership is not active grants nothing.",
         "security": [
           {
             "accountSessionCookie": []
@@ -5817,6 +5889,15 @@
           },
           {
             "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
             "in": "path",
             "required": true,
             "schema": {
@@ -5924,7 +6005,7 @@
                             "rule_count": {
                               "type": "integer",
                               "minimum": 0,
-                              "description": "Rules of active policies, in any Network of the Workspace, that select this group"
+                              "description": "Rules of the Network's active policy that select this group"
                             },
                             "version": {
                               "type": "integer",
@@ -6000,9 +6081,9 @@
         }
       },
       "patch": {
-        "operationId": "changeWorkspaceIdentityGroupMembers",
+        "operationId": "changeNetworkIdentityGroupMembers",
         "summary": "Add and remove user group members",
-        "description": "Requires identity_group.manage. Adds and removes at most 150 principals each, at the version in If-Match. Added principals must be active members of the Workspace. When the set changes, every Network whose active rules select the group rebuilds its maps; access_affecting reports whether that happened.",
+        "description": "Requires identity_group.manage in the Network. Adds and removes at most 150 principals each, at the version in If-Match. Added principals must be active members of the Workspace and of the Network. When the set changes and the Network's active rules select the group, the Network rebuilds its maps; access_affecting reports whether that happened.",
         "security": [
           {
             "accountSessionCookie": [],
@@ -6018,6 +6099,15 @@
           },
           {
             "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
             "in": "path",
             "required": true,
             "schema": {
@@ -6154,7 +6244,7 @@
                             "rule_count": {
                               "type": "integer",
                               "minimum": 0,
-                              "description": "Rules of active policies, in any Network of the Workspace, that select this group"
+                              "description": "Rules of the Network's active policy that select this group"
                             },
                             "version": {
                               "type": "integer",
@@ -10335,9 +10425,9 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/device-tags": {
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/tagged-devices": {
       "get": {
-        "operationId": "listNetworkDeviceTags",
+        "operationId": "listNetworkTaggedDevices",
         "summary": "The tags of a Network's Devices",
         "description": "Requires device.read on the Network. Lists each tagged Device with its tag IDs; untagged Devices are omitted.",
         "security": [

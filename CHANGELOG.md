@@ -5,6 +5,26 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- **Breaking (Core, schema 228): user groups and device tags belong to one
+  Network.** Each group, tag and tag owner now lives in a single Network;
+  the Network's rules can select only its own groups and tags, a tag applies
+  only to that Network's Devices, and group members must be active members
+  of the Network (leaving the Network removes them from its groups). The
+  paths move to `/api/v1/workspaces/{ws}/networks/{net}/identity-groups…`
+  and `…/networks/{net}/device-tags…`; the list of tagged Devices moves from
+  `…/networks/{net}/device-tags` to `…/networks/{net}/tagged-devices`; the
+  Workspace paths are gone. `identity_group.*` and `device_tag.*` are
+  Network permissions: network_admin gains `identity_group.manage` and
+  `device_tag.manage`, it_admin loses them. Limits count per Network (500
+  groups, 200 tags). Workspace groups and tags from before schema 228 are
+  not rewritten: they keep no Network and become inert (nothing lists,
+  selects or resolves them); recreate them in a Network. The upgrade stops
+  while active rules still select them or Devices still carry them; a
+  draft or pending approval naming them fails at publication as an unknown
+  selector. Core
+  images older than this schema answer 503 on these paths; deploy Core and
+  Console together, since `GET …/networks/{net}/device-tags` now returns the
+  tag catalog.
 - Kubernetes gateways K1a1.1–K1a1.2 (Core, schema 224): a Network has
   Kubernetes clusters (`…/kubernetes-clusters`, permissions
   `kubernetes_cluster.manage` and `kubernetes_cluster.approve` for admin and

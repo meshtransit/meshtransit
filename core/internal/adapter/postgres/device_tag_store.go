@@ -17,29 +17,29 @@ import (
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/publicid"
-	"meshtransit.net/core/internal/domain/workspace"
 )
 
-const listDeviceTagsSQL = `SELECT mesh_ops.list_device_tags_v1(` + sessionArguments + `,
- $10::UUID,$11::TIMESTAMPTZ)::TEXT`
+const listDeviceTagsSQL = `SELECT mesh_ops.list_device_tags_v2(` + sessionArguments + `,
+ $10::UUID,$11::UUID,$12::TIMESTAMPTZ)::TEXT`
 
-const changeDeviceTagSQL = `SELECT mesh_ops.change_device_tag_v1(` + sessionArguments + `,
- $10::UUID,$11::TEXT,$12::UUID,$13::BIGINT,$14::TEXT,$15::TEXT,$16::UUID[],$17::TEXT[],$18::UUID[],
- $19::UUID,$20::TIMESTAMPTZ)::TEXT`
+const changeDeviceTagSQL = `SELECT mesh_ops.change_device_tag_v2(` + sessionArguments + `,
+ $10::UUID,$11::UUID,$12::TEXT,$13::UUID,$14::BIGINT,$15::TEXT,$16::TEXT,$17::UUID[],$18::TEXT[],$19::UUID[],
+ $20::UUID,$21::TIMESTAMPTZ)::TEXT`
 
-const readNetworkTagOptionsSQL = `SELECT mesh_ops.read_network_tag_options_v1(` + sessionArguments + `,
+const readNetworkTagOptionsSQL = `SELECT mesh_ops.read_network_tag_options_v2(` + sessionArguments + `,
     $10::UUID, $11::UUID, $12::TIMESTAMPTZ)::TEXT`
 
 const readNetworkDeviceTagsSQL = `SELECT mesh_ops.read_network_device_tags_v1(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::TIMESTAMPTZ)::TEXT`
 
-const changeDeviceTagsSQL = `SELECT mesh_ops.change_device_tags_v1(` + sessionArguments + `,
+const changeDeviceTagsSQL = `SELECT mesh_ops.change_device_tags_v2(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::UUID,$13::JSONB,$14::UUID[],$15::UUID,$16::TIMESTAMPTZ)::TEXT`
 
-// DeviceTagStore reads and changes the device tag catalog and Device tags
-// through the runtime pool. Catalog changes commit with evidence on the
-// Workspace stream; tag assignments on the Device's Network stream, with the
-// revision wakeup that rebuilds its maps.
+// DeviceTagStore reads and changes each Network's tag catalog and its
+// Devices' tags through the runtime pool, in that Network's exact scope.
+// Catalog changes commit with evidence on the Workspace stream; tag
+// assignments on the Network stream, with the revision wakeup that rebuilds
+// its maps.
 type DeviceTagStore struct {
 	database accountSessionDatabase
 	options  AccountSessionOptions
@@ -86,10 +86,9 @@ func deviceTagDatabaseError(err error) error {
 	return errors.Join(devicetag.ErrUnavailable, err)
 }
 
-// begin starts one unit of work, in the Network scope when one is given, and
-// reads its time on the database clock, which authorizes it and stamps
-// everything it writes.
-func (store *DeviceTagStore) begin(ctx context.Context, scope *network.Scope) (accountSessionTransaction,
+// begin starts one unit of work in the Network scope and reads its time on
+// the database clock, which authorizes it and stamps everything it writes.
+func (store *DeviceTagStore) begin(ctx context.Context, scope network.Scope) (accountSessionTransaction,
 	time.Time, error) {
 	if ctx == nil || store == nil || store.database == nil || !validAccountSessionOptions(store.options) {
 		return nil, time.Time{}, devicetag.ErrInvalid
@@ -102,15 +101,13 @@ func (store *DeviceTagStore) begin(ctx context.Context, scope *network.Scope) (a
 		postgresTimeout(store.options.StatementTimeout), postgresTimeout(store.options.IdleTimeout)); err != nil {
 		return tx, time.Time{}, errors.Join(devicetag.ErrUnavailable, err)
 	}
-	if scope != nil {
-		var workspaceInternal, networkInternal int64
-		if err := tx.QueryRow(ctx, setResourceAuthorityScopeSQL, scope.WorkspaceID().String(),
-			scope.NetworkID().String()).Scan(&workspaceInternal, &networkInternal); err != nil {
-			return tx, time.Time{}, deviceTagDatabaseError(err)
-		}
-		if workspaceInternal <= 0 || networkInternal <= 0 {
-			return tx, time.Time{}, devicetag.ErrForbidden
-		}
+	var workspaceInternal, networkInternal int64
+	if err := tx.QueryRow(ctx, setResourceAuthorityScopeSQL, scope.WorkspaceID().String(),
+		scope.NetworkID().String()).Scan(&workspaceInternal, &networkInternal); err != nil {
+		return tx, time.Time{}, deviceTagDatabaseError(err)
+	}
+	if workspaceInternal <= 0 || networkInternal <= 0 {
+		return tx, time.Time{}, devicetag.ErrForbidden
 	}
 	at, err := readTransactionTime(ctx, tx.QueryRow)
 	if err != nil {
@@ -119,7 +116,7 @@ func (store *DeviceTagStore) begin(ctx context.Context, scope *network.Scope) (a
 	return tx, at, nil
 }
 
-func (store *DeviceTagStore) transact(ctx context.Context, scope *network.Scope,
+func (store *DeviceTagStore) transact(ctx context.Context, scope network.Scope,
 	run func(tx accountSessionTransaction, evaluatedAt time.Time) (bool, error)) (resultErr error) {
 	tx, evaluatedAt, err := store.begin(ctx, scope)
 	committed := false
@@ -198,17 +195,17 @@ func deviceTagSemanticHash(document deviceTagDocument) ([32]byte, error) {
 	return sha256.Sum256(encoded), err
 }
 
-// List authorizes device_tag.read and returns the catalog.
+// List authorizes device_tag.read in the Network and returns its catalog.
 func (store *DeviceTagStore) List(ctx context.Context, session accountsession.Session,
-	workspaceID workspace.ID) (devicetag.Listing, error) {
-	if !session.IsValid() || !workspaceID.IsValid() {
+	scope network.Scope) (devicetag.Listing, error) {
+	if !session.IsValid() || !scope.IsValid() {
 		return devicetag.Listing{}, devicetag.ErrInvalid
 	}
 	var listing devicetag.Listing
-	err := store.transact(ctx, nil, func(tx accountSessionTransaction, at time.Time) (bool, error) {
+	err := store.transact(ctx, scope, func(tx accountSessionTransaction, at time.Time) (bool, error) {
 		var encoded string
 		if err := tx.QueryRow(ctx, listDeviceTagsSQL, append(sessionQueryArguments(session),
-			workspaceID.String(), at)...).Scan(&encoded); err != nil {
+			scope.WorkspaceID().String(), scope.NetworkID().String(), at)...).Scan(&encoded); err != nil {
 			return false, deviceTagDatabaseError(err)
 		}
 		var envelope struct {
@@ -242,9 +239,10 @@ type deviceTagChangeRecord struct {
 	Authority catalogAuthority     `json:"authority"`
 }
 
-// Change authorizes device_tag.manage and applies a catalog change.
+// Change authorizes device_tag.manage in the Network and applies a catalog
+// change there.
 func (store *DeviceTagStore) Change(ctx context.Context, change devicetag.Change) (devicetag.Result, error) {
-	if !change.Session.IsValid() || !change.WorkspaceID.IsValid() || !change.TagID.IsValid() ||
+	if !change.Session.IsValid() || !change.Scope.IsValid() || !change.TagID.IsValid() ||
 		!change.CorrelationID.IsValid() {
 		return devicetag.Result{}, devicetag.ErrInvalid
 	}
@@ -274,11 +272,12 @@ func (store *DeviceTagStore) Change(ctx context.Context, change devicetag.Change
 		return devicetag.Result{}, devicetag.ErrUnavailable
 	}
 	var result devicetag.Result
-	err = store.transact(ctx, nil, func(tx accountSessionTransaction, at time.Time) (bool, error) {
+	err = store.transact(ctx, change.Scope, func(tx accountSessionTransaction, at time.Time) (bool, error) {
 		var encoded string
 		if err := tx.QueryRow(ctx, changeDeviceTagSQL, append(sessionQueryArguments(change.Session),
-			change.WorkspaceID.String(), string(change.Operation), change.TagID.String(), expected, name,
-			description, groups, roles, rows, changeID.String(), at)...).Scan(&encoded); err != nil {
+			change.Scope.WorkspaceID().String(), change.Scope.NetworkID().String(), string(change.Operation),
+			change.TagID.String(), expected, name, description, groups, roles, rows, changeID.String(), at)...).
+			Scan(&encoded); err != nil {
 			return false, deviceTagDatabaseError(err)
 		}
 		var record deviceTagChangeRecord
@@ -292,7 +291,8 @@ func (store *DeviceTagStore) Change(ctx context.Context, change devicetag.Change
 			return false, devicetag.ErrInvalid
 		}
 		networks, err := advancedNetworks(record.Networks)
-		if err != nil || (!deleted && len(networks) > 0) {
+		if err != nil || (!deleted && len(networks) > 0) || len(networks) > 1 ||
+			(len(networks) == 1 && networks[0].NetworkID != change.Scope.NetworkID()) {
 			return false, devicetag.ErrInvalid
 		}
 		result = devicetag.Result{Tag: saved, Deleted: deleted, Networks: networks}
@@ -326,6 +326,7 @@ func (store *DeviceTagStore) Change(ctx context.Context, change devicetag.Change
 		}
 		event.payload = struct {
 			WorkspaceID  string           `json:"workspace_id"`
+			NetworkID    string           `json:"network_id"`
 			SessionID    string           `json:"session_id"`
 			TagID        string           `json:"tag_id"`
 			Name         string           `json:"display_name"`
@@ -334,15 +335,17 @@ func (store *DeviceTagStore) Change(ctx context.Context, change devicetag.Change
 			OwnerRoles   []string         `json:"owner_roles"`
 			Networks     int              `json:"rebuilt_networks"`
 			Authority    catalogAuthority `json:"authority"`
-		}{change.WorkspaceID.String(), change.Session.ID().String(), saved.ID.String(), saved.Name, previousName,
-			record.Tag.OwnerGroupIDs, record.Tag.OwnerRoles, len(networks), record.Authority}
+		}{change.Scope.WorkspaceID().String(), change.Scope.NetworkID().String(), change.Session.ID().String(),
+			saved.ID.String(), saved.Name, previousName, record.Tag.OwnerGroupIDs, record.Tag.OwnerRoles,
+			len(networks), record.Authority}
 		event.outboxClass = event.action
 		event.outbox = struct {
 			WorkspaceID string `json:"workspace_id"`
+			NetworkID   string `json:"network_id"`
 			TagID       string `json:"tag_id"`
 			Version     int64  `json:"version"`
-		}{change.WorkspaceID.String(), saved.ID.String(), saved.Version}
-		if err := appendWorkspaceCatalogEvent(ctx, tx, change.WorkspaceID, event); err != nil {
+		}{change.Scope.WorkspaceID().String(), change.Scope.NetworkID().String(), saved.ID.String(), saved.Version}
+		if err := appendWorkspaceCatalogEvent(ctx, tx, change.Scope.WorkspaceID(), event); err != nil {
 			return false, errors.Join(devicetag.ErrUnavailable, err)
 		}
 		reason := struct {
@@ -368,7 +371,7 @@ func (store *DeviceTagStore) NetworkOptions(ctx context.Context, session account
 		return devicetag.NetworkOptions{}, devicetag.ErrInvalid
 	}
 	var options devicetag.NetworkOptions
-	err := store.transact(ctx, &scope, func(tx accountSessionTransaction, at time.Time) (bool, error) {
+	err := store.transact(ctx, scope, func(tx accountSessionTransaction, at time.Time) (bool, error) {
 		var encoded string
 		if err := tx.QueryRow(ctx, readNetworkTagOptionsSQL, append(sessionQueryArguments(session),
 			scope.WorkspaceID().String(), scope.NetworkID().String(), at)...).Scan(&encoded); err != nil {
@@ -431,7 +434,7 @@ func (store *DeviceTagStore) NetworkTags(ctx context.Context, session accountses
 		return nil, devicetag.ErrInvalid
 	}
 	var devices []devicetag.DeviceTags
-	err := store.transact(ctx, &scope, func(tx accountSessionTransaction, at time.Time) (bool, error) {
+	err := store.transact(ctx, scope, func(tx accountSessionTransaction, at time.Time) (bool, error) {
 		var encoded string
 		if err := tx.QueryRow(ctx, readNetworkDeviceTagsSQL, append(sessionQueryArguments(session),
 			scope.WorkspaceID().String(), scope.NetworkID().String(), at)...).Scan(&encoded); err != nil {
@@ -510,7 +513,7 @@ func (store *DeviceTagStore) ChangeAssignments(ctx context.Context, change devic
 	}
 	scope := change.Scope
 	var result devicetag.AssignmentResult
-	err = store.transact(ctx, &scope, func(tx accountSessionTransaction, at time.Time) (bool, error) {
+	err = store.transact(ctx, scope, func(tx accountSessionTransaction, at time.Time) (bool, error) {
 		var encoded string
 		if err := tx.QueryRow(ctx, changeDeviceTagsSQL, append(sessionQueryArguments(change.Session),
 			scope.WorkspaceID().String(), scope.NetworkID().String(), change.DeviceID.String(), addJSON, removed,

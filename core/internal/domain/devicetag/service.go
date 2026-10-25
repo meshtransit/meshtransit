@@ -8,13 +8,12 @@ import (
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/publicid"
-	"meshtransit.net/core/internal/domain/workspace"
 )
 
 // Store reads and changes tags; PostgreSQL authorizes each call and decides
 // it, and every time it persists, on the database clock.
 type Store interface {
-	List(ctx context.Context, session accountsession.Session, workspaceID workspace.ID) (Listing, error)
+	List(ctx context.Context, session accountsession.Session, scope network.Scope) (Listing, error)
 	Change(ctx context.Context, change Change) (Result, error)
 	NetworkTags(ctx context.Context, session accountsession.Session, scope network.Scope) ([]DeviceTags, error)
 	ChangeAssignments(ctx context.Context, change AssignmentChange) (AssignmentResult, error)
@@ -55,17 +54,17 @@ func (service *Service) admit(ctx context.Context, session accountsession.Sessio
 	return nil
 }
 
-// List returns the Workspace's tag catalog.
+// List returns the Network's tag catalog.
 func (service *Service) List(ctx context.Context, session accountsession.Session,
-	workspaceID workspace.ID) (Listing, error) {
+	scope network.Scope) (Listing, error) {
 	err := service.admit(ctx, session)
 	if err != nil {
 		return Listing{}, err
 	}
-	if !workspaceID.IsValid() {
+	if !scope.IsValid() {
 		return Listing{}, ErrInvalid
 	}
-	return service.store.List(ctx, session, workspaceID)
+	return service.store.List(ctx, session, scope)
 }
 
 func (service *Service) ownerRows(definition Definition) ([]publicid.ID, error) {
@@ -81,14 +80,14 @@ func (service *Service) ownerRows(definition Definition) ([]publicid.ID, error) 
 }
 
 // Create adds a tag with its owners.
-func (service *Service) Create(ctx context.Context, session accountsession.Session, workspaceID workspace.ID,
+func (service *Service) Create(ctx context.Context, session accountsession.Session, scope network.Scope,
 	definition Definition, correlationID publicid.ID) (Result, error) {
 	err := service.admit(ctx, session)
 	if err != nil {
 		return Result{}, err
 	}
 	definition = definition.Canonical()
-	if !workspaceID.IsValid() || !definition.IsValid() || !correlationID.IsValid() {
+	if !scope.IsValid() || !definition.IsValid() || !correlationID.IsValid() {
 		return Result{}, ErrInvalid
 	}
 	id, err := service.ids.New()
@@ -100,7 +99,7 @@ func (service *Service) Create(ctx context.Context, session accountsession.Sessi
 		return Result{}, err
 	}
 	return service.store.Change(ctx, Change{
-		Session: session, WorkspaceID: workspaceID, Operation: OperationCreate, TagID: ID(id),
+		Session: session, Scope: scope, Operation: OperationCreate, TagID: ID(id),
 		Definition: definition, OwnerRowIDs: rows, CorrelationID: correlationID,
 	})
 }
@@ -108,14 +107,14 @@ func (service *Service) Create(ctx context.Context, session accountsession.Sessi
 // Update replaces a tag's name, description and owners at the expected
 // version. Renaming keeps the tag's identity, so rules that select it are
 // unaffected.
-func (service *Service) Update(ctx context.Context, session accountsession.Session, workspaceID workspace.ID,
+func (service *Service) Update(ctx context.Context, session accountsession.Session, scope network.Scope,
 	tag ID, expectedVersion int64, definition Definition, correlationID publicid.ID) (Result, error) {
 	err := service.admit(ctx, session)
 	if err != nil {
 		return Result{}, err
 	}
 	definition = definition.Canonical()
-	if !workspaceID.IsValid() || !tag.IsValid() || expectedVersion <= 0 || !definition.IsValid() ||
+	if !scope.IsValid() || !tag.IsValid() || expectedVersion <= 0 || !definition.IsValid() ||
 		!correlationID.IsValid() {
 		return Result{}, ErrInvalid
 	}
@@ -124,24 +123,24 @@ func (service *Service) Update(ctx context.Context, session accountsession.Sessi
 		return Result{}, err
 	}
 	return service.store.Change(ctx, Change{
-		Session: session, WorkspaceID: workspaceID, Operation: OperationUpdate, TagID: tag,
+		Session: session, Scope: scope, Operation: OperationUpdate, TagID: tag,
 		ExpectedVersion: expectedVersion, Definition: definition, OwnerRowIDs: rows,
 		CorrelationID: correlationID,
 	})
 }
 
 // Delete removes a tag no active rule selects, with its assignments.
-func (service *Service) Delete(ctx context.Context, session accountsession.Session, workspaceID workspace.ID,
+func (service *Service) Delete(ctx context.Context, session accountsession.Session, scope network.Scope,
 	tag ID, expectedVersion int64, correlationID publicid.ID) (Result, error) {
 	err := service.admit(ctx, session)
 	if err != nil {
 		return Result{}, err
 	}
-	if !workspaceID.IsValid() || !tag.IsValid() || expectedVersion <= 0 || !correlationID.IsValid() {
+	if !scope.IsValid() || !tag.IsValid() || expectedVersion <= 0 || !correlationID.IsValid() {
 		return Result{}, ErrInvalid
 	}
 	return service.store.Change(ctx, Change{
-		Session: session, WorkspaceID: workspaceID, Operation: OperationDelete, TagID: tag,
+		Session: session, Scope: scope, Operation: OperationDelete, TagID: tag,
 		ExpectedVersion: expectedVersion, CorrelationID: correlationID,
 	})
 }

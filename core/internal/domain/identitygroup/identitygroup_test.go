@@ -9,6 +9,7 @@ import (
 
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/identitygroup"
+	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/domain/workspace"
 )
@@ -64,6 +65,11 @@ func TestChangeMembersRejectsBeforeStore(t *testing.T) {
 	principal, _ := publicid.New()
 	group, _ := publicid.New()
 	workspaceID, _ := publicid.New()
+	networkID, _ := publicid.New()
+	scope, err := network.NewScope(workspace.ID(workspaceID), network.ID(networkID))
+	if err != nil {
+		t.Fatal(err)
+	}
 	correlation, _ := publicid.New()
 	tooMany := make([]publicid.ID, identitygroup.MaximumMembersPerChange+1)
 	for index := range tooMany {
@@ -78,7 +84,7 @@ func TestChangeMembersRejectsBeforeStore(t *testing.T) {
 		{name: "duplicate", add: []publicid.ID{principal, principal}},
 		{name: "too many", add: tooMany},
 	} {
-		_, err := service.ChangeMembers(t.Context(), accountsession.Session{}, workspace.ID(workspaceID),
+		_, err := service.ChangeMembers(t.Context(), accountsession.Session{}, scope,
 			identitygroup.ID(group), 1, test.add, test.remove, correlation)
 		if !errors.Is(err, identitygroup.ErrForbidden) && !errors.Is(err, identitygroup.ErrInvalid) {
 			t.Errorf("%s: err = %v", test.name, err)

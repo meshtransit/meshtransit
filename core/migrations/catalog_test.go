@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 227 {
-		t.Fatalf("len(Catalog()) = %d, want 227", len(catalog))
+	if len(catalog) != 228 {
+		t.Fatalf("len(Catalog()) = %d, want 228", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 227 {
-		t.Fatalf("LatestVersion() = %d, want 227", LatestVersion())
+	if LatestVersion() != 228 {
+		t.Fatalf("LatestVersion() = %d, want 228", LatestVersion())
 	}
 }
 
@@ -6584,6 +6584,53 @@ func TestMigration227KubernetesGatewayMachineKeyRotation(t *testing.T) {
 	for _, forbidden := range []string{"BYPASSRLS", "DROP ", "CREATE OR REPLACE"} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 227 contains %q", forbidden)
+		}
+	}
+}
+
+// Schema 228 moves user groups and tags into one Network: Network-scoped
+// permissions, a member trigger that holds the Network membership, rules
+// and tags bound to their Network, every group resolver checking Network
+// membership, and the Workspace entry points retired.
+func TestMigration228NetworkScopedGroupsTags(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[227]
+	if migration.Version != 228 {
+		t.Fatalf("migration 228 = %+v", migration)
+	}
+	for _, want := range []string{
+		"SET allowed_scope_kinds = ARRAY['network']",
+		"WHERE permission.id = grant_row.permission_id AND grant_row.role_key = 'it_admin'",
+		"SELECT 'network_admin', permission.id",
+		"MESSAGE = 'schema 228: active rules select Workspace user groups or tags',",
+		"MESSAGE = 'schema 228: Devices carry Workspace tags',",
+		"OR NEW.workspace_id <> OLD.workspace_id OR NEW.network_id IS DISTINCT FROM OLD.network_id",
+		"ON mesh.identity_group (network_id, name_key) WHERE state = 'active'",
+		"FOR SHARE OF network_member;",
+		"CREATE TRIGGER identity_group_member_network",
+		"CREATE TRIGGER device_tag_owner_network",
+		"REFERENCES mesh.device_tag (workspace_id, network_id, id) ON DELETE RESTRICT;",
+		"ON source_identity.workspace_id = v_workspace AND source_identity.network_id = v_network",
+		"LEAST(membership.expires_at, network_member.expires_at)",
+		"-- Schema 228: the member leaves the Network's user groups with it.",
+		"CREATE FUNCTION mesh_ops.change_identity_group_members_v2(",
+		"CREATE FUNCTION mesh_ops.change_device_tags_v2(",
+		"MESSAGE = 'user groups and tags belong to a Network since schema 228';",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 228 lacks %q", want)
+		}
+	}
+	// Every resolver that expands a group checks the Network membership.
+	if got := strings.Count(migration.SQL, "JOIN mesh.network_membership AS network_member"); got < 7 {
+		t.Errorf("schema 228 joins the Network membership %d times, want at least 7", got)
+	}
+	// No catalog row is rewritten, so no authority evidence is owed.
+	for _, forbidden := range []string{
+		"BYPASSRLS", "DROP FUNCTION", "TEMPORARY", "SET network_id", "mesh.change_public_id', '01",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 228 contains %q", forbidden)
 		}
 	}
 }

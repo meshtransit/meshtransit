@@ -50,7 +50,9 @@ func assertPostgreSQLInvitations(ctx context.Context, t *testing.T, admin *pgx.C
 		})
 	}
 
-	sent, err := create(owner, "Invitee@Example.test", "auditor")
+	// Schema 183: created while another Workspace change holds the row.
+	sent, err := runWhileWorkspaceShared(ctx, t, admin, "change_workspace_invitation_v1",
+		func() (invitation.Sent, error) { return create(owner, "Invitee@Example.test", "auditor") })
 	if err != nil || sent.Invitation.State != "pending" || sent.Invitation.Email != "invitee@example.test" ||
 		sent.Invitation.Role != "auditor" || sent.Invitation.DeliveryState != "not_configured" ||
 		!strings.HasPrefix(sent.Link, "https://console.example.test/join#invite=") {

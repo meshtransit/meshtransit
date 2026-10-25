@@ -84,7 +84,8 @@ var builtinRoleCatalog = map[BuiltinRole]builtinRoleDefinition{
 		assignableBy:        []RoleAssigner{RoleAssignerOwner, RoleAssignerAdmin, RoleAssignerITAdmin},
 		permissions: permissionsOf(
 			"workspace.read", "network.create", "member.read", "role_binding.read",
-			"identity_group.read", "device_tag.read", "interchange.read",
+			"identity_group.read", "identity_group.manage", "device_tag.read", "device_tag.manage",
+			"interchange.read",
 			"isolation.read", "guardrail.read", "audit.read",
 			"network.read", "network.update", "dns.manage",
 			"device.read", "device_group.read", "device_group.manage", "device_group.members.manage",
@@ -103,8 +104,8 @@ var builtinRoleCatalog = map[BuiltinRole]builtinRoleDefinition{
 		assignableBy:        []RoleAssigner{RoleAssignerOwner, RoleAssignerAdmin, RoleAssignerITAdmin},
 		permissions: permissionsOf(
 			"workspace.read", "member.read", "member.invite", "member.manage",
-			"identity_provider.manage", "identity_group.manage", "identity_group.read",
-			"device_tag.read", "device_tag.manage", "interchange.read", "interchange.manage",
+			"identity_provider.manage", "identity_group.read",
+			"device_tag.read", "interchange.read", "interchange.manage",
 			"role_definition.read", "role_binding.read", "role_binding.manage", "access_review.manage",
 			"isolation.read", "guardrail.read", "audit.read",
 			"network.read", "network.member.manage",

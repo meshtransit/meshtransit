@@ -1,12 +1,14 @@
-// Package devicetag holds the Workspace device tag catalog (G2) and the tags
-// applied to Devices inside their Network. Access Rules select tags as a
-// source or destination. A tagged Device is a service Device: it matches
-// rules by tag only and no longer through its owner's Identity Groups.
+// Package devicetag holds each Network's device tag catalog (G2n) and the
+// tags applied to that Network's Devices; a tag acts only in its Network.
+// Access Rules select tags as a source or destination. A tagged Device is a
+// service Device: it matches rules by tag only and no longer through its
+// owner's Identity Groups.
 //
-// Each tag names its owners, Identity Groups or built-in roles; the
-// Workspace owner owns every tag. A tag owner may tag a Device it owns or a
-// Device of a Network where it holds device.manage; device_tag.manage
-// applies any tag. PostgreSQL enforces all of this and records evidence.
+// Each tag names its owners, Identity Groups of its Network or built-in
+// roles; the Workspace owner owns every tag. A tag owner may tag a Device it
+// owns or, holding device.manage in the Network, any of its Devices;
+// device_tag.manage in the Network applies any tag. PostgreSQL enforces all
+// of this and records evidence.
 package devicetag
 
 import (
@@ -21,7 +23,6 @@ import (
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/publicid"
-	"meshtransit.net/core/internal/domain/workspace"
 )
 
 var (
@@ -33,10 +34,10 @@ var (
 	ErrNotFound = errors.New("device tag: not found")
 	// ErrVersionConflict reports a stale expected version.
 	ErrVersionConflict = errors.New("device tag: version conflict")
-	// ErrTagLimit reports a Workspace that already has the maximum tags.
+	// ErrTagLimit reports a Network that already has the maximum tags.
 	ErrTagLimit = errors.New("device tag: tag limit reached")
-	// ErrUnknownOwner reports an owner group outside the Workspace.
-	ErrUnknownOwner = errors.New("device tag: owner is not in this Workspace")
+	// ErrUnknownOwner reports an owner group outside the tag's Network.
+	ErrUnknownOwner = errors.New("device tag: owner is not in this Network")
 	// ErrNameTaken reports another active tag with the same name.
 	ErrNameTaken = errors.New("device tag: name taken")
 	// ErrInUse reports a tag that active rules select.
@@ -162,7 +163,7 @@ func (tag Tag) IsValid() bool {
 		!tag.CreatedAt.IsZero() && !tag.UpdatedAt.Before(tag.CreatedAt) && tag.Definition.IsValid()
 }
 
-// Listing is the Workspace's tag catalog and whether the reader may manage it.
+// Listing is the Network's tag catalog and whether the reader may manage it.
 type Listing struct {
 	Tags      []Tag
 	CanManage bool
@@ -242,7 +243,7 @@ const (
 // rows a create or update writes, one per owner.
 type Change struct {
 	Session         accountsession.Session
-	WorkspaceID     workspace.ID
+	Scope           network.Scope
 	Operation       Operation
 	TagID           ID
 	ExpectedVersion int64

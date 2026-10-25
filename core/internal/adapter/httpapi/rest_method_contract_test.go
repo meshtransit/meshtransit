@@ -19,11 +19,12 @@ func TestRESTPathsAnswerWrongMethodsWithAllow(t *testing.T) {
 	ws := "/api/v1/workspaces/" + managementWorkspaceID()
 	net := ws + "/networks/" + networkMemberTestNetwork
 	for _, test := range []struct{ method, path, allow string }{
-		{http.MethodDelete, ws + "/identity-groups", "GET, POST"},
-		{http.MethodGet, ws + "/identity-groups/" + id, "PATCH, DELETE"},
-		{http.MethodPost, ws + "/identity-groups/" + id + "/members", "GET, PATCH"},
-		{http.MethodDelete, ws + "/device-tags", "GET, POST"},
-		{http.MethodPost, ws + "/device-tags/" + id, "PATCH, DELETE"},
+		{http.MethodDelete, net + "/identity-groups", "GET, POST"},
+		{http.MethodGet, net + "/identity-groups/" + id, "PATCH, DELETE"},
+		{http.MethodPost, net + "/identity-groups/" + id + "/members", "GET, PATCH"},
+		{http.MethodDelete, net + "/device-tags", "GET, POST"},
+		{http.MethodPost, net + "/device-tags/" + id, "PATCH, DELETE"},
+		{http.MethodPost, net + "/tagged-devices", "GET"},
 		{http.MethodPatch, ws + "/guardrails", "GET, POST"},
 		{http.MethodGet, ws + "/guardrails/actions/preview", "POST"},
 		{http.MethodPost, ws + "/guardrails/" + id, "PATCH, DELETE"},
@@ -58,7 +59,7 @@ func TestRESTPathsAnswerWrongMethodsWithAllow(t *testing.T) {
 func TestBrowserChangesWithoutProofAreRefused(t *testing.T) {
 	t.Parallel()
 	browser, _ := newBrowserManagementFixture(t)
-	path := "/api/v1/workspaces/" + managementWorkspaceID() + "/device-tags/01890f00-0000-7000-8000-000000000a01"
+	path := "/api/v1/workspaces/" + managementWorkspaceID() + "/networks/" + managementNetworkID() + "/device-tags/01890f00-0000-7000-8000-000000000a01"
 	for _, method := range []string{http.MethodPatch, http.MethodDelete} {
 		body := `{"name":"web"}`
 		if method == http.MethodDelete {

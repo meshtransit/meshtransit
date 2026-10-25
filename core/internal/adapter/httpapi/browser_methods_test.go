@@ -12,7 +12,7 @@ import (
 func TestBrowserManagementAdmitsRESTMethods(t *testing.T) {
 	t.Parallel()
 	browser, _ := newBrowserManagementFixture(t)
-	path := "/api/v1/workspaces/" + managementWorkspaceID() + "/device-tags"
+	path := "/api/v1/workspaces/" + managementWorkspaceID() + "/networks/" + managementNetworkID() + "/device-tags"
 	for _, test := range []struct {
 		name   string
 		method string
@@ -65,7 +65,7 @@ func TestBrowserManagementAdmitsPutOnlyWhereARouteTakesIt(t *testing.T) {
 		{"site", network + "/sites/01995d00-0000-7000-8000-0000000002a1", false},
 		{"exit node", network + "/exit-pools/01995d00-0000-7000-8000-0000000002c1/nodes/01995d00-0000-7000-8000-0000000002b1", true},
 		{"exit pool", network + "/exit-pools/01995d00-0000-7000-8000-0000000002c1", false},
-		{"device tags", "/api/v1/workspaces/" + managementWorkspaceID() + "/device-tags", false},
+		{"device tags", "/api/v1/workspaces/" + managementWorkspaceID() + "/networks/" + managementNetworkID() + "/device-tags", false},
 	} {
 		request := browserManagementRequest(t, test.path, `{"priority":10,"state":"active"}`)
 		request.Method = http.MethodPut

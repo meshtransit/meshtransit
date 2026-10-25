@@ -23,7 +23,8 @@ import (
 )
 
 // memberOwnedFixtureDevice returns an active Device of Network 203 whose
-// owner is an active member of Workspace 103, and that owner.
+// owner is an active member of Workspace 103 and of Network 203, and that
+// owner.
 func memberOwnedFixtureDevice(ctx context.Context, t *testing.T, admin *pgx.Conn) (node.ID, publicid.ID) {
 	t.Helper()
 	var deviceText, ownerText string
@@ -34,6 +35,9 @@ JOIN mesh.principal AS principal
 JOIN mesh.workspace_membership AS membership
   ON membership.workspace_id = device.workspace_id AND membership.principal_id = principal.id
  AND membership.state = 'active' AND (membership.expires_at IS NULL OR membership.expires_at > now())
+JOIN mesh.network_membership AS network_member
+  ON network_member.workspace_id = 103 AND network_member.network_id = 203
+ AND network_member.principal_id = principal.id AND network_member.state = 'active'
 WHERE device.workspace_id = 103 AND device.network_id = 203 AND device.state = 'active'
   AND device.deleted_at IS NULL AND device.expires_at > now()
 ORDER BY device.public_id LIMIT 1`).Scan(&deviceText, &ownerText); err != nil {
@@ -87,8 +91,10 @@ func publishIntegrationRules(ctx context.Context, t *testing.T, runtimePool *pos
 // republish, and Explain names both selectors; tagging the source Device
 // makes it a service Device that the Identity Group no longer selects;
 // removing the member advances the Network and drops the edges; the group
-// and the tag the release selects cannot be deleted. It runs after the
-// Device Group policy test and leaves a deny-all policy and no catalog rows.
+// and the tag the release selects cannot be deleted; a rule that names a
+// group or a tag of another Network is refused (schema 228). It runs after
+// the Device Group policy test and leaves a deny-all policy and no catalog
+// rows.
 func assertPostgreSQLIdentityTagPolicy(ctx context.Context, t *testing.T, admin *pgx.Conn,
 	runtimePool *postgresadapter.Pool) {
 	t.Helper()
@@ -114,16 +120,16 @@ func assertPostgreSQLIdentityTagPolicy(ctx context.Context, t *testing.T, admin 
 		}
 	}
 
-	created, err := groups.Create(ctx, owner, workspaceID, identitygroup.Definition{Name: "Operators"}, newCorrelationID(t))
+	created, err := groups.Create(ctx, owner, scope, identitygroup.Definition{Name: "Operators"}, newCorrelationID(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	group := created.Group.ID
-	joined, err := groups.ChangeMembers(ctx, owner, workspaceID, group, 1, []publicid.ID{person}, nil, newCorrelationID(t))
+	joined, err := groups.ChangeMembers(ctx, owner, scope, group, 1, []publicid.ID{person}, nil, newCorrelationID(t))
 	if err != nil || joined.AccessAffecting() {
 		t.Fatalf("join before any rule = %+v, error = %v", joined, err)
 	}
-	tagCreated, err := tags.Create(ctx, owner, workspaceID, devicetag.Definition{Name: "ssh-servers"}, newCorrelationID(t))
+	tagCreated, err := tags.Create(ctx, owner, scope, devicetag.Definition{Name: "ssh-servers"}, newCorrelationID(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +232,7 @@ func assertPostgreSQLIdentityTagPolicy(ctx context.Context, t *testing.T, admin 
 	}
 
 	// Removing the member rebuilds the Network and drops the edges.
-	left, err := groups.ChangeMembers(ctx, owner, workspaceID, group, joined.Group.Version, nil,
+	left, err := groups.ChangeMembers(ctx, owner, scope, group, joined.Group.Version, nil,
 		[]publicid.ID{person}, newCorrelationID(t))
 	if err != nil || !left.AccessAffecting() || len(left.Networks) != 1 || left.Networks[0].NetworkID != networkID {
 		t.Fatalf("leave a selected group = %+v, error = %v", left, err)
@@ -237,22 +243,98 @@ func assertPostgreSQLIdentityTagPolicy(ctx context.Context, t *testing.T, admin 
 	if fixturePolicyRevision(ctx, t, admin) != base+1 {
 		t.Fatal("catalog changes republished policy")
 	}
-	if _, err := groups.Delete(ctx, owner, workspaceID, group, left.Group.Version,
+	if _, err := groups.Delete(ctx, owner, scope, group, left.Group.Version,
 		newCorrelationID(t)); !errors.Is(err, identitygroup.ErrInUse) {
 		t.Fatalf("deleting a selected group: %v", err)
 	}
-	if _, err := tags.Delete(ctx, owner, workspaceID, tag, tagCreated.Tag.Version,
+	if _, err := tags.Delete(ctx, owner, scope, tag, tagCreated.Tag.Version,
 		newCorrelationID(t)); !errors.Is(err, devicetag.ErrInUse) {
 		t.Fatalf("deleting a selected tag: %v", err)
 	}
 
+	// Groups and tags of another Network cannot be selected here.
+	other := secondFixtureScope(ctx, t, admin, scope)
+	foreignGroup, err := groups.Create(ctx, owner, other, identitygroup.Definition{Name: "Operators"},
+		newCorrelationID(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreignTag, err := tags.Create(ctx, owner, other, devicetag.Definition{Name: "ssh-servers"}, newCorrelationID(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, params := range map[string]compilation.RuleIntentParams{
+		"foreign group": {SourceIdentityGroupID: foreignGroup.Group.ID, DestinationTagID: tag},
+		"foreign tag":   {SourceIdentityGroupID: group, DestinationTagID: foreignTag.Tag.ID},
+	} {
+		params.ID, err = policy.ParseRuleID(newCorrelationID(t).String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		params.Scope, params.Protocol, params.DestinationPortRanges = scope, policy.ProtocolTCP, []policy.PortRange{ssh}
+		assertRulesRefused(ctx, t, runtimePool, owner, scope, base+1, name, params)
+	}
+	// Whatever step refused them, no release of this Network holds them.
+	var foreignRules int
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM mesh.compiled_policy_group_rule AS rule
+JOIN mesh.identity_group AS identity_group ON identity_group.id = rule.source_identity_group_id
+WHERE identity_group.public_id = $1::UUID`, foreignGroup.Group.ID.String()).Scan(&foreignRules); err != nil ||
+		foreignRules != 0 {
+		t.Fatalf("rules naming another Network's group = %d, %v", foreignRules, err)
+	}
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM mesh.compiled_policy_group_rule AS rule
+JOIN mesh.device_tag AS tag ON tag.id IN (rule.source_device_tag_id, rule.destination_device_tag_id)
+WHERE tag.public_id = $1::UUID`, foreignTag.Tag.ID.String()).Scan(&foreignRules); err != nil || foreignRules != 0 {
+		t.Fatalf("rules naming another Network's tag = %d, %v", foreignRules, err)
+	}
+	if _, err := tags.Delete(ctx, owner, other, foreignTag.Tag.ID, 1, newCorrelationID(t)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := groups.Delete(ctx, owner, other, foreignGroup.Group.ID, 1, newCorrelationID(t)); err != nil {
+		t.Fatal(err)
+	}
+
 	// A deny-all policy releases both selectors.
 	publishIntegrationRules(ctx, t, runtimePool, owner, scope, base+1, []compilation.RuleIntent{})
-	if _, err := tags.Delete(ctx, owner, workspaceID, tag, tagCreated.Tag.Version, newCorrelationID(t)); err != nil {
+	if _, err := tags.Delete(ctx, owner, scope, tag, tagCreated.Tag.Version, newCorrelationID(t)); err != nil {
 		t.Fatalf("delete released tag: %v", err)
 	}
-	if _, err := groups.Delete(ctx, owner, workspaceID, group, left.Group.Version, newCorrelationID(t)); err != nil {
+	if _, err := groups.Delete(ctx, owner, scope, group, left.Group.Version, newCorrelationID(t)); err != nil {
 		t.Fatalf("delete released group: %v", err)
+	}
+}
+
+// assertRulesRefused compiles and publishes one rule over base and expects
+// either step to refuse it, leaving the active release unchanged.
+func assertRulesRefused(ctx context.Context, t *testing.T, runtimePool *postgresadapter.Pool,
+	owner accountsession.Session, scope network.Scope, base int64, name string, params compilation.RuleIntentParams) {
+	t.Helper()
+	intent, err := compilation.NewRuleIntent(params)
+	if err != nil {
+		t.Fatalf("%s intent: %v", name, err)
+	}
+	request, err := compilation.NewRequest(compilation.RequestParams{
+		Scope: scope, Revision: base + 1, Rules: []compilation.RuleIntent{intent},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := newIntegrationPolicyCompiler(t, runtimePool).Compile(ctx, owner, request)
+	if err != nil {
+		return
+	}
+	reason, err := publication.NewAuditReason("integration foreign selector")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, err := publication.NewManagementCommand(publication.ManagementCommandParams{
+		Candidate: candidate, BasePolicyRevision: base, AccountSession: owner, AuditReason: reason,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newIntegrationManagementPolicyPublicationService(t, runtimePool).Publish(ctx, command); err == nil {
+		t.Fatalf("%s: a rule naming another Network's selector was published", name)
 	}
 }
 

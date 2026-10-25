@@ -83,7 +83,7 @@ func (handler *ManagementHandler) handleIdentityGroups(ctx context.Context, resp
 	groups := handler.identityGroups
 	switch path.action {
 	case "":
-		listing, err := groups.List(ctx, session, path.workspaceID)
+		listing, err := groups.List(ctx, session, path.scope)
 		if err != nil {
 			return fail(classifyIdentityGroupError(err))
 		}
@@ -103,7 +103,7 @@ func (handler *ManagementHandler) handleIdentityGroups(ctx context.Context, resp
 		writeManagementJSON(ctx, handler.logger, response, http.StatusOK, output)
 		return "success"
 	case "members":
-		page, err := groups.Members(ctx, session, path.workspaceID, path.groupID, path.after, path.limit)
+		page, err := groups.Members(ctx, session, path.scope, path.groupID, path.after, path.limit)
 		if err != nil {
 			return fail(classifyIdentityGroupError(err))
 		}
@@ -146,7 +146,7 @@ func (handler *ManagementHandler) handleIdentityGroups(ctx context.Context, resp
 		if !valid {
 			return fail(*invalidManagementRequest())
 		}
-		result, err = groups.Create(ctx, session, path.workspaceID, definition, correlationID)
+		result, err = groups.Create(ctx, session, path.scope, definition, correlationID)
 	} else {
 		expectedVersion, precondition := parseIfMatch(request.Header.Values("If-Match"))
 		if precondition != nil {
@@ -157,10 +157,10 @@ func (handler *ManagementHandler) handleIdentityGroups(ctx context.Context, resp
 			if !valid {
 				return fail(*invalidManagementRequest())
 			}
-			result, err = groups.Update(ctx, session, path.workspaceID, path.groupID, expectedVersion, definition,
+			result, err = groups.Update(ctx, session, path.scope, path.groupID, expectedVersion, definition,
 				correlationID)
 		} else {
-			result, err = groups.Delete(ctx, session, path.workspaceID, path.groupID, expectedVersion, correlationID)
+			result, err = groups.Delete(ctx, session, path.scope, path.groupID, expectedVersion, correlationID)
 		}
 	}
 	if err != nil {
@@ -215,7 +215,7 @@ func (handler *ManagementHandler) changeIdentityGroupMembers(ctx context.Context
 	if !addOK || !removeOK || len(add)+len(remove) == 0 {
 		return fail(*invalidManagementRequest())
 	}
-	result, err := handler.identityGroups.ChangeMembers(ctx, session, path.workspaceID, path.groupID,
+	result, err := handler.identityGroups.ChangeMembers(ctx, session, path.scope, path.groupID,
 		expectedVersion, add, remove, correlationID)
 	if err != nil {
 		return fail(classifyIdentityGroupError(err))
@@ -296,7 +296,7 @@ func (handler *ManagementHandler) handleDeviceTags(ctx context.Context, response
 		return handler.readTagOptions(ctx, response, correlationID, path, session, fail)
 	}
 	if path.action == "" {
-		listing, err := tags.List(ctx, session, path.workspaceID)
+		listing, err := tags.List(ctx, session, path.scope)
 		if err != nil {
 			return fail(classifyDeviceTagError(err))
 		}
@@ -323,7 +323,7 @@ func (handler *ManagementHandler) handleDeviceTags(ctx context.Context, response
 		if !valid {
 			return fail(*invalidManagementRequest())
 		}
-		result, err = tags.Create(ctx, session, path.workspaceID, definition, correlationID)
+		result, err = tags.Create(ctx, session, path.scope, definition, correlationID)
 	} else {
 		expectedVersion, precondition := parseIfMatch(request.Header.Values("If-Match"))
 		if precondition != nil {
@@ -334,10 +334,10 @@ func (handler *ManagementHandler) handleDeviceTags(ctx context.Context, response
 			if !valid {
 				return fail(*invalidManagementRequest())
 			}
-			result, err = tags.Update(ctx, session, path.workspaceID, path.tagID, expectedVersion, definition,
+			result, err = tags.Update(ctx, session, path.scope, path.tagID, expectedVersion, definition,
 				correlationID)
 		} else {
-			result, err = tags.Delete(ctx, session, path.workspaceID, path.tagID, expectedVersion, correlationID)
+			result, err = tags.Delete(ctx, session, path.scope, path.tagID, expectedVersion, correlationID)
 		}
 	}
 	if err != nil {

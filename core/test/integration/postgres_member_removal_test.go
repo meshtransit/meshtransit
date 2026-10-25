@@ -204,9 +204,9 @@ VALUES (1974, '01890f00-0000-7000-8000-000000001974', 1, 103, 203, 1971, 1973, '
     workspace_membership_id, role_key, state, authority_generation, valid_from, version, created_at, updated_at)
 OVERRIDING SYSTEM VALUE VALUES (1975, '01890f00-0000-7000-8000-000000001975', 1, 103, 1971, 1973, 'auditor',
     'active', 1, now() - INTERVAL '1 minute', 1, now() - INTERVAL '1 minute', now() - INTERVAL '1 minute')`},
-		{sql: `INSERT INTO mesh.identity_group (id, public_id, deployment_id, workspace_id, name, name_key, member_count,
-    created_at, updated_at) OVERRIDING SYSTEM VALUE
-VALUES (1976, '01890f00-0000-7000-8000-000000001976', 1, 103, 'Removal check', 'removal check', 1, now(), now())`},
+		{sql: `INSERT INTO mesh.identity_group (id, public_id, deployment_id, workspace_id, network_id, name, name_key,
+    member_count, created_at, updated_at) OVERRIDING SYSTEM VALUE
+VALUES (1976, '01890f00-0000-7000-8000-000000001976', 1, 103, 203, 'Removal check', 'removal check', 1, now(), now())`},
 		{sql: `INSERT INTO mesh.identity_group_member (id, public_id, workspace_id, identity_group_id, principal_id, created_at)
 OVERRIDING SYSTEM VALUE VALUES (1977, '01890f00-0000-7000-8000-000000001977', 103, 1976, 1971, now())`},
 		{sql: `INSERT INTO mesh.enrollment_credential (id, public_id, workspace_id, network_id, enrollment_profile_id,

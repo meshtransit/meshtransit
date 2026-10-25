@@ -58,13 +58,13 @@ const (
 	PermissionMemberManage Permission = "member.manage"
 	// PermissionIdentityProviderManage changes workspace identity-provider configuration.
 	PermissionIdentityProviderManage Permission = "identity_provider.manage"
-	// PermissionIdentityGroupManage changes workspace identity groups.
+	// PermissionIdentityGroupManage changes a Network's identity groups.
 	PermissionIdentityGroupManage Permission = "identity_group.manage"
-	// PermissionIdentityGroupRead reads workspace identity groups.
+	// PermissionIdentityGroupRead reads a Network's identity groups.
 	PermissionIdentityGroupRead Permission = "identity_group.read"
-	// PermissionDeviceTagRead reads the workspace device tag catalog.
+	// PermissionDeviceTagRead reads a Network's device tag catalog.
 	PermissionDeviceTagRead Permission = "device_tag.read"
-	// PermissionDeviceTagManage changes the device tag catalog and applies any tag.
+	// PermissionDeviceTagManage changes a Network's tag catalog and applies any of its tags.
 	PermissionDeviceTagManage Permission = "device_tag.manage"
 	// PermissionInterchangeRead reads the Workspace's Private Interchange relays.
 	PermissionInterchangeRead Permission = "interchange.read"
