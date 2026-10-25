@@ -151,8 +151,22 @@ type Server struct {
 	slots     int
 	byMachine map[key.MachinePublic]*Session
 	live      map[*Session]struct{}
-	wg        sync.WaitGroup
+	// contested holds, for a Kubernetes gateway's machine key whose session
+	// pushed out a live one, until when no session of the key may rotate
+	// its keys (mtcp-v1 §6.8); gatewayContest is that window.
+	contested      map[key.MachinePublic]time.Time
+	gatewayContest time.Duration
+	wg             sync.WaitGroup
 }
+
+// gatewayContestWindow outlasts a gateway's prompt reconnect after
+// SESSION_REPLACED (mtcp-v1 §6.8), so two holders of one Secret keep each
+// other from rotating.
+const gatewayContestWindow = 15 * time.Second
+
+// maxContestedGateways bounds the contested keys a replica remembers; past
+// it the expired ones are dropped.
+const maxContestedGateways = 1 << 12
 
 // NewServer validates options without starting anything.
 func NewServer(options Options) (*Server, error) {
@@ -195,7 +209,8 @@ func NewServer(options Options) (*Server, error) {
 		admission: newAdmission(rate, burst,
 			positiveOr(options.UnauthenticatedPerSource, defaultUnauthenticated(rate, burst)), options.Now),
 		recent: newTimestampCache(), byMachine: make(map[key.MachinePublic]*Session),
-		live: make(map[*Session]struct{})}
+		live: make(map[*Session]struct{}), contested: make(map[key.MachinePublic]time.Time),
+		gatewayContest: gatewayContestWindow}
 	options.Metrics.countExpiringDevices(server.expiringDevices)
 	return server, nil
 }
@@ -469,11 +484,15 @@ func (server *Server) handshake(parent context.Context, transport recordConn, pe
 }
 
 // acceptTimestamp applies replay protection: the replica's cache, then the
-// durable guard. A gateway's timestamp enters neither before its proof
-// (commitGatewayTimestamp).
+// durable guard. A gateway's handshake is not refused here: its timestamp
+// is decided after its node key proof, where a valid proof with a stale
+// timestamp shows a second holder of its keys (checkNodeKeyProof); a
+// replayed INIT never produces that proof. Its timestamp enters neither
+// store before the proof (commitGatewayTimestamp).
 func (server *Server) acceptTimestamp(ctx context.Context, machine key.MachinePublic, nodeKey []byte,
 	timestampMS int64) (TimestampCheck, bool) {
-	if !server.recent.newer(machine, timestampMS) {
+	newer := server.recent.newer(machine, timestampMS)
+	if !newer && server.options.Guard == nil {
 		return TimestampCheck{}, false
 	}
 	check := TimestampCheck{Accepted: true}
@@ -489,18 +508,23 @@ func (server *Server) acceptTimestamp(ctx context.Context, machine key.MachinePu
 			return TimestampCheck{}, false
 		}
 	}
-	if !check.Accepted || !check.Gateway && !server.recent.accept(machine, timestampMS) {
+	check.Accepted = check.Accepted && newer
+	if check.Gateway {
+		return check, true
+	}
+	if !check.Accepted || !server.recent.accept(machine, timestampMS) {
 		return TimestampCheck{}, false
 	}
 	return check, true
 }
 
 // commitGatewayTimestamp records a gateway's handshake timestamp after its
-// proof, durably and in the replica's cache; false is a replay.
+// proof, durably and in the replica's cache; false without an error is a
+// newer timestamp taken meanwhile.
 func (server *Server) commitGatewayTimestamp(ctx context.Context, machine key.MachinePublic, nodeKey []byte,
-	timestampMS int64) bool {
+	timestampMS int64) (bool, error) {
 	if server.options.Guard == nil {
-		return server.recent.accept(machine, timestampMS)
+		return server.recent.accept(machine, timestampMS), nil
 	}
 	guardCtx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
@@ -509,9 +533,9 @@ func (server *Server) commitGatewayTimestamp(ctx context.Context, machine key.Ma
 	if err != nil {
 		server.options.Logger.WarnContext(ctx, "mtcp gateway timestamp failed",
 			"error_code", "mtcp_timestamp_unavailable")
-		return false
+		return false, err
 	}
-	return committed && server.recent.accept(machine, timestampMS)
+	return committed && server.recent.accept(machine, timestampMS), nil
 }
 
 func (server *Server) takeSlot() bool {
@@ -542,14 +566,63 @@ func (server *Server) establish(session *Session) error {
 	}
 	previous := server.byMachine[session.machine]
 	server.byMachine[session.machine] = session
+	// A gateway session that pushes out a live one is contested: a copy of
+	// the gateway's Secret, or the real pod pushing a copy back.
+	contested := previous != nil && previous.ctx.Err() == nil && session.gate.Gateway
+	if contested {
+		server.contestLocked(session.machine)
+	}
 	server.live[session] = struct{}{}
 	session.established.Store(server.options.Now().UnixNano())
 	server.mu.Unlock()
 	server.options.Metrics.sessionOpened()
+	if contested {
+		server.options.Metrics.handshake("gateway_replaced")
+		server.options.Logger.Warn("mtcp gateway session pushed out a live one",
+			"error_code", "gateway_session_replaced")
+	}
 	if previous != nil {
 		previous.replace()
 	}
 	return nil
+}
+
+// contest marks machine contested: two holders of a gateway's keys.
+func (server *Server) contest(machine key.MachinePublic) {
+	server.mu.Lock()
+	server.contestLocked(machine)
+	server.mu.Unlock()
+	server.options.Metrics.handshake("gateway_contested")
+	server.options.Logger.Warn("mtcp gateway keys used by two holders", "error_code", "gateway_session_contested")
+}
+
+func (server *Server) contestLocked(machine key.MachinePublic) {
+	now := server.options.Now()
+	if len(server.contested) >= maxContestedGateways {
+		for contestedKey, until := range server.contested {
+			if !now.Before(until) {
+				delete(server.contested, contestedKey)
+			}
+		}
+	}
+	server.contested[machine] = now.Add(server.gatewayContest)
+}
+
+// rotationWait is how long sessions of machine must wait before they rotate
+// a key: zero unless a gateway session of it pushed out a live one lately.
+func (server *Server) rotationWait(machine key.MachinePublic) time.Duration {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	until, found := server.contested[machine]
+	if !found {
+		return 0
+	}
+	wait := until.Sub(server.options.Now())
+	if wait <= 0 {
+		delete(server.contested, machine)
+		return 0
+	}
+	return wait
 }
 
 func (server *Server) forget(session *Session) {

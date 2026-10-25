@@ -112,6 +112,13 @@ func (session *Session) ProvenNodeKey() (node.Key, bool) {
 	return session.provenNodeKey, session.provenNodeKey.IsValid()
 }
 
+// RotationWait is how long the session must wait before it rotates a key:
+// non-zero while a gateway session of its machine key lately pushed out a
+// live one on this replica (mtcp-v1 §6.8).
+func (session *Session) RotationWait() time.Duration {
+	return session.server.rotationWait(session.machine)
+}
+
 // IsGateway reports whether the machine key belongs to a Kubernetes
 // gateway: then the session proved its node key before anything else.
 func (session *Session) IsGateway() bool { return session.gate.Gateway }
@@ -340,6 +347,10 @@ func (session *Session) run(parent context.Context, establishBy time.Time, relea
 	}
 }
 
+// gatewayFutureSkew is how far ahead of Core a gateway's handshake
+// timestamp may be (mtcp-v1 §6.7).
+const gatewayFutureSkew = 5 * time.Second
+
 // checkNodeKeyProof checks a session's first record (mtcp-v1 §6.7). A
 // gateway's session ends unless the proof holds for its current keys and
 // its timestamp is recorded; an ordinary node only learns the answer. It
@@ -375,7 +386,24 @@ func (session *Session) checkNodeKeyProof(message proto.Message) bool {
 		return refuse("gateway_stale_node_key", "node key is not current")
 	case !valid:
 		return refuse("gateway_bad_proof", "invalid node key proof")
-	case !session.server.commitGatewayTimestamp(session.ctx, session.machine, nodeKey, session.hello.GetTimestampMs()):
+	case time.UnixMilli(session.hello.GetTimestampMs()).After(session.server.options.Now().Add(gatewayFutureSkew)):
+		// A gateway's clock is synchronized: a timestamp far ahead would
+		// shut its real pod out as a replay until time caught up.
+		return refuse("gateway_future_timestamp", "handshake timestamp is ahead of Core")
+	case !gate.Accepted:
+		// A valid proof cannot be replayed (it binds this handshake): a
+		// second holder of the keys took a newer timestamp, so the key is
+		// contested and neither holder rotates (§6.8).
+		session.server.contest(session.machine)
+		return refuse("replay", "handshake replayed")
+	}
+	committed, err := session.server.commitGatewayTimestamp(session.ctx, session.machine, nodeKey,
+		session.hello.GetTimestampMs())
+	switch {
+	case err != nil:
+		return refuse("internal", "handshake check unavailable")
+	case !committed:
+		session.server.contest(session.machine)
 		return refuse("replay", "handshake replayed")
 	}
 	session.provenNodeKey = node.Key(nodeKey)

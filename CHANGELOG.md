@@ -37,7 +37,12 @@ merge (2026-10-09) are kept below.
   recorded as `device.machine_key_rotated`; former keys are never used
   again and lose their handshake timestamp. Gateways may change their
   machine key and their node key 30 times an hour each (other Devices
-  keep 4 node key changes).
+  keep 4 node key changes). A gateway session that pushes out a live one on
+  the same replica contests the key for 15 seconds, during which no session
+  of it rotates (handshake result `gateway_replaced`, limit
+  `gateway_contested`); a valid proof refused as a replay contests the key
+  too, and a gateway's handshake timestamp may run at most 5 seconds ahead
+  of Core. Contention across replicas is not detected yet.
 - **Upgrade note:** `MESHTRANSIT_DNS_SUFFIX` may no longer be a public
   suffix itself (`co.uk`, `github.io`); Core with such a value stops at
   configuration load. Use a domain you own or a private name.

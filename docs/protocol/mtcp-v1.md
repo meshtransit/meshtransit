@@ -461,7 +461,9 @@ MUST send it, and a gateway node sends it only when `session.proof1` was
 negotiated; without it the node stops. Until a gateway's proof checks Core
 neither establishes the session, replaces an older one, nor sends anything
 but the refusal, and its handshake timestamp is compared but not recorded:
-Core records it, durably and in its cache, only after the proof.
+Core records it, durably and in its cache, only after the proof. A gateway's
+handshake with a stale timestamp is still answered; Core refuses it after
+the proof, which a replayed INIT can never send.
 
 | Machine key | Node key | Gateway | Other node |
 |---|---|---|---|
@@ -470,7 +472,8 @@ Core records it, durably and in its cache, only after the proof.
 | held before, not now (revoked, expired) | — | (a gateway's: above) | `Error{NOT_AUTHORIZED, "node key is not current"}`, not fatal |
 | current | not the current key | fatal `Error{NOT_AUTHORIZED, "node key is not current"}` | same, not fatal |
 | current | current, wrong proof | fatal `Error{NOT_AUTHORIZED, "invalid node key proof"}` | `Error{INVALID}`, not fatal |
-| current | current, proof checks, timestamp taken since | fatal `Error{NOT_AUTHORIZED, "handshake replayed"}` | — |
+| current | current, proof checks, timestamp more than 5 s ahead of Core | fatal `Error{NOT_AUTHORIZED, "handshake timestamp is ahead of Core"}` | — |
+| current | current, proof checks, timestamp taken since | fatal `Error{NOT_AUTHORIZED, "handshake replayed"}`; the key is contested (6.8) | — |
 | current | current, proof checks | session goes on, proven | session goes on, proven |
 
 A gateway that sends anything else first gets a fatal
@@ -515,13 +518,36 @@ even when the session ends meanwhile.
 
 The node stores the new key as staged before it sends the request and keeps
 it until a later rotation's response: after a crash it tries its newest
-staged key first, then the former ones. Refusals are `Error`, never fatal:
+staged key first, then the former ones. Refusals are `Error`, not fatal
+(except for a contested key, below):
 `NOT_PERMITTED` when the key was used before or the gateway already changed
 its machine key 30 times within the hour (then with `retry_after_ms`), which
 also tells the node to drop the staged key; `NOT_AUTHORIZED` when the
 session's keys are no longer the gateway's; `INVALID` for a bad key or
 proof; `NOT_PERMITTED` on any session that is not a gateway's. A gateway
 also rotates its node key (6.3) at every start, at most 30 times an hour.
+
+When a gateway session, once established, pushes out a live session of the
+same machine key on the same Core replica, Core contests the key for 15
+seconds and counts it (handshake result `gateway_replaced`). While the key
+is contested no session of it may rotate its machine key or its node key:
+Core ends such a session with a fatal `Error{OVERLOADED, retry_after_ms}`
+until the window ends; the node keeps its staged keys and reconnects after
+`retry_after_ms`. A gateway pushed out with `SESSION_REPLACED`, or refused
+with "handshake replayed", reconnects within 2 seconds every time, outside
+the backoff of section 5, so a copy of its Secret that pushes the real pod
+out is pushed back before it can rotate, and both are kept from rotating for
+as long as they contend. A valid node key proof refused only for its
+timestamp also contests the key: the proof binds the handshake, so a second
+holder of the keys took a newer timestamp; and a gateway's timestamp may not
+run more than 5 seconds ahead of Core, so a copy cannot shut the real pod
+out as replays. The contest relies on the pod's handshakes reaching Core: a
+holder of the keys that shares the pod's source address can use up that
+source's handshake budget (section 14) and rotate after the window; and a
+pod whose clock steps back is counted as a second holder until it catches
+up. A pod whose earlier session lingers after a crash
+waits once. Sessions of one key on two different replicas are not seen as
+contending.
 
 ## 7. Map
 
@@ -1440,7 +1466,7 @@ secrets or other tenants' data, and is at most 512 bytes.
 | C20 | A Device announces endpoints that point its peers' probes at a victim: the overlay, a relay, Core | Core drops overlay, special-purpose, relay and operator-denied addresses, also through NAT64, when a report arrives and when it sends a map; nodes refuse overlay and relay addresses as candidates; each node's pings to a peer's unanswered candidates are bounded by a backoff and a per-Device budget: at most 144 at once and 0.4/s in the long run, so a victim named by M Devices receives at most 0.4 × M pings/s from each node that has them in its map (section 8.1, disco-v2 §4.4) |
 | C21 | One session makes Core work in a loop with cheap messages: map resyncs that each encode the whole map, enforcement reports that each write Redis, browser approvals that each write the database, or a flood of any message | Per-session budgets for each, and one for all messages and bytes (section 14); a node that follows the protocol stays well inside them, and reconnecting is bounded by the per-source handshake rate |
 | C22 | A leaked cluster join key makes its holder a Kubernetes gateway, which sees who connects and carries kubectl traffic | The key opens only a request with no Device; an administrator approves it by a code bound to the replica's own keys, read from the real pod's log and checked by Core and its database; five wrong codes cancel; at most twice the key's uses wait; the key lives an hour at most (6.6) |
-| C23 | A copy of a Kubernetes gateway's Secret, or an older Core, serves, logs out or re-keys the gateway | A gateway proves its node key as its session's first record; until then nothing is established or replaced and its timestamp is not recorded; the database resolves a gateway only for a transaction marked proven, which older Core never marks; gateways cannot log out or register again; former machine keys are kept and refused, and a gateway moves to a new machine key at every start (6.7, 6.8). A copy of the current Secret remains a gateway until an administrator removes it |
+| C23 | A copy of a Kubernetes gateway's Secret, or an older Core, serves, logs out or re-keys the gateway | A gateway proves its node key as its session's first record; until then nothing is established or replaced and its timestamp is not recorded; the database resolves a gateway only for a transaction marked proven, which older Core never marks; gateways cannot log out or register again; former machine keys are kept and refused, and a gateway moves to a new machine key at every start (6.7, 6.8); a gateway session that pushes out a live one on the same replica contests the key, and no session of it rotates for 15 seconds (6.8). A copy of the current Secret remains a gateway until an administrator removes it, and on another replica than the real pod's, or by starving the handshakes of the pod's source address, it can rotate the keys and lock the pod out |
 
 ## 17. Test vectors
 

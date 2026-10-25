@@ -6,6 +6,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
 	"meshtransit.net/core/internal/domain/node"
@@ -242,5 +243,166 @@ func TestLateNodeKeyProofIsRefused(t *testing.T) {
 	}
 	if _, ok := f.handler.last().ProvenNodeKey(); ok {
 		t.Fatal("a late proof proved the node key")
+	}
+}
+
+// A gateway session that pushes out a live one contests its machine key:
+// for a while no session of the key rotates (§6.8). An ordinary Device
+// replacing its session contests nothing.
+func TestGatewaySessionThatReplacesALiveOneContestsTheKey(t *testing.T) {
+	gateway := newProvingNode(t, 0xa1)
+	clock := &testClock{}
+	clock.set(time.Now())
+	guard := &gatewayGuard{checks: map[[32]byte]TimestampCheck{gateway.fingerprint(): currentGateway}, commitOK: true}
+	f := newFixture(t, func(options *Options) { options.Guard, options.Now = guard, clock.now })
+	connect := func() *client {
+		t.Helper()
+		c, _, _ := f.dial(dialOptions{machine: gateway.machine, nodeKey: gateway.node.Public()})
+		c.proveNodeKey(gateway.node, f.control.Public())
+		c.send(sharedmtcp.MessagePing, &mtcpv1.Ping{})
+		c.expect(sharedmtcp.MessagePong)
+		return c
+	}
+	first := connect()
+	if wait := f.handler.last().RotationWait(); wait != 0 {
+		t.Fatalf("the first session waits %v", wait)
+	}
+	connect()
+	if wait := f.handler.last().RotationWait(); wait <= 0 {
+		t.Fatal("pushing out a live session did not contest the key")
+	}
+	first.expectClosedWith(mtcpv1.Error_SESSION_REPLACED, "a newer session for this machine key exists")
+	// Reconnecting at once does not escape it; the window ends on its own.
+	if wait := f.server.rotationWait(gateway.machine.Public()); wait <= 0 {
+		t.Fatal("the contest ended with the session")
+	}
+	clock.advance(gatewayContestWindow)
+	if wait := f.server.rotationWait(gateway.machine.Public()); wait != 0 {
+		t.Fatalf("the contest outlived its window: %v", wait)
+	}
+
+	member := newProvingNode(t, 0xb1)
+	plain := newFixture(t, nil)
+	for range 2 {
+		c, _, _ := plain.dial(dialOptions{machine: member.machine})
+		c.send(sharedmtcp.MessagePing, &mtcpv1.Ping{})
+		c.expect(sharedmtcp.MessagePong)
+	}
+	if wait := plain.server.rotationWait(member.machine.Public()); wait != 0 {
+		t.Fatalf("an ordinary Device's key is contested for %v", wait)
+	}
+}
+
+// testClock is a settable clock for the server.
+type testClock struct {
+	mu      sync.Mutex
+	current time.Time
+}
+
+func (clock *testClock) now() time.Time {
+	clock.mu.Lock()
+	defer clock.mu.Unlock()
+	return clock.current
+}
+
+func (clock *testClock) set(at time.Time) {
+	clock.mu.Lock()
+	defer clock.mu.Unlock()
+	clock.current = at
+}
+
+func (clock *testClock) advance(by time.Duration) {
+	clock.mu.Lock()
+	defer clock.mu.Unlock()
+	clock.current = clock.current.Add(by)
+}
+
+// A valid proof refused for a stale timestamp shows a second holder of the
+// keys: the key is contested, so a copy that pushed a timestamp ahead does
+// not get a quiet window to rotate in (§6.8).
+func TestGatewayReplayWithAValidProofContestsTheKey(t *testing.T) {
+	gateway := newProvingNode(t, 0xc1)
+	f, guard := newGatewayFixture(t, gateway, currentGateway)
+	guard.commitOK = false
+	c, _, _ := f.dial(dialOptions{machine: gateway.machine, nodeKey: gateway.node.Public()})
+	c.proveNodeKey(gateway.node, f.control.Public())
+	c.expectClosedWith(mtcpv1.Error_NOT_AUTHORIZED, "handshake replayed")
+	if wait := f.server.rotationWait(gateway.machine.Public()); wait <= 0 {
+		t.Fatal("a second holder of the keys did not contest them")
+	}
+}
+
+// A gateway's timestamp may not run ahead of Core: it would shut the real
+// pod out as a replay.
+func TestGatewayTimestampAheadIsRefused(t *testing.T) {
+	gateway := newProvingNode(t, 0xd1)
+	f, guard := newGatewayFixture(t, gateway, currentGateway)
+	c, _, _ := f.dial(dialOptions{machine: gateway.machine, nodeKey: gateway.node.Public(),
+		timestamp: time.Now().Add(time.Minute).UnixMilli()})
+	c.proveNodeKey(gateway.node, f.control.Public())
+	c.expectClosedWith(mtcpv1.Error_NOT_AUTHORIZED, "handshake timestamp is ahead of Core")
+	if guard.commits() != 0 || f.handler.opened.Load() != 0 {
+		t.Fatal("a timestamp ahead was recorded")
+	}
+}
+
+// storingGatewayGuard keeps one gateway's last committed timestamp, as
+// schema 226 does: compared at the handshake, written after the proof.
+type storingGatewayGuard struct {
+	mu      sync.Mutex
+	gateway [32]byte
+	stored  int64
+}
+
+func (guard *storingGatewayGuard) AcceptTimestamp(_ context.Context, machine [32]byte, _ []byte,
+	timestamp int64) (TimestampCheck, error) {
+	guard.mu.Lock()
+	defer guard.mu.Unlock()
+	if machine != guard.gateway {
+		return TimestampCheck{Accepted: true, Machine: MachineUnbound}, nil
+	}
+	return TimestampCheck{Accepted: timestamp > guard.stored, Gateway: true, Machine: MachineCurrent,
+		NodeCurrent: true}, nil
+}
+
+func (guard *storingGatewayGuard) CommitGatewayTimestamp(_ context.Context, _ [32]byte, _ []byte,
+	timestamp int64) (bool, error) {
+	guard.mu.Lock()
+	defer guard.mu.Unlock()
+	if timestamp <= guard.stored {
+		return false, nil
+	}
+	guard.stored = timestamp
+	return true, nil
+}
+
+// A copy that keeps taking timestamps a little ahead never gets a quiet
+// window: every refused handshake of the real pod, which proves the keys,
+// renews the contest (§6.8).
+func TestRollingTimestampPoisonKeepsTheKeyContested(t *testing.T) {
+	gateway := newProvingNode(t, 0xe1)
+	clock := &testClock{}
+	clock.set(time.Now())
+	guard := &storingGatewayGuard{gateway: gateway.fingerprint()}
+	f := newFixture(t, func(options *Options) { options.Guard, options.Now = guard, clock.now })
+	for round := range 6 {
+		copied, _, _ := f.dial(dialOptions{machine: gateway.machine, nodeKey: gateway.node.Public(),
+			timestamp: clock.now().Add(4 * time.Second).UnixMilli()})
+		copied.proveNodeKey(gateway.node, f.control.Public())
+		copied.send(sharedmtcp.MessagePing, &mtcpv1.Ping{})
+		copied.expect(sharedmtcp.MessagePong)
+		pod, _, _ := f.dial(dialOptions{machine: gateway.machine, nodeKey: gateway.node.Public(),
+			timestamp: clock.now().UnixMilli()})
+		if pod == nil {
+			t.Fatalf("round %d: the real pod's handshake was refused before its proof", round)
+		}
+		pod.proveNodeKey(gateway.node, f.control.Public())
+		pod.expectClosedWith(mtcpv1.Error_NOT_AUTHORIZED, "handshake replayed")
+		_ = copied.conn.Close()
+		waitFor(t, func() bool { return f.server.Sessions() == 0 })
+		clock.advance(4 * time.Second)
+		if wait := f.server.rotationWait(gateway.machine.Public()); wait <= 0 {
+			t.Fatalf("round %d (%v in): the key is not contested", round, time.Duration(round+1)*4*time.Second)
+		}
 	}
 }

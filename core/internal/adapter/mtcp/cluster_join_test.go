@@ -683,3 +683,35 @@ func TestMachineKeyRotationNeedsAProvenKeyAndResumes(t *testing.T) {
 	}
 	f.expectStream(helloKey) // resumed after the refusal
 }
+
+// While its machine key is contested a gateway rotates neither key: the
+// session ends and the node reconnects, keeping its staged keys (§6.8).
+func TestContestedGatewayRotatesNoKey(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []sharedmtcp.MessageType{sharedmtcp.MessageRotateMachineKey, sharedmtcp.MessageRotateNodeKey} {
+		rotations := &fakeMachineKeyRotations{}
+		f := gatewayFixture(t, rotations)
+		f.session.server.mu.Lock()
+		f.session.server.contested[f.session.Machine()] = time.Now().Add(time.Minute)
+		f.session.server.mu.Unlock()
+		f.run()
+		var err error
+		if kind == sharedmtcp.MessageRotateMachineKey {
+			_, err = f.rotateMachineKey(0x44, 0x44)
+		} else {
+			_, newKey, nodeProof, discoKey, discoProof := f.keys(6)
+			err = f.talk.Receive(t.Context(), sharedmtcp.MessageRotateNodeKey, &mtcpv1.RotateNodeKey{
+				NewNodeKey: newKey, NodeKeyProof: nodeProof, NewDiscoKey: discoKey, DiscoKeyProof: discoProof})
+		}
+		if !errors.Is(err, errSessionLimited) {
+			t.Fatalf("%#x: Receive() = %v", uint8(kind), err)
+		}
+		got := f.expectPast(sharedmtcp.MessageError).(*mtcpv1.Error)
+		if got.GetCode() != mtcpv1.Error_OVERLOADED || !got.GetFatal() || got.GetRetryAfterMs() == 0 {
+			t.Fatalf("%#x answered %v", uint8(kind), got)
+		}
+		if len(rotations.calls()) != 0 || len(f.registrations.calls()) != 0 {
+			t.Fatalf("%#x reached a store", uint8(kind))
+		}
+	}
+}

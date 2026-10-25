@@ -74,10 +74,13 @@ const (
 	limitRouteSelection = "route_selection"
 	// limitSendDeadline: a message was not sent by its send deadline.
 	limitSendDeadline = "send_deadline"
+	// limitGatewayContested: a gateway session asked to rotate a key while
+	// its machine key was contested (§6.8), as a copy of its Secret would.
+	limitGatewayContested = "gateway_contested"
 )
 
 var sessionLimits = []string{limitInbound, limitResync, limitEnforcement, limitBrowser, limitIdentity,
-	limitRouteOffer, limitRouteHealth, limitDNSHealth, limitRouteSelection, limitSendDeadline}
+	limitRouteOffer, limitRouteHealth, limitDNSHealth, limitRouteSelection, limitSendDeadline, limitGatewayContested}
 
 // streamEndReasons is the closed set of map stream end causes.
 var streamEndReasons = []string{
@@ -92,6 +95,10 @@ var handshakeResults = []string{
 	// a retired machine key or a node key that is not current is what a
 	// stale copy of its Secret presents.
 	"gateway_unproven", "gateway_retired", "gateway_stale_node_key", "gateway_bad_proof",
+	// A gateway session pushed out a live session of its machine key; a
+	// second holder of its keys was refused a stale timestamp; a gateway's
+	// timestamp was too far ahead.
+	"gateway_replaced", "gateway_contested", "gateway_future_timestamp",
 }
 
 // NewMetrics constructs unregistered collectors.

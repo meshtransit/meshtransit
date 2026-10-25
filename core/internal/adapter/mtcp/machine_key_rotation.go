@@ -16,6 +16,26 @@ import (
 // gateway reconnects with the new key (mtcp-v1 §6.8).
 var errMachineKeyRotated = errors.New("mtcp: machine key rotated")
 
+// refuseContestedRotation ends a gateway session that asks to rotate a key
+// while its machine key is contested (mtcp-v1 §6.8): a copy of the
+// gateway's Secret must push the real pod out first, and the pod pushing
+// back keeps both from rotating, each time leaving a trace. The node keeps
+// its staged keys and reconnects after the wait. It reports whether it
+// refused.
+func (conversation *conversation) refuseContestedRotation() bool {
+	if !conversation.isGateway() {
+		return false
+	}
+	wait := conversation.session.RotationWait()
+	if wait <= 0 {
+		return false
+	}
+	conversation.application.options.Metrics.limited(limitGatewayContested)
+	conversation.session.endOverloaded("another session of this gateway was pushed out lately; reconnect before "+
+		"rotating", wait)
+	return true
+}
+
 // rotateMachineKey answers RotateMachineKey (mtcp-v1 §6.8): only a gateway
 // session that proved its node key moves, to a key whose possession the
 // request proves. The rotation commits even if the session ends meanwhile,

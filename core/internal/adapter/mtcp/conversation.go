@@ -537,12 +537,18 @@ func (conversation *conversation) Receive(ctx context.Context, _ sharedmtcp.Mess
 		}
 		return conversation.register(ctx, m)
 	case *mtcpv1.RotateNodeKey:
+		if conversation.refuseContestedRotation() {
+			return errSessionLimited
+		}
 		if wait, ok := conversation.identity.spend(conversation.application.now(), 1); !ok {
 			conversation.application.options.Metrics.limited(limitIdentity)
 			return conversation.sendError(mtcpv1.Error_OVERLOADED, "too many rotation requests", retryAfterMS(wait))
 		}
 		return conversation.rotate(ctx, m)
 	case *mtcpv1.RotateMachineKey:
+		if conversation.refuseContestedRotation() {
+			return errSessionLimited
+		}
 		if wait, ok := conversation.identity.spend(conversation.application.now(), 1); !ok {
 			conversation.application.options.Metrics.limited(limitIdentity)
 			return conversation.sendError(mtcpv1.Error_OVERLOADED, "too many rotation requests", retryAfterMS(wait))
