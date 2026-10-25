@@ -461,7 +461,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertPostgreSQLNetworkMembers(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLEnrollmentKeys(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLSingleUseEnrollmentKey(ctx, t, adminConnection, runtimePool)
-	assertPostgreSQLKubernetesClusters(ctx, t, adminConnection, runtimePool)
+	assertPostgreSQLKubernetesClusters(ctx, t, adminConnection, runtimeConnection, runtimePool)
 	assertPostgreSQLAccountSessionRevocation(ctx, t, adminConnection, runtimePool, migrationConfig)
 	assertPostgreSQLInvitations(ctx, t, adminConnection, runtimePool)
 	// After the tests that need four active Devices: it revokes one.

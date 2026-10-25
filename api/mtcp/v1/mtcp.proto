@@ -173,6 +173,21 @@ message RotateNodeKeyResponse {
 
 message Logout {}
 
+// NodeKeyProof proves, as the session's first record, that the node holds
+// its ClientHello node key (mtcp-v1 §6.7). A Kubernetes gateway must send it.
+message NodeKeyProof {
+  bytes proof = 1;
+}
+
+// RotateMachineKey moves a Kubernetes gateway to a new machine key; Core
+// answers RotateMachineKeyResponse and ends the session (mtcp-v1 §6.8).
+message RotateMachineKey {
+  bytes new_machine_key = 1;
+  bytes proof = 2; // made with the new machine key
+}
+
+message RotateMachineKeyResponse {}
+
 // ---- Map ----
 
 message View {

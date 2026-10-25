@@ -139,6 +139,7 @@ type client struct {
 
 type dialOptions struct {
 	machine   key.MachinePrivate
+	nodeKey   key.NodePublic // the ClientHello node key, or none
 	timestamp int64
 	version   uint32
 	keyID     string
@@ -172,7 +173,7 @@ func (f *fixture) dial(options dialOptions) (*client, *refusal, error) {
 	handshake, init, err := sharedmtcp.StartClient(sharedmtcp.ClientConfig{
 		Machine: options.machine, Control: f.control.Public(),
 		Hello: &mtcpv1.ClientHello{ProtocolVersion: options.version, TimestampMs: options.timestamp,
-			Capabilities: []string{"map.zstd", "stats.path1"}},
+			Capabilities: []string{"map.zstd", "stats.path1"}, NodeKey: helloNodeKey(options.nodeKey)},
 	})
 	if err != nil {
 		f.t.Fatal(err)
@@ -208,6 +209,13 @@ func (f *fixture) dial(options dialOptions) (*client, *refusal, error) {
 	}
 	return &client{t: f.t, conn: conn, reader: sharedmtcp.NewRecordReader(buffered), session: session, hello: hello,
 		asm: sharedmtcp.NewAssembler(sharedmtcp.CoreToNode)}, nil, nil
+}
+
+func helloNodeKey(nodeKey key.NodePublic) []byte {
+	if nodeKey == (key.NodePublic{}) {
+		return nil
+	}
+	return nodeKey[:]
 }
 
 func (c *client) send(t sharedmtcp.MessageType, message proto.Message) {
@@ -608,14 +616,19 @@ type replayGuard struct {
 	seen map[[32]byte]int64
 }
 
-func (guard *replayGuard) AcceptTimestamp(_ context.Context, machine [32]byte, _ []byte, timestamp int64) (bool, error) {
+func (guard *replayGuard) AcceptTimestamp(_ context.Context, machine [32]byte, _ []byte, timestamp int64) (
+	TimestampCheck, error) {
 	guard.mu.Lock()
 	defer guard.mu.Unlock()
 	if last, found := guard.seen[machine]; found && timestamp <= last {
-		return false, nil
+		return TimestampCheck{}, nil
 	}
 	guard.seen[machine] = timestamp
-	return true, nil
+	return TimestampCheck{Accepted: true, Machine: MachineCurrent}, nil
+}
+
+func (guard *replayGuard) CommitGatewayTimestamp(context.Context, [32]byte, []byte, int64) (bool, error) {
+	return false, nil
 }
 
 func TestDurableGuardRefusesReplayOnAnotherReplica(t *testing.T) {

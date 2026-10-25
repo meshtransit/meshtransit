@@ -201,7 +201,7 @@ func (conversation *conversation) storeRouteHealthWithin(ctx context.Context, ke
 	if !ok || !kept.nodeKey.IsValid() || kept.nodeKey != conversation.currentKey() {
 		return
 	}
-	machine, err := control.NewAuthenticatedMachine(node.MachineKey(conversation.session.Machine()))
+	machine, err := conversation.authenticatedMachine()
 	if err != nil {
 		return
 	}

@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 225 {
-		t.Fatalf("len(Catalog()) = %d, want 225", len(catalog))
+	if len(catalog) != 226 {
+		t.Fatalf("len(Catalog()) = %d, want 226", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 225 {
-		t.Fatalf("LatestVersion() = %d, want 225", LatestVersion())
+	if LatestVersion() != 226 {
+		t.Fatalf("LatestVersion() = %d, want 226", LatestVersion())
 	}
 }
 
@@ -6519,5 +6519,43 @@ func TestMigration225KubernetesReplicaCompletion(t *testing.T) {
 	if strings.Count(migration.SQL, "DROP TRIGGER") != 1 ||
 		!strings.Contains(migration.SQL, "DROP TRIGGER device_dns_label_kubernetes_gateway ON mesh.device_dns_label;") {
 		t.Error("schema 225 drops another trigger than the gateway DNS label guard")
+	}
+}
+
+// Schema 226 closes every path that resolves a session to a gateway Device
+// unless new Core marked the node key proven, refuses a gateway's logout,
+// and keeps gateway machine keys in a history.
+func TestMigration226KubernetesGatewaySessionProof(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[225]
+	if migration.Version != 226 {
+		t.Fatalf("migration 226 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE OR REPLACE FUNCTION mesh_ops.resolve_map_session_scope(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.resolve_node_key_rotation_scope(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.logout_device_v1(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.complete_kubernetes_replica_request_v1(",
+		"OR mesh_ops.session_proven_node_key_matches_v1(p_machine_key_fingerprint, p_node_key));",
+		"OR mesh_ops.session_proven_node_key_matches_v1(p_machine_key_fingerprint, node_key.public_key));",
+		"RAISE EXCEPTION USING ERRCODE = 'MTK11', MESSAGE = 'a Kubernetes gateway cannot log out';",
+		"ALTER TABLE mesh_ops.kubernetes_gateway_machine_key_history FORCE ROW LEVEL SECURITY;",
+		"pg_catalog.current_setting('mesh.session_proven_node_key', TRUE) IS NOT DISTINCT FROM",
+		"CREATE FUNCTION mesh_ops.accept_mtcp_timestamp_v2(",
+		"CREATE FUNCTION mesh_ops.commit_mtcp_gateway_timestamp_v1(",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 226 lacks %q", want)
+		}
+	}
+	// The GUC is only ever set transaction-locally.
+	if strings.Count(migration.SQL, "'mesh.session_proven_node_key',") != 2 ||
+		strings.Contains(migration.SQL, "set_config('mesh.session_proven_node_key', $") {
+		t.Error("schema 226 sets the proven node key outside mark_session_proven_v1")
+	}
+	for _, forbidden := range []string{"BYPASSRLS", "DROP ", "set_config('mesh.session_proven_node_key', pg_catalog.encode(p_node_key, 'hex'), FALSE"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 226 contains %q", forbidden)
+		}
 	}
 }

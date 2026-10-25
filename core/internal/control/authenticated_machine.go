@@ -16,6 +16,9 @@ var ErrInvalidAuthenticatedMachine = errors.New("control: invalid authenticated 
 // the transport adapter. Untrusted request payloads must never construct it.
 type AuthenticatedMachine struct {
 	key node.MachineKey
+	// proven is the node key the session proved it holds (mtcp-v1 §6.4,
+	// §6.7), or zero.
+	proven node.Key
 }
 
 // NewAuthenticatedMachine records a machine identity after transport authentication.
@@ -24,6 +27,32 @@ func NewAuthenticatedMachine(key node.MachineKey) (AuthenticatedMachine, error) 
 		return AuthenticatedMachine{}, ErrInvalidAuthenticatedMachine
 	}
 	return AuthenticatedMachine{key: key}, nil
+}
+
+// WithProvenNodeKey returns the machine with the node key its session
+// proved; stores tell the database, which serves a Kubernetes gateway only
+// to a session that proved its node key.
+func (machine AuthenticatedMachine) WithProvenNodeKey(nodeKey node.Key) AuthenticatedMachine {
+	if !nodeKey.IsValid() {
+		nodeKey = node.Key{}
+	}
+	machine.proven = nodeKey
+	return machine
+}
+
+// ProvenNodeKey returns the node key the session proved, if any.
+func (machine AuthenticatedMachine) ProvenNodeKey() (node.Key, bool) {
+	return machine.proven, machine.proven.IsValid()
+}
+
+// provenAmong returns the proven node key when it is one of keys, else zero.
+func (machine AuthenticatedMachine) provenAmong(keys ...node.Key) node.Key {
+	for _, nodeKey := range keys {
+		if machine.proven.IsValid() && machine.proven == nodeKey {
+			return nodeKey
+		}
+	}
+	return node.Key{}
 }
 
 // IsValid reports whether the transport supplied a usable machine identity.

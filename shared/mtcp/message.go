@@ -43,6 +43,13 @@ const (
 	MessageNotice                MessageType = 0x52
 )
 
+// Kubernetes gateway messages (mtcp-v1 §6.7, §6.8).
+const (
+	MessageNodeKeyProof             MessageType = 0x15
+	MessageRotateMachineKey         MessageType = 0x16
+	MessageRotateMachineKeyResponse MessageType = 0x17
+)
+
 // Direction is who sends a message.
 type Direction uint8
 
@@ -98,11 +105,15 @@ var specs = map[MessageType]messageSpec{
 	// 16 windows of a 32-byte ID and three numbers each.
 	MessageCaptiveWindowReport: {NodeToCore, 4 * kib, func() proto.Message { return &mtcpv1.CaptiveWindowReport{} }},
 	// 64 resolvers of a 16-byte address and three numbers each.
-	MessageDNSHealthReport: {NodeToCore, 4 * kib, func() proto.Message { return &mtcpv1.DnsHealthReport{} }},
-	MessageRelayTicket:     {CoreToNode, 256 * kib, func() proto.Message { return &mtcpv1.RelayTicket{} }}, // MTT2 zones: 17 bytes × 10,001
-	MessageLifecycle:       {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.Lifecycle{} }},
-	MessageKeyUpdate:       {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.KeyUpdate{} }},
-	MessageNotice:          {CoreToNode, 8 * kib, func() proto.Message { return &mtcpv1.Notice{} }},
+	MessageDNSHealthReport:  {NodeToCore, 4 * kib, func() proto.Message { return &mtcpv1.DnsHealthReport{} }},
+	MessageRelayTicket:      {CoreToNode, 256 * kib, func() proto.Message { return &mtcpv1.RelayTicket{} }}, // MTT2 zones: 17 bytes × 10,001
+	MessageLifecycle:        {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.Lifecycle{} }},
+	MessageKeyUpdate:        {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.KeyUpdate{} }},
+	MessageNotice:           {CoreToNode, 8 * kib, func() proto.Message { return &mtcpv1.Notice{} }},
+	MessageNodeKeyProof:     {NodeToCore, 256, func() proto.Message { return &mtcpv1.NodeKeyProof{} }},
+	MessageRotateMachineKey: {NodeToCore, 256, func() proto.Message { return &mtcpv1.RotateMachineKey{} }},
+	MessageRotateMachineKeyResponse: {CoreToNode, 256,
+		func() proto.Message { return &mtcpv1.RotateMachineKeyResponse{} }},
 }
 
 // Limit returns the decoded size limit of a message type, or 0 if unknown.

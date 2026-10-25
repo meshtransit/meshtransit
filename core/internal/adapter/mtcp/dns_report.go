@@ -172,7 +172,7 @@ func (conversation *conversation) dnsHealth(ctx context.Context, report *mtcpv1.
 		}
 	}
 	conversation.lastDNSHealth = now
-	machine, err := control.NewAuthenticatedMachine(node.MachineKey(conversation.session.Machine()))
+	machine, err := conversation.authenticatedMachine()
 	if err != nil {
 		return nil
 	}

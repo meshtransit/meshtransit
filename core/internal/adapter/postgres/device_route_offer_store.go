@@ -77,6 +77,9 @@ func (store *RouteOfferStore) ReportRouteOffer(ctx context.Context, identity con
 	fingerprint, nodeKey := identity.MachineFingerprint(), identity.NodeKey()
 	changed := false
 	err = store.transact(ctx, func(tx accountSessionTransaction) error {
+		if err := markSessionProven(ctx, tx, fingerprint, identity.NodeKey(), identity.Proven()); err != nil {
+			return routeOfferDatabaseError(err)
+		}
 		var workspaceID, networkID, encoded string
 		if err := tx.QueryRow(ctx, reportDeviceRouteOfferSQL, fingerprint[:], nodeKey[:], texts,
 			changeID.String()).Scan(&workspaceID, &networkID, &encoded); err != nil {

@@ -14,6 +14,9 @@ var (
 	// ErrDeviceLogoutNotFound reports keys that are not the current keys of
 	// an active Device: nothing is logged out.
 	ErrDeviceLogoutNotFound = errors.New("control: no active device for these keys")
+	// ErrDeviceLogoutNotPermitted reports a Device that cannot log out: a
+	// Kubernetes gateway, which an administrator removes (schema 226).
+	ErrDeviceLogoutNotPermitted = errors.New("control: device cannot log out")
 	// ErrDeviceLogoutUnavailable reports a logout that did not commit.
 	ErrDeviceLogoutUnavailable = errors.New("control: device logout unavailable")
 )

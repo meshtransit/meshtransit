@@ -57,6 +57,9 @@ func (store *DeviceLogoutStore) LogoutDevice(ctx context.Context, identity contr
 	fingerprint, nodeKey := identity.MachineFingerprint(), identity.NodeKey()
 	var logout control.DeviceLogout
 	err = store.transact(ctx, func(tx accountSessionTransaction, now time.Time) error {
+		if err := markSessionProven(ctx, tx, fingerprint, nodeKey, identity.Proven()); err != nil {
+			return deviceLogoutDatabaseError(err)
+		}
 		var workspaceID, networkID string
 		if err := tx.QueryRow(ctx, resolveLogoutScopeSQL, fingerprint[:], nodeKey[:]).Scan(&workspaceID,
 			&networkID); err != nil {
@@ -205,6 +208,8 @@ func deviceLogoutDatabaseError(err error) error {
 		switch pgError.Code {
 		case "P0002", "42501":
 			return control.ErrDeviceLogoutNotFound
+		case "MTK11":
+			return control.ErrDeviceLogoutNotPermitted
 		}
 	}
 	return errors.Join(control.ErrDeviceLogoutUnavailable, err)

@@ -33,6 +33,9 @@ type CommandParams struct {
 	MachineKey  node.MachineKey
 	OldNodeKey  node.Key
 	NewNodeKey  node.Key
+	// ProvenNodeKey, when set, is the old or new key the session proved;
+	// a Kubernetes gateway rotates only with it (schema 226).
+	ProvenNodeKey node.Key
 }
 
 // Command requests one monotonic Node-key epoch transition.
@@ -41,6 +44,7 @@ type Command struct {
 	machineKey  node.MachineKey
 	oldNodeKey  node.Key
 	newNodeKey  node.Key
+	proven      node.Key
 }
 
 // NewCommand validates distinct, non-zero old and new Node keys.
@@ -50,8 +54,10 @@ func NewCommand(params CommandParams) (Command, error) {
 		machineKey:  params.MachineKey,
 		oldNodeKey:  params.OldNodeKey,
 		newNodeKey:  params.NewNodeKey,
+		proven:      params.ProvenNodeKey,
 	}
-	if !command.IsValid() {
+	if !command.IsValid() || command.proven != (node.Key{}) && command.proven != command.oldNodeKey &&
+		command.proven != command.newNodeKey {
 		return Command{}, ErrInvalidCommand
 	}
 	return command, nil
@@ -68,6 +74,11 @@ func (command Command) OldNodeKey() node.Key { return command.oldNodeKey }
 
 // NewNodeKey returns the proposed next epoch public key.
 func (command Command) NewNodeKey() node.Key { return command.newNodeKey }
+
+// ProvenNodeKey returns the key the session proved, if any.
+func (command Command) ProvenNodeKey() (node.Key, bool) {
+	return command.proven, command.proven.IsValid()
+}
 
 // IsValid reports whether the authenticated transition is structurally safe.
 func (command Command) IsValid() bool {

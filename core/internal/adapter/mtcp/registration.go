@@ -89,11 +89,16 @@ func (conversation *conversation) register(ctx context.Context, request *mtcpv1.
 		return conversation.sendError(mtcpv1.Error_UNSUPPORTED, "registration is not available", 0)
 	}
 	conversation.wait(approval{}) // a new request replaces any pending approval
+	if conversation.isGateway() {
+		// A gateway's Device exists; it only rotates its keys (mtcp-v1 §6.7).
+		return conversation.reject(rejection{code: mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED,
+			message: "a Kubernetes gateway does not register again"})
+	}
 	keys, hostname, rejected := conversation.validateRegistration(request)
 	if rejected != nil {
 		return conversation.reject(*rejected)
 	}
-	machine, err := control.NewAuthenticatedMachine(node.MachineKey(conversation.session.Machine()))
+	machine, err := conversation.authenticatedMachine()
 	if err != nil {
 		return err
 	}
@@ -187,6 +192,7 @@ func (conversation *conversation) registerWithCredential(ctx context.Context, ma
 	if err != nil {
 		return conversation.registrationFailed(ctx, err)
 	}
+	conversation.prove(keys.node, false)
 	conversation.authorize(keys.node, keys.disco, result.Hostname(), true)
 	return nil
 }
@@ -254,6 +260,7 @@ func (conversation *conversation) registerInteractively(ctx context.Context, mac
 		case err != nil:
 			return conversation.sendError(mtcpv1.Error_INTERNAL, "registration unavailable", 2000)
 		case found:
+			conversation.prove(nodeKey, false)
 			conversation.authorize(nodeKey, keys.disco, result.Hostname(), true)
 			return nil
 		}
@@ -412,6 +419,7 @@ func (conversation *conversation) checkApproval(ctx context.Context, pending app
 	if !found {
 		return false
 	}
+	conversation.prove(pending.keys.node, false)
 	conversation.authorize(pending.keys.node, pending.keys.disco, result.Hostname(), true)
 	return true
 }
@@ -428,14 +436,19 @@ func (conversation *conversation) rotate(ctx context.Context, request *mtcpv1.Ro
 	if !ok {
 		return conversation.sendError(mtcpv1.Error_INVALID, "keys or proofs of possession are invalid", 0)
 	}
-	machine, err := control.NewAuthenticatedMachine(node.MachineKey(conversation.session.Machine()))
+	machine, err := conversation.authenticatedMachine()
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, registrationTimeout)
 	defer cancel()
-	// A repeat after a crash: the new key already is the Device's key.
-	if snapshot, current := conversation.ownsKey(ctx, machine, newKey); current {
+	// A repeat after a crash: the new key already is the Device's key. This
+	// request proved it.
+	owner := machine
+	if conversation.isGateway() {
+		owner = machine.WithProvenNodeKey(newKey)
+	}
+	if snapshot, current := conversation.ownsKey(ctx, owner, newKey); current {
 		return conversation.rotated(keys, snapshot.Hostname(), snapshot.KeyExpiry())
 	}
 	oldKey, hostname, expiry := conversation.rotationBase()
@@ -528,8 +541,9 @@ func (conversation *conversation) rotated(keys provenKeys, hostname node.Hostnam
 	if err := conversation.session.Send(sharedmtcp.MessageRotateNodeKeyResponse, response); err != nil {
 		return err
 	}
-	// The stream restarts with the new key; peers receive it as one map
-	// change from the committed rotation.
+	// The stream restarts with the new key, which this request proved;
+	// peers receive it as one map change from the committed rotation.
+	conversation.prove(keys.node, false)
 	conversation.authorize(keys.node, keys.disco, hostname, false)
 	return nil
 }
@@ -555,11 +569,16 @@ func (conversation *conversation) logout(ctx context.Context) error {
 	if logout == nil {
 		return conversation.sendError(mtcpv1.Error_UNSUPPORTED, "logout is not available", 0)
 	}
+	if conversation.isGateway() {
+		// An administrator removes a gateway; a copy of its keys must not
+		// (mtcp-v1 §6.5).
+		return conversation.sendError(mtcpv1.Error_NOT_PERMITTED, "a Kubernetes gateway cannot log out", 0)
+	}
 	nodeKey, disco, hostname := conversation.suspendStream()
 	if !nodeKey.IsValid() {
 		return conversation.sendError(mtcpv1.Error_NOT_AUTHORIZED, "logout needs an authorized Device", 0)
 	}
-	machine, err := control.NewAuthenticatedMachine(node.MachineKey(conversation.session.Machine()))
+	machine, err := conversation.authenticatedMachine()
 	if err != nil {
 		return err
 	}
@@ -569,6 +588,9 @@ func (conversation *conversation) logout(ctx context.Context) error {
 		conversation.authorize(nodeKey, disco, hostname, false) // nothing changed: the stream resumes
 		if errors.Is(err, control.ErrDeviceLogoutNotFound) {
 			return conversation.sendError(mtcpv1.Error_NOT_AUTHORIZED, "logout needs an authorized Device", 0)
+		}
+		if errors.Is(err, control.ErrDeviceLogoutNotPermitted) {
+			return conversation.sendError(mtcpv1.Error_NOT_PERMITTED, "a Kubernetes gateway cannot log out", 0)
 		}
 		return conversation.sendError(mtcpv1.Error_INTERNAL, "logout unavailable", 2000)
 	}

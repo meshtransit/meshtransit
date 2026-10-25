@@ -50,6 +50,9 @@ func (store *ExitOfferStore) ReportExitOffer(ctx context.Context, identity contr
 	changed := false
 	routes := RouteOfferStore(*store)
 	err = routes.transact(ctx, func(tx accountSessionTransaction) error {
+		if err := markSessionProven(ctx, tx, fingerprint, identity.NodeKey(), identity.Proven()); err != nil {
+			return routeOfferDatabaseError(err)
+		}
 		var workspaceID, networkID, encoded string
 		if err := tx.QueryRow(ctx, reportDeviceExitOfferSQL, fingerprint[:], nodeKey[:], offered,
 			changeID.String()).Scan(&workspaceID, &networkID, &encoded); err != nil {

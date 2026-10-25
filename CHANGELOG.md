@@ -24,6 +24,14 @@ merge (2026-10-09) are kept below.
   creates the gateway Device `<cluster>-<ordinal>` and sends `authorized`
   on the same session. Off unless `MESHTRANSIT_KUBERNETES_JOIN=true`; leave
   it off until K1a1.4 and K1a1.6 are deployed.
+- Kubernetes gateways K1a1.4a (Core, schema 226, MTCP `session.proof1`): a
+  gateway proves its node key as its session's first record
+  (`NodeKeyProof`, mtcp-v1 §6.7); the database serves, rotates or logs out a
+  gateway only for a transaction Core marked proven, so older Core cannot;
+  gateways cannot log out or register again; gateway machine keys enter a
+  history and are never used again. **Deploy rule:** turn
+  `MESHTRANSIT_KUBERNETES_JOIN` on only when every replica runs K1a1.4 or
+  later, and never roll Core back below K1a1.4 while gateway Devices exist.
 - **Upgrade note:** `MESHTRANSIT_DNS_SUFFIX` may no longer be a public
   suffix itself (`co.uk`, `github.io`); Core with such a value stops at
   configuration load. Use a domain you own or a private name.

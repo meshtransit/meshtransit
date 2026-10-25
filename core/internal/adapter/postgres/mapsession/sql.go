@@ -10,6 +10,10 @@ const resolveScopeSQL = `SELECT
     recovery_epoch
 FROM mesh_ops.resolve_map_session_scope($1::BYTEA, $2::BYTEA)`
 
+// markSessionProvenSQL marks, for this transaction, the node key the session
+// proved: schema 226 resolves a Kubernetes gateway only then.
+const markSessionProvenSQL = `SELECT mesh_ops.mark_session_proven_v1($1::BYTEA, $2::BYTEA)`
+
 const mapSessionSuspendedSQL = `SELECT mesh_ops.map_session_suspended_v1($1::BYTEA, $2::BYTEA)`
 
 // Schema 161: whether the Device bound to exactly these keys was revoked.

@@ -47,9 +47,9 @@ func assertPostgreSQLMTCPTimestamp(ctx context.Context, t *testing.T, pool *post
 		{"unbound node key", make([]byte, 32), now - 5, true},
 		{"no node key", nil, now - 5, true},
 	} {
-		accepted, err := store.AcceptTimestamp(ctx, fingerprint, step.nodeKey, step.timestamp)
-		if err != nil || accepted != step.want {
-			t.Fatalf("%s: accepted %t, %v; want %t", step.name, accepted, err, step.want)
+		check, err := store.AcceptTimestamp(ctx, fingerprint, step.nodeKey, step.timestamp)
+		if err != nil || check.Accepted != step.want || check.Gateway || check.MachineState != "current" {
+			t.Fatalf("%s: %+v, %v; want accepted %t", step.name, check, err, step.want)
 		}
 	}
 }

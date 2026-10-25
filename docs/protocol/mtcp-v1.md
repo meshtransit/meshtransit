@@ -233,6 +233,9 @@ payload     bytes[...]
 | 0x12 | `RotateNodeKey` | N→C | 4 KiB |
 | 0x13 | `Logout` | N→C | 1 KiB |
 | 0x14 | `RotateNodeKeyResponse` | C→N | 1 KiB |
+| 0x15 | `NodeKeyProof` | N→C | 256 B |
+| 0x16 | `RotateMachineKey` | N→C | 256 B |
+| 0x17 | `RotateMachineKeyResponse` | C→N | 256 B |
 | 0x20 | `MapSnapshot` | C→N | 32 MiB |
 | 0x21 | `MapDelta` | C→N | 8 MiB |
 | 0x22 | `MapAck` | N→C | 256 B |
@@ -388,7 +391,9 @@ whose machine key and node key are the Device's current keys can log it
 out; otherwise Core answers `Error{code: NOT_AUTHORIZED}`. The Device must
 enroll again. A Network policy MAY
 forbid self-logout for managed Devices; Core then answers
-`Error{code: NOT_PERMITTED}`.
+`Error{code: NOT_PERMITTED}`. A Kubernetes gateway never logs out: Core,
+and its database, answer `Error{code: NOT_PERMITTED}`, so a copy of the
+gateway's keys cannot remove it; an administrator does (6.7).
 
 ### 6.6 Kubernetes cluster join
 
@@ -440,6 +445,54 @@ bytes; the database accepts no other)
 and holds exactly the keys the code bound. It cannot be transferred,
 renamed, suspended or shared. A deployment that has not enabled cluster joins answers
 `rejected{NOT_PERMITTED}`.
+
+### 6.7 Node key proof and Kubernetes gateways
+
+When Core offers `session.proof1`, a node MAY send `NodeKeyProof{proof}` as
+its first TRANSPORT record, before the message that establishes the session:
+
+```
+proof = BLAKE2s-256(key = X25519(node_key, control_key),
+                    "meshtransit/mtcp-node-key-session/v1" || 0x00 || h || node_key)
+```
+
+where `node_key` is the ClientHello's. A Device of kind Kubernetes gateway
+MUST send it, and a gateway node sends it only when `session.proof1` was
+negotiated; without it the node stops. Until a gateway's proof checks Core
+neither establishes the session, replaces an older one, nor sends anything
+but the refusal, and its handshake timestamp is compared but not recorded:
+Core records it, durably and in its cache, only after the proof.
+
+| Machine key | Node key | Gateway | Other node |
+|---|---|---|---|
+| bound to no Device | — | (not a gateway) | `Error{NOT_AUTHORIZED, "machine key is not bound"}`, session goes on |
+| a gateway's former key | — | fatal `Error{NOT_AUTHORIZED, "machine key is retired"}` | — |
+| held before, not now (revoked, expired) | — | (a gateway's: above) | `Error{NOT_AUTHORIZED, "node key is not current"}`, not fatal |
+| current | not the current key | fatal `Error{NOT_AUTHORIZED, "node key is not current"}` | same, not fatal |
+| current | current, wrong proof | fatal `Error{NOT_AUTHORIZED, "invalid node key proof"}` | `Error{INVALID}`, not fatal |
+| current | current, proof checks, timestamp taken since | fatal `Error{NOT_AUTHORIZED, "handshake replayed"}` | — |
+| current | current, proof checks | session goes on, proven | session goes on, proven |
+
+A gateway that sends anything else first gets a fatal
+`Error{NOT_AUTHORIZED, "a Kubernetes gateway must prove its node key first"}`;
+a `NodeKeyProof` after the first record gets `Error{INVALID}`. A gateway
+probing for its keys after a crash tries its staged machine key first.
+
+For a gateway session Core tells its database, in each transaction, which
+machine key and node key the session proved, and the database resolves a
+session to a gateway only then: an older Core, which never does, cannot
+serve, rotate or log out a gateway. An older Core records no timestamp for
+a gateway's handshake (its own cache only), and stores a gateway's
+enforcement reports, which need no map, outside the database: replicas must
+all run a Core that knows gateways before any join is enabled. A gateway session refuses every
+`RegisterRequest` with `rejected{NOT_PERMITTED}` and `Logout` with
+`Error{NOT_PERMITTED}`. The session that completed a cluster join (6.6)
+proved its keys in the `RegisterRequest` and is a gateway session from then
+on.
+
+A copy of a gateway's current machine and node keys (its Kubernetes Secret)
+can still connect as the gateway and replace the real pod's session until
+an administrator removes the Device; a copy of former keys gets nothing.
 
 ## 7. Map
 
@@ -1260,6 +1313,7 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `stats.path1` | Node sends `PathStatsReport` |
 | `nat.report1` | Node sends NAT classification in `EndpointReport` |
 | `map.large1` | Node applies maps of up to 10,000 peers; without it Core sends at most 256 |
+| `session.proof1` | Core accepts `NodeKeyProof` as a session's first record (6.7); a Kubernetes gateway requires it |
 | `routes.subnet.v1` | Node applies `routes` (7.6) |
 | `router.subnet.v1` | Node can forward into Sites: it applies `served` (7.6) and reports `route_digest` (8.4) |
 | `router.health1` | Node sends `RouteHealthReport` (8.3); only with `router.subnet.v1` (Sites) or `router.exit.v1` (its Exit Pool) |
@@ -1356,6 +1410,7 @@ secrets or other tenants' data, and is at most 512 bytes.
 | C20 | A Device announces endpoints that point its peers' probes at a victim: the overlay, a relay, Core | Core drops overlay, special-purpose, relay and operator-denied addresses, also through NAT64, when a report arrives and when it sends a map; nodes refuse overlay and relay addresses as candidates; each node's pings to a peer's unanswered candidates are bounded by a backoff and a per-Device budget: at most 144 at once and 0.4/s in the long run, so a victim named by M Devices receives at most 0.4 × M pings/s from each node that has them in its map (section 8.1, disco-v2 §4.4) |
 | C21 | One session makes Core work in a loop with cheap messages: map resyncs that each encode the whole map, enforcement reports that each write Redis, browser approvals that each write the database, or a flood of any message | Per-session budgets for each, and one for all messages and bytes (section 14); a node that follows the protocol stays well inside them, and reconnecting is bounded by the per-source handshake rate |
 | C22 | A leaked cluster join key makes its holder a Kubernetes gateway, which sees who connects and carries kubectl traffic | The key opens only a request with no Device; an administrator approves it by a code bound to the replica's own keys, read from the real pod's log and checked by Core and its database; five wrong codes cancel; at most twice the key's uses wait; the key lives an hour at most (6.6) |
+| C23 | A copy of a Kubernetes gateway's Secret, or an older Core, serves, logs out or re-keys the gateway | A gateway proves its node key as its session's first record; until then nothing is established or replaced and its timestamp is not recorded; the database resolves a gateway only for a transaction marked proven, which older Core never marks; gateways cannot log out or register again; former machine keys are kept and refused (6.7). A copy of the current Secret remains a gateway until an administrator removes it |
 
 ## 17. Test vectors
 

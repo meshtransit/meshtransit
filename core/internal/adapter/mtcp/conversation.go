@@ -148,7 +148,8 @@ func (application *Application) Open(session *Session) Conversation {
 	sink.suffix = application.options.DNSSuffix
 	sink.infrastructure = application.options.DNSInfrastructureNames
 	sink.logger, sink.metrics = application.options.Logger, application.options.Metrics
-	return &conversation{application: application, session: session, sink: sink,
+	proven, _ := session.ProvenNodeKey()
+	return &conversation{application: application, session: session, sink: sink, provenNodeKey: proven,
 		wake: make(chan struct{}, 1), approvals: make(chan approval, 1),
 		identity: newRateBudget(identityBurst, identityRate), browser: newRateBudget(browserBurst, browserRate),
 		resync:            newRateBudget(resyncBurst, resyncRate),
@@ -199,6 +200,13 @@ type conversation struct {
 	disco      node.DiscoveryKey  // proven at registration or rotation in this session
 	generation uint64             // advances with every authorization
 	restart    context.CancelFunc // ends the running stream when the key changes
+
+	// provenNodeKey is the node key this session proved it holds: by a
+	// NodeKeyProof, or in the registration or rotation that authorized it
+	// (mtcp-v1 §6.4, §6.7). joinedGateway: the session completed a
+	// Kubernetes cluster join, so its Device is a gateway.
+	provenNodeKey node.Key
+	joinedGateway bool
 
 	wake      chan struct{} // the node key changed
 	approvals chan approval // the latest pending browser approval
@@ -272,6 +280,40 @@ func (conversation *conversation) startStream(ctx context.Context) (node.Key, ui
 	return conversation.nodeKey, conversation.generation, streamCtx, cancel
 }
 
+// authenticatedMachine is the session's machine key, with the node key it
+// proved when it serves a Kubernetes gateway: stores then mark it for the
+// database (schema 226). Other Devices need no mark, and cost no extra
+// statement.
+func (conversation *conversation) authenticatedMachine() (control.AuthenticatedMachine, error) {
+	machine, err := control.NewAuthenticatedMachine(node.MachineKey(conversation.session.Machine()))
+	if err != nil {
+		return control.AuthenticatedMachine{}, err
+	}
+	conversation.mu.Lock()
+	proven, gateway := conversation.provenNodeKey, conversation.session.IsGateway() || conversation.joinedGateway
+	conversation.mu.Unlock()
+	if !gateway {
+		return machine, nil
+	}
+	return machine.WithProvenNodeKey(proven), nil
+}
+
+// prove records a node key the session proved in a registration or
+// rotation; gateway marks a completed cluster join.
+func (conversation *conversation) prove(nodeKey node.Key, gateway bool) {
+	conversation.mu.Lock()
+	defer conversation.mu.Unlock()
+	conversation.provenNodeKey = nodeKey
+	conversation.joinedGateway = conversation.joinedGateway || gateway
+}
+
+// isGateway reports whether the session serves a Kubernetes gateway.
+func (conversation *conversation) isGateway() bool {
+	conversation.mu.Lock()
+	defer conversation.mu.Unlock()
+	return conversation.session.IsGateway() || conversation.joinedGateway
+}
+
 func (conversation *conversation) currentGeneration() uint64 {
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
@@ -279,7 +321,7 @@ func (conversation *conversation) currentGeneration() uint64 {
 }
 
 func (conversation *conversation) serve(ctx context.Context, nodeKey node.Key) error {
-	machine, err := control.NewAuthenticatedMachine(node.MachineKey(conversation.session.Machine()))
+	machine, err := conversation.authenticatedMachine()
 	if err != nil {
 		return err
 	}
@@ -523,7 +565,7 @@ func (conversation *conversation) enforcement(ctx context.Context, report *mtcpv
 	if len(report.GetRouteDigest()) == 32 {
 		routes, _ = mapsession.NewRouteDigest(policydigest.Digest(report.GetRouteDigest()), int(report.GetRouteEntries()))
 	}
-	machine, err := control.NewAuthenticatedMachine(node.MachineKey(conversation.session.Machine()))
+	machine, err := conversation.authenticatedMachine()
 	if err != nil {
 		return
 	}

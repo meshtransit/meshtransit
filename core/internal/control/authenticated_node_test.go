@@ -55,3 +55,34 @@ func TestAuthenticatedMachineRejectsInvalidNodeBinding(t *testing.T) {
 		t.Fatal("zero machine BindNodeKey() error = nil, want invalid identity")
 	}
 }
+
+// A node key is proven only when the transport proved that exact key in the
+// session; binding another key, or none, is unproven.
+func TestBindNodeKeyCarriesTheSessionProof(t *testing.T) {
+	t.Parallel()
+	machineKey := node.MachineKey{1}
+	proven, other := node.Key{2}, node.Key{3}
+	machine, err := NewAuthenticatedMachine(machineKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity, _ := machine.BindNodeKey(proven); identity.Proven() {
+		t.Fatal("a key is proven without a session proof")
+	}
+	withProof := machine.WithProvenNodeKey(proven)
+	if key, ok := withProof.ProvenNodeKey(); !ok || key != proven {
+		t.Fatalf("ProvenNodeKey() = %v, %t", key, ok)
+	}
+	if identity, _ := withProof.BindNodeKey(proven); !identity.Proven() {
+		t.Fatal("the proven key is not proven")
+	}
+	if identity, _ := withProof.BindNodeKey(other); identity.Proven() {
+		t.Fatal("another key inherited the proof")
+	}
+	if _, ok := machine.WithProvenNodeKey(node.Key{}).ProvenNodeKey(); ok {
+		t.Fatal("a zero key is proven")
+	}
+	if _, ok := machine.ProvenNodeKey(); ok {
+		t.Fatal("WithProvenNodeKey changed the original machine")
+	}
+}

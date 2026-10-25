@@ -245,7 +245,7 @@ func (conversation *conversation) storeRouteOffer(offer deviceOffer) {
 
 // offerIdentity is the session's Device as it stores its offers.
 func (conversation *conversation) offerIdentity(nodeKey node.Key) (control.AuthenticatedNode, error) {
-	machine, err := control.NewAuthenticatedMachine(node.MachineKey(conversation.session.Machine()))
+	machine, err := conversation.authenticatedMachine()
 	if err != nil {
 		return control.AuthenticatedNode{}, err
 	}

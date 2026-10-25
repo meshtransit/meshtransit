@@ -88,6 +88,10 @@ var streamEndReasons = []string{
 var handshakeResults = []string{
 	"invalid", "unknown_key", "shed", "decrypt", "replay", "internal", "respond", "rejected", "responded",
 	"not_established", "established",
+	// A Kubernetes gateway refused before it proved its node key (§6.7):
+	// a retired machine key or a node key that is not current is what a
+	// stale copy of its Secret presents.
+	"gateway_unproven", "gateway_retired", "gateway_stale_node_key", "gateway_bad_proof",
 }
 
 // NewMetrics constructs unregistered collectors.

@@ -185,6 +185,7 @@ func (conversation *conversation) checkClusterJoin(ctx context.Context, keys pro
 	case completion.State != kubecluster.RequestCompleted:
 		return false
 	}
+	conversation.prove(keys.node, true)
 	conversation.authorize(keys.node, keys.disco, completion.Result.Hostname(), true)
 	return true
 }

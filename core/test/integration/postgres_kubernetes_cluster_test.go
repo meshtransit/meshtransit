@@ -127,7 +127,7 @@ func joinCode(t *testing.T, ticket kubecluster.JoinTicket, keys replicaKeys) str
 // cancels; rejected, cancelled and revoked requests stay decided; the
 // waiting queue is bounded; a cluster with open requests cannot be deleted;
 // and only migrator-owned functions write gateway Devices.
-func assertPostgreSQLKubernetesClusters(ctx context.Context, t *testing.T, admin *pgx.Conn,
+func assertPostgreSQLKubernetesClusters(ctx context.Context, t *testing.T, admin, runtime *pgx.Conn,
 	runtimePool *postgresadapter.Pool) {
 	t.Helper()
 	service, store := newIntegrationKubernetesClusters(t, runtimePool)
@@ -303,6 +303,7 @@ WHERE workspace_id = 103 AND network_id = 203 ORDER BY id LIMIT 1`).Scan(&heldMa
 	assertNoGatewayDevice(ctx, t, admin, clusterID)
 	shiftReplicaRequest(ctx, t, admin, ticket.Request.ID().String(), "1 hour")
 	gatewayDevice := assertReplicaCompletes(ctx, t, admin, completions, ticket, first)
+	assertGatewaySessionProof(ctx, t, admin, runtime, runtimePool, first, gatewayDevice)
 
 	// A second replica: its own code does not approve the first's request,
 	// and it is rejected.
@@ -397,6 +398,7 @@ WHERE kubernetes_cluster_id = (SELECT id FROM mesh.kubernetes_cluster WHERE publ
 		t.Fatalf("Read() = %+v, %v", detail, err)
 	}
 	removeGatewayDevice(ctx, t, admin, gatewayDevice)
+	assertRetiredGatewayKey(ctx, t, runtime, first)
 	// A pod whose gateway is gone gets a final answer, not its Device again.
 	if _, err := completions.CompleteReplicaRequest(ctx, ticket.Scope, ticket.Request.ID(),
 		registrationIdentity(t, first)); !errors.Is(err, kubecluster.ErrNotWaiting) {

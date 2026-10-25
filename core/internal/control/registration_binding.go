@@ -94,10 +94,11 @@ func (machine AuthenticatedMachine) BindNodeKeyRotation(
 		return keyrotation.Command{}, ErrInvalidRegistrationRequest
 	}
 	command, err := keyrotation.NewCommand(keyrotation.CommandParams{
-		OperationID: request.registrationID,
-		MachineKey:  machine.key,
-		OldNodeKey:  request.oldNodeKey,
-		NewNodeKey:  request.nodeKey,
+		OperationID:   request.registrationID,
+		MachineKey:    machine.key,
+		OldNodeKey:    request.oldNodeKey,
+		NewNodeKey:    request.nodeKey,
+		ProvenNodeKey: machine.provenAmong(request.oldNodeKey, request.nodeKey),
 	})
 	if err != nil {
 		return keyrotation.Command{}, ErrInvalidRegistrationRequest

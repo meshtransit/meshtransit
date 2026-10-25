@@ -51,6 +51,9 @@ func (store *Store) ObserveDeviceAliasVersion(ctx context.Context, identity cont
 	if err := configure(ctx, transaction, store.options); err != nil {
 		return errors.Join(ErrLoadSnapshot, err)
 	}
+	if err := markSessionProven(ctx, transaction, identity); err != nil {
+		return errors.Join(ErrLoadSnapshot, err)
+	}
 	machine := identity.MachineFingerprint()
 	key := identity.NodeKey().Bytes()
 	var accepted bool

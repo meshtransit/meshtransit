@@ -119,6 +119,11 @@ func (store *NodeKeyRotationStore) Begin(
 	machineFingerprint := command.MachineKey().Fingerprint()
 	oldNodeKey := command.OldNodeKey().Bytes()
 	newNodeKey := command.NewNodeKey().Bytes()
+	proven, isProven := command.ProvenNodeKey()
+	if err := markSessionProven(ctx, databaseTransaction, command.MachineKey().Fingerprint(), proven,
+		isProven); err != nil {
+		return nil, errors.Join(ErrBeginNodeKeyRotation, classifyNodeKeyRotationDatabaseError(ctx, err))
+	}
 	var workspaceValue, networkValue string
 	if err := databaseTransaction.QueryRow(
 		ctx,

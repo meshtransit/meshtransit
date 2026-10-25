@@ -374,6 +374,9 @@ func (store *Store) loadSnapshot(
 		return snapshotRead{}, errors.Join(ErrLoadSnapshot, err)
 	}
 
+	if err := markSessionProven(ctx, transaction, identity); err != nil {
+		return snapshotRead{}, errors.Join(ErrLoadSnapshot, err)
+	}
 	fingerprint := identity.MachineFingerprint()
 	nodeKey := identity.NodeKey().Bytes()
 	var workspaceValue, networkValue string

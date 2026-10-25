@@ -315,6 +315,47 @@ func TestKeyProofsAndFingerprint(t *testing.T) {
 	}
 }
 
+// Session and rotation proofs use their own domains: a proof of one kind
+// never passes as another, nor as a §6.4 key proof.
+func TestSessionAndMachineRotationProofs(t *testing.T) {
+	machine, control := fixedKeys(t)
+	node, _ := key.NodePrivateFromBytes(bytes.Repeat([]byte{0x77}, 32))
+	hash := [32]byte{0x99}
+	session, err := NodeKeySessionProof(node, control.Public(), hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !VerifyNodeKeySessionProof(control, hash, node.Public(), session[:]) {
+		t.Fatal("valid session proof refused")
+	}
+	if VerifyNodeKeySessionProof(control, [32]byte{0x9a}, node.Public(), session[:]) {
+		t.Fatal("session proof accepted in another session")
+	}
+	keyProof, _ := NodeKeyProof(node, control.Public(), hash)
+	if VerifyNodeKeySessionProof(control, hash, node.Public(), keyProof[:]) ||
+		VerifyKeyProof(control, hash, node.Public(), session[:]) {
+		t.Fatal("a key proof and a session proof are interchangeable")
+	}
+	next, _ := key.MachinePrivateFromBytes(bytes.Repeat([]byte{0x55}, 32))
+	rotation, err := MachineKeyRotationProof(next, control.Public(), hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !VerifyMachineKeyRotationProof(control, hash, next.Public(), rotation[:]) {
+		t.Fatal("valid rotation proof refused")
+	}
+	if VerifyMachineKeyRotationProof(control, hash, machine.Public(), rotation[:]) ||
+		VerifyMachineKeyRotationProof(control, [32]byte{0x9a}, next.Public(), rotation[:]) ||
+		VerifyMachineKeyRotationProof(control, hash, next.Public(), rotation[:31]) {
+		t.Fatal("rotation proof accepted for another key, session or length")
+	}
+	// Made with the current machine key instead of the new one: refused.
+	stale, _ := MachineKeyRotationProof(machine, control.Public(), hash)
+	if VerifyMachineKeyRotationProof(control, hash, next.Public(), stale[:]) {
+		t.Fatal("rotation proof made with the old key accepted")
+	}
+}
+
 type vectors struct {
 	MachinePrivate     string            `json:"machine_private"`
 	ControlPrivate     string            `json:"control_private"`

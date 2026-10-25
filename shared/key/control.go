@@ -176,6 +176,12 @@ func (k DiscoPrivate) SharedWithControl(control ControlPublic) ([Size]byte, erro
 	return shared(k.private, control[:])
 }
 
+// SharedWithControl performs X25519 with a control key, for a proof that a
+// gateway holds the machine key it rotates to.
+func (k MachinePrivate) SharedWithControl(control ControlPublic) ([Size]byte, error) {
+	return shared(k.private, control[:])
+}
+
 // ECDH exposes the key for Noise implementations that take *ecdh.PrivateKey.
 func (k MachinePrivate) ECDH() *ecdh.PrivateKey { return k.private }
 

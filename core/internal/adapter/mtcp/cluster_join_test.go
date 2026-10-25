@@ -438,3 +438,96 @@ func TestClusterJoinIsRateLimited(t *testing.T) {
 		t.Fatalf("%d attempts reached the store", got)
 	}
 }
+
+// The session that completed a join serves its gateway with the node key
+// it proved, and the gateway neither registers again nor logs out.
+func TestCompletedJoinIsAProvenGateway(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessageRegisterRequest)
+	f.clusterJoins.openState = kubecluster.RequestCompleted
+	f.clusterJoins.expiresAt = f.now().Add(time.Hour)
+	f.run()
+	request := f.request(4, clusterJoinAuth(testJoinKey, nil))
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageRegisterRequest, request); err != nil {
+		t.Fatal(err)
+	}
+	f.expectStream(node.Key(request.GetNodeKey()))
+	f.expectPast(sharedmtcp.MessageRegisterResponse)
+	if proven := f.streams.provenStreams(); len(proven) != 1 || !proven[0] {
+		t.Fatalf("streams proven %v", proven)
+	}
+	assertGatewayRefusesRegistrationAndLogout(t, f)
+}
+
+// A session that proved a gateway's node key at its start (§6.7).
+func TestProvenGatewaySession(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	helloKey := node.Key(f.session.Hello().GetNodeKey())
+	f.session.gate = TimestampCheck{Accepted: true, Gateway: true, Machine: MachineCurrent, NodeCurrent: true}
+	f.session.provenNodeKey = helloKey
+	f.talk = f.talk.application.Open(f.session).(*conversation)
+	f.run()
+	f.expectStream(helloKey)
+	if proven := f.streams.provenStreams(); len(proven) != 1 || !proven[0] {
+		t.Fatalf("streams proven %v", proven)
+	}
+	f.expect(sharedmtcp.MessageKeyUpdate)
+	f.expect(sharedmtcp.MessageMapSnapshot)
+	assertGatewayRefusesRegistrationAndLogout(t, f)
+}
+
+func assertGatewayRefusesRegistrationAndLogout(t *testing.T, f *conversationFixture) {
+	t.Helper()
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageRegisterRequest,
+		f.request(9, enrollmentAuth(testEnrollmentKey))); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.expectPast(sharedmtcp.MessageRegisterResponse).(*mtcpv1.RegisterResponse).GetRejected().GetCode(); got !=
+		mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED || len(f.registrations.calls()) != 0 {
+		t.Fatalf("a gateway registered again: %v", got)
+	}
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageLogout, &mtcpv1.Logout{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.expectPast(sharedmtcp.MessageError).(*mtcpv1.Error); got.GetCode() != mtcpv1.Error_NOT_PERMITTED {
+		t.Fatalf("logout answered %v", got)
+	}
+	f.logout.mu.Lock()
+	defer f.logout.mu.Unlock()
+	if len(f.logout.keys) != 0 {
+		t.Fatal("a gateway's logout reached the store")
+	}
+}
+
+// expectPast returns the next message of type want, past the map and key
+// messages a starting stream sends.
+func (f *conversationFixture) expectPast(want sharedmtcp.MessageType) any {
+	f.t.Helper()
+	for {
+		kind, message := f.next()
+		switch kind {
+		case want:
+			return message
+		case sharedmtcp.MessageKeyUpdate, sharedmtcp.MessageMapSnapshot, sharedmtcp.MessageRegisterResponse:
+		default:
+			f.t.Fatalf("got %#x %v, want %#x", uint8(kind), message, uint8(want))
+		}
+	}
+}
+
+// An ordinary Device's streams carry no proof mark, even after it proved
+// its key registering: only gateways need it (no extra statement).
+func TestOrdinaryRegistrationIsNotMarked(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessageRegisterRequest)
+	f.run()
+	request := f.request(9, enrollmentAuth(testEnrollmentKey))
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageRegisterRequest, request); err != nil {
+		t.Fatal(err)
+	}
+	f.expectStream(node.Key(request.GetNodeKey()))
+	if proven := f.streams.provenStreams(); len(proven) != 1 || proven[0] {
+		t.Fatalf("streams proven %v", proven)
+	}
+}

@@ -15,6 +15,7 @@ var ErrInvalidAuthenticatedNode = errors.New("control: invalid authenticated nod
 type AuthenticatedNode struct {
 	machineFingerprint [32]byte
 	nodeKey            node.Key
+	proven             bool
 }
 
 // BindNodeKey creates the identity used to resolve an authoritative Node session.
@@ -25,6 +26,7 @@ func (machine AuthenticatedMachine) BindNodeKey(nodeKey node.Key) (Authenticated
 	return AuthenticatedNode{
 		machineFingerprint: machine.key.Fingerprint(),
 		nodeKey:            nodeKey,
+		proven:             machine.proven.IsValid() && machine.proven == nodeKey,
 	}, nil
 }
 
@@ -35,6 +37,10 @@ func (identity AuthenticatedNode) MachineFingerprint() [32]byte {
 
 // NodeKey returns the request Node key bound to the authenticated machine.
 func (identity AuthenticatedNode) NodeKey() node.Key { return identity.nodeKey }
+
+// Proven reports whether the session proved it holds the node key: then a
+// store marks it in the transaction (schema 226).
+func (identity AuthenticatedNode) Proven() bool { return identity.proven }
 
 // IsValid reports whether both sides of the session identity are present.
 func (identity AuthenticatedNode) IsValid() bool {

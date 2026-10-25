@@ -50,6 +50,8 @@ followed by a zero byte. Registered domains:
 | `MeshTransit MTRP v1` | Noise prologue for MTRP (no zero byte; Noise prologue) |
 | `MeshTransit MTCP v1` | Noise prologue for MTCP (no zero byte; Noise prologue) |
 | `meshtransit/mtcp-key-proof/v1` | MTCP proof of possession of node and disco keys |
+| `meshtransit/mtcp-node-key-session/v1` | MTCP `NodeKeyProof`: the node holds its ClientHello node key in this session (mtcp-v1 §6.7) |
+| `meshtransit/mtcp-machine-key-rotation/v1` | MTCP `RotateMachineKey`: a gateway holds the machine key it rotates to (mtcp-v1 §6.8) |
 | `meshtransit/mtcp-control-fp/v1` | MTCP control key fingerprint in enrollment links |
 | `meshtransit/mtrp-mac1/v1`, `meshtransit/mtrp-cookie/v1` | MTRP handshake DoS MACs |
 

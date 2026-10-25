@@ -57,10 +57,40 @@ type ControlKey struct {
 
 // TimestampGuard accepts a ClientHello timestamp only when it is greater
 // than the last accepted one for the machine key, durably for keys bound to
-// a Device (mtcp-v1 §3, step 3). The machine key is given as its node
-// domain fingerprint, the index Core's Device bindings use.
+// a Device (mtcp-v1 §3, step 3), and says what the keys are. The machine key
+// is given as its node domain fingerprint, the index Core's Device bindings
+// use. A Kubernetes gateway's timestamp is only compared; it is written by
+// CommitGatewayTimestamp once the session proved its node key (§6.7).
 type TimestampGuard interface {
-	AcceptTimestamp(ctx context.Context, machineFingerprint [32]byte, nodeKey []byte, timestampMS int64) (bool, error)
+	AcceptTimestamp(ctx context.Context, machineFingerprint [32]byte, nodeKey []byte,
+		timestampMS int64) (TimestampCheck, error)
+	CommitGatewayTimestamp(ctx context.Context, machineFingerprint [32]byte, nodeKey []byte,
+		timestampMS int64) (bool, error)
+}
+
+// MachineState is what a handshake's machine key is to Core.
+type MachineState uint8
+
+// Machine key states.
+const (
+	// MachineUnbound: no Device holds or held it.
+	MachineUnbound MachineState = iota
+	// MachineCurrent: an active Device holds it now.
+	MachineCurrent
+	// MachineRetired: a Device held it once, or a gateway did.
+	MachineRetired
+)
+
+// TimestampCheck is a TimestampGuard's answer for one handshake.
+type TimestampCheck struct {
+	Accepted bool
+	// Gateway: the machine key belongs, or belonged, to a Kubernetes
+	// gateway, which must prove its node key before anything else.
+	Gateway bool
+	Machine MachineState
+	// NodeCurrent: the ClientHello node key is the current key of the
+	// Device that holds the machine key.
+	NodeCurrent bool
 }
 
 // SessionHandler gives each established session to the application.
@@ -401,8 +431,12 @@ func (server *Server) handshake(parent context.Context, transport recordConn, pe
 	hello := init.Hello()
 	now := server.options.Now()
 	timestamp := time.UnixMilli(hello.GetTimestampMs())
-	if timestamp.Before(now.Add(-timestampWindow)) || timestamp.After(now.Add(timestampWindow)) ||
-		!server.acceptTimestamp(parent, init.Machine(), hello.GetNodeKey(), hello.GetTimestampMs()) {
+	if timestamp.Before(now.Add(-timestampWindow)) || timestamp.After(now.Add(timestampWindow)) {
+		fail("replay")
+		return
+	}
+	check, accepted := server.acceptTimestamp(parent, init.Machine(), hello.GetNodeKey(), hello.GetTimestampMs())
+	if !accepted {
 		fail("replay")
 		return
 	}
@@ -429,27 +463,55 @@ func (server *Server) handshake(parent context.Context, transport recordConn, pe
 		return
 	}
 	session := newSession(server, transport, noise, pending.control.Private, init.Machine(), hello, reply)
+	session.gate = check
 	server.options.Metrics.handshake("responded")
 	session.run(parent, started.Add(handshakeDeadline), pending.releaseSource)
 }
 
+// acceptTimestamp applies replay protection: the replica's cache, then the
+// durable guard. A gateway's timestamp enters neither before its proof
+// (commitGatewayTimestamp).
 func (server *Server) acceptTimestamp(ctx context.Context, machine key.MachinePublic, nodeKey []byte,
-	timestampMS int64) bool {
-	if !server.recent.accept(machine, timestampMS) {
-		return false
+	timestampMS int64) (TimestampCheck, bool) {
+	if !server.recent.newer(machine, timestampMS) {
+		return TimestampCheck{}, false
 	}
+	check := TimestampCheck{Accepted: true}
+	if server.options.Guard != nil {
+		guardCtx, cancel := context.WithTimeout(ctx, writeTimeout)
+		defer cancel()
+		var err error
+		check, err = server.options.Guard.AcceptTimestamp(guardCtx, node.MachineKey(machine).Fingerprint(), nodeKey,
+			timestampMS)
+		if err != nil {
+			server.options.Logger.WarnContext(ctx, "mtcp timestamp check failed",
+				"error_code", "mtcp_timestamp_unavailable")
+			return TimestampCheck{}, false
+		}
+	}
+	if !check.Accepted || !check.Gateway && !server.recent.accept(machine, timestampMS) {
+		return TimestampCheck{}, false
+	}
+	return check, true
+}
+
+// commitGatewayTimestamp records a gateway's handshake timestamp after its
+// proof, durably and in the replica's cache; false is a replay.
+func (server *Server) commitGatewayTimestamp(ctx context.Context, machine key.MachinePublic, nodeKey []byte,
+	timestampMS int64) bool {
 	if server.options.Guard == nil {
-		return true
+		return server.recent.accept(machine, timestampMS)
 	}
 	guardCtx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
-	accepted, err := server.options.Guard.AcceptTimestamp(guardCtx, node.MachineKey(machine).Fingerprint(), nodeKey,
-		timestampMS)
+	committed, err := server.options.Guard.CommitGatewayTimestamp(guardCtx, node.MachineKey(machine).Fingerprint(),
+		nodeKey, timestampMS)
 	if err != nil {
-		server.options.Logger.WarnContext(ctx, "mtcp timestamp check failed", "error_code", "mtcp_timestamp_unavailable")
+		server.options.Logger.WarnContext(ctx, "mtcp gateway timestamp failed",
+			"error_code", "mtcp_timestamp_unavailable")
 		return false
 	}
-	return accepted
+	return committed && server.recent.accept(machine, timestampMS)
 }
 
 func (server *Server) takeSlot() bool {

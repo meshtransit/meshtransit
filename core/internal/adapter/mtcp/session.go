@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
+	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/shared/key"
 	sharedmtcp "meshtransit.net/shared/mtcp"
 )
@@ -41,6 +42,11 @@ type Session struct {
 	capabilities []string
 	control      key.ControlPrivate     // the key the node chose; proofs bind to it
 	openedBy     sharedmtcp.MessageType // the message that established the session
+	// gate is what the handshake's keys are (TimestampGuard); provenNodeKey
+	// is the ClientHello node key once a NodeKeyProof proved it (§6.7). Both
+	// are set before the session is established and never change.
+	gate          TimestampCheck
+	provenNodeKey node.Key
 
 	sendMu   sync.Mutex
 	lastSend atomic.Int64 // Unix nanoseconds of the last record sent
@@ -99,6 +105,16 @@ func (session *Session) VerifyKeyProof(public []byte, proof []byte) bool {
 	}
 	return sharedmtcp.VerifyKeyProof(session.control, session.noise.HandshakeHash(), [key.Size]byte(public), proof)
 }
+
+// ProvenNodeKey returns the ClientHello node key when the session proved it
+// as its first record (mtcp-v1 §6.7).
+func (session *Session) ProvenNodeKey() (node.Key, bool) {
+	return session.provenNodeKey, session.provenNodeKey.IsValid()
+}
+
+// IsGateway reports whether the machine key belongs to a Kubernetes
+// gateway: then the session proved its node key before anything else.
+func (session *Session) IsGateway() bool { return session.gate.Gateway }
 
 // Supports reports whether both sides negotiated a capability.
 func (session *Session) Supports(capability string) bool {
@@ -241,6 +257,21 @@ func (session *Session) run(parent context.Context, establishBy time.Time, relea
 		session.server.options.Metrics.handshake("not_established")
 		return
 	}
+	// A node may prove its node key as its first record; a gateway must
+	// (mtcp-v1 §6.7). Nothing is established, replaced or sent before.
+	if first.t == sharedmtcp.MessageNodeKeyProof {
+		if !session.checkNodeKeyProof(first.message) {
+			return
+		}
+		if first, err = session.receive(assembler, establishBy); err != nil {
+			session.server.options.Metrics.handshake("not_established")
+			return
+		}
+	} else if session.gate.Gateway {
+		session.server.options.Metrics.handshake("gateway_unproven")
+		session.SendError(mtcpv1.Error_NOT_AUTHORIZED, "a Kubernetes gateway must prove its node key first", true)
+		return
+	}
 	if first.t != sharedmtcp.MessagePing && first.t != sharedmtcp.MessageRegisterRequest {
 		session.server.options.Metrics.handshake("not_established")
 		return
@@ -309,6 +340,48 @@ func (session *Session) run(parent context.Context, establishBy time.Time, relea
 	}
 }
 
+// checkNodeKeyProof checks a session's first record (mtcp-v1 §6.7). A
+// gateway's session ends unless the proof holds for its current keys and
+// its timestamp is recorded; an ordinary node only learns the answer. It
+// reports whether the session goes on.
+func (session *Session) checkNodeKeyProof(message proto.Message) bool {
+	proof, _ := message.(*mtcpv1.NodeKeyProof)
+	nodeKey := session.hello.GetNodeKey()
+	valid := len(nodeKey) == key.Size && sharedmtcp.VerifyNodeKeySessionProof(session.control,
+		session.noise.HandshakeHash(), [key.Size]byte(nodeKey), proof.GetProof())
+	gate := session.gate
+	if !gate.Gateway {
+		switch {
+		case gate.Machine == MachineUnbound:
+			session.SendError(mtcpv1.Error_NOT_AUTHORIZED, "machine key is not bound", false)
+		case !valid:
+			session.SendError(mtcpv1.Error_INVALID, "invalid node key proof", false)
+		case gate.Machine != MachineCurrent || !gate.NodeCurrent:
+			session.SendError(mtcpv1.Error_NOT_AUTHORIZED, "node key is not current", false)
+		default:
+			session.provenNodeKey = node.Key(nodeKey)
+		}
+		return true
+	}
+	refuse := func(result, message string) bool {
+		session.server.options.Metrics.handshake(result)
+		session.SendError(mtcpv1.Error_NOT_AUTHORIZED, message, true)
+		return false
+	}
+	switch {
+	case gate.Machine != MachineCurrent:
+		return refuse("gateway_retired", "machine key is retired")
+	case !gate.NodeCurrent:
+		return refuse("gateway_stale_node_key", "node key is not current")
+	case !valid:
+		return refuse("gateway_bad_proof", "invalid node key proof")
+	case !session.server.commitGatewayTimestamp(session.ctx, session.machine, nodeKey, session.hello.GetTimestampMs()):
+		return refuse("replay", "handshake replayed")
+	}
+	session.provenNodeKey = node.Key(nodeKey)
+	return true
+}
+
 // dispatch answers Ping, ignores Pong and gives everything else to the
 // conversation. It reports false when the session must end.
 func (session *Session) dispatch(conversation Conversation, message inbound) bool {
@@ -341,6 +414,9 @@ func (session *Session) dispatch(conversation Conversation, message inbound) boo
 		}
 		return session.Send(sharedmtcp.MessagePong, &mtcpv1.Pong{Nonce: ping.GetNonce()}) == nil
 	case sharedmtcp.MessageError:
+		return true
+	case sharedmtcp.MessageNodeKeyProof:
+		session.SendError(mtcpv1.Error_INVALID, "a node key proof must be the first record", false)
 		return true
 	}
 	if err := conversation.Receive(session.ctx, message.t, message.message); err != nil {
@@ -433,6 +509,15 @@ const maxCachedTimestamps = 1 << 16
 
 func newTimestampCache() *timestampCache {
 	return &timestampCache{last: make(map[key.MachinePublic]int64)}
+}
+
+// newer reports whether timestampMS is newer than the cached one, without
+// recording it.
+func (cache *timestampCache) newer(machine key.MachinePublic, timestampMS int64) bool {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	previous, found := cache.last[machine]
+	return !found || timestampMS > previous
 }
 
 func (cache *timestampCache) accept(machine key.MachinePublic, timestampMS int64) bool {

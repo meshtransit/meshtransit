@@ -70,8 +70,12 @@ func mtcpDependenciesFixture() mtcpDependencies {
 
 type mtcpGuardFixture struct{}
 
-func (mtcpGuardFixture) AcceptTimestamp(context.Context, [32]byte, []byte, int64) (bool, error) {
-	return true, nil
+func (mtcpGuardFixture) AcceptTimestamp(context.Context, [32]byte, []byte, int64) (mtcpadapter.TimestampCheck, error) {
+	return mtcpadapter.TimestampCheck{Accepted: true}, nil
+}
+
+func (mtcpGuardFixture) CommitGatewayTimestamp(context.Context, [32]byte, []byte, int64) (bool, error) {
+	return false, nil
 }
 
 func TestComposeMTCP(t *testing.T) {
@@ -123,7 +127,8 @@ func TestMTCPCapabilities(t *testing.T) {
 		!slices.Contains(mtcpCapabilities(false, false, true), "router.subnet.v1") ||
 		len(exitCapabilities(false)) != 0 || !slices.Contains(exitCapabilities(true), "router.exit.v1") ||
 		!slices.Contains(exitCapabilities(true), "routes.exit.v1") ||
-		len(dnsCapabilities(false)) != 0 || !slices.Equal(dnsCapabilities(true), []string{"dns.forward1", "dns.records1", "dns.root1"}) {
+		len(dnsCapabilities(false)) != 0 || !slices.Equal(dnsCapabilities(true), []string{"dns.forward1", "dns.records1", "dns.root1"}) ||
+		!slices.Contains(mtcpCapabilities(false, false, false), "session.proof1") {
 		t.Fatal("capabilities do not follow the deployment")
 	}
 }

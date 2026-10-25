@@ -41,6 +41,7 @@ type fakeStreams struct {
 
 	mu        sync.Mutex
 	requests  []mapsession.Request
+	proven    []bool // whether each stream's node key was proven
 	reports   []mapsession.ClientEnforcement
 	health    [][]mapsession.SiteHealth
 	dnsHealth [][]mapsession.ResolverHealth
@@ -55,10 +56,12 @@ type fakeStreams struct {
 	entered chan struct{}
 }
 
-func (streams *fakeStreams) Serve(ctx context.Context, _ control.AuthenticatedMachine, request mapsession.Request,
-	sink mapsession.StreamSink) error {
+func (streams *fakeStreams) Serve(ctx context.Context, machine control.AuthenticatedMachine,
+	request mapsession.Request, sink mapsession.StreamSink) error {
+	identity, _ := machine.BindNodeKey(request.NodeKey())
 	streams.mu.Lock()
 	streams.requests = append(streams.requests, request)
+	streams.proven = append(streams.proven, identity.Proven())
 	streams.mu.Unlock()
 	if err := sink.SendSnapshot(ctx, streams.snapshot); err != nil {
 		return err
@@ -258,6 +261,12 @@ func (registrations *fakeRegistrations) Register(_ context.Context, _ control.Au
 	defer registrations.mu.Unlock()
 	registrations.requests = append(registrations.requests, request)
 	return registrations.result, registrations.err
+}
+
+func (streams *fakeStreams) provenStreams() []bool {
+	streams.mu.Lock()
+	defer streams.mu.Unlock()
+	return slices.Clone(streams.proven)
 }
 
 func (registrations *fakeRegistrations) calls() []control.RegistrationRequest {

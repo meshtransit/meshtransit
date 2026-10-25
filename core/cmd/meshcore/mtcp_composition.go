@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"meshtransit.net/core/internal/domain/captivewindow"
@@ -33,8 +34,11 @@ var (
 // router.subnet.v1: subnet routes, when the deployment routes subnets;
 // router.health1: routers report their Sites' health with them;
 // routes.selection1: nodes report the router they use for each Site.
+// session.proof1: a node may prove its node key as its first record, and a
+// Kubernetes gateway must (mtcp-v1 §6.7).
 func mtcpCapabilities(deviceAliases, relayZones, subnetRoutes bool) []string {
-	capabilities := []string{"map.zstd", "disco.v2", "relay.mtrp1", "dns.split", "stats.path1", "nat.report1", "map.large1"}
+	capabilities := []string{"map.zstd", "disco.v2", "relay.mtrp1", "dns.split", "stats.path1", "nat.report1", "map.large1",
+		"session.proof1"}
 	if deviceAliases {
 		capabilities = append(capabilities, "device-alias.v1")
 	}
@@ -238,3 +242,31 @@ func composeDeviceLogout(mapConfig config.ControlMapConfig, runtime *postgresada
 // The map stream service takes resolver health reports (mtcp-v1 §8.6): the
 // MTCP adapter finds it by this interface, and drops the reports without it.
 var _ mtcpadapter.DNSHealthStreams = (*mapsession.StreamService)(nil)
+
+// mtcpTimestampGuard gives the MTCP server schema 226's answers in its own
+// terms.
+type mtcpTimestampGuard struct {
+	store *postgresadapter.MTCPTimestampStore
+}
+
+func (guard mtcpTimestampGuard) AcceptTimestamp(ctx context.Context, machineFingerprint [32]byte, nodeKey []byte,
+	timestampMS int64) (mtcpadapter.TimestampCheck, error) {
+	check, err := guard.store.AcceptTimestamp(ctx, machineFingerprint, nodeKey, timestampMS)
+	if err != nil {
+		return mtcpadapter.TimestampCheck{}, err
+	}
+	machine := mtcpadapter.MachineUnbound
+	switch check.MachineState {
+	case "current":
+		machine = mtcpadapter.MachineCurrent
+	case "retired":
+		machine = mtcpadapter.MachineRetired
+	}
+	return mtcpadapter.TimestampCheck{Accepted: check.Accepted, Gateway: check.Gateway, Machine: machine,
+		NodeCurrent: check.NodeCurrent}, nil
+}
+
+func (guard mtcpTimestampGuard) CommitGatewayTimestamp(ctx context.Context, machineFingerprint [32]byte,
+	nodeKey []byte, timestampMS int64) (bool, error) {
+	return guard.store.CommitGatewayTimestamp(ctx, machineFingerprint, nodeKey, timestampMS)
+}
