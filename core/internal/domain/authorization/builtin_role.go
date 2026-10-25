@@ -76,6 +76,7 @@ var builtinRoleCatalog = map[BuiltinRole]builtinRoleDefinition{
 			"resource.read", "resource.manage", "resource.export", "resource.transfer",
 			"resource_group.read", "resource_group.manage", "resource_group.transfer",
 			"share.read", "share.offer", "share.accept", "share.revoke",
+			"kubernetes_cluster.manage", "kubernetes_cluster.approve",
 		),
 	},
 	BuiltinRoleNetworkAdmin: {
@@ -94,6 +95,7 @@ var builtinRoleCatalog = map[BuiltinRole]builtinRoleDefinition{
 			"resource.read", "resource.manage", "resource.export",
 			"resource_group.read", "resource_group.manage",
 			"share.read", "share.offer", "share.accept", "share.revoke",
+			"kubernetes_cluster.manage", "kubernetes_cluster.approve",
 		),
 	},
 	BuiltinRoleITAdmin: {

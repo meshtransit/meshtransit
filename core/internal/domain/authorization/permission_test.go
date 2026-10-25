@@ -11,11 +11,11 @@ func TestPermissions(t *testing.T) {
 	t.Parallel()
 
 	permissions := authorization.Permissions()
-	if len(permissions) != 80 {
-		t.Fatalf("len(Permissions()) = %d, want 80", len(permissions))
+	if len(permissions) != 82 {
+		t.Fatalf("len(Permissions()) = %d, want 82", len(permissions))
 	}
-	if permissions[len(permissions)-1] != authorization.PermissionNetworkMemberManage {
-		t.Fatalf("last permission = %q, want network.member.manage appended", permissions[len(permissions)-1])
+	if permissions[len(permissions)-1] != authorization.PermissionKubernetesClusterApprove {
+		t.Fatalf("last permission = %q, want kubernetes_cluster.approve appended", permissions[len(permissions)-1])
 	}
 	permissionPattern := regexp.MustCompile(`^[a-z][a-z0-9_]*\.[a-z][a-z0-9_.]*$`)
 	seen := make(map[authorization.Permission]struct{}, len(permissions))

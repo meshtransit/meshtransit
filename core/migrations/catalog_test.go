@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 223 {
-		t.Fatalf("len(Catalog()) = %d, want 223", len(catalog))
+	if len(catalog) != 224 {
+		t.Fatalf("len(Catalog()) = %d, want 224", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 223 {
-		t.Fatalf("LatestVersion() = %d, want 223", LatestVersion())
+	if LatestVersion() != 224 {
+		t.Fatalf("LatestVersion() = %d, want 224", LatestVersion())
 	}
 }
 
@@ -6424,6 +6424,60 @@ func TestMigration223CountsOnlyZoneReceivers(t *testing.T) {
 	for _, forbidden := range []string{"BYPASSRLS", "DROP ", "ALTER TABLE"} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 223 contains %q", forbidden)
+		}
+	}
+}
+
+// Schema 224 keeps join keys out of ordinary registration, lets only its
+// own functions create gateway Devices, and keeps every reference to a
+// gateway out of groups, tags, sharing, routes, exits, Sites and DNS labels.
+func TestMigration224KubernetesClusters(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[223]
+	if migration.Version != 224 {
+		t.Fatalf("migration 224 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE OR REPLACE FUNCTION mesh_ops.resolve_registration_intake_scope(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.lock_registration_credential(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.lock_registration_credential_v2(",
+		"AND gateway_profile.device_kind <> 'standard'",
+		"IF v_gateway AND CURRENT_USER <> 'mesh_migrator' THEN",
+		"LANGUAGE plpgsql\nSECURITY INVOKER\nSET search_path = pg_catalog\nAS $function$\nDECLARE\n    v_gateway BOOLEAN;",
+		"v_gateway := COALESCE(mesh_ops.enrollment_profile_is_gateway_internal_v1(NEW.enrollment_profile_id), TRUE);",
+		"IF NOT v_row ? v_column THEN",
+		"IF p_code IS DISTINCT FROM (",
+		"|| pg_catalog.decode('00', 'hex') || v_before.machine_key",
+		"CREATE TRIGGER enrollment_credential_kubernetes_writer\nBEFORE INSERT OR UPDATE ON mesh.enrollment_credential",
+		"CREATE UNIQUE INDEX kubernetes_replica_request_approved_ordinal_uidx",
+		"WHEN (OLD.kind = 'kubernetes_gateway' OR NEW.kind = 'kubernetes_gateway')",
+		"ALTER TABLE mesh.kubernetes_cluster FORCE ROW LEVEL SECURITY;",
+		"ALTER TABLE mesh.kubernetes_replica_request FORCE ROW LEVEL SECURITY;",
+		"OR p_key_lifetime_seconds IS NULL OR p_key_lifetime_seconds NOT BETWEEN 300 AND 3600",
+		"OR p_uses IS NULL OR p_uses NOT BETWEEN 1 AND 8 THEN",
+		"IF v_waiting >= 2 * v_credential.max_uses THEN",
+		"completion_deadline = v_now + INTERVAL '15 minutes'",
+		"state = CASE WHEN request.failed_code_attempts + 1 >= 5 THEN 'cancelled' ELSE request.state END,",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 224 lacks %q", want)
+		}
+	}
+	for _, table := range []string{
+		"device_alias_client_readiness", "network_dns_name", "exit_pool_serving", "device_alias_lease", "device_dns_label",
+		"device_exit_offer", "device_group_member", "device_route_advertisement", "device_tag_assignment",
+		"direct_device_endpoint", "exit_pool_primary", "network_exit_node", "network_site_router",
+		"private_endpoint_route_intent", "private_endpoint_readiness", "resource_device_target", "site_primary",
+	} {
+		want := "CREATE TRIGGER " + table + "_kubernetes_gateway\nBEFORE INSERT OR UPDATE ON "
+		if !regexp.MustCompile(want).MatchString(migration.SQL) {
+			t.Errorf("schema 224 does not guard %s", table)
+		}
+	}
+	for _, forbidden := range []string{"BYPASSRLS", "DROP TABLE", "DROP FUNCTION", "DROP COLUMN", "DROP INDEX",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.kubernetes_cluster_grant_internal_v1"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 224 contains %q", forbidden)
 		}
 	}
 }

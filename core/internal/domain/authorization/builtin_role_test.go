@@ -49,12 +49,14 @@ func TestBuiltinRoleBoundaries(t *testing.T) {
 		notGranted []Permission
 	}{
 		{
-			role:    BuiltinRoleAdmin,
-			granted: []Permission{"member.manage", "network.member.manage", "device.transfer"},
+			role: BuiltinRoleAdmin,
+			granted: []Permission{"member.manage", "network.member.manage", "device.transfer",
+				"kubernetes_cluster.manage", "kubernetes_cluster.approve"},
 		},
 		{
-			role:    BuiltinRoleNetworkAdmin,
-			granted: []Permission{"policy.publish", "share.offer", "dns.manage", "route.approve"},
+			role: BuiltinRoleNetworkAdmin,
+			granted: []Permission{"policy.publish", "share.offer", "dns.manage", "route.approve",
+				"kubernetes_cluster.manage", "kubernetes_cluster.approve"},
 			notGranted: []Permission{"device.manage", "member.invite", "role_binding.manage", "billing.manage",
 				"network.member.manage"},
 		},
@@ -62,7 +64,8 @@ func TestBuiltinRoleBoundaries(t *testing.T) {
 			role: BuiltinRoleITAdmin,
 			granted: []Permission{"device.manage", "member.invite", "role_binding.manage", "session.revoke",
 				"network.member.manage"},
-			notGranted: []Permission{"policy.publish", "share.offer", "dns.manage", "billing.manage"},
+			notGranted: []Permission{"policy.publish", "share.offer", "dns.manage", "billing.manage",
+				"kubernetes_cluster.manage", "kubernetes_cluster.approve"},
 		},
 		{
 			role:       BuiltinRoleBillingAdmin,
@@ -73,7 +76,7 @@ func TestBuiltinRoleBoundaries(t *testing.T) {
 			role:    BuiltinRoleAuditor,
 			granted: []Permission{"audit.export", "policy.read", "member.read"},
 			notGranted: []Permission{"policy.publish", "device.manage", "billing.manage", "audit.read.secret",
-				"network.member.manage"},
+				"network.member.manage", "kubernetes_cluster.manage", "kubernetes_cluster.approve"},
 		},
 	} {
 		for _, permission := range test.granted {

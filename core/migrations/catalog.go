@@ -590,6 +590,7 @@ func Catalog() []Migration {
 		newMigration(221, "Device Groups whose Devices get no DNS from MeshTransit", networkDNSUnmanagedSQL),
 		newMigration(222, "DNS debt close-out: Device DNS labels taken one writer at a time", dnsDebtCloseoutSQL),
 		newMigration(223, "A DNS zone's page counts only the Devices that still receive it", dnsZoneReceiversSQL),
+		newMigration(224, "Kubernetes clusters, join keys and replica requests approved by code", kubernetesClustersSQL),
 	}
 }
 
@@ -1038,3 +1039,6 @@ var dnsDebtCloseoutSQL string
 
 //go:embed 000223_dns_zone_receivers.up.sql
 var dnsZoneReceiversSQL string
+
+//go:embed 000224_kubernetes_clusters.up.sql
+var kubernetesClustersSQL string

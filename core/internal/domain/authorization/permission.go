@@ -43,6 +43,12 @@ const (
 	PermissionDNSManage Permission = "dns.manage"
 	// PermissionNetworkMemberManage adds and removes the members of a network.
 	PermissionNetworkMemberManage Permission = "network.member.manage"
+	// PermissionKubernetesClusterManage creates and deletes the Kubernetes
+	// clusters of a network and issues their join keys.
+	PermissionKubernetesClusterManage Permission = "kubernetes_cluster.manage"
+	// PermissionKubernetesClusterApprove approves a replica's request to join
+	// a Kubernetes cluster, by the code the replica prints.
+	PermissionKubernetesClusterApprove Permission = "kubernetes_cluster.approve"
 
 	// PermissionMemberRead reads workspace membership.
 	PermissionMemberRead Permission = "member.read"
@@ -268,5 +274,7 @@ func Permissions() []Permission {
 		PermissionInterchangeRead,
 		PermissionInterchangeManage,
 		PermissionNetworkMemberManage,
+		PermissionKubernetesClusterManage,
+		PermissionKubernetesClusterApprove,
 	}
 }

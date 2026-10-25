@@ -109,6 +109,8 @@ func LookupPermission(permission Permission) (PermissionDefinition, bool) {
 		PermissionNetworkDelete,
 		PermissionDNSManage,
 		PermissionNetworkMemberManage,
+		PermissionKubernetesClusterManage,
+		PermissionKubernetesClusterApprove,
 		PermissionDeviceRead,
 		PermissionDeviceManage,
 		PermissionDeviceTransfer,
