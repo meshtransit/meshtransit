@@ -74,18 +74,21 @@ type Store struct {
 	root      *os.Root
 	protector recordProtector
 	clock     func() time.Time
+	// persistHook, when set, sees every write before it is installed.
+	persistHook PersistHook
 }
 
 // Open creates and opens stateDir/identities with owner-only permissions. The
 // store takes ownership of protector only when Open succeeds.
-func Open(stateDir string, protector *secretstore.Protector) (*Store, error) {
-	return openWith(stateDir, time.Now, protector)
+func Open(stateDir string, protector *secretstore.Protector, options ...Option) (*Store, error) {
+	return openWith(stateDir, time.Now, protector, options...)
 }
 
 func openWith(
 	stateDir string,
 	clock func() time.Time,
 	protector recordProtector,
+	options ...Option,
 ) (*Store, error) {
 	if !filepath.IsAbs(stateDir) {
 		return nil, errors.New("identity store directory must be absolute")
@@ -109,12 +112,17 @@ func openWith(
 		return nil, fmt.Errorf("opening confined identity store: %w", err)
 	}
 
-	return &Store{
+	store := &Store{
 		dir:       dir,
 		root:      root,
 		protector: protector,
 		clock:     clock,
-	}, nil
+	}
+	for _, option := range options {
+		option(store)
+	}
+
+	return store, nil
 }
 
 // Close releases the confined directory handle and clears the envelope key.
@@ -675,6 +683,8 @@ func (s *Store) decodeRecord(
 	return record, needsRotation || needsUpgrade, nil
 }
 
+// persistLocked is the only way a record reaches the directory, so the persist
+// hook sees every write; a future remove must go through the hook too.
 func (s *Store) persistLocked(ctx context.Context, record Record, replace bool) error {
 	encoded, err := s.encodeRecord(ctx, record)
 	if err != nil {
@@ -731,6 +741,11 @@ func (s *Store) persistLocked(ctx context.Context, record Record, replace bool) 
 		return fmt.Errorf("closing temporary identity record: %w", err)
 	}
 	finalName := recordFileName(record.profileID)
+	if s.persistHook != nil {
+		if err := s.persistHook(ctx, finalName, encoded); err != nil {
+			return fmt.Errorf("mirroring identity record: %w", err)
+		}
+	}
 	if replace {
 		if err := s.root.Rename(temporaryName, finalName); err != nil {
 			return fmt.Errorf("replacing identity record: %w", err)

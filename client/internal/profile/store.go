@@ -30,17 +30,20 @@ type Store struct {
 	state    Snapshot
 	clock    func() time.Time
 	idSource func() (string, error)
+	// persistHook, when set, sees every write before it is installed.
+	persistHook PersistHook
 }
 
 // Open initializes a profile store rooted at dir and loads any existing state.
-func Open(dir string) (*Store, error) {
-	return openWith(dir, time.Now, randomID)
+func Open(dir string, options ...Option) (*Store, error) {
+	return openWith(dir, time.Now, randomID, options...)
 }
 
 func openWith(
 	dir string,
 	clock func() time.Time,
 	idSource func() (string, error),
+	options ...Option,
 ) (*Store, error) {
 	if !filepath.IsAbs(dir) {
 		return nil, errors.New("profile store directory must be absolute")
@@ -62,6 +65,9 @@ func openWith(
 		state:    newSnapshot(),
 		clock:    clock,
 		idSource: idSource,
+	}
+	for _, option := range options {
+		option(store)
 	}
 	if err := store.load(); err != nil {
 		return nil, errors.Join(err, root.Close())
@@ -150,7 +156,7 @@ func (s *Store) Create(ctx context.Context, input CreateInput) (Profile, error) 
 	if err := validateSnapshot(next); err != nil {
 		return Profile{}, fmt.Errorf("validating next profile state: %w", err)
 	}
-	if err := s.persist(next); err != nil {
+	if err := s.persist(ctx, next); err != nil {
 		return Profile{}, err
 	}
 	s.state = next
@@ -188,7 +194,7 @@ func (s *Store) Activate(ctx context.Context, id string) (Profile, error) {
 
 	next := cloneSnapshot(s.state)
 	next.ActiveProfileID = id
-	if err := s.persist(next); err != nil {
+	if err := s.persist(ctx, next); err != nil {
 		return Profile{}, err
 	}
 	s.state = next
@@ -211,7 +217,7 @@ func (s *Store) SetDisconnected(ctx context.Context, disconnected bool) (bool, e
 	}
 	next := cloneSnapshot(s.state)
 	next.Disconnected = disconnected
-	if err := s.persist(next); err != nil {
+	if err := s.persist(ctx, next); err != nil {
 		return false, err
 	}
 	s.state = next
@@ -261,7 +267,9 @@ func (s *Store) load() error {
 	return nil
 }
 
-func (s *Store) persist(snapshot Snapshot) error {
+// persist is the only way the state reaches the directory, so the persist
+// hook sees every write.
+func (s *Store) persist(ctx context.Context, snapshot Snapshot) error {
 	encoded, err := json.MarshalIndent(snapshot, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encoding profile state: %w", err)
@@ -297,6 +305,11 @@ func (s *Store) persist(snapshot Snapshot) error {
 	}
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("closing temporary profile state: %w", err)
+	}
+	if s.persistHook != nil {
+		if err := s.persistHook(ctx, stateFileName, encoded); err != nil {
+			return fmt.Errorf("mirroring profile state: %w", err)
+		}
 	}
 
 	if err := s.root.Rename(temporaryName, stateFileName); err != nil {

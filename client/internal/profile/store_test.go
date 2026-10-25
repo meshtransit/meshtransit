@@ -285,7 +285,7 @@ func TestStore_Activate(t *testing.T) {
 	}
 }
 
-func newTestStore(t *testing.T) *Store {
+func newTestStore(t *testing.T, options ...Option) *Store {
 	t.Helper()
 
 	ids := []string{firstID, secondID}
@@ -303,7 +303,7 @@ func newTestStore(t *testing.T) *Store {
 		return time.Date(2026, time.September, 9, 12, 0, 0, 0, time.UTC)
 	}
 
-	store, err := openWith(t.TempDir(), clock, idSource)
+	store, err := openWith(t.TempDir(), clock, idSource, options...)
 	if err != nil {
 		t.Fatalf("openWith() error = %v", err)
 	}
