@@ -351,7 +351,9 @@ the old keys until it receives the response or a map whose self entry carries
 the new keys. After a crash it reconnects with the old node key in
 `ClientHello.node_key` and sends the same `RotateNodeKey` again; Core treats a
 request whose keys already are the Device's current keys as a successful
-repeat. Rotation does not need a new approval.
+repeat. Rotation does not need a new approval. This repeat does not apply to
+a Kubernetes gateway, whose former node key is refused at the gate (6.7): it
+proves its staged node key on a new session instead.
 
 Every key change advances the Network revision and resets the WireGuard
 sessions of the Device's peers, so a Device may change its node key at most 4
@@ -425,7 +427,11 @@ of the key's expiry and 10 minutes ahead. When the request is approved Core
 creates the Device and sends `authorized` on the same session; the node
 never polls. After the session drops or `expires_ms` passes, the node sends
 the same request again (same join key, same keys) and gets the same request
-back, or `authorized` once completed. A request rejected or cancelled
+back. Once the request completed the machine key is a gateway's, so such a
+session is refused by the gateway gate (6.7, "a Kubernetes gateway must
+prove its node key first"): a node that lost the `authorized` answer then
+proves its node key on a new session, and a `Pong` tells it the Device
+exists. A request rejected or cancelled
 (five wrong codes, or the key revoked) is answered `rejected{NOT_PERMITTED}`;
 one approved but not completed by its deadline `rejected{EXPIRED}` on the
 session that waited (a node asking again afterwards finds the key's use
