@@ -1,6 +1,7 @@
 package underlay
 
 import (
+	"context"
 	"net"
 	"net/netip"
 	"os"
@@ -96,33 +97,138 @@ func answerA(server *net.UDPConn, address [4]byte) {
 }
 
 // A system resolver that answers SERVFAIL, or does not answer, starts the
-// bypass; one that answers keeps the client on it.
-func TestWatchedConnStartsTheBypassOnFailure(t *testing.T) {
+// bypass, and the next lookup asks the upstreams; one that answers keeps
+// the client on it.
+func TestSystemResolverStartsTheBypassOnFailure(t *testing.T) {
 	t.Cleanup(func() { bypassUntil.Store(0) })
+	upstream := listenUDP(t)
+	go answerA(upstream, [4]byte{203, 0, 113, 8})
+	useUpstream(t, upstream)
+
+	servfail := listenUDP(t)
+	go answerRcode(servfail, dnsmessage.RCodeServerFailure)
+	silent := listenUDP(t)
+	answering := listenUDP(t)
+	go answerA(answering, [4]byte{203, 0, 113, 9})
 	for name, test := range map[string]struct {
-		response []byte
-		bypass   bool
+		server *net.UDPConn
+		bypass bool
 	}{
-		"answer":   {[]byte{0, 1, 0x81, 0x80}, false},
-		"servfail": {[]byte{0, 1, 0x81, 0x82}, true},
+		"answer":   {answering, false},
+		"servfail": {servfail, true},
+		"silent":   {silent, true},
 	} {
 		bypassUntil.Store(0)
-		client, server := net.Pipe()
-		go func() { _, _ = server.Write(test.response); _ = server.Close() }()
-		buffer := make([]byte, 16)
-		_, _ = (&watchedConn{Conn: client}).Read(buffer)
-		_ = client.Close()
+		_, _ = lookupThrough(t, test.server.LocalAddr().String())
 		if bypassing := bypassUntil.Load() > time.Now().UnixNano(); bypassing != test.bypass {
-			t.Errorf("%s: bypassing = %t", name, bypassing)
+			t.Errorf("%s: bypassing = %t, want %t", name, bypassing, test.bypass)
 		}
 	}
+
+	// Bypassing, the next lookup goes to the upstream, whichever server the
+	// resolver asked for.
+	bypassUntil.Store(time.Now().Add(time.Minute).UnixNano())
+	addresses, err := lookupThrough(t, silent.LocalAddr().String())
+	if err != nil || len(addresses) != 1 || addresses[0] != "203.0.113.8" {
+		t.Fatalf("LookupHost() while bypassing = %v, %v; want the upstream's answer", addresses, err)
+	}
+}
+
+func listenUDP(t *testing.T) *net.UDPConn {
+	t.Helper()
+	server, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+	return server
+}
+
+// useUpstream makes server the only resolved upstream for the test.
+func useUpstream(t *testing.T, server *net.UDPConn) {
+	t.Helper()
+	local, ok := server.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		t.Fatalf("local address %T", server.LocalAddr())
+	}
+	path := filepath.Join(t.TempDir(), "resolv.conf")
+	if err := os.WriteFile(path, []byte("nameserver 127.0.0.1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	previousPath, previousPort := upstreamResolvers, upstreamPort
+	upstreamResolvers, upstreamPort = path, uint16(local.Port) //nolint:gosec // G115: a port
+	t.Cleanup(func() { upstreamResolvers, upstreamPort = previousPath, previousPort })
+}
+
+// lookupThrough looks up a name with the system resolver at address, as
+// the client's own dials do.
+func lookupThrough(t *testing.T, address string) ([]string, error) {
+	t.Helper()
+	resolver := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return dialResolver(ctx, network, address)
+	}}
+	ctx, cancel := context.WithTimeout(t.Context(), 1500*time.Millisecond)
+	defer cancel()
+	return resolver.LookupHost(ctx, "control.example.test.")
+}
+
+// answerRcode answers every question with rcode until the socket closes.
+func answerRcode(server *net.UDPConn, rcode dnsmessage.RCode) {
+	buffer := make([]byte, 1500)
+	for {
+		count, remote, err := server.ReadFromUDPAddrPort(buffer)
+		if err != nil {
+			return
+		}
+		var query dnsmessage.Message
+		if query.Unpack(buffer[:count]) != nil {
+			continue
+		}
+		response := dnsmessage.Message{
+			Header:    dnsmessage.Header{ID: query.ID, Response: true, RCode: rcode},
+			Questions: query.Questions,
+		}
+		if packed, err := response.Pack(); err == nil {
+			_, _ = server.WriteToUDPAddrPort(packed, remote)
+		}
+	}
+}
+
+// The system resolver's socket stays a PacketConn through the watch: Go's
+// resolver frames its query by the connection's type, and a UDP socket it
+// takes for a stream gets each query with a TCP length prefix, which no
+// server answers. Every lookup then timed out to the bypass, and forever in
+// a pod, which has no resolved upstreams to bypass to.
+func TestSystemResolverLooksUpOverUDP(t *testing.T) {
+	t.Cleanup(func() { bypassUntil.Store(0) })
 	bypassUntil.Store(0)
-	client, server := net.Pipe()
+	server, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer func() { _ = server.Close() }()
-	_ = client.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
-	_, _ = (&watchedConn{Conn: client}).Read(make([]byte, 16))
-	_ = client.Close()
-	if bypassUntil.Load() <= time.Now().UnixNano() {
-		t.Error("a timeout did not start the bypass")
+	go answerA(server, [4]byte{203, 0, 113, 9})
+	address := server.LocalAddr().String()
+
+	conn, err := dialResolver(t.Context(), "udp", address)
+	if err != nil {
+		t.Fatalf("dialResolver() error = %v", err)
+	}
+	if _, ok := conn.(net.PacketConn); !ok {
+		t.Fatalf("dialResolver() gave a %T, not a PacketConn", conn)
+	}
+	_ = conn.Close()
+
+	resolver := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return dialResolver(ctx, network, address)
+	}}
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	addresses, err := resolver.LookupHost(ctx, "control.example.test.")
+	if err != nil || len(addresses) != 1 || addresses[0] != "203.0.113.9" {
+		t.Fatalf("LookupHost() = %v, %v", addresses, err)
+	}
+	if bypassUntil.Load() > time.Now().UnixNano() {
+		t.Fatal("a lookup the system resolver answered started the bypass")
 	}
 }

@@ -88,22 +88,35 @@ func dialResolver(ctx context.Context, network, address string) (net.Conn, error
 	if err != nil || !strings.HasPrefix(network, "udp") {
 		return conn, err
 	}
-	return &watchedConn{Conn: conn}, nil
+	// Go's resolver frames a query by the connection's type: a UDP socket
+	// must stay a PacketConn, or each query goes out with a TCP length
+	// prefix that no server answers.
+	if udp, ok := conn.(*net.UDPConn); ok {
+		return &watchedUDPConn{UDPConn: udp}, nil
+	}
+	return conn, nil
 }
 
-// watchedConn notes a system resolver that times out or answers SERVFAIL,
-// so the next attempt asks the upstreams directly.
-type watchedConn struct{ net.Conn }
+// watchedUDPConn notes a system resolver that times out or answers
+// SERVFAIL, so the next attempt asks the upstreams directly. It stays a
+// PacketConn.
+type watchedUDPConn struct{ *net.UDPConn }
 
-func (conn *watchedConn) Read(buffer []byte) (int, error) {
-	count, err := conn.Conn.Read(buffer)
+func (conn *watchedUDPConn) Read(buffer []byte) (int, error) {
+	count, err := conn.UDPConn.Read(buffer)
+	watchResponse(buffer, count, err)
+	return count, err
+}
+
+// watchResponse starts the bypass when the system resolver timed out or
+// answered SERVFAIL.
+func watchResponse(buffer []byte, count int, err error) {
 	var timeout net.Error
 	const rcodeServerFailure = 2
 	if (err != nil && errors.As(err, &timeout) && timeout.Timeout()) ||
 		(err == nil && count >= 4 && buffer[3]&0x0f == rcodeServerFailure) {
 		bypassUntil.Store(time.Now().Add(bypassFor).UnixNano())
 	}
-	return count, err
 }
 
 // readUpstreams returns the nameservers of path, other than any in the
