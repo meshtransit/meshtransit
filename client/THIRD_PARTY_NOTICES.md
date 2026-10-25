@@ -1,10 +1,12 @@
 # Third-party notices: client
 
-`meshd`, `meshnetd` and `meshctl` contain only MeshTransit code and the modules below.
+`meshd`, `meshnetd` and `meshctl` contain only MeshTransit code and the modules below. So will the planned Kubernetes gateway `meshgw` (not yet built; only its tests link the rows marked `meshgw` today).
 
 | Module | Used for | License |
 | --- | --- | --- |
 | `golang.zx2c4.com/wireguard` | Linux encrypted data plane | MIT |
+| `gvisor.dev/gvisor` | the userspace TCP/IP stack behind `golang.zx2c4.com/wireguard/tun/netstack`, used only by `meshgw` | Apache-2.0, parts BSD-3-Clause and MIT |
+| `github.com/google/btree` | TCP selective-acknowledgement bookkeeping inside `gvisor.dev/gvisor` (`meshgw`) | Apache-2.0 |
 | `github.com/vishvananda/netlink`, `github.com/vishvananda/netns` | Linux routes, addresses and namespaces | Apache-2.0 |
 | `github.com/google/nftables` | Linux subnet router packet rules (`meshnetd`) | Apache-2.0 |
 | `github.com/mdlayher/netlink`, `github.com/mdlayher/socket` | netlink sockets used by `github.com/google/nftables` | MIT |
@@ -12,11 +14,12 @@
 | `github.com/coder/websocket` | MTCP and relay WebSocket fallback | ISC |
 | `github.com/klauspost/compress` | MTCP message compression | BSD-3-Clause, parts Apache-2.0 |
 | `google.golang.org/protobuf` | MTCP messages | BSD-3-Clause |
-| `golang.org/x/crypto`, `golang.org/x/net`, `golang.org/x/sys` | peer-probe cryptography, DNS messages, system calls | BSD-3-Clause |
+| `golang.org/x/crypto`, `golang.org/x/net`, `golang.org/x/sync`, `golang.org/x/sys`, `golang.org/x/text` | peer-probe cryptography, DNS messages, concurrency helpers, system calls, text handling used by these modules | BSD-3-Clause |
+| `golang.org/x/exp`, `golang.org/x/time` | generic constraints and rate limiting inside `gvisor.dev/gvisor` (`meshgw`) | BSD-3-Clause |
 | `golang.org/x/mobile` | the Java and Objective-C bindings of `client/mobile` that the Android and iOS apps embed (ADR-052) | BSD-3-Clause |
 
 `golang.org/x/mod` and `golang.org/x/tools` (BSD-3-Clause) are required by the `gomobile` and `gobind` build tools pinned in `go.mod`; they run at build time and are not part of any shipped binary.
 
-The complete direct-dependency license texts are reproduced under `client/third_party/licenses/`. Product commands, API names, and documentation must not imply endorsement by any dependency's copyright holders or contributors.
+The license texts of every module in the table above are reproduced under `client/third_party/licenses/`. Product commands, API names, and documentation must not imply endorsement by any dependency's copyright holders or contributors.
 
 Before a release, regenerate the module graph, verify `go.sum`, scan reachable dependencies, and update this notice if the dependency set or license obligations change.

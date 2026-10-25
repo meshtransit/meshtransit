@@ -19,9 +19,11 @@ require (
 	go.uber.org/goleak v1.3.0
 	golang.org/x/net v0.60.0
 	golang.zx2c4.com/wireguard/windows v0.5.3
+	gvisor.dev/gvisor v0.0.0-20260224225140-573d5e7127a8
 )
 
 require (
+	github.com/google/btree v1.1.2 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.23 // indirect
@@ -33,7 +35,6 @@ require (
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/tools v0.49.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
-	gvisor.dev/gvisor v0.0.0-20260224225140-573d5e7127a8 // indirect
 )
 
 require (

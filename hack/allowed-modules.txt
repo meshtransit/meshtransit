@@ -36,6 +36,7 @@ github.com/go-logr/logr
 github.com/go-logr/stdr
 github.com/go-sql-driver/mysql
 github.com/go-viper/mapstructure/v2
+github.com/google/btree
 github.com/google/go-cmp
 github.com/google/nftables
 github.com/google/s2a-go
