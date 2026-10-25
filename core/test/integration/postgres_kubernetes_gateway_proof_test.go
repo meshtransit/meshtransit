@@ -15,6 +15,8 @@ import (
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	"meshtransit.net/core/internal/control"
 	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/kubecluster"
+	"meshtransit.net/core/internal/domain/node"
 )
 
 // assertGatewaySessionProof checks schema 226 against a live gateway Device:
@@ -274,5 +276,160 @@ func assertGatewayMapThroughCore(ctx context.Context, t *testing.T, runtimePool 
 	snapshot, err := store.Load(ctx, proven)
 	if err != nil || snapshot.NodeKey() != keys.node {
 		t.Fatalf("a proven gateway session = %v, %v", snapshot.NodeKey(), err)
+	}
+}
+
+// assertGatewayMachineKeyRotation checks schema 227 through Core's store: the
+// gateway moves to a new machine key, the former one is retired and opens
+// nothing, no key is used twice, and 30 keys an hour is the limit.
+func assertGatewayMachineKeyRotation(ctx context.Context, t *testing.T, admin, runtime *pgx.Conn,
+	runtimePool *postgresadapter.Pool, keys replicaKeys, deviceID string) {
+	t.Helper()
+	store, err := postgresadapter.NewKubernetesGatewayKeyStore(runtimePool, postgresadapter.RegistrationTransactionOptions{
+		StatementTimeout: 5 * time.Second, LockTimeout: 2 * time.Second, IdleTimeout: 5 * time.Second,
+		AddressCandidateLimit: 64,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotate := func(from, to node.MachineKey) error {
+		return store.RotateGatewayMachineKey(ctx, kubecluster.MachineKeyRotation{MachineKey: from, NodeKey: keys.node,
+			NewMachineKey: to, OperationID: mustPublicID(t)})
+	}
+	former := keys.machine
+	next := newReplicaKeys(t).machine
+	if err := rotate(former, next); err != nil {
+		t.Fatalf("RotateGatewayMachineKey() = %v", err)
+	}
+	formerFingerprint, nextFingerprint := former.Fingerprint(), next.Fingerprint()
+	var epoch int64
+	var expired, history, timestamps int
+	if err := admin.QueryRow(ctx, `SELECT device.current_machine_key_epoch,
+    (SELECT pg_catalog.count(*) FROM mesh.device_machine_key_epoch AS machine
+     WHERE machine.device_id = device.id AND machine.fingerprint = $2 AND machine.state = 'expired'),
+    (SELECT pg_catalog.count(*) FROM mesh_ops.kubernetes_gateway_machine_key_history AS history
+     WHERE history.device_id = device.id AND (history.fingerprint = $2 AND history.retired_at IS NOT NULL
+        OR history.fingerprint = $3 AND history.retired_at IS NULL)),
+    (SELECT pg_catalog.count(*) FROM mesh_ops.mtcp_machine_timestamp AS stored
+     WHERE stored.machine_fingerprint = $2)
+FROM mesh.device AS device WHERE device.public_id = $1::UUID`, deviceID, formerFingerprint[:],
+		nextFingerprint[:]).Scan(&epoch, &expired, &history, &timestamps); err != nil || epoch != 2 || expired != 1 ||
+		history != 2 || timestamps != 0 {
+		t.Fatalf("after rotation: epoch %d expired %d history %d timestamps %d, %v", epoch, expired, history,
+			timestamps, err)
+	}
+	assertKubernetesEvent(ctx, t, admin, "device", deviceID, "device.machine_key_rotated")
+	if err := rotate(former, newReplicaKeys(t).machine); !errors.Is(err, kubecluster.ErrNotFound) {
+		t.Fatalf("the former machine key rotated: %v", err)
+	}
+	if err := rotate(next, former); !errors.Is(err, kubecluster.ErrMachineKeyUsed) {
+		t.Fatalf("a former machine key was used again: %v", err)
+	}
+	var state string
+	nodeKey := keys.node.Bytes()
+	if err := runtime.QueryRow(ctx, `SELECT machine_state FROM mesh_ops.accept_mtcp_timestamp_v2($1, $2, $3)`,
+		formerFingerprint[:], nodeKey[:], int64(10_000)).Scan(&state); err != nil || state != "retired" {
+		t.Fatalf("former machine key = %q, %v", state, err)
+	}
+	// A key another Network's ordinary Device once held, which no unique
+	// index guards, or one only a gateway history names, is refused by the
+	// function's own check (MTK13), which sees every Network.
+	formerOrdinary := newReplicaKeys(t).machine
+	insertExpiredOrdinaryMachineKey(ctx, t, admin, formerOrdinary)
+	if code := gatewayRotationState(ctx, t, runtime, next, keys.node, formerOrdinary); code != "MTK13" {
+		t.Fatalf("an ordinary Device's former machine key: SQLSTATE %q", code)
+	}
+	retired := newReplicaKeys(t).machine
+	retiredFingerprint := retired.Fingerprint()
+	if _, err := admin.Exec(ctx, `INSERT INTO mesh_ops.kubernetes_gateway_machine_key_history
+    (fingerprint, device_id, created_at, retired_at)
+SELECT $1, device.id, pg_catalog.now(), pg_catalog.now() FROM mesh.device AS device WHERE device.public_id = $2::UUID`,
+		retiredFingerprint[:], deviceID); err != nil {
+		t.Fatal(err)
+	}
+	if code := gatewayRotationState(ctx, t, runtime, next, keys.node, retired); code != "MTK13" {
+		t.Fatalf("a key in a gateway history: SQLSTATE %q", code)
+	}
+	if err := rotate(next, retired); !errors.Is(err, kubecluster.ErrMachineKeyUsed) {
+		t.Fatalf("the store took a key in a gateway history: %v", err)
+	}
+	// 30 rotations within an hour: one so far.
+	current := next
+	for range kubecluster.MaximumMachineKeyRotations - 1 {
+		following := newReplicaKeys(t).machine
+		if err := rotate(current, following); err != nil {
+			t.Fatalf("rotation within the budget: %v", err)
+		}
+		current = following
+	}
+	var limited *kubecluster.RotationLimitedError
+	if err := rotate(current, newReplicaKeys(t).machine); !errors.As(err, &limited) ||
+		limited.RetryAfter <= 0 || limited.RetryAfter > time.Hour {
+		t.Fatalf("a rotation past the budget: %v", err)
+	}
+}
+
+// gatewayRotationState calls schema 227's function as Core's store would and
+// returns the SQLSTATE it raised, or "" when it rotated (rolled back).
+func gatewayRotationState(ctx context.Context, t *testing.T, runtime *pgx.Conn, from node.MachineKey,
+	nodeKey node.Key, to node.MachineKey) string {
+	t.Helper()
+	tx, err := runtime.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	fingerprint, key := from.Fingerprint(), nodeKey.Bytes()
+	if _, err := tx.Exec(ctx, `SELECT mesh_ops.mark_session_proven_v1($1, $2)`, fingerprint[:], key[:]); err != nil {
+		t.Fatal(err)
+	}
+	var workspaceID, networkID string
+	if err := tx.QueryRow(ctx, `SELECT workspace_public_id::TEXT, network_public_id::TEXT
+FROM mesh_ops.resolve_map_session_scope($1, $2)`, fingerprint[:], key[:]).Scan(&workspaceID, &networkID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT mesh_ops.set_network_scope($1::UUID, $2::UUID)`, workspaceID,
+		networkID); err != nil {
+		t.Fatal(err)
+	}
+	next, nextFingerprint := to.Bytes(), to.Fingerprint()
+	_, err = tx.Exec(ctx, `SELECT * FROM mesh_ops.rotate_kubernetes_gateway_machine_key_v1(
+    $1, $2, $3, $4, pg_catalog.uuidv7(), pg_catalog.uuidv7())`, fingerprint[:], key[:], next[:], nextFingerprint[:])
+	var pgError *pgconn.PgError
+	if errors.As(err, &pgError) {
+		return pgError.Code
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ""
+}
+
+// insertExpiredOrdinaryMachineKey gives the fixture's ordinary Device, in
+// another Network, a former machine key, as a rotation would have left it.
+func insertExpiredOrdinaryMachineKey(ctx context.Context, t *testing.T, admin *pgx.Conn, machine node.MachineKey) {
+	t.Helper()
+	device, _, _ := activeFixtureDeviceKeys(ctx, t, admin)
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SET LOCAL session_replication_role = replica`); err != nil {
+		t.Fatal(err)
+	}
+	key, fingerprint := machine.Bytes(), machine.Fingerprint()
+	if _, err := tx.Exec(ctx, `INSERT INTO mesh.device_machine_key_epoch (
+    public_id, workspace_id, network_id, device_id, epoch, public_key, fingerprint, valid_from, valid_until, state,
+    created_at, updated_at)
+SELECT pg_catalog.uuidv7(), device.workspace_id, device.network_id, device.id,
+    (SELECT pg_catalog.max(epoch) + 100 FROM mesh.device_machine_key_epoch WHERE device_id = device.id),
+    $2, $3, pg_catalog.now() - INTERVAL '2 days', pg_catalog.now() - INTERVAL '1 day', 'expired',
+    pg_catalog.now() - INTERVAL '2 days', pg_catalog.now() - INTERVAL '1 day'
+FROM mesh.device AS device WHERE device.public_id = $1::UUID`, device.String(), key[:], fingerprint[:]); err != nil {
+		t.Fatalf("insert a former machine key: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
 	}
 }

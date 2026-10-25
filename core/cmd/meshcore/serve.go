@@ -642,6 +642,12 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		if len(browserControl) == 1 {
 			deps.browser, deps.origin = &browserControl[0], processConfig.BrowserRegistration.Origin
 		}
+		gatewayKeys, keysErr := composeGatewayKeys(processConfig.Enrollment.Registration, storagePools.runtime)
+		if keysErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "mtcp_composition_failure", "error", keysErr)
+			return 1
+		}
+		deps.gatewayKeys = gatewayKeys
 		if processConfig.KubernetesJoin {
 			joins, joinErr := composeClusterJoins(*processConfig.Enrollment, storagePools.runtime)
 			if joinErr != nil {

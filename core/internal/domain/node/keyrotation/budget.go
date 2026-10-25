@@ -13,6 +13,9 @@ import (
 const (
 	RotationLimit  = 4
 	RotationWindow = time.Hour
+	// GatewayRotationLimit is a Kubernetes gateway's budget: it rotates its
+	// keys at every start (mtcp-v1 §6.7).
+	GatewayRotationLimit = 30
 )
 
 // ErrRateLimited classifies a rotation refused by the per-Device budget; the
@@ -33,8 +36,12 @@ func (err *RateLimitedError) Is(target error) bool { return target == ErrRateLim
 // against for a Device at current: the oldest of the last RotationLimit
 // epochs a key change created. It reports false while the Device changed its
 // key fewer than RotationLimit times (epoch 1 is the registration's key).
-func BudgetEpoch(current int64) (int64, bool) {
-	epoch := current - RotationLimit + 1
+func BudgetEpoch(current int64, gateway bool) (int64, bool) {
+	limit := int64(RotationLimit)
+	if gateway {
+		limit = GatewayRotationLimit
+	}
+	epoch := current - limit + 1
 	return epoch, epoch >= 2
 }
 
@@ -51,6 +58,6 @@ func (resolution Resolution) rotationWait(now time.Time) time.Duration {
 // when an epoch is old enough to count. Its order against the current
 // epoch's start is not checked: replicas' clocks may differ slightly.
 func (resolution Resolution) budgetEvidenceValid() bool {
-	_, counts := BudgetEpoch(resolution.nodeKeyEpoch)
+	_, counts := BudgetEpoch(resolution.nodeKeyEpoch, resolution.gateway)
 	return counts != resolution.budgetWindowStart.IsZero()
 }

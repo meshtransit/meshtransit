@@ -355,7 +355,7 @@ repeat. Rotation does not need a new approval.
 
 Every key change advances the Network revision and resets the WireGuard
 sessions of the Device's peers, so a Device may change its node key at most 4
-times within one hour (section 14). Core checks it under the Device's lock,
+times within one hour, a Kubernetes gateway 30 (6.8, section 14). Core checks it under the Device's lock,
 so it holds across replicas. A rotation over the budget is answered
 `Error{NOT_PERMITTED, retry_after_ms}`.
 
@@ -493,6 +493,35 @@ on.
 A copy of a gateway's current machine and node keys (its Kubernetes Secret)
 can still connect as the gateway and replace the real pod's session until
 an administrator removes the Device; a copy of former keys gets nothing.
+
+### 6.8 Gateway machine key rotation
+
+A Kubernetes gateway moves to a new machine key at every start, so a copy of
+its former Secret opens no session. On a session that proved its node key
+(6.7) it sends `RotateMachineKey{new_machine_key, proof}`:
+
+```
+proof = BLAKE2s-256(key = X25519(new_machine_key, control_key),
+                    "meshtransit/mtcp-machine-key-rotation/v1" || 0x00 || h || new_machine_key)
+```
+
+Core checks the proof, moves the Device to the new key in one transaction
+(the former key's epoch expires and stays in a history; no Device or gateway
+ever uses a key again; its handshake timestamp is forgotten), records
+`device.machine_key_rotated`, answers `RotateMachineKeyResponse{}` and ends
+the session. The node reconnects with the new key and proves its node key
+again; peers see the change as one map change. Core commits the rotation
+even when the session ends meanwhile.
+
+The node stores the new key as staged before it sends the request and keeps
+it until a later rotation's response: after a crash it tries its newest
+staged key first, then the former ones. Refusals are `Error`, never fatal:
+`NOT_PERMITTED` when the key was used before or the gateway already changed
+its machine key 30 times within the hour (then with `retry_after_ms`), which
+also tells the node to drop the staged key; `NOT_AUTHORIZED` when the
+session's keys are no longer the gateway's; `INVALID` for a bad key or
+proof; `NOT_PERMITTED` on any session that is not a gateway's. A gateway
+also rotates its node key (6.3) at every start, at most 30 times an hour.
 
 ## 7. Map
 
@@ -1313,7 +1342,7 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `stats.path1` | Node sends `PathStatsReport` |
 | `nat.report1` | Node sends NAT classification in `EndpointReport` |
 | `map.large1` | Node applies maps of up to 10,000 peers; without it Core sends at most 256 |
-| `session.proof1` | Core accepts `NodeKeyProof` as a session's first record (6.7); a Kubernetes gateway requires it |
+| `session.proof1` | Core accepts `NodeKeyProof` as a session's first record (6.7) and `RotateMachineKey` from gateways (6.8); a Kubernetes gateway requires it |
 | `routes.subnet.v1` | Node applies `routes` (7.6) |
 | `router.subnet.v1` | Node can forward into Sites: it applies `served` (7.6) and reports `route_digest` (8.4) |
 | `router.health1` | Node sends `RouteHealthReport` (8.3); only with `router.subnet.v1` (Sites) or `router.exit.v1` (its Exit Pool) |
@@ -1334,7 +1363,8 @@ Unknown names are ignored. Core sends a feature only when both sides list it.
 | Concurrent sessions per Core replica | configurable (default 4096) |
 | New handshakes per source (IPv4 address or IPv6 /64) | 10/s burst 50 by default, configurable; before any Noise work |
 | Unauthenticated connections per source (IPv4 address or IPv6 /64) | handshakes in progress plus established sessions that have not yet received a map snapshot; by default the handshake burst plus 10 seconds at the handshake rate (150), configurable |
-| Node key changes per Device | 4 per hour (6.3); over it `Error{NOT_PERMITTED, retry_after_ms}` |
+| Node key changes per Device | 4 per hour, 30 for a Kubernetes gateway (6.3); over it `Error{NOT_PERMITTED, retry_after_ms}` |
+| Machine key changes per Kubernetes gateway | 30 per hour (6.8); over it `Error{NOT_PERMITTED, retry_after_ms}` |
 | Endpoint changes a Device's peers see | 1 per 5 s by default, configurable (8.1); the latest is always delivered |
 | New Devices a person adds to one Network by browser sign-in | 20 per 24 hours, revoked ones included; over it `Rejected{NOT_PERMITTED}`. Resuming a Device is not adding one. |
 | `RegisterRequest` and `RotateNodeKey` per session | 4 at once, then 1 per second; over it `Error{OVERLOADED, retry_after_ms}` |
@@ -1405,12 +1435,12 @@ secrets or other tenants' data, and is at most 512 bytes.
 | C15 | Stolen machine key renews an expired Device | `auth.resume` only before expiry unless policy enables auto-renewal |
 | C16 | Shared peers reveal another Workspace's data | Foreign peers carry no owner or provider names; foreign Network revisions never listed |
 | C17 | One source holds every session slot of a replica with sessions that never register, kept alive by Pings | Such sessions count as unauthenticated for their source until they receive a map, bounded per source, and close after the unproven lifetime (section 14) |
-| C18 | One Device churns its whole Network by rotating its node key in a loop, each change advancing the revision and resetting its peers' WireGuard sessions | At most 4 key changes per Device per hour, checked under the Device lock; registration and rotation requests are also rate limited per session (sections 6.3, 14). A refused request still briefly takes the Network's revision lock; the per-source handshake rate bounds how often |
+| C18 | One Device churns its whole Network by rotating its node key in a loop, each change advancing the revision and resetting its peers' WireGuard sessions | At most 4 key changes per Device per hour (a Kubernetes gateway, which re-keys at every start: 30 node key and 30 machine key changes, so whoever holds its current Secret can cause about 60 an hour until an administrator removes it), checked under the Device lock; registration and rotation requests are also rate limited per session (sections 6.3, 14). A refused request still briefly takes the Network's revision lock; the per-source handshake rate bounds how often |
 | C19 | One Device floods its Network with endpoint changes, each costing one map delta per peer | At most one announced change per Device per announce interval, gated atomically in Redis across sessions and replicas; the latest change is still delivered (section 8.1) |
 | C20 | A Device announces endpoints that point its peers' probes at a victim: the overlay, a relay, Core | Core drops overlay, special-purpose, relay and operator-denied addresses, also through NAT64, when a report arrives and when it sends a map; nodes refuse overlay and relay addresses as candidates; each node's pings to a peer's unanswered candidates are bounded by a backoff and a per-Device budget: at most 144 at once and 0.4/s in the long run, so a victim named by M Devices receives at most 0.4 × M pings/s from each node that has them in its map (section 8.1, disco-v2 §4.4) |
 | C21 | One session makes Core work in a loop with cheap messages: map resyncs that each encode the whole map, enforcement reports that each write Redis, browser approvals that each write the database, or a flood of any message | Per-session budgets for each, and one for all messages and bytes (section 14); a node that follows the protocol stays well inside them, and reconnecting is bounded by the per-source handshake rate |
 | C22 | A leaked cluster join key makes its holder a Kubernetes gateway, which sees who connects and carries kubectl traffic | The key opens only a request with no Device; an administrator approves it by a code bound to the replica's own keys, read from the real pod's log and checked by Core and its database; five wrong codes cancel; at most twice the key's uses wait; the key lives an hour at most (6.6) |
-| C23 | A copy of a Kubernetes gateway's Secret, or an older Core, serves, logs out or re-keys the gateway | A gateway proves its node key as its session's first record; until then nothing is established or replaced and its timestamp is not recorded; the database resolves a gateway only for a transaction marked proven, which older Core never marks; gateways cannot log out or register again; former machine keys are kept and refused (6.7). A copy of the current Secret remains a gateway until an administrator removes it |
+| C23 | A copy of a Kubernetes gateway's Secret, or an older Core, serves, logs out or re-keys the gateway | A gateway proves its node key as its session's first record; until then nothing is established or replaced and its timestamp is not recorded; the database resolves a gateway only for a transaction marked proven, which older Core never marks; gateways cannot log out or register again; former machine keys are kept and refused, and a gateway moves to a new machine key at every start (6.7, 6.8). A copy of the current Secret remains a gateway until an administrator removes it |
 
 ## 17. Test vectors
 

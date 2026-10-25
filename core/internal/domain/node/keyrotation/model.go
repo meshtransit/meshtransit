@@ -120,6 +120,8 @@ type OpenResolutionParams struct {
 	// BudgetWindowStart is when the epoch BudgetEpoch names became active;
 	// it must be zero exactly when BudgetEpoch reports false.
 	BudgetWindowStart time.Time
+	// Gateway: the Device is a Kubernetes gateway, with its own budget.
+	Gateway bool
 }
 
 // Resolution is either locked mutable authority or a converged replay result.
@@ -137,6 +139,7 @@ type Resolution struct {
 	nodeKeyVersion    int64
 	nodeKeyValidFrom  time.Time
 	budgetWindowStart time.Time
+	gateway           bool
 	completed         Result
 }
 
@@ -156,6 +159,7 @@ func NewOpenResolution(params OpenResolutionParams) (Resolution, error) {
 		nodeKeyVersion:    params.NodeKeyVersion,
 		nodeKeyValidFrom:  params.NodeKeyValidFrom.UTC(),
 		budgetWindowStart: params.BudgetWindowStart.UTC(),
+		gateway:           params.Gateway,
 	}
 	if !resolution.isOpenValid() {
 		return Resolution{}, ErrInvalidResolution

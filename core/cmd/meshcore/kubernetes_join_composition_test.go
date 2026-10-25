@@ -14,3 +14,11 @@ func TestComposeClusterJoinsNeedsARuntimePool(t *testing.T) {
 		t.Fatalf("composeClusterJoins(nil pool) = %v, %v", joins, err)
 	}
 }
+
+func TestComposeGatewayKeysNeedsARuntimePool(t *testing.T) {
+	t.Parallel()
+	if store, err := composeGatewayKeys(config.RegistrationConfig{}, nil); store != nil ||
+		!errors.Is(err, errInvalidKubernetesJoinComposition) {
+		t.Fatalf("composeGatewayKeys(nil pool) = %v, %v", store, err)
+	}
+}

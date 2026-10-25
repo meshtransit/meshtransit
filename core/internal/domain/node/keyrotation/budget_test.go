@@ -82,9 +82,20 @@ func TestBudgetEpoch(t *testing.T) {
 		epoch  int64
 		counts bool
 	}{1: {}, 4: {}, 5: {epoch: 2, counts: true}, 12: {epoch: 9, counts: true}} {
-		epoch, counts := keyrotation.BudgetEpoch(current)
+		epoch, counts := keyrotation.BudgetEpoch(current, false)
 		if counts != want.counts || (counts && epoch != want.epoch) {
 			t.Errorf("BudgetEpoch(%d) = %d, %t; want %d, %t", current, epoch, counts, want.epoch, want.counts)
+		}
+	}
+	// A Kubernetes gateway rotates at every start: 30 an hour.
+	for current, want := range map[int64]struct {
+		epoch  int64
+		counts bool
+	}{5: {}, 30: {}, 31: {epoch: 2, counts: true}, 40: {epoch: 11, counts: true}} {
+		epoch, counts := keyrotation.BudgetEpoch(current, true)
+		if counts != want.counts || (counts && epoch != want.epoch) {
+			t.Errorf("gateway BudgetEpoch(%d) = %d, %t; want %d, %t", current, epoch, counts, want.epoch,
+				want.counts)
 		}
 	}
 }

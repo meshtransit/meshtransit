@@ -111,6 +111,8 @@ type mtcpDependencies struct {
 	// clusterJoins, when set, accepts Kubernetes cluster joins
 	// (MESHTRANSIT_KUBERNETES_JOIN).
 	clusterJoins mtcpadapter.ClusterJoins
+	// gatewayKeys moves Kubernetes gateways to new machine keys.
+	gatewayKeys kubecluster.MachineKeyRotations
 }
 
 // mtcpMapSessions is mapsession.Service: endpoints and snapshot opening.
@@ -189,6 +191,7 @@ func composeMTCP(
 		applicationOptions.ApprovalOrigin = deps.origin
 		applicationOptions.ApprovalTTL = min(browserRegistrationTTL, mtcpApprovalTTL)
 	}
+	applicationOptions.MachineKeyRotations = deps.gatewayKeys
 	if deps.clusterJoins != nil {
 		applicationOptions.ClusterJoins = deps.clusterJoins
 		applicationOptions.ClusterJoinSecrets = kubecluster.SystemSecrets{}

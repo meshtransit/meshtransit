@@ -32,6 +32,12 @@ merge (2026-10-09) are kept below.
   history and are never used again. **Deploy rule:** turn
   `MESHTRANSIT_KUBERNETES_JOIN` on only when every replica runs K1a1.4 or
   later, and never roll Core back below K1a1.4 while gateway Devices exist.
+- Kubernetes gateways K1a1.4b (Core, schema 227): a gateway moves to a new
+  machine key with `RotateMachineKey` (mtcp-v1 §6.8) on a proven session,
+  recorded as `device.machine_key_rotated`; former keys are never used
+  again and lose their handshake timestamp. Gateways may change their
+  machine key and their node key 30 times an hour each (other Devices
+  keep 4 node key changes).
 - **Upgrade note:** `MESHTRANSIT_DNS_SUFFIX` may no longer be a public
   suffix itself (`co.uk`, `github.io`); Core with such a value stops at
   configuration load. Use a domain you own or a private name.

@@ -593,6 +593,7 @@ func Catalog() []Migration {
 		newMigration(224, "Kubernetes clusters, join keys and replica requests approved by code", kubernetesClustersSQL),
 		newMigration(225, "A replica's session completes its approved request into a gateway Device", kubernetesReplicaCompletionSQL),
 		newMigration(226, "A Kubernetes gateway proves its node key on every session", kubernetesGatewaySessionProofSQL),
+		newMigration(227, "A Kubernetes gateway moves to a new machine key", kubernetesGatewayMachineKeyRotationSQL),
 	}
 }
 
@@ -1050,3 +1051,6 @@ var kubernetesReplicaCompletionSQL string
 
 //go:embed 000226_kubernetes_gateway_session_proof.up.sql
 var kubernetesGatewaySessionProofSQL string
+
+//go:embed 000227_kubernetes_gateway_machine_key_rotation.up.sql
+var kubernetesGatewayMachineKeyRotationSQL string

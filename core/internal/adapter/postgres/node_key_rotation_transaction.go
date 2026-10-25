@@ -27,6 +27,8 @@ const (
 type nodeKeyRotationLockedIDs struct {
 	deviceInternalID  int64
 	nodeKeyInternalID int64
+	// gateway: the Device is a Kubernetes gateway (its own budget).
+	gateway bool
 }
 
 type nodeKeyRotationAuditHead struct {
@@ -138,6 +140,7 @@ func (transaction *nodeKeyRotationTransaction) resolveLocked(
 		&nodeKeyVersion,
 		&currentNodeKeyBytes,
 		&nodeKeyValidFrom,
+		&transaction.locked.gateway,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return keyrotation.Resolution{}, keyrotation.ErrNotFound
@@ -189,6 +192,7 @@ func (transaction *nodeKeyRotationTransaction) resolveLocked(
 			NodeKeyVersion:    nodeKeyVersion,
 			NodeKeyValidFrom:  nodeKeyValidFrom,
 			BudgetWindowStart: budgetStart,
+			Gateway:           transaction.locked.gateway,
 		})
 		if err != nil {
 			return keyrotation.Resolution{}, ErrNodeKeyRotationEvidence
@@ -214,7 +218,7 @@ func (transaction *nodeKeyRotationTransaction) resolveLocked(
 // readBudgetStart returns when the epoch the rotation budget compares
 // against began, zero while the Device has changed its key too few times.
 func (transaction *nodeKeyRotationTransaction) readBudgetStart(ctx context.Context, current int64) (time.Time, error) {
-	epoch, counts := keyrotation.BudgetEpoch(current)
+	epoch, counts := keyrotation.BudgetEpoch(current, transaction.locked.gateway)
 	if !counts {
 		return time.Time{}, nil
 	}

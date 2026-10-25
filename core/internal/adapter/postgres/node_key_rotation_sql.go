@@ -29,7 +29,8 @@ const lockNodeKeyRotationTargetSQL = `SELECT
     node_key.id,
     node_key.version,
     node_key.public_key,
-    node_key.valid_from
+    node_key.valid_from,
+    device.kind = 'kubernetes_gateway'
 FROM mesh.device AS device
 JOIN mesh.device_machine_key_epoch AS machine_key
   ON machine_key.workspace_id = device.workspace_id

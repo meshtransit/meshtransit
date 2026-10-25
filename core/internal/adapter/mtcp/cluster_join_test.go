@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/shared/key"
 	sharedmtcp "meshtransit.net/shared/mtcp"
 )
 
@@ -530,4 +532,154 @@ func TestOrdinaryRegistrationIsNotMarked(t *testing.T) {
 	if proven := f.streams.provenStreams(); len(proven) != 1 || proven[0] {
 		t.Fatalf("streams proven %v", proven)
 	}
+}
+
+// fakeMachineKeyRotations records rotations and fails with err when set.
+type fakeMachineKeyRotations struct {
+	mu        sync.Mutex
+	err       error
+	rotations []kubecluster.MachineKeyRotation
+}
+
+func (rotations *fakeMachineKeyRotations) RotateGatewayMachineKey(_ context.Context,
+	rotation kubecluster.MachineKeyRotation) error {
+	rotations.mu.Lock()
+	defer rotations.mu.Unlock()
+	rotations.rotations = append(rotations.rotations, rotation)
+	return rotations.err
+}
+
+func (rotations *fakeMachineKeyRotations) calls() []kubecluster.MachineKeyRotation {
+	rotations.mu.Lock()
+	defer rotations.mu.Unlock()
+	return slices.Clone(rotations.rotations)
+}
+
+// gatewayFixture is a session that proved a gateway's node key.
+func gatewayFixture(t *testing.T, rotations *fakeMachineKeyRotations) *conversationFixture {
+	t.Helper()
+	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	f.session.gate = TimestampCheck{Accepted: true, Gateway: true, Machine: MachineCurrent, NodeCurrent: true}
+	f.session.provenNodeKey = node.Key(f.session.Hello().GetNodeKey())
+	f.talk.application.options.MachineKeyRotations = rotations
+	f.talk = f.talk.application.Open(f.session).(*conversation)
+	return f
+}
+
+func (f *conversationFixture) rotateMachineKey(seed byte, proofSeed byte) (*mtcpv1.RotateMachineKey, error) {
+	f.t.Helper()
+	next := must(key.MachinePrivateFromBytes(repeat(seed, key.Size)))
+	prover := must(key.MachinePrivateFromBytes(repeat(proofSeed, key.Size)))
+	proof := must(sharedmtcp.MachineKeyRotationProof(prover, f.control.Public(), f.session.HandshakeHash()))
+	public := next.Public()
+	request := &mtcpv1.RotateMachineKey{NewMachineKey: public[:], Proof: proof[:]}
+	return request, f.talk.Receive(f.t.Context(), sharedmtcp.MessageRotateMachineKey, request)
+}
+
+func TestGatewayRotatesItsMachineKey(t *testing.T) {
+	t.Parallel()
+	rotations := &fakeMachineKeyRotations{}
+	f := gatewayFixture(t, rotations)
+	f.run()
+	request, err := f.rotateMachineKey(0x44, 0x44)
+	if !errors.Is(err, errMachineKeyRotated) {
+		t.Fatalf("Receive() = %v, want the session to end", err)
+	}
+	f.expectPast(sharedmtcp.MessageRotateMachineKeyResponse)
+	calls := rotations.calls()
+	if len(calls) != 1 || calls[0].NewMachineKey != node.MachineKey(request.GetNewMachineKey()) ||
+		calls[0].MachineKey != node.MachineKey(f.session.Machine()) ||
+		calls[0].NodeKey != node.Key(f.session.Hello().GetNodeKey()) || !calls[0].OperationID.IsValid() {
+		t.Fatalf("rotations %+v", calls)
+	}
+}
+
+func TestMachineKeyRotationRefusals(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name      string
+		gateway   bool
+		proofSeed byte
+		err       error
+		code      mtcpv1.Error_Code
+		stored    bool
+	}{
+		{name: "not a gateway", proofSeed: 0x44, code: mtcpv1.Error_NOT_PERMITTED},
+		{name: "wrong proof", gateway: true, proofSeed: 0x45, code: mtcpv1.Error_INVALID},
+		{name: "key used before", gateway: true, proofSeed: 0x44, err: kubecluster.ErrMachineKeyUsed,
+			code: mtcpv1.Error_NOT_PERMITTED, stored: true},
+		{name: "over the budget", gateway: true, proofSeed: 0x44,
+			err: &kubecluster.RotationLimitedError{RetryAfter: time.Minute}, code: mtcpv1.Error_NOT_PERMITTED,
+			stored: true},
+		{name: "keys no longer current", gateway: true, proofSeed: 0x44, err: kubecluster.ErrNotFound,
+			code: mtcpv1.Error_NOT_AUTHORIZED, stored: true},
+		{name: "store unavailable", gateway: true, proofSeed: 0x44, err: kubecluster.ErrUnavailable,
+			code: mtcpv1.Error_INTERNAL, stored: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			rotations := &fakeMachineKeyRotations{err: test.err}
+			var f *conversationFixture
+			if test.gateway {
+				f = gatewayFixture(t, rotations)
+			} else {
+				f = newConversationFixture(t, sharedmtcp.MessagePing)
+				f.talk.application.options.MachineKeyRotations = rotations
+			}
+			f.run()
+			if _, err := f.rotateMachineKey(0x44, test.proofSeed); err != nil {
+				t.Fatalf("Receive() = %v", err)
+			}
+			if got := f.expectPast(sharedmtcp.MessageError).(*mtcpv1.Error); got.GetCode() != test.code ||
+				got.GetFatal() {
+				t.Fatalf("answered %v", got)
+			}
+			if stored := len(rotations.calls()) == 1; stored != test.stored {
+				t.Fatalf("store called: %t, want %t", stored, test.stored)
+			}
+		})
+	}
+}
+
+// A gateway session that has not proved its node key does not rotate, nor
+// does a key spelled with bit 255 set; a refusal resumes the map stream.
+func TestMachineKeyRotationNeedsAProvenKeyAndResumes(t *testing.T) {
+	t.Parallel()
+	rotations := &fakeMachineKeyRotations{err: kubecluster.ErrMachineKeyUsed}
+	unproven := gatewayFixture(t, rotations)
+	unproven.talk.provenNodeKey = node.Key{}
+	unproven.run()
+	if _, err := unproven.rotateMachineKey(0x44, 0x44); err != nil {
+		t.Fatal(err)
+	}
+	if got := unproven.expectPast(sharedmtcp.MessageError).(*mtcpv1.Error); got.GetCode() != mtcpv1.Error_NOT_AUTHORIZED {
+		t.Fatalf("unproven answered %v", got)
+	}
+	if len(rotations.calls()) != 0 {
+		t.Fatal("an unproven session reached the store")
+	}
+
+	f := gatewayFixture(t, rotations)
+	helloKey := node.Key(f.session.Hello().GetNodeKey())
+	f.run()
+	f.expectStream(helloKey)
+	next := must(key.MachinePrivateFromBytes(repeat(0x46, key.Size)))
+	public := next.Public()
+	spelled := append([]byte(nil), public[:]...)
+	spelled[key.Size-1] |= 0x80
+	proof := must(sharedmtcp.MachineKeyRotationProof(next, f.control.Public(), f.session.HandshakeHash()))
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageRotateMachineKey,
+		&mtcpv1.RotateMachineKey{NewMachineKey: spelled, Proof: proof[:]}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.expectPast(sharedmtcp.MessageError).(*mtcpv1.Error); got.GetCode() != mtcpv1.Error_INVALID {
+		t.Fatalf("a second spelling answered %v", got)
+	}
+	if _, err := f.rotateMachineKey(0x44, 0x44); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.expectPast(sharedmtcp.MessageError).(*mtcpv1.Error); got.GetCode() != mtcpv1.Error_NOT_PERMITTED {
+		t.Fatalf("a used key answered %v", got)
+	}
+	f.expectStream(helloKey) // resumed after the refusal
 }

@@ -17,6 +17,7 @@ import (
 	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/captivewindow"
 	"meshtransit.net/core/internal/domain/dnsname"
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/node/distribution"
 	"meshtransit.net/shared/key"
@@ -66,9 +67,12 @@ type ApplicationOptions struct {
 	// refused.
 	ClusterJoins       ClusterJoins
 	ClusterJoinSecrets ClusterJoinSecrets
-	Logout             DeviceLogout
-	Paths              PathRecorder
-	Connectivity       ConnectivityRecorder
+	// MachineKeyRotations, when set, moves Kubernetes gateways to new
+	// machine keys (mtcp-v1 §6.8).
+	MachineKeyRotations kubecluster.MachineKeyRotations
+	Logout              DeviceLogout
+	Paths               PathRecorder
+	Connectivity        ConnectivityRecorder
 	// RouteOffers, when set, stores the subnets Devices offer to forward.
 	RouteOffers RouteOffers
 	// ExitOffers, when set, stores whether Devices offer to be exit nodes.
@@ -538,6 +542,12 @@ func (conversation *conversation) Receive(ctx context.Context, _ sharedmtcp.Mess
 			return conversation.sendError(mtcpv1.Error_OVERLOADED, "too many rotation requests", retryAfterMS(wait))
 		}
 		return conversation.rotate(ctx, m)
+	case *mtcpv1.RotateMachineKey:
+		if wait, ok := conversation.identity.spend(conversation.application.now(), 1); !ok {
+			conversation.application.options.Metrics.limited(limitIdentity)
+			return conversation.sendError(mtcpv1.Error_OVERLOADED, "too many rotation requests", retryAfterMS(wait))
+		}
+		return conversation.rotateMachineKey(ctx, m)
 	case *mtcpv1.Logout:
 		return conversation.logout(ctx)
 	default:

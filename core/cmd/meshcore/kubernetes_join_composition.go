@@ -49,3 +49,23 @@ func composeClusterJoins(enrollmentConfig config.EnrollmentConfig,
 	}
 	return clusterJoinStores{KubernetesClusterStore: requests, KubernetesJoinCompletionStore: completions}, nil
 }
+
+// composeGatewayKeys builds the store that moves Kubernetes gateways to new
+// machine keys (mtcp-v1 §6.8). It is composed whether joins are enabled or
+// not: gateways that joined keep rotating.
+func composeGatewayKeys(registration config.RegistrationConfig,
+	runtimePool *postgresadapter.Pool) (*postgresadapter.KubernetesGatewayKeyStore, error) {
+	if runtimePool == nil {
+		return nil, errInvalidKubernetesJoinComposition
+	}
+	store, err := postgresadapter.NewKubernetesGatewayKeyStore(runtimePool, postgresadapter.RegistrationTransactionOptions{
+		StatementTimeout:      registration.Database.StatementTimeout,
+		LockTimeout:           registration.Database.LockTimeout,
+		IdleTimeout:           registration.Database.IdleTimeout,
+		AddressCandidateLimit: registration.AddressCandidateLimit,
+	})
+	if err != nil {
+		return nil, errors.Join(errInvalidKubernetesJoinComposition, err)
+	}
+	return store, nil
+}

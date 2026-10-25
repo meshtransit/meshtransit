@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 226 {
-		t.Fatalf("len(Catalog()) = %d, want 226", len(catalog))
+	if len(catalog) != 227 {
+		t.Fatalf("len(Catalog()) = %d, want 227", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 226 {
-		t.Fatalf("LatestVersion() = %d, want 226", LatestVersion())
+	if LatestVersion() != 227 {
+		t.Fatalf("LatestVersion() = %d, want 227", LatestVersion())
 	}
 }
 
@@ -6556,6 +6556,34 @@ func TestMigration226KubernetesGatewaySessionProof(t *testing.T) {
 	for _, forbidden := range []string{"BYPASSRLS", "DROP ", "set_config('mesh.session_proven_node_key', pg_catalog.encode(p_node_key, 'hex'), FALSE"} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 226 contains %q", forbidden)
+		}
+	}
+}
+
+// Schema 227 rotates a gateway's machine key only for a proven session,
+// within a budget, to a key never used, and forgets the former key's
+// timestamp.
+func TestMigration227KubernetesGatewayMachineKeyRotation(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[226]
+	if migration.Version != 227 {
+		t.Fatalf("migration 227 = %+v", migration)
+	}
+	for _, want := range []string{
+		"IF NOT mesh_ops.session_proven_node_key_matches_v1(p_machine_fingerprint, p_node_key) THEN",
+		"FOR UPDATE OF device, machine;",
+		"IF v_recent >= 30 THEN",
+		"RAISE EXCEPTION USING ERRCODE = 'MTK13', MESSAGE = 'the new machine key was used before';",
+		"DELETE FROM mesh_ops.mtcp_machine_timestamp AS stored",
+		"SET current_machine_key_epoch = v_epoch.epoch + 1, session_generation = device.session_generation + 1,",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 227 lacks %q", want)
+		}
+	}
+	for _, forbidden := range []string{"BYPASSRLS", "DROP ", "CREATE OR REPLACE"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 227 contains %q", forbidden)
 		}
 	}
 }
