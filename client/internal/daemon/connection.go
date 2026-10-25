@@ -97,6 +97,9 @@ func (s *Service) Up(ctx context.Context) (ConnectionChange, error) {
 // registration gate, which the session loop may need to finish a pending
 // node-key rotation on its way to the down state.
 func (s *Service) Logout(ctx context.Context) (LogoutResult, error) {
+	if s.gateway {
+		return LogoutResult{}, ErrGatewayLogout
+	}
 	// Nothing to stop or tell Core when the profile holds no Device; the
 	// check repeats under the gate.
 	if profileID, registered, err := s.activeRegistration(ctx); err != nil {

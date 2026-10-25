@@ -41,7 +41,14 @@ type Config struct {
 	StateDir          string
 	EnvelopeKeyFile   string
 	EnrollmentKeyFile string
-	StateSecret       string
+	// JoinKeyFile, when set (MESHGW_JOIN_DIR), makes the replica a K1
+	// gateway: it joins its cluster with this join key and an
+	// administrator's approval (mtcp-v1 §6.6) instead of enrolling.
+	JoinKeyFile string
+	// PodName, Namespace and NodeName are what the replica reports about
+	// itself while it waits for approval, for display only.
+	PodName, Namespace, NodeName string
+	StateSecret                  string
 	// ProbeAddress serves /healthz, /readyz and /metrics.
 	ProbeAddress string
 	// ListenPort is the encrypted path's UDP port.
@@ -97,7 +104,16 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("meshgw: the Device name %q is over %d bytes", hostname, maxHostnameBytes)
 	}
 	keyName := "key-" + strconv.Itoa(ordinal)
+	joinKeyFile := ""
+	if joinDir := value("MESHGW_JOIN_DIR", ""); joinDir != "" {
+		if !filepath.IsAbs(joinDir) {
+			return Config{}, fmt.Errorf("meshgw: MESHGW_JOIN_DIR %q must be absolute", joinDir)
+		}
+		joinKeyFile = filepath.Join(joinDir, keyName)
+	}
 	return Config{
+		JoinKeyFile: joinKeyFile,
+		PodName:     getenv("POD_NAME"), Namespace: value("POD_NAMESPACE", ""), NodeName: value("NODE_NAME", ""),
 		Ordinal:            ordinal,
 		ControlURL:         controlURL,
 		ControlFingerprint: fingerprint,

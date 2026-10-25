@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -43,10 +44,16 @@ type persistedRecord struct {
 	ControlKeyFingerprint string `json:"control_key_fingerprint"`
 	// Written only once Core announces a next key: older builds refuse the
 	// unknown field, so a downgrade is unsupported during a key rotation.
-	NextControlPublicKey      string    `json:"next_control_public_key,omitempty"`
-	NextControlKeyFingerprint string    `json:"next_control_key_fingerprint,omitempty"`
-	PendingAuthURL            string    `json:"pending_auth_url,omitempty"`
-	IsRegistered              bool      `json:"is_registered"`
+	NextControlPublicKey      string `json:"next_control_public_key,omitempty"`
+	NextControlKeyFingerprint string `json:"next_control_key_fingerprint,omitempty"`
+	PendingAuthURL            string `json:"pending_auth_url,omitempty"`
+	IsRegistered              bool   `json:"is_registered"`
+	// A Kubernetes gateway's state (mtcp-v1 §6.6–6.8), written only by
+	// meshgw: older builds refuse unknown fields, and a gateway is never
+	// downgraded.
+	Gateway                   bool      `json:"gateway,omitzero"`
+	PendingMachinePrivateKeys []string  `json:"pending_machine_private_keys,omitzero"`
+	LastKeyRotationAt         time.Time `json:"last_key_rotation_at,omitzero"`
 	CreatedAt                 time.Time `json:"created_at"`
 	UpdatedAt                 time.Time `json:"updated_at"`
 }
@@ -370,6 +377,9 @@ func (s *Store) ReplaceCredentials(
 	record.pendingNodePrivateKey = ""
 	record.pendingAuthURL = ""
 	record.isRegistered = false
+	record.gateway = false
+	record.pendingMachinePrivateKeys = nil
+	record.lastKeyRotationAt = time.Time{}
 	record.updatedAt = s.clock().UTC()
 	if err := validateRecord(record); err != nil {
 		return Record{}, err
@@ -504,6 +514,76 @@ func (s *Store) AbandonNodeKeyRotation(
 	}
 
 	return record, nil
+}
+
+// CompleteClusterJoin records, in one write, that the profile holds a
+// Device and that it is a Kubernetes gateway: a crash leaves either an
+// unjoined replica or a gateway, never an ordinary Device.
+func (s *Store) CompleteClusterJoin(ctx context.Context, profileID string) (Record, error) {
+	return s.updateControlKeys(ctx, profileID, func(record *Record) error {
+		if record.gateway && record.isRegistered {
+			return errUnchanged
+		}
+		if record.isRegistered {
+			return fmt.Errorf("%w: the profile holds an ordinary Device", ErrInvalid)
+		}
+		record.isRegistered, record.pendingAuthURL, record.gateway = true, "", true
+		return nil
+	})
+}
+
+// StageMachineKeyRotation durably stages a gateway's next machine key before
+// it is sent (mtcp-v1 §6.8) and records the rotation's time, at, by the
+// caller's clock. A key is staged once, and at most three wait.
+func (s *Store) StageMachineKeyRotation(ctx context.Context, profileID string, next []byte,
+	at time.Time,
+) (Record, error) {
+	return s.updateControlKeys(ctx, profileID, func(record *Record) error {
+		staged := string(next)
+		if !record.gateway || !record.isRegistered || staged == "" || staged == record.machinePrivateKey ||
+			slices.Contains(record.pendingMachinePrivateKeys, staged) ||
+			len(record.pendingMachinePrivateKeys) >= maxPendingMachineKeys {
+			return fmt.Errorf("%w: cannot stage this machine key", ErrInvalid)
+		}
+		record.pendingMachinePrivateKeys = append([]string{staged}, record.pendingMachinePrivateKeys...)
+		if at.IsZero() {
+			return fmt.Errorf("%w: rotation time is required", ErrInvalid)
+		}
+		record.lastKeyRotationAt = at.UTC()
+		return nil
+	})
+}
+
+// PromoteMachineKey makes a staged machine key that proved current: keys
+// staged after it stay staged, older ones and the former key are dropped.
+func (s *Store) PromoteMachineKey(ctx context.Context, profileID string, proven []byte) (Record, error) {
+	return s.updateControlKeys(ctx, profileID, func(record *Record) error {
+		index := slices.Index(record.pendingMachinePrivateKeys, string(proven))
+		if index < 0 {
+			return fmt.Errorf("%w: the machine key is not staged", ErrInvalid)
+		}
+		record.machinePrivateKey = record.pendingMachinePrivateKeys[index]
+		record.pendingMachinePrivateKeys = slices.Clone(record.pendingMachinePrivateKeys[:index])
+		if len(record.pendingMachinePrivateKeys) == 0 {
+			record.pendingMachinePrivateKeys = nil
+		}
+		return nil
+	})
+}
+
+// AbandonMachineKeyRotation drops a staged machine key Core surely refused.
+func (s *Store) AbandonMachineKeyRotation(ctx context.Context, profileID string, refused []byte) (Record, error) {
+	return s.updateControlKeys(ctx, profileID, func(record *Record) error {
+		index := slices.Index(record.pendingMachinePrivateKeys, string(refused))
+		if index < 0 {
+			return fmt.Errorf("%w: the machine key is not staged", ErrInvalid)
+		}
+		record.pendingMachinePrivateKeys = slices.Delete(slices.Clone(record.pendingMachinePrivateKeys), index, index+1)
+		if len(record.pendingMachinePrivateKeys) == 0 {
+			record.pendingMachinePrivateKeys = nil
+		}
+		return nil
+	})
 }
 
 // StageNextControlKey durably records the next control key Core announced,
@@ -857,8 +937,13 @@ func sameRecord(left, right Record) bool {
 		left.pendingNodePrivateKey == right.pendingNodePrivateKey &&
 		left.controlPublicKey == right.controlPublicKey &&
 		left.controlKeyFingerprint == right.controlKeyFingerprint &&
+		left.nextControlPublicKey == right.nextControlPublicKey &&
+		left.nextControlKeyFingerprint == right.nextControlKeyFingerprint &&
 		left.pendingAuthURL == right.pendingAuthURL &&
 		left.isRegistered == right.isRegistered &&
+		left.gateway == right.gateway &&
+		slices.Equal(left.pendingMachinePrivateKeys, right.pendingMachinePrivateKeys) &&
+		left.lastKeyRotationAt.Equal(right.lastKeyRotationAt) &&
 		left.createdAt.Equal(right.createdAt) &&
 		left.updatedAt.Equal(right.updatedAt)
 }
@@ -876,6 +961,9 @@ func toPersisted(record Record) persistedRecord {
 		NextControlKeyFingerprint: record.nextControlKeyFingerprint,
 		PendingAuthURL:            record.pendingAuthURL,
 		IsRegistered:              record.isRegistered,
+		Gateway:                   record.gateway,
+		PendingMachinePrivateKeys: slices.Clone(record.pendingMachinePrivateKeys),
+		LastKeyRotationAt:         record.lastKeyRotationAt,
 		CreatedAt:                 record.createdAt,
 		UpdatedAt:                 record.updatedAt,
 	}
@@ -893,6 +981,9 @@ func fromPersisted(record persistedRecord) Record {
 		nextControlKeyFingerprint: record.NextControlKeyFingerprint,
 		pendingAuthURL:            record.PendingAuthURL,
 		isRegistered:              record.IsRegistered,
+		gateway:                   record.Gateway,
+		pendingMachinePrivateKeys: slices.Clone(record.PendingMachinePrivateKeys),
+		lastKeyRotationAt:         record.LastKeyRotationAt,
 		createdAt:                 record.CreatedAt,
 		updatedAt:                 record.UpdatedAt,
 	}

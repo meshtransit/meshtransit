@@ -276,7 +276,7 @@ func (session *Session) run(parent context.Context, establishBy time.Time, relea
 		}
 	} else if session.gate.Gateway {
 		session.server.options.Metrics.handshake("gateway_unproven")
-		session.SendError(mtcpv1.Error_NOT_AUTHORIZED, "a Kubernetes gateway must prove its node key first", true)
+		session.SendError(mtcpv1.Error_NOT_AUTHORIZED, sharedmtcp.GateProveFirst, true)
 		return
 	}
 	if first.t != sharedmtcp.MessagePing && first.t != sharedmtcp.MessageRegisterRequest {
@@ -364,11 +364,11 @@ func (session *Session) checkNodeKeyProof(message proto.Message) bool {
 	if !gate.Gateway {
 		switch {
 		case gate.Machine == MachineUnbound:
-			session.SendError(mtcpv1.Error_NOT_AUTHORIZED, "machine key is not bound", false)
+			session.SendError(mtcpv1.Error_NOT_AUTHORIZED, sharedmtcp.GateMachineUnbound, false)
 		case !valid:
-			session.SendError(mtcpv1.Error_INVALID, "invalid node key proof", false)
+			session.SendError(mtcpv1.Error_INVALID, sharedmtcp.GateInvalidProof, false)
 		case gate.Machine != MachineCurrent || !gate.NodeCurrent:
-			session.SendError(mtcpv1.Error_NOT_AUTHORIZED, "node key is not current", false)
+			session.SendError(mtcpv1.Error_NOT_AUTHORIZED, sharedmtcp.GateNodeNotCurrent, false)
 		default:
 			session.provenNodeKey = node.Key(nodeKey)
 		}
@@ -381,30 +381,30 @@ func (session *Session) checkNodeKeyProof(message proto.Message) bool {
 	}
 	switch {
 	case gate.Machine != MachineCurrent:
-		return refuse("gateway_retired", "machine key is retired")
+		return refuse("gateway_retired", sharedmtcp.GateMachineRetired)
 	case !gate.NodeCurrent:
-		return refuse("gateway_stale_node_key", "node key is not current")
+		return refuse("gateway_stale_node_key", sharedmtcp.GateNodeNotCurrent)
 	case !valid:
-		return refuse("gateway_bad_proof", "invalid node key proof")
+		return refuse("gateway_bad_proof", sharedmtcp.GateInvalidProof)
 	case time.UnixMilli(session.hello.GetTimestampMs()).After(session.server.options.Now().Add(gatewayFutureSkew)):
 		// A gateway's clock is synchronized: a timestamp far ahead would
 		// shut its real pod out as a replay until time caught up.
-		return refuse("gateway_future_timestamp", "handshake timestamp is ahead of Core")
+		return refuse("gateway_future_timestamp", sharedmtcp.GateAhead)
 	case !gate.Accepted:
 		// A valid proof cannot be replayed (it binds this handshake): a
 		// second holder of the keys took a newer timestamp, so the key is
 		// contested and neither holder rotates (§6.8).
 		session.server.contest(session.machine)
-		return refuse("replay", "handshake replayed")
+		return refuse("replay", sharedmtcp.GateReplayed)
 	}
 	committed, err := session.server.commitGatewayTimestamp(session.ctx, session.machine, nodeKey,
 		session.hello.GetTimestampMs())
 	switch {
 	case err != nil:
-		return refuse("internal", "handshake check unavailable")
+		return refuse("internal", sharedmtcp.GateUnavailable)
 	case !committed:
 		session.server.contest(session.machine)
-		return refuse("replay", "handshake replayed")
+		return refuse("replay", sharedmtcp.GateReplayed)
 	}
 	session.provenNodeKey = node.Key(nodeKey)
 	return true

@@ -50,6 +50,8 @@ type Client struct {
 	tlsConfig  *tls.Config
 	port       string // the only origin port accepted; 443 outside tests
 	now        func() time.Time
+	// gateway is set for a Kubernetes gateway replica (NewGateway).
+	gateway *gatewayClock
 }
 
 // New returns a client that uses system trust roots, TLS 1.2 or newer,
@@ -123,6 +125,12 @@ func (c *Client) fetchKeys(ctx context.Context, origin *url.URL) ([]controlKey, 
 		return nil, fmt.Errorf("%w: %w", controlplane.ErrRegistrationTemporary, err)
 	}
 	defer func() { _ = response.Body.Close() }()
+	if c.gateway != nil {
+		// Core's clock, until a handshake gives it precisely.
+		if date, err := http.ParseTime(response.Header.Get("Date")); err == nil {
+			c.gateway.observe(date, c.now(), false)
+		}
+	}
 	if response.StatusCode == http.StatusNotFound {
 		return nil, ErrUnavailable
 	}
@@ -272,6 +280,10 @@ func (c *Client) VerifyTrust(ctx context.Context, controlURL string, material co
 	}
 	if err := c.checkPinned(ctx, origin, keys.control, pinnedFingerprint); err != nil {
 		return err
+	}
+	if c.gateway != nil {
+		// A gateway's sessions prove its node key; Probe checks them.
+		return nil
 	}
 	return c.ping(ctx, origin, keys.machine, keys.control)
 }

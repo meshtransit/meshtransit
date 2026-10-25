@@ -391,6 +391,10 @@ type Service struct {
 	enableSubnetRouter   bool
 	enableExitNode       bool
 	enableExits          bool
+	// gateway: a Kubernetes gateway replica (Options.Gateway);
+	// gatewayCommitWait is Core's commit bound it waits out before probing.
+	gateway           bool
+	gatewayCommitWait time.Duration
 	// exitForwarder answers an exit node's consumers' DNS; exitPins are
 	// the exit nodes users approved.
 	exitForwarder *dnsconfig.ExitForwarder
@@ -525,6 +529,11 @@ type Options struct {
 	// CloudAddresses reads the instance's public cloud addresses; nil turns
 	// cloud metadata lookups off.
 	CloudAddresses CloudAddresses
+	// Gateway runs a Kubernetes gateway replica (meshgw): its control
+	// client is mtcpclient.NewGateway, it joins a cluster, never logs out,
+	// and its control session stops, for meshgw to restart, when Core no
+	// longer takes its keys (mtcp-v1 §6.6–6.8).
+	Gateway bool
 }
 
 // New creates a daemon service from explicit dependencies.
@@ -619,6 +628,8 @@ func New(
 		enableSubnetRouter:   options.EnableSubnetRouter,
 		enableExitNode:       options.EnableExitNode,
 		enableExits:          options.EnableExits,
+		gateway:              options.Gateway,
+		gatewayCommitWait:    gatewayCommitBound,
 		exitForwarder:        exitForwarderFor(options),
 		exitPins:             pins,
 		captive:              captiveRelays,
@@ -732,6 +743,11 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			return fmt.Errorf("reading active profile for control sync: %w", err)
 		}
 		record, err := s.identities.Get(ctx, active.ID)
+		if err == nil && record.IsRegistered() && record.IsGateway() != s.gateway {
+			// A gateway's state under meshd, or the other way round: its
+			// keys must not take the other kind's paths.
+			return ErrGatewayModeMismatch
+		}
 		if errors.Is(err, identity.ErrNotFound) || (err == nil && !record.IsRegistered()) {
 			if err := s.stopRuntime(); err != nil {
 				return err
@@ -751,7 +767,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		if err != nil {
 			return fmt.Errorf("reading identity for control sync: %w", err)
 		}
-		if record.HasPendingNodeKeyRotation() {
+		if record.HasPendingNodeKeyRotation() && !s.gateway {
+			// A gateway settles a staged node key by probing at its start
+			// (PrepareGatewayKeys): its former node key is refused.
 			resumed, rotationErr := s.resumeNodeKeyRotation(ctx)
 			if rotationErr == nil && resumed {
 				runtimeRetry = minRuntimeRetry
@@ -1447,6 +1465,15 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			recoverable := errors.Is(streamErr, errRuntimeRecovery) || pathErr != nil
 			suspended := errors.Is(streamErr, controlplane.ErrNetmapAuthorityPaused)
 			rotated := errors.Is(streamErr, controlplane.ErrControlKeyRotated)
+			if s.gateway && !recoverable && !rotated {
+				// A gateway never re-registers by itself: meshgw restarts and
+				// probes its keys, or an administrator removes the Device.
+				s.setSyncStatus(syncStatus{
+					profileID: active.ID, state: ControlSessionBlocked,
+					dataPlane: dataPlaneState, dns: dnsState,
+				})
+				return errors.Join(fmt.Errorf("%w: %w", ErrGatewayStopped, streamErr), runtimeStopErr)
+			}
 			revokedKeysReplaced := false
 			if !recoverable && errors.Is(streamErr, controlplane.ErrNetmapAuthorityRevoked) {
 				// mtcp-v1 section 10: Core revoked this Device and will never
@@ -2500,6 +2527,10 @@ func (s *Service) dataPlaneStatus() (dataplane.PeerPathSnapshot, relay.HealthSna
 // StartLogin registers the active profile with either an in-memory auth key or
 // an interactive browser flow. The auth key is never persisted.
 func (s *Service) StartLogin(ctx context.Context, authKey string) (Login, error) {
+	if s.gateway {
+		// A gateway joins its cluster (JoinCluster), never logs in.
+		return Login{}, ErrGatewayModeMismatch
+	}
 	release, err := s.acquireRegistration(ctx)
 	if err != nil {
 		return Login{}, err
@@ -2601,7 +2632,7 @@ func (s *Service) rotateNodeKeyLocked(
 		pendingNodePrivateKey,
 		controlplane.RegisterOptions{
 			Hostname:          s.hostname,
-			Version:           "meshd/" + s.build.Version,
+			Version:           s.product() + "/" + s.build.Version,
 			PinnedFingerprint: record.ControlKeyFingerprint(),
 		},
 	)

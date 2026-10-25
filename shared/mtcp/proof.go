@@ -60,7 +60,8 @@ func VerifyKeyProof(control key.ControlPrivate, handshakeHash [32]byte, public [
 // NodeKeySessionProof proves, as a session's first record, that the node
 // holds the ClientHello's node key (mtcp-v1 §6.7).
 func NodeKeySessionProof(node key.NodePrivate, control key.ControlPublic,
-	handshakeHash [32]byte) ([ProofSize]byte, error) {
+	handshakeHash [32]byte,
+) ([ProofSize]byte, error) {
 	secret, err := node.SharedWithControl(control)
 	if err != nil {
 		return [ProofSize]byte{}, err
@@ -71,14 +72,16 @@ func NodeKeySessionProof(node key.NodePrivate, control key.ControlPublic,
 
 // VerifyNodeKeySessionProof checks a NodeKeyProof on Core.
 func VerifyNodeKeySessionProof(control key.ControlPrivate, handshakeHash [32]byte, public [key.Size]byte,
-	got []byte) bool {
+	got []byte,
+) bool {
 	return verifyDomainProof(sessionDomain, control, handshakeHash, public, got)
 }
 
 // MachineKeyRotationProof proves possession of the machine key a gateway
 // rotates to (mtcp-v1 §6.8).
 func MachineKeyRotationProof(next key.MachinePrivate, control key.ControlPublic,
-	handshakeHash [32]byte) ([ProofSize]byte, error) {
+	handshakeHash [32]byte,
+) ([ProofSize]byte, error) {
 	secret, err := next.SharedWithControl(control)
 	if err != nil {
 		return [ProofSize]byte{}, err
@@ -89,12 +92,14 @@ func MachineKeyRotationProof(next key.MachinePrivate, control key.ControlPublic,
 
 // VerifyMachineKeyRotationProof checks a RotateMachineKey proof on Core.
 func VerifyMachineKeyRotationProof(control key.ControlPrivate, handshakeHash [32]byte, public [key.Size]byte,
-	got []byte) bool {
+	got []byte,
+) bool {
 	return verifyDomainProof(rotationDomain, control, handshakeHash, public, got)
 }
 
 func verifyDomainProof(domain string, control key.ControlPrivate, handshakeHash [32]byte, public [key.Size]byte,
-	got []byte) bool {
+	got []byte,
+) bool {
 	secret, err := control.SharedWithPublic(public)
 	if err != nil || len(got) != ProofSize {
 		return false

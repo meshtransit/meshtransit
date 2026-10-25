@@ -72,6 +72,18 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) (err error) {
 	// The probes stop first, reporting not ready while the rest shuts down.
 	defer func() { err = errors.Join(err, stopProbes()) }()
 
+	if cfg.JoinKeyFile != "" {
+		// A K1 gateway: join once, then settle and rotate the keys at every
+		// start, before the map stream (mtcp-v1 §6.6–6.8).
+		if err := joinUntilDone(ctx, service, cfg, enrollRetryFirst, logger); err != nil {
+			return err
+		}
+		if err := prepareKeysUntilDone(ctx, service, enrollRetryFirst, logger); err != nil {
+			return err
+		}
+		logger.Info("gateway joined its cluster", "hostname", cfg.Hostname)
+		return serve(ctx, service, forwarder)
+	}
 	if err := enrollUntilDone(ctx, service, cfg, enrollRetryFirst, logger); err != nil {
 		return err
 	}
@@ -116,10 +128,15 @@ func newRuntime(cfg Config, stacks *Stacks, profiles *profile.Store, identities 
 	// A pod address may repeat in another cluster with the same CIDR, so
 	// the gateway offers peers no host address, only STUN and relays.
 	packets.SetHostAddressSource(noHostAddresses)
-	service, err := daemon.New(profiles, identities, version.Current(), mtcpclient.New(), daemon.Options{
+	control := mtcpclient.New()
+	if cfg.JoinKeyFile != "" {
+		control = mtcpclient.NewGateway()
+	}
+	service, err := daemon.New(profiles, identities, version.Current(), control, daemon.Options{
 		Hostname:  cfg.Hostname,
 		DataPlane: packets,
 		Logger:    logger.With("component", "daemon"),
+		Gateway:   cfg.JoinKeyFile != "",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("meshgw: creating the runtime: %w", err)

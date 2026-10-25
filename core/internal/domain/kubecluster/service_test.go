@@ -15,6 +15,7 @@ import (
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/domain/workspace"
+	"meshtransit.net/shared/kubejoin"
 )
 
 func mustID(t *testing.T, suffix string) publicid.ID {
@@ -279,5 +280,21 @@ func TestSystemSecretsProposeRequests(t *testing.T) {
 	other, err := secrets.NewRequestNonce()
 	if err != nil || other == nonce {
 		t.Fatalf("NewRequestNonce() repeated %x, %v", other, err)
+	}
+}
+
+// The replica parses the cluster ID Core sends into the bytes Core binds in
+// the code.
+func TestClusterIDCrossesToKubejoin(t *testing.T) {
+	t.Parallel()
+	for range 32 {
+		id, err := publicid.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := kubejoin.ParseClusterID(id.String())
+		if err != nil || parsed != [16]byte(id) {
+			t.Fatalf("ParseClusterID(%s) = %x, %v", id, parsed, err)
+		}
 	}
 }

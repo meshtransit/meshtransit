@@ -38,6 +38,11 @@ func (c *Client) Register(ctx context.Context, controlURL string, material contr
 	if err != nil {
 		return controlplane.RegistrationResult{}, err
 	}
+	if options.ClusterJoin != nil && c.gateway == nil {
+		// A gateway's Device needs a client that proves its node key.
+		return controlplane.RegistrationResult{}, fmt.Errorf("%w: a cluster join needs a gateway client",
+			controlplane.ErrRegistration)
+	}
 	auth, err := registrationAuth(origin, options)
 	if err != nil {
 		return controlplane.RegistrationResult{}, err
@@ -65,12 +70,22 @@ func (c *Client) Register(ctx context.Context, controlURL string, material contr
 	if options.FollowupURL != "" {
 		wait = followupWait
 	}
-	return awaitRegistration(ctx, s, wait)
+	if options.ClusterJoin != nil {
+		// Core answers on this session once an administrator approves.
+		wait = min(max(options.JoinWait, 0), maxJoinWait)
+	}
+	return awaitRegistration(ctx, s, wait, options.ClusterJoin != nil, c.sessionError, c.coreNow)
 }
 
 // registrationAuth chooses the method: an enrollment key, a resumed
 // approval (its handle is the URL token, mtcp-v1 §6.2), or a new one.
 func registrationAuth(origin *url.URL, options controlplane.RegisterOptions) (*mtcpv1.RegisterRequest_Auth, error) {
+	if options.ClusterJoin != nil {
+		if options.AuthKey != "" || options.FollowupURL != "" {
+			return nil, fmt.Errorf("%w: a cluster join takes no other method", controlplane.ErrRegistration)
+		}
+		return clusterJoinAuth(options.ClusterJoin)
+	}
 	if options.AuthKey != "" {
 		if options.FollowupURL != "" {
 			return nil, fmt.Errorf("%w: an enrollment key and a follow-up are exclusive", controlplane.ErrRegistration)
@@ -142,7 +157,9 @@ func proveKeys(s *session, node key.NodePrivate) ([]byte, []byte, []byte, error)
 // awaitRegistration reads until the RegisterResponse. A pending approval
 // is reported at once, or after wait if Core may still approve it on this
 // session.
-func awaitRegistration(ctx context.Context, s *session, wait time.Duration) (controlplane.RegistrationResult, error) {
+func awaitRegistration(ctx context.Context, s *session, wait time.Duration, join bool,
+	classify func(*mtcpv1.Error) error, coreNow func() time.Time,
+) (controlplane.RegistrationResult, error) {
 	var pending *controlplane.RegistrationResult
 	deadline := time.Now().Add(answerTimeout)
 	for {
@@ -158,7 +175,7 @@ func awaitRegistration(ctx context.Context, s *session, wait time.Duration) (con
 		}
 		switch m := message.(type) {
 		case *mtcpv1.RegisterResponse:
-			result, done, err := registrationOutcome(m)
+			result, done, err := registrationOutcome(m, join, coreNow())
 			if err != nil || done {
 				return result, err
 			}
@@ -167,19 +184,37 @@ func awaitRegistration(ctx context.Context, s *session, wait time.Duration) (con
 			}
 			pending = &result
 			deadline = time.Now().Add(wait)
+			if result.Approval != nil {
+				// The expiry is by Core's clock; the deadline by this one.
+				if local := time.Now().Add(result.Approval.ExpiresAt.Sub(coreNow())); local.Before(deadline) {
+					deadline = local
+				}
+			}
 		case *mtcpv1.Error:
-			return controlplane.RegistrationResult{}, sessionError(m)
+			return controlplane.RegistrationResult{}, classify(m)
 		}
 	}
 }
 
-func registrationOutcome(response *mtcpv1.RegisterResponse) (controlplane.RegistrationResult, bool, error) {
+// registrationOutcome reads a RegisterResponse; coreNow is the time by
+// Core's clock, which an approval's expiry is in.
+func registrationOutcome(response *mtcpv1.RegisterResponse, join bool, coreNow time.Time,
+) (controlplane.RegistrationResult, bool, error) {
+	pending := response.GetPending()
 	switch {
+	case pending != nil && join != (pending.GetAdminApproval() != nil):
+		// A cluster join waits for an administrator, anything else for a
+		// browser.
+		return controlplane.RegistrationResult{}, true, fmt.Errorf("%w: unexpected pending answer",
+			controlplane.ErrRegistration)
 	case response.GetAuthorized() != nil:
 		return controlplane.RegistrationResult{
 			State:             controlplane.RegistrationStateAuthorized,
 			MachineAuthorized: true,
 		}, true, nil
+	case join && pending != nil:
+		result, err := adminApprovalOutcome(pending, coreNow)
+		return result, err != nil, err
 	case response.GetPending() != nil:
 		approval := response.GetPending().GetApprovalUrl()
 		if parsed, err := url.Parse(approval); err != nil || parsed.Scheme != "https" || len(approval) > 512 {
@@ -190,8 +225,10 @@ func registrationOutcome(response *mtcpv1.RegisterResponse) (controlplane.Regist
 			AuthURL: approval,
 		}, false, nil
 	case response.GetRejected() != nil:
-		return controlplane.RegistrationResult{}, true, fmt.Errorf("%w: %s (%s)", controlplane.ErrRegistration,
-			strings.ToLower(response.GetRejected().GetCode().String()), boundedText(response.GetRejected().GetMessage()))
+		return controlplane.RegistrationResult{}, true, &controlplane.RejectedError{
+			Code:    strings.ToLower(response.GetRejected().GetCode().String()),
+			Message: boundedText(response.GetRejected().GetMessage()),
+		}
 	default:
 		return controlplane.RegistrationResult{}, true, fmt.Errorf("%w: empty response", controlplane.ErrRegistration)
 	}
@@ -226,7 +263,7 @@ func (c *Client) RotateNodeKey(ctx context.Context, controlURL string, material 
 	oldPublic := keys.node.Public()
 	s, err := c.open(ctx, origin, sessionOptions{
 		machine: keys.machine, control: keys.control,
-		nodeKey: oldPublic[:], version: options.Version,
+		nodeKey: oldPublic[:], version: options.Version, prove: c.gatewayProof(keys.node),
 	})
 	if err != nil {
 		return controlplane.RegistrationResult{}, err
@@ -270,7 +307,7 @@ func (c *Client) RotateNodeKey(ctx context.Context, controlURL string, material 
 				return controlplane.RegistrationResult{}, fmt.Errorf("%w: %s",
 					controlplane.ErrNodeKeyRotationRefused, boundedText(m.GetMessage()))
 			}
-			return controlplane.RegistrationResult{}, sessionError(m)
+			return controlplane.RegistrationResult{}, c.sessionError(m)
 		}
 		// Map messages for the old key arrive meanwhile and are not needed.
 	}
@@ -297,7 +334,7 @@ func (c *Client) Logout(ctx context.Context, controlURL string, material control
 	nodePublic := keys.node.Public()
 	s, err := c.open(ctx, origin, sessionOptions{
 		machine: keys.machine, control: keys.control,
-		nodeKey: nodePublic[:], version: options.Version,
+		nodeKey: nodePublic[:], version: options.Version, prove: c.gatewayProof(keys.node),
 	})
 	if err != nil {
 		return err
@@ -331,7 +368,7 @@ func (c *Client) Logout(ctx context.Context, controlURL string, material control
 			if m.GetCode() == mtcpv1.Error_NOT_AUTHORIZED {
 				return fmt.Errorf("%w: %s", controlplane.ErrDeviceNotAuthorized, boundedText(m.GetMessage()))
 			}
-			return sessionError(m)
+			return c.sessionError(m)
 		}
 		// Map messages and other Lifecycle states for the session are not needed.
 	}

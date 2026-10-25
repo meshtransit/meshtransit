@@ -32,6 +32,14 @@ merge (2026-10-09) are kept below.
   history and are never used again. **Deploy rule:** turn
   `MESHTRANSIT_KUBERNETES_JOIN` on only when every replica runs K1a1.4 or
   later, and never roll Core back below K1a1.4 while gateway Devices exist.
+- Kubernetes gateways K1a1.5 (client, meshgw): a replica with
+  `MESHGW_JOIN_DIR` (its join key in key-N) joins its cluster
+  (`auth.cluster_join`), logs `enroll code: XXXXX-XXXXX` while it waits for
+  an administrator, and at every start proves its node key, finds its keys
+  (staged ones first, after a crash) and moves to a new machine key and node
+  key. Its clock follows Core's, it reconnects within 2 seconds when another
+  holder of its keys pushes it out, and it exits when Core no longer takes
+  its keys. meshd and the K0 enrollment path are unchanged.
 - Kubernetes gateways K1a1.4b (Core, schema 227): a gateway moves to a new
   machine key with `RotateMachineKey` (mtcp-v1 §6.8) on a proven session,
   recorded as `device.machine_key_rotated`; former keys are never used

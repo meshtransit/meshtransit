@@ -64,6 +64,12 @@ type Record struct {
 	nextControlKeyFingerprint string
 	pendingAuthURL            string
 	isRegistered              bool
+	// gateway marks a Kubernetes gateway replica; pendingMachinePrivateKeys
+	// are machine keys staged for a rotation, newest first, never sent
+	// twice; lastKeyRotationAt is when the last one was staged.
+	gateway                   bool
+	pendingMachinePrivateKeys []string
+	lastKeyRotationAt         time.Time
 	createdAt                 time.Time
 	updatedAt                 time.Time
 }
@@ -134,6 +140,25 @@ func (r Record) HasPendingAuth() bool { return r.pendingAuthURL != "" }
 // HasPendingNodeKeyRotation reports whether a crash-safe rotation must resume.
 func (r Record) HasPendingNodeKeyRotation() bool { return r.pendingNodePrivateKey != "" }
 
+// IsGateway reports whether the profile is a Kubernetes gateway replica.
+func (r Record) IsGateway() bool { return r.gateway }
+
+// PendingMachinePrivateKeys returns copies of the staged machine keys,
+// newest first. Callers must clear them after use.
+func (r Record) PendingMachinePrivateKeys() [][]byte {
+	keys := make([][]byte, len(r.pendingMachinePrivateKeys))
+	for index, staged := range r.pendingMachinePrivateKeys {
+		keys[index] = []byte(staged)
+	}
+	return keys
+}
+
+// PendingMachineKeyCount returns how many machine keys are staged.
+func (r Record) PendingMachineKeyCount() int { return len(r.pendingMachinePrivateKeys) }
+
+// LastKeyRotationAt returns when the gateway last staged a key rotation.
+func (r Record) LastKeyRotationAt() time.Time { return r.lastKeyRotationAt }
+
 // String deliberately excludes all key and browser authorization material.
 func (r Record) String() string {
 	return fmt.Sprintf(
@@ -198,6 +223,9 @@ func validateRecord(record Record) error {
 	if record.pendingNodePrivateKey != "" && (!record.isRegistered || record.pendingAuthURL != "") {
 		return fmt.Errorf("%w: pending node key rotation requires registered identity", ErrInvalid)
 	}
+	if err := validateGateway(record); err != nil {
+		return err
+	}
 	if record.createdAt.IsZero() || record.updatedAt.IsZero() {
 		return fmt.Errorf("%w: identity timestamps cannot be zero", ErrInvalid)
 	}
@@ -228,6 +256,36 @@ func validateFingerprint(fingerprint string) error {
 	digest, err := hex.DecodeString(strings.TrimPrefix(fingerprint, "sha256:"))
 	if err != nil || len(digest) != 32 || "sha256:"+hex.EncodeToString(digest) != fingerprint {
 		return fmt.Errorf("%w: control key fingerprint is not canonical", ErrInvalid)
+	}
+	return nil
+}
+
+// maxPendingMachineKeys bounds a gateway's staged machine keys: a fourth
+// rotation waits until one proves or is refused.
+const maxPendingMachineKeys = 3
+
+func validateGateway(record Record) error {
+	if !record.gateway {
+		if len(record.pendingMachinePrivateKeys) > 0 || !record.lastKeyRotationAt.IsZero() {
+			return fmt.Errorf("%w: machine key rotation state on an ordinary Device", ErrInvalid)
+		}
+		return nil
+	}
+	if record.pendingAuthURL != "" {
+		return fmt.Errorf("%w: a gateway has no browser authorization", ErrInvalid)
+	}
+	if len(record.pendingMachinePrivateKeys) > 0 && !record.isRegistered {
+		return fmt.Errorf("%w: staged machine keys need a registered gateway", ErrInvalid)
+	}
+	if len(record.pendingMachinePrivateKeys) > maxPendingMachineKeys {
+		return fmt.Errorf("%w: too many staged machine keys", ErrInvalid)
+	}
+	seen := map[string]bool{record.machinePrivateKey: true}
+	for _, staged := range record.pendingMachinePrivateKeys {
+		if staged == "" || len(staged) > maxKeyTextBytes || strings.TrimSpace(staged) != staged || seen[staged] {
+			return fmt.Errorf("%w: staged machine key encoding is invalid", ErrInvalid)
+		}
+		seen[staged] = true
 	}
 	return nil
 }

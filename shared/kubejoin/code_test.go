@@ -156,3 +156,23 @@ func FuzzParse(f *testing.F) {
 		}
 	})
 }
+
+// A cluster's public ID is a canonical lowercase UUIDv7: anything else is
+// refused, so the code binds exactly the bytes Core uses.
+func TestParseClusterID(t *testing.T) {
+	t.Parallel()
+	id, err := ParseClusterID("01890f90-0000-7000-8000-0000000000c1")
+	want := [16]byte{0x01, 0x89, 0x0f, 0x90, 0, 0, 0x70, 0, 0x80, 0, 0, 0, 0, 0, 0, 0xc1}
+	if err != nil || id != want {
+		t.Fatalf("ParseClusterID() = %x, %v", id, err)
+	}
+	for _, bad := range []string{
+		"", "01890F90-0000-7000-8000-0000000000c1", "01890f90-0000-4000-8000-0000000000c1",
+		"01890f90000070008000-0000000000c1", "01890f90-0000-7000-8000-0000000000c1 ", "{01890f90-0000-7000-8000-0000000000c1}",
+		"01890f90-0000-7000-8000-0000000000g1",
+	} {
+		if _, err := ParseClusterID(bad); err == nil {
+			t.Errorf("ParseClusterID(%q) accepted", bad)
+		}
+	}
+}

@@ -112,8 +112,10 @@ var specs = map[MessageType]messageSpec{
 	MessageNotice:           {CoreToNode, 8 * kib, func() proto.Message { return &mtcpv1.Notice{} }},
 	MessageNodeKeyProof:     {NodeToCore, 256, func() proto.Message { return &mtcpv1.NodeKeyProof{} }},
 	MessageRotateMachineKey: {NodeToCore, 256, func() proto.Message { return &mtcpv1.RotateMachineKey{} }},
-	MessageRotateMachineKeyResponse: {CoreToNode, 256,
-		func() proto.Message { return &mtcpv1.RotateMachineKeyResponse{} }},
+	MessageRotateMachineKeyResponse: {
+		CoreToNode, 256,
+		func() proto.Message { return &mtcpv1.RotateMachineKeyResponse{} },
+	},
 }
 
 // Limit returns the decoded size limit of a message type, or 0 if unknown.

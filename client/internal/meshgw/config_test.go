@@ -49,6 +49,7 @@ func TestLoadConfigReadsThePod(t *testing.T) {
 		EnvelopeKeyFile:    filepath.Join(dir, "envelope", "key-2"),
 		EnrollmentKeyFile:  filepath.Join(dir, "enroll", "key-2"),
 		StateSecret:        "meshgw-state-2",
+		PodName:            "meshgw-2",
 		ProbeAddress:       ":9090",
 		ListenPort:         41641,
 		KubeAPIPort:        443,
@@ -112,5 +113,22 @@ func TestReadEnvelopeKey(t *testing.T) {
 	}
 	if _, err := ReadEnvelopeKey(filepath.Join(dir, "missing")); err == nil {
 		t.Fatal("ReadEnvelopeKey(missing) error = nil")
+	}
+}
+
+// MESHGW_JOIN_DIR makes the replica a K1 gateway with its own join key.
+func TestLoadConfigJoinMode(t *testing.T) {
+	t.Parallel()
+	env, dir := testEnv(t)
+	env["MESHGW_JOIN_DIR"] = filepath.Join(dir, "join")
+	env["POD_NAMESPACE"], env["NODE_NAME"] = "mt-kube", "worker-1"
+	cfg, err := loadFrom(env)
+	if err != nil || cfg.JoinKeyFile != filepath.Join(dir, "join", "key-2") || cfg.Namespace != "mt-kube" ||
+		cfg.NodeName != "worker-1" {
+		t.Fatalf("LoadConfig() = %+v, %v", cfg, err)
+	}
+	env["MESHGW_JOIN_DIR"] = "join"
+	if _, err := loadFrom(env); err == nil {
+		t.Fatal("a relative join directory was accepted")
 	}
 }

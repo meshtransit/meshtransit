@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"slices"
 	"time"
@@ -46,6 +47,29 @@ var (
 	// rotation (mtcp-v1 §6.3): Control did not apply it and the current key
 	// stays in use, so the staged key may be discarded.
 	ErrNodeKeyRotationRefused = fmt.Errorf("%w: node key rotation refused", ErrRegistration)
+	// ErrMachineKeyRetired: Core no longer takes this Kubernetes gateway's
+	// machine key (mtcp-v1 §6.7); only an administrator recovers.
+	ErrMachineKeyRetired = fmt.Errorf("%w: the gateway's machine key is retired", ErrRegistration)
+	// ErrNodeKeyNotCurrent: the gateway's machine key holds another node key
+	// now; a staged one may be it.
+	ErrNodeKeyNotCurrent = fmt.Errorf("%w: the node key is not the gateway's current key", ErrRegistration)
+	// ErrMachineKeyUnbound: no Device holds the machine key.
+	ErrMachineKeyUnbound = fmt.Errorf("%w: the machine key is not bound", ErrRegistration)
+	// ErrGatewayProofRequired: the machine key is a gateway's, so a session
+	// must start with a node key proof; a cluster join completed.
+	ErrGatewayProofRequired = fmt.Errorf("%w: the machine key is a gateway's", ErrRegistration)
+	// ErrGatewayContested: another holder of the gateway's keys pushed this
+	// session out or took a newer timestamp; reconnect within 2 seconds,
+	// outside the usual backoff (mtcp-v1 §6.8).
+	ErrGatewayContested = fmt.Errorf("%w: the gateway's keys are contested", ErrRegistrationTemporary)
+	// ErrGatewayClock: the handshake timestamp ran ahead of Core; the clock
+	// offset is corrected, so retry.
+	ErrGatewayClock = fmt.Errorf("%w: the clock is ahead of Core", ErrRegistrationTemporary)
+	// ErrGatewayProofUnsupported: Core does not take node key proofs yet.
+	ErrGatewayProofUnsupported = fmt.Errorf("%w: Core does not take node key proofs", ErrRegistrationTemporary)
+	// ErrMachineKeyRotationRefused: Core surely did not apply a machine key
+	// rotation; the staged key is dropped.
+	ErrMachineKeyRotationRefused = fmt.Errorf("%w: machine key rotation refused", ErrRegistration)
 	// ErrNodeKeyExpired indicates that the Device must register again.
 	ErrNodeKeyExpired = errors.New("control: node key expired")
 	// ErrNetmapRejected indicates a permanent client or registration error.
@@ -112,7 +136,52 @@ const (
 	// RegistrationStateAuthorizationRequired means a person must approve
 	// the Device at AuthURL.
 	RegistrationStateAuthorizationRequired RegistrationState = "authorization_required"
+	// RegistrationStateAdminApprovalRequired means an administrator must
+	// approve a Kubernetes cluster join by the replica's code (mtcp-v1 §6.6).
+	RegistrationStateAdminApprovalRequired RegistrationState = "admin_approval_required"
 )
+
+// ClusterJoin asks to join a Kubernetes cluster as a gateway replica.
+type ClusterJoin struct {
+	// JoinKey is the cluster's mtk1 join key; never logged.
+	JoinKey string
+	// Reported is what the pod says about itself, display only: at most 16
+	// fields, keys up to 64 bytes, values up to 256.
+	Reported map[string]string
+}
+
+func (ClusterJoin) String() string { return "<cluster join redacted>" }
+
+// GoString redacts detailed formatting.
+func (ClusterJoin) GoString() string { return "controlplane.ClusterJoin{<redacted>}" }
+
+// LogValue redacts structured logging.
+func (ClusterJoin) LogValue() slog.Value { return slog.StringValue("<cluster join redacted>") }
+
+// MarshalJSON keeps the join key out of any JSON.
+func (ClusterJoin) MarshalJSON() ([]byte, error) { return []byte(`"<cluster join redacted>"`), nil }
+
+// RejectedError is Core's rejected RegisterResponse: Code is its code in
+// lower case (mtcp-v1 §6.1), such as "credential_invalid" or "expired".
+type RejectedError struct {
+	Code    string
+	Message string
+}
+
+func (err *RejectedError) Error() string {
+	return fmt.Sprintf("%s: %s (%s)", ErrRegistration, err.Code, err.Message)
+}
+
+// Unwrap makes a rejection an ErrRegistration.
+func (err *RejectedError) Unwrap() error { return ErrRegistration }
+
+// AdminApproval is what a replica needs to print its code.
+type AdminApproval struct {
+	ClusterID    [16]byte
+	RequestID    string
+	RequestNonce [32]byte
+	ExpiresAt    time.Time
+}
 
 // RegisterOptions contains non-persisted inputs for one registration request.
 type RegisterOptions struct {
@@ -121,6 +190,10 @@ type RegisterOptions struct {
 	PinnedFingerprint string
 	AuthKey           string
 	FollowupURL       string
+	// ClusterJoin, when set, joins a Kubernetes cluster; JoinWait is how
+	// long to wait on the session for the approval before answering pending.
+	ClusterJoin *ClusterJoin
+	JoinWait    time.Duration
 }
 
 // RegistrationResult excludes account data and private material.
@@ -128,6 +201,8 @@ type RegistrationResult struct {
 	State             RegistrationState
 	AuthURL           string
 	MachineAuthorized bool
+	// Approval is set while a cluster join waits for an administrator.
+	Approval *AdminApproval
 }
 
 // HostOffer is what the host's local settings offer Core (mtcp-v1 §8.2).

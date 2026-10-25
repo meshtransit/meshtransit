@@ -45,30 +45,9 @@ type controller interface {
 // stored pin is the authority, as it follows Core's key rotations and the
 // configured one does not, and the control session checks Core against it.
 func Enroll(ctx context.Context, service controller, cfg Config) error {
-	snapshot, err := service.ListProfiles(ctx)
+	status, err := prepareProfile(ctx, service, cfg)
 	if err != nil {
-		return fmt.Errorf("meshgw: reading profiles: %w", err)
-	}
-	if snapshot.ActiveProfileID == "" {
-		if len(snapshot.Profiles) > 0 {
-			return fmt.Errorf("%w: profiles but none active", ErrStateMismatch)
-		}
-		if _, err := service.CreateProfile(ctx, profile.CreateInput{Name: profileName, ControlURL: cfg.ControlURL}); err != nil {
-			return fmt.Errorf("meshgw: creating the profile: %w", err)
-		}
-	} else if active := activeProfile(snapshot); active.ControlURL != cfg.ControlURL {
-		return fmt.Errorf("%w: %s, configured %s", ErrStateMismatch, active.ControlURL, cfg.ControlURL)
-	}
-
-	status, err := service.Status(ctx)
-	if err != nil {
-		return fmt.Errorf("meshgw: reading the registration: %w", err)
-	}
-	if status.ControlTrust != daemon.ControlTrustPinned {
-		if _, err := service.TrustControl(ctx, cfg.ControlFingerprint); err != nil {
-			return fmt.Errorf("meshgw: checking Core's key: %w", err)
-		}
-		status.Registration = daemon.RegistrationUnregistered
+		return err
 	}
 	switch status.Registration {
 	case daemon.RegistrationRegistered:
@@ -97,6 +76,38 @@ func Enroll(ctx context.Context, service controller, cfg Config) error {
 	return registered(login)
 }
 
+// prepareProfile makes the replica's profile and pins Core's key, on a
+// first start; with state restored it checks them. It returns the
+// registration as the daemon sees it.
+func prepareProfile(ctx context.Context, service controller, cfg Config) (daemon.Status, error) {
+	snapshot, err := service.ListProfiles(ctx)
+	if err != nil {
+		return daemon.Status{}, fmt.Errorf("meshgw: reading profiles: %w", err)
+	}
+	if snapshot.ActiveProfileID == "" {
+		if len(snapshot.Profiles) > 0 {
+			return daemon.Status{}, fmt.Errorf("%w: profiles but none active", ErrStateMismatch)
+		}
+		if _, err := service.CreateProfile(ctx, profile.CreateInput{Name: profileName, ControlURL: cfg.ControlURL}); err != nil {
+			return daemon.Status{}, fmt.Errorf("meshgw: creating the profile: %w", err)
+		}
+	} else if active := activeProfile(snapshot); active.ControlURL != cfg.ControlURL {
+		return daemon.Status{}, fmt.Errorf("%w: %s, configured %s", ErrStateMismatch, active.ControlURL, cfg.ControlURL)
+	}
+
+	status, err := service.Status(ctx)
+	if err != nil {
+		return daemon.Status{}, fmt.Errorf("meshgw: reading the registration: %w", err)
+	}
+	if status.ControlTrust != daemon.ControlTrustPinned {
+		if _, err := service.TrustControl(ctx, cfg.ControlFingerprint); err != nil {
+			return daemon.Status{}, fmt.Errorf("meshgw: checking Core's key: %w", err)
+		}
+		status.Registration = daemon.RegistrationUnregistered
+	}
+	return status, nil
+}
+
 // registered accepts only a login Core authorized: anything else still
 // waits for an administrator.
 func registered(login daemon.Login) error {
@@ -113,6 +124,10 @@ func permanent(err error) bool {
 	switch {
 	case errors.Is(err, controlplane.ErrRegistrationTemporary):
 		return false
+	case errors.Is(err, ErrJoinRefused), errors.Is(err, daemon.ErrGatewayKeysLost),
+		errors.Is(err, daemon.ErrGatewayModeMismatch), errors.Is(err, daemon.ErrNotGateway),
+		errors.Is(err, daemon.ErrGatewayStopped):
+		return true
 	case errors.Is(err, ErrApprovalRequired), errors.Is(err, ErrStateMismatch), errors.Is(err, ErrEnrollmentKey),
 		errors.Is(err, k8sstate.ErrConflict), errors.Is(err, daemon.ErrControlTrust),
 		errors.Is(err, daemon.ErrControlNotTrusted), errors.Is(err, daemon.ErrRegistration),

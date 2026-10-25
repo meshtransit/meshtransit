@@ -353,6 +353,12 @@ func (stream *netmapStream) run(ctx context.Context) error {
 			backoff = minReconnectDelay
 		}
 		delay := max(jittered(backoff), min(retryAfter, controlplane.MaxRetryAfter))
+		gatewayAtOnce := stream.client.gateway != nil && gatewayReconnects(err)
+		if gatewayAtOnce {
+			// Another holder of the gateway's keys pushed it out: push back
+			// within 2 seconds, without growing the backoff (mtcp-v1 §6.8).
+			delay = gatewayReconnectDelay()
+		}
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
@@ -360,7 +366,9 @@ func (stream *netmapStream) run(ctx context.Context) error {
 			return ctx.Err()
 		case <-timer.C:
 		}
-		backoff = min(2*backoff, maxReconnectDelay)
+		if !gatewayAtOnce {
+			backoff = min(2*backoff, maxReconnectDelay)
+		}
 	}
 }
 
@@ -371,6 +379,10 @@ func permanentStreamError(err error) bool {
 		errors.Is(err, controlplane.ErrNetmapInvalid) || errors.Is(err, controlplane.ErrNetmapAuthorityRevoked) ||
 		errors.Is(err, controlplane.ErrNetmapAuthorityPaused) || errors.Is(err, controlplane.ErrNetmapConsumer) ||
 		errors.Is(err, networkmap.ErrInvalid) || errors.Is(err, errUnknownKey) ||
+		// A gateway whose keys Core no longer takes, or that must prove them
+		// first: the daemon settles it (probe, or stop).
+		errors.Is(err, controlplane.ErrMachineKeyRetired) || errors.Is(err, controlplane.ErrNodeKeyNotCurrent) ||
+		errors.Is(err, controlplane.ErrGatewayProofRequired) || errors.Is(err, controlplane.ErrMachineKeyUnbound) ||
 		// The origin does not serve MTCP: the caller may use another protocol.
 		errors.Is(err, ErrUnavailable)
 }
@@ -446,6 +458,7 @@ func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, e
 	s, err := c.open(ctx, stream.origin, sessionOptions{
 		machine: stream.keys.machine, control: stream.keys.control,
 		nodeKey: nodePublic[:], capabilities: capabilities, version: stream.options.Version,
+		prove: c.gatewayProof(stream.keys.node),
 	})
 	if err != nil {
 		return false, controlplane.RetryAfterOf(err), err
@@ -633,6 +646,11 @@ func (run *sessionRun) handle(ctx context.Context, message proto.Message) (time.
 	case *mtcpv1.Lifecycle:
 		return lifecycleOutcome(m)
 	case *mtcpv1.Error:
+		if run.stream.client.gateway != nil {
+			if err := gatewayError(m); err != nil {
+				return time.Duration(m.GetRetryAfterMs()) * time.Millisecond, err
+			}
+		}
 		return errorOutcome(m)
 	}
 	return 0, nil // other messages (Pong, RegisterResponse, Notice) need nothing

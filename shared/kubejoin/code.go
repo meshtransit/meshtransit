@@ -17,6 +17,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base32"
+	"encoding/hex"
 	"errors"
 	"strings"
 )
@@ -118,4 +119,26 @@ func (code Code) Bits() (uint64, bool) {
 		bits = bits<<5 | uint64(value)
 	}
 	return bits, true
+}
+
+// ErrInvalidClusterID reports a cluster ID that is not a canonical UUIDv7.
+var ErrInvalidClusterID = errors.New("kubejoin: invalid cluster ID")
+
+// ParseClusterID reads a cluster's public ID as Core sends it: a canonical
+// lowercase UUIDv7.
+func ParseClusterID(value string) ([16]byte, error) {
+	var id [16]byte
+	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' {
+		return id, ErrInvalidClusterID
+	}
+	digits := value[0:8] + value[9:13] + value[14:18] + value[19:23] + value[24:36]
+	for _, r := range digits {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return id, ErrInvalidClusterID
+		}
+	}
+	if _, err := hex.Decode(id[:], []byte(digits)); err != nil || id[6]>>4 != 7 || id[8]>>6 != 2 {
+		return [16]byte{}, ErrInvalidClusterID
+	}
+	return id, nil
 }

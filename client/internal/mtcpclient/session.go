@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -119,14 +120,29 @@ type sessionOptions struct {
 	nodeKey      []byte // the Device's node key when it has one
 	capabilities []string
 	version      string
+	// prove, set by a gateway once it is one, opens the session with a
+	// NodeKeyProof for nodeKey (mtcp-v1 §6.7).
+	prove key.NodePrivate
 }
 
 // open dials origin, tries the HTTP upgrade and falls back to WebSocket
 // when the upgrade is refused, then completes the handshake (mtcp-v1 §2–3).
 func (c *Client) open(ctx context.Context, origin *url.URL, options sessionOptions) (*session, error) {
+	timestamp := func() int64 { return c.now().UnixMilli() }
+	capabilities := options.capabilities
+	var previous int64 // the gateway timestamp before this hello's
+	if c.gateway != nil {
+		machine := options.machine.Public()
+		timestamp = func() int64 {
+			var next int64
+			next, previous = c.gateway.timestamp(machine, c.now())
+			return next
+		}
+		capabilities = append(slices.Clone(capabilities), gatewayCapability)
+	}
 	hello := &mtcpv1.ClientHello{
-		ProtocolVersion: sharedmtcp.Version, TimestampMs: c.now().UnixMilli(), NodeKey: options.nodeKey,
-		Capabilities: options.capabilities,
+		ProtocolVersion: sharedmtcp.Version, TimestampMs: timestamp(), NodeKey: options.nodeKey,
+		Capabilities: capabilities,
 		Client:       &mtcpv1.ClientInfo{Product: "meshd", Version: options.version, Os: runtime.GOOS, Arch: runtime.GOARCH},
 	}
 	handshakeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
@@ -144,7 +160,7 @@ func (c *Client) open(ctx context.Context, origin *url.URL, options sessionOptio
 	conn, response, err := c.upgrade(handshakeCtx, origin, options.control, init)
 	if errors.Is(err, errSessionRefused) {
 		// A fresh INIT: the refused one may have been seen by a middlebox.
-		hello.TimestampMs = c.now().UnixMilli()
+		hello.TimestampMs = timestamp()
 		if handshake, init, err = start(); err != nil {
 			return nil, err
 		}
@@ -162,6 +178,21 @@ func (c *Client) open(ctx context.Context, origin *url.URL, options sessionOptio
 		_ = conn.close()
 		return nil, fmt.Errorf("%w: control refused the session (%v)", controlplane.ErrRegistration, reply.GetReject())
 	}
+	if c.gateway != nil {
+		server := time.UnixMilli(reply.GetServerTimeMs())
+		c.gateway.observe(server, c.now(), true)
+		if time.UnixMilli(hello.GetTimestampMs()).After(server.Add(gatewayAheadLimit)) {
+			// Core would refuse it after the proof; the clock is corrected.
+			// Unproven, Core recorded nothing, so the next hello may be
+			// earlier; an unproven session's key is not a gateway's yet,
+			// and Core's cache may hold its timestamp.
+			if !options.prove.IsZero() {
+				c.gateway.withdraw(options.machine.Public(), hello.GetTimestampMs(), previous)
+			}
+			_ = conn.close()
+			return nil, controlplane.ErrGatewayClock
+		}
+	}
 	keepalive := time.Duration(reply.GetLimits().GetKeepaliveS()) * time.Second
 	idle := time.Duration(reply.GetLimits().GetIdleTimeoutS()) * time.Second
 	if keepalive <= 0 || keepalive > time.Minute {
@@ -170,10 +201,33 @@ func (c *Client) open(ctx context.Context, origin *url.URL, options sessionOptio
 	if idle <= keepalive {
 		idle = 3 * keepalive
 	}
-	return &session{
+	s := &session{
 		conn: conn, noise: noise, reply: reply, control: options.control,
 		assembler: sharedmtcp.NewAssembler(sharedmtcp.CoreToNode), keepalive: keepalive, idle: idle,
-	}, nil
+	}
+	if !options.prove.IsZero() {
+		if err := s.proveNodeKey(options.prove); err != nil {
+			s.close()
+			return nil, err
+		}
+	}
+	return s, nil
+}
+
+// proveNodeKey sends the session's first record (mtcp-v1 §6.7); without
+// session.proof1 Core would refuse a gateway, so nothing is sent.
+func (s *session) proveNodeKey(node key.NodePrivate) error {
+	if !slices.Contains(s.reply.GetCapabilities(), gatewayCapability) {
+		return controlplane.ErrGatewayProofUnsupported
+	}
+	proof, err := sharedmtcp.NodeKeySessionProof(node, s.control, s.noise.HandshakeHash())
+	if err != nil {
+		return controlplane.ErrInvalidMaterial
+	}
+	if err := s.send(sharedmtcp.MessageNodeKeyProof, &mtcpv1.NodeKeyProof{Proof: proof[:]}); err != nil {
+		return temporary(err)
+	}
+	return nil
 }
 
 func (c *Client) upgrade(ctx context.Context, origin *url.URL, control key.ControlPublic, init []byte) (
