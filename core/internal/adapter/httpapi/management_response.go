@@ -44,6 +44,9 @@ type managementError struct {
 	PeerEstimate *peerEstimateBody
 	// OperationIndex names the operation of a batch that failed, from 0.
 	OperationIndex *int
+	// RemainingAttempts comes with join_code_wrong: wrong codes the request
+	// still accepts before it is cancelled.
+	RemainingAttempts *int
 }
 
 type guardrailFindingBody struct {
@@ -65,6 +68,7 @@ type managementErrorBody struct {
 	GuardrailFindings []guardrailFindingBody `json:"guardrail_findings,omitempty"`
 	PeerEstimate      *peerEstimateBody      `json:"peer_estimate,omitempty"`
 	OperationIndex    *int                   `json:"operation_index,omitempty"`
+	RemainingAttempts *int                   `json:"remaining_attempts,omitempty"`
 }
 
 func classifyAuthenticationError(err error) managementError {
@@ -169,6 +173,7 @@ func writeManagementError(
 			GuardrailFindings: apiError.GuardrailFindings,
 			PeerEstimate:      apiError.PeerEstimate,
 			OperationIndex:    apiError.OperationIndex,
+			RemainingAttempts: apiError.RemainingAttempts,
 		},
 	})
 }

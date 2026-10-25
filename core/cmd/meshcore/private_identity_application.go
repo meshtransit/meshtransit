@@ -124,7 +124,9 @@ type privateIdentityPorts struct {
 	MemberLifecycle httpapi.MemberLifecycleManager
 	NetworkMembers  httpapi.NetworkMemberManager
 	EnrollmentKeys  httpapi.EnrollmentKeyManager
-	Invitations     httpapi.InvitationManager
+	// KubernetesClusters manages Kubernetes clusters; nil answers 503.
+	KubernetesClusters httpapi.KubernetesClusterManager
+	Invitations        httpapi.InvitationManager
 	// InvitationPreviews and InvitationAcceptor serve links and sign-in.
 	InvitationPreviews httpapi.InvitationPreviewer
 	InvitationAcceptor oidcauth.InvitationAcceptor
@@ -264,6 +266,7 @@ func composePrivateIdentity(
 		MemberLifecycle:        ports.MemberLifecycle,
 		NetworkMembers:         ports.NetworkMembers,
 		EnrollmentKeys:         ports.EnrollmentKeys,
+		KubernetesClusters:     ports.KubernetesClusters,
 		Invitations:            ports.Invitations,
 		SessionWorkspaces:      ports.SessionWorkspaces,
 		ShareTargets:           ports.ShareTargets,

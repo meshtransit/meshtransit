@@ -310,6 +310,15 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		}
 		enrollmentKeys = composed
 	}
+	var kubernetesClusters httpapi.KubernetesClusterManager
+	if processConfig.API != nil {
+		composed, composeErr := composeKubernetesClusters(storagePools.runtime, processConfig.EnrollmentKeyDigest)
+		if composeErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "kubernetes_cluster_composition_failure")
+			return 1
+		}
+		kubernetesClusters = composed
+	}
 	var privateFactory *privateIdentityFactory
 	if privateProfile != nil {
 		var browserRuntime []browserRegistrationRuntime
@@ -339,7 +348,8 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			privateIdentityFactoryDependencies{Runtime: storagePools.runtime, Redis: redisClient, Logger: logger,
 				Mailer: mailer, Signup: processConfig.Signup, Interchange: processConfig.Interchange,
 				DNSSuffix: processConfig.DNSSuffix, EnrollmentKeys: enrollmentKeys,
-				SubnetRoutes: processConfig.SubnetRoutes, SiteDenied: processConfig.SiteDenied,
+				KubernetesClusters: kubernetesClusters,
+				SubnetRoutes:       processConfig.SubnetRoutes, SiteDenied: processConfig.SiteDenied,
 				ExitNodes: processConfig.ExitNodes, ExitSpread: processConfig.ExitSpread, Countries: countries,
 				DNSZones: processConfig.DNSZones.Enabled, DNSProtectedNames: processConfig.DNSProtectedNames()},
 			browserRuntime...,
@@ -369,7 +379,8 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			managementServer, managementMetrics, composeErr = composeManagementAPIWithKeys(
 				managementCompositionOptions{API: *processConfig.API, Keys: privateFactory.managementKeys,
 					DNSSuffix: processConfig.DNSSuffix, EnrollmentKeys: enrollmentKeys,
-					SubnetRoutes: processConfig.SubnetRoutes, ExitNodes: processConfig.ExitNodes},
+					KubernetesClusters: kubernetesClusters,
+					SubnetRoutes:       processConfig.SubnetRoutes, ExitNodes: processConfig.ExitNodes},
 				storagePools.runtime,
 				redisClient,
 				logger,
@@ -379,6 +390,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 				*processConfig.API,
 				processConfig.DNSSuffix,
 				enrollmentKeys,
+				kubernetesClusters,
 				processConfig.SubnetRoutes,
 				processConfig.ExitNodes,
 				storagePools.runtime,

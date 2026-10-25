@@ -198,7 +198,7 @@ func NewReplicaRequestView(params ReplicaRequestParams) (ReplicaRequestView, err
 		(state == RequestApproved || state == RequestCompleted) && !approved ||
 		(state == RequestCompleted) != params.DeviceID.IsValid() ||
 		params.ReservedOrdinal < 0 || params.ReservedOrdinal > MaximumOrdinal ||
-		approved == (params.ReservedHostname == "") || len(params.Reported) > 2048 {
+		approved == (params.ReservedHostname == "") || len(params.Reported) > 4096 {
 		return ReplicaRequestView{}, ErrInvalid
 	}
 	params.Reported = append(json.RawMessage(nil), params.Reported...)

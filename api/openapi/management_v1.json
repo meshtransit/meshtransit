@@ -2053,7 +2053,1298 @@
     },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/trust-contracts/{trust_contract_id}/actions/activate": {"post":{"operationId":"activateTrustContract","summary":"Activate an accepted Trust Contract from its exact consumer Network","description":"While a guardrail of either Workspace of the share is being saved, this answers 409 conflict; retry it.","security":[{"accountSessionBearer":[]}],"parameters":[{"$ref":"#/components/parameters/WorkspaceID"},{"$ref":"#/components/parameters/NetworkID"},{"$ref":"#/components/parameters/TrustContractID"},{"$ref":"#/components/parameters/AggregateIfMatch"},{"$ref":"#/components/parameters/IdempotencyKey"}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/ActivateTrustContractRequest"}}}},"responses":{"200":{"description":"The Trust Contract and Imported Resource were activated atomically after fresh two-sided authority checks.","headers":{"ETag":{"$ref":"#/components/headers/TrustContractETag"},"X-Correlation-ID":{"$ref":"#/components/headers/CorrelationID"}},"content":{"application/json":{"schema":{"$ref":"#/components/schemas/TrustContractResponse"}}}},"400":{"$ref":"#/components/responses/InvalidRequest"},"401":{"$ref":"#/components/responses/Unauthenticated"},"403":{"$ref":"#/components/responses/Forbidden"},"404":{"$ref":"#/components/responses/NotFound"},"405":{"$ref":"#/components/responses/MethodNotAllowed"},"409":{"$ref":"#/components/responses/Conflict"},"412":{"$ref":"#/components/responses/PreconditionFailed"},"428":{"$ref":"#/components/responses/PreconditionRequired"},"429":{"$ref":"#/components/responses/RateLimited"},"503":{"$ref":"#/components/responses/Unavailable"},"504":{"$ref":"#/components/responses/Timeout"}}}},
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/trust-contracts/{trust_contract_id}/service-names": {"get":{"operationId":"getTrustContractServiceNames","summary":"Read the service names of a running share","description":"The provider's current suggestions (DNS design D3), for the share's provider or consumer Network (share.read). The consumer also gets the DNS names of its Network that point at the share; the provider never does. The ETag is the suggestions' version: 0 while they are still the offer's.","security":[{"accountSessionBearer":[]}],"parameters":[{"$ref":"#/components/parameters/WorkspaceID"},{"$ref":"#/components/parameters/NetworkID"},{"$ref":"#/components/parameters/TrustContractID"}],"responses":{"200":{"description":"The service names.","headers":{"ETag":{"$ref":"#/components/headers/ServiceNamesETag"},"X-Correlation-ID":{"$ref":"#/components/headers/CorrelationID"}},"content":{"application/json":{"schema":{"$ref":"#/components/schemas/ContractServiceNamesResponse"}}}},"400":{"$ref":"#/components/responses/InvalidRequest"},"401":{"$ref":"#/components/responses/Unauthenticated"},"403":{"$ref":"#/components/responses/Forbidden"},"404":{"$ref":"#/components/responses/NotFound"},"405":{"$ref":"#/components/responses/MethodNotAllowed"},"429":{"$ref":"#/components/responses/RateLimited"},"503":{"$ref":"#/components/responses/Unavailable"},"504":{"$ref":"#/components/responses/Timeout"}}},"put":{"operationId":"replaceTrustContractServiceNames","summary":"Replace the service names a running share suggests","description":"The provider (share.offer) sets 0 to 8 suggestions, checked like an offer's: a refused name answers its DNS zone error with operation_index. The contract must still run (409 trust_contract_ended). The names the consumer already made stay. The same names change nothing. Suggesting a name requires MESHTRANSIT_DNS_ZONES_ENABLED.","security":[{"accountSessionBearer":[]}],"parameters":[{"$ref":"#/components/parameters/WorkspaceID"},{"$ref":"#/components/parameters/NetworkID"},{"$ref":"#/components/parameters/TrustContractID"},{"$ref":"#/components/parameters/ServiceNamesIfMatch"}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/ReplaceContractServiceNamesRequest"}}}},"responses":{"200":{"description":"The service names after the change.","headers":{"ETag":{"$ref":"#/components/headers/ServiceNamesETag"},"X-Correlation-ID":{"$ref":"#/components/headers/CorrelationID"}},"content":{"application/json":{"schema":{"$ref":"#/components/schemas/ContractServiceNamesResponse"}}}},"400":{"$ref":"#/components/responses/InvalidRequest"},"401":{"$ref":"#/components/responses/Unauthenticated"},"403":{"$ref":"#/components/responses/Forbidden"},"404":{"$ref":"#/components/responses/NotFound"},"405":{"$ref":"#/components/responses/MethodNotAllowed"},"429":{"$ref":"#/components/responses/RateLimited"},"503":{"$ref":"#/components/responses/Unavailable"},"504":{"$ref":"#/components/responses/Timeout"},"409":{"$ref":"#/components/responses/Conflict"},"412":{"$ref":"#/components/responses/PreconditionFailed"},"422":{"$ref":"#/components/responses/InvalidRequest"},"428":{"$ref":"#/components/responses/PreconditionRequired"}}}},
-    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/trust-contracts/{trust_contract_id}/service-names/actions/use": {"post":{"operationId":"useTrustContractServiceName","summary":"Make a suggested service name a DNS name of the consumer Network","description":"The consumer (share.read to read the suggestions, dns.manage to make the name) makes one current suggestion a DNS name that answers the share's alias, as an accept does: in the longest zone of the Network that covers it, or in a zone of its own whose other names go to each Device's own DNS. A name the provider does not suggest answers 409 dns_service_name_not_suggested; a name taken or not allowed answers its DNS name error.","security":[{"accountSessionBearer":[]}],"parameters":[{"$ref":"#/components/parameters/WorkspaceID"},{"$ref":"#/components/parameters/NetworkID"},{"$ref":"#/components/parameters/TrustContractID"}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/UseContractServiceNameRequest"}}}},"responses":{"200":{"description":"The DNS name made, and its zone.","headers":{"X-Correlation-ID":{"$ref":"#/components/headers/CorrelationID"}},"content":{"application/json":{"schema":{"$ref":"#/components/schemas/ContractServiceNameUseResponse"}}}},"400":{"$ref":"#/components/responses/InvalidRequest"},"401":{"$ref":"#/components/responses/Unauthenticated"},"403":{"$ref":"#/components/responses/Forbidden"},"404":{"$ref":"#/components/responses/NotFound"},"405":{"$ref":"#/components/responses/MethodNotAllowed"},"429":{"$ref":"#/components/responses/RateLimited"},"503":{"$ref":"#/components/responses/Unavailable"},"504":{"$ref":"#/components/responses/Timeout"},"409":{"$ref":"#/components/responses/Conflict"},"422":{"$ref":"#/components/responses/InvalidRequest"}}}}
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/trust-contracts/{trust_contract_id}/service-names/actions/use": {"post":{"operationId":"useTrustContractServiceName","summary":"Make a suggested service name a DNS name of the consumer Network","description":"The consumer (share.read to read the suggestions, dns.manage to make the name) makes one current suggestion a DNS name that answers the share's alias, as an accept does: in the longest zone of the Network that covers it, or in a zone of its own whose other names go to each Device's own DNS. A name the provider does not suggest answers 409 dns_service_name_not_suggested; a name taken or not allowed answers its DNS name error.","security":[{"accountSessionBearer":[]}],"parameters":[{"$ref":"#/components/parameters/WorkspaceID"},{"$ref":"#/components/parameters/NetworkID"},{"$ref":"#/components/parameters/TrustContractID"}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/UseContractServiceNameRequest"}}}},"responses":{"200":{"description":"The DNS name made, and its zone.","headers":{"X-Correlation-ID":{"$ref":"#/components/headers/CorrelationID"}},"content":{"application/json":{"schema":{"$ref":"#/components/schemas/ContractServiceNameUseResponse"}}}},"400":{"$ref":"#/components/responses/InvalidRequest"},"401":{"$ref":"#/components/responses/Unauthenticated"},"403":{"$ref":"#/components/responses/Forbidden"},"404":{"$ref":"#/components/responses/NotFound"},"405":{"$ref":"#/components/responses/MethodNotAllowed"},"429":{"$ref":"#/components/responses/RateLimited"},"503":{"$ref":"#/components/responses/Unavailable"},"504":{"$ref":"#/components/responses/Timeout"},"409":{"$ref":"#/components/responses/Conflict"},"422":{"$ref":"#/components/responses/InvalidRequest"}}}},
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters": {
+      "get": {
+        "operationId": "listKubernetesClusters",
+        "summary": "List a Network's Kubernetes clusters",
+        "description": "Requires network.read. The active clusters by name, at most 64.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The clusters",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "network_id",
+                        "kubernetes_clusters"
+                      ],
+                      "properties": {
+                        "network_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "kubernetes_clusters": {
+                          "type": "array",
+                          "maxItems": 64,
+                          "items": {
+                            "$ref": "#/components/schemas/KubernetesCluster"
+                          }
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "$ref": "#/components/schemas/PublicID"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createKubernetesCluster",
+        "summary": "Add a Kubernetes cluster",
+        "description": "Requires kubernetes_cluster.manage. Creates the cluster and its enrollment profile; at most 64 per Network. Recorded as kubernetes_cluster.created.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9]([a-z0-9-]{0,58}[a-z0-9])?$",
+                    "description": "A DNS label of at most 60 characters, unique in the Network"
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 128
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The new cluster",
+            "headers": {
+              "ETag": {
+                "description": "The cluster's version, for If-Match",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/KubernetesCluster"
+                    },
+                    "correlation_id": {
+                      "$ref": "#/components/schemas/PublicID"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}": {
+      "get": {
+        "operationId": "readKubernetesCluster",
+        "summary": "Read a Kubernetes cluster",
+        "description": "Requires network.read; keys and requests also need kubernetes_cluster.manage or kubernetes_cluster.approve. The ETag is the cluster's version.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The cluster",
+            "headers": {
+              "ETag": {
+                "description": "The cluster's version, for If-Match",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "kubernetes_cluster",
+                        "replicas",
+                        "join_keys",
+                        "replica_requests"
+                      ],
+                      "properties": {
+                        "kubernetes_cluster": {
+                          "$ref": "#/components/schemas/KubernetesCluster"
+                        },
+                        "replicas": {
+                          "type": "array",
+                          "maxItems": 64,
+                          "items": {
+                            "$ref": "#/components/schemas/KubernetesReplica"
+                          }
+                        },
+                        "join_keys": {
+                          "type": [
+                            "array",
+                            "null"
+                          ],
+                          "maxItems": 50,
+                          "items": {
+                            "$ref": "#/components/schemas/KubernetesJoinKey"
+                          },
+                          "description": "Null unless the caller has kubernetes_cluster.manage or kubernetes_cluster.approve; the newest 50"
+                        },
+                        "replica_requests": {
+                          "type": [
+                            "array",
+                            "null"
+                          ],
+                          "maxItems": 50,
+                          "items": {
+                            "$ref": "#/components/schemas/KubernetesReplicaRequest"
+                          },
+                          "description": "Null unless the caller has kubernetes_cluster.manage or kubernetes_cluster.approve; the newest 50"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "$ref": "#/components/schemas/PublicID"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteKubernetesCluster",
+        "summary": "Delete a Kubernetes cluster",
+        "description": "Requires kubernetes_cluster.manage. Refused with kubernetes_cluster_conflict while a replica or a waiting or approved request remains; revokes the cluster's keys. Recorded as kubernetes_cluster.deleted.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The deleted cluster",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/KubernetesCluster"
+                    },
+                    "correlation_id": {
+                      "$ref": "#/components/schemas/PublicID"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/join-keys": {
+      "get": {
+        "operationId": "listKubernetesJoinKeys",
+        "summary": "List a cluster's join keys",
+        "description": "Requires kubernetes_cluster.manage or kubernetes_cluster.approve. The newest 50, never with their secret.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The keys",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "join_keys"
+                      ],
+                      "properties": {
+                        "join_keys": {
+                          "type": "array",
+                          "maxItems": 50,
+                          "items": {
+                            "$ref": "#/components/schemas/KubernetesJoinKey"
+                          }
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "$ref": "#/components/schemas/PublicID"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      },
+      "post": {
+        "operationId": "issueKubernetesJoinKey",
+        "summary": "Issue a join key",
+        "description": "Requires kubernetes_cluster.manage. A key valid 5 minutes to 1 hour (default 1 hour) for 1 to 8 replicas; the secret (mtk1.<id>.<secret>) is returned once. A key only opens requests; a use is consumed when an administrator approves a request with its code. At most 16 usable keys per cluster. Recorded as kubernetes_join_key.issued.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "uses"
+                ],
+                "properties": {
+                  "uses": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 8
+                  },
+                  "key_lifetime_seconds": {
+                    "type": "integer",
+                    "minimum": 300,
+                    "maximum": 3600
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The new key and its secret",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "join_key",
+                        "secret"
+                      ],
+                      "properties": {
+                        "join_key": {
+                          "$ref": "#/components/schemas/KubernetesJoinKey"
+                        },
+                        "secret": {
+                          "type": "string",
+                          "pattern": "^mtk1\\.",
+                          "description": "Shown only here; put it in a Kubernetes Secret, never in Helm values"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "$ref": "#/components/schemas/PublicID"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/join-keys/{key_id}": {
+      "get": {
+        "operationId": "readKubernetesJoinKey",
+        "summary": "Read a join key",
+        "description": "Requires kubernetes_cluster.manage or kubernetes_cluster.approve; among the newest 50.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "key_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The key",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/KubernetesJoinKey"
+                    },
+                    "correlation_id": {
+                      "$ref": "#/components/schemas/PublicID"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/join-keys/{key_id}/actions/revoke": {
+      "post": {
+        "operationId": "revokeKubernetesJoinKey",
+        "summary": "Revoke a join key",
+        "description": "Requires kubernetes_cluster.manage. Cancels the key's waiting and approved requests. Recorded as kubernetes_join_key.revoked.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "key_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The revoked key",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/KubernetesJoinKey"
+                    },
+                    "correlation_id": {
+                      "$ref": "#/components/schemas/PublicID"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/replica-requests": {
+      "get": {
+        "operationId": "listKubernetesReplicaRequests",
+        "summary": "List a cluster's replica requests",
+        "description": "Requires kubernetes_cluster.manage or kubernetes_cluster.approve. The newest 50.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The requests",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "replica_requests"
+                      ],
+                      "properties": {
+                        "replica_requests": {
+                          "type": "array",
+                          "maxItems": 50,
+                          "items": {
+                            "$ref": "#/components/schemas/KubernetesReplicaRequest"
+                          }
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "$ref": "#/components/schemas/PublicID"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/replica-requests/{request_id}": {
+      "get": {
+        "operationId": "readKubernetesReplicaRequest",
+        "summary": "Read a replica request",
+        "description": "Requires kubernetes_cluster.manage or kubernetes_cluster.approve; among the newest 50.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The request",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/KubernetesReplicaRequest"
+                    },
+                    "correlation_id": {
+                      "$ref": "#/components/schemas/PublicID"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/replica-requests/{request_id}/actions/approve": {
+      "post": {
+        "operationId": "approveKubernetesReplicaRequest",
+        "summary": "Approve a replica request by its code",
+        "description": "Requires kubernetes_cluster.approve. The code is what the replica prints in its log (enroll code: XXXXX-XXXXX); case, spaces and hyphens do not matter. A code that is not ten base32 characters is invalid_request and not counted. A wrong code answers join_code_wrong (422) with the attempts left; the fifth cancels the request (replica_request_cancelled, 409). A matching code consumes one use of the key, reserves an ordinal and the name <cluster>-<ordinal>, and gives the replica 15 minutes to complete; a key no longer usable cancels the request instead (join_key_not_usable, 409). Recorded as kubernetes_replica_request.approved, .code_failed or .cancelled.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "code"
+                ],
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 32
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The approved request",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/KubernetesReplicaRequest"
+                    },
+                    "correlation_id": {
+                      "$ref": "#/components/schemas/PublicID"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/replica-requests/{request_id}/actions/reject": {
+      "post": {
+        "operationId": "rejectKubernetesReplicaRequest",
+        "summary": "Reject a replica request",
+        "description": "Requires kubernetes_cluster.approve. Recorded as kubernetes_replica_request.rejected.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The rejected request",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/KubernetesReplicaRequest"
+                    },
+                    "correlation_id": {
+                      "$ref": "#/components/schemas/PublicID"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    }
   },
   "components": {
     "securitySchemes": {
@@ -2347,6 +3638,296 @@
       }
     },
     "schemas": {
+      "KubernetesCluster": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "cluster_id",
+          "name",
+          "description",
+          "state",
+          "replicas",
+          "created_by_principal_id",
+          "created_at",
+          "updated_at",
+          "version"
+        ],
+        "properties": {
+          "cluster_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([a-z0-9-]{0,58}[a-z0-9])?$",
+            "description": "A DNS label of at most 60 characters, unique in the Network"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "deleted"
+            ]
+          },
+          "replicas": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 64,
+            "description": "Active gateway Devices"
+          },
+          "created_by_principal_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "description": "A Kubernetes cluster whose gateways join the Network"
+      },
+      "KubernetesJoinKey": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key_id",
+          "issued_by_principal_id",
+          "created_at",
+          "expires_at",
+          "revoked_at",
+          "uses",
+          "used",
+          "state"
+        ],
+        "properties": {
+          "key_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "issued_by_principal_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "uses": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8
+          },
+          "used": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "used",
+              "expired",
+              "revoked"
+            ]
+          }
+        },
+        "description": "A join key, never with its secret"
+      },
+      "KubernetesReplicaRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "cluster_id",
+          "key_id",
+          "machine_key_fingerprint",
+          "node_key_fingerprint",
+          "hostname",
+          "reported_by_pod",
+          "state",
+          "failed_code_attempts",
+          "remaining_code_attempts",
+          "approved_by_principal_id",
+          "approved_at",
+          "completion_deadline",
+          "reserved_ordinal",
+          "reserved_name",
+          "device_id",
+          "created_at",
+          "expires_at",
+          "updated_at"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "cluster_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "key_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "machine_key_fingerprint": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "SHA-256 of the machine key Core received"
+          },
+          "node_key_fingerprint": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "hostname": {
+            "type": "string",
+            "maxLength": 253,
+            "description": "What the replica sent, for display"
+          },
+          "reported_by_pod": {
+            "type": "object",
+            "maxProperties": 16,
+            "additionalProperties": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "description": "What the pod says about itself, unverified: display as text only"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "completed",
+              "rejected",
+              "cancelled",
+              "expired"
+            ]
+          },
+          "failed_code_attempts": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5
+          },
+          "remaining_code_attempts": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5
+          },
+          "approved_by_principal_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "approved_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "completion_deadline": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "reserved_ordinal": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 63
+          },
+          "reserved_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "description": "A replica's request to join; it holds no Device until it completes"
+      },
+      "KubernetesReplica": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "device_id",
+          "name",
+          "ordinal",
+          "state",
+          "created_at"
+        ],
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ordinal": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 63
+          },
+          "state": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "description": "A gateway Device of the cluster"
+      },
       "ActivePolicyRule": {
         "type": "object",
         "additionalProperties": false,
@@ -4603,6 +6184,12 @@
           "retryable"
         ],
         "properties": {
+          "remaining_attempts": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4,
+            "description": "With code join_code_wrong: wrong codes the replica request still accepts before it is cancelled"
+          },
           "code": {
             "type": "string"
           },

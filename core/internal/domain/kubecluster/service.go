@@ -310,8 +310,37 @@ var (
 	ErrQueueFull = errors.New("kubernetes cluster: too many replicas waiting")
 )
 
-// MaximumReportedBytes bounds what a pod says about itself.
-const MaximumReportedBytes = 2048
+// What a pod says about itself is a flat JSON object of strings, bounded so
+// that its stored form (JSONB text, a space after each ':' and ',') stays
+// under the database's 4 KiB.
+const (
+	MaximumReportedBytes  = 2048
+	MaximumReportedFields = 16
+	MaximumReportedKey    = 64
+	MaximumReportedValue  = 256
+)
+
+// CanonicalReported accepts a flat JSON object of at most
+// MaximumReportedFields string values, keys of at most MaximumReportedKey
+// bytes and values of at most MaximumReportedValue bytes, and returns it
+// compact with sorted keys, at most MaximumReportedBytes. Anything else is
+// ErrInvalid.
+func CanonicalReported(raw json.RawMessage) (json.RawMessage, error) {
+	var fields map[string]string
+	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil || len(fields) > MaximumReportedFields {
+		return nil, ErrInvalid
+	}
+	for key, value := range fields {
+		if key == "" || len(key) > MaximumReportedKey || len(value) > MaximumReportedValue {
+			return nil, ErrInvalid
+		}
+	}
+	canonical, err := json.Marshal(fields)
+	if err != nil || len(canonical) > MaximumReportedBytes {
+		return nil, ErrInvalid
+	}
+	return canonical, nil
+}
 
 // JoinAttempt is a replica's request to join, as its session presents it.
 // Core chose RequestID and Nonce; the keys are the session's proven ones.
@@ -320,8 +349,8 @@ type JoinAttempt struct {
 	MachineKey   node.MachineKey
 	NodeKey      node.Key
 	Hostname     node.Hostname
-	// Reported is a JSON object of at most MaximumReportedBytes, display
-	// only.
+	// Reported is what the pod says about itself, display only, in the
+	// form CanonicalReported returns.
 	Reported  json.RawMessage
 	RequestID RequestID
 	Nonce     [32]byte
@@ -329,11 +358,11 @@ type JoinAttempt struct {
 
 // IsValid reports whether every field is present and bounded.
 func (attempt JoinAttempt) IsValid() bool {
-	return attempt.Presentation.IsValid() && attempt.MachineKey.IsValid() && attempt.NodeKey.IsValid() &&
+	canonical, err := CanonicalReported(attempt.Reported)
+	return err == nil && string(canonical) == string(attempt.Reported) &&
+		attempt.Presentation.IsValid() && attempt.MachineKey.IsValid() && attempt.NodeKey.IsValid() &&
 		attempt.MachineKey.Bytes() != attempt.NodeKey.Bytes() && attempt.Hostname.IsValid() &&
-		attempt.RequestID.IsValid() && attempt.Nonce != ([32]byte{}) &&
-		len(attempt.Reported) <= MaximumReportedBytes && json.Valid(attempt.Reported) &&
-		len(attempt.Reported) > 0 && attempt.Reported[0] == '{'
+		attempt.RequestID.IsValid() && attempt.Nonce != ([32]byte{})
 }
 
 // JoinTicket is what the replica's session needs to wait for approval: the
@@ -351,4 +380,22 @@ type JoinTicket struct {
 // request and records kubernetes_replica_request.opened.
 type JoinStore interface {
 	OpenReplicaRequest(ctx context.Context, attempt JoinAttempt) (JoinTicket, error)
+}
+
+// SystemSecrets draws join key secrets from the operating system's CSPRNG
+// and IDs as UUIDv7.
+type SystemSecrets struct{}
+
+// NewToken returns a new 256-bit secret.
+func (SystemSecrets) NewToken() (enrollment.CredentialToken, error) {
+	return enrollment.GenerateCredentialToken()
+}
+
+// NewCredentialID returns a new key ID.
+func (SystemSecrets) NewCredentialID() (enrollment.CredentialID, error) {
+	id, err := publicid.New()
+	if err != nil {
+		return enrollment.CredentialID{}, err
+	}
+	return enrollment.CredentialID(id), nil
 }

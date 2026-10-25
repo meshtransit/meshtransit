@@ -5,6 +5,19 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Kubernetes gateways K1a1.1–K1a1.2 (Core, schema 224): a Network has
+  Kubernetes clusters (`…/kubernetes-clusters`, permissions
+  `kubernetes_cluster.manage` and `kubernetes_cluster.approve` for admin and
+  network_admin). A cluster's join keys (`mtk1.<id>.<secret>`, 5 minutes to
+  1 hour, 1 to 8 uses) only open replica requests, which hold no Device; an
+  administrator approves one with the code the replica prints
+  (`…/replica-requests/{id}/actions/approve`, `{"code":"XXXXX-XXXXX"}`),
+  checked by Core and by the database; five wrong codes cancel it. Join keys
+  never enroll through the ordinary enrollment path, older Core included.
+  Gateway Devices (from K1a1.3) belong to the Workspace, never expire, keep
+  their name and owner, and cannot join groups, tags, shares, routes, exits,
+  Sites or DNS names. The replica side (MTCP `cluster_join`) is not
+  available yet.
 - **Upgrade note:** `MESHTRANSIT_DNS_SUFFIX` may no longer be a public
   suffix itself (`co.uk`, `github.io`); Core with such a value stops at
   configuration load. Use a domain you own or a private name.

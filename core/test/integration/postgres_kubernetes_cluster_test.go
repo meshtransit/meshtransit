@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -101,7 +102,7 @@ func joinAttempt(t *testing.T, presentation enrollment.JoinKeyPresentation, keys
 	}
 	return kubecluster.JoinAttempt{
 		Presentation: presentation, MachineKey: keys.machine, NodeKey: keys.node, Hostname: hostname,
-		Reported: []byte(`{"pod":"meshgw-0","namespace":"mt-kube"}`), RequestID: kubecluster.RequestID(id),
+		Reported: []byte(`{"namespace":"mt-kube","pod":"meshgw-0"}`), RequestID: kubecluster.RequestID(id),
 		Nonce: nonce,
 	}
 }
@@ -329,8 +330,22 @@ WHERE workspace_id = 103 AND network_id = 203 ORDER BY id LIMIT 1`).Scan(&heldMa
 	}
 
 	// The waiting queue holds twice the key's uses: 4 here.
+	// The first carries the largest report a pod may send: stored as JSONB it
+	// grows, and every read of the cluster must still decode it.
+	largest := map[string]string{}
+	for index := range kubecluster.MaximumReportedFields {
+		largest[fmt.Sprintf("k%02d", index)] = strings.Repeat("v", 110)
+	}
+	largestReport, err := json.Marshal(largest)
+	if err != nil || len(largestReport) > kubecluster.MaximumReportedBytes {
+		t.Fatalf("largest report = %d bytes, %v", len(largestReport), err)
+	}
 	for index := range 4 {
-		_, err := store.OpenReplicaRequest(ctx, joinAttempt(t, issued.Presentation, newReplicaKeys(t)))
+		attempt := joinAttempt(t, issued.Presentation, newReplicaKeys(t))
+		if index == 0 {
+			attempt.Reported = largestReport
+		}
+		_, err := store.OpenReplicaRequest(ctx, attempt)
 		if index < 4 && err != nil {
 			t.Fatalf("waiting request %d: %v", index, err)
 		}

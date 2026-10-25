@@ -52,6 +52,9 @@ type managementCompositionOptions struct {
 	DNSSuffix dnsname.Suffix
 	// EnrollmentKeys issues enrollment keys; nil reports them unavailable.
 	EnrollmentKeys httpapi.EnrollmentKeyManager
+	// KubernetesClusters manages Kubernetes clusters; nil reports them
+	// unavailable.
+	KubernetesClusters httpapi.KubernetesClusterManager
 	// SubnetRoutes lets Access Rules name Sites
 	// (MESHTRANSIT_SUBNET_ROUTES_ENABLED).
 	SubnetRoutes bool
@@ -64,6 +67,7 @@ func composeManagementAPI(
 	apiConfig config.APIConfig,
 	dnsSuffix dnsname.Suffix,
 	enrollmentKeys httpapi.EnrollmentKeyManager,
+	kubernetesClusters httpapi.KubernetesClusterManager,
 	subnetRoutes, exitNodes bool,
 	runtimePool *postgresadapter.Pool,
 	rateLimiter httpapi.ManagementRateLimiter,
@@ -88,7 +92,8 @@ func composeManagementAPI(
 		API: apiConfig, Keys: managementCompositionKeys{
 			sessions: keyring, idempotency: idempotencyDigester, rateLimit: rateLimitDigester,
 		},
-		DNSSuffix: dnsSuffix, EnrollmentKeys: enrollmentKeys, SubnetRoutes: subnetRoutes, ExitNodes: exitNodes,
+		DNSSuffix: dnsSuffix, EnrollmentKeys: enrollmentKeys, KubernetesClusters: kubernetesClusters,
+		SubnetRoutes: subnetRoutes, ExitNodes: exitNodes,
 	}, runtimePool, rateLimiter, logger)
 }
 
@@ -432,6 +437,7 @@ func composeManagementAPIWithKeys(
 		MaxConcurrentRequests: apiConfig.MaxConcurrentRequests,
 		DNSSuffix:             options.DNSSuffix,
 		EnrollmentKeys:        options.EnrollmentKeys,
+		KubernetesClusters:    options.KubernetesClusters,
 	})
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)

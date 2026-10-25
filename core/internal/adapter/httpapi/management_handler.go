@@ -273,6 +273,9 @@ type ManagementHandlerOptions struct {
 	// ExitPools lists and changes Network Exit Pools and their exit nodes;
 	// nil answers 503.
 	ExitPools ExitPoolManager
+	// KubernetesClusters manages Network Kubernetes clusters, their join
+	// keys and replica requests; nil answers 503.
+	KubernetesClusters KubernetesClusterManager
 	// DNSZones lists and changes the DNS zones of a Network.
 	DNSZones DNSZoneManager
 	// ServiceNames checks the service names a share offer suggests (DNS
@@ -371,6 +374,7 @@ type ManagementHandler struct {
 	deviceGroups              DeviceGroupManager
 	sites                     SiteManager
 	exitPools                 ExitPoolManager
+	kubernetesClusters        KubernetesClusterManager
 	dnsZones                  DNSZoneManager
 	serviceNames              ServiceNameChecker
 	offerServiceNames         OfferServiceNameReader
@@ -461,6 +465,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		deviceGroups:              options.DeviceGroups,
 		sites:                     options.Sites,
 		exitPools:                 options.ExitPools,
+		kubernetesClusters:        options.KubernetesClusters,
 		dnsZones:                  options.DNSZones,
 		serviceNames:              options.ServiceNames,
 		offerServiceNames:         options.OfferServiceNames,
@@ -591,6 +596,7 @@ func (handler *ManagementHandler) serveHTTP(
 	deviceGroupPathValue, deviceGroupMatched := parseDeviceGroupPath(request)
 	sitePathValue, siteMatched := parseSitePath(request)
 	exitPoolPathValue, exitPoolMatched := parseExitPoolPath(request)
+	kubernetesPathValue, kubernetesMatched := parseKubernetesClusterPath(request)
 	dnsZonePathValue, dnsZoneMatched := parseDNSZonePath(request)
 	identityCatalogPathValue, identityCatalogMatched := parseIdentityCatalogPath(request)
 	deviceLifecyclePathValue, deviceLifecycleMatched := parseDeviceLifecyclePath(request)
@@ -603,7 +609,7 @@ func (handler *ManagementHandler) serveHTTP(
 		!workspaceRoleMatched && !workspaceCollectionMatched && !networkCollectionMatched && !sessionWorkspaceMatched &&
 		!shareTargetMatched && !aliasRangeMatched && !deviceLifetimeMatched && !addressUsageMatched && !auditEventMatched &&
 		!auditExportMatched && !guardrailMatched && !interchangeMatched && !deviceGroupMatched && !siteMatched && !exitPoolMatched &&
-		!dnsZoneMatched && !identityCatalogMatched &&
+		!kubernetesMatched && !dnsZoneMatched && !identityCatalogMatched &&
 		!deviceLifecycleMatched && !memberLifecycleMatched && !networkMemberMatched && !invitationMatched &&
 		!enrollmentKeyMatched {
 		resultCode = "not_found"
@@ -647,6 +653,8 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = sitePathValue.operation
 	} else if exitPoolMatched {
 		operation = exitPoolPathValue.operation
+	} else if kubernetesMatched {
+		operation = kubernetesPathValue.operation
 	} else if dnsZoneMatched {
 		operation = dnsZonePathValue.operation
 	} else if identityCatalogMatched {
@@ -711,6 +719,8 @@ func (handler *ManagementHandler) serveHTTP(
 		allowedMethod = sitePathValue.methods.allowedMethod(request.Method)
 	} else if exitPoolMatched {
 		allowedMethod = exitPoolPathValue.methods.allowedMethod(request.Method)
+	} else if kubernetesMatched {
+		allowedMethod = kubernetesPathValue.methods.allowedMethod(request.Method)
 	} else if dnsZoneMatched {
 		allowedMethod = dnsZonePathValue.methods.allowedMethod(request.Method)
 	} else if identityCatalogMatched {
@@ -751,6 +761,8 @@ func (handler *ManagementHandler) serveHTTP(
 			response.Header().Set("Allow", sitePathValue.methods.header())
 		} else if exitPoolMatched {
 			response.Header().Set("Allow", exitPoolPathValue.methods.header())
+		} else if kubernetesMatched {
+			response.Header().Set("Allow", kubernetesPathValue.methods.header())
 		} else if dnsZoneMatched {
 			response.Header().Set("Allow", dnsZonePathValue.methods.header())
 		} else if guardrailMatched {
@@ -881,6 +893,11 @@ func (handler *ManagementHandler) serveHTTP(
 	}
 	if exitPoolMatched {
 		resultCode = handler.handleExitPools(ctx, response, request, correlationID, exitPoolPathValue, session)
+		return
+	}
+	if kubernetesMatched {
+		resultCode = handler.handleKubernetesClusters(ctx, response, request, correlationID, kubernetesPathValue,
+			session)
 		return
 	}
 	if dnsZoneMatched {

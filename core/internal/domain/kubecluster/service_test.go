@@ -229,3 +229,34 @@ func TestWrongCodeErrorIsErrWrongCode(t *testing.T) {
 		t.Fatal("WrongCodeError does not match ErrWrongCode")
 	}
 }
+
+func TestCanonicalReported(t *testing.T) {
+	t.Parallel()
+	canonical, err := kubecluster.CanonicalReported([]byte(` {"pod": "meshgw-0", "namespace":"mt-kube"} `))
+	if err != nil || string(canonical) != `{"namespace":"mt-kube","pod":"meshgw-0"}` {
+		t.Fatalf("CanonicalReported() = %s, %v", canonical, err)
+	}
+	many := "{"
+	for index := range kubecluster.MaximumReportedFields + 1 {
+		if index > 0 {
+			many += ","
+		}
+		many += `"k` + strings.Repeat("x", index) + `":"v"`
+	}
+	many += "}"
+	for name, raw := range map[string]string{
+		"not an object":    `["a"]`,
+		"null":             `null`,
+		"nested":           `{"a":{"b":"c"}}`,
+		"a number":         `{"a":1}`,
+		"an empty key":     `{"":"x"}`,
+		"a long key":       `{"` + strings.Repeat("k", kubecluster.MaximumReportedKey+1) + `":"x"}`,
+		"a long value":     `{"k":"` + strings.Repeat("v", kubecluster.MaximumReportedValue+1) + `"}`,
+		"too many fields":  many,
+		"trailing garbage": `{"a":"b"} x`,
+	} {
+		if _, err := kubecluster.CanonicalReported([]byte(raw)); !errors.Is(err, kubecluster.ErrInvalid) {
+			t.Errorf("%s: CanonicalReported() error = %v, want ErrInvalid", name, err)
+		}
+	}
+}
