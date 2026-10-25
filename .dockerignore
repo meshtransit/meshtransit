@@ -25,4 +25,14 @@
 !relay/cmd/**
 !relay/internal/
 !relay/internal/**
+!client/
+!client/LICENSE
+!client/THIRD_PARTY_NOTICES.md
+!client/third_party/
+!client/third_party/**
+!client/cmd/
+!client/cmd/meshgw/
+!client/cmd/meshgw/**
+!client/internal/
+!client/internal/**
 **/*_test.go

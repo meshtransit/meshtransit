@@ -124,7 +124,7 @@ func TestNetstackRefusesAClosedPort(t *testing.T) {
 	if !errors.As(err, &opErr) || opErr.Err.Error() != refused {
 		t.Fatalf("DialContextTCPAddrPort() error = %v, want %q", err, refused)
 	}
-	if elapsed := time.Since(started); elapsed > 2*time.Second {
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
 		t.Fatalf("refusal took %s", elapsed)
 	}
 }

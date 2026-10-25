@@ -46,3 +46,19 @@ func TestSetHostAddressSourceReplacesInterfaceListing(t *testing.T) {
 		t.Fatal("a nil source replaced the platform source")
 	}
 }
+
+// The Kubernetes gateway gives an empty source: its pod address may repeat
+// in another cluster with the same CIDR, so it offers no host candidate and
+// never falls back to the interface list.
+func TestSetHostAddressSourceCanOfferNone(t *testing.T) {
+	t.Parallel()
+	engine := &WireGuardEngine{hostAddresses: func() ([]netip.Addr, error) {
+		t.Fatal("the system interface list was used")
+		return nil, nil
+	}}
+	engine.SetHostAddressSource(func() []netip.Addr { return nil })
+	addresses, err := engine.hostAddresses()
+	if err != nil || len(addresses) != 0 {
+		t.Fatalf("hostAddresses() = %v, %v; want none", addresses, err)
+	}
+}

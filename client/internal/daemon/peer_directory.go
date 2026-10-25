@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"slices"
 	"strings"
 	"sync"
@@ -77,6 +78,7 @@ type roundTripMeasurer interface {
 type peerDirectory struct {
 	peers      []directoryPeer
 	byDevice   map[string]int
+	byAddress  map[netip.Addr]int
 	relayCodes map[int]string
 }
 
@@ -90,6 +92,7 @@ func newPeerDirectory(snapshot networkmap.Snapshot) *peerDirectory {
 	directory := &peerDirectory{
 		peers:      make([]directoryPeer, 0, len(snapshot.Peers)),
 		byDevice:   make(map[string]int, len(snapshot.Peers)),
+		byAddress:  make(map[netip.Addr]int, len(snapshot.Peers)),
 		relayCodes: make(map[int]string, len(snapshot.Relays)),
 	}
 	for id, region := range snapshot.Relays {
@@ -105,6 +108,7 @@ func newPeerDirectory(snapshot networkmap.Snapshot) *peerDirectory {
 		addresses := make([]string, 0, len(peer.Addresses))
 		for _, prefix := range peer.Addresses {
 			addresses = append(addresses, prefix.Addr().String())
+			directory.byAddress[prefix.Addr()] = len(directory.peers)
 		}
 		directory.byDevice[peer.StableID] = len(directory.peers)
 		directory.peers = append(directory.peers, directoryPeer{
@@ -226,6 +230,22 @@ func (s *Service) Peers(ctx context.Context) ([]PeerView, error) {
 	}
 	directory, _ := s.peerSession.read()
 	return peerViews(directory, s.peerPathStats()), nil
+}
+
+// PeerAt returns the current map's Device at a mesh address, without its
+// path, which only the data plane knows and costs a walk of every peer.
+func (s *Service) PeerAt(address netip.Addr) (PeerView, bool) {
+	directory, _ := s.peerSession.read()
+	if directory == nil {
+		return PeerView{}, false
+	}
+	index, ok := directory.byAddress[address.Unmap()]
+	if !ok {
+		return PeerView{}, false
+	}
+	view := directory.peers[index].view
+	view.Addresses = slices.Clone(view.Addresses)
+	return view, true
 }
 
 // PingPeer measures one round trip to the Device, a peer in the current map.

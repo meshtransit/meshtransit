@@ -147,3 +147,24 @@ func TestPeersListsTheCurrentMap(t *testing.T) {
 		t.Fatalf("Peers() = %#v, %v", views, err)
 	}
 }
+
+// PeerAt finds the map's Device by one of its mesh addresses, without
+// asking the data plane for paths: the Kubernetes gateway asks once for
+// every kubectl connection.
+func TestPeerAtFindsTheDeviceByAddress(t *testing.T) {
+	t.Parallel()
+	service := &Service{}
+	if _, ok := service.PeerAt(netip.MustParseAddr("100.64.0.10")); ok {
+		t.Fatal("PeerAt() found a peer before any map")
+	}
+	service.peerSession.setDirectory(newPeerDirectory(directorySnapshot()))
+	for _, address := range []string{"100.64.0.10", "fd7a::10"} {
+		peer, ok := service.PeerAt(netip.MustParseAddr(address))
+		if !ok || peer.DeviceID != "dev-direct" || peer.Name != "poc-01.mesh.example" {
+			t.Fatalf("PeerAt(%s) = %+v, %v; want dev-direct", address, peer, ok)
+		}
+	}
+	if _, ok := service.PeerAt(netip.MustParseAddr("100.64.9.9")); ok {
+		t.Fatal("PeerAt() found a peer at an address the map does not hold")
+	}
+}
