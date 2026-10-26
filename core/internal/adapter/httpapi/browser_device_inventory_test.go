@@ -279,4 +279,21 @@ func TestDeviceInventoryNamesAReplicaByItsCluster(t *testing.T) {
 	if item := newDeviceInventoryItem(replica, dnsname.Zone{}); item.KubernetesCluster.DNSName != nil {
 		t.Fatal("a cluster is named without a zone")
 	}
+	// A removed replica holds no label, so no name either.
+	id, _ := node.ParseID("01890f00-0000-7000-8000-000000000902")
+	hostname, _ := node.ParseHostname("kinda-k1-0")
+	created := time.Date(2026, time.October, 1, 8, 0, 0, 0, time.UTC)
+	revoked, err := inventory.NewDevice(id, hostname, "revoked", false, 2, created, created, created.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revoked, err = revoked.WithLifecycle(inventory.Lifecycle{Ownership: "workspace"}); err != nil {
+		t.Fatal(err)
+	}
+	if revoked, err = revoked.WithKubernetesCluster(cluster, kubecluster.Name("kinda-k1")); err != nil {
+		t.Fatal(err)
+	}
+	if item := newDeviceInventoryItem(revoked, zone); item.DNSName != nil || item.KubernetesCluster.DNSName != nil {
+		t.Fatalf("a removed replica is named: %+v", item.KubernetesCluster)
+	}
 }

@@ -526,7 +526,7 @@
               ],
               "minLength": 1,
               "maxLength": 253,
-              "description": "The cluster's mesh DNS name <cluster>.kube.<workspace code>.<network code>.<suffix>: it resolves to the addresses of the replicas a Device may reach. null when the Network has no zone."
+              "description": "The cluster's mesh DNS name <cluster>.kube.<workspace code>.<network code>.<suffix>: it resolves to the addresses of the replicas a Device may reach. null when the Network has no zone and for a replica that holds no name (revoked or deleted)."
             }
           },
           "description": "Present only on a Kubernetes gateway replica: its cluster. Access to a replica is granted to the whole cluster, never to the replica alone, so rules, DNS and shares name the cluster instead."

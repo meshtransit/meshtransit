@@ -192,7 +192,8 @@ type deviceInventoryCluster struct {
 	ClusterID string `json:"cluster_id"`
 	Name      string `json:"name"`
 	// DNSName is the cluster's one mesh name, <cluster>.kube.<zone>, by
-	// which other Devices reach its replicas (K1a2b); null without a zone.
+	// which other Devices reach its replicas (K1a2b); null without a zone
+	// and for a removed replica.
 	DNSName *string `json:"dns_name"`
 }
 
@@ -229,8 +230,11 @@ func newDeviceInventoryItem(device inventory.Device, zone dnsname.Zone) deviceIn
 	}
 	if cluster, name, replica := device.KubernetesCluster(); replica {
 		item.KubernetesCluster = &deviceInventoryCluster{ClusterID: cluster.String(), Name: name.String()}
-		if clusterName, named := zone.KubernetesClusterName(name.String()); named {
-			item.KubernetesCluster.DNSName = &clusterName
+		// Only a replica that holds its label (a live one) is in maps.
+		if _, labeled := device.DNSLabel(); labeled {
+			if clusterName, named := zone.KubernetesClusterName(name.String()); named {
+				item.KubernetesCluster.DNSName = &clusterName
+			}
 		}
 		// A replica's own name resolves only in its own map.
 		return item
