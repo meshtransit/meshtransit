@@ -113,6 +113,7 @@ peers and packet filters always come from PostgreSQL.
 | Key or channel | Holds |
 |---|---|
 | `meshtransit:v1:presence:node:<id>` | Which control replica serves a node, fenced by the node's session generation |
+| `meshtransit:v1:presence:node:gateway-contest:<fingerprint>` | Per Kubernetes gateway machine key: until when no session rotates it, after a live holder of its presence lost it to another, and how often that happened (a third time in five minutes is audited as a session fight) |
 | `meshtransit:v1:endpoints:node:<id>` | The node's reported endpoints, disco key and preferred relay, with announce pacing |
 | `meshtransit:v1:delivery:node:<id>`, `…:delivery:node:session:<key>` | What each node was sent and reports enforcing, its NAT and port-mapping state, path statistics (30-day TTL) |
 | `meshtransit:v1:ratelimit:management:…` | Management API rate limits |

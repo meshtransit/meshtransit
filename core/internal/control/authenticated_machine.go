@@ -19,6 +19,9 @@ type AuthenticatedMachine struct {
 	// proven is the node key the session proved it holds (mtcp-v1 §6.4,
 	// §6.7), or zero.
 	proven node.Key
+	// gateway marks a Kubernetes gateway's session: its map stream holds
+	// the gateway's presence by holder (K1a1 plan §16.12).
+	gateway bool
 }
 
 // NewAuthenticatedMachine records a machine identity after transport authentication.
@@ -53,6 +56,21 @@ func (machine AuthenticatedMachine) provenAmong(keys ...node.Key) node.Key {
 		}
 	}
 	return node.Key{}
+}
+
+// AsKubernetesGateway returns the machine marked as a Kubernetes gateway's.
+func (machine AuthenticatedMachine) AsKubernetesGateway() AuthenticatedMachine {
+	machine.gateway = true
+	return machine
+}
+
+// KubernetesGateway returns the fingerprint of the machine key when the
+// session serves a Kubernetes gateway.
+func (machine AuthenticatedMachine) KubernetesGateway() ([32]byte, bool) {
+	if !machine.gateway || !machine.IsValid() {
+		return [32]byte{}, false
+	}
+	return machine.key.Fingerprint(), true
 }
 
 // IsValid reports whether the transport supplied a usable machine identity.

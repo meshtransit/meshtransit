@@ -86,3 +86,27 @@ func TestBindNodeKeyCarriesTheSessionProof(t *testing.T) {
 		t.Fatal("WithProvenNodeKey changed the original machine")
 	}
 }
+
+// A Kubernetes gateway's session is marked: map streams then hold the
+// gateway's presence by holder (K1a1 plan §16.12).
+func TestAuthenticatedMachineMarksKubernetesGateway(t *testing.T) {
+	t.Parallel()
+	machineKey, err := node.NewMachineKey([32]byte{7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	machine, err := NewAuthenticatedMachine(machineKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, gateway := machine.KubernetesGateway(); gateway {
+		t.Fatal("an unmarked machine is a gateway")
+	}
+	fingerprint, gateway := machine.AsKubernetesGateway().KubernetesGateway()
+	if !gateway || fingerprint != machineKey.Fingerprint() {
+		t.Fatalf("KubernetesGateway() = (%x, %t)", fingerprint, gateway)
+	}
+	if _, gateway := (AuthenticatedMachine{}).AsKubernetesGateway().KubernetesGateway(); gateway {
+		t.Fatal("an invalid machine is a gateway")
+	}
+}

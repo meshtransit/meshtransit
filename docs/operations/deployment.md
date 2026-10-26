@@ -204,9 +204,16 @@ user meshcore on >PASSWORD resetkeys resetchannels
 
 Turn the `default` user off. Core uses a single Redis node (no Cluster or
 Sentinel). Redis holds only short-lived state and needs no persistence for
-correctness, but a restart loses the 30-day delivery and enforcement records. Core sets no eviction policy; we recommend
-`noeviction` with enough memory for the delivery records (kept 30 days), so
-presence and rate-limit keys are never evicted under pressure.
+correctness, but a restart loses the 30-day delivery and enforcement records.
+Set `maxmemory-policy noeviction`, with enough memory for the delivery records
+(kept 30 days): presence, rate-limit and Kubernetes gateway contest keys must
+never be evicted under pressure. An evicted or flushed gateway contest key lets
+a holder of a copied gateway Secret rotate the gateway's keys sooner. Core
+cannot check the policy itself (its user has no `CONFIG` or `INFO`).
+
+While Core replicas of two versions run side by side during an upgrade, a
+replica without the gateway presence checks protects gateway key rotation only
+within itself.
 
 ## TLS
 

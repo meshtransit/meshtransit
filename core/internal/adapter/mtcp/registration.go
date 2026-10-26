@@ -462,6 +462,10 @@ func (conversation *conversation) rotate(ctx context.Context, request *mtcpv1.Ro
 	if !oldKey.IsValid() || !hostname.IsValid() {
 		return conversation.sendError(mtcpv1.Error_NOT_AUTHORIZED, "rotation needs an authorized Device", 0)
 	}
+	// A gateway's rotation is checked last, right before it commits.
+	if _, allowed := conversation.gatewayMayRotate(ctx); !allowed {
+		return conversation.refuseGatewayRotation()
+	}
 	registrationID, err := options.RegistrationIDs.NewRegistrationID()
 	if err != nil {
 		return conversation.sendError(mtcpv1.Error_INTERNAL, "rotation unavailable", 2000)

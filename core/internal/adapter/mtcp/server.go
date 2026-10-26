@@ -19,6 +19,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
+	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/platform/clientip"
@@ -173,10 +174,10 @@ type gatewayFight struct {
 	replaced int
 }
 
-// gatewayContestWindow outlasts a gateway's prompt reconnect after
-// SESSION_REPLACED (mtcp-v1 §6.8), so two holders of one Secret keep each
-// other from rotating.
-const gatewayContestWindow = 15 * time.Second
+// gatewayContestWindow outlasts a gateway's return after SESSION_REPLACED
+// (mtcp-v1 §6.8), so two holders of one Secret keep each other from
+// rotating; it is the shared window of Redis (K1a1 plan §16.12).
+const gatewayContestWindow = mapsession.GatewayContestWindow
 
 // maxContestedGateways bounds the contested keys a replica remembers; past
 // it the expired ones are dropped.
@@ -657,11 +658,18 @@ func (server *Server) contest(machine key.MachinePublic) {
 
 func (server *Server) contestLocked(machine key.MachinePublic) {
 	now := server.options.Now()
-	if len(server.contested) >= maxContestedGateways {
+	if _, known := server.contested[machine]; !known && len(server.contested) >= maxContestedGateways {
+		soonest, soonestUntil := key.MachinePublic{}, time.Time{}
 		for contestedKey, until := range server.contested {
 			if !now.Before(until) {
 				delete(server.contested, contestedKey)
+			} else if soonestUntil.IsZero() || until.Before(soonestUntil) {
+				soonest, soonestUntil = contestedKey, until
 			}
+		}
+		// Still full: the contest that ends soonest gives way.
+		if len(server.contested) >= maxContestedGateways {
+			delete(server.contested, soonest)
 		}
 	}
 	server.contested[machine] = now.Add(server.gatewayContest)

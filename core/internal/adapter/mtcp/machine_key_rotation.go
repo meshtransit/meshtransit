@@ -16,26 +16,6 @@ import (
 // gateway reconnects with the new key (mtcp-v1 §6.8).
 var errMachineKeyRotated = errors.New("mtcp: machine key rotated")
 
-// refuseContestedRotation ends a gateway session that asks to rotate a key
-// while its machine key is contested (mtcp-v1 §6.8): a copy of the
-// gateway's Secret must push the real pod out first, and the pod pushing
-// back keeps both from rotating, each time leaving a trace. The node keeps
-// its staged keys and reconnects after the wait. It reports whether it
-// refused.
-func (conversation *conversation) refuseContestedRotation() bool {
-	if !conversation.isGateway() {
-		return false
-	}
-	wait := conversation.session.RotationWait()
-	if wait <= 0 {
-		return false
-	}
-	conversation.application.options.Metrics.limited(limitGatewayContested)
-	conversation.session.endOverloaded("another session of this gateway was pushed out lately; reconnect before "+
-		"rotating", wait)
-	return true
-}
-
 // rotateMachineKey answers RotateMachineKey (mtcp-v1 §6.8): only a gateway
 // session that proved its node key moves, to a key whose possession the
 // request proves. The rotation commits even if the session ends meanwhile,
@@ -71,6 +51,13 @@ func (conversation *conversation) rotateMachineKey(ctx context.Context, request 
 	if err != nil {
 		return conversation.sendError(mtcpv1.Error_INTERNAL, "rotation unavailable", 2000)
 	}
+	// Checked last, right before the stream stops and the rotation commits.
+	claim, allowed := conversation.gatewayMayRotate(ctx)
+	if !allowed {
+		return conversation.refuseGatewayRotation()
+	}
+	// The lease stays the stream's while the rotation commits.
+	conversation.keepGatewayPresence(claim)
 	// The stream stops first: the committed rotation retires this
 	// session's machine key, and the node must get the response, not an
 	// EXPIRED from its own map stream. A refusal resumes it.
@@ -80,6 +67,7 @@ func (conversation *conversation) rotateMachineKey(ctx context.Context, request 
 	err = rotations.RotateGatewayMachineKey(rotateCtx, kubecluster.MachineKeyRotation{
 		MachineKey: current, NodeKey: proven, NewMachineKey: next, OperationID: operation,
 	})
+	conversation.releaseGatewayPresence(ctx, claim)
 	if err != nil && nodeKey.IsValid() {
 		conversation.authorize(nodeKey, disco, hostname, false)
 	}

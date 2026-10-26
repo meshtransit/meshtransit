@@ -18,6 +18,11 @@ const (
 	redisCommandAcquire              redisCommand = "presence_acquire"
 	redisCommandRenew                redisCommand = "presence_renew"
 	redisCommandRelease              redisCommand = "presence_release"
+	redisCommandGatewayAcquire       redisCommand = "gateway_presence_acquire"
+	redisCommandGatewayRenew         redisCommand = "gateway_presence_renew"
+	redisCommandGatewayRelease       redisCommand = "gateway_presence_release"
+	redisCommandGatewayHandOff       redisCommand = "gateway_presence_handoff"
+	redisCommandGatewayCheck         redisCommand = "gateway_rotation_check"
 	redisCommandObserveEndpoints     redisCommand = "endpoints_observe"
 	redisCommandFlushEndpoints       redisCommand = "endpoints_flush"
 	redisCommandLoadEndpoints        redisCommand = "endpoints_load"
@@ -45,6 +50,11 @@ var redisCommands = [...]redisCommand{
 	redisCommandAcquire,
 	redisCommandRenew,
 	redisCommandRelease,
+	redisCommandGatewayAcquire,
+	redisCommandGatewayRenew,
+	redisCommandGatewayRelease,
+	redisCommandGatewayHandOff,
+	redisCommandGatewayCheck,
 	redisCommandObserveEndpoints,
 	redisCommandFlushEndpoints,
 	redisCommandLoadEndpoints,

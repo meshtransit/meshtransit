@@ -27,6 +27,9 @@ var (
 	ErrPresenceChurn = errors.New("map session: presence lease moved too often")
 	// ErrPresenceLost reports a lease that could not be renewed by its owner.
 	ErrPresenceLost = errors.New("map session: presence lease lost")
+	// ErrPresenceTaken is the ErrPresenceLost of a Kubernetes gateway's
+	// stream whose lease another holder has, or nobody (K1a1 plan §16.12).
+	ErrPresenceTaken = fmt.Errorf("%w: another holder has it", ErrPresenceLost)
 	// ErrStreamDiscontinuity reports regressed or incompatible authority evidence.
 	ErrStreamDiscontinuity = errors.New("map session: authority discontinuity")
 	// ErrAuthorizationExpired reports that the stream reached its initial authority deadline.
@@ -193,6 +196,10 @@ func (service *StreamService) Serve(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	gateway, gatewayMachine, err := service.gatewayPresence(machine, sink)
+	if err != nil {
+		return err
+	}
 
 	snapshot, err := service.openSnapshot(ctx, machine, request, true)
 	if err != nil {
@@ -223,7 +230,18 @@ func (service *StreamService) Serve(
 	if err != nil {
 		return errors.Join(ErrInvalidStreamService, err)
 	}
-	claimed, err := service.acquirePresence(ctx, snapshot.Scope(), lease)
+	var claimed bool
+	if gateway != nil {
+		if lease, err = gatewayLease(lease, gatewayMachine); err != nil {
+			return err
+		}
+		// The lease ends with the stream whatever the claim's answer: one
+		// lost on the way may still have reached Redis.
+		defer service.endGatewayPresence(ctx, snapshot.Scope(), lease, gateway.sink)
+		claimed, err = service.acquireGatewayPresence(ctx, snapshot.Scope(), lease, gateway)
+	} else {
+		claimed, err = service.acquirePresence(ctx, snapshot.Scope(), lease)
+	}
 	if errors.Is(err, ErrPresenceChurn) {
 		return err
 	}
@@ -246,8 +264,8 @@ func (service *StreamService) Serve(
 		snapshot,
 		watch,
 	)
-	if errors.Is(err, ErrSuspended) || errors.Is(err, ErrUnauthorized) ||
-		errors.Is(err, ErrAuthorizationExpired) {
+	if gateway == nil && (errors.Is(err, ErrSuspended) || errors.Is(err, ErrUnauthorized) ||
+		errors.Is(err, ErrAuthorizationExpired)) {
 		// The node lost its authority: show it offline now instead of when
 		// the lease expires. A reconnect races nothing, since it is refused.
 		service.releasePresence(ctx, snapshot.Scope(), lease)
@@ -478,6 +496,9 @@ func (service *StreamService) run(
 			claimed, err := service.renewPresence(ctx, lease)
 			if err != nil {
 				return errors.Join(ErrPresenceLost, err)
+			}
+			if !claimed && lease.Gateway() {
+				return ErrPresenceTaken
 			}
 			if !claimed {
 				return ErrPresenceLost
@@ -851,7 +872,13 @@ func (service *StreamService) renewPresence(
 ) (bool, error) {
 	operationCtx, cancel := context.WithTimeout(ctx, service.options.CoordinationTimeout)
 	defer cancel()
-	renewed, err := service.presence.RenewPresence(operationCtx, lease)
+	var renewed bool
+	var err error
+	if store, ok := service.presence.(GatewayPresenceStore); ok && lease.Gateway() {
+		renewed, err = store.RenewGatewayPresence(operationCtx, lease)
+	} else {
+		renewed, err = service.presence.RenewPresence(operationCtx, lease)
+	}
 	if err != nil {
 		return false, fmt.Errorf("renew presence: %w", err)
 	}

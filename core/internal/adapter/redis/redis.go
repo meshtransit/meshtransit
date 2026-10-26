@@ -51,6 +51,7 @@ type Client struct {
 	acquirePresence    presenceAcquireFunc
 	renewPresence      presenceRenewFunc
 	releasePresence    presenceReleaseFunc
+	gatewayScript      gatewayScriptFunc
 	observeEndpoints   observeEndpointsFunc
 	flushEndpoints     flushEndpointsFunc
 	loadEndpoints      loadEndpointsFunc
@@ -116,7 +117,8 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 		publish: func(publishCtx context.Context, channel string, payload []byte) error {
 			return client.Publish(publishCtx, channel, payload).Err()
 		},
-		replicaLoad: runReplicaLoadScript(client),
+		replicaLoad:   runReplicaLoadScript(client),
+		gatewayScript: runGatewayScript(client),
 		withdrawReplicaLoad: func(withdrawCtx context.Context, key, replicaID string) error {
 			return client.HDel(withdrawCtx, key, replicaID).Err()
 		},

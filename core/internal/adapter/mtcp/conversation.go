@@ -18,6 +18,7 @@ import (
 	"meshtransit.net/core/internal/domain/captivewindow"
 	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/kubecluster"
+	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/node/distribution"
 	"meshtransit.net/shared/key"
@@ -70,9 +71,12 @@ type ApplicationOptions struct {
 	// MachineKeyRotations, when set, moves Kubernetes gateways to new
 	// machine keys (mtcp-v1 §6.8).
 	MachineKeyRotations kubecluster.MachineKeyRotations
-	Logout              DeviceLogout
-	Paths               PathRecorder
-	Connectivity        ConnectivityRecorder
+	// GatewayPresence says whether a Kubernetes gateway's stream may rotate
+	// its keys (K1a1 plan §16.12); without it gateways rotate none.
+	GatewayPresence mapsession.GatewayPresenceStore
+	Logout          DeviceLogout
+	Paths           PathRecorder
+	Connectivity    ConnectivityRecorder
 	// RouteOffers, when set, stores the subnets Devices offer to forward.
 	RouteOffers RouteOffers
 	// ExitOffers, when set, stores whether Devices offer to be exit nodes.
@@ -114,6 +118,10 @@ type Application struct {
 	routeHealthTimer func(time.Duration, func()) endpointTimer
 	// routeSelectionTimer starts the route selection pacing's timer.
 	routeSelectionTimer func(time.Duration, func()) endpointTimer
+	// gatewayClaimWait bounds how long a gateway's rotation waits for its
+	// stream to claim the presence; gatewayCheckTimeout bounds asking Redis.
+	gatewayClaimWait    time.Duration
+	gatewayCheckTimeout time.Duration
 }
 
 // NewApplication validates its dependencies.
@@ -141,7 +149,8 @@ func NewApplication(options ApplicationOptions) (*Application, error) {
 	}
 	return &Application{options: options, now: time.Now, poll: approvalPollInterval,
 		endpointTimer: realEndpointTimer, enforcementTimer: realEndpointTimer, routeOfferTimer: realEndpointTimer,
-		routeHealthTimer: realEndpointTimer, routeSelectionTimer: realEndpointTimer}, nil
+		routeHealthTimer: realEndpointTimer, routeSelectionTimer: realEndpointTimer,
+		gatewayClaimWait: gatewayClaimWait, gatewayCheckTimeout: gatewayCheckTimeout}, nil
 }
 
 // Open implements SessionHandler.
@@ -154,7 +163,7 @@ func (application *Application) Open(session *Session) Conversation {
 	sink.logger, sink.metrics = application.options.Logger, application.options.Metrics
 	proven, _ := session.ProvenNodeKey()
 	return &conversation{application: application, session: session, sink: sink, provenNodeKey: proven,
-		wake: make(chan struct{}, 1), approvals: make(chan approval, 1),
+		wake: make(chan struct{}, 1), approvals: make(chan approval, 1), claimed: make(chan struct{}),
 		identity: newRateBudget(identityBurst, identityRate), browser: newRateBudget(browserBurst, browserRate),
 		resync:            newRateBudget(resyncBurst, resyncRate),
 		enforcementPacing: enforcementPacing{budget: newRateBudget(enforcementBurst, enforcementRate)},
@@ -211,6 +220,16 @@ type conversation struct {
 	// Kubernetes cluster join, so its Device is a gateway.
 	provenNodeKey node.Key
 	joinedGateway bool
+	// claim is the presence lease the current stream of a Kubernetes
+	// gateway holds, set by its Serve before its first snapshot; claimed
+	// is closed then. A starting stream clears claim and, once closed,
+	// replaces claimed (K1a1 plan §16.12).
+	claim      node.PresenceLease
+	claimScope network.Scope
+	claimed    chan struct{}
+	// keepPresence: the session stopped the stream to rotate the gateway's
+	// machine key and ends the lease itself once the rotation is decided.
+	keepPresence bool
 
 	wake      chan struct{} // the node key changed
 	approvals chan approval // the latest pending browser approval
@@ -248,8 +267,9 @@ func (conversation *conversation) Run(ctx context.Context) error {
 	for {
 		nodeKey, generation, streamCtx, cancel := conversation.startStream(ctx)
 		if nodeKey.IsValid() {
-			err := conversation.serve(streamCtx, nodeKey)
+			err := conversation.serve(streamCtx, nodeKey, generation)
 			cancel()
+			conversation.endClaim()
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -257,6 +277,9 @@ func (conversation *conversation) Run(ctx context.Context) error {
 				continue // a registration or rotation restarted the stream
 			}
 			conversation.streamEnded(err)
+			if conversation.gatewayPresenceLost(err) {
+				return err
+			}
 			if lifecycle := lifecycleFor(err); lifecycle != nil {
 				_ = conversation.session.Send(sharedmtcp.MessageLifecycle, lifecycle)
 			}
@@ -282,6 +305,12 @@ func (conversation *conversation) startStream(ctx context.Context) (node.Key, ui
 	conversation.session.streaming.Store(true)
 	streamCtx, cancel := context.WithCancel(ctx)
 	conversation.restart = cancel
+	conversation.claim = node.PresenceLease{}
+	select {
+	case <-conversation.claimed:
+		conversation.claimed = make(chan struct{})
+	default:
+	}
 	return conversation.nodeKey, conversation.generation, streamCtx, cancel
 }
 
@@ -300,7 +329,7 @@ func (conversation *conversation) authenticatedMachine() (control.AuthenticatedM
 	if !gateway {
 		return machine, nil
 	}
-	return machine.WithProvenNodeKey(proven), nil
+	return machine.WithProvenNodeKey(proven).AsKubernetesGateway(), nil
 }
 
 // prove records a node key the session proved in a registration or
@@ -325,7 +354,7 @@ func (conversation *conversation) currentGeneration() uint64 {
 	return conversation.generation
 }
 
-func (conversation *conversation) serve(ctx context.Context, nodeKey node.Key) error {
+func (conversation *conversation) serve(ctx context.Context, nodeKey node.Key, generation uint64) error {
 	machine, err := conversation.authenticatedMachine()
 	if err != nil {
 		return err
@@ -368,7 +397,11 @@ func (conversation *conversation) serve(ctx context.Context, nodeKey node.Key) e
 	// zone (mtcp-v1 §8.4, §8.6).
 	conversation.dnsRoot.Store(request.DNSRoot())
 	conversation.sink.reportDNS(request.DNSRoot())
-	return conversation.application.options.Streams.Serve(ctx, machine, request, conversation.sink)
+	var sink mapsession.StreamSink = conversation.sink
+	if _, gateway := machine.KubernetesGateway(); gateway {
+		sink = &gatewayStreamSink{mapSink: conversation.sink, conversation: conversation, generation: generation}
+	}
+	return conversation.application.options.Streams.Serve(ctx, machine, request, sink)
 }
 
 func (conversation *conversation) provenDisco() node.DiscoveryKey {
@@ -538,18 +571,12 @@ func (conversation *conversation) Receive(ctx context.Context, _ sharedmtcp.Mess
 		}
 		return conversation.register(ctx, m)
 	case *mtcpv1.RotateNodeKey:
-		if conversation.refuseContestedRotation() {
-			return errSessionLimited
-		}
 		if wait, ok := conversation.identity.spend(conversation.application.now(), 1); !ok {
 			conversation.application.options.Metrics.limited(limitIdentity)
 			return conversation.sendError(mtcpv1.Error_OVERLOADED, "too many rotation requests", retryAfterMS(wait))
 		}
 		return conversation.rotate(ctx, m)
 	case *mtcpv1.RotateMachineKey:
-		if conversation.refuseContestedRotation() {
-			return errSessionLimited
-		}
 		if wait, ok := conversation.identity.spend(conversation.application.now(), 1); !ok {
 			conversation.application.options.Metrics.limited(limitIdentity)
 			return conversation.sendError(mtcpv1.Error_OVERLOADED, "too many rotation requests", retryAfterMS(wait))

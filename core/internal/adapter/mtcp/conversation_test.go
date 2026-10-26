@@ -54,6 +54,40 @@ type fakeStreams struct {
 	// entered is signalled when that call starts.
 	block   chan struct{}
 	entered chan struct{}
+	// For a Kubernetes gateway's stream: skipClaim leaves the presence
+	// unclaimed, fight makes the claim one that fought; claimed are the
+	// leases claimed.
+	skipClaim bool
+	fight     bool
+	claimed   []node.PresenceLease
+}
+
+// claimGatewayPresence plays mapsession.Serve claiming a gateway's presence.
+func (streams *fakeStreams) claimGatewayPresence(machine control.AuthenticatedMachine, sink mapsession.StreamSink) {
+	fingerprint, gateway := machine.KubernetesGateway()
+	gatewaySink, ok := sink.(mapsession.GatewayPresenceSink)
+	streams.mu.Lock()
+	skip, fight := streams.skipClaim, streams.fight
+	streams.mu.Unlock()
+	if !gateway || !ok || skip {
+		return
+	}
+	holder, _ := node.NewPresenceHolder()
+	lease := must(must(node.NewPresenceLease(streams.snapshot.NodeID(), streams.snapshot.SessionGeneration(),
+		"control-test", 30*time.Second)).WithGateway(holder, fingerprint))
+	streams.mu.Lock()
+	streams.claimed = append(streams.claimed, lease)
+	streams.mu.Unlock()
+	gatewaySink.PresenceClaimed(streams.snapshot.Scope(), lease)
+	if fight {
+		gatewaySink.GatewayKeysFought()
+	}
+}
+
+func (streams *fakeStreams) claimedLeases() []node.PresenceLease {
+	streams.mu.Lock()
+	defer streams.mu.Unlock()
+	return slices.Clone(streams.claimed)
 }
 
 func (streams *fakeStreams) Serve(ctx context.Context, machine control.AuthenticatedMachine,
@@ -63,6 +97,7 @@ func (streams *fakeStreams) Serve(ctx context.Context, machine control.Authentic
 	streams.requests = append(streams.requests, request)
 	streams.proven = append(streams.proven, identity.Proven())
 	streams.mu.Unlock()
+	streams.claimGatewayPresence(machine, sink)
 	if err := sink.SendSnapshot(ctx, streams.snapshot); err != nil {
 		return err
 	}
@@ -1326,7 +1361,7 @@ func TestServeDeclaresLargeMapsOnlyForClientsThatDo(t *testing.T) {
 		nodeKey := f.streams.snapshot.NodeKey()
 		ctx, cancel := context.WithCancel(t.Context())
 		done := make(chan error, 1)
-		go func() { done <- f.talk.serve(ctx, nodeKey) }()
+		go func() { done <- f.talk.serve(ctx, nodeKey, 0) }()
 		f.expectStream(nodeKey)
 		cancel()
 		<-done

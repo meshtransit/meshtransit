@@ -80,10 +80,18 @@ const (
 	// limitGatewayContested: a gateway session asked to rotate a key while
 	// its machine key was contested (§6.8), as a copy of its Secret would.
 	limitGatewayContested = "gateway_contested"
+	// A Kubernetes gateway's rotation refused by its presence (K1a1 plan
+	// §16.12): contested in Redis, held by another stream, not yet claimed
+	// by the session's stream, or unknown (Redis failed).
+	limitGatewayContestedShared   = "gateway_contested_shared"
+	limitGatewayPresenceElsewhere = "gateway_presence_elsewhere"
+	limitGatewayPresencePending   = "gateway_presence_pending"
+	limitGatewayPresenceUnknown   = "gateway_presence_unknown"
 )
 
 var sessionLimits = []string{limitInbound, limitResync, limitEnforcement, limitBrowser, limitIdentity,
-	limitRouteOffer, limitRouteHealth, limitDNSHealth, limitRouteSelection, limitSendDeadline, limitGatewayContested}
+	limitRouteOffer, limitRouteHealth, limitDNSHealth, limitRouteSelection, limitSendDeadline, limitGatewayContested,
+	limitGatewayContestedShared, limitGatewayPresenceElsewhere, limitGatewayPresencePending, limitGatewayPresenceUnknown}
 
 // streamEndReasons is the closed set of map stream end causes.
 var streamEndReasons = []string{

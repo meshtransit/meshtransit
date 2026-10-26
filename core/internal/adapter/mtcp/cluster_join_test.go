@@ -10,6 +10,7 @@ import (
 	"time"
 
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
+	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/enrollment/registration"
 	"meshtransit.net/core/internal/domain/identity"
 	"meshtransit.net/core/internal/domain/ipam"
@@ -539,10 +540,15 @@ type fakeMachineKeyRotations struct {
 	mu        sync.Mutex
 	err       error
 	rotations []kubecluster.MachineKeyRotation
+	// during, when set, runs while the rotation commits.
+	during func()
 }
 
 func (rotations *fakeMachineKeyRotations) RotateGatewayMachineKey(_ context.Context,
 	rotation kubecluster.MachineKeyRotation) error {
+	if rotations.during != nil {
+		rotations.during()
+	}
 	rotations.mu.Lock()
 	defer rotations.mu.Unlock()
 	rotations.rotations = append(rotations.rotations, rotation)
@@ -562,6 +568,11 @@ func gatewayFixture(t *testing.T, rotations *fakeMachineKeyRotations) *conversat
 	f.session.gate = TimestampCheck{Accepted: true, Gateway: true, Machine: MachineCurrent, NodeCurrent: true}
 	f.session.provenNodeKey = node.Key(f.session.Hello().GetNodeKey())
 	f.talk.application.options.MachineKeyRotations = rotations
+	f.talk.application.options.GatewayPresence = &fakeGatewayPresence{state: mapsession.GatewayRotationHeld}
+	f.talk.application.gatewayClaimWait = 200 * time.Millisecond
+	if err := f.session.server.establish(f.session); err != nil {
+		t.Fatal(err)
+	}
 	f.talk = f.talk.application.Open(f.session).(*conversation)
 	return f
 }
@@ -682,36 +693,4 @@ func TestMachineKeyRotationNeedsAProvenKeyAndResumes(t *testing.T) {
 		t.Fatalf("a used key answered %v", got)
 	}
 	f.expectStream(helloKey) // resumed after the refusal
-}
-
-// While its machine key is contested a gateway rotates neither key: the
-// session ends and the node reconnects, keeping its staged keys (§6.8).
-func TestContestedGatewayRotatesNoKey(t *testing.T) {
-	t.Parallel()
-	for _, kind := range []sharedmtcp.MessageType{sharedmtcp.MessageRotateMachineKey, sharedmtcp.MessageRotateNodeKey} {
-		rotations := &fakeMachineKeyRotations{}
-		f := gatewayFixture(t, rotations)
-		f.session.server.mu.Lock()
-		f.session.server.contested[f.session.Machine()] = time.Now().Add(time.Minute)
-		f.session.server.mu.Unlock()
-		f.run()
-		var err error
-		if kind == sharedmtcp.MessageRotateMachineKey {
-			_, err = f.rotateMachineKey(0x44, 0x44)
-		} else {
-			_, newKey, nodeProof, discoKey, discoProof := f.keys(6)
-			err = f.talk.Receive(t.Context(), sharedmtcp.MessageRotateNodeKey, &mtcpv1.RotateNodeKey{
-				NewNodeKey: newKey, NodeKeyProof: nodeProof, NewDiscoKey: discoKey, DiscoKeyProof: discoProof})
-		}
-		if !errors.Is(err, errSessionLimited) {
-			t.Fatalf("%#x: Receive() = %v", uint8(kind), err)
-		}
-		got := f.expectPast(sharedmtcp.MessageError).(*mtcpv1.Error)
-		if got.GetCode() != mtcpv1.Error_OVERLOADED || !got.GetFatal() || got.GetRetryAfterMs() == 0 {
-			t.Fatalf("%#x answered %v", uint8(kind), got)
-		}
-		if len(rotations.calls()) != 0 || len(f.registrations.calls()) != 0 {
-			t.Fatalf("%#x reached a store", uint8(kind))
-		}
-	}
 }

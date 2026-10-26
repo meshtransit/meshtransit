@@ -524,8 +524,7 @@ even when the session ends meanwhile.
 
 The node stores the new key as staged before it sends the request and keeps
 it until a later rotation's response: after a crash it tries its newest
-staged key first, then the former ones. Refusals are `Error`, not fatal
-(except for a contested key, below):
+staged key first, then the former ones. Refusals are `Error`, not fatal:
 `NOT_PERMITTED` when the key was used before or the gateway already changed
 its machine key 30 times within the hour (then with `retry_after_ms`), which
 also tells the node to drop the staged key; `NOT_AUTHORIZED` when the
@@ -533,27 +532,56 @@ session's keys are no longer the gateway's; `INVALID` for a bad key or
 proof; `NOT_PERMITTED` on any session that is not a gateway's. A gateway
 also rotates its node key (6.3) at every start, at most 30 times an hour.
 
-When a gateway session, once established, pushes out a live session of the
-same machine key on the same Core replica, Core contests the key for 15
-seconds and counts it (handshake result `gateway_replaced`). While the key
-is contested no session of it may rotate its machine key or its node key:
-Core ends such a session with a fatal `Error{OVERLOADED, retry_after_ms}`
-until the window ends; the node keeps its staged keys and reconnects after
-`retry_after_ms`. A gateway pushed out with `SESSION_REPLACED`, or refused
-with "handshake replayed", reconnects within 2 seconds every time, outside
-the backoff of section 5, so a copy of its Secret that pushes the real pod
-out is pushed back before it can rotate, and both are kept from rotating for
-as long as they contend. A valid node key proof refused only for its
-timestamp also contests the key: the proof binds the handshake, so a second
-holder of the keys took a newer timestamp; and a gateway's timestamp may not
-run more than 5 seconds ahead of Core, so a copy cannot shut the real pod
-out as replays. The contest relies on the pod's handshakes reaching Core: a
-holder of the keys that shares the pod's source address can use up that
-source's handshake budget (section 14) and rotate after the window; and a
-pod whose clock steps back is counted as a second holder until it catches
-up. A pod whose earlier session lingers after a crash
-waits once. Sessions of one key on two different replicas are not seen as
-contending.
+A gateway session rotates its machine key or its node key only while its own
+map stream holds the gateway's presence on every Core replica, and the key is
+not contested. Every gateway session opened with a Ping streams, so a
+rotation sent right after the Ping waits, at most 5 seconds, for the stream
+to claim the presence. Core refuses a rotation with `Error{NOT_PERMITTED}`,
+not fatal and without `retry_after_ms`, so the node drops the staged key,
+keeps the session and starts at once. It refuses when:
+
+- **No presence.** The stream has not claimed the presence, another stream
+  holds it, or Core cannot tell (Redis failed).
+- **Contested.** The machine key is contested:
+  - **Pushed out on the same replica.** A gateway session pushed out a live
+    session of the same machine key on the same replica, within 10 minutes
+    (handshake result `gateway_replaced`).
+  - **Replayed proof.** A valid node key proof was refused only for its
+    timestamp, within 10 minutes. The proof binds the handshake, so a second
+    holder of the keys took a newer timestamp.
+  - **Presence taken from a live holder.** A gateway stream took the presence
+    from another live holder, on any replica or generation, within 10 minutes.
+    This is shared through Redis.
+- **Replaced while waiting.** The session is no longer its replica's session
+  of the machine key.
+
+A rotation also keeps the stream's presence while it commits, so a stream
+that claims the presence meanwhile contests the key.
+
+A gateway reconnects within 2 seconds every time, outside the backoff of
+section 5, when any of the following happens:
+
+- it is pushed out with `SESSION_REPLACED`;
+- its stream loses the presence to another holder, which Core also answers
+  with a fatal `SESSION_REPLACED`;
+- it is refused with "handshake replayed".
+
+So a copy of its Secret that takes the real pod's place is taken back before
+the window ends, and while they contend neither rotates. The third take of a
+live holder's presence within five minutes is audited as a session fight.
+
+The checks have these limits:
+
+- **Clock.** A gateway's timestamp may not run more than 5 seconds ahead of
+  Core, so a copy cannot shut the real pod out as replays. A pod whose clock
+  steps back is counted as a second holder until it catches up.
+- **Absent pod.** The checks cannot tell a copy from the pod while the pod
+  has no stream at all.
+- **Source budget.** A holder of the keys that shares the pod's source
+  address can use up that source's handshake budget (section 14) for longer
+  than the window, and then rotate.
+- **Restart soon after a take.** A pod restarting within 10 minutes after a
+  take of its presence skips that start's rotation.
 
 ## 7. Map
 
@@ -1442,7 +1470,7 @@ secrets or other tenants' data, and is at most 512 bytes.
 | `UNSUPPORTED` | Unknown message type or capability misuse |
 | `NOT_AUTHORIZED` | Message requires an authorized Device |
 | `NOT_PERMITTED` | Policy forbids the action |
-| `SESSION_REPLACED` | A newer session for this machine key exists |
+| `SESSION_REPLACED` | A newer session for this machine key exists, or another stream took a Kubernetes gateway's presence (6.8) |
 | `OVERLOADED` | Retry after `retry_after_ms` |
 | `INTERNAL` | Retry after `retry_after_ms` |
 

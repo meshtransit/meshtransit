@@ -110,6 +110,7 @@ func TestTLSAuthenticatedDependencies(t *testing.T) {
 	}
 	assertRedisPresenceLeaseFencing(ctx, t, redisClient)
 	assertRedisPresenceTransferLimit(ctx, t, redisClient)
+	assertRedisGatewayPresence(ctx, t, redisClient)
 	assertRedisEndpointObservationFencing(ctx, t, redisClient)
 	assertRedisEndpointAnnouncementPacing(ctx, t, redisClient)
 	assertRedisRateLimit(ctx, t, redisClient)

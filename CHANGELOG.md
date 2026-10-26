@@ -5,6 +5,18 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core (TD-SEC-52b): a Kubernetes gateway rotates its keys only while its
+  own map stream holds the gateway's presence on any control replica, and not
+  within 10 minutes after a live holder of that presence lost it to another
+  (one shared Redis contest key per machine key). A refused rotation is
+  answered `NOT_PERMITTED` without ending the session, so the gateway drops
+  its staged key and starts at once. A gateway stream whose presence another
+  holder took is told `SESSION_REPLACED` and comes back without backing off;
+  the third such take within five minutes is audited as a session fight. A
+  gateway's presence lease names its stream: it is released when the stream
+  ends and handed off when Core rebalances or shuts down. No schema or ACL
+  change; Redis must run with `noeviction`. Metrics
+  `meshtransit_mtcp_limits_total{limit=~"gateway_.*"}`.
 - Core (schema 229, TD-SEC-52a): a Kubernetes gateway that presents a
   retired machine key or a stale node key, or whose current keys two holders
   fight over, leaves a sealed `kubernetes_gateway.stale_key_presented` or
