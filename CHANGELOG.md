@@ -43,7 +43,7 @@ merge (2026-10-09) are kept below.
   and the nonce the code binds, and once an administrator approves it
   creates the gateway Device `<cluster>-<ordinal>` and sends `authorized`
   on the same session. Off unless `MESHTRANSIT_KUBERNETES_JOIN=true`; leave
-  it off until K1a1.4 and K1a1.6 are deployed.
+  it off until K1a1.4 is deployed (the K1a1.6 second approver is deferred).
 - Kubernetes gateways K1a1.4a (Core, schema 226, MTCP `session.proof1`): a
   gateway proves its node key as its session's first record
   (`NodeKeyProof`, mtcp-v1 §6.7); the database serves, rotates or logs out a
