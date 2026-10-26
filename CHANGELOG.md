@@ -5,6 +5,22 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core (schema 230): access to a Kubernetes cluster is granted to the
+  cluster as a whole. A rule's destination may be a cluster
+  (`destination_kubernetes_cluster_id`, TCP 443 only); it reaches every active
+  replica, now and later, through a system Device Group that Core makes on the
+  first rule to the cluster and keeps to the cluster's active gateways. Active
+  policy and Explain name the cluster (`selector_kind: kubernetes_cluster`,
+  `destination_kubernetes_cluster_id`); the Console's Device list names a
+  replica's cluster. No rule, DNS zone, unmanaged DNS group or Device Group may
+  name a gateway Device or a cluster's group otherwise (`kubernetes_replica_rule`,
+  409); a user group no longer makes a gateway a rule source. Approving a replica
+  is refused when a rule to its cluster would give a Device more than 10,000
+  rule edges. Upgrade note: rules written earlier to single replicas keep
+  working and are carried unchanged by later publications until removed; replace
+  them with one rule to the cluster. A DNS zone that already names a gateway as
+  its resolver keeps working, but the zone cannot be changed until that resolver
+  is removed.
 - Core (TD-SEC-52b): a Kubernetes gateway rotates its keys only while its
   own map stream holds the gateway's presence on any control replica, and not
   within 10 minutes after a live holder of that presence lost it to another

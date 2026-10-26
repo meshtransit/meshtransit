@@ -129,6 +129,9 @@ func activePolicyProjection(snapshot catalog.Snapshot) activePolicyData {
 		if rule.DestinationExitPoolID().IsValid() {
 			kind, selector = "exit_pool", rule.DestinationExitPoolID().String()
 		}
+		if rule.DestinationKubernetesClusterID().IsValid() {
+			kind, selector = "kubernetes_cluster", rule.DestinationKubernetesClusterID().String()
+		}
 		destination := ""
 		if item.DestinationNodeID.IsValid() {
 			destination = item.DestinationNodeID.String()

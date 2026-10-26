@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"time"
@@ -33,6 +34,10 @@ FROM mesh_ops.lock_kubernetes_replica_completion_v1($1::UUID, $2::BYTEA, $3::BYT
 FROM mesh_ops.insert_kubernetes_gateway_device_v1($1::BIGINT, $2::UUID, $3::TEXT, $4::TIMESTAMPTZ)`
 	completeKubernetesReplicaRequestSQL = `SELECT mesh_ops.complete_kubernetes_replica_request_v1(
     $1::BIGINT, $2::BIGINT, $3::UUID, $4::BIGINT, $5::TIMESTAMPTZ)`
+	// The cluster's group the gateway joined when its Device was written
+	// (schema 230); no row when the cluster has no group yet.
+	kubernetesPolicyGroupEvidenceSQL = `SELECT group_public_id::TEXT, member_hash_before, member_hash_after,
+    group_revision FROM mesh_ops.kubernetes_cluster_policy_group_evidence_v1($1::BIGINT)`
 )
 
 // KubernetesJoinCompletionStore completes a replica's approved request into
@@ -280,8 +285,12 @@ func (store *KubernetesJoinCompletionStore) completeApproved(ctx context.Context
 		}
 		return registration.Result{}, ErrRegistrationEvidence
 	}
+	joined, err := readKubernetesPolicyGroupEvidence(ctx, tx, deviceInternal)
+	if err != nil {
+		return registration.Result{}, err
+	}
 	if err := appendKubernetesEnrolledEvidence(ctx, tx, helper.locked.audit, lock, requestID, ids, hostname,
-		deviceVersion, newNetworkRevision, newInventoryRevision); err != nil {
+		deviceVersion, newNetworkRevision, newInventoryRevision, joined); err != nil {
 		return registration.Result{}, err
 	}
 	deviceID, err := node.ParseID(ids.device.String())
@@ -298,17 +307,19 @@ func (store *KubernetesJoinCompletionStore) completeApproved(ctx context.Context
 func appendKubernetesEnrolledEvidence(ctx context.Context, tx registrationDatabaseTransaction,
 	head registrationAuditHead, lock kubernetesCompletionLock, requestID kubecluster.RequestID,
 	ids kubernetesCompletionIDs, hostname node.Hostname, deviceVersion, networkRevision, inventoryRevision int64,
+	group *kubernetesPolicyGroupEvidence,
 ) error {
 	approver, err := publicid.Parse(lock.approverPublicID.String)
 	if err != nil {
 		return ErrRegistrationEvidence
 	}
 	auditPayload, err := json.Marshal(struct {
-		Hostname  string `json:"hostname"`
-		RequestID string `json:"request_id"`
-		ClusterID string `json:"cluster_id"`
-		Ordinal   int16  `json:"ordinal"`
-	}{hostname.String(), requestID.String(), lock.clusterPublicID, lock.ordinal.Int16})
+		Hostname  string                         `json:"hostname"`
+		RequestID string                         `json:"request_id"`
+		ClusterID string                         `json:"cluster_id"`
+		Ordinal   int16                          `json:"ordinal"`
+		Group     *kubernetesPolicyGroupEvidence `json:"policy_group,omitempty"`
+	}{hostname.String(), requestID.String(), lock.clusterPublicID, lock.ordinal.Int16, group})
 	if err != nil {
 		return err
 	}
@@ -350,6 +361,10 @@ func kubernetesCompletionDatabaseError(err error) error {
 			return kubecluster.ErrNotFound
 		case "MTK10":
 			return kubecluster.ErrNotWaiting
+		// MTK11: a rule to the cluster would give a Device too many edges
+		// with this replica; the replica asks again.
+		case "MTK11":
+			return errors.Join(kubecluster.ErrEdgeBudget, err)
 		case "40001", "40P01":
 			return kubecluster.ErrConflict
 		}
@@ -358,4 +373,33 @@ func kubernetesCompletionDatabaseError(err error) error {
 		return kubecluster.ErrNotFound
 	}
 	return errors.Join(kubecluster.ErrUnavailable, err)
+}
+
+// kubernetesPolicyGroupEvidence is the cluster's group a new gateway joined:
+// its members without and with the gateway, and the group revision.
+type kubernetesPolicyGroupEvidence struct {
+	GroupID          string `json:"group_id"`
+	MemberHashBefore string `json:"member_set_sha256_before"`
+	MemberHashAfter  string `json:"member_set_sha256"`
+	GroupRevision    int64  `json:"group_revision"`
+}
+
+func readKubernetesPolicyGroupEvidence(ctx context.Context, tx registrationDatabaseTransaction,
+	deviceInternal int64) (*kubernetesPolicyGroupEvidence, error) {
+	var groupID string
+	var before, after []byte
+	var revision int64
+	err := tx.QueryRow(ctx, kubernetesPolicyGroupEvidenceSQL, deviceInternal).Scan(&groupID, &before, &after, &revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, kubernetesCompletionDatabaseError(err)
+	}
+	if _, parseErr := publicid.Parse(groupID); parseErr != nil || len(before) != sha256.Size ||
+		len(after) != sha256.Size || revision <= 0 {
+		return nil, ErrRegistrationEvidence
+	}
+	return &kubernetesPolicyGroupEvidence{GroupID: groupID, MemberHashBefore: hex.EncodeToString(before),
+		MemberHashAfter: hex.EncodeToString(after), GroupRevision: revision}, nil
 }

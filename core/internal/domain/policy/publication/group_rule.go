@@ -8,6 +8,7 @@ import (
 	"meshtransit.net/core/internal/domain/devicegroup"
 	"meshtransit.net/core/internal/domain/devicetag"
 	"meshtransit.net/core/internal/domain/identitygroup"
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/policy"
 	"meshtransit.net/core/internal/domain/publicid"
@@ -73,17 +74,24 @@ type GroupRuleParams struct {
 	DestinationNodeID     node.ID
 	DestinationGroupID    devicegroup.ID
 	DestinationTagID      devicetag.ID
-	Protocol              policy.Protocol
-	DestinationPortRanges []policy.PortRange
+	// DestinationKubernetesClusterID names the cluster whose own Device
+	// Group DestinationGroupID is: the rule reaches every replica of the
+	// cluster, on TCP 443 only.
+	DestinationKubernetesClusterID kubecluster.ID
+	Protocol                       policy.Protocol
+	DestinationPortRanges          []policy.PortRange
 }
 
 // GroupRule is a release fact that names selectors, not their members: maps
 // resolve it from the membership, ownership and tags current at each Network
 // revision.
 type GroupRule struct {
-	ruleID                policy.RuleID
-	source                RuleSide
-	destination           RuleSide
+	ruleID      policy.RuleID
+	source      RuleSide
+	destination RuleSide
+	// cluster labels a destination group that is a Kubernetes cluster's
+	// own; it is not part of what the release grants.
+	cluster               kubecluster.ID
 	protocol              policy.Protocol
 	destinationPortRanges []policy.PortRange
 }
@@ -120,6 +128,7 @@ func NewGroupRule(params GroupRuleParams) (GroupRule, error) {
 			RuleSide{SideDeviceGroup, publicid.ID(params.DestinationGroupID)},
 			RuleSide{SideDeviceTag, publicid.ID(params.DestinationTagID)},
 		),
+		cluster:  params.DestinationKubernetesClusterID,
 		protocol: params.Protocol, destinationPortRanges: ports,
 	}
 	if !valid || !rule.IsValid() {
@@ -177,6 +186,10 @@ func (rule GroupRule) DestinationTagID() devicetag.ID {
 	return devicetag.ID(sideID(rule.destination, SideDeviceTag))
 }
 
+// DestinationKubernetesClusterID returns the cluster whose own group the
+// destination is, when it is one.
+func (rule GroupRule) DestinationKubernetesClusterID() kubecluster.ID { return rule.cluster }
+
 // Protocol returns the packet protocol.
 func (rule GroupRule) Protocol() policy.Protocol { return rule.protocol }
 
@@ -186,11 +199,16 @@ func (rule GroupRule) DestinationPortRanges() []policy.PortRange {
 }
 
 // IsValid reports exactly one source and one destination, at least one
-// selector side, an Identity Group only as a source, and canonical traffic.
+// selector side, an Identity Group only as a source, canonical traffic, and
+// for a Kubernetes cluster's group, TCP 443 only.
 func (rule GroupRule) IsValid() bool {
 	if !rule.ruleID.IsValid() || !rule.source.IsValid() || !rule.destination.IsValid() ||
 		rule.destination.kind == SideIdentityGroup ||
 		(rule.source.kind == SideDevice && rule.destination.kind == SideDevice) {
+		return false
+	}
+	if rule.cluster != (kubecluster.ID{}) && (!rule.cluster.IsValid() ||
+		rule.destination.kind != SideDeviceGroup || !policy.IsKubernetesTraffic(rule.protocol, rule.destinationPortRanges)) {
 		return false
 	}
 	ports, valid := policy.CanonicalTraffic(rule.protocol, rule.destinationPortRanges)

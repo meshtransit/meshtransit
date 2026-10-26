@@ -10,6 +10,7 @@ import (
 
 	"meshtransit.net/core/internal/domain/exitpool"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/policy"
@@ -48,6 +49,15 @@ type ExitPoolResolver interface {
 	ResolvePolicyExitPools(context.Context, accountsession.Session, network.Scope, []exitpool.ID) ([]exitpool.Pool, error)
 }
 
+// KubernetesClusterResolver returns the policy groups of the scope's active
+// Kubernetes clusters, as the reader may see them, after making the group of
+// each given cluster that has none yet. A cluster that is not active in the
+// scope is absent from the result.
+type KubernetesClusterResolver interface {
+	ResolvePolicyKubernetesClusters(context.Context, accountsession.Session, network.Scope,
+		[]kubecluster.ID) ([]kubecluster.PolicyGroup, error)
+}
+
 // SiteResolver returns the active Sites of the scope with the given IDs, as
 // the reader may see them. A missing Site is absent from the result.
 type SiteResolver interface {
@@ -69,6 +79,9 @@ var (
 	// ErrExitPoolsDisabled reports an Exit Pool destination on a compiler
 	// without Exit Pools.
 	ErrExitPoolsDisabled = errors.New("policy compilation: Exit Pools are disabled")
+	// ErrKubernetesClusterUnavailable reports a rule to a Kubernetes cluster
+	// that is not an active cluster of the scope.
+	ErrKubernetesClusterUnavailable = errors.New("policy compilation: Kubernetes cluster unavailable")
 )
 
 // Service compiles typed Device, Resource, and Resource Group destinations.
@@ -77,6 +90,20 @@ type Service struct {
 	imported     ImportedDestinationResolver
 	sites        SiteResolver
 	exitPools    ExitPoolResolver
+	clusters     KubernetesClusterResolver
+}
+
+// WithKubernetesClusters returns a compiler that also compiles rules to
+// Kubernetes clusters and names a rule to a cluster's own group as a rule to
+// the cluster. Without it, a rule to a cluster is refused (ErrInvalidRequest);
+// the database still refuses a cluster's group used any other way.
+func (service *Service) WithKubernetesClusters(clusters KubernetesClusterResolver) (*Service, error) {
+	if service == nil || clusters == nil {
+		return nil, ErrInvalidRequest
+	}
+	extended := *service
+	extended.clusters = clusters
+	return &extended, nil
 }
 
 // WithExitPools returns a compiler that also compiles Exit Pool
@@ -243,6 +270,10 @@ func (service *Service) Compile(
 	if err != nil {
 		return publication.Candidate{}, err
 	}
+	clusterGroups, err := service.resolveKubernetesClusters(ctx, session, request)
+	if err != nil {
+		return publication.Candidate{}, err
+	}
 	rules := make([]policy.Rule, 0, len(request.rules))
 	destinations := make([]publication.ResourceDestination, 0, len(resourceIDs))
 	groupDestinations := make([]publication.ResourceGroupDestination, 0, len(groupIDs))
@@ -258,12 +289,16 @@ func (service *Service) Compile(
 			continue
 		}
 		if intent.SelectsDeviceGroup() {
+			destinationGroup, cluster, err := clusterGroups.destination(intent)
+			if err != nil {
+				return publication.Candidate{}, err
+			}
 			rule, err := publication.NewGroupRule(publication.GroupRuleParams{
 				RuleID: intent.id, SourceNodeID: intent.sourceNodeID, SourceGroupID: intent.sourceGroupID,
 				SourceIdentityGroupID: intent.sourceIdentityGroupID, SourceTagID: intent.sourceTagID,
-				DestinationNodeID: intent.destinationNodeID, DestinationGroupID: intent.destinationDeviceGroupID,
-				DestinationTagID: intent.destinationTagID,
-				Protocol:         intent.protocol, DestinationPortRanges: intent.destinationPortRanges,
+				DestinationNodeID: intent.destinationNodeID, DestinationGroupID: destinationGroup,
+				DestinationTagID: intent.destinationTagID, DestinationKubernetesClusterID: cluster,
+				Protocol: intent.protocol, DestinationPortRanges: intent.destinationPortRanges,
 			})
 			if err != nil {
 				return publication.Candidate{}, ErrInvalidRequest

@@ -10,6 +10,7 @@ import (
 	"meshtransit.net/core/internal/domain/devicetag"
 	"meshtransit.net/core/internal/domain/exitpool"
 	"meshtransit.net/core/internal/domain/identitygroup"
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/policy"
@@ -52,8 +53,11 @@ type RuleIntentParams struct {
 	DestinationPrefixes []netip.Prefix
 	// DestinationExitPoolID selects the Internet through an Exit Pool.
 	DestinationExitPoolID exitpool.ID
-	Protocol              policy.Protocol
-	DestinationPortRanges []policy.PortRange
+	// DestinationKubernetesClusterID selects every replica of a Kubernetes
+	// cluster, through the cluster's own Device Group, on TCP 443 only.
+	DestinationKubernetesClusterID kubecluster.ID
+	Protocol                       policy.Protocol
+	DestinationPortRanges          []policy.PortRange
 }
 
 // RuleIntent is one immutable Access Rule with exactly one typed destination.
@@ -73,6 +77,7 @@ type RuleIntent struct {
 	destinationSiteID             site.ID
 	destinationPrefixes           []netip.Prefix
 	destinationExitPoolID         exitpool.ID
+	destinationCluster            kubecluster.ID
 	protocol                      policy.Protocol
 	destinationPortRanges         []policy.PortRange
 }
@@ -93,6 +98,7 @@ func NewRuleIntent(params RuleIntentParams) (RuleIntent, error) {
 		destinationSiteID:             params.DestinationSiteID,
 		destinationPrefixes:           slices.Clone(params.DestinationPrefixes),
 		destinationExitPoolID:         params.DestinationExitPoolID,
+		destinationCluster:            params.DestinationKubernetesClusterID,
 		protocol:                      params.Protocol, destinationPortRanges: slices.Clone(params.DestinationPortRanges),
 	}
 	if !intent.IsValid() {
@@ -138,7 +144,31 @@ func (intent RuleIntent) SelectsDeviceGroup() bool {
 		return false
 	}
 	return intent.sourceGroupID.IsValid() || intent.destinationDeviceGroupID.IsValid() ||
-		intent.sourceIdentityGroupID.IsValid() || intent.sourceTagID.IsValid() || intent.destinationTagID.IsValid()
+		intent.sourceIdentityGroupID.IsValid() || intent.sourceTagID.IsValid() || intent.destinationTagID.IsValid() ||
+		intent.destinationCluster.IsValid()
+}
+
+// DestinationKubernetesClusterID returns the Kubernetes cluster destination,
+// when selected.
+func (intent RuleIntent) DestinationKubernetesClusterID() kubecluster.ID {
+	return intent.destinationCluster
+}
+
+// WithKubernetesCluster returns the intent naming the cluster in place of
+// the cluster's own Device Group it names, for a reader who knows that group
+// is the cluster's.
+func (intent RuleIntent) WithKubernetesCluster(cluster kubecluster.ID) (RuleIntent, error) {
+	if !intent.destinationDeviceGroupID.IsValid() {
+		return RuleIntent{}, ErrInvalidRequest
+	}
+	named := intent
+	named.destinationDeviceGroupID, named.destinationCluster = devicegroup.ID{}, cluster
+	named.destinationPrefixes = slices.Clone(intent.destinationPrefixes)
+	named.destinationPortRanges = slices.Clone(intent.destinationPortRanges)
+	if !named.IsValid() {
+		return RuleIntent{}, ErrInvalidRequest
+	}
+	return named, nil
 }
 
 // DestinationNodeID returns the direct Device destination, when selected.
@@ -191,11 +221,12 @@ func (intent RuleIntent) IsValid() bool {
 	hasImported := intent.destinationImportedResourceID.IsValid()
 	hasSite := intent.destinationSiteID.IsValid()
 	hasExitPool := intent.destinationExitPoolID.IsValid()
+	hasCluster := intent.destinationCluster.IsValid()
 	if !intent.id.IsValid() || !intent.scope.IsValid() ||
 		boolCount(intent.sourceNodeID.IsValid(), intent.sourceGroupID.IsValid(),
 			intent.sourceIdentityGroupID.IsValid(), intent.sourceTagID.IsValid()) != 1 ||
 		boolCount(hasDevice, hasDeviceGroup, hasTag, hasResource, hasGroup, hasImported, hasSite,
-			hasExitPool) != 1 ||
+			hasExitPool, hasCluster) != 1 ||
 		!intent.protocol.IsValid() || intent.destinationPortRanges == nil ||
 		(!hasSite && len(intent.destinationPrefixes) > 0) ||
 		len(intent.destinationPrefixes) > site.MaximumPrefixesPerSite {
@@ -208,11 +239,11 @@ func (intent RuleIntent) IsValid() bool {
 		return valid
 	}
 	if intent.SelectsDeviceGroup() {
-		if !hasDevice && !hasDeviceGroup && !hasTag {
+		if !hasDevice && !hasDeviceGroup && !hasTag && !hasCluster {
 			return false
 		}
-		_, valid := policy.CanonicalTraffic(intent.protocol, intent.destinationPortRanges)
-		return valid
+		ports, valid := policy.CanonicalTraffic(intent.protocol, intent.destinationPortRanges)
+		return valid && (!hasCluster || policy.IsKubernetesTraffic(intent.protocol, ports))
 	}
 	if hasDevice {
 		_, err := policy.NewRule(policy.RuleParams{

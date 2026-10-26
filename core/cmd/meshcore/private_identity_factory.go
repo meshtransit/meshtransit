@@ -594,6 +594,14 @@ func privateIdentityManagementServices(
 			return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition
 		}
 	}
+	clusterGroups, err := postgresadapter.NewKubernetesClusterPolicyGroupStore(pool,
+		postgresadapter.AccountSessionOptions{StatementTimeout: options.StatementTimeout, IdleTimeout: options.IdleTimeout})
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition
+	}
+	if policyCompiler, err = policyCompiler.WithKubernetesClusters(clusterGroups); err != nil {
+		return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition
+	}
 	accessGraphStore, err := postgresadapter.NewAccessGraphStore(
 		pool,
 		postgresadapter.AccessGraphOptions(options),

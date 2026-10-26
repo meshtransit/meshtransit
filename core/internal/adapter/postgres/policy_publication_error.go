@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"meshtransit.net/core/internal/domain/policy"
 	publication "meshtransit.net/core/internal/domain/policy/publication"
 )
 
@@ -27,6 +28,13 @@ func classifyPolicyPublicationDatabaseError(ctx context.Context, err error) erro
 		return errors.Join(publication.ErrEdgeBudget, err)
 	case "MTP05":
 		return errors.Join(publication.ErrDeviceUnavailable, err)
+	case "MTP06":
+		// The rule's ID is the DETAIL.
+		ruleID, parseErr := policy.ParseRuleID(postgresError.Detail)
+		if parseErr != nil {
+			return errors.Join(publication.ErrKubernetesRule, err)
+		}
+		return errors.Join(&publication.KubernetesRuleError{RuleID: ruleID}, err)
 	case "MTS07":
 		return errors.Join(publication.ErrRouteOverlap, err)
 	case "MT003", "MT006", "MT008", "MT009", "MT011", "42501":

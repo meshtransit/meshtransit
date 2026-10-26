@@ -15,6 +15,7 @@ import (
 	"meshtransit.net/core/internal/domain/exitpool"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/identitygroup"
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/policy"
@@ -50,6 +51,7 @@ type publishPolicyRuleRequest struct {
 	DestinationSiteID             string                          `json:"destination_site_id"`
 	DestinationPrefixes           []string                        `json:"destination_prefixes"`
 	DestinationExitPoolID         string                          `json:"destination_exit_pool_id"`
+	DestinationKubernetesCluster  string                          `json:"destination_kubernetes_cluster_id"`
 	Protocol                      string                          `json:"protocol"`
 	DestinationPortRanges         []publishPolicyPortRangeRequest `json:"destination_port_ranges"`
 }
@@ -317,6 +319,12 @@ func decodePolicyRuleIntent(
 			return compilation.RuleIntent{}, err
 		}
 	}
+	var destinationCluster kubecluster.ID
+	if input.DestinationKubernetesCluster != "" {
+		if destinationCluster, err = kubecluster.ParseID(input.DestinationKubernetesCluster); err != nil {
+			return compilation.RuleIntent{}, err
+		}
+	}
 	if len(input.DestinationPrefixes) > site.MaximumPrefixesPerSite {
 		return compilation.RuleIntent{}, policy.ErrInvalidRule
 	}
@@ -352,8 +360,8 @@ func decodePolicyRuleIntent(
 		DestinationResourceID: destinationResourceID, DestinationGroupID: destinationGroupID,
 		DestinationImportedResourceID: destinationImportedResourceID,
 		DestinationSiteID:             destinationSiteID, DestinationPrefixes: destinationPrefixes,
-		DestinationExitPoolID: destinationExitPoolID,
-		Protocol:              protocol, DestinationPortRanges: portRanges,
+		DestinationExitPoolID: destinationExitPoolID, DestinationKubernetesClusterID: destinationCluster,
+		Protocol: protocol, DestinationPortRanges: portRanges,
 	})
 }
 
@@ -414,6 +422,8 @@ func classifyPolicyPublicationError(err error) managementError {
 			Status: http.StatusConflict, Code: "route_overlap",
 			Message: "rules grant overlapping prefixes of two Sites; a Device could not tell which router to use",
 		}
+	case errors.Is(err, policypublication.ErrKubernetesRule):
+		return kubernetesReplicaRuleError(err)
 	case errors.Is(err, policypublication.ErrDeviceUnavailable):
 		return managementError{
 			Status: http.StatusConflict, Code: "device_unavailable",
@@ -472,6 +482,8 @@ func classifyPolicyCompilationError(err error) managementError {
 			Status: http.StatusConflict, Code: "exit_pools_disabled",
 			Message: "this deployment does not offer Exit Pools",
 		}
+	case errors.Is(err, compilation.ErrKubernetesClusterUnavailable):
+		return kubernetesClusterUnavailableError
 	case errors.Is(err, compilation.ErrSiteRoutesDisabled):
 		return managementError{
 			Status: http.StatusConflict, Code: "subnet_routes_disabled",
@@ -499,4 +511,23 @@ func resultMatchesPolicyPublication(
 	return result.IsValid() && result.Scope() == command.Candidate().Snapshot().Scope() &&
 		result.PolicyRevision() == command.BasePolicyRevision()+1 &&
 		result.SemanticHash() == command.Candidate().SemanticHash()
+}
+
+// kubernetesClusterUnavailableError answers a rule to a cluster the Network
+// does not have.
+var kubernetesClusterUnavailableError = managementError{
+	Status: http.StatusConflict, Code: "kubernetes_cluster_unavailable",
+	Message: "a rule names a Kubernetes cluster that is not in this Network",
+}
+
+// kubernetesReplicaRuleError names the rule that reaches one replica of a
+// Kubernetes cluster, or a cluster's own group, in a way rules may not.
+func kubernetesReplicaRuleError(err error) managementError {
+	message := "a rule names one replica of a Kubernetes cluster or the cluster's own group; " +
+		"remove it and grant access to the cluster on TCP 443 instead"
+	if failure, ok := errors.AsType[*policypublication.KubernetesRuleError](err); ok {
+		message = "rule " + failure.RuleID.String() + " names one replica of a Kubernetes cluster or the " +
+			"cluster's own group; remove it and grant access to the cluster on TCP 443 instead"
+	}
+	return managementError{Status: http.StatusConflict, Code: "kubernetes_replica_rule", Message: message}
 }

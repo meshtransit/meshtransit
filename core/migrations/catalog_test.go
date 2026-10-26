@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 229 {
-		t.Fatalf("len(Catalog()) = %d, want 229", len(catalog))
+	if len(catalog) != 230 {
+		t.Fatalf("len(Catalog()) = %d, want 230", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 229 {
-		t.Fatalf("LatestVersion() = %d, want 229", LatestVersion())
+	if LatestVersion() != 230 {
+		t.Fatalf("LatestVersion() = %d, want 230", LatestVersion())
 	}
 }
 
@@ -6665,6 +6665,46 @@ func TestMigration229KubernetesGatewayKeyEvents(t *testing.T) {
 	for _, forbidden := range []string{"BYPASSRLS", "DROP FUNCTION", "TEMPORARY", "CREATE OR REPLACE", "remote_addr"} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 229 contains %q", forbidden)
+		}
+	}
+}
+
+// Schema 230 grants access to a Kubernetes cluster as a whole: each cluster
+// gets one system Device Group, made on first use with evidence, whose
+// members are exactly its active gateways. Rules reach it on TCP 443 only,
+// never name a gateway or the group otherwise, and the ordinary group
+// functions neither list nor change it. Nothing is backfilled.
+func TestMigration230KubernetesClusterPolicyGroups(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[229]
+	if migration.Version != 230 {
+		t.Fatalf("migration 230 = %+v", migration)
+	}
+	for _, want := range []string{
+		"ADD COLUMN kind TEXT NOT NULL DEFAULT 'user'",
+		"CONSTRAINT device_group_kubernetes_cluster_key UNIQUE (kubernetes_cluster_id)",
+		"WHERE state = 'active' AND kind = 'user';",
+		"CREATE FUNCTION mesh_ops.ensure_kubernetes_cluster_policy_group_v1(",
+		"CREATE FUNCTION mesh_ops.read_kubernetes_cluster_policy_groups_v1(",
+		"CREATE FUNCTION mesh_ops.kubernetes_cluster_policy_group_evidence_v1(",
+		"CREATE FUNCTION mesh_ops.enforce_kubernetes_group_member_v1()",
+		"CREATE FUNCTION mesh_ops.refuse_kubernetes_policy_rule_v1()",
+		"CREATE FUNCTION mesh_ops.refuse_kubernetes_dns_reference_v1()",
+		"CREATE TRIGGER device_kubernetes_group_release",
+		"CREATE TRIGGER kubernetes_replica_request_edge_budget",
+		"ERRCODE = 'MTP06'",
+		"ERRCODE = 'MTK11'",
+		"AND device.kind = 'standard'",
+		"AND device_group.kind = 'user'",
+		"TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 230 lacks %q", want)
+		}
+	}
+	for _, forbidden := range []string{"BYPASSRLS", "DROP FUNCTION", "TEMPORARY"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 230 contains %q", forbidden)
 		}
 	}
 }

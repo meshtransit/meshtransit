@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/netip"
+	"slices"
 	"strings"
 	"time"
 
@@ -111,6 +112,25 @@ func (store *ActivePolicyStore) readActivePolicyOnce(ctx context.Context, sessio
 	snapshot, err := decodeActivePolicy(*encoded)
 	if err != nil || snapshot.Scope() != scope {
 		return catalog.Snapshot{}, simulation.ErrInvalidBaseline
+	}
+	// A rule to a Kubernetes cluster's own group reads as a rule to the
+	// cluster, from the same snapshot; rules to no group need no read.
+	if slices.ContainsFunc(snapshot.Rows(), func(row catalog.Row) bool {
+		return row.Intent.DestinationDeviceGroupID().IsValid()
+	}) {
+		var clusterGroups string
+		if err := transaction.QueryRow(ctx, readKubernetesClusterPolicyGroupsSQL, append(
+			sessionQueryArguments(session), scope.WorkspaceID().String(), scope.NetworkID().String())...).Scan(
+			&clusterGroups); err != nil {
+			return catalog.Snapshot{}, policySimulationDatabaseError(ctx, err)
+		}
+		groups, err := decodeKubernetesPolicyGroups(clusterGroups, scope)
+		if err != nil {
+			return catalog.Snapshot{}, simulation.ErrInvalidBaseline
+		}
+		if snapshot, err = snapshot.WithKubernetesClusters(groups); err != nil {
+			return catalog.Snapshot{}, simulation.ErrInvalidBaseline
+		}
 	}
 	if err := transaction.Commit(ctx); err != nil {
 		return catalog.Snapshot{}, policySimulationDatabaseError(ctx, err)

@@ -14,6 +14,7 @@ import (
 	"meshtransit.net/core/internal/domain/devicetag"
 	"meshtransit.net/core/internal/domain/identity"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/node/inventory"
@@ -24,7 +25,7 @@ import (
 // readConsoleDeviceInventorySQL reads a page in name order with each
 // Device's DNS label, the first 16 prefixes it offers and the scope's display
 // codes (schema 192).
-const readConsoleDeviceInventorySQL = `SELECT mesh_ops.read_console_devices_v5(
+const readConsoleDeviceInventorySQL = `SELECT mesh_ops.read_console_devices_v6(
     $1::UUID, $2::UUID, $3::UUID, $4::UUID,
     $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
     $10::UUID, $11::UUID, $12::TIMESTAMPTZ, $13::TEXT, $14::TEXT, $15::TEXT, $16::UUID, $17::INTEGER
@@ -32,7 +33,7 @@ const readConsoleDeviceInventorySQL = `SELECT mesh_ops.read_console_devices_v5(
 
 // readConsoleDeviceSQL reads one Device with every prefix it offers, how it
 // was enrolled and the mesh addresses it holds (schema 209).
-const readConsoleDeviceSQL = `SELECT mesh_ops.read_console_device_v3(
+const readConsoleDeviceSQL = `SELECT mesh_ops.read_console_device_v4(
     $1::UUID, $2::UUID, $3::UUID, $4::UUID,
     $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
     $10::UUID, $11::UUID, $12::TIMESTAMPTZ, $13::UUID
@@ -281,6 +282,11 @@ type consoleDeviceInventoryEntry struct {
 	// many it offers.
 	AdvertisedPrefixes    []string `json:"advertised_prefixes"`
 	AdvertisedPrefixCount *int     `json:"advertised_prefix_count"`
+	// Schema 230: a Kubernetes gateway replica's cluster.
+	KubernetesCluster *struct {
+		ClusterID string `json:"cluster_id"`
+		Name      string `json:"name"`
+	} `json:"kubernetes_cluster"`
 }
 
 type consoleDeviceInventoryMember struct {
@@ -378,6 +384,16 @@ func (item consoleDeviceInventoryEntry) parse() (inventory.Device, bool) {
 	}
 	if device, deviceErr = device.WithOffer(offer, *item.AdvertisedPrefixCount); deviceErr != nil {
 		return inventory.Device{}, false
+	}
+	if item.KubernetesCluster != nil {
+		cluster, clusterErr := kubecluster.ParseID(item.KubernetesCluster.ClusterID)
+		name, nameErr := kubecluster.ParseName(item.KubernetesCluster.Name)
+		if clusterErr != nil || nameErr != nil {
+			return inventory.Device{}, false
+		}
+		if device, deviceErr = device.WithKubernetesCluster(cluster, name); deviceErr != nil {
+			return inventory.Device{}, false
+		}
 	}
 	if item.DNSLabel != nil {
 		label, labelErr := node.ParseDNSLabel(*item.DNSLabel)

@@ -228,7 +228,7 @@ func assertPostgreSQLDeviceLifecycle(ctx context.Context, t *testing.T, admin *p
 	}
 	// Schema 184: the Network permission check waits for a member change
 	// without holding the session.
-	page, err := runWhileWorkspaceChanging(ctx, t, admin, "read_console_devices_v5", owner.ID().String(),
+	page, err := runWhileWorkspaceChanging(ctx, t, admin, "read_console_devices_v6", owner.ID().String(),
 		func() (inventory.ReadResult, error) {
 			return inventoryStore.ReadDevices(ctx, owner, scope, inventory.Query{Limit: 100})
 		})

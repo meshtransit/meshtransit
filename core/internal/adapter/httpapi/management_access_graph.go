@@ -106,9 +106,11 @@ type explainedPolicyPath struct {
 	// Set when the path comes from a rule that selects Device Groups.
 	SourceDeviceGroupID      string `json:"source_device_group_id,omitempty"`
 	DestinationDeviceGroupID string `json:"destination_device_group_id,omitempty"`
-	SourceIdentityGroupID    string `json:"source_identity_group_id,omitempty"`
-	SourceDeviceTagID        string `json:"source_device_tag_id,omitempty"`
-	DestinationDeviceTagID   string `json:"destination_device_tag_id,omitempty"`
+	// A rule to a Kubernetes cluster names the cluster, not its own group.
+	DestinationKubernetesClusterID string `json:"destination_kubernetes_cluster_id,omitempty"`
+	SourceIdentityGroupID          string `json:"source_identity_group_id,omitempty"`
+	SourceDeviceTagID              string `json:"source_device_tag_id,omitempty"`
+	DestinationDeviceTagID         string `json:"destination_device_tag_id,omitempty"`
 	// Set for a path to a Site: the Site and the prefixes the rule grants.
 	DestinationSiteID   string   `json:"destination_site_id,omitempty"`
 	DestinationPrefixes []string `json:"destination_prefixes,omitempty"`

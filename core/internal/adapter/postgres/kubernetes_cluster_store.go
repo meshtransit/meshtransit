@@ -125,6 +125,11 @@ func kubernetesClusterDatabaseError(err error) error {
 			return kubecluster.ErrKeyNotUsable
 		case "MTK07":
 			return kubecluster.ErrLimitReached
+		// MTD06: a rule to the cluster would give a Device too many edges;
+		// DETAIL names a source Device, empty for the new replica.
+		case "MTD06":
+			source, _ := node.ParseID(pgError.Detail)
+			return &kubecluster.EdgeBudgetError{SourceDeviceID: source}
 		case "22023", "22P02", "23514", "MTK09":
 			return kubecluster.ErrInvalid
 		}

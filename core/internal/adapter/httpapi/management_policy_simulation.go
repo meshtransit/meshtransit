@@ -605,6 +605,8 @@ func classifyPolicySimulationError(err error) managementError {
 			Status: http.StatusConflict, Code: "resource_conflict",
 			Message: "a Resource destination is not active or changed",
 		}
+	case errors.Is(err, compilation.ErrKubernetesClusterUnavailable):
+		return kubernetesClusterUnavailableError
 	case errors.Is(err, simulation.ErrInvalidRequest), errors.Is(err, compilation.ErrInvalidRequest):
 		return *invalidManagementRequest()
 	case errors.Is(err, simulation.ErrInvalidBaseline), errors.Is(err, simulation.ErrInvalidResult):

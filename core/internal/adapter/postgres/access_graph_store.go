@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -15,6 +16,7 @@ import (
 	"meshtransit.net/core/internal/domain/exitpool"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/identitygroup"
+	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/policy"
 	"meshtransit.net/core/internal/domain/policy/publication"
@@ -151,6 +153,10 @@ func (store *AccessGraphStore) ReadActive(
 	}
 	snapshot, err = record.snapshot(query)
 	if err != nil {
+		return accessgraph.Snapshot{}, err
+	}
+	if snapshot, err = nameKubernetesClusterPaths(ctx, transaction.QueryRow, session, query.Scope(),
+		snapshot); err != nil {
 		return accessgraph.Snapshot{}, err
 	}
 	if err := transaction.Commit(ctx); err != nil {
@@ -469,4 +475,27 @@ func accessGraphDatabaseError(ctx context.Context, err error) error {
 		return accessgraph.ErrForbidden
 	}
 	return errors.Join(accessgraph.ErrUnavailable, fmt.Errorf("read active policy explanation: %w", err))
+}
+
+// nameKubernetesClusterPaths names the cluster on every path through a
+// Kubernetes cluster's own Device Group, read in the same snapshot. Paths
+// through no Device Group need no read.
+func nameKubernetesClusterPaths(ctx context.Context,
+	queryRow func(context.Context, string, ...any) resourceAuthorityRow, session accountsession.Session,
+	scope network.Scope, snapshot accessgraph.Snapshot) (accessgraph.Snapshot, error) {
+	if !slices.ContainsFunc(snapshot.Paths(), func(path accessgraph.Path) bool {
+		return path.DestinationDeviceGroupID().IsValid()
+	}) {
+		return snapshot, nil
+	}
+	var encoded string
+	if err := queryRow(ctx, readKubernetesClusterPolicyGroupsSQL, append(sessionQueryArguments(session),
+		scope.WorkspaceID().String(), scope.NetworkID().String())...).Scan(&encoded); err != nil {
+		return accessgraph.Snapshot{}, accessGraphDatabaseError(ctx, err)
+	}
+	groups, err := decodeKubernetesPolicyGroups(encoded, scope)
+	if err != nil {
+		return accessgraph.Snapshot{}, accessgraph.ErrInvalidSnapshot
+	}
+	return snapshot.WithKubernetesClusters(groups)
 }

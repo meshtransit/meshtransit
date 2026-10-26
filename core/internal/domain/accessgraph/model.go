@@ -12,6 +12,7 @@ import (
 	"meshtransit.net/core/internal/domain/devicetag"
 	"meshtransit.net/core/internal/domain/exitpool"
 	"meshtransit.net/core/internal/domain/identitygroup"
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/policy"
@@ -233,6 +234,9 @@ type Path struct {
 	destinationSiteID             site.ID
 	destinationPrefixes           []netip.Prefix
 	destinationExitPoolID         exitpool.ID
+	// destinationCluster names the Kubernetes cluster whose own group a rule
+	// reached, in place of the group.
+	destinationCluster kubecluster.ID
 }
 
 // NewPath validates one immutable explanation path.
@@ -300,6 +304,36 @@ func (path Path) TrustContractID() sharing.ContractID { return path.trustContrac
 // SourceDeviceGroupID returns the source Device Group of a group rule path.
 func (path Path) SourceDeviceGroupID() devicegroup.ID { return path.sourceDeviceGroupID }
 
+// DestinationKubernetesClusterID returns the Kubernetes cluster of a path
+// through a rule to the cluster.
+func (path Path) DestinationKubernetesClusterID() kubecluster.ID { return path.destinationCluster }
+
+// WithKubernetesClusters returns the snapshot with every path through a
+// Kubernetes cluster's own Device Group naming the cluster instead.
+func (snapshot Snapshot) WithKubernetesClusters(groups []kubecluster.PolicyGroup) (Snapshot, error) {
+	byGroup := make(map[devicegroup.ID]kubecluster.ID, len(groups))
+	for _, group := range groups {
+		if !group.IsValid() {
+			return Snapshot{}, ErrInvalidSnapshot
+		}
+		byGroup[group.GroupID] = group.ClusterID
+	}
+	named := snapshot
+	named.paths = clonePaths(snapshot.paths)
+	for index, path := range named.paths {
+		cluster, found := byGroup[path.destinationDeviceGroupID]
+		if !found {
+			continue
+		}
+		path.destinationDeviceGroupID, path.destinationCluster = devicegroup.ID{}, cluster
+		if !path.IsValid() {
+			return Snapshot{}, ErrInvalidSnapshot
+		}
+		named.paths[index] = path
+	}
+	return named, nil
+}
+
 // DestinationDeviceGroupID returns the destination Device Group of a group rule path.
 func (path Path) DestinationDeviceGroupID() devicegroup.ID { return path.destinationDeviceGroupID }
 
@@ -349,7 +383,8 @@ func (path Path) IsValid() bool {
 	}
 	sources := countValid(path.sourceDeviceGroupID.IsValid(), path.sourceIdentityGroupID.IsValid(),
 		path.sourceTagID.IsValid())
-	destinations := countValid(path.destinationDeviceGroupID.IsValid(), path.destinationTagID.IsValid())
+	destinations := countValid(path.destinationDeviceGroupID.IsValid(), path.destinationTagID.IsValid(),
+		path.destinationCluster.IsValid())
 	if sources > 1 || destinations > 1 || (destinations > 0 && path.selectorKind != SelectorKindDevice) ||
 		(sources > 0 && path.selectorKind != SelectorKindDevice && !toSite && !toExit) {
 		return false

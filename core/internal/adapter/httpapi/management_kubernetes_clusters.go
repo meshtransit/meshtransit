@@ -603,6 +603,13 @@ func classifyKubernetesClusterError(err error) managementError {
 	case errors.Is(err, kubecluster.ErrConflict):
 		return managementError{Status: http.StatusConflict, Code: "kubernetes_cluster_conflict",
 			Message: "The cluster changed, its name is taken, or it still has replicas or waiting requests"}
+	case errors.Is(err, kubecluster.ErrEdgeBudget):
+		message := "With one more replica, the replica would load more than 10,000 rule edges; narrow the rules to this cluster"
+		if failure, ok := errors.AsType[*kubecluster.EdgeBudgetError](err); ok && failure.SourceDeviceID.IsValid() {
+			message = "With one more replica, source Device " + failure.SourceDeviceID.String() +
+				" would load more than 10,000 rule edges; narrow the rules to this cluster"
+		}
+		return managementError{Status: http.StatusConflict, Code: "device_policy_edge_limit", Message: message}
 	case errors.Is(err, kubecluster.ErrLimitReached):
 		return managementError{Status: http.StatusConflict, Code: "kubernetes_cluster_limit",
 			Message: "The Network or cluster has as many clusters, keys or replicas as it may"}

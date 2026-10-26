@@ -5,6 +5,8 @@ import (
 	"errors"
 	"slices"
 
+	"meshtransit.net/core/internal/domain/devicegroup"
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/policy/compilation"
@@ -51,10 +53,12 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 		imported := row.Intent.DestinationImportedResourceID().IsValid()
 		siteDestination := row.Intent.DestinationSiteID().IsValid()
 		exitDestination := row.Intent.DestinationExitPoolID().IsValid()
+		cluster := row.Intent.DestinationKubernetesClusterID().IsValid()
 		// A row names its compiled Device destination except when it selects
-		// an Imported Resource, a Device Group, a tag, a Site or an Exit Pool.
-		named := !imported && !deviceGroup && !tag && !siteDestination && !exitDestination
-		if params.DeviceRulesOnly && !device && !deviceGroup && !tag ||
+		// an Imported Resource, a Device Group, a tag, a Site, an Exit Pool or
+		// a Kubernetes cluster (a rule to the cluster's own group).
+		named := !imported && !deviceGroup && !tag && !siteDestination && !exitDestination && !cluster
+		if params.DeviceRulesOnly && !device && !deviceGroup && !tag && !cluster ||
 			device && row.DestinationNodeID != row.Intent.DestinationNodeID() ||
 			!named && row.DestinationNodeID.IsValid() || named && !row.DestinationNodeID.IsValid() {
 			return Snapshot{}, ErrInvalidSnapshot
@@ -62,6 +66,33 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 	}
 	params.Rows = slices.Clone(params.Rows)
 	return Snapshot{params: params}, nil
+}
+
+// WithKubernetesClusters returns the snapshot with every rule to a
+// Kubernetes cluster's own Device Group naming the cluster instead. The rows
+// keep their order; what the release grants does not change.
+func (snapshot Snapshot) WithKubernetesClusters(groups []kubecluster.PolicyGroup) (Snapshot, error) {
+	byGroup := make(map[devicegroup.ID]kubecluster.ID, len(groups))
+	for _, group := range groups {
+		if !group.IsValid() {
+			return Snapshot{}, ErrInvalidSnapshot
+		}
+		byGroup[group.GroupID] = group.ClusterID
+	}
+	params := snapshot.params
+	params.Rows = slices.Clone(snapshot.params.Rows)
+	for index, row := range params.Rows {
+		cluster, found := byGroup[row.Intent.DestinationDeviceGroupID()]
+		if !found {
+			continue
+		}
+		named, err := row.Intent.WithKubernetesCluster(cluster)
+		if err != nil {
+			return Snapshot{}, ErrInvalidSnapshot
+		}
+		params.Rows[index].Intent = named
+	}
+	return NewSnapshot(params)
 }
 
 // Scope returns the exact authorized Network scope.

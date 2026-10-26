@@ -11,6 +11,7 @@ import (
 
 	"meshtransit.net/core/internal/domain/identity"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/publicid"
@@ -47,6 +48,9 @@ type Device struct {
 	// (all of them on one Device's read); offerCount counts them all.
 	offer      []netip.Prefix
 	offerCount int
+	// cluster is set on a Kubernetes gateway replica (schema 230).
+	cluster     kubecluster.ID
+	clusterName kubecluster.Name
 }
 
 // Member names one member a Device belongs to or is handed over to.
@@ -149,6 +153,22 @@ func (device Device) WithOffer(listed []netip.Prefix, count int) (Device, error)
 	}
 	device.offer, device.offerCount = slices.Clone(listed), count
 	return device, nil
+}
+
+// WithKubernetesCluster returns the Device as a gateway replica of the
+// cluster, which only a Workspace Device is.
+func (device Device) WithKubernetesCluster(cluster kubecluster.ID, name kubecluster.Name) (Device, error) {
+	if _, err := kubecluster.ParseName(name.String()); err != nil || !device.IsValid() || !cluster.IsValid() ||
+		device.lifecycle.Ownership != "workspace" {
+		return Device{}, ErrInvalidResult
+	}
+	device.cluster, device.clusterName = cluster, name
+	return device, nil
+}
+
+// KubernetesCluster returns the cluster of a gateway replica.
+func (device Device) KubernetesCluster() (kubecluster.ID, kubecluster.Name, bool) {
+	return device.cluster, device.clusterName, device.cluster.IsValid()
 }
 
 // Offer returns the listed prefixes the Device offers to forward and how

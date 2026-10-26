@@ -149,6 +149,9 @@ func newExplainedPolicyPaths(paths []accessgraph.Path) []explainedPolicyPath {
 		if path.DestinationDeviceGroupID().IsValid() {
 			rendered[index].DestinationDeviceGroupID = path.DestinationDeviceGroupID().String()
 		}
+		if path.DestinationKubernetesClusterID().IsValid() {
+			rendered[index].DestinationKubernetesClusterID = path.DestinationKubernetesClusterID().String()
+		}
 		if path.SourceIdentityGroupID().IsValid() {
 			rendered[index].SourceIdentityGroupID = path.SourceIdentityGroupID().String()
 		}

@@ -176,6 +176,14 @@ func (conversation *conversation) checkClusterJoin(ctx context.Context, keys pro
 	case errors.Is(err, ipam.ErrAddressExhausted):
 		_ = conversation.reject(networkFull)
 		return true
+	case errors.Is(err, kubecluster.ErrEdgeBudget):
+		// A rule to the cluster would give a Device too many edges with this
+		// replica; asked again on the next tick until the deadline.
+		if ctx.Err() == nil {
+			conversation.application.options.Logger.WarnContext(ctx, "mtcp cluster join completion refused",
+				"error_code", "cluster_join_edge_budget")
+		}
+		return false
 	case err != nil:
 		if ctx.Err() == nil && !errors.Is(err, kubecluster.ErrConflict) {
 			conversation.application.options.Logger.WarnContext(ctx, "mtcp cluster join completion failed",

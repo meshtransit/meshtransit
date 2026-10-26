@@ -56,6 +56,8 @@ const (
 	DestinationSite
 	// DestinationExitPool is the Internet through an Exit Pool.
 	DestinationExitPool
+	// DestinationKubernetesCluster is every replica of a Kubernetes cluster.
+	DestinationKubernetesCluster
 )
 
 // String returns the stable audit name of the kind.
@@ -77,13 +79,15 @@ func (kind DestinationKind) String() string {
 		return "site"
 	case DestinationExitPool:
 		return "exit_pool"
+	case DestinationKubernetesCluster:
+		return "kubernetes_cluster"
 	default:
 		return "unknown"
 	}
 }
 
 func (kind DestinationKind) isValid() bool {
-	return kind > DestinationUnknown && kind <= DestinationExitPool
+	return kind > DestinationUnknown && kind <= DestinationKubernetesCluster
 }
 
 // RuleFingerprint identifies one Access Rule as written: its sources,
@@ -171,8 +175,11 @@ func FingerprintRules(candidate Candidate) (RuleFingerprintSet, error) {
 		}
 		source := kind + ":" + rule.Source().ID().String()
 		traffic := ruleTrafficPart(source, rule.Protocol(), rule.DestinationPortRanges())
-		if err := add(rule.RuleID(), groupRuleDestinationKind(rule.Destination().Kind()),
-			rule.Destination().ID(), traffic); err != nil {
+		destinationKind, destination := groupRuleDestinationKind(rule.Destination().Kind()), rule.Destination().ID()
+		if cluster := rule.DestinationKubernetesClusterID(); cluster.IsValid() {
+			destinationKind, destination = DestinationKubernetesCluster, publicid.ID(cluster)
+		}
+		if err := add(rule.RuleID(), destinationKind, destination, traffic); err != nil {
 			return RuleFingerprintSet{}, err
 		}
 	}

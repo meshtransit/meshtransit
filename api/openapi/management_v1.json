@@ -4087,8 +4087,10 @@
               "resource_group",
               "imported_resource",
               "site",
-              "exit_pool"
-            ]
+              "exit_pool",
+              "kubernetes_cluster"
+            ],
+            "description": "kubernetes_cluster: destination_selector_id names a Kubernetes cluster of the Network and the rule reaches every replica of it on TCP 443."
           },
           "destination_prefixes": {
             "type": "array",
@@ -4352,6 +4354,10 @@
           "destination_exit_pool_id": {
             "$ref": "#/components/schemas/PublicID",
             "description": "An Exit Pool of the Network: the rule grants the Internet through its exit nodes, on the rule's protocol and ports. Takes no destination_prefixes."
+          },
+          "destination_kubernetes_cluster_id": {
+            "$ref": "#/components/schemas/PublicID",
+            "description": "A Kubernetes cluster of the Network: the rule grants kubectl to every replica of the cluster, now and later. TCP port 443 only; the source is a Device, Device Group, Identity Group or tag."
           },
           "protocol": {
             "type": "string",
@@ -5425,6 +5431,10 @@
           "destination_device_group_id": {
             "$ref": "#/components/schemas/PublicID",
             "description": "The destination Device Group, when the path comes from a group rule."
+          },
+          "destination_kubernetes_cluster_id": {
+            "$ref": "#/components/schemas/PublicID",
+            "description": "The destination Kubernetes cluster, when the path comes from a rule to a cluster; destination_device_id is then one of its replicas and destination_device_group_id is absent."
           },
           "source_identity_group_id": {
             "$ref": "#/components/schemas/PublicID",

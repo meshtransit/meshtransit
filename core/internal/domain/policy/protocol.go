@@ -144,3 +144,14 @@ func CanonicalTraffic(protocol Protocol, ranges []PortRange) ([]PortRange, bool)
 	}
 	return ports, validCanonicalPortRanges(ports)
 }
+
+// KubernetesClusterPort is the only port a rule to a Kubernetes cluster
+// allows: the cluster's API server, reached through its gateways.
+const KubernetesClusterPort = 443
+
+// IsKubernetesTraffic reports exactly TCP to KubernetesClusterPort, the only
+// traffic a rule to a Kubernetes cluster may allow.
+func IsKubernetesTraffic(protocol Protocol, ranges []PortRange) bool {
+	return protocol == ProtocolTCP && len(ranges) == 1 &&
+		ranges[0].First() == KubernetesClusterPort && ranges[0].Last() == KubernetesClusterPort
+}

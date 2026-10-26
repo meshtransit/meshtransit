@@ -596,6 +596,7 @@ func Catalog() []Migration {
 		newMigration(227, "A Kubernetes gateway moves to a new machine key", kubernetesGatewayMachineKeyRotationSQL),
 		newMigration(228, "User groups and device tags belong to one Network", networkScopedGroupsTagsSQL),
 		newMigration(229, "A Kubernetes gateway's stale or contested keys enter the audit trail", kubernetesGatewayKeyEventsSQL),
+		newMigration(230, "Rules grant a Kubernetes cluster as a whole through its own Device Group", kubernetesClusterPolicyGroupsSQL),
 	}
 }
 
@@ -1062,3 +1063,6 @@ var networkScopedGroupsTagsSQL string
 
 //go:embed 000229_kubernetes_gateway_key_events.up.sql
 var kubernetesGatewayKeyEventsSQL string
+
+//go:embed 000230_kubernetes_cluster_policy_groups.up.sql
+var kubernetesClusterPolicyGroupsSQL string

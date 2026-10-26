@@ -9,6 +9,7 @@ import (
 	"meshtransit.net/core/internal/domain/identity"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/policy"
 )
 
 const maximumAuditReasonBytes = 512
@@ -31,7 +32,21 @@ var (
 	// ErrDeviceUnavailable reports a new rule naming a Device that is not in
 	// the Network or was removed from it.
 	ErrDeviceUnavailable = errors.New("policy publication: a rule names an unavailable Device")
+	// ErrKubernetesRule reports a new or changed rule that names a Kubernetes
+	// gateway Device, or a cluster's own group in a way rules may not: a
+	// cluster is reached through a rule to the cluster, on TCP 443.
+	ErrKubernetesRule = errors.New("policy publication: a rule names a Kubernetes replica or a cluster's group")
 )
+
+// KubernetesRuleError is ErrKubernetesRule for one named rule.
+type KubernetesRuleError struct{ RuleID policy.RuleID }
+
+func (failure *KubernetesRuleError) Error() string {
+	return ErrKubernetesRule.Error() + ": rule " + failure.RuleID.String()
+}
+
+// Is matches ErrKubernetesRule.
+func (failure *KubernetesRuleError) Is(target error) bool { return target == ErrKubernetesRule }
 
 // AuditReason is a bounded human explanation for one authority change.
 type AuditReason struct{ value string }

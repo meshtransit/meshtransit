@@ -184,6 +184,13 @@ type deviceInventoryItem struct {
 	// Device's read. AdvertisedPrefixCount counts them all.
 	AdvertisedPrefixes    []string `json:"advertised_prefixes"`
 	AdvertisedPrefixCount int      `json:"advertised_prefix_count"`
+	// KubernetesCluster is set on a Kubernetes gateway replica only.
+	KubernetesCluster *deviceInventoryCluster `json:"kubernetes_cluster,omitempty"`
+}
+
+type deviceInventoryCluster struct {
+	ClusterID string `json:"cluster_id"`
+	Name      string `json:"name"`
 }
 
 type deviceInventoryMember struct {
@@ -216,6 +223,9 @@ func newDeviceInventoryItem(device inventory.Device, zone dnsname.Zone) deviceIn
 	if lifecycle.SuspendedReason != "" {
 		reason := lifecycle.SuspendedReason
 		item.SuspendedReason = &reason
+	}
+	if cluster, name, replica := device.KubernetesCluster(); replica {
+		item.KubernetesCluster = &deviceInventoryCluster{ClusterID: cluster.String(), Name: name.String()}
 	}
 	if label, labeled := device.DNSLabel(); labeled {
 		if name, named := zone.DeviceName(label); named {

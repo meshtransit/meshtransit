@@ -502,6 +502,25 @@
           "maximum": 256,
           "description": "How many subnets the Device offers in all."
         },
+        "kubernetes_cluster": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "cluster_id",
+            "name"
+          ],
+          "properties": {
+            "cluster_id": {
+              "$ref": "#/components/schemas/PublicID"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 60
+            }
+          },
+          "description": "Present only on a Kubernetes gateway replica: its cluster. Access to a replica is granted to the whole cluster, never to the replica alone, so rules, DNS and shares name the cluster instead."
+        },
         "status": {
           "description": "List only, with include=status; never on a single Device's read. null for a Device that receives no policy (expired, revoked, deleted) and when the Network revisions could not be read. When only delivery records could not be read the object is present with status and enforcement unknown and observations_available is false.",
           "oneOf": [

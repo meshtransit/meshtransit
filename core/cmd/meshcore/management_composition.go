@@ -326,6 +326,16 @@ func composeManagementAPIWithKeys(
 			return nil, nil, errors.Join(errInvalidManagementComposition, err)
 		}
 	}
+	clusterGroups, err := postgresadapter.NewKubernetesClusterPolicyGroupStore(runtimePool,
+		postgresadapter.AccountSessionOptions{
+			StatementTimeout: managementStatementTimeout, IdleTimeout: managementTransactionIdle,
+		})
+	if err != nil {
+		return nil, nil, errors.Join(errInvalidManagementComposition, err)
+	}
+	if policyCompiler, err = policyCompiler.WithKubernetesClusters(clusterGroups); err != nil {
+		return nil, nil, errors.Join(errInvalidManagementComposition, err)
+	}
 	if options.ExitNodes {
 		exitPoolStore, poolErr := postgresadapter.NewExitPoolStore(runtimePool, postgresadapter.AccountSessionOptions{
 			StatementTimeout: managementStatementTimeout, IdleTimeout: managementTransactionIdle,

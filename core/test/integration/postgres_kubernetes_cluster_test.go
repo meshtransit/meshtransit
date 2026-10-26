@@ -179,6 +179,7 @@ func assertPostgreSQLKubernetesClusters(ctx context.Context, t *testing.T, admin
 	assertGatewayWritersRefused(ctx, t, admin, clusterID)
 	assertGatewayDeviceGuards(ctx, t, admin, clusterID)
 	assertGatewayReferenceCoverage(ctx, t, admin)
+	assertKubernetesGroupReferenceCoverage(ctx, t, admin)
 
 	// An enrollment key's ID and secret, presented as a join key, open nothing.
 	enrollmentKeys := newIntegrationEnrollmentKeyService(t, runtimePool)
@@ -302,10 +303,13 @@ WHERE workspace_id = 103 AND network_id = 203 ORDER BY id LIMIT 1`).Scan(&heldMa
 	assertReplicaRequestState(ctx, t, admin, ticket.Request.ID().String(), "approved")
 	assertNoGatewayDevice(ctx, t, admin, clusterID)
 	shiftReplicaRequest(ctx, t, admin, ticket.Request.ID().String(), "1 hour")
+	policyGroup := ensureKubernetesPolicyGroup(ctx, t, admin, runtimePool, owner, scope, clusterID)
 	gatewayDevice := assertReplicaCompletes(ctx, t, admin, completions, ticket, first)
+	assertGatewayJoinedItsGroup(ctx, t, admin, policyGroup, gatewayDevice)
 	assertGatewaySessionProof(ctx, t, admin, runtime, runtimePool, first, gatewayDevice)
 	assertGatewayMachineKeyRotation(ctx, t, admin, runtime, runtimePool, first, gatewayDevice)
 	assertGatewayKeyEvents(ctx, t, admin, runtimePool, service, owner, scope, clusterID, gatewayDevice)
+	assertKubernetesPolicyGroupGuards(ctx, t, admin, policyGroup, gatewayDevice)
 
 	// A second replica: its own code does not approve the first's request,
 	// and it is rejected.
@@ -413,6 +417,11 @@ WHERE kubernetes_cluster_id = (SELECT id FROM mesh.kubernetes_cluster WHERE publ
 		t.Fatalf("Delete() = %+v, %v", deleted, err)
 	}
 	assertKubernetesEvent(ctx, t, admin, "kubernetes_cluster", clusterID.String(), "kubernetes_cluster.deleted")
+	var groupState string
+	if err := admin.QueryRow(ctx, `SELECT state FROM mesh.device_group WHERE public_id = $1::UUID`,
+		policyGroup.String()).Scan(&groupState); err != nil || groupState != "deleted" {
+		t.Fatalf("the deleted cluster's group is %q, %v", groupState, err)
+	}
 }
 
 // assertJoinKeyRefusedByEnrollment: the ordinary intake finds no Network for
@@ -598,26 +607,21 @@ FOR EACH ROW EXECUTE FUNCTION mesh_ops.refuse_kubernetes_gateway_reference_v1('d
 func assertGatewayReferenceCoverage(ctx context.Context, t *testing.T, admin *pgx.Conn) {
 	t.Helper()
 	exempt := map[string]string{
-		"mesh.compiled_policy_exit_rule":                     "compiled Policy: publication refuses gateways (K1a2)",
-		"mesh.compiled_policy_group_rule":                    "compiled Policy: publication refuses gateways (K1a2)",
-		"mesh.compiled_policy_imported_resource_destination": "compiled Policy: publication refuses gateways (K1a2)",
-		"mesh.compiled_policy_route_rule":                    "compiled Policy: publication refuses gateways (K1a2)",
-		"mesh.compiled_policy_rule":                          "compiled Policy: publication refuses gateways (K1a2)",
-		"mesh.device_alias_client_version":                   "what its client supports, reported on every map open",
-		"mesh.device_dns_label":                              "the Device's own mesh name, written when it is created",
-		"mesh.device_machine_key_epoch":                      "a gateway has key epochs like any Device",
-		"mesh.device_node_key_epoch":                         "a gateway has key epochs like any Device",
-		"mesh.enrollment_credential_use":                     "a gateway uses its join key like any Device",
-		"mesh.node_address_lease":                            "a gateway has addresses like any Device",
-		"mesh.pending_registration":                          "registration bookkeeping",
-		"mesh.kubernetes_replica_request":                    "the request that created the gateway",
+		"mesh.device_alias_client_version": "what its client supports, reported on every map open",
+		"mesh.device_dns_label":            "the Device's own mesh name, written when it is created",
+		"mesh.device_machine_key_epoch":    "a gateway has key epochs like any Device",
+		"mesh.device_node_key_epoch":       "a gateway has key epochs like any Device",
+		"mesh.enrollment_credential_use":   "a gateway uses its join key like any Device",
+		"mesh.node_address_lease":          "a gateway has addresses like any Device",
+		"mesh.pending_registration":        "registration bookkeeping",
+		"mesh.kubernetes_replica_request":  "the request that created the gateway",
 	}
 	rows, err := admin.Query(ctx, `SELECT DISTINCT constraint_row.conrelid::REGCLASS::TEXT
 FROM pg_catalog.pg_constraint AS constraint_row
 WHERE constraint_row.confrelid = 'mesh.device'::REGCLASS AND constraint_row.contype = 'f'
 UNION
 SELECT table_schema || '.' || table_name FROM information_schema.columns
-WHERE table_schema = 'mesh' AND table_name IN ('network_dns_name', 'exit_pool_serving')`)
+WHERE table_schema = 'mesh' AND table_name IN ('network_dns_name', 'exit_pool_serving', 'network_dns_zone')`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -638,9 +642,13 @@ WHERE table_schema = 'mesh' AND table_name IN ('network_dns_name', 'exit_pool_se
 			continue
 		}
 		var guarded bool
+		// Schema 230 guards compiled rules, group members and DNS zones with
+		// their own functions.
 		if err := admin.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger
 WHERE tgrelid = $1::REGCLASS AND NOT tgisinternal
-  AND tgfoid = 'mesh_ops.refuse_kubernetes_gateway_reference_v1'::REGPROC)`, table).Scan(&guarded); err != nil {
+  AND tgfoid::REGPROC::TEXT IN ('mesh_ops.refuse_kubernetes_gateway_reference_v1',
+      'mesh_ops.refuse_kubernetes_policy_rule_v1', 'mesh_ops.enforce_kubernetes_group_member_v1',
+      'mesh_ops.refuse_kubernetes_dns_reference_v1'))`, table).Scan(&guarded); err != nil {
 			t.Fatal(err)
 		}
 		if !guarded {
