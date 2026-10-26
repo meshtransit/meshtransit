@@ -483,7 +483,7 @@
           ],
           "minLength": 1,
           "maxLength": 253,
-          "description": "The Device's DNS name <label>.<workspace code>.<network code>.<suffix>, unique in the Network; null for a Device that holds no name (revoked or deleted). The suffix is the deployment's (default mesh.internal)."
+          "description": "The Device's DNS name <label>.<workspace code>.<network code>.<suffix>, unique in the Network; null for a Device that holds no name (revoked or deleted) and for a Kubernetes gateway replica, which other Devices reach by its cluster's name (kubernetes_cluster.dns_name). The suffix is the deployment's (default mesh.internal)."
         },
         "advertised_prefixes": {
           "type": "array",
@@ -507,7 +507,8 @@
           "additionalProperties": false,
           "required": [
             "cluster_id",
-            "name"
+            "name",
+            "dns_name"
           ],
           "properties": {
             "cluster_id": {
@@ -517,6 +518,15 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 60
+            },
+            "dns_name": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1,
+              "maxLength": 253,
+              "description": "The cluster's mesh DNS name <cluster>.kube.<workspace code>.<network code>.<suffix>: it resolves to the addresses of the replicas a Device may reach. null when the Network has no zone."
             }
           },
           "description": "Present only on a Kubernetes gateway replica: its cluster. Access to a replica is granted to the whole cluster, never to the replica alone, so rules, DNS and shares name the cluster instead."

@@ -5,6 +5,20 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core (schema 231): a Kubernetes cluster has one mesh DNS name,
+  `<cluster>.kube.<workspace code>.<network code>.<suffix>`, which resolves to
+  the addresses of the cluster's replicas a Device's map holds (in Device
+  ID order, IPv4 before IPv6 of each, at most 32). Other Devices no longer see
+  a replica's own name or hostname: its map name is a placeholder under
+  `invalid.` and its display name is empty; PTR for the addresses the
+  cluster's record holds answers the cluster's name. The Console's Device
+  list gives a replica no `dns_name` and its cluster's name as
+  `kubernetes_cluster.dns_name`. A replica's own map is unchanged. Point
+  kubeconfigs at the cluster's name (TLS server name
+  `kubernetes.default.svc`). Upgrade note: names that resolved to a single
+  replica, and administrator CNAMEs to them, stop resolving once Core runs
+  on schema 231; the migration runs before Core in the chart, and a Core
+  without schema 231 keeps naming replicas as before.
 - Core (schema 230): access to a Kubernetes cluster is granted to the
   cluster as a whole. A rule's destination may be a cluster
   (`destination_kubernetes_cluster_id`, TCP 443 only); it reaches every active

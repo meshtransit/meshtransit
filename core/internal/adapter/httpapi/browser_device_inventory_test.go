@@ -9,7 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"meshtransit.net/core/internal/domain/dnsname"
+	"meshtransit.net/core/internal/domain/identity"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/node/inventory"
@@ -243,4 +246,37 @@ func inventoryTestDevice(t *testing.T) inventory.Device {
 		t.Fatal(err)
 	}
 	return device
+}
+
+// TestDeviceInventoryNamesAReplicaByItsCluster: a gateway replica's own name
+// resolves only in its own map, so the Console shows its cluster's name
+// instead (K1a2b).
+func TestDeviceInventoryNamesAReplicaByItsCluster(t *testing.T) {
+	t.Parallel()
+	device, err := inventoryTestDevice(t).WithLifecycle(inventory.Lifecycle{Ownership: "workspace"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cluster, _ := kubecluster.ParseID("01890f00-0000-7000-8000-000000000a01")
+	replica, err := device.WithKubernetesCluster(cluster, kubecluster.Name("kinda-k1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	zone, err := dnsname.NewZone(identity.DisplayCode("000000000101"), identity.DisplayCode("000000000201"),
+		dnsname.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item := newDeviceInventoryItem(device, zone); item.DNSName == nil ||
+		*item.DNSName != "laptop.000000000101.000000000201.mesh.internal" {
+		t.Fatalf("standard Device name = %v", item.DNSName)
+	}
+	item := newDeviceInventoryItem(replica, zone)
+	if item.DNSName != nil || item.KubernetesCluster == nil || item.KubernetesCluster.DNSName == nil ||
+		*item.KubernetesCluster.DNSName != "kinda-k1.kube.000000000101.000000000201.mesh.internal" {
+		t.Fatalf("replica name %v, cluster %+v", item.DNSName, item.KubernetesCluster)
+	}
+	if item := newDeviceInventoryItem(replica, dnsname.Zone{}); item.KubernetesCluster.DNSName != nil {
+		t.Fatal("a cluster is named without a zone")
+	}
 }

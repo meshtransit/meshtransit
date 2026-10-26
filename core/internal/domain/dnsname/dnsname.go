@@ -32,6 +32,7 @@ const (
 	// presented under the configured suffix instead.
 	storedSharedSuffix = ".shared.mesh"
 	sharedLabel        = "shared"
+	kubernetesLabel    = "kube"
 )
 
 var (
@@ -154,6 +155,17 @@ func (zone Zone) DeviceName(label node.DNSLabel) (string, bool) {
 		return "", false
 	}
 	return label.String() + "." + zone.value, true
+}
+
+// KubernetesClusterName returns <cluster>.kube.<zone> without a trailing
+// dot: the one name of a Kubernetes cluster's gateway replicas (K1a2b). A
+// Device label is a single label, so no Device name can take it. ok is false
+// for an invalid zone or cluster label.
+func (zone Zone) KubernetesClusterName(cluster string) (string, bool) {
+	if !zone.IsValid() || !validLabel(cluster) {
+		return "", false
+	}
+	return cluster + "." + kubernetesLabel + "." + zone.value, true
 }
 
 // Contains reports whether name (without a trailing dot) is the zone or a

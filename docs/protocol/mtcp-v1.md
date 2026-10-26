@@ -690,8 +690,11 @@ endpoints and presence, and as `name` the name the node imports it under
 (its share name, `<label>.<provider workspace code>.<provider network code>.shared.<suffix>.`)
 or, when the node only exports to it, a placeholder under `invalid.` that
 does not resolve. Its hostname, its own name, `display_name` and `owner` are
-omitted. Every name is at most 253 bytes with its trailing dot; Core bounds
-the suffix accordingly.
+omitted. A gateway replica of a Kubernetes cluster of the node's own Network
+(a peer of any other node) is reached by its cluster's name only: its `name`
+is such a placeholder and its `display_name` is omitted; its own map names
+it as usual. Every name is at most 253 bytes with its trailing dot; Core
+bounds the suffix accordingly.
 
 **Packet filter** (`PacketFilter`): a list of inbound allow rules, default
 deny. Each rule has `sources` (prefixes, at most 1024), `destinations`
@@ -704,8 +707,12 @@ subnets it serves (7.6): their rules name those prefixes as destinations.
 imported shares, `resolvers` (IP and optional DoH/DoT URL), `search_domains`,
 `routes` (name suffix → resolvers, for split DNS; a route without resolvers is
 answered by the node itself). At most 50,000 records. Core sends an A or AAAA
-record for each address of self and of each same-Network peer under its name,
-and one for each address of each imported share under its share name; one
+record for each address of self and of each same-Network peer under its name
+(not a gateway replica); one for each address of the replicas of each
+Kubernetes cluster the map holds under `<cluster>.kube.<zone>.`, in Device
+ID order with IPv4 before IPv6 of each replica, at most 32 per cluster since a
+node refuses more addresses for one name; and one for each address of each
+imported share under its share name; one
 route for the suffix with no resolvers, so the node answers every name under
 it and an unknown one is `NXDOMAIN`; and the Network's zone as the first
 search domain. A node ignores a route without resolvers for the root or a

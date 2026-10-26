@@ -104,6 +104,8 @@ type Store struct {
 	inventories *inventoryCache // nil unless SharedInventory
 	stats       inventoryStats
 	revisions   revisionReads
+	// gatewaysGranted: this role may run the schema 231 gateway reader.
+	gatewaysGranted atomic.Bool
 }
 
 // InventoryStats counts how map snapshots got their candidates.
@@ -639,6 +641,33 @@ func (store *Store) loadPeerCandidates(
 	machineFingerprint []byte,
 	nodeKey []byte,
 ) ([]appmapsession.PeerCandidate, error) {
+	records, err := store.readPeerCandidateRecords(ctx, transaction, machineFingerprint, nodeKey)
+	if err != nil || len(records) == 0 {
+		return []appmapsession.PeerCandidate{}, err
+	}
+	// Read after the candidates' rows are closed: one statement at a time.
+	gateways, _, err := store.readKubernetesGateways(ctx, transaction)
+	if err != nil {
+		return nil, err
+	}
+	candidates := make([]appmapsession.PeerCandidate, 0, len(records))
+	for _, record := range records {
+		gateways.mark(&record)
+		candidate, err := record.candidate(scope)
+		if err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, candidate)
+	}
+	return candidates, nil
+}
+
+func (store *Store) readPeerCandidateRecords(
+	ctx context.Context,
+	transaction databaseTransaction,
+	machineFingerprint []byte,
+	nodeKey []byte,
+) ([]peerCandidateRecord, error) {
 	rows, err := transaction.Query(
 		ctx,
 		loadPeerCandidatesSQL,
@@ -653,13 +682,9 @@ func (store *Store) loadPeerCandidates(
 		return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("read peer candidates: %w", err))
 	}
 	defer rows.Close()
-	candidates := make(
-		[]appmapsession.PeerCandidate,
-		0,
-		min(store.options.PeerCandidateLimit, 64),
-	)
+	records := make([]peerCandidateRecord, 0, min(store.options.PeerCandidateLimit, 64))
 	for rows.Next() {
-		if len(candidates) == store.options.PeerCandidateLimit {
+		if len(records) == store.options.PeerCandidateLimit {
 			return nil, errors.Join(ErrLoadSnapshot, appmapsession.ErrPeerCandidateLimit)
 		}
 		var record peerCandidateRecord
@@ -679,16 +704,12 @@ func (store *Store) loadPeerCandidates(
 		); err != nil {
 			return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("scan peer candidate: %w", err))
 		}
-		candidate, err := record.candidate(scope)
-		if err != nil {
-			return nil, err
-		}
-		candidates = append(candidates, candidate)
+		records = append(records, record)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("iterate peer candidates: %w", err))
 	}
-	return candidates, nil
+	return records, nil
 }
 
 func configure(ctx context.Context, transaction databaseTransaction, options Options) error {

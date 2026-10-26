@@ -45,6 +45,9 @@ type cachedInventory struct {
 	// the last read of the whole Network.
 	changeSeq  int64
 	fullReadAt time.Time
+	// gateways: the inventory marks gateway replicas with their cluster
+	// (schema 231); changes apply only to an inventory read the same way.
+	gateways bool
 }
 
 // sharesAbsent reports whether no share reader can return anything for the

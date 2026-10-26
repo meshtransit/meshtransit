@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/devicegroup"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/kubecluster"
@@ -362,6 +364,120 @@ WHERE tgrelid = $1::REGCLASS AND NOT tgisinternal AND tgfoid::REGPROC::TEXT = AN
 		}
 		if !guarded {
 			t.Errorf("%s refers to Device Groups without the Kubernetes cluster guard", table)
+		}
+	}
+}
+
+// assertMapListsKubernetesGateways: schema 231 tells mesh_runtime, in its
+// installed scope only, which live Devices are gateway replicas and of
+// which cluster; standard Devices are not listed (K1a2b).
+func assertMapListsKubernetesGateways(ctx context.Context, t *testing.T, admin *pgx.Conn, scope network.Scope,
+	gatewayDevice string, cluster string) {
+	t.Helper()
+	read := func(scoped bool) ([][2]any, error) {
+		tx, err := admin.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+			t.Fatal(err)
+		}
+		if scoped {
+			if _, err := tx.Exec(ctx, `SELECT * FROM mesh_ops.set_network_scope($1::UUID, $2::UUID)`,
+				scope.WorkspaceID().String(), scope.NetworkID().String()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		rows, err := tx.Query(ctx, `SELECT numeric_node_id, cluster_name
+FROM mesh_ops.load_map_network_kubernetes_gateways_v1()`)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var listed [][2]any
+		for rows.Next() {
+			var numeric int64
+			var name string
+			if err := rows.Scan(&numeric, &name); err != nil {
+				return nil, err
+			}
+			listed = append(listed, [2]any{numeric, name})
+		}
+		return listed, rows.Err()
+	}
+	var numeric int64
+	if err := admin.QueryRow(ctx, `SELECT id FROM mesh.device WHERE public_id = $1::UUID`,
+		gatewayDevice).Scan(&numeric); err != nil {
+		t.Fatal(err)
+	}
+	var standard int
+	if err := admin.QueryRow(ctx, `SELECT pg_catalog.count(*) FROM mesh.device AS device
+JOIN mesh.network AS network ON network.id = device.network_id
+WHERE network.public_id = $1::UUID AND device.kind = 'standard' AND device.state = 'active'`,
+		scope.NetworkID().String()).Scan(&standard); err != nil || standard == 0 {
+		t.Fatalf("the Network has %d standard Devices to leave out, %v", standard, err)
+	}
+	listed, err := read(true)
+	if err != nil || len(listed) != 1 || listed[0] != [2]any{numeric, cluster} {
+		t.Fatalf("gateways = %v, %v", listed, err)
+	}
+	var pgError *pgconn.PgError
+	if _, err := read(false); !errors.As(err, &pgError) || pgError.Code != "42501" {
+		t.Fatalf("an unscoped read: %v", err)
+	}
+}
+
+// assertMapMarksKubernetesReplicas: a standard Device's map, read through
+// Core's store as mesh_runtime per Device and from the shared Network
+// inventory, marks the gateway replica with its cluster and nothing else.
+func assertMapMarksKubernetesReplicas(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	runtimePool *postgresadapter.Pool, scope network.Scope, gatewayDevice string, cluster string) {
+	t.Helper()
+	var ordinary string
+	if err := admin.QueryRow(ctx, `SELECT device.public_id::TEXT FROM mesh.device AS device
+JOIN mesh.network AS network ON network.id = device.network_id
+WHERE network.public_id = $1::UUID AND device.kind = 'standard' AND device.state = 'active'
+  AND device.deleted_at IS NULL AND device.expires_at > pg_catalog.now()
+ORDER BY device.id LIMIT 1`, scope.NetworkID().String()).Scan(&ordinary); err != nil {
+		t.Fatal(err)
+	}
+	ordinaryID, err := node.ParseID(ordinary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := fixtureDeviceIdentity(ctx, t, admin, ordinaryID)
+	for _, shared := range []bool{false, true} {
+		store, err := postgresadapter.NewMapSessionStore(runtimePool, postgresadapter.MapSessionOptions{
+			StatementTimeout: 5 * time.Second, IdleTimeout: 5 * time.Second,
+			PeerCandidateLimit: mapsession.MaximumPeerCandidates, PolicyRuleLimit: mapsession.MaximumPacketPolicyRules,
+			RelayDirectory: integrationRelayDirectory(t), SharedInventory: shared,
+			InventoryStatementTimeout: 30 * time.Second, InventoryMaxAge: 30 * time.Second,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot, err := store.Load(ctx, identity)
+		if err != nil {
+			t.Fatalf("shared %t: Load() error = %v", shared, err)
+		}
+		marked := 0
+		for _, candidate := range snapshot.PeerCandidates() {
+			name, replica := candidate.KubernetesCluster()
+			isGateway := candidate.NodeID().String() == gatewayDevice
+			if replica != isGateway || (replica && name.String() != cluster) {
+				t.Fatalf("shared %t: candidate %s marked %q (%t)", shared, candidate.NodeID(), name, replica)
+			}
+			if replica {
+				marked++
+			}
+		}
+		if marked != 1 {
+			t.Fatalf("shared %t: %d replicas marked among %d candidates", shared, marked,
+				len(snapshot.PeerCandidates()))
+		}
+		if stats := store.InventoryStats(); shared && stats.Shared != 1 {
+			t.Fatalf("the shared read did not use the Network inventory: %+v", stats)
 		}
 	}
 }

@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 230 {
-		t.Fatalf("len(Catalog()) = %d, want 230", len(catalog))
+	if len(catalog) != 231 {
+		t.Fatalf("len(Catalog()) = %d, want 231", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 230 {
-		t.Fatalf("LatestVersion() = %d, want 230", LatestVersion())
+	if LatestVersion() != 231 {
+		t.Fatalf("LatestVersion() = %d, want 231", LatestVersion())
 	}
 }
 
@@ -6705,6 +6705,33 @@ func TestMigration230KubernetesClusterPolicyGroups(t *testing.T) {
 	for _, forbidden := range []string{"BYPASSRLS", "DROP FUNCTION", "TEMPORARY"} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 230 contains %q", forbidden)
+		}
+	}
+}
+
+func TestMigration231MapKubernetesGateways(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[230]
+	if migration.Version != 231 {
+		t.Fatalf("migration 231 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.load_map_network_kubernetes_gateways_v1()",
+		"RETURNS TABLE (numeric_node_id BIGINT, cluster_name TEXT)",
+		"SECURITY DEFINER",
+		"ERRCODE = '42501'",
+		"AND cluster.state = 'active'",
+		"AND device.kind = 'kubernetes_gateway'",
+		"AND device.kubernetes_cluster_id IS NOT NULL",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_map_network_kubernetes_gateways_v1() TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 231 lacks %q", want)
+		}
+	}
+	for _, forbidden := range []string{"BYPASSRLS", "DROP ", "TEMPORARY", "ALTER TABLE"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 231 contains %q", forbidden)
 		}
 	}
 }

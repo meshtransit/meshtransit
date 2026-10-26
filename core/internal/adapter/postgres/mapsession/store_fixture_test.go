@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -83,6 +84,22 @@ type fakeTransaction struct {
 	guardrailErr error
 	// guardrailAnswer, when set, is the reader's whole answer.
 	guardrailAnswer string
+	// kubernetesGateways reports the schema 231 gateway reader as granted
+	// when set, and answers it: each gateway's numeric ID and cluster name.
+	kubernetesGateways map[int64]string
+}
+
+// gatewayRows answers the schema 231 gateway reader in numeric ID order.
+func (transaction *fakeTransaction) gatewayRows() *gatewayRows {
+	rows := &gatewayRows{}
+	for numeric := range transaction.kubernetesGateways {
+		rows.nodes = append(rows.nodes, numeric)
+	}
+	slices.Sort(rows.nodes)
+	for _, numeric := range rows.nodes {
+		rows.clusters = append(rows.clusters, transaction.kubernetesGateways[numeric])
+	}
+	return rows
 }
 
 // shareGuardrailRows answers mapShareGuardrailsSQL as schema 164 does.
@@ -156,6 +173,13 @@ func (transaction *fakeTransaction) Query(
 		return &grantRows{granted: transaction.directEndpointReader}, nil
 	case inventoryChangesGrantedSQL:
 		return &grantRows{granted: transaction.inventoryChanges}, nil
+	case kubernetesGatewaysGrantedSQL:
+		return &grantRows{granted: transaction.kubernetesGateways != nil}, nil
+	case loadKubernetesGatewaysSQL:
+		if transaction.kubernetesGateways == nil {
+			return nil, errors.New("unexpected gateway read")
+		}
+		return transaction.gatewayRows(), nil
 	case loadNetworkDeviceChangesSQL:
 		if len(transaction.changeRows) == 0 {
 			return nil, errors.New("unexpected inventory change read")

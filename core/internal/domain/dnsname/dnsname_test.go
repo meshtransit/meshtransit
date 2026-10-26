@@ -139,3 +139,28 @@ func must[T any](value T, err error) T {
 	}
 	return value
 }
+
+// TestZoneNamesKubernetesClusters: a cluster is <name>.kube.<zone> (K1a2b),
+// within 253 bytes for the longest cluster name and suffix.
+func TestZoneNamesKubernetesClusters(t *testing.T) {
+	t.Parallel()
+	workspace, networkCode := identity.DisplayCode("000000000101"), identity.DisplayCode("000000000202")
+	zone := must(NewZone(workspace, networkCode, Default()))
+	name, ok := zone.KubernetesClusterName("kinda-k1")
+	if !ok || name != "kinda-k1.kube.000000000101.000000000202.mesh.internal" || !zone.Contains(name) {
+		t.Fatalf("KubernetesClusterName = %q, %v", name, ok)
+	}
+	for _, invalid := range []string{"", "-a", "a-", "A", "a.b", strings.Repeat("a", 64)} {
+		if _, ok := zone.KubernetesClusterName(invalid); ok {
+			t.Errorf("cluster %q is named", invalid)
+		}
+	}
+	if _, ok := (Zone{}).KubernetesClusterName("a"); ok {
+		t.Fatal("an invalid zone names a cluster")
+	}
+	longZone := must(NewZone(workspace, networkCode, must(ParseSuffix(longestSuffix))))
+	longName, ok := longZone.KubernetesClusterName(strings.Repeat("b", 60))
+	if !ok || len(longName)+1 > 253 {
+		t.Fatalf("longest cluster name is %d bytes with its root dot", len(longName)+1)
+	}
+}

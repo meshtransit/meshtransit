@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"meshtransit.net/core/internal/domain/dnsname"
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/sharing"
 )
@@ -19,6 +20,11 @@ const MaximumDNSRecords = 50_000
 // map's DNS, encoded (DNS design D2 §3.4): every map of the Network carries
 // them again on each DNS change.
 const MaximumDNSNameBytes = 1 << 20
+
+// MaximumClusterRecordAddresses bounds the addresses of one Kubernetes
+// cluster's record: a node refuses a whole DNS configuration that gives one
+// name more (K1a2b §8).
+const MaximumClusterRecordAddresses = 32
 
 // dnsRecordOverhead approximates the encoding of one record besides its name
 // and value: field tags, lengths and its type.
@@ -41,14 +47,19 @@ type DNSRecord struct {
 // peer of another Network is known only by the name this map imports it
 // under (its share name, under shared.<suffix>), or by a placeholder that
 // never resolves when the map only exports to it: its hostname and label are
-// never published. The suffix is one locally authoritative route and the
-// zone the search domain.
+// never published. A gateway replica of a Kubernetes cluster is a
+// placeholder too: the map publishes <cluster>.kube.<zone> instead, with the
+// addresses of the cluster's replicas it holds in Device ID order, up to
+// MaximumClusterRecordAddresses (K1a2b). The suffix is one locally
+// authoritative route and the zone the search domain.
 //
 // Names never fail a map: a Device of the Network without a label gets no
 // name or record (Unnamed counts them), and a record whose name another
 // record already took, or that would pass MaximumDNSRecords addresses, is
-// left out (Dropped counts them). Records are kept in a fixed order: self,
-// the peers in Device order, then shares in stored-name order.
+// left out (Dropped counts them, and each cluster address past the bound).
+// Records are kept in a fixed order: self, the peers in Device order, the
+// clusters in the order of their first replica, then shares in stored-name
+// order.
 type DNSView struct {
 	selfName     string
 	peerNames    map[node.ID]string
@@ -142,6 +153,9 @@ func (snapshot Snapshot) dnsView(suffix dnsname.Suffix, full bool) (DNSView, err
 		if unnamed {
 			view.unnamed++
 		}
+	}
+	if named {
+		candidates = append(candidates, view.clusterRecords(snapshot, zone)...)
 	}
 	for _, record := range shared {
 		name := suffix.SharedName(record.Name)
@@ -280,6 +294,42 @@ func (view *DNSView) adminNames(snapshot Snapshot, taken map[string]struct{}, to
 	return names
 }
 
+// clusterRecords names each Kubernetes cluster that has a replica among the
+// map's peers by the addresses of those replicas, in Device order, IPv4
+// then IPv6 of each, up to MaximumClusterRecordAddresses.
+func (view *DNSView) clusterRecords(snapshot Snapshot, zone dnsname.Zone) []DNSRecord {
+	var clusters []kubecluster.Name
+	addresses := map[kubecluster.Name][]netip.Addr{}
+	for _, peer := range snapshot.authorized {
+		cluster, replica := peer.KubernetesCluster()
+		if !replica || peer.scope != snapshot.scope {
+			continue
+		}
+		if _, seen := addresses[cluster]; !seen {
+			clusters = append(clusters, cluster)
+		}
+		kept := addresses[cluster]
+		for _, prefix := range peer.addresses {
+			if len(kept) == MaximumClusterRecordAddresses {
+				view.dropped++
+				continue
+			}
+			kept = append(kept, prefix.Addr().Unmap())
+		}
+		addresses[cluster] = kept
+	}
+	records := make([]DNSRecord, 0, len(clusters))
+	for _, cluster := range clusters {
+		name, ok := zone.KubernetesClusterName(cluster.String())
+		if !ok {
+			view.dropped++
+			continue
+		}
+		records = append(records, DNSRecord{Name: name, Addresses: addresses[cluster]})
+	}
+	return records
+}
+
 // zone returns the Network's zone when the store gave its display codes.
 func (snapshot Snapshot) zone(suffix dnsname.Suffix) (dnsname.Zone, bool) {
 	workspaceCode, networkCode, ok := snapshot.DisplayCodes()
@@ -292,19 +342,28 @@ func (snapshot Snapshot) zone(suffix dnsname.Suffix) (dnsname.Zone, bool) {
 
 // peerName names one authorized peer; record reports whether the name gets
 // an address record of the peer's own addresses, unnamed that a peer of the
-// Network has no label to be named by.
+// Network has no label to be named by. A gateway replica is a placeholder
+// whatever its label: it is reached by its cluster's name only.
 func (snapshot Snapshot) peerName(peer PeerCandidate, zone dnsname.Zone, named bool,
 	suffix dnsname.Suffix) (name string, record, unnamed bool) {
 	if peer.scope != snapshot.scope {
 		if imported, ok := snapshot.ImportedPeerName(peer.nodeID); ok {
 			return suffix.SharedName(imported), false, false
 		}
-		return "device-" + strings.ReplaceAll(peer.nodeID.String(), "-", "") + "." + placeholderZone, false, false
+		return placeholderName(peer.nodeID), false, false
+	}
+	if _, replica := peer.KubernetesCluster(); replica {
+		return placeholderName(peer.nodeID), false, false
 	}
 	if name, ok := zone.DeviceName(peer.dnsLabel); named && ok {
 		return name, true, false
 	}
 	return peer.hostname.String(), false, named
+}
+
+// placeholderName names a peer a map gives no name that resolves.
+func placeholderName(id node.ID) string {
+	return "device-" + strings.ReplaceAll(id.String(), "-", "") + "." + placeholderZone
 }
 
 func recordOf(name string, prefixes []netip.Prefix) DNSRecord {
@@ -367,7 +426,8 @@ func (view DNSView) Zones() []DNSForwardZone {
 func (view DNSView) Unnamed() int { return view.unnamed }
 
 // Dropped returns how many records were left out: a name another record
-// took, a share name in the Network's zone, or past MaximumDNSRecords.
+// took, a share name in the Network's zone, or past MaximumDNSRecords; and
+// each Kubernetes cluster address past MaximumClusterRecordAddresses.
 func (view DNSView) Dropped() int { return view.dropped }
 
 // OverBudget returns how many zones, search domains and names the route

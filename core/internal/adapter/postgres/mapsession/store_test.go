@@ -51,6 +51,7 @@ func TestStoreLoadsConsistentScopedSnapshot(t *testing.T) {
 		setScopeSQL,
 		loadSnapshotSQL,
 		loadPeerCandidatesSQL,
+		kubernetesGatewaysGrantedSQL,
 		loadPacketPolicySQL,
 		loadDirectEdgesSQL,
 	}
@@ -66,7 +67,7 @@ func TestStoreLoadsConsistentScopedSnapshot(t *testing.T) {
 	if !reflect.DeepEqual(transaction.arguments[4], []any{fingerprint[:], nodeKey[:], 101}) {
 		t.Fatalf("candidate arguments did not bind authenticated keys and limit+1")
 	}
-	if !reflect.DeepEqual(transaction.arguments[5], []any{int64(701), int64(5), 101}) {
+	if !reflect.DeepEqual(transaction.arguments[6], []any{int64(701), int64(5), 101}) {
 		t.Fatalf("policy arguments did not bind self Node, exact revision, and limit+1")
 	}
 	candidates := snapshot.PeerCandidates()

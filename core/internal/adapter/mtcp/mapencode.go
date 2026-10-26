@@ -163,8 +163,9 @@ func encodePeer(snapshot mapsession.Snapshot, candidate mapsession.PeerCandidate
 		NodeKey: key[:], KeyExpiryMs: candidate.KeyExpiry().UnixMilli(),
 	}
 	// A peer of another Network carries neither its hostname nor its own
-	// name, only the name this map imports it under (mtcp-v1 §7.3).
-	if candidate.Scope() == snapshot.Scope() {
+	// name, only the name this map imports it under, and a gateway replica
+	// neither, only its placeholder (mtcp-v1 §7.3).
+	if _, replica := candidate.KubernetesCluster(); candidate.Scope() == snapshot.Scope() && !replica {
 		device.DisplayName = candidate.Hostname().String()
 	}
 	encodeAddresses(device, candidate.Addresses())

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"meshtransit.net/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 )
@@ -35,7 +36,10 @@ type PeerCandidateParams struct {
 	Hostname       node.Hostname
 	// DNSLabel is the first label of the Device's name in its Network's
 	// zone; the zero value means the store gave none (no name is published).
-	DNSLabel          node.DNSLabel
+	DNSLabel node.DNSLabel
+	// KubernetesCluster names the cluster of a gateway replica of the
+	// Network; the zero value is a standard Device (K1a2b).
+	KubernetesCluster kubecluster.Name
 	MachineKey        node.MachineKey
 	NodeKey           node.Key
 	SessionGeneration int64
@@ -54,6 +58,7 @@ type PeerCandidate struct {
 	ownerID           identity.PrincipalID
 	hostname          node.Hostname
 	dnsLabel          node.DNSLabel
+	kubernetesCluster kubecluster.Name
 	machineKey        node.MachineKey
 	nodeKey           node.Key
 	sessionGeneration int64
@@ -75,6 +80,7 @@ func NewPeerCandidate(params PeerCandidateParams) (PeerCandidate, error) {
 		ownerID:           params.OwnerID,
 		hostname:          params.Hostname,
 		dnsLabel:          params.DNSLabel,
+		kubernetesCluster: params.KubernetesCluster,
 		machineKey:        params.MachineKey,
 		nodeKey:           params.NodeKey,
 		sessionGeneration: params.SessionGeneration,
@@ -106,6 +112,12 @@ func (candidate PeerCandidate) Hostname() node.Hostname { return candidate.hostn
 // zone, and whether the store gave one.
 func (candidate PeerCandidate) DNSLabel() (node.DNSLabel, bool) {
 	return candidate.dnsLabel, candidate.dnsLabel.IsValid()
+}
+
+// KubernetesCluster returns the cluster of a gateway replica, and whether the
+// candidate is one.
+func (candidate PeerCandidate) KubernetesCluster() (kubecluster.Name, bool) {
+	return candidate.kubernetesCluster, candidate.kubernetesCluster != ""
 }
 
 // MachineKey returns the active machine-key epoch.
@@ -140,6 +152,7 @@ func (candidate PeerCandidate) params() PeerCandidateParams {
 		OwnerID:           candidate.ownerID,
 		Hostname:          candidate.hostname,
 		DNSLabel:          candidate.dnsLabel,
+		KubernetesCluster: candidate.kubernetesCluster,
 		MachineKey:        candidate.machineKey,
 		NodeKey:           candidate.nodeKey,
 		SessionGeneration: candidate.sessionGeneration,
@@ -153,9 +166,19 @@ func validPeerCandidateParams(params PeerCandidateParams) bool {
 	return validNumericID(params.NumericNodeID) && validNumericID(params.NumericOwnerID) &&
 		params.Scope.IsValid() && params.NodeID.IsValid() && params.OwnerID.IsValid() &&
 		params.Hostname.IsValid() && (params.DNSLabel == node.DNSLabel{} || params.DNSLabel.IsValid()) &&
+		validCandidateCluster(params.KubernetesCluster) &&
 		params.MachineKey.IsValid() && params.NodeKey.IsValid() &&
 		params.SessionGeneration > 0 && validSnapshotAddresses(params.Addresses) &&
 		!params.CreatedAt.IsZero() && params.KeyExpiry.After(params.CreatedAt)
+}
+
+// validCandidateCluster accepts no cluster or a cluster name.
+func validCandidateCluster(cluster kubecluster.Name) bool {
+	if cluster == "" {
+		return true
+	}
+	parsed, err := kubecluster.ParseName(cluster.String())
+	return err == nil && parsed == cluster
 }
 
 func canonicalPeerCandidates(candidates []PeerCandidate) []PeerCandidate {
@@ -175,7 +198,7 @@ func equalPeerCandidates(first, second []PeerCandidate) bool {
 			left.numericOwnerID == right.numericOwnerID &&
 			left.scope == right.scope && left.nodeID == right.nodeID &&
 			left.ownerID == right.ownerID && left.hostname == right.hostname &&
-			left.dnsLabel == right.dnsLabel &&
+			left.dnsLabel == right.dnsLabel && left.kubernetesCluster == right.kubernetesCluster &&
 			left.machineKey == right.machineKey && left.nodeKey == right.nodeKey &&
 			left.sessionGeneration == right.sessionGeneration &&
 			slices.Equal(left.addresses, right.addresses) &&

@@ -205,6 +205,11 @@ func (store *Store) readInventoryDevices(
 	cached *cachedInventory,
 ) error {
 	cached.changeSeq = -1
+	gateways, granted, err := store.readKubernetesGateways(ctx, transaction)
+	if err != nil {
+		return err
+	}
+	cached.gateways = granted
 	tracked, err := functionGranted(ctx, transaction, inventoryChangesGrantedSQL)
 	if err != nil {
 		return errors.Join(ErrLoadSnapshot, fmt.Errorf("check inventory change reader: %w", err))
@@ -217,7 +222,7 @@ func (store *Store) readInventoryDevices(
 			return ErrSnapshotEvidence
 		}
 		if canApplyChanges(previous, *cached, scope) {
-			applied, err := store.applyInventoryChanges(ctx, transaction, scope, previous, cached)
+			applied, err := store.applyInventoryChanges(ctx, transaction, scope, previous, cached, gateways)
 			if applied || ctx.Err() != nil {
 				return err
 			}
@@ -228,7 +233,7 @@ func (store *Store) readInventoryDevices(
 			}
 		}
 	}
-	devices, err := store.readNetworkDevices(ctx, transaction, scope)
+	devices, err := store.readNetworkDevices(ctx, transaction, scope, gateways)
 	if err != nil {
 		return err
 	}
@@ -242,12 +247,13 @@ func (store *Store) readInventoryDevices(
 
 // canApplyChanges reports whether cached may be previous with the Devices
 // changed since applied: previous tracked the same Network's counter, which
-// has not gone back, both serve maps under the same recovery epoch, and the
-// last whole read is recent.
+// has not gone back, both serve maps under the same recovery epoch, both
+// read gateway replicas alike, and the last whole read is recent.
 func canApplyChanges(previous, cached cachedInventory, scope network.Scope) bool {
 	return previous.inventory.IsValid() && previous.inventory.Scope() == scope &&
 		previous.changeSeq >= 0 && cached.changeSeq >= previous.changeSeq &&
 		previous.serveable && cached.serveable && previous.recoveryEpoch == cached.recoveryEpoch &&
+		previous.gateways == cached.gateways &&
 		!cached.readAt.Before(previous.readAt) && time.Since(previous.fullReadAt) < inventoryFullReadInterval
 }
 
@@ -260,12 +266,14 @@ func (store *Store) applyInventoryChanges(
 	scope network.Scope,
 	previous cachedInventory,
 	cached *cachedInventory,
+	gateways kubernetesGateways,
 ) (bool, error) {
 	var changes []appmapsession.InventoryChange
 	if cached.changeSeq > previous.changeSeq {
 		var complete bool
 		var err error
-		changes, complete, err = readNetworkDeviceChanges(ctx, transaction, scope, previous.changeSeq, cached.changeSeq)
+		changes, complete, err = readNetworkDeviceChanges(ctx, transaction, scope, previous.changeSeq, cached.changeSeq,
+			gateways)
 		if err != nil || !complete {
 			return false, err
 		}
@@ -287,6 +295,7 @@ func readNetworkDeviceChanges(
 	transaction databaseTransaction,
 	scope network.Scope,
 	since, head int64,
+	gateways kubernetesGateways,
 ) ([]appmapsession.InventoryChange, bool, error) {
 	rows, err := transaction.Query(ctx, loadNetworkDeviceChangesSQL, since, maximumInventoryChanges+1)
 	if err != nil || rows == nil {
@@ -311,6 +320,7 @@ func readNetworkDeviceChanges(
 		}
 		change := appmapsession.InventoryChange{NumericNodeID: record.numericNodeID, Removed: !listed}
 		if listed {
+			gateways.mark(&record)
 			if change.Device, err = record.candidate(scope); err != nil {
 				return nil, false, err
 			}
@@ -327,6 +337,7 @@ func (store *Store) readNetworkDevices(
 	ctx context.Context,
 	transaction databaseTransaction,
 	scope network.Scope,
+	gateways kubernetesGateways,
 ) ([]appmapsession.PeerCandidate, error) {
 	rows, err := transaction.Query(ctx, loadNetworkDevicesSQL, appmapsession.MaximumNetworkDevices+1)
 	if err != nil || rows == nil {
@@ -358,6 +369,7 @@ func (store *Store) readNetworkDevices(
 		); err != nil {
 			return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("scan network inventory: %w", err))
 		}
+		gateways.mark(&record)
 		device, err := record.candidate(scope)
 		if err != nil {
 			return nil, err

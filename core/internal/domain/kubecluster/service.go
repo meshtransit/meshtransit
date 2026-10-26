@@ -52,6 +52,9 @@ func (err *WrongCodeError) Unwrap() error { return ErrWrongCode }
 const (
 	// MaximumClustersPerNetwork bounds a Network's active clusters.
 	MaximumClustersPerNetwork = 64
+	// MaximumReplicasPerCluster bounds a cluster's live replicas (ordinals
+	// 0 to 63, schema 224).
+	MaximumReplicasPerCluster = 64
 	// MaximumListedKeys bounds the keys a cluster's detail lists.
 	MaximumListedKeys = 50
 	// MaximumListedRequests bounds the requests a cluster's detail lists.

@@ -6,6 +6,7 @@ import (
 
 	appmapsession "meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/policy"
@@ -52,6 +53,9 @@ type peerCandidateRecord struct {
 	// dnsLabel is set for every Device of the read scope (schema 169) and
 	// absent for a peer of another Network.
 	dnsLabel *string
+	// kubernetesCluster is set for a gateway replica of the read scope
+	// (schema 231).
+	kubernetesCluster kubecluster.Name
 }
 
 func (record snapshotRecord) snapshot(
@@ -160,6 +164,7 @@ func (record peerCandidateRecord) candidate(
 		OwnerID:           ownerID,
 		Hostname:          hostname,
 		DNSLabel:          dnsLabel,
+		KubernetesCluster: record.kubernetesCluster,
 		MachineKey:        machineKey,
 		NodeKey:           nodeKey,
 		SessionGeneration: record.sessionGeneration,

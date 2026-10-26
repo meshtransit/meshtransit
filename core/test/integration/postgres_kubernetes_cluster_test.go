@@ -310,6 +310,8 @@ WHERE workspace_id = 103 AND network_id = 203 ORDER BY id LIMIT 1`).Scan(&heldMa
 	assertGatewayMachineKeyRotation(ctx, t, admin, runtime, runtimePool, first, gatewayDevice)
 	assertGatewayKeyEvents(ctx, t, admin, runtimePool, service, owner, scope, clusterID, gatewayDevice)
 	assertKubernetesPolicyGroupGuards(ctx, t, admin, policyGroup, gatewayDevice)
+	assertMapListsKubernetesGateways(ctx, t, admin, scope, gatewayDevice, "prod")
+	assertMapMarksKubernetesReplicas(ctx, t, admin, runtimePool, scope, gatewayDevice, "prod")
 
 	// A second replica: its own code does not approve the first's request,
 	// and it is rejected.

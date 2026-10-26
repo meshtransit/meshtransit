@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"meshtransit.net/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 )
@@ -113,5 +114,33 @@ func peerCandidateParamsFixture(
 		Addresses:         []netip.Prefix{netip.MustParsePrefix(fmt.Sprintf("100.64.0.%d/32", marker))},
 		CreatedAt:         createdAt,
 		KeyExpiry:         createdAt.Add(24 * time.Hour),
+	}
+}
+
+// TestPeerCandidateCarriesKubernetesCluster: a gateway replica carries its
+// cluster's name, which a delta compares like any other field (K1a2b §8).
+func TestPeerCandidateCarriesKubernetesCluster(t *testing.T) {
+	params := peerCandidateParamsFixture(t, snapshotFixture(t), "01890f00-0000-7000-8000-000000000702", 2)
+	standard, err := NewPeerCandidate(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := standard.KubernetesCluster(); ok {
+		t.Fatal("a standard Device has a cluster")
+	}
+	params.KubernetesCluster = kubecluster.Name("kinda-k1")
+	replica, err := NewPeerCandidate(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cluster, ok := replica.KubernetesCluster(); !ok || cluster != "kinda-k1" {
+		t.Fatalf("cluster = %q, %v", cluster, ok)
+	}
+	if equalPeerCandidate(standard, replica) {
+		t.Fatal("a cluster change is not a change")
+	}
+	params.KubernetesCluster = kubecluster.Name("Not-A-Label")
+	if _, err := NewPeerCandidate(params); !errors.Is(err, ErrInvalidPeerCandidate) {
+		t.Fatalf("an invalid cluster name: %v", err)
 	}
 }
