@@ -17,11 +17,27 @@ type clusterGroups struct {
 	byGroup   map[devicegroup.ID]kubecluster.ID
 }
 
-// resolveKubernetesClusters reads the clusters' groups when a rule names a
-// cluster or any Device Group, making the group of each named cluster first.
-// Rules that name neither ask for nothing.
-func (service *Service) resolveKubernetesClusters(ctx context.Context, session accountsession.Session,
-	request Request) (clusterGroups, error) {
+// Prepare makes the own Device Group of each Kubernetes cluster the request
+// names that has none yet. Making one advances the Network revision, so a
+// caller that brackets Compile with authority reads (simulation) prepares
+// first; Compile then ensures again, which finds each group and writes
+// nothing (one ensure transaction per named cluster, then one read). A request
+// naming no cluster asks for nothing.
+func (service *Service) Prepare(ctx context.Context, session accountsession.Session, request Request) error {
+	if ctx == nil || service == nil || !session.IsValid() || !request.IsValid() {
+		return ErrInvalidRequest
+	}
+	named, _ := namedKubernetesClusters(request)
+	if len(named) == 0 {
+		return nil
+	}
+	_, err := service.lookupKubernetesClusters(ctx, session, request, named)
+	return err
+}
+
+// namedKubernetesClusters returns the clusters the request's rules name,
+// once each, and whether any rule names a Device Group.
+func namedKubernetesClusters(request Request) ([]kubecluster.ID, bool) {
 	var named []kubecluster.ID
 	seen := make(map[kubecluster.ID]struct{})
 	groups := false
@@ -34,9 +50,23 @@ func (service *Service) resolveKubernetesClusters(ctx context.Context, session a
 			}
 		}
 	}
+	return named, groups
+}
+
+// resolveKubernetesClusters reads the clusters' groups when a rule names a
+// cluster or any Device Group, making the group of each named cluster first
+// (nothing when Prepare made them). Rules that name neither ask for nothing.
+func (service *Service) resolveKubernetesClusters(ctx context.Context, session accountsession.Session,
+	request Request) (clusterGroups, error) {
+	named, groups := namedKubernetesClusters(request)
 	if len(named) == 0 && (!groups || service.clusters == nil) {
 		return clusterGroups{}, nil
 	}
+	return service.lookupKubernetesClusters(ctx, session, request, named)
+}
+
+func (service *Service) lookupKubernetesClusters(ctx context.Context, session accountsession.Session,
+	request Request, named []kubecluster.ID) (clusterGroups, error) {
 	if service.clusters == nil || len(named) > kubecluster.MaximumClustersPerNetwork {
 		return clusterGroups{}, ErrInvalidRequest
 	}

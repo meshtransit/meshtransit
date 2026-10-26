@@ -746,3 +746,62 @@ func simulationSession(t *testing.T) accountsession.Session {
 func simulationTime() time.Time {
 	return time.Date(2026, time.September, 29, 12, 0, 0, 0, time.UTC)
 }
+
+// preparingCompiler records whether it was prepared before the first
+// baseline read, as a compiler that makes Kubernetes cluster groups is.
+type preparingCompiler struct {
+	*simulationCompilerStub
+	reader         *simulationBaselineReader
+	prepared       int
+	readsAtPrepare int
+}
+
+func (compiler *preparingCompiler) Prepare(context.Context, accountsession.Session, compilation.Request) error {
+	compiler.prepared++
+	compiler.readsAtPrepare = compiler.reader.calls
+	return compiler.err
+}
+
+// A compiler's preparation (making a cluster's group, which advances the
+// Network revision) runs before the first baseline read, so the first
+// preview to a new cluster is not stale.
+func TestServicePreparesTheCompilerBeforeReadingTheBaseline(t *testing.T) {
+	t.Parallel()
+
+	scope := simulationScope(t)
+	current := simulationCandidate(t, scope, 6, []policy.Rule{})
+	baseline := simulationBaseline(t, current, simulationVector(t, 12, 8, 9, 6))
+	request := simulationRequest(t, scope, 7, []compilation.RuleIntent{
+		simulationDirectIntent(t, scope, 1, 301, 302, policy.ProtocolICMP, 0, 0),
+	})
+	reader := &simulationBaselineReader{values: []simulation.Baseline{baseline, baseline}}
+	compiler := &preparingCompiler{simulationCompilerStub: simulationCompiler(t, &simulationDestinationResolver{}),
+		reader: reader}
+	if _, err := simulationService(t, reader, compiler).Simulate(t.Context(), simulationSession(t),
+		request); err != nil {
+		t.Fatal(err)
+	}
+	if compiler.prepared != 1 || compiler.readsAtPrepare != 0 || compiler.calls != 1 || reader.calls != 2 {
+		t.Fatalf("prepared %d after %d reads; compiled %d, read %d", compiler.prepared, compiler.readsAtPrepare,
+			compiler.calls, reader.calls)
+	}
+}
+
+// A failed preparation stops the simulation before any read or compilation.
+func TestServiceStopsWhenPreparationFails(t *testing.T) {
+	t.Parallel()
+
+	scope := simulationScope(t)
+	request := simulationRequest(t, scope, 7, []compilation.RuleIntent{
+		simulationDirectIntent(t, scope, 1, 301, 302, policy.ProtocolICMP, 0, 0),
+	})
+	reader := &simulationBaselineReader{}
+	stub := simulationCompiler(t, &simulationDestinationResolver{})
+	stub.err = compilation.ErrKubernetesClusterUnavailable
+	compiler := &preparingCompiler{simulationCompilerStub: stub, reader: reader}
+	_, err := simulationService(t, reader, compiler).Simulate(t.Context(), simulationSession(t), request)
+	if !errors.Is(err, compilation.ErrKubernetesClusterUnavailable) || compiler.prepared != 1 ||
+		reader.calls != 0 || stub.calls != 0 {
+		t.Fatalf("Simulate() = %v; prepared %d, read %d, compiled %d", err, compiler.prepared, reader.calls, stub.calls)
+	}
+}

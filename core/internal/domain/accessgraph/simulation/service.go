@@ -31,6 +31,14 @@ type Compiler interface {
 	) (publication.Candidate, error)
 }
 
+// Preparer is a compiler that must write before it compiles: making a
+// Kubernetes cluster's own Device Group advances the Network revision. The
+// service prepares before its first baseline read, so that write is not
+// taken for authority drift around compilation.
+type Preparer interface {
+	Prepare(context.Context, accountsession.Session, compilation.Request) error
+}
+
 // Dependencies contains the only effects used by simulation.
 type Dependencies struct {
 	Baselines BaselineReader
@@ -67,6 +75,11 @@ func (service *Service) Simulate(
 	}
 	if err := ctx.Err(); err != nil {
 		return Result{}, errors.Join(ErrUnavailable, err)
+	}
+	if preparer, ok := service.compiler.(Preparer); ok {
+		if err := preparer.Prepare(ctx, session, request); err != nil {
+			return Result{}, err
+		}
 	}
 	before, err := service.baselines.ReadSimulationBaseline(ctx, session, request.Scope())
 	if err != nil {

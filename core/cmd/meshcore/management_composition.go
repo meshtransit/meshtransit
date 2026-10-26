@@ -39,6 +39,10 @@ const (
 
 var errInvalidManagementComposition = errors.New("invalid management API composition")
 
+// The simulator prepares the compiler (making Kubernetes cluster groups)
+// before it reads the baseline; a wrapper must keep that.
+var _ simulation.Preparer = (*compilation.Service)(nil)
+
 type managementCompositionKeys struct {
 	sessions    *accountsession.Keyring
 	idempotency *idempotency.Digester

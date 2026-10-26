@@ -185,3 +185,34 @@ func TestServiceCompilesAClusterRuleToTheClustersGroup(t *testing.T) {
 		t.Fatalf("Device rule: %v, ensured %v", err, quiet.ensured)
 	}
 }
+
+// Prepare makes the groups of the clusters a request names, and asks for
+// nothing when it names none; Compile then finds them.
+func TestServicePreparesKubernetesClusterGroups(t *testing.T) {
+	t.Parallel()
+	fixture := newClusterRuleFixture(t)
+	resolver := &clusterResolverFixture{groups: []kubecluster.PolicyGroup{
+		{ClusterID: fixture.cluster, Name: "kinda-k1", GroupID: fixture.clusterGroup},
+	}}
+	byCluster := compilation.RuleIntentParams{SourceGroupID: fixture.userGroup,
+		DestinationKubernetesClusterID: fixture.cluster, Protocol: policy.ProtocolTCP,
+		DestinationPortRanges: []policy.PortRange{fixture.https}}
+	request, service := fixture.compile(t, resolver, byCluster)
+	if err := service.Prepare(t.Context(), compilationSessionFixture(t), request); err != nil ||
+		len(resolver.ensured) != 1 || !slices.Equal(resolver.ensured[0], []kubecluster.ID{fixture.cluster}) {
+		t.Fatalf("Prepare() = %v, ensured %v", err, resolver.ensured)
+	}
+	missing := &clusterResolverFixture{}
+	request, service = fixture.compile(t, missing, byCluster)
+	if err := service.Prepare(t.Context(), compilationSessionFixture(t), request); !errors.Is(err,
+		compilation.ErrKubernetesClusterUnavailable) {
+		t.Fatalf("Prepare() for an unknown cluster = %v", err)
+	}
+	quiet := &clusterResolverFixture{}
+	byGroup := byCluster
+	byGroup.DestinationKubernetesClusterID, byGroup.DestinationDeviceGroupID = kubecluster.ID{}, fixture.clusterGroup
+	request, service = fixture.compile(t, quiet, byGroup)
+	if err := service.Prepare(t.Context(), compilationSessionFixture(t), request); err != nil || len(quiet.ensured) != 0 {
+		t.Fatalf("Prepare() without a named cluster = %v, ensured %v", err, quiet.ensured)
+	}
+}
