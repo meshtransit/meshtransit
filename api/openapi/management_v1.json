@@ -2319,7 +2319,8 @@
                         "kubernetes_cluster",
                         "replicas",
                         "join_keys",
-                        "replica_requests"
+                        "replica_requests",
+                        "key_warnings"
                       ],
                       "properties": {
                         "kubernetes_cluster": {
@@ -2353,6 +2354,82 @@
                             "$ref": "#/components/schemas/KubernetesReplicaRequest"
                           },
                           "description": "Null unless the caller has kubernetes_cluster.manage or kubernetes_cluster.approve; the newest 50"
+                        },
+                        "key_warnings": {
+                          "type": [
+                            "object",
+                            "null"
+                          ],
+                          "additionalProperties": false,
+                          "required": [
+                            "devices",
+                            "truncated"
+                          ],
+                          "description": "Null unless the caller has kubernetes_cluster.manage or kubernetes_cluster.approve. The gateways' stale or contested keys of the last 7 days, one entry per gateway Device (removed ones included), newest first",
+                          "properties": {
+                            "devices": {
+                              "type": "array",
+                              "maxItems": 64,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "device_id",
+                                  "hostname",
+                                  "count_24h",
+                                  "count_7d",
+                                  "last_at",
+                                  "last_reason",
+                                  "key_state"
+                                ],
+                                "properties": {
+                                  "device_id": {
+                                    "$ref": "#/components/schemas/PublicID"
+                                  },
+                                  "hostname": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 253
+                                  },
+                                  "count_24h": {
+                                    "type": "integer",
+                                    "minimum": 0
+                                  },
+                                  "count_7d": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  },
+                                  "last_at": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  },
+                                  "last_reason": {
+                                    "type": "string",
+                                    "enum": [
+                                      "retired_machine_key",
+                                      "stale_node_key",
+                                      "session_fight",
+                                      "replayed_handshake"
+                                    ]
+                                  },
+                                  "key_state": {
+                                    "type": "string",
+                                    "enum": [
+                                      "current",
+                                      "rotated",
+                                      "device_removed",
+                                      "device_expired",
+                                      "device_suspended"
+                                    ]
+                                  }
+                                }
+                              }
+                            },
+                            "truncated": {
+                              "type": "boolean",
+                              "description": "More gateway Devices had events than were listed"
+                            }
+                          }
                         }
                       }
                     },

@@ -305,6 +305,7 @@ WHERE workspace_id = 103 AND network_id = 203 ORDER BY id LIMIT 1`).Scan(&heldMa
 	gatewayDevice := assertReplicaCompletes(ctx, t, admin, completions, ticket, first)
 	assertGatewaySessionProof(ctx, t, admin, runtime, runtimePool, first, gatewayDevice)
 	assertGatewayMachineKeyRotation(ctx, t, admin, runtime, runtimePool, first, gatewayDevice)
+	assertGatewayKeyEvents(ctx, t, admin, runtimePool, service, owner, scope, clusterID, gatewayDevice)
 
 	// A second replica: its own code does not approve the first's request,
 	// and it is rejected.
@@ -400,6 +401,7 @@ WHERE kubernetes_cluster_id = (SELECT id FROM mesh.kubernetes_cluster WHERE publ
 	}
 	removeGatewayDevice(ctx, t, admin, gatewayDevice)
 	assertRetiredGatewayKey(ctx, t, runtime, first)
+	assertRemovedGatewayKeyEvent(ctx, t, admin, runtimePool, gatewayDevice)
 	// A pod whose gateway is gone gets a final answer, not its Device again.
 	if _, err := completions.CompleteReplicaRequest(ctx, ticket.Scope, ticket.Request.ID(),
 		registrationIdentity(t, first)); !errors.Is(err, kubecluster.ErrNotWaiting) {

@@ -15,6 +15,7 @@ import (
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/node"
 )
 
 const (
@@ -137,6 +138,11 @@ func (stub *kubernetesClusterStub) Read(context.Context, accountsession.Session,
 		Replicas: []kubecluster.Replica{},
 		Keys:     []kubecluster.JoinKey{kubernetesTestKeyValue(&testing.T{}, kubecluster.KeyActive)},
 		Requests: []kubecluster.ReplicaRequestView{kubernetesTestRequestValue(&testing.T{}, kubecluster.RequestPending)},
+		KeyWarnings: &kubecluster.KeyWarnings{Devices: []kubecluster.KeyWarning{{
+			DeviceID: kubernetesTestDevice(), Hostname: "prod-0", Last24h: 1, Last7Days: 3,
+			LastAt:     time.Date(2026, time.October, 26, 9, 0, 0, 0, time.UTC),
+			LastReason: kubecluster.KeyEventRetiredMachineKey, KeyState: kubecluster.ReportedKeyRotated,
+		}}},
 	}, nil
 }
 
@@ -416,7 +422,8 @@ func TestKubernetesClusterReadOnlyCaller(t *testing.T) {
 		if response.Code != status {
 			t.Errorf("GET %s = %d, want %d; %s", path, response.Code, status, response.Body)
 		}
-		if status == 200 && !strings.Contains(response.Body.String(), `"join_keys":null`) {
+		if status == 200 && (!strings.Contains(response.Body.String(), `"join_keys":null`) ||
+			!strings.Contains(response.Body.String(), `"key_warnings":null`)) {
 			t.Errorf("GET %s showed keys to a reader: %s", path, response.Body)
 		}
 	}
@@ -458,5 +465,30 @@ func TestKubernetesClusterMethodsAndPreconditions(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusPreconditionRequired || len(stub.calls) != 0 {
 		t.Fatalf("delete without If-Match = %d, calls %v", response.Code, stub.calls)
+	}
+}
+
+func kubernetesTestDevice() node.ID {
+	id, _ := node.ParseID("01890f00-0000-7000-8000-000000000b04")
+	return id
+}
+
+// An administrator's read sums the gateways' key warnings.
+func TestKubernetesClusterReadShowsKeyWarnings(t *testing.T) {
+	t.Parallel()
+	options := validManagementHandlerOptions(t)
+	options.KubernetesClusters = &kubernetesClusterStub{}
+	handler, err := NewManagementHandler(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, newManagementRequest(t, http.MethodGet,
+		kubernetesClustersTestPath("/"+kubernetesTestCluster), ""))
+	want := `"key_warnings":{"devices":[{"device_id":"01890f00-0000-7000-8000-000000000b04","hostname":"prod-0",` +
+		`"count_24h":1,"count_7d":3,"last_at":"2026-10-26T09:00:00Z","last_reason":"retired_machine_key",` +
+		`"key_state":"rotated"}],"truncated":false}`
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), want) {
+		t.Fatalf("read = %d; %s", response.Code, response.Body)
 	}
 }

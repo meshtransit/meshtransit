@@ -30,7 +30,7 @@ const (
  $10::UUID,$11::UUID,$12::UUID,$13::BIGINT,$14::UUID)::TEXT`
 	listKubernetesClustersSQL = `SELECT mesh_ops.list_kubernetes_clusters_v1(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::INTEGER)::TEXT`
-	readKubernetesClusterSQL = `SELECT mesh_ops.read_kubernetes_cluster_v1(` + sessionArguments + `,
+	readKubernetesClusterSQL = `SELECT mesh_ops.read_kubernetes_cluster_v2(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::UUID,$13::INTEGER,$14::INTEGER)::TEXT`
 	issueKubernetesJoinKeySQL = `SELECT mesh_ops.issue_kubernetes_join_key_v1(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::UUID,$13::UUID,$14::TEXT,$15::BYTEA,$16::BYTEA,$17::BIGINT,$18::BIGINT,$19::UUID)::TEXT`
@@ -469,11 +469,14 @@ func (store *KubernetesClusterStore) ReadCluster(ctx context.Context, session ac
 			Replicas  []kubernetesReplicaDocument        `json:"replicas"`
 			Keys      []kubernetesJoinKeyDocument        `json:"keys"`
 			Requests  []kubernetesReplicaRequestDocument `json:"requests"`
+			// Schema 229: present exactly when keys and requests are.
+			KeyWarnings *kubernetesKeyWarningsDocument `json:"key_warnings"`
 		}
 		if err := decodeIdentityCatalogJSON([]byte(encoded), &read); err != nil ||
 			read.NetworkID != scope.NetworkID().String() || read.Replicas == nil ||
 			len(read.Replicas) > kubecluster.MaximumOrdinal+1 || len(read.Keys) > kubecluster.MaximumListedKeys ||
-			len(read.Requests) > kubecluster.MaximumListedRequests {
+			len(read.Requests) > kubecluster.MaximumListedRequests ||
+			(read.KeyWarnings == nil) != (read.Keys == nil) {
 			return false, kubecluster.ErrInvalid
 		}
 		cluster, err := read.Cluster.cluster()
@@ -501,6 +504,13 @@ func (store *KubernetesClusterStore) ReadCluster(ctx context.Context, session ac
 				detail.Keys = append(detail.Keys, key)
 			}
 		}
+		if read.KeyWarnings != nil {
+			warnings, err := read.KeyWarnings.warnings()
+			if err != nil {
+				return false, err
+			}
+			detail.KeyWarnings = &warnings
+		}
 		if read.Requests != nil {
 			detail.Requests = make([]kubecluster.ReplicaRequestView, 0, len(read.Requests))
 			for _, document := range read.Requests {
@@ -514,6 +524,42 @@ func (store *KubernetesClusterStore) ReadCluster(ctx context.Context, session ac
 		return false, nil
 	})
 	return detail, err
+}
+
+type kubernetesKeyWarningsDocument struct {
+	Devices []struct {
+		DeviceID   string    `json:"device_id"`
+		Hostname   string    `json:"hostname"`
+		Count24h   int       `json:"count_24h"`
+		Count7d    int       `json:"count_7d"`
+		LastAt     time.Time `json:"last_at"`
+		LastReason string    `json:"last_reason"`
+		KeyState   string    `json:"key_state"`
+	} `json:"devices"`
+	Truncated bool `json:"truncated"`
+}
+
+// warnings validates the summary of a cluster's gateway key events.
+func (document kubernetesKeyWarningsDocument) warnings() (kubecluster.KeyWarnings, error) {
+	if document.Devices == nil || len(document.Devices) > kubecluster.MaximumKeyWarnings {
+		return kubecluster.KeyWarnings{}, kubecluster.ErrInvalid
+	}
+	warnings := kubecluster.KeyWarnings{Truncated: document.Truncated,
+		Devices: make([]kubecluster.KeyWarning, 0, len(document.Devices))}
+	for _, entry := range document.Devices {
+		deviceID, err := node.ParseID(entry.DeviceID)
+		reason, state := kubecluster.KeyEventReason(entry.LastReason), kubecluster.ReportedKeyState(entry.KeyState)
+		if err != nil || entry.Hostname == "" || len(entry.Hostname) > 253 || entry.Count24h < 0 ||
+			entry.Count7d < 1 || entry.Count24h > entry.Count7d || entry.LastAt.IsZero() || !reason.IsKnown() ||
+			!state.IsKnown() {
+			return kubecluster.KeyWarnings{}, kubecluster.ErrInvalid
+		}
+		warnings.Devices = append(warnings.Devices, kubecluster.KeyWarning{
+			DeviceID: deviceID, Hostname: entry.Hostname, Last24h: entry.Count24h, Last7Days: entry.Count7d,
+			LastAt: entry.LastAt.UTC(), LastReason: reason, KeyState: state,
+		})
+	}
+	return warnings, nil
 }
 
 type kubernetesJoinKeyRecord struct {

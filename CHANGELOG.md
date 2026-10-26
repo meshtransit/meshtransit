@@ -5,6 +5,15 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core (schema 229, TD-SEC-52a): a Kubernetes gateway that presents a
+  retired machine key or a stale node key, or whose current keys two holders
+  fight over, leaves a sealed `kubernetes_gateway.stale_key_presented` or
+  `kubernetes_gateway.keys_contested` event in its Network's audit trail.
+  The control plane reports them off the handshake path, bounded per key
+  (10 minutes), per Device and action (144 a day) and per Network and action
+  (2,000 a day); the cluster's read (`read_kubernetes_cluster_v2`, REST
+  `key_warnings`) sums the last 7 days for its administrators. Nothing is
+  quarantined automatically. Metric `meshtransit_mtcp_gateway_key_audit_total`.
 - Core: the Console's cookie session reaches the Kubernetes cluster API
   (list, read, create, delete, join keys, approve and reject replica
   requests), never with a query. Before, only bearer sessions could; the

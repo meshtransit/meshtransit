@@ -525,6 +525,24 @@ type kubernetesClusterDetailBody struct {
 	Replicas []kubernetesReplicaBody  `json:"replicas"`
 	JoinKeys *[]kubernetesJoinKeyBody `json:"join_keys"`
 	Requests *[]kubernetesRequestBody `json:"replica_requests"`
+	// KeyWarnings sums the gateways' stale or contested keys of the last 7
+	// days (schema 229); null like JoinKeys.
+	KeyWarnings *kubernetesKeyWarningsBody `json:"key_warnings"`
+}
+
+type kubernetesKeyWarningBody struct {
+	DeviceID   string `json:"device_id"`
+	Hostname   string `json:"hostname"`
+	Count24h   int    `json:"count_24h"`
+	Count7d    int    `json:"count_7d"`
+	LastAt     string `json:"last_at"`
+	LastReason string `json:"last_reason"`
+	KeyState   string `json:"key_state"`
+}
+
+type kubernetesKeyWarningsBody struct {
+	Devices   []kubernetesKeyWarningBody `json:"devices"`
+	Truncated bool                       `json:"truncated"`
 }
 
 func newKubernetesClusterDetailBody(detail kubecluster.Detail) kubernetesClusterDetailBody {
@@ -541,6 +559,18 @@ func newKubernetesClusterDetailBody(detail kubecluster.Detail) kubernetesCluster
 			keys = append(keys, newKubernetesJoinKeyBody(key))
 		}
 		body.JoinKeys = &keys
+	}
+	if detail.KeyWarnings != nil {
+		warnings := kubernetesKeyWarningsBody{Truncated: detail.KeyWarnings.Truncated,
+			Devices: make([]kubernetesKeyWarningBody, 0, len(detail.KeyWarnings.Devices))}
+		for _, warning := range detail.KeyWarnings.Devices {
+			warnings.Devices = append(warnings.Devices, kubernetesKeyWarningBody{
+				DeviceID: warning.DeviceID.String(), Hostname: warning.Hostname, Count24h: warning.Last24h,
+				Count7d: warning.Last7Days, LastAt: managementTime(warning.LastAt),
+				LastReason: string(warning.LastReason), KeyState: string(warning.KeyState),
+			})
+		}
+		body.KeyWarnings = &warnings
 	}
 	if detail.Requests != nil {
 		requests := make([]kubernetesRequestBody, 0, len(detail.Requests))

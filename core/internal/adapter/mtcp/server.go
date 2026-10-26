@@ -19,6 +19,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/platform/clientip"
 	"meshtransit.net/shared/key"
@@ -134,6 +135,10 @@ type Options struct {
 	// DrainWindow spreads the reconnects of a shutdown: each session is told
 	// to come back after a random delay within it (zero: at once).
 	DrainWindow time.Duration
+	// GatewayKeys, when set, records Kubernetes gateways' stale or
+	// contested keys in the audit trail, off the handshake path (schema
+	// 229). Nil: the handshake metrics alone count them.
+	GatewayKeys GatewayKeyRecorder
 	Now         func() time.Time
 }
 
@@ -156,7 +161,16 @@ type Server struct {
 	// its keys (mtcp-v1 §6.8); gatewayContest is that window.
 	contested      map[key.MachinePublic]time.Time
 	gatewayContest time.Duration
-	wg             sync.WaitGroup
+	// fights counts, per gateway machine key, the live receiving map
+	// streams its own sessions replaced within gatewayFightWindow.
+	fights     map[key.MachinePublic]gatewayFight
+	keyReports *gatewayKeyReporter
+	wg         sync.WaitGroup
+}
+
+type gatewayFight struct {
+	since    time.Time
+	replaced int
 }
 
 // gatewayContestWindow outlasts a gateway's prompt reconnect after
@@ -167,6 +181,17 @@ const gatewayContestWindow = 15 * time.Second
 // maxContestedGateways bounds the contested keys a replica remembers; past
 // it the expired ones are dropped.
 const maxContestedGateways = 1 << 12
+
+// A gateway's key is fought over when, on one replica, its sessions replace
+// a live map stream that received a record within gatewayFightRecent at
+// least gatewayFightReplaced times within gatewayFightWindow. A pod's start
+// replaces only sessions that do not stream, and a session left half open
+// by a broken path has received nothing (K1a1 plan §15.1).
+const (
+	gatewayFightWindow   = 5 * time.Minute
+	gatewayFightReplaced = 2
+	gatewayFightRecent   = 10 * time.Second
+)
 
 // NewServer validates options without starting anything.
 func NewServer(options Options) (*Server, error) {
@@ -210,7 +235,9 @@ func NewServer(options Options) (*Server, error) {
 			positiveOr(options.UnauthenticatedPerSource, defaultUnauthenticated(rate, burst)), options.Now),
 		recent: newTimestampCache(), byMachine: make(map[key.MachinePublic]*Session),
 		live: make(map[*Session]struct{}), contested: make(map[key.MachinePublic]time.Time),
-		gatewayContest: gatewayContestWindow}
+		gatewayContest: gatewayContestWindow, fights: make(map[key.MachinePublic]gatewayFight)}
+	server.keyReports = newGatewayKeyReporter(options.GatewayKeys, options.Metrics, options.Logger, options.Now,
+		gatewayKeyReportQueue)
 	options.Metrics.countExpiringDevices(server.expiringDevices)
 	return server, nil
 }
@@ -572,6 +599,7 @@ func (server *Server) establish(session *Session) error {
 	if contested {
 		server.contestLocked(session.machine)
 	}
+	fight := contested && server.fightLocked(session.machine, previous)
 	server.live[session] = struct{}{}
 	session.established.Store(server.options.Now().UnixNano())
 	server.mu.Unlock()
@@ -581,10 +609,41 @@ func (server *Server) establish(session *Session) error {
 		server.options.Logger.Warn("mtcp gateway session pushed out a live one",
 			"error_code", "gateway_session_replaced")
 	}
+	if fight {
+		server.keyReports.report(node.MachineKey(session.machine).Fingerprint(), kubecluster.KeyEventSessionFight)
+	}
 	if previous != nil {
 		previous.replace()
 	}
 	return nil
+}
+
+// fightLocked counts previous, a session of machine that a new one
+// replaces, when it was a live map stream that just received a record, and
+// reports whether the key is now fought over.
+func (server *Server) fightLocked(machine key.MachinePublic, previous *Session) bool {
+	now := server.options.Now()
+	recent := min(server.options.Keepalive/2, gatewayFightRecent)
+	if !previous.streaming.Load() || now.Sub(time.Unix(0, previous.lastReceive.Load())) >= recent {
+		return false
+	}
+	fight, known := server.fights[machine]
+	if !known && len(server.fights) >= maxContestedGateways {
+		for candidate, entry := range server.fights {
+			if now.Sub(entry.since) >= gatewayFightWindow {
+				delete(server.fights, candidate)
+			}
+		}
+		if len(server.fights) >= maxContestedGateways {
+			return false
+		}
+	}
+	if !known || now.Sub(fight.since) >= gatewayFightWindow {
+		fight = gatewayFight{since: now}
+	}
+	fight.replaced++
+	server.fights[machine] = fight
+	return fight.replaced >= gatewayFightReplaced
 }
 
 // contest marks machine contested: two holders of a gateway's keys.
@@ -653,6 +712,8 @@ func (server *Server) Shutdown(ctx context.Context) error {
 		server.wg.Wait()
 		close(done)
 	}()
+	// Key reports stop once every session that could report has ended.
+	defer server.keyReports.stop()
 	select {
 	case <-done:
 		return nil

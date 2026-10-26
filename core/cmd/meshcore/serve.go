@@ -598,6 +598,13 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			logger.ErrorContext(ctx, "startup failed", "error_code", "mtcp_composition_failure", "error", storeErr)
 			return 1
 		}
+		// Kubernetes gateways' stale or contested keys enter the audit trail
+		// (schema 229).
+		gatewayKeyEvents, storeErr := postgresadapter.NewKubernetesGatewayKeyEventStore(storagePools.runtime)
+		if storeErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "mtcp_composition_failure", "error", storeErr)
+			return 1
+		}
 		logout, logoutErr := composeDeviceLogout(processConfig.Control.Map, storagePools.runtime)
 		if logoutErr != nil {
 			logger.ErrorContext(ctx, "startup failed", "error_code", "mtcp_composition_failure", "error", logoutErr)
@@ -620,7 +627,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			return 1
 		}
 		deps := mtcpDependencies{streams: mapStreamService, sessions: mapSessionService,
-			registrations: registrationService, logout: logout, paths: redisClient, connectivity: redisClient, guard: mtcpTimestampGuard{store: timestamps}, logger: logger,
+			registrations: registrationService, logout: logout, paths: redisClient, connectivity: redisClient, guard: mtcpTimestampGuard{store: timestamps}, gatewayKeyEvents: gatewayKeyEvents, logger: logger,
 			dnsSuffix: processConfig.DNSSuffix, dnsInfrastructure: processConfig.DNSProtectedNames(),
 			routeOffers:  routeOffers,
 			subnetRoutes: processConfig.SubnetRoutes && processConfig.Control.Map.SharedInventory,

@@ -98,12 +98,14 @@ type mtcpDependencies struct {
 	browser        *browserControlServices
 	origin         string
 	guard          mtcpadapter.TimestampGuard
-	logger         *slog.Logger
-	relayZones     bool           // offer relay.zones2 (MESHTRANSIT_RELAY_TICKET_ZONES_V2)
-	subnetRoutes   bool           // offer subnet routes (MESHTRANSIT_SUBNET_ROUTES_ENABLED)
-	exitNodes      bool           // offer exit nodes (MESHTRANSIT_EXIT_NODES_ENABLED)
-	dnsZones       bool           // offer dns.forward1 (MESHTRANSIT_DNS_ZONES_ENABLED)
-	dnsSuffix      dnsname.Suffix // MESHTRANSIT_DNS_SUFFIX; zero: the default
+	// gatewayKeyEvents records Kubernetes gateways' stale or contested keys.
+	gatewayKeyEvents mtcpadapter.GatewayKeyRecorder
+	logger           *slog.Logger
+	relayZones       bool           // offer relay.zones2 (MESHTRANSIT_RELAY_TICKET_ZONES_V2)
+	subnetRoutes     bool           // offer subnet routes (MESHTRANSIT_SUBNET_ROUTES_ENABLED)
+	exitNodes        bool           // offer exit nodes (MESHTRANSIT_EXIT_NODES_ENABLED)
+	dnsZones         bool           // offer dns.forward1 (MESHTRANSIT_DNS_ZONES_ENABLED)
+	dnsSuffix        dnsname.Suffix // MESHTRANSIT_DNS_SUFFIX; zero: the default
 	// dnsInfrastructure are the deployment's own host names a root zone
 	// leaves to a node's network (MESHTRANSIT_DNS_PROTECTED_NAMES, the
 	// Console and identity hosts).
@@ -218,6 +220,7 @@ func composeMTCP(
 		// MTCP connections count against the listener's connection bound.
 		MaxSessions: controlConfig.MaxSessions,
 		DrainWindow: controlConfig.DrainWindow,
+		GatewayKeys: deps.gatewayKeyEvents,
 	})
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidMTCPComposition, err)

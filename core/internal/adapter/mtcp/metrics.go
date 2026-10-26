@@ -35,6 +35,9 @@ type Metrics struct {
 	// dnsRelayDropped counts the zones' Internet resolvers left out of the
 	// relay lists sent to exit nodes by a map's bounds (TD-CORE-88).
 	dnsRelayDropped prometheus.Counter
+	// gatewayKeyAudit counts reports of Kubernetes gateways' stale or
+	// contested keys by what became of them (schema 229).
+	gatewayKeyAudit *prometheus.CounterVec
 }
 
 // The closed set of route statuses and cut Sites counted when sent.
@@ -187,6 +190,12 @@ func NewMetrics() *Metrics {
 			Name: "meshtransit_mtcp_dns_relay_targets_dropped_total",
 			Help: "DNS zone resolver listings left out of the relay lists sent to exit nodes by a map's bounds, counted per list sent; above zero since start means some were.",
 		}),
+		// Watch: failed or dropped means key warnings that never reached the
+		// audit trail; the handshake metrics still count every case.
+		gatewayKeyAudit: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "meshtransit_mtcp_gateway_key_audit_total",
+			Help: "Reports of Kubernetes gateways' stale or contested keys by result: recorded, limited, busy, suppressed, dropped, failed, unknown.",
+		}, []string{"result"}),
 		keyExpiry: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "meshtransit_mtcp_control_key_not_after_timestamp_seconds",
 			Help: "Expiry of the latest control key this replica answers with (Unix seconds).",
@@ -211,6 +220,9 @@ func NewMetrics() *Metrics {
 	for _, result := range routeResults {
 		metrics.routes.WithLabelValues(result)
 	}
+	for _, result := range gatewayKeyAuditResults {
+		metrics.gatewayKeyAudit.WithLabelValues(result)
+	}
 	return metrics
 }
 
@@ -218,7 +230,7 @@ func NewMetrics() *Metrics {
 func (metrics *Metrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{metrics.handshakes, metrics.sessions, metrics.messages, metrics.streamEnds,
 		metrics.sheds, metrics.unproven, metrics.forwarding, metrics.keyExpiry, metrics.limits, metrics.mapNames,
-		metrics.expiring, metrics.routeOffers, metrics.exitOffers, metrics.routeOfferDropped, metrics.routes, metrics.dnsRelayDropped, routedFilterOmitted,
+		metrics.expiring, metrics.routeOffers, metrics.exitOffers, metrics.routeOfferDropped, metrics.routes, metrics.dnsRelayDropped, metrics.gatewayKeyAudit, routedFilterOmitted,
 		exitFilterOmitted}
 }
 
@@ -371,4 +383,15 @@ func (metrics *Metrics) countExpiringDevices(count func() (within14d, within1d i
 	metrics.expiring.mu.Lock()
 	metrics.expiring.count = count
 	metrics.expiring.mu.Unlock()
+}
+
+// gatewayKeyAuditResults is the closed set of report results.
+var gatewayKeyAuditResults = []string{"recorded", "limited", "busy", "suppressed", "dropped", "failed", "unknown"}
+
+// gatewayKeyReported counts one report result; a nil Metrics counts nothing.
+func (metrics *Metrics) gatewayKeyReported(result string) {
+	if metrics == nil {
+		return
+	}
+	metrics.gatewayKeyAudit.WithLabelValues(result).Inc()
 }

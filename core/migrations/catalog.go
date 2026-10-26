@@ -595,6 +595,7 @@ func Catalog() []Migration {
 		newMigration(226, "A Kubernetes gateway proves its node key on every session", kubernetesGatewaySessionProofSQL),
 		newMigration(227, "A Kubernetes gateway moves to a new machine key", kubernetesGatewayMachineKeyRotationSQL),
 		newMigration(228, "User groups and device tags belong to one Network", networkScopedGroupsTagsSQL),
+		newMigration(229, "A Kubernetes gateway's stale or contested keys enter the audit trail", kubernetesGatewayKeyEventsSQL),
 	}
 }
 
@@ -1058,3 +1059,6 @@ var kubernetesGatewayMachineKeyRotationSQL string
 
 //go:embed 000228_network_scoped_groups_tags.up.sql
 var networkScopedGroupsTagsSQL string
+
+//go:embed 000229_kubernetes_gateway_key_events.up.sql
+var kubernetesGatewayKeyEventsSQL string

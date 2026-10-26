@@ -270,4 +270,7 @@ type Detail struct {
 	// Keys and Requests are nil when the caller may only read the Network.
 	Keys     []JoinKey
 	Requests []ReplicaRequestView
+	// KeyWarnings sums the gateways' key events; nil when the caller may only
+	// read the Network, or Core read an older cluster document.
+	KeyWarnings *KeyWarnings
 }

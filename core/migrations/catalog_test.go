@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 228 {
-		t.Fatalf("len(Catalog()) = %d, want 228", len(catalog))
+	if len(catalog) != 229 {
+		t.Fatalf("len(Catalog()) = %d, want 229", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 228 {
-		t.Fatalf("LatestVersion() = %d, want 228", LatestVersion())
+	if LatestVersion() != 229 {
+		t.Fatalf("LatestVersion() = %d, want 229", LatestVersion())
 	}
 }
 
@@ -6631,6 +6631,40 @@ func TestMigration228NetworkScopedGroupsTags(t *testing.T) {
 	} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 228 contains %q", forbidden)
+		}
+	}
+}
+
+// Schema 229 records a Kubernetes gateway's stale or contested keys as
+// sealed Network audit events: found as the handshake gate finds the
+// gateway, bounded per key, Device and Network, and readable as a summary
+// only by those who manage or approve the cluster.
+func TestMigration229KubernetesGatewayKeyEvents(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[228]
+	if migration.Version != 229 {
+		t.Fatalf("migration 229 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE TABLE mesh_ops.kubernetes_gateway_key_event (",
+		"FOR EACH ROW EXECUTE FUNCTION mesh_audit.capture_authority_mutation('kubernetes_gateway_key_event', 'public_id');",
+		"FROM mesh_ops.kubernetes_gateway_machine_key_history AS history",
+		"ORDER BY machine.valid_from DESC, machine.id DESC",
+		"RETURN pg_catalog.jsonb_build_object('outcome', 'unknown');",
+		"EXCEPTION WHEN lock_not_available THEN",
+		"AND event.action = v_action\n    ) >= 144",
+		"AND event.action = v_action AND event.recorded_at > v_now - INTERVAL '1 day'\n    ) >= 2000",
+		"CREATE FUNCTION mesh_ops.read_kubernetes_cluster_v2(",
+		"RETURN v_read || pg_catalog.jsonb_build_object('key_warnings', NULL::JSONB);",
+		"TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 229 lacks %q", want)
+		}
+	}
+	for _, forbidden := range []string{"BYPASSRLS", "DROP FUNCTION", "TEMPORARY", "CREATE OR REPLACE", "remote_addr"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 229 contains %q", forbidden)
 		}
 	}
 }

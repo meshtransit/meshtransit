@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/shared/key"
 	sharedmtcp "meshtransit.net/shared/mtcp"
@@ -50,6 +51,11 @@ type Session struct {
 
 	sendMu   sync.Mutex
 	lastSend atomic.Int64 // Unix nanoseconds of the last record sent
+	// lastReceive is when the last message arrived (Unix nanoseconds), and
+	// streaming whether the session started a map stream: together they
+	// tell a gateway's live stream from a probe or a half-open session.
+	lastReceive atomic.Int64
+	streaming   atomic.Bool
 	// established is when the session was registered with the server
 	// (Unix nanoseconds); rebalancing leaves young sessions alone.
 	established atomic.Int64
@@ -379,10 +385,16 @@ func (session *Session) checkNodeKeyProof(message proto.Message) bool {
 		session.SendError(mtcpv1.Error_NOT_AUTHORIZED, message, true)
 		return false
 	}
+	// Each of these is audited off the handshake path (schema 229).
+	report := func(reason kubecluster.KeyEventReason) {
+		session.server.keyReports.report(node.MachineKey(session.machine).Fingerprint(), reason)
+	}
 	switch {
 	case gate.Machine != MachineCurrent:
+		report(kubecluster.KeyEventRetiredMachineKey)
 		return refuse("gateway_retired", sharedmtcp.GateMachineRetired)
 	case !gate.NodeCurrent:
+		report(kubecluster.KeyEventStaleNodeKey)
 		return refuse("gateway_stale_node_key", sharedmtcp.GateNodeNotCurrent)
 	case !valid:
 		return refuse("gateway_bad_proof", sharedmtcp.GateInvalidProof)
@@ -395,6 +407,7 @@ func (session *Session) checkNodeKeyProof(message proto.Message) bool {
 		// second holder of the keys took a newer timestamp, so the key is
 		// contested and neither holder rotates (§6.8).
 		session.server.contest(session.machine)
+		report(kubecluster.KeyEventReplayedHandshake)
 		return refuse("replay", sharedmtcp.GateReplayed)
 	}
 	committed, err := session.server.commitGatewayTimestamp(session.ctx, session.machine, nodeKey,
@@ -403,6 +416,8 @@ func (session *Session) checkNodeKeyProof(message proto.Message) bool {
 	case err != nil:
 		return refuse("internal", sharedmtcp.GateUnavailable)
 	case !committed:
+		// The commit also fails when the keys stopped being current since
+		// the gate (a rotation, a revocation): not a replay worth auditing.
 		session.server.contest(session.machine)
 		return refuse("replay", sharedmtcp.GateReplayed)
 	}
@@ -465,6 +480,7 @@ func (session *Session) readLoop(assembler *sharedmtcp.Assembler, messages chan<
 		if err != nil {
 			return err
 		}
+		session.lastReceive.Store(session.server.options.Now().UnixNano())
 		select {
 		case messages <- message:
 		case <-session.ctx.Done():

@@ -279,6 +279,7 @@ func (conversation *conversation) startStream(ctx context.Context) (node.Key, ui
 	context.CancelFunc) {
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
+	conversation.session.streaming.Store(true)
 	streamCtx, cancel := context.WithCancel(ctx)
 	conversation.restart = cancel
 	return conversation.nodeKey, conversation.generation, streamCtx, cancel
