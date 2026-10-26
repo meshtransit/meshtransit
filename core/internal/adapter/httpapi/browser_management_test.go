@@ -45,6 +45,7 @@ type browserManagementFixture struct {
 	logoutAll                                       int
 	logoutAllErr                                    error
 	enrollmentKeys                                  *enrollmentKeyStub
+	kubernetesClusters                              *kubernetesClusterStub
 }
 
 func preparedBrowserProof(t *testing.T, browser *BrowserManagement) string {
@@ -1250,6 +1251,8 @@ func browserManagementTestOptions(t *testing.T) (BrowserManagementOptions, *brow
 	}
 	fixture.enrollmentKeys = &enrollmentKeyStub{}
 	options.EnrollmentKeys = fixture.enrollmentKeys
+	fixture.kubernetesClusters = &kubernetesClusterStub{}
+	options.KubernetesClusters = fixture.kubernetesClusters
 	handler, err := NewManagementHandler(options)
 	if err != nil {
 		t.Fatal(err)

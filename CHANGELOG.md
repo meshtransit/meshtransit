@@ -5,6 +5,10 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: the Console's cookie session reaches the Kubernetes cluster API
+  (list, read, create, delete, join keys, approve and reject replica
+  requests), never with a query. Before, only bearer sessions could; the
+  Console's Kubernetes page failed to read its clusters.
 - **Breaking (Core, schema 228): user groups and device tags belong to one
   Network.** Each group, tag and tag owner now lives in a single Network;
   the Network's rules can select only its own groups and tags, a tag applies

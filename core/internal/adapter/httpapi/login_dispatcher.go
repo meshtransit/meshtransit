@@ -238,7 +238,7 @@ func isBrowserManagementOperation(request *http.Request) bool {
 		isDNSZoneOperation(request) ||
 		isIdentityCatalogOperation(request) || isDeviceLifecycleOperation(request) ||
 		isMemberLifecycleOperation(request) || isNetworkMemberOperation(request) || isEnrollmentKeyOperation(request) ||
-		isInvitationOperation(request) {
+		isInvitationOperation(request) || isKubernetesClusterOperation(request) {
 		return true
 	}
 	_, device := parseDeviceRevokePath(request)

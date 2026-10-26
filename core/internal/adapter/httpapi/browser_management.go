@@ -309,7 +309,7 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		isAuditEventExportRead(request) || isGuardrailOperation(request) || isInterchangeOperation(request) || isDeviceGroupOperation(request) || isSiteOperation(request) ||
 		isExitPoolOperation(request) || isDNSZoneOperation(request) || isIdentityCatalogOperation(request) ||
 		isDeviceLifecycleOperation(request) || isMemberLifecycleOperation(request) || isNetworkMemberOperation(request) || isEnrollmentKeyOperation(request) ||
-		isInvitationOperation(request)
+		isInvitationOperation(request) || isKubernetesClusterOperation(request)
 	resourceSharing, _ := browserResourceSharingOperation(request)
 	if !prepare && !logout && !managementScopes && !inventoryRead && !deviceRead && !distributionRead && !historyRead &&
 		!enforcementRead &&
@@ -583,7 +583,7 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 		(isWorkspaceRoleOperation(request) || isSessionWorkspaceOperation(request) || isShareTargetRead(request) ||
 			isNetworkAliasRangeRead(request) || isNetworkDeviceLifetimeRead(request) || isNetworkAddressUsageRead(request) || isGuardrailRead(request) ||
 			isInterchangeRead(request) ||
-			isInvitationRead(request))
+			isInvitationRead(request) || isKubernetesClusterRead(request))
 	auditRead := isAuditEventListRead(request) || isAuditEventExportRead(request) || isDeviceGroupRead(request) || isSiteRead(request) ||
 		isExitPoolRead(request) || isDNSZoneRead(request) || isIdentityCatalogRead(request) || isNetworkMemberRead(request) ||
 		isEnrollmentKeyRead(request)
