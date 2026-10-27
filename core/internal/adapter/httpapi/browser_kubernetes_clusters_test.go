@@ -19,6 +19,8 @@ func TestBrowserManagementAdmitsKubernetesClusterRoutes(t *testing.T) {
 		kubernetesClustersTestPath(cluster + "/replica-requests"),
 		kubernetesClustersTestPath(cluster + "/join-keys" + child),
 		kubernetesClustersTestPath(cluster + "/replica-requests" + child),
+		kubernetesClustersTestPath(cluster + "/signing"),
+		kubernetesClustersTestPath(cluster + "/signing-trust"),
 	} {
 		if !browser.validRequest(browserManagementReadRequest(t, path)) {
 			t.Errorf("the browser cannot read %s", path)
@@ -35,6 +37,13 @@ func TestBrowserManagementAdmitsKubernetesClusterRoutes(t *testing.T) {
 		if !browser.validRequest(request) || !isBrowserManagementOperation(request) {
 			t.Errorf("the browser cannot POST %s", path)
 		}
+	}
+	// An administrator pastes the cluster's signing keys (K1.1b): a PUT, the only one here.
+	paste := browserManagementRequest(t, kubernetesClustersTestPath(cluster+"/signing-trust"), `{}`)
+	paste.Method = http.MethodPut
+	paste.Header.Set("If-Match", `"1"`)
+	if !browser.validRequest(paste) || !isBrowserManagementOperation(paste) {
+		t.Error("the browser cannot PUT a cluster's signing trust")
 	}
 	deletion := browserManagementRequest(t, kubernetesClustersTestPath(cluster), "")
 	deletion.Method, deletion.Body, deletion.ContentLength = http.MethodDelete, http.NoBody, 0
@@ -92,6 +101,21 @@ func TestBrowserManagementServesKubernetesClusters(t *testing.T) {
 	if approved.Code != http.StatusOK || !slices.Equal(fixture.kubernetesClusters.codes, []string{"ABCDE-FG234"}) ||
 		approved.Header().Get("Set-Cookie") != "" {
 		t.Fatalf("approve = %d, codes %v; %s", approved.Code, fixture.kubernetesClusters.codes, approved.Body)
+	}
+	// The signing keys an administrator pasted reach the manager under their version.
+	paste := browserManagementRequest(t, kubernetesClustersTestPath("/"+kubernetesTestCluster+"/signing-trust"),
+		pastedTrustBody(kindSigningJWKS))
+	paste.Method = http.MethodPut
+	paste.Header.Set("If-Match", `"1"`)
+	paste.Header.Del("Idempotency-Key")
+	paste.Header.Set("X-MeshTransit-CSRF", preparedBrowserProof(t, browser))
+	pasted := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+	if err := browser.Handle(pasted, paste); err != nil {
+		t.Fatal(err)
+	}
+	if pasted.Code != http.StatusOK || len(fixture.kubernetesClusters.replacements) != 1 ||
+		fixture.kubernetesClusters.replacements[0].ExpectedVersion != 1 {
+		t.Fatalf("paste = %d, replacements %+v; %s", pasted.Code, fixture.kubernetesClusters.replacements, pasted.Body)
 	}
 }
 

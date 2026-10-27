@@ -530,12 +530,12 @@ var browserManagementMethods = map[string]bool{
 
 // browserManagementMethod admits the request's method: one of
 // browserManagementMethods, or PUT on a route that takes it: a Site's router,
-// an Exit Pool's exit node, a running share's service names, or a Network's
-// DNS settings.
+// an Exit Pool's exit node, a running share's service names, a Network's
+// DNS settings, or a Kubernetes cluster's signing trust.
 func browserManagementMethod(request *http.Request) bool {
 	if request.Method == http.MethodPut {
 		return isSiteOperation(request) || isExitPoolOperation(request) || isContractServiceNamesOperation(request) ||
-			isDNSSettingsWrite(request)
+			isDNSSettingsWrite(request) || isKubernetesSigningTrustWrite(request)
 	}
 	return browserManagementMethods[request.Method]
 }

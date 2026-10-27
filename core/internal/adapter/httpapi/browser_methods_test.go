@@ -66,6 +66,10 @@ func TestBrowserManagementAdmitsPutOnlyWhereARouteTakesIt(t *testing.T) {
 		{"exit node", network + "/exit-pools/01995d00-0000-7000-8000-0000000002c1/nodes/01995d00-0000-7000-8000-0000000002b1", true},
 		{"exit pool", network + "/exit-pools/01995d00-0000-7000-8000-0000000002c1", false},
 		{"device tags", "/api/v1/workspaces/" + managementWorkspaceID() + "/networks/" + managementNetworkID() + "/device-tags", false},
+		{"cluster signing trust", network + "/kubernetes-clusters/01995d00-0000-7000-8000-0000000002d1/signing-trust", true},
+		{"cluster signing", network + "/kubernetes-clusters/01995d00-0000-7000-8000-0000000002d1/signing", false},
+		{"cluster", network + "/kubernetes-clusters/01995d00-0000-7000-8000-0000000002d1", false},
+		{"clusters", network + "/kubernetes-clusters", false},
 	} {
 		request := browserManagementRequest(t, test.path, `{"priority":10,"state":"active"}`)
 		request.Method = http.MethodPut

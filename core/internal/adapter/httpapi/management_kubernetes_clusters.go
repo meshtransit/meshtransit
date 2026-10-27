@@ -187,6 +187,13 @@ func isKubernetesClusterOperation(request *http.Request) bool {
 	return ok && path.methods.allows(request.Method)
 }
 
+// isKubernetesSigningTrustWrite admits an administrator's paste of the
+// cluster's signing keys, the only PUT of a cluster (K1.1b).
+func isKubernetesSigningTrustWrite(request *http.Request) bool {
+	path, ok := parseKubernetesClusterPath(request)
+	return ok && request.Method == http.MethodPut && path.operation == kubernetesSigningTrustReplaceOperation
+}
+
 // isKubernetesClusterRead admits the reads.
 func isKubernetesClusterRead(request *http.Request) bool {
 	return request != nil && request.Method == http.MethodGet && isKubernetesClusterOperation(request)
