@@ -20,14 +20,26 @@ func (conversation *conversation) gatewayRotationToken(ctx context.Context, raw 
 	machine node.MachineKey, nodeKey node.Key) (node.GatewayToken, bool) {
 	application := conversation.application
 	metrics := application.options.Metrics
+	// Each refusal is counted, and audited off the session's path (schema
+	// 233): token_missing is how a copy of the gateway's Secret shows.
+	refuse := func(limit string, reason kubecluster.KeyEventReason) (node.GatewayToken, bool) {
+		metrics.limited(limit)
+		if conversation.session != nil && conversation.session.server != nil {
+			conversation.session.server.keyReports.report(machine.Fingerprint(), reason)
+		}
+		return node.GatewayToken{}, false
+	}
+	refuseToken := func(reason kubetoken.Reason) (node.GatewayToken, bool) {
+		return refuse(gatewayTokenLimit(reason), kubecluster.KeyEventReason(reason))
+	}
 	// No token (an older meshgw, or no projected volume): refused before
 	// any database read.
 	if raw == "" {
-		metrics.limited(gatewayTokenLimit(kubetoken.ReasonMissing))
-		return node.GatewayToken{}, false
+		return refuseToken(kubetoken.ReasonMissing)
 	}
 	rotations := application.options.MachineKeyRotations
 	if rotations == nil {
+		// Core's own configuration, not the gateway's: counted only.
 		metrics.limited(limitGatewayTrustUnavailable)
 		return node.GatewayToken{}, false
 	}
@@ -36,36 +48,30 @@ func (conversation *conversation) gatewayRotationToken(ctx context.Context, raw 
 	cancel()
 	switch {
 	case errors.Is(err, kubecluster.ErrNotFound):
-		metrics.limited(limitGatewayTrustMissing)
-		return node.GatewayToken{}, false
+		return refuse(limitGatewayTrustMissing, kubecluster.KeyEventTrustMissing)
 	case err != nil:
-		metrics.limited(limitGatewayTrustUnavailable)
-		return node.GatewayToken{}, false
+		return refuse(limitGatewayTrustUnavailable, kubecluster.KeyEventTrustUnavailable)
 	case !trust.Complete():
 		// No trust, or a gateway that joined before K1.1: it joins again.
-		metrics.limited(limitGatewayTrustMissing)
-		return node.GatewayToken{}, false
+		return refuse(limitGatewayTrustMissing, kubecluster.KeyEventTrustMissing)
 	}
 	jwks, err := kubejoin.ParseJWKS(trust.JWKS)
 	if err != nil {
-		metrics.limited(limitGatewayTrustUnavailable)
-		return node.GatewayToken{}, false
+		return refuse(limitGatewayTrustUnavailable, kubecluster.KeyEventTrustUnavailable)
 	}
 	claims, err := kubetoken.Verify(raw, kubetoken.Expectation{Issuer: trust.Issuer, JWKS: jwks,
 		Namespace: trust.Namespace, ServiceAccount: trust.ServiceAccount, PodName: trust.PodName}, application.now())
 	if refused, ok := errors.AsType[*kubetoken.RefusedError](err); ok {
-		metrics.limited(gatewayTokenLimit(refused.Reason))
-		return node.GatewayToken{}, false
+		return refuseToken(refused.Reason)
 	}
 	if err != nil {
-		metrics.limited(limitGatewayTrustMissing)
-		return node.GatewayToken{}, false
+		// The trust as read cannot check a token.
+		return refuse(limitGatewayTrustUnavailable, kubecluster.KeyEventTrustUnavailable)
 	}
 	token := node.GatewayToken{DeviceID: trust.DeviceID, TrustVersion: trust.TrustVersion, JTI: claims.JTI,
 		ExpiresAt: claims.Expiry}
 	if !token.IsValid() {
-		metrics.limited(gatewayTokenLimit(kubetoken.ReasonMalformed))
-		return node.GatewayToken{}, false
+		return refuseToken(kubetoken.ReasonMalformed)
 	}
 	return token, true
 }

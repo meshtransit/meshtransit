@@ -10,6 +10,7 @@ import (
 
 	"go.uber.org/goleak"
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
+	"meshtransit.net/core/internal/adapter/kubetoken"
 	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
@@ -210,15 +211,17 @@ func TestGatewayRotationNeedsItsPodToken(t *testing.T) {
 		token    func(t *testing.T) string
 		trust    kubecluster.RotationTrust
 		trustErr error
+		reason   kubecluster.KeyEventReason
 	}{
-		"no token": {token: func(*testing.T) string { return "" }},
+		"no token": {token: func(*testing.T) string { return "" }, reason: kubecluster.KeyEventTokenMissing},
 		"another pod's token": {token: func(t *testing.T) string {
 			return signPodToken(t, testPodSigner(), testPodClaims(fixtureClock, "meshgw-1"))
-		}},
-		"expired token": {token: func(t *testing.T) string { return signPodToken(t, testPodSigner(), expired) }},
-		"no trust":      {trustErr: kubecluster.ErrNotFound},
-		"trust unread":  {trustErr: errors.New("database: down")},
-		"no bound pod":  {trust: incomplete},
+		}, reason: kubecluster.KeyEventTokenIdentity},
+		"expired token": {token: func(t *testing.T) string { return signPodToken(t, testPodSigner(), expired) },
+			reason: kubecluster.KeyEventTokenExpired},
+		"no trust":     {trustErr: kubecluster.ErrNotFound, reason: kubecluster.KeyEventTrustMissing},
+		"trust unread": {trustErr: errors.New("database: down"), reason: kubecluster.KeyEventTrustUnavailable},
+		"no bound pod": {trust: incomplete, reason: kubecluster.KeyEventTrustMissing},
 	} {
 		for _, kind := range rotationKinds() {
 			t.Run(fmt.Sprintf("%s %#x", name, uint8(kind)), func(t *testing.T) {
@@ -226,6 +229,7 @@ func TestGatewayRotationNeedsItsPodToken(t *testing.T) {
 				rotations := &fakeMachineKeyRotations{trust: test.trust, trustErr: test.trustErr}
 				presence := &fakeGatewayPresence{state: mapsession.GatewayRotationHeld}
 				f := gatewayFixture(t, rotations)
+				recorder := reportGatewayKeys(f)
 				f.talk.application.options.GatewayPresence = presence
 				if test.token != nil {
 					f.podToken = test.token(t)
@@ -239,6 +243,12 @@ func TestGatewayRotationNeedsItsPodToken(t *testing.T) {
 				if len(presence.checked()) != 0 {
 					t.Fatal("a refused token reached Redis")
 				}
+				// Each refusal enters the audit trail, off the session's path.
+				got := waitReports(t, recorder, 1)
+				if len(got) != 1 || got[0].reason != test.reason ||
+					got[0].machine != node.MachineKey(f.session.machine).Fingerprint() {
+					t.Fatalf("reports %+v, want one %s", got, test.reason)
+				}
 			})
 		}
 	}
@@ -251,6 +261,7 @@ func TestGatewayTokenRefusedByTheStore(t *testing.T) {
 	for _, kind := range rotationKinds() {
 		rotations := &fakeMachineKeyRotations{err: kubecluster.ErrGatewayTokenRefused}
 		f := gatewayFixture(t, rotations)
+		recorder := reportGatewayKeys(f)
 		f.registrations.err = keyrotation.ErrGatewayTokenRefused
 		f.run()
 		f.expectStream(node.Key(f.session.Hello().GetNodeKey()))
@@ -261,7 +272,22 @@ func TestGatewayTokenRefusedByTheStore(t *testing.T) {
 		if got.GetCode() != mtcpv1.Error_NOT_PERMITTED || got.GetFatal() {
 			t.Fatalf("%#x answered %v", uint8(kind), got)
 		}
+		// A token used before is not audited: its pod used it.
+		time.Sleep(20 * time.Millisecond)
+		if reports := recorder.reports(); len(reports) != 0 {
+			t.Fatalf("%#x reported %+v", uint8(kind), reports)
+		}
 	}
+}
+
+// reportGatewayKeys gives the fixture's server a key reporter over a stub.
+func reportGatewayKeys(f *conversationFixture) *keyRecorderStub {
+	recorder := &keyRecorderStub{outcome: kubecluster.KeyEventRecorded}
+	server := f.session.server
+	server.keyReports = newGatewayKeyReporter(recorder, server.options.Metrics, server.options.Logger,
+		server.options.Now, 16)
+	f.t.Cleanup(server.keyReports.stop)
+	return recorder
 }
 
 // The node key rotation carries the verified token to the store.
@@ -559,6 +585,19 @@ func TestClusterLocalIssuer(t *testing.T) {
 	} {
 		if got := clusterLocalIssuer(issuer); got != local {
 			t.Errorf("clusterLocalIssuer(%q) = %v, want %v", issuer, got, local)
+		}
+	}
+}
+
+// Every reason the verifier refuses a token for is an audit reason of its
+// own, as the rotation reports it.
+func TestTokenRefusalsAreAuditReasons(t *testing.T) {
+	t.Parallel()
+	for _, reason := range []kubetoken.Reason{kubetoken.ReasonMissing, kubetoken.ReasonMalformed,
+		kubetoken.ReasonUnknownKey, kubetoken.ReasonSignature, kubetoken.ReasonExpired, kubetoken.ReasonAudience,
+		kubetoken.ReasonIdentity} {
+		if !kubecluster.KeyEventReason(reason).TokenRefused() {
+			t.Errorf("%s is not an audit reason", reason)
 		}
 	}
 }

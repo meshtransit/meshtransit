@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -124,6 +125,35 @@ func (stub *kubernetesClusterStub) List(context.Context, accountsession.Session,
 	return []kubecluster.Cluster{kubernetesTestClusterValue(&testing.T{})}, nil
 }
 
+func (stub *kubernetesClusterStub) ReadSigning(context.Context, accountsession.Session, network.Scope,
+	kubecluster.ID) (kubecluster.Signing, error) {
+	stub.calls = append(stub.calls, "signing")
+	if stub.failure != nil {
+		return kubecluster.Signing{}, stub.failure
+	}
+	deviceID, _ := node.ParseID("01890f00-0000-7000-8000-000000000b04")
+	requestID, _ := kubecluster.ParseRequestID(kubernetesTestRequest)
+	rotated := time.Date(2026, time.October, 27, 11, 14, 22, 0, time.UTC)
+	signing := kubecluster.Signing{
+		Trust: &kubecluster.SigningTrust{Issuer: "https://kubernetes.default.svc.cluster.local",
+			KeyThumbprints: [][32]byte{{0xab}}, Namespace: "mt-kube-k1", ServiceAccount: "meshgw",
+			StatefulSet: "meshgw", Version: 1, Source: kubecluster.TrustFromReplicaApproval,
+			SetAt: time.Date(2026, time.October, 27, 10, 55, 0, 0, time.UTC)},
+		Replicas: []kubecluster.ReplicaSigning{{DeviceID: deviceID, PodName: "meshgw-0", LastTokenRotation: rotated},
+			{DeviceID: deviceID, PodName: "meshgw-1"}},
+	}
+	if stub.readOnly {
+		return signing, nil
+	}
+	signing.Requests = []kubecluster.RequestSigning{{RequestID: requestID, CodeVersion: 2,
+		Issuer: "https://kubernetes.default.svc.cluster.local", Namespace: "mt-kube-k1", ServiceAccount: "meshgw",
+		StatefulSet: "meshgw", PodName: "meshgw-1", JoinKeyThumbprint: [32]byte{0xcd}}}
+	signing.TokenWarnings = &kubecluster.KeyWarnings{Devices: []kubecluster.KeyWarning{{DeviceID: deviceID,
+		Hostname: "prod-0", Last24h: 1, Last7Days: 2, LastAt: rotated, LastReason: kubecluster.KeyEventTokenMissing,
+		KeyState: kubecluster.ReportedKeyCurrent}}}
+	return signing, nil
+}
+
 func (stub *kubernetesClusterStub) Read(context.Context, accountsession.Session, network.Scope,
 	kubecluster.ID) (kubecluster.Detail, error) {
 	stub.calls = append(stub.calls, "read")
@@ -210,6 +240,7 @@ func TestParseKubernetesClusterPath(t *testing.T) {
 			true, kubernetesJoinKeyRevokeOperation},
 		{http.MethodGet, kubernetesClustersTestPath(cluster + "/replica-requests"), true,
 			kubernetesRequestListOperation},
+		{http.MethodGet, kubernetesClustersTestPath(cluster + "/signing"), true, kubernetesClusterSigningOperation},
 		{http.MethodGet, kubernetesClustersTestPath(cluster + "/replica-requests/" + kubernetesTestRequest), true,
 			kubernetesRequestReadOperation},
 		{http.MethodPost, kubernetesClustersTestPath(cluster + "/replica-requests/" + kubernetesTestRequest +
@@ -493,5 +524,54 @@ func TestKubernetesClusterReadShowsKeyWarnings(t *testing.T) {
 		`"key_state":"rotated"}],"truncated":false}`
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), want) {
 		t.Fatalf("read = %d; %s", response.Code, response.Body)
+	}
+}
+
+// The signing read shows the trust, the replicas' pods and, to those who
+// manage or approve the cluster, the waiting requests against the trust and
+// the refused rotation tokens.
+func TestKubernetesClusterSigningRead(t *testing.T) {
+	t.Parallel()
+	thumbprint := func(b byte) string { return fmt.Sprintf("%02x%062x", b, 0) }
+	for _, readOnly := range []bool{false, true} {
+		options := validManagementHandlerOptions(t)
+		options.KubernetesClusters = &kubernetesClusterStub{readOnly: readOnly}
+		handler, err := NewManagementHandler(options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, newManagementRequest(t, http.MethodGet,
+			kubernetesClustersTestPath("/"+kubernetesTestCluster+"/signing"), ""))
+		body := response.Body.String()
+		wants := []string{
+			`"cluster_id":"` + kubernetesTestCluster + `"`,
+			`"trust":{"issuer":"https://kubernetes.default.svc.cluster.local","key_thumbprints":["` +
+				thumbprint(0xab) + `"],"namespace":"mt-kube-k1","service_account":"meshgw","statefulset":"meshgw",` +
+				`"version":1,"source":"replica_approval","set_at":"2026-10-27T10:55:00Z"}`,
+			`"replicas":[{"device_id":"01890f00-0000-7000-8000-000000000b04","pod_name":"meshgw-0",` +
+				`"last_token_rotation_at":"2026-10-27T11:14:22Z"},{"device_id":` +
+				`"01890f00-0000-7000-8000-000000000b04","pod_name":"meshgw-1","last_token_rotation_at":null}]`,
+		}
+		if readOnly {
+			wants = append(wants, `"replica_requests":null`, `"token_warnings":null`)
+		} else {
+			wants = append(wants,
+				`"replica_requests":[{"request_id":"`+kubernetesTestRequest+`","code_version":2,`+
+					`"issuer":"https://kubernetes.default.svc.cluster.local","namespace":"mt-kube-k1",`+
+					`"service_account":"meshgw","statefulset":"meshgw","pod_name":"meshgw-1",`+
+					`"join_key_thumbprint":"`+thumbprint(0xcd)+`","trust_state":"differs_from_trust"}]`,
+				`"token_warnings":{"devices":[{"device_id":"01890f00-0000-7000-8000-000000000b04",`+
+					`"hostname":"prod-0","count_24h":1,"count_7d":2,"last_at":"2026-10-27T11:14:22Z",`+
+					`"last_reason":"token_missing","key_state":"current"}],"truncated":false}`)
+		}
+		for _, want := range wants {
+			if response.Code != http.StatusOK || !strings.Contains(body, want) {
+				t.Fatalf("read-only %t: %d; %s\nwant %s", readOnly, response.Code, body, want)
+			}
+		}
+		if response.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("Cache-Control = %q", response.Header().Get("Cache-Control"))
+		}
 	}
 }

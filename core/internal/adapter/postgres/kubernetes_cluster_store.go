@@ -522,6 +522,12 @@ func (store *KubernetesClusterStore) ReadCluster(ctx context.Context, session ac
 			if err != nil {
 				return false, err
 			}
+			// Schema 233 keeps refused rotation tokens out of this read.
+			for _, warning := range warnings.Devices {
+				if warning.LastReason.TokenRefused() {
+					return false, kubecluster.ErrInvalid
+				}
+			}
 			detail.KeyWarnings = &warnings
 		}
 		if read.Requests != nil {

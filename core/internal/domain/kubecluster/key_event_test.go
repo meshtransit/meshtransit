@@ -8,17 +8,32 @@ import (
 
 func TestKeyEventReasons(t *testing.T) {
 	t.Parallel()
-	for reason, stale := range map[kubecluster.KeyEventReason]bool{
-		kubecluster.KeyEventRetiredMachineKey: true,
-		kubecluster.KeyEventStaleNodeKey:      true,
-		kubecluster.KeyEventSessionFight:      false,
-		kubecluster.KeyEventReplayedHandshake: false,
+	const (
+		stale     = "kubernetes_gateway.stale_key_presented"
+		contested = "kubernetes_gateway.keys_contested"
+		refused   = "kubernetes_gateway.rotation_token_refused"
+	)
+	for reason, action := range map[kubecluster.KeyEventReason]string{
+		kubecluster.KeyEventRetiredMachineKey: stale,
+		kubecluster.KeyEventStaleNodeKey:      stale,
+		kubecluster.KeyEventSessionFight:      contested,
+		kubecluster.KeyEventReplayedHandshake: contested,
+		kubecluster.KeyEventTokenMissing:      refused,
+		kubecluster.KeyEventTokenMalformed:    refused,
+		kubecluster.KeyEventTokenUnknownKey:   refused,
+		kubecluster.KeyEventTokenSignature:    refused,
+		kubecluster.KeyEventTokenExpired:      refused,
+		kubecluster.KeyEventTokenAudience:     refused,
+		kubecluster.KeyEventTokenIdentity:     refused,
+		kubecluster.KeyEventTrustMissing:      refused,
+		kubecluster.KeyEventTrustUnavailable:  refused,
 	} {
-		if !reason.IsKnown() || reason.StaleKey() != stale {
-			t.Errorf("%s: known %t, stale %t", reason, reason.IsKnown(), reason.StaleKey())
+		if !reason.IsKnown() || reason.StaleKey() != (action == stale) || reason.Action() != action ||
+			reason.TokenRefused() != (action == refused) {
+			t.Errorf("%s: known %t, stale %t, action %q", reason, reason.IsKnown(), reason.StaleKey(), reason.Action())
 		}
 	}
-	for _, reason := range []kubecluster.KeyEventReason{"", "session_replaced", "RETIRED_MACHINE_KEY"} {
+	for _, reason := range []kubecluster.KeyEventReason{"", "session_replaced", "RETIRED_MACHINE_KEY", "replayed", "token_"} {
 		if reason.IsKnown() {
 			t.Errorf("%q is known", reason)
 		}

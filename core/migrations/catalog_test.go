@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 232 {
-		t.Fatalf("len(Catalog()) = %d, want 232", len(catalog))
+	if len(catalog) != 233 {
+		t.Fatalf("len(Catalog()) = %d, want 233", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 232 {
-		t.Fatalf("LatestVersion() = %d, want 232", LatestVersion())
+	if LatestVersion() != 233 {
+		t.Fatalf("LatestVersion() = %d, want 233", LatestVersion())
 	}
 }
 
@@ -6783,6 +6783,47 @@ func TestMigration232GatewayRotationTokens(t *testing.T) {
 	for _, forbidden := range []string{"BYPASSRLS", "DROP FUNCTION", "TEMPORARY", "session_replication_role"} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 232 contains %q", forbidden)
+		}
+	}
+}
+
+func TestMigration233GatewayTokenAuditAndSigningRead(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[232]
+	if migration.Version != 233 {
+		t.Fatalf("migration 233 = %+v", migration)
+	}
+	for _, want := range []string{
+		// The reason CHECK swapped without a long lock: added NOT VALID,
+		// validated, then the old one dropped.
+		"ADD CONSTRAINT kubernetes_gateway_key_event_reason_v2_check CHECK (",
+		"action = 'kubernetes_gateway.rotation_token_refused'",
+		"'token_missing', 'token_malformed', 'token_unknown_key', 'token_signature', 'token_expired',",
+		"'token_audience', 'token_identity', 'trust_missing', 'trust_unavailable'",
+		") NOT VALID;",
+		"VALIDATE CONSTRAINT kubernetes_gateway_key_event_reason_v2_check;",
+		"DROP CONSTRAINT kubernetes_gateway_key_event_reason_check;",
+		// v2 records the new action; v1 keeps the old reasons.
+		"CREATE FUNCTION mesh_ops.record_kubernetes_gateway_key_event_v2(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.record_kubernetes_gateway_key_event_v1(",
+		"RETURN mesh_ops.record_kubernetes_gateway_key_event_v2(",
+		// The cluster's v2 read sums only the old actions.
+		"CREATE OR REPLACE FUNCTION mesh_ops.read_kubernetes_cluster_v2(",
+		"AND event.action IN ('kubernetes_gateway.stale_key_presented', 'kubernetes_gateway.keys_contested')",
+		// The signing read, for the Console only.
+		"CREATE FUNCTION mesh_ops.read_kubernetes_cluster_signing_v1(",
+		"'kubernetes_cluster.manage'",
+		"AND event.action = 'kubernetes_gateway.rotation_token_refused'",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.record_kubernetes_gateway_key_event_v2(BYTEA, TEXT, INTEGER, UUID, UUID)",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_kubernetes_cluster_signing_v1(",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 233 lacks %q", want)
+		}
+	}
+	for _, forbidden := range []string{"BYPASSRLS", "DROP FUNCTION", "TEMPORARY", "session_replication_role"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 233 contains %q", forbidden)
 		}
 	}
 }

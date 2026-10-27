@@ -2996,6 +2996,367 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/signing": {
+      "get": {
+        "operationId": "readKubernetesClusterSigning",
+        "summary": "Read a cluster's signing trust",
+        "description": "Requires network.read; requests and token warnings also need kubernetes_cluster.manage or kubernetes_cluster.approve. A Core before K1.1 answers 404.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The signing trust",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "network_id",
+                        "cluster_id",
+                        "trust",
+                        "replicas",
+                        "replica_requests",
+                        "token_warnings"
+                      ],
+                      "properties": {
+                        "network_id": {
+                          "$ref": "#/components/schemas/PublicID"
+                        },
+                        "cluster_id": {
+                          "$ref": "#/components/schemas/PublicID"
+                        },
+                        "trust": {
+                          "type": [
+                            "object",
+                            "null"
+                          ],
+                          "additionalProperties": false,
+                          "description": "The ServiceAccount signing trust the cluster's gateways' pod tokens are checked against; null until the first replica with signing keys is approved",
+                          "required": [
+                            "issuer",
+                            "key_thumbprints",
+                            "namespace",
+                            "service_account",
+                            "statefulset",
+                            "version",
+                            "source",
+                            "set_at"
+                          ],
+                          "properties": {
+                            "issuer": {
+                              "type": "string",
+                              "minLength": 9,
+                              "maxLength": 255
+                            },
+                            "key_thumbprints": {
+                              "type": "array",
+                              "minItems": 1,
+                              "maxItems": 64,
+                              "items": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              },
+                              "description": "RFC 7638 thumbprints of the cluster's signing keys, hex"
+                            },
+                            "namespace": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 63
+                            },
+                            "service_account": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253
+                            },
+                            "statefulset": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "replica_approval",
+                                "admin_paste"
+                              ]
+                            },
+                            "set_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "replicas": {
+                          "type": "array",
+                          "maxItems": 256,
+                          "description": "The cluster's gateway Devices, not deleted, that joined with signing keys",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "device_id",
+                              "pod_name",
+                              "last_token_rotation_at"
+                            ],
+                            "properties": {
+                              "device_id": {
+                                "$ref": "#/components/schemas/PublicID"
+                              },
+                              "pod_name": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 253
+                              },
+                              "last_token_rotation_at": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ],
+                                "format": "date-time",
+                                "description": "When the replica last rotated a key, each time with a valid pod token; null when it has not since it joined"
+                              }
+                            }
+                          }
+                        },
+                        "replica_requests": {
+                          "type": [
+                            "array",
+                            "null"
+                          ],
+                          "maxItems": 64,
+                          "description": "Null unless the caller has kubernetes_cluster.manage or kubernetes_cluster.approve. The pending and approved requests, newest first, with how each one's signing material stands against the trust",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "request_id",
+                              "code_version",
+                              "issuer",
+                              "namespace",
+                              "service_account",
+                              "statefulset",
+                              "pod_name",
+                              "join_key_thumbprint",
+                              "trust_state"
+                            ],
+                            "properties": {
+                              "request_id": {
+                                "$ref": "#/components/schemas/PublicID"
+                              },
+                              "code_version": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 2
+                              },
+                              "issuer": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "namespace": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "service_account": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "statefulset": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "pod_name": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "join_key_thumbprint": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ],
+                                "pattern": "^[0-9a-f]{64}$"
+                              },
+                              "trust_state": {
+                                "type": "string",
+                                "enum": [
+                                  "sets_trust",
+                                  "matches_trust",
+                                  "differs_from_trust",
+                                  "must_join_again"
+                                ],
+                                "description": "Approving sets the trust, keeps it, is refused, or cancels a request opened without signing keys (code version 1, whose fields are null)"
+                              }
+                            }
+                          }
+                        },
+                        "token_warnings": {
+                          "type": [
+                            "object",
+                            "null"
+                          ],
+                          "additionalProperties": false,
+                          "required": [
+                            "devices",
+                            "truncated"
+                          ],
+                          "description": "Null unless the caller has kubernetes_cluster.manage or kubernetes_cluster.approve. The gateways' rotations refused for their pod token or the cluster's trust in the last 7 days, one entry per gateway Device, newest first; token_missing is how a copy of a gateway's Secret shows",
+                          "properties": {
+                            "devices": {
+                              "type": "array",
+                              "maxItems": 64,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "device_id",
+                                  "hostname",
+                                  "count_24h",
+                                  "count_7d",
+                                  "last_at",
+                                  "last_reason",
+                                  "key_state"
+                                ],
+                                "properties": {
+                                  "device_id": {
+                                    "$ref": "#/components/schemas/PublicID"
+                                  },
+                                  "hostname": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 253
+                                  },
+                                  "count_24h": {
+                                    "type": "integer",
+                                    "minimum": 0
+                                  },
+                                  "count_7d": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  },
+                                  "last_at": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  },
+                                  "last_reason": {
+                                    "type": "string",
+                                    "enum": [
+                                      "token_missing",
+                                      "token_malformed",
+                                      "token_unknown_key",
+                                      "token_signature",
+                                      "token_expired",
+                                      "token_audience",
+                                      "token_identity",
+                                      "trust_missing",
+                                      "trust_unavailable"
+                                    ]
+                                  },
+                                  "key_state": {
+                                    "type": "string",
+                                    "enum": [
+                                      "current",
+                                      "rotated",
+                                      "device_removed",
+                                      "device_expired",
+                                      "device_suspended"
+                                    ]
+                                  }
+                                }
+                              }
+                            },
+                            "truncated": {
+                              "type": "boolean",
+                              "description": "More gateway Devices had refusals than were listed"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "$ref": "#/components/schemas/PublicID"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/replica-requests": {
       "get": {
         "operationId": "listKubernetesReplicaRequests",

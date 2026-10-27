@@ -24,7 +24,7 @@ var (
 )
 
 const (
-	recordKubernetesGatewayKeyEventSQL = `SELECT mesh_ops.record_kubernetes_gateway_key_event_v1(
+	recordKubernetesGatewayKeyEventSQL = `SELECT mesh_ops.record_kubernetes_gateway_key_event_v2(
     $1::BYTEA,$2::TEXT,$3::INTEGER,$4::UUID,$5::UUID)::TEXT`
 	appendKubernetesGatewayKeyEventEvidenceSQL = `SELECT mesh_ops.append_kubernetes_gateway_key_event_evidence_v1(
     $1::UUID,$2::BIGINT,$3::BIGINT,$4::BYTEA,$5::BYTEA,$6::UUID,$7::UUID,$8::JSONB)`
@@ -37,8 +37,8 @@ const (
 )
 
 // KubernetesGatewayKeyEventStore records a gateway's stale or contested
-// keys, each with its sealed audit event, through the runtime pool of the
-// control plane (schema 229).
+// keys and its refused rotation tokens, each with its sealed audit event,
+// through the runtime pool of the control plane (schemas 229, 233).
 type KubernetesGatewayKeyEventStore struct{ database outboxDatabase }
 
 // NewKubernetesGatewayKeyEventStore accepts the runtime pool only.
@@ -162,7 +162,7 @@ func decodeGatewayKeyEventProof(encoded string, event publicid.ID,
 	semantic, semanticErr := hex.DecodeString(proof.SemanticHash)
 	previous, previousErr := hex.DecodeString(proof.PreviousHash)
 	payloadHash := sha256.Sum256([]byte(proof.Payload))
-	if proof.Action != gatewayKeyEventAction(reason) || proof.EventID != event.String() ||
+	if proof.Action != reason.Action() || proof.EventID != event.String() ||
 		proof.NetworkRevision < 1 || semanticErr != nil || len(semantic) != sha256.Size ||
 		previousErr != nil || len(previous) != sha256.Size || proof.StreamID < 1 || proof.Sequence < 1 ||
 		len(proof.Payload) == 0 || len(proof.Payload) > gatewayKeyEventMaximumPayload ||
@@ -170,15 +170,6 @@ func decodeGatewayKeyEventProof(encoded string, event publicid.ID,
 		return gatewayKeyEventProof{}, ErrKubernetesGatewayKeyEventStore
 	}
 	return proof, nil
-}
-
-// gatewayKeyEventAction is the audit action of a reason, as the database
-// derives it.
-func gatewayKeyEventAction(reason kubecluster.KeyEventReason) string {
-	if reason.StaleKey() {
-		return "kubernetes_gateway.stale_key_presented"
-	}
-	return "kubernetes_gateway.keys_contested"
 }
 
 // hashGatewayKeyEvent binds the event to the stream head the database

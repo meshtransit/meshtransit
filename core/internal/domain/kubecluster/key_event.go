@@ -26,18 +26,59 @@ const (
 	KeyEventReplayedHandshake KeyEventReason = "replayed_handshake"
 )
 
+// Reasons a gateway's rotation was refused for its pod token or its
+// cluster's trust (schema 233, K1.1 design §9); a token used before is
+// not one. token_missing is the main sign of a copy of the gateway's
+// Secret.
+const (
+	KeyEventTokenMissing     KeyEventReason = "token_missing"
+	KeyEventTokenMalformed   KeyEventReason = "token_malformed"
+	KeyEventTokenUnknownKey  KeyEventReason = "token_unknown_key"
+	KeyEventTokenSignature   KeyEventReason = "token_signature"
+	KeyEventTokenExpired     KeyEventReason = "token_expired"
+	KeyEventTokenAudience    KeyEventReason = "token_audience"
+	KeyEventTokenIdentity    KeyEventReason = "token_identity"
+	KeyEventTrustMissing     KeyEventReason = "trust_missing"
+	KeyEventTrustUnavailable KeyEventReason = "trust_unavailable"
+)
+
 // IsKnown reports one of the reasons above.
 func (reason KeyEventReason) IsKnown() bool {
 	switch reason {
 	case KeyEventRetiredMachineKey, KeyEventStaleNodeKey, KeyEventSessionFight, KeyEventReplayedHandshake:
 		return true
 	}
-	return false
+	return reason.TokenRefused()
 }
 
 // StaleKey reports a stale key, as opposed to keys two holders contest.
 func (reason KeyEventReason) StaleKey() bool {
 	return reason == KeyEventRetiredMachineKey || reason == KeyEventStaleNodeKey
+}
+
+// TokenRefused reports a rotation refused for its pod token or trust.
+func (reason KeyEventReason) TokenRefused() bool {
+	switch reason {
+	case KeyEventTokenMissing, KeyEventTokenMalformed, KeyEventTokenUnknownKey, KeyEventTokenSignature,
+		KeyEventTokenExpired, KeyEventTokenAudience, KeyEventTokenIdentity, KeyEventTrustMissing,
+		KeyEventTrustUnavailable:
+		return true
+	}
+	return false
+}
+
+// Action is the audit action of a known reason, as the database derives
+// it; empty for an unknown one.
+func (reason KeyEventReason) Action() string {
+	switch {
+	case reason.StaleKey():
+		return "kubernetes_gateway.stale_key_presented"
+	case reason.TokenRefused():
+		return "kubernetes_gateway.rotation_token_refused"
+	case reason.IsKnown():
+		return "kubernetes_gateway.keys_contested"
+	}
+	return ""
 }
 
 // MaximumSuppressedReports bounds the reports one event says were folded

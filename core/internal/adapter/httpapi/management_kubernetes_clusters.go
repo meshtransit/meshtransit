@@ -30,6 +30,7 @@ const (
 	kubernetesRequestReadOperation    = "kubernetes_replica_request_read"
 	kubernetesRequestApproveOperation = "kubernetes_replica_request_approve"
 	kubernetesRequestRejectOperation  = "kubernetes_replica_request_reject"
+	kubernetesClusterSigningOperation = "kubernetes_cluster_signing_read"
 )
 
 // KubernetesClusterManager manages a Network's Kubernetes clusters, their
@@ -39,6 +40,7 @@ type KubernetesClusterManager interface {
 	Delete(context.Context, kubecluster.Deletion) (kubecluster.Cluster, error)
 	List(context.Context, accountsession.Session, network.Scope) ([]kubecluster.Cluster, error)
 	Read(context.Context, accountsession.Session, network.Scope, kubecluster.ID) (kubecluster.Detail, error)
+	ReadSigning(context.Context, accountsession.Session, network.Scope, kubecluster.ID) (kubecluster.Signing, error)
 	IssueJoinKey(context.Context, kubecluster.KeyRequest) (kubecluster.IssuedJoinKey, error)
 	RevokeJoinKey(context.Context, kubecluster.KeyRevocation) (kubecluster.JoinKey, error)
 	Approve(context.Context, kubecluster.Decision, string) (kubecluster.ReplicaRequestView, error)
@@ -64,6 +66,7 @@ type kubernetesClusterPath struct {
 //	GET         kubernetes-clusters/{c}/join-keys/{key}                   read
 //	POST        kubernetes-clusters/{c}/join-keys/{key}/actions/revoke    revoke
 //	GET         kubernetes-clusters/{c}/replica-requests                  list
+//	GET         kubernetes-clusters/{c}/signing                           signing read (K1.1)
 //	GET         kubernetes-clusters/{c}/replica-requests/{r}              read
 //	POST        kubernetes-clusters/{c}/replica-requests/{r}/actions/approve|reject
 //
@@ -130,6 +133,9 @@ func (path *kubernetesClusterPath) route(rest []string) (map[string]string, bool
 	case len(rest) == 2 && rest[1] == "replica-requests":
 		path.methods = restMethods{http.MethodGet}
 		return map[string]string{http.MethodGet: kubernetesRequestListOperation}, true
+	case len(rest) == 2 && rest[1] == "signing":
+		path.methods = restMethods{http.MethodGet}
+		return map[string]string{http.MethodGet: kubernetesClusterSigningOperation}, true
 	case (len(rest) == 3 || len(rest) == 5 && rest[3] == "actions" && rest[4] == "revoke") && rest[1] == "join-keys":
 		key, ok := child(2)
 		if !ok {
@@ -221,6 +227,8 @@ func (handler *ManagementHandler) handleKubernetesClusters(ctx context.Context, 
 			return fail(classifyKubernetesClusterError(err))
 		}
 		writeKubernetesData(ctx, handler, response, correlationID, http.StatusOK, newKubernetesClusterBody(cluster))
+	case kubernetesClusterSigningOperation:
+		return handler.readKubernetesClusterSigning(ctx, response, correlationID, path, session, fail)
 	case kubernetesJoinKeyIssueOperation:
 		return handler.issueKubernetesJoinKey(ctx, response, request, correlationID, path, session, fail)
 	case kubernetesJoinKeyRevokeOperation:
@@ -545,6 +553,19 @@ type kubernetesKeyWarningsBody struct {
 	Truncated bool                       `json:"truncated"`
 }
 
+func newKubernetesKeyWarningsBody(source kubecluster.KeyWarnings) kubernetesKeyWarningsBody {
+	warnings := kubernetesKeyWarningsBody{Truncated: source.Truncated,
+		Devices: make([]kubernetesKeyWarningBody, 0, len(source.Devices))}
+	for _, warning := range source.Devices {
+		warnings.Devices = append(warnings.Devices, kubernetesKeyWarningBody{
+			DeviceID: warning.DeviceID.String(), Hostname: warning.Hostname, Count24h: warning.Last24h,
+			Count7d: warning.Last7Days, LastAt: managementTime(warning.LastAt),
+			LastReason: string(warning.LastReason), KeyState: string(warning.KeyState),
+		})
+	}
+	return warnings
+}
+
 func newKubernetesClusterDetailBody(detail kubecluster.Detail) kubernetesClusterDetailBody {
 	body := kubernetesClusterDetailBody{Cluster: newKubernetesClusterBody(detail.Cluster),
 		Replicas: make([]kubernetesReplicaBody, 0, len(detail.Replicas))}
@@ -561,15 +582,7 @@ func newKubernetesClusterDetailBody(detail kubecluster.Detail) kubernetesCluster
 		body.JoinKeys = &keys
 	}
 	if detail.KeyWarnings != nil {
-		warnings := kubernetesKeyWarningsBody{Truncated: detail.KeyWarnings.Truncated,
-			Devices: make([]kubernetesKeyWarningBody, 0, len(detail.KeyWarnings.Devices))}
-		for _, warning := range detail.KeyWarnings.Devices {
-			warnings.Devices = append(warnings.Devices, kubernetesKeyWarningBody{
-				DeviceID: warning.DeviceID.String(), Hostname: warning.Hostname, Count24h: warning.Last24h,
-				Count7d: warning.Last7Days, LastAt: managementTime(warning.LastAt),
-				LastReason: string(warning.LastReason), KeyState: string(warning.KeyState),
-			})
-		}
+		warnings := newKubernetesKeyWarningsBody(*detail.KeyWarnings)
 		body.KeyWarnings = &warnings
 	}
 	if detail.Requests != nil {

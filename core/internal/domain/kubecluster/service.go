@@ -132,6 +132,8 @@ type Store interface {
 	DeleteCluster(ctx context.Context, deletion Deletion) (Cluster, error)
 	ListClusters(ctx context.Context, session accountsession.Session, scope network.Scope) ([]Cluster, error)
 	ReadCluster(ctx context.Context, session accountsession.Session, scope network.Scope, id ID) (Detail, error)
+	ReadClusterSigning(ctx context.Context, session accountsession.Session, scope network.Scope,
+		id ID) (Signing, error)
 	IssueJoinKey(ctx context.Context, issue KeyIssue) (JoinKey, error)
 	RevokeJoinKey(ctx context.Context, revocation KeyRevocation) (JoinKey, error)
 	DecideReplicaRequest(ctx context.Context, decision Decision) (ReplicaRequestView, error)
@@ -218,6 +220,19 @@ func (service *Service) Read(ctx context.Context, session accountsession.Session
 		return Detail{}, ErrInvalid
 	}
 	return service.store.ReadCluster(ctx, session, scope, id)
+}
+
+// ReadSigning returns one cluster's signing trust, its replicas' pods,
+// its waiting requests' signing material and its rotation token warnings.
+func (service *Service) ReadSigning(ctx context.Context, session accountsession.Session, scope network.Scope,
+	id ID) (Signing, error) {
+	if err := service.admit(ctx, session, scope); err != nil {
+		return Signing{}, err
+	}
+	if !id.IsValid() {
+		return Signing{}, ErrInvalid
+	}
+	return service.store.ReadClusterSigning(ctx, session, scope, id)
 }
 
 // KeyRequest asks for a join key of a cluster: zero Lifetime means an hour.

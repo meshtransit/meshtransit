@@ -47,9 +47,10 @@ func (*sequentialSecrets) NewCredentialID() (enrollment.CredentialID, error) {
 
 // recordingStore records what reaches it and answers plausibly.
 type recordingStore struct {
-	issues    []kubecluster.KeyIssue
-	decisions []kubecluster.Decision
-	creations []kubecluster.Creation
+	issues       []kubecluster.KeyIssue
+	decisions    []kubecluster.Decision
+	creations    []kubecluster.Creation
+	signingReads []kubecluster.ID
 }
 
 func (store *recordingStore) CreateCluster(_ context.Context, creation kubecluster.Creation) (kubecluster.Cluster, error) {
@@ -68,6 +69,12 @@ func (*recordingStore) ListClusters(context.Context, accountsession.Session, net
 func (*recordingStore) ReadCluster(context.Context, accountsession.Session, network.Scope,
 	kubecluster.ID) (kubecluster.Detail, error) {
 	return kubecluster.Detail{}, nil
+}
+
+func (store *recordingStore) ReadClusterSigning(_ context.Context, _ accountsession.Session, _ network.Scope,
+	id kubecluster.ID) (kubecluster.Signing, error) {
+	store.signingReads = append(store.signingReads, id)
+	return kubecluster.Signing{}, nil
 }
 
 func (store *recordingStore) IssueJoinKey(_ context.Context, issue kubecluster.KeyIssue) (kubecluster.JoinKey, error) {
@@ -296,5 +303,30 @@ func TestClusterIDCrossesToKubejoin(t *testing.T) {
 		if err != nil || parsed != [16]byte(id) {
 			t.Fatalf("ParseClusterID(%s) = %x, %v", id, parsed, err)
 		}
+	}
+}
+
+// A signing read needs a live session and a cluster ID before the store.
+func TestServiceReadSigning(t *testing.T) {
+	t.Parallel()
+	service, store, session, scope, now := serviceFixture(t)
+	id := kubecluster.ID(mustID(t, "000000000301"))
+	if _, err := service.ReadSigning(context.Background(), session, scope, id); err != nil {
+		t.Fatalf("ReadSigning() error = %v", err)
+	}
+	if _, err := service.ReadSigning(context.Background(), session, scope, kubecluster.ID{}); !errors.Is(err,
+		kubecluster.ErrInvalid) {
+		t.Fatalf("ReadSigning(no ID) error = %v, want ErrInvalid", err)
+	}
+	ended, err := kubecluster.NewService(store, fixedClock(now.Add(48*time.Hour)), &sequentialSecrets{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ended.ReadSigning(context.Background(), session, scope, id); !errors.Is(err,
+		kubecluster.ErrForbidden) {
+		t.Fatalf("an ended session read signing: %v", err)
+	}
+	if len(store.signingReads) != 1 || store.signingReads[0] != id {
+		t.Fatalf("store reads = %v", store.signingReads)
 	}
 }

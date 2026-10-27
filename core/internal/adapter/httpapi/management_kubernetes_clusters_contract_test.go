@@ -94,3 +94,64 @@ func TestKubernetesClusterReadMatchesTheContract(t *testing.T) {
 		t.Fatalf("contract enums %v %v", device.Properties["last_reason"].Enum, device.Properties["key_state"].Enum)
 	}
 }
+
+// The signing read says exactly what the published contract says (K1.1).
+func TestKubernetesClusterSigningMatchesTheContract(t *testing.T) {
+	t.Parallel()
+	document, err := openapi.ManagementDocument(openapi.ManagementProfileBearerV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var contract struct {
+		Paths map[string]map[string]struct {
+			Responses map[string]struct {
+				Content map[string]struct {
+					Schema openAPISchema `json:"schema"`
+				} `json:"content"`
+			} `json:"responses"`
+		} `json:"paths"`
+	}
+	if err := json.Unmarshal(document, &contract); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/signing"
+	data := contract.Paths[path]["get"].Responses["200"].Content["application/json"].Schema.Properties["data"]
+	required := slices.Clone(data.Required)
+	slices.Sort(required)
+	if got, want := data.names(), jsonFields(kubernetesSigningBody{}); !slices.Equal(got, want) ||
+		!slices.Equal(required, want) {
+		t.Fatalf("contract fields %v, required %v, body fields %v", got, required, want)
+	}
+	for name, body := range map[string]any{"trust": kubernetesSigningTrustBody{},
+		"token_warnings": kubernetesKeyWarningsBody{}} {
+		if got, want := data.Properties[name].names(), jsonFields(body); !slices.Equal(got, want) {
+			t.Errorf("%s fields %v, body %v", name, got, want)
+		}
+	}
+	for name, body := range map[string]any{"replicas": kubernetesSigningReplica{},
+		"replica_requests": kubernetesSigningRequest{}} {
+		items := data.Properties[name].Items
+		if items == nil {
+			t.Fatalf("%s has no items", name)
+		}
+		if got, want := items.names(), jsonFields(body); !slices.Equal(got, want) {
+			t.Errorf("%s fields %v, body %v", name, got, want)
+		}
+	}
+	states := data.Properties["replica_requests"].Items.Properties["trust_state"].Enum
+	for _, state := range []kubecluster.RequestTrustState{kubecluster.RequestSetsTrust, kubecluster.RequestMatchesTrust,
+		kubecluster.RequestDiffersFromTrust, kubecluster.RequestMustJoinAgain} {
+		if !slices.Contains(states, string(state)) {
+			t.Errorf("the contract lacks trust state %q", state)
+		}
+	}
+	device := data.Properties["token_warnings"].Properties["devices"].Items
+	if device == nil || len(device.Properties["last_reason"].Enum) != 9 {
+		t.Fatalf("token warning reasons %+v", device)
+	}
+	for _, reason := range device.Properties["last_reason"].Enum {
+		if !kubecluster.KeyEventReason(reason).TokenRefused() {
+			t.Errorf("the contract names reason %q", reason)
+		}
+	}
+}
