@@ -99,6 +99,7 @@ func (machine AuthenticatedMachine) BindNodeKeyRotation(
 		OldNodeKey:    request.oldNodeKey,
 		NewNodeKey:    request.nodeKey,
 		ProvenNodeKey: machine.provenAmong(request.oldNodeKey, request.nodeKey),
+		GatewayToken:  machine.token,
 	})
 	if err != nil {
 		return keyrotation.Command{}, ErrInvalidRegistrationRequest

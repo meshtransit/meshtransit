@@ -361,6 +361,11 @@ func kubernetesCompletionDatabaseError(err error) error {
 			return kubecluster.ErrNotFound
 		case "MTK10":
 			return kubecluster.ErrNotWaiting
+		// Schema 232: a request without trust, or a pod a live Device holds.
+		case "MTK14":
+			return kubecluster.ErrJoinAgain
+		case "MTK16":
+			return kubecluster.ErrPodHeld
 		// MTK11: a rule to the cluster would give a Device too many edges
 		// with this replica; the replica asks again.
 		case "MTK11":

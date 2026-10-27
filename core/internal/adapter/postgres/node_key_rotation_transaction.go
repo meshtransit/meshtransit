@@ -13,6 +13,7 @@ import (
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/node/keyrotation"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 type nodeKeyRotationTransactionState uint8
@@ -171,6 +172,19 @@ func (transaction *nodeKeyRotationTransaction) resolveLocked(
 
 	switch currentNodeKey {
 	case command.OldNodeKey():
+		// Schema 232: a gateway's rotation records its verified pod token
+		// here, under the Device lock and before the audit head, so the
+		// epoch trigger admits the new key. A repeat (the replay branch)
+		// committed its use already. A gateway without a token goes on and
+		// the trigger refuses its new epoch.
+		if token, ok := command.GatewayToken(); ok && transaction.locked.gateway {
+			currentKey := currentNodeKey.Bytes()
+			if err := transaction.database.Exec(ctx, consumeGatewayRotationTokenSQL,
+				publicid.ID(token.DeviceID).String(), machineFingerprint[:], currentKey[:], token.TrustVersion,
+				token.JTI, token.ExpiresAt); err != nil {
+				return keyrotation.Resolution{}, classifyNodeKeyRotationDatabaseError(ctx, err)
+			}
+		}
 		budgetStart, err := transaction.readBudgetStart(ctx, nodeKeyEpoch)
 		if err != nil {
 			return keyrotation.Resolution{}, err

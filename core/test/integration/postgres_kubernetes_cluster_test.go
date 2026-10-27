@@ -103,16 +103,61 @@ func joinAttempt(t *testing.T, presentation enrollment.JoinKeyPresentation, keys
 	return kubecluster.JoinAttempt{
 		Presentation: presentation, MachineKey: keys.machine, NodeKey: keys.node, Hostname: hostname,
 		Reported: []byte(`{"namespace":"mt-kube","pod":"meshgw-0"}`), RequestID: kubecluster.RequestID(id),
-		Nonce: nonce,
+		Nonce: nonce, Trust: fixtureTrust(t, keys, fixtureIssuer),
 	}
+}
+
+const fixtureIssuer = "https://kubernetes.default.svc.cluster.local"
+
+// fixtureJWKS is the EC key of RFC 7517 Appendix A.1: the stores never see a
+// token, only the signing material Core verified (K1.1).
+const fixtureJWKS = `{"keys":[{"kty":"EC","crv":"P-256","kid":"fixture",` +
+	`"x":"MKBCTNIcKUSDii11ySs3526iDZ8AiTo7Tu6KPAqv7D4","y":"4Etl6SRW2YiLUrN5vfvVHuhp7x8PxltmWWlbbM4IFyM"}]}`
+
+// fixturePodName names a replica's pod after its keys, so every replica of
+// a test has its own pod and its code can be computed again.
+func fixturePodName(keys replicaKeys) string {
+	machine := keys.machine.Bytes()
+	return fmt.Sprintf("meshgw-%d", int(machine[0])<<8|int(machine[1]))
+}
+
+// fixtureTrust is the trust a replica with keys would send, under issuer.
+func fixtureTrust(t *testing.T, keys replicaKeys, issuer string) kubecluster.JoinTrust {
+	t.Helper()
+	return fixtureTrustIn(t, keys, issuer, "mt-kube-k1")
+}
+
+// fixtureTrustIn is fixtureTrust in another namespace.
+func fixtureTrustIn(t *testing.T, keys replicaKeys, issuer, namespace string) kubecluster.JoinTrust {
+	t.Helper()
+	jwks, err := kubejoin.ParseJWKS([]byte(fixtureJWKS))
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, _ := jwks.Key("fixture")
+	trust, err := kubecluster.NewJoinTrust(kubejoin.Trust{Issuer: issuer, JWKS: jwks, Namespace: namespace,
+		ServiceAccount: "meshgw", PodName: fixturePodName(keys)}, signer.Thumbprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return trust
+}
+
+// kubejoinComputeV2 is the code v2 the replica with keys prints for ticket.
+func kubejoinComputeV2(keys replicaKeys, ticket kubecluster.JoinTicket, digest [32]byte) (string, error) {
+	code, err := kubejoin.ComputeV2(kubejoin.Inputs{
+		MachineKey: keys.machine.Bytes(), NodeKey: keys.node.Bytes(),
+		ClusterID: [16]byte(publicid.ID(ticket.ClusterID)), RequestNonce: ticket.Nonce,
+	}, digest)
+	return code.String(), err
 }
 
 func joinCode(t *testing.T, ticket kubecluster.JoinTicket, keys replicaKeys) string {
 	t.Helper()
-	code, err := kubejoin.Compute(kubejoin.Inputs{
+	code, err := kubejoin.ComputeV2(kubejoin.Inputs{
 		MachineKey: keys.machine.Bytes(), NodeKey: keys.node.Bytes(),
 		ClusterID: [16]byte(publicid.ID(ticket.ClusterID)), RequestNonce: ticket.Nonce,
-	})
+	}, fixtureTrust(t, keys, fixtureIssuer).Digest())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,6 +352,8 @@ WHERE workspace_id = 103 AND network_id = 203 ORDER BY id LIMIT 1`).Scan(&heldMa
 	gatewayDevice := assertReplicaCompletes(ctx, t, admin, completions, ticket, first)
 	assertGatewayJoinedItsGroup(ctx, t, admin, policyGroup, gatewayDevice)
 	assertGatewaySessionProof(ctx, t, admin, runtime, runtimePool, first, gatewayDevice)
+	assertGatewayRotationTokens(ctx, t, admin, runtime, first, gatewayDevice)
+	assertJoinTrust(ctx, t, admin, service, store, owner, scope, clusterID, first)
 	assertGatewayMachineKeyRotation(ctx, t, admin, runtime, runtimePool, first, gatewayDevice)
 	assertGatewayKeyEvents(ctx, t, admin, runtimePool, service, owner, scope, clusterID, gatewayDevice)
 	assertKubernetesPolicyGroupGuards(ctx, t, admin, policyGroup, gatewayDevice)
@@ -400,7 +447,8 @@ WHERE kubernetes_cluster_id = (SELECT id FROM mesh.kubernetes_cluster WHERE publ
 		t.Fatalf("a revoked key opened a request: %v", err)
 	}
 	detail, err := service.Read(ctx, owner, scope, clusterID)
-	if err != nil || len(detail.Keys) != 1 || len(detail.Requests) < 3 || len(detail.Replicas) != 1 ||
+	// Two keys: this one, revoked, and the one assertJoinTrust issued.
+	if err != nil || len(detail.Keys) != 2 || len(detail.Requests) < 3 || len(detail.Replicas) != 1 ||
 		detail.Replicas[0].DeviceID.String() != gatewayDevice || detail.Replicas[0].Name != "prod-0" ||
 		detail.Replicas[0].Ordinal != 0 || detail.Cluster.Replicas() != 1 {
 		t.Fatalf("Read() = %+v, %v", detail, err)
@@ -676,7 +724,7 @@ func assertDatabaseChecksTheCode(ctx context.Context, t *testing.T, admin *pgx.C
 		scope.WorkspaceID().String(), scope.NetworkID().String()); err != nil {
 		t.Fatal(err)
 	}
-	_, err = tx.Exec(ctx, `SELECT mesh_ops.approve_kubernetes_replica_request_v1(
+	_, err = tx.Exec(ctx, `SELECT mesh_ops.approve_kubernetes_replica_request_v2(
     $1::UUID,$2::UUID,$3::UUID,$4::UUID,$5::BIGINT,$6::BIGINT,$7::BIGINT,$8::BIGINT,$9::BIGINT,
     $10::UUID,$11::UUID,$12::UUID,$13::UUID,$14::BIGINT,$15::UUID)`,
 		session.ID().String(), session.DeploymentID().String(), session.PrincipalID().String(),

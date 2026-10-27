@@ -13,16 +13,22 @@ import (
 
 	"meshtransit.net/core/internal/domain/audit"
 	"meshtransit.net/core/internal/domain/kubecluster"
+	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/publicid"
 )
 
 const (
 	resolveGatewaySessionScopeSQL = `SELECT workspace_public_id::TEXT, network_public_id::TEXT
 FROM mesh_ops.resolve_map_session_scope($1::BYTEA, $2::BYTEA)`
+	// Schema 232: the rotation records one use of the verified pod token.
 	rotateGatewayMachineKeySQL = `SELECT device_public_id::TEXT, previous_device_version, device_version,
     machine_key_epoch, session_generation, limited_until
-FROM mesh_ops.rotate_kubernetes_gateway_machine_key_v1(
-    $1::BYTEA, $2::BYTEA, $3::BYTEA, $4::BYTEA, $5::UUID, $6::UUID)`
+FROM mesh_ops.rotate_kubernetes_gateway_machine_key_v2(
+    $1::BYTEA, $2::BYTEA, $3::BYTEA, $4::BYTEA, $5::UUID, $6::UUID, $7::UUID, $8::BIGINT, $9::TEXT,
+    $10::TIMESTAMPTZ)`
+	readGatewayRotationTrustSQL = `SELECT device_public_id::TEXT, trust_version, issuer, jwks, namespace,
+    service_account, pod_name
+FROM mesh_ops.read_kubernetes_gateway_rotation_trust_v1($1::BYTEA, $2::BYTEA)`
 	appendGatewayKeyRotationEvidenceSQL = `SELECT mesh_audit.append_authority_evidence(
     $1::BIGINT, $2::UUID, $3::UUID, $4::BIGINT, $5::BYTEA, $6::BYTEA,
     'device', $7::UUID, $8::BIGINT, $9::BIGINT, NULL::UUID,
@@ -118,8 +124,10 @@ func (store *KubernetesGatewayKeyStore) RotateGatewayMachineKey(ctx context.Cont
 	newKey := rotation.NewMachineKey.Bytes()
 	newFingerprint := rotation.NewMachineKey.Fingerprint()
 	var row gatewayKeyRotationRow
+	token := rotation.Token
 	if err := tx.QueryRow(ctx, rotateGatewayMachineKeySQL, fingerprint[:], nodeKey[:], newKey[:],
-		newFingerprint[:], ids[0].String(), ids[1].String()).Scan(&row.devicePublicID, &row.previousDeviceVersion,
+		newFingerprint[:], ids[0].String(), ids[1].String(), publicid.ID(token.DeviceID).String(),
+		token.TrustVersion, token.JTI, token.ExpiresAt).Scan(&row.devicePublicID, &row.previousDeviceVersion,
 		&row.deviceVersion, &row.machineKeyEpoch, &row.sessionGeneration, &row.limitedUntil); err != nil {
 		return gatewayKeyDatabaseError(err)
 	}
@@ -214,6 +222,10 @@ func gatewayKeyDatabaseError(err error) error {
 			return kubecluster.ErrNotFound
 		case "MTK13":
 			return kubecluster.ErrMachineKeyUsed
+		// Schema 232: the token was used for this key, the trust changed, no
+		// token reached the new epoch, or it expired by the database's clock.
+		case "MTK17", "MTK18", "MTK19", "MTK20":
+			return kubecluster.ErrGatewayTokenRefused
 		case "23505":
 			// Another rotation took the same new key meanwhile; any other
 			// duplicate is not about the key.
@@ -226,4 +238,42 @@ func gatewayKeyDatabaseError(err error) error {
 		}
 	}
 	return errors.Join(kubecluster.ErrUnavailable, err)
+}
+
+// ReadRotationTrust implements kubecluster.MachineKeyRotations: in a
+// transaction marked with the session's proof, as the rotation itself reads
+// the gateway, and always rolled back.
+func (store *KubernetesGatewayKeyStore) ReadRotationTrust(ctx context.Context, machineKey node.MachineKey,
+	nodeKey node.Key) (trust kubecluster.RotationTrust, resultErr error) {
+	if ctx == nil || store == nil || store.database == nil || !validRegistrationTransactionOptions(store.options) ||
+		!machineKey.IsValid() || !nodeKey.IsValid() {
+		return kubecluster.RotationTrust{}, kubecluster.ErrInvalid
+	}
+	tx, err := store.database.Begin(ctx)
+	if err != nil {
+		return kubecluster.RotationTrust{}, errors.Join(kubecluster.ErrUnavailable, err)
+	}
+	defer func() { resultErr = errors.Join(resultErr, rollbackRegistrationSetup(tx)) }()
+	if _, err := tx.Exec(ctx, configureRegistrationTransactionSQL, postgresTimeout(store.options.StatementTimeout),
+		postgresTimeout(store.options.LockTimeout), postgresTimeout(store.options.IdleTimeout)); err != nil {
+		return kubecluster.RotationTrust{}, errors.Join(kubecluster.ErrUnavailable, err)
+	}
+	fingerprint, key := machineKey.Fingerprint(), nodeKey.Bytes()
+	if _, err := tx.Exec(ctx, markSessionProvenSQL, fingerprint[:], key[:]); err != nil {
+		return kubecluster.RotationTrust{}, errors.Join(kubecluster.ErrUnavailable, err)
+	}
+	var deviceText string
+	var version sql.NullInt64
+	var issuer, namespace, account, pod sql.NullString
+	var jwks []byte
+	if err := tx.QueryRow(ctx, readGatewayRotationTrustSQL, fingerprint[:], key[:]).Scan(&deviceText, &version,
+		&issuer, &jwks, &namespace, &account, &pod); err != nil {
+		return kubecluster.RotationTrust{}, gatewayKeyDatabaseError(err)
+	}
+	device, err := node.ParseID(deviceText)
+	if err != nil {
+		return kubecluster.RotationTrust{}, errors.Join(kubecluster.ErrUnavailable, err)
+	}
+	return kubecluster.RotationTrust{DeviceID: device, TrustVersion: version.Int64, Issuer: issuer.String,
+		JWKS: jwks, Namespace: namespace.String, ServiceAccount: account.String, PodName: pod.String}, nil
 }

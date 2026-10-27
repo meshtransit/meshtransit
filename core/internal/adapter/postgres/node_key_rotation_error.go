@@ -25,6 +25,14 @@ func classifyNodeKeyRotationDatabaseError(ctx context.Context, err error) error 
 		return errors.Join(keyrotation.ErrConflict, err)
 	case "40001", "40P01", "55P03":
 		return errors.Join(keyrotation.ErrRetryableTransaction, err)
+	// consume_kubernetes_gateway_rotation_token_v1: the session is no longer
+	// the Device's.
+	case "P0002":
+		return errors.Join(keyrotation.ErrNotFound, err)
+	// Schema 232: a gateway's pod token was used for this key, checked
+	// against a trust that changed, absent at its new epoch, or expired.
+	case "MTK17", "MTK18", "MTK19", "MTK20":
+		return errors.Join(keyrotation.ErrGatewayTokenRefused, err)
 	default:
 		return err
 	}

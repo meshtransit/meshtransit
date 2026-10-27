@@ -598,6 +598,8 @@ func Catalog() []Migration {
 		newMigration(229, "A Kubernetes gateway's stale or contested keys enter the audit trail", kubernetesGatewayKeyEventsSQL),
 		newMigration(230, "Rules grant a Kubernetes cluster as a whole through its own Device Group", kubernetesClusterPolicyGroupsSQL),
 		newMigration(231, "Maps name a Kubernetes cluster instead of its gateway replicas", mapKubernetesGatewaysSQL),
+		newMigration(232, "A Kubernetes gateway rotates a key only with its pod's ServiceAccount token",
+			kubernetesGatewayRotationTokensSQL),
 	}
 }
 
@@ -1070,3 +1072,6 @@ var kubernetesClusterPolicyGroupsSQL string
 
 //go:embed 000231_map_kubernetes_gateways.up.sql
 var mapKubernetesGatewaysSQL string
+
+//go:embed 000232_kubernetes_gateway_rotation_tokens.up.sql
+var kubernetesGatewayRotationTokensSQL string

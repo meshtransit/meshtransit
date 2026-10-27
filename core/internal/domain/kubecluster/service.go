@@ -359,6 +359,8 @@ type JoinAttempt struct {
 	Reported  json.RawMessage
 	RequestID RequestID
 	Nonce     [32]byte
+	// Trust is the pod's verified signing material (K1.1): required.
+	Trust JoinTrust
 }
 
 // IsValid reports whether every field is present and bounded.
@@ -367,7 +369,7 @@ func (attempt JoinAttempt) IsValid() bool {
 	return err == nil && string(canonical) == string(attempt.Reported) &&
 		attempt.Presentation.IsValid() && attempt.MachineKey.IsValid() && attempt.NodeKey.IsValid() &&
 		attempt.MachineKey.Bytes() != attempt.NodeKey.Bytes() && attempt.Hostname.IsValid() &&
-		attempt.RequestID.IsValid() && attempt.Nonce != ([32]byte{})
+		attempt.RequestID.IsValid() && attempt.Nonce != ([32]byte{}) && attempt.Trust.IsValid()
 }
 
 // JoinTicket is what the replica's session needs to wait for approval: the
@@ -381,6 +383,10 @@ type JoinTicket struct {
 	Scope   network.Scope
 	Nonce   [32]byte
 	Created bool
+	// TrustConflict is true when the same keys asked again with other
+	// signing material than their request holds: the replica's code cannot
+	// match, and its session answers CONFLICT with the request.
+	TrustConflict bool
 }
 
 // JoinStore opens requests for replicas' sessions: it verifies the key's

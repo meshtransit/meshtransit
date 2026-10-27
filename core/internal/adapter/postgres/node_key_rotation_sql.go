@@ -142,3 +142,10 @@ const appendNodeKeyRotationEvidenceSQL = `SELECT mesh_audit.append_authority_evi
     $11::BYTEA, $12::BYTEA, $13::JSONB,
     'network.revision.advanced', $14::JSONB
 )`
+
+// consumeGatewayRotationTokenSQL records one use of a gateway's verified pod
+// token for its node key rotation (schema 232). It carries the token's jti,
+// never the token.
+// #nosec G101 -- SQL text naming a token's jti, not credential material.
+const consumeGatewayRotationTokenSQL = `SELECT mesh_ops.consume_kubernetes_gateway_rotation_token_v1(
+    $1::UUID, $2::BYTEA, $3::BYTEA, 'node_key', $4::BIGINT, $5::TEXT, $6::TIMESTAMPTZ)`

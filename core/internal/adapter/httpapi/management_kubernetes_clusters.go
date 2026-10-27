@@ -619,6 +619,16 @@ func classifyKubernetesClusterError(err error) managementError {
 	case errors.Is(err, kubecluster.ErrKeyNotUsable):
 		return managementError{Status: http.StatusConflict, Code: "join_key_not_usable",
 			Message: "The join key is revoked, expired or used up; the request was cancelled"}
+	// Schema 232 (K1.1): refusals that stay refusals.
+	case errors.Is(err, kubecluster.ErrJoinAgain):
+		return managementError{Status: http.StatusConflict, Code: "replica_must_rejoin",
+			Message: "The request has no signing keys; it was cancelled. The replica must join again"}
+	case errors.Is(err, kubecluster.ErrSigningMismatch):
+		return managementError{Status: http.StatusConflict, Code: "replica_signing_mismatch",
+			Message: "The replica's issuer, ServiceAccount or signing key differs from the cluster's"}
+	case errors.Is(err, kubecluster.ErrPodHeld):
+		return managementError{Status: http.StatusConflict, Code: "replica_pod_held",
+			Message: "Another Device or approval holds this pod; remove it first"}
 	case errors.Is(err, kubecluster.ErrInvalid):
 		return *invalidManagementRequest()
 	default:

@@ -168,7 +168,10 @@ func TestClusterJoinWaitsForApproval(t *testing.T) {
 		t.Fatalf("%d attempts", len(attempts))
 	}
 	attempt := attempts[0]
-	if !attempt.IsValid() || attempt.MachineKey.Bytes() != [32]byte(f.session.Machine()) ||
+	// K1.1a: the session sends no pod trust until MTCP carries the token
+	// (design §13, step 4), so the store refuses the attempt; that step
+	// checks attempt.IsValid() here again.
+	if attempt.Trust.IsValid() || attempt.MachineKey.Bytes() != [32]byte(f.session.Machine()) ||
 		attempt.NodeKey != node.Key(request.GetNodeKey()) || attempt.Hostname.String() != "laptop" ||
 		string(attempt.Reported) != `{"namespace":"mt","pod":"meshgw-0"}` || attempt.Nonce != nonce ||
 		attempt.Presentation.Reveal() != testJoinKey {
@@ -553,6 +556,12 @@ func (rotations *fakeMachineKeyRotations) RotateGatewayMachineKey(_ context.Cont
 	defer rotations.mu.Unlock()
 	rotations.rotations = append(rotations.rotations, rotation)
 	return rotations.err
+}
+
+// ReadRotationTrust is not used by the session yet (K1.1a wires it next).
+func (rotations *fakeMachineKeyRotations) ReadRotationTrust(context.Context, node.MachineKey,
+	node.Key) (kubecluster.RotationTrust, error) {
+	return kubecluster.RotationTrust{}, kubecluster.ErrNotFound
 }
 
 func (rotations *fakeMachineKeyRotations) calls() []kubecluster.MachineKeyRotation {

@@ -36,11 +36,11 @@ const (
  $10::UUID,$11::UUID,$12::UUID,$13::UUID,$14::TEXT,$15::BYTEA,$16::BYTEA,$17::BIGINT,$18::BIGINT,$19::UUID)::TEXT`
 	revokeKubernetesJoinKeySQL = `SELECT mesh_ops.revoke_kubernetes_join_key_v1(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::UUID,$13::UUID,$14::UUID)::TEXT`
-	lockKubernetesReplicaRequestSQL = `SELECT mesh_ops.lock_kubernetes_replica_request_v1(` + sessionArguments + `,
+	lockKubernetesReplicaRequestSQL = `SELECT mesh_ops.lock_kubernetes_replica_request_v2(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::UUID,$13::UUID,$14::UUID)::TEXT`
-	approveKubernetesReplicaRequestSQL = `SELECT mesh_ops.approve_kubernetes_replica_request_v1(` +
+	approveKubernetesReplicaRequestSQL = `SELECT mesh_ops.approve_kubernetes_replica_request_v2(` +
 		sessionArguments + `,$10::UUID,$11::UUID,$12::UUID,$13::UUID,$15::BIGINT,$14::UUID)::TEXT`
-	recordKubernetesJoinCodeFailureSQL = `SELECT mesh_ops.record_kubernetes_join_code_failure_v1(` +
+	recordKubernetesJoinCodeFailureSQL = `SELECT mesh_ops.record_kubernetes_join_code_failure_v2(` +
 		sessionArguments + `,$10::UUID,$11::UUID,$12::UUID,$13::UUID,$14::UUID)::TEXT`
 	rejectKubernetesReplicaRequestSQL = `SELECT mesh_ops.reject_kubernetes_replica_request_v1(` +
 		sessionArguments + `,$10::UUID,$11::UUID,$12::UUID,$13::UUID,$14::UUID)::TEXT`
@@ -132,6 +132,14 @@ func kubernetesClusterDatabaseError(err error) error {
 			return &kubecluster.EdgeBudgetError{SourceDeviceID: source}
 		case "22023", "22P02", "23514", "MTK09":
 			return kubecluster.ErrInvalid
+		// Schema 232: the request has no trust, its trust differs from the
+		// cluster's, or its pod is held.
+		case "MTK14":
+			return kubecluster.ErrJoinAgain
+		case "MTK15":
+			return kubecluster.ErrSigningMismatch
+		case "MTK16":
+			return kubecluster.ErrPodHeld
 		}
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -718,8 +726,23 @@ func (store *KubernetesClusterStore) appendKeyEvent(ctx context.Context, tx acco
 	return nil
 }
 
+// kubernetesTrustSetDocument is the signing trust a cluster's first
+// approval anchored (schema 232): it enters the approval's audit event.
+type kubernetesTrustSetDocument struct {
+	TrustID        string   `json:"trust_id"`
+	Version        int64    `json:"version"`
+	Issuer         string   `json:"issuer"`
+	Namespace      string   `json:"namespace"`
+	ServiceAccount string   `json:"service_account"`
+	StatefulSet    string   `json:"statefulset"`
+	KeyThumbprints []string `json:"key_thumbprints"`
+}
+
 type kubernetesRequestRecord struct {
-	Outcome         string                            `json:"outcome"`
+	Outcome string `json:"outcome"`
+	// TrustSet is what an approval anchored as the cluster's signing trust
+	// (schema 232), null when the cluster had one.
+	TrustSet        *kubernetesTrustSetDocument       `json:"trust_set,omitempty"`
 	NetworkID       string                            `json:"network_id"`
 	NetworkRevision int64                             `json:"network_revision"`
 	Before          *kubernetesReplicaRequestDocument `json:"before"`
@@ -743,13 +766,17 @@ func (store *KubernetesClusterStore) DecideReplicaRequest(ctx context.Context, d
 	var outcome error
 	err = store.transact(ctx, scope, func(tx accountSessionTransaction) (bool, error) {
 		statement, action := rejectKubernetesReplicaRequestSQL, "kubernetes_replica_request.rejected"
+		legacy := false
 		if decision.Kind == kubecluster.DecisionApprove {
-			matched, err := store.codeMatches(ctx, tx, decision, changeID)
+			matched, codeVersion, err := store.codeMatches(ctx, tx, decision, changeID)
 			if err != nil {
 				return false, err
 			}
+			// Schema 232: a request without trust is cancelled by the
+			// approval, whatever the code.
+			legacy = codeVersion == 1
 			statement, action = approveKubernetesReplicaRequestSQL, "kubernetes_replica_request.approved"
-			if !matched {
+			if !matched && !legacy {
 				statement, action = recordKubernetesJoinCodeFailureSQL, "kubernetes_replica_request.code_failed"
 			}
 		} else if decision.Kind != kubecluster.DecisionReject {
@@ -758,7 +785,8 @@ func (store *KubernetesClusterStore) DecideReplicaRequest(ctx context.Context, d
 		arguments := append(sessionQueryArguments(decision.Session), scope.WorkspaceID().String(),
 			scope.NetworkID().String(), decision.ClusterID.String(), decision.RequestID.String(), changeID.String())
 		if statement == approveKubernetesReplicaRequestSQL {
-			// The database checks the code again from the request's keys.
+			// The database checks the code again from the request's keys and
+			// trust.
 			bits, ok := decision.Code.Bits()
 			if !ok {
 				return false, kubecluster.ErrInvalid
@@ -788,6 +816,8 @@ func (store *KubernetesClusterStore) DecideReplicaRequest(ctx context.Context, d
 			if state == kubecluster.RequestCancelled {
 				action = "kubernetes_replica_request.cancelled"
 			}
+		case action == "kubernetes_replica_request.approved" && record.Outcome == "cancelled" && legacy:
+			action, outcome = "kubernetes_replica_request.cancelled", kubecluster.ErrJoinAgain
 		case action == "kubernetes_replica_request.approved" && record.Outcome == "cancelled":
 			action, outcome = "kubernetes_replica_request.cancelled", kubecluster.ErrKeyNotUsable
 		case action == "kubernetes_replica_request.approved" && state != kubecluster.RequestApproved,
@@ -802,31 +832,35 @@ func (store *KubernetesClusterStore) DecideReplicaRequest(ctx context.Context, d
 	return view, outcome
 }
 
-// codeMatches locks the request and compares the typed code with the one
-// its keys give. A request that is no longer waiting stops here.
+// codeMatches locks the request and compares the typed code with the code v2
+// its keys and trust give, and returns the request's code version: 1 is a
+// request without trust (before schema 232), which no code approves. A
+// request that is no longer waiting stops here.
 func (store *KubernetesClusterStore) codeMatches(ctx context.Context, tx accountSessionTransaction,
-	decision kubecluster.Decision, changeID publicid.ID) (bool, error) {
+	decision kubecluster.Decision, changeID publicid.ID) (bool, int, error) {
 	var encoded string
 	if err := tx.QueryRow(ctx, lockKubernetesReplicaRequestSQL, append(sessionQueryArguments(decision.Session),
 		decision.Scope.WorkspaceID().String(), decision.Scope.NetworkID().String(), decision.ClusterID.String(),
 		decision.RequestID.String(), changeID.String())...).Scan(&encoded); err != nil {
-		return false, kubernetesClusterDatabaseError(err)
+		return false, 0, kubernetesClusterDatabaseError(err)
 	}
 	var locked struct {
 		Request      kubernetesReplicaRequestDocument `json:"request"`
 		MachineKey   string                           `json:"machine_key"`
 		NodeKey      string                           `json:"node_key"`
 		RequestNonce string                           `json:"request_nonce"`
+		CodeVersion  int                              `json:"code_version"`
+		TrustDigest  *string                          `json:"trust_digest"`
 	}
 	if err := decodeIdentityCatalogJSON([]byte(encoded), &locked); err != nil {
-		return false, kubecluster.ErrInvalid
+		return false, 0, kubecluster.ErrInvalid
 	}
 	if locked.Request.State != string(kubecluster.RequestPending) {
-		return false, kubecluster.ErrNotWaiting
+		return false, 0, kubecluster.ErrNotWaiting
 	}
 	clusterID, err := kubecluster.ParseID(locked.Request.ClusterID)
 	if err != nil || clusterID != decision.ClusterID {
-		return false, kubecluster.ErrInvalid
+		return false, 0, kubecluster.ErrInvalid
 	}
 	inputs := kubejoin.Inputs{ClusterID: [16]byte(publicid.ID(clusterID))}
 	for _, field := range []struct {
@@ -836,15 +870,25 @@ func (store *KubernetesClusterStore) codeMatches(ctx context.Context, tx account
 		{locked.RequestNonce, inputs.RequestNonce[:]}} {
 		decoded, err := hex.DecodeString(field.hex)
 		if err != nil || len(decoded) != len(field.into) {
-			return false, kubecluster.ErrInvalid
+			return false, 0, kubecluster.ErrInvalid
 		}
 		copy(field.into, decoded)
 	}
-	expected, err := kubejoin.Compute(inputs)
-	if err != nil {
-		return false, kubecluster.ErrInvalid
+	switch {
+	case locked.CodeVersion == 1 && locked.TrustDigest == nil:
+		return false, 1, nil
+	case locked.CodeVersion != 2 || locked.TrustDigest == nil:
+		return false, 0, kubecluster.ErrInvalid
 	}
-	return expected.Equal(decision.Code), nil
+	digest, err := hex.DecodeString(*locked.TrustDigest)
+	if err != nil || len(digest) != 32 {
+		return false, 0, kubecluster.ErrInvalid
+	}
+	expected, err := kubejoin.ComputeV2(inputs, [32]byte(digest))
+	if err != nil {
+		return false, 0, kubecluster.ErrInvalid
+	}
+	return expected.Equal(decision.Code), 2, nil
 }
 
 func (store *KubernetesClusterStore) appendRequestEvent(ctx context.Context, tx accountSessionTransaction,
@@ -871,20 +915,22 @@ func (store *KubernetesClusterStore) appendRequestEvent(ctx context.Context, tx 
 		version: record.Request.Version, networkVersion: record.NetworkRevision,
 		action: action, permission: "kubernetes_cluster.approve", before: &before, after: after,
 		payload: struct {
-			NetworkID          string           `json:"network_id"`
-			SessionID          string           `json:"session_id"`
-			ClusterID          string           `json:"cluster_id"`
-			RequestID          string           `json:"request_id"`
-			KeyID              string           `json:"key_id"`
-			MachineFingerprint string           `json:"machine_key_fingerprint"`
-			NodeFingerprint    string           `json:"node_key_fingerprint"`
-			State              string           `json:"state"`
-			FailedAttempts     int              `json:"failed_code_attempts"`
-			ReservedOrdinal    *int             `json:"reserved_ordinal,omitempty"`
-			Authority          catalogAuthority `json:"authority"`
+			NetworkID          string                      `json:"network_id"`
+			SessionID          string                      `json:"session_id"`
+			ClusterID          string                      `json:"cluster_id"`
+			RequestID          string                      `json:"request_id"`
+			KeyID              string                      `json:"key_id"`
+			MachineFingerprint string                      `json:"machine_key_fingerprint"`
+			NodeFingerprint    string                      `json:"node_key_fingerprint"`
+			State              string                      `json:"state"`
+			FailedAttempts     int                         `json:"failed_code_attempts"`
+			ReservedOrdinal    *int                        `json:"reserved_ordinal,omitempty"`
+			TrustSet           *kubernetesTrustSetDocument `json:"signing_trust_set,omitempty"`
+			Authority          catalogAuthority            `json:"authority"`
 		}{record.NetworkID, decision.Session.ID().String(), record.Request.ClusterID, record.Request.RequestID,
 			record.Request.KeyID, record.Request.MachineFingerprint, record.Request.NodeFingerprint,
-			record.Request.State, record.Request.FailedAttempts, record.Request.ReservedOrdinal, record.Authority},
+			record.Request.State, record.Request.FailedAttempts, record.Request.ReservedOrdinal, record.TrustSet,
+			record.Authority},
 		outboxClass: action,
 		outbox: struct {
 			NetworkID string `json:"network_id"`
@@ -905,8 +951,10 @@ const (
 FROM mesh_ops.resolve_kubernetes_join_scope_v1($1::UUID)`
 	lockKubernetesJoinKeySQL = `SELECT digest_algorithm, digest_key_id, token_digest
 FROM mesh_ops.lock_kubernetes_join_key_v1($1::UUID)`
-	openKubernetesReplicaRequestSQL = `SELECT mesh_ops.open_kubernetes_replica_request_v1(
- $1::UUID,$2::UUID,$3::BYTEA,$4::BYTEA,$5::BYTEA,$6::BYTEA,$7::TEXT,$8::JSONB,$9::BYTEA,$10::UUID)::TEXT`
+	// Schema 232: the request holds the pod's verified trust.
+	openKubernetesReplicaRequestSQL = `SELECT mesh_ops.open_kubernetes_replica_request_v2(
+ $1::UUID,$2::UUID,$3::BYTEA,$4::BYTEA,$5::BYTEA,$6::BYTEA,$7::TEXT,$8::JSONB,$9::BYTEA,$10::UUID,
+ $11::TEXT,$12::BYTEA,$13::BYTEA[],$14::TEXT,$15::TEXT,$16::TEXT,$17::TEXT,$18::BYTEA,$19::BYTEA)::TEXT`
 )
 
 var _ kubecluster.JoinStore = (*KubernetesClusterStore)(nil)
@@ -951,14 +999,23 @@ func (store *KubernetesClusterStore) OpenReplicaRequest(ctx context.Context, att
 		}
 		machine, nodeKey := attempt.MachineKey.Bytes(), attempt.NodeKey.Bytes()
 		machineFingerprint, nodeFingerprint := attempt.MachineKey.Fingerprint(), attempt.NodeKey.Fingerprint()
+		trust := attempt.Trust
+		thumbprints := make([][]byte, 0, len(trust.KeyThumbprints()))
+		for _, thumbprint := range trust.KeyThumbprints() {
+			thumbprints = append(thumbprints, thumbprint[:])
+		}
+		joinKey, trustDigest := trust.JoinKeyThumbprint(), trust.Digest()
 		var encoded string
 		if err := tx.QueryRow(ctx, openKubernetesReplicaRequestSQL, attempt.Presentation.CredentialID().String(),
 			attempt.RequestID.String(), machine[:], machineFingerprint[:], nodeKey[:], nodeFingerprint[:],
-			attempt.Hostname.String(), string(attempt.Reported), attempt.Nonce[:], changeID.String()).Scan(&encoded); err != nil {
+			attempt.Hostname.String(), string(attempt.Reported), attempt.Nonce[:], changeID.String(),
+			trust.Issuer(), trust.JWKS(), thumbprints, trust.Namespace(), trust.ServiceAccount(), trust.StatefulSet(),
+			trust.PodName(), joinKey[:], trustDigest[:]).Scan(&encoded); err != nil {
 			return false, kubernetesJoinDatabaseError(err)
 		}
 		var opened struct {
 			Created         bool                             `json:"created"`
+			TrustConflict   bool                             `json:"trust_conflict"`
 			IssuerID        string                           `json:"key_issuer_principal_id"`
 			NetworkID       string                           `json:"network_id"`
 			NetworkRevision int64                            `json:"network_revision"`
@@ -974,7 +1031,7 @@ func (store *KubernetesClusterStore) OpenReplicaRequest(ctx context.Context, att
 			return false, kubecluster.ErrInvalid
 		}
 		ticket = kubecluster.JoinTicket{Request: view, ClusterID: view.ClusterID(), Scope: scope,
-			Nonce: [32]byte(nonce), Created: opened.Created}
+			Nonce: [32]byte(nonce), Created: opened.Created, TrustConflict: opened.TrustConflict}
 		if !opened.Created {
 			return false, nil
 		}

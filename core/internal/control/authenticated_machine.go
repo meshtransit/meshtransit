@@ -22,6 +22,9 @@ type AuthenticatedMachine struct {
 	// gateway marks a Kubernetes gateway's session: its map stream holds
 	// the gateway's presence by holder (K1a1 plan §16.12).
 	gateway bool
+	// token is the pod token Core verified for this request's key rotation
+	// (K1.1), or zero.
+	token node.GatewayToken
 }
 
 // NewAuthenticatedMachine records a machine identity after transport authentication.
@@ -56,6 +59,21 @@ func (machine AuthenticatedMachine) provenAmong(keys ...node.Key) node.Key {
 		}
 	}
 	return node.Key{}
+}
+
+// WithGatewayToken returns the machine with the pod token Core verified for
+// its gateway's key rotation; the store records one use of it.
+func (machine AuthenticatedMachine) WithGatewayToken(token node.GatewayToken) AuthenticatedMachine {
+	if !token.IsValid() {
+		token = node.GatewayToken{}
+	}
+	machine.token = token
+	return machine
+}
+
+// GatewayToken returns the verified pod token, if any.
+func (machine AuthenticatedMachine) GatewayToken() (node.GatewayToken, bool) {
+	return machine.token, machine.token.IsValid()
 }
 
 // AsKubernetesGateway returns the machine marked as a Kubernetes gateway's.

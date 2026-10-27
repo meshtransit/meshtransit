@@ -169,8 +169,11 @@ func (conversation *conversation) checkClusterJoin(ctx context.Context, keys pro
 	case errors.Is(err, kubecluster.ErrExpired):
 		_ = conversation.reject(joinRequestExpired)
 		return true
+	// Schema 232: a request without trust, or a pod a live Device holds,
+	// never completes.
 	case errors.Is(err, kubecluster.ErrNotWaiting), errors.Is(err, kubecluster.ErrKeyNotUsable),
-		errors.Is(err, kubecluster.ErrNotFound):
+		errors.Is(err, kubecluster.ErrNotFound), errors.Is(err, kubecluster.ErrJoinAgain),
+		errors.Is(err, kubecluster.ErrPodHeld):
 		_ = conversation.reject(joinRequestEnded)
 		return true
 	case errors.Is(err, ipam.ErrAddressExhausted):

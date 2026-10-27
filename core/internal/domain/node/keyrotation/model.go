@@ -25,6 +25,10 @@ var (
 	ErrNotFound = errors.New("node key rotation: device unavailable")
 	// ErrConflict reports stale or mismatched old-key authority.
 	ErrConflict = errors.New("node key rotation: stale key epoch")
+	// ErrGatewayTokenRefused reports a Kubernetes gateway's rotation the
+	// database refused for its pod token: none, used for this key, checked
+	// against a trust that changed, or no longer valid. Nothing committed.
+	ErrGatewayTokenRefused = errors.New("node key rotation: gateway token refused")
 )
 
 // CommandParams contains transport-authenticated rotation material.
@@ -36,6 +40,9 @@ type CommandParams struct {
 	// ProvenNodeKey, when set, is the old or new key the session proved;
 	// a Kubernetes gateway rotates only with it (schema 226).
 	ProvenNodeKey node.Key
+	// GatewayToken, when valid, is the pod token Core verified for a
+	// Kubernetes gateway; a gateway's new key epoch needs it (schema 232).
+	GatewayToken node.GatewayToken
 }
 
 // Command requests one monotonic Node-key epoch transition.
@@ -45,6 +52,7 @@ type Command struct {
 	oldNodeKey  node.Key
 	newNodeKey  node.Key
 	proven      node.Key
+	token       node.GatewayToken
 }
 
 // NewCommand validates distinct, non-zero old and new Node keys.
@@ -55,6 +63,9 @@ func NewCommand(params CommandParams) (Command, error) {
 		oldNodeKey:  params.OldNodeKey,
 		newNodeKey:  params.NewNodeKey,
 		proven:      params.ProvenNodeKey,
+	}
+	if params.GatewayToken.IsValid() {
+		command.token = params.GatewayToken
 	}
 	if !command.IsValid() || command.proven != (node.Key{}) && command.proven != command.oldNodeKey &&
 		command.proven != command.newNodeKey {
@@ -78,6 +89,12 @@ func (command Command) NewNodeKey() node.Key { return command.newNodeKey }
 // ProvenNodeKey returns the key the session proved, if any.
 func (command Command) ProvenNodeKey() (node.Key, bool) {
 	return command.proven, command.proven.IsValid()
+}
+
+// GatewayToken returns the verified pod token of a gateway's rotation, if
+// any.
+func (command Command) GatewayToken() (node.GatewayToken, bool) {
+	return command.token, command.token.IsValid()
 }
 
 // IsValid reports whether the authenticated transition is structurally safe.

@@ -15,8 +15,10 @@ import (
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	"meshtransit.net/core/internal/control"
 	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/enrollment"
 	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node/keyrotation"
 )
 
 // assertGatewaySessionProof checks schema 226 against a live gateway Device:
@@ -292,9 +294,39 @@ func assertGatewayMachineKeyRotation(ctx context.Context, t *testing.T, admin, r
 	if err != nil {
 		t.Fatal(err)
 	}
+	device, err := node.ParseID(deviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Schema 232: the trust and pod assertGatewayRotationTokens bound.
+	trust, err := store.ReadRotationTrust(ctx, keys.machine, keys.node)
+	if err != nil || !trust.Complete() || trust.DeviceID != device || trust.TrustVersion != 1 ||
+		trust.PodName != fixturePodName(keys) || trust.Namespace != "mt-kube-k1" || trust.ServiceAccount != "meshgw" {
+		t.Fatalf("ReadRotationTrust() = %+v, %v", trust, err)
+	}
+	if _, err := store.ReadRotationTrust(ctx, newReplicaKeys(t).machine, keys.node); !errors.Is(err,
+		kubecluster.ErrNotFound) {
+		t.Fatalf("ReadRotationTrust(other keys) error = %v, want ErrNotFound", err)
+	}
+	token := node.GatewayToken{DeviceID: device, TrustVersion: 1, JTI: "machine-1",
+		ExpiresAt: time.Now().Add(9 * time.Minute)}
 	rotate := func(from, to node.MachineKey) error {
 		return store.RotateGatewayMachineKey(ctx, kubecluster.MachineKeyRotation{MachineKey: from, NodeKey: keys.node,
-			NewMachineKey: to, OperationID: mustPublicID(t)})
+			NewMachineKey: to, OperationID: mustPublicID(t), Token: token})
+	}
+	// Without a token, or with one checked against another trust, nothing
+	// rotates.
+	if err := store.RotateGatewayMachineKey(ctx, kubecluster.MachineKeyRotation{MachineKey: keys.machine,
+		NodeKey: keys.node, NewMachineKey: newReplicaKeys(t).machine, OperationID: mustPublicID(t)}); !errors.Is(err,
+		kubecluster.ErrInvalid) {
+		t.Fatalf("a rotation without a token: %v", err)
+	}
+	stale := token
+	stale.TrustVersion = 2
+	if err := store.RotateGatewayMachineKey(ctx, kubecluster.MachineKeyRotation{MachineKey: keys.machine,
+		NodeKey: keys.node, NewMachineKey: newReplicaKeys(t).machine, OperationID: mustPublicID(t),
+		Token: stale}); !errors.Is(err, kubecluster.ErrGatewayTokenRefused) {
+		t.Fatalf("a token checked against another trust: %v", err)
 	}
 	former := keys.machine
 	next := newReplicaKeys(t).machine
@@ -367,6 +399,63 @@ SELECT $1, device.id, pg_catalog.now(), pg_catalog.now() FROM mesh.device AS dev
 		limited.RetryAfter <= 0 || limited.RetryAfter > time.Hour {
 		t.Fatalf("a rotation past the budget: %v", err)
 	}
+	// The former key no longer opens a gateway session, token or not.
+	if err := rotate(former, newReplicaKeys(t).machine); !errors.Is(err, kubecluster.ErrNotFound) {
+		t.Fatalf("the former machine key with the token: %v", err)
+	}
+	assertGatewayNodeKeyRotation(ctx, t, runtimePool, current, keys.node, token)
+}
+
+// assertGatewayNodeKeyRotation checks schema 232 on the shared node key
+// path: a gateway's node key moves only with a verified token, recorded in
+// the rotation's transaction, and a repeat of a committed rotation succeeds
+// without another use.
+func assertGatewayNodeKeyRotation(ctx context.Context, t *testing.T, runtimePool *postgresadapter.Pool,
+	machineKey node.MachineKey, nodeKey node.Key, token node.GatewayToken) {
+	t.Helper()
+	service := newIntegrationNodeKeyRotationService(t, runtimePool)
+	next := newReplicaKeys(t).node
+	command := func(operation string, withToken bool, proven node.Key) keyrotation.Command {
+		params := keyrotation.CommandParams{
+			OperationID: mustRegistrationID(t, operation), MachineKey: machineKey, OldNodeKey: nodeKey,
+			NewNodeKey: next, ProvenNodeKey: proven,
+		}
+		if withToken {
+			token.JTI = "node-1"
+			params.GatewayToken = token
+		}
+		built, err := keyrotation.NewCommand(params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return built
+	}
+	if _, err := service.Rotate(ctx, command("000000000a01", false, nodeKey)); !errors.Is(err,
+		keyrotation.ErrGatewayTokenRefused) {
+		t.Fatalf("a gateway node key rotation without a token: %v", err)
+	}
+	stale := command("000000000a03", true, nodeKey)
+	stale = keyrotationWithTrustVersion(t, stale, token, 2)
+	if _, err := service.Rotate(ctx, stale); !errors.Is(err, keyrotation.ErrGatewayTokenRefused) {
+		t.Fatalf("a token checked against another trust: %v", err)
+	}
+	if _, err := service.Rotate(ctx, command("000000000a02", true, nodeKey)); err != nil {
+		t.Fatalf("a gateway node key rotation with a token: %v", err)
+	}
+	// A repeat, by a session that proved the new key (as mtcp's repeat
+	// does), finds it current and records no second use of the token.
+	if _, err := service.Rotate(ctx, command("000000000a02", true, next)); err != nil {
+		t.Fatalf("a repeat of the committed rotation: %v", err)
+	}
+}
+
+func mustRegistrationID(t *testing.T, suffix string) enrollment.RegistrationID {
+	t.Helper()
+	id, err := enrollment.ParseRegistrationID("01890f30-0000-7000-8000-" + suffix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 // gatewayRotationState calls schema 227's function as Core's store would and
@@ -432,4 +521,20 @@ FROM mesh.device AS device WHERE device.public_id = $1::UUID`, device.String(), 
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// keyrotationWithTrustVersion rebuilds command with token checked against
+// another trust version.
+func keyrotationWithTrustVersion(t *testing.T, command keyrotation.Command, token node.GatewayToken,
+	version int64) keyrotation.Command {
+	t.Helper()
+	token.JTI, token.TrustVersion = "node-stale", version
+	proven, _ := command.ProvenNodeKey()
+	rebuilt, err := keyrotation.NewCommand(keyrotation.CommandParams{OperationID: command.OperationID(),
+		MachineKey: command.MachineKey(), OldNodeKey: command.OldNodeKey(), NewNodeKey: command.NewNodeKey(),
+		ProvenNodeKey: proven, GatewayToken: token})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rebuilt
 }

@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 231 {
-		t.Fatalf("len(Catalog()) = %d, want 231", len(catalog))
+	if len(catalog) != 232 {
+		t.Fatalf("len(Catalog()) = %d, want 232", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 231 {
-		t.Fatalf("LatestVersion() = %d, want 231", LatestVersion())
+	if LatestVersion() != 232 {
+		t.Fatalf("LatestVersion() = %d, want 232", LatestVersion())
 	}
 }
 
@@ -6732,6 +6732,57 @@ func TestMigration231MapKubernetesGateways(t *testing.T) {
 	for _, forbidden := range []string{"BYPASSRLS", "DROP ", "TEMPORARY", "ALTER TABLE"} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 231 contains %q", forbidden)
+		}
+	}
+}
+
+func TestMigration232GatewayRotationTokens(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[231]
+	if migration.Version != 232 {
+		t.Fatalf("migration 232 = %+v", migration)
+	}
+	for _, want := range []string{
+		// The cluster's signing trust, apart from the cluster row.
+		"CREATE TABLE mesh.kubernetes_cluster_signing_trust (",
+		"mode TEXT NOT NULL DEFAULT 'pinned' CHECK (mode = 'pinned')",
+		"source TEXT NOT NULL CHECK (source IN ('replica_approval', 'admin_paste'))",
+		"ALTER TABLE mesh.kubernetes_cluster_signing_trust FORCE ROW LEVEL SECURITY;",
+		// One use of a token per cluster, jti, purpose and replaced key.
+		"CREATE TABLE mesh_ops.kubernetes_gateway_token_use (",
+		"PRIMARY KEY (kubernetes_cluster_id, jti, purpose, replaced_key)",
+		"xact_id XID8 NOT NULL",
+		"ALTER TABLE mesh_ops.kubernetes_gateway_token_use FORCE ROW LEVEL SECURITY;",
+		// The trigger every key epoch insert passes (K11-I1).
+		"CREATE FUNCTION mesh_ops.require_kubernetes_gateway_rotation_token_v1()",
+		"IF NEW.epoch = 1 THEN",
+		"use.xact_id = pg_catalog.pg_current_xact_id()",
+		"ERRCODE = 'MTK19'",
+		"BEFORE INSERT ON mesh.device_machine_key_epoch",
+		"EXECUTE FUNCTION mesh_ops.require_kubernetes_gateway_rotation_token_v1('machine_key');",
+		"BEFORE INSERT ON mesh.device_node_key_epoch",
+		"EXECUTE FUNCTION mesh_ops.require_kubernetes_gateway_rotation_token_v1('node_key');",
+		// Reading the trust, consuming a token, rotating with one.
+		"CREATE FUNCTION mesh_ops.read_kubernetes_gateway_rotation_trust_v1(",
+		"CREATE FUNCTION mesh_ops.consume_kubernetes_gateway_rotation_token_v1(",
+		"FOR SHARE OF trust",
+		"ERRCODE = 'MTK17'",
+		"ERRCODE = 'MTK18'",
+		"ERRCODE = 'MTK20'",
+		"INTERVAL '15 minutes 30 seconds'",
+		"CREATE FUNCTION mesh_ops.rotate_kubernetes_gateway_machine_key_v2(",
+		"CREATE FUNCTION mesh_ops.prune_kubernetes_gateway_token_uses_v1(",
+		"INTERVAL '5 minutes'",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_kubernetes_gateway_rotation_trust_v1(BYTEA, BYTEA) TO mesh_runtime;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.consume_kubernetes_gateway_rotation_token_v1(",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 232 lacks %q", want)
+		}
+	}
+	for _, forbidden := range []string{"BYPASSRLS", "DROP FUNCTION", "TEMPORARY", "session_replication_role"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 232 contains %q", forbidden)
 		}
 	}
 }
