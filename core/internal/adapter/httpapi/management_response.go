@@ -47,6 +47,8 @@ type managementError struct {
 	// RemainingAttempts comes with join_code_wrong: wrong codes the request
 	// still accepts before it is cancelled.
 	RemainingAttempts *int
+	// JWKSRule comes with signing_keys_invalid: the rule a pasted JWKS broke.
+	JWKSRule string
 }
 
 type guardrailFindingBody struct {
@@ -69,6 +71,7 @@ type managementErrorBody struct {
 	PeerEstimate      *peerEstimateBody      `json:"peer_estimate,omitempty"`
 	OperationIndex    *int                   `json:"operation_index,omitempty"`
 	RemainingAttempts *int                   `json:"remaining_attempts,omitempty"`
+	JWKSRule          string                 `json:"jwks_rule,omitempty"`
 }
 
 func classifyAuthenticationError(err error) managementError {
@@ -174,6 +177,7 @@ func writeManagementError(
 			PeerEstimate:      apiError.PeerEstimate,
 			OperationIndex:    apiError.OperationIndex,
 			RemainingAttempts: apiError.RemainingAttempts,
+			JWKSRule:          apiError.JWKSRule,
 		},
 	})
 }

@@ -51,6 +51,13 @@ type recordingStore struct {
 	decisions    []kubecluster.Decision
 	creations    []kubecluster.Creation
 	signingReads []kubecluster.ID
+	replacements []kubecluster.TrustReplacement
+}
+
+func (store *recordingStore) ReplaceSigningTrust(_ context.Context,
+	replacement kubecluster.TrustReplacement) (kubecluster.TrustReplacementResult, error) {
+	store.replacements = append(store.replacements, replacement)
+	return kubecluster.TrustReplacementResult{}, nil
 }
 
 func (store *recordingStore) CreateCluster(_ context.Context, creation kubecluster.Creation) (kubecluster.Cluster, error) {

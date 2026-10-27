@@ -358,6 +358,7 @@ WHERE workspace_id = 103 AND network_id = 203 ORDER BY id LIMIT 1`).Scan(&heldMa
 	assertGatewayKeyEvents(ctx, t, admin, runtimePool, service, owner, scope, clusterID, gatewayDevice)
 	assertGatewayTokenAuditAndSigning(ctx, t, admin, runtime, runtimePool, service, owner, custom, scope,
 		clusterID, gatewayDevice)
+	assertSigningTrustPaste(ctx, t, admin, runtimePool, service, owner, custom, scope, clusterID, gatewayDevice)
 	assertKubernetesPolicyGroupGuards(ctx, t, admin, policyGroup, gatewayDevice)
 	assertMapListsKubernetesGateways(ctx, t, admin, scope, gatewayDevice, "prod")
 	assertMapMarksKubernetesReplicas(ctx, t, admin, runtimePool, scope, gatewayDevice, "prod")

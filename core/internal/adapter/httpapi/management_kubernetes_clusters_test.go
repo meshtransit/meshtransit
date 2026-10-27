@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -31,14 +32,16 @@ func kubernetesClustersTestPath(rest string) string {
 }
 
 type kubernetesClusterStub struct {
-	readOnly  bool
-	calls     []string
-	creations []kubecluster.Creation
-	deletions []kubecluster.Deletion
-	keys      []kubecluster.KeyRequest
-	decisions []kubecluster.Decision
-	codes     []string
-	failure   error
+	readOnly     bool
+	replacements []kubecluster.TrustReplacement
+	replaceErr   error
+	calls        []string
+	creations    []kubecluster.Creation
+	deletions    []kubecluster.Deletion
+	keys         []kubecluster.KeyRequest
+	decisions    []kubecluster.Decision
+	codes        []string
+	failure      error
 }
 
 func kubernetesTestClusterValue(t testing.TB) kubecluster.Cluster {
@@ -123,6 +126,19 @@ func (stub *kubernetesClusterStub) List(context.Context, accountsession.Session,
 		return nil, stub.failure
 	}
 	return []kubecluster.Cluster{kubernetesTestClusterValue(&testing.T{})}, nil
+}
+
+func (stub *kubernetesClusterStub) ReplaceTrust(_ context.Context,
+	replacement kubecluster.TrustReplacement) (kubecluster.TrustReplacementResult, error) {
+	stub.calls, stub.replacements = append(stub.calls, "replace"), append(stub.replacements, replacement)
+	if stub.replaceErr != nil {
+		return kubecluster.TrustReplacementResult{}, stub.replaceErr
+	}
+	return kubecluster.TrustReplacementResult{Changed: true, Trust: kubecluster.SigningTrust{
+		Issuer: replacement.Issuer, KeyThumbprints: [][32]byte{{0xab}}, Keys: kubecluster.TrustKeysOf(replacement.JWKS),
+		Namespace: replacement.Namespace, ServiceAccount: replacement.ServiceAccount,
+		StatefulSet: replacement.StatefulSet, Version: replacement.ExpectedVersion + 1,
+		Source: kubecluster.TrustFromAdminPaste, SetAt: time.Date(2026, time.October, 27, 15, 0, 0, 0, time.UTC)}}, nil
 }
 
 func (stub *kubernetesClusterStub) ReadSigning(context.Context, accountsession.Session, network.Scope,
@@ -246,6 +262,10 @@ func TestParseKubernetesClusterPath(t *testing.T) {
 		{http.MethodGet, kubernetesClustersTestPath(cluster + "/replica-requests"), true,
 			kubernetesRequestListOperation},
 		{http.MethodGet, kubernetesClustersTestPath(cluster + "/signing"), true, kubernetesClusterSigningOperation},
+		{http.MethodGet, kubernetesClustersTestPath(cluster + "/signing-trust"), true,
+			kubernetesSigningTrustReadOperation},
+		{http.MethodPut, kubernetesClustersTestPath(cluster + "/signing-trust"), true,
+			kubernetesSigningTrustReplaceOperation},
 		{http.MethodGet, kubernetesClustersTestPath(cluster + "/replica-requests/" + kubernetesTestRequest), true,
 			kubernetesRequestReadOperation},
 		{http.MethodPost, kubernetesClustersTestPath(cluster + "/replica-requests/" + kubernetesTestRequest +
@@ -552,8 +572,9 @@ func TestKubernetesClusterSigningRead(t *testing.T) {
 		wants := []string{
 			`"cluster_id":"` + kubernetesTestCluster + `"`,
 			`"trust":{"issuer":"https://kubernetes.default.svc.cluster.local","key_thumbprints":["` +
-				thumbprint(0xab) + `"],"namespace":"mt-kube-k1","service_account":"meshgw","statefulset":"meshgw",` +
-				`"version":1,"source":"replica_approval","set_at":"2026-10-27T10:55:00Z"}`,
+				thumbprint(0xab) + `"],` +
+				`"keys":[],"namespace":"mt-kube-k1","service_account":"meshgw","statefulset":"meshgw",` +
+				`"version":1,"source":"replica_approval","set_at":"2026-10-27T10:55:00Z","set_by":null}`,
 			`"replicas":[{"device_id":"01890f00-0000-7000-8000-000000000b04","pod_name":"meshgw-0",` +
 				`"last_token_rotation_at":"2026-10-27T11:14:22Z"},{"device_id":` +
 				`"01890f00-0000-7000-8000-000000000b04","pod_name":"meshgw-1","last_token_rotation_at":null}]`,
@@ -582,5 +603,121 @@ func TestKubernetesClusterSigningRead(t *testing.T) {
 		if response.Header().Get("Cache-Control") != "no-store" {
 			t.Fatalf("Cache-Control = %q", response.Header().Get("Cache-Control"))
 		}
+	}
+}
+
+// kindSigningJWKS is the JWKS kind meshgw-a served on 2026-10-27.
+const kindSigningJWKS = `{"keys":[{"use":"sig","kty":"RSA","kid":"W5g6JhuNGLKpWbGKkY1h_vyNJWNV3OHpeiEJLThDJhE","alg":"RS256","n":"ulb6f8XOFK8q2EKPjPXlwDQuMhPTiee6zlEDZu0twbQecr0w7uG6Vqghhovln3lwCtJdM_eHsWfgmd6I-HdaFUv738BlNvEZXanR9d5mSBmnIDtIUTpwrNOVTuskzBOMceJf86g7QwfL_ixA8xaavgt27B5dqZJcM34ORUy6O2qcm18keFqKhMoQ_FPnFS1xZmEPTw3VzBLpOAaI6sTh0-LBTtszztX-F6GYSw3bZenJUVQ9CHAPr4AtJRrRA0lpZj__gCz9CpajdNfJY712HzBv6tMb8ElqO3DaEr2ka40yqIug9wkMmlLg85MrMhtOZViuZq0hf_SAPFipqjVQKw","e":"AQAB"}]}`
+
+func pastedTrustBody(jwks string) string {
+	return `{"issuer":"https://kubernetes.default.svc.cluster.local","jwks":` + jwks +
+		`,"namespace":"mt-kube-k1","service_account":"meshgw","statefulset":"meshgw",` +
+		`"reason":"kind rotated its signing key"}`
+}
+
+// An administrator pastes the cluster's signing keys under the trust's
+// version ("0" for none); the body is read strictly and a JWKS refusal
+// names its rule.
+func TestKubernetesSigningTrustReplace(t *testing.T) {
+	t.Parallel()
+	trustPath := kubernetesClustersTestPath("/" + kubernetesTestCluster + "/signing-trust")
+	put := func(t *testing.T, stub *kubernetesClusterStub, ifMatch, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		options := validManagementHandlerOptions(t)
+		options.KubernetesClusters = stub
+		handler, err := NewManagementHandler(options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := newManagementRequest(t, http.MethodPut, trustPath, body)
+		request.Header.Del("If-Match")
+		if ifMatch != "" {
+			request.Header.Set("If-Match", ifMatch)
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+	stub := &kubernetesClusterStub{}
+	response := put(t, stub, `"0"`, pastedTrustBody(kindSigningJWKS))
+	body := response.Body.String()
+	if response.Code != http.StatusOK || response.Header().Get("ETag") != `"1"` ||
+		!strings.Contains(body, `"changed":true`) ||
+		!strings.Contains(body, `"keys":[{"kid":"W5g6JhuNGLKpWbGKkY1h_vyNJWNV3OHpeiEJLThDJhE",`+
+			`"computed_kid":"W5g6JhuNGLKpWbGKkY1h_vyNJWNV3OHpeiEJLThDJhE","thumbprint":"`) ||
+		len(stub.replacements) != 1 || stub.replacements[0].ExpectedVersion != 0 ||
+		stub.replacements[0].Reason != "kind rotated its signing key" {
+		t.Fatalf("PUT = %d %s; %s; %+v", response.Code, response.Header().Get("ETag"), body, stub.replacements)
+	}
+	for name, test := range map[string]struct {
+		ifMatch, body string
+		replaceErr    error
+		status        int
+		code, rule    string
+	}{
+		"no If-Match": {"", pastedTrustBody(kindSigningJWKS), nil, http.StatusPreconditionRequired,
+			"precondition_required", ""},
+		"weak If-Match": {`W/"1"`, pastedTrustBody(kindSigningJWKS), nil, http.StatusBadRequest,
+			"invalid_request", ""},
+		"bad kid": {`"1"`, pastedTrustBody(strings.Replace(kindSigningJWKS, `"kid":"W5g6`, `"kid":"\u0001W5g6`, 1)),
+			nil, http.StatusUnprocessableEntity, "signing_keys_invalid", "kid"},
+		"no keys": {`"1"`, pastedTrustBody(`{"keys":[]}`), nil, http.StatusUnprocessableEntity,
+			"signing_keys_invalid", "no_keys"},
+		"jwks a string": {`"1"`, pastedTrustBody(`"{}"`), nil, http.StatusUnprocessableEntity,
+			"signing_keys_invalid", "json"},
+		"http issuer": {`"1"`, strings.Replace(pastedTrustBody(kindSigningJWKS), "https://", "http://", 1), nil,
+			http.StatusUnprocessableEntity, "signing_identity_invalid", ""},
+		"no reason": {`"1"`, strings.Replace(pastedTrustBody(kindSigningJWKS),
+			`"reason":"kind rotated its signing key"`, `"reason":""`, 1), nil, http.StatusBadRequest,
+			"invalid_request", ""},
+		"duplicate member": {`"1"`, strings.Replace(pastedTrustBody(kindSigningJWKS), `{"issuer"`,
+			`{"Issuer":"https://other.example","issuer"`, 1), nil, http.StatusBadRequest, "invalid_request", ""},
+		"unknown member": {`"1"`, strings.Replace(pastedTrustBody(kindSigningJWKS), `{"issuer"`,
+			`{"extra":1,"issuer"`, 1), nil, http.StatusBadRequest, "invalid_request", ""},
+		"trust changed": {`"1"`, pastedTrustBody(kindSigningJWKS), kubecluster.ErrTrustChanged,
+			http.StatusPreconditionFailed, "signing_trust_changed", ""},
+		"identity bound": {`"1"`, pastedTrustBody(kindSigningJWKS), kubecluster.ErrIdentityBound,
+			http.StatusConflict, "replica_identity_bound", ""},
+		"forbidden": {`"1"`, pastedTrustBody(kindSigningJWKS), kubecluster.ErrForbidden,
+			http.StatusForbidden, "permission_denied", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			stub := &kubernetesClusterStub{replaceErr: test.replaceErr}
+			response := put(t, stub, test.ifMatch, test.body)
+			var failure struct {
+				Error struct {
+					Code     string `json:"code"`
+					JWKSRule string `json:"jwks_rule"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &failure); err != nil || response.Code != test.status ||
+				failure.Error.Code != test.code || failure.Error.JWKSRule != test.rule {
+				t.Fatalf("PUT = %d %s, want %d %s %s", response.Code, response.Body, test.status, test.code, test.rule)
+			}
+			if test.replaceErr == nil && len(stub.replacements) != 0 {
+				t.Fatal("a refused body reached the cluster manager")
+			}
+		})
+	}
+}
+
+// The trust's own read carries its version as the ETag ("0" for none).
+func TestKubernetesSigningTrustRead(t *testing.T) {
+	t.Parallel()
+	options := validManagementHandlerOptions(t)
+	options.KubernetesClusters = &kubernetesClusterStub{}
+	handler, err := NewManagementHandler(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, newManagementRequest(t, http.MethodGet,
+		kubernetesClustersTestPath("/"+kubernetesTestCluster+"/signing-trust"), ""))
+	body := response.Body.String()
+	if response.Code != http.StatusOK || response.Header().Get("ETag") != `"1"` ||
+		!strings.Contains(body, `"trust":{"issuer":"https://kubernetes.default.svc.cluster.local"`) ||
+		!strings.Contains(body, `"can_replace_trust":false`) {
+		t.Fatalf("GET = %d %s %s", response.Code, response.Header().Get("ETag"), body)
 	}
 }

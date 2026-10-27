@@ -3054,7 +3054,9 @@
                         "replicas",
                         "replica_requests",
                         "replica_requests_truncated",
-                        "token_warnings"
+                        "token_warnings",
+                        "unknown_kids",
+                        "can_replace_trust"
                       ],
                       "properties": {
                         "network_id": {
@@ -3073,12 +3075,14 @@
                           "required": [
                             "issuer",
                             "key_thumbprints",
+                            "keys",
                             "namespace",
                             "service_account",
                             "statefulset",
                             "version",
                             "source",
-                            "set_at"
+                            "set_at",
+                            "set_by"
                           ],
                           "properties": {
                             "issuer": {
@@ -3095,6 +3099,45 @@
                                 "pattern": "^[0-9a-f]{64}$"
                               },
                               "description": "RFC 7638 thumbprints of the cluster's signing keys, hex"
+                            },
+                            "keys": {
+                              "type": "array",
+                              "minItems": 1,
+                              "maxItems": 8,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "kid",
+                                  "computed_kid",
+                                  "thumbprint",
+                                  "kty"
+                                ],
+                                "properties": {
+                                  "kid": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "description": "The kid the JWKS declares"
+                                  },
+                                  "computed_kid": {
+                                    "type": "string",
+                                    "description": "The kid Kubernetes computes for the key (base64url SHA-256 of its PKIX DER), as kubectl shows it"
+                                  },
+                                  "thumbprint": {
+                                    "type": "string",
+                                    "pattern": "^[0-9a-f]{64}$",
+                                    "description": "RFC 7638 thumbprint, hex"
+                                  },
+                                  "kty": {
+                                    "type": "string",
+                                    "enum": [
+                                      "RSA",
+                                      "EC"
+                                    ]
+                                  }
+                                }
+                              }
                             },
                             "namespace": {
                               "type": "string",
@@ -3125,6 +3168,14 @@
                             "set_at": {
                               "type": "string",
                               "format": "date-time"
+                            },
+                            "set_by": {
+                              "type": [
+                                "string",
+                                "null"
+                              ],
+                              "format": "uuid",
+                              "description": "Who set the trust; null for a reader of the Network"
                             }
                           }
                         },
@@ -3325,6 +3376,23 @@
                               "description": "More gateway Devices had refusals than were listed"
                             }
                           }
+                        },
+                        "unknown_kids": {
+                          "type": [
+                            "array",
+                            "null"
+                          ],
+                          "maxItems": 8,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128
+                          },
+                          "description": "Null unless the caller has kubernetes_cluster.manage or kubernetes_cluster.approve. The kids the cluster signed rotation tokens with in the last 7 days that the trust lacks, newest first, since the trust was set"
+                        },
+                        "can_replace_trust": {
+                          "type": "boolean",
+                          "description": "The caller may replace the trust: it has both kubernetes_cluster.manage and kubernetes_cluster.approve"
                         }
                       }
                     },
@@ -3350,6 +3418,516 @@
           },
           "405": {
             "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/signing-trust": {
+      "get": {
+        "operationId": "readKubernetesClusterSigningTrust",
+        "summary": "Read a cluster's signing trust",
+        "description": "Requires network.read. The ETag is the trust's version, \"0\" when the cluster has none.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The signing trust",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "The trust's version, \"0\" when the cluster has none"
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "network_id",
+                        "cluster_id",
+                        "trust",
+                        "can_replace_trust"
+                      ],
+                      "properties": {
+                        "network_id": {
+                          "$ref": "#/components/schemas/PublicID"
+                        },
+                        "cluster_id": {
+                          "$ref": "#/components/schemas/PublicID"
+                        },
+                        "trust": {
+                          "type": [
+                            "object",
+                            "null"
+                          ],
+                          "additionalProperties": false,
+                          "description": "The ServiceAccount signing trust the cluster's gateways' pod tokens are checked against; null until the first replica with signing keys is approved",
+                          "required": [
+                            "issuer",
+                            "key_thumbprints",
+                            "keys",
+                            "namespace",
+                            "service_account",
+                            "statefulset",
+                            "version",
+                            "source",
+                            "set_at",
+                            "set_by"
+                          ],
+                          "properties": {
+                            "issuer": {
+                              "type": "string",
+                              "minLength": 9,
+                              "maxLength": 255
+                            },
+                            "key_thumbprints": {
+                              "type": "array",
+                              "minItems": 1,
+                              "maxItems": 64,
+                              "items": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              },
+                              "description": "RFC 7638 thumbprints of the cluster's signing keys, hex"
+                            },
+                            "keys": {
+                              "type": "array",
+                              "minItems": 1,
+                              "maxItems": 8,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "kid",
+                                  "computed_kid",
+                                  "thumbprint",
+                                  "kty"
+                                ],
+                                "properties": {
+                                  "kid": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "description": "The kid the JWKS declares"
+                                  },
+                                  "computed_kid": {
+                                    "type": "string",
+                                    "description": "The kid Kubernetes computes for the key (base64url SHA-256 of its PKIX DER), as kubectl shows it"
+                                  },
+                                  "thumbprint": {
+                                    "type": "string",
+                                    "pattern": "^[0-9a-f]{64}$",
+                                    "description": "RFC 7638 thumbprint, hex"
+                                  },
+                                  "kty": {
+                                    "type": "string",
+                                    "enum": [
+                                      "RSA",
+                                      "EC"
+                                    ]
+                                  }
+                                }
+                              }
+                            },
+                            "namespace": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 63
+                            },
+                            "service_account": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253
+                            },
+                            "statefulset": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "replica_approval",
+                                "admin_paste"
+                              ]
+                            },
+                            "set_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "set_by": {
+                              "type": [
+                                "string",
+                                "null"
+                              ],
+                              "format": "uuid",
+                              "description": "Who set the trust; null for a reader of the Network"
+                            }
+                          }
+                        },
+                        "can_replace_trust": {
+                          "type": "boolean",
+                          "description": "The caller may replace the trust: it has both kubernetes_cluster.manage and kubernetes_cluster.approve"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "$ref": "#/components/schemas/PublicID"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      },
+      "put": {
+        "operationId": "replaceKubernetesClusterSigningTrust",
+        "summary": "Set or replace a cluster's signing trust",
+        "description": "Requires kubernetes_cluster.manage and kubernetes_cluster.approve. If-Match is the trust's version, \"0\" when the cluster has none. The same trust again changes and records nothing, whatever the version. The namespace, ServiceAccount and StatefulSet stay while a gateway runs or an approval may complete. Each change records kubernetes_cluster.signing_trust_replaced.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The trust's version as a strong ETag, \"0\" for none"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "issuer",
+                  "jwks",
+                  "namespace",
+                  "service_account",
+                  "statefulset",
+                  "reason"
+                ],
+                "properties": {
+                  "issuer": {
+                    "type": "string",
+                    "minLength": 9,
+                    "maxLength": 255,
+                    "description": "The ServiceAccount issuer, https"
+                  },
+                  "jwks": {
+                    "type": "object",
+                    "description": "The cluster's JWKS as kubectl get --raw /openid/v1/jwks prints it; at most 16 KiB and 8 keys"
+                  },
+                  "namespace": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 63
+                  },
+                  "service_account": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 253
+                  },
+                  "statefulset": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 253
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "description": "Why; recorded with the audit event"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The signing trust after the replacement",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "The trust's version, \"0\" when the cluster has none"
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "changed",
+                        "trust"
+                      ],
+                      "properties": {
+                        "changed": {
+                          "type": "boolean",
+                          "description": "False when the trust already was the one sent: nothing changed and nothing was recorded"
+                        },
+                        "trust": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "description": "The ServiceAccount signing trust the cluster's gateways' pod tokens are checked against; null until the first replica with signing keys is approved",
+                          "required": [
+                            "issuer",
+                            "key_thumbprints",
+                            "keys",
+                            "namespace",
+                            "service_account",
+                            "statefulset",
+                            "version",
+                            "source",
+                            "set_at",
+                            "set_by"
+                          ],
+                          "properties": {
+                            "issuer": {
+                              "type": "string",
+                              "minLength": 9,
+                              "maxLength": 255
+                            },
+                            "key_thumbprints": {
+                              "type": "array",
+                              "minItems": 1,
+                              "maxItems": 64,
+                              "items": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              },
+                              "description": "RFC 7638 thumbprints of the cluster's signing keys, hex"
+                            },
+                            "keys": {
+                              "type": "array",
+                              "minItems": 1,
+                              "maxItems": 8,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "kid",
+                                  "computed_kid",
+                                  "thumbprint",
+                                  "kty"
+                                ],
+                                "properties": {
+                                  "kid": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "description": "The kid the JWKS declares"
+                                  },
+                                  "computed_kid": {
+                                    "type": "string",
+                                    "description": "The kid Kubernetes computes for the key (base64url SHA-256 of its PKIX DER), as kubectl shows it"
+                                  },
+                                  "thumbprint": {
+                                    "type": "string",
+                                    "pattern": "^[0-9a-f]{64}$",
+                                    "description": "RFC 7638 thumbprint, hex"
+                                  },
+                                  "kty": {
+                                    "type": "string",
+                                    "enum": [
+                                      "RSA",
+                                      "EC"
+                                    ]
+                                  }
+                                }
+                              }
+                            },
+                            "namespace": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 63
+                            },
+                            "service_account": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253
+                            },
+                            "statefulset": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "replica_approval",
+                                "admin_paste"
+                              ]
+                            },
+                            "set_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "set_by": {
+                              "type": [
+                                "string",
+                                "null"
+                              ],
+                              "format": "uuid",
+                              "description": "Who set the trust; null for a reader of the Network"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "$ref": "#/components/schemas/PublicID"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
@@ -6656,8 +7234,65 @@
           "retryable": {
             "type": "boolean"
           },
-          "peer_estimate": {"$ref":"#/components/schemas/PolicyPeerEstimate","description":"With code simulation_too_large: the peer counts, which need no Device-by-Device expansion"},
-          "guardrail_findings": {"type":"array","maxItems":100,"description":"With code guardrail_violation: the acting Workspace's enforced guardrails that blocked the change. Code counterpart_guardrail_violation (the other Workspace of a share blocks it) carries none","items":{"type":"object","additionalProperties":false,"required":["guardrail_id","name","kind","reason"],"properties":{"guardrail_id":{"$ref":"#/components/schemas/PublicID"},"name":{"type":"string","maxLength":80},"kind":{"type":"string","enum":["network_isolation","network_sharing","external_sharing"]},"reason":{"type":"string","enum":["isolated_networks","network_sharing_locked","external_sharing_blocked"]}}}}
+          "peer_estimate": {
+            "$ref": "#/components/schemas/PolicyPeerEstimate",
+            "description": "With code simulation_too_large: the peer counts, which need no Device-by-Device expansion"
+          },
+          "guardrail_findings": {
+            "type": "array",
+            "maxItems": 100,
+            "description": "With code guardrail_violation: the acting Workspace's enforced guardrails that blocked the change. Code counterpart_guardrail_violation (the other Workspace of a share blocks it) carries none",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "guardrail_id",
+                "name",
+                "kind",
+                "reason"
+              ],
+              "properties": {
+                "guardrail_id": {
+                  "$ref": "#/components/schemas/PublicID"
+                },
+                "name": {
+                  "type": "string",
+                  "maxLength": 80
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "network_isolation",
+                    "network_sharing",
+                    "external_sharing"
+                  ]
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "isolated_networks",
+                    "network_sharing_locked",
+                    "external_sharing_blocked"
+                  ]
+                }
+              }
+            }
+          },
+          "jwks_rule": {
+            "type": "string",
+            "enum": [
+              "size",
+              "json",
+              "no_keys",
+              "too_many_keys",
+              "key_type",
+              "key_size",
+              "kid",
+              "private_member",
+              "encoding"
+            ],
+            "description": "With code signing_keys_invalid: the rule the pasted JWKS broke"
+          }
         }
       },
     "ActivateTrustContractRequest": {"type":"object","additionalProperties":false,"required":["provider_workspace_id","provider_network_id","consumer_workspace_id","consumer_network_id","reason"],"properties":{"provider_workspace_id":{"$ref":"#/components/schemas/PublicID"},"provider_network_id":{"$ref":"#/components/schemas/PublicID"},"consumer_workspace_id":{"$ref":"#/components/schemas/PublicID"},"consumer_network_id":{"$ref":"#/components/schemas/PublicID"},"reason":{"type":"string","minLength":1,"maxLength":512}}},

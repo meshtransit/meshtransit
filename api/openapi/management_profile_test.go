@@ -70,13 +70,13 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 	// operations (9 of them the Exit Pools, 6 the DNS zones with a zone's
 	// status, 6 their names, 2 the Network's DNS settings); another count
 	// means an API was added or dropped without review. The base document
-	// has 45 paths, 10 of them the Kubernetes clusters (bearer only until the
+	// has 46 paths, 11 of them the Kubernetes clusters (bearer only until the
 	// Console's K1d step moves them onto the cookie).
 	operations := 0
 	for _, item := range paths {
 		operations += len(item.(map[string]any))
 	}
-	if len(basePaths) != 45 || operations != 121 {
+	if len(basePaths) != 46 || operations != 121 {
 		t.Fatal("private profile introduced another product resource API", len(basePaths), operations)
 	}
 	for path, raw := range paths {

@@ -15,6 +15,7 @@ type recordedKeyReport struct {
 	machine    [32]byte
 	reason     kubecluster.KeyEventReason
 	suppressed int
+	keyID      string
 }
 
 // keyRecorderStub answers with outcome, or waits for release when block.
@@ -27,9 +28,9 @@ type keyRecorderStub struct {
 }
 
 func (stub *keyRecorderStub) Record(ctx context.Context, machine [32]byte, reason kubecluster.KeyEventReason,
-	suppressed int) (kubecluster.KeyEventOutcome, error) {
+	suppressed int, keyID string) (kubecluster.KeyEventOutcome, error) {
 	stub.mu.Lock()
-	stub.calls = append(stub.calls, recordedKeyReport{machine, reason, suppressed})
+	stub.calls = append(stub.calls, recordedKeyReport{machine, reason, suppressed, keyID})
 	outcome, block, called := stub.outcome, stub.block, stub.called
 	stub.mu.Unlock()
 	if called != nil {

@@ -22,12 +22,15 @@ func (conversation *conversation) gatewayRotationToken(ctx context.Context, raw 
 	metrics := application.options.Metrics
 	// Each refusal is counted, and audited off the session's path (schema
 	// 233): token_missing is how a copy of the gateway's Secret shows.
-	refuse := func(limit string, reason kubecluster.KeyEventReason) (node.GatewayToken, bool) {
+	refuseWith := func(limit string, reason kubecluster.KeyEventReason, keyID string) (node.GatewayToken, bool) {
 		metrics.limited(limit)
 		if conversation.session != nil && conversation.session.server != nil {
-			conversation.session.server.keyReports.report(machine.Fingerprint(), reason)
+			conversation.session.server.keyReports.reportToken(machine.Fingerprint(), reason, keyID)
 		}
 		return node.GatewayToken{}, false
+	}
+	refuse := func(limit string, reason kubecluster.KeyEventReason) (node.GatewayToken, bool) {
+		return refuseWith(limit, reason, "")
 	}
 	refuseToken := func(reason kubetoken.Reason) (node.GatewayToken, bool) {
 		return refuse(gatewayTokenLimit(reason), kubecluster.KeyEventReason(reason))
@@ -62,7 +65,9 @@ func (conversation *conversation) gatewayRotationToken(ctx context.Context, raw 
 	claims, err := kubetoken.Verify(raw, kubetoken.Expectation{Issuer: trust.Issuer, JWKS: jwks,
 		Namespace: trust.Namespace, ServiceAccount: trust.ServiceAccount, PodName: trust.PodName}, application.now())
 	if refused, ok := errors.AsType[*kubetoken.RefusedError](err); ok {
-		return refuseToken(refused.Reason)
+		// A key the trust lacks is named, so the Console can say which.
+		return refuseWith(gatewayTokenLimit(refused.Reason), kubecluster.KeyEventReason(refused.Reason),
+			refused.KeyID)
 	}
 	if err != nil {
 		// The trust as read cannot check a token.

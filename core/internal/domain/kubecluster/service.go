@@ -134,6 +134,7 @@ type Store interface {
 	ReadCluster(ctx context.Context, session accountsession.Session, scope network.Scope, id ID) (Detail, error)
 	ReadClusterSigning(ctx context.Context, session accountsession.Session, scope network.Scope,
 		id ID) (Signing, error)
+	ReplaceSigningTrust(ctx context.Context, replacement TrustReplacement) (TrustReplacementResult, error)
 	IssueJoinKey(ctx context.Context, issue KeyIssue) (JoinKey, error)
 	RevokeJoinKey(ctx context.Context, revocation KeyRevocation) (JoinKey, error)
 	DecideReplicaRequest(ctx context.Context, decision Decision) (ReplicaRequestView, error)

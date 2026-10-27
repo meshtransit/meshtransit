@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 234 {
-		t.Fatalf("len(Catalog()) = %d, want 234", len(catalog))
+	if len(catalog) != 235 {
+		t.Fatalf("len(Catalog()) = %d, want 235", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 234 {
-		t.Fatalf("LatestVersion() = %d, want 234", LatestVersion())
+	if LatestVersion() != 235 {
+		t.Fatalf("LatestVersion() = %d, want 235", LatestVersion())
 	}
 }
 
@@ -6860,6 +6860,50 @@ func TestMigration234RevokedGatewaysReleaseTheirPods(t *testing.T) {
 	for _, forbidden := range []string{"BYPASSRLS", "DROP FUNCTION", "TEMPORARY", "session_replication_role"} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 234 contains %q", forbidden)
+		}
+	}
+}
+
+func TestMigration235AdminPastesSigningTrust(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[234]
+	if migration.Version != 235 {
+		t.Fatalf("migration 235 = %+v", migration)
+	}
+	for _, want := range []string{
+		// The kid of a token signed by a key the trust lacks.
+		"ADD COLUMN token_kid TEXT",
+		"CREATE FUNCTION mesh_ops.record_kubernetes_gateway_key_event_v3(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.record_kubernetes_gateway_key_event_v2(",
+		"RETURN mesh_ops.record_kubernetes_gateway_key_event_v3(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.kubernetes_gateway_key_event_payload_internal_v1(",
+		// An administrator replaces the trust: the cluster locked first,
+		// manage and approve both, identity bound while replicas run.
+		"CREATE FUNCTION mesh_ops.replace_kubernetes_cluster_signing_trust_v1(",
+		"'kubernetes_cluster.manage'",
+		"'kubernetes_cluster.approve'",
+		"FOR UPDATE OF cluster",
+		"ERRCODE = 'MTK21'",
+		"ERRCODE = 'MTK22'",
+		"source = 'admin_paste'",
+		"source_request_id = NULL",
+		// A signing read for Core 235; v1 stays for Core 234.
+		"CREATE FUNCTION mesh_ops.read_kubernetes_cluster_signing_v2(",
+		"'can_replace_trust'",
+		"'unknown_kids'",
+		"event.recorded_at > v_trust_set_at",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.replace_kubernetes_cluster_signing_trust_v1(",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_kubernetes_cluster_signing_v2(",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.record_kubernetes_gateway_key_event_v3(",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 235 lacks %q", want)
+		}
+	}
+	for _, forbidden := range []string{"BYPASSRLS", "DROP FUNCTION", "TEMPORARY", "session_replication_role",
+		"CREATE OR REPLACE FUNCTION mesh_ops.read_kubernetes_cluster_signing_v1("} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 235 contains %q", forbidden)
 		}
 	}
 }

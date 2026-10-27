@@ -8,12 +8,12 @@ import (
 	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base32"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"math/big"
 	"slices"
@@ -65,7 +65,35 @@ const (
 // rsaExponent is 65537, the only public exponent accepted.
 var rsaExponent = []byte{1, 0, 1}
 
-func invalidJWKS(rule string) error { return fmt.Errorf("%w: %s", ErrInvalidJWKS, rule) }
+// JWKSRule names the rule a refused JWKS broke, for an administrator who
+// pasted it (K1.1b): a stable value, not the message.
+type JWKSRule string
+
+// The rules of design §7.3.
+const (
+	RuleSize          JWKSRule = "size"
+	RuleJSON          JWKSRule = "json"
+	RuleNoKeys        JWKSRule = "no_keys"
+	RuleTooManyKeys   JWKSRule = "too_many_keys"
+	RuleKeyType       JWKSRule = "key_type"
+	RuleKeySize       JWKSRule = "key_size"
+	RuleKeyID         JWKSRule = "kid"
+	RulePrivateMember JWKSRule = "private_member"
+	RuleEncoding      JWKSRule = "encoding"
+)
+
+// JWKSError is a JWKS refused under Rule; it is ErrInvalidJWKS.
+type JWKSError struct {
+	Rule   JWKSRule
+	detail string
+}
+
+func (err *JWKSError) Error() string { return ErrInvalidJWKS.Error() + ": " + err.detail }
+
+// Is makes a JWKSError ErrInvalidJWKS.
+func (err *JWKSError) Is(target error) bool { return target == ErrInvalidJWKS }
+
+func invalidJWKS(rule JWKSRule, detail string) error { return &JWKSError{Rule: rule, detail: detail} }
 
 // SigningKey is one public key of a JWKS.
 type SigningKey struct {
@@ -75,6 +103,19 @@ type SigningKey struct {
 	Thumbprint [32]byte
 	// Public is a *rsa.PublicKey or a *ecdsa.PublicKey.
 	Public crypto.PublicKey
+}
+
+// KubernetesKeyID is the kid Kubernetes gives the key: base64url (no
+// padding) of the SHA-256 of its public key in PKIX DER, as kubectl shows
+// it. A JWKS may declare any other kid; K1.1b warns when they differ.
+// Empty when the key cannot be marshalled.
+func (key SigningKey) KubernetesKeyID() string {
+	der, err := x509.MarshalPKIXPublicKey(key.Public)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(der)
+	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
 // JWKS is a set of signing keys in canonical form (kube-sa-trust/v1):
@@ -130,21 +171,24 @@ type canonicalKey struct {
 // strict unpadded base64url with no leading zero bytes in the modulus.
 func ParseJWKS(raw []byte) (JWKS, error) {
 	if len(raw) > MaxJWKSSize {
-		return JWKS{}, invalidJWKS("larger than 16 KiB")
+		return JWKS{}, invalidJWKS(RuleSize, "larger than 16 KiB")
 	}
 	if err := CheckStrictJSON(raw); err != nil {
-		return JWKS{}, invalidJWKS("not one JSON value with distinct member names")
+		return JWKS{}, invalidJWKS(RuleJSON, "not one JSON value with distinct member names")
 	}
 	var document map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &document); err != nil || len(document) != 1 || document["keys"] == nil {
-		return JWKS{}, invalidJWKS(`not an object with only "keys"`)
+		return JWKS{}, invalidJWKS(RuleJSON, `not an object with only "keys"`)
 	}
 	var members []map[string]json.RawMessage
 	if err := json.Unmarshal(document["keys"], &members); err != nil {
-		return JWKS{}, invalidJWKS(`"keys" is not an array of objects`)
+		return JWKS{}, invalidJWKS(RuleJSON, `"keys" is not an array of objects`)
 	}
-	if len(members) == 0 || len(members) > MaxSigningKeys {
-		return JWKS{}, invalidJWKS("not 1 to 8 keys")
+	if len(members) == 0 {
+		return JWKS{}, invalidJWKS(RuleNoKeys, "no keys")
+	}
+	if len(members) > MaxSigningKeys {
+		return JWKS{}, invalidJWKS(RuleTooManyKeys, "more than 8 keys")
 	}
 	keys := make([]SigningKey, 0, len(members))
 	written := make([]canonicalKey, 0, len(members))
@@ -154,7 +198,11 @@ func ParseJWKS(raw []byte) (JWKS, error) {
 			return JWKS{}, err
 		}
 		if _, found := (JWKS{keys: keys}).Key(key.ID); found {
-			return JWKS{}, invalidJWKS("two keys share a kid")
+			return JWKS{}, invalidJWKS(RuleKeyID, "two keys share a kid")
+		}
+		// One public key under two kids: a trust names each key once.
+		if slices.ContainsFunc(keys, func(known SigningKey) bool { return known.Thumbprint == key.Thumbprint }) {
+			return JWKS{}, invalidJWKS(RuleKeyID, "two kids name one key")
 		}
 		keys = append(keys, key)
 		written = append(written, canonical)
@@ -163,7 +211,7 @@ func ParseJWKS(raw []byte) (JWKS, error) {
 	slices.SortFunc(written, func(a, b canonicalKey) int { return cmp.Compare(a.Kid, b.Kid) })
 	canonical, err := encodeCanonical(written)
 	if err != nil {
-		return JWKS{}, invalidJWKS("cannot be encoded")
+		return JWKS{}, invalidJWKS(RuleEncoding, "cannot be encoded")
 	}
 	return JWKS{canonical: canonical, keys: keys}, nil
 }
@@ -185,7 +233,7 @@ func encodeCanonical(keys []canonicalKey) ([]byte, error) {
 func parseKey(member map[string]json.RawMessage) (SigningKey, canonicalKey, error) {
 	for name := range member {
 		if !slices.Contains(keptMembers, name) && !slices.Contains(droppedMembers, name) {
-			return SigningKey{}, canonicalKey{}, invalidJWKS("a key has a member that is private or unknown")
+			return SigningKey{}, canonicalKey{}, invalidJWKS(RulePrivateMember, "a key has a member that is private or unknown")
 		}
 	}
 	values := map[string]string{}
@@ -196,16 +244,16 @@ func parseKey(member map[string]json.RawMessage) (SigningKey, canonicalKey, erro
 		}
 		var value *string
 		if err := json.Unmarshal(raw, &value); err != nil || value == nil {
-			return SigningKey{}, canonicalKey{}, invalidJWKS("a key member is not a string")
+			return SigningKey{}, canonicalKey{}, invalidJWKS(RuleEncoding, "a key member is not a string")
 		}
 		values[name] = *value
 	}
 	if use, present := values["use"]; present && use != "sig" {
-		return SigningKey{}, canonicalKey{}, invalidJWKS(`a key's "use" is not "sig"`)
+		return SigningKey{}, canonicalKey{}, invalidJWKS(RuleKeyType, `a key's "use" is not "sig"`)
 	}
 	kid := values["kid"]
 	if !printable(kid, maxKeyID) {
-		return SigningKey{}, canonicalKey{}, invalidJWKS("a kid is not 1 to 128 printable characters")
+		return SigningKey{}, canonicalKey{}, invalidJWKS(RuleKeyID, "a kid is not 1 to 128 printable characters")
 	}
 	switch values["kty"] {
 	case "RSA":
@@ -213,33 +261,33 @@ func parseKey(member map[string]json.RawMessage) (SigningKey, canonicalKey, erro
 	case "EC":
 		return parseECKey(kid, values)
 	default:
-		return SigningKey{}, canonicalKey{}, invalidJWKS(`a key's "kty" is neither "RSA" nor "EC"`)
+		return SigningKey{}, canonicalKey{}, invalidJWKS(RuleKeyType, `a key's "kty" is neither "RSA" nor "EC"`)
 	}
 }
 
 func parseRSAKey(kid string, values map[string]string) (SigningKey, canonicalKey, error) {
 	if !onlyMembers(values, "kty", "kid", "alg", "use", "n", "e") {
-		return SigningKey{}, canonicalKey{}, invalidJWKS("an RSA key has EC members")
+		return SigningKey{}, canonicalKey{}, invalidJWKS(RuleKeyType, "an RSA key has EC members")
 	}
 	if !algorithmIs(values, AlgorithmRS256) {
-		return SigningKey{}, canonicalKey{}, invalidJWKS(`an RSA key's "alg" is not "RS256"`)
+		return SigningKey{}, canonicalKey{}, invalidJWKS(RuleKeyType, `an RSA key's "alg" is not "RS256"`)
 	}
 	modulus, err := decodeMember(values["n"])
 	if err != nil || len(modulus) == 0 || modulus[0] == 0 {
-		return SigningKey{}, canonicalKey{}, invalidJWKS("an RSA modulus is not minimal base64url")
+		return SigningKey{}, canonicalKey{}, invalidJWKS(RuleEncoding, "an RSA modulus is not minimal base64url")
 	}
 	exponent, err := decodeMember(values["e"])
 	if err != nil || !bytes.Equal(exponent, rsaExponent) {
-		return SigningKey{}, canonicalKey{}, invalidJWKS("an RSA exponent is not 65537")
+		return SigningKey{}, canonicalKey{}, invalidJWKS(RuleKeyType, "an RSA exponent is not 65537")
 	}
 	n := new(big.Int).SetBytes(modulus)
 	if n.BitLen() < minRSABits || n.BitLen() > maxRSABits {
-		return SigningKey{}, canonicalKey{}, invalidJWKS("an RSA key is not 2048 to 4096 bits")
+		return SigningKey{}, canonicalKey{}, invalidJWKS(RuleKeySize, "an RSA key is not 2048 to 4096 bits")
 	}
 	// crypto/rsa refuses an even modulus when it verifies: trusting one
 	// would refuse every token later.
 	if n.Bit(0) == 0 {
-		return SigningKey{}, canonicalKey{}, invalidJWKS("an RSA modulus is even")
+		return SigningKey{}, canonicalKey{}, invalidJWKS(RuleKeyType, "an RSA modulus is even")
 	}
 	canonical := canonicalKey{Alg: AlgorithmRS256, E: values["e"], Kid: kid, Kty: "RSA", N: values["n"]}
 	// RFC 7638 §3.2: the required members, in lexicographic order, no
@@ -253,20 +301,20 @@ func parseRSAKey(kid string, values map[string]string) (SigningKey, canonicalKey
 
 func parseECKey(kid string, values map[string]string) (SigningKey, canonicalKey, error) {
 	if !onlyMembers(values, "kty", "kid", "alg", "use", "crv", "x", "y") {
-		return SigningKey{}, canonicalKey{}, invalidJWKS("an EC key has RSA members")
+		return SigningKey{}, canonicalKey{}, invalidJWKS(RuleKeyType, "an EC key has RSA members")
 	}
 	if !algorithmIs(values, AlgorithmES256) || values["crv"] != "P-256" {
-		return SigningKey{}, canonicalKey{}, invalidJWKS(`an EC key is not P-256 with "alg" "ES256"`)
+		return SigningKey{}, canonicalKey{}, invalidJWKS(RuleKeyType, `an EC key is not P-256 with "alg" "ES256"`)
 	}
 	x, xErr := decodeMember(values["x"])
 	y, yErr := decodeMember(values["y"])
 	if xErr != nil || yErr != nil || len(x) != ecCoordSize || len(y) != ecCoordSize {
-		return SigningKey{}, canonicalKey{}, invalidJWKS("an EC coordinate is not 32 bytes of base64url")
+		return SigningKey{}, canonicalKey{}, invalidJWKS(RuleEncoding, "an EC coordinate is not 32 bytes of base64url")
 	}
 	point := append(append([]byte{4}, x...), y...)
 	public, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), point)
 	if err != nil {
-		return SigningKey{}, canonicalKey{}, invalidJWKS("an EC point is not on P-256")
+		return SigningKey{}, canonicalKey{}, invalidJWKS(RuleKeyType, "an EC point is not on P-256")
 	}
 	canonical := canonicalKey{Alg: AlgorithmES256, Crv: "P-256", Kid: kid, Kty: "EC", X: values["x"], Y: values["y"]}
 	thumbprint := sha256.Sum256([]byte(`{"crv":"P-256","kty":"EC","x":"` + canonical.X + `","y":"` + canonical.Y + `"}`))
@@ -294,10 +342,14 @@ func algorithmIs(values map[string]string, want string) bool {
 func decodeMember(value string) ([]byte, error) {
 	decoded, err := base64.RawURLEncoding.Strict().DecodeString(value)
 	if err != nil || base64.RawURLEncoding.EncodeToString(decoded) != value {
-		return nil, ErrInvalidJWKS
+		return nil, invalidJWKS(RuleEncoding, "a member is not strict unpadded base64url")
 	}
 	return decoded, nil
 }
+
+// ValidKeyID reports a kid as a JWKS may carry one: 1 to 128 printable
+// ASCII characters.
+func ValidKeyID(keyID string) bool { return printable(keyID, 128) }
 
 // printable reports whether value is 1 to limit printable ASCII characters
 // other than space.

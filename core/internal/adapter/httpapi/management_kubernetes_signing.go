@@ -21,17 +21,54 @@ type kubernetesSigningBody struct {
 	Requests  *[]kubernetesSigningRequest `json:"replica_requests"`
 	Truncated bool                        `json:"replica_requests_truncated"`
 	Warnings  *kubernetesKeyWarningsBody  `json:"token_warnings"`
+	// UnknownKids are the kids the cluster signs with that the trust lacks
+	// (K1.1b); null for a reader of the Network.
+	UnknownKids *[]string `json:"unknown_kids"`
+	CanReplace  bool      `json:"can_replace_trust"`
 }
 
 type kubernetesSigningTrustBody struct {
-	Issuer         string   `json:"issuer"`
-	KeyThumbprints []string `json:"key_thumbprints"`
-	Namespace      string   `json:"namespace"`
-	ServiceAccount string   `json:"service_account"`
-	StatefulSet    string   `json:"statefulset"`
-	Version        int64    `json:"version"`
-	Source         string   `json:"source"`
-	SetAt          string   `json:"set_at"`
+	Issuer         string                   `json:"issuer"`
+	KeyThumbprints []string                 `json:"key_thumbprints"`
+	Keys           []kubernetesTrustKeyBody `json:"keys"`
+	Namespace      string                   `json:"namespace"`
+	ServiceAccount string                   `json:"service_account"`
+	StatefulSet    string                   `json:"statefulset"`
+	Version        int64                    `json:"version"`
+	Source         string                   `json:"source"`
+	SetAt          string                   `json:"set_at"`
+	// SetBy is null for a reader of the Network.
+	SetBy *string `json:"set_by"`
+}
+
+// kubernetesTrustKeyBody names one key of the trust: its declared kid, the
+// kid Kubernetes computes for it (what kubectl shows), its RFC 7638
+// thumbprint and type.
+type kubernetesTrustKeyBody struct {
+	KeyID           string `json:"kid"`
+	KubernetesKeyID string `json:"computed_kid"`
+	Thumbprint      string `json:"thumbprint"`
+	Type            string `json:"kty"`
+}
+
+func newKubernetesSigningTrustBody(trust kubecluster.SigningTrust) *kubernetesSigningTrustBody {
+	thumbprints := make([]string, 0, len(trust.KeyThumbprints))
+	for _, thumbprint := range trust.KeyThumbprints {
+		thumbprints = append(thumbprints, hex.EncodeToString(thumbprint[:]))
+	}
+	keys := make([]kubernetesTrustKeyBody, 0, len(trust.Keys))
+	for _, key := range trust.Keys {
+		keys = append(keys, kubernetesTrustKeyBody{KeyID: key.KeyID, KubernetesKeyID: key.KubernetesKeyID,
+			Thumbprint: hex.EncodeToString(key.Thumbprint[:]), Type: key.Type})
+	}
+	body := &kubernetesSigningTrustBody{Issuer: trust.Issuer, KeyThumbprints: thumbprints, Keys: keys,
+		Namespace: trust.Namespace, ServiceAccount: trust.ServiceAccount, StatefulSet: trust.StatefulSet,
+		Version: trust.Version, Source: string(trust.Source), SetAt: managementTime(trust.SetAt)}
+	if trust.SetBy.IsValid() {
+		setBy := trust.SetBy.String()
+		body.SetBy = &setBy
+	}
+	return body
 }
 
 type kubernetesSigningReplica struct {
@@ -62,15 +99,14 @@ func (handler *ManagementHandler) readKubernetesClusterSigning(ctx context.Conte
 		return fail(classifyKubernetesClusterError(err))
 	}
 	body := kubernetesSigningBody{NetworkID: path.scope.NetworkID().String(), ClusterID: path.clusterID.String(),
-		Replicas: make([]kubernetesSigningReplica, 0, len(signing.Replicas)), Truncated: signing.RequestsTruncated}
-	if trust := signing.Trust; trust != nil {
-		thumbprints := make([]string, 0, len(trust.KeyThumbprints))
-		for _, thumbprint := range trust.KeyThumbprints {
-			thumbprints = append(thumbprints, hex.EncodeToString(thumbprint[:]))
-		}
-		body.Trust = &kubernetesSigningTrustBody{Issuer: trust.Issuer, KeyThumbprints: thumbprints,
-			Namespace: trust.Namespace, ServiceAccount: trust.ServiceAccount, StatefulSet: trust.StatefulSet,
-			Version: trust.Version, Source: string(trust.Source), SetAt: managementTime(trust.SetAt)}
+		Replicas: make([]kubernetesSigningReplica, 0, len(signing.Replicas)), Truncated: signing.RequestsTruncated,
+		CanReplace: signing.CanReplaceTrust}
+	if signing.Trust != nil {
+		body.Trust = newKubernetesSigningTrustBody(*signing.Trust)
+	}
+	if signing.UnknownKeyIDs != nil {
+		unknown := append([]string{}, signing.UnknownKeyIDs...)
+		body.UnknownKids = &unknown
 	}
 	for _, replica := range signing.Replicas {
 		listed := kubernetesSigningReplica{DeviceID: replica.DeviceID.String(), PodName: replica.PodName}

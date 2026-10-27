@@ -1,6 +1,7 @@
 package mtcp
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -207,11 +208,15 @@ func TestGatewayRotationNeedsItsPodToken(t *testing.T) {
 	expired := testPodClaims(fixtureClock.Add(-time.Hour), "meshgw-0")
 	incomplete := testRotationTrust()
 	incomplete.PodName = ""
+	// The cluster signs with k1; this trust knows the key as "other" only.
+	renamed := testRotationTrust()
+	renamed.JWKS = bytes.Replace(renamed.JWKS, []byte(`"kid":"k1"`), []byte(`"kid":"other"`), 1)
 	for name, test := range map[string]struct {
 		token    func(t *testing.T) string
 		trust    kubecluster.RotationTrust
 		trustErr error
 		reason   kubecluster.KeyEventReason
+		keyID    string
 	}{
 		"no token": {token: func(*testing.T) string { return "" }, reason: kubecluster.KeyEventTokenMissing},
 		"another pod's token": {token: func(t *testing.T) string {
@@ -222,6 +227,8 @@ func TestGatewayRotationNeedsItsPodToken(t *testing.T) {
 		"no trust":     {trustErr: kubecluster.ErrNotFound, reason: kubecluster.KeyEventTrustMissing},
 		"trust unread": {trustErr: errors.New("database: down"), reason: kubecluster.KeyEventTrustUnavailable},
 		"no bound pod": {trust: incomplete, reason: kubecluster.KeyEventTrustMissing},
+		// The audit names the key the cluster signs with now (K1.1b).
+		"unknown key": {trust: renamed, reason: kubecluster.KeyEventTokenUnknownKey, keyID: "k1"},
 	} {
 		for _, kind := range rotationKinds() {
 			t.Run(fmt.Sprintf("%s %#x", name, uint8(kind)), func(t *testing.T) {
@@ -245,7 +252,7 @@ func TestGatewayRotationNeedsItsPodToken(t *testing.T) {
 				}
 				// Each refusal enters the audit trail, off the session's path.
 				got := waitReports(t, recorder, 1)
-				if len(got) != 1 || got[0].reason != test.reason ||
+				if len(got) != 1 || got[0].reason != test.reason || got[0].keyID != test.keyID ||
 					got[0].machine != node.MachineKey(f.session.machine).Fingerprint() {
 					t.Fatalf("reports %+v, want one %s", got, test.reason)
 				}

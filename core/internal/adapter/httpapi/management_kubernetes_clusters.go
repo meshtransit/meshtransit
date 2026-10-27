@@ -31,6 +31,9 @@ const (
 	kubernetesRequestApproveOperation = "kubernetes_replica_request_approve"
 	kubernetesRequestRejectOperation  = "kubernetes_replica_request_reject"
 	kubernetesClusterSigningOperation = "kubernetes_cluster_signing_read"
+	// K1.1b: an administrator reads and replaces the signing trust.
+	kubernetesSigningTrustReadOperation    = "kubernetes_signing_trust_read"
+	kubernetesSigningTrustReplaceOperation = "kubernetes_signing_trust_replace"
 )
 
 // KubernetesClusterManager manages a Network's Kubernetes clusters, their
@@ -41,6 +44,7 @@ type KubernetesClusterManager interface {
 	List(context.Context, accountsession.Session, network.Scope) ([]kubecluster.Cluster, error)
 	Read(context.Context, accountsession.Session, network.Scope, kubecluster.ID) (kubecluster.Detail, error)
 	ReadSigning(context.Context, accountsession.Session, network.Scope, kubecluster.ID) (kubecluster.Signing, error)
+	ReplaceTrust(context.Context, kubecluster.TrustReplacement) (kubecluster.TrustReplacementResult, error)
 	IssueJoinKey(context.Context, kubecluster.KeyRequest) (kubecluster.IssuedJoinKey, error)
 	RevokeJoinKey(context.Context, kubecluster.KeyRevocation) (kubecluster.JoinKey, error)
 	Approve(context.Context, kubecluster.Decision, string) (kubecluster.ReplicaRequestView, error)
@@ -67,6 +71,7 @@ type kubernetesClusterPath struct {
 //	POST        kubernetes-clusters/{c}/join-keys/{key}/actions/revoke    revoke
 //	GET         kubernetes-clusters/{c}/replica-requests                  list
 //	GET         kubernetes-clusters/{c}/signing                           signing read (K1.1)
+//	GET|PUT     kubernetes-clusters/{c}/signing-trust                     trust read, replace (K1.1b)
 //	GET         kubernetes-clusters/{c}/replica-requests/{r}              read
 //	POST        kubernetes-clusters/{c}/replica-requests/{r}/actions/approve|reject
 //
@@ -136,6 +141,10 @@ func (path *kubernetesClusterPath) route(rest []string) (map[string]string, bool
 	case len(rest) == 2 && rest[1] == "signing":
 		path.methods = restMethods{http.MethodGet}
 		return map[string]string{http.MethodGet: kubernetesClusterSigningOperation}, true
+	case len(rest) == 2 && rest[1] == "signing-trust":
+		path.methods = restMethods{http.MethodGet, http.MethodPut}
+		return map[string]string{http.MethodGet: kubernetesSigningTrustReadOperation,
+			http.MethodPut: kubernetesSigningTrustReplaceOperation}, true
 	case (len(rest) == 3 || len(rest) == 5 && rest[3] == "actions" && rest[4] == "revoke") && rest[1] == "join-keys":
 		key, ok := child(2)
 		if !ok {
@@ -229,6 +238,10 @@ func (handler *ManagementHandler) handleKubernetesClusters(ctx context.Context, 
 		writeKubernetesData(ctx, handler, response, correlationID, http.StatusOK, newKubernetesClusterBody(cluster))
 	case kubernetesClusterSigningOperation:
 		return handler.readKubernetesClusterSigning(ctx, response, correlationID, path, session, fail)
+	case kubernetesSigningTrustReadOperation:
+		return handler.readKubernetesSigningTrust(ctx, response, correlationID, path, session, fail)
+	case kubernetesSigningTrustReplaceOperation:
+		return handler.replaceKubernetesSigningTrust(ctx, response, request, correlationID, path, session, fail)
 	case kubernetesJoinKeyIssueOperation:
 		return handler.issueKubernetesJoinKey(ctx, response, request, correlationID, path, session, fail)
 	case kubernetesJoinKeyRevokeOperation:
@@ -632,6 +645,14 @@ func classifyKubernetesClusterError(err error) managementError {
 	case errors.Is(err, kubecluster.ErrKeyNotUsable):
 		return managementError{Status: http.StatusConflict, Code: "join_key_not_usable",
 			Message: "The join key is revoked, expired or used up; the request was cancelled"}
+	// Schema 235 (K1.1b): a pasted trust over another version, or a new
+	// identity while replicas run.
+	case errors.Is(err, kubecluster.ErrTrustChanged):
+		return managementError{Status: http.StatusPreconditionFailed, Code: "signing_trust_changed",
+			Message: "The cluster's signing keys changed; read them again"}
+	case errors.Is(err, kubecluster.ErrIdentityBound):
+		return managementError{Status: http.StatusConflict, Code: "replica_identity_bound",
+			Message: "Replicas still run under the namespace, ServiceAccount and StatefulSet; keep them, or remove the replicas first"}
 	// Schema 232 (K1.1): refusals that stay refusals.
 	case errors.Is(err, kubecluster.ErrJoinAgain):
 		return managementError{Status: http.StatusConflict, Code: "replica_must_rejoin",

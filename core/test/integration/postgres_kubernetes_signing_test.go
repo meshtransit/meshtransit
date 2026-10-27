@@ -35,7 +35,7 @@ func assertGatewayTokenAuditAndSigning(ctx context.Context, t *testing.T, admin,
 	current, _ := gatewayKeyFingerprints(ctx, t, admin, deviceID)
 	record := func(reason kubecluster.KeyEventReason, want kubecluster.KeyEventOutcome) {
 		t.Helper()
-		if outcome, err := store.Record(ctx, current, reason, 0); err != nil || outcome != want {
+		if outcome, err := store.Record(ctx, current, reason, 0, ""); err != nil || outcome != want {
 			t.Fatalf("Record(%s) = %v, %v; want %v", reason, outcome, err, want)
 		}
 	}

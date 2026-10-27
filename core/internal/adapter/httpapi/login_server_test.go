@@ -374,7 +374,7 @@ func TestLoginServerAnswersUnknownAPIPathWith404(t *testing.T) {
 	network := "/api/v1/workspaces/01890f00-0000-7000-8000-000000000101/networks/" +
 		"01890f00-0000-7000-8000-000000000201"
 	for _, target := range []string{
-		network + "/kubernetes-clusters/01890f00-0000-7000-8000-000000000a01/signing-trust",
+		network + "/kubernetes-clusters/01890f00-0000-7000-8000-000000000a01/signing-keys",
 		network + "/no-such-resource",
 		"/api/v2/anything",
 	} {

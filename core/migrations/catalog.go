@@ -603,6 +603,7 @@ func Catalog() []Migration {
 		newMigration(233, "A Kubernetes gateway's refused rotation tokens enter the audit trail",
 			kubernetesGatewayTokenAuditSQL),
 		newMigration(234, "A revoked Kubernetes gateway no longer holds its pod", kubernetesRevokedGatewayPodsSQL),
+		newMigration(235, "An administrator pastes a Kubernetes cluster's signing keys", kubernetesSigningTrustPasteSQL),
 	}
 }
 
@@ -1084,3 +1085,6 @@ var kubernetesGatewayTokenAuditSQL string
 
 //go:embed 000234_kubernetes_revoked_gateway_pods.up.sql
 var kubernetesRevokedGatewayPodsSQL string
+
+//go:embed 000235_kubernetes_signing_trust_paste.up.sql
+var kubernetesSigningTrustPasteSQL string

@@ -1,7 +1,9 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"slices"
 	"time"
@@ -14,14 +16,21 @@ import (
 	"meshtransit.net/shared/kubejoin"
 )
 
-const readKubernetesClusterSigningSQL = `SELECT mesh_ops.read_kubernetes_cluster_signing_v1(` +
+const readKubernetesClusterSigningSQL = `SELECT mesh_ops.read_kubernetes_cluster_signing_v2(` +
 	sessionArguments + `,$10::UUID,$11::UUID,$12::UUID)::TEXT`
 
 // maximumTrustKeys bounds the keys of a trust as read: a JWKS of 16 KiB
 // holds far fewer.
 const maximumTrustKeys = 64
 
+// maximumUnknownKeyIDs bounds the kids a signing read lists that the trust
+// lacks.
+const maximumUnknownKeyIDs = 8
+
 type kubernetesSigningTrustDocument struct {
+	TrustID        string    `json:"trust_id"`
+	JWKS           string    `json:"jwks"`
+	SetBy          *string   `json:"set_by"`
 	Issuer         string    `json:"issuer"`
 	KeyThumbprints []string  `json:"key_thumbprints"`
 	Namespace      string    `json:"namespace"`
@@ -70,12 +79,15 @@ func (store *KubernetesClusterStore) ReadClusterSigning(ctx context.Context, ses
 			Requests      []kubernetesSigningRequestDocument `json:"requests"`
 			Truncated     bool                               `json:"requests_truncated"`
 			TokenWarnings *kubernetesKeyWarningsDocument     `json:"token_warnings"`
+			UnknownKids   []string                           `json:"unknown_kids"`
+			CanReplace    bool                               `json:"can_replace_trust"`
 		}
 		if err := decodeIdentityCatalogJSON([]byte(encoded), &read); err != nil ||
 			read.NetworkID != scope.NetworkID().String() || read.ClusterID != id.String() || read.Replicas == nil ||
 			len(read.Replicas) > kubecluster.MaximumOrdinal+1 ||
 			len(read.Requests) > kubecluster.MaximumSigningRequests ||
 			(read.TokenWarnings == nil) != (read.Requests == nil) ||
+			(read.UnknownKids == nil) != (read.Requests == nil) || len(read.UnknownKids) > maximumUnknownKeyIDs ||
 			read.Truncated && len(read.Requests) != kubecluster.MaximumSigningRequests {
 			return false, kubecluster.ErrInvalid
 		}
@@ -83,11 +95,32 @@ func (store *KubernetesClusterStore) ReadClusterSigning(ctx context.Context, ses
 		if err != nil {
 			return false, err
 		}
+		for _, keyID := range read.UnknownKids {
+			if !kubejoin.ValidKeyID(keyID) {
+				return false, kubecluster.ErrInvalid
+			}
+		}
 		signing = decoded
 		signing.RequestsTruncated = read.Truncated
+		signing.CanReplaceTrust = read.CanReplace
+		signing.UnknownKeyIDs = withoutTrustKeys(read.UnknownKids, signing.Trust)
 		return false, nil
 	})
 	return signing, err
+}
+
+// withoutTrustKeys drops the kids the trust holds now, by declared or
+// computed kid: a refusal recorded just after a paste may name a key the
+// paste added.
+func withoutTrustKeys(keyIDs []string, trust *kubecluster.SigningTrust) []string {
+	if keyIDs == nil || trust == nil {
+		return keyIDs
+	}
+	return slices.DeleteFunc(slices.Clone(keyIDs), func(keyID string) bool {
+		return slices.ContainsFunc(trust.Keys, func(key kubecluster.TrustKey) bool {
+			return key.KeyID == keyID || key.KubernetesKeyID == keyID
+		})
+	})
 }
 
 func decodeKubernetesSigning(trust *kubernetesSigningTrustDocument, replicas []kubernetesSigningReplicaDocument,
@@ -163,9 +196,37 @@ func (document kubernetesSigningTrustDocument) trust() (kubecluster.SigningTrust
 		}
 		thumbprints = append(thumbprints, thumbprint)
 	}
-	return kubecluster.SigningTrust{Issuer: document.Issuer, KeyThumbprints: thumbprints,
+	raw, err := base64.StdEncoding.DecodeString(document.JWKS)
+	if err != nil {
+		return kubecluster.SigningTrust{}, kubecluster.ErrInvalid
+	}
+	jwks, err := kubejoin.ParseJWKS(raw)
+	if err != nil || !bytes.Equal(jwks.Canonical(), raw) {
+		return kubecluster.SigningTrust{}, kubecluster.ErrInvalid
+	}
+	keys := kubecluster.TrustKeysOf(jwks)
+	if len(keys) != len(thumbprints) {
+		return kubecluster.SigningTrust{}, kubecluster.ErrInvalid
+	}
+	for index, key := range keys {
+		if key.Thumbprint != thumbprints[index] {
+			return kubecluster.SigningTrust{}, kubecluster.ErrInvalid
+		}
+	}
+	if _, err := publicid.Parse(document.TrustID); err != nil {
+		return kubecluster.SigningTrust{}, kubecluster.ErrInvalid
+	}
+	trust := kubecluster.SigningTrust{Issuer: document.Issuer, KeyThumbprints: thumbprints, Keys: keys,
 		Namespace: document.Namespace, ServiceAccount: document.ServiceAccount, StatefulSet: document.StatefulSet,
-		Version: document.Version, Source: source, SetAt: document.SetAt.UTC()}, nil
+		Version: document.Version, Source: source, SetAt: document.SetAt.UTC()}
+	if document.SetBy != nil {
+		setBy, err := publicid.Parse(*document.SetBy)
+		if err != nil {
+			return kubecluster.SigningTrust{}, kubecluster.ErrInvalid
+		}
+		trust.SetBy = setBy
+	}
+	return trust, nil
 }
 
 // request validates a waiting request's signing material: none at code

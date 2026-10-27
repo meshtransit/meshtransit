@@ -13,8 +13,10 @@ import (
 // contested key, as a sealed audit event of its Network (schema 229).
 // machine is the node-domain fingerprint of the session's machine key.
 type GatewayKeyRecorder interface {
+	// keyID is the kid of a token signed by a key the trust lacks, else
+	// empty (schema 235).
 	Record(ctx context.Context, machine [32]byte, reason kubecluster.KeyEventReason,
-		suppressed int) (kubecluster.KeyEventOutcome, error)
+		suppressed int, keyID string) (kubecluster.KeyEventOutcome, error)
 }
 
 const (
@@ -47,6 +49,7 @@ type gatewayKeyReportState struct {
 type gatewayKeyReport struct {
 	key        gatewayKeyReportKey
 	suppressed int
+	keyID      string
 }
 
 // gatewayKeyReporter records gateway key reports off the handshake path
@@ -87,6 +90,13 @@ func newGatewayKeyReporter(recorder GatewayKeyRecorder, metrics *Metrics, logger
 // report queues one report of machine for reason unless the same was sent
 // within its hold; then it only counts it into the next event.
 func (reporter *gatewayKeyReporter) report(machine [32]byte, reason kubecluster.KeyEventReason) {
+	reporter.reportToken(machine, reason, "")
+}
+
+// reportToken is report for a refused rotation token: keyID names the key
+// a token was signed with that the trust lacks, else empty. Reports folded
+// into one event keep the kid sent with it.
+func (reporter *gatewayKeyReporter) reportToken(machine [32]byte, reason kubecluster.KeyEventReason, keyID string) {
 	if reporter == nil || !reason.IsKnown() {
 		return
 	}
@@ -117,7 +127,7 @@ func (reporter *gatewayKeyReporter) report(machine [32]byte, reason kubecluster.
 		state = &gatewayKeyReportState{}
 		reporter.seen[key] = state
 	}
-	pending := gatewayKeyReport{key: key, suppressed: state.suppressed}
+	pending := gatewayKeyReport{key: key, suppressed: state.suppressed, keyID: keyID}
 	state.suppressed, state.holdUntil = 0, now.Add(gatewayKeyReportHold)
 	select {
 	case reporter.queue <- pending:
@@ -158,7 +168,8 @@ func (reporter *gatewayKeyReporter) run() {
 
 func (reporter *gatewayKeyReporter) record(pending gatewayKeyReport) {
 	ctx, cancel := context.WithTimeout(reporter.ctx, gatewayKeyRecordTimeout)
-	outcome, err := reporter.recorder.Record(ctx, pending.key.machine, pending.key.reason, pending.suppressed)
+	outcome, err := reporter.recorder.Record(ctx, pending.key.machine, pending.key.reason, pending.suppressed,
+		pending.keyID)
 	cancel()
 	result := "failed"
 	switch {

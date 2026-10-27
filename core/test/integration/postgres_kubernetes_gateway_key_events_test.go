@@ -52,7 +52,7 @@ func assertGatewayKeyEvents(ctx context.Context, t *testing.T, admin *pgx.Conn, 
 	record := func(machine [32]byte, reason kubecluster.KeyEventReason, suppressed int,
 		want kubecluster.KeyEventOutcome) {
 		t.Helper()
-		if outcome, err := store.Record(ctx, machine, reason, suppressed); err != nil || outcome != want {
+		if outcome, err := store.Record(ctx, machine, reason, suppressed, ""); err != nil || outcome != want {
 			t.Fatalf("Record(%x, %s) = %v, %v; want %v", machine[:4], reason, outcome, err, want)
 		}
 	}
@@ -177,7 +177,7 @@ WHERE device_public_id = $1::UUID`, deviceID); err != nil {
 	if _, err := admin.Exec(ctx, `SET session_replication_role = origin`); err != nil {
 		t.Fatal(err)
 	}
-	if outcome, err := store.Record(ctx, current, kubecluster.KeyEventRetiredMachineKey, 0); err != nil ||
+	if outcome, err := store.Record(ctx, current, kubecluster.KeyEventRetiredMachineKey, 0, ""); err != nil ||
 		outcome != kubecluster.KeyEventRecorded {
 		t.Fatalf("removed gateway's report = %v, %v", outcome, err)
 	}

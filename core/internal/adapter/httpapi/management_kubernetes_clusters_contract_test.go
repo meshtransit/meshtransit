@@ -155,3 +155,44 @@ func TestKubernetesClusterSigningMatchesTheContract(t *testing.T) {
 		}
 	}
 }
+
+// The trust's own read and its keys say what the contract says (K1.1b).
+func TestKubernetesSigningTrustMatchesTheContract(t *testing.T) {
+	t.Parallel()
+	document, err := openapi.ManagementDocument(openapi.ManagementProfileBearerV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var contract struct {
+		Paths map[string]map[string]struct {
+			Responses map[string]struct {
+				Content map[string]struct {
+					Schema openAPISchema `json:"schema"`
+				} `json:"content"`
+			} `json:"responses"`
+		} `json:"paths"`
+	}
+	if err := json.Unmarshal(document, &contract); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/signing-trust"
+	data := contract.Paths[path]["get"].Responses["200"].Content["application/json"].Schema.Properties["data"]
+	if got, want := data.names(), jsonFields(kubernetesSigningTrustRead{}); !slices.Equal(got, want) {
+		t.Fatalf("GET fields %v, body %v", got, want)
+	}
+	trust := data.Properties["trust"]
+	if got, want := trust.names(), jsonFields(kubernetesSigningTrustBody{}); !slices.Equal(got, want) {
+		t.Fatalf("trust fields %v, body %v", got, want)
+	}
+	keys := trust.Properties["keys"].Items
+	if keys == nil {
+		t.Fatal("trust.keys has no items")
+	}
+	if got, want := keys.names(), jsonFields(kubernetesTrustKeyBody{}); !slices.Equal(got, want) {
+		t.Fatalf("key fields %v, body %v", got, want)
+	}
+	put := contract.Paths[path]["put"].Responses["200"].Content["application/json"].Schema.Properties["data"]
+	if got := put.names(); !slices.Equal(got, []string{"changed", "trust"}) {
+		t.Fatalf("PUT fields %v", got)
+	}
+}

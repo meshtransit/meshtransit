@@ -6,6 +6,8 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -164,8 +166,10 @@ func TestParseJWKSRefuses(t *testing.T) {
 		"duplicate key member":       `{"keys":[{"kty":"RSA","kid":"k","kid":"j","n":"` + rfc7638N + `","e":"AQAB"}]}`,
 		"nine keys":                  `{"keys":[` + strings.Join(nineKeys, ",") + `]}`,
 		"duplicate kid":              `{"keys":[` + ecJSON + `,` + ecJSON + `]}`,
-		"missing kid":                `{"keys":[{"kty":"RSA","n":"` + rfc7638N + `","e":"AQAB"}]}`,
-		"empty kid":                  `{"keys":[{"kty":"RSA","kid":"","n":"` + rfc7638N + `","e":"AQAB"}]}`,
+		"one key under two kids": `{"keys":[{"kty":"RSA","kid":"a","n":"` + rfc7638N + `","e":"AQAB"},` +
+			`{"kty":"RSA","kid":"b","n":"` + rfc7638N + `","e":"AQAB"}]}`,
+		"missing kid": `{"keys":[{"kty":"RSA","n":"` + rfc7638N + `","e":"AQAB"}]}`,
+		"empty kid":   `{"keys":[{"kty":"RSA","kid":"","n":"` + rfc7638N + `","e":"AQAB"}]}`,
 		"long kid": `{"keys":[{"kty":"RSA","kid":"` + strings.Repeat("k", 129) + `","n":"` + rfc7638N +
 			`","e":"AQAB"}]}`,
 		"kid with a control character": `{"keys":[{"kty":"RSA","kid":"a\u0001","n":"` + rfc7638N + `","e":"AQAB"}]}`,
@@ -199,8 +203,14 @@ func TestParseJWKSRefuses(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if _, err := ParseJWKS([]byte(raw)); !errors.Is(err, ErrInvalidJWKS) {
+			_, err := ParseJWKS([]byte(raw))
+			if !errors.Is(err, ErrInvalidJWKS) {
 				t.Fatalf("ParseJWKS() error = %v, want ErrInvalidJWKS", err)
+			}
+			// Each refusal names its rule, for an administrator's paste.
+			refused, ok := errors.AsType[*JWKSError](err)
+			if !ok || refused.Rule != refusalRules[name] || refusalRules[name] == "" {
+				t.Fatalf("ParseJWKS() rule = %+v, want %q", refused, refusalRules[name])
 			}
 		})
 	}
@@ -558,3 +568,57 @@ func TestTokenPod(t *testing.T) {
 		}
 	}
 }
+
+// The rule each refusal of TestParseJWKSRefuses names.
+var refusalRules = map[string]JWKSRule{
+	"not JSON": RuleJSON, "not an object": RuleJSON, "trailing data": RuleJSON, "no keys": RuleJSON,
+	"empty keys": RuleNoKeys, "other top-level member": RuleJSON, "duplicate top-level member": RuleJSON,
+	"duplicate key member": RuleJSON, "nine keys": RuleTooManyKeys, "duplicate kid": RuleKeyID, "one key under two kids": RuleKeyID,
+	"missing kid": RuleKeyID, "empty kid": RuleKeyID, "long kid": RuleKeyID,
+	"kid with a control character": RuleKeyID, "kid not a string": RuleEncoding, "oct key": RulePrivateMember,
+	"OKP key": RuleKeyType, "use enc": RuleKeyType, "RSA under ES256": RuleKeyType, "RSA under PS256": RuleKeyType,
+	"private exponent": RulePrivateMember, "private prime": RulePrivateMember,
+	"other private member": RulePrivateMember, "key_ops": RulePrivateMember, "unknown member": RulePrivateMember,
+	"RSA 1024 bits": RuleKeySize, "RSA 4104 bits": RuleKeySize, "exponent 3": RuleKeyType,
+	"exponent with a leading zero": RuleKeyType, "modulus with a leading zero": RuleEncoding,
+	"padded base64url": RuleEncoding, "standard base64": RuleEncoding, "no modulus": RuleEncoding,
+	"P-384": RuleKeyType, "EC under RS256": RuleKeyType, "EC point off curve": RuleKeyType,
+	"EC short coordinate": RuleEncoding, "EC with RSA members": RuleKeyType, "too large": RuleSize,
+}
+
+// Kubernetes names a key by the SHA-256 of its public key in PKIX DER, which
+// kubectl shows; a JWKS may declare any other kid (vector: kind meshgw-a).
+func TestKubernetesKeyID(t *testing.T) {
+	t.Parallel()
+	jwks, err := ParseJWKS([]byte(kindJWKS))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := jwks.Keys()[0]
+	if got := key.KubernetesKeyID(); got != "W5g6JhuNGLKpWbGKkY1h_vyNJWNV3OHpeiEJLThDJhE" || got != key.ID {
+		t.Fatalf("KubernetesKeyID() = %q, kid %q", got, key.ID)
+	}
+	renamed, err := ParseJWKS([]byte(strings.Replace(kindJWKS, key.ID, "another-name", 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamed.Keys()[0].KubernetesKeyID() != key.ID {
+		t.Fatal("the computed kid follows the declared one")
+	}
+	ecJSON, _ := ecKeyJSON(t, "ec")
+	ec, err := ParseJWKS([]byte(`{"keys":[` + ecJSON + `]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(ec.Keys()[0].Public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(der)
+	if ec.Keys()[0].KubernetesKeyID() != base64.RawURLEncoding.EncodeToString(sum[:]) {
+		t.Fatal("an EC key's computed kid is not the SHA-256 of its PKIX DER")
+	}
+}
+
+// kindJWKS is the JWKS kind meshgw-a served on 2026-10-27.
+const kindJWKS = `{"keys":[{"use":"sig","kty":"RSA","kid":"W5g6JhuNGLKpWbGKkY1h_vyNJWNV3OHpeiEJLThDJhE","alg":"RS256","n":"ulb6f8XOFK8q2EKPjPXlwDQuMhPTiee6zlEDZu0twbQecr0w7uG6Vqghhovln3lwCtJdM_eHsWfgmd6I-HdaFUv738BlNvEZXanR9d5mSBmnIDtIUTpwrNOVTuskzBOMceJf86g7QwfL_ixA8xaavgt27B5dqZJcM34ORUy6O2qcm18keFqKhMoQ_FPnFS1xZmEPTw3VzBLpOAaI6sTh0-LBTtszztX-F6GYSw3bZenJUVQ9CHAPr4AtJRrRA0lpZj__gCz9CpajdNfJY712HzBv6tMb8ElqO3DaEr2ka40yqIug9wkMmlLg85MrMhtOZViuZq0hf_SAPFipqjVQKw","e":"AQAB"}]}`

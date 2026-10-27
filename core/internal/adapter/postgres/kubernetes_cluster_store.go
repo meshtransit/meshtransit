@@ -140,6 +140,12 @@ func kubernetesClusterDatabaseError(err error) error {
 			return kubecluster.ErrSigningMismatch
 		case "MTK16":
 			return kubecluster.ErrPodHeld
+		// Schema 235: the trust's version moved, or replicas still run under
+		// its identity.
+		case "MTK21":
+			return kubecluster.ErrTrustChanged
+		case "MTK22":
+			return kubecluster.ErrIdentityBound
 		}
 	}
 	if errors.Is(err, pgx.ErrNoRows) {

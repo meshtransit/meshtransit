@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 // TrustSource is how a cluster's signing trust was set.
@@ -29,12 +30,17 @@ func (source TrustSource) IsKnown() bool {
 type SigningTrust struct {
 	Issuer         string
 	KeyThumbprints [][32]byte
+	// Keys names each key; empty from a read that carries no JWKS.
+	Keys           []TrustKey
 	Namespace      string
 	ServiceAccount string
 	StatefulSet    string
 	Version        int64
 	Source         TrustSource
 	SetAt          time.Time
+	// SetBy is who set the trust, for those who manage or approve the
+	// cluster; zero otherwise.
+	SetBy publicid.ID
 }
 
 // RequestTrustState is how a waiting request's signing material stands
@@ -103,6 +109,11 @@ const MaximumSigningRequests = 64
 // cluster; RequestsTruncated says more requests wait than were listed.
 // Replicas are the active gateway Devices, each the holder of its pod.
 type Signing struct {
+	// CanReplaceTrust: the caller may replace the trust (K1.1b).
+	CanReplaceTrust bool
+	// UnknownKeyIDs are the kids the cluster signed tokens with that the
+	// trust lacks, since it was set; nil for readers.
+	UnknownKeyIDs     []string
 	Trust             *SigningTrust
 	Replicas          []ReplicaSigning
 	Requests          []RequestSigning

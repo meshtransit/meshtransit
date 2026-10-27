@@ -61,6 +61,10 @@ const (
 // the token or its claims.
 type RefusedError struct {
 	Reason Reason
+	// KeyID is the kid of a token signed by a key the trust lacks, when it
+	// is 1 to 128 printable characters; empty otherwise. It is a key's
+	// name, not a secret, and enters the audit trail (K1.1b).
+	KeyID string
 }
 
 func (err *RefusedError) Error() string { return "kubetoken: token refused: " + string(err.Reason) }
@@ -140,7 +144,11 @@ func Verify(raw string, expect Expectation, now time.Time) (Claims, error) {
 	}
 	key, found := expect.JWKS.Key(keyID)
 	if !found {
-		return Claims{}, refuse(ReasonUnknownKey)
+		refused := &RefusedError{Reason: ReasonUnknownKey}
+		if kubejoin.ValidKeyID(keyID) {
+			refused.KeyID = keyID
+		}
+		return Claims{}, refused
 	}
 	if key.Algorithm != algorithm {
 		return Claims{}, refuse(ReasonSignature)

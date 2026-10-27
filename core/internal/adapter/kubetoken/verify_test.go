@@ -465,3 +465,26 @@ func TestVerifyAcceptsTimeEdges(t *testing.T) {
 		})
 	}
 }
+
+// A token signed by a key the trust lacks names that key, so an
+// administrator knows which key the cluster signs with now (K1.1b); a kid
+// that is not 1 to 128 printable characters is not passed on.
+func TestUnknownKeyRefusalNamesTheKey(t *testing.T) {
+	t.Parallel()
+	for kid, want := range map[string]string{ //nolint:gosec // G101: key IDs, which are public
+		"W5g6JhuNGLKpWbGKkY1h_vyNJWNV3OHpeiEJLThDJhE": "W5g6JhuNGLKpWbGKkY1h_vyNJWNV3OHpeiEJLThDJhE",
+		strings.Repeat("k", 129):                      "",
+		"a\u0001b":                                    "",
+	} {
+		_, err := Verify(token(t, header("RS256", kid), claims(), "RS256"), rotationExpectation(t), testNow)
+		refused, ok := errors.AsType[*RefusedError](err)
+		if !ok || refused.Reason != ReasonUnknownKey || refused.KeyID != want {
+			t.Fatalf("Verify(kid %q) = %+v, want unknown key %q", kid, refused, want)
+		}
+	}
+	// Other refusals name no key.
+	_, err := Verify(token(t, header("RS256", "rsa-1"), claims(), "ES256"), rotationExpectation(t), testNow)
+	if refused, ok := errors.AsType[*RefusedError](err); !ok || refused.KeyID != "" {
+		t.Fatalf("Verify(bad signature) = %+v", refused)
+	}
+}

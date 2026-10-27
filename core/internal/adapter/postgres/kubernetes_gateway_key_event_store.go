@@ -13,6 +13,7 @@ import (
 	"meshtransit.net/core/internal/domain/audit"
 	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/shared/kubejoin"
 )
 
 var (
@@ -24,8 +25,8 @@ var (
 )
 
 const (
-	recordKubernetesGatewayKeyEventSQL = `SELECT mesh_ops.record_kubernetes_gateway_key_event_v2(
-    $1::BYTEA,$2::TEXT,$3::INTEGER,$4::UUID,$5::UUID)::TEXT`
+	recordKubernetesGatewayKeyEventSQL = `SELECT mesh_ops.record_kubernetes_gateway_key_event_v3(
+    $1::BYTEA,$2::TEXT,$3::INTEGER,$4::UUID,$5::UUID,$6::TEXT)::TEXT`
 	appendKubernetesGatewayKeyEventEvidenceSQL = `SELECT mesh_ops.append_kubernetes_gateway_key_event_evidence_v1(
     $1::UUID,$2::BIGINT,$3::BIGINT,$4::BYTEA,$5::BYTEA,$6::UUID,$7::UUID,$8::JSONB)`
 	gatewayKeyEventAggregateKind  = "kubernetes_gateway_key_event"
@@ -54,10 +55,17 @@ func NewKubernetesGatewayKeyEventStore(pool *Pool) (*KubernetesGatewayKeyEventSt
 // the number of reports folded into it. It never retries: a report that
 // meets a lock is busy.
 func (store *KubernetesGatewayKeyEventStore) Record(ctx context.Context, machine [32]byte,
-	reason kubecluster.KeyEventReason, suppressed int) (outcome kubecluster.KeyEventOutcome, resultErr error) {
+	reason kubecluster.KeyEventReason, suppressed int, keyID string) (outcome kubecluster.KeyEventOutcome,
+	resultErr error) {
 	if ctx == nil || store == nil || store.database == nil || machine == ([32]byte{}) || !reason.IsKnown() ||
-		suppressed < 0 || suppressed > kubecluster.MaximumSuppressedReports {
+		suppressed < 0 || suppressed > kubecluster.MaximumSuppressedReports ||
+		keyID != "" && (reason != kubecluster.KeyEventTokenUnknownKey || !kubejoin.ValidKeyID(keyID)) {
 		return 0, ErrInvalidKubernetesGatewayKeyEventStore
+	}
+	// Schema 235: a kid only with a key the trust lacks.
+	var tokenKeyID any
+	if keyID != "" {
+		tokenKeyID = keyID
 	}
 	var ids [4]publicid.ID
 	for index := range ids {
@@ -85,7 +93,7 @@ func (store *KubernetesGatewayKeyEventStore) Record(ctx context.Context, machine
 	}
 	var encoded string
 	if err := transaction.QueryRow(ctx, recordKubernetesGatewayKeyEventSQL, machine[:], string(reason), suppressed,
-		eventID.String(), change.String()).Scan(&encoded); err != nil {
+		eventID.String(), change.String(), tokenKeyID).Scan(&encoded); err != nil {
 		return gatewayKeyEventBusy(err)
 	}
 	proof, err := decodeGatewayKeyEventProof(encoded, eventID, reason)
