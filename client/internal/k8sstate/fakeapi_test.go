@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -419,8 +420,17 @@ func (a *fakeAPI) serveSigning(w http.ResponseWriter, r *http.Request) bool {
 		writeStatus(w, http.StatusUnauthorized, "Unauthorized", "unauthorized")
 	case forbidden:
 		writeStatus(w, http.StatusForbidden, "Forbidden", "forbidden")
+	// Kubernetes serves the JWKS only as a JWK set and answers 406 to an
+	// Accept without it. The fake is stricter than the real router, which
+	// also takes */* or no Accept, and does not check discovery's Accept.
+	case r.URL.Path == "/openid/v1/jwks" && !strings.Contains(r.Header.Get("Accept"), "application/jwk-set+json"):
+		writeStatus(w, http.StatusNotAcceptable, "NotAcceptable", "406: Not Acceptable")
 	default:
-		w.Header().Set("Content-Type", "application/json")
+		contentType := "application/json"
+		if r.URL.Path == "/openid/v1/jwks" {
+			contentType = "application/jwk-set+json"
+		}
+		w.Header().Set("Content-Type", contentType)
 		_, _ = w.Write([]byte(body))
 	}
 	return true

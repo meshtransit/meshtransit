@@ -28,7 +28,7 @@ func ReadSigningKeys(ctx context.Context, cfg Config) (issuer string, jwks []byt
 		return "", nil, err
 	}
 	defer client.close()
-	discovery, err := client.getRaw(ctx, "/.well-known/openid-configuration")
+	discovery, err := client.getRaw(ctx, "/.well-known/openid-configuration", "application/json")
 	if err != nil {
 		return "", nil, err
 	}
@@ -38,7 +38,7 @@ func ReadSigningKeys(ctx context.Context, cfg Config) (issuer string, jwks []byt
 	if err := json.Unmarshal(discovery, &document); err != nil || document.Issuer == "" {
 		return "", nil, errors.New("k8sstate: the API server's discovery document names no issuer")
 	}
-	jwks, err = client.getRaw(ctx, "/openid/v1/jwks")
+	jwks, err = client.getRaw(ctx, "/openid/v1/jwks", "application/jwk-set+json, application/json")
 	if err != nil {
 		return "", nil, err
 	}
@@ -46,7 +46,9 @@ func ReadSigningKeys(ctx context.Context, cfg Config) (issuer string, jwks []byt
 }
 
 // getRaw GETs path from the API server, bounded, with the pod's token.
-func (c *apiClient) getRaw(ctx context.Context, path string) ([]byte, error) {
+// accept names the media types to ask for: the API server answers 406 to a
+// JWKS request that does not accept application/jwk-set+json.
+func (c *apiClient) getRaw(ctx context.Context, path, accept string) ([]byte, error) {
 	if c.cfg.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, c.cfg.Timeout)
@@ -61,7 +63,7 @@ func (c *apiClient) getRaw(ctx context.Context, path string) ([]byte, error) {
 		return nil, fmt.Errorf("k8sstate: building the request: %w", err)
 	}
 	request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
-	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Accept", accept)
 	response, err := c.http.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("k8sstate: GET %s: %w", path, err)
