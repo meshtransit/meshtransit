@@ -509,7 +509,7 @@ func (s *Service) gatewayPodToken() controlplane.PodToken {
 }
 
 // MaxPodTokenSize bounds a pod token file: Core takes tokens of 8 KiB.
-const MaxPodTokenSize = 8 << 10
+const MaxPodTokenSize = kubejoin.MaxTokenSize
 
 // ReadPodToken reads a projected pod token, bounded; an empty or oversized
 // file is an error, never sent.

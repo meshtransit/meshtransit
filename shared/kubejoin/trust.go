@@ -40,6 +40,8 @@ var (
 const (
 	// MaxJWKSSize bounds a JWKS as received, before canonicalization.
 	MaxJWKSSize = 16 << 10
+	// MaxTokenSize bounds a pod's ServiceAccount token as sent and received.
+	MaxTokenSize = 8 << 10
 	// MaxSigningKeys bounds the keys of one JWKS.
 	MaxSigningKeys = 8
 	// MaxIssuerSize bounds an issuer URL.

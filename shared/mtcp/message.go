@@ -9,6 +9,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
+	"meshtransit.net/shared/kubejoin"
 )
 
 // MessageType is the msg_type byte of a fragment (mtcp-v1 §4.2).
@@ -81,12 +82,19 @@ const (
 )
 
 var specs = map[MessageType]messageSpec{
-	MessageError:                 {Both, 4 * kib, func() proto.Message { return &mtcpv1.Error{} }},
-	MessagePing:                  {Both, 256, func() proto.Message { return &mtcpv1.Ping{} }},
-	MessagePong:                  {Both, 256, func() proto.Message { return &mtcpv1.Pong{} }},
-	MessageRegisterRequest:       {NodeToCore, 16 * kib, func() proto.Message { return &mtcpv1.RegisterRequest{} }},
-	MessageRegisterResponse:      {CoreToNode, 8 * kib, func() proto.Message { return &mtcpv1.RegisterResponse{} }},
-	MessageRotateNodeKey:         {NodeToCore, 4 * kib, func() proto.Message { return &mtcpv1.RotateNodeKey{} }},
+	MessageError: {Both, 4 * kib, func() proto.Message { return &mtcpv1.Error{} }},
+	MessagePing:  {Both, 256, func() proto.Message { return &mtcpv1.Ping{} }},
+	MessagePong:  {Both, 256, func() proto.Message { return &mtcpv1.Pong{} }},
+	// A Kubernetes gateway's join adds its pod token, issuer and JWKS (K1.1).
+	MessageRegisterRequest: {
+		NodeToCore, 16*kib + kubejoin.MaxTokenSize + kubejoin.MaxIssuerSize + kubejoin.MaxJWKSSize,
+		func() proto.Message { return &mtcpv1.RegisterRequest{} },
+	},
+	MessageRegisterResponse: {CoreToNode, 8 * kib, func() proto.Message { return &mtcpv1.RegisterResponse{} }},
+	// A Kubernetes gateway's rotations add its pod token (K1.1).
+	MessageRotateNodeKey: {
+		NodeToCore, 4*kib + kubejoin.MaxTokenSize, func() proto.Message { return &mtcpv1.RotateNodeKey{} },
+	},
 	MessageLogout:                {NodeToCore, kib, func() proto.Message { return &mtcpv1.Logout{} }},
 	MessageRotateNodeKeyResponse: {CoreToNode, kib, func() proto.Message { return &mtcpv1.RotateNodeKeyResponse{} }},
 	MessageMapSnapshot:           {CoreToNode, 32 * mib, func() proto.Message { return &mtcpv1.MapSnapshot{} }},
@@ -105,13 +113,15 @@ var specs = map[MessageType]messageSpec{
 	// 16 windows of a 32-byte ID and three numbers each.
 	MessageCaptiveWindowReport: {NodeToCore, 4 * kib, func() proto.Message { return &mtcpv1.CaptiveWindowReport{} }},
 	// 64 resolvers of a 16-byte address and three numbers each.
-	MessageDNSHealthReport:  {NodeToCore, 4 * kib, func() proto.Message { return &mtcpv1.DnsHealthReport{} }},
-	MessageRelayTicket:      {CoreToNode, 256 * kib, func() proto.Message { return &mtcpv1.RelayTicket{} }}, // MTT2 zones: 17 bytes × 10,001
-	MessageLifecycle:        {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.Lifecycle{} }},
-	MessageKeyUpdate:        {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.KeyUpdate{} }},
-	MessageNotice:           {CoreToNode, 8 * kib, func() proto.Message { return &mtcpv1.Notice{} }},
-	MessageNodeKeyProof:     {NodeToCore, 256, func() proto.Message { return &mtcpv1.NodeKeyProof{} }},
-	MessageRotateMachineKey: {NodeToCore, 256, func() proto.Message { return &mtcpv1.RotateMachineKey{} }},
+	MessageDNSHealthReport: {NodeToCore, 4 * kib, func() proto.Message { return &mtcpv1.DnsHealthReport{} }},
+	MessageRelayTicket:     {CoreToNode, 256 * kib, func() proto.Message { return &mtcpv1.RelayTicket{} }}, // MTT2 zones: 17 bytes × 10,001
+	MessageLifecycle:       {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.Lifecycle{} }},
+	MessageKeyUpdate:       {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.KeyUpdate{} }},
+	MessageNotice:          {CoreToNode, 8 * kib, func() proto.Message { return &mtcpv1.Notice{} }},
+	MessageNodeKeyProof:    {NodeToCore, 256, func() proto.Message { return &mtcpv1.NodeKeyProof{} }},
+	MessageRotateMachineKey: {
+		NodeToCore, 256 + kubejoin.MaxTokenSize, func() proto.Message { return &mtcpv1.RotateMachineKey{} },
+	},
 	MessageRotateMachineKeyResponse: {
 		CoreToNode, 256,
 		func() proto.Message { return &mtcpv1.RotateMachineKeyResponse{} },

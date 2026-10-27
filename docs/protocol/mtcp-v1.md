@@ -228,13 +228,13 @@ payload     bytes[...]
 | 0x01 | `Error` | both | 4 KiB |
 | 0x02 | `Ping` | both | 256 B |
 | 0x03 | `Pong` | both | 256 B |
-| 0x10 | `RegisterRequest` | N→C | 16 KiB |
+| 0x10 | `RegisterRequest` | N→C | 41,215 B (16 KiB, plus a Kubernetes gateway's pod token of 8 KiB, issuer of 255 B and JWKS of 16 KiB) |
 | 0x11 | `RegisterResponse` | C→N | 8 KiB |
-| 0x12 | `RotateNodeKey` | N→C | 4 KiB |
+| 0x12 | `RotateNodeKey` | N→C | 12 KiB (4 KiB plus a pod token of 8 KiB) |
 | 0x13 | `Logout` | N→C | 1 KiB |
 | 0x14 | `RotateNodeKeyResponse` | C→N | 1 KiB |
 | 0x15 | `NodeKeyProof` | N→C | 256 B |
-| 0x16 | `RotateMachineKey` | N→C | 256 B |
+| 0x16 | `RotateMachineKey` | N→C | 8,448 B (256 B plus a pod token of 8 KiB) |
 | 0x17 | `RotateMachineKeyResponse` | C→N | 256 B |
 | 0x20 | `MapSnapshot` | C→N | 32 MiB |
 | 0x21 | `MapDelta` | C→N | 8 MiB |

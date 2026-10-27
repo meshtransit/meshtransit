@@ -25,7 +25,7 @@ const (
 	// Audience is the only audience a gateway token may carry.
 	Audience = "meshtransit.net/kubernetes-gateway"
 	// MaxTokenSize bounds a token as received.
-	MaxTokenSize = 8 << 10
+	MaxTokenSize = kubejoin.MaxTokenSize
 	// MaxLifetime bounds exp − iat: kubelet asks for 600 s.
 	MaxLifetime = 15 * time.Minute
 	// ClockSkew is how far ahead of Core's clock iat and nbf may be.
