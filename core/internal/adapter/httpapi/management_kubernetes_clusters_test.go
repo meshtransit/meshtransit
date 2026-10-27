@@ -145,9 +145,14 @@ func (stub *kubernetesClusterStub) ReadSigning(context.Context, accountsession.S
 	if stub.readOnly {
 		return signing, nil
 	}
+	heldID, _ := kubecluster.ParseRequestID("01890f00-0000-7000-8000-000000000f02")
 	signing.Requests = []kubecluster.RequestSigning{{RequestID: requestID, CodeVersion: 2,
 		Issuer: "https://kubernetes.default.svc.cluster.local", Namespace: "mt-kube-k1", ServiceAccount: "meshgw",
-		StatefulSet: "meshgw", PodName: "meshgw-1", JoinKeyThumbprint: [32]byte{0xcd}}}
+		StatefulSet: "meshgw", PodName: "meshgw-1", JoinKeyThumbprint: [32]byte{0xcd}},
+		{RequestID: heldID, CodeVersion: 2, Issuer: "https://kubernetes.default.svc.cluster.local",
+			Namespace: "mt-kube-k1", ServiceAccount: "meshgw", StatefulSet: "meshgw", PodName: "meshgw-0",
+			JoinKeyThumbprint: [32]byte{0xab}}}
+	signing.RequestsTruncated = true
 	signing.TokenWarnings = &kubecluster.KeyWarnings{Devices: []kubecluster.KeyWarning{{DeviceID: deviceID,
 		Hostname: "prod-0", Last24h: 1, Last7Days: 2, LastAt: rotated, LastReason: kubecluster.KeyEventTokenMissing,
 		KeyState: kubecluster.ReportedKeyCurrent}}}
@@ -554,13 +559,17 @@ func TestKubernetesClusterSigningRead(t *testing.T) {
 				`"01890f00-0000-7000-8000-000000000b04","pod_name":"meshgw-1","last_token_rotation_at":null}]`,
 		}
 		if readOnly {
-			wants = append(wants, `"replica_requests":null`, `"token_warnings":null`)
+			wants = append(wants, `"replica_requests":null`, `"replica_requests_truncated":false`,
+				`"token_warnings":null`)
 		} else {
+			// The trust matches, but an active replica holds the pod.
+			wants = append(wants, `"pod_name":"meshgw-0","join_key_thumbprint":"`+thumbprint(0xab)+
+				`","trust_state":"pod_held"}`, `"replica_requests_truncated":true`)
 			wants = append(wants,
 				`"replica_requests":[{"request_id":"`+kubernetesTestRequest+`","code_version":2,`+
 					`"issuer":"https://kubernetes.default.svc.cluster.local","namespace":"mt-kube-k1",`+
 					`"service_account":"meshgw","statefulset":"meshgw","pod_name":"meshgw-1",`+
-					`"join_key_thumbprint":"`+thumbprint(0xcd)+`","trust_state":"differs_from_trust"}]`,
+					`"join_key_thumbprint":"`+thumbprint(0xcd)+`","trust_state":"differs_from_trust"}`,
 				`"token_warnings":{"devices":[{"device_id":"01890f00-0000-7000-8000-000000000b04",`+
 					`"hostname":"prod-0","count_24h":1,"count_7d":2,"last_at":"2026-10-27T11:14:22Z",`+
 					`"last_reason":"token_missing","key_state":"current"}],"truncated":false}`)

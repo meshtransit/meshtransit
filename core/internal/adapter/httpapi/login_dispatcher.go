@@ -3,6 +3,7 @@ package httpapi
 import (
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -16,6 +17,10 @@ var (
 	ErrInvalidLoginDispatcher = errors.New("http api: invalid login dispatcher")
 	// ErrLoginDispatchUnavailable conceals missing ownership or canceled dispatch.
 	ErrLoginDispatchUnavailable = errors.New("http api: login dispatch unavailable")
+	// ErrUnknownBrowserAPIPath reports a well-formed request for an API path
+	// this listener does not serve: nothing was read, spent or staged, so the
+	// server may answer 404 as the bearer listener does instead of aborting.
+	ErrUnknownBrowserAPIPath = fmt.Errorf("%w: no API at the path", ErrInvalidLoginDispatcher)
 )
 
 // LoginDispatcher selects exact private login operations, never a public HTTP
@@ -221,6 +226,10 @@ func (dispatcher *LoginDispatcher) Handle(response http.ResponseWriter, request 
 			operation = "complete"
 			return browser.completion.Complete(response, request)
 		}
+	}
+	if strings.HasPrefix(request.URL.Path, "/api/") {
+		operation = "api_not_found"
+		return ErrUnknownBrowserAPIPath
 	}
 	return ErrInvalidLoginDispatcher
 }

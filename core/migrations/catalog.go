@@ -602,6 +602,7 @@ func Catalog() []Migration {
 			kubernetesGatewayRotationTokensSQL),
 		newMigration(233, "A Kubernetes gateway's refused rotation tokens enter the audit trail",
 			kubernetesGatewayTokenAuditSQL),
+		newMigration(234, "A revoked Kubernetes gateway no longer holds its pod", kubernetesRevokedGatewayPodsSQL),
 	}
 }
 
@@ -1080,3 +1081,6 @@ var kubernetesGatewayRotationTokensSQL string
 
 //go:embed 000233_kubernetes_gateway_token_audit.up.sql
 var kubernetesGatewayTokenAuditSQL string
+
+//go:embed 000234_kubernetes_revoked_gateway_pods.up.sql
+var kubernetesRevokedGatewayPodsSQL string

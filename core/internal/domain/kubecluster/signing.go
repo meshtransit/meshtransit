@@ -52,6 +52,9 @@ const (
 	// RequestMustJoinAgain: opened without signing material, before K1.1;
 	// approving cancels it and the replica joins again.
 	RequestMustJoinAgain RequestTrustState = "must_join_again"
+	// RequestPodHeld: an active replica already holds the request's pod;
+	// approving is refused until that Device is revoked.
+	RequestPodHeld RequestTrustState = "pod_held"
 )
 
 // RequestSigning is the signing material a pending or approved replica
@@ -83,8 +86,8 @@ func (request RequestSigning) State(trust *SigningTrust) RequestTrustState {
 	return RequestMatchesTrust
 }
 
-// ReplicaSigning is a gateway Device of the cluster, not deleted, with the
-// pod its join named. LastTokenRotation is when it last rotated a key, each
+// ReplicaSigning is an active gateway Device of the cluster with the pod
+// its join named. LastTokenRotation is when it last rotated a key, each
 // time with a valid pod token; zero when it has not since it joined.
 type ReplicaSigning struct {
 	DeviceID          node.ID
@@ -97,10 +100,29 @@ const MaximumSigningRequests = 64
 
 // Signing is a cluster's signing read (K1.1 design §8.4, §9). Requests and
 // TokenWarnings are nil for those who neither manage nor approve the
-// cluster.
+// cluster; RequestsTruncated says more requests wait than were listed.
+// Replicas are the active gateway Devices, each the holder of its pod.
 type Signing struct {
-	Trust         *SigningTrust
-	Replicas      []ReplicaSigning
-	Requests      []RequestSigning
-	TokenWarnings *KeyWarnings
+	Trust             *SigningTrust
+	Replicas          []ReplicaSigning
+	Requests          []RequestSigning
+	RequestsTruncated bool
+	TokenWarnings     *KeyWarnings
+}
+
+// StateOf is how approving request would end, as far as the read shows: its
+// signing material against the trust first, then its pod against the
+// active replicas. An approval in progress for the same pod also holds it;
+// the read does not show that.
+func (signing Signing) StateOf(request RequestSigning) RequestTrustState {
+	state := request.State(signing.Trust)
+	if state != RequestSetsTrust && state != RequestMatchesTrust {
+		return state
+	}
+	for _, replica := range signing.Replicas {
+		if replica.PodName == request.PodName {
+			return RequestPodHeld
+		}
+	}
+	return state
 }

@@ -130,6 +130,18 @@ func readBrowserSessionCookie(headers http.Header) (accountsession.Token, error)
 // connection. It writes nothing and reports false unless the response is
 // still pristine; the caller then aborts as for any other failure.
 func answerRefusedBrowserManagement(response http.ResponseWriter) (string, bool) {
+	return answerBrowserBeforeAdmission(response, *invalidManagementRequest())
+}
+
+// answerUnknownBrowserAPIPath answers an API path the listener does not
+// serve (ErrUnknownBrowserAPIPath) with the bearer listener's 404, under the
+// same conditions as answerRefusedBrowserManagement.
+func answerUnknownBrowserAPIPath(response http.ResponseWriter) (string, bool) {
+	return answerBrowserBeforeAdmission(response, managementError{Status: http.StatusNotFound,
+		Code: "not_found", Message: "the requested resource is unavailable"})
+}
+
+func answerBrowserBeforeAdmission(response http.ResponseWriter, apiError managementError) (string, bool) {
 	if response == nil || response.Header() == nil || len(response.Header()) != 0 {
 		return "", false
 	}
@@ -137,7 +149,6 @@ func answerRefusedBrowserManagement(response http.ResponseWriter) (string, bool)
 	if err != nil {
 		return "", false
 	}
-	apiError := invalidManagementRequest()
 	body, err := json.Marshal(managementErrorResponse{Error: managementErrorBody{
 		Code: apiError.Code, Message: apiError.Message, CorrelationID: correlationID.String(),
 	}})
@@ -151,7 +162,7 @@ func answerRefusedBrowserManagement(response http.ResponseWriter) (string, bool)
 	header.Set("Content-Length", strconv.Itoa(len(body)))
 	// The request body was never read; the connection is not reused for it.
 	header.Set("Connection", "close")
-	response.WriteHeader(http.StatusBadRequest)
+	response.WriteHeader(apiError.Status)
 	written, err := response.Write(body)
 	return correlationID.String(), err == nil && written == len(body)
 }

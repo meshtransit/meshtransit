@@ -68,13 +68,15 @@ func (store *KubernetesClusterStore) ReadClusterSigning(ctx context.Context, ses
 			Trust         *kubernetesSigningTrustDocument    `json:"trust"`
 			Replicas      []kubernetesSigningReplicaDocument `json:"replicas"`
 			Requests      []kubernetesSigningRequestDocument `json:"requests"`
+			Truncated     bool                               `json:"requests_truncated"`
 			TokenWarnings *kubernetesKeyWarningsDocument     `json:"token_warnings"`
 		}
 		if err := decodeIdentityCatalogJSON([]byte(encoded), &read); err != nil ||
 			read.NetworkID != scope.NetworkID().String() || read.ClusterID != id.String() || read.Replicas == nil ||
 			len(read.Replicas) > kubecluster.MaximumOrdinal+1 ||
 			len(read.Requests) > kubecluster.MaximumSigningRequests ||
-			(read.TokenWarnings == nil) != (read.Requests == nil) {
+			(read.TokenWarnings == nil) != (read.Requests == nil) ||
+			read.Truncated && len(read.Requests) != kubecluster.MaximumSigningRequests {
 			return false, kubecluster.ErrInvalid
 		}
 		decoded, err := decodeKubernetesSigning(read.Trust, read.Replicas, read.Requests, read.TokenWarnings)
@@ -82,6 +84,7 @@ func (store *KubernetesClusterStore) ReadClusterSigning(ctx context.Context, ses
 			return false, err
 		}
 		signing = decoded
+		signing.RequestsTruncated = read.Truncated
 		return false, nil
 	})
 	return signing, err

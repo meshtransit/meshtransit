@@ -48,3 +48,32 @@ func TestRequestSigningState(t *testing.T) {
 		}
 	}
 }
+
+// A pod an active replica already holds cannot be approved, whatever its
+// signing keys: approving checks the trust first, then the pod.
+func TestSigningStateOfHeldPod(t *testing.T) {
+	t.Parallel()
+	trust := &kubecluster.SigningTrust{Issuer: "https://kubernetes.default.svc.cluster.local",
+		KeyThumbprints: [][32]byte{{1}}, Namespace: "mt-kube-k1", ServiceAccount: "meshgw", StatefulSet: "meshgw",
+		Version: 1, Source: kubecluster.TrustFromReplicaApproval}
+	request := kubecluster.RequestSigning{CodeVersion: 2, Issuer: trust.Issuer, Namespace: "mt-kube-k1",
+		ServiceAccount: "meshgw", StatefulSet: "meshgw", PodName: "meshgw-0", JoinKeyThumbprint: [32]byte{1}}
+	held := kubecluster.Signing{Trust: trust, Replicas: []kubecluster.ReplicaSigning{{PodName: "meshgw-0"}}}
+	if got := held.StateOf(request); got != kubecluster.RequestPodHeld {
+		t.Fatalf("StateOf(held pod) = %q", got)
+	}
+	free := kubecluster.Signing{Trust: trust, Replicas: []kubecluster.ReplicaSigning{{PodName: "meshgw-1"}}}
+	if got := free.StateOf(request); got != kubecluster.RequestMatchesTrust {
+		t.Fatalf("StateOf(free pod) = %q", got)
+	}
+	// The trust is checked first: keys that differ stay refused for that.
+	differs := request
+	differs.Namespace = "other"
+	if got := held.StateOf(differs); got != kubecluster.RequestDiffersFromTrust {
+		t.Fatalf("StateOf(other namespace) = %q", got)
+	}
+	// Without a trust the pod is still checked.
+	if got := (kubecluster.Signing{Replicas: held.Replicas}).StateOf(request); got != kubecluster.RequestPodHeld {
+		t.Fatalf("StateOf(held pod, no trust) = %q", got)
+	}
+}

@@ -27,7 +27,7 @@ func assertJoinTrust(ctx context.Context, t *testing.T, admin *pgx.Conn, service
 	clusterID kubecluster.ID, first replicaKeys) {
 	t.Helper()
 	issued, err := service.IssueJoinKey(ctx, kubecluster.KeyRequest{Session: owner, Scope: scope,
-		ClusterID: clusterID, Uses: 4, CorrelationID: newCorrelationID(t)})
+		ClusterID: clusterID, Uses: 5, CorrelationID: newCorrelationID(t)})
 	if err != nil {
 		t.Fatalf("IssueJoinKey() = %v", err)
 	}
@@ -85,6 +85,36 @@ func assertJoinTrust(ctx context.Context, t *testing.T, admin *pgx.Conn, service
 		kubecluster.ErrPodHeld) {
 		t.Fatalf("approving a second replica of the gateway's pod: %v", err)
 	}
+	// A revoked gateway holds its pod no more (schema 234): the pod joins
+	// again. The approval is then let lapse and the gateway restored, as the
+	// rest of this test reads them.
+	setGatewayState := func(state string) {
+		t.Helper()
+		tx, err := admin.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if _, err := tx.Exec(ctx, `SET LOCAL session_replication_role = replica`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE mesh.device SET state = $1 WHERE id = (
+    SELECT request.device_id FROM mesh.kubernetes_replica_request AS request
+    JOIN mesh.kubernetes_cluster AS cluster ON cluster.id = request.kubernetes_cluster_id
+    WHERE cluster.public_id = $2::UUID AND request.state = 'completed')`, state, clusterID.String()); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setGatewayState("revoked")
+	if _, err := service.Approve(ctx, decision(twinTicket), joinCode(t, twinTicket, twin)); err != nil {
+		t.Fatalf("approving the pod of a revoked gateway: %v", err)
+	}
+	waiting = waiting[:len(waiting)-1]
+	shiftReplicaRequest(ctx, t, admin, twinTicket.Request.ID().String(), "-1 hour")
+	setGatewayState("active")
 
 	// Another namespace than the cluster's: refused too.
 	elsewhere := newReplicaKeys(t)

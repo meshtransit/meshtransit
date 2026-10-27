@@ -3053,6 +3053,7 @@
                         "trust",
                         "replicas",
                         "replica_requests",
+                        "replica_requests_truncated",
                         "token_warnings"
                       ],
                       "properties": {
@@ -3130,7 +3131,7 @@
                         "replicas": {
                           "type": "array",
                           "maxItems": 256,
-                          "description": "The cluster's gateway Devices, not deleted, that joined with signing keys",
+                          "description": "The cluster's active gateway Devices that joined with signing keys, each the holder of its pod",
                           "items": {
                             "type": "object",
                             "additionalProperties": false,
@@ -3232,12 +3233,17 @@
                                   "sets_trust",
                                   "matches_trust",
                                   "differs_from_trust",
-                                  "must_join_again"
+                                  "must_join_again",
+                                  "pod_held"
                                 ],
-                                "description": "Approving sets the trust, keeps it, is refused, or cancels a request opened without signing keys (code version 1, whose fields are null)"
+                                "description": "Approving sets the trust, keeps it, is refused for other signing keys, cancels a request opened without signing keys (code version 1, whose fields are null), or is refused because an active replica holds the pod"
                               }
                             }
                           }
+                        },
+                        "replica_requests_truncated": {
+                          "type": "boolean",
+                          "description": "More requests wait than the 64 listed; false for a reader of the Network"
                         },
                         "token_warnings": {
                           "type": [

@@ -140,7 +140,7 @@ func TestKubernetesClusterSigningMatchesTheContract(t *testing.T) {
 	}
 	states := data.Properties["replica_requests"].Items.Properties["trust_state"].Enum
 	for _, state := range []kubecluster.RequestTrustState{kubecluster.RequestSetsTrust, kubecluster.RequestMatchesTrust,
-		kubecluster.RequestDiffersFromTrust, kubecluster.RequestMustJoinAgain} {
+		kubecluster.RequestDiffersFromTrust, kubecluster.RequestMustJoinAgain, kubecluster.RequestPodHeld} {
 		if !slices.Contains(states, string(state)) {
 			t.Errorf("the contract lacks trust state %q", state)
 		}

@@ -364,6 +364,57 @@ func TestLoginServerAnswersRefusedBrowserManagementWith400(t *testing.T) {
 	}
 }
 
+// An API path the listener does not know is answered 404 like the bearer
+// listener's, so a newer Console can tell "this Core has no such route"
+// from a failure; nothing was read, spent or staged.
+func TestLoginServerAnswersUnknownAPIPathWith404(t *testing.T) {
+	t.Parallel()
+	options, fixture, callback := loginServerTestOptions(t)
+	server, client := startLoginTestServer(t, options)
+	network := "/api/v1/workspaces/01890f00-0000-7000-8000-000000000101/networks/" +
+		"01890f00-0000-7000-8000-000000000201"
+	for _, target := range []string{
+		network + "/kubernetes-clusters/01890f00-0000-7000-8000-000000000a01/signing-trust",
+		network + "/no-such-resource",
+		"/api/v2/anything",
+	} {
+		t.Run(target, func(t *testing.T) {
+			request := loginServerTestRequest(t, server, http.MethodGet, target)
+			request.Header.Set("Origin", "https://console.example.test")
+			request.Header.Set("X-MeshTransit-Session", "v1")
+			response, err := client.Do(request)
+			if err != nil {
+				t.Fatal("an unknown API path was aborted instead of answered", err)
+			}
+			body, readErr := io.ReadAll(io.LimitReader(response.Body, 4096))
+			if closeErr := response.Body.Close(); readErr != nil || closeErr != nil {
+				t.Fatal("answer not consumed/closed")
+			}
+			var payload struct {
+				Error struct {
+					Code      string `json:"code"`
+					Retryable bool   `json:"retryable"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(body, &payload); err != nil || payload.Error.Code != "not_found" ||
+				payload.Error.Retryable {
+				t.Fatal("the answer did not say not found", string(body))
+			}
+			correlation := response.Header.Get("X-Correlation-ID")
+			if response.StatusCode != http.StatusNotFound || correlation == "" ||
+				!bytes.Contains(body, []byte(`"correlation_id":"`+correlation+`"`)) ||
+				response.Header.Get("Content-Type") != "application/json" ||
+				response.Header.Get("Cache-Control") != servedNoStore || response.Header.Get("Set-Cookie") != "" ||
+				response.Header.Get("X-Frame-Options") != "DENY" {
+				t.Fatal("the answer crossed its response boundary", response.StatusCode, response.Header, string(body))
+			}
+		})
+	}
+	if len(fixture.calls) != 0 || callback.calls != 0 {
+		t.Fatal("an unknown API path reached dependency effects")
+	}
+}
+
 func TestLoginDispatcherAdmitsOnlyTheDNSZoneDeleteQuery(t *testing.T) {
 	t.Parallel()
 	dispatcher, _, _ := dispatcherTestGraph(t)

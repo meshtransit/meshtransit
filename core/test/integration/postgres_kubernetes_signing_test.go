@@ -95,7 +95,8 @@ WHERE event.target_kind = 'kubernetes_gateway_key_event' AND event.payload ->> '
 	if replica == nil || replica.PodName == "" || replica.LastTokenRotation.IsZero() {
 		t.Fatalf("ReadSigning() replicas = %+v", signing.Replicas)
 	}
-	if signing.Requests == nil || len(signing.Requests) > kubecluster.MaximumSigningRequests {
+	if signing.Requests == nil || len(signing.Requests) > kubecluster.MaximumSigningRequests ||
+		signing.RequestsTruncated {
 		t.Fatalf("ReadSigning() requests = %+v", signing.Requests)
 	}
 	for _, request := range signing.Requests {

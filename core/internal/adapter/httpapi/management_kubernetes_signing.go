@@ -19,6 +19,7 @@ type kubernetesSigningBody struct {
 	Trust     *kubernetesSigningTrustBody `json:"trust"`
 	Replicas  []kubernetesSigningReplica  `json:"replicas"`
 	Requests  *[]kubernetesSigningRequest `json:"replica_requests"`
+	Truncated bool                        `json:"replica_requests_truncated"`
 	Warnings  *kubernetesKeyWarningsBody  `json:"token_warnings"`
 }
 
@@ -61,7 +62,7 @@ func (handler *ManagementHandler) readKubernetesClusterSigning(ctx context.Conte
 		return fail(classifyKubernetesClusterError(err))
 	}
 	body := kubernetesSigningBody{NetworkID: path.scope.NetworkID().String(), ClusterID: path.clusterID.String(),
-		Replicas: make([]kubernetesSigningReplica, 0, len(signing.Replicas))}
+		Replicas: make([]kubernetesSigningReplica, 0, len(signing.Replicas)), Truncated: signing.RequestsTruncated}
 	if trust := signing.Trust; trust != nil {
 		thumbprints := make([]string, 0, len(trust.KeyThumbprints))
 		for _, thumbprint := range trust.KeyThumbprints {
@@ -82,7 +83,7 @@ func (handler *ManagementHandler) readKubernetesClusterSigning(ctx context.Conte
 	if signing.Requests != nil {
 		requests := make([]kubernetesSigningRequest, 0, len(signing.Requests))
 		for _, request := range signing.Requests {
-			requests = append(requests, newKubernetesSigningRequest(request, signing.Trust))
+			requests = append(requests, newKubernetesSigningRequest(request, signing.StateOf(request)))
 		}
 		body.Requests = &requests
 	}
@@ -95,9 +96,9 @@ func (handler *ManagementHandler) readKubernetesClusterSigning(ctx context.Conte
 }
 
 func newKubernetesSigningRequest(request kubecluster.RequestSigning,
-	trust *kubecluster.SigningTrust) kubernetesSigningRequest {
+	state kubecluster.RequestTrustState) kubernetesSigningRequest {
 	listed := kubernetesSigningRequest{RequestID: request.RequestID.String(), CodeVersion: request.CodeVersion,
-		TrustState: string(request.State(trust))}
+		TrustState: string(state)}
 	if request.CodeVersion == 2 {
 		thumbprint := hex.EncodeToString(request.JoinKeyThumbprint[:])
 		listed.Issuer, listed.Namespace, listed.ServiceAccount = &request.Issuer, &request.Namespace,

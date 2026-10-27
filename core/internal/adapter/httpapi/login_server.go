@@ -256,6 +256,13 @@ func (owner *LoginServer) handle(response http.ResponseWriter, request *http.Req
 				return
 			}
 		}
+		// An API path this listener does not serve: 404, as on the bearer
+		// listener, so a Console can tell an older Core from a failure.
+		if errors.Is(err, ErrUnknownBrowserAPIPath) {
+			if _, answered := answerUnknownBrowserAPIPath(response); answered {
+				return
+			}
+		}
 		// Returning would implicitly flush any staged cookies with status 200.
 		// Abort preserves partial-delivery uncertainty and never retries effects.
 		owner.abort(socket)

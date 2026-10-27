@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 233 {
-		t.Fatalf("len(Catalog()) = %d, want 233", len(catalog))
+	if len(catalog) != 234 {
+		t.Fatalf("len(Catalog()) = %d, want 234", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 233 {
-		t.Fatalf("LatestVersion() = %d, want 233", LatestVersion())
+	if LatestVersion() != 234 {
+		t.Fatalf("LatestVersion() = %d, want 234", LatestVersion())
 	}
 }
 
@@ -6824,6 +6824,42 @@ func TestMigration233GatewayTokenAuditAndSigningRead(t *testing.T) {
 	for _, forbidden := range []string{"BYPASSRLS", "DROP FUNCTION", "TEMPORARY", "session_replication_role"} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 233 contains %q", forbidden)
+		}
+	}
+}
+
+func TestMigration234RevokedGatewaysReleaseTheirPods(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[233]
+	if migration.Version != 234 {
+		t.Fatalf("migration 234 = %+v", migration)
+	}
+	for _, want := range []string{
+		// Only an active gateway Device holds its pod, at approval and at
+		// completion.
+		"CREATE OR REPLACE FUNCTION mesh_ops.approve_kubernetes_replica_request_v2(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.complete_kubernetes_replica_request_v1(",
+		"AND other.sa_pod_name = v_before.sa_pod_name AND device.state = 'active' AND device.deleted_at IS NULL)",
+		"AND other.sa_pod_name = v_trusted.sa_pod_name AND device.state = 'active' AND device.deleted_at IS NULL)",
+		// The signing read lists active replicas and says when it cut the
+		// waiting requests.
+		"CREATE OR REPLACE FUNCTION mesh_ops.read_kubernetes_cluster_signing_v1(",
+		"AND device.state = 'active'",
+		"'requests_truncated', v_truncated",
+		"LIMIT 65",
+		"CREATE INDEX kubernetes_replica_request_waiting_idx",
+		"WHERE state IN ('pending', 'approved')",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 234 lacks %q", want)
+		}
+	}
+	if strings.Contains(migration.SQL, "AND other.sa_pod_name = v_before.sa_pod_name AND device.deleted_at IS NULL)") {
+		t.Error("schema 234 keeps a revoked Device holding its pod")
+	}
+	for _, forbidden := range []string{"BYPASSRLS", "DROP FUNCTION", "TEMPORARY", "session_replication_role"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 234 contains %q", forbidden)
 		}
 	}
 }
