@@ -32,8 +32,10 @@ type fakeGateway struct {
 	retired   map[key.MachinePublic]bool
 	probes    []string // machine:node texts probed, in order
 	rotateErr error
-	rotated   []key.MachinePublic
-	podTokens []string // pod tokens the machine key rotations carried
+	// rotateDelay is how long Core takes to answer a machine key rotation.
+	rotateDelay time.Duration
+	rotated     []key.MachinePublic
+	podTokens   []string // pod tokens the machine key rotations carried
 }
 
 func machinePublic(t *testing.T, text []byte) key.MachinePublic {
@@ -79,9 +81,12 @@ func (gateway *fakeGateway) ProbeGateway(_ context.Context, _ string, material c
 	return nil
 }
 
-func (gateway *fakeGateway) RotateMachineKey(_ context.Context, _ string, material controlplane.KeyMaterial,
+func (gateway *fakeGateway) RotateMachineKey(ctx context.Context, _ string, material controlplane.KeyMaterial,
 	_ string, next key.MachinePrivate, podToken controlplane.PodToken,
 ) error {
+	if err := sleepContext(ctx, gateway.rotateDelay); err != nil {
+		return err
+	}
 	gateway.mu.Lock()
 	defer gateway.mu.Unlock()
 	gateway.rotated = append(gateway.rotated, next.Public())
@@ -268,6 +273,28 @@ func TestPrepareGatewayKeysRotates(t *testing.T) {
 	gateway.current[machinePublic(t, after.Material().MachinePrivateKey)] = string(after.Material().NodePrivateKey)
 	if err := service.PrepareGatewayKeys(t.Context()); err != nil || len(gateway.rotated) != 1 {
 		t.Fatalf("a second start within two minutes rotated: %v, %d", err, len(gateway.rotated))
+	}
+}
+
+// A slow answer from Core leaves the whole budget for keeping the keys it
+// committed: the machine key and then the node key both move (TD-CLI-78).
+func TestPrepareGatewayKeysAfterASlowRotation(t *testing.T) {
+	t.Parallel()
+	service, identities, gateway, profileID, now := joinedGateway(t)
+	// Room for each encrypted write, and Core slower than the whole budget.
+	service.rotationPersistWait = 250 * time.Millisecond
+	gateway.rotateDelay = 750 * time.Millisecond
+	before, _ := identities.Get(t.Context(), profileID)
+	if err := service.PrepareGatewayKeys(t.Context()); err != nil {
+		t.Fatalf("PrepareGatewayKeys() = %v", err)
+	}
+	after, _ := identities.Get(t.Context(), profileID)
+	if string(after.Material().MachinePrivateKey) == string(before.Material().MachinePrivateKey) ||
+		len(after.PendingMachinePrivateKeys()) != 0 || !after.LastKeyRotationAt().Equal(*now) {
+		t.Fatal("the machine key Core committed was not kept")
+	}
+	if len(gateway.rotationKeys) != 1 {
+		t.Fatalf("node key rotations %d, want 1", len(gateway.rotationKeys))
 	}
 }
 

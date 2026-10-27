@@ -174,7 +174,7 @@ func (s *Service) JoinCluster(ctx context.Context, joinKey string, reported map[
 // markGatewayJoined records the Device, durably and in one write, before
 // anything else uses it.
 func (s *Service) markGatewayJoined(ctx context.Context, profileID string) error {
-	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rotationPersistTimeout)
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.rotationPersistWait)
 	defer cancel()
 	if _, err := s.identities.CompleteClusterJoin(persistCtx, profileID); err != nil {
 		return fmt.Errorf("recording the joined gateway: %w", err)
@@ -335,7 +335,7 @@ func (s *Service) probeGatewayKeys(ctx context.Context, gateway gatewayProber, p
 func (s *Service) adoptGatewayKeys(ctx context.Context, profileID string, record identity.Record,
 	machine, node, pendingNode []byte,
 ) error {
-	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rotationPersistTimeout)
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.rotationPersistWait)
 	defer cancel()
 	current := record.Material()
 	defer clearIdentityMaterial(current)
@@ -400,9 +400,10 @@ func (s *Service) rotateGatewayKeys(ctx context.Context, gateway gatewayProber, 
 	if err != nil {
 		return controlplane.ErrInvalidMaterial
 	}
-	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rotationPersistTimeout)
-	defer cancel()
-	if record, err = s.identities.StageMachineKeyRotation(persistCtx, profileID, next, now); err != nil {
+	stageCtx, cancelStage := context.WithTimeout(context.WithoutCancel(ctx), s.rotationPersistWait)
+	record, err = s.identities.StageMachineKeyRotation(stageCtx, profileID, next, now)
+	cancelStage()
+	if err != nil {
 		return fmt.Errorf("staging the gateway's machine key: %w", err)
 	}
 	current := record.Material()
@@ -411,6 +412,10 @@ func (s *Service) rotateGatewayKeys(ctx context.Context, gateway gatewayProber, 
 	defer clearProtocolMaterial(material)
 	err = gateway.RotateMachineKey(ctx, controlURL, material, record.ControlKeyFingerprint(), nextMachine,
 		s.gatewayPodToken())
+	// Keeping Core's answer gets its own budget: a slow answer must not
+	// leave a committed key unkept (TD-CLI-78).
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.rotationPersistWait)
+	defer cancel()
 	switch {
 	case errors.Is(err, controlplane.ErrMachineKeyRotationRefused):
 		// Surely not applied: the key is dropped and the gateway goes on.

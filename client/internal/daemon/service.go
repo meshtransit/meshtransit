@@ -398,6 +398,9 @@ type Service struct {
 	// podTokenWarned: a missing pod token was reported this start.
 	podTokenWarned    atomic.Bool
 	gatewayCommitWait time.Duration
+	// rotationPersistWait bounds keeping a gateway's keys on disk, apart
+	// from any wait for Core.
+	rotationPersistWait time.Duration
 	// exitForwarder answers an exit node's consumers' DNS; exitPins are
 	// the exit nodes users approved.
 	exitForwarder *dnsconfig.ExitForwarder
@@ -637,6 +640,7 @@ func New(
 		gateway:              options.Gateway,
 		gatewayTokenFile:     options.GatewayTokenFile,
 		gatewayCommitWait:    gatewayCommitBound,
+		rotationPersistWait:  rotationPersistTimeout,
 		exitForwarder:        exitForwarderFor(options),
 		exitPins:             pins,
 		captive:              captiveRelays,
@@ -2647,7 +2651,7 @@ func (s *Service) rotateNodeKeyLocked(
 	if errors.Is(err, controlplane.ErrNodeKeyRotationRefused) {
 		// Control did not apply it and keeps the current key: drop the staged
 		// key so the Device goes on with the current one instead of waiting.
-		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rotationPersistTimeout)
+		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.rotationPersistWait)
 		defer cancel()
 		if _, abandonErr := s.identities.AbandonNodeKeyRotation(persistCtx, active.ID, pendingNodePrivateKey); abandonErr != nil {
 			// Not ErrNodeKeyRotationRefused: the key stays staged and is retried.
@@ -2662,7 +2666,7 @@ func (s *Service) rotateNodeKeyLocked(
 	}
 	persistCtx, cancel := context.WithTimeout(
 		context.WithoutCancel(ctx),
-		rotationPersistTimeout,
+		s.rotationPersistWait,
 	)
 	defer cancel()
 	if _, err := s.identities.CompleteNodeKeyRotation(
