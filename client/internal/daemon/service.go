@@ -393,7 +393,10 @@ type Service struct {
 	enableExits          bool
 	// gateway: a Kubernetes gateway replica (Options.Gateway);
 	// gatewayCommitWait is Core's commit bound it waits out before probing.
-	gateway           bool
+	gateway          bool
+	gatewayTokenFile string
+	// podTokenWarned: a missing pod token was reported this start.
+	podTokenWarned    atomic.Bool
 	gatewayCommitWait time.Duration
 	// exitForwarder answers an exit node's consumers' DNS; exitPins are
 	// the exit nodes users approved.
@@ -534,6 +537,9 @@ type Options struct {
 	// and its control session stops, for meshgw to restart, when Core no
 	// longer takes its keys (mtcp-v1 §6.6–6.8).
 	Gateway bool
+	// GatewayTokenFile is where a gateway's pod ServiceAccount token is
+	// (K1.1), read again for each key rotation: kubelet replaces it.
+	GatewayTokenFile string
 }
 
 // New creates a daemon service from explicit dependencies.
@@ -629,6 +635,7 @@ func New(
 		enableExitNode:       options.EnableExitNode,
 		enableExits:          options.EnableExits,
 		gateway:              options.Gateway,
+		gatewayTokenFile:     options.GatewayTokenFile,
 		gatewayCommitWait:    gatewayCommitBound,
 		exitForwarder:        exitForwarderFor(options),
 		exitPins:             pins,
@@ -2634,6 +2641,7 @@ func (s *Service) rotateNodeKeyLocked(
 			Hostname:          s.hostname,
 			Version:           s.product() + "/" + s.build.Version,
 			PinnedFingerprint: record.ControlKeyFingerprint(),
+			GatewayToken:      s.gatewayPodToken(),
 		},
 	)
 	if errors.Is(err, controlplane.ErrNodeKeyRotationRefused) {

@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"slices"
+	"strings"
 	"time"
 
 	"meshtransit.net/client/internal/controlplane"
@@ -49,7 +52,8 @@ var (
 // gatewayProber is what a gateway's control client adds (mtcpclient.NewGateway).
 type gatewayProber interface {
 	ProbeGateway(context.Context, string, controlplane.KeyMaterial, string) error
-	RotateMachineKey(context.Context, string, controlplane.KeyMaterial, string, key.MachinePrivate) error
+	RotateMachineKey(context.Context, string, controlplane.KeyMaterial, string, key.MachinePrivate,
+		controlplane.PodToken) error
 }
 
 // ClusterJoinState is where a gateway's cluster join stands.
@@ -59,7 +63,20 @@ type ClusterJoinState string
 const (
 	ClusterJoinWaiting ClusterJoinState = "waiting"
 	ClusterJoinJoined  ClusterJoinState = "joined"
+	// ClusterJoinConflict: the keys hold a request with other signing
+	// material; Code is this replica's own code for it, which differs from
+	// the request's, so an administrator rejects it (K1.1).
+	ClusterJoinConflict ClusterJoinState = "conflict"
 )
+
+// PodIdentity is what a K1 gateway replica proves itself with (K1.1): its
+// pod's ServiceAccount token, and its cluster's issuer and keys as the API
+// server serves them.
+type PodIdentity struct {
+	Token  controlplane.PodToken
+	Issuer string
+	JWKS   []byte
+}
 
 // ClusterJoin is a cluster join's answer: while it waits, the code an
 // administrator types and until when this request waits.
@@ -74,7 +91,7 @@ type ClusterJoin struct {
 // same keys; it waits up to wait on the session for the approval. The key
 // is used for this request only, never stored.
 func (s *Service) JoinCluster(ctx context.Context, joinKey string, reported map[string]string,
-	wait time.Duration,
+	wait time.Duration, pod PodIdentity,
 ) (ClusterJoin, error) {
 	gateway, err := s.gatewayClient()
 	if err != nil {
@@ -109,8 +126,11 @@ func (s *Service) JoinCluster(ctx context.Context, joinKey string, reported map[
 	result, err := s.prober.Register(ctx, active.ControlURL, material, controlplane.RegisterOptions{
 		Hostname: s.hostname, Version: s.product() + "/" + s.build.Version,
 		PinnedFingerprint: record.ControlKeyFingerprint(),
-		ClusterJoin:       &controlplane.ClusterJoin{JoinKey: joinKey, Reported: reported},
-		JoinWait:          wait,
+		ClusterJoin: &controlplane.ClusterJoin{
+			JoinKey: joinKey, Reported: reported, PodToken: pod.Token,
+			Issuer: pod.Issuer, JWKS: pod.JWKS,
+		},
+		JoinWait: wait,
 	})
 	if errors.Is(err, controlplane.ErrGatewayProofRequired) {
 		// The join completed but its answer was lost: the keys now are a
@@ -119,6 +139,13 @@ func (s *Service) JoinCluster(ctx context.Context, joinKey string, reported map[
 		if err == nil {
 			result.State = controlplane.RegistrationStateAuthorized
 		}
+	}
+	if rejected, ok := errors.AsType[*controlplane.RejectedError](err); ok && rejected.Approval != nil {
+		code, codeErr := joinCode(material, rejected.Approval, pod)
+		if codeErr != nil {
+			return ClusterJoin{}, codeErr
+		}
+		return ClusterJoin{State: ClusterJoinConflict, Code: code, RequestID: rejected.Approval.RequestID}, nil
 	}
 	if err != nil {
 		return ClusterJoin{}, err
@@ -131,7 +158,7 @@ func (s *Service) JoinCluster(ctx context.Context, joinKey string, reported map[
 		s.signalControlSync()
 		return ClusterJoin{State: ClusterJoinJoined}, nil
 	case controlplane.RegistrationStateAdminApprovalRequired:
-		code, err := joinCode(material, result.Approval)
+		code, err := joinCode(material, result.Approval, pod)
 		if err != nil {
 			return ClusterJoin{}, err
 		}
@@ -155,20 +182,27 @@ func (s *Service) markGatewayJoined(ctx context.Context, profileID string) error
 	return nil
 }
 
-// joinCode is the code an administrator types: it binds this replica's own
-// keys and what Core chose (shared/kubejoin).
-func joinCode(material controlplane.KeyMaterial, approval *controlplane.AdminApproval) (string, error) {
+// joinCode is the code an administrator types: the code v2 binds this
+// replica's own keys, what Core chose, and the signing material it sent
+// (shared/kubejoin): the names in its own token, never what Core answers.
+func joinCode(material controlplane.KeyMaterial, approval *controlplane.AdminApproval, pod PodIdentity) (string,
+	error,
+) {
 	if approval == nil {
 		return "", fmt.Errorf("%w: no admin approval", controlplane.ErrRegistration)
+	}
+	digest, err := podTrustDigest(pod)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", controlplane.ErrRegistration, err)
 	}
 	machine, node, err := publicKeys(material)
 	if err != nil {
 		return "", err
 	}
-	code, err := kubejoin.Compute(kubejoin.Inputs{
+	code, err := kubejoin.ComputeV2(kubejoin.Inputs{
 		MachineKey: machine, NodeKey: node,
 		ClusterID: approval.ClusterID, RequestNonce: approval.RequestNonce,
-	})
+	}, digest)
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", controlplane.ErrRegistration, err)
 	}
@@ -375,7 +409,8 @@ func (s *Service) rotateGatewayKeys(ctx context.Context, gateway gatewayProber, 
 	material := toProtocolMaterial(current)
 	clearIdentityMaterial(current)
 	defer clearProtocolMaterial(material)
-	err = gateway.RotateMachineKey(ctx, controlURL, material, record.ControlKeyFingerprint(), nextMachine)
+	err = gateway.RotateMachineKey(ctx, controlURL, material, record.ControlKeyFingerprint(), nextMachine,
+		s.gatewayPodToken())
 	switch {
 	case errors.Is(err, controlplane.ErrMachineKeyRotationRefused):
 		// Surely not applied: the key is dropped and the gateway goes on.
@@ -436,4 +471,64 @@ func (s *Service) rotationSettled(record identity.Record) bool {
 	last := record.LastKeyRotationAt()
 	now := s.clock()
 	return last.IsZero() || (!last.After(now) && now.Sub(last) >= gatewayRotationInterval)
+}
+
+// podTrustDigest digests what the replica sends with its join: the issuer,
+// its keys and the namespace, ServiceAccount and pod its token names.
+func podTrustDigest(pod PodIdentity) ([32]byte, error) {
+	jwks, err := kubejoin.ParseJWKS(pod.JWKS)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	namespace, account, name, err := kubejoin.TokenPod(pod.Token.Reveal())
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return kubejoin.TrustDigest(kubejoin.Trust{
+		Issuer: pod.Issuer, JWKS: jwks, Namespace: namespace,
+		ServiceAccount: account, PodName: name,
+	})
+}
+
+// gatewayPodToken reads the gateway's pod token for a key rotation, again
+// each time; none (no file, or not a gateway) sends none, and Core refuses
+// the rotation, which the gateway survives (K1.1 design §7.1). A missing
+// token is reported once per start.
+func (s *Service) gatewayPodToken() controlplane.PodToken {
+	if !s.gateway || s.gatewayTokenFile == "" {
+		return ""
+	}
+	token, err := ReadPodToken(s.gatewayTokenFile)
+	if err != nil {
+		if !s.podTokenWarned.Swap(true) {
+			s.logControlSessionFailure("gateway pod token unreadable", err)
+		}
+		return ""
+	}
+	return token
+}
+
+// MaxPodTokenSize bounds a pod token file: Core takes tokens of 8 KiB.
+const MaxPodTokenSize = 8 << 10
+
+// ReadPodToken reads a projected pod token, bounded; an empty or oversized
+// file is an error, never sent.
+func ReadPodToken(path string) (controlplane.PodToken, error) {
+	file, err := os.Open(path) //nolint:gosec // G304: the configured projected token
+	if err != nil {
+		return "", fmt.Errorf("reading the pod token: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(file, MaxPodTokenSize+2))
+	if err != nil {
+		return "", fmt.Errorf("reading the pod token: %w", err)
+	}
+	token := strings.TrimSpace(string(raw))
+	switch {
+	case token == "":
+		return "", errors.New("the pod token file is empty")
+	case len(token) > MaxPodTokenSize:
+		return "", errors.New("the pod token is over 8 KiB")
+	}
+	return controlplane.PodToken(token), nil
 }

@@ -381,8 +381,10 @@ func TestCheckStrictJSON(t *testing.T) {
 			t.Errorf("CheckStrictJSON(%s) error = %v", raw, err)
 		}
 	}
-	for _, raw := range []string{``, `{`, `{"a":1,"a":2}`, `{"a":{"b":1,"b":1}}`, `[{"a":1,"a":1}]`, `{} {}`,
-		`{"a":1}x`} {
+	for _, raw := range []string{
+		``, `{`, `{"a":1,"a":2}`, `{"a":{"b":1,"b":1}}`, `[{"a":1,"a":1}]`, `{} {}`,
+		`{"a":1}x`,
+	} {
 		if err := CheckStrictJSON([]byte(raw)); !errors.Is(err, ErrInvalidJSON) {
 			t.Errorf("CheckStrictJSON(%s) error = %v, want ErrInvalidJSON", raw, err)
 		}
@@ -529,4 +531,30 @@ func FuzzCheckStrictJSON(f *testing.F) {
 			t.Fatalf("error = %v", err)
 		}
 	})
+}
+
+// TokenPod reads, without verifying, the identity a pod's own token names:
+// the replica computes its code from what it sends.
+func TestTokenPod(t *testing.T) {
+	t.Parallel()
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"system:serviceaccount:mt-kube-k1:meshgw",` +
+		`"kubernetes.io":{"namespace":"mt-kube-k1","pod":{"name":"meshgw-2","uid":"u"},` +
+		`"serviceaccount":{"name":"meshgw","uid":"s"}}}`))
+	namespace, account, pod, err := TokenPod("eyJhbGciOiJFUzI1NiJ9." + payload + ".c2ln")
+	if err != nil || namespace != "mt-kube-k1" || account != "meshgw" || pod != "meshgw-2" {
+		t.Fatalf("TokenPod() = %q, %q, %q, %v", namespace, account, pod, err)
+	}
+	for name, token := range map[string]string{
+		"empty":          "",
+		"two segments":   "a." + payload,
+		"not base64":     "a.!!.c",
+		"not JSON":       "a." + base64.RawURLEncoding.EncodeToString([]byte("x")) + ".c",
+		"no pod":         "a." + base64.RawURLEncoding.EncodeToString([]byte(`{"kubernetes.io":{"namespace":"n"}}`)) + ".c",
+		"not pod-bound":  "a." + base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"system:serviceaccount:n:s"}`)) + ".c",
+		"duplicate name": "a." + base64.RawURLEncoding.EncodeToString([]byte(`{"kubernetes.io":{},"kubernetes.io":{}}`)) + ".c",
+	} {
+		if _, _, _, err := TokenPod(token); !errors.Is(err, ErrInvalidTrust) {
+			t.Errorf("%s: TokenPod() error = %v, want ErrInvalidTrust", name, err)
+		}
+	}
 }

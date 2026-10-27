@@ -2638,6 +2638,7 @@ type fakeControl struct {
 	streamStarted     chan struct{}
 	streamError       error
 	echoPeerProbeKey  bool
+	rotationTokens    []string // gateway pod tokens the node key rotations carried
 }
 
 type fakeDataPlane struct {
@@ -2823,10 +2824,11 @@ func (f *fakeControl) RotateNodeKey(
 	_ string,
 	material controlplane.KeyMaterial,
 	newNodePrivateKey []byte,
-	_ controlplane.RegisterOptions,
+	options controlplane.RegisterOptions,
 ) (controlplane.RegistrationResult, error) {
 	f.mu.Lock()
 	f.rotationKeys = append(f.rotationKeys, append([]byte(nil), newNodePrivateKey...))
+	f.rotationTokens = append(f.rotationTokens, options.GatewayToken.Reveal())
 	f.rotationMaterials = append(f.rotationMaterials, controlplane.KeyMaterial{
 		MachinePrivateKey: append([]byte(nil), material.MachinePrivateKey...),
 		NodePrivateKey:    append([]byte(nil), material.NodePrivateKey...),

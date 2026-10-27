@@ -411,10 +411,28 @@ session's machine key and node key, which holds no Device, and answers
 32-byte nonce Core chose) and no `approval_url`. The node prints the code
 
 ```
-digest = SHA-256("meshtransit/kube-join-code/v1" || 0x00 || machine_key(32)
-                 || node_key(32) || cluster_id(16) || request_nonce(32))
+trust  = SHA-256("meshtransit/kube-sa-trust/v1" || 0x00 || u16 issuer || u32 jwks
+                 || u16 namespace || u16 service_account || u16 pod)
+digest = SHA-256("meshtransit/kube-join-code/v2" || 0x00 || machine_key(32)
+                 || node_key(32) || cluster_id(16) || request_nonce(32) || trust(32))
 code   = the first 50 bits of digest, RFC 4648 base32 upper case: "XXXXX-XXXXX"
 ```
+
+Each length is big-endian before its bytes; `jwks` is the canonical form of
+the cluster's keys (`kube-sa-trust/v1`: public members only, sorted by
+`kid`, members in lexicographic order, no whitespace, no HTML escaping).
+Since K1.1 the join also carries the pod's identity:
+`service_account_token` (the pod's projected ServiceAccount token, audience
+`meshtransit.net/kubernetes-gateway`; never logged),
+`service_account_issuer` and `service_account_jwks` (as the cluster's API
+server serves them). Core verifies the token against those keys and takes
+the namespace, ServiceAccount and pod from it; the node takes them from its
+own token's payload. A join without a valid token or keys is
+`rejected{INVALID}`; a cluster whose issuer is not cluster-local (`*.svc`,
+`*.cluster.local`) is `rejected{NOT_PERMITTED}` until administrators can
+replace a cluster's keys. When the keys hold a request with other signing
+material, Core answers `rejected{CONFLICT}` with that request's
+`admin_approval`, and the node prints its own code for it, which differs.
 
 (`shared/kubejoin`), and an administrator approves the request by typing
 the code read from the replica's log. Core and its database each compute the
@@ -514,6 +532,16 @@ proof = BLAKE2s-256(key = X25519(new_machine_key, control_key),
                     "meshtransit/mtcp-machine-key-rotation/v1" || 0x00 || h || new_machine_key)
 ```
 
+Since K1.1 both rotations of a gateway (this one and 6.3) carry
+`service_account_token`, the pod's token, read again for each rotation.
+Core verifies it after the request's own proofs (and, for a node key, after
+finding that a repeated rotation already committed, which needs no token)
+and before the presence check below, against the cluster's signing trust
+(set when the cluster's first replica was approved) and the pod the
+Device's join named, and records one use of it per key it replaces, in the
+rotation's transaction; without one, or with a token used for that key
+already, the rotation is refused with `Error{NOT_PERMITTED}`, not fatal.
+
 Core checks the proof, moves the Device to the new key in one transaction
 (the former key's epoch expires and stays in a history; no Device or gateway
 ever uses a key again; its handshake timestamp is forgotten), records
@@ -533,16 +561,19 @@ proof; `NOT_PERMITTED` on any session that is not a gateway's. A gateway
 also rotates its node key (6.3) at every start, at most 30 times an hour.
 
 A gateway session rotates its machine key or its node key only while its own
-map stream holds the gateway's presence on every Core replica, and the key is
-not contested. Every gateway session opened with a Ping streams, so a
+map stream holds the gateway's presence on every Core replica. Since K1.1 a
+contested key no longer refuses the rotation: only the pod has the token,
+so its rotation retires the keys of a copy that fought it. Every gateway session opened with a Ping streams, so a
 rotation sent right after the Ping waits, at most 5 seconds, for the stream
 to claim the presence. Core refuses a rotation with `Error{NOT_PERMITTED}`,
 not fatal and without `retry_after_ms`, so the node drops the staged key,
 keeps the session and starts at once. It refuses when:
 
+- **No valid pod token** (K1.1), checked first.
 - **No presence.** The stream has not claimed the presence, another stream
   holds it, or Core cannot tell (Redis failed).
-- **Contested.** The machine key is contested:
+- **Contested** (before K1.1 only; since K1.1 counted, not refused). The
+  machine key is contested:
   - **Pushed out on the same replica.** A gateway session pushed out a live
     session of the same machine key on the same replica, within 10 minutes
     (handshake result `gateway_replaced`).

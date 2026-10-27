@@ -34,6 +34,9 @@ func assertRedisGatewayPresence(ctx context.Context, t *testing.T, client *redis
 	second := gatewayPresenceLease(t, nodeID, 2, "control-b", machine)
 	assertGatewayAcquire(ctx, t, client, second, window, true, false)
 	assertGatewayRotation(ctx, t, client, second, mapsession.GatewayRotationContested)
+	// K1.1: the lease is checked before the contest, so a stream that lost
+	// it is not held, contest or not (Core lets a held contest rotate).
+	assertGatewayRotation(ctx, t, client, first, mapsession.GatewayRotationNotHeld)
 	assertGatewayRenew(ctx, t, client, first, false)
 	assertGatewayRenew(ctx, t, client, second, true)
 	assertGatewayRelease(ctx, t, client, first, false)

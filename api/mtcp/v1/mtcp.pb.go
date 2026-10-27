@@ -1916,13 +1916,14 @@ func (*RegisterResponse_Pending_) isRegisterResponse_Outcome() {}
 func (*RegisterResponse_Rejected_) isRegisterResponse_Outcome() {}
 
 type RotateNodeKey struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	NewNodeKey    []byte                 `protobuf:"bytes,1,opt,name=new_node_key,json=newNodeKey,proto3" json:"new_node_key,omitempty"`
-	NewDiscoKey   []byte                 `protobuf:"bytes,2,opt,name=new_disco_key,json=newDiscoKey,proto3" json:"new_disco_key,omitempty"`
-	NodeKeyProof  []byte                 `protobuf:"bytes,3,opt,name=node_key_proof,json=nodeKeyProof,proto3" json:"node_key_proof,omitempty"`
-	DiscoKeyProof []byte                 `protobuf:"bytes,4,opt,name=disco_key_proof,json=discoKeyProof,proto3" json:"disco_key_proof,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	NewNodeKey          []byte                 `protobuf:"bytes,1,opt,name=new_node_key,json=newNodeKey,proto3" json:"new_node_key,omitempty"`
+	NewDiscoKey         []byte                 `protobuf:"bytes,2,opt,name=new_disco_key,json=newDiscoKey,proto3" json:"new_disco_key,omitempty"`
+	NodeKeyProof        []byte                 `protobuf:"bytes,3,opt,name=node_key_proof,json=nodeKeyProof,proto3" json:"node_key_proof,omitempty"`
+	DiscoKeyProof       []byte                 `protobuf:"bytes,4,opt,name=disco_key_proof,json=discoKeyProof,proto3" json:"disco_key_proof,omitempty"`
+	ServiceAccountToken string                 `protobuf:"bytes,5,opt,name=service_account_token,json=serviceAccountToken,proto3" json:"service_account_token,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *RotateNodeKey) Reset() {
@@ -1981,6 +1982,13 @@ func (x *RotateNodeKey) GetDiscoKeyProof() []byte {
 		return x.DiscoKeyProof
 	}
 	return nil
+}
+
+func (x *RotateNodeKey) GetServiceAccountToken() string {
+	if x != nil {
+		return x.ServiceAccountToken
+	}
+	return ""
 }
 
 type RotateNodeKeyResponse struct {
@@ -2116,11 +2124,12 @@ func (x *NodeKeyProof) GetProof() []byte {
 }
 
 type RotateMachineKey struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	NewMachineKey []byte                 `protobuf:"bytes,1,opt,name=new_machine_key,json=newMachineKey,proto3" json:"new_machine_key,omitempty"`
-	Proof         []byte                 `protobuf:"bytes,2,opt,name=proof,proto3" json:"proof,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	NewMachineKey       []byte                 `protobuf:"bytes,1,opt,name=new_machine_key,json=newMachineKey,proto3" json:"new_machine_key,omitempty"`
+	Proof               []byte                 `protobuf:"bytes,2,opt,name=proof,proto3" json:"proof,omitempty"`
+	ServiceAccountToken string                 `protobuf:"bytes,3,opt,name=service_account_token,json=serviceAccountToken,proto3" json:"service_account_token,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *RotateMachineKey) Reset() {
@@ -2165,6 +2174,13 @@ func (x *RotateMachineKey) GetProof() []byte {
 		return x.Proof
 	}
 	return nil
+}
+
+func (x *RotateMachineKey) GetServiceAccountToken() string {
+	if x != nil {
+		return x.ServiceAccountToken
+	}
+	return ""
 }
 
 type RotateMachineKeyResponse struct {
@@ -6078,11 +6094,14 @@ func (*RegisterRequest_Auth_Resume) isRegisterRequest_Auth_Method() {}
 func (*RegisterRequest_Auth_ClusterJoin) isRegisterRequest_Auth_Method() {}
 
 type RegisterRequest_ClusterJoin struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	JoinKey       string                 `protobuf:"bytes,1,opt,name=join_key,json=joinKey,proto3" json:"join_key,omitempty"`
-	Reported      []byte                 `protobuf:"bytes,2,opt,name=reported,proto3" json:"reported,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	JoinKey              string                 `protobuf:"bytes,1,opt,name=join_key,json=joinKey,proto3" json:"join_key,omitempty"`
+	Reported             []byte                 `protobuf:"bytes,2,opt,name=reported,proto3" json:"reported,omitempty"`
+	ServiceAccountToken  string                 `protobuf:"bytes,3,opt,name=service_account_token,json=serviceAccountToken,proto3" json:"service_account_token,omitempty"`
+	ServiceAccountIssuer string                 `protobuf:"bytes,4,opt,name=service_account_issuer,json=serviceAccountIssuer,proto3" json:"service_account_issuer,omitempty"`
+	ServiceAccountJwks   []byte                 `protobuf:"bytes,5,opt,name=service_account_jwks,json=serviceAccountJwks,proto3" json:"service_account_jwks,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *RegisterRequest_ClusterJoin) Reset() {
@@ -6125,6 +6144,27 @@ func (x *RegisterRequest_ClusterJoin) GetJoinKey() string {
 func (x *RegisterRequest_ClusterJoin) GetReported() []byte {
 	if x != nil {
 		return x.Reported
+	}
+	return nil
+}
+
+func (x *RegisterRequest_ClusterJoin) GetServiceAccountToken() string {
+	if x != nil {
+		return x.ServiceAccountToken
+	}
+	return ""
+}
+
+func (x *RegisterRequest_ClusterJoin) GetServiceAccountIssuer() string {
+	if x != nil {
+		return x.ServiceAccountIssuer
+	}
+	return ""
+}
+
+func (x *RegisterRequest_ClusterJoin) GetServiceAccountJwks() []byte {
+	if x != nil {
+		return x.ServiceAccountJwks
 	}
 	return nil
 }
@@ -6406,9 +6446,10 @@ func (x *RegisterResponse_AdminApproval) GetRequestNonce() []byte {
 }
 
 type RegisterResponse_Rejected struct {
-	state         protoimpl.MessageState         `protogen:"open.v1"`
-	Code          RegisterResponse_Rejected_Code `protobuf:"varint,1,opt,name=code,proto3,enum=meshtransit.mtcp.v1.RegisterResponse_Rejected_Code" json:"code,omitempty"`
-	Message       string                         `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	state         protoimpl.MessageState          `protogen:"open.v1"`
+	Code          RegisterResponse_Rejected_Code  `protobuf:"varint,1,opt,name=code,proto3,enum=meshtransit.mtcp.v1.RegisterResponse_Rejected_Code" json:"code,omitempty"`
+	Message       string                          `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	AdminApproval *RegisterResponse_AdminApproval `protobuf:"bytes,3,opt,name=admin_approval,json=adminApproval,proto3" json:"admin_approval,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6455,6 +6496,13 @@ func (x *RegisterResponse_Rejected) GetMessage() string {
 		return x.Message
 	}
 	return ""
+}
+
+func (x *RegisterResponse_Rejected) GetAdminApproval() *RegisterResponse_AdminApproval {
+	if x != nil {
+		return x.AdminApproval
+	}
+	return nil
 }
 
 type HealthReport_Component struct {
@@ -6934,7 +6982,7 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\x04Ping\x12\x14\n" +
 	"\x05nonce\x18\x01 \x01(\fR\x05nonce\"\x1c\n" +
 	"\x04Pong\x12\x14\n" +
-	"\x05nonce\x18\x01 \x01(\fR\x05nonce\"\xc5\x05\n" +
+	"\x05nonce\x18\x01 \x01(\fR\x05nonce\"\xe7\x06\n" +
 	"\x0fRegisterRequest\x12\x19\n" +
 	"\bnode_key\x18\x01 \x01(\fR\anodeKey\x12\x1b\n" +
 	"\tdisco_key\x18\x02 \x01(\fR\bdiscoKey\x129\n" +
@@ -6947,13 +6995,16 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\vinteractive\x18\x02 \x01(\v20.meshtransit.mtcp.v1.RegisterRequest.InteractiveH\x00R\vinteractive\x12E\n" +
 	"\x06resume\x18\x03 \x01(\v2+.meshtransit.mtcp.v1.RegisterRequest.ResumeH\x00R\x06resume\x12U\n" +
 	"\fcluster_join\x18\x04 \x01(\v20.meshtransit.mtcp.v1.RegisterRequest.ClusterJoinH\x00R\vclusterJoinB\b\n" +
-	"\x06method\x1aD\n" +
+	"\x06method\x1a\xe5\x01\n" +
 	"\vClusterJoin\x12\x19\n" +
 	"\bjoin_key\x18\x01 \x01(\tR\ajoinKey\x12\x1a\n" +
-	"\breported\x18\x02 \x01(\fR\breported\x1a2\n" +
+	"\breported\x18\x02 \x01(\fR\breported\x127\n" +
+	"\x15service_account_token\x18\x03 \x01(\tB\x03\x80\x01\x01R\x13serviceAccountToken\x124\n" +
+	"\x16service_account_issuer\x18\x04 \x01(\tR\x14serviceAccountIssuer\x120\n" +
+	"\x14service_account_jwks\x18\x05 \x01(\fR\x12serviceAccountJwks\x1a2\n" +
 	"\vInteractive\x12#\n" +
 	"\rresume_handle\x18\x01 \x01(\tR\fresumeHandle\x1a\b\n" +
-	"\x06Resume\"\xd6\a\n" +
+	"\x06Resume\"\xb2\b\n" +
 	"\x10RegisterResponse\x12R\n" +
 	"\n" +
 	"authorized\x18\x01 \x01(\v20.meshtransit.mtcp.v1.RegisterResponse.AuthorizedH\x00R\n" +
@@ -6978,10 +7029,11 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"cluster_id\x18\x01 \x01(\tR\tclusterId\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x02 \x01(\tR\trequestId\x12#\n" +
-	"\rrequest_nonce\x18\x03 \x01(\fR\frequestNonce\x1a\xf9\x01\n" +
+	"\rrequest_nonce\x18\x03 \x01(\fR\frequestNonce\x1a\xd5\x02\n" +
 	"\bRejected\x12G\n" +
 	"\x04code\x18\x01 \x01(\x0e23.meshtransit.mtcp.v1.RegisterResponse.Rejected.CodeR\x04code\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\x89\x01\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12Z\n" +
+	"\x0eadmin_approval\x18\x03 \x01(\v23.meshtransit.mtcp.v1.RegisterResponse.AdminApprovalR\radminApproval\"\x89\x01\n" +
 	"\x04Code\x12\x14\n" +
 	"\x10CODE_UNSPECIFIED\x10\x00\x12\v\n" +
 	"\aINVALID\x10\x01\x12\x16\n" +
@@ -6990,22 +7042,24 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\rNOT_PERMITTED\x10\x04\x12\f\n" +
 	"\bCONFLICT\x10\x05\x12\v\n" +
 	"\aEXPIRED\x10\x06B\t\n" +
-	"\aoutcome\"\xa3\x01\n" +
+	"\aoutcome\"\xdc\x01\n" +
 	"\rRotateNodeKey\x12 \n" +
 	"\fnew_node_key\x18\x01 \x01(\fR\n" +
 	"newNodeKey\x12\"\n" +
 	"\rnew_disco_key\x18\x02 \x01(\fR\vnewDiscoKey\x12$\n" +
 	"\x0enode_key_proof\x18\x03 \x01(\fR\fnodeKeyProof\x12&\n" +
-	"\x0fdisco_key_proof\x18\x04 \x01(\fR\rdiscoKeyProof\"V\n" +
+	"\x0fdisco_key_proof\x18\x04 \x01(\fR\rdiscoKeyProof\x127\n" +
+	"\x15service_account_token\x18\x05 \x01(\tB\x03\x80\x01\x01R\x13serviceAccountToken\"V\n" +
 	"\x15RotateNodeKeyResponse\x12\x19\n" +
 	"\bnode_key\x18\x01 \x01(\fR\anodeKey\x12\"\n" +
 	"\rkey_expiry_ms\x18\x02 \x01(\x03R\vkeyExpiryMs\"\b\n" +
 	"\x06Logout\"$\n" +
 	"\fNodeKeyProof\x12\x14\n" +
-	"\x05proof\x18\x01 \x01(\fR\x05proof\"P\n" +
+	"\x05proof\x18\x01 \x01(\fR\x05proof\"\x89\x01\n" +
 	"\x10RotateMachineKey\x12&\n" +
 	"\x0fnew_machine_key\x18\x01 \x01(\fR\rnewMachineKey\x12\x14\n" +
-	"\x05proof\x18\x02 \x01(\fR\x05proof\"\x1a\n" +
+	"\x05proof\x18\x02 \x01(\fR\x05proof\x127\n" +
+	"\x15service_account_token\x18\x03 \x01(\tB\x03\x80\x01\x01R\x13serviceAccountToken\"\x1a\n" +
 	"\x18RotateMachineKeyResponse\".\n" +
 	"\x04View\x12\x14\n" +
 	"\x05epoch\x18\x01 \x01(\x04R\x05epoch\x12\x10\n" +
@@ -7725,18 +7779,19 @@ var file_mtcp_v1_mtcp_proto_depIdxs = []int32{
 	93,  // 97: meshtransit.mtcp.v1.RegisterRequest.Auth.cluster_join:type_name -> meshtransit.mtcp.v1.RegisterRequest.ClusterJoin
 	98,  // 98: meshtransit.mtcp.v1.RegisterResponse.Pending.admin_approval:type_name -> meshtransit.mtcp.v1.RegisterResponse.AdminApproval
 	2,   // 99: meshtransit.mtcp.v1.RegisterResponse.Rejected.code:type_name -> meshtransit.mtcp.v1.RegisterResponse.Rejected.Code
-	12,  // 100: meshtransit.mtcp.v1.HealthReport.Component.name:type_name -> meshtransit.mtcp.v1.HealthReport.Component.Name
-	13,  // 101: meshtransit.mtcp.v1.HealthReport.Component.state:type_name -> meshtransit.mtcp.v1.HealthReport.Component.State
-	14,  // 102: meshtransit.mtcp.v1.RouteHealthReport.ExitHealth.state:type_name -> meshtransit.mtcp.v1.RouteHealthReport.SiteHealth.State
-	8,   // 103: meshtransit.mtcp.v1.RouteHealthReport.ExitHealth.families:type_name -> meshtransit.mtcp.v1.ExitCandidate.Families
-	14,  // 104: meshtransit.mtcp.v1.RouteHealthReport.SiteHealth.state:type_name -> meshtransit.mtcp.v1.RouteHealthReport.SiteHealth.State
-	15,  // 105: meshtransit.mtcp.v1.RouteSelectionReport.ExitSelection.reason:type_name -> meshtransit.mtcp.v1.RouteSelectionReport.ExitSelection.Reason
-	16,  // 106: meshtransit.mtcp.v1.RouteSelectionReport.SiteSelection.reason:type_name -> meshtransit.mtcp.v1.RouteSelectionReport.SiteSelection.Reason
-	107, // [107:107] is the sub-list for method output_type
-	107, // [107:107] is the sub-list for method input_type
-	107, // [107:107] is the sub-list for extension type_name
-	107, // [107:107] is the sub-list for extension extendee
-	0,   // [0:107] is the sub-list for field type_name
+	98,  // 100: meshtransit.mtcp.v1.RegisterResponse.Rejected.admin_approval:type_name -> meshtransit.mtcp.v1.RegisterResponse.AdminApproval
+	12,  // 101: meshtransit.mtcp.v1.HealthReport.Component.name:type_name -> meshtransit.mtcp.v1.HealthReport.Component.Name
+	13,  // 102: meshtransit.mtcp.v1.HealthReport.Component.state:type_name -> meshtransit.mtcp.v1.HealthReport.Component.State
+	14,  // 103: meshtransit.mtcp.v1.RouteHealthReport.ExitHealth.state:type_name -> meshtransit.mtcp.v1.RouteHealthReport.SiteHealth.State
+	8,   // 104: meshtransit.mtcp.v1.RouteHealthReport.ExitHealth.families:type_name -> meshtransit.mtcp.v1.ExitCandidate.Families
+	14,  // 105: meshtransit.mtcp.v1.RouteHealthReport.SiteHealth.state:type_name -> meshtransit.mtcp.v1.RouteHealthReport.SiteHealth.State
+	15,  // 106: meshtransit.mtcp.v1.RouteSelectionReport.ExitSelection.reason:type_name -> meshtransit.mtcp.v1.RouteSelectionReport.ExitSelection.Reason
+	16,  // 107: meshtransit.mtcp.v1.RouteSelectionReport.SiteSelection.reason:type_name -> meshtransit.mtcp.v1.RouteSelectionReport.SiteSelection.Reason
+	108, // [108:108] is the sub-list for method output_type
+	108, // [108:108] is the sub-list for method input_type
+	108, // [108:108] is the sub-list for extension type_name
+	108, // [108:108] is the sub-list for extension extendee
+	0,   // [0:108] is the sub-list for field type_name
 }
 
 func init() { file_mtcp_v1_mtcp_proto_init() }

@@ -166,10 +166,15 @@ end
 redis.call('HSET', KEYS[1], 'handoff', '1')
 return {1}
 `)
-	// checkGatewayRotationScript answers {1} when the lease is exactly this
-	// generation, replica and holder's and the machine key is not
-	// contested, {2} when it is contested, {3} when the lease is not held.
+	// checkGatewayRotationScript answers {3} when the lease is not exactly
+	// this generation, replica and holder's, else {2} when the machine key
+	// is contested, else {1}. The lease is checked first (K1.1 design
+	// §7.4): a rotation with a verified pod token needs only to hold it.
 	checkGatewayRotationScript = redisclient.NewScript(`
+if redis.call('HGET', KEYS[1], 'generation') ~= ARGV[1] or redis.call('HGET', KEYS[1], 'replica') ~= ARGV[2] or
+    redis.call('HGET', KEYS[1], 'holder') ~= ARGV[3] or ARGV[3] == '' then
+    return {3}
+end
 local clock = redis.call('TIME')
 local now = tonumber(clock[1]) * 1000 + math.floor(tonumber(clock[2]) / 1000)
 local contest_until = redis.call('HGET', KEYS[2], 'until')
@@ -178,10 +183,6 @@ if contest_until ~= false then
     if until_ms == nil or until_ms > now then
         return {2}
     end
-end
-if redis.call('HGET', KEYS[1], 'generation') ~= ARGV[1] or redis.call('HGET', KEYS[1], 'replica') ~= ARGV[2] or
-    redis.call('HGET', KEYS[1], 'holder') ~= ARGV[3] or ARGV[3] == '' then
-    return {3}
 end
 return {1}
 `)

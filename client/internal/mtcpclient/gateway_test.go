@@ -222,6 +222,7 @@ func TestRotateMachineKey(t *testing.T) {
 				_, message, err := s.receive(5 * time.Second)
 				request, ok := message.(*mtcpv1.RotateMachineKey)
 				if err != nil || !ok || len(request.GetNewMachineKey()) != key.Size ||
+					request.GetServiceAccountToken() != "pod-token" ||
 					!sharedmtcp.VerifyMachineKeyRotationProof(s.control, s.hash, [key.Size]byte(request.GetNewMachineKey()),
 						request.GetProof()) {
 					return
@@ -231,7 +232,7 @@ func TestRotateMachineKey(t *testing.T) {
 			})
 			trust := gatewayTrust(t, core)
 			err := core.gatewayClient().RotateMachineKey(t.Context(), core.origin(), trust.Material, trust.Fingerprint,
-				next)
+				next, "pod-token")
 			if test.want == nil && err != nil || test.want != nil && !errors.Is(err, test.want) || !rotated.Load() {
 				t.Fatalf("RotateMachineKey() = %v (sent %t)", err, rotated.Load())
 			}

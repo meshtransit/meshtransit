@@ -75,7 +75,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) (err error) {
 	if cfg.JoinKeyFile != "" {
 		// A K1 gateway: join once, then settle and rotate the keys at every
 		// start, before the map stream (mtcp-v1 §6.6–6.8).
-		if err := joinUntilDone(ctx, service, cfg, enrollRetryFirst, logger); err != nil {
+		if err := joinUntilDone(ctx, service, cfg, readPodIdentity, enrollRetryFirst, logger); err != nil {
 			return err
 		}
 		if err := prepareKeysUntilDone(ctx, service, enrollRetryFirst, logger); err != nil {
@@ -137,6 +137,8 @@ func newRuntime(cfg Config, stacks *Stacks, profiles *profile.Store, identities 
 		DataPlane: packets,
 		Logger:    logger.With("component", "daemon"),
 		Gateway:   cfg.JoinKeyFile != "",
+		// K1.1: read again for each key rotation.
+		GatewayTokenFile: cfg.PodTokenFile,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("meshgw: creating the runtime: %w", err)

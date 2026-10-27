@@ -225,10 +225,21 @@ func registrationOutcome(response *mtcpv1.RegisterResponse, join bool, coreNow t
 			AuthURL: approval,
 		}, false, nil
 	case response.GetRejected() != nil:
-		return controlplane.RegistrationResult{}, true, &controlplane.RejectedError{
+		rejected := &controlplane.RejectedError{
 			Code:    strings.ToLower(response.GetRejected().GetCode().String()),
 			Message: boundedText(response.GetRejected().GetMessage()),
 		}
+		// K1.1: a join whose keys hold a request with other signing
+		// material gets that request back, to print its own code.
+		if join && response.GetRejected().GetCode() == mtcpv1.RegisterResponse_Rejected_CONFLICT &&
+			response.GetRejected().GetAdminApproval() != nil {
+			approval, err := conflictApproval(response.GetRejected().GetAdminApproval())
+			if err != nil {
+				return controlplane.RegistrationResult{}, true, err
+			}
+			rejected.Approval = approval
+		}
+		return controlplane.RegistrationResult{}, true, rejected
 	default:
 		return controlplane.RegistrationResult{}, true, fmt.Errorf("%w: empty response", controlplane.ErrRegistration)
 	}
@@ -281,6 +292,7 @@ func (c *Client) RotateNodeKey(ctx context.Context, controlURL string, material 
 	if err := s.send(sharedmtcp.MessageRotateNodeKey, &mtcpv1.RotateNodeKey{
 		NewNodeKey:   newPublic[:],
 		NodeKeyProof: nodeProof, NewDiscoKey: discoKey, DiscoKeyProof: discoProof,
+		ServiceAccountToken: options.GatewayToken.Reveal(),
 	}); err != nil {
 		return controlplane.RegistrationResult{}, temporary(err)
 	}

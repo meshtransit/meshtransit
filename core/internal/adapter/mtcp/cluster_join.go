@@ -3,14 +3,18 @@ package mtcp
 import (
 	"context"
 	"errors"
+	"strings"
+	"time"
 
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
+	"meshtransit.net/core/internal/adapter/kubetoken"
 	"meshtransit.net/core/internal/control"
 	"meshtransit.net/core/internal/domain/enrollment"
 	"meshtransit.net/core/internal/domain/ipam"
 	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/shared/kubejoin"
 	sharedmtcp "meshtransit.net/shared/mtcp"
 )
 
@@ -69,6 +73,11 @@ func (conversation *conversation) registerWithClusterJoin(ctx context.Context, m
 		return conversation.reject(rejection{code: mtcpv1.RegisterResponse_Rejected_INVALID,
 			message: "reported must be a JSON object of at most 16 short strings"})
 	}
+	trust, refused := podJoinTrust(join, conversation.application.now())
+	if refused != nil {
+		options.Metrics.limited(limitClusterJoinToken)
+		return conversation.reject(*refused)
+	}
 	// Opening a request reads and writes the database: one per sign-in
 	// and per reconnect, like a browser approval.
 	if wait, ok := conversation.browser.spend(conversation.application.now(), 1); !ok {
@@ -90,10 +99,25 @@ func (conversation *conversation) registerWithClusterJoin(ctx context.Context, m
 	}
 	ticket, err := options.ClusterJoins.OpenReplicaRequest(ctx, kubecluster.JoinAttempt{
 		Presentation: presentation, MachineKey: machineKey, NodeKey: keys.node, Hostname: hostname,
-		Reported: reported, RequestID: requestID, Nonce: nonce,
+		Reported: reported, RequestID: requestID, Nonce: nonce, Trust: trust,
 	})
 	if err != nil {
 		return conversation.joinRefused(ctx, err)
+	}
+	// The keys hold a request with other signing material: the replica's
+	// code cannot match it. The request goes back so the replica prints its
+	// own code, which the administrator sees differ (design §6.3).
+	if ticket.TrustConflict {
+		return conversation.session.Send(sharedmtcp.MessageRegisterResponse, &mtcpv1.RegisterResponse{
+			Outcome: &mtcpv1.RegisterResponse_Rejected_{Rejected: &mtcpv1.RegisterResponse_Rejected{
+				Code:    mtcpv1.RegisterResponse_Rejected_CONFLICT,
+				Message: "the keys hold a join request with other signing material; reject it and join again",
+				AdminApproval: &mtcpv1.RegisterResponse_AdminApproval{
+					ClusterId: ticket.ClusterID.String(), RequestId: ticket.Request.ID().String(),
+					RequestNonce: ticket.Nonce[:],
+				},
+			}},
+		})
 	}
 	wait := clusterJoinWait{scope: ticket.Scope, requestID: ticket.Request.ID(), identity: identity}
 	// A request approved or completed before this session asked again
@@ -199,4 +223,65 @@ func (conversation *conversation) checkClusterJoin(ctx context.Context, keys pro
 	conversation.prove(keys.node, true)
 	conversation.authorize(keys.node, keys.disco, completion.Result.Hostname(), true)
 	return true
+}
+
+// podJoinTrust verifies the pod's ServiceAccount token against the issuer
+// and keys the pod sent with it, and returns the trust the join code v2
+// binds (K1.1 design §6.2). The administrator's code anchors the keys: a
+// token signed by keys the pod made up only names a request no one approves.
+func podJoinTrust(join *mtcpv1.RegisterRequest_ClusterJoin, now time.Time) (kubecluster.JoinTrust, *rejection) {
+	invalid := func(message string) (kubecluster.JoinTrust, *rejection) {
+		return kubecluster.JoinTrust{}, &rejection{code: mtcpv1.RegisterResponse_Rejected_INVALID, message: message}
+	}
+	if join.GetServiceAccountToken() == "" {
+		return invalid("a Kubernetes gateway joins with its pod's ServiceAccount token: upgrade meshgw and " +
+			"mount a projected token with audience " + kubetoken.Audience)
+	}
+	jwks, err := kubejoin.ParseJWKS(join.GetServiceAccountJwks())
+	if err != nil {
+		// The error names the rule broken, never the input.
+		return invalid("the cluster's signing keys are not accepted (" + err.Error() + ")")
+	}
+	issuer := join.GetServiceAccountIssuer()
+	if !kubejoin.ValidIssuer(issuer) {
+		return invalid("the cluster's issuer must be an https URL")
+	}
+	// Until administrators can replace a cluster's keys (K1.1b), a cluster
+	// whose provider rotates them on its own would stop rotating gateway
+	// keys: only cluster-local issuers join (design §14).
+	if !clusterLocalIssuer(issuer) {
+		return kubecluster.JoinTrust{}, &rejection{code: mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED,
+			message: "only clusters with a cluster-local issuer (kind, kubeadm) join for now; " +
+				"clusters with a public issuer (EKS, GKE, AKS) join once administrators can replace a cluster's keys"}
+	}
+	claims, err := kubetoken.Verify(join.GetServiceAccountToken(),
+		kubetoken.Expectation{Issuer: issuer, JWKS: jwks}, now)
+	if refused, ok := errors.AsType[*kubetoken.RefusedError](err); ok {
+		message := "the pod's ServiceAccount token is refused (" + string(refused.Reason) + ")"
+		switch refused.Reason {
+		case kubetoken.ReasonMalformed:
+			message += ": it must be a pod-bound token of Kubernetes 1.30 or newer, living at most 15 minutes"
+		case kubetoken.ReasonAudience:
+			message += ": its audience must be " + kubetoken.Audience
+		}
+		return invalid(message)
+	}
+	if err != nil {
+		return invalid("the pod's ServiceAccount token is refused")
+	}
+	trust, err := kubecluster.NewJoinTrust(kubejoin.Trust{Issuer: issuer, JWKS: jwks, Namespace: claims.Namespace,
+		ServiceAccount: claims.ServiceAccount, PodName: claims.PodName}, claims.KeyThumbprint)
+	if err != nil {
+		return invalid("the pod is not a StatefulSet replica")
+	}
+	return trust, nil
+}
+
+// clusterLocalIssuer reports whether issuer names a host only the cluster
+// resolves, as kind and kubeadm clusters do.
+func clusterLocalIssuer(issuer string) bool {
+	authority, _, _ := strings.Cut(strings.TrimPrefix(issuer, "https://"), "/")
+	host, _, _ := strings.Cut(strings.ToLower(authority), ":")
+	return host == "kubernetes.default.svc" || strings.HasSuffix(host, ".svc") ||
+		strings.HasSuffix(host, ".cluster.local")
 }

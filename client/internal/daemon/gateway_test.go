@@ -3,7 +3,11 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -29,6 +33,7 @@ type fakeGateway struct {
 	probes    []string // machine:node texts probed, in order
 	rotateErr error
 	rotated   []key.MachinePublic
+	podTokens []string // pod tokens the machine key rotations carried
 }
 
 func machinePublic(t *testing.T, text []byte) key.MachinePublic {
@@ -75,11 +80,12 @@ func (gateway *fakeGateway) ProbeGateway(_ context.Context, _ string, material c
 }
 
 func (gateway *fakeGateway) RotateMachineKey(_ context.Context, _ string, material controlplane.KeyMaterial,
-	_ string, next key.MachinePrivate,
+	_ string, next key.MachinePrivate, podToken controlplane.PodToken,
 ) error {
 	gateway.mu.Lock()
 	defer gateway.mu.Unlock()
 	gateway.rotated = append(gateway.rotated, next.Public())
+	gateway.podTokens = append(gateway.podTokens, podToken.Reveal())
 	if gateway.rotateErr != nil {
 		return gateway.rotateErr
 	}
@@ -168,7 +174,7 @@ func TestJoinClusterPrintsTheCodeThenJoins(t *testing.T) {
 		}},
 		{State: controlplane.RegistrationStateAuthorized, MachineAuthorized: true},
 	}
-	waiting, err := service.JoinCluster(t.Context(), "mtk1.secret", map[string]string{"pod": "meshgw-0"}, time.Minute)
+	waiting, err := service.JoinCluster(t.Context(), "mtk1.secret", map[string]string{"pod": "meshgw-0"}, time.Minute, testPodIdentity(t))
 	if err != nil || waiting.State != ClusterJoinWaiting || waiting.RequestID != "request-1" ||
 		!waiting.ExpiresAt.Equal(expires) {
 		t.Fatalf("JoinCluster() = %+v, %v", waiting, err)
@@ -178,18 +184,25 @@ func TestJoinClusterPrintsTheCodeThenJoins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, _ := kubejoin.Compute(kubejoin.Inputs{
+	// The code v2 binds the trust the replica sent: its token's names.
+	digest, err := podTrustDigest(testPodIdentity(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := kubejoin.ComputeV2(kubejoin.Inputs{
 		MachineKey: machine, NodeKey: node, ClusterID: clusterID,
 		RequestNonce: nonce,
-	})
+	}, digest)
 	if waiting.Code != want.String() {
 		t.Fatalf("code %q, want %q", waiting.Code, want.String())
 	}
 	options := gateway.registerOptions[0]
-	if options.ClusterJoin == nil || options.ClusterJoin.JoinKey != "mtk1.secret" || options.JoinWait != time.Minute {
+	if options.ClusterJoin == nil || options.ClusterJoin.JoinKey != "mtk1.secret" || options.JoinWait != time.Minute ||
+		options.ClusterJoin.PodToken != testPodIdentity(t).Token || options.ClusterJoin.Issuer == "" ||
+		len(options.ClusterJoin.JWKS) == 0 {
 		t.Fatalf("register options %+v", options)
 	}
-	joined, err := service.JoinCluster(t.Context(), "mtk1.secret", nil, time.Minute)
+	joined, err := service.JoinCluster(t.Context(), "mtk1.secret", nil, time.Minute, testPodIdentity(t))
 	if err != nil || joined.State != ClusterJoinJoined {
 		t.Fatalf("second JoinCluster() = %+v, %v", joined, err)
 	}
@@ -213,7 +226,7 @@ func TestJoinClusterAfterALostAnswer(t *testing.T) {
 	gateway.registerFunc = func(context.Context, controlplane.RegisterOptions) (controlplane.RegistrationResult, error) {
 		return controlplane.RegistrationResult{}, controlplane.ErrGatewayProofRequired
 	}
-	joined, err := service.JoinCluster(t.Context(), "mtk1.secret", nil, time.Minute)
+	joined, err := service.JoinCluster(t.Context(), "mtk1.secret", nil, time.Minute, testPodIdentity(t))
 	if err != nil || joined.State != ClusterJoinJoined {
 		t.Fatalf("JoinCluster() = %+v, %v", joined, err)
 	}
@@ -422,10 +435,122 @@ func TestPrepareGatewayKeysLateCommit(t *testing.T) {
 func TestOrdinaryDaemonHasNoGatewayCalls(t *testing.T) {
 	t.Parallel()
 	service, _, _, _, _ := newTestService(t)
-	if _, err := service.JoinCluster(t.Context(), "mtk1.secret", nil, time.Minute); !errors.Is(err, ErrNotGateway) {
+	if _, err := service.JoinCluster(t.Context(), "mtk1.secret", nil, time.Minute, testPodIdentity(t)); !errors.Is(err, ErrNotGateway) {
 		t.Fatalf("JoinCluster() = %v", err)
 	}
 	if err := service.PrepareGatewayKeys(t.Context()); !errors.Is(err, ErrNotGateway) {
 		t.Fatalf("PrepareGatewayKeys() = %v", err)
+	}
+}
+
+// testPodIdentity is a pod's identity as meshgw reads it: a token whose
+// payload names the pod (the replica never verifies it), and the cluster's
+// issuer and keys.
+func testPodIdentity(t *testing.T) PodIdentity {
+	t.Helper()
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"kubernetes.io":{"namespace":"mt-kube-k1",` +
+		`"pod":{"name":"meshgw-0","uid":"u"},"serviceaccount":{"name":"meshgw","uid":"s"}}}`))
+	return PodIdentity{
+		Token:  controlplane.PodToken("eyJhbGciOiJFUzI1NiJ9." + payload + ".c2ln"),
+		Issuer: "https://kubernetes.default.svc.cluster.local",
+		JWKS: []byte(`{"keys":[{"kty":"EC","crv":"P-256","kid":"k1",` +
+			`"x":"MKBCTNIcKUSDii11ySs3526iDZ8AiTo7Tu6KPAqv7D4","y":"4Etl6SRW2YiLUrN5vfvVHuhp7x8PxltmWWlbbM4IFyM"}]}`),
+	}
+}
+
+// Keys that hold a request with other signing material: the replica gets
+// its own code for that request, to print (K1.1 design §6.3).
+func TestJoinClusterConflictGivesTheReplicasCode(t *testing.T) {
+	t.Parallel()
+	service, identities, gateway, profileID, _ := newGatewayService(t)
+	nonce := [32]byte{7, 7}
+	clusterID := [16]byte{0x01, 0x89, 0x0f, 0x90, 0, 0, 0x70, 0, 0x80, 0, 0, 0, 0, 0, 0, 0xc1}
+	gateway.registerFunc = func(context.Context, controlplane.RegisterOptions) (controlplane.RegistrationResult, error) {
+		return controlplane.RegistrationResult{}, &controlplane.RejectedError{
+			Code: "conflict", Message: "other trust",
+			Approval: &controlplane.AdminApproval{ClusterID: clusterID, RequestID: "request-9", RequestNonce: nonce},
+		}
+	}
+	conflict, err := service.JoinCluster(t.Context(), "mtk1.secret", nil, time.Minute, testPodIdentity(t))
+	if err != nil || conflict.State != ClusterJoinConflict || conflict.RequestID != "request-9" {
+		t.Fatalf("JoinCluster() = %+v, %v", conflict, err)
+	}
+	record, _ := identities.Get(t.Context(), profileID)
+	machine, node, err := publicKeys(toProtocolMaterial(record.Material()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, _ := podTrustDigest(testPodIdentity(t))
+	want, _ := kubejoin.ComputeV2(kubejoin.Inputs{
+		MachineKey: machine, NodeKey: node, ClusterID: clusterID,
+		RequestNonce: nonce,
+	}, digest)
+	if conflict.Code != want.String() {
+		t.Fatalf("code %q, want %q", conflict.Code, want.String())
+	}
+}
+
+// A join without a readable pod identity asks nothing.
+func TestJoinClusterNeedsThePodIdentity(t *testing.T) {
+	t.Parallel()
+	service, _, gateway, _, _ := newGatewayService(t)
+	gateway.registrationResults = []controlplane.RegistrationResult{{
+		State: controlplane.RegistrationStateAdminApprovalRequired, Approval: &controlplane.AdminApproval{
+			ClusterID: [16]byte{1}, RequestID: "request-1", RequestNonce: [32]byte{1}, ExpiresAt: time.Now().Add(time.Hour),
+		},
+	}}
+	pod := testPodIdentity(t)
+	pod.JWKS = []byte(`{}`)
+	if _, err := service.JoinCluster(t.Context(), "mtk1.secret", nil, time.Minute, pod); err == nil {
+		t.Fatal("a join with keys that are not a JWKS printed a code")
+	}
+}
+
+// Both rotations carry the pod token, read from its file each time (K1.1).
+func TestPrepareGatewayKeysCarriesThePodToken(t *testing.T) {
+	t.Parallel()
+	service, identities, gateway, profileID, now := joinedGateway(t)
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenFile, []byte("pod-token-1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service.gatewayTokenFile = tokenFile
+	if err := service.PrepareGatewayKeys(t.Context()); err != nil {
+		t.Fatalf("PrepareGatewayKeys() = %v", err)
+	}
+	// Kubelet replaced the token: the next start reads the new one.
+	if err := os.WriteFile(tokenFile, []byte("pod-token-2"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	*now = now.Add(3 * time.Minute)
+	record, _ := identities.Get(t.Context(), profileID)
+	gateway.current[machinePublic(t, record.Material().MachinePrivateKey)] = string(record.Material().NodePrivateKey)
+	if err := service.PrepareGatewayKeys(t.Context()); err != nil {
+		t.Fatalf("second PrepareGatewayKeys() = %v", err)
+	}
+	gateway.fakeControl.mu.Lock()
+	nodeTokens := slices.Clone(gateway.rotationTokens)
+	gateway.fakeControl.mu.Unlock()
+	if !slices.Equal(gateway.podTokens, []string{"pod-token-1", "pod-token-2"}) ||
+		!slices.Equal(nodeTokens, []string{"pod-token-1", "pod-token-2"}) {
+		t.Fatalf("machine key tokens %v, node key tokens %v", gateway.podTokens, nodeTokens)
+	}
+}
+
+// A pod token file that is empty or too large is never sent.
+func TestReadPodTokenRefuses(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for name, content := range map[string]string{"empty": " \n", "too large": strings.Repeat("a", MaxPodTokenSize+1)} {
+		path := filepath.Join(dir, strings.ReplaceAll(name, " ", "-"))
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ReadPodToken(path); err == nil {
+			t.Errorf("%s: ReadPodToken() accepted it", name)
+		}
+	}
+	if _, err := ReadPodToken(filepath.Join(dir, "missing")); err == nil {
+		t.Error("ReadPodToken() accepted a missing file")
 	}
 }

@@ -34,8 +34,8 @@ const (
 	// GatewayRotationHeld means the stream still holds the presence and the
 	// keys are not contested.
 	GatewayRotationHeld GatewayRotationState = iota + 1
-	// GatewayRotationContested means a live holder of the keys lost the
-	// presence to another within the contest window.
+	// GatewayRotationContested means the stream holds the presence, but a
+	// live holder of the keys lost it to another within the contest window.
 	GatewayRotationContested
 	// GatewayRotationNotHeld means another stream holds the presence, or none.
 	GatewayRotationNotHeld

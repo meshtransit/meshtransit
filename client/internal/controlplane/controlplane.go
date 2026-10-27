@@ -148,6 +148,11 @@ type ClusterJoin struct {
 	// Reported is what the pod says about itself, display only: at most 16
 	// fields, keys up to 64 bytes, values up to 256.
 	Reported map[string]string
+	// PodToken is the pod's ServiceAccount token (K1.1); never logged.
+	// Issuer and JWKS are the cluster's, read from its API server.
+	PodToken PodToken
+	Issuer   string
+	JWKS     []byte
 }
 
 func (ClusterJoin) String() string { return "<cluster join redacted>" }
@@ -166,6 +171,9 @@ func (ClusterJoin) MarshalJSON() ([]byte, error) { return []byte(`"<cluster join
 type RejectedError struct {
 	Code    string
 	Message string
+	// Approval is, on a cluster join's conflict, the request the keys hold
+	// with other signing material: the replica prints its own code for it.
+	Approval *AdminApproval
 }
 
 func (err *RejectedError) Error() string {
@@ -194,6 +202,9 @@ type RegisterOptions struct {
 	// long to wait on the session for the approval before answering pending.
 	ClusterJoin *ClusterJoin
 	JoinWait    time.Duration
+	// GatewayToken is a Kubernetes gateway's pod token for its node key
+	// rotation (K1.1); never logged.
+	GatewayToken PodToken
 }
 
 // RegistrationResult excludes account data and private material.
@@ -520,3 +531,22 @@ type EnforcementReport struct {
 
 // NetmapHandler consumes one fully validated, defensive network snapshot.
 type NetmapHandler func(context.Context, networkmap.Snapshot) error
+
+// PodToken is a Kubernetes gateway's pod ServiceAccount token (K1.1). It
+// redacts itself in every format, structured log and JSON, so a struct that
+// holds one can be printed.
+type PodToken string
+
+func (PodToken) String() string { return "<pod token redacted>" }
+
+// GoString redacts detailed formatting.
+func (PodToken) GoString() string { return "<pod token redacted>" }
+
+// LogValue redacts structured logging.
+func (PodToken) LogValue() slog.Value { return slog.StringValue("<pod token redacted>") }
+
+// MarshalJSON keeps the token out of any JSON.
+func (PodToken) MarshalJSON() ([]byte, error) { return []byte(`"<pod token redacted>"`), nil }
+
+// Reveal returns the token, for the one message that carries it.
+func (token PodToken) Reveal() string { return string(token) }

@@ -505,3 +505,36 @@ func ComputeV2(inputs Inputs, trustDigest [32]byte) (Code, error) {
 	hash.Write(trustDigest[:])
 	return Code{text: base32.StdEncoding.EncodeToString(hash.Sum(nil))[:Length]}, nil
 }
+
+// TokenPod reads the namespace, ServiceAccount and pod a pod-bound token
+// names, without verifying it: a replica computes its code from the token it
+// sends, and Core verifies the token before it digests the same names.
+func TokenPod(token string) (namespace, serviceAccount, pod string, err error) {
+	segments := strings.Split(token, ".")
+	if len(segments) != 3 {
+		return "", "", "", ErrInvalidTrust
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(segments[1])
+	if err != nil || CheckStrictJSON(payload) != nil {
+		return "", "", "", ErrInvalidTrust
+	}
+	var claims struct {
+		Kubernetes struct {
+			Namespace string `json:"namespace"`
+			Pod       struct {
+				Name string `json:"name"`
+			} `json:"pod"`
+			ServiceAccount struct {
+				Name string `json:"name"`
+			} `json:"serviceaccount"`
+		} `json:"kubernetes.io"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return "", "", "", ErrInvalidTrust
+	}
+	kubernetes := claims.Kubernetes
+	if kubernetes.Namespace == "" || kubernetes.ServiceAccount.Name == "" || kubernetes.Pod.Name == "" {
+		return "", "", "", ErrInvalidTrust
+	}
+	return kubernetes.Namespace, kubernetes.ServiceAccount.Name, kubernetes.Pod.Name, nil
+}

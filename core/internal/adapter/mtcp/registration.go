@@ -462,6 +462,24 @@ func (conversation *conversation) rotate(ctx context.Context, request *mtcpv1.Ro
 	if !oldKey.IsValid() || !hostname.IsValid() {
 		return conversation.sendError(mtcpv1.Error_NOT_AUTHORIZED, "rotation needs an authorized Device", 0)
 	}
+	// K1.1: a gateway's pod token, checked before Redis; the store records
+	// its use on the rotation's transaction. After the repeat above, which
+	// needs none.
+	if conversation.isGateway() {
+		// The trust is read for the key the session proved, which the store
+		// marks too; a session that proved another key rotates nothing.
+		proven, ok := machine.ProvenNodeKey()
+		if !ok || proven != oldKey {
+			options.Metrics.limited(limitGatewayTrustMissing)
+			return conversation.refuseGatewayRotation()
+		}
+		token, ok := conversation.gatewayRotationToken(ctx, request.GetServiceAccountToken(),
+			node.MachineKey(conversation.session.Machine()), proven)
+		if !ok {
+			return conversation.refuseGatewayRotation()
+		}
+		machine = machine.WithGatewayToken(token)
+	}
 	// A gateway's rotation is checked last, right before it commits.
 	if _, allowed := conversation.gatewayMayRotate(ctx); !allowed {
 		return conversation.refuseGatewayRotation()
@@ -484,6 +502,9 @@ func (conversation *conversation) rotate(ctx context.Context, request *mtcpv1.Ro
 		switch {
 		case errors.Is(err, keyrotation.ErrConflict), errors.Is(err, registration.ErrIntentConflict):
 			return conversation.sendError(mtcpv1.Error_NOT_PERMITTED, "the keys conflict with an existing Device", 0)
+		case errors.Is(err, keyrotation.ErrGatewayTokenRefused):
+			options.Metrics.limited(limitGatewayTokenStore)
+			return conversation.refuseGatewayRotation()
 		case errors.Is(err, keyrotation.ErrNotFound):
 			return conversation.sendError(mtcpv1.Error_NOT_AUTHORIZED, "rotation needs an authorized Device", 0)
 		case errors.As(err, &limited):

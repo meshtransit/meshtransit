@@ -2,6 +2,9 @@ package mtcp
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"slices"
@@ -17,6 +20,7 @@ import (
 	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/shared/key"
 	sharedmtcp "meshtransit.net/shared/mtcp"
 )
@@ -37,6 +41,9 @@ type fakeClusterJoins struct {
 	completeErr error
 	attempts    []kubecluster.JoinAttempt
 	checks      []kubecluster.RequestID
+	// trustConflict answers as if the keys held a request with other
+	// signing material.
+	trustConflict bool
 }
 
 func (joins *fakeClusterJoins) OpenReplicaRequest(_ context.Context, attempt kubecluster.JoinAttempt) (
@@ -70,8 +77,13 @@ func (joins *fakeClusterJoins) OpenReplicaRequest(_ context.Context, attempt kub
 	if err != nil {
 		return kubecluster.JoinTicket{}, err
 	}
+	nonce := attempt.Nonce
+	if joins.trustConflict {
+		// The stored request's nonce, not the one this attempt proposed.
+		nonce = [32]byte{0xee}
+	}
 	return kubecluster.JoinTicket{Request: view, ClusterID: testClusterID, Scope: joins.scope,
-		Nonce: attempt.Nonce, Created: true}, nil
+		Nonce: nonce, Created: !joins.trustConflict, TrustConflict: joins.trustConflict}, nil
 }
 
 func (joins *fakeClusterJoins) CompleteReplicaRequest(_ context.Context, scope network.Scope,
@@ -139,9 +151,16 @@ func (fixedJoinSecrets) NewRequestNonce() ([32]byte, error) {
 	return nonce, nil
 }
 
+// clusterJoinAuth is a replica's join with its pod's token and the
+// cluster's issuer and keys (K1.1).
 func clusterJoinAuth(joinKey string, reported []byte) *mtcpv1.RegisterRequest_Auth {
-	return &mtcpv1.RegisterRequest_Auth{Method: &mtcpv1.RegisterRequest_Auth_ClusterJoin{
-		ClusterJoin: &mtcpv1.RegisterRequest_ClusterJoin{JoinKey: joinKey, Reported: reported}}}
+	return podJoinAuth(&mtcpv1.RegisterRequest_ClusterJoin{JoinKey: joinKey, Reported: reported,
+		ServiceAccountToken:  signPodTokenOrPanic(testPodSigner(), testPodClaims(fixtureClock, "meshgw-0")),
+		ServiceAccountIssuer: testIssuer, ServiceAccountJwks: testJWKS()})
+}
+
+func podJoinAuth(join *mtcpv1.RegisterRequest_ClusterJoin) *mtcpv1.RegisterRequest_Auth {
+	return &mtcpv1.RegisterRequest_Auth{Method: &mtcpv1.RegisterRequest_Auth_ClusterJoin{ClusterJoin: join}}
 }
 
 func TestClusterJoinWaitsForApproval(t *testing.T) {
@@ -168,10 +187,11 @@ func TestClusterJoinWaitsForApproval(t *testing.T) {
 		t.Fatalf("%d attempts", len(attempts))
 	}
 	attempt := attempts[0]
-	// K1.1a: the session sends no pod trust until MTCP carries the token
-	// (design §13, step 4), so the store refuses the attempt; that step
-	// checks attempt.IsValid() here again.
-	if attempt.Trust.IsValid() || attempt.MachineKey.Bytes() != [32]byte(f.session.Machine()) ||
+	// K1.1: the attempt carries the trust Core verified from the pod's
+	// token.
+	if !attempt.IsValid() || attempt.Trust.PodName() != "meshgw-0" || attempt.Trust.StatefulSet() != "meshgw" ||
+		attempt.Trust.Namespace() != "mt-kube-k1" || attempt.Trust.Issuer() != testIssuer ||
+		attempt.MachineKey.Bytes() != [32]byte(f.session.Machine()) ||
 		attempt.NodeKey != node.Key(request.GetNodeKey()) || attempt.Hostname.String() != "laptop" ||
 		string(attempt.Reported) != `{"namespace":"mt","pod":"meshgw-0"}` || attempt.Nonce != nonce ||
 		attempt.Presentation.Reveal() != testJoinKey {
@@ -540,8 +560,12 @@ func TestOrdinaryRegistrationIsNotMarked(t *testing.T) {
 
 // fakeMachineKeyRotations records rotations and fails with err when set.
 type fakeMachineKeyRotations struct {
-	mu        sync.Mutex
-	err       error
+	mu  sync.Mutex
+	err error
+	// trust is what ReadRotationTrust answers; trustErr its error.
+	trust     kubecluster.RotationTrust
+	trustErr  error
+	trustRead int
 	rotations []kubecluster.MachineKeyRotation
 	// during, when set, runs while the rotation commits.
 	during func()
@@ -558,10 +582,20 @@ func (rotations *fakeMachineKeyRotations) RotateGatewayMachineKey(_ context.Cont
 	return rotations.err
 }
 
-// ReadRotationTrust is not used by the session yet (K1.1a wires it next).
 func (rotations *fakeMachineKeyRotations) ReadRotationTrust(context.Context, node.MachineKey,
 	node.Key) (kubecluster.RotationTrust, error) {
-	return kubecluster.RotationTrust{}, kubecluster.ErrNotFound
+	rotations.mu.Lock()
+	defer rotations.mu.Unlock()
+	rotations.trustRead++
+	return rotations.trust, rotations.trustErr
+}
+
+// testRotationTrust is the trust of the tests' cluster, whose pod meshgw-0
+// is the gateway.
+func testRotationTrust() kubecluster.RotationTrust {
+	return kubecluster.RotationTrust{DeviceID: node.ID(must(publicid.Parse("01890f90-0000-7000-8000-0000000000e1"))),
+		TrustVersion: 1, Issuer: testIssuer, JWKS: testJWKS(), Namespace: "mt-kube-k1", ServiceAccount: "meshgw",
+		PodName: "meshgw-0"}
 }
 
 func (rotations *fakeMachineKeyRotations) calls() []kubecluster.MachineKeyRotation {
@@ -576,9 +610,13 @@ func gatewayFixture(t *testing.T, rotations *fakeMachineKeyRotations) *conversat
 	f := newConversationFixture(t, sharedmtcp.MessagePing)
 	f.session.gate = TimestampCheck{Accepted: true, Gateway: true, Machine: MachineCurrent, NodeCurrent: true}
 	f.session.provenNodeKey = node.Key(f.session.Hello().GetNodeKey())
+	if !rotations.trust.DeviceID.IsValid() && rotations.trustErr == nil {
+		rotations.trust = testRotationTrust()
+	}
 	f.talk.application.options.MachineKeyRotations = rotations
 	f.talk.application.options.GatewayPresence = &fakeGatewayPresence{state: mapsession.GatewayRotationHeld}
 	f.talk.application.gatewayClaimWait = 200 * time.Millisecond
+	f.podToken = testPodToken(t)
 	if err := f.session.server.establish(f.session); err != nil {
 		t.Fatal(err)
 	}
@@ -592,7 +630,8 @@ func (f *conversationFixture) rotateMachineKey(seed byte, proofSeed byte) (*mtcp
 	prover := must(key.MachinePrivateFromBytes(repeat(proofSeed, key.Size)))
 	proof := must(sharedmtcp.MachineKeyRotationProof(prover, f.control.Public(), f.session.HandshakeHash()))
 	public := next.Public()
-	request := &mtcpv1.RotateMachineKey{NewMachineKey: public[:], Proof: proof[:]}
+	request := &mtcpv1.RotateMachineKey{NewMachineKey: public[:], Proof: proof[:],
+		ServiceAccountToken: f.podToken}
 	return request, f.talk.Receive(f.t.Context(), sharedmtcp.MessageRotateMachineKey, request)
 }
 
@@ -607,6 +646,11 @@ func TestGatewayRotatesItsMachineKey(t *testing.T) {
 	}
 	f.expectPast(sharedmtcp.MessageRotateMachineKeyResponse)
 	calls := rotations.calls()
+	token := calls[0].Token
+	if !token.IsValid() || token.DeviceID != testRotationTrust().DeviceID || token.TrustVersion != 1 ||
+		token.JTI != "jti-meshgw-0" || !token.ExpiresAt.Equal(fixtureClock.Add(9*time.Minute)) {
+		t.Fatalf("token %+v", token)
+	}
 	if len(calls) != 1 || calls[0].NewMachineKey != node.MachineKey(request.GetNewMachineKey()) ||
 		calls[0].MachineKey != node.MachineKey(f.session.Machine()) ||
 		calls[0].NodeKey != node.Key(f.session.Hello().GetNodeKey()) || !calls[0].OperationID.IsValid() {
@@ -702,4 +746,78 @@ func TestMachineKeyRotationNeedsAProvenKeyAndResumes(t *testing.T) {
 		t.Fatalf("a used key answered %v", got)
 	}
 	f.expectStream(helloKey) // resumed after the refusal
+}
+
+// A join without a valid pod token, or from a cluster whose issuer is
+// public, opens nothing (K1.1 design §6.2, §14).
+func TestClusterJoinNeedsThePodToken(t *testing.T) {
+	t.Parallel()
+	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongAudience := testPodClaims(fixtureClock, "meshgw-0")
+	wrongAudience["aud"] = []string{"https://kubernetes.default.svc"}
+	const eks = "https://oidc.eks.ap-southeast-1.amazonaws.com/id/ABC"
+	publicIssuer := testPodClaims(fixtureClock, "meshgw-0")
+	publicIssuer["iss"] = eks
+	join := func(token, issuer string, jwks []byte) *mtcpv1.RegisterRequest_ClusterJoin {
+		return &mtcpv1.RegisterRequest_ClusterJoin{JoinKey: testJoinKey, ServiceAccountToken: token,
+			ServiceAccountIssuer: issuer, ServiceAccountJwks: jwks}
+	}
+	for name, test := range map[string]struct {
+		join *mtcpv1.RegisterRequest_ClusterJoin
+		want mtcpv1.RegisterResponse_Rejected_Code
+	}{
+		"no token":         {join("", testIssuer, testJWKS()), mtcpv1.RegisterResponse_Rejected_INVALID},
+		"no keys":          {join(testPodToken(t), testIssuer, nil), mtcpv1.RegisterResponse_Rejected_INVALID},
+		"keys not a JWKS":  {join(testPodToken(t), testIssuer, []byte(`{"keys":[]}`)), mtcpv1.RegisterResponse_Rejected_INVALID},
+		"API server token": {join(signPodToken(t, testPodSigner(), wrongAudience), testIssuer, testJWKS()), mtcpv1.RegisterResponse_Rejected_INVALID},
+		"another key": {join(signPodToken(t, other, testPodClaims(fixtureClock, "meshgw-0")), testIssuer, testJWKS()),
+			mtcpv1.RegisterResponse_Rejected_INVALID},
+		"another issuer": {join(testPodToken(t), "https://other.svc.cluster.local", testJWKS()),
+			mtcpv1.RegisterResponse_Rejected_INVALID},
+		"public issuer before K1.1b": {join(signPodToken(t, testPodSigner(), publicIssuer), eks, testJWKS()),
+			mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newConversationFixture(t, sharedmtcp.MessageRegisterRequest)
+			f.clusterJoins.expiresAt = f.now().Add(time.Hour)
+			f.run()
+			if err := f.talk.Receive(t.Context(), sharedmtcp.MessageRegisterRequest,
+				f.request(4, podJoinAuth(test.join))); err != nil {
+				t.Fatal(err)
+			}
+			if len(f.clusterJoins.opened()) != 0 {
+				t.Fatal("the store saw the attempt")
+			}
+			if got := f.expect(sharedmtcp.MessageRegisterResponse).(*mtcpv1.RegisterResponse).GetRejected().
+				GetCode(); got != test.want {
+				t.Fatalf("rejected %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+// The same keys with other signing material: CONFLICT, with the request
+// the keys hold, so the replica prints its own code (design §6.3).
+func TestClusterJoinTrustConflictCarriesTheRequest(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessageRegisterRequest)
+	f.clusterJoins.expiresAt, f.clusterJoins.trustConflict = f.now().Add(time.Hour), true
+	f.run()
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageRegisterRequest,
+		f.request(4, clusterJoinAuth(testJoinKey, nil))); err != nil {
+		t.Fatal(err)
+	}
+	rejected := f.expect(sharedmtcp.MessageRegisterResponse).(*mtcpv1.RegisterResponse).GetRejected()
+	nonce := [32]byte{0xee}
+	approval := rejected.GetAdminApproval()
+	if rejected.GetCode() != mtcpv1.RegisterResponse_Rejected_CONFLICT ||
+		approval.GetClusterId() != testClusterID.String() ||
+		approval.GetRequestId() != "01890f90-0000-7000-8000-0000000000d1" ||
+		string(approval.GetRequestNonce()) != string(nonce[:]) {
+		t.Fatalf("rejected %v", rejected)
+	}
 }

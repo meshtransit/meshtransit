@@ -78,10 +78,13 @@ func (sink *gatewayStreamSink) HandsOffPresence() bool {
 }
 
 // gatewayMayRotate reports whether a Kubernetes gateway's session may
-// rotate a key now (K1a1 plan §16.12): its stream holds the gateway's
-// presence, the keys are contested neither here nor in Redis, and the
-// session still is this replica's session of its machine key. Any other
-// session may.
+// rotate a key now: its stream holds the gateway's presence and the session
+// still is this replica's session of its machine key. Any other session may.
+//
+// K1.1 design §7.4: every gateway rotation that gets here carries a pod
+// token Core verified, which a copy of the gateway's Secret cannot have; so
+// a contest (K1a1 plan §16.12) no longer refuses it, and the real pod
+// rotates the copy's keys away. A contest is counted.
 func (conversation *conversation) gatewayMayRotate(ctx context.Context) (gatewayClaim, bool) {
 	if !conversation.isGateway() {
 		return gatewayClaim{}, true
@@ -93,10 +96,7 @@ func (conversation *conversation) gatewayMayRotate(ctx context.Context) (gateway
 		metrics.limited(limitGatewayPresencePending)
 		return gatewayClaim{}, false
 	}
-	if conversation.session.RotationWait() > 0 {
-		metrics.limited(limitGatewayContested)
-		return gatewayClaim{}, false
-	}
+	contested := conversation.session.RotationWait() > 0
 	store := application.options.GatewayPresence
 	if store == nil {
 		metrics.limited(limitGatewayPresenceUnknown)
@@ -110,8 +110,7 @@ func (conversation *conversation) gatewayMayRotate(ctx context.Context) (gateway
 		metrics.limited(limitGatewayPresenceUnknown)
 		return gatewayClaim{}, false
 	case state == mapsession.GatewayRotationContested:
-		metrics.limited(limitGatewayContestedShared)
-		return gatewayClaim{}, false
+		contested = true
 	case state != mapsession.GatewayRotationHeld:
 		metrics.limited(limitGatewayPresenceElsewhere)
 		return gatewayClaim{}, false
@@ -119,6 +118,9 @@ func (conversation *conversation) gatewayMayRotate(ctx context.Context) (gateway
 	if conversation.session.ctx.Err() != nil || !conversation.session.server.holds(conversation.session) {
 		metrics.limited(limitGatewayPresenceElsewhere)
 		return gatewayClaim{}, false
+	}
+	if contested {
+		metrics.limited(limitGatewayContestOverridden)
 	}
 	return claim, true
 }

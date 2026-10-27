@@ -41,6 +41,8 @@ type fakeAPI struct {
 	putFaults   []putFault
 	getFailures int
 	getKind     string
+	// signingForbidden refuses the OIDC paths, as a hardened cluster does.
+	signingForbidden bool
 }
 
 // faultKind says how one PUT is answered.
@@ -88,7 +90,16 @@ func newFakeAPI(t *testing.T) *fakeAPI {
 	return api
 }
 
+// The cluster's ServiceAccount issuer, as the fake API server serves it.
+const (
+	testIssuer = "https://kubernetes.default.svc.cluster.local"
+	testJWKS   = `{"keys":[{"use":"sig","kty":"RSA","kid":"k","alg":"RS256","n":"AQ","e":"AQAB"}]}`
+)
+
 func (a *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
+	if a.serveSigning(w, r) {
+		return
+	}
 	path := "/api/v1/namespaces/" + testNamespace + "/secrets/" + testSecret
 	if r.URL.Path != path {
 		http.Error(w, "unexpected path "+r.URL.Path, http.StatusNotFound)
@@ -384,4 +395,33 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+// serveSigning answers the OIDC discovery and JWKS paths, to the pod's
+// token only, unless signingForbidden.
+func (a *fakeAPI) serveSigning(w http.ResponseWriter, r *http.Request) bool {
+	var body string
+	switch r.URL.Path {
+	case "/.well-known/openid-configuration":
+		body = `{"issuer":"` + testIssuer + `","jwks_uri":"https://172.18.0.2:6443/openid/v1/jwks"}`
+	case "/openid/v1/jwks":
+		body = testJWKS
+	default:
+		return false
+	}
+	a.mu.Lock()
+	token, forbidden := a.token, a.signingForbidden
+	a.mu.Unlock()
+	switch {
+	case r.Method != http.MethodGet:
+		http.Error(w, "method", http.StatusMethodNotAllowed)
+	case r.Header.Get("Authorization") != "Bearer "+token:
+		writeStatus(w, http.StatusUnauthorized, "Unauthorized", "unauthorized")
+	case forbidden:
+		writeStatus(w, http.StatusForbidden, "Forbidden", "forbidden")
+	default:
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}
+	return true
 }

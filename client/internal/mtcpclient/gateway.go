@@ -209,7 +209,7 @@ func (c *Client) ProbeGateway(ctx context.Context, controlURL string, material c
 // staged next durably first, and never sends it again: Core does not
 // repeat a rotation, so an unknown outcome is settled by probing.
 func (c *Client) RotateMachineKey(ctx context.Context, controlURL string, material controlplane.KeyMaterial,
-	pinnedFingerprint string, next key.MachinePrivate,
+	pinnedFingerprint string, next key.MachinePrivate, podToken controlplane.PodToken,
 ) error {
 	if next.IsZero() {
 		return controlplane.ErrInvalidMaterial
@@ -228,7 +228,7 @@ func (c *Client) RotateMachineKey(ctx context.Context, controlURL string, materi
 	}
 	public := next.Public()
 	if err := s.send(sharedmtcp.MessageRotateMachineKey, &mtcpv1.RotateMachineKey{
-		NewMachineKey: public[:], Proof: proof[:],
+		NewMachineKey: public[:], Proof: proof[:], ServiceAccountToken: podToken.Reveal(),
 	}); err != nil {
 		return temporary(err)
 	}
@@ -319,7 +319,11 @@ func clusterJoinAuth(join *controlplane.ClusterJoin) (*mtcpv1.RegisterRequest_Au
 		reported = encoded
 	}
 	return &mtcpv1.RegisterRequest_Auth{Method: &mtcpv1.RegisterRequest_Auth_ClusterJoin{
-		ClusterJoin: &mtcpv1.RegisterRequest_ClusterJoin{JoinKey: join.JoinKey, Reported: reported},
+		ClusterJoin: &mtcpv1.RegisterRequest_ClusterJoin{
+			JoinKey: join.JoinKey, Reported: reported,
+			ServiceAccountToken: join.PodToken.Reveal(), ServiceAccountIssuer: join.Issuer,
+			ServiceAccountJwks: join.JWKS,
+		},
 	}}, nil
 }
 
@@ -342,5 +346,19 @@ func adminApprovalOutcome(pending *mtcpv1.RegisterResponse_Pending, now time.Tim
 			ClusterID: clusterID, RequestID: approval.GetRequestId(),
 			RequestNonce: [32]byte(approval.GetRequestNonce()), ExpiresAt: expires,
 		},
+	}, nil
+}
+
+// conflictApproval reads the request a conflicting cluster join gets back:
+// enough to print the replica's own code, with no wait.
+func conflictApproval(approval *mtcpv1.RegisterResponse_AdminApproval) (*controlplane.AdminApproval, error) {
+	clusterID, err := kubejoin.ParseClusterID(approval.GetClusterId())
+	_, requestErr := kubejoin.ParseClusterID(approval.GetRequestId())
+	if err != nil || requestErr != nil || len(approval.GetRequestNonce()) != 32 {
+		return nil, fmt.Errorf("%w: invalid admin approval", controlplane.ErrRegistration)
+	}
+	return &controlplane.AdminApproval{
+		ClusterID: clusterID, RequestID: approval.GetRequestId(),
+		RequestNonce: [32]byte(approval.GetRequestNonce()),
 	}, nil
 }

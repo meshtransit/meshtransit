@@ -47,6 +47,11 @@ func (conversation *conversation) rotateMachineKey(ctx context.Context, request 
 	if !next.IsValid() || next == current {
 		return conversation.sendError(mtcpv1.Error_INVALID, "the new machine key or its proof is invalid", 0)
 	}
+	// K1.1: the pod's token first, before Redis or the store.
+	token, ok := conversation.gatewayRotationToken(ctx, request.GetServiceAccountToken(), current, proven)
+	if !ok {
+		return conversation.refuseGatewayRotation()
+	}
 	operation, err := publicid.New()
 	if err != nil {
 		return conversation.sendError(mtcpv1.Error_INTERNAL, "rotation unavailable", 2000)
@@ -65,7 +70,7 @@ func (conversation *conversation) rotateMachineKey(ctx context.Context, request 
 	rotateCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), registrationTimeout)
 	defer cancel()
 	err = rotations.RotateGatewayMachineKey(rotateCtx, kubecluster.MachineKeyRotation{
-		MachineKey: current, NodeKey: proven, NewMachineKey: next, OperationID: operation,
+		MachineKey: current, NodeKey: proven, NewMachineKey: next, OperationID: operation, Token: token,
 	})
 	conversation.releaseGatewayPresence(ctx, claim)
 	if err != nil && nodeKey.IsValid() {
@@ -78,6 +83,9 @@ func (conversation *conversation) rotateMachineKey(ctx context.Context, request 
 	// surely did not commit.
 	case errors.Is(err, kubecluster.ErrMachineKeyUsed):
 		return conversation.sendError(mtcpv1.Error_NOT_PERMITTED, "the new machine key was used before", 0)
+	case errors.Is(err, kubecluster.ErrGatewayTokenRefused):
+		conversation.application.options.Metrics.limited(limitGatewayTokenStore)
+		return conversation.refuseGatewayRotation()
 	case errors.As(err, &limited):
 		return conversation.sendError(mtcpv1.Error_NOT_PERMITTED,
 			"the gateway changed its machine key too often; try again later", retryAfterMS(limited.RetryAfter))

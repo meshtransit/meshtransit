@@ -2,8 +2,10 @@ package mtcp
 
 import (
 	"fmt"
-	mtcpv1 "meshtransit.net/api/mtcp/v1"
 	"sync"
+
+	mtcpv1 "meshtransit.net/api/mtcp/v1"
+	"meshtransit.net/core/internal/adapter/kubetoken"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -77,21 +79,39 @@ const (
 	limitRouteSelection = "route_selection"
 	// limitSendDeadline: a message was not sent by its send deadline.
 	limitSendDeadline = "send_deadline"
-	// limitGatewayContested: a gateway session asked to rotate a key while
-	// its machine key was contested (§6.8), as a copy of its Secret would.
-	limitGatewayContested = "gateway_contested"
 	// A Kubernetes gateway's rotation refused by its presence (K1a1 plan
-	// §16.12): contested in Redis, held by another stream, not yet claimed
-	// by the session's stream, or unknown (Redis failed).
-	limitGatewayContestedShared   = "gateway_contested_shared"
+	// §16.12): held by another stream, not yet claimed by the session's
+	// stream, or unknown (Redis failed). Since K1.1 a contest refuses no
+	// rotation (limitGatewayContestOverridden counts it).
 	limitGatewayPresenceElsewhere = "gateway_presence_elsewhere"
 	limitGatewayPresencePending   = "gateway_presence_pending"
 	limitGatewayPresenceUnknown   = "gateway_presence_unknown"
+	// limitClusterJoinToken: a cluster join without a valid pod token, or
+	// from a cluster with a public issuer (K1.1).
+	limitClusterJoinToken = "cluster_join_token"
+	// A gateway's rotation refused for its pod token (K1.1 design §7.3):
+	// gateway_<kubetoken reason>, the trust missing or unreadable, or the
+	// store refusing the token's use (replayed, trust changed, expired).
+	limitGatewayTrustMissing     = "gateway_trust_missing"
+	limitGatewayTrustUnavailable = "gateway_trust_unavailable"
+	limitGatewayTokenStore       = "gateway_token_store_refused"
+	// limitGatewayContestOverridden: a rotation with a valid token while the
+	// keys were marked contested (design §7.4); counted, not refused.
+	limitGatewayContestOverridden = "gateway_contest_overridden"
 )
 
+// gatewayTokenLimit names the limit of a token refusal reason.
+func gatewayTokenLimit(reason kubetoken.Reason) string { return "gateway_" + string(reason) }
+
 var sessionLimits = []string{limitInbound, limitResync, limitEnforcement, limitBrowser, limitIdentity,
-	limitRouteOffer, limitRouteHealth, limitDNSHealth, limitRouteSelection, limitSendDeadline, limitGatewayContested,
-	limitGatewayContestedShared, limitGatewayPresenceElsewhere, limitGatewayPresencePending, limitGatewayPresenceUnknown}
+	limitRouteOffer, limitRouteHealth, limitDNSHealth, limitRouteSelection, limitSendDeadline,
+	limitGatewayPresenceElsewhere, limitGatewayPresencePending, limitGatewayPresenceUnknown,
+	limitClusterJoinToken, limitGatewayTrustMissing, limitGatewayTrustUnavailable, limitGatewayTokenStore,
+	limitGatewayContestOverridden,
+	gatewayTokenLimit(kubetoken.ReasonMissing), gatewayTokenLimit(kubetoken.ReasonMalformed),
+	gatewayTokenLimit(kubetoken.ReasonUnknownKey), gatewayTokenLimit(kubetoken.ReasonSignature),
+	gatewayTokenLimit(kubetoken.ReasonExpired), gatewayTokenLimit(kubetoken.ReasonAudience),
+	gatewayTokenLimit(kubetoken.ReasonIdentity)}
 
 // streamEndReasons is the closed set of map stream end causes.
 var streamEndReasons = []string{

@@ -14,6 +14,7 @@ import (
 	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node/keyrotation"
 	"meshtransit.net/shared/key"
 	sharedmtcp "meshtransit.net/shared/mtcp"
 )
@@ -85,7 +86,8 @@ func (f *conversationFixture) rotateNodeKey() error {
 	f.t.Helper()
 	_, newKey, nodeProof, discoKey, discoProof := f.keys(6)
 	return f.talk.Receive(f.t.Context(), sharedmtcp.MessageRotateNodeKey, &mtcpv1.RotateNodeKey{
-		NewNodeKey: newKey, NodeKeyProof: nodeProof, NewDiscoKey: discoKey, DiscoKeyProof: discoProof})
+		NewNodeKey: newKey, NodeKeyProof: nodeProof, NewDiscoKey: discoKey, DiscoKeyProof: discoProof,
+		ServiceAccountToken: f.podToken})
 }
 
 // expectRotationRefused expects a rotation refused for good, the session
@@ -113,8 +115,7 @@ func (f *conversationFixture) rotate(kind sharedmtcp.MessageType) error {
 	return f.rotateNodeKey()
 }
 
-// A gateway rotates only while its stream holds the presence and Redis says
-// the keys are neither contested nor held by another stream.
+// A gateway rotates only while its stream holds the presence.
 func TestGatewayRotationNeedsItsPresence(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
@@ -124,7 +125,6 @@ func TestGatewayRotationNeedsItsPresence(t *testing.T) {
 		noStore bool
 		noClaim bool
 	}{
-		{name: "contested", state: mapsession.GatewayRotationContested},
 		{name: "held by another stream", state: mapsession.GatewayRotationNotHeld},
 		{name: "redis failed", err: errors.New("redis: down")},
 		{name: "no store", noStore: true},
@@ -172,22 +172,112 @@ func TestGatewayRotationChecksTheStreamsLease(t *testing.T) {
 	}
 }
 
-// While its machine key is contested on this replica a gateway rotates
-// neither key; the refusal is definitive and keeps the session.
-func TestLocallyContestedGatewayRotatesNoKey(t *testing.T) {
+// With its pod's token a gateway rotates while its keys are contested,
+// here or in Redis, and so retires the keys of a copy (K1.1 design §7.4).
+func TestContestedGatewayRotatesWithItsToken(t *testing.T) {
+	t.Parallel()
+	for _, local := range []bool{true, false} {
+		for _, kind := range rotationKinds() {
+			rotations := &fakeMachineKeyRotations{}
+			f := gatewayFixture(t, rotations)
+			if local {
+				f.session.server.mu.Lock()
+				f.session.server.contested[f.session.Machine()] = time.Now().Add(time.Minute)
+				f.session.server.mu.Unlock()
+			} else {
+				f.talk.application.options.GatewayPresence = &fakeGatewayPresence{
+					state: mapsession.GatewayRotationContested}
+			}
+			f.run()
+			f.expectStream(node.Key(f.session.Hello().GetNodeKey()))
+			_ = f.rotate(kind)
+			if len(rotations.calls())+len(f.registrations.calls()) != 1 {
+				t.Fatalf("local %t %#x: the rotation did not reach the store", local, uint8(kind))
+			}
+		}
+	}
+}
+
+// Without a token of the gateway's own pod checked against its cluster's
+// trust, a gateway rotates nothing; the refusal comes before Redis and
+// keeps the session (K1.1 design §7.2, §7.3).
+func TestGatewayRotationNeedsItsPodToken(t *testing.T) {
+	t.Parallel()
+	expired := testPodClaims(fixtureClock.Add(-time.Hour), "meshgw-0")
+	incomplete := testRotationTrust()
+	incomplete.PodName = ""
+	for name, test := range map[string]struct {
+		token    func(t *testing.T) string
+		trust    kubecluster.RotationTrust
+		trustErr error
+	}{
+		"no token": {token: func(*testing.T) string { return "" }},
+		"another pod's token": {token: func(t *testing.T) string {
+			return signPodToken(t, testPodSigner(), testPodClaims(fixtureClock, "meshgw-1"))
+		}},
+		"expired token": {token: func(t *testing.T) string { return signPodToken(t, testPodSigner(), expired) }},
+		"no trust":      {trustErr: kubecluster.ErrNotFound},
+		"trust unread":  {trustErr: errors.New("database: down")},
+		"no bound pod":  {trust: incomplete},
+	} {
+		for _, kind := range rotationKinds() {
+			t.Run(fmt.Sprintf("%s %#x", name, uint8(kind)), func(t *testing.T) {
+				t.Parallel()
+				rotations := &fakeMachineKeyRotations{trust: test.trust, trustErr: test.trustErr}
+				presence := &fakeGatewayPresence{state: mapsession.GatewayRotationHeld}
+				f := gatewayFixture(t, rotations)
+				f.talk.application.options.GatewayPresence = presence
+				if test.token != nil {
+					f.podToken = test.token(t)
+				}
+				f.run()
+				f.expectStream(node.Key(f.session.Hello().GetNodeKey()))
+				if err := f.rotate(kind); err != nil {
+					t.Fatalf("Receive() = %v, want the session kept", err)
+				}
+				f.expectRotationRefused(kind, rotations)
+				if len(presence.checked()) != 0 {
+					t.Fatal("a refused token reached Redis")
+				}
+			})
+		}
+	}
+}
+
+// The store's refusal of the token's use (replayed, trust changed, expired
+// by its clock) is definitive: NOT_PERMITTED, the session kept.
+func TestGatewayTokenRefusedByTheStore(t *testing.T) {
 	t.Parallel()
 	for _, kind := range rotationKinds() {
-		rotations := &fakeMachineKeyRotations{}
+		rotations := &fakeMachineKeyRotations{err: kubecluster.ErrGatewayTokenRefused}
 		f := gatewayFixture(t, rotations)
-		f.session.server.mu.Lock()
-		f.session.server.contested[f.session.Machine()] = time.Now().Add(time.Minute)
-		f.session.server.mu.Unlock()
+		f.registrations.err = keyrotation.ErrGatewayTokenRefused
 		f.run()
 		f.expectStream(node.Key(f.session.Hello().GetNodeKey()))
 		if err := f.rotate(kind); err != nil {
 			t.Fatalf("%#x: Receive() = %v", uint8(kind), err)
 		}
-		f.expectRotationRefused(kind, rotations)
+		got := f.expectPast(sharedmtcp.MessageError).(*mtcpv1.Error)
+		if got.GetCode() != mtcpv1.Error_NOT_PERMITTED || got.GetFatal() {
+			t.Fatalf("%#x answered %v", uint8(kind), got)
+		}
+	}
+}
+
+// The node key rotation carries the verified token to the store.
+func TestGatewayNodeKeyRotationCarriesTheToken(t *testing.T) {
+	t.Parallel()
+	f := gatewayFixture(t, &fakeMachineKeyRotations{})
+	f.run()
+	f.expectStream(node.Key(f.session.Hello().GetNodeKey()))
+	_ = f.rotateNodeKey()
+	machines := f.registrations.authenticatedMachines()
+	if len(machines) != 1 {
+		t.Fatalf("%d registrations", len(machines))
+	}
+	if token, ok := machines[0].GatewayToken(); !ok || token.JTI != "jti-meshgw-0" ||
+		token.DeviceID != testRotationTrust().DeviceID {
+		t.Fatalf("token %+v, %v", token, ok)
 	}
 }
 
@@ -422,5 +512,53 @@ func TestLiveContestsAreBounded(t *testing.T) {
 	}
 	if _, kept := server.contested[first]; kept {
 		t.Fatal("the contest ending soonest was kept")
+	}
+}
+
+// A repeat of a node key rotation that committed answers with the key and
+// needs no token: the client would otherwise drop its only key (K1.1
+// design §7.2).
+func TestGatewayNodeKeyRepeatNeedsNoToken(t *testing.T) {
+	t.Parallel()
+	rotations := &fakeMachineKeyRotations{}
+	f := gatewayFixture(t, rotations)
+	f.run()
+	f.expectStream(node.Key(f.session.Hello().GetNodeKey()))
+	committed, _, _, _, _ := f.keys(6)
+	f.snapshots.mu.Lock()
+	f.snapshots.current[committed] = true
+	f.snapshots.mu.Unlock()
+	f.podToken = ""
+	if err := f.rotateNodeKey(); err != nil {
+		t.Fatalf("Receive() = %v", err)
+	}
+	if _, ok := f.expectPast(sharedmtcp.MessageRotateNodeKeyResponse).(*mtcpv1.RotateNodeKeyResponse); !ok {
+		t.Fatal("no RotateNodeKeyResponse")
+	}
+	rotations.mu.Lock()
+	reads := rotations.trustRead
+	rotations.mu.Unlock()
+	if reads != 0 || len(f.registrations.calls()) != 0 {
+		t.Fatalf("the repeat read the trust %d times, registered %d", reads, len(f.registrations.calls()))
+	}
+}
+
+// Only issuers a cluster alone resolves join before K1.1b.
+func TestClusterLocalIssuer(t *testing.T) {
+	t.Parallel()
+	for issuer, local := range map[string]bool{
+		"https://kubernetes.default.svc.cluster.local":         true,
+		"https://kubernetes.default.svc":                       true,
+		"https://KUBERNETES.DEFAULT.SVC:443":                   true,
+		"https://issuer.ns.svc/path":                           true,
+		"https://kubernetes.default.svc.cluster.local.":        false,
+		"https://evil.svc.example.com":                         false,
+		"https://x.cluster.local.evil.com":                     false,
+		"https://oidc.eks.ap-southeast-1.amazonaws.com/id/ABC": false,
+		"https://container.googleapis.com/v1/projects/p":       false,
+	} {
+		if got := clusterLocalIssuer(issuer); got != local {
+			t.Errorf("clusterLocalIssuer(%q) = %v, want %v", issuer, got, local)
+		}
 	}
 }

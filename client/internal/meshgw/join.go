@@ -11,6 +11,7 @@ import (
 
 	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/daemon"
+	"meshtransit.net/client/internal/k8sstate"
 )
 
 // A K1 gateway replica joins its cluster with the join key in its Secret
@@ -32,8 +33,8 @@ const (
 // joiner is the gateway daemon as the join loop sees it.
 type joiner interface {
 	controller
-	JoinCluster(ctx context.Context, joinKey string, reported map[string]string, wait time.Duration) (
-		daemon.ClusterJoin, error)
+	JoinCluster(ctx context.Context, joinKey string, reported map[string]string, wait time.Duration,
+		pod daemon.PodIdentity) (daemon.ClusterJoin, error)
 	PrepareGatewayKeys(ctx context.Context) error
 }
 
@@ -41,19 +42,56 @@ type joiner interface {
 // what an administrator must do.
 var ErrJoinRefused = errors.New("meshgw: the cluster join was refused")
 
+// podIdentitySource reads what the replica proves itself with at each join
+// (K1.1): its pod's token, and its cluster's issuer and keys.
+type podIdentitySource func(ctx context.Context, cfg Config) (daemon.PodIdentity, error)
+
+// readPodIdentity reads the projected token and asks the API server for the
+// cluster's issuer and keys, with the pod's default token.
+func readPodIdentity(ctx context.Context, cfg Config) (daemon.PodIdentity, error) {
+	token, err := daemon.ReadPodToken(cfg.PodTokenFile)
+	if err != nil {
+		return daemon.PodIdentity{}, fmt.Errorf("meshgw: %w (a projected token with audience "+
+			"meshtransit.net/kubernetes-gateway must be mounted at %s)", err, cfg.PodTokenFile)
+	}
+	api, err := k8sstate.InClusterConfig(cfg.StateSecret)
+	if err != nil {
+		return daemon.PodIdentity{}, err
+	}
+	issuer, jwks, err := k8sstate.ReadSigningKeys(ctx, api)
+	if err != nil {
+		return daemon.PodIdentity{}, err
+	}
+	return daemon.PodIdentity{Token: token, Issuer: issuer, JWKS: jwks}, nil
+}
+
 // joinUntilDone joins the cluster, printing the code while it waits; two
 // asks start at least wait apart, should Core answer pending at once
 // (sessions cut short by a proxy or a rolling Core). Failures that may
 // pass are retried from wait, at most a minute apart.
-func joinUntilDone(ctx context.Context, service joiner, cfg Config, wait time.Duration, logger *slog.Logger) error {
+func joinUntilDone(ctx context.Context, service joiner, cfg Config, identity podIdentitySource, wait time.Duration,
+	logger *slog.Logger,
+) error {
 	backoff := wait
 	expiredOnce := false
 	for {
 		started := time.Now()
-		state, err := joinOnce(ctx, service, cfg)
+		state, err := joinOnce(ctx, service, cfg, identity)
 		switch {
 		case err == nil && state.State == daemon.ClusterJoinJoined:
 			return nil
+		case err == nil && state.State == daemon.ClusterJoinConflict:
+			// The keys hold a request with other signing material: this
+			// replica's code differs from that request's, so an
+			// administrator rejects it and the replica asks again.
+			logger.Warn("enroll code: "+state.Code, "request", state.RequestID,
+				"hint", "this request holds other signing keys than this pod's; reject it, the replica asks again")
+			// Until an administrator acts, ask less and less often.
+			if err := sleepUntil(ctx, backoff-time.Since(started)); err != nil {
+				return err
+			}
+			backoff = min(2*backoff, enrollRetryLongest)
+			continue
 		case err == nil:
 			logger.Info("enroll code: "+state.Code, "request", state.RequestID, "expires_at", state.ExpiresAt,
 				"hint", "an administrator approves this replica with this code")
@@ -91,9 +129,11 @@ func joinUntilDone(ctx context.Context, service joiner, cfg Config, wait time.Du
 	}
 }
 
-// joinOnce asks once: the join key is read for this request only, and a
-// replica that already joined needs none.
-func joinOnce(ctx context.Context, service joiner, cfg Config) (daemon.ClusterJoin, error) {
+// joinOnce asks once: the join key and the pod identity are read for this
+// request only, and a replica that already joined needs neither.
+func joinOnce(ctx context.Context, service joiner, cfg Config, identity podIdentitySource) (daemon.ClusterJoin,
+	error,
+) {
 	attempt, cancel := context.WithTimeout(ctx, joinAttemptTimeout)
 	defer cancel()
 	status, err := prepareProfile(attempt, service, cfg)
@@ -107,7 +147,11 @@ func joinOnce(ctx context.Context, service joiner, cfg Config) (daemon.ClusterJo
 	if err != nil {
 		return daemon.ClusterJoin{}, err
 	}
-	return service.JoinCluster(attempt, key, reported(cfg), joinWait)
+	pod, err := identity(attempt, cfg)
+	if err != nil {
+		return daemon.ClusterJoin{}, err
+	}
+	return service.JoinCluster(attempt, key, reported(cfg), joinWait, pod)
 }
 
 // joinRefusal turns Core's final refusals into what an administrator must
@@ -123,9 +167,13 @@ func joinRefusal(err error) error {
 			ErrJoinRefused, rejected.Code)
 	case "expired":
 		return fmt.Errorf("%w: the approval expired twice; approve the replica within the time shown", ErrJoinRefused)
+	case "invalid":
+		// K1.1: Core's message says what to fix (meshgw version, the
+		// projected token, the cluster), never the state Secret.
+		return fmt.Errorf("%w: %s", ErrJoinRefused, rejected.Message)
 	default:
-		return fmt.Errorf("%w: %s (%s); remove this replica's state Secret to ask again", ErrJoinRefused,
-			rejected.Code, rejected.Message)
+		return fmt.Errorf("%w: %s (%s); if an administrator rejected or cancelled the request, remove this "+
+			"replica's state Secret to ask again", ErrJoinRefused, rejected.Code, rejected.Message)
 	}
 }
 

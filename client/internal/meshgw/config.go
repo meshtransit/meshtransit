@@ -12,9 +12,12 @@ import (
 )
 
 const (
-	defaultStateDir     = "/var/lib/meshgw/state"
-	defaultEnvelopeDir  = "/etc/meshgw/envelope"
-	defaultEnrollDir    = "/etc/meshgw/enroll"
+	defaultStateDir    = "/var/lib/meshgw/state"
+	defaultEnvelopeDir = "/etc/meshgw/envelope"
+	defaultEnrollDir   = "/etc/meshgw/enroll"
+	// defaultPodTokenFile is where the manifest mounts the projected token.
+	// #nosec G101 -- a file path, not credential material.
+	defaultPodTokenFile = "/var/run/secrets/meshtransit/token"
 	defaultSecretPrefix = "meshgw-state" //nolint:gosec // G101: a Secret name, not a credential
 	defaultProbeAddress = ":9090"
 	defaultListenPort   = 41641
@@ -45,6 +48,10 @@ type Config struct {
 	// gateway: it joins its cluster with this join key and an
 	// administrator's approval (mtcp-v1 §6.6) instead of enrolling.
 	JoinKeyFile string
+	// PodTokenFile is a K1 gateway's projected ServiceAccount token, audience
+	// meshtransit.net/kubernetes-gateway (MESHGW_POD_TOKEN_FILE): it proves
+	// the replica is its pod when it joins and rotates its keys (K1.1).
+	PodTokenFile string
 	// PodName, Namespace and NodeName are what the replica reports about
 	// itself while it waits for approval, for display only.
 	PodName, Namespace, NodeName string
@@ -104,16 +111,20 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("meshgw: the Device name %q is over %d bytes", hostname, maxHostnameBytes)
 	}
 	keyName := "key-" + strconv.Itoa(ordinal)
-	joinKeyFile := ""
+	joinKeyFile, podTokenFile := "", ""
 	if joinDir := value("MESHGW_JOIN_DIR", ""); joinDir != "" {
 		if !filepath.IsAbs(joinDir) {
 			return Config{}, fmt.Errorf("meshgw: MESHGW_JOIN_DIR %q must be absolute", joinDir)
 		}
 		joinKeyFile = filepath.Join(joinDir, keyName)
+		podTokenFile = value("MESHGW_POD_TOKEN_FILE", defaultPodTokenFile)
+		if !filepath.IsAbs(podTokenFile) {
+			return Config{}, fmt.Errorf("meshgw: MESHGW_POD_TOKEN_FILE %q must be absolute", podTokenFile)
+		}
 	}
 	return Config{
-		JoinKeyFile: joinKeyFile,
-		PodName:     getenv("POD_NAME"), Namespace: value("POD_NAMESPACE", ""), NodeName: value("NODE_NAME", ""),
+		JoinKeyFile: joinKeyFile, PodTokenFile: podTokenFile,
+		PodName: getenv("POD_NAME"), Namespace: value("POD_NAMESPACE", ""), NodeName: value("NODE_NAME", ""),
 		Ordinal:            ordinal,
 		ControlURL:         controlURL,
 		ControlFingerprint: fingerprint,

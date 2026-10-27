@@ -288,13 +288,15 @@ type fakeRegistrations struct {
 	result   registration.Result
 	err      error
 	requests []control.RegistrationRequest
+	machines []control.AuthenticatedMachine
 }
 
-func (registrations *fakeRegistrations) Register(_ context.Context, _ control.AuthenticatedMachine,
+func (registrations *fakeRegistrations) Register(_ context.Context, machine control.AuthenticatedMachine,
 	request control.RegistrationRequest) (registration.Result, error) {
 	registrations.mu.Lock()
 	defer registrations.mu.Unlock()
 	registrations.requests = append(registrations.requests, request)
+	registrations.machines = append(registrations.machines, machine)
 	return registrations.result, registrations.err
 }
 
@@ -413,7 +415,9 @@ func (c *fakeConnectivity) RecordConnectivity(_ context.Context, _ node.ID, gene
 }
 
 type conversationFixture struct {
-	t             *testing.T
+	t *testing.T
+	// podToken is what a gateway's rotations carry (gatewayFixture).
+	podToken      string
 	session       *Session
 	node          *nodeView
 	control       key.ControlPrivate
@@ -2006,4 +2010,10 @@ func TestPresenceChurnAsksTheNodeToWait(t *testing.T) {
 	if reason := streamEndReason(err); reason != "presence_churn" {
 		t.Fatalf("end reason = %q", reason)
 	}
+}
+
+func (registrations *fakeRegistrations) authenticatedMachines() []control.AuthenticatedMachine {
+	registrations.mu.Lock()
+	defer registrations.mu.Unlock()
+	return slices.Clone(registrations.machines)
 }
