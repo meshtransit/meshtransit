@@ -19,6 +19,7 @@ import (
 	"encoding/base32"
 	"encoding/hex"
 	"errors"
+	"io"
 	"strings"
 )
 
@@ -52,19 +53,30 @@ type Code struct {
 //
 // Every input must be non-zero.
 func Compute(inputs Inputs) (Code, error) {
-	if inputs.MachineKey == ([32]byte{}) || inputs.NodeKey == ([32]byte{}) ||
-		inputs.ClusterID == ([16]byte{}) || inputs.RequestNonce == ([32]byte{}) {
+	if !inputs.complete() {
 		return Code{}, ErrInvalid
 	}
 	hash := sha256.New()
 	hash.Write([]byte(label))
 	hash.Write([]byte{0})
-	hash.Write(inputs.MachineKey[:])
-	hash.Write(inputs.NodeKey[:])
-	hash.Write(inputs.ClusterID[:])
-	hash.Write(inputs.RequestNonce[:])
+	inputs.write(hash)
 	digest := hash.Sum(nil)
 	return Code{text: base32.StdEncoding.EncodeToString(digest)[:Length]}, nil
+}
+
+// complete reports whether every input is non-zero.
+func (inputs Inputs) complete() bool {
+	return inputs.MachineKey != ([32]byte{}) && inputs.NodeKey != ([32]byte{}) &&
+		inputs.ClusterID != ([16]byte{}) && inputs.RequestNonce != ([32]byte{})
+}
+
+// write hashes the inputs in code order.
+func (inputs Inputs) write(digest io.Writer) {
+	// A hash.Hash never fails to write.
+	_, _ = digest.Write(inputs.MachineKey[:])
+	_, _ = digest.Write(inputs.NodeKey[:])
+	_, _ = digest.Write(inputs.ClusterID[:])
+	_, _ = digest.Write(inputs.RequestNonce[:])
 }
 
 // Parse reads a code as a person typed it: case, spaces and hyphens are
