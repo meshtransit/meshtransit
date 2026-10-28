@@ -277,7 +277,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			marks = redisClient
 		}
 		workers, composeErr := composeKubernetesCAWorker(*processConfig.KubernetesCAWorker,
-			processConfig.DNSSuffix, storagePools.worker, marks, logger)
+			processConfig.DNSSuffix, storagePools.worker, marks, redisClient, logger)
 		if composeErr != nil {
 			logger.ErrorContext(ctx, "startup failed", "error_code", "kubernetes_ca_worker_composition_failure")
 			return 1
@@ -286,6 +286,10 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		roleServices = append(roleServices,
 			app.OwnedService{Name: "kubernetes-ca-worker", Service: workers.lifecycle},
 			app.OwnedService{Name: "kubernetes-certificate-signer", Service: workers.signer})
+		if workers.hints != nil {
+			roleServices = append(roleServices,
+				app.OwnedService{Name: "kubernetes-certificate-wakeups", Service: workers.hints})
+		}
 	}
 	if processConfig.EnforcementLedgerWorker != nil {
 		workerService, workerMetrics, composeErr := composeEnforcementLedgerWorker(
@@ -680,6 +684,21 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 				return 1
 			}
 			deps.clusterJoins = joins
+		}
+		// Gateways ask for their replica certificates where their maps are
+		// built from the shared inventory (gateway.cert1, a3b).
+		if processConfig.KubernetesJoin && processConfig.Control.Map.SharedInventory {
+			certificates, hints, certErr := composeKubeCertificates(processConfig.Enrollment.Registration,
+				storagePools.runtime, redisClient, logger)
+			if certErr != nil {
+				logger.ErrorContext(ctx, "startup failed", "error_code", "mtcp_composition_failure", "error", certErr)
+				return 1
+			}
+			deps.kubeCertificates = certificates
+			if hints != nil {
+				roleServices = append(roleServices,
+					app.OwnedService{Name: "kubernetes-certificate-hints", Service: hints})
+			}
 		}
 		if relay := processConfig.RelayAuthority; relay != nil && relay.TicketDeployment != nil {
 			deps.relayZones = relay.TicketZonesV2

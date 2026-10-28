@@ -87,17 +87,20 @@ func TestReconcileAfterRestoreRetiresEveryIntermediate(t *testing.T) {
 		store.guard.Suspected {
 		t.Fatalf("ReconcileAfterRestore() = %d, %v; store %+v", retired, err, store)
 	}
-	for _, changes := range store.changes {
-		move := changes.Steps[0].Move
-		if changes.Operator != operator || move.To != kubeca.StateRetired || move.Reason != kubeca.ReasonEmergency ||
-			len(changes.Schedules) != 1 {
-			t.Fatalf("changes %+v", changes)
-		}
+	// The busy Network is retried, then both of its intermediates retire in
+	// one change (§14 R-M7), each at the version listed.
+	if len(store.changes) != 1 {
+		t.Fatalf("%d changes, want one for the Network", len(store.changes))
 	}
-	// The busy Network is retried; each is retired at the version listed.
-	for _, changes := range store.changes {
-		if move := changes.Steps[0].Move; move.CA == first.CA && move.Version != 3 {
-			t.Fatalf("retired at version %d, want the listed one", move.Version)
+	changes := store.changes[0]
+	if changes.Operator != operator || len(changes.Steps) != 2 || len(changes.Schedules) != 2 {
+		t.Fatalf("changes %+v", changes)
+	}
+	for _, step := range changes.Steps {
+		move := step.Move
+		if move.To != kubeca.StateRetired || move.Reason != kubeca.ReasonEmergency ||
+			move.CA == first.CA && move.Version != 3 || move.CA == second.CA && move.Version != 1 {
+			t.Fatalf("move %+v", move)
 		}
 	}
 }

@@ -201,6 +201,44 @@ message RotateMachineKey {
 
 message RotateMachineKeyResponse {}
 
+// KubeCertRequest asks for a Kubernetes gateway replica certificate
+// (gateway.cert1, mtcp-v1 §6.9): with the pod's token after the pod
+// starts, then each time with a renewal proof by the current certificate's
+// key. The gateway keeps request_id, its key and CSR until the request is
+// issued or refused, across sessions.
+message KubeCertRequest {
+  bytes request_id = 1; // 16 bytes, unique per Device
+  bytes csr = 2;        // DER, P-256, ECDSA-SHA256
+  // The pod's ServiceAccount token; never logged.
+  string service_account_token = 3 [debug_redact = true];
+  bytes renewal_serial = 4; // 16 bytes: the certificate renewed
+  bytes renewal_proof = 5;  // ASN.1 ECDSA by that certificate's key
+}
+
+// KubeCertResult answers one KubeCertRequest (mtcp-v1 §6.9). An outcome or
+// reason the gateway does not know is a RETRY.
+message KubeCertResult {
+  enum Outcome {
+    OUTCOME_UNSPECIFIED = 0;
+    ISSUED = 1;
+    REFUSED = 2;
+    RETRY = 3;
+  }
+  bytes request_id = 1;
+  Outcome outcome = 2;
+  string reason = 3;          // a short code (section 6.9); empty when issued
+  int64 retry_after_ms = 4;   // RETRY, and some refusals: wait at least this long
+  bytes certificate = 5;      // ISSUED: DER of the replica certificate
+  repeated bytes chain = 6;   // ISSUED: DER of the intermediates, leaf side first, no root
+  bytes root_fingerprint = 7;   // ISSUED: SHA-256 of the root's DER
+  bytes issuer_fingerprint = 8; // ISSUED: SHA-256 of the issuing intermediate's DER
+  int64 not_after_ms = 9;
+  int64 renew_at_ms = 10;
+  // ISSUED: the gateway's Network revision when it was issued; a map at or
+  // past it shows the CAs as they were then (section 7.10).
+  uint64 network_revision = 11;
+}
+
 // ---- Map ----
 
 message View {
@@ -282,6 +320,19 @@ message Device {
   // Only in a Kubernetes gateway's own map, for a peer a rule naming groups
   // reaches it from, when the session negotiated gateway.kube.v1 (7.8).
   KubernetesAccess kubernetes = 17;
+  // Only on a Kubernetes gateway's self, when the session negotiated
+  // gateway.cert1 (7.10): its cluster's root and signing intermediate.
+  // Absent: Core could not read them; the gateway keeps its certificate.
+  KubernetesCA kubernetes_ca = 18;
+}
+
+// KubernetesCA names, by SHA-256 of their DER, the root a gateway's
+// cluster's clients trust and the intermediate that signs now (7.10). Both
+// empty: the cluster has no CA yet. An empty signing_fingerprint with a
+// root: no intermediate signs at the moment.
+message KubernetesCA {
+  bytes root_fingerprint = 1;
+  bytes signing_fingerprint = 2;
 }
 
 // KubernetesAccess is what a cluster's gateway may let a peer do in the

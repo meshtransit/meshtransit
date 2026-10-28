@@ -95,6 +95,16 @@ func kubernetesCapabilities(sharedInventory bool) []string {
 	return []string{"gateway.kube.v1"}
 }
 
+// kubeCertCapabilities offers gateway.cert1, gateways' replica
+// certificates (mtcp-v1 §6.9), whenever Core queues them: whether a worker
+// signs now is answered per request (a3 §14 R-H2).
+func kubeCertCapabilities(certificates mtcpadapter.KubeCertificates) []string {
+	if certificates == nil {
+		return nil
+	}
+	return []string{mtcpadapter.CapabilityKubeCert}
+}
+
 // mtcpDependencies are the application services MTCP sessions use. The
 // browser fields are nil when browser registration is off.
 type mtcpDependencies struct {
@@ -130,6 +140,9 @@ type mtcpDependencies struct {
 	gatewayKeys kubecluster.MachineKeyRotations
 	// gatewayPresence says whether a gateway's stream may rotate its keys.
 	gatewayPresence mapsession.GatewayPresenceStore
+	// kubeCertificates, when set, queues gateways' certificate requests
+	// (gateway.cert1).
+	kubeCertificates mtcpadapter.KubeCertificates
 }
 
 // mtcpMapSessions is mapsession.Service: endpoints and snapshot opening.
@@ -210,6 +223,7 @@ func composeMTCP(
 	}
 	applicationOptions.MachineKeyRotations = deps.gatewayKeys
 	applicationOptions.GatewayPresence = deps.gatewayPresence
+	applicationOptions.KubeCertificates = deps.kubeCertificates
 	if deps.clusterJoins != nil {
 		applicationOptions.ClusterJoins = deps.clusterJoins
 		applicationOptions.ClusterJoinSecrets = kubecluster.SystemSecrets{}
@@ -225,7 +239,8 @@ func composeMTCP(
 		Guard:     deps.guard,
 		Capabilities: append(append(mtcpCapabilities(controlConfig.Map.EnableDeviceAliases, deps.relayZones,
 			deps.subnetRoutes), exitCapabilities(deps.exitNodes)...), append(captiveCapabilities(deps.captiveWindows),
-			append(dnsCapabilities(deps.dnsZones), kubernetesCapabilities(deps.kubernetesAccess)...)...)...),
+			append(append(dnsCapabilities(deps.dnsZones), kubernetesCapabilities(deps.kubernetesAccess)...),
+				kubeCertCapabilities(deps.kubeCertificates)...)...)...),
 		Logger:         logger,
 		Metrics:        metrics,
 		HandshakeRate:  controlConfig.MTCP.HandshakeRate,

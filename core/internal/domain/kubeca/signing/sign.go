@@ -29,7 +29,8 @@ const (
 
 // RenewalVerifier checks a renewal signature (shared/mtcp, injected so the
 // domain stays free of protocol code).
-type RenewalVerifier func(publicKey []byte, handshakeHash [32]byte, requestID [16]byte, csr, proof []byte) bool
+type RenewalVerifier func(publicKey []byte, handshakeHash [32]byte, requestID, serial [16]byte, csr,
+	proof []byte) bool
 
 // decision is what to do with a claim: issue it, or refuse it for reason.
 type decision struct {
@@ -86,20 +87,26 @@ func (signer *signer) sign(ctx context.Context, custody kubeca.Custody, claim Cl
 	var trustVersion int64
 	switch claim.Proof {
 	case ProofToken:
-		if claim.Trust == nil || !claim.Trust.Complete() {
-			return decision{refuse: ReasonTrustMissing}, nil
-		}
-		use, err := signer.verifyToken(claim.Token, *claim.Trust, now)
-		if err != nil || use.JTI == "" || !use.ExpiresAt.After(now) || use.PodName != claim.Trust.PodName {
+		// The worker checked the token at its first claim (checkToken) and
+		// recorded what it checked (§14 R-M1).
+		verified := claim.Verified
+		if verified == nil || !verified.Valid() {
 			return decision{refuse: ReasonToken}, nil
 		}
-		token, trustVersion = &use, claim.Trust.Version
+		if !verified.Use.ExpiresAt.After(now) {
+			return decision{refuse: ReasonTokenExpired}, nil
+		}
+		if claim.Trust == nil || claim.Trust.Version != verified.TrustVersion {
+			return decision{refuse: ReasonTrustMissing}, nil
+		}
+		use := verified.Use
+		token, trustVersion = &use, verified.TrustVersion
 	case ProofRenewal:
 		if len(claim.RenewalPublicKey) == 0 || !claim.RenewalNotAfter.After(now) {
 			return decision{refuse: ReasonRenewalExpired}, nil
 		}
-		if !signer.verifyRenewal(claim.RenewalPublicKey, claim.HandshakeHash, claim.RequestID, claim.CSR,
-			claim.RenewalProof) {
+		if !signer.verifyRenewal(claim.RenewalPublicKey, claim.HandshakeHash, claim.RequestID, claim.RenewalSerial,
+			claim.CSR, claim.RenewalProof) {
 			return decision{refuse: ReasonProof}, nil
 		}
 	default:
@@ -154,23 +161,73 @@ func clusterDNSName(claim Claim, suffix dnsname.Suffix) (string, bool) {
 	return zone.KubernetesClusterName(claim.ClusterName)
 }
 
-// renewalTime is when the gateway renews: with a third of the life left,
-// up to a twelfth earlier, at random, so a cluster's replicas spread out.
+// checkToken checks a token request's pod token against its cluster's
+// signing trust at now: the claims to record in its place, or why it is
+// refused.
+func (signer *signer) checkToken(claim Claim, now time.Time) (VerifiedToken, Reason) {
+	if claim.Trust == nil || !claim.Trust.Complete() {
+		return VerifiedToken{}, ReasonTrustMissing
+	}
+	use, err := signer.verifyToken(claim.Token, *claim.Trust, now)
+	if err != nil || !validJTI(use.JTI) || !use.ExpiresAt.After(now) || use.PodName != claim.Trust.PodName ||
+		!validPodName(use.PodName) {
+		return VerifiedToken{}, ReasonToken
+	}
+	// A token's expiry is whole seconds (JWT exp); recorded as such, the
+	// claims read back equal the ones checked.
+	use.ExpiresAt = use.ExpiresAt.Truncate(time.Second)
+	return VerifiedToken{Use: use, TrustVersion: claim.Trust.Version}, ""
+}
+
+// validJTI reports a jti the ledger keeps: 1 to 128 printable ASCII
+// characters (schema 240, 241).
+func validJTI(jti string) bool {
+	if len(jti) == 0 || len(jti) > 128 {
+		return false
+	}
+	for index := range len(jti) {
+		if jti[index] < '!' || jti[index] > '~' {
+			return false
+		}
+	}
+	return true
+}
+
+// validPodName reports a pod name the ledger keeps: a DNS subdomain.
+func validPodName(name string) bool {
+	if len(name) == 0 || len(name) > 253 {
+		return false
+	}
+	for index := range len(name) {
+		character := name[index]
+		if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '.' &&
+			character != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+// renewalTime is when the gateway renews: a third of the way into the
+// certificate's life, give or take a twenty-fourth at random so a cluster's
+// replicas spread out. A 24-hour certificate renews 7 to 9 hours after it
+// is issued, so signing may stop for about 15 hours before a running
+// replica's certificate expires (§14 R-H1, design §15.9).
 func renewalTime(now, notAfter time.Time) (time.Time, error) {
-	remaining := notAfter.Sub(now)
-	if remaining <= 0 {
+	life := notAfter.Sub(now)
+	if life <= 0 {
 		return time.Time{}, kubeca.ErrInvalid
 	}
-	spread := remaining / 12
+	spread := life / 24
 	jitter := time.Duration(0)
 	if spread > 0 {
-		value, err := rand.Int(rand.Reader, big.NewInt(int64(spread)))
+		value, err := rand.Int(rand.Reader, big.NewInt(2*int64(spread)+1))
 		if err != nil {
 			return time.Time{}, err
 		}
-		jitter = time.Duration(value.Int64())
+		jitter = time.Duration(value.Int64()) - spread
 	}
-	return now.Add(remaining*2/3 - jitter), nil
+	return now.Add(life/3 + jitter), nil
 }
 
 // open returns the claim's intermediate in the clear, opened at most every

@@ -14,10 +14,12 @@ import (
 	"meshtransit.net/core/internal/adapter/kubecustody"
 	"meshtransit.net/core/internal/adapter/kubetoken"
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	redisadapter "meshtransit.net/core/internal/adapter/redis"
 	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/kubeca"
 	"meshtransit.net/core/internal/domain/kubeca/lifecycle"
 	"meshtransit.net/core/internal/domain/kubeca/signing"
+	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/platform/app"
 	"meshtransit.net/core/internal/platform/buildinfo"
 	"meshtransit.net/core/internal/platform/config"
@@ -32,11 +34,13 @@ var errInvalidKubernetesCAWorkerComposition = errors.New("invalid Kubernetes CA 
 type kubernetesCAWorkers struct {
 	lifecycle *lifecycle.Worker
 	signer    *signing.Worker
-	metrics   []prometheus.Collector
+	// hints, with Redis, wakes the signer when control queues a request.
+	hints   *kubeCertHints
+	metrics []prometheus.Collector
 }
 
 func composeKubernetesCAWorker(settings config.KubernetesCAWorkerConfig, suffix dnsname.Suffix,
-	pool *postgresadapter.Pool, marks lifecycle.MarkKeeper, logger *slog.Logger,
+	pool *postgresadapter.Pool, marks lifecycle.MarkKeeper, hints *redisadapter.Client, logger *slog.Logger,
 ) (kubernetesCAWorkers, error) {
 	if pool == nil || marks == nil || logger == nil || !suffix.IsValid() {
 		return kubernetesCAWorkers{}, errInvalidKubernetesCAWorkerComposition
@@ -61,11 +65,23 @@ func composeKubernetesCAWorker(settings config.KubernetesCAWorkerConfig, suffix 
 	if err != nil {
 		return kubernetesCAWorkers{}, errors.Join(errInvalidKubernetesCAWorkerComposition, err)
 	}
-	signer, err := signing.New(signing.Options{
+	signerOptions := signing.Options{
 		DeploymentID: settings.DeploymentID, Suffix: suffix, Version: version,
 		BatchSize: kubernetesCertificateBatch, OperationTimeout: settings.OperationTimeout,
 		MaximumPerSecond: kubernetesCertificatesPerSecond,
-	}, certificates, fileCustodySource(settings), verifyGatewayCertificateToken, mtcp.VerifyKubeCertRenewal, logger)
+	}
+	var wakeups *kubeCertHints
+	if hints != nil {
+		// Redis hints (a3 §14 R-H3): control's queued requests wake the
+		// signer; each settled request wakes the session waiting for it.
+		wake := make(chan struct{}, 1)
+		wakeups = queuedKubeCertHints(hints, wake, logger)
+		signerOptions.Wake = wake
+		signerOptions.Settled = func(_ context.Context, request publicid.ID) {
+			wakeups.Publish(func(ctx context.Context) { _ = hints.PublishKubeCertSettled(ctx, request) })
+		}
+	}
+	signer, err := signing.New(signerOptions, certificates, fileCustodySource(settings), verifyGatewayCertificateToken, mtcp.VerifyKubeCertRenewal, logger)
 	if err != nil {
 		return kubernetesCAWorkers{}, errors.Join(errInvalidKubernetesCAWorkerComposition, err)
 	}
@@ -78,7 +94,8 @@ func composeKubernetesCAWorker(settings config.KubernetesCAWorkerConfig, suffix 
 		return kubernetesCAWorkers{}, errors.Join(errInvalidKubernetesCAWorkerComposition, err)
 	}
 	return kubernetesCAWorkers{
-		lifecycle: worker, signer: signer, metrics: []prometheus.Collector{lifecycleMetrics, signerMetrics},
+		lifecycle: worker, signer: signer, hints: wakeups,
+		metrics: []prometheus.Collector{lifecycleMetrics, signerMetrics},
 	}, nil
 }
 

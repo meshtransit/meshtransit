@@ -32,7 +32,13 @@ func TestParseKubernetesCAArguments(t *testing.T) {
 		// The restore commands act on the whole installation.
 		{"guard", true},
 		{"mark-restored" + operator, true},
-		{"reconcile-after-restore" + operator, true},
+		{"reconcile-after-restore" + operator + " --roots-checked-since=2026-10-01T00:00:00Z", true},
+		// Reconcile needs the time from which root retirements were
+		// checked (a3 §14 R-M8), and nothing else takes it.
+		{"reconcile-after-restore" + operator, false},
+		{"reconcile-after-restore" + operator + " --roots-checked-since=yesterday", false},
+		{"reconcile-after-restore" + operator + " --roots-checked-since=2999-01-01T00:00:00Z", false},
+		{"mark-restored" + operator + " --roots-checked-since=2026-10-01T00:00:00Z", false},
 		{"guard" + operator, false},
 		{"mark-restored", false},
 		{"reconcile-after-restore " + scope + operator, false},

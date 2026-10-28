@@ -169,16 +169,60 @@ func (fixture signFixture) signer(t *testing.T, renewalValid bool) *signer {
 			}
 			return TokenUse{JTI: "jti-1", ExpiresAt: now.Add(10 * time.Minute), PodName: trust.PodName}, nil
 		},
-		func(publicKey []byte, handshakeHash [32]byte, requestID [16]byte, csr, proof []byte) bool {
-			return renewalValid && len(publicKey) > 0 && handshakeHash == [32]byte{9} &&
+		func(publicKey []byte, handshakeHash [32]byte, requestID, serial [16]byte, csr, proof []byte) bool {
+			return renewalValid && len(publicKey) > 0 && handshakeHash == [32]byte{9} && serial == [16]byte{5} &&
 				requestID == fixture.claim.RequestID && bytes.Equal(csr, fixture.claim.CSR) && bytes.Equal(proof, []byte("sig"))
 		})
+}
+
+// verified is the fixture's claim once a worker checked its token (§14
+// R-M1): the claims replace the token.
+func (fixture signFixture) verified(t *testing.T) Claim {
+	t.Helper()
+	claim := fixture.claim
+	verified, reason := fixture.signer(t, true).checkToken(claim, fixture.now)
+	if reason != "" {
+		t.Fatalf("checkToken() refused %s", reason)
+	}
+	claim.Verified, claim.Token = &verified, ""
+	return claim
+}
+
+func TestCheckToken(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string]struct {
+		change func(*Claim)
+		want   Reason
+	}{
+		"a valid token":       {change: func(*Claim) {}},
+		"no trust":            {change: func(claim *Claim) { claim.Trust = nil }, want: ReasonTrustMissing},
+		"an incomplete trust": {change: func(claim *Claim) { claim.Trust.PodName = "" }, want: ReasonTrustMissing},
+		"a refused token":     {change: func(claim *Claim) { claim.Token = "forged" }, want: ReasonToken},
+		"another pod's token": {change: func(claim *Claim) { claim.Trust.PodName = "gateway-1" }},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newSignFixture(t)
+			claim := fixture.claim
+			trust := *claim.Trust
+			claim.Trust = &trust
+			test.change(&claim)
+			verified, reason := fixture.signer(t, true).checkToken(claim, fixture.now)
+			if reason != test.want || (reason == "") != verified.Valid() {
+				t.Fatalf("checkToken() = %+v, %q; want %q", verified, reason, test.want)
+			}
+			if reason == "" && (verified.Use.JTI != "jti-1" || verified.TrustVersion != 1 ||
+				verified.Use.PodName != claim.Trust.PodName) {
+				t.Fatalf("checkToken() = %+v", verified)
+			}
+		})
+	}
 }
 
 func TestSignIssuesForTheClusterName(t *testing.T) {
 	t.Parallel()
 	fixture := newSignFixture(t)
-	decided, err := fixture.signer(t, true).sign(t.Context(), fixture.custody, fixture.claim, fixture.now)
+	decided, err := fixture.signer(t, true).sign(t.Context(), fixture.custody, fixture.verified(t), fixture.now)
 	if err != nil || decided.refuse != "" {
 		t.Fatalf("sign() = %+v, %v", decided, err)
 	}
@@ -207,9 +251,10 @@ func TestSignIssuesForTheClusterName(t *testing.T) {
 		issue.TrustVersion != 1 {
 		t.Fatalf("issue = %+v", issue)
 	}
-	// Renew with a third of the life left, up to a twelfth earlier.
+	// Renew a third into the life, give or take a twenty-fourth (§14 R-H1):
+	// a 24-hour certificate 7 to 9 hours after it is issued.
 	life := issue.NotAfter.Sub(fixture.now)
-	if earliest, latest := fixture.now.Add(life*2/3-life/12), fixture.now.Add(life*2/3); issue.RenewAt.Before(earliest) ||
+	if earliest, latest := fixture.now.Add(life/3-life/24), fixture.now.Add(life/3+life/24); issue.RenewAt.Before(earliest) ||
 		issue.RenewAt.After(latest) {
 		t.Fatalf("renew at %v, want between %v and %v", issue.RenewAt, earliest, latest)
 	}
@@ -222,6 +267,7 @@ func TestSignRenewsWithTheCurrentKey(t *testing.T) {
 	claim.Proof, claim.Token, claim.Trust = ProofRenewal, "", nil
 	claim.HandshakeHash, claim.RenewalProof = [32]byte{9}, []byte("sig")
 	claim.RenewalPublicKey, claim.RenewalNotAfter = []byte("spki"), fixture.now.Add(time.Hour)
+	claim.RenewalSerial = [16]byte{5}
 	decided, err := fixture.signer(t, true).sign(t.Context(), fixture.custody, claim, fixture.now)
 	if err != nil || decided.refuse != "" || decided.issue.Token != nil {
 		t.Fatalf("sign(renewal) = %+v, %v", decided, err)
@@ -254,10 +300,20 @@ func TestSignRefuses(t *testing.T) {
 		},
 		"no tenant codes": {change: func(claim *Claim, _ time.Time) { claim.NetworkCode = "" }, want: ReasonMisnamed},
 		"no trust":        {change: func(claim *Claim, _ time.Time) { claim.Trust = nil }, want: ReasonTrustMissing},
-		"an incomplete trust": {
-			change: func(claim *Claim, _ time.Time) { claim.Trust.PodName = "" }, want: ReasonTrustMissing,
+		"a trust that moved on": {
+			change: func(claim *Claim, _ time.Time) { claim.Trust.Version = 2 }, want: ReasonTrustMissing,
 		},
-		"a refused token": {change: func(claim *Claim, _ time.Time) { claim.Token = "forged" }, want: ReasonToken},
+		"a token no worker checked": {
+			change: func(claim *Claim, _ time.Time) { claim.Verified, claim.Token = nil, "token" }, want: ReasonToken,
+		},
+		"a token that expired since it was checked": {
+			change: func(claim *Claim, now time.Time) {
+				verified := *claim.Verified
+				verified.Use.ExpiresAt = now
+				claim.Verified = &verified
+			},
+			want: ReasonTokenExpired,
+		},
 		"an expired renewed certificate": {
 			change: func(claim *Claim, now time.Time) { renewal(claim); claim.RenewalNotAfter = now },
 			want:   ReasonRenewalExpired,
@@ -276,7 +332,7 @@ func TestSignRefuses(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			fixture := newSignFixture(t)
-			claim := fixture.claim
+			claim := fixture.verified(t)
 			intermediate, trust := *claim.Intermediate, *claim.Trust
 			claim.Intermediate, claim.Trust = &intermediate, &trust
 			test.change(&claim, fixture.now)
@@ -293,7 +349,7 @@ func TestSignOpensAnIntermediateOnce(t *testing.T) {
 	fixture := newSignFixture(t)
 	signer := fixture.signer(t, true)
 	for range 2 {
-		if decided, err := signer.sign(t.Context(), fixture.custody, fixture.claim, fixture.now); err != nil ||
+		if decided, err := signer.sign(t.Context(), fixture.custody, fixture.verified(t), fixture.now); err != nil ||
 			decided.refuse != "" {
 			t.Fatalf("sign() = %+v, %v", decided, err)
 		}
@@ -302,11 +358,11 @@ func TestSignOpensAnIntermediateOnce(t *testing.T) {
 		t.Fatalf("opened %d times, want once", *fixture.opened)
 	}
 	// Past five minutes, or once the CA changed, it is opened again.
-	if _, err := signer.sign(t.Context(), fixture.custody, fixture.claim, fixture.now.Add(cacheLifetime)); err != nil {
+	if _, err := signer.sign(t.Context(), fixture.custody, fixture.verified(t), fixture.now.Add(cacheLifetime)); err != nil {
 		t.Fatal(err)
 	}
 	signer.drop(fixture.claim.Intermediate.ID)
-	if _, err := signer.sign(t.Context(), fixture.custody, fixture.claim, fixture.now); err != nil {
+	if _, err := signer.sign(t.Context(), fixture.custody, fixture.verified(t), fixture.now); err != nil {
 		t.Fatal(err)
 	}
 	if *fixture.opened != 3 {
@@ -318,13 +374,13 @@ func TestSignReportsCustodyTrouble(t *testing.T) {
 	t.Parallel()
 	fixture := newSignFixture(t)
 	fixture.custody.fail = kubeca.ErrUnavailable
-	if _, err := fixture.signer(t, true).sign(t.Context(), fixture.custody, fixture.claim, fixture.now); !errors.Is(err,
+	if _, err := fixture.signer(t, true).sign(t.Context(), fixture.custody, fixture.verified(t), fixture.now); !errors.Is(err,
 		kubeca.ErrUnavailable) {
 		t.Fatalf("sign() error = %v", err)
 	}
 	// A sealed key under another cluster does not open.
 	fixture = newSignFixture(t)
-	claim := fixture.claim
+	claim := fixture.verified(t)
 	claim.ClusterID = mustID(t)
 	if _, err := fixture.signer(t, true).sign(t.Context(), fixture.custody, claim, fixture.now); err == nil {
 		t.Fatal("an intermediate sealed for another cluster opened")

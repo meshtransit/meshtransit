@@ -8,7 +8,7 @@ import (
 	"meshtransit.net/core/internal/platform/config"
 )
 
-const usage = "Usage: meshcore [serve | version | config validate | identity fingerprint | migrate status | migrate up | migrate verify | migrate operator status | migrate operator apply [--dry-run] [--after-rollout] [--through N] | bootstrap check | bootstrap apply | account revoke-sessions|quarantine|release <principal-id> | kubernetes-ca status|rewrap|rotate-data-key|retire-ca --workspace W --network N [--ca C --reason R] [--actor A --change-ref R] | kubernetes-ca guard | kubernetes-ca mark-restored|reconcile-after-restore --actor A --change-ref R]\n"
+const usage = "Usage: meshcore [serve | version | config validate | identity fingerprint | migrate status | migrate up | migrate verify | migrate operator status | migrate operator apply [--dry-run] [--after-rollout] [--through N] | bootstrap check | bootstrap apply | account revoke-sessions|quarantine|release <principal-id> | kubernetes-ca status|rewrap|rotate-data-key|retire-ca --workspace W --network N [--ca C --reason R] [--actor A --change-ref R] | kubernetes-ca guard | kubernetes-ca mark-restored --actor A --change-ref R | kubernetes-ca reconcile-after-restore --actor A --change-ref R --roots-checked-since T]\n"
 
 func execute(
 	ctx context.Context,

@@ -612,6 +612,8 @@ func Catalog() []Migration {
 			kubernetesClusterCATwoTierSQL),
 		newMigration(240, "The worker signs Kubernetes gateway certificates; CA work stops after a database restore",
 			kubernetesGatewayCertificatesSQL),
+		newMigration(241, "Pod tokens leave the certificate queue at the first claim; Workspaces share it fairly",
+			kubernetesGatewayCertificateQueueSQL),
 	}
 }
 
@@ -1111,3 +1113,6 @@ var kubernetesClusterCATwoTierSQL string
 
 //go:embed 000240_kubernetes_gateway_certificates.up.sql
 var kubernetesGatewayCertificatesSQL string
+
+//go:embed 000241_kubernetes_gateway_certificate_queue.up.sql
+var kubernetesGatewayCertificateQueueSQL string

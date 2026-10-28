@@ -53,6 +53,7 @@ type fakeStore struct {
 	guard     kubeca.Guard
 	marked    []kubeca.Operator
 	listed    int
+	stamped   []int64
 }
 
 func (store *fakeStore) ReadGuard(context.Context, deployment.ID) (kubeca.Guard, error) {
@@ -61,6 +62,11 @@ func (store *fakeStore) ReadGuard(context.Context, deployment.ID) (kubeca.Guard,
 		guard.Generation, guard.ReadStarted, guard.ReadFinished = 1, time.Now(), time.Now()
 	}
 	return guard, nil
+}
+
+func (store *fakeStore) StampGuard(_ context.Context, _ deployment.ID, generation int64) error {
+	store.stamped = append(store.stamped, generation)
+	return nil
 }
 
 func (store *fakeStore) MarkRestored(_ context.Context, _ deployment.ID, operator kubeca.Operator) error {
@@ -465,11 +471,14 @@ func TestWorkerStopsAfterARestore(t *testing.T) {
 		marks     *regressingMarks
 		marked    int
 		suspect   bool
+		// stamped: signing may go on (a3 §14 R-M9).
+		stamped bool
 	}{
 		"an operator marked the restore":        {suspected: true, suspect: true},
 		"the marks show the database went back": {marks: &regressingMarks{regressed: true}, marked: 1, suspect: true},
 		"the marks cannot be read":              {marks: &regressingMarks{err: errors.New("redis")}},
-		"no restore":                            {marks: &regressingMarks{}},
+		"no restore":                            {marks: &regressingMarks{}, stamped: true},
+		"no marks configured":                   {stamped: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -485,6 +494,9 @@ func TestWorkerStopsAfterARestore(t *testing.T) {
 			if snapshot := worker.Snapshot(); snapshot.RestoreSuspected != test.suspect ||
 				len(store.marked) != test.marked || (store.listed == 0) != test.suspect {
 				t.Fatalf("snapshot %+v, marked %v, listed %d", snapshot, store.marked, store.listed)
+			}
+			if (len(store.stamped) == 1 && store.stamped[0] == 1) != test.stamped {
+				t.Fatalf("stamped %v", store.stamped)
 			}
 			if test.marked == 1 && (store.marked[0].IsWorker() || !store.marked[0].Valid()) {
 				t.Fatalf("marked by %+v", store.marked[0])

@@ -55,6 +55,12 @@ type Options struct {
 	OperationTimeout time.Duration
 	// MaximumPerSecond bounds the certificates signed each second.
 	MaximumPerSecond int
+	// Wake, optional, ends an idle wait at once: control queued a request
+	// (a Redis hint, a3 §14 R-H3).
+	Wake <-chan struct{}
+	// Settled, optional, tells control a request was issued or refused, so
+	// a waiting session answers without polling. Best effort.
+	Settled func(ctx context.Context, request publicid.ID)
 }
 
 func (options Options) valid() bool {
@@ -66,9 +72,12 @@ func (options Options) valid() bool {
 // Measurements are identifier-free counts for metrics.
 type Measurements struct {
 	Running, CustodyReady, Suspected, SuffixMismatch bool
-	Pending                                          int64
-	Issued, Requeued, Released, Lost, Failures       uint64
-	Refused                                          map[Reason]uint64
+	// Unchecked: the restore tripwire was not checked lately, so nothing is
+	// signed (§14 R-M9).
+	Unchecked                                  bool
+	Pending                                    int64
+	Issued, Requeued, Released, Lost, Failures uint64
+	Refused                                    map[Reason]uint64
 }
 
 // Worker signs the installation's queued certificate requests. It owns one
@@ -97,9 +106,9 @@ type Worker struct {
 	done    chan error
 	refused map[Reason]uint64
 
-	running, custodyReady, suspected, suffixMismatch atomic.Bool
-	pending                                          atomic.Int64
-	issued, requeued, released, lost, failures       atomic.Uint64
+	running, custodyReady, suspected, suffixMismatch, unchecked atomic.Bool
+	pending                                                     atomic.Int64
+	issued, requeued, released, lost, failures                  atomic.Uint64
 }
 
 // New builds a stopped worker without I/O.
@@ -184,6 +193,7 @@ func (worker *Worker) Snapshot() Measurements {
 	worker.mu.Unlock()
 	return Measurements{
 		Running: worker.running.Load(), CustodyReady: worker.custodyReady.Load(), Suspected: worker.suspected.Load(),
+		Unchecked:      worker.unchecked.Load(),
 		SuffixMismatch: worker.suffixMismatch.Load(), Pending: worker.pending.Load(), Issued: worker.issued.Load(),
 		Requeued: worker.requeued.Load(), Released: worker.released.Load(), Lost: worker.lost.Load(),
 		Failures: worker.failures.Load(), Refused: refused,
@@ -195,15 +205,25 @@ func (worker *Worker) run(ctx context.Context) {
 	defer timer.Stop()
 	// Opened intermediates hold private keys: none outlive the worker.
 	defer worker.signer.clear()
+	idle := false
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-worker.options.Wake:
+			// A request was queued: an idle worker looks now. One pacing a
+			// full batch keeps its rate.
+			if idle && timer.Stop() {
+				idle = false
+				timer.Reset(0)
+			}
 		case <-timer.C:
 			delay := idleDelay
+			idle = true
 			if progressed := worker.Pass(ctx); progressed == worker.options.BatchSize {
 				// A full batch settled: go on at the signing rate.
 				delay = time.Duration(progressed) * time.Second / time.Duration(worker.options.MaximumPerSecond)
+				idle = false
 			}
 			if ctx.Err() != nil {
 				return
@@ -239,6 +259,7 @@ func (worker *Worker) Pass(ctx context.Context) int {
 		return 0
 	}
 	worker.suspected.Store(batch.Suspected)
+	worker.unchecked.Store(batch.Unchecked)
 	worker.pending.Store(batch.Pending)
 	if batch.RefusedAttempts > 0 {
 		worker.mu.Lock()
@@ -248,6 +269,13 @@ func (worker *Worker) Pass(ctx context.Context) int {
 	if batch.Suspected {
 		// Keys opened before the restore was suspected are dropped.
 		worker.signer.clear()
+		return 0
+	}
+	if batch.Unchecked {
+		// The lifecycle worker has not compared the restore marks lately
+		// (stopped, or Redis down): nothing is signed until it does.
+		worker.logger.WarnContext(ctx, "kubernetes certificates deferred: restore tripwire not checked",
+			"error_code", "kubernetes_ca_tripwire_unchecked")
 		return 0
 	}
 	if batch.Suffix != worker.options.Suffix.String() {
@@ -295,8 +323,24 @@ func (worker *Worker) backOff(delay time.Duration) {
 }
 
 // handle signs one claim and settles it. done is false when the claim was
-// given back; custodyDown when the custody itself failed.
+// given back; custodyDown when the custody itself failed. A panic while
+// signing one claim refuses that claim only (§14 R-L4).
 func (worker *Worker) handle(ctx context.Context, claim Claim, now time.Time) (done, custodyDown bool) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			worker.failures.Add(1)
+			worker.logger.ErrorContext(ctx, "kubernetes certificate signing failed", "error_code",
+				"kubernetes_certificate_sign_panic")
+			done, custodyDown = worker.refuse(ctx, claim, ReasonInternal), false
+		}
+	}()
+	if claim.Proof == ProofToken && claim.Verified == nil {
+		verified, recorded, settled := worker.recordToken(ctx, claim, now)
+		if !recorded {
+			return settled, false
+		}
+		claim.Verified, claim.Token = &verified, ""
+	}
 	signCtx, cancel := context.WithTimeout(ctx, worker.options.OperationTimeout)
 	decided, err := worker.signer.sign(signCtx, worker.custody, claim, now)
 	cancel()
@@ -319,12 +363,12 @@ func (worker *Worker) handle(ctx context.Context, claim Claim, now time.Time) (d
 	settleCtx, cancelSettle := context.WithTimeout(context.WithoutCancel(ctx), worker.options.OperationTimeout)
 	defer cancelSettle()
 	if decided.refuse != "" {
-		outcome, err := worker.store.Refuse(settleCtx, worker.options.DeploymentID, claim.ID, claim.ClaimToken,
-			decided.refuse)
-		worker.count(outcome, decided.refuse, err)
-		return err == nil && outcome == OutcomeRefused, false
+		return worker.refuse(ctx, claim, decided.refuse), false
 	}
 	outcome, reason, err := worker.store.Issue(settleCtx, worker.options.DeploymentID, decided.issue)
+	if err == nil && (outcome == OutcomeIssued || outcome == OutcomeRefused) {
+		worker.settled(settleCtx, claim.ID)
+	}
 	if outcome == OutcomeRequeued {
 		worker.signer.drop(claim.Intermediate.ID)
 	}
@@ -334,6 +378,56 @@ func (worker *Worker) handle(ctx context.Context, claim Claim, now time.Time) (d
 	}
 	worker.count(outcome, reason, err)
 	return err == nil && (outcome == OutcomeIssued || outcome == OutcomeRefused || outcome == OutcomeRequeued), false
+}
+
+// recordToken checks a token request's pod token at its first claim and
+// replaces it in the database with the claims checked (§14 R-M1), or
+// refuses the request. When nothing is to be signed, recorded is false and
+// settled says whether the claim was settled (refused or lost); a claim
+// whose record failed is given back, not counted as progress (review a3b
+// Go M6).
+func (worker *Worker) recordToken(ctx context.Context, claim Claim, now time.Time) (verified VerifiedToken,
+	recorded, settled bool,
+) {
+	verified, reason := worker.signer.checkToken(claim, now)
+	if reason != "" {
+		return VerifiedToken{}, false, worker.refuse(ctx, claim, reason)
+	}
+	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), worker.options.OperationTimeout)
+	defer cancel()
+	outcome, err := worker.store.RecordToken(recordCtx, worker.options.DeploymentID, claim.ID, claim.ClaimToken,
+		verified)
+	switch {
+	case err != nil:
+		worker.count(outcome, "", err)
+		worker.release(ctx, claim)
+		return VerifiedToken{}, false, false
+	case outcome != OutcomeRecorded:
+		worker.count(outcome, "", nil)
+		return VerifiedToken{}, false, true
+	}
+	return verified, true, true
+}
+
+// refuse settles a held claim as refused for reason, within a bound of its
+// own so a stopping worker still does. It reports whether it was.
+func (worker *Worker) refuse(ctx context.Context, claim Claim, reason Reason) bool {
+	settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), worker.options.OperationTimeout)
+	defer cancel()
+	outcome, err := worker.store.Refuse(settleCtx, worker.options.DeploymentID, claim.ID, claim.ClaimToken, reason)
+	worker.count(outcome, reason, err)
+	if err == nil && outcome == OutcomeRefused {
+		worker.settled(settleCtx, claim.ID)
+		return true
+	}
+	return false
+}
+
+// settled tells control, if it listens, that request was settled.
+func (worker *Worker) settled(ctx context.Context, request publicid.ID) {
+	if worker.options.Settled != nil {
+		worker.options.Settled(ctx, request)
+	}
 }
 
 // custodyFailure reports an error of the custody as a whole, as opposed to
@@ -419,8 +513,8 @@ func (worker *Worker) loadCustody(ctx context.Context) {
 // sign for the next 90 s: with a custody that answers, no restore suspected
 // and the recorded suffix. It runs after the claim, which tells the last two.
 func (worker *Worker) beat(ctx context.Context) {
-	ready := worker.custody != nil && !worker.suspected.Load() && !worker.suffixMismatch.Load() &&
-		!time.Now().Before(worker.backoffUntil)
+	ready := worker.custody != nil && !worker.suspected.Load() && !worker.unchecked.Load() &&
+		!worker.suffixMismatch.Load() && !time.Now().Before(worker.backoffUntil)
 	// A change of readiness is told at once (review a3a M4).
 	if !worker.lastBeat.IsZero() && time.Since(worker.lastBeat) < beatInterval && ready == worker.lastReady {
 		return

@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 240 {
-		t.Fatalf("len(Catalog()) = %d, want 240", len(catalog))
+	if len(catalog) != 241 {
+		t.Fatalf("len(Catalog()) = %d, want 241", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 240 {
-		t.Fatalf("LatestVersion() = %d, want 240", LatestVersion())
+	if LatestVersion() != 241 {
+		t.Fatalf("LatestVersion() = %d, want 241", LatestVersion())
 	}
 }
 
@@ -7148,5 +7148,49 @@ func TestMigration240KubernetesGatewayCertificates(t *testing.T) {
 		if strings.Contains(payload, secret) {
 			t.Errorf("the certificate audit payload reads %s", secret)
 		}
+	}
+}
+
+func TestMigration241KubernetesGatewayCertificateQueue(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 241 || catalog[240].Version != 241 {
+		t.Fatalf("the catalog has no migration 241 (%d migrations)", len(catalog))
+	}
+	migration := catalog[240]
+	for _, want := range []string{
+		// R-M1: the token leaves at the first claim; issue takes the claims.
+		"SET token = NULL, token_jti = p_jti, token_expires_at = p_token_expires_at",
+		"MESSAGE = 'the token claims are not the ones recorded'",
+		// R-M2: superseded, and abandoned requests hold room 30 seconds.
+		"SET state = 'refused', reason = 'superseded'",
+		"p_updated_at OPERATOR(pg_catalog.>) (p_now OPERATOR(pg_catalog.-) INTERVAL '30 seconds'))",
+		// R-M3: a Workspace limit and Workspaces in turn.
+		">= 200 THEN",
+		"PARTITION BY request.workspace_id ORDER BY request.created_at, request.id) AS turn",
+		"FOR UPDATE OF request SKIP LOCKED",
+		// R-M9: no claim without a recent tripwire check.
+		"v_checked_at <= v_now - INTERVAL '10 minutes'",
+		// R-M6: the result names its revision.
+		"'network_revision', request.network_revision",
+		// R-L5: a claimed request is pruned only a minute past its lease.
+		"AND (request.state <> 'claimed' OR request.claim_expires_at < v_now - INTERVAL '1 minute')",
+		// Review a3b SQL M1, M3: leases end first, in id order, skipping held rows.
+		"ORDER BY request.id\n        FOR UPDATE SKIP LOCKED",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_kubernetes_ca_signing_state_v1() TO mesh_runtime",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.stamp_kubernetes_ca_guard_v1(UUID, BIGINT) TO mesh_worker",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 241 lacks %q", want)
+		}
+	}
+	for _, statement := range strings.Split(migration.SQL, ";") {
+		if strings.Contains(statement, "TO mesh_runtime") &&
+			!strings.Contains(statement, "read_kubernetes_ca_signing_state_v1") {
+			t.Errorf("migration 241 grants the runtime: %s", strings.TrimSpace(statement))
+		}
+	}
+	if strings.Contains(migration.SQL, "set_config('mesh.access_ledger_scan', '', TRUE)") {
+		t.Error("migration 241 clears mesh.access_ledger_scan")
 	}
 }

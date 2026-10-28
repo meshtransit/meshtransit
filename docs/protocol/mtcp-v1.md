@@ -236,6 +236,8 @@ payload     bytes[...]
 | 0x15 | `NodeKeyProof` | N→C | 256 B |
 | 0x16 | `RotateMachineKey` | N→C | 8,448 B (256 B plus a pod token of 8 KiB) |
 | 0x17 | `RotateMachineKeyResponse` | C→N | 256 B |
+| 0x18 | `KubeCertRequest` | N→C | 13 KiB (5 KiB plus a pod token of 8 KiB) |
+| 0x19 | `KubeCertResult` | C→N | 32 KiB |
 | 0x20 | `MapSnapshot` | C→N | 32 MiB |
 | 0x21 | `MapDelta` | C→N | 8 MiB |
 | 0x22 | `MapAck` | N→C | 256 B |
@@ -614,6 +616,85 @@ The checks have these limits:
   than the window, and then rotate.
 - **Restart soon after a take.** A pod restarting within 10 minutes after a
   take of its presence skips that start's rotation.
+
+### 6.9 Kubernetes gateway certificates
+
+A Kubernetes gateway that negotiated `gateway.cert1` asks Core for the TLS
+certificate of its replica: 24 hours, for its cluster's DNS name, signed by
+its cluster's intermediate CA. The gateway generates the key (P-256) and
+keeps it in memory only; it never enters the gateway's Secret.
+
+`KubeCertRequest` carries:
+
+- `request_id`: 16 bytes the gateway chooses, unique for its Device. The
+  gateway keeps `request_id`, its key and its CSR until the request is
+  issued or refused, and sends the same request again after a retry or a
+  new session.
+- `csr`: DER, at most 4 KiB, P-256, ECDSA with SHA-256, its signature valid.
+- exactly one proof:
+  - `service_account_token`, the first request after the pod starts: the
+    pod's ServiceAccount token, checked as in 6.8;
+  - `renewal_serial` (16 bytes) and `renewal_proof`, every later request:
+    an ASN.1 ECDSA signature, at most 72 bytes, by the key of the gateway's
+    current certificate, whose serial `renewal_serial` is, over
+
+    ```
+    SHA-256("meshtransit/kube-cert-renewal/v1" || 0x00 || h || request_id ||
+            renewal_serial || SHA-256(csr))
+    ```
+
+    where `h` is the session's handshake hash.
+
+Only a gateway session that proved its node key (6.7) and whose map stream
+holds the gateway's presence is served. Core checks the form, queues the
+request and waits up to 5 seconds for its signer; the signer checks the
+token or the renewal proof again. A session has at most one request
+waiting; the session goes on serving its map meanwhile. Requests count
+against the session's `RegisterRequest` budget (section 14).
+
+Every answer about a request is a `KubeCertResult` naming its
+`request_id`; an `Error` only answers a request without a 16-byte
+`request_id` (`INVALID`) or one sent without `gateway.cert1`
+(`UNSUPPORTED`). `outcome` is:
+
+- `ISSUED`: `certificate` (DER), `chain` (the intermediates, leaf side
+  first, at most 4, no root), `root_fingerprint` and `issuer_fingerprint`
+  (SHA-256 of the DER), `not_after_ms`, `renew_at_ms` and
+  `network_revision`. Sending an issued request again returns the same
+  certificate.
+- `REFUSED` or `RETRY`, with a `reason` and `retry_after_ms`.
+
+The gateway acts on the reason:
+
+| Reason | Outcome | The gateway |
+|---|---|---|
+| `unavailable`, `busy`, `limited`, `overloaded`, `timeout`, `presence`, `internal` | `RETRY` | sends the same request again after `retry_after_ms` or its own backoff, whichever is longer |
+| `proof`, `renewal_unknown`, `renewal_expired` | `REFUSED` | asks again with its pod token |
+| `token`, `token_expired`, `token_used`, `trust_missing` | `REFUSED` | waits at least 60 seconds for the kubelet to refresh its token, then asks again |
+| `no_ca`, `misnamed` | `REFUSED` | waits for its map to name a signing CA (7.10), at most 5 minutes, then asks again |
+| `contested` | `REFUSED` | asks again after `retry_after_ms` (60 to 90 seconds) |
+| `superseded`, `attempts` | `REFUSED` | asks again with a new request |
+| `csr`, `conflict` | `REFUSED` | asks again with a new key and `request_id`; this is the gateway's fault |
+| `invalid` | `REFUSED` | fixes the request's form (one proof, within its sizes) and asks again with a new `request_id`; this is the gateway's fault |
+| `revoked`, `cluster`, `not_gateway`, `not_proven` | `REFUSED` | asks no more in this session |
+| any other, or an unknown `outcome` | | as `RETRY` |
+
+A pod's token request refuses its Device's other unfinished requests as
+`superseded`. A request still queued when the wait ends stays queued: the
+gateway's next send finds it, issued or still waiting. A session that ends
+gives up its waiting request. Core keeps a request 10 minutes.
+
+**Renewal.** The gateway renews at `renew_at_ms`, clamped to between a
+minute from now and 12 hours before `not_after_ms`: about 8 hours into the
+certificate's life, so signing may stop for about 15 hours before a running
+replica's certificate expires. Its backoff grows from 2 seconds to
+`max(30 s, min(5 min, remaining life / 20))`.
+
+**Limits.** 12 certificates issued per Device and hour; 2 requests in
+flight per Device, 20 per cluster, 200 per Workspace and 1,000 per
+installation; over one, `RETRY` with `limited` or `overloaded`. When no
+signer can sign, Core answers `RETRY` with `unavailable` at once and a
+`retry_after_ms` of 1 to 5 minutes.
 
 ## 7. Map
 
@@ -1155,6 +1236,25 @@ Network.
   refuses its peers' Kubernetes access once its map was last confirmed longer
   ago than its own bound (at least 5 minutes).
 
+### 7.10 Kubernetes CA
+
+A Kubernetes gateway that negotiated `gateway.cert1` may find `kubernetes_ca`
+on its `self`: the SHA-256 of its cluster's root (`root_fingerprint`) and
+of the intermediate that signs now (`signing_fingerprint`).
+
+- **Absent.** Core could not read them, or a database restore is suspected:
+  the gateway keeps its certificate.
+- **Both empty.** The cluster has no CA yet.
+- **Only a root.** No intermediate signs at the moment: the gateway keeps
+  its certificate.
+
+The gateway renews early when its map's `network_revisions` for its Network
+is at or past the `network_revision` its certificate was issued at and the
+map's root differs from its certificate's root (within 5 minutes, jittered)
+or the map's signing intermediate differs from its certificate's issuer
+(within an hour, jittered). A map older than its certificate never makes it
+renew.
+
 ## 8. Node reports
 
 ### 8.1 Endpoints and NAT
@@ -1518,6 +1618,7 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `router.exit.v1` | Node can be an exit node: it applies `served_exits` (7.7) and reports `exit_offered` (8.2); with `router.health1` it reports its exit health in `RouteHealthReport` |
 | `relay.zones2` | Node hands relays MTT2 tickets and their ZONES (MTRP §5.4, §6.1). Core offers it only once every relay accepts them |
 | `captive.audit1` | Node sends `CaptiveWindowReport` (8.5); only with `routes.exit.v1` |
+| `gateway.cert1` | A Kubernetes gateway asks for its replica certificate with `KubeCertRequest` (6.9) and reads `kubernetes_ca` on its `self` (7.10); Core offers it whenever it queues certificate requests, whether or not a signer is up |
 | `gateway.kube.v1` | A Kubernetes gateway applies its peers' `kubernetes` and `owner` (7.8), acknowledges map messages after applying them and takes `MapFresh` (7.9); Core offers it only where maps come from its shared Network view |
 
 Unknown names are ignored. Core sends a feature only when both sides list it.
@@ -1535,7 +1636,8 @@ Unknown names are ignored. Core sends a feature only when both sides list it.
 | Machine key changes per Kubernetes gateway | 30 per hour (6.8); over it `Error{NOT_PERMITTED, retry_after_ms}` |
 | Endpoint changes a Device's peers see | 1 per 5 s by default, configurable (8.1); the latest is always delivered |
 | New Devices a person adds to one Network by browser sign-in | 20 per 24 hours, revoked ones included; over it `Rejected{NOT_PERMITTED}`. Resuming a Device is not adding one. |
-| `RegisterRequest` and `RotateNodeKey` per session | 4 at once, then 1 per second; over it `Error{OVERLOADED, retry_after_ms}` |
+| `RegisterRequest`, `RotateNodeKey` and `KubeCertRequest` per session | 4 at once, then 1 per second; over it `Error{OVERLOADED, retry_after_ms}`, or for `KubeCertRequest` a `KubeCertResult{RETRY, limited}` |
+| Kubernetes gateway certificates (6.9) | 12 issued per Device and hour; in flight 2 per Device, 20 per cluster, 200 per Workspace, 1,000 per installation; one request waiting per session |
 | Browser approvals issued or resumed per session (6.2) | 2 at once, then 1 per 10 s; over it `Error{OVERLOADED, retry_after_ms}`. A malformed resume handle is refused before it counts |
 | `MapResync` per session (7.1) | 2 at once, then 1 per 5 s; over it fatal `Error{OVERLOADED, retry_after_ms}`, and the node gets a fresh snapshot when it reconnects |
 | `EnforcementReport` per session (8.4) | 4 at once, then 1 per second; over it the latest report is kept, replacing any kept before, and stored when the budget allows |

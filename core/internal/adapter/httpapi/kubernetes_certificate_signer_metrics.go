@@ -13,10 +13,10 @@ import (
 var ErrInvalidKubernetesCertificateSignerMetrics = errors.New("invalid Kubernetes certificate signer metrics")
 
 type kubernetesCertificateSignerMetricsCollector struct {
-	worker                      *signing.Worker
-	running, suspended, pending *prometheus.Desc
-	issued, requeued, released  *prometheus.Desc
-	lost, failures, refused     *prometheus.Desc
+	worker                                 *signing.Worker
+	running, suspended, unchecked, pending *prometheus.Desc
+	issued, requeued, released             *prometheus.Desc
+	lost, failures, refused                *prometheus.Desc
 }
 
 // NewKubernetesCertificateSignerMetricsCollector exposes fixed,
@@ -35,7 +35,9 @@ func NewKubernetesCertificateSignerMetricsCollector(worker *signing.Worker) (pro
 		worker:  worker,
 		running: describe("meshtransit_kubernetes_certificate_signer_running", "Whether the certificate signer runs."),
 		suspended: describe("meshtransit_kubernetes_certificate_signer_suspended",
-			"Whether the signer signs nothing: no custody, a restore suspected, or another DNS suffix."),
+			"Whether the signer signs nothing: no custody, a restore suspected, the restore tripwire not checked lately, or another DNS suffix."),
+		unchecked: describe("meshtransit_kubernetes_certificate_signer_tripwire_unchecked",
+			"Whether signing waits because the restore tripwire was not checked in the last 10 minutes."),
 		pending: describe("meshtransit_kubernetes_certificate_queue_depth",
 			"Gateway certificate requests waiting, as of the signer's last claim."),
 		issued: describe("meshtransit_kubernetes_certificates_issued_total",
@@ -55,7 +57,7 @@ func NewKubernetesCertificateSignerMetricsCollector(worker *signing.Worker) (pro
 
 func (collector *kubernetesCertificateSignerMetricsCollector) Describe(descriptions chan<- *prometheus.Desc) {
 	for _, descriptor := range []*prometheus.Desc{
-		collector.running, collector.suspended, collector.pending, collector.issued, collector.requeued,
+		collector.running, collector.suspended, collector.unchecked, collector.pending, collector.issued, collector.requeued,
 		collector.released, collector.lost, collector.failures, collector.refused,
 	} {
 		descriptions <- descriptor
@@ -72,7 +74,8 @@ func (collector *kubernetesCertificateSignerMetricsCollector) Collect(metrics ch
 	}
 	metrics <- prometheus.MustNewConstMetric(collector.running, prometheus.GaugeValue, flag(snapshot.Running))
 	metrics <- prometheus.MustNewConstMetric(collector.suspended, prometheus.GaugeValue,
-		flag(!snapshot.CustodyReady || snapshot.Suspected || snapshot.SuffixMismatch))
+		flag(!snapshot.CustodyReady || snapshot.Suspected || snapshot.Unchecked || snapshot.SuffixMismatch))
+	metrics <- prometheus.MustNewConstMetric(collector.unchecked, prometheus.GaugeValue, flag(snapshot.Unchecked))
 	metrics <- prometheus.MustNewConstMetric(collector.pending, prometheus.GaugeValue, float64(snapshot.Pending))
 	for descriptor, value := range map[*prometheus.Desc]uint64{
 		collector.issued: snapshot.Issued, collector.requeued: snapshot.Requeued, collector.released: snapshot.Released,

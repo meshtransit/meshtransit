@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -27,6 +28,24 @@ type fakeStore struct {
 	beats      []bool
 	pruned     int
 	claimCalls int
+	recorded   []VerifiedToken
+	recordAs   Outcome
+	recordErr  error
+}
+
+func (store *fakeStore) RecordToken(_ context.Context, _ deployment.ID, _ publicid.ID, _ ClaimToken,
+	verified VerifiedToken,
+) (Outcome, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	store.recorded = append(store.recorded, verified)
+	if store.recordErr != nil {
+		return "", store.recordErr
+	}
+	if store.recordAs == "" {
+		return OutcomeRecorded, nil
+	}
+	return store.recordAs, nil
 }
 
 func (store *fakeStore) Claim(context.Context, deployment.ID, int, time.Duration) (Batch, error) {
@@ -108,8 +127,10 @@ func TestWorkerIssuesAndRefuses(t *testing.T) {
 	fixture := newSignFixture(t)
 	refused := fixture.claim
 	refused.ID, refused.Token = mustID(t), "forged"
-	store := &fakeStore{batch: Batch{Now: fixture.now, Suffix: testSuffix, Pending: 3,
-		Claims: []Claim{fixture.claim, refused}}}
+	store := &fakeStore{batch: Batch{
+		Now: fixture.now, Suffix: testSuffix, Pending: 3,
+		Claims: []Claim{fixture.claim, refused},
+	}}
 	worker := testSigningWorker(t, fixture, store, fixture.custody)
 	if handled := worker.Pass(t.Context()); handled != 2 {
 		t.Fatalf("Pass() handled %d", handled)
@@ -172,8 +193,10 @@ func TestWorkerGivesBackWhatItCannotSign(t *testing.T) {
 func TestWorkerForgetsACAThatChanged(t *testing.T) {
 	t.Parallel()
 	fixture := newSignFixture(t)
-	store := &fakeStore{issueAs: OutcomeRequeued,
-		batch: Batch{Now: fixture.now, Suffix: testSuffix, Claims: []Claim{fixture.claim}}}
+	store := &fakeStore{
+		issueAs: OutcomeRequeued,
+		batch:   Batch{Now: fixture.now, Suffix: testSuffix, Claims: []Claim{fixture.claim}},
+	}
 	worker := testSigningWorker(t, fixture, store, fixture.custody)
 	worker.Pass(t.Context())
 	if len(worker.signer.cache) != 0 || worker.Snapshot().Requeued != 1 {
@@ -265,5 +288,114 @@ func TestWorkerCountsRefusedAttempts(t *testing.T) {
 	worker.Pass(t.Context())
 	if refused := worker.Snapshot().Refused[ReasonAttempts]; refused != 2 {
 		t.Fatalf("refused attempts = %d", refused)
+	}
+}
+
+func TestWorkerRecordsTheTokenBeforeSigning(t *testing.T) {
+	t.Parallel()
+	fixture := newSignFixture(t)
+	store := &fakeStore{batch: Batch{Now: fixture.now, Suffix: testSuffix, Claims: []Claim{fixture.claim}}}
+	worker := testSigningWorker(t, fixture, store, fixture.custody)
+	worker.Pass(t.Context())
+	// The token is checked once and its claims replace it; the issue
+	// carries those claims (§14 R-M1).
+	if len(store.recorded) != 1 || store.recorded[0].Use.JTI != "jti-1" || store.recorded[0].TrustVersion != 1 ||
+		len(store.issued) != 1 || store.issued[0].Token == nil || *store.issued[0].Token != store.recorded[0].Use {
+		t.Fatalf("recorded %+v, issued %+v", store.recorded, store.issued)
+	}
+	// A claim whose token a worker checked before is not checked again.
+	claim := fixture.claim
+	claim.Verified, claim.Token = &store.recorded[0], ""
+	store.batch = Batch{Now: fixture.now, Suffix: testSuffix, Claims: []Claim{claim}}
+	worker.Pass(t.Context())
+	if len(store.recorded) != 1 || len(store.issued) != 2 {
+		t.Fatalf("recorded %d, issued %d", len(store.recorded), len(store.issued))
+	}
+	// A claim lost before its token was recorded is not signed.
+	store.recordAs = OutcomeLost
+	store.batch = Batch{Now: fixture.now, Suffix: testSuffix, Claims: []Claim{fixture.claim}}
+	worker.Pass(t.Context())
+	if len(store.issued) != 2 || worker.Snapshot().Lost != 1 {
+		t.Fatalf("issued %d, snapshot %+v", len(store.issued), worker.Snapshot())
+	}
+}
+
+func TestWorkerRefusesAClaimThatPanics(t *testing.T) {
+	t.Parallel()
+	fixture := newSignFixture(t)
+	other := fixture.claim
+	other.ID = mustID(t)
+	store := &fakeStore{batch: Batch{Now: fixture.now, Suffix: testSuffix, Claims: []Claim{fixture.claim, other}}}
+	worker := testSigningWorker(t, fixture, store, fixture.custody)
+	calls := 0
+	worker.signer.verifyToken = func(string, Trust, time.Time) (TokenUse, error) {
+		calls++
+		if calls == 1 {
+			panic("malformed")
+		}
+		return TokenUse{JTI: "jti-2", ExpiresAt: fixture.now.Add(10 * time.Minute), PodName: "gateway-0"}, nil
+	}
+	// Only the claim that panicked is refused; the next one is signed
+	// (§14 R-L4).
+	if handled := worker.Pass(t.Context()); handled != 2 {
+		t.Fatalf("Pass() handled %d", handled)
+	}
+	if len(store.refused) != 1 || store.refused[0] != ReasonInternal || len(store.issued) != 1 ||
+		store.issued[0].Request != other.ID {
+		t.Fatalf("refused %v, issued %+v", store.refused, store.issued)
+	}
+}
+
+func TestWorkerWaitsForTheTripwire(t *testing.T) {
+	t.Parallel()
+	fixture := newSignFixture(t)
+	store := &fakeStore{batch: Batch{Now: fixture.now, Unchecked: true}}
+	worker := testSigningWorker(t, fixture, store, fixture.custody)
+	worker.Pass(t.Context())
+	// Nothing is signed and the worker says it cannot sign (§14 R-M9).
+	if !worker.Snapshot().Unchecked || len(store.issued) != 0 || len(store.beats) != 1 || store.beats[0] {
+		t.Fatalf("snapshot %+v, beats %v", worker.Snapshot(), store.beats)
+	}
+}
+
+// A record that failed gives the claim back and counts no progress
+// (review a3b Go M6).
+func TestWorkerReleasesAClaimWhoseTokenWasNotRecorded(t *testing.T) {
+	t.Parallel()
+	fixture := newSignFixture(t)
+	store := &fakeStore{
+		batch:     Batch{Now: fixture.now, Suffix: testSuffix, Claims: []Claim{fixture.claim}},
+		recordErr: errors.New("database"),
+	}
+	worker := testSigningWorker(t, fixture, store, fixture.custody)
+	if handled := worker.Pass(t.Context()); handled != 0 {
+		t.Fatalf("Pass() handled %d", handled)
+	}
+	if len(store.released) != 1 || len(store.issued) != 0 || len(store.refused) != 0 {
+		t.Fatalf("released %d, issued %d, refused %v", len(store.released), len(store.issued), store.refused)
+	}
+}
+
+// A token whose jti or pod name the ledger cannot keep is refused at once.
+func TestCheckTokenRefusesWhatTheLedgerCannotKeep(t *testing.T) {
+	t.Parallel()
+	for name, use := range map[string]TokenUse{
+		"a jti with a space": {JTI: "a b", PodName: "gateway-0"},
+		"a long jti":         {JTI: strings.Repeat("j", 129), PodName: "gateway-0"},
+		"an upper-case pod":  {JTI: "jti", PodName: "Gateway-0"},
+	} {
+		fixture := newSignFixture(t)
+		signer := fixture.signer(t, true)
+		signer.verifyToken = func(string, Trust, time.Time) (TokenUse, error) {
+			use.ExpiresAt = fixture.now.Add(time.Minute)
+			return use, nil
+		}
+		claim := fixture.claim
+		trust := *claim.Trust
+		trust.PodName = use.PodName
+		claim.Trust = &trust
+		if _, reason := signer.checkToken(claim, fixture.now); reason != ReasonToken {
+			t.Errorf("%s: %q", name, reason)
+		}
 	}
 }

@@ -50,6 +50,10 @@ const (
 	MessageNodeKeyProof             MessageType = 0x15
 	MessageRotateMachineKey         MessageType = 0x16
 	MessageRotateMachineKeyResponse MessageType = 0x17
+	// MessageKubeCertRequest and MessageKubeCertResult are gateway.cert1
+	// (mtcp-v1 §6.9).
+	MessageKubeCertRequest MessageType = 0x18
+	MessageKubeCertResult  MessageType = 0x19
 )
 
 // Direction is who sends a message.
@@ -128,6 +132,13 @@ var specs = map[MessageType]messageSpec{
 		CoreToNode, 256,
 		func() proto.Message { return &mtcpv1.RotateMachineKeyResponse{} },
 	},
+	// A 4 KiB CSR, the pod token, a renewal proof.
+	MessageKubeCertRequest: {
+		NodeToCore, 5*kib + kubejoin.MaxTokenSize, func() proto.Message { return &mtcpv1.KubeCertRequest{} },
+	},
+	// A leaf and up to KubeCertChainMaximum intermediates of 4 KiB each, with
+	// room for a customer's PKI (a3 §14 R-L2).
+	MessageKubeCertResult: {CoreToNode, 32 * kib, func() proto.Message { return &mtcpv1.KubeCertResult{} }},
 }
 
 // Limit returns the decoded size limit of a message type, or 0 if unknown.

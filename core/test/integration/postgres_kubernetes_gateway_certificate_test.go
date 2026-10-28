@@ -24,6 +24,7 @@ import (
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/kubeca"
+	"meshtransit.net/core/internal/domain/kubeca/certqueue"
 	"meshtransit.net/core/internal/domain/kubeca/lifecycle"
 	"meshtransit.net/core/internal/domain/kubeca/signing"
 	"meshtransit.net/core/internal/domain/publicid"
@@ -61,6 +62,17 @@ func newCertificateKey(t *testing.T) *ecdsa.PrivateKey {
 		t.Fatal(err)
 	}
 	return key
+}
+
+// renewalAsk is a renewal of certificate with proof, under a handshake of
+// its own.
+func renewalAsk(t *testing.T, id byte, certificate *x509.Certificate, proof []byte) certificateAsk {
+	t.Helper()
+	handshake := sha256.Sum256([]byte{id})
+	return certificateAsk{
+		publicID: mustPublicID(t), id: [16]byte{id}, key: newCertificateKey(t), handshake: handshake[:],
+		serial: certificate.SerialNumber.FillBytes(make([]byte, 16)), proof: proof,
+	}
 }
 
 func tokenAsk(t *testing.T, id byte, key *ecdsa.PrivateKey, token string) certificateAsk {
@@ -124,7 +136,7 @@ func decodeCertificateAnswer(t *testing.T, encoded string) map[string]any {
 // again; the database enforces one token use per key, the limits, the CA
 // still active, and stops it all while a restore is suspected.
 func assertGatewayCertificates(ctx context.Context, t *testing.T, admin, runtime *pgx.Conn,
-	workerPool *postgresadapter.Pool, fixture clusterCAFixture, keys replicaKeys, deviceID string,
+	runtimePool, workerPool *postgresadapter.Pool, fixture clusterCAFixture, keys replicaKeys, deviceID string,
 ) {
 	t.Helper()
 	store, err := postgresadapter.NewKubernetesGatewayCertificateStore(workerPool)
@@ -154,6 +166,20 @@ func assertGatewayCertificates(ctx context.Context, t *testing.T, admin, runtime
 		t.Fatal(err)
 	}
 	root, intermediate := activeClusterCAs(ctx, t, fixture)
+
+	// Nothing is signed while the lifecycle worker has not checked the
+	// restore tripwire for 10 minutes (schema 241, a3 §14 R-M9).
+	if _, err := admin.Exec(ctx, `UPDATE mesh_ops.kubernetes_ca_guard
+SET checked_at = pg_catalog.clock_timestamp() - INTERVAL '11 minutes'`); err != nil {
+		t.Fatal(err)
+	}
+	if batch, err := store.Claim(ctx, fixture.installation, 8, 30*time.Second); err != nil || !batch.Unchecked ||
+		len(batch.Claims) != 0 {
+		t.Fatalf("a claim before the tripwire was checked = %+v, %v", batch, err)
+	}
+	if err := fixture.store.StampGuard(ctx, fixture.installation, 1); err != nil {
+		t.Fatal(err)
+	}
 
 	// A token request waits; asking again with the same id finds it; with
 	// another key it conflicts.
@@ -206,7 +232,8 @@ WHERE purpose = 'cert' AND jti = 'pod-token-1'`).Scan(&uses); err != nil || uses
 	// A renewal is signed by the key of the certificate it renews.
 	assertCertificateRenewal(ctx, t, runtime, worker, keys, deviceID, first, certificate)
 
-	assertCertificateLimits(ctx, t, admin, runtime, worker, keys, deviceID)
+	assertCertificateLimits(ctx, t, admin, runtime, worker, keys, deviceID, certificate)
+	assertCertificateQueue(ctx, t, admin, runtime, runtimePool, store, worker, fixture, keys, certificate)
 	assertCertificateLeases(ctx, t, admin, runtime, store, fixture, keys)
 	assertCertificatePrivileges(ctx, t, admin)
 	assertCertificatePruning(ctx, t, admin, store, fixture, first.publicID)
@@ -298,7 +325,7 @@ func assertCertificateRenewal(ctx context.Context, t *testing.T, runtime *pgx.Co
 		serial: certificate.SerialNumber.FillBytes(make([]byte, 16)),
 	}
 	csr, digest := renewal.csr(t)
-	proof, err := mtcp.SignKubeCertRenewal(current.key, handshake, renewal.id, csr)
+	proof, err := mtcp.SignKubeCertRenewal(current.key, handshake, renewal.id, [16]byte(renewal.serial), csr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +335,8 @@ func assertCertificateRenewal(ctx context.Context, t *testing.T, runtime *pgx.Co
 	forged := renewal
 	forged.publicID, forged.id = mustPublicID(t), [16]byte{4}
 	forgedCSR, forgedDigest := forged.csr(t)
-	if forged.proof, err = mtcp.SignKubeCertRenewal(newCertificateKey(t), handshake, forged.id, forgedCSR); err != nil {
+	if forged.proof, err = mtcp.SignKubeCertRenewal(newCertificateKey(t), handshake, forged.id,
+		[16]byte(forged.serial), forgedCSR); err != nil {
 		t.Fatal(err)
 	}
 	enqueueCertificate(ctx, t, runtime, keys, forged, forgedCSR, forgedDigest)
@@ -330,9 +358,10 @@ func assertCertificateRenewal(ctx context.Context, t *testing.T, runtime *pgx.Co
 }
 
 // assertCertificateLimits: two requests in flight per Device, twelve issued
-// per Device and hour.
+// per Device and hour. A token request supersedes the Device's others, so
+// the requests in flight are renewals (their proofs are refused later).
 func assertCertificateLimits(ctx context.Context, t *testing.T, admin, runtime *pgx.Conn, worker *signing.Worker,
-	keys replicaKeys, deviceID string,
+	keys replicaKeys, deviceID string, certificate *x509.Certificate,
 ) {
 	t.Helper()
 	ask := func(id byte) map[string]any {
@@ -340,9 +369,14 @@ func assertCertificateLimits(ctx context.Context, t *testing.T, admin, runtime *
 		csr, digest := request.csr(t)
 		return enqueueCertificate(ctx, t, runtime, keys, request, csr, digest)
 	}
-	ask(10)
-	ask(11)
-	if answer := ask(12); answer["outcome"] != "limited" || answer["retry_after_ms"] != float64(2000) {
+	renew := func(id byte) map[string]any {
+		request := renewalAsk(t, id, certificate, []byte("not-a-signature"))
+		csr, digest := request.csr(t)
+		return enqueueCertificate(ctx, t, runtime, keys, request, csr, digest)
+	}
+	renew(10)
+	renew(11)
+	if answer := renew(12); answer["outcome"] != "limited" || answer["retry_after_ms"] != float64(2000) {
 		t.Fatalf("a third request in flight: %v", answer)
 	}
 	worker.Pass(ctx)
@@ -479,6 +513,15 @@ func assertCertificatePrivileges(ctx context.Context, t *testing.T, admin *pgx.C
 		{"mesh_runtime", "mesh_ops.issue_kubernetes_gateway_certificate_v1(UUID, UUID, UUID, UUID, UUID, UUID, BIGINT, BYTEA, BYTEA, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ, TIMESTAMPTZ, TEXT, TIMESTAMPTZ, TEXT, BIGINT)", false},
 		{"mesh_runtime", "mesh_ops.mark_kubernetes_ca_restored_v1(UUID, TEXT, TEXT)", false},
 		{"mesh_observer", "mesh_ops.read_kubernetes_gateway_certificate_v1(UUID, UUID)", false},
+		// Schema 241: control reads whether anyone signs; only the worker
+		// records token claims and stamps the guard.
+		{"mesh_runtime", "mesh_ops.read_kubernetes_ca_signing_state_v1()", true},
+		{"mesh_worker", "mesh_ops.read_kubernetes_ca_signing_state_v1()", false},
+		{"mesh_observer", "mesh_ops.read_kubernetes_ca_signing_state_v1()", false},
+		{"mesh_runtime", "mesh_ops.record_kubernetes_gateway_certificate_token_v1(UUID, UUID, UUID, TEXT, TIMESTAMPTZ, TEXT, BIGINT)", false},
+		{"mesh_worker", "mesh_ops.record_kubernetes_gateway_certificate_token_v1(UUID, UUID, UUID, TEXT, TIMESTAMPTZ, TEXT, BIGINT)", true},
+		{"mesh_runtime", "mesh_ops.stamp_kubernetes_ca_guard_v1(UUID, BIGINT)", false},
+		{"mesh_worker", "mesh_ops.stamp_kubernetes_ca_guard_v1(UUID, BIGINT)", true},
 	} {
 		var allowed bool
 		if err := admin.QueryRow(ctx, `SELECT pg_catalog.has_function_privilege($1, $2, 'EXECUTE')`, check.role,
@@ -561,6 +604,11 @@ JOIN mesh.network AS network ON network.id = revision.network_id WHERE network.p
 	}
 	claim := batch.Claims[0]
 	issue := signedIssue(ctx, t, claim, batch.Now, fixture)
+	if outcome, err := store.RecordToken(ctx, fixture.installation, claim.ID, claim.ClaimToken,
+		signing.VerifiedToken{Use: *issue.Token, TrustVersion: issue.TrustVersion}); err != nil ||
+		outcome != signing.OutcomeRecorded {
+		t.Fatalf("RecordToken() = %s, %v", outcome, err)
+	}
 	if outcome, _, err := store.Issue(ctx, fixture.installation, issue); err != nil || outcome != signing.OutcomeRequeued {
 		t.Fatalf("an issue after the CA changed = %s, %v", outcome, err)
 	}
@@ -610,7 +658,9 @@ func signedIssue(ctx context.Context, t *testing.T, claim signing.Claim, now tim
 		CAVersion: claim.Intermediate.Version, Serial: issued.Serial.FillBytes(make([]byte, 16)),
 		Certificate: issued.Certificate, PublicKey: certificate.RawSubjectPublicKeyInfo, NotBefore: issued.NotBefore,
 		NotAfter: issued.NotAfter, RenewAt: now.Add(12 * time.Hour),
-		Token:        &signing.TokenUse{JTI: claim.Token, ExpiresAt: now.Add(10 * time.Minute), PodName: claim.Trust.PodName},
+		Token: &signing.TokenUse{
+			JTI: claim.Token, ExpiresAt: now.Add(10 * time.Minute).Truncate(time.Second), PodName: claim.Trust.PodName,
+		},
 		TrustVersion: claim.Trust.Version,
 	}
 }
@@ -676,5 +726,200 @@ func assertCertificateRestoreGuard(ctx context.Context, t *testing.T, runtime *p
 	if guard, err := fixture.store.ReadGuard(ctx, fixture.installation); err != nil || guard.Suspected ||
 		guard.Generation < time.Now().Add(-time.Hour).UnixMilli() {
 		t.Fatalf("the guard after reconcile = %+v, %v", guard, err)
+	}
+}
+
+// assertCertificateQueue: schema 241 (a3 §14) and control's store. A pod's
+// token request supersedes its Device's unfinished requests (R-M2); the
+// worker erases a token once it checked it (R-M1); abandoned requests make
+// room 30 seconds later (R-M2); control queues, reads back and learns
+// whether anyone signs (R-H3).
+func assertCertificateQueue(ctx context.Context, t *testing.T, admin, runtime *pgx.Conn,
+	runtimePool *postgresadapter.Pool, store *postgresadapter.KubernetesGatewayCertificateStore,
+	worker *signing.Worker, fixture clusterCAFixture, keys replicaKeys, certificate *x509.Certificate,
+) {
+	t.Helper()
+	enqueue := func(ask certificateAsk) map[string]any {
+		t.Helper()
+		csr, digest := ask.csr(t)
+		return enqueueCertificate(ctx, t, runtime, keys, ask, csr, digest)
+	}
+	older := renewalAsk(t, 80, certificate, []byte("not-a-signature"))
+	enqueue(older)
+	pod := tokenAsk(t, 81, newCertificateKey(t), "pod-queue")
+	if answer := enqueue(pod); answer["outcome"] != "pending" {
+		t.Fatalf("a pod's token request: %v", answer)
+	}
+	deviceID := deviceOfRequest(ctx, t, admin, pod.publicID)
+	if answer := readCertificate(ctx, t, runtime, deviceID, older.publicID.String()); answer["outcome"] != "refused" ||
+		answer["reason"] != "superseded" {
+		t.Fatalf("a request the pod's token request superseded: %v", answer)
+	}
+
+	// The first claim carries the token; once checked, its claims replace
+	// it in the database and later claims carry those.
+	batch, err := store.Claim(ctx, fixture.installation, 8, 30*time.Second)
+	if err != nil || len(batch.Claims) != 1 || batch.Claims[0].Token != "pod-queue" || batch.Claims[0].Verified != nil {
+		t.Fatalf("claim = %+v, %v", batch, err)
+	}
+	claim := batch.Claims[0]
+	verified := signing.VerifiedToken{Use: signing.TokenUse{JTI: "pod-queue",
+		ExpiresAt: batch.Now.Add(10 * time.Minute).Truncate(time.Second), PodName: claim.Trust.PodName},
+		TrustVersion: claim.Trust.Version}
+	if outcome, err := store.RecordToken(ctx, fixture.installation, claim.ID, claim.ClaimToken, verified); err != nil ||
+		outcome != signing.OutcomeRecorded {
+		t.Fatalf("RecordToken() = %s, %v", outcome, err)
+	}
+	var tokenLeft bool
+	var jti string
+	if err := admin.QueryRow(ctx, `SELECT token IS NOT NULL, token_jti FROM mesh_ops.kubernetes_gateway_certificate_request
+WHERE public_id = $1::UUID`, pod.publicID.String()).Scan(&tokenLeft, &jti); err != nil || tokenLeft ||
+		jti != "pod-queue" {
+		t.Fatalf("after the token was checked: token kept %v, jti %q, %v", tokenLeft, jti, err)
+	}
+	if outcome, err := store.RecordToken(ctx, fixture.installation, claim.ID, signing.ClaimToken{1}, verified); err != nil ||
+		outcome != signing.OutcomeLost {
+		t.Fatalf("RecordToken() with another claim's token = %s, %v", outcome, err)
+	}
+	if _, err := store.Release(ctx, fixture.installation, claim.ID, claim.ClaimToken); err != nil {
+		t.Fatal(err)
+	}
+	batch, err = store.Claim(ctx, fixture.installation, 8, 30*time.Second)
+	if err != nil || len(batch.Claims) != 1 || batch.Claims[0].Token != "" || batch.Claims[0].Verified == nil ||
+		*batch.Claims[0].Verified != verified {
+		t.Fatalf("a claim after the token was checked = %+v, %v", batch, err)
+	}
+	if _, err := store.Release(ctx, fixture.installation, claim.ID, batch.Claims[0].ClaimToken); err != nil {
+		t.Fatal(err)
+	}
+	worker.Pass(ctx)
+	if answer := readCertificate(ctx, t, runtime, deviceID, pod.publicID.String()); answer["outcome"] != "issued" ||
+		answer["network_revision"] == nil || answer["device_id"] != deviceID {
+		t.Fatalf("a request whose token was checked earlier: %v", answer)
+	}
+
+	// A claimed request a pod's new token request superseded is lost to
+	// the worker holding it.
+	stale := tokenAsk(t, 85, newCertificateKey(t), "pod-stale")
+	enqueue(stale)
+	held, err := store.Claim(ctx, fixture.installation, 8, 30*time.Second)
+	if err != nil || len(held.Claims) != 1 || held.Claims[0].ID != stale.publicID {
+		t.Fatalf("claim = %+v, %v", held, err)
+	}
+	enqueue(tokenAsk(t, 86, newCertificateKey(t), "pod-restarted"))
+	if outcome, err := store.RecordToken(ctx, fixture.installation, stale.publicID, held.Claims[0].ClaimToken,
+		signing.VerifiedToken{Use: signing.TokenUse{JTI: "pod-stale", ExpiresAt: held.Now.Add(time.Minute).Truncate(time.Second),
+			PodName: held.Claims[0].Trust.PodName}, TrustVersion: held.Claims[0].Trust.Version}); err != nil ||
+		outcome != signing.OutcomeLost {
+		t.Fatalf("RecordToken() on a superseded request = %s, %v", outcome, err)
+	}
+	worker.Pass(ctx)
+
+	// Abandoned requests hold room for 30 seconds only.
+	first, second := renewalAsk(t, 82, certificate, []byte("not-a-signature")),
+		renewalAsk(t, 83, certificate, []byte("not-a-signature"))
+	enqueue(first)
+	enqueue(second)
+	third := renewalAsk(t, 84, certificate, []byte("not-a-signature"))
+	if answer := enqueue(third); answer["outcome"] != "limited" {
+		t.Fatalf("a third request in flight: %v", answer)
+	}
+	for _, ask := range []certificateAsk{first, second} {
+		var abandoned string
+		if err := runtime.QueryRow(ctx, `SELECT mesh_ops.abandon_kubernetes_gateway_certificate_v1($1::UUID, $2::UUID)::TEXT`,
+			deviceID, ask.publicID.String()).Scan(&abandoned); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if answer := enqueue(third); answer["outcome"] != "limited" {
+		t.Fatalf("a request while two were just abandoned: %v", answer)
+	}
+	if _, err := admin.Exec(ctx, `UPDATE mesh_ops.kubernetes_gateway_certificate_request
+SET updated_at = updated_at - INTERVAL '31 seconds' WHERE public_id = ANY($1::UUID[])`,
+		[]string{first.publicID.String(), second.publicID.String()}); err != nil {
+		t.Fatal(err)
+	}
+	if answer := enqueue(third); answer["outcome"] != "pending" {
+		t.Fatalf("a request once the abandoned ones made room: %v", answer)
+	}
+	worker.Pass(ctx)
+	assertGuardStamp(ctx, t, admin, fixture)
+
+	assertCertificateQueueStore(ctx, t, runtimePool, worker, keys)
+}
+
+// assertCertificateQueueStore: control's store queues for the keys the
+// session proved, reads the request back as the worker settles it, and
+// reads whether a worker signs.
+func assertCertificateQueueStore(ctx context.Context, t *testing.T, runtimePool *postgresadapter.Pool,
+	worker *signing.Worker, keys replicaKeys,
+) {
+	t.Helper()
+	queue, err := postgresadapter.NewKubernetesGatewayCertificateQueueStore(runtimePool,
+		postgresadapter.RegistrationTransactionOptions{StatementTimeout: 5 * time.Second, LockTimeout: time.Second,
+			IdleTimeout: 10 * time.Second, AddressCandidateLimit: 256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state, err := queue.SigningState(ctx); err != nil || !state.Ready() {
+		t.Fatalf("SigningState() = %+v, %v", state, err)
+	}
+	ask := tokenAsk(t, 90, newCertificateKey(t), "pod-control")
+	csr, digest := ask.csr(t)
+	request := certqueue.Request{
+		ID: ask.publicID, MachineFingerprint: [32]byte(fingerprintOf(keys)), NodeKey: [32]byte(nodeKeyOf(keys)),
+		RequestID: ask.id, CSR: csr, PublicKeySHA256: digest, Token: *ask.token,
+	}
+	stored, err := queue.Enqueue(ctx, request)
+	if err != nil || stored.State != certqueue.StatePending || stored.Request != ask.publicID || !stored.Device.IsValid() {
+		t.Fatalf("Enqueue() = %+v, %v", stored, err)
+	}
+	worker.Pass(ctx)
+	issued, found, err := queue.Read(ctx, stored.Device, stored.Request)
+	if err != nil || !found || issued.State != certqueue.StateIssued || len(issued.Certificate) == 0 ||
+		len(issued.Chain) != 1 || len(issued.RootFingerprint) != 32 || len(issued.IssuerFingerprint) != 32 ||
+		issued.NetworkRevision < 1 || !issued.RenewAt.Before(issued.NotAfter) {
+		t.Fatalf("Read() = %+v, %v, %v", issued, found, err)
+	}
+	// About a third into its 24 hours (a3 §14 R-H1).
+	if life := issued.NotAfter.Sub(issued.RenewAt); life < 14*time.Hour || life > 17*time.Hour+time.Minute {
+		t.Fatalf("renews %v before it expires", life)
+	}
+	if _, found, err := queue.Abandon(ctx, stored.Device, mustPublicID(t)); err != nil || found {
+		t.Fatalf("Abandon() of an unknown request = %v, %v", found, err)
+	}
+	// Keys that are not the gateway's current ones queue nothing.
+	request.ID, request.NodeKey = mustPublicID(t), [32]byte{9}
+	if refused, err := queue.Enqueue(ctx, request); err != nil || refused.State != certqueue.StateRefused ||
+		refused.Reason != "revoked" || refused.Request.IsValid() {
+		t.Fatalf("Enqueue() with another node key = %+v, %v", refused, err)
+	}
+}
+
+// assertGuardStamp: the stamp holds for the guard's generation only, never
+// while a restore is suspected; claims sweep leases that ran out even then
+// (review a3b SQL M1).
+func assertGuardStamp(ctx context.Context, t *testing.T, admin *pgx.Conn, fixture clusterCAFixture) {
+	t.Helper()
+	checked := func() time.Time {
+		t.Helper()
+		var at time.Time
+		if err := admin.QueryRow(ctx, `SELECT checked_at FROM mesh_ops.kubernetes_ca_guard`).Scan(&at); err != nil {
+			t.Fatal(err)
+		}
+		return at
+	}
+	before := checked()
+	if err := fixture.store.StampGuard(ctx, fixture.installation, 99); err != nil {
+		t.Fatal(err)
+	}
+	if after := checked(); !after.Equal(before) {
+		t.Fatalf("a stamp of another generation moved checked_at from %v to %v", before, after)
+	}
+	if err := fixture.store.StampGuard(ctx, fixture.installation, 1); err != nil {
+		t.Fatal(err)
+	}
+	if after := checked(); !after.After(before) {
+		t.Fatalf("the stamp did not move checked_at: %v", after)
 	}
 }

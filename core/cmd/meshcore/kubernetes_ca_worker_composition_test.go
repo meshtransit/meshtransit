@@ -19,17 +19,17 @@ func TestKubernetesCAWorkerCompositionRejectsMissingDependencies(t *testing.T) {
 	marks := &redisadapter.Client{}
 	for _, pool := range []*postgresadapter.Pool{nil, {}} {
 		workers, err := composeKubernetesCAWorker(config.KubernetesCAWorkerConfig{}, suffix, pool, marks,
-			discardCompositionLogger())
+			nil, discardCompositionLogger())
 		if workers.lifecycle != nil || workers.signer != nil || !errors.Is(err, errInvalidKubernetesCAWorkerComposition) {
 			t.Fatal("invalid worker pool accepted", err)
 		}
 	}
 	if workers, err := composeKubernetesCAWorker(config.KubernetesCAWorkerConfig{}, dnsname.Suffix{},
-		&postgresadapter.Pool{}, marks, discardCompositionLogger()); workers.lifecycle != nil || err == nil {
+		&postgresadapter.Pool{}, marks, nil, discardCompositionLogger()); workers.lifecycle != nil || err == nil {
 		t.Fatal("a missing suffix accepted", err)
 	}
 	if workers, err := composeKubernetesCAWorker(config.KubernetesCAWorkerConfig{}, suffix, &postgresadapter.Pool{},
-		nil, discardCompositionLogger()); workers.lifecycle != nil || err == nil {
+		nil, nil, discardCompositionLogger()); workers.lifecycle != nil || err == nil {
 		t.Fatal("missing marks accepted", err)
 	}
 }

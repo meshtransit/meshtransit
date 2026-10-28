@@ -42,6 +42,9 @@ type kubernetesCAArguments struct {
 	ca        publicid.ID
 	reason    kubeca.Reason
 	operator  kubeca.Operator
+	// rootsCheckedSince: reconcile-after-restore's operator checked the
+	// root retirements logged since then (a3 §14 R-M8).
+	rootsCheckedSince time.Time
 }
 
 func parseKubernetesCAArguments(args []string) (kubernetesCAArguments, bool) {
@@ -60,12 +63,27 @@ func parseKubernetesCAArguments(args []string) (kubernetesCAArguments, bool) {
 	reason := flags.String("reason", "", "compromise, emergency or admin (retire-ca)")
 	actor := flags.String("actor", "", "who makes the change")
 	changeRef := flags.String("change-ref", "", "the change record that allows it")
+	rootsChecked := flags.String("roots-checked-since", "",
+		"RFC 3339 time from which the operator checked logged root retirements (reconcile-after-restore)")
 	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 {
+		return kubernetesCAArguments{}, false
+	}
+	// A restore can bring back a root retired for a compromise; only the
+	// logs outside the database tell (§14 R-M8). Reconcile needs the
+	// operator to say from when they checked them.
+	if (*rootsChecked != "") != (args[0] == "reconcile-after-restore") {
 		return kubernetesCAArguments{}, false
 	}
 	arguments := kubernetesCAArguments{
 		operation: args[0], reason: kubeca.Reason(*reason),
 		operator: kubeca.Operator{Name: *actor, ChangeRef: *changeRef},
+	}
+	if *rootsChecked != "" {
+		since, err := time.Parse(time.RFC3339, *rootsChecked)
+		if err != nil || since.After(time.Now().Add(time.Minute)) {
+			return kubernetesCAArguments{}, false
+		}
+		arguments.rootsCheckedSince = since
 	}
 	// The worker's tripwire name is its own (review a3a L).
 	if !arguments.operator.Valid() || changes == arguments.operator.IsWorker() ||
@@ -137,7 +155,7 @@ func runKubernetesCA(ctx context.Context, args []string, lookup config.LookupFun
 	if err != nil {
 		return fail("invalid_kubernetes_ca_configuration", err)
 	}
-	result, err := kubernetesCAOperation(ctx, arguments, store, settings)
+	result, err := kubernetesCAOperation(ctx, arguments, store, settings, logger)
 	if err != nil {
 		return fail("kubernetes_ca_command_failure", err)
 	}
@@ -148,7 +166,7 @@ func runKubernetesCA(ctx context.Context, args []string, lookup config.LookupFun
 }
 
 func kubernetesCAOperation(ctx context.Context, arguments kubernetesCAArguments,
-	store *postgresadapter.KubernetesClusterCAStore, settings config.KubernetesCAWorkerConfig,
+	store *postgresadapter.KubernetesClusterCAStore, settings config.KubernetesCAWorkerConfig, logger *slog.Logger,
 ) (any, error) {
 	installation, scope := settings.DeploymentID, arguments.scope
 	switch arguments.operation {
@@ -168,9 +186,14 @@ func kubernetesCAOperation(ctx context.Context, arguments kubernetesCAArguments,
 		if err != nil {
 			return map[string]any{"retired_intermediates": retired}, err
 		}
+		logger.WarnContext(ctx, "Kubernetes CA work resumed after a database restore",
+			"event", "kubernetes_ca_restore_reconciled", "actor", arguments.operator.Name,
+			"change_ref", arguments.operator.ChangeRef, "retired_intermediates", retired,
+			"roots_checked_since", arguments.rootsCheckedSince.UTC().Format(time.RFC3339))
 		return map[string]any{
 			"retired_intermediates": retired, "restore_suspected": false,
-			"check": restoreChecklist,
+			"roots_checked_since": arguments.rootsCheckedSince.UTC().Format(time.RFC3339),
+			"check":               restoreChecklist,
 		}, nil
 	}
 	if arguments.operation == "status" {
@@ -181,6 +204,11 @@ func kubernetesCAOperation(ctx context.Context, arguments kubernetesCAArguments,
 		return kubernetesCAStatus(read), nil
 	}
 	if arguments.operation == "retire-ca" {
+		// What is retired, read first for the log line below.
+		retiring := kubernetesCAStatusCA{ID: arguments.ca.String()}
+		if read, err := store.Read(ctx, installation, scope); err == nil {
+			retiring = describeCA(read, arguments.ca)
+		}
 		// A worker pass may hold the Network for a moment: try a few times.
 		var err error
 		for attempt := 0; attempt < 10; attempt++ {
@@ -198,6 +226,13 @@ func kubernetesCAOperation(ctx context.Context, arguments kubernetesCAArguments,
 		if err != nil {
 			return nil, err
 		}
+		// Kept outside the database (the log pipeline, SIEM): after a
+		// restore, the operator retires such CAs again (§14 R-M8).
+		logger.WarnContext(ctx, "Kubernetes CA retired by an operator", "event", "kubernetes_ca_retired",
+			"ca", retiring.ID, "kind", retiring.Kind, "fingerprint", retiring.Fingerprint,
+			"reason", string(arguments.reason), "actor", arguments.operator.Name,
+			"change_ref", arguments.operator.ChangeRef, "workspace", scope.WorkspaceID().String(),
+			"network", scope.NetworkID().String())
 		return map[string]string{"retired": arguments.ca.String()}, nil
 	}
 	custody, _, err := fileCustodySource(settings)(ctx)
@@ -210,6 +245,24 @@ func kubernetesCAOperation(ctx context.Context, arguments kubernetesCAArguments,
 	}
 	id, err := lifecycle.RotateDataKey(ctx, store, custody, installation, scope, arguments.operator)
 	return map[string]string{"data_key_id": id.String()}, err
+}
+
+// describeCA describes one CA of a Network as status shows it; only its ID
+// when the Network has no such CA.
+func describeCA(read kubeca.Network, id publicid.ID) kubernetesCAStatusCA {
+	for _, cluster := range read.Clusters {
+		for _, ca := range cluster.CAs {
+			if ca.ID == id {
+				fingerprint := sha256.Sum256(ca.Certificate)
+				return kubernetesCAStatusCA{
+					ID: ca.ID.String(), Kind: ca.Kind.String(), State: string(ca.State), Name: ca.ClusterDNSName,
+					NotAfter:    ca.NotAfter.UTC().Format(time.RFC3339),
+					Fingerprint: hex.EncodeToString(fingerprint[:]), DataKeyID: ca.DataKeyID.String(),
+				}
+			}
+		}
+	}
+	return kubernetesCAStatusCA{ID: id.String()}
 }
 
 type kubernetesCAStatusCA struct {

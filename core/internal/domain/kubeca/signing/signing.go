@@ -1,5 +1,5 @@
 // Package signing signs Kubernetes gateway replica certificates for the
-// worker (K1a4a a3, docs/k8s-k1a4-a3-signing-design.md): it claims queued
+// worker (K1a4a a3, the a3 signing design): it claims queued
 // requests, checks again the pod token or the renewal signature each one
 // carries, signs it with its cluster's active intermediate and issues it
 // through the store, which checks the Device, cluster and CA again in the
@@ -50,6 +50,9 @@ const (
 	ReasonCSR            Reason = "csr"
 	// ReasonAttempts is the database's: three leases ran out.
 	ReasonAttempts Reason = "attempts"
+	// ReasonInternal is a claim the worker failed on (a panic while
+	// signing it, review §14 R-L4).
+	ReasonInternal Reason = "internal"
 )
 
 // Reasons the database gives when it refuses to issue (schema 240).
@@ -58,13 +61,16 @@ const (
 	ReasonCluster      Reason = "cluster"
 	ReasonTokenExpired Reason = "token_expired"
 	ReasonTokenUsed    Reason = "token_used"
+	// ReasonSuperseded: the pod started again and asked anew (§14 R-M2).
+	ReasonSuperseded Reason = "superseded"
 )
 
 // KnownReasons is every reason a refusal is counted under; any other is
 // counted as ReasonOther.
 var KnownReasons = []Reason{
 	ReasonNoCA, ReasonMisnamed, ReasonTrustMissing, ReasonToken, ReasonProof, ReasonRenewalExpired, ReasonCSR,
-	ReasonRevoked, ReasonCluster, ReasonTokenExpired, ReasonTokenUsed, ReasonAttempts, ReasonOther,
+	ReasonRevoked, ReasonCluster, ReasonTokenExpired, ReasonTokenUsed, ReasonAttempts, ReasonInternal,
+	ReasonSuperseded, ReasonOther,
 }
 
 // ReasonOther counts a refusal for a reason this build does not know.
@@ -141,7 +147,9 @@ func ParseClaimToken(value string) (ClaimToken, error) {
 }
 
 // Claim is a request the worker holds until its lease ends. Token is a
-// bearer credential: Claim never formats it.
+// bearer credential: Claim never formats it. A token request carries either
+// its Token or, once a worker checked it, the claims it checked (Verified):
+// the token leaves the database at the first claim (§14 R-M1).
 type Claim struct {
 	ID               publicid.ID
 	ClaimToken       ClaimToken
@@ -156,9 +164,11 @@ type Claim struct {
 	PublicKeySHA256  [sha256.Size]byte
 	Proof            Proof
 	Token            string `json:"-"`
+	Verified         *VerifiedToken
 	HandshakeHash    [32]byte
 	RenewalProof     []byte
 	RenewalPublicKey []byte
+	RenewalSerial    [16]byte
 	RenewalNotAfter  time.Time
 	Trust            *Trust
 	Intermediate     *Intermediate
@@ -174,12 +184,14 @@ func (Claim) GoString() string { return "signing.Claim([REDACTED])" }
 func (Claim) LogValue() slog.Value { return slog.StringValue("[REDACTED]") }
 
 // Batch is what one claim returned: the database's clock, the DNS suffix
-// recorded for the installation, and the claims; Suspected when a restore
-// is suspected and nothing was claimed.
+// recorded for the installation, and the claims. Nothing is claimed when a
+// restore is suspected (Suspected), or when the restore tripwire was not
+// checked within 10 minutes (Unchecked, §14 R-M9).
 type Batch struct {
 	Now       time.Time
 	Suffix    string
 	Suspected bool
+	Unchecked bool
 	// Pending counts the requests still waiting after the claim.
 	Pending int64
 	// RefusedAttempts counts the requests this claim refused after three
@@ -194,6 +206,20 @@ type TokenUse struct {
 	JTI       string
 	ExpiresAt time.Time
 	PodName   string
+}
+
+// VerifiedToken is what a worker checked in a pod token and recorded in
+// place of it: the token's evidence and the signing trust it was checked
+// against.
+type VerifiedToken struct {
+	Use          TokenUse
+	TrustVersion int64
+}
+
+// Valid reports complete claims.
+func (verified VerifiedToken) Valid() bool {
+	return verified.Use.JTI != "" && !verified.Use.ExpiresAt.IsZero() && verified.Use.PodName != "" &&
+		verified.TrustVersion >= 1
 }
 
 // Issue is a signed certificate for the request a claim holds.
@@ -226,6 +252,8 @@ const (
 	OutcomeReleased  Outcome = "released"
 	OutcomeSuspected Outcome = "suspected"
 	OutcomeLost      Outcome = "lost"
+	// OutcomeRecorded: a token's claims replaced it.
+	OutcomeRecorded Outcome = "recorded"
 )
 
 // Store is the worker's view of the queue and ledger (the postgres
@@ -237,6 +265,10 @@ type Store interface {
 		reason Reason) (Outcome, error)
 	Release(ctx context.Context, installation deployment.ID, request publicid.ID, claimToken ClaimToken) (Outcome,
 		error)
+	// RecordToken replaces a held request's token with the claims checked
+	// in it.
+	RecordToken(ctx context.Context, installation deployment.ID, request publicid.ID, claimToken ClaimToken,
+		verified VerifiedToken) (Outcome, error)
 	Prune(ctx context.Context, installation deployment.ID, limit int) (int, int, error)
 	Beat(ctx context.Context, installation deployment.ID, instance publicid.ID, ready bool, version, custody string,
 		capabilities []string) (time.Time, error)

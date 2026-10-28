@@ -29,6 +29,8 @@ const (
     $1::UUID,$2::UUID,$3::UUID)::TEXT`
 	pruneKubernetesGatewayCertificatesSQL = `SELECT mesh_ops.prune_kubernetes_gateway_certificates_v1(
     $1::UUID,$2::INTEGER)::TEXT`
+	recordKubernetesGatewayCertificateClaimsSQL = `SELECT mesh_ops.record_kubernetes_gateway_certificate_token_v1(
+    $1::UUID,$2::UUID,$3::UUID,$4::TEXT,$5::TIMESTAMPTZ,$6::TEXT,$7::BIGINT)::TEXT`
 
 	gatewayCertificateAggregateKind = "kubernetes_gateway_certificate"
 	// A claim holds at most 64 requests of a few KiB each, hex encoded.
@@ -88,11 +90,11 @@ func (store *KubernetesGatewayCertificateStore) Claim(ctx context.Context, insta
 	}
 	batch := signing.Batch{Now: record.Now, Pending: record.Pending, RefusedAttempts: record.RefusedAttempts}
 	switch record.Outcome {
-	case "suspected":
+	case "suspected", "unchecked":
 		if len(record.Requests) != 0 {
 			return signing.Batch{}, ErrKubernetesClusterCAStore
 		}
-		batch.Suspected = true
+		batch.Suspected, batch.Unchecked = record.Outcome == "suspected", record.Outcome == "unchecked"
 		return batch, nil
 	case "claimed":
 	default:
@@ -125,23 +127,30 @@ func (store *KubernetesGatewayCertificateStore) Claim(ctx context.Context, insta
 // gatewayCertificateClaimRecord is one claimed request as
 // kubernetes_gateway_certificate_claim_internal_v1 encodes it.
 type gatewayCertificateClaimRecord struct {
-	ID               string     `json:"id"`
-	ClaimToken       string     `json:"claim_token"`
-	RequestID        string     `json:"request_id"`
-	WorkspaceID      string     `json:"workspace_id"`
-	NetworkID        string     `json:"network_id"`
-	DeviceID         string     `json:"device_id"`
-	ClusterID        string     `json:"cluster_id"`
-	ClusterName      string     `json:"cluster_name"`
-	WorkspaceCode    *string    `json:"workspace_code"`
-	NetworkCode      *string    `json:"network_code"`
-	CSR              string     `json:"csr"`
-	PublicKeySHA256  string     `json:"public_key_sha256"`
-	Proof            string     `json:"proof"`
-	Token            *string    `json:"token"`
+	ID              string  `json:"id"`
+	ClaimToken      string  `json:"claim_token"`
+	RequestID       string  `json:"request_id"`
+	WorkspaceID     string  `json:"workspace_id"`
+	NetworkID       string  `json:"network_id"`
+	DeviceID        string  `json:"device_id"`
+	ClusterID       string  `json:"cluster_id"`
+	ClusterName     string  `json:"cluster_name"`
+	WorkspaceCode   *string `json:"workspace_code"`
+	NetworkCode     *string `json:"network_code"`
+	CSR             string  `json:"csr"`
+	PublicKeySHA256 string  `json:"public_key_sha256"`
+	Proof           string  `json:"proof"`
+	Token           *string `json:"token"`
+	Verified        *struct {
+		JTI          string    `json:"jti"`
+		ExpiresAt    time.Time `json:"expires_at"`
+		PodName      string    `json:"pod_name"`
+		TrustVersion int64     `json:"trust_version"`
+	} `json:"verified"`
 	HandshakeHash    *string    `json:"handshake_hash"`
 	RenewalProof     *string    `json:"renewal_proof"`
 	RenewalPublicKey *string    `json:"renewal_public_key"`
+	RenewalSerial    *string    `json:"renewal_serial"`
 	RenewalNotAfter  *time.Time `json:"renewal_not_after"`
 	Trust            *struct {
 		Version        int64   `json:"version"`
@@ -185,8 +194,21 @@ func (record gatewayCertificateClaimRecord) decode() (signing.Claim, error) {
 		claim.WorkspaceCode, claim.NetworkCode = *record.WorkspaceCode, *record.NetworkCode
 	}
 	switch {
-	case record.Proof == "token" && record.Token != nil && record.HandshakeHash == nil && record.RenewalProof == nil:
-		claim.Proof, claim.Token = signing.ProofToken, *record.Token
+	case record.Proof == "token" && (record.Token == nil) != (record.Verified == nil) && record.HandshakeHash == nil &&
+		record.RenewalProof == nil:
+		claim.Proof = signing.ProofToken
+		if record.Token != nil {
+			claim.Token = *record.Token
+		} else {
+			// A worker checked the token at an earlier claim (§14 R-M1).
+			verified := signing.VerifiedToken{Use: signing.TokenUse{JTI: record.Verified.JTI,
+				ExpiresAt: record.Verified.ExpiresAt, PodName: record.Verified.PodName},
+				TrustVersion: record.Verified.TrustVersion}
+			if !verified.Valid() {
+				return signing.Claim{}, ErrKubernetesClusterCAStore
+			}
+			claim.Verified = &verified
+		}
 		trust, err := record.decodeTrust()
 		if err != nil {
 			return signing.Claim{}, err
@@ -200,12 +222,14 @@ func (record gatewayCertificateClaimRecord) decode() (signing.Claim, error) {
 		}
 		claim.Proof, claim.HandshakeHash, claim.RenewalProof = signing.ProofRenewal, [32]byte(hash), proof
 		// The renewed certificate may be gone (pruned): the worker refuses.
-		if record.RenewalPublicKey != nil && record.RenewalNotAfter != nil {
-			key, err := hex.DecodeString(*record.RenewalPublicKey)
-			if err != nil || len(key) == 0 {
+		if record.RenewalPublicKey != nil && record.RenewalNotAfter != nil && record.RenewalSerial != nil {
+			key, keyErr := hex.DecodeString(*record.RenewalPublicKey)
+			serial, serialErr := hex.DecodeString(*record.RenewalSerial)
+			if keyErr != nil || serialErr != nil || len(key) == 0 || len(serial) != len(claim.RenewalSerial) {
 				return signing.Claim{}, ErrKubernetesClusterCAStore
 			}
 			claim.RenewalPublicKey, claim.RenewalNotAfter = key, *record.RenewalNotAfter
+			claim.RenewalSerial = [16]byte(serial)
 		}
 	default:
 		return signing.Claim{}, ErrKubernetesClusterCAStore
@@ -356,7 +380,7 @@ func decodeCertificateOutcome(encoded string) (certificateOutcome, error) {
 		if len(head) == 2 && reason != "" {
 			return certificateOutcome{Outcome: outcome, Reason: reason}, nil
 		}
-	case "requeued", "released", "suspected", "lost":
+	case "requeued", "released", "suspected", "lost", "recorded":
 		if len(head) == 1 {
 			return certificateOutcome{Outcome: outcome}, nil
 		}
@@ -424,8 +448,25 @@ func (store *KubernetesGatewayCertificateStore) settle(ctx context.Context, stat
 	return signing.Outcome(settled.Outcome), nil
 }
 
-// Prune removes the installation's requests older than ten minutes and
-// ledger rows older than 13 months, at most limit of each.
+// RecordToken replaces a held request's pod token with the claims the worker
+// checked in it (schema 241, §14 R-M1).
+func (store *KubernetesGatewayCertificateStore) RecordToken(ctx context.Context, installation deployment.ID,
+	request publicid.ID, claimToken signing.ClaimToken, verified signing.VerifiedToken,
+) (signing.Outcome, error) {
+	if !store.valid(ctx, installation) || !request.IsValid() || claimToken.IsZero() || !verified.Valid() {
+		return "", ErrInvalidKubernetesClusterCAStore
+	}
+	outcome, err := store.settle(ctx, recordKubernetesGatewayCertificateClaimsSQL, installation.String(),
+		request.String(), claimToken.String(), verified.Use.JTI, verified.Use.ExpiresAt, verified.Use.PodName,
+		verified.TrustVersion)
+	if err == nil && outcome != signing.OutcomeRecorded && outcome != signing.OutcomeLost {
+		return "", ErrKubernetesClusterCAStore
+	}
+	return outcome, err
+}
+
+// Prune removes the installation's ended or abandoned requests older than
+// ten minutes and ledger rows older than 13 months, at most limit of each.
 func (store *KubernetesGatewayCertificateStore) Prune(ctx context.Context, installation deployment.ID,
 	limit int,
 ) (int, int, error) {

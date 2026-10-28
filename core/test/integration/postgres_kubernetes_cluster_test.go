@@ -365,7 +365,8 @@ WHERE workspace_id = 103 AND network_id = 203 ORDER BY id LIMIT 1`).Scan(&heldMa
 	assertMapListsKubernetesGateways(ctx, t, admin, scope, gatewayDevice, "prod")
 	assertMapMarksKubernetesReplicas(ctx, t, admin, runtimePool, scope, gatewayDevice, "prod")
 	caFixture := assertKubernetesClusterCAs(ctx, t, admin, worker, workerPool, service, owner, scope, clusterID)
-	assertGatewayCertificates(ctx, t, admin, runtime, workerPool, caFixture, gatewayKeys, gatewayDevice)
+	assertGatewayCertificates(ctx, t, admin, runtime, runtimePool, workerPool, caFixture, gatewayKeys,
+		gatewayDevice)
 
 	// A second replica: its own code does not approve the first's request,
 	// and it is rejected.

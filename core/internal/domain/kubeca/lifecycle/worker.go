@@ -20,6 +20,9 @@ import (
 
 const (
 	maximumBatchSize = 64
+	// guardRecheck is how often a long pass checks the restore guard
+	// again (and stamps it): well inside the 10 minutes signing waits.
+	guardRecheck = time.Minute
 	// custodyRetry is how often the worker reads its custody's keys again:
 	// a new wrap key file is picked up within a minute.
 	custodyRetry = time.Minute
@@ -54,6 +57,10 @@ type Store interface {
 		plan func(kubeca.Network) (kubeca.Changes, error)) (bool, error)
 	ReadGuard(ctx context.Context, installation deployment.ID) (kubeca.Guard, error)
 	MarkRestored(ctx context.Context, installation deployment.ID, operator kubeca.Operator) error
+	// StampGuard records that the restore marks of generation were
+	// compared and found no restore: signing goes on for 10 minutes
+	// (a3 §14 R-M9).
+	StampGuard(ctx context.Context, installation deployment.ID, generation int64) error
 	AddDataKey(ctx context.Context, installation deployment.ID, scope network.Scope, id publicid.ID,
 		wrapped kubeca.WrappedKey, operator kubeca.Operator) (bool, error)
 	Postpone(ctx context.Context, installation deployment.ID, scope network.Scope, until time.Time) (bool, error)
@@ -238,6 +245,7 @@ func (worker *Worker) Pass(ctx context.Context) {
 	if worker.guarded(ctx) || !worker.claimSuffix(ctx) {
 		return
 	}
+	guardedAt := time.Now()
 	limit := min(maximumBatchSize, worker.options.BatchSize+len(worker.backoff))
 	listCtx, cancel := context.WithTimeout(ctx, worker.options.OperationTimeout)
 	scopes, err := worker.store.ListDue(listCtx, worker.options.DeploymentID, limit)
@@ -256,6 +264,15 @@ func (worker *Worker) Pass(ctx context.Context) {
 		}
 		if entry, waiting := worker.backoff[scope]; waiting && now.Before(entry.until) {
 			continue
+		}
+		// A long pass checks the guard again: signing waits on a recent
+		// check, and a restore found mid-pass stops the rest (review a3b
+		// SQL M4).
+		if time.Since(guardedAt) >= guardRecheck {
+			if worker.guarded(ctx) {
+				return
+			}
+			guardedAt = time.Now()
 		}
 		attempted++
 		worker.networks.Add(1)
@@ -280,13 +297,19 @@ func (worker *Worker) guarded(ctx context.Context) bool {
 		}
 		return true
 	}
+	// Signing goes on only while the marks are compared (a3 §14 R-M9):
+	// each comparison that finds no restore stamps the guard. Marks that
+	// cannot be compared (Redis down, a missing ACL) stop no lifecycle work
+	// (Redis is never the authority) but leave the guard unstamped, so
+	// signing stops 10 minutes later. Without marks configured the guard is
+	// stamped each pass: the tripwire is off by configuration.
+	compared := true
 	if !guard.Suspected && worker.options.Marks != nil {
 		regressed, err := worker.options.Marks.Compare(readCtx, worker.options.DeploymentID, guard)
-		// Marks that cannot be compared (no Redis, a missing ACL) turn the
-		// tripwire off: counted, never a stop (review a3a L).
 		worker.marksUnavailable.Store(err != nil)
 		switch {
 		case err != nil:
+			compared = false
 			worker.logger.WarnContext(ctx, "kubernetes CA restore marks unavailable", "error_code",
 				"kubernetes_ca_marks_unavailable")
 		case regressed:
@@ -295,6 +318,13 @@ func (worker *Worker) guarded(ctx context.Context) bool {
 					"kubernetes_ca_guard_mark_failed")
 			}
 			guard.Suspected = true
+		}
+	}
+	if !guard.Suspected && compared {
+		if err := worker.store.StampGuard(readCtx, worker.options.DeploymentID, guard.Generation); err != nil &&
+			ctx.Err() == nil {
+			worker.logger.WarnContext(ctx, "kubernetes CA restore check not recorded", "error_code",
+				"kubernetes_ca_guard_stamp_failed")
 		}
 	}
 	worker.restoreSuspected.Store(guard.Suspected)

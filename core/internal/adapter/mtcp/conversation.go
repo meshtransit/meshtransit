@@ -74,9 +74,12 @@ type ApplicationOptions struct {
 	// GatewayPresence says whether a Kubernetes gateway's stream may rotate
 	// its keys (K1a1 plan §16.12); without it gateways rotate none.
 	GatewayPresence mapsession.GatewayPresenceStore
-	Logout          DeviceLogout
-	Paths           PathRecorder
-	Connectivity    ConnectivityRecorder
+	// KubeCertificates, when set, answers gateway.cert1 requests (mtcp-v1
+	// §6.9).
+	KubeCertificates KubeCertificates
+	Logout           DeviceLogout
+	Paths            PathRecorder
+	Connectivity     ConnectivityRecorder
 	// RouteOffers, when set, stores the subnets Devices offer to forward.
 	RouteOffers RouteOffers
 	// ExitOffers, when set, stores whether Devices offer to be exit nodes.
@@ -231,6 +234,18 @@ type conversation struct {
 	// machine key and ends the lease itself once the rotation is decided.
 	keepPresence bool
 
+	// kubeCertPending: a certificate request of the session waits on its
+	// goroutine (kubeCertWork); a second one is told to retry (a3 §3).
+	// The goroutine runs under kubeCertCtx, which Run cancels before it
+	// joins the work; kubeCertClosed then refuses new work (review a3b Go
+	// H1). kubeCertMu guards the three.
+	kubeCertPending atomic.Bool
+	kubeCertWork    sync.WaitGroup
+	kubeCertMu      sync.Mutex
+	kubeCertClosed  bool
+	kubeCertCtx     context.Context
+	kubeCertCancel  context.CancelFunc
+
 	wake      chan struct{} // the node key changed
 	approvals chan approval // the latest pending browser approval
 
@@ -259,6 +274,9 @@ func (conversation *conversation) Run(ctx context.Context) error {
 	}
 	conversation.watchApprovalsWithin(ctx)
 	defer conversation.stopApprovals()
+	// A certificate request's wait ends with the conversation: cancelled,
+	// then joined, before Run returns.
+	defer conversation.closeKubeCerts()
 	defer conversation.stopEndpointPacing()
 	defer conversation.stopEnforcementPacing()
 	defer conversation.stopRouteOfferPacing()
@@ -589,6 +607,8 @@ func (conversation *conversation) Receive(ctx context.Context, _ sharedmtcp.Mess
 		return conversation.rotateMachineKey(ctx, m)
 	case *mtcpv1.Logout:
 		return conversation.logout(ctx)
+	case *mtcpv1.KubeCertRequest:
+		return conversation.kubeCert(ctx, m)
 	default:
 		return Violation(mtcpv1.Error_INVALID, "unexpected message")
 	}

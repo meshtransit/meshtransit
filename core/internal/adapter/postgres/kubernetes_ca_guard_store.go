@@ -15,6 +15,7 @@ const (
 	markKubernetesCARestoredSQL   = `SELECT mesh_ops.mark_kubernetes_ca_restored_v1($1::UUID,$2::TEXT,$3::TEXT)::TEXT`
 	clearKubernetesCARestoreSQL   = `SELECT mesh_ops.clear_kubernetes_ca_restore_v1($1::UUID,$2::BIGINT,$3::TEXT,$4::TEXT)::TEXT`
 	listKubernetesCAIntermediates = `SELECT mesh_ops.list_kubernetes_ca_active_intermediates_v1($1::UUID,$2::INTEGER)::TEXT`
+	stampKubernetesCAGuardSQL     = `SELECT mesh_ops.stamp_kubernetes_ca_guard_v1($1::UUID,$2::BIGINT)::TEXT`
 
 	clusterCAMaximumListed = 256
 )
@@ -39,6 +40,7 @@ func (store *KubernetesClusterCAStore) ReadGuard(ctx context.Context, installati
 		Suspected       *bool      `json:"suspected"`
 		Generation      int64      `json:"generation"`
 		MarkedAt        *time.Time `json:"marked_at"`
+		CheckedAt       *time.Time `json:"checked_at"`
 		CertificateMark int64      `json:"certificate_mark"`
 		CAMark          int64      `json:"ca_mark"`
 		StartedAt       time.Time  `json:"started_at"`
@@ -56,6 +58,29 @@ func (store *KubernetesClusterCAStore) ReadGuard(ctx context.Context, installati
 		return kubeca.Guard{}, ErrKubernetesClusterCAStore
 	}
 	return guard, nil
+}
+
+// StampGuard records that the lifecycle worker compared the restore marks
+// of generation and found no restore (schema 241, a3 §14 R-M9). A guard
+// that moved on or is suspected is left as it is.
+func (store *KubernetesClusterCAStore) StampGuard(ctx context.Context, installation deployment.ID,
+	generation int64,
+) error {
+	if !store.valid(ctx, installation) || generation < 1 {
+		return ErrInvalidKubernetesClusterCAStore
+	}
+	encoded, err := store.queryText(ctx, stampKubernetesCAGuardSQL, installation.String(), generation)
+	if err != nil {
+		return err
+	}
+	var record struct {
+		Outcome string `json:"outcome"`
+	}
+	if err := decodeStrictJSON(encoded, 256, &record); err != nil ||
+		record.Outcome != "stamped" && record.Outcome != "stale" {
+		return ErrKubernetesClusterCAStore
+	}
+	return nil
 }
 
 // MarkRestored stops the installation's CA work until an operator

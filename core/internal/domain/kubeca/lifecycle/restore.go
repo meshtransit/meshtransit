@@ -97,14 +97,14 @@ func ReconcileAfterRestore(ctx context.Context, store RestoreStore, installation
 			return retired, nil
 		}
 		before := retired
-		for _, intermediate := range left {
-			done, err := retireIntermediate(ctx, store, installation, intermediate, operator)
+		// One change per Network: one revision, one map rebuild, however
+		// many of its clusters it retires (a3 §14 R-M7).
+		for _, group := range byNetwork(left) {
+			done, err := retireIntermediates(ctx, store, installation, group, operator)
 			if err != nil && !errors.Is(err, ErrBusy) && !errors.Is(err, errStaleIntermediate) {
 				return retired, err
 			}
-			if done {
-				retired++
-			}
+			retired += done
 		}
 		if retired == before {
 			// Every Network was busy or changed: give the holder a moment.
@@ -120,31 +120,49 @@ func ReconcileAfterRestore(ctx context.Context, store RestoreStore, installation
 
 var errStaleIntermediate = errors.New("kubernetes CA reconcile: the intermediate changed")
 
-// retireIntermediate retires one intermediate at the version listed and
-// asks its cluster's next look at once, so it gets a new one as soon as CA
-// work resumes. A busy Network or a changed intermediate is listed again.
-func retireIntermediate(ctx context.Context, store RestoreStore, installation deployment.ID,
-	intermediate kubeca.IntermediateRef, operator kubeca.Operator,
-) (bool, error) {
-	busy, err := store.Change(ctx, installation, intermediate.Scope, func(locked kubeca.Network) (kubeca.Changes,
+// byNetwork groups listed intermediates by Network, in the order listed.
+func byNetwork(listed []kubeca.IntermediateRef) [][]kubeca.IntermediateRef {
+	var groups [][]kubeca.IntermediateRef
+	index := map[network.Scope]int{}
+	for _, intermediate := range listed {
+		at, ok := index[intermediate.Scope]
+		if !ok {
+			at = len(groups)
+			index[intermediate.Scope] = at
+			groups = append(groups, nil)
+		}
+		groups[at] = append(groups[at], intermediate)
+	}
+	return groups
+}
+
+// retireIntermediates retires one Network's listed intermediates, each at
+// the version listed, in one change, and asks each cluster's next look at
+// once, so it gets a new one as soon as CA work resumes. A busy Network or
+// a changed intermediate is listed again. It returns how many it retired.
+func retireIntermediates(ctx context.Context, store RestoreStore, installation deployment.ID,
+	intermediates []kubeca.IntermediateRef, operator kubeca.Operator,
+) (int, error) {
+	busy, err := store.Change(ctx, installation, intermediates[0].Scope, func(locked kubeca.Network) (kubeca.Changes,
 		error,
 	) {
-		return kubeca.Changes{
-			Operator: operator,
-			Steps: []kubeca.Step{{Move: &kubeca.Move{
+		changes := kubeca.Changes{Operator: operator}
+		for _, intermediate := range intermediates {
+			changes.Steps = append(changes.Steps, kubeca.Step{Move: &kubeca.Move{
 				CA: intermediate.CA, Version: intermediate.Version, To: kubeca.StateRetired,
 				Reason: kubeca.ReasonEmergency,
-			}}},
-			Schedules: []kubeca.Schedule{{Cluster: intermediate.Cluster, At: locked.Now}},
-		}, nil
+			}})
+			changes.Schedules = append(changes.Schedules, kubeca.Schedule{Cluster: intermediate.Cluster, At: locked.Now})
+		}
+		return changes, nil
 	})
 	switch {
 	case errors.Is(err, kubeca.ErrStale):
-		return false, errStaleIntermediate
+		return 0, errStaleIntermediate
 	case err != nil:
-		return false, err
+		return 0, err
 	case busy:
-		return false, ErrBusy
+		return 0, ErrBusy
 	}
-	return true, nil
+	return len(intermediates), nil
 }

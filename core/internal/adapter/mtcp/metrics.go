@@ -3,9 +3,11 @@ package mtcp
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
 	"meshtransit.net/core/internal/adapter/kubetoken"
+	"meshtransit.net/core/internal/domain/kubeca/certqueue"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -40,6 +42,9 @@ type Metrics struct {
 	// gatewayKeyAudit counts reports of Kubernetes gateways' stale or
 	// contested keys by what became of them (schema 229).
 	gatewayKeyAudit *prometheus.CounterVec
+	// kubeCerts and kubeCertWait count gateway.cert1 answers (mtcp-v1 §6.9).
+	kubeCerts    *prometheus.CounterVec
+	kubeCertWait prometheus.Histogram
 }
 
 // The closed set of route statuses and cut Sites counted when sent.
@@ -224,6 +229,18 @@ func NewMetrics() *Metrics {
 			Name: "meshtransit_mtcp_gateway_key_audit_total",
 			Help: "Reports of Kubernetes gateways' stale or contested keys by result: recorded, limited, busy, suppressed, dropped, failed, unknown.",
 		}, []string{"result"}),
+		// Watch: unavailable means no worker signs (gateways back off for
+		// minutes); contested, token or proof climbing means copies of a
+		// gateway's identity, or gateways that do not follow the protocol.
+		kubeCerts: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "meshtransit_mtcp_kube_cert_results_total",
+			Help: "Kubernetes gateway certificate requests answered, by outcome and reason.",
+		}, []string{"outcome", "reason"}),
+		kubeCertWait: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "meshtransit_mtcp_kube_cert_wait_seconds",
+			Help:    "How long a Kubernetes gateway certificate request took to answer.",
+			Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 3, 5, 8},
+		}),
 		keyExpiry: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "meshtransit_mtcp_control_key_not_after_timestamp_seconds",
 			Help: "Expiry of the latest control key this replica answers with (Unix seconds).",
@@ -251,6 +268,7 @@ func NewMetrics() *Metrics {
 	for _, result := range gatewayKeyAuditResults {
 		metrics.gatewayKeyAudit.WithLabelValues(result)
 	}
+	metrics.kubeCerts.WithLabelValues("issued", "")
 	return metrics
 }
 
@@ -258,7 +276,7 @@ func NewMetrics() *Metrics {
 func (metrics *Metrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{metrics.handshakes, metrics.sessions, metrics.messages, metrics.streamEnds,
 		metrics.sheds, metrics.unproven, metrics.forwarding, metrics.keyExpiry, metrics.limits, metrics.mapNames,
-		metrics.expiring, metrics.routeOffers, metrics.exitOffers, metrics.routeOfferDropped, metrics.routes, metrics.dnsRelayDropped, metrics.gatewayKeyAudit, routedFilterOmitted,
+		metrics.expiring, metrics.routeOffers, metrics.exitOffers, metrics.routeOfferDropped, metrics.routes, metrics.dnsRelayDropped, metrics.gatewayKeyAudit, metrics.kubeCerts, metrics.kubeCertWait, routedFilterOmitted,
 		exitFilterOmitted}
 }
 
@@ -415,6 +433,37 @@ func (metrics *Metrics) countExpiringDevices(count func() (within14d, within1d i
 
 // gatewayKeyAuditResults is the closed set of report results.
 var gatewayKeyAuditResults = []string{"recorded", "limited", "busy", "suppressed", "dropped", "failed", "unknown"}
+
+// kubeCertAnswered counts one certificate request's answer, by outcome
+// and a known reason; a nil Metrics counts nothing.
+func (metrics *Metrics) kubeCertAnswered(result certqueue.Result, took time.Duration) {
+	if metrics == nil {
+		return
+	}
+	outcome, reason := "retry", result.Reason
+	switch result.Outcome {
+	case certqueue.OutcomeIssued:
+		outcome, reason = "issued", ""
+	case certqueue.OutcomeRefused:
+		outcome = "refused"
+	}
+	if reason != "" && !certqueue.KnownReason(reason) {
+		reason = "other"
+	}
+	metrics.kubeCerts.WithLabelValues(outcome, reason).Inc()
+	if took > 0 {
+		metrics.kubeCertWait.Observe(took.Seconds())
+	}
+}
+
+// kubeCertUnanswered counts a certificate request answered with an Error
+// (no capability, no request ID); a nil Metrics counts nothing.
+func (metrics *Metrics) kubeCertUnanswered(reason string) {
+	if metrics == nil {
+		return
+	}
+	metrics.kubeCerts.WithLabelValues("error", reason).Inc()
+}
 
 // gatewayKeyReported counts one report result; a nil Metrics counts nothing.
 func (metrics *Metrics) gatewayKeyReported(result string) {

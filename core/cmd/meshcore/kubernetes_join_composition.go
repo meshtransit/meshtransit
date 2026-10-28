@@ -1,10 +1,15 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"log/slog"
 
 	mtcpadapter "meshtransit.net/core/internal/adapter/mtcp"
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	redisadapter "meshtransit.net/core/internal/adapter/redis"
+	"meshtransit.net/core/internal/domain/kubeca/certqueue"
+	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/platform/config"
 )
 
@@ -69,3 +74,59 @@ func composeGatewayKeys(registration config.RegistrationConfig,
 	}
 	return store, nil
 }
+
+// composeKubeCertificates builds the certificate queue Kubernetes gateways
+// ask through (gateway.cert1, mtcp-v1 §6.9), bounded like registrations.
+// With Redis it also returns the hints service: queued requests wake the
+// signing workers and settled ones wake the sessions waiting for them;
+// without, the workers poll and sessions read back.
+func composeKubeCertificates(registration config.RegistrationConfig, runtimePool *postgresadapter.Pool,
+	client *redisadapter.Client, logger *slog.Logger,
+) (*certqueue.Service, *kubeCertHints, error) {
+	if runtimePool == nil || logger == nil {
+		return nil, nil, errInvalidKubernetesJoinComposition
+	}
+	store, err := postgresadapter.NewKubernetesGatewayCertificateQueueStore(runtimePool,
+		postgresadapter.RegistrationTransactionOptions{
+			StatementTimeout:      registration.Database.StatementTimeout,
+			LockTimeout:           registration.Database.LockTimeout,
+			IdleTimeout:           registration.Database.IdleTimeout,
+			AddressCandidateLimit: registration.AddressCandidateLimit,
+		})
+	if err != nil {
+		return nil, nil, errors.Join(errInvalidKubernetesJoinComposition, err)
+	}
+	options := certqueue.Options{}
+	var hints *kubeCertHints
+	var service *certqueue.Service
+	if client != nil {
+		hints = newKubeCertHints("settled", func(ctx context.Context) (kubeCertHintSubscription, error) {
+			return client.SubscribeKubeCertSettled(ctx)
+		}, func(request publicid.ID) { service.Settled(request) }, logger)
+		options.Queued = func(context.Context) {
+			hints.Publish(func(ctx context.Context) { _ = client.PublishKubeCertQueued(ctx) })
+		}
+	}
+	service, err = certqueue.New(store, options)
+	if err != nil {
+		return nil, nil, errors.Join(errInvalidKubernetesJoinComposition, err)
+	}
+	return service, hints, nil
+}
+
+// queuedKubeCertHints wakes an idle signing worker when a request is
+// queued, and publishes the worker's settled requests.
+func queuedKubeCertHints(client *redisadapter.Client, wake chan<- struct{}, logger *slog.Logger) *kubeCertHints {
+	return newKubeCertHints("queued", func(ctx context.Context) (kubeCertHintSubscription, error) {
+		return client.SubscribeKubeCertQueued(ctx)
+	}, func(publicid.ID) {
+		select {
+		case wake <- struct{}{}:
+		default:
+		}
+	}, logger)
+}
+
+// malformedHint reports a hint that could not be read; the subscription
+// goes on.
+func malformedHint(err error) bool { return errors.Is(err, redisadapter.ErrInvalidKubeCertWakeup) }

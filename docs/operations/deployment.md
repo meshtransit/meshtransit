@@ -201,6 +201,8 @@ user meshcore on >PASSWORD resetkeys resetchannels
   &meshtransit:v1:wakeup:network_revision_advanced
   &meshtransit:v1:wakeup:connectivity_changed
   &meshtransit:v1:wakeup:site_health_failed
+  &meshtransit:v1:wakeup:kube_cert_queued
+  &meshtransit:v1:wakeup:kube_cert_settled
 ```
 
 Turn the `default` user off. Core uses a single Redis node (no Cluster or
@@ -209,7 +211,10 @@ correctness, but a restart loses the 30-day delivery and enforcement records.
 Set `maxmemory-policy noeviction`, with enough memory for the delivery records
 (kept 30 days): presence, rate-limit and Kubernetes gateway contest keys must
 never be evicted under pressure. An evicted or flushed gateway contest key lets
-a holder of a copied gateway Secret rotate the gateway's keys sooner. Core
+a holder of a copied gateway Secret rotate the gateway's keys sooner. The
+Kubernetes CA restore marks (`~meshtransit:v1:kubeca:*`) carry a TTL too: an
+evicted mark hides a database restore from the tripwire until it is seen
+again. Core
 cannot check the policy itself (its user has no `CONFIG` or `INFO`).
 
 While Core replicas of two versions run side by side during an upgrade, a
