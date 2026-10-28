@@ -270,6 +270,21 @@ message Device {
   Owner owner = 14;
   repeated string capabilities = 15;
   AliasGrant alias = 16;
+  // Only in a Kubernetes gateway's own map, for a peer a rule naming groups
+  // reaches it from, when the session negotiated gateway.kube.v1 (7.8).
+  KubernetesAccess kubernetes = 17;
+}
+
+// KubernetesAccess is what a cluster's gateway may let a peer do in the
+// cluster: the Kubernetes groups it holds (7.8).
+message KubernetesAccess {
+  repeated KubernetesGrant grants = 1; // sorted by group; at least one
+  int64 owner_changed_ms = 2;          // when the peer last changed owner; 0: never
+}
+
+message KubernetesGrant {
+  string group = 1;
+  int64 valid_until_ms = 2; // never 0
 }
 
 message PeerPatch {

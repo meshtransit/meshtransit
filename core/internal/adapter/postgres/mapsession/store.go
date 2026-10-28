@@ -152,6 +152,14 @@ type InventoryStats struct {
 	// GuardrailCuts counts shares left out of maps because an enforced
 	// guardrail of either side blocks them (schema 164).
 	GuardrailCuts uint64
+	// KubernetesWithheld counts gateway maps built without their peers'
+	// Kubernetes access (K1a3 §12.2), by reason: the inventory did not read
+	// the evidence (Unread) or read it inconsistent (Evidence), the Device
+	// was read on its own (Direct), or has direct projections (Projections).
+	KubernetesWithheldUnread      uint64
+	KubernetesWithheldEvidence    uint64
+	KubernetesWithheldDirect      uint64
+	KubernetesWithheldProjections uint64
 }
 
 // policyShadowInterval: one in this many reads that could expand the
@@ -162,7 +170,8 @@ const policyShadowInterval = 64
 type inventoryStats struct {
 	shared, reads, direct, policyMismatch, derived, unchanged, sharingDeclines, changeReads, changeFallbacks,
 	sharesSkipped, shareRechecks, policiesExpanded, policyShadowChecks, policyCandidates,
-	guardrailCuts atomic.Uint64
+	guardrailCuts, kubernetesWithheldUnread, kubernetesWithheldEvidence, kubernetesWithheldDirect,
+	kubernetesWithheldProjections atomic.Uint64
 }
 
 // InventoryStats returns the counters since the store was built.
@@ -173,7 +182,11 @@ func (store *Store) InventoryStats() InventoryStats {
 		SharingDeclines: store.stats.sharingDeclines.Load(), ChangeReads: store.stats.changeReads.Load(),
 		ChangeFallbacks: store.stats.changeFallbacks.Load(), SharesSkipped: store.stats.sharesSkipped.Load(),
 		ShareRechecks: store.stats.shareRechecks.Load(), PoliciesExpanded: store.stats.policiesExpanded.Load(),
-		PolicyShadowChecks: store.stats.policyShadowChecks.Load(), GuardrailCuts: store.stats.guardrailCuts.Load()}
+		PolicyShadowChecks: store.stats.policyShadowChecks.Load(), GuardrailCuts: store.stats.guardrailCuts.Load(),
+		KubernetesWithheldUnread:      store.stats.kubernetesWithheldUnread.Load(),
+		KubernetesWithheldEvidence:    store.stats.kubernetesWithheldEvidence.Load(),
+		KubernetesWithheldDirect:      store.stats.kubernetesWithheldDirect.Load(),
+		KubernetesWithheldProjections: store.stats.kubernetesWithheldProjections.Load()}
 }
 
 // policyMatches checks, for a read that read the Device's own packet policy,
@@ -234,16 +247,28 @@ func (store *Store) Load(
 		return appmapsession.Snapshot{}, errors.Join(ErrLoadSnapshot, err)
 	}
 	if store.inventories != nil {
-		read, err := store.loadSnapshot(ctx, identity, true)
-		if err != nil || read.complete {
-			return read.snapshot, err
-		}
-		shared, ok, err := store.withSharedInventory(ctx, read)
-		if err != nil || ok {
-			if ok {
-				store.stats.shared.Add(1)
+		// A gateway replica's map carries its peers' Kubernetes access only
+		// from the shared view, so a gateway tries it once more before its
+		// own read, which withholds that access (K1a3 §13.10).
+		for attempt := 0; ; attempt++ {
+			read, err := store.loadSnapshot(ctx, identity, true)
+			if err != nil || read.complete {
+				return read.snapshot, err
 			}
-			return shared, err
+			shared, ok, gateway, err := store.withSharedInventory(ctx, read)
+			if err != nil || ok {
+				if ok {
+					store.stats.shared.Add(1)
+				}
+				return shared, err
+			}
+			if gateway.newer && attempt == 0 {
+				continue // the Device's facts lag the view: read them again
+			}
+			if gateway.listed {
+				store.stats.kubernetesWithheldDirect.Add(1)
+			}
+			break
 		}
 		// No inventory answers for this read (none usable, it does not list
 		// this Device unchanged, or the policy moved on): read the
@@ -282,44 +307,62 @@ type snapshotRead struct {
 // self and carry the same policy revision; the peers are then those of the
 // later revision, which only removes revoked ones and adds Devices the same
 // policy admits.
-func (store *Store) withSharedInventory(ctx context.Context, read snapshotRead) (appmapsession.Snapshot, bool, error) {
+//
+// gateway reports whether the inventory lists the Device as a Kubernetes
+// gateway replica, whose own read would withhold its peers' access, and is
+// of a later revision than the read.
+func (store *Store) withSharedInventory(ctx context.Context, read snapshotRead) (
+	snapshot appmapsession.Snapshot, ok bool, gateway gatewayRead, err error) {
 	scope := read.snapshot.Scope()
-	cached, found, err := store.inventories.get(ctx, scope, read.revision, read.readAt,
+	cached, found, readErr := store.inventories.get(ctx, scope, read.revision, read.readAt,
 		func(readCtx context.Context, previous cachedInventory) (cachedInventory, error) {
 			store.stats.reads.Add(1)
 			return store.readInventory(readCtx, scope, read.workspaceValue, read.networkValue, previous)
 		})
-	if err != nil {
-		return appmapsession.Snapshot{}, false, err
+	if readErr != nil {
+		return appmapsession.Snapshot{}, false, gatewayRead{}, readErr
 	}
 	if !found {
-		return appmapsession.Snapshot{}, false, nil
+		return appmapsession.Snapshot{}, false, gatewayRead{}, nil
+	}
+	if cached.gatewayListed(read.snapshot.NodeID()) {
+		gateway = gatewayRead{listed: true, newer: cached.revision > read.revision}
 	}
 	if !read.policyDeferred && !store.policyMatches(cached, read) {
-		return appmapsession.Snapshot{}, false, nil
+		return appmapsession.Snapshot{}, false, gateway, nil
 	}
 	if (read.sharesSkipped && !cached.sharesAbsent(read.snapshot.NumericNodeID())) ||
 		(read.directSkipped && cached.directEndpoints) {
 		// The inventory this read is completed with (of its revision or later)
 		// shows a share: read the Device again with its shares.
 		store.stats.shareRechecks.Add(1)
-		return appmapsession.Snapshot{}, false, nil
+		return appmapsession.Snapshot{}, false, gateway, nil
 	}
 	inventory := cached.inventory
 	self, listed := inventory.Device(read.snapshot.NodeID())
 	if !listed || self.NumericNodeID() != read.snapshot.NumericNodeID() ||
 		self.MachineKey() != read.snapshot.MachineKey() || self.NodeKey() != read.snapshot.NodeKey() {
-		return appmapsession.Snapshot{}, false, nil
+		return appmapsession.Snapshot{}, false, gateway, nil
 	}
 	if read.policyDeferred {
-		return store.withExpandedPolicy(cached, read)
+		snapshot, ok, err = store.withExpandedPolicy(cached, read)
+		return snapshot, ok, gateway, err
 	}
 	routes := cached.policy.RoutesFor(read.snapshot.NodeID(), read.readAt)
-	snapshot, err := read.snapshot.WithInventoryRoutes(inventory, read.snapshot.PacketPolicy(), routes)
+	snapshot, err = read.snapshot.WithInventoryRoutes(inventory, read.snapshot.PacketPolicy(), routes)
 	if err != nil {
-		return appmapsession.Snapshot{}, false, errors.Join(ErrSnapshotEvidence, err)
+		return appmapsession.Snapshot{}, false, gateway, errors.Join(ErrSnapshotEvidence, err)
 	}
-	return snapshot, true, nil
+	// policyMatches compared the Device's own policy with the expansion
+	// the access comes from, except for a Device with direct projections.
+	if read.snapshot.HasDirectProjections() {
+		if gateway.listed {
+			store.stats.kubernetesWithheldProjections.Add(1)
+		}
+		return snapshot, true, gateway, nil
+	}
+	view := store.kubernetesView(cached, read.snapshot.NodeID(), read.readAt, true)
+	return snapshot.WithKubernetes(view), true, gateway, nil
 }
 
 // withExpandedPolicy completes a read that deferred its packet policy: the
@@ -345,8 +388,9 @@ func (store *Store) withExpandedPolicy(cached cachedInventory, read snapshotRead
 	if err != nil {
 		return appmapsession.Snapshot{}, false, errors.Join(ErrSnapshotEvidence, err)
 	}
+	view := store.kubernetesView(cached, snapshot.NodeID(), read.readAt, true)
 	store.stats.policiesExpanded.Add(1)
-	return completed, true, nil
+	return completed.WithKubernetes(view), true, nil
 }
 
 // loadSnapshot reads one Device's snapshot in one repeatable-read

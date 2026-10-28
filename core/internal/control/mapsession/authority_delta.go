@@ -95,7 +95,7 @@ func projectAuthorityDelta(
 	nextPeers := next.AuthorizedPeers()
 	if current.PacketPolicy().Equal(next.PacketPolicy()) &&
 		equalDirectDeviceProjections(current.directDeviceProjections, next.directDeviceProjections) &&
-		current.routes.Equal(next.routes) &&
+		current.routes.Equal(next.routes) && current.kubernetes.Equal(next.kubernetes) &&
 		equalPeerCandidates(currentPeers, nextPeers) {
 		return false, nil, nil, ErrInvalidAuthorityDelta
 	}
@@ -118,7 +118,9 @@ func projectAuthorityDelta(
 			peer.NodeID(),
 			false,
 		)
-		if found && equalPeerCandidate(currentPeer, peer) && !isConnectivityChanged && !aliasGrantChanged(current, next, peer.NodeID()) {
+		if found && equalPeerCandidate(currentPeer, peer) && !isConnectivityChanged &&
+			!aliasGrantChanged(current, next, peer.NodeID()) &&
+			!current.kubernetes.peerChanged(next.kubernetes, peer.NodeID()) {
 			continue
 		}
 		changedPeers = append(changedPeers, peer)

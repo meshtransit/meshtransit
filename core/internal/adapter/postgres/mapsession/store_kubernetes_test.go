@@ -193,7 +193,8 @@ func TestInventoryReadsTheKubernetesSourcesOfAClusterNetwork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	access := cached.policy.KubernetesAccessFor(gateway, inventoryReadAt)[client]
+	access := cached.policy.KubernetesAccessFor(gateway, func(id node.ID) bool { return id == gateway },
+		inventoryReadAt)[client]
 	if len(access.Grants) != 2 || access.Grants[0].Group != "edit" || access.Grants[1].Group != "view" ||
 		!access.Grants[0].ValidUntil.Equal(until) || !access.OwnerChangedAt.Equal(changed) ||
 		access.OwnerKind != appmapsession.KubernetesOwnerMember {
@@ -201,9 +202,11 @@ func TestInventoryReadsTheKubernetesSourcesOfAClusterNetwork(t *testing.T) {
 	}
 }
 
-// TestStoreRefusesInvalidKubernetesSources: groups for a rule the release
-// does not hold, or an owner the schema cannot produce, fail the read.
-func TestStoreRefusesInvalidKubernetesSources(t *testing.T) {
+// TestStoreWithholdsInvalidKubernetesSources: groups for a rule the release
+// does not hold, or an owner the schema cannot produce, leave the read whole
+// but the policy without that evidence: only the gateway's map loses its
+// peers' access, and it is counted (K1a3 §12.2, TD-CORE-100).
+func TestStoreWithholdsInvalidKubernetesSources(t *testing.T) {
 	t.Parallel()
 	member := []any{int64(701), "member", "01890f00-0000-7000-8000-000000000011", true, true,
 		nil, nil, false}
@@ -225,9 +228,17 @@ func TestStoreRefusesInvalidKubernetesSources(t *testing.T) {
 			transaction.kubernetesRuleGroups, transaction.kubernetesSources = test.groups, test.sources
 			queueInventoryRead(transaction, 7, 10, true)
 			transaction.inventoryRows = []*peerCandidateRows{{records: []peerCandidateRecord{validPeerCandidateRecord(2)}}}
-			if _, err := store.readInventory(t.Context(), scope, testWorkspaceID, testNetworkID,
-				cachedInventory{}); !errors.Is(err, ErrSnapshotEvidence) {
-				t.Fatalf("readInventory() error = %v, want ErrSnapshotEvidence", err)
+			cached, err := store.readInventory(t.Context(), scope, testWorkspaceID, testNetworkID, cachedInventory{})
+			if err != nil || cached.kubernetes != kubernetesWithheld || !cached.policy.IsValid() {
+				t.Fatalf("readInventory() = %v, %v", cached.kubernetes, err)
+			}
+			gateway, err := node.ParseID(testPeerNodeID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			view := store.kubernetesView(cached, gateway, inventoryReadAt, true)
+			if view.Computed() || store.InventoryStats().KubernetesWithheldEvidence != 1 {
+				t.Fatalf("view %+v, stats %+v", view, store.InventoryStats())
 			}
 		})
 	}

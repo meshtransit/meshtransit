@@ -37,6 +37,7 @@ func streamSnapshotChanged(current, next Snapshot) bool {
 		relayDirectoryChanged(current, next) ||
 		!equalDirectDeviceProjections(current.directDeviceProjections, next.directDeviceProjections) ||
 		!current.routes.Equal(next.routes) ||
+		!current.kubernetes.Equal(next.kubernetes) ||
 		!sameMapConnectivity(current, next)
 }
 

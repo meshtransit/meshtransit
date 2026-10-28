@@ -705,9 +705,10 @@ removal of the same ID, makes the delta invalid (the node resyncs).
 | `home_relay` | Relay region ID the peer is reachable through |
 | `online`, `last_seen` | Presence, as known to Core; `online` is absent when Core has no connectivity for the Device (unknown, not offline: nodes still probe it) |
 | `key_expiry` | When the Device stops being valid without renewal |
-| `owner` | Opaque owner reference for display (no personal data beyond a display name) |
+| `owner` | Opaque owner reference for display (no personal data beyond a display name); in a Kubernetes gateway's map, set with `kubernetes` (7.8) |
 | `capabilities` | Feature names the peer supports (section 13) |
 | `alias` | Device alias grant, when the peer is reached through a share (7.4) |
+| `kubernetes` | The Kubernetes groups the peer holds in the node's cluster; only in a Kubernetes gateway's own map (7.8) |
 
 **Names.** Core names Devices under the deployment's DNS suffix (Core
 configuration, `mesh.internal` by default). Self and every peer of the node's
@@ -1086,6 +1087,41 @@ a scope without targets or sources or with a source that is not a host
 prefix, a probe port of 0, or a rule whose destination is not `0.0.0.0/0` or
 `::/0`.
 
+### 7.8 Kubernetes access
+
+A Kubernetes gateway that negotiated `gateway.kube.v1` gets, on each peer of
+its own Network that a policy rule naming Kubernetes groups lets reach it,
+`kubernetes`: the groups the peer holds in the gateway's cluster and when it
+last changed owner, and `owner`. Core offers `gateway.kube.v1` only where it
+builds maps from its shared Network view; it ignores it from any node that is
+not a gateway. No other map carries either field, and no peer of another
+Network ever does.
+
+- **Grants.** `grants` lists the groups, sorted, at least one. Each holds
+  until `valid_until_ms`, never 0: the earliest of the selector membership
+  the rule matched the peer by, the peer's key expiry, and, for a member's
+  Device (tagged or not), the end of its owner's Workspace and Network
+  memberships. A group several rules grant holds until the latest of them.
+  The gateway stops honouring a grant at its deadline on its own; Core drops
+  it at its next rebuild.
+- **Exclusions.** A peer that routes for others (a Site router or an exit
+  node, in any state), a member's Device whose owner is no longer an active
+  member, and a peer Core holds no owner evidence for carry no `kubernetes`.
+  Only a rule whose destination group holds nothing but the cluster's
+  replicas counts.
+- **Owner.** `owner.ref` is the member's public principal ID, `tags:` and the
+  Device's tag IDs sorted and joined by commas, or empty for a Device of the
+  Workspace; `owner.display_name` is always empty (no person's name reaches
+  the cluster). `owner_changed_ms` is when the Device last changed owner; 0:
+  never.
+- **Replacement.** Every `peers_upsert` to the gateway carries both fields,
+  connectivity upserts included: an upsert replaces the peer, so without them
+  a peer going offline would lose its groups. A change of the access alone
+  between revisions (a membership ending) comes as a full snapshot.
+- **Withheld.** When Core could not read the evidence with the policy the
+  map's packet filter came from (the gateway was read on its own, or the
+  evidence was inconsistent), the map carries no `kubernetes` on any peer.
+
 ## 8. Node reports
 
 ### 8.1 Endpoints and NAT
@@ -1449,6 +1485,7 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `router.exit.v1` | Node can be an exit node: it applies `served_exits` (7.7) and reports `exit_offered` (8.2); with `router.health1` it reports its exit health in `RouteHealthReport` |
 | `relay.zones2` | Node hands relays MTT2 tickets and their ZONES (MTRP §5.4, §6.1). Core offers it only once every relay accepts them |
 | `captive.audit1` | Node sends `CaptiveWindowReport` (8.5); only with `routes.exit.v1` |
+| `gateway.kube.v1` | A Kubernetes gateway applies its peers' `kubernetes` and `owner` (7.8); Core offers it only where maps come from its shared Network view |
 
 Unknown names are ignored. Core sends a feature only when both sides list it.
 

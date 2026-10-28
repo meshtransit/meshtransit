@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	appmapsession "meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/policy"
 )
 
@@ -19,6 +21,20 @@ FROM mesh_ops.load_map_network_kubernetes_rule_groups_v1($1::BIGINT)`
 	loadKubernetesSourcesSQL = `SELECT device_id, owner_kind, owner_ref, member_owned, owner_active,
     owner_valid_until, owner_changed_at, forwards
 FROM mesh_ops.load_map_network_kubernetes_sources_v1($1::INTEGER)`
+)
+
+// kubernetesEvidence says whether an inventory's policy carries what its
+// gateways' maps need.
+type kubernetesEvidence uint8
+
+const (
+	// kubernetesNotRead: the Network has no cluster, or the database lacks
+	// schema 237; gateways' maps carry no access.
+	kubernetesNotRead kubernetesEvidence = iota
+	kubernetesRead
+	// kubernetesWithheld: the evidence was read but inconsistent; the policy
+	// holds none, and gateways' maps withhold their peers' access.
+	kubernetesWithheld
 )
 
 // readsKubernetesSources reports whether this role may run the schema 237
@@ -138,4 +154,55 @@ func readKubernetesSources(ctx context.Context, transaction databaseTransaction)
 		return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("iterate Kubernetes sources: %w", err))
 	}
 	return sources, nil
+}
+
+// gatewayRead is what a shared read learned of a Device that is a
+// Kubernetes gateway replica: listed by the inventory, and newer, the
+// inventory is of a later revision than the Device's own facts.
+type gatewayRead struct{ listed, newer bool }
+
+// gatewayListed reports whether the inventory lists the Device as a
+// Kubernetes gateway replica.
+func (cached cachedInventory) gatewayListed(self node.ID) bool {
+	candidate, listed := cached.inventory.Device(self)
+	_, gateway := candidate.KubernetesCluster()
+	return listed && gateway
+}
+
+// kubernetesView computes, for the map of self built from cached at the
+// database time at, its peers' Kubernetes access: only a gateway replica's,
+// only from the Network policy its packet filter is expanded from, and only
+// a rule to its own cluster counts. A gateway whose inventory did not read
+// the evidence, or read it inconsistent, gets the zero view (withheld),
+// counted when count (a map opened, not each refresh of one).
+func (store *Store) kubernetesView(cached cachedInventory, self node.ID, at time.Time,
+	count bool) appmapsession.KubernetesView {
+	candidate, listed := cached.inventory.Device(self)
+	cluster, gateway := candidate.KubernetesCluster()
+	if !listed || !gateway {
+		return appmapsession.KubernetesView{}
+	}
+	withheld := func(counter *atomic.Uint64) appmapsession.KubernetesView {
+		if count {
+			counter.Add(1)
+		}
+		return appmapsession.KubernetesView{}
+	}
+	switch cached.kubernetes {
+	case kubernetesRead:
+	case kubernetesWithheld:
+		return withheld(&store.stats.kubernetesWithheldEvidence)
+	default:
+		return withheld(&store.stats.kubernetesWithheldUnread)
+	}
+	replica := func(peer node.ID) bool {
+		replica, found := cached.inventory.Device(peer)
+		peerCluster, isReplica := replica.KubernetesCluster()
+		return found && isReplica && peerCluster == cluster
+	}
+	view, err := appmapsession.NewKubernetesView(cached.policy.KubernetesAccessFor(self, replica, at))
+	if err != nil {
+		return withheld(&store.stats.kubernetesWithheldEvidence)
+	}
+	return view
 }

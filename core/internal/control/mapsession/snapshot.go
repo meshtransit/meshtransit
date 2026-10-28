@@ -59,6 +59,10 @@ type SnapshotParams struct {
 	// Routes are the Device's subnet routes, expanded from its Network's
 	// policy with PacketPolicy; the zero value carries none.
 	Routes RouteView
+	// Kubernetes is, for a cluster gateway, its peers' Kubernetes access,
+	// computed from the policy PacketPolicy was expanded from; the zero
+	// value carries none (K1a3b).
+	Kubernetes KubernetesView
 	// routeCapabilities carry the session's route capabilities through
 	// rebuilds (withRouteCapabilities).
 	routeCapabilities      RouteCapabilities
@@ -105,6 +109,7 @@ type Snapshot struct {
 	sharingDependencies     []network.Scope
 	packetPolicy            policy.Snapshot
 	routes                  RouteView
+	kubernetes              KubernetesView
 	connectivity            []Connectivity
 	// sharedConnectivity, when set, replaces connectivity: a version of the
 	// replica's table for the Network, read through self and the authorized
@@ -191,6 +196,7 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 		sharingDependencies:     params.SharingDependencies,
 		packetPolicy:            params.PacketPolicy,
 		routes:                  params.Routes,
+		kubernetes:              params.Kubernetes,
 		routeCapabilities:       params.routeCapabilities,
 		routeCapabilitiesKnown:  params.routeCapabilitiesKnown,
 		connectivity:            params.Connectivity,
@@ -446,6 +452,7 @@ func (snapshot Snapshot) params() SnapshotParams {
 		SharingDependencies:     slices.Clone(snapshot.sharingDependencies),
 		PacketPolicy:            snapshot.packetPolicy,
 		Routes:                  snapshot.routes,
+		Kubernetes:              snapshot.kubernetes,
 		routeCapabilities:       snapshot.routeCapabilities,
 		routeCapabilitiesKnown:  snapshot.routeCapabilitiesKnown,
 		Connectivity:            slices.Clone(snapshot.connectivity),

@@ -174,6 +174,16 @@ func encodePeer(snapshot mapsession.Snapshot, candidate mapsession.PeerCandidate
 			return nil, err
 		}
 	}
+	if access, found := snapshot.Kubernetes().For(candidate.NodeID()); found {
+		if candidate.Scope() != snapshot.Scope() {
+			return nil, ErrMapEncoding // access comes only from the gateway's own Network
+		}
+		kubernetes, err := encodeKubernetesAccess(access)
+		if err != nil {
+			return nil, err
+		}
+		device.Owner, device.Kubernetes = &mtcpv1.Owner{Ref: access.OwnerRef}, kubernetes
+	}
 	if grant, found := snapshot.DeviceAliasFor(candidate.NodeID()); found {
 		if !aliases {
 			return nil, ErrMapEncoding // such peers are never selected without device-alias.v1
@@ -185,6 +195,25 @@ func encodePeer(snapshot mapsession.Snapshot, candidate mapsession.PeerCandidate
 		device.Alias = alias
 	}
 	return device, nil
+}
+
+// encodeKubernetesAccess encodes one peer's access in a gateway's map
+// (mtcp-v1 §7.8): its groups, each with a deadline that is never 0, and
+// when it last changed owner. Its owner goes in Device.owner, by reference
+// only: no person's name reaches the cluster.
+func encodeKubernetesAccess(access mapsession.KubernetesAccess) (*mtcpv1.KubernetesAccess, error) {
+	encoded := &mtcpv1.KubernetesAccess{Grants: make([]*mtcpv1.KubernetesGrant, 0, len(access.Grants))}
+	for _, grant := range access.Grants {
+		if grant.ValidUntil.UnixMilli() <= 0 {
+			return nil, ErrMapEncoding
+		}
+		encoded.Grants = append(encoded.Grants,
+			&mtcpv1.KubernetesGrant{Group: grant.Group, ValidUntilMs: grant.ValidUntil.UnixMilli()})
+	}
+	if !access.OwnerChangedAt.IsZero() {
+		encoded.OwnerChangedMs = access.OwnerChangedAt.UnixMilli()
+	}
+	return encoded, nil
 }
 
 func encodeAddresses(device *mtcpv1.Device, addresses []netip.Prefix) {

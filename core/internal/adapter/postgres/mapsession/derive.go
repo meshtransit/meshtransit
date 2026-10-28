@@ -66,6 +66,12 @@ func (store *Store) Derive(
 	if capabilities, known := current.RouteCapabilities(); known {
 		routes = routes.ForCapabilities(capabilities)
 	}
+	// A gateway's peers' access may change between two reads of the view
+	// (an owner's membership ends), so it is computed at the database's
+	// time now rather than the read's; every other change comes with a
+	// reread before it takes effect.
+	// A map that carried access and now withholds it is counted once.
+	kubernetes := store.kubernetesView(cached, self.NodeID(), cached.databaseNow(), current.Kubernetes().Computed())
 	selfLabel, _ := self.DNSLabel()
 	snapshot, err := appmapsession.NewSnapshot(appmapsession.SnapshotParams{
 		Scope:             scope,
@@ -90,6 +96,7 @@ func (store *Store) Derive(
 		Inventory:         cached.inventory,
 		PacketPolicy:      packetPolicy,
 		Routes:            routes,
+		Kubernetes:        kubernetes,
 		RelayDirectory:    store.relayDirectory(scope.NetworkID()),
 	})
 	if err != nil {
@@ -103,8 +110,10 @@ func (store *Store) Derive(
 // Network when it was built from the latest shared view (the same objects,
 // which an identical reread keeps), at that view's revision and policy
 // revision, with the same header and relay directory, and no policy or key
-// deadline is near. Maps with direct projections, cut to a peer limit or of a
-// Device a share binds are always rebuilt.
+// deadline is near; for a gateway's map, its peers' Kubernetes access
+// computed now is still what it carries (an owner's membership ending moves
+// no revision and no ChangesAt). Maps with direct projections, cut to a peer
+// limit or of a Device a share binds are always rebuilt.
 func (store *Store) Unchanged(ctx context.Context, current appmapsession.Snapshot, minRevision int64) (bool, error) {
 	if ctx == nil || store == nil || store.inventories == nil || !current.IsValid() ||
 		current.HasDirectProjections() || current.IsPeerLimited() || minRevision > current.NetworkRevision() {
@@ -132,6 +141,16 @@ func (store *Store) Unchanged(ctx context.Context, current appmapsession.Snapsho
 		(changesAt.IsZero() || cached.databaseNow().Add(clockMargin).Before(changesAt)) &&
 		directory.Revision() == current.RelayDirectory().Revision() &&
 		directory.Fingerprint() == current.RelayDirectory().Fingerprint()
+	// Equal access has the same earliest grant, so the same refresh time:
+	// once it passed, that grant is gone and the map is rebuilt. A refresh
+	// time the view's own clock has reached rebuilds it too, so a timer that
+	// fired early on the snapshot's clock never spins on an unchanged map.
+	if unchanged && current.Kubernetes().Computed() {
+		now := cached.databaseNow()
+		refreshAt := current.Kubernetes().RefreshAt()
+		unchanged = (refreshAt.IsZero() || now.Before(refreshAt)) &&
+			store.kubernetesView(cached, current.NodeID(), now, false).Equal(current.Kubernetes())
+	}
 	if unchanged {
 		store.stats.unchanged.Add(1)
 	}

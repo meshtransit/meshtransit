@@ -83,6 +83,18 @@ func dnsCapabilities(dnsZones bool) []string {
 	return []string{"dns.forward1", "dns.records1", "dns.root1"}
 }
 
+// kubernetesCapabilities offers gateway.kube.v1, a Kubernetes gateway's
+// peers' Kubernetes access in its map (mtcp-v1 §7.8), only where maps are
+// built from the shared inventory: no other read computes it, so a gateway
+// is told the deployment lacks it instead of finding its peers without
+// access (K1a3 §13.10).
+func kubernetesCapabilities(sharedInventory bool) []string {
+	if !sharedInventory {
+		return nil
+	}
+	return []string{"gateway.kube.v1"}
+}
+
 // mtcpDependencies are the application services MTCP sessions use. The
 // browser fields are nil when browser registration is off.
 type mtcpDependencies struct {
@@ -105,6 +117,7 @@ type mtcpDependencies struct {
 	subnetRoutes     bool           // offer subnet routes (MESHTRANSIT_SUBNET_ROUTES_ENABLED)
 	exitNodes        bool           // offer exit nodes (MESHTRANSIT_EXIT_NODES_ENABLED)
 	dnsZones         bool           // offer dns.forward1 (MESHTRANSIT_DNS_ZONES_ENABLED)
+	kubernetesAccess bool           // offer gateway.kube.v1 (shared inventory)
 	dnsSuffix        dnsname.Suffix // MESHTRANSIT_DNS_SUFFIX; zero: the default
 	// dnsInfrastructure are the deployment's own host names a root zone
 	// leaves to a node's network (MESHTRANSIT_DNS_PROTECTED_NAMES, the
@@ -212,7 +225,7 @@ func composeMTCP(
 		Guard:     deps.guard,
 		Capabilities: append(append(mtcpCapabilities(controlConfig.Map.EnableDeviceAliases, deps.relayZones,
 			deps.subnetRoutes), exitCapabilities(deps.exitNodes)...), append(captiveCapabilities(deps.captiveWindows),
-			dnsCapabilities(deps.dnsZones)...)...),
+			append(dnsCapabilities(deps.dnsZones), kubernetesCapabilities(deps.kubernetesAccess)...)...)...),
 		Logger:         logger,
 		Metrics:        metrics,
 		HandshakeRate:  controlConfig.MTCP.HandshakeRate,

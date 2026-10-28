@@ -25,6 +25,7 @@ type Request struct {
 	dnsForward         bool
 	dnsRecords         bool
 	dnsRoot            bool
+	kubernetes         bool
 	endpointSet        node.EndpointSet
 	hasEndpointSet     bool
 	preferredRelay     int
@@ -116,6 +117,17 @@ func (request Request) WithLargeMap() Request {
 
 // LargeMap reports whether the client declared large maps.
 func (request Request) LargeMap() bool { return request.largeMap }
+
+// WithKubernetes records that the node is a Kubernetes gateway that applies
+// its peers' Kubernetes access (MTCP gateway.kube.v1, §7.8); the protocol
+// adapter sets it only for a gateway's session.
+func (request Request) WithKubernetes() Request {
+	request.kubernetes = true
+	return request
+}
+
+// Kubernetes reports whether the session takes its peers' Kubernetes access.
+func (request Request) Kubernetes() bool { return request.kubernetes }
 
 // WithRelayZones records that the client and Core negotiated relay.zones2:
 // the client hands relays MTT2 tickets and their zone lists, so its relay

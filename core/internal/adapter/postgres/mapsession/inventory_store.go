@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -185,8 +186,8 @@ func (store *Store) readInventory(
 			return cachedInventory{}, err
 		}
 	}
-	cached.policy, err = readNetworkPolicy(ctx, transaction, scope, policyRevision, releaseActive, routes,
-		kubernetes)
+	cached.policy, cached.kubernetes, err = readNetworkPolicy(ctx, transaction, scope, policyRevision,
+		releaseActive, routes, kubernetes)
 	if err != nil {
 		return cachedInventory{}, err
 	}
@@ -404,8 +405,11 @@ type networkRoutes struct {
 }
 
 // readNetworkPolicy reads one Network's policy at selector level within the
-// inventory transaction, so both describe the same committed state, and its
-// subnet routes when routes asks for them.
+// inventory transaction, so both describe the same committed state, its
+// subnet routes when routes asks for them, and, with kubernetes, what its
+// gateways' maps need. Inconsistent Kubernetes evidence does not fail the
+// read: the policy is built without it and reports it withheld, so only
+// gateways' maps lose their peers' access (K1a3 §12.2, TD-CORE-100).
 func readNetworkPolicy(
 	ctx context.Context,
 	transaction databaseTransaction,
@@ -414,46 +418,59 @@ func readNetworkPolicy(
 	releaseActive bool,
 	routes networkRoutes,
 	kubernetes bool,
-) (appmapsession.NetworkPolicy, error) {
+) (appmapsession.NetworkPolicy, kubernetesEvidence, error) {
 	params := appmapsession.NetworkPolicyParams{Scope: scope, Revision: revision, ReleaseActive: releaseActive}
 	var err error
 	if routes.revision > 0 && routes.peerLimit > 0 {
 		params.RouteRevision, params.RoutePeerLimit = routes.revision, routes.peerLimit
 		if routes.sites {
 			if err := readNetworkRoutes(ctx, transaction, &params); err != nil {
-				return appmapsession.NetworkPolicy{}, err
+				return appmapsession.NetworkPolicy{}, kubernetesNotRead, err
 			}
 		}
 		if routes.exits {
 			if err := readNetworkExits(ctx, transaction, &params, routes.spread); err != nil {
-				return appmapsession.NetworkPolicy{}, err
+				return appmapsession.NetworkPolicy{}, kubernetesNotRead, err
 			}
 		}
 		if routes.dnsZones {
 			if err := readNetworkDNSZones(ctx, transaction, &params, routes.protected); err != nil {
-				return appmapsession.NetworkPolicy{}, err
+				return appmapsession.NetworkPolicy{}, kubernetesNotRead, err
 			}
 		}
 	}
 	if params.Rules, err = readNetworkPolicyRules(ctx, transaction, revision); err != nil {
-		return appmapsession.NetworkPolicy{}, err
+		return appmapsession.NetworkPolicy{}, kubernetesNotRead, err
 	}
 	if params.Members, err = readNetworkSelectorMembers(ctx, transaction); err != nil {
-		return appmapsession.NetworkPolicy{}, err
+		return appmapsession.NetworkPolicy{}, kubernetesNotRead, err
 	}
 	if params.Devices, err = readNetworkPolicyDevices(ctx, transaction); err != nil {
-		return appmapsession.NetworkPolicy{}, err
+		return appmapsession.NetworkPolicy{}, kubernetesNotRead, err
 	}
-	if kubernetes && releaseActive {
-		if err := readKubernetesPolicy(ctx, transaction, revision, &params); err != nil {
-			return appmapsession.NetworkPolicy{}, err
+	evidence := kubernetesNotRead
+	if kubernetes {
+		evidence = kubernetesRead
+		if releaseActive {
+			withKubernetes := params
+			withKubernetes.Rules = slices.Clone(params.Rules)
+			err := readKubernetesPolicy(ctx, transaction, revision, &withKubernetes)
+			if err != nil && !errors.Is(err, ErrSnapshotEvidence) {
+				return appmapsession.NetworkPolicy{}, kubernetesNotRead, err
+			}
+			if err == nil {
+				if networkPolicy, err := appmapsession.NewNetworkPolicy(withKubernetes); err == nil {
+					return networkPolicy, kubernetesRead, nil
+				}
+			}
+			evidence = kubernetesWithheld
 		}
 	}
 	networkPolicy, err := appmapsession.NewNetworkPolicy(params)
 	if err != nil {
-		return appmapsession.NetworkPolicy{}, errors.Join(ErrSnapshotEvidence, err)
+		return appmapsession.NetworkPolicy{}, kubernetesNotRead, errors.Join(ErrSnapshotEvidence, err)
 	}
-	return networkPolicy, nil
+	return networkPolicy, evidence, nil
 }
 
 func readNetworkPolicyRules(

@@ -438,7 +438,7 @@ func (service *StreamService) run(
 			}
 		}
 		var projectionDeadline <-chan time.Time
-		if deadline := current.ProjectionExpiry(); deadline.Before(current.KeyExpiry()) {
+		if deadline := refreshDeadline(current); deadline.Before(current.KeyExpiry()) {
 			projectionExpiry.Reset(current.untilDeadline(deadline))
 			projectionDeadline = projectionExpiry.C
 		} else {
@@ -694,8 +694,9 @@ func (service *StreamService) deliver(
 	if relayDirectoryChanged(current, next) ||
 		(current.NetworkRevision() == next.NetworkRevision() &&
 			(!equalDirectDeviceProjections(current.directDeviceProjections, next.directDeviceProjections) ||
-				// A membership or Device lapse moved routes without a revision.
-				!current.routes.Equal(next.routes))) {
+				// A membership or Device lapse moved routes, or a gateway's
+				// peers' Kubernetes access, without a revision (K1a3 §13.1).
+				!current.routes.Equal(next.routes) || !current.kubernetes.Equal(next.kubernetes))) {
 		if err := sink.SendSnapshot(ctx, next); err != nil {
 			return false, errors.Join(ErrStreamWrite, err)
 		}

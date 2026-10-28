@@ -397,8 +397,12 @@ func (conversation *conversation) serve(ctx context.Context, nodeKey node.Key, g
 	// zone (mtcp-v1 §8.4, §8.6).
 	conversation.dnsRoot.Store(request.DNSRoot())
 	conversation.sink.reportDNS(request.DNSRoot())
+	_, gateway := machine.KubernetesGateway()
+	if gateway && conversation.session.Supports("gateway.kube.v1") {
+		request = request.WithKubernetes()
+	}
 	var sink mapsession.StreamSink = conversation.sink
-	if _, gateway := machine.KubernetesGateway(); gateway {
+	if gateway {
 		sink = &gatewayStreamSink{mapSink: conversation.sink, conversation: conversation, generation: generation}
 	}
 	return conversation.application.options.Streams.Serve(ctx, machine, request, sink)

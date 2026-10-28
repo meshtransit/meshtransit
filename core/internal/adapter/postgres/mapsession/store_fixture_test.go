@@ -61,8 +61,10 @@ type fakeTransaction struct {
 	// policyExpiry overrides when the Network policy's Devices expire.
 	policyExpiry time.Time
 	// clusterRule makes the Network policy's rule reach Device group 90,
-	// whose only member is Device 702, a cluster gateway.
+	// whose only member is Device 702, a cluster gateway, from 701;
+	// clusterSelf makes 701 the gateway instead, reached from 702.
 	clusterRule    bool
+	clusterSelf    bool
 	policyRows     *policyRuleRows
 	directRows     *directEdgeRows
 	aliasRows      *directEdgeRows
@@ -173,11 +175,18 @@ func (transaction *fakeTransaction) Query(
 		if transaction.clusterRule {
 			rules.rows[0][0], rules.rows[0][4], rules.rows[0][5] = "group", "device_group", int64(90)
 		}
+		if transaction.clusterSelf {
+			rules.rows[0][0], rules.rows[0][3] = "group", int64(702)
+			rules.rows[0][4], rules.rows[0][5] = "device_group", int64(90)
+		}
 		return rules, nil
 	case loadNetworkSelectorMembersSQL:
 		_, members, _ := networkPolicyRows(transaction.policyExpiry)
 		if transaction.clusterRule {
 			members.rows = append(members.rows, []any{"device_group", int64(90), int64(702), nil})
+		}
+		if transaction.clusterSelf {
+			members.rows = append(members.rows, []any{"device_group", int64(90), int64(701), nil})
 		}
 		return members, nil
 	case loadNetworkPolicyDevicesSQL:

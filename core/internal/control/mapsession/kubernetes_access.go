@@ -106,11 +106,14 @@ func validRuleKubernetesGroups(rule NetworkPolicyRule) bool {
 // (the selector membership, the peer's own expiry, its owner's membership);
 // the latest such path wins per group. A peer without source evidence, one
 // that forwards for others, or a member's Device, tagged or not, whose owner
-// is no longer an active member gets nothing (§4.4, §12.2, §13.5). Nil for a
-// Device that no such rule reaches.
-func (networkPolicy NetworkPolicy) KubernetesAccessFor(gateway node.ID, now time.Time) map[node.ID]KubernetesAccess {
+// is no longer an active member gets nothing (§4.4, §12.2, §13.5). A rule
+// counts only when every live member of its destination group is a replica
+// of the gateway's own cluster (replica): a cluster's group holds nothing
+// else (TD-CORE-100). Nil for a Device that no such rule reaches.
+func (networkPolicy NetworkPolicy) KubernetesAccessFor(gateway node.ID, replica func(node.ID) bool,
+	now time.Time) map[node.ID]KubernetesAccess {
 	inner := networkPolicy.inner
-	if inner == nil || !inner.releaseActive || len(inner.sources) == 0 {
+	if inner == nil || !inner.releaseActive || len(inner.sources) == 0 || replica == nil {
 		return nil
 	}
 	self, known := inner.byNode[gateway]
@@ -119,7 +122,8 @@ func (networkPolicy NetworkPolicy) KubernetesAccessFor(gateway node.ID, now time
 	}
 	grants := make(map[int64]map[string]time.Time)
 	for _, rule := range inner.rules {
-		if rule.KubernetesGroups == nil || !inner.selects(rule.DestinationKind, rule.DestinationRef, self, now) {
+		if rule.KubernetesGroups == nil || !inner.selects(rule.DestinationKind, rule.DestinationRef, self, now) ||
+			!inner.onlyReplicas(rule.DestinationRef, replica, now) {
 			continue
 		}
 		inner.eachSelectedUntil(rule.SourceKind, rule.SourceRef, now, func(peer int64, selectedUntil time.Time) {
@@ -158,12 +162,22 @@ func (networkPolicy NetworkPolicy) KubernetesAccessFor(gateway node.ID, now time
 		for group, until := range groups {
 			entry.Grants = append(entry.Grants, KubernetesGrant{Group: group, ValidUntil: until})
 		}
-		slices.SortFunc(entry.Grants, func(first, second KubernetesGrant) int {
-			return strings.Compare(first.Group, second.Group)
-		})
+		slices.SortFunc(entry.Grants, compareKubernetesGrants)
 		access[inner.devices[peer].NodeID] = entry
 	}
 	return access
+}
+
+// onlyReplicas reports whether every live member of Device group group is
+// a replica.
+func (inner *networkPolicy) onlyReplicas(group int64, replica func(node.ID) bool, now time.Time) bool {
+	for _, entry := range inner.members[selectorKey{kind: SelectorDeviceGroup, id: group}] {
+		if (entry.validUntil.IsZero() || now.Before(entry.validUntil)) && inner.live(entry.device, now) &&
+			!replica(inner.devices[entry.device].NodeID) {
+			return false
+		}
+	}
+	return true
 }
 
 // eachSelectedUntil visits every Device one rule side selects at now, with
@@ -177,44 +191,6 @@ func (inner *networkPolicy) eachSelectedUntil(kind SelectorKind, ref int64, now 
 	for _, entry := range inner.members[selectorKey{kind: kind, id: ref}] {
 		if entry.validUntil.IsZero() || now.Before(entry.validUntil) {
 			visit(entry.device, entry.validUntil)
-		}
-	}
-}
-
-// KubernetesChangesAt returns the earliest end of an owner's membership
-// among the Devices a rule naming Kubernetes groups selects as its source:
-// when some gateway's access changes beyond what ChangesAt tracks. Zero:
-// none. Kept apart from ChangesAt so other owners' memberships never
-// rebuild the Network's maps (§13.6).
-func (networkPolicy NetworkPolicy) KubernetesChangesAt() time.Time {
-	if networkPolicy.inner == nil {
-		return time.Time{}
-	}
-	return networkPolicy.inner.kubernetesChangesAt
-}
-
-// noteKubernetesChanges sets kubernetesChangesAt from the owners of every
-// Device a rule naming groups may select as its source, at any time.
-func (inner *networkPolicy) noteKubernetesChanges() {
-	note := func(device int64) {
-		source, found := inner.sources[device]
-		if !found || source.OwnerValidUntil.IsZero() {
-			return
-		}
-		if inner.kubernetesChangesAt.IsZero() || source.OwnerValidUntil.Before(inner.kubernetesChangesAt) {
-			inner.kubernetesChangesAt = source.OwnerValidUntil
-		}
-	}
-	for _, rule := range inner.rules {
-		if rule.KubernetesGroups == nil {
-			continue
-		}
-		if rule.SourceKind == SelectorDevice {
-			note(rule.SourceRef)
-			continue
-		}
-		for _, entry := range inner.members[selectorKey{kind: rule.SourceKind, id: rule.SourceRef}] {
-			note(entry.device)
 		}
 	}
 }

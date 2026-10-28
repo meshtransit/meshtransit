@@ -57,6 +57,11 @@ func kubernetesAccessFixture(t *testing.T, sources []KubernetesSource) (NetworkP
 	return networkPolicy, ids
 }
 
+// replicaOf reports gateway 9 as the only replica of its cluster.
+func replicaOf(ids map[int64]node.ID) func(node.ID) bool {
+	return func(id node.ID) bool { return id == ids[9] }
+}
+
 func kubernetesSourcesFixture() []KubernetesSource {
 	return []KubernetesSource{
 		{Device: 1, OwnerKind: KubernetesOwnerMember, OwnerRef: "01890f00-0000-7000-8000-000000000011",
@@ -79,7 +84,7 @@ func kubernetesSourcesFixture() []KubernetesSource {
 func TestKubernetesAccessComesFromTheEdgesToTheGateway(t *testing.T) {
 	t.Parallel()
 	networkPolicy, ids := kubernetesAccessFixture(t, kubernetesSourcesFixture())
-	access := networkPolicy.KubernetesAccessFor(ids[9], policyNow)
+	access := networkPolicy.KubernetesAccessFor(ids[9], replicaOf(ids), policyNow)
 	grants := func(device int64) map[string]time.Time {
 		result := map[string]time.Time{}
 		for _, grant := range access[ids[device]].Grants {
@@ -118,24 +123,21 @@ func TestKubernetesAccessComesFromTheEdgesToTheGateway(t *testing.T) {
 		}
 	}
 	// Past a deadline the grant is gone: after an hour Device 4 has none.
-	if later := networkPolicy.KubernetesAccessFor(ids[9], policyNow.Add(90*time.Minute)); len(later[ids[4]].Grants) != 0 {
+	if later := networkPolicy.KubernetesAccessFor(ids[9], replicaOf(ids), policyNow.Add(90*time.Minute)); len(later[ids[4]].Grants) != 0 {
 		t.Fatalf("Device 4 after its membership: %+v", later[ids[4]])
 	}
-	// Selections still rebuild every map; an owner's end only changes the
-	// access of the Devices a rule naming groups selects (§13.6).
+	// Selections still rebuild every map; an owner's end does not, the
+	// grants it bounds carry it instead (§13.6).
 	if !networkPolicy.ChangesAt().Equal(policyNow.Add(time.Hour)) {
 		t.Fatalf("ChangesAt() = %v", networkPolicy.ChangesAt())
 	}
-	if !networkPolicy.KubernetesChangesAt().Equal(policyNow.Add(2 * time.Hour)) {
-		t.Fatalf("KubernetesChangesAt() = %v", networkPolicy.KubernetesChangesAt())
-	}
 	// A Device that is not a gateway, or a policy read without sources,
 	// gets nothing.
-	if access := networkPolicy.KubernetesAccessFor(ids[1], policyNow); len(access) != 0 {
+	if access := networkPolicy.KubernetesAccessFor(ids[1], replicaOf(ids), policyNow); len(access) != 0 {
 		t.Fatalf("a client got %+v", access)
 	}
 	bare, ids := kubernetesAccessFixture(t, nil)
-	if access := bare.KubernetesAccessFor(ids[9], policyNow); len(access) != 0 {
+	if access := bare.KubernetesAccessFor(ids[9], replicaOf(ids), policyNow); len(access) != 0 {
 		t.Fatalf("no sources: %+v", access)
 	}
 }
@@ -148,7 +150,7 @@ func TestKubernetesAccessNeedsAnActiveOwner(t *testing.T) {
 	sources[1] = KubernetesSource{Device: 2, OwnerKind: KubernetesOwnerMember,
 		OwnerRef: "01890f00-0000-7000-8000-000000000012", MemberOwned: true, OwnerActive: false}
 	networkPolicy, ids := kubernetesAccessFixture(t, sources)
-	if access := networkPolicy.KubernetesAccessFor(ids[9], policyNow); len(access[ids[2]].Grants) != 0 {
+	if access := networkPolicy.KubernetesAccessFor(ids[9], replicaOf(ids), policyNow); len(access[ids[2]].Grants) != 0 {
 		t.Fatalf("an inactive owner's Device: %+v", access[ids[2]])
 	}
 	scope := snapshotFixture(t).Scope()
@@ -183,13 +185,13 @@ func TestKubernetesAccessOfATaggedMemberDeviceNeedsItsOwner(t *testing.T) {
 	sources := kubernetesSourcesFixture()
 	sources[1] = tagged
 	networkPolicy, ids := kubernetesAccessFixture(t, sources)
-	if access := networkPolicy.KubernetesAccessFor(ids[9], policyNow); len(access[ids[2]].Grants) != 0 {
+	if access := networkPolicy.KubernetesAccessFor(ids[9], replicaOf(ids), policyNow); len(access[ids[2]].Grants) != 0 {
 		t.Fatalf("an expired member's tagged Device: %+v", access[ids[2]])
 	}
 	tagged.OwnerActive, tagged.OwnerValidUntil = true, policyNow.Add(3*time.Hour)
 	sources[1] = tagged
 	networkPolicy, ids = kubernetesAccessFixture(t, sources)
-	access := networkPolicy.KubernetesAccessFor(ids[9], policyNow)[ids[2]]
+	access := networkPolicy.KubernetesAccessFor(ids[9], replicaOf(ids), policyNow)[ids[2]]
 	if len(access.Grants) != 2 || !access.Grants[0].ValidUntil.Equal(policyNow.Add(3*time.Hour)) ||
 		access.OwnerKind != KubernetesOwnerTags {
 		t.Fatalf("an active member's tagged Device: %+v", access)
@@ -217,5 +219,19 @@ func TestKubernetesSourcesAreInPolicyEquality(t *testing.T) {
 	other, _ := kubernetesAccessFixture(t, changed)
 	if first.Equal(other) {
 		t.Fatal("a changed owner left the policy equal")
+	}
+}
+
+// A rule counts only when its destination group holds nothing but the
+// gateway's cluster's replicas: were another Device in it, the group is not
+// the cluster's and grants nothing (TD-CORE-100).
+func TestKubernetesAccessNeedsTheClustersOwnGroup(t *testing.T) {
+	t.Parallel()
+	networkPolicy, ids := kubernetesAccessFixture(t, kubernetesSourcesFixture())
+	if access := networkPolicy.KubernetesAccessFor(ids[9], func(node.ID) bool { return false }, policyNow); len(access) != 0 {
+		t.Fatalf("a group of other Devices granted %+v", access)
+	}
+	if access := networkPolicy.KubernetesAccessFor(ids[9], nil, policyNow); len(access) != 0 {
+		t.Fatalf("no replica check granted %+v", access)
 	}
 }

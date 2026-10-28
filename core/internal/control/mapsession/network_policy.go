@@ -138,9 +138,6 @@ type networkPolicy struct {
 	// read, for Equal.
 	sources    map[int64]KubernetesSource
 	sourceList []KubernetesSource
-	// kubernetesChangesAt is the earliest end of a membership a gateway's
-	// access rests on; zero: none.
-	kubernetesChangesAt time.Time
 }
 
 // NewNetworkPolicy validates and indexes one Network's policy.
@@ -225,7 +222,6 @@ func NewNetworkPolicy(params NetworkPolicyParams) (NetworkPolicy, error) {
 		return NetworkPolicy{}, ErrInvalidNetworkPolicy
 	}
 	inner.routes = routes
-	inner.noteKubernetesChanges()
 	return NetworkPolicy{inner: inner}, nil
 }
 

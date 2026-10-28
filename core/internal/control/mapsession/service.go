@@ -189,6 +189,7 @@ func (service *Service) Refresh(
 	if derived, err = derived.withRouteCapabilities(request); err != nil {
 		return Snapshot{}, errors.Join(ErrOpen, err)
 	}
+	derived = derived.withKubernetesCapability(request)
 	derived.peerLimit = service.options.sessionPeerLimit(request)
 	derived.relayZones = request.RelayZones()
 	return service.loadConnectivity(ctx, derived)
@@ -245,6 +246,7 @@ func (service *Service) open(
 	if snapshot, err = snapshot.withRouteCapabilities(request); err != nil {
 		return Snapshot{}, errors.Join(ErrOpen, err)
 	}
+	snapshot = snapshot.withKubernetesCapability(request)
 	snapshot.peerLimit = service.options.sessionPeerLimit(request)
 	snapshot.relayZones = request.RelayZones()
 	return service.loadConnectivity(ctx, snapshot)
