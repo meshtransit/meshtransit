@@ -52,6 +52,9 @@ type KubeAPIForwarder struct {
 	MaxConnections int
 	// PeerAt names the map's Device at a connection's source address.
 	PeerAt func(netip.Addr) (daemon.PeerView, bool)
+	// Now is the time by Core's clock, which the deadlines of a peer's
+	// Kubernetes groups are in; nil: the local clock.
+	Now    func() time.Time
 	Logger *slog.Logger
 
 	open      atomic.Int64
@@ -199,8 +202,11 @@ func (f *KubeAPIForwarder) accept(ctx context.Context, bound *listener, handlers
 // back.
 func (f *KubeAPIForwarder) forward(ctx context.Context, client net.Conn, source net.Addr) {
 	defer func() { _ = client.Close() }()
-	deviceID, deviceName := f.device(source)
-	log := f.Logger.With("source", addressText(source), "device_id", deviceID, "device_name", deviceName)
+	peer := f.device(source)
+	// What the map grants the peer in the cluster, as the connection opens
+	// (K1a3b): logged now, enforced from K1b on.
+	log := f.Logger.With("source", addressText(source), "device_id", peer.DeviceID, "device_name", peer.Name,
+		"kubernetes_groups", peer.Kubernetes.GroupsAt(f.now()), "kubernetes_owner", kubernetesOwner(peer))
 
 	dial, cancel := context.WithTimeout(ctx, kubeAPIDialTimeout)
 	server, err := (&net.Dialer{}).DialContext(dial, "tcp", f.Backend)
@@ -260,20 +266,38 @@ func addressText(address net.Addr) string {
 	return address.String()
 }
 
-// device names the map's Device at address, or nothing if the map has none
+// device is the map's Device at address, or nothing if the map has none
 // there: the packet filter admits only map peers, so that is not expected.
-func (f *KubeAPIForwarder) device(address net.Addr) (id, name string) {
+func (f *KubeAPIForwarder) device(address net.Addr) daemon.PeerView {
 	tcp, ok := address.(*net.TCPAddr)
 	if !ok || f.PeerAt == nil {
-		return "", ""
+		return daemon.PeerView{}
 	}
 	source, ok := netip.AddrFromSlice(tcp.IP)
 	if !ok {
-		return "", ""
+		return daemon.PeerView{}
 	}
-	peer, ok := f.PeerAt(source.Unmap())
-	if !ok {
-		return "", ""
+	peer, _ := f.PeerAt(source.Unmap())
+	return peer
+}
+
+// now is the time by Core's clock.
+func (f *KubeAPIForwarder) now() time.Time {
+	if f.Now == nil {
+		return time.Now()
 	}
-	return peer.DeviceID, peer.Name
+	return f.Now()
+}
+
+// kubernetesOwner is the peer's owner reference, "none" for a peer the map
+// grants nothing and "workspace" for a Device of the Workspace.
+func kubernetesOwner(peer daemon.PeerView) string {
+	switch {
+	case peer.Kubernetes == nil:
+		return "none"
+	case peer.Kubernetes.OwnerRef == "":
+		return "workspace"
+	default:
+		return peer.Kubernetes.OwnerRef
+	}
 }

@@ -16,6 +16,7 @@ import (
 	"golang.zx2c4.com/wireguard/tun/netstack"
 
 	"meshtransit.net/client/internal/daemon"
+	"meshtransit.net/client/internal/networkmap"
 )
 
 // recordingHandler keeps the forwarder's log records, with the attributes
@@ -132,7 +133,13 @@ func startForwarder(t *testing.T, backend string, maxConnections int) *forwarder
 			if address != clientAddr {
 				return daemon.PeerView{}, false
 			}
-			return daemon.PeerView{DeviceID: "dev-laptop", Name: "laptop"}, true
+			return daemon.PeerView{
+				DeviceID: "dev-laptop", Name: "laptop",
+				Kubernetes: &networkmap.KubernetesAccess{OwnerRef: "01890f00-0000-7000-8000-000000000011", Grants: []networkmap.KubernetesGrant{
+					{Group: "edit", ValidUntil: time.Now().Add(-time.Minute)},
+					{Group: "view", ValidUntil: time.Now().Add(time.Hour)},
+				}},
+			}, true
 		},
 		Logger: slog.New(logs),
 	}
@@ -197,8 +204,9 @@ func TestKubeAPIForwarderCarriesAConnection(t *testing.T) {
 	}
 
 	opened := test.logs.waitFor(t, "kube API connection opened")
-	if opened["device_id"] != "dev-laptop" || opened["device_name"] != "laptop" || opened["source"] == "" {
-		t.Fatalf("opened log = %v, want the laptop", opened)
+	if opened["device_id"] != "dev-laptop" || opened["device_name"] != "laptop" || opened["source"] == "" ||
+		opened["kubernetes_groups"] != "[view]" || opened["kubernetes_owner"] != "01890f00-0000-7000-8000-000000000011" {
+		t.Fatalf("opened log = %v, want the laptop with its live group", opened)
 	}
 	closed := test.logs.waitFor(t, "kube API connection closed")
 	if closed["device_id"] != "dev-laptop" || closed["bytes_to_api"] != "131072" || closed["bytes_from_api"] != "131072" {

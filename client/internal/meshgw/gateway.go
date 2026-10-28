@@ -53,7 +53,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) (err error) {
 
 	stacks := NewStacks(MTU, logger.With("component", "stacks"))
 	defer func() { err = errors.Join(err, stacks.Close()) }()
-	service, err := newRuntime(cfg, stacks, profiles, identities, logger)
+	service, coreNow, err := newRuntime(cfg, stacks, profiles, identities, logger)
 	if err != nil {
 		return err
 	}
@@ -63,6 +63,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) (err error) {
 		Backend:        cfg.KubeAPIBackend,
 		MaxConnections: DefaultMaxKubeAPIConnections,
 		PeerAt:         service.PeerAt,
+		Now:            coreNow,
 		Logger:         logger.With("component", "kube_api"),
 	}
 	stopProbes, err := startProbes(ctx, cfg, service, stacks, forwarder, logger)
@@ -117,12 +118,14 @@ func restoreState(ctx context.Context, cfg Config, logger *slog.Logger) (*k8ssta
 }
 
 // newRuntime builds the data plane over the stacks and the daemon over it.
+//
+// coreNow is the time by Core's clock as the control client estimates it.
 func newRuntime(cfg Config, stacks *Stacks, profiles *profile.Store, identities *identity.Store,
 	logger *slog.Logger,
-) (*daemon.Service, error) {
+) (service *daemon.Service, coreNow func() time.Time, err error) {
 	packets, err := dataplane.NewWireGuardWithObserver(stacks, uint16(cfg.ListenPort), nil) //nolint:gosec // validated 1024-65535
 	if err != nil {
-		return nil, fmt.Errorf("meshgw: creating the data plane: %w", err)
+		return nil, nil, fmt.Errorf("meshgw: creating the data plane: %w", err)
 	}
 	packets.SetLogger(logger.With("component", "data_plane"))
 	// A pod address may repeat in another cluster with the same CIDR, so
@@ -132,7 +135,7 @@ func newRuntime(cfg Config, stacks *Stacks, profiles *profile.Store, identities 
 	if cfg.JoinKeyFile != "" {
 		control = mtcpclient.NewGateway()
 	}
-	service, err := daemon.New(profiles, identities, version.Current(), control, daemon.Options{
+	service, err = daemon.New(profiles, identities, version.Current(), control, daemon.Options{
 		Hostname:  cfg.Hostname,
 		DataPlane: packets,
 		Logger:    logger.With("component", "daemon"),
@@ -141,9 +144,9 @@ func newRuntime(cfg Config, stacks *Stacks, profiles *profile.Store, identities 
 		GatewayTokenFile: cfg.PodTokenFile,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("meshgw: creating the runtime: %w", err)
+		return nil, nil, fmt.Errorf("meshgw: creating the runtime: %w", err)
 	}
-	return service, nil
+	return service, control.CoreNow, nil
 }
 
 // startProbes serves the probes and polls the status for them; the returned

@@ -74,6 +74,9 @@ type Node struct {
 	Expired           bool
 	MachineAuthorized bool
 	Alias             *AliasBinding
+	// Kubernetes is the peer's access in a Kubernetes gateway's cluster;
+	// only a gateway's map has it, never on self or an alias peer.
+	Kubernetes *KubernetesAccess
 }
 
 // SelectorKind identifies one bounded address selector representation.

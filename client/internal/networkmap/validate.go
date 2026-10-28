@@ -314,6 +314,12 @@ func validateNode(node Node, self bool, now time.Time) error {
 		}
 		seenEndpoints[endpoint] = struct{}{}
 	}
+	if node.Kubernetes != nil && (self || node.Alias != nil) {
+		return errors.New("kubernetes access is only for a peer of the Network")
+	}
+	if err := CheckKubernetesAccess(node.Kubernetes); err != nil {
+		return err
+	}
 	if self && !node.MachineAuthorized {
 		return errors.New("machine is not authorized")
 	}
@@ -601,6 +607,7 @@ func cloneDNSConfig(config *DNSConfig) *DNSConfig {
 
 func cloneNode(node Node) Node {
 	node.Alias = cloneAlias(node.Alias)
+	node.Kubernetes = CloneKubernetesAccess(node.Kubernetes)
 	node.Addresses = append([]netip.Prefix(nil), node.Addresses...)
 	node.AllowedIPs = append([]netip.Prefix(nil), node.AllowedIPs...)
 	node.Endpoints = append([]netip.AddrPort(nil), node.Endpoints...)

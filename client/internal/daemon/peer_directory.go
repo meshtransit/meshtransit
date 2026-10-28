@@ -58,6 +58,9 @@ type PeerView struct {
 	// Measurable is whether PingPeer can measure the peer: the map gives it
 	// a discovery key.
 	Measurable bool
+	// Kubernetes is the peer's access in a Kubernetes gateway's cluster; nil
+	// on any other node, and for a peer the gateway's map grants nothing.
+	Kubernetes *networkmap.KubernetesAccess
 }
 
 // PeerPing is one round trip to a peer.
@@ -118,6 +121,7 @@ func newPeerDirectory(snapshot networkmap.Snapshot) *peerDirectory {
 				DeviceID: peer.StableID, Name: peer.Name, Addresses: addresses,
 				OnlineKnown: peer.OnlineKnown, Online: peer.OnlineKnown && peer.Online,
 				Measurable: peer.DiscoveryKey != "",
+				Kubernetes: peer.Kubernetes,
 			},
 		})
 	}
@@ -137,6 +141,7 @@ func peerViews(directory *peerDirectory, stats []dataplane.PeerPathStat) []PeerV
 	for _, peer := range directory.peers {
 		view := peer.view
 		view.Addresses = slices.Clone(view.Addresses)
+		view.Kubernetes = networkmap.CloneKubernetesAccess(view.Kubernetes)
 		stat, held := byID[peer.id]
 		view.Path, view.RelayRegion = pathOf(stat, held, directory.relayCodes)
 		view.RxBytes, view.TxBytes = stat.RxBytes, stat.TxBytes
@@ -245,6 +250,7 @@ func (s *Service) PeerAt(address netip.Addr) (PeerView, bool) {
 	}
 	view := directory.peers[index].view
 	view.Addresses = slices.Clone(view.Addresses)
+	view.Kubernetes = networkmap.CloneKubernetesAccess(view.Kubernetes)
 	return view, true
 }
 

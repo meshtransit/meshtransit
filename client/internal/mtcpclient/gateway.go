@@ -123,6 +123,11 @@ func (c *Client) coreNow() time.Time {
 	return c.gateway.now(c.now())
 }
 
+// CoreNow is the time by Core's clock as this client estimates it: what a
+// gateway checks the deadlines of its peers' Kubernetes access against
+// (mtcp-v1 §7.8); the local clock for meshd.
+func (c *Client) CoreNow() time.Time { return c.coreNow() }
+
 // gatewayError maps the gateway gate's refusals (mtcp-v1 §6.7, §6.8), or
 // returns nil for any other Error.
 func gatewayError(m *mtcpv1.Error) error {

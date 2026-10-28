@@ -50,7 +50,10 @@ type mapState struct {
 	// takesRoutes: the node declared routes.subnet.v1; otherwise it ignores
 	// routes, as it ignores any field it did not ask for.
 	takesRoutes bool
-	served      *mtcpv1.ServedRoutes
+	// takesKubernetes: the node is a gateway that declared gateway.kube.v1;
+	// any other ignores peers' Kubernetes access.
+	takesKubernetes bool
+	served          *mtcpv1.ServedRoutes
 	// takesServed: the node declared router.subnet.v1.
 	takesServed bool
 	servedExits *mtcpv1.ServedExits
@@ -264,6 +267,11 @@ func (state *mapState) build(input snapshotInput) (networkmap.Snapshot, error) {
 		if err != nil {
 			return networkmap.Snapshot{}, err
 		}
+		// A peer's malformed access costs that peer its access, never the
+		// gateway its map (fail closed for one peer).
+		if !state.takesKubernetes || peer.Alias != nil || networkmap.CheckKubernetesAccess(peer.Kubernetes) != nil {
+			peer.Kubernetes = nil
+		}
 		if peer.Alias != nil {
 			peer.Alias.SelfKey, peer.Alias.PeerKey = self.PublicKey, peer.PublicKey
 		}
@@ -426,7 +434,31 @@ func convertDevice(device *mtcpv1.Device, self bool, now time.Time) (networkmap.
 		}
 		node.Alias = binding
 	}
+	// Self never holds access (mtcp-v1 §7.8): any sent is ignored.
+	if access := device.GetKubernetes(); access != nil && !self {
+		node.Kubernetes = convertKubernetesAccess(access, device.GetOwner().GetRef())
+	}
 	return node, nil
+}
+
+// convertKubernetesAccess decodes a peer's access in a gateway's map
+// (mtcp-v1 §7.8); networkmap validates it. A deadline of 0, which Core never
+// sends, stays zero and is refused there.
+func convertKubernetesAccess(access *mtcpv1.KubernetesAccess, owner string) *networkmap.KubernetesAccess {
+	converted := &networkmap.KubernetesAccess{
+		OwnerRef: owner,
+		Grants:   make([]networkmap.KubernetesGrant, 0, len(access.GetGrants())),
+	}
+	if changed := access.GetOwnerChangedMs(); changed > 0 {
+		converted.OwnerChangedAt = time.UnixMilli(changed).UTC()
+	}
+	for _, grant := range access.GetGrants() {
+		converted.Grants = append(converted.Grants, networkmap.KubernetesGrant{Group: grant.GetGroup()})
+		if until := grant.GetValidUntilMs(); until > 0 {
+			converted.Grants[len(converted.Grants)-1].ValidUntil = time.UnixMilli(until).UTC()
+		}
+	}
+	return converted
 }
 
 func convertAlias(alias *mtcpv1.AliasGrant) (*networkmap.AliasBinding, error) {

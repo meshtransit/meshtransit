@@ -419,42 +419,7 @@ func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, e
 		return false, 0, err
 	}
 	nodePublic := stream.keys.node.Public()
-	// map.large1: this client applies maps of up to 10,000 peers, alias
-	// peers and policy rules, with two DNS records per shared Device; Core
-	// limits a client without it to the earlier bounds (256 peers).
-	// relay.zones2: it hands relays MTT2 tickets for more than 31 shares.
-	capabilities := []string{
-		"map.zstd", "relay.mtrp1", "dns.split", "stats.path1", "nat.report1", "map.large1", "relay.zones2",
-	}
-	if stream.options.EnableDeviceAliases {
-		capabilities = append(capabilities, "device-alias.v1")
-	}
-	if stream.options.EnableSubnetRoutes {
-		capabilities = append(capabilities, "routes.subnet.v1", "routes.selection1")
-	}
-	if stream.options.EnableSubnetRouter {
-		capabilities = append(capabilities, "router.subnet.v1", "router.health1")
-	}
-	if stream.options.EnableExits {
-		capabilities = append(capabilities, "routes.exit.v1")
-		if stream.options.CaptiveWindows != nil {
-			capabilities = append(capabilities, "captive.audit1")
-		}
-		if !stream.options.EnableSubnetRoutes {
-			capabilities = append(capabilities, "routes.selection1")
-		}
-	}
-	if stream.options.EnableDNSForward {
-		// Names and every zone kind (DNS design D2), and the root zone with
-		// DNS evidence (D1b), need forward zones.
-		capabilities = append(capabilities, "dns.forward1", "dns.records1", "dns.root1")
-	}
-	if stream.options.EnableExitNode {
-		capabilities = append(capabilities, "router.exit.v1")
-		if !stream.options.EnableSubnetRouter {
-			capabilities = append(capabilities, "router.health1")
-		}
-	}
+	capabilities := streamCapabilities(stream.options, c.gateway != nil)
 	s, err := c.open(ctx, stream.origin, sessionOptions{
 		machine: stream.keys.machine, control: stream.keys.control,
 		nodeKey: nodePublic[:], capabilities: capabilities, version: stream.options.Version,
@@ -491,6 +456,7 @@ func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, e
 	}()
 	state := newMapState(stream.options.EnableSubnetRoutes)
 	state.takesServed = stream.options.EnableSubnetRouter
+	state.takesKubernetes = c.gateway != nil
 	state.takesServedExits = stream.options.EnableExitNode
 	state.takesExits = stream.options.EnableExits
 	run := &sessionRun{stream: stream, s: s, state: state, controlTime: time.UnixMilli(s.reply.GetServerTimeMs())}
@@ -1304,4 +1270,49 @@ func sameControlKey(left, right *key.ControlPublic) bool {
 		return left == right
 	}
 	return *left == *right
+}
+
+// streamCapabilities are what a map stream declares (mtcp-v1 section 13).
+func streamCapabilities(options controlplane.NetmapOptions, gateway bool) []string {
+	// map.large1: this client applies maps of up to 10,000 peers, alias
+	// peers and policy rules, with two DNS records per shared Device; Core
+	// limits a client without it to the earlier bounds (256 peers).
+	// relay.zones2: it hands relays MTT2 tickets for more than 31 shares.
+	capabilities := []string{
+		"map.zstd", "relay.mtrp1", "dns.split", "stats.path1", "nat.report1", "map.large1", "relay.zones2",
+	}
+	if options.EnableDeviceAliases {
+		capabilities = append(capabilities, "device-alias.v1")
+	}
+	if options.EnableSubnetRoutes {
+		capabilities = append(capabilities, "routes.subnet.v1", "routes.selection1")
+	}
+	if options.EnableSubnetRouter {
+		capabilities = append(capabilities, "router.subnet.v1", "router.health1")
+	}
+	if options.EnableExits {
+		capabilities = append(capabilities, "routes.exit.v1")
+		if options.CaptiveWindows != nil {
+			capabilities = append(capabilities, "captive.audit1")
+		}
+		if !options.EnableSubnetRoutes {
+			capabilities = append(capabilities, "routes.selection1")
+		}
+	}
+	if options.EnableDNSForward {
+		// Names and every zone kind (DNS design D2), and the root zone with
+		// DNS evidence (D1b), need forward zones.
+		capabilities = append(capabilities, "dns.forward1", "dns.records1", "dns.root1")
+	}
+	if gateway {
+		// A Kubernetes gateway takes its peers' Kubernetes access (§7.8).
+		capabilities = append(capabilities, "gateway.kube.v1")
+	}
+	if options.EnableExitNode {
+		capabilities = append(capabilities, "router.exit.v1")
+		if !options.EnableSubnetRouter {
+			capabilities = append(capabilities, "router.health1")
+		}
+	}
+	return capabilities
 }
