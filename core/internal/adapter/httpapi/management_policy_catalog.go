@@ -45,6 +45,9 @@ type activePolicyRule struct {
 	// rules carry it, so clients that know no Site rules see the rows they
 	// always did.
 	DestinationPrefixes []string `json:"destination_prefixes,omitempty"`
+	// KubernetesGroups are the groups a rule to a cluster grants; absent when
+	// it grants none (K1a3).
+	KubernetesGroups []string `json:"kubernetes_groups,omitempty"`
 }
 
 func parseActivePolicyPath(request *http.Request) (policySimulationPath, bool) {
@@ -145,7 +148,7 @@ func activePolicyProjection(snapshot catalog.Snapshot) activePolicyData {
 		case rule.SourceTagID().IsValid():
 			sourceKind, sourceSelector, sourceDevice = "device_tag", rule.SourceTagID().String(), ""
 		}
-		data.Rules = append(data.Rules, activePolicyRule{ID: rule.ID().String(), SourceDeviceID: sourceDevice, SourceKind: sourceKind, SourceSelectorID: sourceSelector, DestinationDeviceID: destination, Protocol: rule.Protocol().String(), DestinationPortRanges: activePolicyPorts(rule.DestinationPortRanges()), SelectorKind: kind, DestinationSelectorID: selector, DestinationPrefixes: prefixes})
+		data.Rules = append(data.Rules, activePolicyRule{ID: rule.ID().String(), SourceDeviceID: sourceDevice, SourceKind: sourceKind, SourceSelectorID: sourceSelector, DestinationDeviceID: destination, Protocol: rule.Protocol().String(), DestinationPortRanges: activePolicyPorts(rule.DestinationPortRanges()), SelectorKind: kind, DestinationSelectorID: selector, DestinationPrefixes: prefixes, KubernetesGroups: rule.KubernetesGroups()})
 	}
 	return data
 }

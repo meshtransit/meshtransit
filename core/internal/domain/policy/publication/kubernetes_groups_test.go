@@ -179,3 +179,35 @@ func TestKubernetesGroupsAreInTheRuleFingerprint(t *testing.T) {
 		}
 	}
 }
+
+// One cluster's rules grant at most 64 distinct groups, as a gateway
+// reports; another cluster counts its own.
+func TestAClustersRulesGrantAtMost64Groups(t *testing.T) {
+	t.Parallel()
+	rules := make([]publication.GroupRule, 0, 5)
+	for index := range 5 {
+		params := clusterRuleParams(t, policy.ProtocolTCP, 443, 443)
+		id, err := policy.ParseRuleID("01890f00-0000-7000-8000-00000000090" + string(rune('1'+index)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		params.RuleID = id
+		params.KubernetesGroups = make([]string, 0, 16)
+		for group := range 16 {
+			params.KubernetesGroups = append(params.KubernetesGroups,
+				"g"+string(rune('a'+index))+string(rune('a'+group)))
+		}
+		rule, err := publication.NewGroupRule(params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rules = append(rules, rule)
+	}
+	base := publicationCandidateFixture(t, 2, nil)
+	if _, err := base.WithGroupRules(rules[:4]); err != nil {
+		t.Fatalf("64 groups: %v", err)
+	}
+	if _, err := base.WithGroupRules(rules); err == nil {
+		t.Fatal("80 groups to one cluster were accepted")
+	}
+}

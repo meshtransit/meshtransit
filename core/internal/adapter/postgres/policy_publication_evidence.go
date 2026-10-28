@@ -492,10 +492,12 @@ type policyGroupRulePayload struct {
 	Protocol                       string `json:"protocol"`
 	PortRangeFirst                 []int  `json:"port_range_first"`
 	PortRangeLast                  []int  `json:"port_range_last"`
+	// KubernetesGroups are read by attach_policy_group_rules_v3 only.
+	KubernetesGroups []string `json:"kubernetes_groups,omitempty"`
 }
 
 // encodePolicyGroupRules encodes the candidate's group rules for
-// attach_policy_group_rules_v2, using the projection identities that follow
+// attach_policy_group_rules_v2 or _v3, using the projection identities that follow
 // the Device pairs and Imported Resource selectors. Nil means none.
 func encodePolicyGroupRules(change publication.Change) ([]byte, error) {
 	candidate := change.Command().Candidate()
@@ -520,6 +522,7 @@ func encodePolicyGroupRules(change publication.Change) ([]byte, error) {
 		item := policyGroupRulePayload{
 			ProjectionPublicID: projectionIDs[offset+index].String(), AccessRulePublicID: rule.RuleID().String(),
 			Protocol: rule.Protocol().String(), PortRangeFirst: first, PortRangeLast: last,
+			KubernetesGroups: rule.KubernetesGroups(),
 		}
 		source, destination := rule.Source(), rule.Destination()
 		switch source.Kind() {

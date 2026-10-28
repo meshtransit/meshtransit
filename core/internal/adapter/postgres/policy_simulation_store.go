@@ -194,6 +194,21 @@ func (store *PolicySimulationStore) readSimulationBaselineOnce(
 		len(record.ExitRules) > policy.MaximumRules {
 		return simulation.Baseline{}, simulation.ErrInvalidBaseline
 	}
+	// The release's rules to clusters with their groups, in this snapshot,
+	// so the baseline rebuilds the release it was hashed as.
+	if record.HasActiveRelease && len(record.GroupRules) > 0 {
+		read, found, readErr := readPolicyKubernetesGroups(ctx, func(ctx context.Context, query string,
+			arguments ...any) scannedRow {
+			return transaction.QueryRow(ctx, query, arguments...)
+		}, session, scope, record.PolicyRevision, evaluatedAt)
+		if readErr != nil {
+			return simulation.Baseline{}, policySimulationDatabaseError(ctx, readErr)
+		}
+		if !found {
+			return simulation.Baseline{}, simulation.ErrInvalidBaseline
+		}
+		record.kubernetesGroups = read
+	}
 	baseline, err = record.baseline(scope)
 	if err != nil {
 		return simulation.Baseline{}, err
@@ -229,6 +244,9 @@ type policySimulationBaselineRecord struct {
 	}
 	guardrails         []guardrail.Guardrail
 	providerGuardrails map[workspace.ID][]guardrail.Guardrail
+	// kubernetesGroups are the groups and clusters of the release's rules
+	// to clusters, and whether its hash covers them (schema 236).
+	kubernetesGroups policyKubernetesGroups
 }
 
 var selectorKinds = map[string]publication.SideKind{
@@ -263,14 +281,17 @@ func (record policySimulationBaselineRecord) selectorMembers() (map[publication.
 }
 
 // decodePolicyGroupRules rebuilds group rules from the attach payload shape.
-func decodePolicyGroupRules(payloads []policyGroupRulePayload) ([]publication.GroupRule, error) {
+func decodePolicyGroupRules(payloads []policyGroupRulePayload,
+	kubernetesGroups policyKubernetesGroups) ([]publication.GroupRule, error) {
 	rules := make([]publication.GroupRule, 0, len(payloads))
 	for _, payload := range payloads {
 		ruleID, err := policy.ParseRuleID(payload.AccessRulePublicID)
 		if err != nil || len(payload.PortRangeFirst) != len(payload.PortRangeLast) {
 			return nil, simulation.ErrInvalidBaseline
 		}
-		params := publication.GroupRuleParams{RuleID: ruleID, Protocol: parsePolicyRuleProtocol(payload.Protocol)}
+		params := publication.GroupRuleParams{RuleID: ruleID, Protocol: parsePolicyRuleProtocol(payload.Protocol),
+			DestinationKubernetesClusterID: kubernetesGroups.clusters[ruleID],
+			KubernetesGroups:               kubernetesGroups.groups[ruleID]}
 		parse := func(text string, target *node.ID) error {
 			if text == "" {
 				return nil
@@ -404,7 +425,7 @@ func (record policySimulationBaselineRecord) baseline(
 		return simulation.Baseline{}, fmt.Errorf("reconstruct compiled baseline: %w", err)
 	}
 	if len(record.GroupRules) > 0 {
-		groupRules, groupErr := decodePolicyGroupRules(record.GroupRules)
+		groupRules, groupErr := decodePolicyGroupRules(record.GroupRules, record.kubernetesGroups)
 		if groupErr != nil {
 			return simulation.Baseline{}, groupErr
 		}
@@ -434,7 +455,13 @@ func (record policySimulationBaselineRecord) baseline(
 	if err != nil {
 		return simulation.Baseline{}, err
 	}
-	if candidate.SemanticHash() != semanticHash {
+	// A release a Core before K1a3 published was hashed without the groups
+	// the database carried for it.
+	rebuiltHash := candidate.SemanticHash()
+	if !record.kubernetesGroups.hashed {
+		rebuiltHash = candidate.LegacySemanticHash()
+	}
+	if rebuiltHash != semanticHash {
 		return simulation.Baseline{}, fmt.Errorf("compiled baseline semantic hash differs: %w", simulation.ErrInvalidBaseline)
 	}
 	return simulation.NewBaseline(simulation.BaselineParams{

@@ -388,7 +388,11 @@ func encodePolicySimulationResult(result simulation.Result) simulatedPolicy {
 	baseline := result.Baseline()
 	baselineCandidate := baseline.Candidate()
 	baselineHash := baselineCandidate.SemanticHash().Bytes()
-	releaseID, _, hasActiveRelease := baseline.ActiveRelease()
+	releaseID, releaseHash, hasActiveRelease := baseline.ActiveRelease()
+	if hasActiveRelease {
+		// The hash the release was published under, with or without groups.
+		baselineHash = releaseHash.Bytes()
+	}
 	baselineEvidence := simulatedPolicyBaseline{
 		RevisionVector:        encodePolicySimulationVector(baseline.RevisionVector()),
 		HasActiveRelease:      hasActiveRelease,
@@ -607,6 +611,8 @@ func classifyPolicySimulationError(err error) managementError {
 		}
 	case errors.Is(err, compilation.ErrKubernetesClusterUnavailable):
 		return kubernetesClusterUnavailableError
+	case errors.Is(err, compilation.ErrKubernetesGroupsRequired):
+		return kubernetesGroupsRequiredError
 	case errors.Is(err, simulation.ErrInvalidRequest), errors.Is(err, compilation.ErrInvalidRequest):
 		return *invalidManagementRequest()
 	case errors.Is(err, simulation.ErrInvalidBaseline), errors.Is(err, simulation.ErrInvalidResult):

@@ -38,6 +38,11 @@ var (
 	ErrKubernetesRule = errors.New("policy publication: a rule names a Kubernetes replica or a cluster's group")
 )
 
+// ErrKubernetesGroups reports a rule to a Kubernetes cluster that would lose
+// the Kubernetes groups it has, or a cluster whose rules grant more than 64
+// groups (schema 236).
+var ErrKubernetesGroups = errors.New("policy publication: a rule to a Kubernetes cluster loses or exceeds its groups")
+
 // KubernetesRuleError is ErrKubernetesRule for one named rule.
 type KubernetesRuleError struct{ RuleID policy.RuleID }
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"slices"
 
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/policy"
 	"meshtransit.net/core/internal/domain/publicid"
 )
@@ -306,6 +307,24 @@ func validGroupRules(candidate Candidate) bool {
 			return false
 		}
 		if _, used := taken[rule.ruleID]; used {
+			return false
+		}
+	}
+	// A gateway reports at most 64 groups: one cluster's rules grant no more.
+	perCluster := make(map[kubecluster.ID]map[string]struct{})
+	for _, rule := range candidate.groupRules {
+		if rule.kubernetesGroups == nil {
+			continue
+		}
+		groups := perCluster[rule.cluster]
+		if groups == nil {
+			groups = make(map[string]struct{})
+			perCluster[rule.cluster] = groups
+		}
+		for _, group := range rule.kubernetesGroups {
+			groups[group] = struct{}{}
+		}
+		if len(groups) > kubecluster.MaximumClusterKubernetesGroups {
 			return false
 		}
 	}

@@ -132,6 +132,24 @@ func (store *ActivePolicyStore) readActivePolicyOnce(ctx context.Context, sessio
 			return catalog.Snapshot{}, simulation.ErrInvalidBaseline
 		}
 	}
+	// Rules to clusters name their Kubernetes groups, from the same release.
+	if slices.ContainsFunc(snapshot.Rows(), func(row catalog.Row) bool {
+		return row.Intent.DestinationKubernetesClusterID().IsValid()
+	}) {
+		read, found, err := readPolicyKubernetesGroups(ctx, func(ctx context.Context, query string,
+			arguments ...any) scannedRow {
+			return transaction.QueryRow(ctx, query, arguments...)
+		}, session, scope, snapshot.Revision(), evaluatedAt)
+		if err != nil {
+			return catalog.Snapshot{}, policySimulationDatabaseError(ctx, err)
+		}
+		if !found {
+			return catalog.Snapshot{}, simulation.ErrForbidden
+		}
+		if snapshot, err = snapshot.WithKubernetesGroups(read.groups); err != nil {
+			return catalog.Snapshot{}, simulation.ErrInvalidBaseline
+		}
+	}
 	if err := transaction.Commit(ctx); err != nil {
 		return catalog.Snapshot{}, policySimulationDatabaseError(ctx, err)
 	}

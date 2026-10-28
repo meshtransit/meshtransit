@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 235 {
-		t.Fatalf("len(Catalog()) = %d, want 235", len(catalog))
+	if len(catalog) != 236 {
+		t.Fatalf("len(Catalog()) = %d, want 236", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 235 {
-		t.Fatalf("LatestVersion() = %d, want 235", LatestVersion())
+	if LatestVersion() != 236 {
+		t.Fatalf("LatestVersion() = %d, want 236", LatestVersion())
 	}
 }
 
@@ -6905,5 +6905,53 @@ func TestMigration235AdminPastesSigningTrust(t *testing.T) {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 235 contains %q", forbidden)
 		}
+	}
+}
+
+// A rule to a Kubernetes cluster names its Kubernetes groups (K1a3a). Core
+// attaches them through _v3, which marks them hashed; a Core before K1a3,
+// through _v2, gets the groups of an unchanged rule carried and a changed
+// one refused; _v1 is no longer the runtime's.
+func TestMigration236KubernetesRuleGroups(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[235]
+	if migration.Version != 236 {
+		t.Fatalf("migration 236 = %+v", migration)
+	}
+	for _, want := range []string{
+		"ADD COLUMN kubernetes_groups TEXT[]",
+		"ADD COLUMN kubernetes_groups_hashed BOOLEAN NOT NULL DEFAULT FALSE",
+		`COLLATE "C" < p_groups[position.index] COLLATE "C"`,
+		"BETWEEN 1 AND 16",
+		") NOT VALID,",
+		"VALIDATE CONSTRAINT compiled_policy_group_rule_kubernetes_groups_check",
+		"CREATE TRIGGER compiled_policy_group_rule_kubernetes_groups\nBEFORE INSERT ON mesh.compiled_policy_group_rule",
+		"NEW.kubernetes_groups := v_previous.kubernetes_groups",
+		"would lose its Kubernetes groups",
+		"CREATE FUNCTION mesh_ops.attach_policy_group_rules_v3(",
+		"pg_catalog.set_config('mesh.kubernetes_groups_aware', 'on', TRUE)",
+		"HAVING pg_catalog.count(DISTINCT kubernetes_group.name) > 64",
+		"REVOKE EXECUTE ON FUNCTION mesh_ops.attach_policy_group_rules_v1(UUID, TIMESTAMPTZ, JSONB) FROM mesh_runtime",
+		"CREATE FUNCTION mesh_ops.read_policy_kubernetes_groups_v1(",
+		"ARRAY['policy.read', 'policy.validate', 'policy.publish']",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.attach_policy_group_rules_v3(UUID, TIMESTAMPTZ, JSONB) TO mesh_runtime",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 236 lacks %q", want)
+		}
+	}
+	// Old Cores keep their functions: nothing they call is replaced.
+	for _, unwanted := range []string{
+		"CREATE OR REPLACE FUNCTION mesh_ops.attach_policy_group_rules_v2(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.read_active_policy_v4(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.read_policy_simulation_baseline_v6(",
+	} {
+		if strings.Contains(migration.SQL, unwanted) {
+			t.Errorf("migration 236 replaces %q", unwanted)
+		}
+	}
+	// _v3 differs from _v2 only by the groups.
+	if strings.Count(migration.SQL, "kubernetes_groups_aware") != 3 {
+		t.Errorf("kubernetes_groups_aware appears %d times", strings.Count(migration.SQL, "kubernetes_groups_aware"))
 	}
 }

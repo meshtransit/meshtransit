@@ -5049,6 +5049,19 @@
           "destination_selector_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "kubernetes_groups": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 63,
+              "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+            },
+            "description": "The Kubernetes groups a rule to a cluster grants, sorted; absent when it grants none, as for a rule published before Kubernetes groups."
           }
         }
       },
@@ -5303,6 +5316,19 @@
           "destination_kubernetes_cluster_id": {
             "$ref": "#/components/schemas/PublicID",
             "description": "A Kubernetes cluster of the Network: the rule grants kubectl to every replica of the cluster, now and later. TCP port 443 only; the source is a Device, Device Group, Identity Group or tag."
+          },
+          "kubernetes_groups": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 63,
+              "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+            },
+            "description": "With destination_kubernetes_cluster_id only: the Kubernetes groups the rule grants, names of groups declared in the cluster gateway's Helm values. Absent keeps the groups the rule has in the active release, while it comes from the same source to the same cluster; an empty list is refused; a new or retargeted rule to a cluster needs at least one."
           },
           "protocol": {
             "type": "string",

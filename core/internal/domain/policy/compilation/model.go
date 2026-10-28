@@ -56,8 +56,12 @@ type RuleIntentParams struct {
 	// DestinationKubernetesClusterID selects every replica of a Kubernetes
 	// cluster, through the cluster's own Device Group, on TCP 443 only.
 	DestinationKubernetesClusterID kubecluster.ID
-	Protocol                       policy.Protocol
-	DestinationPortRanges          []policy.PortRange
+	// KubernetesGroups are the groups a rule to a cluster grants, in any
+	// order (K1a3). Nil keeps the groups the rule has in the release the
+	// request replaces; an empty list is refused.
+	KubernetesGroups      []string
+	Protocol              policy.Protocol
+	DestinationPortRanges []policy.PortRange
 }
 
 // RuleIntent is one immutable Access Rule with exactly one typed destination.
@@ -78,6 +82,7 @@ type RuleIntent struct {
 	destinationPrefixes           []netip.Prefix
 	destinationExitPoolID         exitpool.ID
 	destinationCluster            kubecluster.ID
+	kubernetesGroups              []string
 	protocol                      policy.Protocol
 	destinationPortRanges         []policy.PortRange
 }
@@ -99,6 +104,7 @@ func NewRuleIntent(params RuleIntentParams) (RuleIntent, error) {
 		destinationPrefixes:           slices.Clone(params.DestinationPrefixes),
 		destinationExitPoolID:         params.DestinationExitPoolID,
 		destinationCluster:            params.DestinationKubernetesClusterID,
+		kubernetesGroups:              sortedKubernetesGroups(params.KubernetesGroups),
 		protocol:                      params.Protocol, destinationPortRanges: slices.Clone(params.DestinationPortRanges),
 	}
 	if !intent.IsValid() {
@@ -148,6 +154,37 @@ func (intent RuleIntent) SelectsDeviceGroup() bool {
 		intent.destinationCluster.IsValid()
 }
 
+// KubernetesGroups returns the sorted groups a rule to a cluster names, nil
+// when it names none and keeps those it has.
+func (intent RuleIntent) KubernetesGroups() []string { return slices.Clone(intent.kubernetesGroups) }
+
+// sortedKubernetesGroups sorts a copy; nil stays nil and an empty list stays
+// empty, for IsValid to refuse.
+func sortedKubernetesGroups(groups []string) []string {
+	if groups == nil {
+		return nil
+	}
+	sorted := slices.Clone(groups)
+	slices.Sort(sorted)
+	return sorted
+}
+
+// validKubernetesGroups reports nil, or 1 to 16 distinct sorted groups.
+func validKubernetesGroups(groups []string) bool {
+	if groups == nil {
+		return true
+	}
+	if len(groups) == 0 || len(groups) > kubecluster.MaximumRuleKubernetesGroups {
+		return false
+	}
+	for index, group := range groups {
+		if !kubecluster.ValidKubernetesGroup(group) || index > 0 && groups[index-1] >= group {
+			return false
+		}
+	}
+	return true
+}
+
 // DestinationKubernetesClusterID returns the Kubernetes cluster destination,
 // when selected.
 func (intent RuleIntent) DestinationKubernetesClusterID() kubecluster.ID {
@@ -165,6 +202,20 @@ func (intent RuleIntent) WithKubernetesCluster(cluster kubecluster.ID) (RuleInte
 	named.destinationDeviceGroupID, named.destinationCluster = devicegroup.ID{}, cluster
 	named.destinationPrefixes = slices.Clone(intent.destinationPrefixes)
 	named.destinationPortRanges = slices.Clone(intent.destinationPortRanges)
+	named.kubernetesGroups = slices.Clone(intent.kubernetesGroups)
+	if !named.IsValid() {
+		return RuleIntent{}, ErrInvalidRequest
+	}
+	return named, nil
+}
+
+// WithKubernetesGroups returns the intent to a cluster naming groups, for a
+// reader of a release that holds them; nil names none.
+func (intent RuleIntent) WithKubernetesGroups(groups []string) (RuleIntent, error) {
+	named := intent
+	named.destinationPrefixes = slices.Clone(intent.destinationPrefixes)
+	named.destinationPortRanges = slices.Clone(intent.destinationPortRanges)
+	named.kubernetesGroups = sortedKubernetesGroups(groups)
 	if !named.IsValid() {
 		return RuleIntent{}, ErrInvalidRequest
 	}
@@ -229,7 +280,8 @@ func (intent RuleIntent) IsValid() bool {
 			hasExitPool, hasCluster) != 1 ||
 		!intent.protocol.IsValid() || intent.destinationPortRanges == nil ||
 		(!hasSite && len(intent.destinationPrefixes) > 0) ||
-		len(intent.destinationPrefixes) > site.MaximumPrefixesPerSite {
+		len(intent.destinationPrefixes) > site.MaximumPrefixesPerSite ||
+		!validKubernetesGroups(intent.kubernetesGroups) || intent.kubernetesGroups != nil && !hasCluster {
 		return false
 	}
 	if hasSite || hasExitPool {

@@ -37,23 +37,26 @@ type publishPolicyRequest struct {
 }
 
 type publishPolicyRuleRequest struct {
-	ID                            string                          `json:"id"`
-	SourceDeviceID                string                          `json:"source_device_id"`
-	SourceDeviceGroupID           string                          `json:"source_device_group_id"`
-	SourceIdentityGroupID         string                          `json:"source_identity_group_id"`
-	SourceDeviceTagID             string                          `json:"source_device_tag_id"`
-	DestinationDeviceID           string                          `json:"destination_device_id"`
-	DestinationDeviceGroupID      string                          `json:"destination_device_group_id"`
-	DestinationDeviceTagID        string                          `json:"destination_device_tag_id"`
-	DestinationResourceID         string                          `json:"destination_resource_id"`
-	DestinationGroupID            string                          `json:"destination_resource_group_id"`
-	DestinationImportedResourceID string                          `json:"destination_imported_resource_id"`
-	DestinationSiteID             string                          `json:"destination_site_id"`
-	DestinationPrefixes           []string                        `json:"destination_prefixes"`
-	DestinationExitPoolID         string                          `json:"destination_exit_pool_id"`
-	DestinationKubernetesCluster  string                          `json:"destination_kubernetes_cluster_id"`
-	Protocol                      string                          `json:"protocol"`
-	DestinationPortRanges         []publishPolicyPortRangeRequest `json:"destination_port_ranges"`
+	ID                            string   `json:"id"`
+	SourceDeviceID                string   `json:"source_device_id"`
+	SourceDeviceGroupID           string   `json:"source_device_group_id"`
+	SourceIdentityGroupID         string   `json:"source_identity_group_id"`
+	SourceDeviceTagID             string   `json:"source_device_tag_id"`
+	DestinationDeviceID           string   `json:"destination_device_id"`
+	DestinationDeviceGroupID      string   `json:"destination_device_group_id"`
+	DestinationDeviceTagID        string   `json:"destination_device_tag_id"`
+	DestinationResourceID         string   `json:"destination_resource_id"`
+	DestinationGroupID            string   `json:"destination_resource_group_id"`
+	DestinationImportedResourceID string   `json:"destination_imported_resource_id"`
+	DestinationSiteID             string   `json:"destination_site_id"`
+	DestinationPrefixes           []string `json:"destination_prefixes"`
+	DestinationExitPoolID         string   `json:"destination_exit_pool_id"`
+	DestinationKubernetesCluster  string   `json:"destination_kubernetes_cluster_id"`
+	// KubernetesGroups are the groups a rule to a cluster grants; absent or
+	// null keeps those the rule has, and an empty list is refused (K1a3).
+	KubernetesGroups      *[]string                       `json:"kubernetes_groups"`
+	Protocol              string                          `json:"protocol"`
+	DestinationPortRanges []publishPolicyPortRangeRequest `json:"destination_port_ranges"`
 }
 
 type publishPolicyPortRangeRequest struct {
@@ -340,6 +343,13 @@ func decodePolicyRuleIntent(
 	if !protocol.IsValid() {
 		return compilation.RuleIntent{}, policy.ErrInvalidRule
 	}
+	var kubernetesGroups []string
+	if input.KubernetesGroups != nil {
+		if len(*input.KubernetesGroups) == 0 {
+			return compilation.RuleIntent{}, policy.ErrInvalidRule
+		}
+		kubernetesGroups = *input.KubernetesGroups
+	}
 	portRanges := make([]policy.PortRange, len(input.DestinationPortRanges))
 	for index, inputRange := range input.DestinationPortRanges {
 		if inputRange.First <= 0 || inputRange.First > math.MaxUint16 ||
@@ -361,7 +371,8 @@ func decodePolicyRuleIntent(
 		DestinationImportedResourceID: destinationImportedResourceID,
 		DestinationSiteID:             destinationSiteID, DestinationPrefixes: destinationPrefixes,
 		DestinationExitPoolID: destinationExitPoolID, DestinationKubernetesClusterID: destinationCluster,
-		Protocol: protocol, DestinationPortRanges: portRanges,
+		KubernetesGroups: kubernetesGroups,
+		Protocol:         protocol, DestinationPortRanges: portRanges,
 	})
 }
 
@@ -421,6 +432,12 @@ func classifyPolicyPublicationError(err error) managementError {
 		return managementError{
 			Status: http.StatusConflict, Code: "route_overlap",
 			Message: "rules grant overlapping prefixes of two Sites; a Device could not tell which router to use",
+		}
+	case errors.Is(err, policypublication.ErrKubernetesGroups):
+		return managementError{
+			Status: http.StatusConflict, Code: "kubernetes_groups_conflict",
+			Message: "a rule to a Kubernetes cluster would lose its Kubernetes groups, " +
+				"or a cluster's rules grant more than 64 groups",
 		}
 	case errors.Is(err, policypublication.ErrKubernetesRule):
 		return kubernetesReplicaRuleError(err)
@@ -484,6 +501,8 @@ func classifyPolicyCompilationError(err error) managementError {
 		}
 	case errors.Is(err, compilation.ErrKubernetesClusterUnavailable):
 		return kubernetesClusterUnavailableError
+	case errors.Is(err, compilation.ErrKubernetesGroupsRequired):
+		return kubernetesGroupsRequiredError
 	case errors.Is(err, compilation.ErrSiteRoutesDisabled):
 		return managementError{
 			Status: http.StatusConflict, Code: "subnet_routes_disabled",
@@ -518,6 +537,13 @@ func resultMatchesPolicyPublication(
 var kubernetesClusterUnavailableError = managementError{
 	Status: http.StatusConflict, Code: "kubernetes_cluster_unavailable",
 	Message: "a rule names a Kubernetes cluster that is not in this Network",
+}
+
+// kubernetesGroupsRequiredError answers a new rule to a cluster that names
+// no Kubernetes group.
+var kubernetesGroupsRequiredError = managementError{
+	Status: http.StatusUnprocessableEntity, Code: "kubernetes_groups_required",
+	Message: "a new rule to a Kubernetes cluster must name the Kubernetes groups it grants",
 }
 
 // kubernetesReplicaRuleError names the rule that reaches one replica of a

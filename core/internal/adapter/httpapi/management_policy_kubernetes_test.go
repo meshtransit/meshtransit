@@ -87,3 +87,42 @@ func TestPolicyRulesToKubernetesClusters(t *testing.T) {
 		t.Fatalf("classify simulation unknown cluster = %+v", unknown)
 	}
 }
+
+// A rule to a cluster names its Kubernetes groups: given ones are decoded,
+// none keeps those it has, an empty list is refused, and a read shows them;
+// the refusals answer with their own codes (K1a3).
+func TestPolicyRulesNameKubernetesGroups(t *testing.T) {
+	t.Parallel()
+	workspaceID, _ := workspace.ParseID("01890f00-0000-7000-8000-000000000101")
+	networkID, _ := network.ParseID("01890f00-0000-7000-8000-000000000201")
+	scope, _ := network.NewScope(workspaceID, networkID)
+	groups := []string{"view", "edit"}
+	input := publishPolicyRuleRequest{
+		ID: "01890f00-0000-7000-8000-000000000801", SourceDeviceGroupID: "01890f00-0000-7000-8000-000000000a01",
+		DestinationKubernetesCluster: "01890f00-0000-7000-8000-000000000f01", Protocol: "tcp",
+		DestinationPortRanges: []publishPolicyPortRangeRequest{{First: 443, Last: 443}},
+		KubernetesGroups:      &groups,
+	}
+	intent, err := decodePolicyRuleIntent(scope, input)
+	if err != nil || strings.Join(intent.KubernetesGroups(), ",") != "edit,view" {
+		t.Fatalf("decodePolicyRuleIntent() = %v, %v", intent.KubernetesGroups(), err)
+	}
+	kept := input
+	kept.KubernetesGroups = nil
+	if intent, err := decodePolicyRuleIntent(scope, kept); err != nil || intent.KubernetesGroups() != nil {
+		t.Fatalf("no groups: %v, %v", intent.KubernetesGroups(), err)
+	}
+	empty := input
+	empty.KubernetesGroups = &[]string{}
+	if _, err := decodePolicyRuleIntent(scope, empty); err == nil {
+		t.Fatal("an empty group list was decoded")
+	}
+	required := classifyPolicyCompilationError(compilation.ErrKubernetesGroupsRequired)
+	if required.Status != http.StatusUnprocessableEntity || required.Code != "kubernetes_groups_required" {
+		t.Fatalf("required = %+v", required)
+	}
+	lost := classifyPolicyPublicationError(policypublication.ErrKubernetesGroups)
+	if lost.Status != http.StatusConflict || lost.Code != "kubernetes_groups_conflict" {
+		t.Fatalf("lost = %+v", lost)
+	}
+}

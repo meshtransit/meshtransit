@@ -9,6 +9,7 @@ import (
 	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/policy"
 	"meshtransit.net/core/internal/domain/policy/compilation"
 	"meshtransit.net/core/internal/domain/policy/publication"
 )
@@ -87,6 +88,28 @@ func (snapshot Snapshot) WithKubernetesClusters(groups []kubecluster.PolicyGroup
 			continue
 		}
 		named, err := row.Intent.WithKubernetesCluster(cluster)
+		if err != nil {
+			return Snapshot{}, ErrInvalidSnapshot
+		}
+		params.Rows[index].Intent = named
+	}
+	return NewSnapshot(params)
+}
+
+// WithKubernetesGroups returns the snapshot with each rule to a Kubernetes
+// cluster naming the groups the release holds for it (K1a3); a rule absent
+// from groups names none. Read after WithKubernetesClusters.
+func (snapshot Snapshot) WithKubernetesGroups(groups map[policy.RuleID][]string) (Snapshot, error) {
+	params := snapshot.params
+	params.Rows = slices.Clone(snapshot.params.Rows)
+	for index, row := range params.Rows {
+		if !row.Intent.DestinationKubernetesClusterID().IsValid() {
+			if _, named := groups[row.Intent.ID()]; named {
+				return Snapshot{}, ErrInvalidSnapshot
+			}
+			continue
+		}
+		named, err := row.Intent.WithKubernetesGroups(groups[row.Intent.ID()])
 		if err != nil {
 			return Snapshot{}, ErrInvalidSnapshot
 		}

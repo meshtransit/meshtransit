@@ -139,8 +139,12 @@ func (baseline Baseline) IsValid() bool {
 		return false
 	}
 	if baseline.hasActiveRelease {
-		return baseline.releaseID.IsValid() && baseline.semanticHash.IsValid() &&
-			baseline.semanticHash == baseline.candidate.SemanticHash() &&
+		// A release a Core before K1a3 published carries Kubernetes groups
+		// the database kept for it, under the hash without them.
+		hashed := baseline.semanticHash == baseline.candidate.SemanticHash() ||
+			baseline.candidate.CoversKubernetesGroups() &&
+				baseline.semanticHash == baseline.candidate.LegacySemanticHash()
+		return baseline.releaseID.IsValid() && baseline.semanticHash.IsValid() && hashed &&
 			baseline.revisionVector.PolicyRevision() > 1
 	}
 	return !baseline.releaseID.IsValid() && !baseline.semanticHash.IsValid() &&

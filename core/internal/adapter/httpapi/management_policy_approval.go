@@ -736,6 +736,10 @@ func policyApprovalDecisionResultMatches(result approval.Result, command approva
 
 func classifyPolicyApprovalError(err error) managementError {
 	switch {
+	case errors.Is(err, compilation.ErrKubernetesGroupsRequired):
+		return kubernetesGroupsRequiredError
+	case errors.Is(err, compilation.ErrKubernetesClusterUnavailable):
+		return kubernetesClusterUnavailableError
 	case errors.Is(err, context.DeadlineExceeded):
 		return managementError{
 			Status: http.StatusGatewayTimeout, Code: "request_timeout",

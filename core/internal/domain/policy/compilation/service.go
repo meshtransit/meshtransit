@@ -15,6 +15,7 @@ import (
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/policy"
 	"meshtransit.net/core/internal/domain/policy/publication"
+	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/domain/resource"
 	"meshtransit.net/core/internal/domain/resource/catalog"
 	"meshtransit.net/core/internal/domain/sharing"
@@ -58,6 +59,23 @@ type KubernetesClusterResolver interface {
 		[]kubecluster.ID) ([]kubecluster.PolicyGroup, error)
 }
 
+// ReleasedClusterRule is a rule to a Kubernetes cluster as a release holds
+// it: the cluster, the source, and the Kubernetes groups, nil for a rule
+// released before K1a3 (its traffic is always TCP 443).
+type ReleasedClusterRule struct {
+	Cluster    kubecluster.ID
+	SourceKind publication.SideKind
+	SourceID   publicid.ID
+	Groups     []string
+}
+
+// KubernetesRuleGroupReader returns the rules to Kubernetes clusters of the
+// scope's release at a policy revision (K1a3).
+type KubernetesRuleGroupReader interface {
+	ReadPolicyKubernetesGroups(context.Context, accountsession.Session, network.Scope,
+		int64) (map[policy.RuleID]ReleasedClusterRule, error)
+}
+
 // SiteResolver returns the active Sites of the scope with the given IDs, as
 // the reader may see them. A missing Site is absent from the result.
 type SiteResolver interface {
@@ -82,6 +100,9 @@ var (
 	// ErrKubernetesClusterUnavailable reports a rule to a Kubernetes cluster
 	// that is not an active cluster of the scope.
 	ErrKubernetesClusterUnavailable = errors.New("policy compilation: Kubernetes cluster unavailable")
+	// ErrKubernetesGroupsRequired reports a new rule to a Kubernetes cluster
+	// that names no Kubernetes group.
+	ErrKubernetesGroupsRequired = errors.New("policy compilation: a new rule to a Kubernetes cluster needs groups")
 )
 
 // Service compiles typed Device, Resource, and Resource Group destinations.
@@ -91,6 +112,21 @@ type Service struct {
 	sites        SiteResolver
 	exitPools    ExitPoolResolver
 	clusters     KubernetesClusterResolver
+	ruleGroups   KubernetesRuleGroupReader
+}
+
+// WithKubernetesRuleGroups returns a compiler that keeps, for a rule to a
+// cluster sent without groups, the groups it has in the release the request
+// replaces, and refuses a new one without groups. Without it a rule keeps
+// only the groups it names, and the database refuses one that would lose
+// some.
+func (service *Service) WithKubernetesRuleGroups(reader KubernetesRuleGroupReader) (*Service, error) {
+	if service == nil || reader == nil {
+		return nil, ErrInvalidRequest
+	}
+	extended := *service
+	extended.ruleGroups = reader
+	return &extended, nil
 }
 
 // WithKubernetesClusters returns a compiler that also compiles rules to
@@ -283,6 +319,7 @@ func (service *Service) Compile(
 		len(importedIDs),
 	)
 	var groupRules []publication.GroupRule
+	keptGroups := service.keptKubernetesGroups(ctx, session, request)
 	for _, intent := range request.rules {
 		destinationNodeID := intent.destinationNodeID
 		if intent.destinationSiteID.IsValid() || intent.destinationExitPoolID.IsValid() {
@@ -293,12 +330,17 @@ func (service *Service) Compile(
 			if err != nil {
 				return publication.Candidate{}, err
 			}
+			groups, err := keptGroups(intent, cluster)
+			if err != nil {
+				return publication.Candidate{}, err
+			}
 			rule, err := publication.NewGroupRule(publication.GroupRuleParams{
 				RuleID: intent.id, SourceNodeID: intent.sourceNodeID, SourceGroupID: intent.sourceGroupID,
 				SourceIdentityGroupID: intent.sourceIdentityGroupID, SourceTagID: intent.sourceTagID,
 				DestinationNodeID: intent.destinationNodeID, DestinationGroupID: destinationGroup,
 				DestinationTagID: intent.destinationTagID, DestinationKubernetesClusterID: cluster,
-				Protocol: intent.protocol, DestinationPortRanges: intent.destinationPortRanges,
+				KubernetesGroups: groups,
+				Protocol:         intent.protocol, DestinationPortRanges: intent.destinationPortRanges,
 			})
 			if err != nil {
 				return publication.Candidate{}, ErrInvalidRequest

@@ -35,6 +35,8 @@ func classifyPolicyPublicationDatabaseError(ctx context.Context, err error) erro
 			return errors.Join(publication.ErrKubernetesRule, err)
 		}
 		return errors.Join(&publication.KubernetesRuleError{RuleID: ruleID}, err)
+	case "MTP07":
+		return errors.Join(publication.ErrKubernetesGroups, err)
 	case "MTS07":
 		return errors.Join(publication.ErrRouteOverlap, err)
 	case "MT003", "MT006", "MT008", "MT009", "MT011", "42501":

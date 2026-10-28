@@ -415,10 +415,23 @@ func (transaction *policyPublicationTransaction) applyLocked(
 	if groupRules, err := encodePolicyGroupRules(change); err != nil {
 		return publication.Result{}, err
 	} else if groupRules != nil {
+		// Attach through _v3 when the schema has it, so a rule that would
+		// lose its Kubernetes groups is refused, not carried; groups the
+		// release was hashed with never go through _v2, which drops them.
+		var aware bool
+		if err := transaction.database.QueryRow(ctx, kubernetesGroupRulesGrantedSQL).Scan(&aware); err != nil {
+			return publication.Result{}, fmt.Errorf("check policy group rule function: %w", err)
+		}
+		attachQuery := attachPolicyGroupRulesSQL
+		if aware {
+			attachQuery = attachKubernetesPolicyGroupRulesSQL
+		} else if command.Candidate().CoversKubernetesGroups() {
+			return publication.Result{}, ErrPolicyPublicationEvidence
+		}
 		var attachedCount int
 		if err := transaction.database.QueryRow(
 			ctx,
-			attachPolicyGroupRulesSQL,
+			attachQuery,
 			change.MutationIDs().ReleaseID().String(),
 			change.OccurredAt(),
 			groupRules,
