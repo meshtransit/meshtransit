@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 241 {
-		t.Fatalf("len(Catalog()) = %d, want 241", len(catalog))
+	if len(catalog) != 242 {
+		t.Fatalf("len(Catalog()) = %d, want 242", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 241 {
-		t.Fatalf("LatestVersion() = %d, want 241", LatestVersion())
+	if LatestVersion() != 242 {
+		t.Fatalf("LatestVersion() = %d, want 242", LatestVersion())
 	}
 }
 
@@ -7192,5 +7192,32 @@ func TestMigration241KubernetesGatewayCertificateQueue(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "set_config('mesh.access_ledger_scan', '', TRUE)") {
 		t.Error("migration 241 clears mesh.access_ledger_scan")
+	}
+}
+
+func TestMigration242MapKubernetesClusterCAs(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 242 || catalog[241].Version != 242 {
+		t.Fatalf("the catalog has no migration 242 (%d migrations)", len(catalog))
+	}
+	migration := catalog[241]
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.load_map_network_kubernetes_cas_v1(p_limit INTEGER)",
+		"mesh_ops.current_workspace_id()",
+		// Withheld while a restore is suspected.
+		"WHERE guard.restore_suspected) THEN\n        RETURN pg_catalog.jsonb_build_object('withheld', TRUE",
+		"ca.kind = 'root' AND ca.state = 'active'",
+		"ca.kind = 'intermediate' AND ca.state = 'active'",
+		// The root named is the signing intermediate's issuer.
+		"LEFT JOIN mesh.kubernetes_cluster_ca AS issuer ON issuer.id = signing.issuer_ca_id",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_map_network_kubernetes_cas_v1(INTEGER) TO mesh_runtime",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 242 lacks %q", want)
+		}
+	}
+	if strings.Contains(migration.SQL, "certificate,") || strings.Contains(migration.SQL, "private_key") {
+		t.Error("migration 242 reads more than fingerprints")
 	}
 }

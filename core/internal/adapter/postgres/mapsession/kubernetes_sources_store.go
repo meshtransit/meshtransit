@@ -9,6 +9,7 @@ import (
 	"time"
 
 	appmapsession "meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/policy"
 )
@@ -182,6 +183,15 @@ func (store *Store) kubernetesView(cached cachedInventory, self node.ID, at time
 	if !listed || !gateway {
 		return appmapsession.KubernetesView{}
 	}
+	// The cluster's CAs come with the inventory, whatever the access
+	// evidence (§7.10).
+	return cached.withKubernetesCA(store.kubernetesAccessView(cached, self, cluster, at, count), cluster)
+}
+
+// kubernetesAccessView computes a gateway replica's peers' Kubernetes
+// access, as kubernetesView says.
+func (store *Store) kubernetesAccessView(cached cachedInventory, self node.ID, cluster kubecluster.Name,
+	at time.Time, count bool) appmapsession.KubernetesView {
 	withheld := func(counter *atomic.Uint64) appmapsession.KubernetesView {
 		if count {
 			counter.Add(1)

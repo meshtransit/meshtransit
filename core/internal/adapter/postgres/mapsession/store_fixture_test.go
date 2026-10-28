@@ -95,7 +95,9 @@ type fakeTransaction struct {
 	// kubernetesSources reports the schema 237 readers as granted when set,
 	// and answers the sources reader; kubernetesRuleGroups answers the
 	// rule groups reader.
-	kubernetesSources    [][]any
+	kubernetesSources [][]any
+	// kubernetesCAs is what schema 242's reader returns; nil: not granted.
+	kubernetesCAs        *string
 	kubernetesRuleGroups [][]any
 }
 
@@ -200,6 +202,10 @@ func (transaction *fakeTransaction) Query(
 		return &grantRows{granted: transaction.kubernetesGateways != nil}, nil
 	case kubernetesSourcesGrantedSQL:
 		return &grantRows{granted: transaction.kubernetesSources != nil}, nil
+	case kubernetesCAsGrantedSQL:
+		return &grantRows{granted: transaction.kubernetesCAs != nil}, nil
+	case loadKubernetesCAsSQL:
+		return &genericRows{rows: [][]any{{*transaction.kubernetesCAs}}}, nil
 	case loadKubernetesSourcesSQL:
 		return &genericRows{rows: transaction.kubernetesSources}, nil
 	case loadKubernetesRuleGroupsSQL:

@@ -143,7 +143,9 @@ func projectAuthorityDelta(
 		}
 	}
 
-	return !equalProjectedConnectivity(current, next, current.NodeID(), true),
+	// The gateway's own entry carries its cluster's CAs (§7.10).
+	return !equalProjectedConnectivity(current, next, current.NodeID(), true) ||
+			current.kubernetes.caChanged(next.kubernetes),
 		changedPeers,
 		removedPeerNumericIDs,
 		nil

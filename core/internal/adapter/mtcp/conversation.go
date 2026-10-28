@@ -420,6 +420,9 @@ func (conversation *conversation) serve(ctx context.Context, nodeKey node.Key, g
 		request = request.WithKubernetes()
 		conversation.sink.confirmFreshness()
 	}
+	if gateway && conversation.session.Supports(CapabilityKubeCert) {
+		request = request.WithKubernetesCA()
+	}
 	var sink mapsession.StreamSink = conversation.sink
 	if gateway {
 		sink = &gatewayStreamSink{mapSink: conversation.sink, conversation: conversation, generation: generation}

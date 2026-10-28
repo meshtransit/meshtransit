@@ -26,6 +26,7 @@ type Request struct {
 	dnsRecords         bool
 	dnsRoot            bool
 	kubernetes         bool
+	kubernetesCA       bool
 	endpointSet        node.EndpointSet
 	hasEndpointSet     bool
 	preferredRelay     int
@@ -128,6 +129,17 @@ func (request Request) WithKubernetes() Request {
 
 // Kubernetes reports whether the session takes its peers' Kubernetes access.
 func (request Request) Kubernetes() bool { return request.kubernetes }
+
+// WithKubernetesCA records that the node is a Kubernetes gateway that reads
+// its cluster's CAs on its own entry (MTCP gateway.cert1, §7.10); the
+// protocol adapter sets it only for a gateway's session.
+func (request Request) WithKubernetesCA() Request {
+	request.kubernetesCA = true
+	return request
+}
+
+// KubernetesCA reports whether the session takes its cluster's CAs.
+func (request Request) KubernetesCA() bool { return request.kubernetesCA }
 
 // WithRelayZones records that the client and Core negotiated relay.zones2:
 // the client hands relays MTT2 tickets and their zone lists, so its relay

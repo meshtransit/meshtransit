@@ -1,6 +1,7 @@
 package mapsession
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -137,5 +138,79 @@ func TestWithheldEvidenceLeavesThePlainPolicy(t *testing.T) {
 		!withheld.policy.Equal(plain.policy) {
 		t.Fatalf("withheld %v, plain %v, equal %v", withheld.kubernetes, plain.kubernetes,
 			withheld.policy.Equal(plain.policy))
+	}
+}
+
+// TestGatewayMapNamesItsClusterCAs: a gateway's map from the shared view
+// names its cluster's root and signing CA when schema 242 is granted; none
+// while a restore is suspected or the reader is missing; both empty for a
+// cluster without CAs (mtcp-v1 §7.10).
+func TestGatewayMapNamesItsClusterCAs(t *testing.T) {
+	root, signing := strings.Repeat("ab", 32), strings.Repeat("cd", 32)
+	for name, test := range map[string]struct {
+		cas     *string
+		known   bool
+		root    bool
+		signing bool
+	}{
+		"named": {cas: pointer(`{"withheld":false,"clusters":[{"name":"kinda-k1","root":"` + root +
+			`","signing":"` + signing + `"}]}`), known: true, root: true, signing: true},
+		"no intermediate": {cas: pointer(`{"withheld":false,"clusters":[{"name":"kinda-k1","root":"` + root +
+			`","signing":null}]}`), known: true, root: true},
+		"no CA yet":         {cas: pointer(`{"withheld":false,"clusters":[]}`), known: true},
+		"restore suspected": {cas: pointer(`{"withheld":true,"clusters":[]}`)},
+		"reader missing":    {},
+		"malformed":         {cas: pointer(`{"withheld":false,"clusters":[{"name":"kinda-k1","root":"ab"}]}`)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store, transaction, _ := gatewayStoreFixture(t)
+			transaction.kubernetesCAs = test.cas
+			loaded, err := store.Load(t.Context(), validIdentity(t))
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			ca, known := loaded.Kubernetes().CA()
+			if known != test.known || (len(ca.Root) == 32) != test.root || (len(ca.Signing) == 32) != test.signing {
+				t.Fatalf("CA() = %+v, %v", ca, known)
+			}
+		})
+	}
+}
+
+func pointer(value string) *string { return &value }
+
+// A gateway.kube.v1 session without gateway.cert1 carries no CAs; its map
+// is still found unchanged when nothing changed (review a3b2 H1), and one
+// with the CAs is too. Withheld and rejected CAs are counted.
+func TestUnchangedGatewayMapWithClusterCAs(t *testing.T) {
+	store, transaction, _ := gatewayStoreFixture(t)
+	transaction.kubernetesCAs = pointer(`{"withheld":false,"clusters":[{"name":"kinda-k1","root":"` +
+		strings.Repeat("ab", 32) + `","signing":"` + strings.Repeat("cd", 32) + `"}]}`)
+	loaded, err := store.Load(t.Context(), validIdentity(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutCA := loaded.WithKubernetes(loaded.Kubernetes().WithoutCA())
+	for name, current := range map[string]appmapsession.Snapshot{"with CAs": loaded, "without CAs": withoutCA} {
+		if unchanged, err := store.Unchanged(t.Context(), current, 0); err != nil || !unchanged {
+			t.Fatalf("%s: Unchanged() = %v, %v", name, unchanged, err)
+		}
+	}
+	for _, test := range []struct {
+		cas                string
+		withheld, rejected uint64
+	}{
+		{`{"withheld":true,"clusters":[]}`, 1, 0},
+		{`{"withheld":false,"clusters":[{"name":"kinda-k1","signing":"` + strings.Repeat("cd", 32) + `"}]}`, 0, 1},
+	} {
+		store, transaction, _ := gatewayStoreFixture(t)
+		transaction.kubernetesCAs = pointer(test.cas)
+		if _, err := store.Load(t.Context(), validIdentity(t)); err != nil {
+			t.Fatal(err)
+		}
+		if stats := store.InventoryStats(); stats.KubernetesCAsWithheld != test.withheld ||
+			stats.KubernetesCAsRejected != test.rejected {
+			t.Fatalf("%s: stats %+v", test.cas, stats)
+		}
 	}
 }

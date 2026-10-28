@@ -185,6 +185,27 @@ func (store *Store) readInventory(
 		if kubernetes, err = store.readsKubernetesSources(ctx, transaction); err != nil {
 			return cachedInventory{}, err
 		}
+		// Gateways' maps name their clusters' CAs (§7.10): read with the
+		// inventory, of its revision.
+		granted, err := store.readsKubernetesCAs(ctx, transaction)
+		if err != nil {
+			return cachedInventory{}, err
+		}
+		if granted {
+			var withheld bool
+			if cached.kubernetesCAs, cached.kubernetesCAsRead, withheld, err = readKubernetesCAs(ctx,
+				transaction); err != nil {
+				return cachedInventory{}, err
+			}
+			// Gateways keep their certificates meanwhile; counted so
+			// operators see that renewing on a CA change is off.
+			switch {
+			case withheld:
+				store.stats.kubernetesCAsWithheld.Add(1)
+			case !cached.kubernetesCAsRead:
+				store.stats.kubernetesCAsRejected.Add(1)
+			}
+		}
 	}
 	cached.policy, cached.kubernetes, err = readNetworkPolicy(ctx, transaction, scope, policyRevision,
 		releaseActive, routes, kubernetes)

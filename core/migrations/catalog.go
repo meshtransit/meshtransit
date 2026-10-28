@@ -614,6 +614,7 @@ func Catalog() []Migration {
 			kubernetesGatewayCertificatesSQL),
 		newMigration(241, "Pod tokens leave the certificate queue at the first claim; Workspaces share it fairly",
 			kubernetesGatewayCertificateQueueSQL),
+		newMigration(242, "A Kubernetes gateway's map names its cluster's root and signing CA", mapKubernetesClusterCAsSQL),
 	}
 }
 
@@ -1116,3 +1117,6 @@ var kubernetesGatewayCertificatesSQL string
 
 //go:embed 000241_kubernetes_gateway_certificate_queue.up.sql
 var kubernetesGatewayCertificateQueueSQL string
+
+//go:embed 000242_map_kubernetes_cluster_cas.up.sql
+var mapKubernetesClusterCAsSQL string

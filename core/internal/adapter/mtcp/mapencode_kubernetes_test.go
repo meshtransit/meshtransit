@@ -1,6 +1,7 @@
 package mtcp
 
 import (
+	"bytes"
 	"fmt"
 	"net/netip"
 	"slices"
@@ -240,5 +241,29 @@ func TestOnlyAGatewaySessionTakesKubernetesAccess(t *testing.T) {
 				t.Fatalf("requests %d, Kubernetes %v", len(requests), len(requests) > 0 && requests[0].Kubernetes())
 			}
 		})
+	}
+}
+
+// A gateway's own entry names its cluster's CAs when known, and carries no
+// kubernetes_ca otherwise (mtcp-v1 §7.10).
+func TestEncodeSnapshotNamesTheGatewaysClusterCAs(t *testing.T) {
+	t.Parallel()
+	scope := snapshotFixture(t, 7).Scope()
+	standard := peerFixture(t, scope, "01890f00-0000-7000-8000-000000000702", 702, "100.64.0.2", 2)
+	root, signing := bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{2}, 32)
+	view := mapsession.KubernetesView{}.WithCA(mapsession.KubernetesCA{Root: root, Signing: signing})
+	message, err := encodeSnapshot(snapshotFixture(t, 7, standard).WithKubernetes(view), &mtcpv1.View{Epoch: 9, Seq: 1},
+		false, nil, dnsname.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca := message.GetSelf().GetKubernetesCa()
+	if ca == nil || !bytes.Equal(ca.GetRootFingerprint(), root) || !bytes.Equal(ca.GetSigningFingerprint(), signing) {
+		t.Fatalf("self.kubernetes_ca = %v", ca)
+	}
+	plain, err := encodeSnapshot(snapshotFixture(t, 7, standard), &mtcpv1.View{Epoch: 9, Seq: 1}, false, nil,
+		dnsname.Default())
+	if err != nil || plain.GetSelf().GetKubernetesCa() != nil {
+		t.Fatalf("a map without CAs: %v, %v", plain.GetSelf().GetKubernetesCa(), err)
 	}
 }

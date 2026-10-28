@@ -133,6 +133,11 @@ func encodeSelf(snapshot mapsession.Snapshot, endpoints endpointFilter,
 			return nil, err
 		}
 	}
+	// A gateway's cluster's CAs (gateway.cert1, §7.10); absent when
+	// unknown, so the gateway keeps its certificate.
+	if ca, known := snapshot.Kubernetes().CA(); known {
+		device.KubernetesCa = &mtcpv1.KubernetesCA{RootFingerprint: ca.Root, SigningFingerprint: ca.Signing}
+	}
 	return device, nil
 }
 

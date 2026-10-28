@@ -1,6 +1,7 @@
 package mapsession
 
 import (
+	"bytes"
 	"maps"
 	"slices"
 	"strings"
@@ -21,6 +22,59 @@ type KubernetesView struct {
 	access    map[node.ID]KubernetesAccess
 	refreshAt time.Time
 	computed  bool
+	// ca is the gateway's cluster's CAs, when caKnown (§7.10): read with
+	// the inventory, apart from the access evidence.
+	ca      KubernetesCA
+	caKnown bool
+}
+
+// KubernetesCA is what a gateway's map names of its cluster's CAs (MTCP
+// §7.10): the SHA-256 of the active root's DER and of the intermediate that
+// signs now, each empty when there is none.
+type KubernetesCA struct {
+	Root, Signing []byte
+}
+
+// Valid reports fingerprints of 32 bytes or none, and no intermediate
+// without a root.
+func (ca KubernetesCA) Valid() bool {
+	return (len(ca.Root) == 0 || len(ca.Root) == 32) && (len(ca.Signing) == 0 || len(ca.Signing) == 32) &&
+		(len(ca.Signing) == 0 || len(ca.Root) == 32)
+}
+
+// Equal compares two CAs by their fingerprints.
+func (ca KubernetesCA) Equal(other KubernetesCA) bool {
+	return bytes.Equal(ca.Root, other.Root) && bytes.Equal(ca.Signing, other.Signing)
+}
+
+// WithCA returns the view with its gateway's cluster's CAs; an invalid one
+// leaves them unknown (the map carries none).
+func (view KubernetesView) WithCA(ca KubernetesCA) KubernetesView {
+	if !ca.Valid() {
+		view.ca, view.caKnown = KubernetesCA{}, false
+		return view
+	}
+	view.ca = KubernetesCA{Root: bytes.Clone(ca.Root), Signing: bytes.Clone(ca.Signing)}
+	view.caKnown = true
+	return view
+}
+
+// WithoutCA returns the view without its cluster's CAs, as a session without
+// gateway.cert1 has it.
+func (view KubernetesView) WithoutCA() KubernetesView {
+	view.ca, view.caKnown = KubernetesCA{}, false
+	return view
+}
+
+// CA returns the gateway's cluster's CAs; false when the map carries none
+// (§7.10 "absent": not read, withheld, or not a gateway.cert1 session).
+func (view KubernetesView) CA() (KubernetesCA, bool) {
+	return KubernetesCA{Root: bytes.Clone(view.ca.Root), Signing: bytes.Clone(view.ca.Signing)}, view.caKnown
+}
+
+// caChanged reports whether two views name other CAs.
+func (view KubernetesView) caChanged(other KubernetesView) bool {
+	return view.caKnown != other.caKnown || !view.ca.Equal(other.ca)
 }
 
 // NewKubernetesView validates and copies one gateway's peer access: every
@@ -83,7 +137,8 @@ func (view KubernetesView) RefreshAt() time.Time { return view.refreshAt }
 // Equal compares what two views put in a map: whether each carries access,
 // and every peer's grants and owner. When they refresh is not part of it.
 func (view KubernetesView) Equal(other KubernetesView) bool {
-	return view.computed == other.computed && maps.EqualFunc(view.access, other.access, equalKubernetesAccess)
+	return view.computed == other.computed && maps.EqualFunc(view.access, other.access, equalKubernetesAccess) &&
+		!view.caChanged(other)
 }
 
 // peerChanged reports whether one peer's access differs between two views.
@@ -124,9 +179,17 @@ func (snapshot Snapshot) WithKubernetes(view KubernetesView) Snapshot {
 // withKubernetesCapability keeps the Kubernetes access only for a session
 // that negotiated gateway.kube.v1 (request.Kubernetes); a map of any other
 // session carries none, and neither its peers' owners.
+// The cluster's CAs stay only for a session that negotiated gateway.cert1
+// (request.KubernetesCA, §7.10).
 func (snapshot Snapshot) withKubernetesCapability(request Request) Snapshot {
+	ca, caKnown := snapshot.kubernetes.ca, snapshot.kubernetes.caKnown
 	if !request.Kubernetes() {
 		snapshot.kubernetes = KubernetesView{}
+	}
+	if request.KubernetesCA() {
+		snapshot.kubernetes.ca, snapshot.kubernetes.caKnown = ca, caKnown
+	} else {
+		snapshot.kubernetes.ca, snapshot.kubernetes.caKnown = KubernetesCA{}, false
 	}
 	return snapshot
 }

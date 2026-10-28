@@ -108,6 +108,9 @@ type Store struct {
 	gatewaysGranted atomic.Bool
 	// kubernetesSourcesGranted: this role may run the schema 237 readers.
 	kubernetesSourcesGranted atomic.Bool
+	// kubernetesCAsGranted: schema 242's reader of clusters' CAs is
+	// granted (probed until it is).
+	kubernetesCAsGranted atomic.Bool
 }
 
 // InventoryStats counts how map snapshots got their candidates.
@@ -160,6 +163,10 @@ type InventoryStats struct {
 	KubernetesWithheldEvidence    uint64
 	KubernetesWithheldDirect      uint64
 	KubernetesWithheldProjections uint64
+	// KubernetesCAsWithheld counts inventory reads whose clusters' CAs were
+	// withheld (a restore suspected); KubernetesCAsRejected those whose
+	// answer could not be trusted (schema 242, mtcp-v1 §7.10).
+	KubernetesCAsWithheld, KubernetesCAsRejected uint64
 }
 
 // policyShadowInterval: one in this many reads that could expand the
@@ -171,7 +178,7 @@ type inventoryStats struct {
 	shared, reads, direct, policyMismatch, derived, unchanged, sharingDeclines, changeReads, changeFallbacks,
 	sharesSkipped, shareRechecks, policiesExpanded, policyShadowChecks, policyCandidates,
 	guardrailCuts, kubernetesWithheldUnread, kubernetesWithheldEvidence, kubernetesWithheldDirect,
-	kubernetesWithheldProjections atomic.Uint64
+	kubernetesWithheldProjections, kubernetesCAsWithheld, kubernetesCAsRejected atomic.Uint64
 }
 
 // InventoryStats returns the counters since the store was built.
@@ -186,7 +193,9 @@ func (store *Store) InventoryStats() InventoryStats {
 		KubernetesWithheldUnread:      store.stats.kubernetesWithheldUnread.Load(),
 		KubernetesWithheldEvidence:    store.stats.kubernetesWithheldEvidence.Load(),
 		KubernetesWithheldDirect:      store.stats.kubernetesWithheldDirect.Load(),
-		KubernetesWithheldProjections: store.stats.kubernetesWithheldProjections.Load()}
+		KubernetesWithheldProjections: store.stats.kubernetesWithheldProjections.Load(),
+		KubernetesCAsWithheld:         store.stats.kubernetesCAsWithheld.Load(),
+		KubernetesCAsRejected:         store.stats.kubernetesCAsRejected.Load()}
 }
 
 // policyMatches checks, for a read that read the Device's own packet policy,

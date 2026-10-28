@@ -188,7 +188,10 @@ func (collector *mapInventoryCollector) Collect(metrics chan<- prometheus.Metric
 	metrics <- prometheus.MustNewConstMetric(collector.policies, prometheus.CounterValue, float64(stats.PolicyShadowChecks), "shadow")
 	for reason, count := range map[string]uint64{"unread": stats.KubernetesWithheldUnread,
 		"evidence": stats.KubernetesWithheldEvidence, "direct": stats.KubernetesWithheldDirect,
-		"projections": stats.KubernetesWithheldProjections} {
+		"projections": stats.KubernetesWithheldProjections,
+		// The clusters' CAs (gateway.cert1, §7.10): withheld while a
+		// restore is suspected, rejected when the answer was unusable.
+		"ca_restore_suspected": stats.KubernetesCAsWithheld, "ca_rejected": stats.KubernetesCAsRejected} {
 		metrics <- prometheus.MustNewConstMetric(collector.withheld, prometheus.CounterValue, float64(count), reason)
 	}
 }

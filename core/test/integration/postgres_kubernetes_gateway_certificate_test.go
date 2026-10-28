@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strconv"
 	"testing"
 	"time"
 
@@ -234,6 +235,7 @@ WHERE purpose = 'cert' AND jti = 'pod-token-1'`).Scan(&uses); err != nil || uses
 
 	assertCertificateLimits(ctx, t, admin, runtime, worker, keys, deviceID, certificate)
 	assertCertificateQueue(ctx, t, admin, runtime, runtimePool, store, worker, fixture, keys, certificate)
+	assertMapKubernetesCAs(ctx, t, admin, runtime, fixture, root, intermediate)
 	assertCertificateLeases(ctx, t, admin, runtime, store, fixture, keys)
 	assertCertificatePrivileges(ctx, t, admin)
 	assertCertificatePruning(ctx, t, admin, store, fixture, first.publicID)
@@ -921,5 +923,51 @@ func assertGuardStamp(ctx context.Context, t *testing.T, admin *pgx.Conn, fixtur
 	}
 	if after := checked(); !after.After(before) {
 		t.Fatalf("the stamp did not move checked_at: %v", after)
+	}
+}
+
+// assertMapKubernetesCAs: schema 242 names, for the map's Network, each
+// active cluster's active root and signing intermediate by SHA-256 of their
+// DER, and withholds them all while a restore is suspected (mtcp-v1 §7.10).
+func assertMapKubernetesCAs(ctx context.Context, t *testing.T, admin, runtime *pgx.Conn, fixture clusterCAFixture,
+	root, intermediate kubeca.StoredCA,
+) {
+	t.Helper()
+	var workspaceID, networkID int64
+	if err := admin.QueryRow(ctx, `SELECT network.workspace_id, network.id FROM mesh.network AS network
+WHERE network.public_id = $1::UUID`, fixture.scope.NetworkID().String()).Scan(&workspaceID, &networkID); err != nil {
+		t.Fatal(err)
+	}
+	read := func() map[string]any {
+		t.Helper()
+		tx, err := runtime.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if _, err := tx.Exec(ctx, `SELECT pg_catalog.set_config('mesh.workspace_id', $1::TEXT, TRUE),
+    pg_catalog.set_config('mesh.network_id', $2::TEXT, TRUE)`, strconv.FormatInt(workspaceID, 10),
+			strconv.FormatInt(networkID, 10)); err != nil {
+			t.Fatal(err)
+		}
+		var encoded string
+		if err := tx.QueryRow(ctx, `SELECT mesh_ops.load_map_network_kubernetes_cas_v1(10)::TEXT`).Scan(
+			&encoded); err != nil {
+			t.Fatalf("read the map's CAs: %v", err)
+		}
+		return decodeCertificateAnswer(t, encoded)
+	}
+	answer := read()
+	clusters, _ := answer["clusters"].([]any)
+	rootPrint, signingPrint := sha256.Sum256(root.Certificate), sha256.Sum256(intermediate.Certificate)
+	found := false
+	for _, entry := range clusters {
+		cluster, _ := entry.(map[string]any)
+		if cluster["root"] == hex.EncodeToString(rootPrint[:]) {
+			found = cluster["signing"] == hex.EncodeToString(signingPrint[:])
+		}
+	}
+	if answer["withheld"] != false || !found {
+		t.Fatalf("the map's CAs: %v", answer)
 	}
 }

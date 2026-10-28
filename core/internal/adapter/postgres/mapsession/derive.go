@@ -148,8 +148,13 @@ func (store *Store) Unchanged(ctx context.Context, current appmapsession.Snapsho
 	if unchanged && current.Kubernetes().Computed() {
 		now := cached.databaseNow()
 		refreshAt := current.Kubernetes().RefreshAt()
-		unchanged = (refreshAt.IsZero() || now.Before(refreshAt)) &&
-			store.kubernetesView(cached, current.NodeID(), now, false).Equal(current.Kubernetes())
+		view := store.kubernetesView(cached, current.NodeID(), now, false)
+		if _, known := current.Kubernetes().CA(); !known {
+			// A session without gateway.cert1 carries no CAs (review a3b2
+			// H1); the same revision and inventory hold the same CAs.
+			view = view.WithoutCA()
+		}
+		unchanged = (refreshAt.IsZero() || now.Before(refreshAt)) && view.Equal(current.Kubernetes())
 	}
 	if unchanged {
 		store.stats.unchanged.Add(1)

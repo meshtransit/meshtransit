@@ -7,6 +7,7 @@ import (
 
 	appmapsession "meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
 )
 
@@ -52,6 +53,10 @@ type cachedInventory struct {
 	// carries what their maps need (K1a3b) when kubernetes says it was read.
 	clusters   bool
 	kubernetes kubernetesEvidence
+	// kubernetesCAs are the Network's clusters' root and signing CAs
+	// (schema 242), when kubernetesCAsRead.
+	kubernetesCAs     map[kubecluster.Name]appmapsession.KubernetesCA
+	kubernetesCAsRead bool
 }
 
 // sharesAbsent reports whether no share reader can return anything for the
