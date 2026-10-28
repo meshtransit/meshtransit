@@ -354,7 +354,7 @@ WHERE workspace_id = 103 AND network_id = 203 ORDER BY id LIMIT 1`).Scan(&heldMa
 	assertGatewaySessionProof(ctx, t, admin, runtime, runtimePool, first, gatewayDevice)
 	assertGatewayRotationTokens(ctx, t, admin, runtime, first, gatewayDevice)
 	assertJoinTrust(ctx, t, admin, service, store, owner, scope, clusterID, first)
-	assertGatewayMachineKeyRotation(ctx, t, admin, runtime, runtimePool, first, gatewayDevice)
+	gatewayKeys := assertGatewayMachineKeyRotation(ctx, t, admin, runtime, runtimePool, first, gatewayDevice)
 	assertGatewayKeyEvents(ctx, t, admin, runtimePool, service, owner, scope, clusterID, gatewayDevice)
 	assertGatewayTokenAuditAndSigning(ctx, t, admin, runtime, runtimePool, service, owner, custom, scope,
 		clusterID, gatewayDevice)
@@ -364,7 +364,8 @@ WHERE workspace_id = 103 AND network_id = 203 ORDER BY id LIMIT 1`).Scan(&heldMa
 	assertKubernetesGatewaySources(ctx, t, admin, scope)
 	assertMapListsKubernetesGateways(ctx, t, admin, scope, gatewayDevice, "prod")
 	assertMapMarksKubernetesReplicas(ctx, t, admin, runtimePool, scope, gatewayDevice, "prod")
-	assertKubernetesClusterCAs(ctx, t, admin, worker, workerPool, service, owner, scope, clusterID)
+	caFixture := assertKubernetesClusterCAs(ctx, t, admin, worker, workerPool, service, owner, scope, clusterID)
+	assertGatewayCertificates(ctx, t, admin, runtime, workerPool, caFixture, gatewayKeys, gatewayDevice)
 
 	// A second replica: its own code does not approve the first's request,
 	// and it is rejected.
@@ -663,15 +664,17 @@ FOR EACH ROW EXECUTE FUNCTION mesh_ops.refuse_kubernetes_gateway_reference_v1('d
 func assertGatewayReferenceCoverage(ctx context.Context, t *testing.T, admin *pgx.Conn) {
 	t.Helper()
 	exempt := map[string]string{
-		"mesh.device_alias_client_version": "what its client supports, reported on every map open",
-		"mesh.device_dns_label":            "the Device's own mesh name, written when it is created",
-		"mesh.device_machine_key_epoch":    "a gateway has key epochs like any Device",
-		"mesh.device_node_key_epoch":       "a gateway has key epochs like any Device",
-		"mesh.enrollment_credential_use":   "a gateway uses its join key like any Device",
-		"mesh.node_address_lease":          "a gateway has addresses like any Device",
-		"mesh.pending_registration":        "registration bookkeeping",
-		"mesh.kubernetes_replica_request":  "the request that created the gateway",
-		"mesh.device_owner_change":         "when a Device changed owner, written by a trigger only; a gateway never does",
+		"mesh.device_alias_client_version":                "what its client supports, reported on every map open",
+		"mesh.device_dns_label":                           "the Device's own mesh name, written when it is created",
+		"mesh.device_machine_key_epoch":                   "a gateway has key epochs like any Device",
+		"mesh.device_node_key_epoch":                      "a gateway has key epochs like any Device",
+		"mesh.enrollment_credential_use":                  "a gateway uses its join key like any Device",
+		"mesh.node_address_lease":                         "a gateway has addresses like any Device",
+		"mesh.pending_registration":                       "registration bookkeeping",
+		"mesh.kubernetes_replica_request":                 "the request that created the gateway",
+		"mesh.device_owner_change":                        "when a Device changed owner, written by a trigger only; a gateway never does",
+		"mesh.kubernetes_gateway_certificate":             "a gateway's own certificates",
+		"mesh_ops.kubernetes_gateway_certificate_request": "a gateway's own certificate requests",
 	}
 	rows, err := admin.Query(ctx, `SELECT DISTINCT constraint_row.conrelid::REGCLASS::TEXT
 FROM pg_catalog.pg_constraint AS constraint_row

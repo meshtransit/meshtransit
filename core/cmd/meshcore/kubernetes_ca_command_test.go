@@ -29,6 +29,15 @@ func TestParseKubernetesCAArguments(t *testing.T) {
 		{"status --workspace=x --network=y", false},
 		{"rename " + scope + operator, false},
 		{"status " + scope + " extra", false},
+		// The restore commands act on the whole installation.
+		{"guard", true},
+		{"mark-restored" + operator, true},
+		{"reconcile-after-restore" + operator, true},
+		{"guard" + operator, false},
+		{"mark-restored", false},
+		{"reconcile-after-restore " + scope + operator, false},
+		{"mark-restored" + operator + ca, false},
+		{"mark-restored --actor=meshcore-worker --change-ref=restore-tripwire", false},
 	} {
 		if _, ok := parseKubernetesCAArguments(strings.Fields(test.args)); ok != test.ok {
 			t.Errorf("%q: ok = %v", test.args, ok)

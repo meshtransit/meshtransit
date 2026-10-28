@@ -18,6 +18,7 @@ import (
 	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/control/rebalance"
 	"meshtransit.net/core/internal/domain/enrollment"
+	"meshtransit.net/core/internal/domain/kubeca/lifecycle"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/network/revisionworker"
 	"meshtransit.net/core/internal/domain/relay"
@@ -271,14 +272,20 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		roleServices = append(roleServices, app.OwnedService{Name: "access-ledger-worker", Service: workerService})
 	}
 	if processConfig.KubernetesCAWorker != nil {
-		workerService, workerMetrics, composeErr := composeKubernetesCAWorker(*processConfig.KubernetesCAWorker,
-			processConfig.DNSSuffix, storagePools.worker, logger)
+		var marks lifecycle.MarkKeeper
+		if redisClient != nil {
+			marks = redisClient
+		}
+		workers, composeErr := composeKubernetesCAWorker(*processConfig.KubernetesCAWorker,
+			processConfig.DNSSuffix, storagePools.worker, marks, logger)
 		if composeErr != nil {
 			logger.ErrorContext(ctx, "startup failed", "error_code", "kubernetes_ca_worker_composition_failure")
 			return 1
 		}
-		additionalMetrics = append(additionalMetrics, workerMetrics)
-		roleServices = append(roleServices, app.OwnedService{Name: "kubernetes-ca-worker", Service: workerService})
+		additionalMetrics = append(additionalMetrics, workers.metrics...)
+		roleServices = append(roleServices,
+			app.OwnedService{Name: "kubernetes-ca-worker", Service: workers.lifecycle},
+			app.OwnedService{Name: "kubernetes-certificate-signer", Service: workers.signer})
 	}
 	if processConfig.EnforcementLedgerWorker != nil {
 		workerService, workerMetrics, composeErr := composeEnforcementLedgerWorker(

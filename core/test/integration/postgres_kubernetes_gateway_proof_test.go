@@ -284,8 +284,9 @@ func assertGatewayMapThroughCore(ctx context.Context, t *testing.T, runtimePool 
 // assertGatewayMachineKeyRotation checks schema 227 through Core's store: the
 // gateway moves to a new machine key, the former one is retired and opens
 // nothing, no key is used twice, and 30 keys an hour is the limit.
+// It returns the gateway's keys after the rotations it committed.
 func assertGatewayMachineKeyRotation(ctx context.Context, t *testing.T, admin, runtime *pgx.Conn,
-	runtimePool *postgresadapter.Pool, keys replicaKeys, deviceID string) {
+	runtimePool *postgresadapter.Pool, keys replicaKeys, deviceID string) replicaKeys {
 	t.Helper()
 	store, err := postgresadapter.NewKubernetesGatewayKeyStore(runtimePool, postgresadapter.RegistrationTransactionOptions{
 		StatementTimeout: 5 * time.Second, LockTimeout: 2 * time.Second, IdleTimeout: 5 * time.Second,
@@ -403,7 +404,8 @@ SELECT $1, device.id, pg_catalog.now(), pg_catalog.now() FROM mesh.device AS dev
 	if err := rotate(former, newReplicaKeys(t).machine); !errors.Is(err, kubecluster.ErrNotFound) {
 		t.Fatalf("the former machine key with the token: %v", err)
 	}
-	assertGatewayNodeKeyRotation(ctx, t, runtimePool, current, keys.node, token)
+	return replicaKeys{machine: current, node: assertGatewayNodeKeyRotation(ctx, t, runtimePool, current, keys.node,
+		token)}
 }
 
 // assertGatewayNodeKeyRotation checks schema 232 on the shared node key
@@ -411,7 +413,7 @@ SELECT $1, device.id, pg_catalog.now(), pg_catalog.now() FROM mesh.device AS dev
 // the rotation's transaction, and a repeat of a committed rotation succeeds
 // without another use.
 func assertGatewayNodeKeyRotation(ctx context.Context, t *testing.T, runtimePool *postgresadapter.Pool,
-	machineKey node.MachineKey, nodeKey node.Key, token node.GatewayToken) {
+	machineKey node.MachineKey, nodeKey node.Key, token node.GatewayToken) node.Key {
 	t.Helper()
 	service := newIntegrationNodeKeyRotationService(t, runtimePool)
 	next := newReplicaKeys(t).node
@@ -447,6 +449,7 @@ func assertGatewayNodeKeyRotation(ctx context.Context, t *testing.T, runtimePool
 	if _, err := service.Rotate(ctx, command("000000000a02", true, next)); err != nil {
 		t.Fatalf("a repeat of the committed rotation: %v", err)
 	}
+	return next
 }
 
 func mustRegistrationID(t *testing.T, suffix string) enrollment.RegistrationID {

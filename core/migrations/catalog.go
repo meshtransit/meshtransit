@@ -610,6 +610,8 @@ func Catalog() []Migration {
 			kubernetesClusterCASQL),
 		newMigration(239, "Kubernetes clusters get a root and short-lived intermediates; data keys can be wrapped again",
 			kubernetesClusterCATwoTierSQL),
+		newMigration(240, "The worker signs Kubernetes gateway certificates; CA work stops after a database restore",
+			kubernetesGatewayCertificatesSQL),
 	}
 }
 
@@ -1106,3 +1108,6 @@ var kubernetesClusterCASQL string
 
 //go:embed 000239_kubernetes_cluster_ca_two_tier.up.sql
 var kubernetesClusterCATwoTierSQL string
+
+//go:embed 000240_kubernetes_gateway_certificates.up.sql
+var kubernetesGatewayCertificatesSQL string

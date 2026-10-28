@@ -50,9 +50,27 @@ type fakeStore struct {
 	planErr   error
 	readErr   error
 	busy      bool
+	guard     kubeca.Guard
+	marked    []kubeca.Operator
+	listed    int
+}
+
+func (store *fakeStore) ReadGuard(context.Context, deployment.ID) (kubeca.Guard, error) {
+	guard := store.guard
+	if guard.Generation == 0 {
+		guard.Generation, guard.ReadStarted, guard.ReadFinished = 1, time.Now(), time.Now()
+	}
+	return guard, nil
+}
+
+func (store *fakeStore) MarkRestored(_ context.Context, _ deployment.ID, operator kubeca.Operator) error {
+	store.marked = append(store.marked, operator)
+	store.guard.Suspected = true
+	return nil
 }
 
 func (store *fakeStore) ListDue(context.Context, deployment.ID, int) ([]network.Scope, error) {
+	store.listed++
 	return []network.Scope{store.scope}, nil
 }
 
@@ -425,5 +443,52 @@ func TestWorkerKeepsClustersOneByOneAfterAFailure(t *testing.T) {
 	}
 	if snapshot := worker.Snapshot(); snapshot.Failures != 1 || store.postponed != 0 {
 		t.Fatalf("snapshot %+v, postponed %d", snapshot, store.postponed)
+	}
+}
+
+// regressingMarks reports the database below its marks.
+type regressingMarks struct {
+	regressed bool
+	err       error
+	compared  []kubeca.Guard
+}
+
+func (marks *regressingMarks) Compare(_ context.Context, _ deployment.ID, guard kubeca.Guard) (bool, error) {
+	marks.compared = append(marks.compared, guard)
+	return marks.regressed, marks.err
+}
+
+func TestWorkerStopsAfterARestore(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string]struct {
+		suspected bool
+		marks     *regressingMarks
+		marked    int
+		suspect   bool
+	}{
+		"an operator marked the restore":        {suspected: true, suspect: true},
+		"the marks show the database went back": {marks: &regressingMarks{regressed: true}, marked: 1, suspect: true},
+		"the marks cannot be read":              {marks: &regressingMarks{err: errors.New("redis")}},
+		"no restore":                            {marks: &regressingMarks{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			store := &fakeStore{scope: testScope(t), matched: true}
+			store.guard = kubeca.Guard{Suspected: test.suspected, Generation: 1, ReadStarted: time.Now(), ReadFinished: time.Now()}
+			worker := testWorker(t, store, func(context.Context) (kubeca.Custody, string, error) {
+				return sealingCustody{}, "file", nil
+			})
+			if test.marks != nil {
+				worker.options.Marks = test.marks
+			}
+			worker.Pass(t.Context())
+			if snapshot := worker.Snapshot(); snapshot.RestoreSuspected != test.suspect ||
+				len(store.marked) != test.marked || (store.listed == 0) != test.suspect {
+				t.Fatalf("snapshot %+v, marked %v, listed %d", snapshot, store.marked, store.listed)
+			}
+			if test.marked == 1 && (store.marked[0].IsWorker() || !store.marked[0].Valid()) {
+				t.Fatalf("marked by %+v", store.marked[0])
+			}
+		})
 	}
 }

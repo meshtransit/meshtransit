@@ -197,6 +197,7 @@ user meshcore on >PASSWORD resetkeys resetchannels
   ~meshtransit:v1:dns-index:*
   ~meshtransit:v1:ratelimit:management:*
   ~meshtransit:v1:control:replicas
+  ~meshtransit:v1:kubeca:*
   &meshtransit:v1:wakeup:network_revision_advanced
   &meshtransit:v1:wakeup:connectivity_changed
   &meshtransit:v1:wakeup:site_health_failed

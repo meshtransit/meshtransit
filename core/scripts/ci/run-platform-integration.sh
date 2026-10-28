@@ -366,6 +366,7 @@ docker exec --detach --user redis "${redis_container}" redis-server \
 	"+hscan" "+zadd" "+zrem" "+zcount" "+zremrangebyscore" \
 	"~meshtransit:v1:presence:node:*" \
 	"~meshtransit:v1:control:replicas" \
+	"~meshtransit:v1:kubeca:*" \
 	"~meshtransit:v1:endpoints:node:*" \
 	"~meshtransit:v1:delivery:node:*" \
 	"~meshtransit:v1:site-selection:*" \

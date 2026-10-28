@@ -6,31 +6,48 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
 	"meshtransit.net/core/internal/adapter/httpapi"
 	"meshtransit.net/core/internal/adapter/kubecustody"
+	"meshtransit.net/core/internal/adapter/kubetoken"
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/kubeca"
 	"meshtransit.net/core/internal/domain/kubeca/lifecycle"
+	"meshtransit.net/core/internal/domain/kubeca/signing"
 	"meshtransit.net/core/internal/platform/app"
 	"meshtransit.net/core/internal/platform/buildinfo"
 	"meshtransit.net/core/internal/platform/config"
+	"meshtransit.net/shared/kubejoin"
+	"meshtransit.net/shared/mtcp"
 )
 
 var errInvalidKubernetesCAWorkerComposition = errors.New("invalid Kubernetes CA worker composition")
 
+// kubernetesCAWorkers are the worker's two Kubernetes CA services: the
+// lifecycle of the CAs, and the signing of gateway certificates (a3).
+type kubernetesCAWorkers struct {
+	lifecycle *lifecycle.Worker
+	signer    *signing.Worker
+	metrics   []prometheus.Collector
+}
+
 func composeKubernetesCAWorker(settings config.KubernetesCAWorkerConfig, suffix dnsname.Suffix,
-	pool *postgresadapter.Pool, logger *slog.Logger,
-) (*lifecycle.Worker, prometheus.Collector, error) {
-	if pool == nil || logger == nil || !suffix.IsValid() {
-		return nil, nil, errInvalidKubernetesCAWorkerComposition
+	pool *postgresadapter.Pool, marks lifecycle.MarkKeeper, logger *slog.Logger,
+) (kubernetesCAWorkers, error) {
+	if pool == nil || marks == nil || logger == nil || !suffix.IsValid() {
+		return kubernetesCAWorkers{}, errInvalidKubernetesCAWorkerComposition
 	}
 	store, err := postgresadapter.NewKubernetesClusterCAStore(pool)
 	if err != nil {
-		return nil, nil, errors.Join(errInvalidKubernetesCAWorkerComposition, err)
+		return kubernetesCAWorkers{}, errors.Join(errInvalidKubernetesCAWorkerComposition, err)
+	}
+	certificates, err := postgresadapter.NewKubernetesGatewayCertificateStore(pool)
+	if err != nil {
+		return kubernetesCAWorkers{}, errors.Join(errInvalidKubernetesCAWorkerComposition, err)
 	}
 	version := buildinfo.Current().Version
 	if version == "" {
@@ -39,16 +56,56 @@ func composeKubernetesCAWorker(settings config.KubernetesCAWorkerConfig, suffix 
 	worker, err := lifecycle.New(lifecycle.Options{
 		DeploymentID: settings.DeploymentID, Suffix: suffix, BatchSize: settings.BatchSize,
 		PollInterval: settings.PollInterval, OperationTimeout: settings.OperationTimeout, Version: version,
-		Policy: lifecycle.DefaultPolicy(),
+		Policy: lifecycle.DefaultPolicy(), Marks: marks,
 	}, store, fileCustodySource(settings), logger)
 	if err != nil {
-		return nil, nil, errors.Join(errInvalidKubernetesCAWorkerComposition, err)
+		return kubernetesCAWorkers{}, errors.Join(errInvalidKubernetesCAWorkerComposition, err)
 	}
-	metrics, err := httpapi.NewKubernetesCAWorkerMetricsCollector(worker)
+	signer, err := signing.New(signing.Options{
+		DeploymentID: settings.DeploymentID, Suffix: suffix, Version: version,
+		BatchSize: kubernetesCertificateBatch, OperationTimeout: settings.OperationTimeout,
+		MaximumPerSecond: kubernetesCertificatesPerSecond,
+	}, certificates, fileCustodySource(settings), verifyGatewayCertificateToken, mtcp.VerifyKubeCertRenewal, logger)
 	if err != nil {
-		return nil, nil, errors.Join(errInvalidKubernetesCAWorkerComposition, err)
+		return kubernetesCAWorkers{}, errors.Join(errInvalidKubernetesCAWorkerComposition, err)
 	}
-	return worker, metrics, nil
+	lifecycleMetrics, err := httpapi.NewKubernetesCAWorkerMetricsCollector(worker)
+	if err != nil {
+		return kubernetesCAWorkers{}, errors.Join(errInvalidKubernetesCAWorkerComposition, err)
+	}
+	signerMetrics, err := httpapi.NewKubernetesCertificateSignerMetricsCollector(signer)
+	if err != nil {
+		return kubernetesCAWorkers{}, errors.Join(errInvalidKubernetesCAWorkerComposition, err)
+	}
+	return kubernetesCAWorkers{
+		lifecycle: worker, signer: signer, metrics: []prometheus.Collector{lifecycleMetrics, signerMetrics},
+	}, nil
+}
+
+const (
+	// kubernetesCertificateBatch is how many requests one claim takes.
+	kubernetesCertificateBatch = 8
+	// kubernetesCertificatesPerSecond bounds the signing rate of one worker
+	// process (§4).
+	kubernetesCertificatesPerSecond = 100
+)
+
+// verifyGatewayCertificateToken checks a certificate request's pod token
+// against its cluster's signing trust and the pod the Device's join named,
+// as a key rotation's (K1.1 §7.3).
+func verifyGatewayCertificateToken(raw string, trust signing.Trust, now time.Time) (signing.TokenUse, error) {
+	jwks, err := kubejoin.ParseJWKS(trust.JWKS)
+	if err != nil {
+		return signing.TokenUse{}, err
+	}
+	claims, err := kubetoken.Verify(raw, kubetoken.Expectation{
+		Issuer: trust.Issuer, JWKS: jwks, Namespace: trust.Namespace, ServiceAccount: trust.ServiceAccount,
+		PodName: trust.PodName,
+	}, now)
+	if err != nil {
+		return signing.TokenUse{}, err
+	}
+	return signing.TokenUse{JTI: claims.JTI, ExpiresAt: claims.Expiry, PodName: claims.PodName}, nil
 }
 
 // fileCustodySource reads the wrap key and the previous ones each time the
@@ -96,4 +153,7 @@ func readWrapKey(file config.SecretFile) (kubeca.DataKey, error) {
 	return key, nil
 }
 
-var _ app.Service = (*lifecycle.Worker)(nil)
+var (
+	_ app.Service = (*lifecycle.Worker)(nil)
+	_ app.Service = (*signing.Worker)(nil)
+)

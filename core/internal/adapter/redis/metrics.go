@@ -40,6 +40,7 @@ const (
 	redisCommandLoadSiteSelection    redisCommand = "site_selection_load"
 	redisCommandLoadDNSIndex         redisCommand = "dns_index_load"
 	redisCommandReplicaLoad          redisCommand = "replica_load"
+	redisCommandKubernetesCAMarks    redisCommand = "kubernetes_ca_marks"
 )
 
 var redisCommands = [...]redisCommand{
@@ -72,6 +73,7 @@ var redisCommands = [...]redisCommand{
 	redisCommandLoadSiteSelection,
 	redisCommandLoadDNSIndex,
 	redisCommandReplicaLoad,
+	redisCommandKubernetesCAMarks,
 }
 
 // endpointAnnouncementOutcomes is the closed set of what an endpoint

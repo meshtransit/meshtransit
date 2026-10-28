@@ -52,11 +52,19 @@ type Store interface {
 	Read(ctx context.Context, installation deployment.ID, scope network.Scope) (kubeca.Network, error)
 	Change(ctx context.Context, installation deployment.ID, scope network.Scope,
 		plan func(kubeca.Network) (kubeca.Changes, error)) (bool, error)
+	ReadGuard(ctx context.Context, installation deployment.ID) (kubeca.Guard, error)
+	MarkRestored(ctx context.Context, installation deployment.ID, operator kubeca.Operator) error
 	AddDataKey(ctx context.Context, installation deployment.ID, scope network.Scope, id publicid.ID,
 		wrapped kubeca.WrappedKey, operator kubeca.Operator) (bool, error)
 	Postpone(ctx context.Context, installation deployment.ID, scope network.Scope, until time.Time) (bool, error)
 	Beat(ctx context.Context, installation deployment.ID, instance publicid.ID, ready bool, version, custody string,
 		capabilities []string) (time.Time, error)
+}
+
+// MarkKeeper keeps the guard's marks outside the database (Redis) and says
+// whether the database went back below them (a3 §5).
+type MarkKeeper interface {
+	Compare(ctx context.Context, installation deployment.ID, guard kubeca.Guard) (bool, error)
 }
 
 // CustodySource builds the worker's custody, reading its keys: it may fail
@@ -73,6 +81,8 @@ type Options struct {
 	OperationTimeout time.Duration
 	Version          string
 	Policy           Policy
+	// Marks is optional: without it only an operator's mark stops CA work.
+	Marks MarkKeeper
 }
 
 func (options Options) valid() bool {
@@ -84,7 +94,8 @@ func (options Options) valid() bool {
 
 // Measurements are identifier-free counts for metrics.
 type Measurements struct {
-	Running, CustodyReady, SuffixMismatch                     bool
+	Running, CustodyReady, SuffixMismatch, RestoreSuspected   bool
+	MarksUnavailable                                          bool
 	Passes, Networks, Changed, PlanChanged, Failures, Created uint64
 	Moved, Misnamed, Busy                                     uint64
 }
@@ -109,7 +120,8 @@ type Worker struct {
 	cancel  context.CancelFunc
 	done    chan error
 
-	running, custodyReady, suffixMismatch                   atomic.Bool
+	running, custodyReady, suffixMismatch, restoreSuspected atomic.Bool
+	marksUnavailable                                        atomic.Bool
 	passes, networks, changed, planChanged, failures, moved atomic.Uint64
 	created, misnamed, busy                                 atomic.Uint64
 }
@@ -190,7 +202,9 @@ func (worker *Worker) Snapshot() Measurements {
 	}
 	return Measurements{
 		Running: worker.running.Load(), CustodyReady: worker.custodyReady.Load(),
-		SuffixMismatch: worker.suffixMismatch.Load(), Passes: worker.passes.Load(), Networks: worker.networks.Load(),
+		SuffixMismatch: worker.suffixMismatch.Load(), RestoreSuspected: worker.restoreSuspected.Load(),
+		MarksUnavailable: worker.marksUnavailable.Load(),
+		Passes:           worker.passes.Load(), Networks: worker.networks.Load(),
 		Changed: worker.changed.Load(), PlanChanged: worker.planChanged.Load(), Failures: worker.failures.Load(),
 		Created: worker.created.Load(), Moved: worker.moved.Load(), Misnamed: worker.misnamed.Load(),
 		Busy: worker.busy.Load(),
@@ -221,7 +235,7 @@ func (worker *Worker) Pass(ctx context.Context) {
 	worker.loadCustody(ctx)
 	worker.forgetStaleBackoff()
 	worker.beat(ctx)
-	if !worker.claimSuffix(ctx) {
+	if worker.guarded(ctx) || !worker.claimSuffix(ctx) {
 		return
 	}
 	limit := min(maximumBatchSize, worker.options.BatchSize+len(worker.backoff))
@@ -250,6 +264,45 @@ func (worker *Worker) Pass(ctx context.Context) {
 		stop()
 		worker.settle(ctx, scope, err)
 	}
+}
+
+// guarded reports CA work stopped: a restore is suspected (an operator
+// marked it, or the marks kept outside the database show it went back), or
+// the guard cannot be read. A mark that cannot be compared stops nothing:
+// Redis is never the authority (§5).
+func (worker *Worker) guarded(ctx context.Context) bool {
+	readCtx, cancel := context.WithTimeout(ctx, worker.options.OperationTimeout)
+	defer cancel()
+	guard, err := worker.store.ReadGuard(readCtx, worker.options.DeploymentID)
+	if err != nil || !guard.Valid() {
+		if ctx.Err() == nil {
+			worker.logger.WarnContext(ctx, "kubernetes CA work deferred", "error_code", "kubernetes_ca_guard_read_failed")
+		}
+		return true
+	}
+	if !guard.Suspected && worker.options.Marks != nil {
+		regressed, err := worker.options.Marks.Compare(readCtx, worker.options.DeploymentID, guard)
+		// Marks that cannot be compared (no Redis, a missing ACL) turn the
+		// tripwire off: counted, never a stop (review a3a L).
+		worker.marksUnavailable.Store(err != nil)
+		switch {
+		case err != nil:
+			worker.logger.WarnContext(ctx, "kubernetes CA restore marks unavailable", "error_code",
+				"kubernetes_ca_marks_unavailable")
+		case regressed:
+			if err := worker.store.MarkRestored(readCtx, worker.options.DeploymentID, kubeca.TripwireOperator); err != nil {
+				worker.logger.ErrorContext(ctx, "kubernetes CA restore not recorded", "error_code",
+					"kubernetes_ca_guard_mark_failed")
+			}
+			guard.Suspected = true
+		}
+	}
+	worker.restoreSuspected.Store(guard.Suspected)
+	if guard.Suspected {
+		worker.logger.ErrorContext(ctx, "kubernetes CA work stopped: database restore suspected", "error_code",
+			"kubernetes_ca_restore_suspected")
+	}
+	return guard.Suspected
 }
 
 // settle records how keeping a Network went: a failure backs it off and
@@ -347,7 +400,8 @@ func (worker *Worker) forgetStaleBackoff() {
 }
 
 // beat tells control this worker is alive and what it does. It signs
-// nothing yet, so it is never ready to sign (a3 adds signing).
+// nothing itself, so it is never ready to sign: the signing worker beats as
+// its own instance (a3).
 func (worker *Worker) beat(ctx context.Context) {
 	custody := worker.custodyKind
 	if custody == "" {

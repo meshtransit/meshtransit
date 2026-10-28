@@ -27,6 +27,13 @@ import (
 // audit trail.
 var kubernetesCAOperations = map[string]bool{
 	"status": false, "rewrap": true, "rotate-data-key": true, "retire-ca": true,
+	"guard": false, "mark-restored": true, "reconcile-after-restore": true,
+}
+
+// kubernetesCAInstallationOperations act on the whole installation, not on
+// one Network (a3 §5).
+var kubernetesCAInstallationOperations = map[string]bool{
+	"guard": true, "mark-restored": true, "reconcile-after-restore": true,
 }
 
 type kubernetesCAArguments struct {
@@ -56,17 +63,28 @@ func parseKubernetesCAArguments(args []string) (kubernetesCAArguments, bool) {
 	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 {
 		return kubernetesCAArguments{}, false
 	}
+	arguments := kubernetesCAArguments{
+		operation: args[0], reason: kubeca.Reason(*reason),
+		operator: kubeca.Operator{Name: *actor, ChangeRef: *changeRef},
+	}
+	// The worker's tripwire name is its own (review a3a L).
+	if !arguments.operator.Valid() || changes == arguments.operator.IsWorker() ||
+		arguments.operator.Name == kubeca.TripwireOperator.Name {
+		return kubernetesCAArguments{}, false
+	}
+	if kubernetesCAInstallationOperations[arguments.operation] {
+		if *workspaceID != "" || *networkID != "" || *caID != "" || *reason != "" {
+			return kubernetesCAArguments{}, false
+		}
+		return arguments, true
+	}
 	parsedWorkspace, workspaceErr := workspace.ParseID(*workspaceID)
 	parsedNetwork, networkErr := network.ParseID(*networkID)
 	scope, scopeErr := network.NewScope(parsedWorkspace, parsedNetwork)
-	arguments := kubernetesCAArguments{
-		operation: args[0], scope: scope, reason: kubeca.Reason(*reason),
-		operator: kubeca.Operator{Name: *actor, ChangeRef: *changeRef},
-	}
-	if workspaceErr != nil || networkErr != nil || scopeErr != nil || !arguments.operator.Valid() ||
-		changes == arguments.operator.IsWorker() {
+	if workspaceErr != nil || networkErr != nil || scopeErr != nil {
 		return kubernetesCAArguments{}, false
 	}
+	arguments.scope = scope
 	if arguments.operation == "retire-ca" {
 		ca, err := publicid.Parse(*caID)
 		if err != nil || *reason == "" {
@@ -133,6 +151,28 @@ func kubernetesCAOperation(ctx context.Context, arguments kubernetesCAArguments,
 	store *postgresadapter.KubernetesClusterCAStore, settings config.KubernetesCAWorkerConfig,
 ) (any, error) {
 	installation, scope := settings.DeploymentID, arguments.scope
+	switch arguments.operation {
+	case "guard":
+		guard, err := store.ReadGuard(ctx, installation)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"restore_suspected": guard.Suspected, "generation": guard.Generation}, nil
+	case "mark-restored":
+		if err := lifecycle.MarkRestored(ctx, store, installation, arguments.operator); err != nil {
+			return nil, err
+		}
+		return map[string]any{"restore_suspected": true}, nil
+	case "reconcile-after-restore":
+		retired, err := lifecycle.ReconcileAfterRestore(ctx, store, installation, arguments.operator)
+		if err != nil {
+			return map[string]any{"retired_intermediates": retired}, err
+		}
+		return map[string]any{
+			"retired_intermediates": retired, "restore_suspected": false,
+			"check": restoreChecklist,
+		}, nil
+	}
 	if arguments.operation == "status" {
 		read, err := store.Read(ctx, installation, scope)
 		if err != nil {
@@ -230,4 +270,13 @@ func kubernetesCAStatus(read kubeca.Network) any {
 		})
 	}
 	return map[string]any{"data_keys": keys, "clusters": clusters}
+}
+
+// restoreChecklist is what a restore can bring back that only records kept
+// outside the database tell (a3 §5): the operator checks each.
+var restoreChecklist = []string{
+	"roots retired for a compromise after the restore point: retire them again (retire-ca --reason compromise)",
+	"gateway Devices revoked or quarantined after the restore point: revoke them again",
+	"Kubernetes clusters deleted after the restore point: delete them again",
+	"data keys rotated or wrap keys rotated after the restore point: rotate again",
 }

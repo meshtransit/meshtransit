@@ -3,6 +3,7 @@ package kubeca
 import (
 	"time"
 
+	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/publicid"
 )
 
@@ -182,4 +183,32 @@ type Changes struct {
 	Steps     []Step
 	Schedules []Schedule
 	Operator  Operator
+}
+
+// Guard is an installation's restore guard (a3 §5) and the marks the
+// worker compares with the ones it keeps outside the database: they only
+// grow, unless the database went back. ReadStarted and ReadFinished are the
+// database's clock before and after the marks were read (review a3a M2).
+type Guard struct {
+	Suspected       bool
+	Generation      int64
+	CertificateMark int64
+	CAMark          int64
+	ReadStarted     time.Time
+	ReadFinished    time.Time
+}
+
+// Valid reports a guard as the database returns one.
+func (guard Guard) Valid() bool {
+	return guard.Generation >= 1 && guard.CertificateMark >= 0 && guard.CAMark >= 0 && !guard.ReadStarted.IsZero() &&
+		!guard.ReadFinished.Before(guard.ReadStarted)
+}
+
+// IntermediateRef names an active intermediate at its version, for an
+// operator to retire it wherever it is.
+type IntermediateRef struct {
+	Scope   network.Scope
+	Cluster publicid.ID
+	CA      publicid.ID
+	Version int64
 }

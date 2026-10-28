@@ -50,6 +50,12 @@ func NewKubernetesCAWorkerMetricsCollector(worker *lifecycle.Worker) (prometheus
 			gauge("meshtransit_kubernetes_ca_suffix_mismatch",
 				"Whether the worker's DNS suffix differs from the recorded one, which stops all CA work.",
 				func(m lifecycle.Measurements) bool { return m.SuffixMismatch }),
+			gauge("meshtransit_kubernetes_ca_restore_suspected",
+				"Whether CA work is stopped because the database looks restored, until an operator reconciles.",
+				func(m lifecycle.Measurements) bool { return m.RestoreSuspected }),
+			gauge("meshtransit_kubernetes_ca_restore_marks_unavailable",
+				"Whether the worker could not compare its restore marks kept in Redis: the restore tripwire is off.",
+				func(m lifecycle.Measurements) bool { return m.MarksUnavailable }),
 		},
 		counter: []kubernetesCACounter{
 			counter("meshtransit_kubernetes_ca_worker_passes_total", "Total Kubernetes CA worker passes.",

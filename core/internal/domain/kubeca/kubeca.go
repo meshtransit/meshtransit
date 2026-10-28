@@ -35,6 +35,15 @@ var (
 	// ErrUnavailable reports a custody that could not answer now (a KMS
 	// call failed): try again later.
 	ErrUnavailable = errors.New("kubeca: custody unavailable")
+	// ErrStale reports a stored CA or data key that changed since it was
+	// read; nothing of the change was applied.
+	ErrStale = errors.New("kubeca: changed since it was read")
+	// ErrIntermediatesActive reports a restore guard that cannot be cleared
+	// while an intermediate is still active.
+	ErrIntermediatesActive = errors.New("kubeca: intermediates are still active")
+	// TripwireOperator names the worker when it stops CA work itself after
+	// it saw the database go back; no operator may take this name.
+	TripwireOperator = Operator{Name: "meshcore-worker", ChangeRef: "restore-tripwire"}
 )
 
 // Bounds of each tier's life and of a replica certificate (K1a4 §17.2,

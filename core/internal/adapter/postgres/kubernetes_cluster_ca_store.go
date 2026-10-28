@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"meshtransit.net/core/internal/domain/deployment"
@@ -20,7 +21,7 @@ var (
 	ErrKubernetesClusterCAStore = errors.New("postgres Kubernetes cluster CA store")
 	// ErrKubernetesClusterCAStale reports a CA or data key that changed since
 	// it was read; nothing of the change was applied.
-	ErrKubernetesClusterCAStale = errors.New("postgres Kubernetes cluster CA changed since it was read")
+	ErrKubernetesClusterCAStale = fmt.Errorf("postgres Kubernetes cluster CA: %w", kubeca.ErrStale)
 	// ErrKubernetesClusterCABusy reports a Network another worker holds.
 	ErrKubernetesClusterCABusy = errors.New("postgres Kubernetes cluster CA Network is busy")
 )

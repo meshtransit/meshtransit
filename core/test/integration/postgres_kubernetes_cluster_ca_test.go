@@ -130,7 +130,7 @@ func move(ca publicid.ID, version int64, to kubeca.State, reason kubeca.Reason) 
 func assertKubernetesClusterCAs(ctx context.Context, t *testing.T, admin, worker *pgx.Conn,
 	workerPool *postgresadapter.Pool, service *kubecluster.Service, owner accountsession.Session,
 	scope network.Scope, clusterID kubecluster.ID,
-) {
+) clusterCAFixture {
 	t.Helper()
 	assertClusterCAPrivileges(ctx, t, admin)
 	store, err := postgresadapter.NewKubernetesClusterCAStore(workerPool)
@@ -290,6 +290,7 @@ WHERE workspace.public_id = $1::UUID`, scope.WorkspaceID().String()).Scan(&insta
 	assertClusterCAPostpone(ctx, t, admin, fixture)
 	assertCAWorkerPass(ctx, t, admin, fixture, service, owner)
 	assertClusterCAHeartbeats(ctx, t, admin, store, installation, other)
+	return fixture
 }
 
 func findCluster(t *testing.T, read kubeca.Network, id publicid.ID) kubeca.Cluster {

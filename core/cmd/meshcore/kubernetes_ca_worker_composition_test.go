@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	redisadapter "meshtransit.net/core/internal/adapter/redis"
 	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/platform/config"
 )
@@ -15,16 +16,21 @@ import (
 func TestKubernetesCAWorkerCompositionRejectsMissingDependencies(t *testing.T) {
 	t.Parallel()
 	suffix := dnsname.Default()
+	marks := &redisadapter.Client{}
 	for _, pool := range []*postgresadapter.Pool{nil, {}} {
-		worker, metrics, err := composeKubernetesCAWorker(config.KubernetesCAWorkerConfig{}, suffix, pool,
+		workers, err := composeKubernetesCAWorker(config.KubernetesCAWorkerConfig{}, suffix, pool, marks,
 			discardCompositionLogger())
-		if worker != nil || metrics != nil || !errors.Is(err, errInvalidKubernetesCAWorkerComposition) {
+		if workers.lifecycle != nil || workers.signer != nil || !errors.Is(err, errInvalidKubernetesCAWorkerComposition) {
 			t.Fatal("invalid worker pool accepted", err)
 		}
 	}
-	if worker, _, err := composeKubernetesCAWorker(config.KubernetesCAWorkerConfig{}, dnsname.Suffix{},
-		&postgresadapter.Pool{}, discardCompositionLogger()); worker != nil || err == nil {
+	if workers, err := composeKubernetesCAWorker(config.KubernetesCAWorkerConfig{}, dnsname.Suffix{},
+		&postgresadapter.Pool{}, marks, discardCompositionLogger()); workers.lifecycle != nil || err == nil {
 		t.Fatal("a missing suffix accepted", err)
+	}
+	if workers, err := composeKubernetesCAWorker(config.KubernetesCAWorkerConfig{}, suffix, &postgresadapter.Pool{},
+		nil, discardCompositionLogger()); workers.lifecycle != nil || err == nil {
+		t.Fatal("missing marks accepted", err)
 	}
 }
 

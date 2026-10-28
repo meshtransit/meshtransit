@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 239 {
-		t.Fatalf("len(Catalog()) = %d, want 239", len(catalog))
+	if len(catalog) != 240 {
+		t.Fatalf("len(Catalog()) = %d, want 240", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 239 {
-		t.Fatalf("LatestVersion() = %d, want 239", LatestVersion())
+	if LatestVersion() != 240 {
+		t.Fatalf("LatestVersion() = %d, want 240", LatestVersion())
 	}
 }
 
@@ -7086,6 +7086,67 @@ func TestMigration239KubernetesClusterCATwoTier(t *testing.T) {
 	for _, secret := range []string{"private_key_ciphertext", "ciphertext", "certificate,", "sealed"} {
 		if strings.Contains(payload, secret) {
 			t.Errorf("the CA audit payload reads %s", secret)
+		}
+	}
+}
+
+func TestMigration240KubernetesGatewayCertificates(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 240 || catalog[239].Version != 240 {
+		t.Fatalf("the catalog has no migration 240 (%d migrations)", len(catalog))
+	}
+	migration := catalog[239]
+	for _, want := range []string{
+		"CHECK (purpose IN ('machine_key', 'node_key', 'cert')) NOT VALID",
+		"CREATE TABLE mesh.kubernetes_gateway_certificate (",
+		"CREATE TABLE mesh_ops.kubernetes_gateway_certificate_request (",
+		"CREATE TABLE mesh_ops.kubernetes_ca_guard (",
+		"UNIQUE (device_id, request_id)",
+		"FOR UPDATE SKIP LOCKED",
+		"AFTER INSERT ON mesh.kubernetes_gateway_certificate",
+		"mesh_audit.capture_authority_mutation('kubernetes_gateway_certificate', 'public_id')",
+		"ALTER TABLE mesh_ops.kubernetes_gateway_certificate_request FORCE ROW LEVEL SECURITY",
+		"ALTER TABLE mesh.kubernetes_gateway_certificate FORCE ROW LEVEL SECURITY",
+		"ALTER TABLE mesh_ops.kubernetes_ca_guard FORCE ROW LEVEL SECURITY",
+		// One revision per transaction of CA changes (a3 §3).
+		"WHERE mutation.transaction_id = v_transaction::BIGINT AND mutation.aggregate_kind = 'kubernetes_cluster_ca'",
+		// Issue takes the Network's CA lock shared before any row lock.
+		"pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended(",
+		// While a restore is suspected the worker changes no CA.
+		"BEFORE INSERT OR UPDATE ON mesh.kubernetes_cluster_ca",
+		// The token is used once per key, by the database's clock.
+		"v_request.kubernetes_cluster_id, p_jti, 'cert', pg_catalog.decode(pg_catalog.repeat('00', 32), 'hex'),",
+		"p_token_expires_at > v_now + INTERVAL '15 minutes 30 seconds'",
+		// Q31 limits.
+		"issued.issued_at > v_now - INTERVAL '1 hour';\n    IF v_count >= 12 THEN",
+		"AND request.state IN ('pending', 'claimed', 'abandoned')) >= 20 THEN",
+		"WHERE request.deployment_id = v_deployment_id AND request.state IN ('pending', 'claimed', 'abandoned'))",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.enqueue_kubernetes_gateway_certificate_v1(",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.claim_kubernetes_gateway_certificates_v1(UUID, INTEGER, INTEGER) TO mesh_worker",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.mark_kubernetes_ca_restored_v1(UUID, TEXT, TEXT) TO mesh_worker",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 240 lacks %q", want)
+		}
+	}
+	// Control queues and reads; it never claims, signs or issues.
+	for _, statement := range strings.Split(migration.SQL, ";") {
+		if strings.Contains(statement, "TO mesh_runtime") && !strings.Contains(statement, "enqueue_kubernetes_gateway") &&
+			!strings.Contains(statement, "read_kubernetes_gateway_certificate_v1") &&
+			!strings.Contains(statement, "abandon_kubernetes_gateway") {
+			t.Errorf("migration 240 grants the runtime: %s", strings.TrimSpace(statement))
+		}
+	}
+	if strings.Contains(migration.SQL, "set_config('mesh.access_ledger_scan', '', TRUE)") {
+		t.Error("migration 240 clears mesh.access_ledger_scan")
+	}
+	// The certificate audit payload carries no key or certificate.
+	payload := migration.SQL[strings.Index(migration.SQL, "kubernetes_gateway_certificate_payload_internal_v1(p_certificate_id BIGINT)"):]
+	payload = payload[:strings.Index(payload, "$function$;")]
+	for _, secret := range []string{"issued.public_key,", "issued.certificate,", "token", "private_key"} {
+		if strings.Contains(payload, secret) {
+			t.Errorf("the certificate audit payload reads %s", secret)
 		}
 	}
 }

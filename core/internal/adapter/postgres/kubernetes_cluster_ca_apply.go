@@ -190,6 +190,7 @@ var caProofActions = map[string][]string{
 	caDataKeyAggregateKind: {
 		"kubernetes_ca_data_key.created", "kubernetes_ca_data_key.rewrapped", "kubernetes_ca_data_key.retired",
 	},
+	gatewayCertificateAggregateKind: {"kubernetes_gateway.certificate_issued"},
 }
 
 func knownCAAction(aggregate, action string) bool {
