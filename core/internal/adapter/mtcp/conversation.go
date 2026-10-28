@@ -400,6 +400,7 @@ func (conversation *conversation) serve(ctx context.Context, nodeKey node.Key, g
 	_, gateway := machine.KubernetesGateway()
 	if gateway && conversation.session.Supports("gateway.kube.v1") {
 		request = request.WithKubernetes()
+		conversation.sink.confirmFreshness()
 	}
 	var sink mapsession.StreamSink = conversation.sink
 	if gateway {

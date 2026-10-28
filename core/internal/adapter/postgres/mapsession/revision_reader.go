@@ -22,8 +22,8 @@ var _ appmapsession.NetworkRevisionReader = (*Store)(nil)
 // revisionShareAge is how long one read of a Network's revision answers
 // the exit node streams of that Network on this replica: they poll every
 // few seconds, so their reads coalesce into about one per Network
-// (TD-CORE-90).
-const revisionShareAge = time.Second
+// (TD-CORE-90). A gateway's MapFresh relies on this bound.
+const revisionShareAge = appmapsession.RevisionReadAge
 
 // maxRevisionReads bounds the Networks whose last read is remembered.
 const maxRevisionReads = 4096
@@ -34,7 +34,9 @@ type revisionReads struct {
 	entries map[network.Scope]*revisionRead
 }
 
-// revisionRead is one read; done closes when revision and err are set.
+// revisionRead is one read; done closes when revision and err are set. at
+// is this host's clock before the read began: its answer is the database's
+// at that time or later.
 type revisionRead struct {
 	done     chan struct{}
 	revision int64
@@ -42,9 +44,9 @@ type revisionRead struct {
 	at       time.Time
 }
 
-// NetworkRevision implements NetworkRevisionReader: a read made for
-// another stream of the Network within revisionShareAge, or being made,
-// answers; otherwise one short read-only transaction in the Network's exact
+// NetworkRevision implements NetworkRevisionReader: a read begun for
+// another stream of the Network within revisionShareAge, done or not,
+// answers, so no answer predates the call by more than that; otherwise one short read-only transaction in the Network's exact
 // scope, bound like a snapshot read.
 func (store *Store) NetworkRevision(ctx context.Context, scope network.Scope) (int64, error) {
 	if ctx == nil || store == nil || store.database == nil || !scope.IsValid() {
@@ -57,11 +59,11 @@ func (store *Store) NetworkRevision(ctx context.Context, scope network.Scope) (i
 	now := time.Now()
 	reads.mu.Lock()
 	read, ok := reads.entries[scope]
-	if !ok || (!read.at.IsZero() && now.Sub(read.at) >= revisionShareAge) {
+	if !ok || now.Sub(read.at) >= revisionShareAge {
 		if reads.entries == nil || (!ok && len(reads.entries) >= maxRevisionReads) {
 			reads.entries = make(map[network.Scope]*revisionRead)
 		}
-		read = &revisionRead{done: make(chan struct{})}
+		read = &revisionRead{done: make(chan struct{}), at: now}
 		reads.entries[scope] = read
 		// The read is every waiting stream's, the first caller's too: it runs
 		// on its own deadline, and a caller that gives up only stops waiting.
@@ -82,7 +84,6 @@ func (store *Store) shareRevisionRead(reads *revisionReads, scope network.Scope,
 	read.revision, read.err = store.readNetworkRevision(readCtx, scope)
 	cancel()
 	reads.mu.Lock()
-	read.at = time.Now()
 	if read.err != nil && reads.entries[scope] == read {
 		// A failure answers the waiting streams only.
 		delete(reads.entries, scope)

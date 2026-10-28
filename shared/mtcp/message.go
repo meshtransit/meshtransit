@@ -29,6 +29,7 @@ const (
 	MessageMapDelta              MessageType = 0x21
 	MessageMapAck                MessageType = 0x22
 	MessageMapResync             MessageType = 0x23
+	MessageMapFresh              MessageType = 0x24
 	MessageEndpointReport        MessageType = 0x30
 	MessageHostinfoReport        MessageType = 0x31
 	MessageHealthReport          MessageType = 0x32
@@ -101,6 +102,7 @@ var specs = map[MessageType]messageSpec{
 	MessageMapDelta:              {CoreToNode, 8 * mib, func() proto.Message { return &mtcpv1.MapDelta{} }},
 	MessageMapAck:                {NodeToCore, 256, func() proto.Message { return &mtcpv1.MapAck{} }},
 	MessageMapResync:             {NodeToCore, 256, func() proto.Message { return &mtcpv1.MapResync{} }},
+	MessageMapFresh:              {CoreToNode, kib, func() proto.Message { return &mtcpv1.MapFresh{} }},
 	MessageEndpointReport:        {NodeToCore, 8 * kib, func() proto.Message { return &mtcpv1.EndpointReport{} }},
 	MessageHostinfoReport:        {NodeToCore, 8 * kib, func() proto.Message { return &mtcpv1.HostinfoReport{} }},
 	MessageHealthReport:          {NodeToCore, 16 * kib, func() proto.Message { return &mtcpv1.HealthReport{} }},

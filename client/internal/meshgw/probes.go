@@ -3,6 +3,7 @@ package meshgw
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -14,6 +15,10 @@ import (
 // statusTimeout bounds one status read; the stores may wait on the state
 // Secret meanwhile.
 const statusTimeout = 10 * time.Second
+
+// staleMapAfter is how long a map may go unconfirmed (MapFresh) before the
+// gateway logs it; K1b will refuse requests past its staleAfter.
+const staleMapAfter = 5 * time.Minute
 
 // Counter is one metric the probes serve beside the status.
 type Counter struct {
@@ -33,6 +38,15 @@ type Probes struct {
 	checks   []check
 	clock    func() time.Time
 	last     atomic.Pointer[observed]
+	// logger, when set, reports a map that went unconfirmed past
+	// staleMapAfter, and when it is confirmed again; stale is whether the
+	// last observation was.
+	logger *slog.Logger
+	stale  bool
+	// started is when the probes were made; unconfirmed whether a map
+	// never confirmed was reported.
+	started     time.Time
+	unconfirmed bool
 }
 
 // check is one more condition of readiness, with the reason it gives.
@@ -51,6 +65,7 @@ type observed struct {
 // NewProbes polls status every interval once Poll runs.
 func NewProbes(status func(context.Context) (daemon.Status, error), interval time.Duration, counters ...Counter) *Probes {
 	probes := &Probes{status: status, interval: interval, counters: counters, clock: time.Now}
+	probes.started = probes.clock()
 	probes.last.Store(&observed{at: probes.clock(), reason: "starting"})
 	return probes
 }
@@ -59,6 +74,19 @@ func NewProbes(status func(context.Context) (daemon.Status, error), interval tim
 // Call it before Poll.
 func (p *Probes) Require(reason string, ok func() bool) {
 	p.checks = append(p.checks, check{reason: reason, ok: ok})
+}
+
+// LogStaleMap makes the poller log a map Core has not confirmed current for
+// staleMapAfter (K1a3 §5.3). Call it before Poll.
+func (p *Probes) LogStaleMap(logger *slog.Logger) { p.logger = logger }
+
+// mapAge is how long ago Core last confirmed the map current; false before
+// any confirmation.
+func (p *Probes) mapAge(status daemon.Status) (time.Duration, bool) {
+	if status.MapFreshAt.IsZero() {
+		return 0, false
+	}
+	return max(p.clock().Sub(status.MapFreshAt), 0), true
 }
 
 // Poll reads the status until ctx ends, then reports not ready.
@@ -91,6 +119,31 @@ func (p *Probes) observe(ctx context.Context) {
 		}
 	}
 	p.last.Store(&observed{at: p.clock(), ready: ready, reason: reason, status: status})
+	p.reportStaleness(status)
+}
+
+// reportStaleness logs a map crossing staleMapAfter either way.
+func (p *Probes) reportStaleness(status daemon.Status) {
+	age, confirmed := p.mapAge(status)
+	if p.logger == nil {
+		return
+	}
+	if !confirmed {
+		// A Core before K1a3c, or a map that withholds its peers' access,
+		// is never confirmed: said once.
+		if !p.unconfirmed && p.clock().Sub(p.started) > staleMapAfter {
+			p.unconfirmed = true
+			p.logger.Warn("map never confirmed current")
+		}
+		return
+	}
+	switch stale := age > staleMapAfter; {
+	case stale && !p.stale:
+		p.logger.Warn("map not confirmed current", "age", age.Round(time.Second).String())
+	case !stale && p.stale:
+		p.logger.Info("map confirmed current again")
+	}
+	p.stale = age > staleMapAfter
 }
 
 // current is the last result, not ready once it is stale.
@@ -145,6 +198,10 @@ func (p *Probes) Handler() http.Handler {
 				"# HELP meshgw_netmap_revision Revision of the current map.\n# TYPE meshgw_netmap_revision gauge\n"+
 				"meshgw_netmap_revision %d\n",
 			ready, last.status.PeerCount, last.status.NetmapRevision)
+		if age, confirmed := p.mapAge(last.status); confirmed {
+			_, _ = fmt.Fprintf(w, "# HELP meshgw_map_age_seconds Seconds since Core last confirmed the map current.\n"+
+				"# TYPE meshgw_map_age_seconds gauge\nmeshgw_map_age_seconds %d\n", int64(age.Seconds()))
+		}
 		for _, counter := range p.counters {
 			_, _ = fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s counter\n%s %d\n",
 				counter.Name, counter.Help, counter.Name, counter.Name, counter.Value())

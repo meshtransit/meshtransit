@@ -249,6 +249,15 @@ message MapAck {
   View view = 1;
 }
 
+// MapFresh tells a Kubernetes gateway (gateway.kube.v1) that the authority
+// of a view it acknowledged still stood at as_of_ms by Core's clock (7.9).
+message MapFresh {
+  View view = 1;                                 // the view this confirms
+  repeated NetworkRevision network_revisions = 2;
+  int64 as_of_ms = 3;
+  int64 age_ms = 4; // how long before sending as_of_ms was, by Core's clock
+}
+
 message MapResync {
   View view = 1; // the node's current view
 }

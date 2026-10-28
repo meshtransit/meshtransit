@@ -68,6 +68,19 @@ func (h *recordingHandler) find(message string) (map[string]string, bool) {
 	return nil, false
 }
 
+// count returns how many records carry message.
+func (h *recordingHandler) count(message string) int {
+	h.log.mu.Lock()
+	defer h.log.mu.Unlock()
+	count := 0
+	for _, record := range h.log.records {
+		if record.Message == message {
+			count++
+		}
+	}
+	return count
+}
+
 func (h *recordingHandler) waitFor(t *testing.T, message string) map[string]string {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

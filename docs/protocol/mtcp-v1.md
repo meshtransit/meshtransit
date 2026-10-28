@@ -240,6 +240,7 @@ payload     bytes[...]
 | 0x21 | `MapDelta` | C→N | 8 MiB |
 | 0x22 | `MapAck` | N→C | 256 B |
 | 0x23 | `MapResync` | N→C | 256 B |
+| 0x24 | `MapFresh` | C→N | 1 KiB |
 | 0x30 | `EndpointReport` | N→C | 8 KiB |
 | 0x31 | `HostinfoReport` | N→C | 8 KiB |
 | 0x32 | `HealthReport` | N→C | 16 KiB |
@@ -655,6 +656,9 @@ into a full reread of the node's view. If the window stays full for 60 s, Core
 ends the stream; the node reconnects and receives a fresh snapshot (new
 epoch). A slow node therefore costs bounded memory and gets a correct (if
 later) map.
+
+A Kubernetes gateway that negotiated `gateway.kube.v1` acknowledges a map
+message only after it applied it (7.9).
 
 ### 7.3 Contents
 
@@ -1122,6 +1126,35 @@ Network ever does.
   map's packet filter came from (the gateway was read on its own, or the
   evidence was inconsistent), the map carries no `kubernetes` on any peer.
 
+### 7.9 Map freshness
+
+A Kubernetes gateway that negotiated `gateway.kube.v1` learns how current its
+map is, so it can stop honouring its peers' Kubernetes access (7.8) when Core
+stops confirming it. Core sends `MapFresh{view, network_revisions, as_of_ms,
+age_ms}` only on such a gateway's stream, only for a map that carries its
+peers' access (never for one that withholds it) and has no peer of another
+Network.
+
+- **After an acknowledgement.** Once the gateway acknowledged the epoch's last
+  snapshot or authority delta, Core confirms that view as of when the
+  authority it carries was read.
+- **While nothing changes.** Every 60 s Core reads the Network's revision; if it
+  still is the map's and no refresh is pending, Core confirms the view again,
+  as of that read (a shared read may be up to 1 s old). A newer revision makes
+  Core refresh the map instead.
+- **`view`** is the epoch's last authority view, which the gateway acknowledged;
+  later connectivity deltas do not move it. **`age_ms`** is how long before
+  sending `as_of_ms` was, by Core's clock.
+- **Gateway.** It takes a `MapFresh` whose epoch is that of the map it applied
+  and whose seq is no later than the applied one, and dates its map back
+  `age_ms` from when it received it, on its own monotonic clock; it never
+  compares Core's wall clock with its own. It ignores any other. A gateway
+  acknowledges a map message only after applying it (7.2).
+- **Bound.** A map confirmed at most about 60 s plus Core's refresh pacing ago
+  lags the database by no more than that, plus building time. A gateway
+  refuses its peers' Kubernetes access once its map was last confirmed longer
+  ago than its own bound (at least 5 minutes).
+
 ## 8. Node reports
 
 ### 8.1 Endpoints and NAT
@@ -1485,7 +1518,7 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `router.exit.v1` | Node can be an exit node: it applies `served_exits` (7.7) and reports `exit_offered` (8.2); with `router.health1` it reports its exit health in `RouteHealthReport` |
 | `relay.zones2` | Node hands relays MTT2 tickets and their ZONES (MTRP §5.4, §6.1). Core offers it only once every relay accepts them |
 | `captive.audit1` | Node sends `CaptiveWindowReport` (8.5); only with `routes.exit.v1` |
-| `gateway.kube.v1` | A Kubernetes gateway applies its peers' `kubernetes` and `owner` (7.8); Core offers it only where maps come from its shared Network view |
+| `gateway.kube.v1` | A Kubernetes gateway applies its peers' `kubernetes` and `owner` (7.8), acknowledges map messages after applying them and takes `MapFresh` (7.9); Core offers it only where maps come from its shared Network view |
 
 Unknown names are ignored. Core sends a feature only when both sides list it.
 

@@ -158,8 +158,12 @@ type Status struct {
 	DeviceExpiry    string
 	PeerCount       int
 	PolicyRuleCount int
-	PeerPaths       dataplane.PeerPathSnapshot
-	SubnetRoutes    dataplane.SubnetRouteStatus
+	// MapFreshAt is when Core last confirmed a Kubernetes gateway's applied
+	// map current, on this host's monotonic clock; zero: never, or not a
+	// gateway.
+	MapFreshAt   time.Time
+	PeerPaths    dataplane.PeerPathSnapshot
+	SubnetRoutes dataplane.SubnetRouteStatus
 	// RouteSites is the router each Site's traffic goes to.
 	RouteSites   []RouteSiteView
 	SubnetRouter dataplane.SubnetRouterStatus
@@ -395,6 +399,9 @@ type Service struct {
 	// gatewayCommitWait is Core's commit bound it waits out before probing.
 	gateway          bool
 	gatewayTokenFile string
+	// mapFreshAt is when Core last confirmed a gateway's applied map
+	// current (MapFresh), on this host's monotonic clock; nil: never.
+	mapFreshAt atomic.Pointer[time.Time]
 	// podTokenWarned: a missing pod token was reported this start.
 	podTokenWarned    atomic.Bool
 	gatewayCommitWait time.Duration
@@ -1179,6 +1186,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					ExitHealth:         exitHealth,
 					RouteHealth:        routeHealth,
 					DNSHealth:          dnsHealth,
+					MapFresh:           s.mapFreshness(),
 					RouteSelection:     routeSelection,
 					AnnounceGoingAway:  func() bool { return !restartExpected(s.restartMarkerPath, s.clock()) },
 					CaptiveWindows:     s.captiveWindowsToReport(),
@@ -2452,6 +2460,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		DeviceExpiresAt:    deviceExpiryOf(registration, syncState),
 		DeviceExpiry:       DeviceExpiryState(deviceExpiryOf(registration, syncState), s.clock()),
 		PeerCount:          syncState.peerCount,
+		MapFreshAt:         s.mapFreshAtValue(),
 		PolicyRuleCount:    syncState.policyRuleCount,
 		PeerPaths:          peerPaths,
 		SubnetRoutes:       subnetRoutes,
@@ -3336,3 +3345,25 @@ func discoEndpoints(candidates pathdiscovery.Set) []disco.Endpoint {
 
 // The DNS controllers of every platform order resolver Devices by liveness.
 var _ dnsLivenessController = (*dnsconfig.Manager)(nil)
+
+// mapFreshness records a gateway's MapFresh confirmations; nil for meshd.
+func (s *Service) mapFreshness() func(time.Time) {
+	if !s.gateway {
+		return nil
+	}
+	return func(at time.Time) {
+		for {
+			previous := s.mapFreshAt.Load()
+			if previous != nil && !at.After(*previous) || s.mapFreshAt.CompareAndSwap(previous, &at) {
+				return
+			}
+		}
+	}
+}
+
+func (s *Service) mapFreshAtValue() time.Time {
+	if at := s.mapFreshAt.Load(); at != nil {
+		return *at
+	}
+	return time.Time{}
+}

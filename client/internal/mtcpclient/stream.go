@@ -403,6 +403,8 @@ func jittered(base time.Duration) time.Duration {
 type incoming struct {
 	message proto.Message
 	err     error
+	// at is when the message was read, before any wait in the inbox.
+	at time.Time
 }
 
 // session runs one session. It reports whether a map arrived and how long
@@ -440,7 +442,7 @@ func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, e
 		for {
 			_, message, err := s.receive()
 			select {
-			case inbox <- incoming{message: message, err: err}:
+			case inbox <- incoming{message: message, err: err, at: time.Now()}:
 			case <-stop:
 				return
 			}
@@ -501,6 +503,9 @@ type sessionRun struct {
 	unacked  int
 	ackView  *mtcpv1.View
 	ackTimer *time.Timer
+	// applied is the view of the map last handed to the daemon (or found
+	// unchanged); nil before. A MapFresh confirms it only (mtcp-v1 §7.9).
+	applied *mtcpv1.View
 }
 
 // A node acknowledges a snapshot at once, and deltas once ackBatch of them
@@ -540,7 +545,7 @@ func (run *sessionRun) loop(ctx context.Context, inbox <-chan incoming) (bool, t
 			if in.err != nil {
 				return run.mapped, 0, errors.Join(errSessionEnded, in.err)
 			}
-			retryAfter, err := run.handle(ctx, in.message)
+			retryAfter, err := run.handle(ctx, in)
 			if err != nil {
 				return run.mapped, retryAfter, err
 			}
@@ -581,8 +586,8 @@ func (run *sessionRun) loop(ctx context.Context, inbox <-chan incoming) (bool, t
 }
 
 // handle applies one message from Core.
-func (run *sessionRun) handle(ctx context.Context, message proto.Message) (time.Duration, error) {
-	switch m := message.(type) {
+func (run *sessionRun) handle(ctx context.Context, in incoming) (time.Duration, error) {
+	switch m := in.message.(type) {
 	case *mtcpv1.KeyUpdate:
 		return 0, run.keyUpdate(ctx, m)
 	case *mtcpv1.MapSnapshot:
@@ -604,6 +609,11 @@ func (run *sessionRun) handle(ctx context.Context, message proto.Message) (time.
 			return 0, run.send(sharedmtcp.MessageMapResync, &mtcpv1.MapResync{View: view})
 		}
 		return 0, run.mapChanged(ctx, m.GetView(), false)
+	case *mtcpv1.MapFresh:
+		// Dated from when it was read: time it waited behind a map being
+		// applied must not make the map look fresher.
+		run.mapFresh(m, in.at)
+		return 0, nil
 	case *mtcpv1.RelayTicket:
 		if err := run.state.setTicket(m); err != nil {
 			return 0, err
@@ -676,18 +686,47 @@ func (run *sessionRun) acknowledge() error {
 	return run.send(sharedmtcp.MessageMapAck, &mtcpv1.MapAck{View: run.ackView})
 }
 
+// mapFresh takes Core's word that the authority of view still stood ageMs
+// before now, when that view is one the daemon applied: of the applied
+// epoch and no later than the applied seq, deltas being applied in order.
+// Only a gateway takes it.
+func (run *sessionRun) mapFresh(fresh *mtcpv1.MapFresh, now time.Time) {
+	report := run.stream.options.MapFresh
+	view, applied := fresh.GetView(), run.applied
+	if report == nil || run.stream.client.gateway == nil || applied == nil || view == nil ||
+		view.GetEpoch() != applied.GetEpoch() || view.GetSeq() > applied.GetSeq() || fresh.GetAgeMs() < 0 {
+		return
+	}
+	report(now.Add(-time.Duration(fresh.GetAgeMs()) * time.Millisecond))
+}
+
 // mapChanged delivers the view, acknowledges it now or soon, and after the
-// first map of the session sends the node's reports.
+// first map of the session sends the node's reports. A gateway applies the
+// map before it acknowledges it, so an acknowledgement Core confirms with a
+// MapFresh is one of a map in force (K1a3 §5.1).
 func (run *sessionRun) mapChanged(ctx context.Context, view *mtcpv1.View, snapshot bool) error {
-	run.ackView = view
-	run.unacked++
-	switch {
-	case snapshot || run.unacked >= ackBatch:
-		if err := run.acknowledge(); err != nil {
+	gateway := run.stream.client.gateway != nil
+	if gateway {
+		if err := run.deliver(ctx); err != nil {
 			return err
 		}
-	case run.unacked == 1:
-		run.ackTimer.Reset(ackDelay)
+	}
+	// A gateway acknowledges only a map it applied: one it set aside, its
+	// self entry not yet carrying this session's disco key, waits for the
+	// next (K1a3 §12.4).
+	applied := !gateway || run.applied != nil && run.applied.GetEpoch() == view.GetEpoch() &&
+		run.applied.GetSeq() == view.GetSeq()
+	if applied {
+		run.ackView = view
+		run.unacked++
+		switch {
+		case snapshot || run.unacked >= ackBatch:
+			if err := run.acknowledge(); err != nil {
+				return err
+			}
+		case run.unacked == 1:
+			run.ackTimer.Reset(ackDelay)
+		}
 	}
 	if !run.mapped {
 		run.mapped = true
@@ -697,6 +736,9 @@ func (run *sessionRun) mapChanged(ctx context.Context, view *mtcpv1.View, snapsh
 		if err := run.sendReports(nil); err != nil {
 			return err
 		}
+	}
+	if gateway {
+		return nil // delivered above
 	}
 	return run.deliver(ctx)
 }
@@ -718,7 +760,9 @@ func (run *sessionRun) deliver(ctx context.Context) error {
 	}
 	compare := snapshot
 	compare.Revision = 0
+	view := &mtcpv1.View{Epoch: run.state.epoch, Seq: run.state.seq}
 	if stream.last != nil && reflect.DeepEqual(*stream.last, compare) {
+		run.applied = view
 		stream.setConnected(true) // usable again, the map already applied
 		return nil
 	}
@@ -727,6 +771,7 @@ func (run *sessionRun) deliver(ctx context.Context) error {
 	}
 	stream.revision++
 	stream.last = &compare
+	run.applied = view
 	stream.setConnected(true)
 	return nil
 }

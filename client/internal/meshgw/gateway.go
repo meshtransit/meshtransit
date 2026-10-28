@@ -166,6 +166,7 @@ func startProbes(ctx context.Context, cfg Config, service *daemon.Service, stack
 	)
 	// K0 serves kubectl: a replica not listening for it is not ready.
 	probes.Require("kube API not listening", forwarder.Listening)
+	probes.LogStaleMap(logger.With("component", "map"))
 	server, err := serveProbes(ctx, cfg.ProbeAddress, probes.Handler(), logger)
 	if err != nil {
 		return nil, err

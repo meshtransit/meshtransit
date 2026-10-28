@@ -181,3 +181,23 @@ func TestKubernetesViewRefreshesAtItsEarliestGrant(t *testing.T) {
 		t.Fatalf("an empty view = %+v", empty)
 	}
 }
+
+// A rebuild describes the same read: how current the map is, and its
+// deadlines, still count from it (K1a3c, MapFresh as_of).
+func TestRebuildsKeepTheReadTime(t *testing.T) {
+	t.Parallel()
+	params := snapshotFixture(t).params()
+	read := time.Now().Add(-time.Minute)
+	params.ReadAtLocal, params.DatabaseReadAt = read, read.UTC()
+	snapshot, err := NewSnapshot(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebuilt, err := NewSnapshot(snapshot.params())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rebuilt.ReadAtLocal().Equal(read) || !rebuilt.databaseReadAt.Equal(read.UTC()) {
+		t.Fatalf("rebuilt read at %v / %v, want %v", rebuilt.ReadAtLocal(), rebuilt.databaseReadAt, read)
+	}
+}

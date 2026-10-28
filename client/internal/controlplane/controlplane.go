@@ -273,6 +273,10 @@ type NetmapOptions struct {
 	// sent in a DnsHealthReport when Core takes it (dns.root1), on change
 	// and at least every 5 minutes (mtcp-v1 §8.6).
 	DNSHealth <-chan []ResolverHealth
+	// MapFresh, for a Kubernetes gateway, is called with this host's clock
+	// (monotonic) at which Core last confirmed the map it applied current
+	// (MapFresh, mtcp-v1 §7.9).
+	MapFresh func(time.Time)
 	// RouteSelection, with EnableSubnetRoutes, carries the router this node
 	// sends each Site's traffic to; each set is sent in a
 	// RouteSelectionReport when Core takes it (routes.selection1), again

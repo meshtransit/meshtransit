@@ -98,6 +98,14 @@ type StreamSink interface {
 	SendKeepAlive(context.Context) error
 }
 
+// FreshMapSink is a sink that tells a Kubernetes gateway its map is current
+// (mtcp-v1 §7.9). The stream calls ConfirmFresh when the Network's revision,
+// read at asOf or later, still is current's and no refresh is pending; the
+// sink sends only if the node acknowledged current's authority.
+type FreshMapSink interface {
+	ConfirmFresh(ctx context.Context, current Snapshot, asOf time.Time) error
+}
+
 // RevisionWatcher provides a bounded local wakeup channel for one Network.
 // The release function is caller-owned and must be idempotent.
 type RevisionWatcher interface {
@@ -130,6 +138,10 @@ type StreamOptions struct {
 	// Network's revision (NetworkRevisionReader); zero is
 	// DefaultExitRevisionPoll.
 	ExitRevisionPoll time.Duration
+	// FreshPoll is how often the stream of a Kubernetes gateway whose map
+	// carries its peers' access confirms the map is current (MapFresh);
+	// zero is DefaultFreshPoll.
+	FreshPoll time.Duration
 	// RelayAccess, when set, issues each node's Interchange grant.
 	RelayAccess RelayAccess
 	// FilterDigest, when set, records the digest of each delivered packet
@@ -323,6 +335,9 @@ func (service *StreamService) run(
 	defer reconcile.Stop()
 	exitPoll := time.NewTicker(cmp.Or(service.options.ExitRevisionPoll, DefaultExitRevisionPoll))
 	defer exitPoll.Stop()
+	freshPoll := time.NewTicker(cmp.Or(service.options.FreshPoll, DefaultFreshPoll))
+	defer freshPoll.Stop()
+	freshSink, confirmsFresh := sink.(FreshMapSink)
 	revisionReader, readsRevisions := service.snapshots.(NetworkRevisionReader)
 	authorityExpiry := time.NewTimer(initial.untilDeadline(initial.KeyExpiry()))
 	defer authorityExpiry.Stop()
@@ -464,6 +479,12 @@ func (service *StreamService) run(
 		if readsRevisions && current.Routes().ServesExit() {
 			exitPollDue = exitPoll.C
 		}
+		// Only a map that carries its peers' Kubernetes access is
+		// confirmed; a withheld one never is (K1a3 Q8).
+		var freshPollDue <-chan time.Time
+		if readsRevisions && confirmsFresh && current.Kubernetes().Computed() && len(current.SharingScopes()) == 0 {
+			freshPollDue = freshPoll.C
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -476,6 +497,35 @@ func (service *StreamService) run(
 			if revision > current.NetworkRevision() && !pacer.hold(time.Now(), revision) {
 				if err := fullRefresh(service.refreshTo(max(revision, pacer.pendingRevision))); err != nil {
 					return err
+				}
+			}
+		case <-freshPollDue:
+			readAt := time.Now()
+			revision, err := service.readNetworkRevision(ctx, revisionReader, current)
+			if errors.Is(err, ErrNoRevisionReader) {
+				readsRevisions = false
+			}
+			_, pending := pacer.due()
+			switch {
+			case err != nil:
+			case revision > current.NetworkRevision():
+				// A newer revision is a wakeup the stream missed, paced like one.
+				if !pacer.hold(time.Now(), revision) {
+					if err := fullRefresh(service.refreshTo(max(revision, pacer.pendingRevision))); err != nil {
+						return err
+					}
+				}
+			case revision == current.NetworkRevision() && !pending:
+				// A shared read of the revision may be up to
+				// RevisionReadAge old. A map past its own refresh time
+				// (on the database clock) still holds a lapsed grant: it
+				// is rebuilt, not confirmed.
+				if refreshAt := current.Kubernetes().RefreshAt(); !refreshAt.IsZero() &&
+					current.untilDeadline(refreshAt) <= 0 {
+					break
+				}
+				if err := freshSink.ConfirmFresh(ctx, current, readAt.Add(-RevisionReadAge)); err != nil {
+					return errors.Join(ErrStreamWrite, err)
 				}
 			}
 		case <-relayRenewalDue:
@@ -551,6 +601,14 @@ func (service *StreamService) run(
 // DefaultExitRevisionPoll is how often an exit node's stream reads its
 // Network's revision by default.
 const DefaultExitRevisionPoll = 5 * time.Second
+
+// DefaultFreshPoll is how often a Kubernetes gateway's stream confirms its
+// map by default (K1a3 §5.2).
+const DefaultFreshPoll = 60 * time.Second
+
+// RevisionReadAge bounds how old a NetworkRevisionReader's answer may be:
+// one read is shared by the streams of a Network for that long.
+const RevisionReadAge = time.Second
 
 // ErrNoRevisionReader reports a NetworkRevisionReader over a store that
 // reads no revisions: the stream stops asking.

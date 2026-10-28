@@ -458,6 +458,10 @@ func (snapshot Snapshot) params() SnapshotParams {
 		Connectivity:            slices.Clone(snapshot.connectivity),
 		RelayDirectory:          snapshot.relayDirectory,
 		OmittedShares:           snapshot.omittedShares,
+		// A rebuild describes the same read: its deadlines and how current
+		// it is still count from that read.
+		DatabaseReadAt: snapshot.databaseReadAt,
+		ReadAtLocal:    snapshot.readAtLocal,
 	}
 }
 

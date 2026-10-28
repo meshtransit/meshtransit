@@ -106,6 +106,10 @@ func compareKubernetesGrants(first, second KubernetesGrant) int {
 	return strings.Compare(first.Group, second.Group)
 }
 
+// ReadAtLocal returns this host's clock taken before the read the snapshot
+// comes from: no later than when its authority was current.
+func (snapshot Snapshot) ReadAtLocal() time.Time { return snapshot.readAtLocal }
+
 // Kubernetes returns the map's Kubernetes access of its peers.
 func (snapshot Snapshot) Kubernetes() KubernetesView { return snapshot.kubernetes }
 

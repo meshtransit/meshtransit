@@ -154,3 +154,37 @@ func TestGatewayMapStateKeepsPeersAccess(t *testing.T) {
 		t.Fatal("meshd kept a peer's access")
 	}
 }
+
+// A gateway takes a MapFresh for the view it applied, or an earlier one of
+// the same epoch, and dates its map back by the age Core reported; any other
+// is ignored, as is any on meshd (mtcp-v1 §7.9).
+func TestGatewayTakesMapFreshForTheMapItApplied(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	var reported []time.Time
+	run := func(gateway bool) *sessionRun {
+		client := New()
+		if gateway {
+			client = NewGateway()
+		}
+		return &sessionRun{stream: &netmapStream{client: client, options: controlplane.NetmapOptions{
+			MapFresh: func(at time.Time) { reported = append(reported, at) },
+		}}, applied: &mtcpv1.View{Epoch: 9, Seq: 5}}
+	}
+	fresh := func(epoch, seq uint64, age int64) *mtcpv1.MapFresh {
+		return &mtcpv1.MapFresh{View: &mtcpv1.View{Epoch: epoch, Seq: seq}, AgeMs: age}
+	}
+	gateway := run(true)
+	gateway.mapFresh(fresh(9, 3, 1500), now)
+	gateway.mapFresh(fresh(9, 5, 0), now)
+	for _, ignored := range []*mtcpv1.MapFresh{fresh(9, 6, 0), fresh(8, 1, 0), fresh(9, 5, -1), {}} {
+		gateway.mapFresh(ignored, now)
+	}
+	run(false).mapFresh(fresh(9, 5, 0), now)
+	unapplied := run(true)
+	unapplied.applied = nil
+	unapplied.mapFresh(fresh(9, 1, 0), now)
+	if len(reported) != 2 || !reported[0].Equal(now.Add(-1500*time.Millisecond)) || !reported[1].Equal(now) {
+		t.Fatalf("reported %v", reported)
+	}
+}

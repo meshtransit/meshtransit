@@ -73,6 +73,21 @@ type mapSink struct {
 	exits       *mtcpv1.ExitConfig   // the Exit Pools the node holds; nil: none
 	exitServed  *mtcpv1.ServedExits  // the Exit Pool the node serves; nil: none
 	authorized  bool                 // a registration awaits its RegisterResponse
+	// fresh is set for a Kubernetes gateway's session that negotiated
+	// gateway.kube.v1: it is told when its map is current (MapFresh,
+	// mtcp-v1 §7.9).
+	fresh bool
+	// authoritySeq is the seq of the epoch's last snapshot or authority
+	// delta, authorityAsOf this host's clock before its authority was read,
+	// and authorityFresh whether it may be confirmed: its map carries the
+	// peers' Kubernetes access (K1a3 Q8) and only its own Network.
+	// freshSent is the authority seq whose acknowledgement was confirmed.
+	authoritySeq   uint64
+	authorityAsOf  time.Time
+	authorityFresh bool
+	freshSent      uint64
+	// freshPending: a goroutine is about to confirm an acknowledgement.
+	freshPending bool
 }
 
 func newMapSink(session *Session, aliases bool, controlKeys []ControlKey, now func() time.Time) *mapSink {
@@ -137,8 +152,55 @@ func (sink *mapSink) sendSnapshotLocked(_ context.Context, snapshot mapsession.S
 	// A map was authorized for this session: it serves a Device now.
 	sink.session.proveDevice()
 	sink.epoch, sink.seq, sink.acked = epoch, 1, 0
+	sink.freshSent = 0
 	sink.adoptLocked(snapshot, grant)
+	sink.noteAuthorityLocked(snapshot)
 	return sink.sendTicketLocked(grant)
+}
+
+// noteAuthorityLocked records that the message just sent, at seq, carries
+// snapshot's authority.
+func (sink *mapSink) noteAuthorityLocked(snapshot mapsession.Snapshot) {
+	sink.authoritySeq, sink.authorityAsOf = sink.seq, snapshot.ReadAtLocal()
+	sink.authorityFresh = snapshot.Kubernetes().Computed() && len(snapshot.SharingScopes()) == 0
+}
+
+// ConfirmFresh implements mapsession.FreshMapSink: a gateway that
+// acknowledged current's authority hears that it still stood at asOf.
+func (sink *mapSink) ConfirmFresh(_ context.Context, current mapsession.Snapshot, asOf time.Time) error {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if !sink.confirmableLocked() || sink.current.NetworkRevision() != current.NetworkRevision() {
+		return nil
+	}
+	return sink.sendFreshLocked(asOf)
+}
+
+// confirmableLocked reports whether the node holds and acknowledged an
+// authority a MapFresh may confirm.
+func (sink *mapSink) confirmableLocked() bool {
+	return sink.fresh && sink.hasCurrent && sink.authorityFresh && sink.acked >= sink.authoritySeq
+}
+
+// sendFreshLocked confirms the epoch's last authority as of asOf.
+func (sink *mapSink) sendFreshLocked(asOf time.Time) error {
+	if err := sink.session.Send(sharedmtcp.MessageMapFresh, &mtcpv1.MapFresh{
+		View:             &mtcpv1.View{Epoch: sink.epoch, Seq: sink.authoritySeq},
+		NetworkRevisions: networkRevisions(sink.current), AsOfMs: asOf.UnixMilli(),
+		AgeMs: max(sink.now().Sub(asOf).Milliseconds(), 0),
+	}); err != nil {
+		return err
+	}
+	sink.freshSent = sink.authoritySeq
+	return nil
+}
+
+// confirmFreshness makes the sink tell a Kubernetes gateway when its map is
+// current (mtcp-v1 §7.9).
+func (sink *mapSink) confirmFreshness() {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	sink.fresh = true
 }
 
 // announce makes the next snapshot start with RegisterResponse{authorized}:
@@ -221,6 +283,7 @@ func (sink *mapSink) SendAuthorityDelta(ctx context.Context, delta mapsession.Au
 	if err := sink.sendDeltaLocked(ctx, message, snapshot, grant); err != nil {
 		return err
 	}
+	sink.noteAuthorityLocked(snapshot)
 	if message.Dns != nil {
 		sink.dnsDigest = digest
 		sink.adoptDNSLocked(message.Dns)
@@ -303,6 +366,7 @@ func (sink *mapSink) sendDeltaLocked(ctx context.Context, message *mtcpv1.MapDel
 // SendAuthorityPause tells a suspended node to remove peers and keep its
 // keys; the session then ends and the node retries (mtcp-v1 §10).
 func (sink *mapSink) SendAuthorityPause(context.Context, mapsession.Snapshot) error {
+	sink.revokeFreshness()
 	return sink.session.Send(sharedmtcp.MessageLifecycle, &mtcpv1.Lifecycle{
 		State: mtcpv1.Lifecycle_SUSPENDED, Reason: "the Device is suspended", RetryAfterMs: 3000,
 	})
@@ -310,7 +374,18 @@ func (sink *mapSink) SendAuthorityPause(context.Context, mapsession.Snapshot) er
 
 // SendAuthorityWithdrawal sends nothing: the stream returns the cause next,
 // and the conversation turns it into the matching Lifecycle.
-func (sink *mapSink) SendAuthorityWithdrawal(context.Context, mapsession.Snapshot) error { return nil }
+func (sink *mapSink) SendAuthorityWithdrawal(context.Context, mapsession.Snapshot) error {
+	sink.revokeFreshness()
+	return nil
+}
+
+// revokeFreshness stops confirming the map: its authority was paused or
+// withdrawn.
+func (sink *mapSink) revokeFreshness() {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	sink.authorityFresh = false
+}
 
 // SendRelayGrant delivers a renewed grant: keys, relay map and ticket.
 func (sink *mapSink) SendRelayGrant(ctx context.Context, snapshot mapsession.Snapshot) error {
@@ -491,6 +566,25 @@ func (sink *mapSink) ack(view *mtcpv1.View) {
 	select {
 	case sink.ackSignal <- struct{}{}:
 	default:
+	}
+	// A gateway hears at once that the authority it just applied is
+	// current as of its read (K1a3 §13.3). The session's reader never
+	// writes: another goroutine sends it.
+	if sink.confirmableLocked() && sink.freshSent != sink.authoritySeq && !sink.freshPending {
+		sink.freshPending = true
+		go sink.confirmAcknowledged()
+	}
+}
+
+// confirmAcknowledged sends the MapFresh an acknowledgement earned, unless
+// a newer authority awaits its own meanwhile. A failed send ends the
+// session through its writer, which reports it.
+func (sink *mapSink) confirmAcknowledged() {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	sink.freshPending = false
+	if sink.confirmableLocked() && sink.freshSent != sink.authoritySeq {
+		_ = sink.sendFreshLocked(sink.authorityAsOf)
 	}
 }
 

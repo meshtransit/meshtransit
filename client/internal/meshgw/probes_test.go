@@ -3,6 +3,7 @@ package meshgw
 import (
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -149,5 +150,66 @@ func TestProbesRequireTheirConditions(t *testing.T) {
 	probes.observe(t.Context())
 	if !probes.current().ready {
 		t.Fatal("current() not ready once the listener is up")
+	}
+}
+
+// The gateway serves how long ago Core confirmed its map current, logs once
+// when that passes five minutes and once when it is confirmed again
+// (K1a3 §5.3).
+func TestProbesReportTheMapsAge(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	fresh := now
+	status := func(context.Context) (daemon.Status, error) {
+		return daemon.Status{ControlSession: daemon.ControlSessionSynchronized, MapFreshAt: fresh}, nil
+	}
+	probes := NewProbes(status, time.Second)
+	logs := newRecordingHandler()
+	probes.LogStaleMap(slog.New(logs))
+	probes.clock = func() time.Time { return now }
+	server := httptest.NewServer(probes.Handler())
+	defer server.Close()
+
+	now = now.Add(90 * time.Second)
+	probes.observe(t.Context())
+	if _, body := get(t, server.URL+"/metrics"); !strings.Contains(body, "meshgw_map_age_seconds 90\n") {
+		t.Fatalf("metrics = %s", body)
+	}
+	if _, logged := logs.find("map not confirmed current"); logged {
+		t.Fatal("a fresh map was logged stale")
+	}
+	now = now.Add(5 * time.Minute)
+	probes.observe(t.Context())
+	probes.observe(t.Context())
+	stale := logs.waitFor(t, "map not confirmed current")
+	if stale["age"] != "6m30s" || logs.count("map not confirmed current") != 1 {
+		t.Fatalf("stale log %v, %d times", stale, logs.count("map not confirmed current"))
+	}
+	fresh = now
+	probes.observe(t.Context())
+	logs.waitFor(t, "map confirmed current again")
+}
+
+// Before any confirmation the gateway serves no map age, and says once
+// when none came in five minutes.
+func TestProbesServeNoAgeWithoutAConfirmation(t *testing.T) {
+	t.Parallel()
+	probes := NewProbes(func(context.Context) (daemon.Status, error) {
+		return daemon.Status{ControlSession: daemon.ControlSessionSynchronized}, nil
+	}, time.Second)
+	logs := newRecordingHandler()
+	probes.LogStaleMap(slog.New(logs))
+	probes.observe(t.Context())
+	now := time.Now().Add(6 * time.Minute)
+	probes.clock = func() time.Time { return now }
+	probes.observe(t.Context())
+	probes.observe(t.Context())
+	if logs.count("map never confirmed current") != 1 {
+		t.Fatalf("never-confirmed logs = %d", logs.count("map never confirmed current"))
+	}
+	server := httptest.NewServer(probes.Handler())
+	defer server.Close()
+	if _, body := get(t, server.URL+"/metrics"); strings.Contains(body, "meshgw_map_age_seconds") {
+		t.Fatalf("metrics = %s", body)
 	}
 }
