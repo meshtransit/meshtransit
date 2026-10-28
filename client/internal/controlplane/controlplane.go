@@ -277,6 +277,11 @@ type NetmapOptions struct {
 	// (monotonic) at which Core last confirmed the map it applied current
 	// (MapFresh, mtcp-v1 §7.9).
 	MapFresh func(time.Time)
+	// KubeCerts, for a Kubernetes gateway, carries its certificate
+	// requests; the stream declares gateway.cert1, sends each on its
+	// session once the first map arrived, and answers each call once
+	// (mtcp-v1 §6.9).
+	KubeCerts <-chan KubeCertCall
 	// RouteSelection, with EnableSubnetRoutes, carries the router this node
 	// sends each Site's traffic to; each set is sent in a
 	// RouteSelectionReport when Core takes it (routes.selection1), again

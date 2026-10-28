@@ -684,10 +684,13 @@ A pod's token request refuses its Device's other unfinished requests as
 gateway's next send finds it, issued or still waiting. A session that ends
 gives up its waiting request. Core keeps a request 10 minutes.
 
-**Renewal.** The gateway renews at `renew_at_ms`, clamped to between a
-minute from now and 12 hours before `not_after_ms`: about 8 hours into the
-certificate's life, so signing may stop for about 15 hours before a running
-replica's certificate expires. Its backoff grows from 2 seconds to
+**Renewal.** The gateway renews at `renew_at_ms`, never later than half
+the certificate's life (12 hours of a 24-hour certificate) and never sooner
+than 15 minutes after the issue (a minute when the root changed). Its renewal
+time is fixed when the certificate is issued, from the gateway's estimate of
+Core's clock. A certificate shorter than 12 hours renews a quarter into its
+life. With Core's `renew_at_ms` about 8 hours into the life, signing may stop
+for about 15 hours before a running replica's certificate expires. Its backoff grows from 2 seconds to
 `max(30 s, min(5 min, remaining life / 20))`.
 
 **Limits.** 12 certificates issued per Device and hour; 2 requests in
@@ -720,7 +723,9 @@ may reach it, packet filter, DNS, relay map and settings.
   contribute shared peers are never listed. Core records which revisions were
   delivered, so the Console can show how far a policy has been distributed
   and relate a node's view to a historic revision. Nodes treat them as opaque
-  diagnostics.
+  diagnostics, except that a Kubernetes gateway compares its Network's
+  revision with its certificate's to tell a map newer than the certificate
+  (7.10).
 - A delta is atomic: the node applies all of it or none.
 
 ### 7.2 Flow control
@@ -1250,10 +1255,12 @@ of the intermediate that signs now (`signing_fingerprint`).
 
 The gateway renews early when its map's `network_revisions` for its Network
 is at or past the `network_revision` its certificate was issued at and the
-map's root differs from its certificate's root (within 5 minutes, jittered)
-or the map's signing intermediate differs from its certificate's issuer
-(within an hour, jittered). A map older than its certificate never makes it
-renew.
+map's root differs from its certificate's root, or the map's signing
+intermediate differs from its certificate's issuer: at a random time within
+`min(1 hour, remaining life / 4)`, once per pair of CAs, and never sooner
+than 15 minutes after the issue (a minute when the root changed). A map older
+than its certificate never makes it renew. A certificate issued by another
+intermediate than the one a map at or past its revision names is not taken.
 
 ## 8. Node reports
 

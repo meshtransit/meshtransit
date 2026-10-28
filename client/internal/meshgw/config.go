@@ -52,6 +52,9 @@ type Config struct {
 	// meshtransit.net/kubernetes-gateway (MESHGW_POD_TOKEN_FILE): it proves
 	// the replica is its pod when it joins and rotates its keys (K1.1).
 	PodTokenFile string
+	// Certificates, for a K1 gateway, keeps its replica's TLS certificate
+	// from Core (MESHGW_CERTIFICATES, default on; "off" turns it off).
+	Certificates bool
 	// PodName, Namespace and NodeName are what the replica reports about
 	// itself while it waits for approval, for display only.
 	PodName, Namespace, NodeName string
@@ -111,7 +114,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("meshgw: the Device name %q is over %d bytes", hostname, maxHostnameBytes)
 	}
 	keyName := "key-" + strconv.Itoa(ordinal)
-	joinKeyFile, podTokenFile := "", ""
+	joinKeyFile, podTokenFile, certificates := "", "", false
 	if joinDir := value("MESHGW_JOIN_DIR", ""); joinDir != "" {
 		if !filepath.IsAbs(joinDir) {
 			return Config{}, fmt.Errorf("meshgw: MESHGW_JOIN_DIR %q must be absolute", joinDir)
@@ -121,9 +124,16 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		if !filepath.IsAbs(podTokenFile) {
 			return Config{}, fmt.Errorf("meshgw: MESHGW_POD_TOKEN_FILE %q must be absolute", podTokenFile)
 		}
+		switch value("MESHGW_CERTIFICATES", "on") {
+		case "on":
+			certificates = true
+		case "off":
+		default:
+			return Config{}, errors.New(`meshgw: MESHGW_CERTIFICATES must be "on" or "off"`)
+		}
 	}
 	return Config{
-		JoinKeyFile: joinKeyFile, PodTokenFile: podTokenFile,
+		JoinKeyFile: joinKeyFile, PodTokenFile: podTokenFile, Certificates: certificates,
 		PodName: getenv("POD_NAME"), Namespace: value("POD_NAMESPACE", ""), NodeName: value("NODE_NAME", ""),
 		Ordinal:            ordinal,
 		ControlURL:         controlURL,

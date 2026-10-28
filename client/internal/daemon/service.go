@@ -161,9 +161,12 @@ type Status struct {
 	// MapFreshAt is when Core last confirmed a Kubernetes gateway's applied
 	// map current, on this host's monotonic clock; zero: never, or not a
 	// gateway.
-	MapFreshAt   time.Time
-	PeerPaths    dataplane.PeerPathSnapshot
-	SubnetRoutes dataplane.SubnetRouteStatus
+	MapFreshAt time.Time
+	// GatewayCertificate is a gateway's replica certificate; nil when it
+	// asks for none.
+	GatewayCertificate *GatewayCertificateStatus
+	PeerPaths          dataplane.PeerPathSnapshot
+	SubnetRoutes       dataplane.SubnetRouteStatus
 	// RouteSites is the router each Site's traffic goes to.
 	RouteSites   []RouteSiteView
 	SubnetRouter dataplane.SubnetRouterStatus
@@ -399,6 +402,9 @@ type Service struct {
 	// gatewayCommitWait is Core's commit bound it waits out before probing.
 	gateway          bool
 	gatewayTokenFile string
+	// certificates keeps a gateway's replica certificate; nil when it asks
+	// for none (Options.GatewayCertificates).
+	certificates *gatewayCertificates
 	// mapFreshAt is when Core last confirmed a gateway's applied map
 	// current (MapFresh), on this host's monotonic clock; nil: never.
 	mapFreshAt atomic.Pointer[time.Time]
@@ -550,6 +556,10 @@ type Options struct {
 	// GatewayTokenFile is where a gateway's pod ServiceAccount token is
 	// (K1.1), read again for each key rotation: kubelet replaces it.
 	GatewayTokenFile string
+	// GatewayCertificates, with Gateway, keeps the replica's TLS
+	// certificate: asked for with the pod token, renewed with its key
+	// (MTCP gateway.cert1, K1a4a a4). The key never leaves memory.
+	GatewayCertificates bool
 }
 
 // New creates a daemon service from explicit dependencies.
@@ -675,6 +685,13 @@ func New(
 	if reapplier, ok := options.DNS.(dnsReapplier); ok {
 		reapplier.OnReapply(service.reappliedDNS)
 	}
+	if options.Gateway && options.GatewayCertificates {
+		certificates, err := newGatewayCertificates(service)
+		if err != nil {
+			return nil, err
+		}
+		service.certificates = certificates
+	}
 	return service, nil
 }
 
@@ -692,6 +709,16 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 	}()
 	// The restart the marker announced has happened: a later stop is real.
 	clearRestartMarker(s.restartMarkerPath, s.logger)
+	if s.certificates != nil {
+		// Kept across map streams: a pending request survives a new session
+		// (K1a4a a4 §3.2).
+		certificateCtx, stopCertificates := context.WithCancel(ctx)
+		s.certificates.start(certificateCtx)
+		defer func() {
+			stopCertificates()
+			s.certificates.stop()
+		}()
+	}
 	if s.captive != nil {
 		detector := s.newCaptiveDetector()
 		s.captiveDetector.Store(detector)
@@ -1187,6 +1214,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					RouteHealth:        routeHealth,
 					DNSHealth:          dnsHealth,
 					MapFresh:           s.mapFreshness(),
+					KubeCerts:          s.kubeCertCalls(),
 					RouteSelection:     routeSelection,
 					AnnounceGoingAway:  func() bool { return !restartExpected(s.restartMarkerPath, s.clock()) },
 					CaptiveWindows:     s.captiveWindowsToReport(),
@@ -1223,6 +1251,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					if s.profiles.Snapshot().ActiveProfileID != active.ID {
 						return nil
 					}
+					s.gatewayMapApplied(snapshot)
 					if pathSampler != nil {
 						pathSampler.observe(snapshot)
 					}
@@ -2461,6 +2490,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		DeviceExpiry:       DeviceExpiryState(deviceExpiryOf(registration, syncState), s.clock()),
 		PeerCount:          syncState.peerCount,
 		MapFreshAt:         s.mapFreshAtValue(),
+		GatewayCertificate: s.gatewayCertificateStatus(),
 		PolicyRuleCount:    syncState.policyRuleCount,
 		PeerPaths:          peerPaths,
 		SubnetRoutes:       subnetRoutes,

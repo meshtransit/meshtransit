@@ -459,6 +459,7 @@ func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, e
 	state := newMapState(stream.options.EnableSubnetRoutes)
 	state.takesServed = stream.options.EnableSubnetRouter
 	state.takesKubernetes = c.gateway != nil
+	state.takesKubernetesCA = c.gateway != nil && stream.options.KubeCerts != nil
 	state.takesServedExits = stream.options.EnableExitNode
 	state.takesExits = stream.options.EnableExits
 	run := &sessionRun{stream: stream, s: s, state: state, controlTime: time.UnixMilli(s.reply.GetServerTimeMs())}
@@ -506,6 +507,12 @@ type sessionRun struct {
 	// applied is the view of the map last handed to the daemon (or found
 	// unchanged); nil before. A MapFresh confirms it only (mtcp-v1 §7.9).
 	applied *mtcpv1.View
+	// kubeCert is the gateway's certificate call waiting on this session;
+	// nil when none (mtcp-v1 §6.9). kubeCertLate is the answer to a call
+	// that timed out; kubeCertWait, when set, replaces kubeCertWait (tests).
+	kubeCert     *kubeCertInFlight
+	kubeCertLate *kubeCertLate
+	kubeCertWait time.Duration
 }
 
 // A node acknowledges a snapshot at once, and deltas once ackBatch of them
@@ -532,6 +539,9 @@ func (run *sessionRun) loop(ctx context.Context, inbox <-chan incoming) (bool, t
 	run.ackTimer = time.NewTimer(time.Hour)
 	run.ackTimer.Stop()
 	defer run.ackTimer.Stop()
+	// A call still waiting when the session ends is answered: the request
+	// may be queued, and sending it again finds it.
+	defer run.endKubeCert(controlplane.ErrKubeCertSessionLost)
 	for {
 		// The end of ctx goes first: a stopping router announces it before
 		// handling anything else.
@@ -581,6 +591,12 @@ func (run *sessionRun) loop(ctx context.Context, inbox <-chan incoming) (bool, t
 			if err := run.acknowledge(); err != nil {
 				return run.mapped, 0, err
 			}
+		case call := <-run.kubeCertCalls():
+			if err := run.sendKubeCert(call); err != nil {
+				return run.mapped, 0, err
+			}
+		case <-run.kubeCertTimeout():
+			run.timeOutKubeCert()
 		}
 	}
 }
@@ -619,6 +635,9 @@ func (run *sessionRun) handle(ctx context.Context, in incoming) (time.Duration, 
 			return 0, err
 		}
 		return 0, run.deliver(ctx)
+	case *mtcpv1.KubeCertResult:
+		run.kubeCertResult(m)
+		return 0, nil
 	case *mtcpv1.Lifecycle:
 		return lifecycleOutcome(m)
 	case *mtcpv1.Error:
@@ -1352,6 +1371,10 @@ func streamCapabilities(options controlplane.NetmapOptions, gateway bool) []stri
 	if gateway {
 		// A Kubernetes gateway takes its peers' Kubernetes access (§7.8).
 		capabilities = append(capabilities, "gateway.kube.v1")
+		if options.KubeCerts != nil {
+			// It asks for its replica certificate (§6.9, §7.10).
+			capabilities = append(capabilities, kubeCertCapability)
+		}
 	}
 	if options.EnableExitNode {
 		capabilities = append(capabilities, "router.exit.v1")

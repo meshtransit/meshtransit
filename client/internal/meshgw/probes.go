@@ -202,6 +202,7 @@ func (p *Probes) Handler() http.Handler {
 			_, _ = fmt.Fprintf(w, "# HELP meshgw_map_age_seconds Seconds since Core last confirmed the map current.\n"+
 				"# TYPE meshgw_map_age_seconds gauge\nmeshgw_map_age_seconds %d\n", int64(age.Seconds()))
 		}
+		writeCertificateMetrics(w, last.status.GatewayCertificate)
 		for _, counter := range p.counters {
 			_, _ = fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s counter\n%s %d\n",
 				counter.Name, counter.Help, counter.Name, counter.Name, counter.Value())

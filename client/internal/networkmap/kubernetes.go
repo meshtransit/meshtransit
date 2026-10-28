@@ -131,3 +131,25 @@ func CloneKubernetesAccess(access *KubernetesAccess) *KubernetesAccess {
 	cloned.Grants = slices.Clone(access.Grants)
 	return &cloned
 }
+
+// KubernetesCA is what a gateway's map names of its cluster's CAs (mtcp-v1
+// §7.10): the SHA-256 of the root's DER and of the intermediate that signs
+// now, each empty when there is none, and the map's revision of the
+// gateway's Network, which says how recent the map is.
+type KubernetesCA struct {
+	Root, Signing []byte
+	MapRevision   uint64
+}
+
+// CheckKubernetesCA reports fingerprints of 32 bytes or none, and no
+// intermediate without a root.
+func CheckKubernetesCA(ca *KubernetesCA) error {
+	if ca == nil {
+		return nil
+	}
+	if len(ca.Root) != 0 && len(ca.Root) != 32 || len(ca.Signing) != 0 && len(ca.Signing) != 32 ||
+		len(ca.Signing) != 0 && len(ca.Root) == 0 {
+		return errors.New("networkmap: invalid Kubernetes CA fingerprints")
+	}
+	return nil
+}

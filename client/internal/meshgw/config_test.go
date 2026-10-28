@@ -132,3 +132,24 @@ func TestLoadConfigJoinMode(t *testing.T) {
 		t.Fatal("a relative join directory was accepted")
 	}
 }
+
+// A K1 gateway keeps its certificate unless MESHGW_CERTIFICATES is "off";
+// an enrolled replica keeps none (K1a4a a4).
+func TestLoadConfigCertificates(t *testing.T) {
+	t.Parallel()
+	env, dir := testEnv(t)
+	if cfg, err := loadFrom(env); err != nil || cfg.Certificates {
+		t.Fatalf("an enrolled replica: %+v, %v", cfg.Certificates, err)
+	}
+	env["MESHGW_JOIN_DIR"] = filepath.Join(dir, "join")
+	for value, want := range map[string]bool{"": true, "on": true, "off": false} {
+		env["MESHGW_CERTIFICATES"] = value
+		if cfg, err := loadFrom(env); err != nil || cfg.Certificates != want {
+			t.Errorf("%q: %v, %v", value, cfg.Certificates, err)
+		}
+	}
+	env["MESHGW_CERTIFICATES"] = "yes"
+	if _, err := loadFrom(env); err == nil {
+		t.Fatal("MESHGW_CERTIFICATES=yes was accepted")
+	}
+}

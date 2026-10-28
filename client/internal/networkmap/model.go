@@ -36,6 +36,9 @@ type Snapshot struct {
 	// a local choice among Exits (exit node design §9), never part of
 	// Core's map; nil when it uses none.
 	ExitRoute *ExitRoute
+	// KubernetesCA is a Kubernetes gateway's cluster's CAs (mtcp-v1 §7.10);
+	// nil when the map does not name them (absent).
+	KubernetesCA *KubernetesCA
 	// DroppedAliasPeers counts the shared Devices the client left out of
 	// this map because their alias could not be used (expired, invalid or
 	// colliding); for the log, never for authority.

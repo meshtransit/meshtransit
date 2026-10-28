@@ -232,6 +232,7 @@ WHERE purpose = 'cert' AND jti = 'pod-token-1'`).Scan(&uses); err != nil || uses
 
 	// A renewal is signed by the key of the certificate it renews.
 	assertCertificateRenewal(ctx, t, runtime, worker, keys, deviceID, first, certificate)
+	assertCertificateResends(ctx, t, admin, runtime, store, worker, fixture, keys, deviceID, first, certificate)
 
 	assertCertificateLimits(ctx, t, admin, runtime, worker, keys, deviceID, certificate)
 	assertCertificateQueue(ctx, t, admin, runtime, runtimePool, store, worker, fixture, keys, certificate)

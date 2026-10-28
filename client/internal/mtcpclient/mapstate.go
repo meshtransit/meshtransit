@@ -57,6 +57,9 @@ type mapState struct {
 	// takesServed: the node declared router.subnet.v1.
 	takesServed bool
 	servedExits *mtcpv1.ServedExits
+	// takesKubernetesCA: the node is a gateway that declared gateway.cert1;
+	// its own entry may name its cluster's CAs (§7.10).
+	takesKubernetesCA bool
 	// takesServedExits: the node declared router.exit.v1.
 	takesServedExits bool
 	exits            *mtcpv1.ExitConfig
@@ -312,11 +315,35 @@ func (state *mapState) build(input snapshotInput) (networkmap.Snapshot, error) {
 	if interchange, regions, ok := state.interchange(input.now); ok {
 		snapshot.Interchange, snapshot.Relays = interchange, regions
 	}
+	if state.takesKubernetesCA {
+		snapshot.KubernetesCA = state.kubernetesCA()
+	}
 	// A share whose alias cannot be used now (expired, invalid, colliding,
 	// or a clock ahead of Core's) is left out, not the whole map.
 	usable, dropped := networkmap.WithoutUnusableAliases(networkmap.WithUsableEndpoints(snapshot), input.now)
 	usable.DroppedAliasPeers = dropped
 	return networkmap.ValidateAndClone(usable, input.now)
+}
+
+// kubernetesCA is the gateway's cluster's CAs its own entry names, with the
+// map's revision of its Network; nil when absent or malformed (a malformed
+// one never costs the gateway its map: it keeps its certificate).
+func (state *mapState) kubernetesCA() *networkmap.KubernetesCA {
+	named := state.self.GetKubernetesCa()
+	if named == nil {
+		return nil
+	}
+	ca := &networkmap.KubernetesCA{
+		Root: bytes.Clone(named.GetRootFingerprint()), Signing: bytes.Clone(named.GetSigningFingerprint()),
+	}
+	// A gateway belongs to one Network: the map lists its revision only.
+	for _, revision := range state.revisions {
+		ca.MapRevision = max(ca.MapRevision, revision.GetRevision())
+	}
+	if networkmap.CheckKubernetesCA(ca) != nil {
+		return nil
+	}
+	return ca
 }
 
 // interchange verifies the relay map with the grant's signing keys and

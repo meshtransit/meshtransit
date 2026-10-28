@@ -58,6 +58,9 @@ func ValidateAndClone(snapshot Snapshot, now time.Time) (Snapshot, error) {
 	if err := validateNode(snapshot.Self, true, now); err != nil {
 		return Snapshot{}, fmt.Errorf("%w: self: %w", ErrInvalid, err)
 	}
+	if err := CheckKubernetesCA(snapshot.KubernetesCA); err != nil {
+		return Snapshot{}, fmt.Errorf("%w: %w", ErrInvalid, err)
+	}
 	if snapshot.Audit.Enabled() && snapshot.Audit.NodeID() != snapshot.Self.ID {
 		return Snapshot{}, fmt.Errorf("%w: audit credential reporter does not match self", ErrInvalid)
 	}
@@ -577,6 +580,12 @@ func cloneSnapshot(snapshot Snapshot) Snapshot {
 	if snapshot.ExitRoute != nil {
 		route := *snapshot.ExitRoute
 		cloned.ExitRoute = &route
+	}
+	if snapshot.KubernetesCA != nil {
+		cloned.KubernetesCA = &KubernetesCA{
+			Root:    append([]byte(nil), snapshot.KubernetesCA.Root...),
+			Signing: append([]byte(nil), snapshot.KubernetesCA.Signing...), MapRevision: snapshot.KubernetesCA.MapRevision,
+		}
 	}
 
 	return cloned

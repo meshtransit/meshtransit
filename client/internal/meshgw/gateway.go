@@ -142,6 +142,8 @@ func newRuntime(cfg Config, stacks *Stacks, profiles *profile.Store, identities 
 		Gateway:   cfg.JoinKeyFile != "",
 		// K1.1: read again for each key rotation.
 		GatewayTokenFile: cfg.PodTokenFile,
+		// K1a4a a4: the replica's TLS certificate, key in memory only.
+		GatewayCertificates: cfg.Certificates,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("meshgw: creating the runtime: %w", err)
