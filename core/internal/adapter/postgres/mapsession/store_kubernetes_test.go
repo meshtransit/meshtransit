@@ -3,6 +3,7 @@ package mapsession
 import (
 	"errors"
 	"testing"
+	"time"
 
 	appmapsession "meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/node"
@@ -159,5 +160,101 @@ func TestInventoryIsReadWholeOnceGatewaysAreRead(t *testing.T) {
 	}
 	if countQueries(transaction.queries, loadNetworkDevicesSQL) != 2 || deviceCluster(t, second, 3) != "kinda-k1" {
 		t.Fatalf("the inventory kept a replica without its cluster (queries %v)", transaction.queries)
+	}
+}
+
+// TestInventoryReadsTheKubernetesSourcesOfAClusterNetwork: once schema 237
+// is granted, a Network with a cluster gateway reads its rules' Kubernetes
+// groups and its Devices' owners into the policy (K1a3 §16 b1).
+func TestInventoryReadsTheKubernetesSourcesOfAClusterNetwork(t *testing.T) {
+	t.Parallel()
+	until := inventoryReadAt.Add(2 * time.Hour)
+	changed := inventoryReadAt.Add(-time.Hour)
+	store, transaction, scope := changeTrackingStore(t)
+	transaction.kubernetesGateways = map[int64]string{702: "kinda-k1"}
+	transaction.clusterRule = true
+	transaction.policyExpiry = inventoryReadAt.Add(24 * time.Hour)
+	transaction.kubernetesRuleGroups = [][]any{{testRuleID, []string{"edit", "view"}}}
+	transaction.kubernetesSources = [][]any{
+		{int64(701), "member", "01890f00-0000-7000-8000-000000000011", true, true, until, changed, false},
+		{int64(702), "workspace", "", false, false, nil, nil, false},
+	}
+	queueInventoryRead(transaction, 7, 10, true)
+	transaction.inventoryRows = []*peerCandidateRows{{records: []peerCandidateRecord{validPeerCandidateRecord(2)}}}
+	cached, err := store.readInventory(t.Context(), scope, testWorkspaceID, testNetworkID, cachedInventory{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateway, err := node.ParseID(testPeerNodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := node.ParseID(testNodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	access := cached.policy.KubernetesAccessFor(gateway, inventoryReadAt)[client]
+	if len(access.Grants) != 2 || access.Grants[0].Group != "edit" || access.Grants[1].Group != "view" ||
+		!access.Grants[0].ValidUntil.Equal(until) || !access.OwnerChangedAt.Equal(changed) ||
+		access.OwnerKind != appmapsession.KubernetesOwnerMember {
+		t.Fatalf("access = %+v", access)
+	}
+}
+
+// TestStoreRefusesInvalidKubernetesSources: groups for a rule the release
+// does not hold, or an owner the schema cannot produce, fail the read.
+func TestStoreRefusesInvalidKubernetesSources(t *testing.T) {
+	t.Parallel()
+	member := []any{int64(701), "member", "01890f00-0000-7000-8000-000000000011", true, true,
+		nil, nil, false}
+	for name, test := range map[string]struct {
+		groups  [][]any
+		sources [][]any
+	}{
+		"unknown rule":     {groups: [][]any{{"01890f00-0000-7000-8000-000000000899", []string{"view"}}}, sources: [][]any{member}},
+		"no groups":        {groups: [][]any{{testRuleID, []string{}}}, sources: [][]any{member}},
+		"unknown owner":    {sources: [][]any{{int64(701), "robot", "", false, false, nil, nil, false}}},
+		"workspace active": {sources: [][]any{{int64(701), "workspace", "", false, true, nil, nil, false}}},
+		"tags without ref": {sources: [][]any{{int64(701), "tags", "x", false, false, nil, nil, false}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			store, transaction, scope := changeTrackingStore(t)
+			transaction.kubernetesGateways = map[int64]string{702: "kinda-k1"}
+			transaction.clusterRule = true
+			transaction.kubernetesRuleGroups, transaction.kubernetesSources = test.groups, test.sources
+			queueInventoryRead(transaction, 7, 10, true)
+			transaction.inventoryRows = []*peerCandidateRows{{records: []peerCandidateRecord{validPeerCandidateRecord(2)}}}
+			if _, err := store.readInventory(t.Context(), scope, testWorkspaceID, testNetworkID,
+				cachedInventory{}); !errors.Is(err, ErrSnapshotEvidence) {
+				t.Fatalf("readInventory() error = %v, want ErrSnapshotEvidence", err)
+			}
+		})
+	}
+}
+
+// TestInventoryReadsNoKubernetesSourcesUnlessNeeded: a Network without a
+// gateway never probes for schema 237, and a database without it reads
+// none of its data (a rolling deploy onto schema 236).
+func TestInventoryReadsNoKubernetesSourcesUnlessNeeded(t *testing.T) {
+	t.Parallel()
+	for name, gateways := range map[string]map[int64]string{"no gateway": nil, "schema 236": {702: "kinda-k1"}} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			store, transaction, scope := changeTrackingStore(t)
+			transaction.kubernetesGateways = gateways
+			queueInventoryRead(transaction, 7, 10, true)
+			transaction.inventoryRows = []*peerCandidateRows{{records: []peerCandidateRecord{validPeerCandidateRecord(2)}}}
+			if _, err := store.readInventory(t.Context(), scope, testWorkspaceID, testNetworkID,
+				cachedInventory{}); err != nil {
+				t.Fatal(err)
+			}
+			probes := countQueries(transaction.queries, kubernetesSourcesGrantedSQL)
+			if gateways == nil && probes != 0 || gateways != nil && probes != 1 ||
+				countQueries(transaction.queries, loadKubernetesSourcesSQL) != 0 ||
+				countQueries(transaction.queries, loadKubernetesRuleGroupsSQL) != 0 {
+				t.Fatalf("queries %v", transaction.queries)
+			}
+		})
 	}
 }

@@ -59,7 +59,10 @@ type fakeTransaction struct {
 	// noNetworkRules serves a Network policy without the Device's rule.
 	noNetworkRules bool
 	// policyExpiry overrides when the Network policy's Devices expire.
-	policyExpiry   time.Time
+	policyExpiry time.Time
+	// clusterRule makes the Network policy's rule reach Device group 90,
+	// whose only member is Device 702, a cluster gateway.
+	clusterRule    bool
 	policyRows     *policyRuleRows
 	directRows     *directEdgeRows
 	aliasRows      *directEdgeRows
@@ -87,6 +90,11 @@ type fakeTransaction struct {
 	// kubernetesGateways reports the schema 231 gateway reader as granted
 	// when set, and answers it: each gateway's numeric ID and cluster name.
 	kubernetesGateways map[int64]string
+	// kubernetesSources reports the schema 237 readers as granted when set,
+	// and answers the sources reader; kubernetesRuleGroups answers the
+	// rule groups reader.
+	kubernetesSources    [][]any
+	kubernetesRuleGroups [][]any
 }
 
 // gatewayRows answers the schema 231 gateway reader in numeric ID order.
@@ -162,9 +170,15 @@ func (transaction *fakeTransaction) Query(
 		if transaction.noNetworkRules {
 			return &genericRows{}, nil
 		}
+		if transaction.clusterRule {
+			rules.rows[0][0], rules.rows[0][4], rules.rows[0][5] = "group", "device_group", int64(90)
+		}
 		return rules, nil
 	case loadNetworkSelectorMembersSQL:
 		_, members, _ := networkPolicyRows(transaction.policyExpiry)
+		if transaction.clusterRule {
+			members.rows = append(members.rows, []any{"device_group", int64(90), int64(702), nil})
+		}
 		return members, nil
 	case loadNetworkPolicyDevicesSQL:
 		_, _, devices := networkPolicyRows(transaction.policyExpiry)
@@ -175,6 +189,12 @@ func (transaction *fakeTransaction) Query(
 		return &grantRows{granted: transaction.inventoryChanges}, nil
 	case kubernetesGatewaysGrantedSQL:
 		return &grantRows{granted: transaction.kubernetesGateways != nil}, nil
+	case kubernetesSourcesGrantedSQL:
+		return &grantRows{granted: transaction.kubernetesSources != nil}, nil
+	case loadKubernetesSourcesSQL:
+		return &genericRows{rows: transaction.kubernetesSources}, nil
+	case loadKubernetesRuleGroupsSQL:
+		return &genericRows{rows: transaction.kubernetesRuleGroups}, nil
 	case loadKubernetesGatewaysSQL:
 		if transaction.kubernetesGateways == nil {
 			return nil, errors.New("unexpected gateway read")
@@ -401,6 +421,8 @@ func (rows *genericRows) Scan(destinations ...any) error {
 			*destination = value.(string)
 		case *int64:
 			*destination = value.(int64)
+		case *bool:
+			*destination = value.(bool)
 		case *[]int32:
 			*destination = append([]int32(nil), value.([]int32)...)
 		case *[]string:

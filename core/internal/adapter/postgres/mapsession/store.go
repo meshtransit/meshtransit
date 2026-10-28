@@ -106,6 +106,8 @@ type Store struct {
 	revisions   revisionReads
 	// gatewaysGranted: this role may run the schema 231 gateway reader.
 	gatewaysGranted atomic.Bool
+	// kubernetesSourcesGranted: this role may run the schema 237 readers.
+	kubernetesSourcesGranted atomic.Bool
 }
 
 // InventoryStats counts how map snapshots got their candidates.

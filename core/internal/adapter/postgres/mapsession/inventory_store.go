@@ -179,7 +179,14 @@ func (store *Store) readInventory(
 			spread: store.options.ExitNodes && store.options.ExitSpread, dnsZones: store.options.DNSZones,
 			protected: store.options.protectedDNSNames()}
 	}
-	cached.policy, err = readNetworkPolicy(ctx, transaction, scope, policyRevision, releaseActive, routes)
+	kubernetes := false
+	if cached.clusters {
+		if kubernetes, err = store.readsKubernetesSources(ctx, transaction); err != nil {
+			return cachedInventory{}, err
+		}
+	}
+	cached.policy, err = readNetworkPolicy(ctx, transaction, scope, policyRevision, releaseActive, routes,
+		kubernetes)
 	if err != nil {
 		return cachedInventory{}, err
 	}
@@ -210,6 +217,7 @@ func (store *Store) readInventoryDevices(
 		return err
 	}
 	cached.gateways = granted
+	cached.clusters = len(gateways) > 0
 	tracked, err := functionGranted(ctx, transaction, inventoryChangesGrantedSQL)
 	if err != nil {
 		return errors.Join(ErrLoadSnapshot, fmt.Errorf("check inventory change reader: %w", err))
@@ -405,6 +413,7 @@ func readNetworkPolicy(
 	revision int64,
 	releaseActive bool,
 	routes networkRoutes,
+	kubernetes bool,
 ) (appmapsession.NetworkPolicy, error) {
 	params := appmapsession.NetworkPolicyParams{Scope: scope, Revision: revision, ReleaseActive: releaseActive}
 	var err error
@@ -434,6 +443,11 @@ func readNetworkPolicy(
 	}
 	if params.Devices, err = readNetworkPolicyDevices(ctx, transaction); err != nil {
 		return appmapsession.NetworkPolicy{}, err
+	}
+	if kubernetes && releaseActive {
+		if err := readKubernetesPolicy(ctx, transaction, revision, &params); err != nil {
+			return appmapsession.NetworkPolicy{}, err
+		}
 	}
 	networkPolicy, err := appmapsession.NewNetworkPolicy(params)
 	if err != nil {

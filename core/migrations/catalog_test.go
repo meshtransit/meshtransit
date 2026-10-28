@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 236 {
-		t.Fatalf("len(Catalog()) = %d, want 236", len(catalog))
+	if len(catalog) != 237 {
+		t.Fatalf("len(Catalog()) = %d, want 237", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 236 {
-		t.Fatalf("LatestVersion() = %d, want 236", LatestVersion())
+	if LatestVersion() != 237 {
+		t.Fatalf("LatestVersion() = %d, want 237", LatestVersion())
 	}
 }
 
@@ -6953,5 +6953,41 @@ func TestMigration236KubernetesRuleGroups(t *testing.T) {
 	// _v3 differs from _v2 only by the groups.
 	if strings.Count(migration.SQL, "kubernetes_groups_aware") != 3 {
 		t.Errorf("kubernetes_groups_aware appears %d times", strings.Count(migration.SQL, "kubernetes_groups_aware"))
+	}
+}
+
+// A gateway's map learns who owns the Devices that reach it (K1a3b): owner
+// changes kept by a trigger only, read only for Networks with a cluster.
+func TestMigration237KubernetesGatewaySources(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[236]
+	if migration.Version != 237 {
+		t.Fatalf("migration 237 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE TABLE mesh.device_owner_change (",
+		"ALTER TABLE mesh.device_owner_change FORCE ROW LEVEL SECURITY",
+		"AFTER UPDATE OF owner_principal_id, ownership ON mesh.device",
+		"WHEN (OLD.owner_principal_id IS DISTINCT FROM NEW.owner_principal_id OR OLD.ownership IS DISTINCT FROM NEW.ownership)",
+		"SELECT device.id, pg_catalog.transaction_timestamp()",
+		"device.ownership = 'member',\n           device.ownership = 'member' AND principal.state = 'active'",
+		"ORDER BY tag.public_id::TEXT COLLATE \"C\"",
+		"CREATE FUNCTION mesh_ops.load_map_network_kubernetes_rule_groups_v1(p_policy_revision BIGINT)",
+		"CREATE FUNCTION mesh_ops.load_map_network_kubernetes_sources_v1(p_limit INTEGER)",
+		"FROM mesh.network_site_router AS router",
+		"FROM mesh.network_exit_node AS exit_node",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_map_network_kubernetes_sources_v1(INTEGER) TO mesh_runtime",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 237 lacks %q", want)
+		}
+	}
+	// The backfill scans no audit trail while it holds mesh.device locked.
+	if strings.Contains(migration.SQL, "mesh_audit.") {
+		t.Error("migration 237 reads the audit trail")
+	}
+	// Device rows are never rewritten to backfill.
+	if strings.Contains(migration.SQL, "UPDATE mesh.device ") || strings.Contains(migration.SQL, "UPDATE mesh.device\n") {
+		t.Error("migration 237 rewrites Device rows")
 	}
 }

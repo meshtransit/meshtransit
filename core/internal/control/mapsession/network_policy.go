@@ -40,6 +40,9 @@ type NetworkPolicyRule struct {
 	DestinationRef  int64
 	Protocol        policy.Protocol
 	Ports           []policy.PortRange
+	// KubernetesGroups are the groups a rule to a cluster's own Device
+	// Group grants, sorted; nil for any other rule (K1a3).
+	KubernetesGroups []string
 }
 
 // SelectorMember places one Device in one selector, until ValidUntil when
@@ -91,6 +94,10 @@ type NetworkPolicyParams struct {
 	// DNSUnmanagedGroups are the Device Groups whose Devices get no DNS
 	// configuration in their maps (DNS design D5b, schema 221).
 	DNSUnmanagedGroups []int64
+	// KubernetesSources are, for a Network that has a Kubernetes cluster,
+	// what each Device's Kubernetes access rests on (K1a3); none for other
+	// Networks.
+	KubernetesSources []KubernetesSource
 }
 
 // NetworkPolicy is one Network's packet policy at selector level, shared by
@@ -127,6 +134,13 @@ type networkPolicy struct {
 	deviceList []PolicyDevice
 	// routes holds the Network's subnet routes; nil: none.
 	routes *routeIndex
+	// sources indexes KubernetesSources by Device; sourceList keeps them as
+	// read, for Equal.
+	sources    map[int64]KubernetesSource
+	sourceList []KubernetesSource
+	// kubernetesChangesAt is the earliest end of a membership a gateway's
+	// access rests on; zero: none.
+	kubernetesChangesAt time.Time
 }
 
 // NewNetworkPolicy validates and indexes one Network's policy.
@@ -143,6 +157,14 @@ func NewNetworkPolicy(params NetworkPolicyParams) (NetworkPolicy, error) {
 		byNode:     make(map[node.ID]int64, len(params.Devices)),
 		memberList: slices.Clone(params.Members),
 		deviceList: slices.Clone(params.Devices),
+		sources:    make(map[int64]KubernetesSource, len(params.KubernetesSources)),
+		sourceList: slices.Clone(params.KubernetesSources),
+	}
+	for _, source := range params.KubernetesSources {
+		if _, duplicate := inner.sources[source.Device]; duplicate || !source.valid() {
+			return NetworkPolicy{}, ErrInvalidNetworkPolicy
+		}
+		inner.sources[source.Device] = source
 	}
 	if !params.ReleaseActive && len(params.Rules) != 0 {
 		return NetworkPolicy{}, ErrInvalidNetworkPolicy
@@ -180,7 +202,8 @@ func NewNetworkPolicy(params NetworkPolicyParams) (NetworkPolicy, error) {
 	}
 	for _, rule := range inner.rules {
 		if !rule.ID.IsValid() || !rule.SourceKind.valid() || !rule.DestinationKind.valid() ||
-			rule.DestinationKind == SelectorIdentityGroup || rule.SourceRef <= 0 || rule.DestinationRef <= 0 {
+			rule.DestinationKind == SelectorIdentityGroup || rule.SourceRef <= 0 || rule.DestinationRef <= 0 ||
+			!validRuleKubernetesGroups(rule) {
 			return NetworkPolicy{}, ErrInvalidNetworkPolicy
 		}
 	}
@@ -202,6 +225,7 @@ func NewNetworkPolicy(params NetworkPolicyParams) (NetworkPolicy, error) {
 		return NetworkPolicy{}, ErrInvalidNetworkPolicy
 	}
 	inner.routes = routes
+	inner.noteKubernetesChanges()
 	return NetworkPolicy{inner: inner}, nil
 }
 
@@ -228,7 +252,8 @@ func (networkPolicy NetworkPolicy) Equal(other NetworkPolicy) bool {
 		slices.EqualFunc(left.rules, right.rules, func(first, second NetworkPolicyRule) bool {
 			return first.ID == second.ID && first.SourceKind == second.SourceKind && first.SourceRef == second.SourceRef &&
 				first.DestinationKind == second.DestinationKind && first.DestinationRef == second.DestinationRef &&
-				first.Protocol == second.Protocol && slices.Equal(first.Ports, second.Ports)
+				first.Protocol == second.Protocol && slices.Equal(first.Ports, second.Ports) &&
+				slices.Equal(first.KubernetesGroups, second.KubernetesGroups)
 		}) &&
 		slices.EqualFunc(left.memberList, right.memberList, func(first, second SelectorMember) bool {
 			return first.Kind == second.Kind && first.Selector == second.Selector && first.Device == second.Device &&
@@ -236,7 +261,7 @@ func (networkPolicy NetworkPolicy) Equal(other NetworkPolicy) bool {
 		}) &&
 		slices.EqualFunc(left.deviceList, right.deviceList, func(first, second PolicyDevice) bool {
 			return first.Device == second.Device && first.NodeID == second.NodeID && first.ExpiresAt.Equal(second.ExpiresAt)
-		}) && left.routes.equal(right.routes)
+		}) && left.routes.equal(right.routes) && equalKubernetesSources(left.sourceList, right.sourceList)
 }
 
 // RoutesFor returns self's subnet routes at time now: the Sites it may reach
@@ -380,6 +405,7 @@ func cloneNetworkPolicyRules(rules []NetworkPolicyRule) []NetworkPolicyRule {
 	cloned := make([]NetworkPolicyRule, len(rules))
 	for index, rule := range rules {
 		rule.Ports = append([]policy.PortRange(nil), rule.Ports...)
+		rule.KubernetesGroups = slices.Clone(rule.KubernetesGroups)
 		cloned[index] = rule
 	}
 	return cloned

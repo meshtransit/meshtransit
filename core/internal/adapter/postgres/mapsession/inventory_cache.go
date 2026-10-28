@@ -48,6 +48,9 @@ type cachedInventory struct {
 	// gateways: the inventory marks gateway replicas with their cluster
 	// (schema 231); changes apply only to an inventory read the same way.
 	gateways bool
+	// clusters: the Network has Kubernetes gateway replicas, so its policy
+	// carries what their maps need (K1a3b).
+	clusters bool
 }
 
 // sharesAbsent reports whether no share reader can return anything for the

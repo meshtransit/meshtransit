@@ -361,6 +361,7 @@ WHERE workspace_id = 103 AND network_id = 203 ORDER BY id LIMIT 1`).Scan(&heldMa
 	assertSigningTrustPaste(ctx, t, admin, runtimePool, service, owner, custom, scope, clusterID, gatewayDevice)
 	assertKubernetesPolicyGroupGuards(ctx, t, admin, policyGroup, gatewayDevice)
 	assertKubernetesRuleGroups(ctx, t, admin, policyGroup)
+	assertKubernetesGatewaySources(ctx, t, admin, scope)
 	assertMapListsKubernetesGateways(ctx, t, admin, scope, gatewayDevice, "prod")
 	assertMapMarksKubernetesReplicas(ctx, t, admin, runtimePool, scope, gatewayDevice, "prod")
 
@@ -669,6 +670,7 @@ func assertGatewayReferenceCoverage(ctx context.Context, t *testing.T, admin *pg
 		"mesh.node_address_lease":          "a gateway has addresses like any Device",
 		"mesh.pending_registration":        "registration bookkeeping",
 		"mesh.kubernetes_replica_request":  "the request that created the gateway",
+		"mesh.device_owner_change":         "when a Device changed owner, written by a trigger only; a gateway never does",
 	}
 	rows, err := admin.Query(ctx, `SELECT DISTINCT constraint_row.conrelid::REGCLASS::TEXT
 FROM pg_catalog.pg_constraint AS constraint_row
