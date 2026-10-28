@@ -256,9 +256,24 @@ const (
 	OutcomeRecorded Outcome = "recorded"
 )
 
+// FleetRow is one active gateway Device of an active cluster (a4d): its
+// place in the scan, when its latest certificate expires (zero: none),
+// whether it asked within the last 10 minutes, and whether that latest
+// request went unserved (refused, given up, or waiting over a minute).
+type FleetRow struct {
+	Cluster  int64
+	Ordinal  int
+	NotAfter time.Time
+	Asking   bool
+	Unserved bool
+}
+
 // Store is the worker's view of the queue and ledger (the postgres
 // adapter).
 type Store interface {
+	// Fleet reads up to limit gateway Devices after (cluster, ordinal).
+	Fleet(ctx context.Context, installation deployment.ID, afterCluster int64, afterOrdinal, limit int) ([]FleetRow,
+		error)
 	Claim(ctx context.Context, installation deployment.ID, limit int, lease time.Duration) (Batch, error)
 	Issue(ctx context.Context, installation deployment.ID, issue Issue) (Outcome, Reason, error)
 	Refuse(ctx context.Context, installation deployment.ID, request publicid.ID, claimToken ClaimToken,

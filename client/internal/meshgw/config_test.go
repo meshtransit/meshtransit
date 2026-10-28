@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const testFingerprint = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -148,6 +149,18 @@ func TestLoadConfigCertificates(t *testing.T) {
 			t.Errorf("%q: %v, %v", value, cfg.Certificates, err)
 		}
 	}
+	env["MESHGW_CERTIFICATES"] = ""
+	env["MESHGW_CERTIFICATE_RENEW_AFTER"] = "15m"
+	if cfg, err := loadFrom(env); err != nil || cfg.CertificateRenewAfter != 15*time.Minute {
+		t.Fatalf("a renewal after 15 minutes: %v, %v", cfg.CertificateRenewAfter, err)
+	}
+	for _, refused := range []string{"14m", "soon"} {
+		env["MESHGW_CERTIFICATE_RENEW_AFTER"] = refused
+		if _, err := loadFrom(env); err == nil {
+			t.Errorf("MESHGW_CERTIFICATE_RENEW_AFTER=%s was accepted", refused)
+		}
+	}
+	env["MESHGW_CERTIFICATE_RENEW_AFTER"] = ""
 	env["MESHGW_CERTIFICATES"] = "yes"
 	if _, err := loadFrom(env); err == nil {
 		t.Fatal("MESHGW_CERTIFICATES=yes was accepted")

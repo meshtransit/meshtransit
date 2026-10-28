@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -29,6 +30,8 @@ const (
     $1::UUID,$2::UUID,$3::UUID)::TEXT`
 	pruneKubernetesGatewayCertificatesSQL = `SELECT mesh_ops.prune_kubernetes_gateway_certificates_v1(
     $1::UUID,$2::INTEGER)::TEXT`
+	readKubernetesGatewayCertificateFleetSQL = `SELECT mesh_ops.read_kubernetes_gateway_certificate_fleet_v1(
+    $1::UUID,$2::BIGINT,$3::INTEGER,$4::INTEGER)::TEXT`
 	recordKubernetesGatewayCertificateClaimsSQL = `SELECT mesh_ops.record_kubernetes_gateway_certificate_token_v1(
     $1::UUID,$2::UUID,$3::UUID,$4::TEXT,$5::TIMESTAMPTZ,$6::TEXT,$7::BIGINT)::TEXT`
 
@@ -36,6 +39,9 @@ const (
 	// A claim holds at most 64 requests of a few KiB each, hex encoded.
 	gatewayCertificateMaximumClaim = 8 << 20
 	gatewayCertificateMaximumBatch = 64
+	// A fleet page holds at most 1,000 rows of five short values.
+	gatewayCertificateMaximumFleet     = 1000
+	gatewayCertificateMaximumFleetText = 128 << 10
 )
 
 // KubernetesGatewayCertificateStore is the signing worker's view of the
@@ -201,9 +207,13 @@ func (record gatewayCertificateClaimRecord) decode() (signing.Claim, error) {
 			claim.Token = *record.Token
 		} else {
 			// A worker checked the token at an earlier claim (§14 R-M1).
-			verified := signing.VerifiedToken{Use: signing.TokenUse{JTI: record.Verified.JTI,
-				ExpiresAt: record.Verified.ExpiresAt, PodName: record.Verified.PodName},
-				TrustVersion: record.Verified.TrustVersion}
+			verified := signing.VerifiedToken{
+				Use: signing.TokenUse{
+					JTI:       record.Verified.JTI,
+					ExpiresAt: record.Verified.ExpiresAt, PodName: record.Verified.PodName,
+				},
+				TrustVersion: record.Verified.TrustVersion,
+			}
 			if !verified.Valid() {
 				return signing.Claim{}, ErrKubernetesClusterCAStore
 			}
@@ -486,6 +496,59 @@ func (store *KubernetesGatewayCertificateStore) Prune(ctx context.Context, insta
 		return 0, 0, ErrKubernetesClusterCAStore
 	}
 	return *record.Requests, *record.Certificates, nil
+}
+
+// Fleet reads up to limit active gateway Devices of active clusters after
+// (cluster, ordinal): when each one's latest certificate expires and
+// whether it asked lately (schema 243, a4d).
+func (store *KubernetesGatewayCertificateStore) Fleet(ctx context.Context, installation deployment.ID,
+	afterCluster int64, afterOrdinal, limit int,
+) ([]signing.FleetRow, error) {
+	if !store.valid(ctx, installation) || afterCluster < 0 || afterOrdinal < 0 || afterOrdinal > 63 || limit < 1 ||
+		limit > gatewayCertificateMaximumFleet {
+		return nil, ErrInvalidKubernetesClusterCAStore
+	}
+	encoded, err := store.cas.queryText(ctx, readKubernetesGatewayCertificateFleetSQL, installation.String(),
+		afterCluster, afterOrdinal, limit)
+	if err != nil {
+		return nil, err
+	}
+	var record struct {
+		Rows *[][5]json.RawMessage `json:"rows"`
+	}
+	if err := decodeStrictJSON(encoded, gatewayCertificateMaximumFleetText, &record); err != nil ||
+		record.Rows == nil || len(*record.Rows) > limit {
+		return nil, ErrKubernetesClusterCAStore
+	}
+	rows := make([]signing.FleetRow, 0, len(*record.Rows))
+	for _, raw := range *record.Rows {
+		row, ok := decodeFleetRow(raw)
+		if !ok || row.Cluster < afterCluster || row.Cluster == afterCluster && row.Ordinal <= afterOrdinal {
+			return nil, ErrKubernetesClusterCAStore
+		}
+		rows = append(rows, row)
+		afterCluster, afterOrdinal = row.Cluster, row.Ordinal
+	}
+	return rows, nil
+}
+
+// decodeFleetRow reads [cluster, ordinal, not_after_ms|null, asking,
+// unserved].
+func decodeFleetRow(raw [5]json.RawMessage) (signing.FleetRow, bool) {
+	var (
+		row      signing.FleetRow
+		notAfter *int64
+	)
+	if json.Unmarshal(raw[0], &row.Cluster) != nil || json.Unmarshal(raw[1], &row.Ordinal) != nil ||
+		json.Unmarshal(raw[2], &notAfter) != nil || json.Unmarshal(raw[3], &row.Asking) != nil ||
+		json.Unmarshal(raw[4], &row.Unserved) != nil || row.Unserved && !row.Asking ||
+		row.Cluster < 1 || row.Ordinal < 0 || row.Ordinal > 63 || notAfter != nil && *notAfter <= 0 {
+		return signing.FleetRow{}, false
+	}
+	if notAfter != nil {
+		row.NotAfter = time.UnixMilli(*notAfter)
+	}
+	return row, true
 }
 
 // Beat records the signing worker's heartbeat, as the CA store does.

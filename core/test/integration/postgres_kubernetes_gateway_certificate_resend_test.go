@@ -8,7 +8,9 @@ import (
 	"crypto/ecdsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -166,5 +168,84 @@ SET created_at = created_at - INTERVAL '11 minutes' WHERE public_id = $1::UUID`,
 	worker.Pass(ctx)
 	if answer := readCertificate(ctx, t, runtime, deviceID, pod.publicID.String()); answer["outcome"] != "issued" {
 		t.Fatalf("the pod's token request: %v", answer)
+	}
+	assertCertificateFleet(ctx, t, admin, store, fixture, deviceID)
+
+	// Refused last: unserved, though its latest certificate is valid
+	// (review a4d M2).
+	refused, refusedCSR := newAsk(106)
+	refused = sent(refused, refusedCSR, "session-k", newCertificateKey(t))
+	enqueue(refused, refusedCSR)
+	worker.Pass(ctx)
+	if answer := readCertificate(ctx, t, runtime, deviceID, refused.publicID.String()); answer["outcome"] != "refused" {
+		t.Fatalf("a renewal signed by another key: %v", answer)
+	}
+	rows, err := store.Fleet(ctx, fixture.installation, 0, 0, 1000)
+	if err != nil || !slices.ContainsFunc(rows, func(row signing.FleetRow) bool {
+		return row.Asking && row.Unserved && row.NotAfter.After(time.Now().Add(10*time.Hour))
+	}) {
+		t.Fatalf("Fleet() after a refusal = %+v, %v", rows, err)
+	}
+}
+
+// assertCertificateFleet: schema 243 reads the gateway, which just asked,
+// with its latest certificate, a page at a time after a cursor (a4d).
+func assertCertificateFleet(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	store *postgresadapter.KubernetesGatewayCertificateStore, fixture clusterCAFixture, deviceID string,
+) {
+	t.Helper()
+	var cluster int64
+	var ordinal int
+	var notAfter time.Time
+	if err := admin.QueryRow(ctx, `SELECT device.kubernetes_cluster_id, device.kubernetes_ordinal, (
+    SELECT issued.not_after FROM mesh.kubernetes_gateway_certificate AS issued
+    WHERE issued.device_id = device.id ORDER BY issued.issued_at DESC LIMIT 1)
+FROM mesh.device AS device WHERE device.public_id = $1::UUID`, deviceID).Scan(&cluster, &ordinal,
+		&notAfter); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := store.Fleet(ctx, fixture.installation, 0, 0, 1000)
+	if err != nil {
+		t.Fatalf("Fleet() = %v", err)
+	}
+	found := false
+	for _, row := range rows {
+		if row.Cluster == cluster && row.Ordinal == ordinal {
+			// Its latest request was issued: asked, served.
+			found = row.Asking && !row.Unserved && row.NotAfter.Sub(notAfter).Abs() < time.Millisecond
+		}
+	}
+	if !found {
+		t.Fatalf("Fleet() = %+v, want cluster %d ordinal %d asking, expiring %v", rows, cluster, ordinal, notAfter)
+	}
+	if after, err := store.Fleet(ctx, fixture.installation, cluster, ordinal, 1000); err != nil ||
+		slices.ContainsFunc(after, func(row signing.FleetRow) bool {
+			return row.Cluster < cluster || row.Cluster == cluster && row.Ordinal <= ordinal
+		}) {
+		t.Fatalf("Fleet() after the gateway = %+v, %v", after, err)
+	}
+	// One row a page walks the same rows in the same order.
+	var walked []signing.FleetRow
+	for afterCluster, afterOrdinal := int64(0), 0; ; {
+		page, err := store.Fleet(ctx, fixture.installation, afterCluster, afterOrdinal, 1)
+		if err != nil || len(page) > 1 {
+			t.Fatalf("Fleet(limit 1) = %+v, %v", page, err)
+		}
+		if len(page) == 0 {
+			break
+		}
+		walked = append(walked, page[0])
+		afterCluster, afterOrdinal = page[0].Cluster, page[0].Ordinal
+	}
+	if len(walked) != len(rows) {
+		t.Fatalf("walked %d rows a page at a time, %d at once", len(walked), len(rows))
+	}
+	for index := range rows {
+		if walked[index].Cluster != rows[index].Cluster || walked[index].Ordinal != rows[index].Ordinal {
+			t.Fatalf("row %d: %+v, at once %+v", index, walked[index], rows[index])
+		}
+	}
+	if _, err := store.Fleet(ctx, fixture.installation, 0, 0, 1001); err == nil {
+		t.Fatal("Fleet() took a page over 1,000")
 	}
 }

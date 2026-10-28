@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
+
+	"meshtransit.net/client/internal/kubecert"
 )
 
 const (
@@ -55,6 +58,11 @@ type Config struct {
 	// Certificates, for a K1 gateway, keeps its replica's TLS certificate
 	// from Core (MESHGW_CERTIFICATES, default on; "off" turns it off).
 	Certificates bool
+	// CertificateRenewAfter, for tests and demos only, renews a certificate
+	// this long after its issue when that is sooner than Core asks
+	// (MESHGW_CERTIFICATE_RENEW_AFTER, a Go duration of 15 minutes or more;
+	// a4 design §10 L4). Zero: Core's time.
+	CertificateRenewAfter time.Duration
 	// PodName, Namespace and NodeName are what the replica reports about
 	// itself while it waits for approval, for display only.
 	PodName, Namespace, NodeName string
@@ -114,7 +122,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("meshgw: the Device name %q is over %d bytes", hostname, maxHostnameBytes)
 	}
 	keyName := "key-" + strconv.Itoa(ordinal)
-	joinKeyFile, podTokenFile, certificates := "", "", false
+	joinKeyFile, podTokenFile, certificates, renewAfter := "", "", false, time.Duration(0)
 	if joinDir := value("MESHGW_JOIN_DIR", ""); joinDir != "" {
 		if !filepath.IsAbs(joinDir) {
 			return Config{}, fmt.Errorf("meshgw: MESHGW_JOIN_DIR %q must be absolute", joinDir)
@@ -131,10 +139,18 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		default:
 			return Config{}, errors.New(`meshgw: MESHGW_CERTIFICATES must be "on" or "off"`)
 		}
+		if raw := value("MESHGW_CERTIFICATE_RENEW_AFTER", ""); raw != "" {
+			parsed, err := time.ParseDuration(raw)
+			if err != nil || parsed < kubecert.MinimumRenewAfter {
+				return Config{}, errors.New("meshgw: MESHGW_CERTIFICATE_RENEW_AFTER must be a duration of 15m or more")
+			}
+			renewAfter = parsed
+		}
 	}
 	return Config{
 		JoinKeyFile: joinKeyFile, PodTokenFile: podTokenFile, Certificates: certificates,
-		PodName: getenv("POD_NAME"), Namespace: value("POD_NAMESPACE", ""), NodeName: value("NODE_NAME", ""),
+		CertificateRenewAfter: renewAfter,
+		PodName:               getenv("POD_NAME"), Namespace: value("POD_NAMESPACE", ""), NodeName: value("NODE_NAME", ""),
 		Ordinal:            ordinal,
 		ControlURL:         controlURL,
 		ControlFingerprint: fingerprint,

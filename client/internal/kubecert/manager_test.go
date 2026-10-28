@@ -359,3 +359,28 @@ func TestManagerWaitsForTheFirstMap(t *testing.T) {
 	cancel()
 	<-done
 }
+
+// RenewAfter, for demos, renews sooner than Core asks, never under 15
+// minutes (a4 design §10 L4).
+func TestManagerRenewAfter(t *testing.T) {
+	t.Parallel()
+	core := newFakeCore(t)
+	options := Options{
+		Request: core.request, Token: func() (string, error) { return core.token, nil },
+		Now: func() time.Time { return *core.now }, Logger: slog.New(slog.DiscardHandler), RenewAfter: 14 * time.Minute,
+	}
+	if _, err := New(options); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("New() with RenewAfter 14m = %v", err)
+	}
+	options.RenewAfter = 15 * time.Minute
+	manager, err := New(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.mapSeen = true
+	core.answers = append(core.answers, core.issue)
+	manager.step(t.Context(), *core.now)
+	if want := core.now.Add(15 * time.Minute); !manager.nextAt.Equal(want) {
+		t.Fatalf("renews at %v, want %v", manager.nextAt, want)
+	}
+}

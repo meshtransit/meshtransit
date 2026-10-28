@@ -402,6 +402,8 @@ type Service struct {
 	// gatewayCommitWait is Core's commit bound it waits out before probing.
 	gateway          bool
 	gatewayTokenFile string
+	// gatewayRenewAfter: Options.GatewayCertificateRenewAfter.
+	gatewayRenewAfter time.Duration
 	// certificates keeps a gateway's replica certificate; nil when it asks
 	// for none (Options.GatewayCertificates).
 	certificates *gatewayCertificates
@@ -560,6 +562,9 @@ type Options struct {
 	// certificate: asked for with the pod token, renewed with its key
 	// (MTCP gateway.cert1, K1a4a a4). The key never leaves memory.
 	GatewayCertificates bool
+	// GatewayCertificateRenewAfter, tests and demos only: see
+	// kubecert.Options.RenewAfter.
+	GatewayCertificateRenewAfter time.Duration
 }
 
 // New creates a daemon service from explicit dependencies.
@@ -656,6 +661,7 @@ func New(
 		enableExits:          options.EnableExits,
 		gateway:              options.Gateway,
 		gatewayTokenFile:     options.GatewayTokenFile,
+		gatewayRenewAfter:    options.GatewayCertificateRenewAfter,
 		gatewayCommitWait:    gatewayCommitBound,
 		rotationPersistWait:  rotationPersistTimeout,
 		exitForwarder:        exitForwarderFor(options),

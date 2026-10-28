@@ -31,6 +31,28 @@ type fakeStore struct {
 	recorded   []VerifiedToken
 	recordAs   Outcome
 	recordErr  error
+	fleet      []FleetRow
+	fleetErr   error
+	fleetReads int
+}
+
+func (store *fakeStore) Fleet(_ context.Context, _ deployment.ID, afterCluster int64, afterOrdinal, limit int) (
+	[]FleetRow, error,
+) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	store.fleetReads++
+	if store.fleetErr != nil {
+		return nil, store.fleetErr
+	}
+	var page []FleetRow
+	for _, row := range store.fleet {
+		if (row.Cluster > afterCluster || row.Cluster == afterCluster && row.Ordinal > afterOrdinal) &&
+			len(page) < limit {
+			page = append(page, row)
+		}
+	}
+	return page, nil
 }
 
 func (store *fakeStore) RecordToken(_ context.Context, _ deployment.ID, _ publicid.ID, _ ClaimToken,
@@ -465,4 +487,77 @@ func (buffer *lockedBuffer) String() string {
 	buffer.mu.Lock()
 	defer buffer.mu.Unlock()
 	return buffer.text.String()
+}
+
+// The fleet is read a page per pass and counted when the scan ends; a
+// failed read starts over (a4d).
+func TestWorkerMeasuresTheFleet(t *testing.T) {
+	t.Parallel()
+	fixture := newSignFixture(t)
+	store := &fakeStore{batch: Batch{Now: fixture.now, Suffix: testSuffix}}
+	now := time.Now()
+	for index := range fleetPage + 3 {
+		row := FleetRow{Cluster: int64(1 + index/64), Ordinal: index % 64, NotAfter: now.Add(20 * time.Hour)}
+		switch index {
+		case 0:
+			row.NotAfter, row.Asking = time.Time{}, true // missing, asking
+		case 1:
+			row.NotAfter = now.Add(-time.Minute) // expired, scaled to zero
+		case 2:
+			row.NotAfter, row.Asking = now.Add(5*time.Hour), true // expiring, asking
+		case 3:
+			row.Asking = true // renewing on time
+		case 4:
+			row.Asking, row.Unserved = true, true // restarted, refused
+		}
+		store.fleet = append(store.fleet, row)
+	}
+	worker := testSigningWorker(t, fixture, store, fixture.custody)
+	worker.Pass(t.Context())
+	if fleet := worker.Snapshot().Fleet; !fleet.MeasuredAt.IsZero() || store.fleetReads != 1 {
+		t.Fatalf("published after one page: %+v (%d reads)", fleet, store.fleetReads)
+	}
+	worker.Pass(t.Context())
+	fleet := worker.Snapshot().Fleet
+	if fleet.MeasuredAt.IsZero() || fleet.Missing != 2 || fleet.Expiring != 1 || fleet.Struggling != 3 ||
+		fleet.Valid != int64(fleetPage) || store.fleetReads != 2 {
+		t.Fatalf("fleet %+v after %d reads", fleet, store.fleetReads)
+	}
+	// Not again before the interval.
+	worker.Pass(t.Context())
+	if store.fleetReads != 2 {
+		t.Fatalf("read again at once: %d", store.fleetReads)
+	}
+	// A failed read keeps the last counts and starts over a minute later.
+	worker.fleetNext = time.Time{}
+	store.fleetErr = errors.New("down")
+	worker.Pass(t.Context())
+	if got := worker.Snapshot().Fleet; got != fleet || worker.fleetAfter != [2]int64{} ||
+		time.Until(worker.fleetNext) < 50*time.Second {
+		t.Fatalf("after a failed read: %+v, after %v, next %v", got, worker.fleetAfter, worker.fleetNext)
+	}
+}
+
+// A scan of exactly one full page ends at the empty page after it (review
+// a4d L5).
+func TestWorkerMeasuresAFullPageFleet(t *testing.T) {
+	t.Parallel()
+	fixture := newSignFixture(t)
+	store := &fakeStore{batch: Batch{Now: fixture.now, Suffix: testSuffix}}
+	for index := range fleetPage {
+		store.fleet = append(store.fleet, FleetRow{
+			Cluster: int64(1 + index/64), Ordinal: index % 64,
+			NotAfter: time.Now().Add(20 * time.Hour),
+		})
+	}
+	worker := testSigningWorker(t, fixture, store, fixture.custody)
+	worker.Pass(t.Context())
+	if !worker.Snapshot().Fleet.MeasuredAt.IsZero() {
+		t.Fatal("published after a full page")
+	}
+	worker.Pass(t.Context())
+	if fleet := worker.Snapshot().Fleet; fleet.MeasuredAt.IsZero() || fleet.Valid != int64(fleetPage) ||
+		store.fleetReads != 2 {
+		t.Fatalf("fleet %+v after %d reads", fleet, store.fleetReads)
+	}
 }

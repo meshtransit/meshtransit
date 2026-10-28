@@ -38,6 +38,13 @@ const (
 	// uncheckedWarnAfter is how long a worker that never saw the tripwire
 	// checked waits before it warns.
 	uncheckedWarnAfter = 10 * time.Minute
+	// The fleet is read one page per pass, a full scan every fleetInterval
+	// (a4d); a certificate with less than fleetExpiring left is expiring: a
+	// replica that renews on time has about 15 hours left.
+	fleetInterval = 5 * time.Minute
+	fleetRetry    = time.Minute
+	fleetPage     = 500
+	fleetExpiring = 10 * time.Hour
 )
 
 var (
@@ -81,6 +88,22 @@ type Measurements struct {
 	Pending                                    int64
 	Issued, Requeued, Released, Lost, Failures uint64
 	Refused                                    map[Reason]uint64
+	// Fleet is the last full scan of the gateway Devices (a4d).
+	Fleet FleetCounts
+}
+
+// FleetCounts count active gateway Devices of active clusters by their
+// latest certificate: Valid, Expiring within 10 hours, or Missing (none, or
+// expired). Struggling are running replicas that do not get one: the
+// expiring or missing that asked within the last 10 minutes, and any whose
+// latest request went unserved, whatever its latest certificate (a pod that
+// restarted holds none of the certificates the ledger lists, review a4d
+// M2). A replica scaled to zero asks nothing, so it is missing but never
+// struggling. MeasuredAt is when the scan ended; zero: none yet. Every
+// worker replica counts the whole fleet: aggregate with max().
+type FleetCounts struct {
+	Valid, Expiring, Missing, Struggling int64
+	MeasuredAt                           time.Time
 }
 
 // Worker signs the installation's queued certificate requests. It owns one
@@ -108,12 +131,18 @@ type Worker struct {
 	uncheckedWarned bool
 	backoffUntil    time.Time
 	custodyDelay    time.Duration
+	// The fleet scan in progress: its next page after fleetAfter, its
+	// counts so far, and when the next scan starts.
+	fleetNext    time.Time
+	fleetAfter   [2]int64
+	fleetPartial FleetCounts
 
 	mu      sync.Mutex
 	started bool
 	cancel  context.CancelFunc
 	done    chan error
 	refused map[Reason]uint64
+	fleet   FleetCounts
 
 	running, custodyReady, suspected, suffixMismatch, unchecked atomic.Bool
 	pending                                                     atomic.Int64
@@ -199,13 +228,14 @@ func (worker *Worker) Snapshot() Measurements {
 	for reason, count := range worker.refused {
 		refused[reason] = count
 	}
+	fleet := worker.fleet
 	worker.mu.Unlock()
 	return Measurements{
 		Running: worker.running.Load(), CustodyReady: worker.custodyReady.Load(), Suspected: worker.suspected.Load(),
 		Unchecked:      worker.unchecked.Load(),
 		SuffixMismatch: worker.suffixMismatch.Load(), Pending: worker.pending.Load(), Issued: worker.issued.Load(),
 		Requeued: worker.requeued.Load(), Released: worker.released.Load(), Lost: worker.lost.Load(),
-		Failures: worker.failures.Load(), Refused: refused,
+		Failures: worker.failures.Load(), Refused: refused, Fleet: fleet,
 	}
 }
 
@@ -250,6 +280,7 @@ func (worker *Worker) run(ctx context.Context) {
 func (worker *Worker) Pass(ctx context.Context) int {
 	worker.loadCustody(ctx)
 	worker.prune(ctx)
+	worker.measureFleet(ctx)
 	worker.signer.forget(time.Now())
 	defer worker.beat(ctx)
 	if worker.custody == nil || time.Now().Before(worker.backoffUntil) {
@@ -572,4 +603,50 @@ func (worker *Worker) prune(ctx context.Context) {
 		worker.logger.WarnContext(ctx, "kubernetes certificate pruning failed", "error_code",
 			"kubernetes_certificate_prune_failed")
 	}
+}
+
+// measureFleet reads one page of the gateway fleet when a scan is due, so a
+// pass never waits on more than one bounded read (a4d). The counts are
+// published when the last page is read; a failed read starts over later.
+func (worker *Worker) measureFleet(ctx context.Context) {
+	now := time.Now()
+	if now.Before(worker.fleetNext) {
+		return
+	}
+	readCtx, cancel := context.WithTimeout(ctx, worker.options.OperationTimeout)
+	rows, err := worker.store.Fleet(readCtx, worker.options.DeploymentID, worker.fleetAfter[0],
+		int(worker.fleetAfter[1]), fleetPage)
+	cancel()
+	if err != nil {
+		if ctx.Err() == nil {
+			worker.logger.WarnContext(ctx, "kubernetes gateway certificate fleet read failed", "error_code",
+				"kubernetes_certificate_fleet_failed")
+		}
+		worker.fleetAfter, worker.fleetPartial, worker.fleetNext = [2]int64{}, FleetCounts{}, now.Add(fleetRetry)
+		return
+	}
+	for _, row := range rows {
+		missing := !row.NotAfter.After(now)
+		expiring := !missing && row.NotAfter.Before(now.Add(fleetExpiring))
+		switch {
+		case missing:
+			worker.fleetPartial.Missing++
+		case expiring:
+			worker.fleetPartial.Expiring++
+		default:
+			worker.fleetPartial.Valid++
+		}
+		if row.Unserved || row.Asking && (missing || expiring) {
+			worker.fleetPartial.Struggling++
+		}
+		worker.fleetAfter = [2]int64{row.Cluster, int64(row.Ordinal)}
+	}
+	if len(rows) == fleetPage {
+		return
+	}
+	worker.fleetPartial.MeasuredAt = now
+	worker.mu.Lock()
+	worker.fleet = worker.fleetPartial
+	worker.mu.Unlock()
+	worker.fleetAfter, worker.fleetPartial, worker.fleetNext = [2]int64{}, FleetCounts{}, now.Add(fleetInterval)
 }

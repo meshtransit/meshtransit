@@ -17,13 +17,19 @@ type kubernetesCertificateSignerMetricsCollector struct {
 	running, suspended, unchecked, pending *prometheus.Desc
 	issued, requeued, released             *prometheus.Desc
 	lost, failures, refused                *prometheus.Desc
+	fleet, struggling, measured            *prometheus.Desc
 }
 
 // NewKubernetesCertificateSignerMetricsCollector exposes fixed,
 // identifier-free measurements of the gateway certificate signer (a3 §6).
 // Alert on a signer suspended while requests wait, on a queue that keeps
 // growing, and on failures or refusals for token, proof or revoked that
-// climb.
+// climb. The fleet gauges cover every gateway replica, in clusters an
+// operator cannot scrape (a4d). Every worker replica exports the whole
+// fleet: aggregate with max(), never sum(). Alert on struggling replicas
+// above 0 for 30 minutes, on max_over_time of it over an hour above 0 for 2
+// hours (a backing-off gateway asks once an hour), and on a scan older than
+// 15 minutes.
 func NewKubernetesCertificateSignerMetricsCollector(worker *signing.Worker) (prometheus.Collector, error) {
 	if worker == nil {
 		return nil, ErrInvalidKubernetesCertificateSignerMetrics
@@ -52,13 +58,21 @@ func NewKubernetesCertificateSignerMetricsCollector(worker *signing.Worker) (pro
 			"Total signing or store failures."),
 		refused: describe("meshtransit_kubernetes_certificate_signing_refused_total",
 			"Total gateway certificate requests refused, by reason.", "reason"),
+		fleet: describe("meshtransit_kubernetes_gateway_replicas_by_certificate",
+			"Active gateway replicas of active clusters by their latest certificate: valid, expiring within 10 hours, or missing (none or expired; a replica scaled to zero stays missing).",
+			"state"),
+		struggling: describe("meshtransit_kubernetes_gateway_replicas_struggling",
+			"Gateway replicas that asked within 10 minutes and got no certificate: refused, waiting over a minute, or still none or one expiring within 10 hours."),
+		measured: describe("meshtransit_kubernetes_gateway_fleet_measured_timestamp_seconds",
+			"When the signer last counted the gateway fleet (Unix seconds); 0: not yet."),
 	}, nil
 }
 
 func (collector *kubernetesCertificateSignerMetricsCollector) Describe(descriptions chan<- *prometheus.Desc) {
 	for _, descriptor := range []*prometheus.Desc{
 		collector.running, collector.suspended, collector.unchecked, collector.pending, collector.issued, collector.requeued,
-		collector.released, collector.lost, collector.failures, collector.refused,
+		collector.released, collector.lost, collector.failures, collector.refused, collector.fleet, collector.struggling,
+		collector.measured,
 	} {
 		descriptions <- descriptor
 	}
@@ -83,6 +97,16 @@ func (collector *kubernetesCertificateSignerMetricsCollector) Collect(metrics ch
 	} {
 		metrics <- prometheus.MustNewConstMetric(descriptor, prometheus.CounterValue, float64(value))
 	}
+	fleet := snapshot.Fleet
+	for state, count := range map[string]int64{"valid": fleet.Valid, "expiring": fleet.Expiring, "missing": fleet.Missing} {
+		metrics <- prometheus.MustNewConstMetric(collector.fleet, prometheus.GaugeValue, float64(count), state)
+	}
+	metrics <- prometheus.MustNewConstMetric(collector.struggling, prometheus.GaugeValue, float64(fleet.Struggling))
+	measured := 0.0
+	if !fleet.MeasuredAt.IsZero() {
+		measured = float64(fleet.MeasuredAt.Unix())
+	}
+	metrics <- prometheus.MustNewConstMetric(collector.measured, prometheus.GaugeValue, measured)
 	for _, reason := range signing.KnownReasons {
 		metrics <- prometheus.MustNewConstMetric(collector.refused, prometheus.CounterValue,
 			float64(snapshot.Refused[reason]), string(reason))

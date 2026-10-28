@@ -58,7 +58,7 @@ func newGatewayCertificates(s *Service) (*gatewayCertificates, error) {
 			token, err := ReadPodToken(s.gatewayTokenFile)
 			return string(token), err
 		},
-		Now: s.coreNow, Logger: s.logger,
+		Now: s.coreNow, Logger: s.logger, RenewAfter: s.gatewayRenewAfter,
 	})
 	if err != nil {
 		return nil, err

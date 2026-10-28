@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 242 {
-		t.Fatalf("len(Catalog()) = %d, want 242", len(catalog))
+	if len(catalog) != 243 {
+		t.Fatalf("len(Catalog()) = %d, want 243", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 242 {
-		t.Fatalf("LatestVersion() = %d, want 242", LatestVersion())
+	if LatestVersion() != 243 {
+		t.Fatalf("LatestVersion() = %d, want 243", LatestVersion())
 	}
 }
 
@@ -7219,5 +7219,32 @@ func TestMigration242MapKubernetesClusterCAs(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "certificate,") || strings.Contains(migration.SQL, "private_key") {
 		t.Error("migration 242 reads more than fingerprints")
+	}
+}
+
+func TestMigration243KubernetesGatewayCertificateFleet(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 243 || catalog[242].Version != 243 {
+		t.Fatalf("the catalog has no migration 243 (%d migrations)", len(catalog))
+	}
+	migration := catalog[242]
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.read_kubernetes_gateway_certificate_fleet_v1(",
+		"p_limit NOT BETWEEN 1 AND 1000",
+		"device.kind = 'kubernetes_gateway' AND device.state = 'active' AND device.expires_at > v_now",
+		"cluster.state = 'active' AND workspace.deployment_id = v_deployment_id",
+		"ORDER BY device.kubernetes_cluster_id, device.kubernetes_ordinal",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_kubernetes_gateway_certificate_fleet_v1(UUID, BIGINT, INTEGER, INTEGER)\n    TO mesh_worker",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 243 lacks %q", want)
+		}
+	}
+	// Times and counts only: no certificate, key, token or name.
+	for _, forbidden := range []string{"issued.certificate", "public_key", "token", "device.name", "hostname"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("migration 243 reads %q", forbidden)
+		}
 	}
 }

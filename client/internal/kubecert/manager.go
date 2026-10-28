@@ -34,7 +34,15 @@ type Options struct {
 	// Now is Core's clock as the gateway estimates it.
 	Now    func() time.Time
 	Logger *slog.Logger
+	// RenewAfter, tests and demos only, renews a certificate this long
+	// after its issue when that is sooner than Core asks; zero: never. At
+	// least MinimumRenewAfter, so a fleet cannot hit Core's 12 an hour.
+	RenewAfter time.Duration
 }
+
+// MinimumRenewAfter is the shortest Options.RenewAfter: the reissue floor,
+// so there is one floor (review a4d L3).
+const MinimumRenewAfter = minimumReissue
 
 // Manager keeps the gateway's certificate; it owns one goroutine (Run).
 type Manager struct {
@@ -100,7 +108,8 @@ type outcomeKey struct{ outcome, reason string }
 
 // New builds a manager without I/O.
 func New(options Options) (*Manager, error) {
-	if options.Request == nil || options.Token == nil || options.Now == nil || options.Logger == nil {
+	if options.Request == nil || options.Token == nil || options.Now == nil || options.Logger == nil ||
+		options.RenewAfter != 0 && options.RenewAfter < MinimumRenewAfter {
 		return nil, ErrInvalid
 	}
 	return &Manager{
@@ -230,6 +239,9 @@ func (manager *Manager) validCurrent(now time.Time) (*Certificate, bool) {
 func (manager *Manager) dueAt(current *Certificate, now time.Time) time.Time {
 	plan := manager.early
 	due := renewalTime(*current, plan != nil && plan.root)
+	if after := manager.options.RenewAfter; after > 0 && current.IssuedAt.Add(after).Before(due) {
+		due = current.IssuedAt.Add(after)
+	}
 	if plan != nil && plan.at.Before(due) {
 		earliest := current.IssuedAt.Add(minimumReissue)
 		if plan.root {

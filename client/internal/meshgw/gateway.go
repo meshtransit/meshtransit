@@ -128,6 +128,11 @@ func newRuntime(cfg Config, stacks *Stacks, profiles *profile.Store, identities 
 		return nil, nil, fmt.Errorf("meshgw: creating the data plane: %w", err)
 	}
 	packets.SetLogger(logger.With("component", "data_plane"))
+	if cfg.CertificateRenewAfter > 0 {
+		// Tests and demos only: support sees it in the pod log (review a4d L4).
+		logger.Warn("replica certificates renew on a test schedule", "error_code",
+			"kubernetes_certificate_test_renewal", "renew_after", cfg.CertificateRenewAfter.String())
+	}
 	// A pod address may repeat in another cluster with the same CIDR, so
 	// the gateway offers peers no host address, only STUN and relays.
 	packets.SetHostAddressSource(noHostAddresses)
@@ -143,7 +148,7 @@ func newRuntime(cfg Config, stacks *Stacks, profiles *profile.Store, identities 
 		// K1.1: read again for each key rotation.
 		GatewayTokenFile: cfg.PodTokenFile,
 		// K1a4a a4: the replica's TLS certificate, key in memory only.
-		GatewayCertificates: cfg.Certificates,
+		GatewayCertificates: cfg.Certificates, GatewayCertificateRenewAfter: cfg.CertificateRenewAfter,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("meshgw: creating the runtime: %w", err)
