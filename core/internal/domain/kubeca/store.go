@@ -1,0 +1,148 @@
+package kubeca
+
+import (
+	"time"
+
+	"meshtransit.net/core/internal/domain/publicid"
+)
+
+// State is where a stored CA stands in its lifecycle (K1a4 §3.3): next is
+// published but does not sign, active signs, retiring is still trusted,
+// retired is neither.
+type State string
+
+// The states of a stored CA.
+const (
+	StateNext     State = "next"
+	StateActive   State = "active"
+	StateRetiring State = "retiring"
+	StateRetired  State = "retired"
+)
+
+// Reason says why a CA was created or last moved.
+type Reason string
+
+// The reasons a CA was created or moved.
+const (
+	ReasonInitial        Reason = "initial"
+	ReasonScheduled      Reason = "scheduled"
+	ReasonNameChanged    Reason = "name_changed"
+	ReasonAdmin          Reason = "admin"
+	ReasonEmergency      Reason = "emergency"
+	ReasonCompromise     Reason = "compromise"
+	ReasonClusterDeleted Reason = "cluster_deleted"
+	ReasonExpired        Reason = "expired"
+)
+
+// CreatesCA reports whether a CA may be created for this reason.
+func (reason Reason) CreatesCA() bool {
+	switch reason {
+	case ReasonInitial, ReasonScheduled, ReasonNameChanged, ReasonAdmin, ReasonEmergency, ReasonCompromise:
+		return true
+	}
+	return false
+}
+
+// MovesCA reports whether a CA may move for this reason.
+func (reason Reason) MovesCA() bool {
+	switch reason {
+	case ReasonScheduled, ReasonNameChanged, ReasonAdmin, ReasonEmergency, ReasonCompromise, ReasonClusterDeleted,
+		ReasonExpired:
+		return true
+	}
+	return false
+}
+
+// StoredDataKey is a Network's data key as stored: wrapped by the custody.
+// Only the active one seals new CAs.
+type StoredDataKey struct {
+	ID      publicid.ID
+	Wrapped WrappedKey
+	Active  bool
+}
+
+// StoredCA is a CA as the worker reads it. SealedKey is nil once the CA no
+// longer signs; ActivatedAt and RetiringAt are zero until set.
+type StoredCA struct {
+	ID             publicid.ID
+	Version        int64
+	State          State
+	Reason         Reason
+	DataKeyID      publicid.ID
+	Certificate    []byte
+	ClusterDNSName string
+	NotBefore      time.Time
+	NotAfter       time.Time
+	SealedKey      []byte
+	CreatedAt      time.Time
+	ActivatedAt    time.Time
+	RetiringAt     time.Time
+}
+
+// Cluster is a scheduled cluster of a Network with its CAs that are not
+// retired. Active is false for a deleted cluster whose CAs remain.
+type Cluster struct {
+	ID           publicid.ID
+	Name         string
+	Active       bool
+	NextActionAt time.Time
+	Failures     int
+	CAs          []StoredCA
+}
+
+// Network is what the worker decides a Network's CA changes from, read
+// under the Network's CA lock. Now is the database's clock.
+type Network struct {
+	Now           time.Time
+	WorkspaceCode string
+	NetworkCode   string
+	DataKeys      []StoredDataKey
+	Clusters      []Cluster
+}
+
+// Creation creates a cluster's CA, next or active, sealed under the Network's
+// active data key.
+type Creation struct {
+	Cluster        publicid.ID
+	ID             publicid.ID
+	State          State
+	Reason         Reason
+	DataKeyID      publicid.ID
+	Certificate    []byte
+	ClusterDNSName string
+	NotBefore      time.Time
+	NotAfter       time.Time
+	SealedKey      []byte
+}
+
+// Move moves a CA, still at Version, forward to To.
+type Move struct {
+	CA      publicid.ID
+	Version int64
+	To      State
+	Reason  Reason
+}
+
+// Step is one CA change: exactly one of Create and Move is set. Steps
+// apply in order, each as its own audited change.
+type Step struct {
+	Create *Creation
+	Move   *Move
+}
+
+// Schedule sets when the worker next looks at a cluster. Done ends the
+// schedule of a deleted cluster with no CA left; Failed counts a failed
+// look.
+type Schedule struct {
+	Cluster publicid.ID
+	At      time.Time
+	Failed  bool
+	Done    bool
+}
+
+// Changes are what the worker applies to a Network in one transaction:
+// steps first, then schedules.
+type Changes struct {
+	Steps     []Step
+	Schedules []Schedule
+}

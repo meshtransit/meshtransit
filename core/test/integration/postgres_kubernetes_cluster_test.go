@@ -173,7 +173,7 @@ func joinCode(t *testing.T, ticket kubecluster.JoinTicket, keys replicaKeys) str
 // waiting queue is bounded; a cluster with open requests cannot be deleted;
 // and only migrator-owned functions write gateway Devices.
 func assertPostgreSQLKubernetesClusters(ctx context.Context, t *testing.T, admin, runtime *pgx.Conn,
-	runtimePool *postgresadapter.Pool) {
+	runtimePool, workerPool *postgresadapter.Pool, worker *pgx.Conn) {
 	t.Helper()
 	service, store := newIntegrationKubernetesClusters(t, runtimePool)
 	members := newNetworkMemberFixture(t, runtimePool)
@@ -364,6 +364,7 @@ WHERE workspace_id = 103 AND network_id = 203 ORDER BY id LIMIT 1`).Scan(&heldMa
 	assertKubernetesGatewaySources(ctx, t, admin, scope)
 	assertMapListsKubernetesGateways(ctx, t, admin, scope, gatewayDevice, "prod")
 	assertMapMarksKubernetesReplicas(ctx, t, admin, runtimePool, scope, gatewayDevice, "prod")
+	assertKubernetesClusterCAs(ctx, t, admin, worker, workerPool, scope, clusterID)
 
 	// A second replica: its own code does not approve the first's request,
 	// and it is rejected.

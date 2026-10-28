@@ -606,6 +606,8 @@ func Catalog() []Migration {
 		newMigration(235, "An administrator pastes a Kubernetes cluster's signing keys", kubernetesSigningTrustPasteSQL),
 		newMigration(236, "A rule to a Kubernetes cluster names the Kubernetes groups it grants", kubernetesRuleGroupsSQL),
 		newMigration(237, "What a Kubernetes gateway's map knows of the Devices that reach it", kubernetesGatewaySourcesSQL),
+		newMigration(238, "The worker keeps each Kubernetes cluster's CA, sealed under its Network's data key",
+			kubernetesClusterCASQL),
 	}
 }
 
@@ -1096,3 +1098,6 @@ var kubernetesRuleGroupsSQL string
 
 //go:embed 000237_kubernetes_gateway_sources.up.sql
 var kubernetesGatewaySourcesSQL string
+
+//go:embed 000238_kubernetes_cluster_ca.up.sql
+var kubernetesClusterCASQL string

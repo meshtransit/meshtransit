@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 237 {
-		t.Fatalf("len(Catalog()) = %d, want 237", len(catalog))
+	if len(catalog) != 238 {
+		t.Fatalf("len(Catalog()) = %d, want 238", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 237 {
-		t.Fatalf("LatestVersion() = %d, want 237", LatestVersion())
+	if LatestVersion() != 238 {
+		t.Fatalf("LatestVersion() = %d, want 238", LatestVersion())
 	}
 }
 
@@ -6989,5 +6989,57 @@ func TestMigration237KubernetesGatewaySources(t *testing.T) {
 	// Device rows are never rewritten to backfill.
 	if strings.Contains(migration.SQL, "UPDATE mesh.device ") || strings.Contains(migration.SQL, "UPDATE mesh.device\n") {
 		t.Error("migration 237 rewrites Device rows")
+	}
+}
+
+func TestMigration238KubernetesClusterCAs(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 238 || catalog[237].Version != 238 {
+		t.Fatalf("the catalog has no migration 238 (%d migrations)", len(catalog))
+	}
+	migration := catalog[237]
+	for _, want := range []string{
+		"CREATE TABLE mesh.kubernetes_ca_data_key (",
+		"CREATE TABLE mesh.kubernetes_cluster_ca (",
+		"CREATE TABLE mesh_ops.kubernetes_cluster_ca_schedule (",
+		"CREATE TABLE mesh_ops.kubernetes_ca_worker_heartbeat (",
+		"ALTER TABLE mesh.kubernetes_cluster_ca FORCE ROW LEVEL SECURITY",
+		"ALTER TABLE mesh.kubernetes_ca_data_key FORCE ROW LEVEL SECURITY",
+		"fingerprint BYTEA NOT NULL UNIQUE CHECK (fingerprint = pg_catalog.sha256(certificate))",
+		"ON mesh.kubernetes_cluster_ca (kubernetes_cluster_id) WHERE state = 'active'",
+		"ON mesh.kubernetes_cluster_ca (kubernetes_cluster_id) WHERE state = 'next'",
+		"ON mesh.kubernetes_cluster_ca (kubernetes_cluster_id) WHERE state = 'retiring'",
+		"mesh_audit.capture_authority_mutation('kubernetes_cluster_ca', 'public_id')",
+		"AFTER INSERT ON mesh.kubernetes_cluster",
+		"AFTER UPDATE OF state ON mesh.kubernetes_cluster",
+		"pg_catalog.pg_try_advisory_xact_lock(",
+		"'kubernetes_cluster_ca', v_ca.public_id, v_ca.version, v_revision, NULL::UUID",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.lock_kubernetes_ca_network_v1(UUID, UUID, UUID) TO mesh_worker",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.beat_kubernetes_ca_worker_v1(UUID, UUID, BOOLEAN, TEXT, TEXT) TO mesh_worker",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.postpone_kubernetes_ca_network_v1(UUID, UUID, UUID, TIMESTAMPTZ)",
+		"IF p_network_revision IS DISTINCT FROM v_revision THEN",
+		"activated_at IS NOT NULL AND activated_at >= created_at",
+		"pg_catalog.set_config('mesh.access_ledger_scan', COALESCE(v_scan, ''), TRUE)",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 238 lacks %q", want)
+		}
+	}
+	// The scan setting is restored, never cleared.
+	if strings.Contains(migration.SQL, "set_config('mesh.access_ledger_scan', '', TRUE)") {
+		t.Error("migration 238 clears mesh.access_ledger_scan")
+	}
+	// Only the worker keeps CAs: the control plane gets no function here.
+	if strings.Contains(migration.SQL, "TO mesh_runtime") {
+		t.Error("migration 238 grants the runtime")
+	}
+	// The audit payload never carries key material.
+	payload := migration.SQL[strings.Index(migration.SQL, "kubernetes_cluster_ca_payload_internal_v1(p_ca_id BIGINT)"):]
+	payload = payload[:strings.Index(payload, "$function$;")]
+	for _, secret := range []string{"private_key_ciphertext", "ciphertext", "certificate,"} {
+		if strings.Contains(payload, secret) {
+			t.Errorf("the CA audit payload reads %s", secret)
+		}
 	}
 }
