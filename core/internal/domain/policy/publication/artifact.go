@@ -11,13 +11,16 @@ import (
 )
 
 const (
-	policyHashDomainV1               = "meshtransit/policy-release/v1\x00"
-	policyHashDomainV2               = "meshtransit/policy-release/v2\x00"
-	policyHashDomainV3               = "meshtransit/policy-release/v3\x00"
-	policyHashDomainV4               = "meshtransit/policy-release/v4\x00"
-	policyHashDomainV5               = "meshtransit/policy-release/v5\x00"
-	policyHashDomainV6               = "meshtransit/policy-release/v6\x00"
-	policyHashDomainV7               = "meshtransit/policy-release/v7\x00"
+	policyHashDomainV1 = "meshtransit/policy-release/v1\x00"
+	policyHashDomainV2 = "meshtransit/policy-release/v2\x00"
+	policyHashDomainV3 = "meshtransit/policy-release/v3\x00"
+	policyHashDomainV4 = "meshtransit/policy-release/v4\x00"
+	policyHashDomainV5 = "meshtransit/policy-release/v5\x00"
+	policyHashDomainV6 = "meshtransit/policy-release/v6\x00"
+	policyHashDomainV7 = "meshtransit/policy-release/v7\x00"
+	// policyHashDomainV8 adds the Kubernetes groups of rules to a cluster
+	// (K1a3); a release whose rules name none keeps an earlier domain.
+	policyHashDomainV8               = "meshtransit/policy-release/v8\x00"
 	resourceCompilerFormatV2         = 2
 	resourceGroupCompilerFormatV3    = 3
 	importedResourceCompilerFormatV4 = 4
@@ -500,10 +503,20 @@ func validResourceGroupDestinations(candidate Candidate) bool {
 	return true
 }
 
+// hashCandidate hashes what the candidate grants, the Kubernetes groups of
+// its rules to clusters included.
 func hashCandidate(candidate Candidate) SemanticHash {
+	return hashCandidateWith(candidate, candidate.CoversKubernetesGroups())
+}
+
+// hashCandidateWith hashes the candidate in domain v8, with the Kubernetes
+// groups, or as a Core before K1a3 would, without them.
+func hashCandidateWith(candidate Candidate, kubernetesGroups bool) SemanticHash {
 	rules := candidate.snapshot.Rules()
 	domain := policyHashDomainV1
-	if len(candidate.exitRules) > 0 {
+	if kubernetesGroups {
+		domain = policyHashDomainV8
+	} else if len(candidate.exitRules) > 0 {
 		domain = policyHashDomainV7
 	} else if len(candidate.routeRules) > 0 {
 		domain = policyHashDomainV6
@@ -553,6 +566,16 @@ func hashCandidate(candidate Candidate) SemanticHash {
 		present := presentSections(candidate)
 		if len(candidate.routeRules) > 0 {
 			present |= 1 << 4
+		}
+		encoded = append(encoded, present)
+	case policyHashDomainV8:
+		// v8 tags route and exit rules: either may come without the other.
+		present := presentSections(candidate)
+		if len(candidate.routeRules) > 0 {
+			present |= 1 << 4
+		}
+		if len(candidate.exitRules) > 0 {
+			present |= 1 << 5
 		}
 		encoded = append(encoded, present)
 	}
@@ -665,7 +688,38 @@ func hashCandidate(candidate Candidate) SemanticHash {
 	if len(candidate.exitRules) > 0 {
 		encoded = appendExitRules(encoded, candidate.exitRules)
 	}
+	if domain == policyHashDomainV8 {
+		encoded = appendKubernetesGroups(encoded, candidate.groupRules)
+	}
 	return SemanticHash(sha256.Sum256(encoded))
+}
+
+// appendKubernetesGroups encodes, for each group rule in release order, the
+// count of its Kubernetes groups and each group with its length.
+func appendKubernetesGroups(encoded []byte, rules []GroupRule) []byte {
+	for _, rule := range rules {
+		encoded = appendUint64(encoded, uint64(len(rule.kubernetesGroups)))
+		for _, group := range rule.kubernetesGroups {
+			encoded = appendUint64(encoded, uint64(len(group)))
+			encoded = append(encoded, group...)
+		}
+	}
+	return encoded
+}
+
+// CoversKubernetesGroups reports whether any rule names Kubernetes groups,
+// so that the semantic hash is of domain v8 and covers them.
+func (candidate Candidate) CoversKubernetesGroups() bool {
+	return slices.ContainsFunc(candidate.groupRules, func(rule GroupRule) bool {
+		return rule.kubernetesGroups != nil
+	})
+}
+
+// LegacySemanticHash returns the hash a Core before K1a3 computes for the
+// release: without Kubernetes groups. It equals SemanticHash when no rule
+// names any.
+func (candidate Candidate) LegacySemanticHash() SemanticHash {
+	return hashCandidateWith(candidate, false)
 }
 
 // presentSections tags which optional sections follow the Device pairs, so

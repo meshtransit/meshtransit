@@ -78,8 +78,12 @@ type GroupRuleParams struct {
 	// Group DestinationGroupID is: the rule reaches every replica of the
 	// cluster, on TCP 443 only.
 	DestinationKubernetesClusterID kubecluster.ID
-	Protocol                       policy.Protocol
-	DestinationPortRanges          []policy.PortRange
+	// KubernetesGroups are the Kubernetes groups a rule to a cluster grants,
+	// in any order (K1a3). None on other rules; none on a cluster rule
+	// released before K1a3, which grants no group.
+	KubernetesGroups      []string
+	Protocol              policy.Protocol
+	DestinationPortRanges []policy.PortRange
 }
 
 // GroupRule is a release fact that names selectors, not their members: maps
@@ -91,7 +95,9 @@ type GroupRule struct {
 	destination RuleSide
 	// cluster labels a destination group that is a Kubernetes cluster's
 	// own; it is not part of what the release grants.
-	cluster               kubecluster.ID
+	cluster kubecluster.ID
+	// kubernetesGroups are sorted, distinct and nil when there are none.
+	kubernetesGroups      []string
 	protocol              policy.Protocol
 	destinationPortRanges []policy.PortRange
 }
@@ -128,8 +134,9 @@ func NewGroupRule(params GroupRuleParams) (GroupRule, error) {
 			RuleSide{SideDeviceGroup, publicid.ID(params.DestinationGroupID)},
 			RuleSide{SideDeviceTag, publicid.ID(params.DestinationTagID)},
 		),
-		cluster:  params.DestinationKubernetesClusterID,
-		protocol: params.Protocol, destinationPortRanges: ports,
+		cluster:          params.DestinationKubernetesClusterID,
+		kubernetesGroups: canonicalKubernetesGroups(params.KubernetesGroups),
+		protocol:         params.Protocol, destinationPortRanges: ports,
 	}
 	if !valid || !rule.IsValid() {
 		return GroupRule{}, ErrInvalidGroupRule
@@ -190,6 +197,38 @@ func (rule GroupRule) DestinationTagID() devicetag.ID {
 // destination is, when it is one.
 func (rule GroupRule) DestinationKubernetesClusterID() kubecluster.ID { return rule.cluster }
 
+// KubernetesGroups returns the sorted Kubernetes groups a rule to a cluster
+// grants, nil when it grants none.
+func (rule GroupRule) KubernetesGroups() []string { return slices.Clone(rule.kubernetesGroups) }
+
+// canonicalKubernetesGroups sorts a copy of groups, nil when there are none.
+// Validity is checked by IsValid, so duplicates stay to be refused, and so
+// does a non-nil empty list: none is nil, never an empty list given.
+func canonicalKubernetesGroups(groups []string) []string {
+	if groups == nil {
+		return nil
+	}
+	sorted := slices.Clone(groups)
+	slices.Sort(sorted)
+	return sorted
+}
+
+// validKubernetesGroups reports nil, or 1 to 16 distinct sorted valid names.
+func validKubernetesGroups(groups []string) bool {
+	if groups == nil {
+		return true
+	}
+	if len(groups) == 0 || len(groups) > kubecluster.MaximumRuleKubernetesGroups {
+		return false
+	}
+	for index, group := range groups {
+		if !kubecluster.ValidKubernetesGroup(group) || index > 0 && groups[index-1] >= group {
+			return false
+		}
+	}
+	return true
+}
+
 // Protocol returns the packet protocol.
 func (rule GroupRule) Protocol() policy.Protocol { return rule.protocol }
 
@@ -200,7 +239,8 @@ func (rule GroupRule) DestinationPortRanges() []policy.PortRange {
 
 // IsValid reports exactly one source and one destination, at least one
 // selector side, an Identity Group only as a source, canonical traffic, and
-// for a Kubernetes cluster's group, TCP 443 only.
+// for a Kubernetes cluster's group, TCP 443 only and at most 16 sorted
+// distinct Kubernetes groups, which no other rule names.
 func (rule GroupRule) IsValid() bool {
 	if !rule.ruleID.IsValid() || !rule.source.IsValid() || !rule.destination.IsValid() ||
 		rule.destination.kind == SideIdentityGroup ||
@@ -209,6 +249,10 @@ func (rule GroupRule) IsValid() bool {
 	}
 	if rule.cluster != (kubecluster.ID{}) && (!rule.cluster.IsValid() ||
 		rule.destination.kind != SideDeviceGroup || !policy.IsKubernetesTraffic(rule.protocol, rule.destinationPortRanges)) {
+		return false
+	}
+	if !validKubernetesGroups(rule.kubernetesGroups) ||
+		rule.kubernetesGroups != nil && rule.cluster == (kubecluster.ID{}) {
 		return false
 	}
 	ports, valid := policy.CanonicalTraffic(rule.protocol, rule.destinationPortRanges)
@@ -224,6 +268,7 @@ func cloneGroupRules(rules []GroupRule) []GroupRule {
 	for index, rule := range rules {
 		cloned[index] = rule
 		cloned[index].destinationPortRanges = slices.Clone(rule.destinationPortRanges)
+		cloned[index].kubernetesGroups = slices.Clone(rule.kubernetesGroups)
 	}
 	return cloned
 }

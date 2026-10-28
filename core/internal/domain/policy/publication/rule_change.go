@@ -175,6 +175,11 @@ func FingerprintRules(candidate Candidate) (RuleFingerprintSet, error) {
 		}
 		source := kind + ":" + rule.Source().ID().String()
 		traffic := ruleTrafficPart(source, rule.Protocol(), rule.DestinationPortRanges())
+		// Groups join the traffic only when there are some, so a rule
+		// without them keeps the fingerprint it had before K1a3.
+		if groups := rule.KubernetesGroups(); groups != nil {
+			traffic += "|kubernetes:" + strings.Join(groups, ",")
+		}
 		destinationKind, destination := groupRuleDestinationKind(rule.Destination().Kind()), rule.Destination().ID()
 		if cluster := rule.DestinationKubernetesClusterID(); cluster.IsValid() {
 			destinationKind, destination = DestinationKubernetesCluster, publicid.ID(cluster)
