@@ -399,3 +399,70 @@ func TestCheckTokenRefusesWhatTheLedgerCannotKeep(t *testing.T) {
 		}
 	}
 }
+
+// The tripwire's state is logged when it changes, not every pass: a WARN
+// only once signing had been allowed since the worker started.
+func TestWorkerLogsTheTripwireOnChange(t *testing.T) {
+	t.Parallel()
+	fixture := newSignFixture(t)
+	var logged lockedBuffer
+	store := &fakeStore{batch: Batch{Now: fixture.now, Unchecked: true}}
+	worker := testSigningWorker(t, fixture, store, fixture.custody)
+	worker.logger = slog.New(slog.NewTextHandler(&logged, nil))
+	pass := func(unchecked bool) {
+		t.Helper()
+		store.mu.Lock()
+		store.batch = Batch{Now: fixture.now, Suffix: testSuffix, Unchecked: unchecked}
+		store.mu.Unlock()
+		worker.Pass(t.Context())
+	}
+	pass(true)
+	pass(true)
+	pass(false)
+	pass(true)
+	pass(true)
+	text := logged.String()
+	first, resumes, warn := strings.Index(text, "first check"), strings.Index(text, "signing resumes"),
+		strings.Index(text, "level=WARN")
+	if strings.Count(text, "first check") != 1 || strings.Count(text, "signing resumes") != 1 ||
+		strings.Count(text, "level=WARN") != 1 || first >= resumes || resumes >= warn ||
+		!strings.Contains(text[:resumes], "level=INFO") {
+		t.Fatalf("logged:\n%s", text)
+	}
+	// A worker that never saw it checked warns once 10 minutes on.
+	fresh := testSigningWorker(t, fixture, store, fixture.custody)
+	var freshLog lockedBuffer
+	fresh.logger = slog.New(slog.NewTextHandler(&freshLog, nil))
+	store.mu.Lock()
+	store.batch = Batch{Now: fixture.now, Unchecked: true}
+	store.mu.Unlock()
+	fresh.Pass(t.Context())
+	fresh.uncheckedSince = time.Now().Add(-uncheckedWarnAfter)
+	for range 2 {
+		store.mu.Lock()
+		store.batch = Batch{Now: fixture.now, Unchecked: true}
+		store.mu.Unlock()
+		fresh.Pass(t.Context())
+	}
+	if strings.Count(freshLog.String(), "level=WARN") != 1 {
+		t.Fatalf("logged:\n%s", freshLog.String())
+	}
+}
+
+// lockedBuffer is a log sink safe for concurrent writes.
+type lockedBuffer struct {
+	mu   sync.Mutex
+	text strings.Builder
+}
+
+func (buffer *lockedBuffer) Write(data []byte) (int, error) {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.text.Write(data)
+}
+
+func (buffer *lockedBuffer) String() string {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.text.String()
+}

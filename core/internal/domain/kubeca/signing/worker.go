@@ -35,6 +35,9 @@ const (
 	// releaseTimeout bounds giving claims back while the worker stops.
 	releaseTimeout   = 5 * time.Second
 	maximumBatchSize = 32
+	// uncheckedWarnAfter is how long a worker that never saw the tripwire
+	// checked waits before it warns.
+	uncheckedWarnAfter = 10 * time.Minute
 )
 
 var (
@@ -97,8 +100,14 @@ type Worker struct {
 	lastBeat     time.Time
 	lastReady    bool
 	lastPrune    time.Time
-	backoffUntil time.Time
-	custodyDelay time.Duration
+	// checkedOnce: a claim found the restore tripwire checked since the
+	// worker started. uncheckedSince and uncheckedWarned track the current
+	// stretch without a check.
+	checkedOnce     bool
+	uncheckedSince  time.Time
+	uncheckedWarned bool
+	backoffUntil    time.Time
+	custodyDelay    time.Duration
 
 	mu      sync.Mutex
 	started bool
@@ -259,7 +268,7 @@ func (worker *Worker) Pass(ctx context.Context) int {
 		return 0
 	}
 	worker.suspected.Store(batch.Suspected)
-	worker.unchecked.Store(batch.Unchecked)
+	wasUnchecked := worker.unchecked.Swap(batch.Unchecked)
 	worker.pending.Store(batch.Pending)
 	if batch.RefusedAttempts > 0 {
 		worker.mu.Lock()
@@ -273,11 +282,28 @@ func (worker *Worker) Pass(ctx context.Context) int {
 	}
 	if batch.Unchecked {
 		// The lifecycle worker has not compared the restore marks lately
-		// (stopped, or Redis down): nothing is signed until it does.
-		worker.logger.WarnContext(ctx, "kubernetes certificates deferred: restore tripwire not checked",
-			"error_code", "kubernetes_ca_tripwire_unchecked")
+		// (stopped, or Redis down): nothing is signed until it does. Told
+		// once, not every pass: a WARN at once if the tripwire was found
+		// checked since this worker started, else (a start) an INFO, and a
+		// WARN if it stays unchecked for the 10 minutes signing tolerates.
+		if !wasUnchecked {
+			worker.uncheckedSince, worker.uncheckedWarned = time.Now(), false
+			if !worker.checkedOnce {
+				worker.logger.InfoContext(ctx, "kubernetes certificates wait for the restore tripwire's first check")
+			}
+		}
+		if !worker.uncheckedWarned &&
+			(worker.checkedOnce || time.Since(worker.uncheckedSince) >= uncheckedWarnAfter) {
+			worker.uncheckedWarned = true
+			worker.logger.WarnContext(ctx, "kubernetes certificates deferred: restore tripwire not checked",
+				"error_code", "kubernetes_ca_tripwire_unchecked")
+		}
 		return 0
 	}
+	if wasUnchecked {
+		worker.logger.InfoContext(ctx, "kubernetes certificates: restore tripwire checked, signing resumes")
+	}
+	worker.checkedOnce = true
 	if batch.Suffix != worker.options.Suffix.String() {
 		// The lifecycle worker reports the mismatch; nothing is signed
 		// under another installation's names (§17.1 C2).
