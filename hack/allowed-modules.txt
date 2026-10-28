@@ -17,6 +17,7 @@ github.com/aws/aws-sdk-go-v2/credentials
 github.com/aws/aws-sdk-go-v2/internal/configsources
 github.com/aws/aws-sdk-go-v2/internal/endpoints/v2
 github.com/aws/aws-sdk-go-v2/internal/v4a
+github.com/aws/aws-sdk-go-v2/service/kms
 github.com/aws/aws-sdk-go-v2/service/sesv2
 github.com/aws/smithy-go
 github.com/beevik/etree

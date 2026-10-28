@@ -139,9 +139,11 @@ Version 2.0. The full license text is available at
 
 ## AWS SDK for Go v2 and Smithy Go (Apache-2.0)
 
-Used only by `internal/adapter/sesmail` to send product email through the
-Amazon SES v2 API over HTTPS (`github.com/aws/aws-sdk-go-v2`,
-`.../credentials`, `.../service/sesv2` and `github.com/aws/smithy-go`).
+Used by `internal/adapter/sesmail` to send product email through the Amazon
+SES v2 API over HTTPS, and by `internal/adapter/kubecustody` to wrap the data
+keys of Kubernetes cluster CAs with AWS KMS (ADR-053)
+(`github.com/aws/aws-sdk-go-v2`, `.../credentials`, `.../service/sesv2`,
+`.../service/kms` and `github.com/aws/smithy-go`).
 
 AWS SDK for Go  
 Copyright 2015 Amazon.com, Inc. or its affiliates. All Rights Reserved.  
