@@ -1,0 +1,37 @@
+package main
+
+import (
+	"strings"
+	"testing"
+)
+
+// Changes need an operator and a change record; a status read takes
+// neither; retire-ca needs a CA and a reason, and nothing else does.
+func TestParseKubernetesCAArguments(t *testing.T) {
+	t.Parallel()
+	const scope = "--workspace=01890f00-0000-7000-8000-000000000101 --network=01890f00-0000-7000-8000-000000000201"
+	const operator = " --actor=alice@example.com --change-ref=CHG-7"
+	const ca = " --ca=01890f00-0000-7000-8000-000000000301"
+	for _, test := range []struct {
+		args string
+		ok   bool
+	}{
+		{"status " + scope, true},
+		{"rewrap " + scope + operator, true},
+		{"rotate-data-key " + scope + operator, true},
+		{"retire-ca " + scope + operator + ca + " --reason=compromise", true},
+		{"status " + scope + operator, false},
+		{"rewrap " + scope, false},
+		{"rewrap " + scope + " --actor=alice@example.com", false},
+		{"retire-ca " + scope + operator + " --reason=compromise", false},
+		{"retire-ca " + scope + operator + ca, false},
+		{"rewrap " + scope + operator + ca, false},
+		{"status --workspace=x --network=y", false},
+		{"rename " + scope + operator, false},
+		{"status " + scope + " extra", false},
+	} {
+		if _, ok := parseKubernetesCAArguments(strings.Fields(test.args)); ok != test.ok {
+			t.Errorf("%q: ok = %v", test.args, ok)
+		}
+	}
+}

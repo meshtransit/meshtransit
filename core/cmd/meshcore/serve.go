@@ -270,6 +270,16 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		additionalMetrics = append(additionalMetrics, workerMetrics)
 		roleServices = append(roleServices, app.OwnedService{Name: "access-ledger-worker", Service: workerService})
 	}
+	if processConfig.KubernetesCAWorker != nil {
+		workerService, workerMetrics, composeErr := composeKubernetesCAWorker(*processConfig.KubernetesCAWorker,
+			processConfig.DNSSuffix, storagePools.worker, logger)
+		if composeErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "kubernetes_ca_worker_composition_failure")
+			return 1
+		}
+		additionalMetrics = append(additionalMetrics, workerMetrics)
+		roleServices = append(roleServices, app.OwnedService{Name: "kubernetes-ca-worker", Service: workerService})
+	}
 	if processConfig.EnforcementLedgerWorker != nil {
 		workerService, workerMetrics, composeErr := composeEnforcementLedgerWorker(
 			*processConfig.EnforcementLedgerWorker, storagePools.worker, redisClient, logger)

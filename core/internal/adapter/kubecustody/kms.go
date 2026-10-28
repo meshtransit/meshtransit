@@ -24,6 +24,7 @@ const (
 type KMSClient interface {
 	GenerateDataKey(ctx context.Context, input *kms.GenerateDataKeyInput,
 		options ...func(*kms.Options)) (*kms.GenerateDataKeyOutput, error)
+	Encrypt(ctx context.Context, input *kms.EncryptInput, options ...func(*kms.Options)) (*kms.EncryptOutput, error)
 	Decrypt(ctx context.Context, input *kms.DecryptInput, options ...func(*kms.Options)) (*kms.DecryptOutput, error)
 }
 
@@ -31,25 +32,31 @@ type KMSClient interface {
 // unwrap is a KMS call the cloud logs, which is the evidence of key use
 // audits ask for (K1a4 §15.2). The encryption context binds each data key
 // to its purpose, deployment and Network. Keys are named by their full ARN, which
-// KMS reports on wrapping; a previous key, kept while moving to another KMS
-// key, still opens what it wrapped.
+// KMS reports on wrapping; previous keys, kept while moving to another KMS
+// key until every data key is wrapped again, still open what they wrapped.
 type KMS struct {
 	client     KMSClient
 	keyARN     string
-	previous   string
+	previous   map[string]bool
 	deployment string
 }
 
 var _ kubeca.Custody = (*KMS)(nil)
 
 // NewKMS builds a KMS custody over client for the KMS key keyARN (and,
-// while moving, the previous one) of deployment.
-func NewKMS(client KMSClient, keyARN, previous, deployment string) (*KMS, error) {
-	if client == nil || !validKeyARN(keyARN) || deployment == "" || previous == keyARN ||
-		previous != "" && !validKeyARN(previous) {
+// while moving, the previous ones) of deployment.
+func NewKMS(client KMSClient, keyARN string, previous []string, deployment string) (*KMS, error) {
+	if client == nil || !validKeyARN(keyARN) || deployment == "" || len(previous) > maximumPreviousKeys {
 		return nil, kubeca.ErrInvalid
 	}
-	return &KMS{client: client, keyARN: keyARN, previous: previous, deployment: deployment}, nil
+	custody := &KMS{client: client, keyARN: keyARN, previous: map[string]bool{}, deployment: deployment}
+	for _, key := range previous {
+		if !validKeyARN(key) || key == keyARN || custody.previous[key] {
+			return nil, kubeca.ErrInvalid
+		}
+		custody.previous[key] = true
+	}
+	return custody, nil
 }
 
 // validKeyARN accepts a KMS key ARN with its region and account, never an
@@ -106,11 +113,28 @@ func (custody *KMS) NewDataKey(ctx context.Context, network string) (kubeca.Data
 		kubeca.WrappedKey{Custody: kmsCustody, KeyID: custody.keyARN, Ciphertext: output.CiphertextBlob}, nil
 }
 
+// WrapDataKey implements kubeca.Custody.
+func (custody *KMS) WrapDataKey(ctx context.Context, network string, dataKey kubeca.DataKey) (kubeca.WrappedKey, error) {
+	if network == "" || dataKey.IsZero() {
+		return kubeca.WrappedKey{}, kubeca.ErrInvalid
+	}
+	output, err := custody.client.Encrypt(ctx, &kms.EncryptInput{
+		KeyId: &custody.keyARN, Plaintext: dataKey[:], EncryptionContext: custody.context(network),
+	})
+	if err != nil {
+		return kubeca.WrappedKey{}, kmsError(err)
+	}
+	if output == nil || len(output.CiphertextBlob) == 0 || output.KeyId == nil || *output.KeyId != custody.keyARN {
+		return kubeca.WrappedKey{}, kubeca.ErrInvalid
+	}
+	return kubeca.WrappedKey{Custody: kmsCustody, KeyID: custody.keyARN, Ciphertext: output.CiphertextBlob}, nil
+}
+
 // OpenDataKey implements kubeca.Custody. It opens only what one of its own
 // keys wrapped, and names that key to KMS, so a ciphertext of another key
 // never opens.
 func (custody *KMS) OpenDataKey(ctx context.Context, network string, wrapped kubeca.WrappedKey) (kubeca.DataKey, error) {
-	known := wrapped.KeyID == custody.keyARN || custody.previous != "" && wrapped.KeyID == custody.previous
+	known := wrapped.KeyID == custody.keyARN || custody.previous[wrapped.KeyID]
 	if wrapped.Custody != kmsCustody || !known || len(wrapped.Ciphertext) == 0 || network == "" {
 		return kubeca.DataKey{}, kubeca.ErrInvalid
 	}

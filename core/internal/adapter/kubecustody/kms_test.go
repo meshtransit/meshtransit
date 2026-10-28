@@ -32,7 +32,8 @@ func contextTag(context map[string]string) string {
 }
 
 func (fake *fakeKMS) GenerateDataKey(_ context.Context, input *kms.GenerateDataKeyInput,
-	_ ...func(*kms.Options)) (*kms.GenerateDataKeyOutput, error) {
+	_ ...func(*kms.Options),
+) (*kms.GenerateDataKeyOutput, error) {
 	if fake.fail != nil {
 		return nil, fake.fail
 	}
@@ -41,12 +42,28 @@ func (fake *fakeKMS) GenerateDataKey(_ context.Context, input *kms.GenerateDataK
 	}
 	fake.contexts = append(fake.contexts, maps.Clone(input.EncryptionContext))
 	plaintext := bytes.Repeat([]byte{7}, 32)
-	return &kms.GenerateDataKeyOutput{Plaintext: plaintext, KeyId: input.KeyId,
-		CiphertextBlob: append([]byte(*input.KeyId+"|"+contextTag(input.EncryptionContext)+"|"), plaintext...)}, nil
+	return &kms.GenerateDataKeyOutput{
+		Plaintext: plaintext, KeyId: input.KeyId,
+		CiphertextBlob: append([]byte(*input.KeyId+"|"+contextTag(input.EncryptionContext)+"|"), plaintext...),
+	}, nil
+}
+
+func (fake *fakeKMS) Encrypt(_ context.Context, input *kms.EncryptInput,
+	_ ...func(*kms.Options),
+) (*kms.EncryptOutput, error) {
+	if fake.fail != nil {
+		return nil, fake.fail
+	}
+	fake.contexts = append(fake.contexts, maps.Clone(input.EncryptionContext))
+	return &kms.EncryptOutput{
+		KeyId:          input.KeyId,
+		CiphertextBlob: append([]byte(*input.KeyId+"|"+contextTag(input.EncryptionContext)+"|"), input.Plaintext...),
+	}, nil
 }
 
 func (fake *fakeKMS) Decrypt(_ context.Context, input *kms.DecryptInput,
-	_ ...func(*kms.Options)) (*kms.DecryptOutput, error) {
+	_ ...func(*kms.Options),
+) (*kms.DecryptOutput, error) {
 	if fake.fail != nil {
 		return nil, fake.fail
 	}
@@ -68,7 +85,7 @@ func (fake *fakeKMS) Decrypt(_ context.Context, input *kms.DecryptInput,
 func TestKMSCustodyBindsEveryCall(t *testing.T) {
 	t.Parallel()
 	fake := &fakeKMS{}
-	before, err := NewKMS(fake, previousARN, "", "dep-1")
+	before, err := NewKMS(fake, previousARN, nil, "dep-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +93,7 @@ func TestKMSCustodyBindsEveryCall(t *testing.T) {
 	if err != nil || wrapped.Custody != "kms" || wrapped.KeyID != previousARN {
 		t.Fatalf("NewDataKey() = %+v, %v", wrapped, err)
 	}
-	moved, err := NewKMS(fake, primaryARN, previousARN, "dep-1")
+	moved, err := NewKMS(fake, primaryARN, []string{previousARN}, "dep-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +110,7 @@ func TestKMSCustodyBindsEveryCall(t *testing.T) {
 			t.Fatalf("encryption context %v", context)
 		}
 	}
-	stranger, _ := NewKMS(fake, primaryARN, "", "dep-1")
+	stranger, _ := NewKMS(fake, primaryARN, nil, "dep-1")
 	for name, wrong := range map[string]kubeca.WrappedKey{
 		"unknown key":  wrapped,
 		"file wrapped": {Custody: "file", KeyID: primaryARN, Ciphertext: []byte("x")},
@@ -124,13 +141,54 @@ func TestKMSCustodyBindsEveryCall(t *testing.T) {
 		t.Fatalf("a network failure: %v", err)
 	}
 	for name, build := range map[string]func() (*KMS, error){
-		"alias":         func() (*KMS, error) { return NewKMS(fake, "alias/meshtransit", "", "dep-1") },
-		"loose ARN":     func() (*KMS, error) { return NewKMS(fake, "arn:x:kms::key/", "", "dep-1") },
-		"same previous": func() (*KMS, error) { return NewKMS(fake, primaryARN, primaryARN, "dep-1") },
-		"no deployment": func() (*KMS, error) { return NewKMS(fake, primaryARN, "", "") },
+		"alias":         func() (*KMS, error) { return NewKMS(fake, "alias/meshtransit", nil, "dep-1") },
+		"loose ARN":     func() (*KMS, error) { return NewKMS(fake, "arn:x:kms::key/", nil, "dep-1") },
+		"same previous": func() (*KMS, error) { return NewKMS(fake, primaryARN, []string{primaryARN}, "dep-1") },
+		"bad previous":  func() (*KMS, error) { return NewKMS(fake, primaryARN, []string{"alias/old"}, "dep-1") },
+		"no deployment": func() (*KMS, error) { return NewKMS(fake, primaryARN, nil, "") },
 	} {
 		if _, err := build(); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+// A data key is wrapped again under the primary KMS key, bound to its
+// Network like every other call.
+func TestKMSCustodyWrapsAnExistingKeyAgain(t *testing.T) {
+	t.Parallel()
+	fake := &fakeKMS{}
+	before, err := NewKMS(fake, previousARN, nil, "dep-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataKey, wrapped, err := before.NewDataKey(t.Context(), "net-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved, err := NewKMS(fake, primaryARN, []string{previousARN}, "dep-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := moved.WrapDataKey(t.Context(), "net-1", dataKey)
+	if err != nil || again.KeyID != primaryARN || again.Custody != "kms" {
+		t.Fatalf("WrapDataKey() = %+v, %v", again, err)
+	}
+	only, err := NewKMS(fake, primaryARN, nil, "dep-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opened, err := only.OpenDataKey(t.Context(), "net-1", again); err != nil || opened != dataKey {
+		t.Fatalf("the rewrapped key does not open: %v", err)
+	}
+	if _, err := only.OpenDataKey(t.Context(), "net-1", wrapped); !errors.Is(err, kubeca.ErrInvalid) {
+		t.Fatalf("a key of a forgotten previous key opened: %v", err)
+	}
+	if _, err := moved.WrapDataKey(t.Context(), "net-1", kubeca.DataKey{}); !errors.Is(err, kubeca.ErrInvalid) {
+		t.Fatalf("a zero key: %v", err)
+	}
+	fake.fail = &smithy.GenericAPIError{Code: "AccessDeniedException"}
+	if _, err := moved.WrapDataKey(t.Context(), "net-1", dataKey); !errors.Is(err, kubeca.ErrMisconfigured) {
+		t.Fatalf("a denied wrap: %v", err)
 	}
 }

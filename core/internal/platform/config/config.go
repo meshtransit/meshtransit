@@ -88,6 +88,8 @@ type Config struct {
 	ContractExpiryWorker  *ContractExpiryWorkerConfig
 	RelayAuthority        *RelayAuthorityConfig
 	AccessLedgerWorker    *AccessLedgerWorkerConfig
+	// KubernetesCAWorker keeps Kubernetes cluster CAs (K1a4 §17).
+	KubernetesCAWorker *KubernetesCAWorkerConfig
 	// EnforcementLedgerWorker records client enforcement evidence (R1-69).
 	EnforcementLedgerWorker *EnforcementLedgerWorkerConfig
 	AuthExpiry              *AuthExpiryConfig
@@ -175,6 +177,11 @@ func Load(lookup LookupFunc) (Config, error) {
 	}
 
 	accessLedgerWorkerConfig, err := loadAccessLedgerWorkerConfig(lookup, role)
+	if err != nil {
+		return Config{}, err
+	}
+
+	kubernetesCAWorkerConfig, err := loadKubernetesCAWorkerConfig(lookup, role)
 	if err != nil {
 		return Config{}, err
 	}
@@ -382,6 +389,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		ContractExpiryWorker:    contractExpiryWorkerConfig,
 		RelayAuthority:          relayAuthorityConfig,
 		AccessLedgerWorker:      accessLedgerWorkerConfig,
+		KubernetesCAWorker:      kubernetesCAWorkerConfig,
 		EnforcementLedgerWorker: enforcementLedgerWorkerConfig,
 		AuthExpiry:              authExpiryConfig,
 		PrivateLogin:            privateLoginFile,

@@ -608,6 +608,8 @@ func Catalog() []Migration {
 		newMigration(237, "What a Kubernetes gateway's map knows of the Devices that reach it", kubernetesGatewaySourcesSQL),
 		newMigration(238, "The worker keeps each Kubernetes cluster's CA, sealed under its Network's data key",
 			kubernetesClusterCASQL),
+		newMigration(239, "Kubernetes clusters get a root and short-lived intermediates; data keys can be wrapped again",
+			kubernetesClusterCATwoTierSQL),
 	}
 }
 
@@ -1101,3 +1103,6 @@ var kubernetesGatewaySourcesSQL string
 
 //go:embed 000238_kubernetes_cluster_ca.up.sql
 var kubernetesClusterCASQL string
+
+//go:embed 000239_kubernetes_cluster_ca_two_tier.up.sql
+var kubernetesClusterCATwoTierSQL string

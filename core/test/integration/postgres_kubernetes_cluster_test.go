@@ -364,7 +364,7 @@ WHERE workspace_id = 103 AND network_id = 203 ORDER BY id LIMIT 1`).Scan(&heldMa
 	assertKubernetesGatewaySources(ctx, t, admin, scope)
 	assertMapListsKubernetesGateways(ctx, t, admin, scope, gatewayDevice, "prod")
 	assertMapMarksKubernetesReplicas(ctx, t, admin, runtimePool, scope, gatewayDevice, "prod")
-	assertKubernetesClusterCAs(ctx, t, admin, worker, workerPool, scope, clusterID)
+	assertKubernetesClusterCAs(ctx, t, admin, worker, workerPool, service, owner, scope, clusterID)
 
 	// A second replica: its own code does not approve the first's request,
 	// and it is rejected.

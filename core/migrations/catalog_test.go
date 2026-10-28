@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 238 {
-		t.Fatalf("len(Catalog()) = %d, want 238", len(catalog))
+	if len(catalog) != 239 {
+		t.Fatalf("len(Catalog()) = %d, want 239", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 238 {
-		t.Fatalf("LatestVersion() = %d, want 238", LatestVersion())
+	if LatestVersion() != 239 {
+		t.Fatalf("LatestVersion() = %d, want 239", LatestVersion())
 	}
 }
 
@@ -7038,6 +7038,52 @@ func TestMigration238KubernetesClusterCAs(t *testing.T) {
 	payload := migration.SQL[strings.Index(migration.SQL, "kubernetes_cluster_ca_payload_internal_v1(p_ca_id BIGINT)"):]
 	payload = payload[:strings.Index(payload, "$function$;")]
 	for _, secret := range []string{"private_key_ciphertext", "ciphertext", "certificate,"} {
+		if strings.Contains(payload, secret) {
+			t.Errorf("the CA audit payload reads %s", secret)
+		}
+	}
+}
+
+func TestMigration239KubernetesClusterCATwoTier(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 239 || catalog[238].Version != 239 {
+		t.Fatalf("the catalog has no migration 239 (%d migrations)", len(catalog))
+	}
+	migration := catalog[238]
+	for _, want := range []string{
+		// 238's CA tables are rebuilt only while empty.
+		"IF EXISTS (SELECT 1 FROM mesh.kubernetes_cluster_ca) OR EXISTS (SELECT 1 FROM mesh.kubernetes_ca_data_key)",
+		"DROP TABLE mesh.kubernetes_cluster_ca;",
+		"CREATE TABLE mesh_ops.kubernetes_ca_dns_suffix (",
+		"CREATE TABLE mesh.kubernetes_ca_data_key_wrapping (",
+		"kind TEXT NOT NULL CHECK (kind IN ('root', 'intermediate'))",
+		"ON mesh.kubernetes_cluster_ca (kubernetes_cluster_id) WHERE kind = 'intermediate' AND state = 'active'",
+		"ON mesh.kubernetes_cluster_ca (kubernetes_cluster_id) WHERE kind = 'root' AND state = 'active'",
+		"CONSTRAINT kubernetes_cluster_ca_issuer_fk FOREIGN KEY",
+		"mesh_audit.capture_authority_mutation('kubernetes_ca_data_key', 'public_id')",
+		"mesh_audit.capture_authority_mutation('kubernetes_cluster_ca', 'public_id')",
+		"ALTER TABLE mesh.kubernetes_ca_data_key_wrapping FORCE ROW LEVEL SECURITY",
+		"ALTER TABLE mesh_ops.kubernetes_ca_dns_suffix FORCE ROW LEVEL SECURITY",
+		"IF p_network_revision IS DISTINCT FROM v_revision THEN",
+		"CASE WHEN v_row.changed_by IS NULL THEN 'system.reconcile' ELSE 'system.operator' END",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.rewrap_kubernetes_ca_data_key_v1(",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.claim_kubernetes_ca_dns_suffix_v1(UUID, TEXT) TO mesh_worker",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 239 lacks %q", want)
+		}
+	}
+	if strings.Contains(migration.SQL, "TO mesh_runtime") {
+		t.Error("migration 239 grants the runtime")
+	}
+	if strings.Contains(migration.SQL, "set_config('mesh.access_ledger_scan', '', TRUE)") {
+		t.Error("migration 239 clears mesh.access_ledger_scan")
+	}
+	// The audit payloads never carry key material.
+	payload := migration.SQL[strings.Index(migration.SQL, "kubernetes_ca_payload_internal_v1(p_aggregate TEXT, p_row_id BIGINT)"):]
+	payload = payload[:strings.Index(payload, "$function$;")]
+	for _, secret := range []string{"private_key_ciphertext", "ciphertext", "certificate,", "sealed"} {
 		if strings.Contains(payload, secret) {
 			t.Errorf("the CA audit payload reads %s", secret)
 		}

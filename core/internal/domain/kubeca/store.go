@@ -54,18 +54,23 @@ func (reason Reason) MovesCA() bool {
 }
 
 // StoredDataKey is a Network's data key as stored: wrapped by the custody.
-// Only the active one seals new CAs.
+// Only the active one seals new CAs; a retired one still opens the CAs it
+// sealed.
 type StoredDataKey struct {
 	ID      publicid.ID
+	Version int64
 	Wrapped WrappedKey
 	Active  bool
 }
 
-// StoredCA is a CA as the worker reads it. SealedKey is nil once the CA no
-// longer signs; ActivatedAt and RetiringAt are zero until set.
+// StoredCA is a CA as the worker reads it: a root, or an intermediate with
+// the root that signed it (IssuerID). SealedKey is nil once the CA no longer
+// signs; ActivatedAt and RetiringAt are zero until set.
 type StoredCA struct {
 	ID             publicid.ID
 	Version        int64
+	Kind           Kind
+	IssuerID       publicid.ID
 	State          State
 	Reason         Reason
 	DataKeyID      publicid.ID
@@ -100,11 +105,14 @@ type Network struct {
 	Clusters      []Cluster
 }
 
-// Creation creates a cluster's CA, next or active, sealed under the Network's
-// active data key.
+// Creation creates a cluster's CA, sealed under the Network's active data
+// key: a root, next or active, or an active intermediate signed by the
+// active root IssuerID.
 type Creation struct {
 	Cluster        publicid.ID
 	ID             publicid.ID
+	Kind           Kind
+	IssuerID       publicid.ID
 	State          State
 	Reason         Reason
 	DataKeyID      publicid.ID
@@ -140,9 +148,38 @@ type Schedule struct {
 	Done    bool
 }
 
+// Operator names who made a change by hand and the change record that
+// allows it (K1a4 §15.4). The zero Operator is the worker itself.
+type Operator struct {
+	Name      string
+	ChangeRef string
+}
+
+// IsWorker reports the worker's own change.
+func (operator Operator) IsWorker() bool { return operator == Operator{} }
+
+// Valid reports the worker, or an operator with a name and a change record
+// of printable ASCII, each at most 128 bytes.
+func (operator Operator) Valid() bool {
+	return operator.IsWorker() || printable(operator.Name) && printable(operator.ChangeRef)
+}
+
+func printable(value string) bool {
+	if value == "" || len(value) > 128 {
+		return false
+	}
+	for index := range len(value) {
+		if value[index] < ' ' || value[index] > '~' {
+			return false
+		}
+	}
+	return true
+}
+
 // Changes are what the worker applies to a Network in one transaction:
-// steps first, then schedules.
+// steps first, then schedules, all by Operator.
 type Changes struct {
 	Steps     []Step
 	Schedules []Schedule
+	Operator  Operator
 }

@@ -24,14 +24,36 @@ const clusterName = "kinda-k1.kube.000000000101.000000000201.mesh.internal"
 
 var testNow = time.Date(2026, time.October, 28, 12, 0, 0, 0, time.UTC)
 
+func testRoot(t *testing.T) CA {
+	t.Helper()
+	root, err := NewRoot(RootParams{
+		ClusterDNSName: clusterName, Subject: "MeshTransit kinda-k1 root 1",
+		NotBefore: testNow, Lifetime: DefaultRootLifetime,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// testCA is an intermediate of a fresh root: the CA that signs replicas.
 func testCA(t *testing.T) CA {
 	t.Helper()
-	ca, err := NewCA(CAParams{ClusterDNSName: clusterName, Subject: "MeshTransit kinda-k1 000000000201",
-		NotBefore: testNow, Lifetime: 2 * 365 * 24 * time.Hour})
+	ca, err := testRoot(t).NewIntermediate(IntermediateParams{
+		Subject:   "MeshTransit kinda-k1 1",
+		NotBefore: testNow, Lifetime: DefaultIntermediateLifetime,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return ca
+}
+
+func pools(ca CA) (roots, intermediates *x509.CertPool) {
+	roots, intermediates = x509.NewCertPool(), x509.NewCertPool()
+	roots.AddCert(ca.Root())
+	intermediates.AddCert(ca.Certificate())
+	return roots, intermediates
 }
 
 func csrFor(t *testing.T, key any, names ...string) []byte {
@@ -46,35 +68,112 @@ func csrFor(t *testing.T, key any, names ...string) []byte {
 	return csr
 }
 
-// A cluster's CA is a constrained root: it may sign only for the cluster's
-// name, never an IP, and nothing below it may sign (ADR-053, K1a4-I3).
-func TestNewCAIsConstrainedToTheClusterName(t *testing.T) {
-	t.Parallel()
-	ca := testCA(t)
+// checkConstrained checks what both tiers carry: the cluster's name only,
+// never an IP, a P-256 key, and the fingerprint of the DER (ADR-053,
+// K1a4-I3).
+func checkConstrained(t *testing.T, ca CA) {
+	t.Helper()
 	cert := ca.Certificate()
-	if !cert.IsCA || cert.MaxPathLen != 0 || !cert.MaxPathLenZero || cert.KeyUsage != x509.KeyUsageCertSign|x509.KeyUsageCRLSign {
-		t.Fatalf("CA basics: isCA %v pathlen %d/%v usage %v", cert.IsCA, cert.MaxPathLen, cert.MaxPathLenZero, cert.KeyUsage)
-	}
-	if !cert.PermittedDNSDomainsCritical || !slices.Equal(cert.PermittedDNSDomains, []string{clusterName}) ||
-		len(cert.ExcludedIPRanges) != 2 || len(cert.PermittedIPRanges) != 0 {
-		t.Fatalf("name constraints: %v %v %v", cert.PermittedDNSDomains, cert.ExcludedIPRanges, cert.PermittedIPRanges)
+	if !cert.IsCA || cert.KeyUsage != x509.KeyUsageCertSign|x509.KeyUsageCRLSign ||
+		!cert.PermittedDNSDomainsCritical || !slices.Equal(cert.PermittedDNSDomains, []string{clusterName}) ||
+		len(cert.ExcludedIPRanges) != 2 || len(cert.PermittedIPRanges) != 0 || ca.ClusterDNSName() != clusterName {
+		t.Fatalf("constraints: %v %v %v", cert.PermittedDNSDomains, cert.ExcludedIPRanges, cert.PermittedIPRanges)
 	}
 	if cert.PublicKeyAlgorithm != x509.ECDSA || cert.PublicKey.(*ecdsa.PublicKey).Curve != elliptic.P256() {
 		t.Fatalf("CA key %v", cert.PublicKeyAlgorithm)
 	}
-	if !cert.NotAfter.Equal(testNow.Add(2*365*24*time.Hour)) || cert.NotBefore.After(testNow) {
-		t.Fatalf("CA validity %v – %v", cert.NotBefore, cert.NotAfter)
-	}
 	if sum := sha256.Sum256(cert.Raw); ca.Fingerprint() != sum {
 		t.Fatal("fingerprint is not the SHA-256 of the DER")
 	}
-	for name, params := range map[string]CAParams{
-		"short":    {ClusterDNSName: clusterName, Subject: "x", NotBefore: testNow, Lifetime: 200 * 24 * time.Hour},
-		"long":     {ClusterDNSName: clusterName, Subject: "x", NotBefore: testNow, Lifetime: 6 * 365 * 24 * time.Hour},
-		"no name":  {Subject: "x", NotBefore: testNow, Lifetime: 2 * 365 * 24 * time.Hour},
-		"bad name": {ClusterDNSName: "Not A Name", Subject: "x", NotBefore: testNow, Lifetime: 2 * 365 * 24 * time.Hour},
+}
+
+// A cluster's root lives ten years and may have one CA below it; it starts
+// a day back, so a client whose clock is behind still trusts it (§17.2,
+// §17.3).
+func TestNewRootIsConstrainedToTheClusterName(t *testing.T) {
+	t.Parallel()
+	root := testRoot(t)
+	checkConstrained(t, root)
+	cert := root.Certificate()
+	if root.Kind() != KindRoot || cert.MaxPathLen != 1 || cert.MaxPathLenZero ||
+		cert.CheckSignatureFrom(cert) != nil || root.Root() != cert {
+		t.Fatalf("root: kind %v pathlen %d/%v", root.Kind(), cert.MaxPathLen, cert.MaxPathLenZero)
+	}
+	if !cert.NotBefore.Equal(testNow.Add(-24*time.Hour)) || !cert.NotAfter.Equal(testNow.Add(DefaultRootLifetime)) {
+		t.Fatalf("root validity %v – %v", cert.NotBefore, cert.NotAfter)
+	}
+	year := 365 * 24 * time.Hour
+	for name, params := range map[string]RootParams{
+		"short":      {ClusterDNSName: clusterName, Subject: "x", NotBefore: testNow, Lifetime: 4 * year},
+		"long":       {ClusterDNSName: clusterName, Subject: "x", NotBefore: testNow, Lifetime: 16 * year},
+		"no name":    {Subject: "x", NotBefore: testNow, Lifetime: DefaultRootLifetime},
+		"bad name":   {ClusterDNSName: "Not A Name", Subject: "x", NotBefore: testNow, Lifetime: DefaultRootLifetime},
+		"no subject": {ClusterDNSName: clusterName, NotBefore: testNow, Lifetime: DefaultRootLifetime},
 	} {
-		if _, err := NewCA(params); !errors.Is(err, ErrInvalid) {
+		if _, err := NewRoot(params); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// An intermediate is signed by its root, carries the same name constraint,
+// may have no CA below it, and ends no later than its root.
+func TestNewIntermediateIsSignedByItsRoot(t *testing.T) {
+	t.Parallel()
+	root := testRoot(t)
+	ca, err := root.NewIntermediate(IntermediateParams{
+		Subject: "MeshTransit kinda-k1 1", NotBefore: testNow,
+		Lifetime: DefaultIntermediateLifetime,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkConstrained(t, ca)
+	cert := ca.Certificate()
+	if ca.Kind() != KindIntermediate || cert.MaxPathLen != 0 || !cert.MaxPathLenZero ||
+		cert.CheckSignatureFrom(root.Certificate()) != nil || ca.Root() != root.Certificate() {
+		t.Fatalf("intermediate: kind %v pathlen %d/%v", ca.Kind(), cert.MaxPathLen, cert.MaxPathLenZero)
+	}
+	if !cert.NotBefore.Equal(testNow.Add(-24*time.Hour)) ||
+		!cert.NotAfter.Equal(testNow.Add(DefaultIntermediateLifetime)) {
+		t.Fatalf("intermediate validity %v – %v", cert.NotBefore, cert.NotAfter)
+	}
+	// It starts no earlier than its root, and ends with it.
+	late, err := root.NewIntermediate(IntermediateParams{
+		Subject: "late", Lifetime: DefaultIntermediateLifetime,
+		NotBefore: root.Certificate().NotAfter.Add(-10 * 24 * time.Hour),
+	})
+	if err != nil || !late.Certificate().NotAfter.Equal(root.Certificate().NotAfter) {
+		t.Fatalf("clamped intermediate %v, %v", late.Certificate().NotAfter, err)
+	}
+	early, err := root.NewIntermediate(IntermediateParams{
+		Subject: "early", NotBefore: testNow.Add(-time.Hour),
+		Lifetime: DefaultIntermediateLifetime,
+	})
+	if err != nil || early.Certificate().NotBefore.Before(root.Certificate().NotBefore) {
+		t.Fatalf("intermediate starts before its root: %v, %v", early.Certificate().NotBefore, err)
+	}
+	for name, create := range map[string]func() (CA, error){
+		"short": func() (CA, error) {
+			return root.NewIntermediate(IntermediateParams{Subject: "x", NotBefore: testNow, Lifetime: 6 * 24 * time.Hour})
+		},
+		"long": func() (CA, error) {
+			return root.NewIntermediate(IntermediateParams{Subject: "x", NotBefore: testNow, Lifetime: 91 * 24 * time.Hour})
+		},
+		"under an intermediate": func() (CA, error) {
+			return ca.NewIntermediate(IntermediateParams{
+				Subject: "x", NotBefore: testNow,
+				Lifetime: DefaultIntermediateLifetime,
+			})
+		},
+		"after the root": func() (CA, error) {
+			return root.NewIntermediate(IntermediateParams{
+				Subject: "x", NotBefore: root.Certificate().NotAfter,
+				Lifetime: DefaultIntermediateLifetime,
+			})
+		},
+	} {
+		if _, err := create(); !errors.Is(err, ErrInvalid) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
@@ -87,8 +186,10 @@ func TestSignReplicaTakesOnlyThePublicKey(t *testing.T) {
 	t.Parallel()
 	ca := testCA(t)
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	issued, err := ca.SignReplica(ReplicaRequest{CSR: csrFor(t, key, "evil.example", clusterName),
-		ClusterDNSName: clusterName, Now: testNow, Lifetime: 24 * time.Hour})
+	issued, err := ca.SignReplica(ReplicaRequest{
+		CSR:            csrFor(t, key, "evil.example", clusterName),
+		ClusterDNSName: clusterName, Now: testNow,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +204,7 @@ func TestSignReplicaTakesOnlyThePublicKey(t *testing.T) {
 		t.Fatalf("leaf fields: names %v ips %v cn %q usage %v/%v", cert.DNSNames, cert.IPAddresses,
 			cert.Subject.CommonName, cert.KeyUsage, cert.ExtKeyUsage)
 	}
-	if !cert.NotBefore.Equal(testNow.Add(-5*time.Minute)) || !cert.NotAfter.Equal(testNow.Add(24*time.Hour)) ||
+	if !cert.NotBefore.Equal(testNow.Add(-time.Hour)) || !cert.NotAfter.Equal(testNow.Add(ReplicaLifetime)) ||
 		!issued.NotAfter.Equal(cert.NotAfter) {
 		t.Fatalf("leaf validity %v – %v", cert.NotBefore, cert.NotAfter)
 	}
@@ -114,38 +215,51 @@ func TestSignReplicaTakesOnlyThePublicKey(t *testing.T) {
 	if issued.PublicKeySHA256 != sha256.Sum256(spki) {
 		t.Fatal("public key hash")
 	}
-	roots := x509.NewCertPool()
-	roots.AddCert(ca.Certificate())
-	if _, err := cert.Verify(x509.VerifyOptions{Roots: roots, DNSName: clusterName, CurrentTime: testNow,
-		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); err != nil {
+	// A client that trusts only the root verifies the chain the gateway sends.
+	roots, intermediates := pools(ca)
+	if _, err := cert.Verify(x509.VerifyOptions{
+		Roots: roots, Intermediates: intermediates, DNSName: clusterName,
+		CurrentTime: testNow, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}); err != nil {
 		t.Fatalf("verify: %v", err)
 	}
-	again, err := ca.SignReplica(ReplicaRequest{CSR: csrFor(t, key), ClusterDNSName: clusterName, Now: testNow,
-		Lifetime: 24 * time.Hour})
+	if len(issued.Chain) != 2 || !bytes.Equal(issued.Chain[0], issued.Certificate) ||
+		!bytes.Equal(issued.Chain[1], ca.Certificate().Raw) {
+		t.Fatalf("chain of %d certificates", len(issued.Chain))
+	}
+	again, err := ca.SignReplica(ReplicaRequest{CSR: csrFor(t, key), ClusterDNSName: clusterName, Now: testNow})
 	if err != nil || again.Serial.Cmp(issued.Serial) == 0 {
 		t.Fatalf("second serial: %v", err)
 	}
 }
 
-// Near the CA's end a replica's certificate ends with it.
+// Near the intermediate's end a replica's certificate ends with it; a root
+// signs no replica.
 func TestSignReplicaEndsWithTheCA(t *testing.T) {
 	t.Parallel()
 	ca := testCA(t)
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	late := ca.Certificate().NotAfter.Add(-time.Hour)
-	issued, err := ca.SignReplica(ReplicaRequest{CSR: csrFor(t, key), ClusterDNSName: clusterName, Now: late,
-		Lifetime: 24 * time.Hour})
+	late := ca.Certificate().NotAfter.Add(-2 * time.Hour)
+	issued, err := ca.SignReplica(ReplicaRequest{CSR: csrFor(t, key), ClusterDNSName: clusterName, Now: late})
 	if err != nil || !issued.NotAfter.Equal(ca.Certificate().NotAfter) {
 		t.Fatalf("clamped to %v, %v", issued.NotAfter, err)
 	}
-	if _, err := ca.SignReplica(ReplicaRequest{CSR: csrFor(t, key), ClusterDNSName: clusterName,
-		Now: ca.Certificate().NotAfter, Lifetime: 24 * time.Hour}); !errors.Is(err, ErrInvalid) {
+	if _, err := ca.SignReplica(ReplicaRequest{
+		CSR: csrFor(t, key), ClusterDNSName: clusterName,
+		Now: ca.Certificate().NotAfter,
+	}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("an expired CA signed: %v", err)
+	}
+	if _, err := testRoot(t).SignReplica(ReplicaRequest{
+		CSR: csrFor(t, key), ClusterDNSName: clusterName,
+		Now: testNow,
+	}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("a root signed a replica: %v", err)
 	}
 }
 
 // Only a P-256 key with a valid proof of possession is signed, for this
-// CA's cluster, for at most 72 hours.
+// CA's cluster.
 func TestSignReplicaRefusesWhatItCannotStandBehind(t *testing.T) {
 	t.Parallel()
 	ca := testCA(t)
@@ -156,16 +270,19 @@ func TestSignReplicaRefusesWhatItCannotStandBehind(t *testing.T) {
 	forged := csrFor(t, p256)
 	forged[len(forged)-3] ^= 0xff
 	for name, request := range map[string]ReplicaRequest{
-		"P-384":         {CSR: csrFor(t, p384), ClusterDNSName: clusterName, Now: testNow, Lifetime: time.Hour},
-		"RSA":           {CSR: csrFor(t, rsaKey), ClusterDNSName: clusterName, Now: testNow, Lifetime: time.Hour},
-		"Ed25519":       {CSR: csrFor(t, edKey), ClusterDNSName: clusterName, Now: testNow, Lifetime: time.Hour},
-		"bad signature": {CSR: forged, ClusterDNSName: clusterName, Now: testNow, Lifetime: time.Hour},
-		"garbage":       {CSR: []byte("not a csr"), ClusterDNSName: clusterName, Now: testNow, Lifetime: time.Hour},
-		"other cluster": {CSR: csrFor(t, p256), ClusterDNSName: "other.kube.000000000101.000000000201.mesh.internal",
-			Now: testNow, Lifetime: time.Hour},
-		"too long": {CSR: csrFor(t, p256), ClusterDNSName: clusterName, Now: testNow, Lifetime: 73 * time.Hour},
-		"too short": {CSR: csrFor(t, p256), ClusterDNSName: clusterName, Now: testNow,
-			Lifetime: 30 * time.Minute},
+		"P-384":         {CSR: csrFor(t, p384), ClusterDNSName: clusterName, Now: testNow},
+		"RSA":           {CSR: csrFor(t, rsaKey), ClusterDNSName: clusterName, Now: testNow},
+		"Ed25519":       {CSR: csrFor(t, edKey), ClusterDNSName: clusterName, Now: testNow},
+		"bad signature": {CSR: forged, ClusterDNSName: clusterName, Now: testNow},
+		"garbage":       {CSR: []byte("not a csr"), ClusterDNSName: clusterName, Now: testNow},
+		"other cluster": {
+			CSR: csrFor(t, p256), ClusterDNSName: "other.kube.000000000101.000000000201.mesh.internal",
+			Now: testNow,
+		},
+		"huge": {
+			CSR: append(csrFor(t, p256), make([]byte, MaximumCSRSize)...), ClusterDNSName: clusterName,
+			Now: testNow,
+		},
 	} {
 		if _, err := ca.SignReplica(request); !errors.Is(err, ErrInvalid) {
 			t.Errorf("%s: %v", name, err)
@@ -174,43 +291,67 @@ func TestSignReplicaRefusesWhatItCannotStandBehind(t *testing.T) {
 }
 
 // The name constraint is real: a certificate for another name, even signed
-// by the CA's key, does not verify under it.
+// by the intermediate's key, does not verify under the root.
 func TestCANameConstraintHolds(t *testing.T) {
 	t.Parallel()
 	ca := testCA(t)
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	template := &x509.Certificate{SerialNumber: big.NewInt(7), DNSNames: []string{"bank.example"},
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(7), DNSNames: []string{"bank.example"},
 		NotBefore: testNow.Add(-time.Hour), NotAfter: testNow.Add(time.Hour),
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
 	der, err := x509.CreateCertificate(rand.Reader, template, ca.Certificate(), &key.PublicKey, ca.privateKey)
 	if err != nil {
 		t.Fatal(err)
 	}
 	leaf, _ := x509.ParseCertificate(der)
-	roots := x509.NewCertPool()
-	roots.AddCert(ca.Certificate())
-	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, DNSName: "bank.example", CurrentTime: testNow}); err == nil {
+	roots, intermediates := pools(ca)
+	if _, err := leaf.Verify(x509.VerifyOptions{
+		Roots: roots, Intermediates: intermediates, DNSName: "bank.example",
+		CurrentTime: testNow,
+	}); err == nil {
 		t.Fatal("a certificate outside the cluster's name verified")
 	}
 }
 
 // A CA comes back from its certificate and private key only when the two
-// belong together.
+// belong together, and an intermediate only under its own root.
 func TestParseCAChecksTheKeyMatches(t *testing.T) {
 	t.Parallel()
-	ca := testCA(t)
-	key, err := ca.MarshalPrivateKey()
+	root := testRoot(t)
+	rootKey, err := root.MarshalPrivateKey()
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := ParseCA(ca.Certificate().Raw, key)
-	if err != nil || parsed.Fingerprint() != ca.Fingerprint() {
-		t.Fatalf("ParseCA() = %v", err)
+	parsedRoot, err := ParseRoot(root.Certificate().Raw, rootKey)
+	if err != nil || parsedRoot.Fingerprint() != root.Fingerprint() || parsedRoot.Kind() != KindRoot {
+		t.Fatalf("ParseRoot() = %v", err)
+	}
+	ca, err := root.NewIntermediate(IntermediateParams{
+		Subject: "x", NotBefore: testNow,
+		Lifetime: DefaultIntermediateLifetime,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _ := ca.MarshalPrivateKey()
+	parsed, err := ParseIntermediate(ca.Certificate().Raw, key, root.Certificate())
+	if err != nil || parsed.Fingerprint() != ca.Fingerprint() || parsed.Kind() != KindIntermediate {
+		t.Fatalf("ParseIntermediate() = %v", err)
 	}
 	other := testCA(t)
 	otherKey, _ := other.MarshalPrivateKey()
-	if _, err := ParseCA(ca.Certificate().Raw, otherKey); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("a mismatched key was taken: %v", err)
+	for name, parse := range map[string]func() (CA, error){
+		"mismatched key":       func() (CA, error) { return ParseIntermediate(ca.Certificate().Raw, otherKey, root.Certificate()) },
+		"another root":         func() (CA, error) { return ParseIntermediate(ca.Certificate().Raw, key, other.Root()) },
+		"root as intermediate": func() (CA, error) { return ParseIntermediate(root.Certificate().Raw, rootKey, root.Certificate()) },
+		"intermediate as root": func() (CA, error) { return ParseRoot(ca.Certificate().Raw, key) },
+		"root without key":     func() (CA, error) { return ParseRoot(root.Certificate().Raw, otherKey) },
+	} {
+		if _, err := parse(); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }
 
@@ -259,21 +400,25 @@ func TestEnvelopeBindsItsContext(t *testing.T) {
 	}
 }
 
-// A CA starts five minutes back, so a peer slightly behind accepts it, and
-// signs nothing before it starts or with less than an hour left.
+// An intermediate signs nothing before it starts or with less than an hour
+// left; a replica's certificate starts an hour back, never before its CA.
 func TestCAValidityBounds(t *testing.T) {
 	t.Parallel()
 	ca := testCA(t)
-	if !ca.Certificate().NotBefore.Equal(testNow.Add(-5 * time.Minute)) {
-		t.Fatalf("CA NotBefore %v", ca.Certificate().NotBefore)
-	}
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	start := ca.Certificate().NotBefore.Add(10 * time.Minute)
+	issued, err := ca.SignReplica(ReplicaRequest{CSR: csrFor(t, key), ClusterDNSName: clusterName, Now: start})
+	if err != nil || !issued.NotBefore.Equal(ca.Certificate().NotBefore) {
+		t.Fatalf("a certificate starting before its CA: %v, %v", issued.NotBefore, err)
+	}
 	for name, now := range map[string]time.Time{
-		"before the CA":      testNow.Add(-10 * time.Minute),
+		"before the CA":      ca.Certificate().NotBefore.Add(-time.Minute),
 		"under an hour left": ca.Certificate().NotAfter.Add(-30 * time.Minute),
 	} {
-		if _, err := ca.SignReplica(ReplicaRequest{CSR: csrFor(t, key), ClusterDNSName: clusterName, Now: now,
-			Lifetime: 24 * time.Hour}); !errors.Is(err, ErrInvalid) {
+		if _, err := ca.SignReplica(ReplicaRequest{
+			CSR: csrFor(t, key), ClusterDNSName: clusterName,
+			Now: now,
+		}); !errors.Is(err, ErrInvalid) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
@@ -283,7 +428,7 @@ func TestCAValidityBounds(t *testing.T) {
 // that key, does not come back as a CA (review a1a M1).
 func TestParseCARefusesARewrittenCertificate(t *testing.T) {
 	t.Parallel()
-	ca := testCA(t)
+	ca := testRoot(t)
 	keyDER, _ := ca.MarshalPrivateKey()
 	widen := func(change func(*x509.Certificate)) []byte {
 		template := *ca.Certificate()
@@ -306,10 +451,11 @@ func TestParseCARefusesARewrittenCertificate(t *testing.T) {
 	for name, der := range map[string][]byte{
 		"no IP exclusion":       widen(func(c *x509.Certificate) { c.ExcludedIPRanges = nil }),
 		"path length":           widen(func(c *x509.Certificate) { c.MaxPathLen, c.MaxPathLenZero = 3, false }),
+		"no path limit":         widen(func(c *x509.Certificate) { c.MaxPathLen, c.MaxPathLenZero = -1, false }),
 		"not critical":          widen(func(c *x509.Certificate) { c.PermittedDNSDomainsCritical = false }),
 		"signed by another key": foreign,
 	} {
-		if _, err := ParseCA(der, keyDER); !errors.Is(err, ErrInvalid) {
+		if _, err := ParseRoot(der, keyDER); !errors.Is(err, ErrInvalid) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
@@ -322,12 +468,15 @@ func TestSignReplicaTakesOnlySHA256Requests(t *testing.T) {
 	ca := testCA(t)
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
-		SignatureAlgorithm: x509.ECDSAWithSHA384}, key)
+		SignatureAlgorithm: x509.ECDSAWithSHA384,
+	}, key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ca.SignReplica(ReplicaRequest{CSR: csr, ClusterDNSName: clusterName, Now: testNow,
-		Lifetime: 24 * time.Hour}); !errors.Is(err, ErrInvalid) {
+	if _, err := ca.SignReplica(ReplicaRequest{
+		CSR: csr, ClusterDNSName: clusterName,
+		Now: testNow,
+	}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("a non-SHA-256 CSR: %v", err)
 	}
 }
@@ -344,11 +493,21 @@ func TestSealedCAOpensOnlyWithItsCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	opened, err := OpenCA(dataKey, ca.Certificate().Raw, sealed, "dep", "cluster", "ca")
+	opened, err := OpenIntermediate(dataKey, ca.Certificate().Raw, sealed, "dep", "cluster", "ca", ca.Root())
 	if err != nil || opened.Fingerprint() != ca.Fingerprint() {
-		t.Fatalf("OpenCA() = %v", err)
+		t.Fatalf("OpenIntermediate() = %v", err)
 	}
-	if _, err := OpenCA(dataKey, other.Certificate().Raw, sealed, "dep", "cluster", "ca"); !errors.Is(err, ErrInvalid) {
+	if _, err := OpenIntermediate(dataKey, other.Certificate().Raw, sealed, "dep", "cluster", "ca",
+		other.Root()); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("another certificate opened the key: %v", err)
+	}
+	root := testRoot(t)
+	sealedRoot, err := SealCA(dataKey, root, "dep", "cluster", "root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opened, err := OpenRoot(dataKey, root.Certificate().Raw, sealedRoot, "dep", "cluster", "root"); err != nil ||
+		opened.Kind() != KindRoot {
+		t.Fatalf("OpenRoot() = %v", err)
 	}
 }

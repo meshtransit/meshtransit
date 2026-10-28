@@ -16,9 +16,10 @@ import (
 const fileCustody = "file"
 
 // File wraps data keys with AES-256-GCM under a key read from a secret
-// file, bound to the data key's Network. A previous key, kept after a
-// rotation of the file key, still opens what it wrapped but never wraps (the
-// new key is primary first, R3). It never formats its keys.
+// file, bound to the data key's Network. Previous keys, kept after
+// rotations of the file key until every data key is wrapped again, still
+// open what they wrapped but never wrap (the new key is primary first, R3).
+// It never formats its keys.
 type File struct {
 	primary  kubeca.DataKey
 	keyID    string
@@ -27,18 +28,23 @@ type File struct {
 
 var _ kubeca.Custody = (*File)(nil)
 
-// NewFile builds a file custody from its primary key and, during a
-// rotation, the previous one. An all-zero key (a failed read) is refused.
-func NewFile(primary kubeca.DataKey, previous *kubeca.DataKey) (*File, error) {
-	if primary.IsZero() {
+// maximumPreviousKeys bounds the older keys a custody keeps for opening.
+const maximumPreviousKeys = 8
+
+// NewFile builds a file custody from its primary key and, during
+// rotations, the previous ones. An all-zero key (a failed read) or the same
+// key twice is refused.
+func NewFile(primary kubeca.DataKey, previous []kubeca.DataKey) (*File, error) {
+	if primary.IsZero() || len(previous) > maximumPreviousKeys {
 		return nil, kubeca.ErrInvalid
 	}
 	custody := &File{primary: primary, keyID: fileKeyID(primary), previous: map[string]kubeca.DataKey{}}
-	if previous != nil {
-		if previous.IsZero() || *previous == primary {
+	for _, key := range previous {
+		id := fileKeyID(key)
+		if _, seen := custody.previous[id]; seen || key.IsZero() || key == primary {
 			return nil, kubeca.ErrInvalid
 		}
-		custody.previous[fileKeyID(*previous)] = *previous
+		custody.previous[id] = key
 	}
 	return custody, nil
 }
@@ -68,6 +74,18 @@ func (custody *File) NewDataKey(_ context.Context, network string) (kubeca.DataK
 		return kubeca.DataKey{}, kubeca.WrappedKey{}, err
 	}
 	return dataKey, kubeca.WrappedKey{Custody: fileCustody, KeyID: custody.keyID, Ciphertext: sealed}, nil
+}
+
+// WrapDataKey implements kubeca.Custody.
+func (custody *File) WrapDataKey(_ context.Context, network string, dataKey kubeca.DataKey) (kubeca.WrappedKey, error) {
+	if network == "" || dataKey.IsZero() {
+		return kubeca.WrappedKey{}, kubeca.ErrInvalid
+	}
+	sealed, err := kubeca.Seal(custody.primary, kubeca.DataKeyAAD(network), dataKey[:])
+	if err != nil {
+		return kubeca.WrappedKey{}, err
+	}
+	return kubeca.WrappedKey{Custody: fileCustody, KeyID: custody.keyID, Ciphertext: sealed}, nil
 }
 
 // OpenDataKey implements kubeca.Custody.

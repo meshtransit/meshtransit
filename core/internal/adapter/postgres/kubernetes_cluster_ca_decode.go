@@ -8,17 +8,28 @@ import (
 	"meshtransit.net/core/internal/domain/publicid"
 )
 
+// clusterCAMaximumLive bounds a cluster's CAs that are not retired: three
+// roots, one active intermediate and the retiring ones whose certificates
+// may still live.
+const clusterCAMaximumLive = 16
+
+// The database refuses a ninth retiring intermediate, so a cluster has at
+// most three roots, one active intermediate and eight retiring ones.
+
 type clusterCADataKeyRecord struct {
 	ID         string `json:"id"`
+	Version    int64  `json:"version"`
+	Active     bool   `json:"active"`
 	Custody    string `json:"custody"`
 	KeyID      string `json:"key_id"`
 	Ciphertext string `json:"ciphertext"`
-	Active     bool   `json:"active"`
 }
 
 type clusterCARecord struct {
 	ID             string     `json:"id"`
 	Version        int64      `json:"version"`
+	Kind           string     `json:"kind"`
+	IssuerID       *string    `json:"issuer_id"`
 	State          string     `json:"state"`
 	Reason         string     `json:"reason"`
 	DataKeyID      string     `json:"data_key_id"`
@@ -41,9 +52,10 @@ type clusterCAClusterRecord struct {
 	CAs          []clusterCARecord `json:"cas"`
 }
 
-// decodeClusterCANetwork decodes what lock_kubernetes_ca_network_v1 read;
-// locked is false when another worker holds the Network.
-func decodeClusterCANetwork(encoded string) (kubeca.Network, bool, error) {
+// decodeClusterCANetwork decodes what read_kubernetes_ca_network_v1 or
+// lock_kubernetes_ca_network_v2 returned, with its outcome: read, locked
+// or busy (with nothing read).
+func decodeClusterCANetwork(encoded string) (kubeca.Network, string, error) {
 	var record struct {
 		Outcome       string                   `json:"outcome"`
 		Now           time.Time                `json:"now"`
@@ -53,14 +65,14 @@ func decodeClusterCANetwork(encoded string) (kubeca.Network, bool, error) {
 		Clusters      []clusterCAClusterRecord `json:"clusters"`
 	}
 	if err := decodeStrictJSON(encoded, clusterCAMaximumNetwork, &record); err != nil {
-		return kubeca.Network{}, false, ErrKubernetesClusterCAStore
+		return kubeca.Network{}, "", ErrKubernetesClusterCAStore
 	}
-	if record.Outcome == "busy" {
-		return kubeca.Network{}, false, nil
+	if record.Outcome == "busy" && record.DataKeys == nil && record.Clusters == nil {
+		return kubeca.Network{}, "busy", nil
 	}
-	if record.Outcome != "locked" || record.Now.IsZero() || record.WorkspaceCode == nil || record.NetworkCode == nil ||
-		record.DataKeys == nil || record.Clusters == nil {
-		return kubeca.Network{}, false, ErrKubernetesClusterCAStore
+	if record.Outcome != "locked" && record.Outcome != "read" || record.Now.IsZero() ||
+		record.WorkspaceCode == nil || record.NetworkCode == nil || record.DataKeys == nil || record.Clusters == nil {
+		return kubeca.Network{}, "", ErrKubernetesClusterCAStore
 	}
 	read := kubeca.Network{
 		Now: record.Now, WorkspaceCode: *record.WorkspaceCode, NetworkCode: *record.NetworkCode,
@@ -70,29 +82,29 @@ func decodeClusterCANetwork(encoded string) (kubeca.Network, bool, error) {
 	for _, item := range record.DataKeys {
 		key, err := decodeClusterCADataKey(item)
 		if err != nil {
-			return kubeca.Network{}, false, err
+			return kubeca.Network{}, "", err
 		}
 		read.DataKeys = append(read.DataKeys, key)
 	}
 	for _, item := range record.Clusters {
 		cluster, err := decodeClusterCACluster(item)
 		if err != nil {
-			return kubeca.Network{}, false, err
+			return kubeca.Network{}, "", err
 		}
 		read.Clusters = append(read.Clusters, cluster)
 	}
-	return read, true, nil
+	return read, record.Outcome, nil
 }
 
 func decodeClusterCADataKey(record clusterCADataKeyRecord) (kubeca.StoredDataKey, error) {
 	id, idErr := publicid.Parse(record.ID)
 	ciphertext, ciphertextErr := hex.DecodeString(record.Ciphertext)
-	if idErr != nil || ciphertextErr != nil || len(ciphertext) == 0 || record.KeyID == "" ||
+	if idErr != nil || ciphertextErr != nil || len(ciphertext) == 0 || record.KeyID == "" || record.Version < 1 ||
 		record.Custody != "file" && record.Custody != "kms" {
 		return kubeca.StoredDataKey{}, ErrKubernetesClusterCAStore
 	}
 	return kubeca.StoredDataKey{
-		ID: id, Active: record.Active,
+		ID: id, Version: record.Version, Active: record.Active,
 		Wrapped: kubeca.WrappedKey{Custody: record.Custody, KeyID: record.KeyID, Ciphertext: ciphertext},
 	}, nil
 }
@@ -100,7 +112,8 @@ func decodeClusterCADataKey(record clusterCADataKeyRecord) (kubeca.StoredDataKey
 func decodeClusterCACluster(record clusterCAClusterRecord) (kubeca.Cluster, error) {
 	id, err := publicid.Parse(record.ID)
 	if err != nil || record.Name == "" || record.State != "active" && record.State != "deleted" ||
-		record.NextActionAt.IsZero() || record.Failures < 0 || record.CAs == nil || len(record.CAs) > 3 {
+		record.NextActionAt.IsZero() || record.Failures < 0 || record.CAs == nil ||
+		len(record.CAs) > clusterCAMaximumLive {
 		return kubeca.Cluster{}, ErrKubernetesClusterCAStore
 	}
 	cluster := kubeca.Cluster{
@@ -117,22 +130,37 @@ func decodeClusterCACluster(record clusterCAClusterRecord) (kubeca.Cluster, erro
 	return cluster, nil
 }
 
+// decodeClusterCA checks a stored CA is one the schema allows: a root (no
+// issuer), or an intermediate (an issuer, never next); a sealed key exactly
+// while it signs or is published.
 func decodeClusterCA(record clusterCARecord) (kubeca.StoredCA, error) {
 	id, idErr := publicid.Parse(record.ID)
 	dataKey, dataKeyErr := publicid.Parse(record.DataKeyID)
 	certificate, certificateErr := hex.DecodeString(record.Certificate)
+	kind, kindOK := kubeca.ParseKind(record.Kind)
 	state := kubeca.State(record.State)
 	reason := kubeca.Reason(record.Reason)
+	signing := state == kubeca.StateNext || state == kubeca.StateActive
 	if idErr != nil || dataKeyErr != nil || certificateErr != nil || len(certificate) == 0 || record.Version < 1 ||
-		state != kubeca.StateNext && state != kubeca.StateActive && state != kubeca.StateRetiring ||
+		!kindOK || (kind == kubeca.KindRoot) != (record.IssuerID == nil) ||
+		!signing && state != kubeca.StateRetiring || kind == kubeca.KindIntermediate && state == kubeca.StateNext ||
 		!reason.CreatesCA() || record.ClusterDNSName == "" || !record.NotAfter.After(record.NotBefore) ||
-		record.CreatedAt.IsZero() || (record.SealedKey != nil) != (state != kubeca.StateRetiring) {
+		record.CreatedAt.IsZero() || (record.SealedKey != nil) != signing ||
+		(record.ActivatedAt != nil) != (state == kubeca.StateActive || state == kubeca.StateRetiring) ||
+		(record.RetiringAt != nil) != (state == kubeca.StateRetiring) {
 		return kubeca.StoredCA{}, ErrKubernetesClusterCAStore
 	}
 	ca := kubeca.StoredCA{
-		ID: id, Version: record.Version, State: state, Reason: reason, DataKeyID: dataKey,
+		ID: id, Version: record.Version, Kind: kind, State: state, Reason: reason, DataKeyID: dataKey,
 		Certificate: certificate, ClusterDNSName: record.ClusterDNSName, NotBefore: record.NotBefore,
 		NotAfter: record.NotAfter, CreatedAt: record.CreatedAt,
+	}
+	if record.IssuerID != nil {
+		issuer, err := publicid.Parse(*record.IssuerID)
+		if err != nil {
+			return kubeca.StoredCA{}, ErrKubernetesClusterCAStore
+		}
+		ca.IssuerID = issuer
 	}
 	if record.SealedKey != nil {
 		sealed, err := hex.DecodeString(*record.SealedKey)

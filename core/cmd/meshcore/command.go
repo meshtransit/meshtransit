@@ -8,7 +8,7 @@ import (
 	"meshtransit.net/core/internal/platform/config"
 )
 
-const usage = "Usage: meshcore [serve | version | config validate | identity fingerprint | migrate status | migrate up | migrate verify | migrate operator status | migrate operator apply [--dry-run] [--after-rollout] [--through N] | bootstrap check | bootstrap apply | account revoke-sessions|quarantine|release <principal-id>]\n"
+const usage = "Usage: meshcore [serve | version | config validate | identity fingerprint | migrate status | migrate up | migrate verify | migrate operator status | migrate operator apply [--dry-run] [--after-rollout] [--through N] | bootstrap check | bootstrap apply | account revoke-sessions|quarantine|release <principal-id> | kubernetes-ca status|rewrap|rotate-data-key|retire-ca --workspace W --network N [--ca C --reason R] [--actor A --change-ref R]]\n"
 
 func execute(
 	ctx context.Context,
@@ -34,6 +34,8 @@ func execute(
 		return runMigrateOperator(ctx, args[2:], lookup, output, errorOutput, openOperatorService)
 	case len(args) == 2 && args[0] == "bootstrap" && (args[1] == "check" || args[1] == "apply"):
 		return runBootstrap(ctx, args[1], lookup, output, errorOutput)
+	case len(args) >= 2 && args[0] == "kubernetes-ca":
+		return runKubernetesCA(ctx, args[1:], lookup, output, errorOutput)
 	case len(args) == 3 && args[0] == "account" && accountCommandActions[args[1]] != "":
 		return runAccount(ctx, args[1], args[2], lookup, output, errorOutput)
 	case len(args) == 1 && (args[0] == "help" || args[0] == "-h" || args[0] == "--help"):
