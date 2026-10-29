@@ -273,3 +273,57 @@ func TestProbesReportAnOpenCheck(t *testing.T) {
 		t.Fatalf("fresh map: %+v", last)
 	}
 }
+
+// The kubectl path's checks reach readiness whole: an open check keeps its
+// function and its reason (regression: copying through Require lost it and
+// held every proxying replica unready, K1c c4).
+func TestProbesRequireAllKeepsOpenChecks(t *testing.T) {
+	t.Parallel()
+	probes := NewProbes(func(context.Context) (daemon.Status, error) {
+		return daemon.Status{ControlSession: daemon.ControlSessionSynchronized}, nil
+	}, time.Second)
+	open := true
+	probes.requireAll([]check{
+		{open: func() (bool, string) { return open, "map not confirmed within 5m0s" }},
+		{reason: "kube API cannot listen", ok: func() bool { return true }},
+	})
+	probes.observe(t.Context())
+	if last := probes.current(); !last.ready {
+		t.Fatalf("open: %+v", last)
+	}
+	open = false
+	probes.observe(t.Context())
+	if last := probes.current(); last.ready || last.reason != "map not confirmed within 5m0s" {
+		t.Fatalf("closed: %+v", last)
+	}
+}
+
+// The gateway's probes take the kubectl path's open check whole: open, the
+// replica is ready (the K1c c4 wiring held it unready with no reason).
+func TestNewGatewayProbesKeepsTheOpenCheck(t *testing.T) {
+	t.Parallel()
+	open := true
+	probes := newGatewayProbes(func(context.Context) (daemon.Status, error) {
+		return daemon.Status{ControlSession: daemon.ControlSessionSynchronized}, nil
+	}, func() uint64 { return 0 }, kubectlReadiness{checks: []check{
+		{open: func() (bool, string) { return open, "map not confirmed within 5m0s" }},
+		{reason: "kube API cannot listen", ok: func() bool { return true }},
+	}})
+	probes.observe(t.Context())
+	if last := probes.current(); !last.ready {
+		t.Fatalf("open: %+v", last)
+	}
+	open = false
+	probes.observe(t.Context())
+	if last := probes.current(); last.ready || last.reason != "map not confirmed within 5m0s" {
+		t.Fatalf("closed: %+v", last)
+	}
+	empty := NewProbes(func(context.Context) (daemon.Status, error) {
+		return daemon.Status{ControlSession: daemon.ControlSessionSynchronized}, nil
+	}, time.Second)
+	empty.requireAll([]check{{}})
+	empty.observe(t.Context())
+	if last := empty.current(); last.ready || last.reason != "readiness check has no condition" {
+		t.Fatalf("empty check: %+v", last)
+	}
+}

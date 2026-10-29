@@ -55,7 +55,7 @@ type Probes struct {
 }
 
 // check is one more condition of readiness, with the reason it gives;
-// open, when set, gives its own reason instead.
+// open, when set, is used instead of ok and gives its own reason.
 type check struct {
 	reason string
 	ok     func() bool
@@ -80,8 +80,12 @@ func NewProbes(status func(context.Context) (daemon.Status, error), interval tim
 // Require adds a condition of readiness; reason is reported while it fails.
 // Call it before Poll.
 func (p *Probes) Require(reason string, ok func() bool) {
-	p.checks = append(p.checks, check{reason: reason, ok: ok})
+	p.requireAll([]check{{reason: reason, ok: ok}})
 }
+
+// requireAll adds conditions as they are, an open check's own reason
+// included (a copy through Require dropped it: K1c c4). Call it before Poll.
+func (p *Probes) requireAll(checks []check) { p.checks = append(p.checks, checks...) }
 
 // AddMetrics adds metrics /metrics writes. Call it before Handler.
 func (p *Probes) AddMetrics(write func(io.Writer)) { p.metrics = append(p.metrics, write) }
@@ -141,9 +145,10 @@ func (p *Probes) observe(ctx context.Context) {
 			if ok, why := required.open(); !ok {
 				ready, reason = false, why
 			}
-		case required.ok == nil || !required.ok():
-			// A check without a condition holds the replica unready
-			// rather than panic.
+		case required.ok == nil:
+			// A wiring mistake: unready, and saying so (review c4 M2).
+			ready, reason = false, "readiness check has no condition"
+		case !required.ok():
 			ready, reason = false, required.reason
 		}
 	}

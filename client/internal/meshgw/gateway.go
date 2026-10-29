@@ -162,25 +162,33 @@ func newRuntime(cfg Config, stacks *Stacks, profiles *profile.Store, identities 
 	return service, control.CoreNow, nil
 }
 
-// startProbes serves the probes and polls the status for them; the returned
-// function stops both and waits for the poller.
-func startProbes(ctx context.Context, cfg Config, service *daemon.Service, stacks *Stacks, ready kubectlReadiness,
-	logger *slog.Logger,
-) (func() error, error) {
+// newGatewayProbes builds the replica's probes over status: the kubectl
+// path's checks whole (K1c c4: copying them field by field once dropped an
+// open check), its counters, metrics and status parts.
+func newGatewayProbes(status func(context.Context) (daemon.Status, error), dropped func() uint64,
+	ready kubectlReadiness,
+) *Probes {
 	counters := append([]Counter{{
 		Name: "meshgw_dropped_packets_total", Help: "Packets dropped between the stack and the data plane.",
-		Value: stacks.Dropped,
+		Value: dropped,
 	}}, ready.counters...)
-	probes := NewProbes(service.Status, probeInterval, counters...)
-	for _, required := range ready.checks {
-		probes.Require(required.reason, required.ok)
-	}
+	probes := NewProbes(status, probeInterval, counters...)
+	probes.requireAll(ready.checks)
 	if ready.metrics != nil {
 		probes.AddMetrics(ready.metrics)
 	}
 	for name, report := range ready.status {
 		probes.AddStatus(name, report)
 	}
+	return probes
+}
+
+// startProbes serves the probes and polls the status for them; the returned
+// function stops both and waits for the poller.
+func startProbes(ctx context.Context, cfg Config, service *daemon.Service, stacks *Stacks, ready kubectlReadiness,
+	logger *slog.Logger,
+) (func() error, error) {
+	probes := newGatewayProbes(service.Status, stacks.Dropped, ready)
 	probes.LogStaleMap(logger.With("component", "map"))
 	server, err := serveProbes(ctx, cfg.ProbeAddress, probes.Handler(), logger)
 	if err != nil {
