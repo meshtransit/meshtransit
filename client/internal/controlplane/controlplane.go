@@ -282,6 +282,13 @@ type NetmapOptions struct {
 	// session once the first map arrived, and answers each call once
 	// (mtcp-v1 §6.9).
 	KubeCerts <-chan KubeCertCall
+	// KubeAudits and KubeAuditReports, for a Kubernetes gateway, carry its
+	// operation records: the stream declares gateway.audit1 when
+	// KubeAudits is set, sends each batch on its session once the first
+	// map arrived and answers each call once; reports are sent unanswered,
+	// dropped when they cannot be (mtcp-v1 §6.10).
+	KubeAudits       <-chan KubeAuditCall
+	KubeAuditReports <-chan KubeAuditReport
 	// RouteSelection, with EnableSubnetRoutes, carries the router this node
 	// sends each Site's traffic to; each set is sent in a
 	// RouteSelectionReport when Core takes it (routes.selection1), again

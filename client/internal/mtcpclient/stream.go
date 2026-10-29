@@ -524,6 +524,13 @@ type sessionRun struct {
 	kubeCert     *kubeCertInFlight
 	kubeCertLate *kubeCertLate
 	kubeCertWait time.Duration
+	// kubeAudits are the gateway's operation batches waiting on this
+	// session for their ack, by batch ID (mtcp-v1 §6.10); kubeAuditTimer
+	// fires at the earliest deadline among them.
+	kubeAudits     map[[16]byte]*kubeAuditInFlightCall
+	kubeAuditTimer *time.Timer
+	// kubeAuditLate are batches whose calls timed out, kept a while.
+	kubeAuditLate map[[16]byte]kubeAuditLateBatch
 }
 
 // A node acknowledges a snapshot at once, and deltas once ackBatch of them
@@ -553,6 +560,9 @@ func (run *sessionRun) loop(ctx context.Context, inbox <-chan incoming) (bool, t
 	// A call still waiting when the session ends is answered: the request
 	// may be queued, and sending it again finds it.
 	defer run.endKubeCert(controlplane.ErrKubeCertSessionLost)
+	// So is every operation batch: Core may have recorded it, and sending
+	// it again finds the same audit_ids.
+	defer run.endKubeAudits(controlplane.ErrKubeAuditSessionLost)
 	for {
 		// The end of ctx goes first: a stopping router announces it before
 		// handling anything else.
@@ -608,6 +618,16 @@ func (run *sessionRun) loop(ctx context.Context, inbox <-chan incoming) (bool, t
 			}
 		case <-run.kubeCertTimeout():
 			run.timeOutKubeCert()
+		case call := <-run.kubeAuditCalls():
+			if err := run.sendKubeAudit(call); err != nil {
+				return run.mapped, 0, err
+			}
+		case report := <-run.kubeAuditReports():
+			if err := run.sendKubeAuditReport(report); err != nil {
+				return run.mapped, 0, err
+			}
+		case <-run.kubeAuditTimeout():
+			run.timeOutKubeAudits()
 		}
 	}
 }
@@ -649,6 +669,8 @@ func (run *sessionRun) handle(ctx context.Context, in incoming) (time.Duration, 
 	case *mtcpv1.KubeCertResult:
 		run.kubeCertResult(m)
 		return 0, nil
+	case *mtcpv1.KubeAuditAck:
+		return 0, run.kubeAuditAck(m)
 	case *mtcpv1.Lifecycle:
 		return lifecycleOutcome(m)
 	case *mtcpv1.Error:
@@ -1390,6 +1412,10 @@ func streamCapabilities(options controlplane.NetmapOptions, gateway bool) []stri
 		if options.KubeCerts != nil {
 			// It asks for its replica certificate (§6.9, §7.10).
 			capabilities = append(capabilities, kubeCertCapability)
+		}
+		if options.KubeAudits != nil {
+			// It has Core record type A operations first (§6.10).
+			capabilities = append(capabilities, kubeAuditCapability)
 		}
 	}
 	if options.EnableExitNode {
