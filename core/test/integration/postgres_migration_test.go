@@ -307,6 +307,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertWorkerOutboxDelivery(ctx, t, adminConnection, workerPool)
 	assertRevisionDispatcherDelivery(ctx, t, adminConnection, workerPool)
 	assertRevisionDispatcherRecovery(ctx, t, adminConnection, workerPool)
+	assertKubernetesOperationPartitions(ctx, t, workerPool)
 
 	openRegistrationCommand := seedOpenRegistrationAuthority(ctx, t, adminConnection)
 	assertRegistrationTransactionLockHelpers(

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	mtcpadapter "meshtransit.net/core/internal/adapter/mtcp"
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	redisadapter "meshtransit.net/core/internal/adapter/redis"
+	"meshtransit.net/core/internal/domain/audit/partitions"
 	"meshtransit.net/core/internal/domain/kubeaudit"
 )
 
@@ -146,4 +148,52 @@ func (collector kubeAuditQueue) Collect(metrics chan<- prometheus.Metric) {
 	collector.queue.WithLabelValues("intent").Set(float64(collector.intents.Queued()))
 	collector.queue.WithLabelValues("outcome").Set(float64(collector.reports.Queued()))
 	collector.queue.Collect(metrics)
+}
+
+// kubeOperationPartitionOptions keep three months ahead and check hourly:
+// a failed pass (a lock not taken in time) is retried within the hour, and
+// the gauge alerts long before a month runs out (K1b0 §4, §8).
+var kubeOperationPartitionOptions = partitions.Options{MonthsAhead: 3, Interval: time.Hour,
+	OperationTimeout: 30 * time.Second}
+
+// composeKubeOperationPartitions keeps the monthly partitions of Kubernetes
+// operations on the worker, with its gauge and counter.
+func composeKubeOperationPartitions(pool *postgresadapter.Pool, logger *slog.Logger) (
+	*partitions.Maintainer, []prometheus.Collector, error,
+) {
+	if pool == nil || logger == nil {
+		return nil, nil, errInvalidKubeAuditComposition
+	}
+	logger = logger.With("partitions", "kubernetes_operation")
+	store, err := postgresadapter.NewKubernetesOperationPartitionStore(pool, logger)
+	if err != nil {
+		return nil, nil, errors.Join(errInvalidKubeAuditComposition, err)
+	}
+	maintainer, err := partitions.New(kubeOperationPartitionOptions, store, logger)
+	if err != nil {
+		return nil, nil, errors.Join(errInvalidKubeAuditComposition, err)
+	}
+	// Watch (review b0c H1, M1): ahead under 2, or -1 (this month's is
+	// missing: type A operations are refused); a last whole pass over 3
+	// hours old (passes keep failing, ahead is stale; before a whole pass it
+	// is the worker's start); both absent while no worker runs. Ahead reads
+	// NaN before the first whole pass, never an alert.
+	ahead := prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "meshtransit_kubernetes_operation_partitions_ahead",
+		Help: "Months ahead of this one every Kubernetes operation table held at the last whole pass; " +
+			"-1: this month's is missing; NaN: no pass yet.",
+	}, store.Ahead)
+	checked := prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "meshtransit_kubernetes_operation_partitions_checked_timestamp_seconds",
+		Help: "Unix time of the last whole Kubernetes operation partition pass, or of the worker's start before one.",
+	}, store.CheckedAt)
+	failed := prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Name: "meshtransit_kubernetes_operation_partitions_passes_failed_total",
+		Help: "Kubernetes operation partition passes that failed, retried at the next one.",
+	}, func() float64 { return float64(maintainer.Snapshot().Failed) })
+	dropped := prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Name: "meshtransit_kubernetes_operation_partitions_dropped_total",
+		Help: "Kubernetes operation partitions dropped past their retention.",
+	}, func() float64 { return float64(store.Dropped()) })
+	return maintainer, []prometheus.Collector{ahead, checked, failed, dropped}, nil
 }

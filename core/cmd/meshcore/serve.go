@@ -215,6 +215,14 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			return 1
 		}
 		roleServices = append(roleServices, app.OwnedService{Name: "audit-partition-maintainer", Service: auditPartitions})
+		operationPartitions, operationMetrics, composeErr := composeKubeOperationPartitions(storagePools.worker, logger)
+		if composeErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "kubernetes_operation_partition_composition_failure")
+			return 1
+		}
+		additionalMetrics = append(additionalMetrics, operationMetrics...)
+		roleServices = append(roleServices,
+			app.OwnedService{Name: "kubernetes-operation-partition-maintainer", Service: operationPartitions})
 		unroutedRetirer, composeErr := composeOutboxUnroutedRetirer(storagePools.worker, logger)
 		if composeErr != nil {
 			logger.ErrorContext(ctx, "startup failed", "error_code", "outbox_unrouted_composition_failure")
