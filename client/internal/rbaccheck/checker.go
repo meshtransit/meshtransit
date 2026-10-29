@@ -243,6 +243,7 @@ func (checker *Checker) Pass(ctx context.Context) {
 		}
 		checker.verdicts[group.Name] = verdict
 		checker.mu.Unlock()
+		checker.report(group.Name, previous, verdict)
 	}
 	if changed {
 		select {
@@ -250,6 +251,23 @@ func (checker *Checker) Pass(ctx context.Context) {
 		default:
 		}
 	}
+}
+
+// report logs a group's verdict when it changes: an ERROR, with the detail,
+// for a group turned off (K1b design §9; kind demo b5b).
+func (checker *Checker) report(group string, previous, verdict Verdict) {
+	logger := checker.options.Logger
+	if logger == nil || verdict.Enabled == previous.Enabled && verdict.Impersonation == previous.Impersonation &&
+		verdict.Reason == previous.Reason && verdict.Detail == previous.Detail {
+		return
+	}
+	if !verdict.Enabled {
+		logger.Error("Kubernetes group turned off", "error_code", "kubernetes_group_disabled", "group", group,
+			"reason", verdict.Reason, "detail", verdict.Detail)
+		return
+	}
+	logger.Info("Kubernetes group enabled", "group", group, "impersonation", verdict.Impersonation,
+		"note", verdict.Reason)
 }
 
 // check asks, in order, about every right a group must not hold; the first

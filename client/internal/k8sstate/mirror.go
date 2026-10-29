@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -76,6 +77,15 @@ func Open(ctx context.Context, cfg Config) (*Mirror, error) {
 
 // Close releases idle connections to the API server.
 func (m *Mirror) Close() { m.api.close() }
+
+// UID is the Secret's UID: tokens the gateway mints are bound to it.
+func (m *Mirror) UID() string {
+	m.lock <- struct{}{}
+	defer func() { <-m.lock }()
+	var uid string
+	_ = json.Unmarshal(m.current.metadata["uid"], &uid)
+	return uid
+}
 
 // Data returns a copy of the Secret's data as last seen.
 func (m *Mirror) Data() map[string][]byte {

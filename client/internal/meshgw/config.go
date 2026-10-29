@@ -75,6 +75,11 @@ type Config struct {
 	// and KubeAPIBackend the API server it passes the connections to.
 	KubeAPIPort    int
 	KubeAPIBackend string
+	// Cluster is the cluster's name (MESHGW_CLUSTER).
+	Cluster string
+	// Kube is how the gateway serves kubectl: a K0 gateway, which enrolls,
+	// passes TCP through; a K1 one proxies by default (K1b).
+	Kube KubeConfig
 }
 
 // LoadConfig reads the pod's configuration from its environment.
@@ -147,7 +152,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 			renewAfter = parsed
 		}
 	}
-	return Config{
+	cfg := Config{
 		JoinKeyFile: joinKeyFile, PodTokenFile: podTokenFile, Certificates: certificates,
 		CertificateRenewAfter: renewAfter,
 		PodName:               getenv("POD_NAME"), Namespace: value("POD_NAMESPACE", ""), NodeName: value("NODE_NAME", ""),
@@ -163,7 +168,29 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		ListenPort:         listenPort,
 		KubeAPIPort:        kubeAPIPort,
 		KubeAPIBackend:     net.JoinHostPort(apiHost, apiPort),
-	}, nil
+		Cluster:            cluster,
+	}
+	if joinKeyFile == "" {
+		// A gateway that enrolls (K0) only passes kubectl through: proxy
+		// settings without MESHGW_JOIN_DIR are a mistake, refused rather
+		// than left unchecked (review b5b M4).
+		if mode := value("MESHGW_KUBE_MODE", KubeModePassthrough); mode != KubeModePassthrough {
+			return Config{}, errors.New("meshgw: a gateway that enrolls only passes kubectl through")
+		}
+		for _, name := range proxyOnlyVariables {
+			if value(name, "") != "" {
+				return Config{}, fmt.Errorf("meshgw: %s needs MESHGW_JOIN_DIR: a gateway that enrolls only "+
+					"passes kubectl through", name)
+			}
+		}
+		cfg.Kube = KubeConfig{Mode: KubeModePassthrough}
+		return cfg, nil
+	}
+	cfg.Kube, err = loadKubeConfig(getenv, cfg, cfg.KubeAPIBackend, certificates)
+	if err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
 }
 
 // ReadEnvelopeKey reads the key that seals the identity records: exactly

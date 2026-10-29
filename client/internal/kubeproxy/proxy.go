@@ -402,10 +402,23 @@ func (server *Server) choose(peer Peer, named string) (Group, string) {
 		}
 		return group, ""
 	}
+	off := ""
 	for _, group := range server.order {
-		if slices.Contains(held, group.Name) && server.options.Verdict(group.Name).Enabled {
+		if !slices.Contains(held, group.Name) {
+			continue
+		}
+		verdict := server.options.Verdict(group.Name)
+		if verdict.Enabled {
 			return group, ""
 		}
+		if off == "" {
+			off = fmt.Sprintf("group %q is turned off by the gateway: %s", group.Name, verdict.Reason)
+		}
+	}
+	if off != "" {
+		// Say why the group the Device would use is off, not that it holds
+		// none (kind demo b5b).
+		return Group{}, off
 	}
 	if len(held) > 0 {
 		return Group{}, fmt.Sprintf("Device %s holds only groups used by name in cluster %s; use the context "+

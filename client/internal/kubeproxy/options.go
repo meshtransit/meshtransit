@@ -131,13 +131,13 @@ func (options Options) validate() error {
 	case options.StaleAfter < minimumStale || options.StaleAfter > maximumStale:
 		return errors.New("kubeproxy: staleAfter must be 2 to 15 minutes")
 	}
-	return validateGroups(options.Groups)
+	return ValidateGroups(options.Groups)
 }
 
-// validateGroups checks groups as the chart will (K1 §6): DNS labels, one
+// ValidateGroups checks groups as the chart will (K1 §6): DNS labels, one
 // default and not privileged, principals for a privileged group,
 // impersonation only for one.
-func validateGroups(groups []Group) error {
+func ValidateGroups(groups []Group) error {
 	defaults := 0
 	seen := map[string]bool{}
 	for _, group := range groups {

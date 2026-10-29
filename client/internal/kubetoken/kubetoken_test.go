@@ -103,7 +103,7 @@ func testOptions(t *testing.T, api *fakeAPI) Options {
 	}
 	options := DefaultOptions()
 	options.Server, options.CAFile, options.TokenFile = api.server.URL, ca, token
-	options.Namespace, options.PodName, options.PodUID = "meshtransit", "meshgw-0", "uid-0"
+	options.Namespace, options.BoundSecret, options.BoundSecretUID = "meshtransit", "meshgw-state-0", "uid-0"
 	return options
 }
 
@@ -142,8 +142,8 @@ func TestMinterMintsAndKeeps(t *testing.T) {
 	body := api.bodies[0]
 	if api.paths[0] != "POST /api/v1/namespaces/meshtransit/serviceaccounts/mt-view/token" ||
 		api.auth[0] != "Bearer gateway-token" || body.Kind != "TokenRequest" ||
-		body.Spec.ExpirationSeconds != 600 || body.Spec.BoundObjectRef.Kind != "Pod" ||
-		body.Spec.BoundObjectRef.Name != "meshgw-0" || body.Spec.BoundObjectRef.UID != "uid-0" ||
+		body.Spec.ExpirationSeconds != 600 || body.Spec.BoundObjectRef.Kind != "Secret" ||
+		body.Spec.BoundObjectRef.Name != "meshgw-state-0" || body.Spec.BoundObjectRef.UID != "uid-0" ||
 		len(body.Spec.Audiences) != 0 {
 		t.Fatalf("request %s %s %+v", api.paths[0], api.auth[0], body)
 	}
@@ -471,11 +471,11 @@ func TestMinterRefusesBadKeysAndOptions(t *testing.T) {
 		t.Fatal("a bad key reached the API server")
 	}
 	for name, change := range map[string]func(*Options){
-		"http":       func(options *Options) { options.Server = "http://a" },
-		"userinfo":   func(options *Options) { options.Server = "https://u:p@a" },
-		"query":      func(options *Options) { options.Server = "https://a?x=1" },
-		"no pod UID": func(options *Options) { options.PodUID = "" },
-		"short life": func(options *Options) { options.ExpirationSeconds = 300 },
+		"http":                func(options *Options) { options.Server = "http://a" },
+		"userinfo":            func(options *Options) { options.Server = "https://u:p@a" },
+		"query":               func(options *Options) { options.Server = "https://a?x=1" },
+		"no bound Secret UID": func(options *Options) { options.BoundSecretUID = "" },
+		"short life":          func(options *Options) { options.ExpirationSeconds = 300 },
 	} {
 		options := testOptions(t, api)
 		change(&options)

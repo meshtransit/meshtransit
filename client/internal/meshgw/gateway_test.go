@@ -97,7 +97,9 @@ func TestServeStopsWhenTheDaemonStops(t *testing.T) {
 	}
 	stopped := errors.New("reading active profile for control sync")
 	done := make(chan error, 1)
-	go func() { done <- serve(t.Context(), failingRunner{err: stopped}, forwarder) }()
+	go func() {
+		done <- serve(t.Context(), failingRunner{err: stopped}, func(ctx context.Context) { _ = forwarder.Run(ctx) })
+	}()
 	select {
 	case err := <-done:
 		if !errors.Is(err, stopped) {

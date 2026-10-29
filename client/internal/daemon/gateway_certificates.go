@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/hex"
 	"sync"
 	"time"
@@ -27,6 +28,15 @@ type gatewayCertificates struct {
 	manager *kubecert.Manager
 	calls   chan controlplane.KubeCertCall
 	done    sync.WaitGroup
+
+	// mu guards the last certificate converted for TLS, by serial and
+	// issuer.
+	mu        sync.Mutex
+	tls       *tls.Certificate
+	tlsSerial [16]byte
+	tlsIssuer [32]byte
+	// tlsIssuedAt is when the converted certificate was taken.
+	tlsIssuedAt time.Time
 }
 
 // GatewayCertificateStatus is a gateway's certificate as status shows it:
@@ -150,3 +160,43 @@ func (s *Service) gatewayCertificateStatus() *GatewayCertificateStatus {
 	}
 	return status
 }
+
+// GatewayCertificate is the replica's certificate to serve kubectl with,
+// while unexpired. One whose CAs the map no longer names is still served
+// until its early renewal: the map names only the current pair, so closing
+// on a mismatch would close every replica in each planned rotation (K1b
+// b5b, design §3 as built). The *tls.Certificate is made once per
+// certificate. False when the gateway has none valid.
+func (s *Service) GatewayCertificate() (*tls.Certificate, bool) {
+	if s.certificates == nil {
+		return nil, false
+	}
+	return s.certificates.serving()
+}
+
+// serving converts the manager's certificate, reusing the last conversion.
+func (certificates *gatewayCertificates) serving() (*tls.Certificate, bool) {
+	current, ok := certificates.manager.Current()
+	if !ok {
+		return nil, false
+	}
+	certificates.mu.Lock()
+	defer certificates.mu.Unlock()
+	if certificates.tls != nil && (certificates.tlsSerial == current.Serial && certificates.tlsIssuer == current.Issuer ||
+		certificates.tlsIssuedAt.After(current.IssuedAt)) {
+		// The same one, or a newer one another handshake already took
+		// (review b5b L4).
+		return certificates.tls, true
+	}
+	chain := make([][]byte, 0, 1+len(current.Chain))
+	chain = append(chain, current.DER)
+	chain = append(chain, current.Chain...)
+	certificates.tls = &tls.Certificate{Certificate: chain, PrivateKey: current.Key, Leaf: current.Leaf}
+	certificates.tlsSerial, certificates.tlsIssuer, certificates.tlsIssuedAt = current.Serial, current.Issuer,
+		current.IssuedAt
+	return certificates.tls, true
+}
+
+// MapFreshAt is when Core last confirmed a gateway's applied map current,
+// on this host's monotonic clock; zero: never.
+func (s *Service) MapFreshAt() time.Time { return s.mapFreshAtValue() }

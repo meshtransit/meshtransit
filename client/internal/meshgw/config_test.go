@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -55,8 +56,10 @@ func TestLoadConfigReadsThePod(t *testing.T) {
 		ListenPort:         41641,
 		KubeAPIPort:        443,
 		KubeAPIBackend:     "[fd00:10:96::1]:443",
+		Cluster:            "kinda",
+		Kube:               KubeConfig{Mode: KubeModePassthrough},
 	}
-	if cfg != want {
+	if !reflect.DeepEqual(cfg, want) {
 		t.Fatalf("LoadConfig() = %+v\nwant %+v", cfg, want)
 	}
 }
@@ -122,6 +125,7 @@ func TestLoadConfigJoinMode(t *testing.T) {
 	t.Parallel()
 	env, dir := testEnv(t)
 	env["MESHGW_JOIN_DIR"] = filepath.Join(dir, "join")
+	env["MESHGW_KUBE_MODE"] = KubeModePassthrough
 	env["POD_NAMESPACE"], env["NODE_NAME"] = "mt-kube", "worker-1"
 	cfg, err := loadFrom(env)
 	if err != nil || cfg.JoinKeyFile != filepath.Join(dir, "join", "key-2") || cfg.Namespace != "mt-kube" ||
@@ -143,6 +147,7 @@ func TestLoadConfigCertificates(t *testing.T) {
 		t.Fatalf("an enrolled replica: %+v, %v", cfg.Certificates, err)
 	}
 	env["MESHGW_JOIN_DIR"] = filepath.Join(dir, "join")
+	env["MESHGW_KUBE_MODE"] = KubeModePassthrough
 	for value, want := range map[string]bool{"": true, "on": true, "off": false} {
 		env["MESHGW_CERTIFICATES"] = value
 		if cfg, err := loadFrom(env); err != nil || cfg.Certificates != want {
@@ -164,5 +169,105 @@ func TestLoadConfigCertificates(t *testing.T) {
 	env["MESHGW_CERTIFICATES"] = "yes"
 	if _, err := loadFrom(env); err == nil {
 		t.Fatal("MESHGW_CERTIFICATES=yes was accepted")
+	}
+}
+
+// proxyEnv is a K1 gateway's environment in proxy mode.
+func proxyEnv(t *testing.T) map[string]string {
+	t.Helper()
+	env, dir := testEnv(t)
+	env["MESHGW_JOIN_DIR"] = filepath.Join(dir, "join")
+	env["POD_NAMESPACE"], env["MESHGW_REPLICAS"] = "mt-kube", "3"
+	env["MESHGW_KUBE_GROUPS"] = `[{"name":"view","default":true},{"name":"edit","namespaces":["team-a"]},
+		{"name":"sre","privileged":true,"allowedPrincipals":["person-1"],"allowImpersonation":true}]`
+	return env
+}
+
+// A K1 gateway proxies by default, with the groups the chart gives it
+// (K1b design §10).
+func TestLoadConfigProxyMode(t *testing.T) {
+	t.Parallel()
+	env := proxyEnv(t)
+	env["MESHGW_SECRET_RESOURCES"] = "sealedsecrets.bitnami.com, tokens"
+	env["MESHGW_GUARDED_NAMESPACES"] = "ingress"
+	cfg, err := loadFrom(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kube := cfg.Kube
+	if kube.Mode != KubeModeProxy || kube.Cluster != "kinda" || len(kube.Groups) != 3 || !kube.Groups[0].Default ||
+		!kube.Groups[2].AllowImpersonation || kube.StaleAfter != 5*time.Minute ||
+		kube.APIServer != "https://[fd00:10:96::1]:443" || kube.APIServerOverride || kube.StatefulSet != "meshgw" ||
+		kube.Replicas != 3 || kube.ServiceAccount != "meshgw" ||
+		!reflect.DeepEqual(kube.GuardedNamespaces, []string{"ingress"}) {
+		t.Fatalf("%+v", kube)
+	}
+	if want := []string{"meshgw-envelope", "meshgw-join", "meshgw-state-0", "meshgw-state-1", "meshgw-state-2",
+		"meshgw-state-3", "meshgw-state-4"}; !reflect.DeepEqual(kube.Secrets, want) {
+		t.Fatalf("secrets %v", kube.Secrets)
+	}
+	if len(kube.SecretResources) != 2 || kube.SecretResources[0].Group != "bitnami.com" ||
+		kube.SecretResources[0].Resource != "sealedsecrets" || kube.SecretResources[1].Group != "" {
+		t.Fatalf("secret resources %+v", kube.SecretResources)
+	}
+}
+
+func TestLoadConfigRefusesBadProxyModes(t *testing.T) {
+	t.Parallel()
+	for name, change := range map[string]func(map[string]string){
+		"no groups":       func(env map[string]string) { delete(env, "MESHGW_KUBE_GROUPS") },
+		"groups not json": func(env map[string]string) { env["MESHGW_KUBE_GROUPS"] = "view" },
+		"unknown field":   func(env map[string]string) { env["MESHGW_KUBE_GROUPS"] = `[{"name":"view","default":true,"x":1}]` },
+		"no default":      func(env map[string]string) { env["MESHGW_KUBE_GROUPS"] = `[{"name":"view"}]` },
+		"privileged default": func(env map[string]string) {
+			env["MESHGW_KUBE_GROUPS"] = `[{"name":"a","default":true,"privileged":true,"allowedPrincipals":["p"]}]`
+		},
+		"impersonating plain": func(env map[string]string) {
+			env["MESHGW_KUBE_GROUPS"] = `[{"name":"a","default":true,"allowImpersonation":true}]`
+		},
+		"passthrough with groups": func(env map[string]string) { env["MESHGW_KUBE_MODE"] = KubeModePassthrough },
+		"unknown mode":            func(env map[string]string) { env["MESHGW_KUBE_MODE"] = "tcp" },
+		"no certificates":         func(env map[string]string) { env["MESHGW_CERTIFICATES"] = "off" },
+		"no namespace":            func(env map[string]string) { delete(env, "POD_NAMESPACE") },
+		"past the replicas":       func(env map[string]string) { env["MESHGW_REPLICAS"] = "2" },
+		"trailing json":           func(env map[string]string) { env["MESHGW_KUBE_GROUPS"] = `[{"name":"view","default":true}]]` },
+		"backend with query":      func(env map[string]string) { env["MESHGW_KUBE_API_BACKEND"] = "https://api:6443?x=1" },
+		"stale too long":          func(env map[string]string) { env["MESHGW_KUBE_STALE_AFTER"] = "1h" },
+		"bad secret resource":     func(env map[string]string) { env["MESHGW_SECRET_RESOURCES"] = "Secrets" },
+		"http backend":            func(env map[string]string) { env["MESHGW_KUBE_API_BACKEND"] = "http://api:6443" },
+		"too many replicas":       func(env map[string]string) { env["MESHGW_REPLICAS"] = "11" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			env := proxyEnv(t)
+			change(env)
+			if _, err := loadFrom(env); err == nil {
+				t.Fatal("LoadConfig() error = nil")
+			}
+		})
+	}
+	// An enrolled replica only passes through, and takes no proxy settings
+	// (review b5b M4).
+	for name, value := range map[string]string{
+		"MESHGW_KUBE_MODE": KubeModeProxy, "MESHGW_KUBE_GROUPS": `[{"name":"view","default":true}]`,
+		"MESHGW_SECRET_RESOURCES": "tokens",
+	} {
+		env, _ := testEnv(t)
+		env[name] = value
+		if _, err := loadFrom(env); err == nil {
+			t.Errorf("an enrolled replica took %s", name)
+		}
+	}
+}
+
+// MESHGW_KUBE_API_BACKEND points the proxy at another API server, for
+// tests.
+func TestLoadConfigAPIServerOverride(t *testing.T) {
+	t.Parallel()
+	env := proxyEnv(t)
+	env["MESHGW_KUBE_API_BACKEND"] = "https://127.0.0.1:6443"
+	cfg, err := loadFrom(env)
+	if err != nil || cfg.Kube.APIServer != "https://127.0.0.1:6443" || !cfg.Kube.APIServerOverride {
+		t.Fatalf("%+v, %v", cfg.Kube, err)
 	}
 }

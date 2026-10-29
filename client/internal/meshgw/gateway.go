@@ -53,20 +53,20 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) (err error) {
 
 	stacks := NewStacks(MTU, logger.With("component", "stacks"))
 	defer func() { err = errors.Join(err, stacks.Close()) }()
-	service, coreNow, err := newRuntime(cfg, stacks, profiles, identities, logger)
+	var audits kubeAuditChannels
+	if cfg.Kube.Mode == KubeModeProxy {
+		audits = newKubeAuditChannels()
+	}
+	service, coreNow, err := newRuntime(cfg, stacks, profiles, identities, audits, logger)
 	if err != nil {
 		return err
 	}
-	forwarder := &KubeAPIForwarder{
-		Stacks:         stacks,
-		Port:           uint16(cfg.KubeAPIPort), //nolint:gosec // validated 1-65535
-		Backend:        cfg.KubeAPIBackend,
-		MaxConnections: DefaultMaxKubeAPIConnections,
-		PeerAt:         service.PeerAt,
-		Now:            coreNow,
-		Logger:         logger.With("component", "kube_api"),
+	kubectl, ready, err := newKubectlPath(cfg, service, coreNow, audits, stacks, mirror.UID(), logger)
+	if err != nil {
+		return err
 	}
-	stopProbes, err := startProbes(ctx, cfg, service, stacks, forwarder, logger)
+	defer kubectl.close()
+	stopProbes, err := startProbes(ctx, cfg, service, stacks, ready, logger)
 	if err != nil {
 		return err
 	}
@@ -82,14 +82,14 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) (err error) {
 		if err := prepareKeysUntilDone(ctx, service, enrollRetryFirst, logger); err != nil {
 			return err
 		}
-		logger.Info("gateway joined its cluster", "hostname", cfg.Hostname)
-		return serve(ctx, service, forwarder)
+		logger.Info("gateway joined its cluster", "hostname", cfg.Hostname, "kube_mode", cfg.Kube.Mode)
+		return serve(ctx, service, kubectl.run)
 	}
 	if err := enrollUntilDone(ctx, service, cfg, enrollRetryFirst, logger); err != nil {
 		return err
 	}
 	logger.Info("gateway enrolled", "hostname", cfg.Hostname)
-	return serve(ctx, service, forwarder)
+	return serve(ctx, service, kubectl.run)
 }
 
 // restoreState opens the replica's state Secret and rebuilds the state
@@ -121,7 +121,7 @@ func restoreState(ctx context.Context, cfg Config, logger *slog.Logger) (*k8ssta
 //
 // coreNow is the time by Core's clock as the control client estimates it.
 func newRuntime(cfg Config, stacks *Stacks, profiles *profile.Store, identities *identity.Store,
-	logger *slog.Logger,
+	audits kubeAuditChannels, logger *slog.Logger,
 ) (service *daemon.Service, coreNow func() time.Time, err error) {
 	packets, err := dataplane.NewWireGuardWithObserver(stacks, uint16(cfg.ListenPort), nil) //nolint:gosec // validated 1024-65535
 	if err != nil {
@@ -149,6 +149,8 @@ func newRuntime(cfg Config, stacks *Stacks, profiles *profile.Store, identities 
 		GatewayTokenFile: cfg.PodTokenFile,
 		// K1a4a a4: the replica's TLS certificate, key in memory only.
 		GatewayCertificates: cfg.Certificates, GatewayCertificateRenewAfter: cfg.CertificateRenewAfter,
+		// K1b: type A operations go to Core on the map stream.
+		KubeAudits: audits.calls, KubeAuditReports: audits.reports,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("meshgw: creating the runtime: %w", err)
@@ -158,21 +160,17 @@ func newRuntime(cfg Config, stacks *Stacks, profiles *profile.Store, identities 
 
 // startProbes serves the probes and polls the status for them; the returned
 // function stops both and waits for the poller.
-func startProbes(ctx context.Context, cfg Config, service *daemon.Service, stacks *Stacks,
-	forwarder *KubeAPIForwarder, logger *slog.Logger,
+func startProbes(ctx context.Context, cfg Config, service *daemon.Service, stacks *Stacks, ready kubectlReadiness,
+	logger *slog.Logger,
 ) (func() error, error) {
-	probes := NewProbes(service.Status, probeInterval,
-		Counter{
-			Name: "meshgw_dropped_packets_total", Help: "Packets dropped between the stack and the data plane.",
-			Value: stacks.Dropped,
-		},
-		Counter{
-			Name: "meshgw_kube_api_connections_total", Help: "kubectl connections carried.",
-			Value: forwarder.Total,
-		},
-	)
-	// K0 serves kubectl: a replica not listening for it is not ready.
-	probes.Require("kube API not listening", forwarder.Listening)
+	counters := append([]Counter{{
+		Name: "meshgw_dropped_packets_total", Help: "Packets dropped between the stack and the data plane.",
+		Value: stacks.Dropped,
+	}}, ready.counters...)
+	probes := NewProbes(service.Status, probeInterval, counters...)
+	for _, required := range ready.checks {
+		probes.Require(required.reason, required.ok)
+	}
 	probes.LogStaleMap(logger.With("component", "map"))
 	server, err := serveProbes(ctx, cfg.ProbeAddress, probes.Handler(), logger)
 	if err != nil {
@@ -198,16 +196,16 @@ type runner interface {
 	Run(context.Context) error
 }
 
-// serve runs the daemon and the kubectl forwarder until ctx ends or the
-// gateway must stop, and returns why it stopped. The forwarder stops with
-// the daemon, whichever way the daemon stops.
-func serve(ctx context.Context, service runner, forwarder *KubeAPIForwarder) error {
+// serve runs the daemon and the kubectl path until ctx ends or the gateway
+// must stop, and returns why it stopped. The kubectl path stops with the
+// daemon, whichever way the daemon stops.
+func serve(ctx context.Context, service runner, kubectl func(context.Context)) error {
 	forwarderCtx, stopForwarder := context.WithCancel(ctx)
 	defer stopForwarder()
 	forwarded := make(chan struct{})
 	go func() {
 		defer close(forwarded)
-		_ = forwarder.Run(forwarderCtx)
+		kubectl(forwarderCtx)
 	}()
 	err := service.Run(ctx)
 	stopForwarder()

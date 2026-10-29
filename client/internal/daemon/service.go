@@ -408,6 +408,10 @@ type Service struct {
 	gatewayTokenFile string
 	// gatewayRenewAfter: Options.GatewayCertificateRenewAfter.
 	gatewayRenewAfter time.Duration
+	// kubeAudits and kubeAuditReports: Options.KubeAudits and
+	// KubeAuditReports.
+	kubeAudits       <-chan controlplane.KubeAuditCall
+	kubeAuditReports <-chan controlplane.KubeAuditReport
 	// certificates keeps a gateway's replica certificate; nil when it asks
 	// for none (Options.GatewayCertificates).
 	certificates *gatewayCertificates
@@ -571,6 +575,11 @@ type Options struct {
 	// GatewayCertificateRenewAfter, tests and demos only: see
 	// kubecert.Options.RenewAfter.
 	GatewayCertificateRenewAfter time.Duration
+	// KubeAudits and KubeAuditReports, with Gateway, carry the kubeaudit
+	// recorder's batches and outcomes to the map stream (gateway.audit1,
+	// K1b); nil: the gateway records nothing.
+	KubeAudits       <-chan controlplane.KubeAuditCall
+	KubeAuditReports <-chan controlplane.KubeAuditReport
 }
 
 // New creates a daemon service from explicit dependencies.
@@ -668,6 +677,8 @@ func New(
 		gateway:              options.Gateway,
 		gatewayTokenFile:     options.GatewayTokenFile,
 		gatewayRenewAfter:    options.GatewayCertificateRenewAfter,
+		kubeAudits:           options.KubeAudits,
+		kubeAuditReports:     options.KubeAuditReports,
 		gatewayCommitWait:    gatewayCommitBound,
 		rotationPersistWait:  rotationPersistTimeout,
 		exitForwarder:        exitForwarderFor(options),
@@ -1227,6 +1238,8 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					DNSHealth:          dnsHealth,
 					MapFresh:           s.mapFreshness(),
 					KubeCerts:          s.kubeCertCalls(),
+					KubeAudits:         s.kubeAudits,
+					KubeAuditReports:   s.kubeAuditReports,
 					RouteSelection:     routeSelection,
 					AnnounceGoingAway:  func() bool { return !restartExpected(s.restartMarkerPath, s.clock()) },
 					CaptiveWindows:     s.captiveWindowsToReport(),

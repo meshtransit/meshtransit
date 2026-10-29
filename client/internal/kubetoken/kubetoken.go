@@ -66,8 +66,12 @@ type Options struct {
 	// Server is the API server's https URL; CAFile its CA; TokenFile the
 	// gateway's own token, read for every request; Namespace the gateway's.
 	Server, CAFile, TokenFile, Namespace string
-	// PodName and PodUID bind each token to the gateway's pod.
-	PodName, PodUID string
+	// BoundSecret and BoundSecretUID bind each token to the replica's own
+	// state Secret: deleting it, as a new join does, revokes the tokens,
+	// and the token's claims name the replica. A Pod cannot be the bound
+	// object: the API server binds a token only to a pod running as the
+	// token's own ServiceAccount, never the gateway's (kind demo b5b).
+	BoundSecret, BoundSecretUID string
 	// ExpirationSeconds is each token's life.
 	ExpirationSeconds int64
 	// RefreshFrom and RefreshTo: a token is minted again this long before
@@ -95,7 +99,7 @@ func (options Options) valid() bool {
 	server, err := url.Parse(options.Server)
 	return err == nil && server.Scheme == "https" && server.Host != "" && server.User == nil &&
 		server.RawQuery == "" && server.Fragment == "" && options.CAFile != "" && options.TokenFile != "" &&
-		dnsLabel(options.Namespace) && options.PodName != "" && options.PodUID != "" &&
+		dnsLabel(options.Namespace) && options.BoundSecret != "" && options.BoundSecretUID != "" &&
 		options.ExpirationSeconds >= 600 && options.RefreshFrom > usableMargin &&
 		options.RefreshTo >= options.RefreshFrom &&
 		options.RefreshTo < time.Duration(options.ExpirationSeconds)*time.Second && options.Capacity >= 1 &&
@@ -205,9 +209,9 @@ type Minter struct {
 	// leaves before (review b3 L4).
 	heldUntil time.Time
 	closed    bool
-	mints    sync.WaitGroup
-	ctx      context.Context
-	cancel   context.CancelFunc
+	mints     sync.WaitGroup
+	ctx       context.Context
+	cancel    context.CancelFunc
 }
 
 // New makes a minter for an API server.
@@ -395,8 +399,8 @@ func (minter *Minter) request(id key) (Token, error) {
 	}
 	body, err := json.Marshal(tokenRequest{APIVersion: "authentication.k8s.io/v1", Kind: "TokenRequest",
 		Spec: tokenRequestSpec{ExpirationSeconds: minter.options.ExpirationSeconds,
-			BoundObjectRef: boundObject{Kind: "Pod", APIVersion: "v1", Name: minter.options.PodName,
-				UID: minter.options.PodUID}}})
+			BoundObjectRef: boundObject{Kind: "Secret", APIVersion: "v1", Name: minter.options.BoundSecret,
+				UID: minter.options.BoundSecretUID}}})
 	if err != nil {
 		return Token{}, err
 	}

@@ -80,6 +80,9 @@ func TestMirrorWritesOverTheVersionItLastSaw(t *testing.T) {
 	if got := mirror.Data()[keyProfile]; string(got) != "before" {
 		t.Fatalf("Data() = %q, want the Secret's", got)
 	}
+	if uid := mirror.UID(); uid != testUID {
+		t.Fatalf("UID() = %q, want the Secret's", uid)
+	}
 	mustPut(t, mirror, keyA, "one")
 	mustPut(t, mirror, keyA, "two")
 	wantStored(t, api, keyA, "two")

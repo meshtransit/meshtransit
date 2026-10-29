@@ -366,6 +366,13 @@ func TestProxyChoosesGroups(t *testing.T) {
 	if response.StatusCode != http.StatusForbidden || !strings.Contains(body, "list secrets") {
 		t.Fatalf("a group turned off by name: %d %s", response.StatusCode, body)
 	}
+	// Every group it would use off: the reason, not "holds none".
+	f.verdicts.Store("edit", rbaccheck.Verdict{Reason: "the RBAC check fails"})
+	response, body = f.do(http.MethodGet, "/api/v1/pods", nil)
+	if response.StatusCode != http.StatusForbidden || !strings.Contains(body, `group \"view\" is turned off`) {
+		t.Fatalf("every default group off: %d %s", response.StatusCode, body)
+	}
+	f.verdicts.Store("edit", rbaccheck.Verdict{Enabled: true})
 	for name, change := range map[string]func(*Peer){
 		"recent owner": func(peer *Peer) { peer.Access.OwnerChangedAt = time.Now().Add(-time.Hour) },
 		"not listed":   func(peer *Peer) { peer.Access.OwnerRef = "person-2" },
@@ -604,7 +611,7 @@ func TestNewRefusesBadOptions(t *testing.T) {
 		"two defaults":            {{Name: "a", Default: true}, {Name: "b", Default: true}},
 		"bad name":                {{Name: "A"}},
 	} {
-		if err := validateGroups(groups); err == nil {
+		if err := ValidateGroups(groups); err == nil {
 			t.Errorf("%s: taken", name)
 		}
 	}
