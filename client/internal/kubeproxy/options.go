@@ -17,6 +17,7 @@ import (
 
 	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/kubeaudit"
+	"meshtransit.net/client/internal/kubeevent"
 	"meshtransit.net/client/internal/kubereq"
 	"meshtransit.net/client/internal/kubetoken"
 	"meshtransit.net/client/internal/networkmap"
@@ -107,8 +108,20 @@ type Options struct {
 	Tokens  Tokens
 	// SecretResources are read like secrets.
 	SecretResources []kubereq.GroupResource
-	Version         string
-	Logger          *slog.Logger
+	// Events record each use of a privileged group on the cluster's side;
+	// required when a group is privileged (K1b design §4).
+	Events PrivilegedEvents
+	// Wake, when set, has Run sweep the sessions at once (rbaccheck's
+	// verdicts changed); a map change waits for the next second's sweep.
+	Wake    <-chan struct{}
+	Version string
+	Logger  *slog.Logger
+}
+
+// PrivilegedEvents is kubeevent.Recorder: counted false with an error
+// means the cluster could not be told, and the use is refused.
+type PrivilegedEvents interface {
+	Privileged(ctx context.Context, use kubeevent.Use) (counted bool, err error)
 }
 
 // staleBounds bound StaleAfter (K1b design §4).
@@ -130,6 +143,8 @@ func (options Options) validate() error {
 		return errors.New("kubeproxy: missing dependencies")
 	case options.StaleAfter < minimumStale || options.StaleAfter > maximumStale:
 		return errors.New("kubeproxy: staleAfter must be 2 to 15 minutes")
+	case options.Events == nil && slices.ContainsFunc(options.Groups, func(group Group) bool { return group.Privileged }):
+		return errors.New("kubeproxy: a privileged group needs the cluster's Events")
 	}
 	return ValidateGroups(options.Groups)
 }

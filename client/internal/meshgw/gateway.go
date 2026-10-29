@@ -171,6 +171,12 @@ func startProbes(ctx context.Context, cfg Config, service *daemon.Service, stack
 	for _, required := range ready.checks {
 		probes.Require(required.reason, required.ok)
 	}
+	if ready.metrics != nil {
+		probes.AddMetrics(ready.metrics)
+	}
+	for name, report := range ready.status {
+		probes.AddStatus(name, report)
+	}
 	probes.LogStaleMap(logger.With("component", "map"))
 	server, err := serveProbes(ctx, cfg.ProbeAddress, probes.Handler(), logger)
 	if err != nil {

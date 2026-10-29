@@ -11,6 +11,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"io"
 	"log/slog"
 	"math/big"
@@ -28,6 +29,7 @@ import (
 
 	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/kubeaudit"
+	"meshtransit.net/client/internal/kubeevent"
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/rbaccheck"
 )
@@ -95,6 +97,25 @@ type fixture struct {
 	fresh    atomic.Pointer[time.Time]
 	verdicts sync.Map // group -> rbaccheck.Verdict
 	seen     chan seen
+	events   *fakeEvents
+	wake     chan struct{}
+}
+
+// fakeEvents records privileged uses; fail refuses the next ones.
+type fakeEvents struct {
+	mu   sync.Mutex
+	uses []kubeevent.Use
+	fail atomic.Bool
+}
+
+func (events *fakeEvents) Privileged(_ context.Context, use kubeevent.Use) (bool, error) {
+	if events.fail.Load() {
+		return false, errors.New("the API server answered 403")
+	}
+	events.mu.Lock()
+	defer events.mu.Unlock()
+	events.uses = append(events.uses, use)
+	return true, nil
 }
 
 func newFixture(t *testing.T) *fixture { t.Helper(); return newFixtureAt(t, "") }
@@ -104,13 +125,16 @@ func newFixture(t *testing.T) *fixture { t.Helper(); return newFixtureAt(t, "") 
 func newFixtureAt(t *testing.T, backendURL string) *fixture {
 	t.Helper()
 	f := &fixture{t: t, records: &fakeRecords{answer: kubeaudit.Answer{Recorded: true, AuditID: [16]byte{7}}},
-		tokens: &fakeTokens{}, seen: make(chan seen, 16)}
+		tokens: &fakeTokens{}, seen: make(chan seen, 16), events: &fakeEvents{}, wake: make(chan struct{}, 1)}
 	backend := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.seen <- seen{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Header: r.Header.Clone()}
 		switch {
+		case strings.HasSuffix(r.URL.Path, "/slow"):
+			<-r.Context().Done() // answers nothing until the gateway gives up
+			return
 		case strings.HasSuffix(r.URL.Path, "/unauthorized"):
 			w.WriteHeader(http.StatusUnauthorized)
-		case strings.HasSuffix(r.URL.Path, "/stream"):
+		case strings.HasSuffix(r.URL.Path, "/stream") || r.URL.Query().Get("watch") == "true":
 			w.WriteHeader(http.StatusOK)
 			for {
 				if _, err := io.WriteString(w, strings.Repeat("x", 1024)+"\n"); err != nil {
@@ -179,7 +203,8 @@ func newFixtureAt(t *testing.T, backendURL string) *fixture {
 			held, _ := verdict.(rbaccheck.Verdict)
 			return held
 		},
-		Records: f.records, Tokens: f.tokens, Version: "test", Logger: slog.New(slog.DiscardHandler),
+		Records: f.records, Tokens: f.tokens, Events: f.events, Wake: f.wake, Version: "test",
+		Logger: slog.New(slog.DiscardHandler),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -191,11 +216,16 @@ func newFixtureAt(t *testing.T, backendURL string) *fixture {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
+	swept := make(chan struct{})
 	go func() {
 		defer close(done)
 		_ = server.Serve(ctx, listener)
 	}()
-	t.Cleanup(func() { cancel(); <-done })
+	go func() {
+		defer close(swept)
+		_ = server.Run(ctx)
+	}()
+	t.Cleanup(func() { cancel(); <-done; <-swept })
 	f.address = listener.Addr().String()
 	f.client = &http.Client{Transport: &http.Transport{
 		TLSClientConfig:   &tls.Config{RootCAs: pool, ServerName: clusterName},

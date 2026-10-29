@@ -16,12 +16,14 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/kubeaudit"
+	"meshtransit.net/client/internal/kubeevent"
 	"meshtransit.net/client/internal/kubereq"
 )
 
@@ -45,9 +47,10 @@ type Server struct {
 	groups  map[string]Group
 	// order is the groups a request without one may use: the default,
 	// then the others not privileged, weakest first as configured.
-	order   []Group
-	backend *url.URL
-	reverse *httputil.ReverseProxy
+	order    []Group
+	backend  *url.URL
+	reverse  *httputil.ReverseProxy
+	sessions *registry
 }
 
 // New makes a proxy; Serve serves it.
@@ -57,7 +60,7 @@ func New(options Options) (*Server, error) {
 	}
 	backend, _ := url.Parse(options.Backend)
 	backend.Path = ""
-	server := &Server{options: options, groups: map[string]Group{}, backend: backend}
+	server := &Server{options: options, groups: map[string]Group{}, backend: backend, sessions: newRegistry()}
 	transports, err := newTransports(options.BackendCA, server.remint)
 	if err != nil {
 		return nil, err
@@ -75,8 +78,20 @@ func New(options Options) (*Server, error) {
 		Transport:      transports,
 		FlushInterval:  -1,
 		ModifyResponse: server.answered,
+		// A copy a cut or a client ends, at debug: not an event.
+		ErrorLog: slog.NewLogLogger(options.Logger.Handler(), slog.LevelDebug),
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			carried, _ := r.Context().Value(planKey{}).(*plan)
+			if reason := cutReasonOf(r.Context()); reason != "" {
+				// Cut by the sweep before the API server answered: it may
+				// have reached it. The client hears why, never an empty 200
+				// (review b6a H1).
+				if carried != nil {
+					carried.status.Store(statusClientGone)
+					server.cutAnswer(w, carried.device, carried.group, reason, carried.typeA)
+				}
+				return
+			}
 			if errors.Is(err, context.Canceled) {
 				// The client left: the request may have reached the API
 				// server, so it is reported answered, not "not forwarded".
@@ -156,6 +171,8 @@ type plan struct {
 	auditID      [16]byte
 	source       string
 	device       string
+	group        Group
+	typeA        bool // Core recorded it
 	version      string
 	agent        string
 	impersonate  http.Header // the Impersonate-* kept, for a group allowed
@@ -253,8 +270,43 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	class, info := kubereq.Classify(kubereq.Request{Method: r.Method, URL: out, Header: r.Header},
 		kubereq.Options{Privileged: group.Privileged, Impersonating: len(impersonate) > 0,
 			SecretResources: server.options.SecretResources})
-	server.forward(w, r, forwarding{who: who, peer: peer, group: group, out: out, class: class, info: info,
-		impersonate: impersonate, impersonated: impersonated, started: started})
+	// The session is registered, then checked again: a map that changed
+	// since choose is seen here, one that changes after by the sweep
+	// (K1b design §8).
+	ctx, cancel := context.WithCancelCause(r.Context())
+	defer cancel(nil)
+	held := &session{device: peer.DeviceID, key: peer.Key, source: who.source, group: group,
+		kind: sessionKind(r, out, info), impersonating: len(impersonate) > 0, cancel: cancel}
+	if held.kind == kindUpgrade && r.ProtoMajor == 1 {
+		held.close = func() { _ = who.Conn.Close() }
+	}
+	done := server.sessions.add(held)
+	defer done()
+	if ended := server.ended(held); ended != "" {
+		server.cutAnswer(w, peer.DeviceID, group, ended, false)
+		return
+	}
+	server.forward(w, r.WithContext(ctx), forwarding{who: who, peer: peer, group: group, out: out, class: class,
+		info: info, impersonate: impersonate, impersonated: impersonated, started: started, session: held})
+}
+
+// sessionKind is a request's kind for the registry.
+func sessionKind(r *http.Request, out *url.URL, info kubereq.Info) string {
+	switch {
+	case r.Header.Get("Upgrade") != "":
+		return kindUpgrade
+	case info.Verb == "watch":
+		return kindWatch
+	case info.Subresource == "log" && followed(out.Query().Get("follow")):
+		return kindStream
+	}
+	return kindRequest
+}
+
+// followed reads follow= as the API server does, a bool (re-review b6a L4).
+func followed(value string) bool {
+	follow, err := strconv.ParseBool(value)
+	return err == nil && follow
 }
 
 // forwarding is one request on its way to the API server.
@@ -268,6 +320,7 @@ type forwarding struct {
 	impersonate  http.Header
 	impersonated string
 	started      time.Time
+	session      *session
 }
 
 // forward mints the token, has Core record a type A operation, and
@@ -278,6 +331,11 @@ type forwarding struct {
 func (server *Server) forward(w http.ResponseWriter, r *http.Request, request forwarding) {
 	owner := ownerOf(request.peer)
 	token, err := server.options.Tokens.For(r.Context(), request.peer.DeviceID, owner, request.group.Name)
+	if reason := cutReasonOf(r.Context()); err != nil && reason != "" {
+		// Cut while minting: not a minter fault (review b6a L2).
+		server.cutAnswer(w, request.peer.DeviceID, request.group, reason, false)
+		return
+	}
 	if err != nil {
 		server.options.Logger.Warn("Kubernetes token not minted", "error_code", "kubernetes_token_unavailable",
 			"group", request.group.Name, "error", err)
@@ -286,8 +344,9 @@ func (server *Server) forward(w http.ResponseWriter, r *http.Request, request fo
 		return
 	}
 	carried := &plan{out: request.out, token: token, source: request.who.source.String(),
-		device: request.peer.DeviceID, agent: agentOf(r.Header.Get("User-Agent")), impersonate: request.impersonate,
-		version: server.options.Version}
+		device: request.peer.DeviceID, group: request.group, agent: agentOf(r.Header.Get("User-Agent")),
+		impersonate: request.impersonate,
+		version:     server.options.Version}
 	if r.ContentLength == 0 && !request.class.TypeA() {
 		// A request without a body can be sent again with a new token once
 		// (review b5a M4). Not a type A one: Core's record names the token
@@ -306,13 +365,30 @@ func (server *Server) forward(w http.ResponseWriter, r *http.Request, request fo
 			Impersonated: request.impersonated, TokenID: token.ID(),
 		})
 		if !answer.Recorded {
+			if reason := cutReasonOf(r.Context()); reason != "" {
+				server.cutAnswer(w, request.peer.DeviceID, request.group, reason, false)
+				return
+			}
 			server.unrecorded(w, request.peer.DeviceID, answer)
 			return
 		}
-		carried.auditID = answer.AuditID
+		carried.auditID, carried.typeA = answer.AuditID, true
+		if request.group.Privileged && !server.announce(r.Context(), request, owner, carried.auditID) {
+			server.options.Records.Finished(carried.auditID, 0, time.Since(request.started))
+			if reason := cutReasonOf(r.Context()); reason != "" {
+				server.cutAnswer(w, request.peer.DeviceID, request.group, reason, true)
+				return
+			}
+			refuse(w, http.StatusServiceUnavailable, "the gateway could not record the privileged session in "+
+				"the cluster", time.Second)
+			return
+		}
 	} else if carried.auditID, err = newAuditID(); err != nil {
 		refuse(w, http.StatusInternalServerError, "the gateway could not name the request", 0)
 		return
+	}
+	if request.session != nil {
+		server.sessions.setAuditID(request.session, carried.auditID)
 	}
 	defer func() {
 		status := int(carried.status.Load())
@@ -329,6 +405,20 @@ func (server *Server) forward(w http.ResponseWriter, r *http.Request, request fo
 			"duration_ms", time.Since(request.started).Milliseconds())
 	}()
 	server.reverse.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), planKey{}, carried)))
+}
+
+// announce has the cluster record a privileged group's use; false when the
+// first use of its window could not be, which refuses it (K1b design §4).
+func (server *Server) announce(ctx context.Context, request forwarding, owner string, auditID [16]byte) bool {
+	counted, err := server.options.Events.Privileged(ctx, kubeevent.Use{Device: request.peer.DeviceID,
+		DeviceName: request.peer.Name, Owner: owner, Group: request.group.Name,
+		Source: request.who.source.String(), AuditID: formatAuditID(auditID)})
+	if err != nil && cutReasonOf(ctx) == "" {
+		server.options.Logger.Error("Kubernetes privileged session Event failed", "error_code",
+			"kubernetes_privileged_event_failed", "device_id", request.peer.DeviceID, "group", request.group.Name,
+			"counted", counted, "error", err)
+	}
+	return counted
 }
 
 // remint is the transport's way back to a request's plan for a new token.

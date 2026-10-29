@@ -2,7 +2,9 @@ package meshgw
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"sync/atomic"
@@ -47,6 +49,9 @@ type Probes struct {
 	// never confirmed was reported.
 	started     time.Time
 	unconfirmed bool
+	// metrics write more metrics; reports are /status's parts, by name.
+	metrics []func(io.Writer)
+	reports map[string]func() any
 }
 
 // check is one more condition of readiness, with the reason it gives.
@@ -74,6 +79,18 @@ func NewProbes(status func(context.Context) (daemon.Status, error), interval tim
 // Call it before Poll.
 func (p *Probes) Require(reason string, ok func() bool) {
 	p.checks = append(p.checks, check{reason: reason, ok: ok})
+}
+
+// AddMetrics adds metrics /metrics writes. Call it before Handler.
+func (p *Probes) AddMetrics(write func(io.Writer)) { p.metrics = append(p.metrics, write) }
+
+// AddStatus adds a part to /status, read at each request. Call it before
+// Handler.
+func (p *Probes) AddStatus(name string, report func() any) {
+	if p.reports == nil {
+		p.reports = map[string]func() any{}
+	}
+	p.reports[name] = report
 }
 
 // LogStaleMap makes the poller log a map Core has not confirmed current for
@@ -207,6 +224,22 @@ func (p *Probes) Handler() http.Handler {
 			_, _ = fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s counter\n%s %d\n",
 				counter.Name, counter.Help, counter.Name, counter.Name, counter.Value())
 		}
+		for _, write := range p.metrics {
+			write(w)
+		}
+	})
+	// /status is the probes' port only: never on the mesh. It names groups
+	// and why they are off, never a token or key (K1b design §11).
+	mux.HandleFunc("GET /status", func(w http.ResponseWriter, _ *http.Request) {
+		last := p.current()
+		report := map[string]any{"ready": last.ready, "reason": last.reason}
+		for name, part := range p.reports {
+			report[name] = part()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		encoder := json.NewEncoder(w)
+		encoder.SetIndent("", "  ")
+		_ = encoder.Encode(report)
 	})
 	return mux
 }

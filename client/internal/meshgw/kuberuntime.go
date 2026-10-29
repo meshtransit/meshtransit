@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/netip"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/daemon"
 	"meshtransit.net/client/internal/kubeaudit"
+	"meshtransit.net/client/internal/kubeevent"
 	"meshtransit.net/client/internal/kubeproxy"
 	"meshtransit.net/client/internal/kubetoken"
 	"meshtransit.net/client/internal/rbaccheck"
@@ -25,6 +27,9 @@ const (
 	// checkMintRate and checkMintBurst bound rbaccheck's own minter, apart
 	// from the users' (review b4 L4): one token per group, refreshed.
 	checkMintRate, checkMintBurst = 2, 20
+	// privilegedEventWindow gathers one (Device, group)'s privileged uses
+	// into one Event (K1b design §4).
+	privilegedEventWindow = 5 * time.Minute
 )
 
 // kubeAuditChannels carry the recorder's batches and outcomes to the
@@ -48,6 +53,8 @@ type kubeRuntime struct {
 	minters  []*kubetoken.Minter
 	listener *KubeProxyListener
 	logger   *slog.Logger
+	// groupNames are the configured groups, in order, for status.
+	groupNames []string
 }
 
 // newKubeRuntime builds the request path of a proxying gateway.
@@ -90,6 +97,7 @@ func newKubeRuntime(cfg Config, service *daemon.Service, coreNow func() time.Tim
 	}
 	checkGroups := make([]rbaccheck.Group, 0, len(kube.Groups))
 	for _, group := range kube.Groups {
+		runtime.groupNames = append(runtime.groupNames, group.Name)
 		checkGroups = append(checkGroups, rbaccheck.Group{Name: group.Name, Privileged: group.Privileged,
 			AllowImpersonation: group.AllowImpersonation})
 	}
@@ -99,6 +107,12 @@ func newKubeRuntime(cfg Config, service *daemon.Service, coreNow func() time.Tim
 		Replicas: kube.Replicas, Secrets: kube.Secrets, GuardedNamespaces: kube.GuardedNamespaces,
 		Interval: rbacCheckInterval, Logger: logger.With("component", "rbaccheck"),
 	})
+	if err != nil {
+		return fail(fmt.Errorf("meshgw: %w", err))
+	}
+	events, err := kubeevent.New(kubeevent.Options{Server: kube.APIServer, CAFile: kube.APICAFile,
+		TokenFile: kube.APITokenFile, Namespace: cfg.Namespace, Instance: cfg.PodName,
+		Window: privilegedEventWindow, Logger: logger.With("component", "kube_events")})
 	if err != nil {
 		return fail(fmt.Errorf("meshgw: %w", err))
 	}
@@ -112,6 +126,7 @@ func newKubeRuntime(cfg Config, service *daemon.Service, coreNow func() time.Tim
 		Certificate: service.GatewayCertificate, MapFreshAt: service.MapFreshAt, StaleAfter: kube.StaleAfter,
 		CoreNow: coreNow, Verdict: runtime.checker.Verdict, Records: recorder,
 		Tokens: kubeproxy.MinterTokens{Minter: minter}, SecretResources: kube.SecretResources,
+		Events: events, Wake: runtime.checker.Changes(),
 		Version: version.Current().Version, Logger: logger.With("component", "kube_proxy"),
 	})
 	if err != nil {
@@ -155,7 +170,7 @@ func newMinter(cfg Config, boundSecretUID string, options kubetoken.Options) (*k
 func (runtime *kubeRuntime) run(ctx context.Context) {
 	var running sync.WaitGroup
 	for _, part := range []func(context.Context) error{runtime.recorder.Run, runtime.checker.Run,
-		runtime.listener.Run} {
+		runtime.listener.Run, runtime.proxy.Run} {
 		running.Go(func() {
 			if err := part(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				runtime.logger.Error("kube request path stopped", "error", err)
@@ -176,6 +191,9 @@ func (runtime *kubeRuntime) close() {
 type kubectlReadiness struct {
 	checks   []check
 	counters []Counter
+	// metrics and status, when set, add to /metrics and /status.
+	metrics func(io.Writer)
+	status  map[string]func() any
 }
 
 // kubectlPath is the gateway's kubectl path: the proxy (K1b) or the K0
@@ -203,7 +221,7 @@ func newKubectlPath(cfg Config, service *daemon.Service, coreNow func() time.Tim
 		return kubectlPath{run: runtime.run, close: runtime.close}, kubectlReadiness{checks: []check{
 			{reason: "no valid certificate", ok: func() bool { _, valid := service.GatewayCertificate(); return valid }},
 			{reason: "kube API cannot listen", ok: func() bool { return !runtime.listener.BindFailing() }},
-		}}, nil
+		}, metrics: runtime.writeMetrics, status: map[string]func() any{"kube": runtime.status}}, nil
 	}
 	if cfg.JoinKeyFile != "" {
 		// Gone at K1f; support sees it on every start (review L8).
@@ -223,6 +241,9 @@ func newKubectlPath(cfg Config, service *daemon.Service, coreNow func() time.Tim
 		kubectlReadiness{
 			// K0 serves kubectl: a replica not listening for it is not ready.
 			checks: []check{{reason: "kube API not listening", ok: forwarder.Listening}},
+			status: map[string]func() any{"kube": func() any {
+				return map[string]any{"mode": KubeModePassthrough, "listening": forwarder.Listening()}
+			}},
 			counters: []Counter{{Name: "meshgw_kube_api_connections_total", Help: "kubectl connections carried.",
 				Value: forwarder.Total}},
 		}, nil

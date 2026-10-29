@@ -213,3 +213,20 @@ func TestProbesServeNoAgeWithoutAConfirmation(t *testing.T) {
 		t.Fatalf("metrics = %s", body)
 	}
 }
+
+// /status carries each added part; /metrics the added metrics.
+func TestProbesServeStatusAndAddedMetrics(t *testing.T) {
+	t.Parallel()
+	probes := NewProbes(func(context.Context) (daemon.Status, error) { return daemon.Status{}, nil }, time.Second)
+	probes.AddStatus("kube", func() any { return map[string]any{"mode": KubeModeProxy} })
+	probes.AddMetrics(func(w io.Writer) { _, _ = io.WriteString(w, "meshgw_kube_listener_open 1\n") })
+	server := httptest.NewServer(probes.Handler())
+	defer server.Close()
+	if code, body := get(t, server.URL+"/status"); code != http.StatusOK ||
+		!strings.Contains(body, `"mode": "proxy"`) || !strings.Contains(body, `"ready": false`) {
+		t.Fatalf("/status = %d %s", code, body)
+	}
+	if _, body := get(t, server.URL+"/metrics"); !strings.Contains(body, "meshgw_kube_listener_open 1\n") {
+		t.Fatalf("/metrics %s", body)
+	}
+}
