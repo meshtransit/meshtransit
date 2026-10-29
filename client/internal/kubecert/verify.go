@@ -62,6 +62,10 @@ func verify(result controlplane.KubeCertResult, key *ecdsa.PrivateKey, ca *netwo
 		[32]byte(ca.Signing) != [32]byte(result.IssuerFingerprint) {
 		return Certificate{}, errors.Join(ErrVerify, errors.New("the map names another signing CA"))
 	}
+	if ca != nil && ca.MapRevision >= result.NetworkRevision && len(ca.Root) == 32 &&
+		[32]byte(ca.Root) != [32]byte(result.RootFingerprint) {
+		return Certificate{}, errors.Join(ErrVerify, errors.New("the map names another root"))
+	}
 	cert := Certificate{
 		Key: key, Leaf: leaf, DER: slices.Clone(result.Certificate), NotAfter: leaf.NotAfter,
 		RenewAt: result.RenewAt, NetworkRevision: result.NetworkRevision, IssuedAt: now,

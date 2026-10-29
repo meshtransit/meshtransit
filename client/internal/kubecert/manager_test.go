@@ -1,6 +1,7 @@
 package kubecert
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/x509"
@@ -202,11 +203,11 @@ func TestManagerRenewsEarlyOnTheMap(t *testing.T) {
 	if plan == nil || plan.root || plan.at.After(core.now.Add(time.Hour)) || !manager.Snapshot().MapMismatch {
 		t.Fatalf("early plan %+v", plan)
 	}
-	// The same pair again plans nothing more; a matching map cancels it.
-	manager.early = nil
-	manager.planEarly(*core.now)
-	if manager.early != nil {
-		t.Fatal("the same pair planned twice")
+	// The same pair again keeps its time, never drawn anew; a matching map
+	// cancels it.
+	manager.planEarly(core.now.Add(time.Minute))
+	if manager.early == nil || !manager.early.at.Equal(plan.at) {
+		t.Fatalf("the same pair planned again: %+v, first %+v", manager.early, plan)
 	}
 	manager.mapCA = &networkmap.KubernetesCA{Root: current.Root[:], Signing: current.Issuer[:], MapRevision: 7}
 	manager.planEarly(*core.now)
@@ -420,5 +421,96 @@ func TestManagerWakesOnANewSigningCA(t *testing.T) {
 	manager.step(t.Context(), *core.now)
 	if _, ok := manager.Current(); !ok {
 		t.Fatal("no certificate once the map named a new CA")
+	}
+}
+
+// A map that cannot say (no CA read, no intermediate signing yet while a
+// root rotates) keeps the plan; the pair coming back keeps its time, so a
+// rotation's early renewal is never lost (kind demo 2026-10-29: meshgw-0
+// held a retired root's certificate past the hour).
+func TestManagerKeepsTheEarlyPlanThroughAMapThatCannotSay(t *testing.T) {
+	t.Parallel()
+	core := newFakeCore(t)
+	manager := testManager(t, core)
+	core.answers = append(core.answers, core.issue)
+	manager.step(t.Context(), *core.now)
+	current, _ := manager.Current()
+	*core.now = core.now.Add(time.Hour)
+	rotated := &networkmap.KubernetesCA{Root: bytes.Repeat([]byte{7}, 32), Signing: bytes.Repeat([]byte{8}, 32),
+		MapRevision: 6}
+	manager.mapArrived(rotated, *core.now)
+	plan := manager.early
+	if plan == nil || !plan.root {
+		t.Fatalf("no plan for a new root: %+v", plan)
+	}
+	for name, cannotSay := range map[string]*networkmap.KubernetesCA{
+		"absent":       nil,
+		"no CA yet":    {MapRevision: 7},
+		"root only":    {Root: bytes.Repeat([]byte{7}, 32), MapRevision: 7},
+		"an older map": {Root: bytes.Repeat([]byte{9}, 32), Signing: bytes.Repeat([]byte{9}, 32), MapRevision: 1},
+	} {
+		manager.mapArrived(cannotSay, *core.now)
+		if manager.early == nil || !manager.early.at.Equal(plan.at) {
+			t.Fatalf("%s dropped the plan: %+v", name, manager.early)
+		}
+	}
+	manager.mapArrived(rotated, core.now.Add(time.Minute))
+	if manager.early == nil || !manager.early.at.Equal(plan.at) || !manager.nextAt.Equal(manager.dueAt(&current, *core.now)) {
+		t.Fatalf("the pair back: %+v, next %v", manager.early, manager.nextAt)
+	}
+	// The renewal happens at the planned time.
+	core.answers = append(core.answers, core.issue)
+	*core.now = manager.nextAt
+	manager.step(t.Context(), *core.now)
+	if len(core.requests) != 2 {
+		t.Fatalf("no early renewal: %d requests", len(core.requests))
+	}
+}
+
+// Once renewed under the new pair, the plan ends and nothing plans again;
+// a plan that fired before the certificate was issued is never restored
+// (review M).
+func TestManagerUsesAnEarlyPlanOnce(t *testing.T) {
+	t.Parallel()
+	core := newFakeCore(t)
+	manager := testManager(t, core)
+	core.answers = append(core.answers, core.issue)
+	manager.step(t.Context(), *core.now)
+	*core.now = core.now.Add(time.Hour)
+	// Core rotates to a new root and intermediate; the map names them.
+	core.ca = newTestCA(t)
+	rotated := &networkmap.KubernetesCA{Root: core.ca.rootPrint[:], Signing: core.ca.intermediatePrint[:],
+		MapRevision: 6}
+	manager.mapArrived(rotated, *core.now)
+	if manager.early == nil || !manager.early.root {
+		t.Fatalf("no plan for the new root: %+v", manager.early)
+	}
+	core.answers = append(core.answers, core.issue)
+	*core.now = manager.nextAt
+	manager.step(t.Context(), *core.now)
+	renewed, ok := manager.Current()
+	if !ok || renewed.Root != core.ca.rootPrint || len(core.requests) != 2 {
+		t.Fatalf("no renewal under the new pair: %d requests", len(core.requests))
+	}
+	manager.mapArrived(rotated, *core.now)
+	if manager.early != nil || manager.Snapshot().MapMismatch {
+		t.Fatalf("a plan after the renewal: %+v", manager.early)
+	}
+	*core.now = core.now.Add(2 * time.Hour)
+	manager.step(t.Context(), *core.now)
+	if len(core.requests) != 2 {
+		t.Fatalf("renewed again: %d requests", len(core.requests))
+	}
+	// A pair whose plan fired before the certificate's issue is spent.
+	other := &networkmap.KubernetesCA{Root: bytes.Repeat([]byte{7}, 32), Signing: bytes.Repeat([]byte{8}, 32),
+		MapRevision: 7}
+	manager.mapArrived(other, *core.now)
+	spent := *manager.early
+	manager.mu.Lock()
+	manager.current.IssuedAt = spent.at.Add(time.Second)
+	manager.mu.Unlock()
+	manager.mapArrived(other, spent.at.Add(time.Minute))
+	if manager.early != nil {
+		t.Fatalf("a spent plan came back: %+v", manager.early)
 	}
 }

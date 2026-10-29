@@ -216,6 +216,10 @@ func TestVerify(t *testing.T) {
 	if _, err := verify(good, key, newer, testNow); err == nil {
 		t.Fatal("a certificate of an older intermediate was taken")
 	}
+	otherRoot := &networkmap.KubernetesCA{Root: make([]byte, 32), Signing: ca.intermediatePrint[:], MapRevision: 6}
+	if _, err := verify(good, key, otherRoot, testNow); err == nil {
+		t.Fatal("a certificate under a root the map does not name was taken")
+	}
 	older := &networkmap.KubernetesCA{Root: ca.rootPrint[:], Signing: make([]byte, 32), MapRevision: 4}
 	if _, err := verify(good, key, older, testNow); err != nil {
 		t.Fatalf("an older map refused the certificate: %v", err)

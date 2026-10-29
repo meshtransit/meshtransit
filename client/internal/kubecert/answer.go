@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"meshtransit.net/client/internal/controlplane"
+	"meshtransit.net/client/internal/networkmap"
 )
 
 // unsupportedCeiling bounds the wait while Core issues no certificates
@@ -166,22 +167,67 @@ func (manager *Manager) planEarly(now time.Time) {
 		return
 	}
 	spread, differs, root := earlyRenewal(*current, manager.mapCA, now)
-	manager.mu.Lock()
-	manager.mismatch = differs
-	manager.mu.Unlock()
 	if !differs {
-		manager.early = nil
+		// Only a map naming the certificate's own CAs ends a plan. One that
+		// cannot say (absent, no intermediate yet while a root rotates, older
+		// than the certificate) keeps it: the pair may come back, and its
+		// renewal must not be lost (kind demo 2026-10-29).
+		if namesCertificateCAs(*current, manager.mapCA) {
+			manager.early = nil
+			manager.setMismatch(false)
+		}
 		return
 	}
+	manager.setMismatch(true)
 	var pair [64]byte
 	copy(pair[:32], manager.mapCA.Root)
 	copy(pair[32:], manager.mapCA.Signing)
-	if manager.planned[pair] {
+	plan, planned := manager.planned[pair]
+	if planned && !plan.at.After(current.IssuedAt) {
+		// Used: the certificate was issued after it fired. Never again for
+		// this pair, or a Core naming a root it did not sign under would
+		// have the gateway renew every minute (review M).
+		manager.early = nil
 		return
 	}
-	manager.planned[pair] = true
-	manager.early = &earlyPlan{at: now.Add(random(spread)), root: root}
-	if manager.pending == nil && manager.early.at.Before(manager.nextAt) {
+	if !planned {
+		// Once per pair: the time is drawn once and kept.
+		plan = earlyPlan{at: now.Add(random(spread)), root: root}
+		manager.rememberPlan(pair, plan)
+	}
+	manager.early = &plan
+	if manager.pending == nil && plan.at.Before(manager.nextAt) {
 		manager.nextAt = manager.dueAt(current, now)
 	}
+}
+
+// namesCertificateCAs reports a map at or past the certificate's revision
+// naming the certificate's own root and issuer.
+func namesCertificateCAs(cert Certificate, ca *networkmap.KubernetesCA) bool {
+	return ca != nil && ca.MapRevision >= cert.NetworkRevision && len(ca.Root) == 32 && len(ca.Signing) == 32 &&
+		[32]byte(ca.Root) == cert.Root && [32]byte(ca.Signing) == cert.Issuer
+}
+
+// maxPlannedPairs bounds the CA pairs remembered: one per rotation.
+const maxPlannedPairs = 16
+
+// rememberPlan keeps a pair's plan, dropping the earliest when full.
+func (manager *Manager) rememberPlan(pair [64]byte, plan earlyPlan) {
+	if len(manager.planned) >= maxPlannedPairs {
+		var oldest [64]byte
+		first := true
+		for key, kept := range manager.planned {
+			if first || kept.at.Before(manager.planned[oldest].at) {
+				oldest, first = key, false
+			}
+		}
+		delete(manager.planned, oldest)
+	}
+	manager.planned[pair] = plan
+}
+
+func (manager *Manager) setMismatch(mismatch bool) {
+	manager.mu.Lock()
+	manager.mismatch = mismatch
+	manager.mu.Unlock()
 }

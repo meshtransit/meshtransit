@@ -69,7 +69,7 @@ type Manager struct {
 	// review M2): a replica waiting for approval builds up no backoff.
 	mapSeen bool
 	early   *earlyPlan
-	planned map[[64]byte]bool // CA pairs an early renewal was planned for
+	planned map[[64]byte]earlyPlan // CA pairs an early renewal was planned for, and when
 
 	mu       sync.Mutex
 	current  *Certificate
@@ -113,7 +113,7 @@ func New(options Options) (*Manager, error) {
 		return nil, ErrInvalid
 	}
 	return &Manager{
-		options: options, maps: make(chan *networkmap.KubernetesCA, 1), planned: map[[64]byte]bool{},
+		options: options, maps: make(chan *networkmap.KubernetesCA, 1), planned: map[[64]byte]earlyPlan{},
 		counts: map[outcomeKey]uint64{},
 	}, nil
 }
