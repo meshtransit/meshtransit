@@ -257,17 +257,21 @@ type WireGuardEngine struct {
 	relayTopology           [32]byte
 	appliedRevision         uint64
 	peers                   map[uint64]wireGuardPeerState
-	addresses               []netip.Prefix
-	routes                  []netip.Prefix
-	filter                  *policyFilter
-	observer                PacketObserver
-	hostAddresses           func() ([]netip.Addr, error)
-	clock                   func() time.Time
-	relayBootstraps         uint64
-	directPromotions        uint64
-	relayFallbacks          uint64
-	lastPromotion           time.Duration
-	maximumPromotion        time.Duration
+	// addressKeys indexes the single-address allowed IPs wireguard-go
+	// holds by the key they belong to, for a Kubernetes gateway's
+	// connections; read without mu (review b5a M2).
+	addressKeys      addressIndex
+	addresses        []netip.Prefix
+	routes           []netip.Prefix
+	filter           *policyFilter
+	observer         PacketObserver
+	hostAddresses    func() ([]netip.Addr, error)
+	clock            func() time.Time
+	relayBootstraps  uint64
+	directPromotions uint64
+	relayFallbacks   uint64
+	lastPromotion    time.Duration
+	maximumPromotion time.Duration
 	// logger, when set, records each peer's path changes and device stops.
 	logger      *slog.Logger
 	credentials *relayCredentials
@@ -576,6 +580,15 @@ func (e *WireGuardEngine) applySnapshot(
 		var preserved, sessionResets map[uint64]struct{}
 		if e.deviceConfigurationHash == plan.deviceConfigurationHash {
 			peerConfiguration, preserved, sessionResets = wireGuardPeerDiff(e.peers, plan.peers)
+		}
+		// Addresses whose holder changes leave the index before wireguard-go
+		// moves them (re-review b5a M-1); adoption indexes the plan. A full
+		// replace_peers drops every peer for a moment, so every address
+		// leaves (round 3 LOW).
+		if e.deviceConfigurationHash == plan.deviceConfigurationHash {
+			e.withholdChangedAddresses(plan.peers)
+		} else {
+			e.addressKeys.clear()
 		}
 		if len(peerConfiguration) != 0 {
 			if err := e.device.Configure(bytes.NewReader(peerConfiguration)); err != nil {
@@ -1204,6 +1217,7 @@ func (e *WireGuardEngine) advanceCompatiblePlan(
 	e.configurationHash = plan.configurationHash
 	e.deviceConfigurationHash = plan.deviceConfigurationHash
 	e.peers = nextPeers
+	e.publishAddressKeys()
 	e.appliedRevision = revision
 
 	return true, nil
@@ -1330,6 +1344,7 @@ func (e *WireGuardEngine) adoptPlanPreserving(revision uint64, plan wireGuardPla
 		}
 		e.peers[peer.id] = state
 	}
+	e.publishAddressKeys()
 }
 
 // wireGuardPeerDiff returns the UAPI configuration that turns the installed
@@ -1475,6 +1490,7 @@ func (e *WireGuardEngine) closeLocked() error {
 	e.relayTopology = [32]byte{}
 	e.appliedRevision = 0
 	e.peers = nil
+	e.addressKeys.clear()
 	e.addresses = nil
 	e.routes = nil
 
@@ -1938,6 +1954,18 @@ func validPeerEndpoints(endpoints []netip.AddrPort) []netip.AddrPort {
 	})
 
 	return slices.Compact(valid)
+}
+
+// ParseNodeKey reads a map's "nodekey:<hex>" public key.
+func ParseNodeKey(value string) ([32]byte, error) { return parseNodePublicKey(value) }
+
+// PeerKeyAt returns the node key of the peer that holds address as a
+// single-address allowed IP in wireguard-go now: the only peer whose packets
+// may come from it. A Kubernetes gateway binds a connection to that key, so
+// a map changing under it cannot lend one Device's address to another (K1b
+// design §4). An address two peers claim is no one's.
+func (e *WireGuardEngine) PeerKeyAt(address netip.Addr) ([32]byte, bool) {
+	return e.addressKeys.keyAt(address)
 }
 
 func parseNodePublicKey(value string) ([32]byte, error) {

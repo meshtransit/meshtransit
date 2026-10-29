@@ -1298,7 +1298,13 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 							if s.captive != nil {
 								s.captive.noteRelays(snapshot.Relays)
 							}
-							s.peerSession.setDirectory(newPeerDirectory(snapshot))
+							directory := newPeerDirectory(snapshot)
+							if len(directory.kubernetesRefused) > 0 {
+								s.logger.Error("Kubernetes access ignored for Devices with a range address",
+									"error_code", "kubernetes_peer_range_address",
+									"devices", directory.kubernetesRefused)
+							}
+							s.peerSession.setDirectory(directory)
 							publishRouteSelection()
 							// Routers and resolver Devices reached only through
 							// the relay still prove they are up, for local

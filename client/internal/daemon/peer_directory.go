@@ -83,12 +83,20 @@ type peerDirectory struct {
 	byDevice   map[string]int
 	byAddress  map[netip.Addr]int
 	relayCodes map[int]string
+	// kubernetesRefused are the Devices whose Kubernetes access a gateway
+	// ignores, an address of theirs being a range (K1b design §4).
+	kubernetesRefused []string
 }
 
 type directoryPeer struct {
 	id        uint64
 	homeRelay int
-	view      PeerView
+	// key is the peer's node key; zero when the map's is not one.
+	key [32]byte
+	// singleAddresses reports a peer whose addresses are all /32 or /128:
+	// one with Kubernetes access must be (K1b design §4).
+	singleAddresses bool
+	view            PeerView
 }
 
 func newPeerDirectory(snapshot networkmap.Snapshot) *peerDirectory {
@@ -109,14 +117,21 @@ func newPeerDirectory(snapshot networkmap.Snapshot) *peerDirectory {
 			continue
 		}
 		addresses := make([]string, 0, len(peer.Addresses))
+		single := true
 		for _, prefix := range peer.Addresses {
+			single = single && prefix.IsSingleIP()
 			addresses = append(addresses, prefix.Addr().String())
 			directory.byAddress[prefix.Addr()] = len(directory.peers)
 		}
 		directory.byDevice[peer.StableID] = len(directory.peers)
+		if peer.Kubernetes != nil && !single {
+			directory.kubernetesRefused = append(directory.kubernetesRefused, peer.StableID)
+		}
+		nodeKey, _ := dataplane.ParseNodeKey(peer.PublicKey)
 		directory.peers = append(directory.peers, directoryPeer{
 			id:        peer.ID,
 			homeRelay: peer.HomeRelay,
+			key:       nodeKey, singleAddresses: single,
 			view: PeerView{
 				DeviceID: peer.StableID, Name: peer.Name, Addresses: addresses,
 				OnlineKnown: peer.OnlineKnown, Online: peer.OnlineKnown && peer.Online,
@@ -252,6 +267,49 @@ func (s *Service) PeerAt(address netip.Addr) (PeerView, bool) {
 	view.Addresses = slices.Clone(view.Addresses)
 	view.Kubernetes = networkmap.CloneKubernetesAccess(view.Kubernetes)
 	return view, true
+}
+
+// KubernetesPeer is a Kubernetes gateway's peer at a mesh address: its
+// Device, the node key its packets come under, and its access in the
+// gateway's cluster (nil: none).
+type KubernetesPeer struct {
+	DeviceID, Name string
+	Key            [32]byte
+	Kubernetes     *networkmap.KubernetesAccess
+}
+
+// peerKeys is a data plane that tells which peer's packets may come from
+// an address.
+type peerKeys interface {
+	PeerKeyAt(netip.Addr) ([32]byte, bool)
+}
+
+// KubernetesPeerAt returns the map's Device at a mesh address only while
+// the data plane holds the same node key for it: while a map is applied the
+// data plane and the map may disagree, and then no one is (K1b design §4,
+// review v1 M1). Without a data plane that tells, no one is.
+func (s *Service) KubernetesPeerAt(address netip.Addr) (KubernetesPeer, bool) {
+	address = address.Unmap()
+	keys, ok := s.dataPlane.(peerKeys)
+	if !ok {
+		return KubernetesPeer{}, false
+	}
+	directory, _ := s.peerSession.read()
+	if directory == nil {
+		return KubernetesPeer{}, false
+	}
+	index, found := directory.byAddress[address]
+	if !found {
+		return KubernetesPeer{}, false
+	}
+	peer := directory.peers[index]
+	held, installed := keys.PeerKeyAt(address)
+	if !installed || peer.key == ([32]byte{}) || held != peer.key ||
+		(peer.view.Kubernetes != nil && !peer.singleAddresses) {
+		return KubernetesPeer{}, false
+	}
+	return KubernetesPeer{DeviceID: peer.view.DeviceID, Name: peer.view.Name, Key: peer.key,
+		Kubernetes: networkmap.CloneKubernetesAccess(peer.view.Kubernetes)}, true
 }
 
 // PingPeer measures one round trip to the Device, a peer in the current map.

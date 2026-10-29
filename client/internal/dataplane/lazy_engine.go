@@ -245,6 +245,7 @@ func (e *WireGuardEngine) installLazyPeer(peer *lazyPeer) {
 		e.peers = make(map[uint64]wireGuardPeerState)
 	}
 	e.peers[peer.id] = state
+	e.addressKeys.add(peer.id, state)
 	peer.lastActive.Store(now.UnixNano())
 	peer.installed.Store(true)
 	e.lazy.activations.Add(1)
@@ -300,6 +301,10 @@ func (e *WireGuardEngine) evictIdleLazyPeers(now time.Time) {
 	}
 	if len(evicted) == 0 {
 		return
+	}
+	// They leave the index before wireguard-go drops their addresses.
+	for _, peer := range evicted {
+		e.addressKeys.remove(peer.id, e.peers[peer.id])
 	}
 	if err := e.device.Configure(bytes.NewReader(configuration.Bytes())); err != nil {
 		e.failLazyDevice("evicting idle lazy peers failed")
