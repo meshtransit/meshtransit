@@ -31,6 +31,18 @@ const (
 	inboundMessageRate  = 50.0
 	inboundByteBurst    = 1 << 20
 	inboundByteRate     = 256 << 10
+	// gateway.audit1 messages have their own byte budget instead of the
+	// inbound one, whose overrun ends the session and its map stream (K1b0
+	// §3.5): over it intents are refused limited and outcomes dropped. Four
+	// times it is the ceiling, past which the session ends after all, so a
+	// gateway cannot make Core decode without bound.
+	auditByteBurst    = 512 << 10
+	auditByteRate     = 256 << 10
+	auditCeilingBurst = 4 * auditByteBurst
+	auditCeilingRate  = 4 * auditByteRate
+	// auditMessageFloor is the least an audit message costs, so tiny ones
+	// cannot make Core decode and answer without bound (review b0b1 H2).
+	auditMessageFloor = 4 << 10
 )
 
 // rateBudget is a token bucket holding burst tokens, recovered at rate per

@@ -238,6 +238,9 @@ payload     bytes[...]
 | 0x17 | `RotateMachineKeyResponse` | C→N | 256 B |
 | 0x18 | `KubeCertRequest` | N→C | 13 KiB (5 KiB plus a pod token of 8 KiB) |
 | 0x19 | `KubeCertResult` | C→N | 32 KiB |
+| 0x1A | `KubeAuditIntents` | N→C | 128 KiB |
+| 0x1B | `KubeAuditAck` | C→N | 32 KiB |
+| 0x1C | `KubeAuditOutcomes` | N→C | 128 KiB |
 | 0x20 | `MapSnapshot` | C→N | 32 MiB |
 | 0x21 | `MapDelta` | C→N | 8 MiB |
 | 0x22 | `MapAck` | N→C | 256 B |
@@ -703,6 +706,58 @@ flight per Device, 20 per cluster, 200 per Workspace and 1,000 per
 installation; over one, `RETRY` with `limited` or `overloaded`. When no
 signer can sign, Core answers `RETRY` with `unavailable` at once and a
 `retry_after_ms` of 1 to 5 minutes.
+
+### 6.10 Kubernetes operation events
+
+A Kubernetes gateway that negotiated `gateway.audit1` has Core record each
+type A operation (a write, `exec`, `attach`, `port-forward`, a `proxy`
+subresource, a Secret read, a privileged or impersonated request, or one it
+cannot parse) **before** it forwards it, and sends `Audit-ID: <audit_id>` to
+the API server. A gateway that gets no answer for an operation does not
+forward it.
+
+- **`KubeAuditIntents`:** `batch_id` (16 bytes) and 1 to 128 intents, at most
+  128 KiB. Each intent: `intent_id` (16 bytes in the UUIDv7 layout, its first
+  48 bits the gateway's milliseconds, unique for the gateway Device within 10
+  minutes; more than 10 minutes from Core's clock it is `invalid`),
+  `peer_device_id`, `groups` (at most 16, each at most 63 bytes), `class`, `verb`, `api_group`, `resource`, `subresource`, `namespace`,
+  `name`, `impersonated`, `token_id` (at most 32 bytes) and `observed_ms`.
+  Strings are UTF-8 without NUL or control characters, within the sizes in the
+  proto (`verb` 32, `api_group` 253, `resource` and `subresource` 63,
+  `namespace` 63, `name` 253, `impersonated` 253 bytes). The largest intent is
+  about 2 KiB, so a gateway splits batches by encoded size. An `intent_id`
+  twice in one batch is `invalid` (Core records the first).
+- **Checks:** the peer must be a peer the gateway's own current map grants
+  Kubernetes access (7.8), the groups among those granted, and that map read
+  within the gateway's `staleAfter` by Core's clock. Core takes the peer's
+  owner from that map, never from the gateway.
+- **`KubeAuditAck`:** the batch's `batch_id` and, in order, each intent's
+  `intent_id` with either `audit_id` (16 bytes, UUIDv7) or `refused` and
+  `retry_after_ms`. Core answers only after the record is durable. Sending an
+  intent again with the same `intent_id` and content within 10 minutes
+  answers the same `audit_id`; other content is `conflict`.
+
+| `refused` | The gateway |
+|---|---|
+| `limited` | answers 429 with `Retry-After` |
+| `overloaded`, `unavailable` | answers 503; may send again after `retry_after_ms` |
+| `stale` | answers 503 until its map is fresh |
+| `device`, `not_granted` | answers 403 (usually a revocation racing the request) |
+| `invalid` | answers 403; its own fault, never sent again |
+| `conflict` | answers 503; its own fault, never sent again |
+
+- **`KubeAuditOutcomes`:** at most 1,024 outcomes (`audit_id`, HTTP status,
+  duration) and 256 type B counts (peer, reason, count, first and last
+  times), at most 128 KiB. Core answers nothing and may drop them under load.
+- **Budget:** these messages spend their own budget of 512 KiB at once and
+  256 KiB/s, not the session's (section 14): over it intents are refused
+  `limited` and outcomes dropped. Past four times it the session ends with
+  `Error{OVERLOADED}`.
+- At most 4 batches wait for an ack per session; a fifth is answered with
+  every intent `limited`. A gateway session that has not proved its node key
+  or does not hold the gateway's presence has every intent refused
+  `unavailable`. These messages from any other session, or without
+  `gateway.audit1`, are a fatal `Error{INVALID}`.
 
 ## 7. Map
 
@@ -1679,6 +1734,7 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `relay.zones2` | Node hands relays MTT2 tickets and their ZONES (MTRP §5.4, §6.1). Core offers it only once every relay accepts them |
 | `captive.audit1` | Node sends `CaptiveWindowReport` (8.5); only with `routes.exit.v1` |
 | `gateway.cert1` | A Kubernetes gateway asks for its replica certificate with `KubeCertRequest` (6.9) and reads `kubernetes_ca` on its `self` (7.10); Core offers it whenever it queues certificate requests, whether or not a signer is up |
+| `gateway.audit1` | A Kubernetes gateway records type A operations before forwarding them and reports outcomes (6.10); Core offers it with Kubernetes join and its shared Network view, once it could write them at startup |
 | `kube.ca1` | Any node reads `kubernetes_clusters` in its map: the clusters it may reach and their roots (7.11); Core offers it where Kubernetes join is on, it builds maps from its shared Network view, and it could read the roots when it started |
 | `gateway.kube.v1` | A Kubernetes gateway applies its peers' `kubernetes` and `owner` (7.8), acknowledges map messages after applying them and takes `MapFresh` (7.9); Core offers it only where maps come from its shared Network view |
 
@@ -1707,7 +1763,8 @@ Unknown names are ignored. Core sends a feature only when both sides list it.
 | `DnsHealthReport` per session (8.6) | 1 per 20 s; a sooner one is dropped, the node's next one counts |
 | Offers of `HostinfoReport` stored per session (8.2) | 4 at once, then 1 per 10 s; over it the latest offer is kept, replacing any kept before, and stored when the budget allows. An offer sent before the session serves a Device is stored once it does |
 | A Device's live presence lease moving to another Core replica | 10 per minute; past it the stream ends with `Lifecycle{RECONNECT, retry_after_ms}` until the minute is over. Two processes sharing one machine key are bounded to that rate, not stopped; a reconnect after a replica ended, a rolling update or a rebalance moves it once. A refused attempt still costs Core the snapshot and relay ticket it prepared, but not their delivery |
-| Everything a node sends, per session | 200 messages at once, then 50 per second, and 1 MiB of records at once, then 256 KiB per second; over either, fatal `Error{OVERLOADED, retry_after_ms}`. `MapAck` counts only as bytes: it answers map messages Core chose to send, and nodes that ack every message (7.2) must not reach the limit |
+| Everything a node sends, per session, except a gateway's `gateway.audit1` messages | 200 messages at once, then 50 per second, and 1 MiB of records at once, then 256 KiB per second; over either, fatal `Error{OVERLOADED, retry_after_ms}`. `MapAck` counts only as bytes: it answers map messages Core chose to send, and nodes that ack every message (7.2) must not reach the limit |
+| A gateway's `gateway.audit1` messages (6.10) | Each costs its records or its decoded size, whichever is more, and at least 4 KiB: 512 KiB at once, then 256 KiB per second; over it, intents are refused `limited` and outcomes dropped. Four times it (2 MiB at once, then 1 MiB per second) ends the session with `Error{OVERLOADED}` |
 | Lifetime of a session that receives no map snapshot | 15 minutes by default, configurable; longer than a browser approval (6.2), then the session closes |
 | Outbound messages per session | No send queue: one message is written at a time. Each record must be written within 10 s, and each whole message within 30 s plus its size at 64 KiB/s, at most 10 minutes; otherwise Core closes the session and the node reconnects |
 | Unacknowledged map messages | 8 (7.2) |

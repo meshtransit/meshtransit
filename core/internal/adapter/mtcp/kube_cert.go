@@ -21,6 +21,10 @@ import (
 // its replica certificate (mtcp-v1 §6.9).
 const CapabilityKubeCert = "gateway.cert1"
 
+// CapabilityKubeAudit is gateway.audit1: a Kubernetes gateway has Core
+// record type A operations before forwarding them (mtcp-v1 §6.10).
+const CapabilityKubeAudit = "gateway.audit1"
+
 const (
 	// kubeCertBusyRetry is the wait, jittered, after a request sent while
 	// another one of the session waits.

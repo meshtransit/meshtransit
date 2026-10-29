@@ -239,6 +239,72 @@ message KubeCertResult {
   uint64 network_revision = 11;
 }
 
+// KubeAuditIntents asks Core to record type A Kubernetes operations before a
+// gateway forwards them (gateway.audit1, section 6.10).
+message KubeAuditIntents {
+  bytes batch_id = 1;                   // 16 bytes, the gateway's
+  repeated KubeAuditIntent intents = 2; // 1 to 128
+}
+
+message KubeAuditIntent {
+  enum Class {
+    CLASS_UNSPECIFIED = 0;
+    WRITE = 1;
+    EXEC = 2;
+    PROXY = 3;
+    SECRET_READ = 4;
+    PRIVILEGED = 5;
+    UNPARSED = 6;
+  }
+  bytes intent_id = 1;        // 16 bytes, unique per gateway Device within 10 minutes
+  string peer_device_id = 2;  // the Device whose request it is
+  repeated string groups = 3; // the Kubernetes groups used, at most 16 of 1 to 63 bytes
+  Class class = 4;
+  string verb = 5;            // 1 to 32 bytes
+  string api_group = 6;       // at most 253 bytes
+  string resource = 7;        // at most 63 bytes
+  string subresource = 8;     // at most 63 bytes
+  string namespace = 9;       // at most 63 bytes
+  string name = 10;           // at most 253 bytes
+  string impersonated = 11;   // at most 253 bytes; empty: none
+  bytes token_id = 12;        // the Device token's ID, at most 32 bytes
+  int64 observed_ms = 13;     // when the gateway received the request
+}
+
+// KubeAuditAck answers each intent of a batch, in order (section 6.10).
+message KubeAuditAck {
+  bytes batch_id = 1;
+  repeated KubeAuditResult results = 2;
+}
+
+message KubeAuditResult {
+  bytes intent_id = 1;
+  bytes audit_id = 2;       // 16 bytes when recorded: the gateway's Audit-ID
+  string refused = 3;       // empty when recorded
+  int64 retry_after_ms = 4; // when the reason allows another try
+}
+
+// KubeAuditOutcomes reports finished type A operations and type B denials;
+// Core answers nothing (section 6.10).
+message KubeAuditOutcomes {
+  repeated KubeAuditOutcome outcomes = 1; // at most 1024
+  repeated KubeAuditDenials denials = 2;  // at most 256
+}
+
+message KubeAuditOutcome {
+  bytes audit_id = 1;
+  uint32 status = 2;
+  uint32 duration_ms = 3;
+}
+
+message KubeAuditDenials {
+  string peer_device_id = 1;
+  string reason = 2; // unauthenticated, forbidden, not_granted, stale, limited, other
+  uint32 count = 3;
+  int64 first_ms = 4;
+  int64 last_ms = 5;
+}
+
 // ---- Map ----
 
 message View {

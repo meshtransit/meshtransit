@@ -2,6 +2,7 @@ package mtcp
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -151,5 +152,85 @@ func TestSessionInboundBudgetLetsAFollowingNodeThrough(t *testing.T) {
 				t.Fatalf("second %d, message %d of the steady rate refused", second+1, index+1)
 			}
 		}
+	}
+}
+
+// auditRecordingConversation notes, for each message, whether the session
+// said it was over its audit budget.
+type auditRecordingConversation struct {
+	acceptingConversation
+	session *Session
+	over    []bool
+}
+
+func (conversation *auditRecordingConversation) Receive(context.Context, sharedmtcp.MessageType,
+	proto.Message,
+) error {
+	conversation.over = append(conversation.over, conversation.session.AuditOverBudget())
+	return nil
+}
+
+// gateway.audit1 messages spend their own budget, never the inbound one:
+// over it they are still handed on, marked over; only past four times it
+// does the session end (K1b0 §3.5).
+func TestSessionAuditBudget(t *testing.T) {
+	t.Parallel()
+	session, _, _ := testSession(t)
+	session.ctx, session.cancel = context.WithCancelCause(t.Context())
+	now := time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)
+	session.server.options.Now = func() time.Time { return now }
+	session.gate.Gateway = true
+	session.capabilities = append(session.capabilities, CapabilityKubeAudit)
+	conversation := &auditRecordingConversation{session: session}
+	intents := inbound{t: sharedmtcp.MessageKubeAuditIntents, message: &mtcpv1.KubeAuditIntents{}, size: 128 << 10}
+	// Four full messages fit the audit burst; the general budget is untouched.
+	for index := range 4 {
+		if !session.dispatch(conversation, intents) {
+			t.Fatalf("intents %d ended the session", index+1)
+		}
+	}
+	if session.inboundBytes.spent != 0 || session.inboundMessages.spent != 0 {
+		t.Fatalf("audit spent the inbound budget: %v bytes, %v messages", session.inboundBytes.spent,
+			session.inboundMessages.spent)
+	}
+	// Past the audit burst: still handed on, marked over.
+	for range 13 {
+		if !session.dispatch(conversation, intents) {
+			break
+		}
+	}
+	if conversation.over[3] || slices.Contains(conversation.over[4:], false) {
+		t.Fatalf("over = %v", conversation.over)
+	}
+	// Past the ceiling: the session ends.
+	if session.ctx.Err() == nil {
+		t.Fatal("past the audit ceiling the session went on")
+	}
+	if len(conversation.over) != 16 {
+		t.Fatalf("handed on %d messages, want 16 within the ceiling", len(conversation.over))
+	}
+}
+
+// A session that is no gateway with gateway.audit1 pays for audit messages
+// from the inbound budget, as any message (review b0b1 H1); a tiny one costs
+// a gateway at least the floor.
+func TestSessionAuditBudgetIsTheGatewaysOnly(t *testing.T) {
+	t.Parallel()
+	session, _, _ := testSession(t)
+	session.ctx, session.cancel = context.WithCancelCause(t.Context())
+	now := time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)
+	session.server.options.Now = func() time.Time { return now }
+	small := inbound{t: sharedmtcp.MessageKubeAuditIntents, message: &mtcpv1.KubeAuditIntents{}, size: 40}
+	session.dispatch(acceptingConversation{}, small)
+	if session.inboundMessages.spent != 1 || session.auditBytes.spent != 0 {
+		t.Fatalf("a node's audit message: inbound %v, audit %v", session.inboundMessages.spent,
+			session.auditBytes.spent)
+	}
+	session.gate.Gateway = true
+	session.capabilities = append(session.capabilities, CapabilityKubeAudit)
+	session.dispatch(acceptingConversation{}, small)
+	if session.inboundMessages.spent != 1 || session.auditBytes.spent != auditMessageFloor {
+		t.Fatalf("a gateway's tiny audit message: inbound %v, audit %v", session.inboundMessages.spent,
+			session.auditBytes.spent)
 	}
 }

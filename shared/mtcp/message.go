@@ -54,6 +54,11 @@ const (
 	// (mtcp-v1 §6.9).
 	MessageKubeCertRequest MessageType = 0x18
 	MessageKubeCertResult  MessageType = 0x19
+	// MessageKubeAuditIntents, MessageKubeAuditAck and
+	// MessageKubeAuditOutcomes are gateway.audit1 (mtcp-v1 §6.10).
+	MessageKubeAuditIntents  MessageType = 0x1a
+	MessageKubeAuditAck      MessageType = 0x1b
+	MessageKubeAuditOutcomes MessageType = 0x1c
 )
 
 // Direction is who sends a message.
@@ -139,6 +144,12 @@ var specs = map[MessageType]messageSpec{
 	// A leaf and up to KubeCertChainMaximum intermediates of 4 KiB each, with
 	// room for a customer's PKI (a3 §14 R-L2).
 	MessageKubeCertResult: {CoreToNode, 32 * kib, func() proto.Message { return &mtcpv1.KubeCertResult{} }},
+	// Up to 128 intents, each up to about 2 KiB (16 groups of 63 bytes take
+	// 1 KiB): a gateway splits batches by encoded size (K1b0 design §3.2).
+	MessageKubeAuditIntents: {NodeToCore, 128 * kib, func() proto.Message { return &mtcpv1.KubeAuditIntents{} }},
+	MessageKubeAuditAck:     {CoreToNode, 32 * kib, func() proto.Message { return &mtcpv1.KubeAuditAck{} }},
+	// 1,024 outcomes and 256 denial counts.
+	MessageKubeAuditOutcomes: {NodeToCore, 128 * kib, func() proto.Message { return &mtcpv1.KubeAuditOutcomes{} }},
 }
 
 // Limit returns the decoded size limit of a message type, or 0 if unknown.

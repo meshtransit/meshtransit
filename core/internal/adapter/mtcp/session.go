@@ -77,6 +77,12 @@ type Session struct {
 	// (rate_budget.go); only the run loop uses them.
 	inboundMessages rateBudget
 	inboundBytes    rateBudget
+	// auditBytes and auditCeiling bound gateway.audit1 messages instead
+	// (rate_budget.go); auditOver says the message being handled is over
+	// auditBytes. Only the run loop uses them.
+	auditBytes   rateBudget
+	auditCeiling rateBudget
+	auditOver    bool
 }
 
 func newSession(server *Server, transport recordConn, noise *sharedmtcp.Session, control key.ControlPrivate,
@@ -84,8 +90,28 @@ func newSession(server *Server, transport recordConn, noise *sharedmtcp.Session,
 	return &Session{server: server, transport: transport, noise: noise, control: control, machine: machine,
 		hello: hello, reply: reply, capabilities: reply.GetCapabilities(),
 		inboundMessages: newRateBudget(inboundMessageBurst, inboundMessageRate),
-		inboundBytes:    newRateBudget(inboundByteBurst, inboundByteRate)}
+		inboundBytes:    newRateBudget(inboundByteBurst, inboundByteRate),
+		auditBytes:      newRateBudget(auditByteBurst, auditByteRate),
+		auditCeiling:    newRateBudget(auditCeilingBurst, auditCeilingRate)}
 }
+
+// isAuditMessage reports a gateway.audit1 message from the node.
+func isAuditMessage(t sharedmtcp.MessageType) bool {
+	return t == sharedmtcp.MessageKubeAuditIntents || t == sharedmtcp.MessageKubeAuditOutcomes
+}
+
+// auditCost is what an audit message spends of the audit budget: its
+// records or its decoded size, whichever is more (a compressed message
+// costs what Core decodes), and never less than auditMessageFloor.
+func auditCost(message inbound) float64 {
+	return float64(max(message.size, proto.Size(message.message), auditMessageFloor))
+}
+
+// AuditOverBudget reports whether the gateway.audit1 message being handled
+// is over the session's audit budget: its intents are refused limited and
+// its outcomes dropped (K1b0 §3.5). Only the conversation's Receive, on the
+// run loop, may call it.
+func (session *Session) AuditOverBudget() bool { return session.auditOver }
 
 // Machine returns the session's authenticated machine key.
 func (session *Session) Machine() key.MachinePublic { return session.machine }
@@ -425,10 +451,9 @@ func (session *Session) checkNodeKeyProof(message proto.Message) bool {
 	return true
 }
 
-// dispatch answers Ping, ignores Pong and gives everything else to the
-// conversation. It reports false when the session must end.
-func (session *Session) dispatch(conversation Conversation, message inbound) bool {
-	now := session.server.options.Now()
+// admitInbound spends a message's share of the session's inbound budget,
+// ending the session when it is over.
+func (session *Session) admitInbound(now time.Time, message inbound) bool {
 	// A MapAck answers map messages Core chose to send, and a node may ack
 	// each one (older nodes do), so acks follow Core's own rate: they count only as bytes.
 	cost := 1.0
@@ -446,6 +471,31 @@ func (session *Session) dispatch(conversation Conversation, message inbound) boo
 	if !ok {
 		session.server.options.Metrics.limited(limitInbound)
 		session.endOverloaded("too many messages", wait)
+	}
+	return ok
+}
+
+// dispatch answers Ping, ignores Pong and gives everything else to the
+// conversation. It reports false when the session must end.
+func (session *Session) dispatch(conversation Conversation, message inbound) bool {
+	now := session.server.options.Now()
+	session.auditOver = false
+	if isAuditMessage(message.t) && session.gate.Gateway && session.Supports(CapabilityKubeAudit) {
+		// A gateway's own budget (K1b0 §3.5): never the inbound one, so audit
+		// never ends its map stream; the ceiling bounds the work it makes.
+		// Any other sender spends the inbound budget, and the conversation
+		// refuses the message (review b0b1 H1).
+		cost := auditCost(message)
+		if wait, ok := session.auditCeiling.spend(now, cost); !ok {
+			session.server.options.Metrics.limited(limitAuditCeiling)
+			session.endOverloaded("too many audit records", wait)
+			return false
+		}
+		if _, ok := session.auditBytes.spend(now, cost); !ok {
+			session.server.options.Metrics.limited(limitAudit)
+			session.auditOver = true
+		}
+	} else if !session.admitInbound(now, message) {
 		return false
 	}
 	switch message.t {

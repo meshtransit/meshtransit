@@ -78,7 +78,12 @@ const (
 
 // The closed set of per-session limits (rate_budget.go).
 const (
-	limitInbound        = "inbound"
+	limitInbound = "inbound"
+	// limitAudit: a gateway.audit1 message over the session's audit budget
+	// (refused or dropped); limitAuditCeiling: over its ceiling (the
+	// session ended).
+	limitAudit          = "audit"
+	limitAuditCeiling   = "audit_ceiling"
 	limitResync         = "resync"
 	limitEnforcement    = "enforcement"
 	limitBrowser        = "browser"
@@ -113,7 +118,7 @@ const (
 // gatewayTokenLimit names the limit of a token refusal reason.
 func gatewayTokenLimit(reason kubetoken.Reason) string { return "gateway_" + string(reason) }
 
-var sessionLimits = []string{limitInbound, limitResync, limitEnforcement, limitBrowser, limitIdentity,
+var sessionLimits = []string{limitInbound, limitAudit, limitAuditCeiling, limitResync, limitEnforcement, limitBrowser, limitIdentity,
 	limitRouteOffer, limitRouteHealth, limitDNSHealth, limitRouteSelection, limitSendDeadline,
 	limitGatewayPresenceElsewhere, limitGatewayPresencePending, limitGatewayPresenceUnknown,
 	limitClusterJoinToken, limitGatewayTrustMissing, limitGatewayTrustUnavailable, limitGatewayTokenStore,
