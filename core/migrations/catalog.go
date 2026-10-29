@@ -633,6 +633,8 @@ func Catalog() []Migration {
 			kubernetesAuditSettingsSQL),
 		newMigration(251, "Audit exporters export a cluster's operations for audit-check, a page at a time",
 			kubernetesOperationExportsSQL),
+		newMigration(252, "Approvers ask the CA worker to retire a cluster's CA",
+			kubernetesCARetireRequestsSQL),
 	}
 }
 
@@ -1165,3 +1167,6 @@ var kubernetesAuditSettingsSQL string
 
 //go:embed 000251_kubernetes_operation_exports.up.sql
 var kubernetesOperationExportsSQL string
+
+//go:embed 000252_kubernetes_ca_retire_requests.up.sql
+var kubernetesCARetireRequestsSQL string

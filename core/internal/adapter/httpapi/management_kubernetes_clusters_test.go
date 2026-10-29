@@ -58,6 +58,43 @@ type kubernetesClusterStub struct {
 	// exportPageDelay slows each page: the stream outlives the request.
 	exportPageDelay time.Duration
 	denialRanges    [][2]time.Time
+	retires         []kubecluster.CARetireRequestCommand
+}
+
+func kubernetesTestRetireID() publicid.ID {
+	id, err := publicid.Parse(kubernetesTestKey)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
+func (stub *kubernetesClusterStub) RequestCARetire(_ context.Context,
+	command kubecluster.CARetireRequestCommand) (kubecluster.CARetireRequestResult, error) {
+	stub.calls = append(stub.calls, "request-retire")
+	stub.retires = append(stub.retires, command)
+	if stub.failure != nil {
+		return kubecluster.CARetireRequestResult{}, stub.failure
+	}
+	created := time.Date(2026, 10, 30, 6, 0, 0, 0, time.UTC)
+	return kubecluster.CARetireRequestResult{Created: command.CAVersion != 7, Request: kubecluster.CARetireRequest{
+		ID: kubernetesTestRetireID(), CAID: command.CAID, CAVersion: command.CAVersion,
+		Reason: command.Reason, ChangeRef: command.ChangeRef, Note: command.Note,
+		State: kubecluster.RetireStatePending, CreatedAt: created, ExpiresAt: created.Add(time.Hour)}}, nil
+}
+
+func (stub *kubernetesClusterStub) ListCARetireRequests(_ context.Context,
+	query kubecluster.PageQuery) (kubecluster.CARetireRequestPage, error) {
+	stub.calls = append(stub.calls, "list-retires")
+	stub.pages = append(stub.pages, query)
+	if stub.failure != nil {
+		return kubecluster.CARetireRequestPage{}, stub.failure
+	}
+	created := time.Date(2026, 10, 30, 6, 0, 0, 0, time.UTC)
+	return kubecluster.CARetireRequestPage{Next: stub.next, Requests: []kubecluster.CARetireRequest{{
+		ID: kubernetesTestRetireID(), CAVersion: 3, Reason: kubecluster.RetireReasonAdmin,
+		ChangeRef: "CHG-12", State: kubecluster.RetireStateRefused, Refusal: kubecluster.RetireRefusalChanged,
+		CreatedAt: created, ExpiresAt: created.Add(time.Hour), FinishedAt: created.Add(time.Minute)}}}, nil
 }
 
 func (stub *kubernetesClusterStub) ListJoinKeys(_ context.Context,
@@ -598,6 +635,31 @@ func TestKubernetesClusterHTTPBoundary(t *testing.T) {
 			"read-ca", `"certificate_pem":"-----BEGIN CERTIFICATE-----\n`, ""},
 		{"read an unknown CA", http.MethodGet, cluster + "/certificate-authorities/" + kubernetesTestKey, "", "",
 			nil, 404, "read-ca", "kubernetes_cluster_not_found", ""},
+		{"request a retire", http.MethodPost, cluster + "/ca-retire-requests",
+			`{"ca_id":"` + kubernetesTestCAID + `","ca_version":3,"reason":"compromise","change_ref":"INC-9","note":"key leaked"}`,
+			"", nil, 201, "request-retire", `"created":true`, ""},
+		{"request a retire already waiting", http.MethodPost, cluster + "/ca-retire-requests",
+			`{"ca_id":"` + kubernetesTestCAID + `","ca_version":7,"reason":"admin","change_ref":"CHG-1","note":""}`,
+			"", nil, 200, "request-retire", `"created":false`, ""},
+		{"request a retire, no CA", http.MethodPost, cluster + "/ca-retire-requests",
+			`{"ca_version":3,"reason":"admin","change_ref":"CHG-1","note":""}`, "", nil, 400, "", "invalid_request", ""},
+		{"request a retire, unknown field", http.MethodPost, cluster + "/ca-retire-requests",
+			`{"ca_id":"` + kubernetesTestCAID + `","ca_version":3,"reason":"admin","change_ref":"x","note":"","force":true}`,
+			"", nil, 400, "", "invalid_request", ""},
+		{"request a retire, a query", http.MethodPost, cluster + "/ca-retire-requests?page_size=1",
+			`{"ca_id":"` + kubernetesTestCAID + `","ca_version":3,"reason":"admin","change_ref":"x","note":""}`,
+			"", nil, 404, "", "", ""},
+		{"request a retire, retired", http.MethodPost, cluster + "/ca-retire-requests",
+			`{"ca_id":"` + kubernetesTestCAID + `","ca_version":3,"reason":"admin","change_ref":"x","note":""}`,
+			"", kubecluster.ErrCARetired, 409, "request-retire", "ca_already_retired", ""},
+		{"request a retire, another reason waits", http.MethodPost, cluster + "/ca-retire-requests",
+			`{"ca_id":"` + kubernetesTestCAID + `","ca_version":3,"reason":"admin","change_ref":"x","note":""}`,
+			"", kubecluster.ErrRetirePending, 409, "request-retire", "retire_request_pending", ""},
+		{"request a retire, too often", http.MethodPost, cluster + "/ca-retire-requests",
+			`{"ca_id":"` + kubernetesTestCAID + `","ca_version":3,"reason":"admin","change_ref":"x","note":""}`,
+			"", kubecluster.ErrRetireRateLimited, 429, "request-retire", "retire_rate_limited", ""},
+		{"list retire requests", http.MethodGet, cluster + "/ca-retire-requests?page_size=10", "", "", nil, 200,
+			"list-retires", `"refusal":"changed"`, ""},
 		{"a CA page over 50", http.MethodGet, cluster + "/certificate-authorities?page_size=51", "", "", nil, 404,
 			"", "", ""},
 		{"a replica page of 100", http.MethodGet, cluster + "/replicas?page_size=100", "", "", nil, 200,

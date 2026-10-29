@@ -160,6 +160,8 @@ type Store interface {
 	ReplaceAuditSettings(ctx context.Context, replacement AuditSettingsReplacement) (AuditSettingsResult, error)
 	BeginExport(ctx context.Context, query ExportQuery) (ExportHeader, error)
 	ExportPage(ctx context.Context, query ExportQuery, after PageCursor) ([]ExportRecord, error)
+	RequestCARetire(ctx context.Context, command CARetireRequestCommand) (CARetireRequestResult, error)
+	ListCARetireRequests(ctx context.Context, query PageQuery) (CARetireRequestPage, error)
 }
 
 // Clock reads the host's time; it only refuses sessions that already ended.

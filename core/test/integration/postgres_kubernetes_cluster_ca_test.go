@@ -287,6 +287,7 @@ WHERE workspace.public_id = $1::UUID`, scope.WorkspaceID().String()).Scan(&insta
 	fixture = assertDataKeyRewrapAndRetire(ctx, t, admin, fixture, operator)
 	assertClusterCARevisionBound(ctx, t, worker, fixture)
 	assertKubernetesCAReads(ctx, t, service, owner, scope, clusterID, first.ID, operator)
+	assertKubernetesCARetireRequests(ctx, t, admin, fixture, service, owner)
 	assertDeletedClusterCAs(ctx, t, admin, fixture, service, owner)
 	assertClusterCAPostpone(ctx, t, admin, fixture)
 	assertCAWorkerPass(ctx, t, admin, fixture, service, owner)

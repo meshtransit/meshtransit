@@ -134,18 +134,7 @@ func RetireCA(ctx context.Context, store OperatorStore, installation deployment.
 				if target.ID != ca {
 					continue
 				}
-				changes := kubeca.Changes{Operator: operator, Schedules: []kubeca.Schedule{
-					{Cluster: cluster.ID, At: locked.Now},
-				}}
-				if target.Kind == kubeca.KindRoot {
-					for _, below := range cluster.CAs {
-						if below.Kind == kubeca.KindIntermediate && below.IssuerID == target.ID {
-							changes.Steps = append(changes.Steps, retireStep(below, reason))
-						}
-					}
-				}
-				changes.Steps = append(changes.Steps, retireStep(target, reason))
-				return changes, nil
+				return retireChanges(locked, cluster, target, reason, operator), nil
 			}
 		}
 		return kubeca.Changes{}, kubeca.ErrInvalid

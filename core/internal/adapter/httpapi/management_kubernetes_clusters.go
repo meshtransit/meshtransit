@@ -47,6 +47,9 @@ const (
 	kubernetesAuditSettingsReadOperation    = "kubernetes_audit_settings_read"
 	kubernetesAuditSettingsReplaceOperation = "kubernetes_audit_settings_replace"
 	kubernetesDenialCountsOperation         = "kubernetes_operation_denial_counts"
+	// K1d d2a: approvers ask the CA worker to retire a CA.
+	kubernetesCARetireListOperation    = "kubernetes_ca_retire_request_list"
+	kubernetesCARetireRequestOperation = "kubernetes_ca_retire_request_create"
 )
 
 // KubernetesClusterManager manages a Network's Kubernetes clusters, their
@@ -85,6 +88,8 @@ type KubernetesClusterManager interface {
 		error)
 	BeginExport(context.Context, kubecluster.ExportQuery) (kubecluster.ExportHeader, error)
 	ExportPage(context.Context, kubecluster.ExportQuery, kubecluster.PageCursor) ([]kubecluster.ExportRecord, error)
+	RequestCARetire(context.Context, kubecluster.CARetireRequestCommand) (kubecluster.CARetireRequestResult, error)
+	ListCARetireRequests(context.Context, kubecluster.PageQuery) (kubecluster.CARetireRequestPage, error)
 }
 
 type kubernetesClusterPath struct {
@@ -123,6 +128,7 @@ type kubernetesClusterPath struct {
 //	GET         kubernetes-clusters/{c}/operation-denial-counts            sums (K1d d1c)
 //	GET|PUT     kubernetes-clusters/{c}/audit-settings                     read, replace (K1d d1d)
 //	GET         kubernetes-clusters/{c}/operation-exports                  export (K1d d1d)
+//	GET|POST    kubernetes-clusters/{c}/ca-retire-requests                 list, request (K1d d2a)
 //
 // Only GET of a list takes a query: page_size and page_token (K1d).
 func parseKubernetesClusterPath(request *http.Request) (kubernetesClusterPath, bool) {
@@ -221,6 +227,10 @@ func (path *kubernetesClusterPath) route(rest []string) (map[string]string, bool
 		path.methods = restMethods{http.MethodGet, http.MethodPut}
 		return map[string]string{http.MethodGet: kubernetesAuditSettingsReadOperation,
 			http.MethodPut: kubernetesAuditSettingsReplaceOperation}, true
+	case len(rest) == 2 && rest[1] == "ca-retire-requests":
+		path.methods = collectionMethods
+		return map[string]string{http.MethodGet: kubernetesCARetireListOperation,
+			http.MethodPost: kubernetesCARetireRequestOperation}, true
 	case len(rest) == 2 && rest[1] == "operation-denial-counts":
 		path.methods = restMethods{http.MethodGet}
 		return map[string]string{http.MethodGet: kubernetesDenialCountsOperation}, true
@@ -346,6 +356,8 @@ func (handler *ManagementHandler) handleKubernetesClusters(ctx context.Context, 
 		return handler.readKubernetesReplicasAndCAs(ctx, response, correlationID, path, session, fail)
 	case kubernetesOperationExportOperation:
 		return handler.exportKubernetesOperations(ctx, response, correlationID, path, session, fail)
+	case kubernetesCARetireListOperation, kubernetesCARetireRequestOperation:
+		return handler.serveKubernetesCARetireRequests(ctx, response, request, correlationID, path, session, fail)
 	case kubernetesAuditSettingsReadOperation, kubernetesAuditSettingsReplaceOperation:
 		return handler.serveKubernetesAuditSettings(ctx, response, request, correlationID, path, session, fail)
 	case kubernetesOperationListOperation, kubernetesOperationReadOperation, kubernetesDenialCountsOperation:
@@ -772,6 +784,18 @@ func classifyKubernetesClusterError(err error) managementError {
 	case errors.Is(err, kubecluster.ErrKeyNotUsable):
 		return managementError{Status: http.StatusConflict, Code: "join_key_not_usable",
 			Message: "The join key is revoked, expired or used up; the request was cancelled"}
+	// Schema 252 (K1d d2a): a retired CA, another reason waiting, or a
+	// person who asked too often.
+	case errors.Is(err, kubecluster.ErrCARetired):
+		return managementError{Status: http.StatusConflict, Code: "ca_already_retired",
+			Message: "The certificate authority is already retired"}
+	case errors.Is(err, kubecluster.ErrRetirePending):
+		return managementError{Status: http.StatusConflict, Code: "retire_request_pending",
+			Message: "Another request to retire this certificate authority, for another reason, is waiting"}
+	case errors.Is(err, kubecluster.ErrRetireRateLimited):
+		return managementError{Status: http.StatusTooManyRequests, Code: "retire_rate_limited",
+			Message:   "You asked to retire certificate authorities 5 times in the last hour; try again later",
+			Retryable: true}
 	// Schema 235 (K1.1b): a pasted trust over another version, or a new
 	// identity while replicas run.
 	case errors.Is(err, kubecluster.ErrTrustChanged):

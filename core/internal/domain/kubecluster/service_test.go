@@ -58,6 +58,19 @@ type recordingStore struct {
 	operations    []kubecluster.OperationQuery
 	auditSettings []kubecluster.AuditSettingsReplacement
 	exports       []kubecluster.ExportQuery
+	retires       []kubecluster.CARetireRequestCommand
+}
+
+func (store *recordingStore) RequestCARetire(_ context.Context,
+	command kubecluster.CARetireRequestCommand) (kubecluster.CARetireRequestResult, error) {
+	store.retires = append(store.retires, command)
+	return kubecluster.CARetireRequestResult{}, nil
+}
+
+func (store *recordingStore) ListCARetireRequests(_ context.Context,
+	query kubecluster.PageQuery) (kubecluster.CARetireRequestPage, error) {
+	store.pages = append(store.pages, query)
+	return kubecluster.CARetireRequestPage{}, nil
 }
 
 func (store *recordingStore) ListJoinKeys(_ context.Context,
@@ -582,5 +595,45 @@ func TestServiceExports(t *testing.T) {
 	from, to := query.RecordsRange()
 	if from != query.From.Add(-5*time.Minute) || to != query.To.Add(5*time.Minute) {
 		t.Fatalf("RecordsRange() = %v, %v", from, to)
+	}
+}
+
+// A retire request names a CA at a version, a reason a person may give and
+// a change reference; text is printable and bounded (K1d §4.1).
+func TestServiceRequestCARetire(t *testing.T) {
+	t.Parallel()
+	service, store, session, scope, _ := serviceFixture(t)
+	base := kubecluster.CARetireRequestCommand{Session: session, Scope: scope,
+		ClusterID: kubecluster.ID(mustID(t, "000000000301")), CAID: mustID(t, "000000000401"), CAVersion: 2,
+		Reason: kubecluster.RetireReasonCompromise, ChangeRef: "INC-4711", CorrelationID: mustID(t, "000000000901")}
+	for name, change := range map[string]func(*kubecluster.CARetireRequestCommand){
+		"no cluster":          func(c *kubecluster.CARetireRequestCommand) { c.ClusterID = kubecluster.ID{} },
+		"no CA":               func(c *kubecluster.CARetireRequestCommand) { c.CAID = publicid.ID{} },
+		"version zero":        func(c *kubecluster.CARetireRequestCommand) { c.CAVersion = 0 },
+		"the worker's reason": func(c *kubecluster.CARetireRequestCommand) { c.Reason = "scheduled" },
+		"no change reference": func(c *kubecluster.CARetireRequestCommand) { c.ChangeRef = "" },
+		"a line break":        func(c *kubecluster.CARetireRequestCommand) { c.Note = "first\nsecond" },
+		"a long change ref":   func(c *kubecluster.CARetireRequestCommand) { c.ChangeRef = strings.Repeat("x", 257) },
+		"invalid UTF-8 note":  func(c *kubecluster.CARetireRequestCommand) { c.Note = "\xff" },
+		"no correlation":      func(c *kubecluster.CARetireRequestCommand) { c.CorrelationID = publicid.ID{} },
+		"a bidi override":     func(c *kubecluster.CARetireRequestCommand) { c.ChangeRef = "INC\u202e1" },
+		"a line separator":    func(c *kubecluster.CARetireRequestCommand) { c.Note = "a\u2028b" },
+	} {
+		command := base
+		change(&command)
+		if _, err := service.RequestCARetire(context.Background(), command); !errors.Is(err, kubecluster.ErrInvalid) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if len(store.retires) != 0 {
+		t.Fatalf("invalid requests reached the store: %+v", store.retires)
+	}
+	accented := base
+	accented.Note = strings.Repeat("ê", 256)
+	if _, err := service.RequestCARetire(context.Background(), accented); err != nil {
+		t.Fatalf("256 accented characters: %v", err)
+	}
+	if len(store.retires) != 1 {
+		t.Fatalf("the valid request did not reach the store")
 	}
 }

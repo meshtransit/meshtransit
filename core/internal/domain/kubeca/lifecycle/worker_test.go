@@ -54,9 +54,13 @@ type fakeStore struct {
 	marked    []kubeca.Operator
 	listed    int
 	stamped   []int64
+	guardErr  error
 }
 
 func (store *fakeStore) ReadGuard(context.Context, deployment.ID) (kubeca.Guard, error) {
+	if store.guardErr != nil {
+		return kubeca.Guard{}, store.guardErr
+	}
 	guard := store.guard
 	if guard.Generation == 0 {
 		guard.Generation, guard.ReadStarted, guard.ReadFinished = 1, time.Now(), time.Now()

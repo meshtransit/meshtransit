@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 251 {
-		t.Fatalf("len(Catalog()) = %d, want 251", len(catalog))
+	if len(catalog) != 252 {
+		t.Fatalf("len(Catalog()) = %d, want 252", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 251 {
-		t.Fatalf("LatestVersion() = %d, want 251", LatestVersion())
+	if LatestVersion() != 252 {
+		t.Fatalf("LatestVersion() = %d, want 252", LatestVersion())
 	}
 }
 
@@ -7516,6 +7516,42 @@ func TestMigration251KubernetesOperationExports(t *testing.T) {
 	} {
 		if strings.Contains(migration.SQL, never) {
 			t.Errorf("migration 251 has %q", never)
+		}
+	}
+}
+
+func TestMigration252KubernetesCARetireRequests(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 252 || catalog[251].Version != 252 {
+		t.Fatalf("the catalog has no migration 252 (%d migrations)", len(catalog))
+	}
+	migration := catalog[251]
+	for _, want := range []string{
+		"'kubernetes_cluster.approve');",
+		"WHERE state = 'pending';",
+		"CHECK (expires_at = created_at + INTERVAL '1 hour')",
+		"LIMIT 5) AS counted;",
+		"ERRCODE = 'MTK40'", "ERRCODE = 'MTK41'", "ERRCODE = 'MTK42'",
+		"AFTER INSERT ON mesh.kubernetes_ca_retire_request",
+		"ALTER TABLE mesh.kubernetes_ca_retire_request FORCE ROW LEVEL SECURITY;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.request_kubernetes_ca_retire_v1(",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_kubernetes_ca_retire_work_v1(UUID, INTEGER) TO mesh_worker;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.complete_kubernetes_ca_retire_request_v1(UUID, UUID, UUID, UUID) TO mesh_worker;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 252 lacks %q", want)
+		}
+	}
+	for _, never := range []string{
+		// The API never touches the CA rows; only the worker retires.
+		"UPDATE mesh.kubernetes_cluster_ca",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.kubernetes_ca_retire_request_waiting_internal_v1",
+		"read_kubernetes_ca_retire_work_v1(UUID, INTEGER) TO mesh_runtime",
+		"complete_kubernetes_ca_retire_request_v1(UUID, UUID, UUID, UUID) TO mesh_runtime",
+	} {
+		if strings.Contains(migration.SQL, never) {
+			t.Errorf("migration 252 has %q", never)
 		}
 	}
 }

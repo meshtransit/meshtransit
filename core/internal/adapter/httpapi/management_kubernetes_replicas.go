@@ -16,7 +16,7 @@ import (
 func isKubernetesPagedList(operation string) bool {
 	switch operation {
 	case kubernetesJoinKeyListOperation, kubernetesRequestListOperation, kubernetesReplicaListOperation,
-		kubernetesCAListOperation:
+		kubernetesCAListOperation, kubernetesCARetireListOperation:
 		return true
 	default:
 		return false

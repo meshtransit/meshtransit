@@ -146,6 +146,14 @@ func kubernetesClusterDatabaseError(err error) error {
 			return kubecluster.ErrTrustChanged
 		case "MTK22":
 			return kubecluster.ErrIdentityBound
+		// Schema 252: the CA is retired already, another reason waits, or
+		// the person asked too often.
+		case "MTK40":
+			return kubecluster.ErrCARetired
+		case "MTK41":
+			return kubecluster.ErrRetirePending
+		case "MTK42":
+			return kubecluster.ErrRetireRateLimited
 		}
 	}
 	if errors.Is(err, pgx.ErrNoRows) {

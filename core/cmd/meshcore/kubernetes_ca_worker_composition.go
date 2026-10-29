@@ -60,7 +60,7 @@ func composeKubernetesCAWorker(settings config.KubernetesCAWorkerConfig, suffix 
 	worker, err := lifecycle.New(lifecycle.Options{
 		DeploymentID: settings.DeploymentID, Suffix: suffix, BatchSize: settings.BatchSize,
 		PollInterval: settings.PollInterval, OperationTimeout: settings.OperationTimeout, Version: version,
-		Policy: lifecycle.DefaultPolicy(), Marks: marks,
+		Policy: lifecycle.DefaultPolicy(), Marks: marks, Requests: store.RetireQueue(),
 	}, store, fileCustodySource(settings), logger)
 	if err != nil {
 		return kubernetesCAWorkers{}, errors.Join(errInvalidKubernetesCAWorkerComposition, err)

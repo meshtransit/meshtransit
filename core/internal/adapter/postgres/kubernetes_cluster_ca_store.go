@@ -270,6 +270,16 @@ func (store *KubernetesClusterCAStore) changeOnce(ctx context.Context, installat
 				return false, err
 			}
 		}
+		// A person's request these changes carry out ends with them, or
+		// nothing applies (K1d Q159).
+		if changes.Completes != (publicid.ID{}) {
+			if !changes.Completes.IsValid() {
+				return false, ErrInvalidKubernetesClusterCAStore
+			}
+			if err := completeRetireRequest(ctx, transaction, installation, scope, changes.Completes); err != nil {
+				return false, err
+			}
+		}
 		return true, nil
 	})
 	if errors.Is(err, ErrKubernetesClusterCABusy) {

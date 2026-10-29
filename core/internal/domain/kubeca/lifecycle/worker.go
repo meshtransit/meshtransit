@@ -90,6 +90,9 @@ type Options struct {
 	Policy           Policy
 	// Marks is optional: without it only an operator's mark stops CA work.
 	Marks MarkKeeper
+	// Requests is optional: without it people's requests to retire a CA
+	// wait for a worker that reads them (K1d §4.1).
+	Requests RetireRequests
 }
 
 func (options Options) valid() bool {
@@ -105,6 +108,8 @@ type Measurements struct {
 	MarksUnavailable                                          bool
 	Passes, Networks, Changed, PlanChanged, Failures, Created uint64
 	Moved, Misnamed, Busy                                     uint64
+	// Retired and RetireRefused count people's retire requests ended.
+	Retired, RetireRefused uint64
 }
 
 // Worker keeps the CAs of the installation's clusters through their life.
@@ -131,6 +136,7 @@ type Worker struct {
 	marksUnavailable                                        atomic.Bool
 	passes, networks, changed, planChanged, failures, moved atomic.Uint64
 	created, misnamed, busy                                 atomic.Uint64
+	retired, retireRefused                                  atomic.Uint64
 }
 
 type retryState struct {
@@ -214,7 +220,7 @@ func (worker *Worker) Snapshot() Measurements {
 		Passes:           worker.passes.Load(), Networks: worker.networks.Load(),
 		Changed: worker.changed.Load(), PlanChanged: worker.planChanged.Load(), Failures: worker.failures.Load(),
 		Created: worker.created.Load(), Moved: worker.moved.Load(), Misnamed: worker.misnamed.Load(),
-		Busy: worker.busy.Load(),
+		Busy: worker.busy.Load(), Retired: worker.retired.Load(), RetireRefused: worker.retireRefused.Load(),
 	}
 }
 
@@ -242,7 +248,12 @@ func (worker *Worker) Pass(ctx context.Context) {
 	worker.loadCustody(ctx)
 	worker.forgetStaleBackoff()
 	worker.beat(ctx)
-	if worker.guarded(ctx) || !worker.claimSuffix(ctx) {
+	// The guard is read once, marks compared, for the requests and the
+	// rest: a compromise retires even while a restore is suspected, other
+	// reasons wait or are refused (K1d Q162).
+	guard := worker.guardState(ctx)
+	worker.retireRequests(ctx, guard)
+	if guard.stopsLifecycle() || !worker.claimSuffix(ctx) {
 		return
 	}
 	guardedAt := time.Now()
@@ -288,6 +299,13 @@ func (worker *Worker) Pass(ctx context.Context) {
 // the guard cannot be read. A mark that cannot be compared stops nothing:
 // Redis is never the authority (§5).
 func (worker *Worker) guarded(ctx context.Context) bool {
+	return worker.guardState(ctx).stopsLifecycle()
+}
+
+// guardState reads the guard and compares the marks: on when a restore is
+// suspected, unknown when the guard cannot be read or the marks cannot be
+// compared (lifecycle work stops only in the first two cases).
+func (worker *Worker) guardState(ctx context.Context) guardState {
 	readCtx, cancel := context.WithTimeout(ctx, worker.options.OperationTimeout)
 	defer cancel()
 	guard, err := worker.store.ReadGuard(readCtx, worker.options.DeploymentID)
@@ -295,7 +313,7 @@ func (worker *Worker) guarded(ctx context.Context) bool {
 		if ctx.Err() == nil {
 			worker.logger.WarnContext(ctx, "kubernetes CA work deferred", "error_code", "kubernetes_ca_guard_read_failed")
 		}
-		return true
+		return guardUnknown
 	}
 	// Signing goes on only while the marks are compared (a3 §14 R-M9):
 	// each comparison that finds no restore stamps the guard. Marks that
@@ -328,11 +346,18 @@ func (worker *Worker) guarded(ctx context.Context) bool {
 		}
 	}
 	worker.restoreSuspected.Store(guard.Suspected)
-	if guard.Suspected {
+	switch {
+	case guard.Suspected:
 		worker.logger.ErrorContext(ctx, "kubernetes CA work stopped: database restore suspected", "error_code",
 			"kubernetes_ca_restore_suspected")
+		return guardOn
+	case !compared:
+		// Lifecycle work goes on (Redis is never the authority), but a
+		// person's request other than a compromise waits for a comparison.
+		return guardMarksUnknown
+	default:
+		return guardOff
 	}
-	return guard.Suspected
 }
 
 // settle records how keeping a Network went: a failure backs it off and

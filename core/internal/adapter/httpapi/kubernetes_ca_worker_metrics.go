@@ -79,6 +79,12 @@ func NewKubernetesCAWorkerMetricsCollector(worker *lifecycle.Worker) (prometheus
 			counter("meshtransit_kubernetes_ca_misnamed_total",
 				"Total looks at clusters whose roots sign for another name; only an operator renames them.",
 				func(m lifecycle.Measurements) uint64 { return m.Misnamed }),
+			counter("meshtransit_kubernetes_ca_retire_requests_done_total",
+				"Total requests to retire a CA the worker carried out.",
+				func(m lifecycle.Measurements) uint64 { return m.Retired }),
+			counter("meshtransit_kubernetes_ca_retire_requests_refused_total",
+				"Total requests to retire a CA the worker refused: expired, changed, guard or gone.",
+				func(m lifecycle.Measurements) uint64 { return m.RetireRefused }),
 		},
 	}, nil
 }

@@ -779,6 +779,281 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/ca-retire-requests": {
+      "get": {
+        "operationId": "listKubernetesCARetireRequests",
+        "summary": "List a cluster's requests to retire a certificate authority, newest first",
+        "description": "Requires kubernetes_cluster.approve, or audit.read in the Workspace or the Network.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 10
+            }
+          },
+          {
+            "$ref": "#/components/parameters/PageToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of requests",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "ca_retire_requests"
+                      ],
+                      "properties": {
+                        "ca_retire_requests": {
+                          "type": "array",
+                          "maxItems": 100,
+                          "items": {
+                            "$ref": "#/components/schemas/KubernetesCARetireRequest"
+                          }
+                        },
+                        "next_page_token": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      },
+      "post": {
+        "operationId": "requestKubernetesCARetire",
+        "summary": "Ask the CA worker to retire one of a cluster's certificate authorities",
+        "description": "Requires kubernetes_cluster.approve. Core records the request; the CA worker retires the CA (a root with its intermediates) within its next pass and marks the request done, or refuses it: expired after an hour, changed when the CA moved past ca_version, guard while a database restore is suspected (but for compromise), gone when the CA was already retired. A waiting request for the same CA and reason is returned unchanged (200, created false); another reason waiting is 409 retire_request_pending. At most 5 requests a person an hour (429 retire_rate_limited). change_ref and note hold no secrets or personal data.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KubernetesCARetireRequestCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A request for the same CA and reason already waits",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "created",
+                        "request"
+                      ],
+                      "properties": {
+                        "created": {
+                          "type": "boolean"
+                        },
+                        "request": {
+                          "$ref": "#/components/schemas/KubernetesCARetireRequest"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "The request is recorded",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "created",
+                        "request"
+                      ],
+                      "properties": {
+                        "created": {
+                          "type": "boolean"
+                        },
+                        "request": {
+                          "$ref": "#/components/schemas/KubernetesCARetireRequest"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/operation-denial-counts": {
       "get": {
         "operationId": "getKubernetesOperationDenialCounts",
@@ -6064,6 +6339,137 @@
       }
     },
     "schemas": {
+      "KubernetesCARetireRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "ca_id",
+          "ca_version",
+          "reason",
+          "change_ref",
+          "note",
+          "requested_by_principal_id",
+          "state",
+          "refusal",
+          "created_at",
+          "expires_at",
+          "finished_at"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ca_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ca_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "emergency",
+              "compromise"
+            ]
+          },
+          "change_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "requested_by_principal_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "done",
+              "refused"
+            ]
+          },
+          "refusal": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "expired",
+              "changed",
+              "guard",
+              "gone",
+              null
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "KubernetesCARetireRequestCreate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ca_id",
+          "ca_version",
+          "reason",
+          "change_ref"
+        ],
+        "properties": {
+          "ca_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ca_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "emergency",
+              "compromise"
+            ]
+          },
+          "change_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "description": "A ticket or incident reference; printable, no line breaks."
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Optional; printable, no line breaks."
+          }
+        }
+      },
       "KubernetesAuditSettings": {
         "type": "object",
         "required": [

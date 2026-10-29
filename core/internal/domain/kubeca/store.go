@@ -183,6 +183,37 @@ type Changes struct {
 	Steps     []Step
 	Schedules []Schedule
 	Operator  Operator
+	// Completes names the retire request these changes carry out; it is
+	// marked done in the same transaction, or nothing applies (K1d Q159).
+	Completes publicid.ID
+}
+
+// RetireRequest is a person's waiting request for the worker to retire one
+// of a cluster's CAs (K1d §4.1), as the queue lists it with the database's
+// clock.
+type RetireRequest struct {
+	Scope     network.Scope
+	Cluster   publicid.ID
+	ID        publicid.ID
+	CA        publicid.ID
+	CAVersion int64
+	CAState   State
+	Reason    Reason
+	ExpiresAt time.Time
+}
+
+// Why the worker refused a retire request; the API's names (K1d §4.1).
+const (
+	RetireRefusalExpired = "expired"
+	RetireRefusalChanged = "changed"
+	RetireRefusalGuard   = "guard"
+	RetireRefusalGone    = "gone"
+)
+
+// RetireRequestOperator names the worker carrying out request on the CA's
+// row; the person and their change reference stay on the request (Q160).
+func RetireRequestOperator(request publicid.ID) Operator {
+	return Operator{Name: "retire-request", ChangeRef: request.String()}
 }
 
 // Guard is an installation's restore guard (a3 §5) and the marks the
