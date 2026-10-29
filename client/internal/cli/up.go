@@ -164,8 +164,8 @@ func runUp(
 	return writeUpConnected(ctx, stdout, stderr, isJSON, client, result)
 }
 
-// ensureActiveProfile reuses the profile already pointing at server, or
-// creates one, and makes it the active profile.
+// ensureActiveProfile makes a profile of server active: the active one of
+// server, else the first of server, else a new one.
 func ensureActiveProfile(
 	ctx context.Context,
 	client DaemonClient,
@@ -176,7 +176,10 @@ func ensureActiveProfile(
 	if err != nil {
 		return localapi.Profile{}, false, err
 	}
-	for _, existing := range profiles.Profiles {
+	// The active profile wins over another of the same server: down then
+	// up must not switch profiles (e5).
+	var match *localapi.Profile
+	for index, existing := range profiles.Profiles {
 		existingServer, parseErr := canonicalServer(existing.ControlURL)
 		if parseErr != nil || existingServer != server {
 			continue
@@ -184,7 +187,12 @@ func ensureActiveProfile(
 		if existing.IsActive {
 			return existing, false, nil
 		}
-		activated, err := client.ActivateProfile(ctx, existing.ID)
+		if match == nil {
+			match = &profiles.Profiles[index]
+		}
+	}
+	if match != nil {
+		activated, err := client.ActivateProfile(ctx, match.ID)
 
 		return activated, false, err
 	}

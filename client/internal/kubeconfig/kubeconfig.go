@@ -1,8 +1,9 @@
 // Package kubeconfig adds and removes the kubeconfig entries meshctl
 // manages (K1e design §4): a cluster and a context per cluster and group,
-// marked with an extension, and the empty user mt-none. It edits files the
-// way client-go chooses them, keeps every other entry, field, comment and
-// the order, and never writes a credential.
+// marked with an extension, and the user mt-none, which holds only a
+// placeholder token. It edits files the way client-go chooses them, keeps
+// every other entry, field, comment and the order, and never writes a
+// credential.
 package kubeconfig
 
 import (
@@ -22,9 +23,13 @@ import (
 const (
 	// ExtensionName marks the entries meshctl manages.
 	ExtensionName = "meshtransit.net/managed"
-	// NoUser is the user the contexts name: no credential at all, the
-	// gateway knows the Device by its WireGuard key.
+	// NoUser is the user the contexts name: no credential, the gateway
+	// knows the Device by its WireGuard key.
 	NoUser = "mt-none"
+	// PlaceholderToken is all NoUser holds: client-go asks for a username
+	// when a user has nothing (K1b Q78). It is no secret and grants
+	// nothing: the gateway drops Authorization, an API server refuses it.
+	PlaceholderToken = "meshtransit-mesh-identity"
 
 	maxFileSize = 4 << 20
 	lockStale   = time.Minute
@@ -46,6 +51,7 @@ var (
 	ErrNameTaken = errors.New("kubeconfig: another cluster's entry has that name")
 	// ErrCredential reports a user mt-none that carries a credential.
 	ErrCredential = errors.New("kubeconfig: a user named mt-none carries a credential; remove it")
+
 	// ErrLocked reports a lock another writer holds.
 	ErrLocked = errors.New("kubeconfig: locked by another writer")
 	// ErrUnsafe reports a file meshctl must not write: another user's, or a
@@ -611,13 +617,50 @@ func (document *config) nameFree(name string, marker Marker, force bool) error {
 	return nil
 }
 
-// noUserCredential refuses a user mt-none that is not empty: kubectl would
-// send what it carries to the gateway (review e2 L5).
+// noUserCredential refuses a user mt-none that holds more than the
+// placeholder: kubectl would send what it carries to the gateway (review
+// e2 L5).
 func (document *config) noUserCredential() error {
-	if user := document.findName("users", NoUser); user != nil && !emptyUser(get(user, "user")) {
+	user := document.findName("users", NoUser)
+	if user == nil {
+		return nil
+	}
+	// A key given twice: meshctl reads the first, client-go the last (re-review L1).
+	if keyCount(user, "user") > 1 || keyCount(user, "name") > 1 {
+		return ErrCredential
+	}
+	if body := get(user, "user"); !emptyUser(body) && !placeholderUser(body) {
 		return ErrCredential
 	}
 	return nil
+}
+
+// keyCount counts key in mapping.
+func keyCount(mapping *yaml.Node, key string) int {
+	count := 0
+	for index := 0; mapping != nil && mapping.Kind == yaml.MappingNode && index+1 < len(mapping.Content); index += 2 {
+		if mapping.Content[index].Value == key {
+			count++
+		}
+	}
+	return count
+}
+
+// placeholderUser reports a user body that holds the placeholder token and
+// nothing else.
+func placeholderUser(body *yaml.Node) bool {
+	if body == nil || body.Kind != yaml.MappingNode || len(body.Content) != 2 {
+		return false
+	}
+	key, value := body.Content[0], body.Content[1]
+	return key.Kind == yaml.ScalarNode && key.Value == "token" &&
+		value.Kind == yaml.ScalarNode && value.Tag == "!!str" && value.Value == PlaceholderToken
+}
+
+func placeholderBody() *yaml.Node {
+	body := &yaml.Node{Kind: yaml.MappingNode}
+	set(body, "token", scalar(PlaceholderToken))
+	return body
 }
 
 // emptyUser reports a user body with nothing in it: missing, null, or an
@@ -694,12 +737,16 @@ func (document *config) upsert(entry Entry, force bool) error {
 		set(existing, "name", scalar(entry.Name))
 		set(existing, itemKey[item.list], item.body)
 	}
-	if document.findName("users", NoUser) == nil {
-		user := &yaml.Node{Kind: yaml.MappingNode}
+	// An empty mt-none, as meshctl wrote before the placeholder, gets it:
+	// kubectl would ask for a username (e5).
+	if user := document.findName("users", NoUser); user == nil {
+		user = &yaml.Node{Kind: yaml.MappingNode}
 		set(user, "name", scalar(NoUser))
-		set(user, "user", &yaml.Node{Kind: yaml.MappingNode})
+		set(user, "user", placeholderBody())
 		list := document.list("users")
 		list.Content = append(list.Content, user)
+	} else if emptyUser(get(user, "user")) {
+		set(user, "user", placeholderBody())
 	}
 	return nil
 }
@@ -746,7 +793,8 @@ func (document *config) remove(match func(Marker) bool) int {
 	users := document.list("users")
 	kept := users.Content[:0]
 	for _, entry := range users.Content {
-		if nameOf(entry) != NoUser || !emptyUser(get(entry, "user")) {
+		body := get(entry, "user")
+		if nameOf(entry) != NoUser || !emptyUser(body) && !placeholderUser(body) {
 			kept = append(kept, entry)
 		}
 	}

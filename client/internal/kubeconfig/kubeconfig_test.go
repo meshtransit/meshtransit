@@ -2,6 +2,7 @@ package kubeconfig
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -66,8 +67,11 @@ func TestLoginCreatesAndKeepsOthers(t *testing.T) {
 	if cluster["certificate-authority"] != "/var/lib/meshtransit/kube/p/c.pem" || cluster["tls-server-name"] != "prod.k8s.example" {
 		t.Fatalf("cluster %v", cluster)
 	}
-	if strings.Contains(string(must(os.ReadFile(file))), "token") { //nolint:gosec // The test's own file.
-		t.Fatal("a credential was written")
+	// mt-none holds the placeholder only: kubectl asks for a username
+	// when a user holds nothing (K1b Q78, e5).
+	users := config["users"].([]any)
+	if len(users) != 1 || fmt.Sprint(users[0]) != "map[name:mt-none user:map[token:meshtransit-mesh-identity]]" {
+		t.Fatalf("users %v", users)
 	}
 	// A group's entry is its own (review v1 H4): the plain one stays.
 	if _, err := Login([]string{file}, entry("sre"), false, false); err != nil {
@@ -329,5 +333,48 @@ func TestFind(t *testing.T) {
 	if found, err = Find([]string{ours}, entry("").Marker.ClusterID); err != nil || len(found) != 1 ||
 		!found[0].ClusterMissing {
 		t.Fatalf("missing cluster: %+v, %v\n%s", found, err, raw)
+	}
+}
+
+// An empty mt-none, as meshctl wrote before e5, gets the placeholder; a
+// placeholder with anything beside it is a credential.
+func TestLoginPlaceholderUser(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	old := filepath.Join(dir, "old")
+	if err := os.WriteFile(old, []byte("apiVersion: v1\nusers:\n- name: mt-none\n  user: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Login([]string{old}, entry(""), false, false); err != nil {
+		t.Fatal(err)
+	}
+	if users := readConfig(t, old)["users"].([]any); len(users) != 1 ||
+		fmt.Sprint(users[0]) != "map[name:mt-none user:map[token:meshtransit-mesh-identity]]" {
+		t.Fatalf("users %v", users)
+	}
+	mixed := filepath.Join(dir, "mixed")
+	if err := os.WriteFile(mixed, []byte("apiVersion: v1\nusers:\n- name: mt-none\n  user: {token: "+
+		PlaceholderToken+", username: admin}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Login([]string{mixed}, entry(""), false, false); !errors.Is(err, ErrCredential) {
+		t.Fatalf("a placeholder with a username: %v", err)
+	}
+	for name, user := range map[string]string{ //nolint:gosec // G101: test kubeconfigs, no credential.
+		"binary token":  "  user: {token: !!binary bWVzaHRyYW5zaXQ=}\n",
+		"aliased token": "  user: {token: *t}\n",
+		"token twice":   "  user: {token: " + PlaceholderToken + ", token: real}\n",
+		"user twice":    "  user: {token: " + PlaceholderToken + "}\n  user: {token: real}\n",
+		"block literal": "  user:\n    token: |\n      " + PlaceholderToken + "\n",
+		"token file":    "  user: {tokenFile: /etc/token}\n",
+	} {
+		path := filepath.Join(dir, strings.ReplaceAll(name, " ", "-"))
+		content := "apiVersion: v1\nx: &t " + PlaceholderToken + "\nusers:\n- name: mt-none\n" + user
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Login([]string{path}, entry(""), false, false); !errors.Is(err, ErrCredential) {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }

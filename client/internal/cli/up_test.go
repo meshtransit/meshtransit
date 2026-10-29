@@ -182,6 +182,28 @@ func TestUpIsIdempotentOnAConnectedMachine(t *testing.T) {
 	}
 }
 
+// Two profiles of one server: up keeps the active one, even when another
+// is listed first (e5: down then up switched profiles).
+func TestUpKeepsTheActiveProfileOfItsServer(t *testing.T) {
+	t.Parallel()
+	client := &upFakeClient{
+		profiles: []localapi.Profile{
+			{ID: "first", Name: "First", ControlURL: "https://control.meshtransit.net"},
+			{ID: "active", Name: "Active", ControlURL: "https://control.meshtransit.net/", IsActive: true},
+		},
+		registration: "registered",
+		network:      "provider-net.mesh",
+		pinned:       DefaultControlKeyFingerprint,
+		upChanged:    true,
+	}
+	if code, _, stderr := runUpCommand(t, client); code != 0 {
+		t.Fatalf("up exit = %d, stderr = %s", code, stderr)
+	}
+	if len(client.created) != 0 || len(client.activated) != 0 {
+		t.Fatalf("up switched profiles: created=%v activated=%v", client.created, client.activated)
+	}
+}
+
 func TestUpReconnectsAMachineThatWasDown(t *testing.T) {
 	t.Parallel()
 	client := &upFakeClient{
