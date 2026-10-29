@@ -43,6 +43,15 @@ type Snapshot struct {
 	// roots (mtcp-v1 §7.11), sorted by ID; nil for a node that does not take
 	// them (a gateway), what the node holds otherwise, empty or not.
 	KubernetesClusters []KubernetesCluster
+	// KubernetesClustersAuthoritative: KubernetesClusters is a list Core
+	// sent as AVAILABLE in this process and not past its hold, so a cluster
+	// missing from it is gone. False after a restart until Core says (K1e
+	// design §3.3).
+	KubernetesClustersAuthoritative bool
+	// KubernetesClustersNegotiated: the session this map came on negotiated
+	// kube.ca1, so Core speaks for the list on it; with the session up and
+	// no hold, Core confirms the list (K1e, review e1a H3).
+	KubernetesClustersNegotiated bool
 	// DroppedAliasPeers counts the shared Devices the client left out of
 	// this map because their alias could not be used (expired, invalid or
 	// colliding); for the log, never for authority.

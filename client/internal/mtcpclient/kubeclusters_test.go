@@ -276,3 +276,27 @@ func TestKubeClusterHoldWallClockAndNames(t *testing.T) {
 		t.Fatalf("a bad DNS name: %+v", cleared[0])
 	}
 }
+
+// A hold is authoritative only once Core sent an AVAILABLE list in this
+// process, and while not past its hold: a restart's empty hold, or an
+// UNREAD first map, never lets a node delete what it lacks (K1e §3.3).
+func TestKubeClusterHoldAuthoritative(t *testing.T) {
+	t.Parallel()
+	start := time.Now()
+	root := clusterRoot(t, testClusterName)
+	if (kubeClusterHold{}).authoritativeAt(start) {
+		t.Fatal("an empty hold is authoritative")
+	}
+	unread := kubeClusterHold{}.apply(unavailableField(mtcpv1.KubernetesClusters_UNREAD), start)
+	if unread.authoritativeAt(start) {
+		t.Fatal("a first map that is not AVAILABLE made the hold authoritative")
+	}
+	hold := kubeClusterHold{}.apply(clustersField([][]byte{root}, root), start)
+	if !hold.authoritativeAt(start) {
+		t.Fatal("an AVAILABLE list is not authoritative")
+	}
+	hold = hold.apply(unavailableField(mtcpv1.KubernetesClusters_RESTORE), start.Add(time.Hour))
+	if !hold.authoritativeAt(start.Add(25*time.Hour)) || hold.authoritativeAt(start.Add(26*time.Hour+time.Second)) {
+		t.Fatal("the hold's authority does not end with its 25 hours")
+	}
+}

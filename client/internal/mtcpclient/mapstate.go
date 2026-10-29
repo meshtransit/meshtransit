@@ -338,6 +338,8 @@ func (state *mapState) build(input snapshotInput) (networkmap.Snapshot, error) {
 	}
 	if state.takesClusters && state.kubeClusters != nil {
 		snapshot.KubernetesClusters = state.kubeClusters.clusters(input.now)
+		snapshot.KubernetesClustersAuthoritative = state.kubeClusters.authoritativeAt(input.now)
+		snapshot.KubernetesClustersNegotiated = state.clustersNegotiated
 	}
 	// A share whose alias cannot be used now (expired, invalid, colliding,
 	// or a clock ahead of Core's) is left out, not the whole map.

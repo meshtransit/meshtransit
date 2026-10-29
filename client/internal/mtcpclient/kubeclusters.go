@@ -44,6 +44,10 @@ type kubeClusterHold struct {
 	// unavailableSince is wall time (no monotonic reading): a host asleep
 	// still ages the clock (review d3 M1).
 	unavailableSince time.Time
+	// authoritative: the list came from an AVAILABLE field in this process.
+	// A hold that starts empty (a restart) is not, so nothing it lacks may
+	// be deleted (K1e design §3.3, review v1 H2).
+	authoritative bool
 }
 
 // kubeRootUse is a root as a cluster names it.
@@ -181,7 +185,15 @@ func (hold kubeClusterHold) apply(field *mtcpv1.KubernetesClusters, now time.Tim
 			verdicts[use] = usable
 		}
 	}
-	return kubeClusterHold{list: list, pool: pool, verdicts: verdicts}
+	return kubeClusterHold{list: list, pool: pool, verdicts: verdicts, authoritative: true}
+}
+
+// authoritativeAt reports whether the hold's list may be acted on as
+// complete at now: it came from an AVAILABLE field and is not past its
+// hold.
+func (hold kubeClusterHold) authoritativeAt(now time.Time) bool {
+	return hold.authoritative &&
+		(hold.unavailableSince.IsZero() || !now.Round(0).After(hold.unavailableSince.Add(kubeClustersHeldLong)))
 }
 
 // clusters converts the hold at now: each cluster's state and usable roots;
