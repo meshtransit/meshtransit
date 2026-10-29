@@ -669,15 +669,20 @@ The gateway acts on the reason:
 | Reason | Outcome | The gateway |
 |---|---|---|
 | `unavailable`, `busy`, `limited`, `overloaded`, `timeout`, `presence`, `internal` | `RETRY` | sends the same request again after `retry_after_ms` or its own backoff, whichever is longer |
-| `proof`, `renewal_unknown`, `renewal_expired` | `REFUSED` | asks again with its pod token |
-| `token`, `token_expired`, `token_used`, `trust_missing` | `REFUSED` | waits at least 60 seconds for the kubelet to refresh its token, then asks again |
-| `no_ca`, `misnamed` | `REFUSED` | waits for its map to name a signing CA (7.10), at most 5 minutes, then asks again |
-| `contested` | `REFUSED` | asks again after `retry_after_ms` (60 to 90 seconds) |
-| `superseded`, `attempts` | `REFUSED` | asks again with a new request |
+| `proof`, `renewal_unknown`, `renewal_expired` | `REFUSED` | asks again with its pod token, after its backoff (from 2 seconds, doubling, to about 3 minutes) |
+| `token`, `token_expired`, `token_used`, `trust_missing` | `REFUSED` | waits at least 60 seconds for the kubelet to refresh its token, at most 10 minutes, then asks again |
+| `no_ca`, `misnamed` | `REFUSED` | waits for its map to name another signing CA (7.10), at most 5 minutes; asks again within 30 seconds of such a map while it holds no valid certificate (with one, at its early renewal, 7.10), else after its refusal backoff |
+| `contested` | `REFUSED` | asks again after `retry_after_ms` (60 to 90 seconds) or its refusal backoff, whichever is longer |
+| `superseded`, `attempts` | `REFUSED` | asks again with a new request after its refusal backoff |
 | `csr`, `conflict` | `REFUSED` | asks again with a new key and `request_id`; this is the gateway's fault |
 | `invalid` | `REFUSED` | fixes the request's form (one proof, within its sizes) and asks again with a new `request_id`; this is the gateway's fault |
-| `revoked`, `cluster`, `not_gateway`, `not_proven` | `REFUSED` | asks no more in this session |
-| any other, or an unknown `outcome` | | as `RETRY` |
+| `revoked`, `cluster`, `not_gateway`, `not_proven` | `REFUSED` | waits 5 to 15 minutes, or its refusal backoff if longer, then asks again |
+| any other | `REFUSED` | as `superseded` |
+| any | an unknown `outcome` | as `RETRY` |
+
+The refusal backoff starts at a minute and doubles to an hour, jittered,
+with each refusal since the last certificate issued: a fleet refused
+together spreads out.
 
 A pod's token request refuses its Device's other unfinished requests as
 `superseded`. A request still queued when the wait ends stays queued: the

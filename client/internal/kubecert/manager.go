@@ -156,11 +156,7 @@ func (manager *Manager) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case ca := <-manager.maps:
-			manager.mapCA = ca
-			if !manager.mapSeen {
-				manager.mapSeen, manager.attempts, manager.nextAt = true, 0, time.Time{}
-			}
-			manager.planEarly(manager.options.Now())
+			manager.mapArrived(ca, manager.options.Now())
 		case <-timer.C:
 			if now := manager.options.Now(); !now.Before(manager.nextAt) {
 				manager.step(ctx, now)
@@ -175,6 +171,24 @@ func (manager *Manager) Run(ctx context.Context) error {
 		}
 		timer.Reset(wait)
 	}
+}
+
+// mapArrived takes a new map's CAs. The first map starts at once; one that
+// ends a wait for another signing CA (no_ca) brings the next request within
+// recheck, jittered so a cluster's replicas do not ask together, whatever
+// the refusal backoff (docs review a4 M2).
+func (manager *Manager) mapArrived(ca *networkmap.KubernetesCA, now time.Time) {
+	manager.mapCA = ca
+	if !manager.mapSeen {
+		manager.mapSeen, manager.attempts, manager.nextAt = true, 0, time.Time{}
+	}
+	if !manager.waitMapTill.IsZero() && ca != nil && len(ca.Signing) == 32 &&
+		!bytes.Equal(ca.Signing, manager.waitMapSigning) {
+		if soon := now.Add(jitter(recheck)); soon.Before(manager.nextAt) {
+			manager.nextAt = soon
+		}
+	}
+	manager.planEarly(now)
 }
 
 // step acts when due: waits for a token or map out, then asks.

@@ -384,3 +384,41 @@ func TestManagerRenewAfter(t *testing.T) {
 		t.Fatalf("renews at %v, want %v", manager.nextAt, want)
 	}
 }
+
+// After no_ca, a map naming another signing CA brings the next request
+// within recheck, whatever the refusal backoff; the same CA does not
+// (docs review a4 M2).
+func TestManagerWakesOnANewSigningCA(t *testing.T) {
+	t.Parallel()
+	core := newFakeCore(t)
+	manager := testManager(t, core)
+	old := &networkmap.KubernetesCA{Root: make([]byte, 32), Signing: make([]byte, 32), MapRevision: 9}
+	manager.mapArrived(old, *core.now)
+	manager.refusals = 6
+	core.answers = append(core.answers, refuse("no_ca"))
+	manager.step(t.Context(), *core.now)
+	asleep := manager.nextAt
+	if asleep.Sub(*core.now) < 10*time.Minute {
+		t.Fatalf("no_ca after 6 refusals waits %v", asleep.Sub(*core.now))
+	}
+	*core.now = core.now.Add(time.Minute)
+	manager.mapArrived(&networkmap.KubernetesCA{
+		Root: make([]byte, 32), Signing: make([]byte, 32),
+		MapRevision: 10,
+	}, *core.now)
+	if !manager.nextAt.Equal(asleep) {
+		t.Fatalf("the same signing CA moved the next request to %v", manager.nextAt)
+	}
+	manager.mapArrived(&networkmap.KubernetesCA{
+		Root: core.ca.rootPrint[:], Signing: core.ca.intermediatePrint[:], MapRevision: 11,
+	}, *core.now)
+	if wait := manager.nextAt.Sub(*core.now); wait > recheck {
+		t.Fatalf("a new signing CA waits %v", wait)
+	}
+	core.answers = append(core.answers, core.issue)
+	*core.now = manager.nextAt
+	manager.step(t.Context(), *core.now)
+	if _, ok := manager.Current(); !ok {
+		t.Fatal("no certificate once the map named a new CA")
+	}
+}
