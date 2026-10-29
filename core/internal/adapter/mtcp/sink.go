@@ -72,7 +72,10 @@ type mapSink struct {
 	served      *mtcpv1.ServedRoutes // the Sites the node serves; nil: none
 	exits       *mtcpv1.ExitConfig   // the Exit Pools the node holds; nil: none
 	exitServed  *mtcpv1.ServedExits  // the Exit Pool the node serves; nil: none
-	authorized  bool                 // a registration awaits its RegisterResponse
+	// kubeClusters is what the node holds of its Kubernetes clusters, for a
+	// session that negotiated kube.ca1 (§7.11).
+	kubeClusters kubeClusterState
+	authorized   bool // a registration awaits its RegisterResponse
 	// fresh is set for a Kubernetes gateway's session that negotiated
 	// gateway.kube.v1: it is told when its map is current (MapFresh,
 	// mtcp-v1 §7.9).
@@ -134,9 +137,16 @@ func (sink *mapSink) sendSnapshotLocked(_ context.Context, snapshot mapsession.S
 		return err
 	}
 	message.Dns = withInfrastructure(message.Dns, sink.infrastructure)
+	kubeClusters, kubeCounts := sink.kubeClusters, kubeClusterCounts{}
+	if sink.session.Supports(CapabilityKubeCA) {
+		message.KubernetesClusters, kubeClusters, kubeCounts = sink.kubeClusters.encodeKubernetesClusters(snapshot,
+			sink.suffix, true)
+	}
 	if err := sink.session.Send(sharedmtcp.MessageMapSnapshot, message); err != nil {
 		return err
 	}
+	sink.kubeClusters = kubeClusters
+	sink.metrics.kubernetesClustersSent(kubeCounts)
 	if sink.dnsDigest, err = dnsDigest(message.GetDns()); err != nil {
 		return err
 	}
@@ -280,8 +290,20 @@ func (sink *mapSink) SendAuthorityDelta(ctx context.Context, delta mapsession.Au
 	if !proto.Equal(exitServed, sink.exitServed) {
 		message.ServedExits = cmp.Or(exitServed, &mtcpv1.ServedExits{})
 	}
+	// Kubernetes clusters when they changed (§7.11); a delta without a
+	// current map goes as a snapshot, which encodes them itself.
+	kubeClusters, kubeCounts := sink.kubeClusters, kubeClusterCounts{}
+	if sink.hasCurrent && sink.session.Supports(CapabilityKubeCA) {
+		message.KubernetesClusters, kubeClusters, kubeCounts = sink.kubeClusters.encodeKubernetesClusters(snapshot,
+			sink.suffix, false)
+	}
+	sent := sink.hasCurrent
 	if err := sink.sendDeltaLocked(ctx, message, snapshot, grant); err != nil {
 		return err
+	}
+	if sent {
+		sink.kubeClusters = kubeClusters
+		sink.metrics.kubernetesClustersSent(kubeCounts)
 	}
 	sink.noteAuthorityLocked(snapshot)
 	if message.Dns != nil {

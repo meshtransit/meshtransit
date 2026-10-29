@@ -408,3 +408,18 @@ func (store *Store) readInventoryKubernetesCAs(ctx context.Context, transaction 
 	}
 	return nil
 }
+
+// KubernetesTrustGranted reports, in a read of its own, whether this role
+// may run schema 244's readers. Core offers kube.ca1 only then: a session
+// it is offered to must find its clusters' trust read (K1a4d design §2.1).
+func (store *Store) KubernetesTrustGranted(ctx context.Context) (granted bool, resultErr error) {
+	if ctx == nil || store == nil || store.database == nil {
+		return false, ErrInvalidStore
+	}
+	transaction, err := store.database.Begin(ctx)
+	if err != nil || transaction == nil {
+		return false, errors.Join(ErrLoadSnapshot, nonNil(err))
+	}
+	defer func() { resultErr = errors.Join(resultErr, rollback(transaction)) }()
+	return functionGranted(ctx, transaction, kubernetesTrustGrantedSQL)
+}

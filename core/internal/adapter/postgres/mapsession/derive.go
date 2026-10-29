@@ -156,6 +156,13 @@ func (store *Store) Unchanged(ctx context.Context, current appmapsession.Snapsho
 		}
 		unchanged = (refreshAt.IsZero() || now.Before(refreshAt)) && view.Equal(current.Kubernetes())
 	}
+	// A session that takes the clusters' trust (kube.ca1) is rebuilt when
+	// the trust was read again differently at the same revision (a read
+	// that failed, a root's DER found): the stream sends it as a delta
+	// (review d2 H1).
+	if unchanged && current.Kubernetes().TrustTaken() {
+		unchanged = cached.kubernetesTrust.Equal(current.Kubernetes().Trust())
+	}
 	if unchanged {
 		store.stats.unchanged.Add(1)
 	}

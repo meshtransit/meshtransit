@@ -325,3 +325,34 @@ func trustScope(t *testing.T) network.Scope {
 	}
 	return scope
 }
+
+// A kube.ca1 session's map is rebuilt when the trust was read again
+// differently at the same revision; one without kube.ca1 is not (review d2
+// H1).
+func TestUnchangedComparesTheTakenTrust(t *testing.T) {
+	store, transaction, _ := gatewayStoreFixture(t)
+	transaction.kubernetesTrust = pointer(trustAnswer(hex.EncodeToString(testRootPrint[:])))
+	transaction.kubernetesRoots = map[[32]byte][]byte{testRootPrint: testRootDER}
+	loaded, err := store.Load(t.Context(), validIdentity(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := loaded.Kubernetes().Trust()
+	if read.Availability() != appmapsession.KubernetesTrustAvailable {
+		t.Fatalf("the map's trust is %v", read.Availability())
+	}
+	other := appmapsession.UnavailableKubernetesTrust(appmapsession.KubernetesTrustUnread)
+	for name, test := range map[string]struct {
+		view      appmapsession.KubernetesView
+		unchanged bool
+	}{
+		"taken, the same":      {view: loaded.Kubernetes().WithTakenTrust(read), unchanged: true},
+		"taken, another":       {view: loaded.Kubernetes().WithTakenTrust(other)},
+		"not taken, any other": {view: loaded.Kubernetes().WithTrust(other), unchanged: true},
+	} {
+		unchanged, err := store.Unchanged(t.Context(), loaded.WithKubernetes(test.view), 0)
+		if err != nil || unchanged != test.unchanged {
+			t.Fatalf("%s: Unchanged() = %v, %v", name, unchanged, err)
+		}
+	}
+}

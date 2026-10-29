@@ -715,7 +715,8 @@ may reach it, packet filter, DNS, relay map and settings.
   `MapSnapshot` has an `epoch` strictly greater than any earlier one for this
   Device and `seq = 1`; each following `MapDelta` keeps the epoch and
   increases `seq` by one.
-- A `MapSnapshot` replaces the node's entire state.
+- A `MapSnapshot` replaces the node's entire state, except the Kubernetes
+  clusters a node keeps while they are not available (7.11).
 - A `MapDelta` from another epoch is dropped silently (it predates the latest
   snapshot). A `MapDelta` of the current epoch whose `seq` is not exactly the
   current `seq + 1` is a gap: the node sends `MapResync{epoch, seq}` and
@@ -765,6 +766,7 @@ message only after it applied it (7.9).
 | `settings` | Report intervals and the path statistics switch |
 | `routes` | Subnet routes the node may use (7.6); only with `routes.subnet.v1` |
 | `served` | Subnets the node forwards to as a router (7.6); only with `router.subnet.v1` |
+| `kubernetes_clusters` | Kubernetes clusters the node may reach and their roots (7.11); only with `kube.ca1` |
 
 `MapDelta` carries only what changed:
 
@@ -780,6 +782,7 @@ message only after it applied it (7.9).
 | `settings` | Replaces settings when present |
 | `routes` | Replaces all routes when present; present and empty removes them |
 | `served` | Replaces all served routes when present; present and empty removes them |
+| `kubernetes_clusters` | Replaces the Kubernetes clusters when present; adds roots the node does not hold (7.11) |
 
 A `device_id` appears at most once across `peers_upsert`, `peers_remove` and
 `peer_patches` in one delta. A patch for an unknown peer, or an upsert and a
@@ -1267,6 +1270,51 @@ than 15 minutes after the issue (a minute when the root changed). A map older
 than its certificate never makes it renew. A certificate issued by another
 intermediate than the one a map at or past its revision names is not taken.
 
+### 7.11 Kubernetes clusters
+
+A node that negotiated `kube.ca1` gets `kubernetes_clusters` in every
+`MapSnapshot`, and in a `MapDelta` when it changed. It names each Kubernetes
+cluster that has a gateway replica among the node's peers of its own Network
+(the clusters its DNS names, 7.3) and what the node trusts that cluster's
+gateways by. Peers of another Network never bring a cluster.
+
+- **`availability`.** Only `AVAILABLE` makes the list authoritative: a
+  cluster missing from it is gone. `RESTORE` (a database restore is
+  suspected) and `UNREAD` (Core could not read them) come with an empty list
+  and no roots: the node keeps what it holds. `AVAILABILITY_UNSPECIFIED`, or a
+  `MapSnapshot` without the field on a session that negotiated `kube.ca1`, is
+  invalid: the node drops the map.
+- **Clusters.** At most 1,000, sorted by `cluster_id` (the newest past it are
+  left out). `dns_name` is the cluster's name in the Network's zone, empty
+  when Core cannot name it; `tls_server_name` is the name its gateways'
+  certificates carry and its roots' name constraints permit, empty when it has
+  no CA yet. They may differ (a suffix moved, a rename pending): the node
+  connects to `dns_name` and checks the certificate for `tls_server_name`.
+  `root_fingerprints` (SHA-256 of DER) is the whole set of roots to trust:
+  the next, active and retiring ones.
+- **Roots.** `roots` carries DER, each once: a snapshot every root its
+  clusters name, a delta only those the node does not hold, at most 2 MiB a
+  message (the rest come in a later message carrying the field). The node
+  keeps DER by fingerprint, takes only DER whose SHA-256 a listed cluster
+  names, and drops DER no listed cluster names any more; Core sends again
+  what it dropped. A fingerprint without DER leaves the cluster incomplete.
+- **Each root apart.** A root that does not parse as a CA with a path length
+  of 1, critical name constraints permitting exactly one DNS name and
+  excluding every IP address, or whose permitted name is not the cluster's
+  `tls_server_name` (the retiring root after a rename), is left out of that
+  cluster's trust; it never invalidates the map or another cluster.
+- **While not available.** Neither the list nor the held DER changes. Within
+  an epoch that had an `AVAILABLE` list, Core sends no field for `UNREAD`;
+  it sends `RESTORE` once. The node keeps its clusters, by `cluster_id`, for
+  at most 25 hours from the first map that was not `AVAILABLE` (snapshots
+  after a reconnect do not restart that clock; only an `AVAILABLE` map
+  clears it); past that they are unavailable, but the node keeps their DER
+  until an `AVAILABLE` list, which Core counts as held. This is the only
+  state a `MapSnapshot` does not replace (7.1). A node that restarts holds
+  none.
+- **Not negotiated.** A session on a Core that does not offer `kube.ca1` says
+  nothing about the clusters: the node keeps what it holds.
+
 ## 8. Node reports
 
 ### 8.1 Endpoints and NAT
@@ -1631,6 +1679,7 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `relay.zones2` | Node hands relays MTT2 tickets and their ZONES (MTRP §5.4, §6.1). Core offers it only once every relay accepts them |
 | `captive.audit1` | Node sends `CaptiveWindowReport` (8.5); only with `routes.exit.v1` |
 | `gateway.cert1` | A Kubernetes gateway asks for its replica certificate with `KubeCertRequest` (6.9) and reads `kubernetes_ca` on its `self` (7.10); Core offers it whenever it queues certificate requests, whether or not a signer is up |
+| `kube.ca1` | Any node reads `kubernetes_clusters` in its map: the clusters it may reach and their roots (7.11); Core offers it where Kubernetes join is on, it builds maps from its shared Network view, and it could read the roots when it started |
 | `gateway.kube.v1` | A Kubernetes gateway applies its peers' `kubernetes` and `owner` (7.8), acknowledges map messages after applying them and takes `MapFresh` (7.9); Core offers it only where maps come from its shared Network view |
 
 Unknown names are ignored. Core sends a feature only when both sides list it.

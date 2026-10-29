@@ -26,6 +26,12 @@ type KubernetesView struct {
 	// the inventory, apart from the access evidence.
 	ca      KubernetesCA
 	caKnown bool
+	// trust is the Network's clusters' trust, for a session that takes it
+	// (trustTaken: kube.ca1, §7.11): any node's map, not only a gateway's.
+	// It is apart from Equal: a change of it alone reaches the node as a
+	// delta, never a snapshot (review d2 H2).
+	trust      KubernetesTrust
+	trustTaken bool
 }
 
 // KubernetesCA is what a gateway's map names of its cluster's CAs (MTCP
@@ -70,6 +76,32 @@ func (view KubernetesView) WithoutCA() KubernetesView {
 // (§7.10 "absent": not read, withheld, or not a gateway.cert1 session).
 func (view KubernetesView) CA() (KubernetesCA, bool) {
 	return KubernetesCA{Root: bytes.Clone(view.ca.Root), Signing: bytes.Clone(view.ca.Signing)}, view.caKnown
+}
+
+// WithTrust returns the view with its Network's clusters' trust.
+func (view KubernetesView) WithTrust(trust KubernetesTrust) KubernetesView {
+	view.trust = trust
+	return view
+}
+
+// Trust returns the Network's clusters' trust the view carries; unread
+// unless the inventory read it and the session takes it.
+func (view KubernetesView) Trust() KubernetesTrust { return view.trust }
+
+// WithTakenTrust returns the view of a session that takes the clusters'
+// trust (kube.ca1) with trust, as withKubernetesCapability leaves it.
+func (view KubernetesView) WithTakenTrust(trust KubernetesTrust) KubernetesView {
+	view.trust, view.trustTaken = trust, true
+	return view
+}
+
+// TrustTaken reports whether the view's session takes the clusters' trust.
+func (view KubernetesView) TrustTaken() bool { return view.trustTaken }
+
+// TrustChanged reports whether two views' sessions differ in the clusters'
+// trust they take.
+func (view KubernetesView) TrustChanged(other KubernetesView) bool {
+	return view.trustTaken != other.trustTaken || !view.trust.Equal(other.trust)
 }
 
 // caChanged reports whether two views name other CAs.
@@ -180,11 +212,18 @@ func (snapshot Snapshot) WithKubernetes(view KubernetesView) Snapshot {
 // that negotiated gateway.kube.v1 (request.Kubernetes); a map of any other
 // session carries none, and neither its peers' owners.
 // The cluster's CAs stay only for a session that negotiated gateway.cert1
-// (request.KubernetesCA, §7.10).
+// (request.KubernetesCA, §7.10), and the clusters' trust only for one that
+// negotiated kube.ca1.
 func (snapshot Snapshot) withKubernetesCapability(request Request) Snapshot {
-	ca, caKnown := snapshot.kubernetes.ca, snapshot.kubernetes.caKnown
+	ca, caKnown, trust := snapshot.kubernetes.ca, snapshot.kubernetes.caKnown, snapshot.kubernetes.trust
 	if !request.Kubernetes() {
 		snapshot.kubernetes = KubernetesView{}
+	}
+	// The clusters' trust stays only for a session that negotiated
+	// kube.ca1 (§7.11).
+	snapshot.kubernetes.trust, snapshot.kubernetes.trustTaken = KubernetesTrust{}, false
+	if request.KubernetesClusters() {
+		snapshot.kubernetes.trust, snapshot.kubernetes.trustTaken = trust, true
 	}
 	if request.KubernetesCA() {
 		snapshot.kubernetes.ca, snapshot.kubernetes.caKnown = ca, caKnown

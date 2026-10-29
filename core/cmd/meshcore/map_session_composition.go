@@ -31,9 +31,9 @@ func composeMapSession(
 	exitSpread bool, // MESHTRANSIT_EXIT_SPREAD_ENABLED
 	dnsZones bool, // MESHTRANSIT_DNS_ZONES_ENABLED
 	dnsProtectedNames []string, // MESHTRANSIT_DNS_PROTECTED_NAMES and the deployment's own hosts
-) (*mapsession.Service, prometheus.Collector, error) {
+) (*mapsession.Service, prometheus.Collector, kubernetesTrustProbe, error) {
 	if runtimePool == nil || endpoints == nil || connectivity == nil || !relayDirectory.IsValid() {
-		return nil, nil, errInvalidMapSessionComposition
+		return nil, nil, nil, errInvalidMapSessionComposition
 	}
 	store, err := postgresadapter.NewMapSessionStore(
 		runtimePool,
@@ -62,19 +62,24 @@ func composeMapSession(
 		},
 	)
 	if err != nil {
-		return nil, nil, errors.Join(errInvalidMapSessionComposition, err)
+		return nil, nil, nil, errors.Join(errInvalidMapSessionComposition, err)
 	}
 	service, err := newMapSessionService(mapConfig, store, endpoints, connectivity)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if hub != nil {
 		if service, err = service.WithConnectivityHub(hub); err != nil {
-			return nil, nil, errors.Join(errInvalidMapSessionComposition, err)
+			return nil, nil, nil, errors.Join(errInvalidMapSessionComposition, err)
 		}
 	}
-	return service, newMapInventoryCollector(store.InventoryStats), nil
+	return service, newMapInventoryCollector(store.InventoryStats), store.KubernetesTrustGranted, nil
 }
+
+// kubernetesTrustProbe reports whether the runtime role may run schema
+// 244's readers; serve probes it once, at startup, since the capability
+// list (kube.ca1) is fixed for the process (K1a4d design §2.1).
+type kubernetesTrustProbe func(context.Context) (bool, error)
 
 // composeConnectivityHub returns the replica's shared connectivity tables
 // and the watcher streams use: the hub, or the feed itself when the shared
@@ -164,7 +169,7 @@ func newMapInventoryCollector(stats func() postgresmapsession.InventoryStats) *m
 		policies: prometheus.NewDesc("meshtransit_map_snapshot_policies_total",
 			"Packet policies of shared map reads by source: expanded from the Network policy, or read for a shadow check against that expansion.", []string{"source"}, nil),
 		withheld: prometheus.NewDesc("meshtransit_map_kubernetes_access_withheld_total",
-			"Kubernetes gateway maps built without their peers' Kubernetes access, by reason.", []string{"reason"}, nil),
+			"Kubernetes gateway maps built without their peers' Kubernetes access, by reason; the ca_ and trust_ reasons count inventory reads, clusters or roots.", []string{"reason"}, nil),
 	}
 }
 
@@ -191,7 +196,12 @@ func (collector *mapInventoryCollector) Collect(metrics chan<- prometheus.Metric
 		"projections": stats.KubernetesWithheldProjections,
 		// The clusters' CAs (gateway.cert1, §7.10): withheld while a
 		// restore is suspected, rejected when the answer was unusable.
-		"ca_restore_suspected": stats.KubernetesCAsWithheld, "ca_rejected": stats.KubernetesCAsRejected} {
+		"ca_restore_suspected": stats.KubernetesCAsWithheld, "ca_rejected": stats.KubernetesCAsRejected,
+		// Clients' cluster trust (kube.ca1, K1a4d §3): unread inventories
+		// (schema 244 failed or untrusted), roots whose DER could not be
+		// read, and clusters left out of their gateways' CAs.
+		"trust_unread": stats.KubernetesTrustUnread, "trust_root_missing": stats.KubernetesRootsMissing,
+		"ca_omitted": stats.KubernetesGatewayCAsOmitted} {
 		metrics <- prometheus.MustNewConstMetric(collector.withheld, prometheus.CounterValue, float64(count), reason)
 	}
 }

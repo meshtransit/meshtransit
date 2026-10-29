@@ -556,7 +556,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		if hubMetrics != nil {
 			additionalMetrics = append(additionalMetrics, hubMetrics)
 		}
-		mapSessionService, mapInventoryMetrics, composeErr := composeMapSession(
+		mapSessionService, mapInventoryMetrics, kubernetesTrust, composeErr := composeMapSession(
 			processConfig.Control.Map,
 			storagePools.runtime,
 			redisClient,
@@ -684,6 +684,19 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 				return 1
 			}
 			deps.clusterJoins = joins
+		}
+		// Nodes take the clusters they may reach and their roots (kube.ca1,
+		// K1a4d) once the runtime role may read them; probed once, as the
+		// capability list is fixed for the process.
+		if processConfig.KubernetesJoin && processConfig.Control.Map.SharedInventory {
+			probeCtx, cancelProbe := context.WithTimeout(ctx, 10*time.Second)
+			granted, grantErr := kubernetesTrust(probeCtx)
+			cancelProbe()
+			if grantErr != nil || !granted {
+				logger.WarnContext(ctx, "Kubernetes cluster roots not offered to clients",
+					"error_code", "kubernetes_cluster_trust_unavailable", "error", grantErr)
+			}
+			deps.kubernetesClusters = granted && grantErr == nil
 		}
 		// Gateways ask for their replica certificates where their maps are
 		// built from the shared inventory (gateway.cert1, a3b).

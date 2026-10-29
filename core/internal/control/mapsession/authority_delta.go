@@ -82,7 +82,8 @@ func projectAuthorityDelta(
 	// committed between them (a Network's DNS changes, which reach maps
 	// together) are one delta: the node orders deltas by seq, not revision.
 	sameRevisionSubset := next.NetworkRevision() == current.NetworkRevision() &&
-		(current.authorizedTotal != 0 || next.authorizedTotal != 0) && !sameAuthorizedPeers(current, next)
+		((current.authorizedTotal != 0 || next.authorizedTotal != 0) && !sameAuthorizedPeers(current, next) ||
+			current.kubernetes.TrustChanged(next.kubernetes))
 	if !streamCanAdvance(current, next) ||
 		(next.NetworkRevision() <= current.NetworkRevision() && !sameRevisionSubset) ||
 		relayDirectoryChanged(current, next) ||
@@ -96,7 +97,7 @@ func projectAuthorityDelta(
 	if current.PacketPolicy().Equal(next.PacketPolicy()) &&
 		equalDirectDeviceProjections(current.directDeviceProjections, next.directDeviceProjections) &&
 		current.routes.Equal(next.routes) && current.kubernetes.Equal(next.kubernetes) &&
-		equalPeerCandidates(currentPeers, nextPeers) {
+		!current.kubernetes.TrustChanged(next.kubernetes) && equalPeerCandidates(currentPeers, nextPeers) {
 		return false, nil, nil, ErrInvalidAuthorityDelta
 	}
 	currentByID := make(map[node.ID]PeerCandidate, len(currentPeers))

@@ -760,9 +760,12 @@ func (service *StreamService) deliver(
 		}
 		return true, nil
 	}
-	if current.NetworkRevision() == next.NetworkRevision() && !sameAuthorizedPeers(current, next) {
+	if current.NetworkRevision() == next.NetworkRevision() && (!sameAuthorizedPeers(current, next) ||
+		current.kubernetes.TrustChanged(next.kubernetes)) {
 		// A peer limit chose other peers (presence changed): same authority,
-		// another visible subset.
+		// another visible subset. Or the clusters' trust was read again at
+		// the same revision (a read that failed, a root's DER found): a
+		// delta, so the encoder's epoch rules hold (§7.11).
 		delta, deltaErr := NewAuthorityDelta(current, next)
 		if deltaErr != nil {
 			if err := sink.SendSnapshot(ctx, next); err != nil {

@@ -175,17 +175,19 @@ func (cached cachedInventory) gatewayListed(self node.ID) bool {
 // only from the Network policy its packet filter is expanded from, and only
 // a rule to its own cluster counts. A gateway whose inventory did not read
 // the evidence, or read it inconsistent, gets the zero view (withheld),
-// counted when count (a map opened, not each refresh of one).
+// counted when count (a map opened, not each refresh of one). Every map
+// carries the Network's clusters' trust (kube.ca1 sessions keep it, §7.11).
 func (store *Store) kubernetesView(cached cachedInventory, self node.ID, at time.Time,
 	count bool) appmapsession.KubernetesView {
 	candidate, listed := cached.inventory.Device(self)
 	cluster, gateway := candidate.KubernetesCluster()
 	if !listed || !gateway {
-		return appmapsession.KubernetesView{}
+		return appmapsession.KubernetesView{}.WithTrust(cached.kubernetesTrust)
 	}
 	// The cluster's CAs come with the inventory, whatever the access
 	// evidence (§7.10).
-	return cached.withKubernetesCA(store.kubernetesAccessView(cached, self, cluster, at, count), cluster)
+	return cached.withKubernetesCA(store.kubernetesAccessView(cached, self, cluster, at, count),
+		cluster).WithTrust(cached.kubernetesTrust)
 }
 
 // kubernetesAccessView computes a gateway replica's peers' Kubernetes

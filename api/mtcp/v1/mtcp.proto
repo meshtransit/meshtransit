@@ -264,6 +264,7 @@ message MapSnapshot {
   ServedRoutes served = 10; // router.subnet.v1: subnets this node forwards to
   ExitConfig exits = 11; // routes.exit.v1: Exit Pools this node may use (section 7.7)
   ServedExits served_exits = 12; // router.exit.v1: the Exit Pool this node is an exit node of
+  KubernetesClusters kubernetes_clusters = 13; // kube.ca1: the clusters this node may reach and their roots (section 7.11)
 }
 
 message MapDelta {
@@ -281,6 +282,7 @@ message MapDelta {
   ServedRoutes served = 12; // replaces served routes when set; set and empty clears them
   ExitConfig exits = 13; // replaces Exit Pools when set; set and empty clears them
   ServedExits served_exits = 14; // replaces served Exit Pools when set; set and empty clears them
+  KubernetesClusters kubernetes_clusters = 15; // kube.ca1: replaces the clusters when set (section 7.11)
 }
 
 message MapAck {
@@ -333,6 +335,35 @@ message Device {
 message KubernetesCA {
   bytes root_fingerprint = 1;
   bytes signing_fingerprint = 2;
+}
+
+// KubernetesClusters is, for a node that negotiated kube.ca1, each
+// Kubernetes cluster with a gateway replica among its peers of its own
+// Network and what the node trusts that cluster's gateways by (7.11).
+message KubernetesClusters {
+  repeated KubernetesCluster clusters = 1; // sorted by cluster_id
+  // DER of roots, without duplicates: a snapshot's carry every root its
+  // clusters name (within its budget); a delta's only those the node does
+  // not hold yet.
+  repeated bytes roots = 2;
+  Availability availability = 3;
+  // Only AVAILABLE makes the list authoritative; otherwise clusters and
+  // roots are empty and the node keeps what it holds (7.11).
+  enum Availability {
+    AVAILABILITY_UNSPECIFIED = 0;
+    AVAILABLE = 1;
+    RESTORE = 2; // a database restore is suspected
+    UNREAD = 3;  // Core could not read them
+  }
+}
+
+// KubernetesCluster is one cluster a node may reach (7.11).
+message KubernetesCluster {
+  string cluster_id = 1; // the cluster's public ID
+  string name = 2;
+  string dns_name = 3;        // in the Network's zone; empty: not named
+  string tls_server_name = 4; // the name its gateways' certificates carry; empty: no CA yet
+  repeated bytes root_fingerprints = 5; // SHA-256 of the DER of the roots to trust, in Core's order
 }
 
 // KubernetesAccess is what a cluster's gateway may let a peer do in the

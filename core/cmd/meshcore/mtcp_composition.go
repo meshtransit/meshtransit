@@ -105,6 +105,16 @@ func kubeCertCapabilities(certificates mtcpadapter.KubeCertificates) []string {
 	return []string{mtcpadapter.CapabilityKubeCert}
 }
 
+// kubernetesClusterCapabilities offers kube.ca1, the Kubernetes clusters a
+// node may reach and their roots in its map (mtcp-v1 §7.11), when schema
+// 244 was granted at startup.
+func kubernetesClusterCapabilities(offered bool) []string {
+	if !offered {
+		return nil
+	}
+	return []string{mtcpadapter.CapabilityKubeCA}
+}
+
 // mtcpDependencies are the application services MTCP sessions use. The
 // browser fields are nil when browser registration is off.
 type mtcpDependencies struct {
@@ -123,12 +133,15 @@ type mtcpDependencies struct {
 	// gatewayKeyEvents records Kubernetes gateways' stale or contested keys.
 	gatewayKeyEvents mtcpadapter.GatewayKeyRecorder
 	logger           *slog.Logger
-	relayZones       bool           // offer relay.zones2 (MESHTRANSIT_RELAY_TICKET_ZONES_V2)
-	subnetRoutes     bool           // offer subnet routes (MESHTRANSIT_SUBNET_ROUTES_ENABLED)
-	exitNodes        bool           // offer exit nodes (MESHTRANSIT_EXIT_NODES_ENABLED)
-	dnsZones         bool           // offer dns.forward1 (MESHTRANSIT_DNS_ZONES_ENABLED)
-	kubernetesAccess bool           // offer gateway.kube.v1 (shared inventory)
-	dnsSuffix        dnsname.Suffix // MESHTRANSIT_DNS_SUFFIX; zero: the default
+	relayZones       bool // offer relay.zones2 (MESHTRANSIT_RELAY_TICKET_ZONES_V2)
+	subnetRoutes     bool // offer subnet routes (MESHTRANSIT_SUBNET_ROUTES_ENABLED)
+	exitNodes        bool // offer exit nodes (MESHTRANSIT_EXIT_NODES_ENABLED)
+	dnsZones         bool // offer dns.forward1 (MESHTRANSIT_DNS_ZONES_ENABLED)
+	kubernetesAccess bool // offer gateway.kube.v1 (shared inventory)
+	// kubernetesClusters offers kube.ca1 (Kubernetes join, shared
+	// inventory, schema 244 granted at startup).
+	kubernetesClusters bool
+	dnsSuffix          dnsname.Suffix // MESHTRANSIT_DNS_SUFFIX; zero: the default
 	// dnsInfrastructure are the deployment's own host names a root zone
 	// leaves to a node's network (MESHTRANSIT_DNS_PROTECTED_NAMES, the
 	// Console and identity hosts).
@@ -240,7 +253,8 @@ func composeMTCP(
 		Capabilities: append(append(mtcpCapabilities(controlConfig.Map.EnableDeviceAliases, deps.relayZones,
 			deps.subnetRoutes), exitCapabilities(deps.exitNodes)...), append(captiveCapabilities(deps.captiveWindows),
 			append(append(dnsCapabilities(deps.dnsZones), kubernetesCapabilities(deps.kubernetesAccess)...),
-				kubeCertCapabilities(deps.kubeCertificates)...)...)...),
+				append(kubeCertCapabilities(deps.kubeCertificates),
+					kubernetesClusterCapabilities(deps.kubernetesClusters)...)...)...)...),
 		Logger:         logger,
 		Metrics:        metrics,
 		HandshakeRate:  controlConfig.MTCP.HandshakeRate,

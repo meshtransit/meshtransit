@@ -280,7 +280,7 @@ func (store *Store) Load(
 		for attempt := 0; ; attempt++ {
 			read, err := store.loadSnapshot(ctx, identity, true)
 			if err != nil || read.complete {
-				return read.snapshot, err
+				return store.withInventoryTrust(ctx, read), err
 			}
 			shared, ok, gateway, err := store.withSharedInventory(ctx, read)
 			if err != nil || ok {
@@ -302,10 +302,35 @@ func (store *Store) Load(
 		// candidates directly, afresh.
 	}
 	read, err := store.loadSnapshot(ctx, identity, false)
-	if err == nil {
-		store.stats.direct.Add(1)
+	if err != nil {
+		return appmapsession.Snapshot{}, err
 	}
-	return read.snapshot, err
+	store.stats.direct.Add(1)
+	return store.withInventoryTrust(ctx, read), nil
+}
+
+// withInventoryTrust adds to a map read on its own the Network's clusters'
+// trust from the Network's inventory of the read's revision or later (a
+// Device a share binds is never completed with the inventory, yet its map
+// names clusters too, §7.11). Without one the trust stays unread.
+func (store *Store) withInventoryTrust(ctx context.Context, read snapshotRead) appmapsession.Snapshot {
+	if store.inventories == nil || !read.snapshot.IsValid() {
+		return read.snapshot
+	}
+	scope := read.snapshot.Scope()
+	// The inventory a failed completion just found answers without a read.
+	if cached, ok := store.inventories.peek(scope); ok && cached.revision >= read.revision {
+		return read.snapshot.WithKubernetes(read.snapshot.Kubernetes().WithTrust(cached.kubernetesTrust))
+	}
+	cached, found, err := store.inventories.get(ctx, scope, read.revision, read.readAt,
+		func(readCtx context.Context, previous cachedInventory) (cachedInventory, error) {
+			store.stats.reads.Add(1)
+			return store.readInventory(readCtx, scope, read.workspaceValue, read.networkValue, previous)
+		})
+	if err != nil || !found {
+		return read.snapshot
+	}
+	return read.snapshot.WithKubernetes(read.snapshot.Kubernetes().WithTrust(cached.kubernetesTrust))
 }
 
 // snapshotRead is one transaction's result: a complete snapshot, or (for a
@@ -386,7 +411,8 @@ func (store *Store) withSharedInventory(ctx context.Context, read snapshotRead) 
 		if gateway.listed {
 			store.stats.kubernetesWithheldProjections.Add(1)
 		}
-		return snapshot, true, gateway, nil
+		return snapshot.WithKubernetes(appmapsession.KubernetesView{}.WithTrust(cached.kubernetesTrust)), true,
+			gateway, nil
 	}
 	view := store.kubernetesView(cached, read.snapshot.NodeID(), read.readAt, true)
 	return snapshot.WithKubernetes(view), true, gateway, nil

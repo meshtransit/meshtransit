@@ -39,6 +39,11 @@ type Metrics struct {
 	// dnsRelayDropped counts the zones' Internet resolvers left out of the
 	// relay lists sent to exit nodes by a map's bounds (TD-CORE-88).
 	dnsRelayDropped prometheus.Counter
+	// kubeClusters counts, per map message carrying Kubernetes clusters
+	// (§7.11), the clusters past a map's bound, the roots past a
+	// message's DER budget and the clusters whose zone name is not their
+	// certificates' name, by kind.
+	kubeClusters *prometheus.CounterVec
 	// gatewayKeyAudit counts reports of Kubernetes gateways' stale or
 	// contested keys by what became of them (schema 229).
 	gatewayKeyAudit *prometheus.CounterVec
@@ -219,6 +224,10 @@ func NewMetrics() *Metrics {
 		}, []string{"result"}),
 		// Watch: above zero means consumers are refused resolvers admins
 		// chose (more than 256 resolvers, 64 Group sets or 16,384 consumers).
+		kubeClusters: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "meshtransit_mtcp_kubernetes_clusters_left_total",
+			Help: "Kubernetes cluster entries of client maps (kube.ca1) by kind: dropped past the map's 1,000 clusters, root_deferred past a message's 2 MiB of DER (sent later), name_mismatch when the zone name differs from the name gateways' certificates carry.",
+		}, []string{"kind"}),
 		dnsRelayDropped: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "meshtransit_mtcp_dns_relay_targets_dropped_total",
 			Help: "DNS zone resolver listings left out of the relay lists sent to exit nodes by a map's bounds, counted per list sent; above zero since start means some were.",
@@ -276,7 +285,7 @@ func NewMetrics() *Metrics {
 func (metrics *Metrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{metrics.handshakes, metrics.sessions, metrics.messages, metrics.streamEnds,
 		metrics.sheds, metrics.unproven, metrics.forwarding, metrics.keyExpiry, metrics.limits, metrics.mapNames,
-		metrics.expiring, metrics.routeOffers, metrics.exitOffers, metrics.routeOfferDropped, metrics.routes, metrics.dnsRelayDropped, metrics.gatewayKeyAudit, metrics.kubeCerts, metrics.kubeCertWait, routedFilterOmitted,
+		metrics.expiring, metrics.routeOffers, metrics.exitOffers, metrics.routeOfferDropped, metrics.routes, metrics.dnsRelayDropped, metrics.kubeClusters, metrics.gatewayKeyAudit, metrics.kubeCerts, metrics.kubeCertWait, routedFilterOmitted,
 		exitFilterOmitted}
 }
 
@@ -378,6 +387,21 @@ func (metrics *Metrics) servedExitsSent(dropped int) {
 		return
 	}
 	metrics.dnsRelayDropped.Add(float64(dropped))
+}
+
+// kubernetesClustersSent counts what a map message's Kubernetes clusters
+// left out or found mismatched.
+func (metrics *Metrics) kubernetesClustersSent(counts kubeClusterCounts) {
+	if metrics == nil {
+		return
+	}
+	for kind, count := range map[string]int{
+		"dropped": counts.dropped, "root_deferred": counts.deferred, "name_mismatch": counts.mismatched,
+	} {
+		if count > 0 {
+			metrics.kubeClusters.WithLabelValues(kind).Add(float64(count))
+		}
+	}
 }
 
 // routeOfferPrefixesDropped counts ignored offered prefixes.

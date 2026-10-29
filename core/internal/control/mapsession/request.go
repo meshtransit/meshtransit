@@ -27,6 +27,7 @@ type Request struct {
 	dnsRoot            bool
 	kubernetes         bool
 	kubernetesCA       bool
+	kubernetesClusters bool
 	endpointSet        node.EndpointSet
 	hasEndpointSet     bool
 	preferredRelay     int
@@ -140,6 +141,16 @@ func (request Request) WithKubernetesCA() Request {
 
 // KubernetesCA reports whether the session takes its cluster's CAs.
 func (request Request) KubernetesCA() bool { return request.kubernetesCA }
+
+// WithKubernetesClusters records that the node takes the clusters it may
+// reach and their roots (MTCP kube.ca1, §7.11).
+func (request Request) WithKubernetesClusters() Request {
+	request.kubernetesClusters = true
+	return request
+}
+
+// KubernetesClusters reports whether the session takes its clusters' roots.
+func (request Request) KubernetesClusters() bool { return request.kubernetesClusters }
 
 // WithRelayZones records that the client and Core negotiated relay.zones2:
 // the client hands relays MTT2 tickets and their zone lists, so its relay
