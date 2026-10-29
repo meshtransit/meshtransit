@@ -754,10 +754,12 @@ forward it.
   `limited` and outcomes dropped. Past four times it the session ends with
   `Error{OVERLOADED}`.
 - At most 4 batches wait for an ack per session; a fifth is answered with
-  every intent `limited`. A gateway session that has not proved its node key
-  or does not hold the gateway's presence has every intent refused
-  `unavailable`. These messages from any other session, or without
-  `gateway.audit1`, are a fatal `Error{INVALID}`.
+  every intent `limited`. A batch without a 16-byte `batch_id`, empty, or of
+  more than 128 intents has its first 128 intents refused `invalid`. A
+  session that serves no gateway, has not proved its node key or does not
+  hold the gateway's presence has every intent refused `unavailable`, and its
+  outcomes are dropped. Without `gateway.audit1` these messages are answered
+  with a non-fatal `Error{UNSUPPORTED}`; the session stays.
 
 ## 7. Map
 

@@ -77,6 +77,12 @@ type ApplicationOptions struct {
 	// KubeCertificates, when set, answers gateway.cert1 requests (mtcp-v1
 	// §6.9).
 	KubeCertificates KubeCertificates
+	// KubeAudit, when set with KubeAuditReports, records gateway.audit1
+	// operations, outcomes and denials (mtcp-v1 §6.10); KubeAuditLimits,
+	// when set, bounds them (K1b0 §6).
+	KubeAudit        KubeAuditWriter
+	KubeAuditReports KubeAuditReports
+	KubeAuditLimits  KubeAuditLimiter
 	Logout           DeviceLogout
 	Paths            PathRecorder
 	Connectivity     ConnectivityRecorder
@@ -133,7 +139,8 @@ func NewApplication(options ApplicationOptions) (*Application, error) {
 		len(options.ControlKeys) == 0 || options.Logger == nil ||
 		(options.Registrations != nil) != (options.RegistrationIDs != nil) ||
 		(options.BrowserIssuer != nil) != (options.BrowserApproval != nil) ||
-		(options.ClusterJoins != nil) != (options.ClusterJoinSecrets != nil) {
+		(options.ClusterJoins != nil) != (options.ClusterJoinSecrets != nil) ||
+		(options.KubeAudit != nil) != (options.KubeAuditReports != nil) {
 		return nil, ErrInvalidServer
 	}
 	if options.BrowserIssuer != nil && (options.ApprovalOrigin == "" || options.ApprovalTTL <= 0 ||
@@ -245,6 +252,16 @@ type conversation struct {
 	kubeCertClosed  bool
 	kubeCertCtx     context.Context
 	kubeCertCancel  context.CancelFunc
+	// kubeAuditPending counts the session's intent batches waiting for
+	// their ack (K1b0 §3.3), each on a goroutine of kubeAuditWork under
+	// kubeAuditCtx, which Run cancels and joins as it does the certificate
+	// work; kubeAuditMu guards the context and kubeAuditClosed.
+	kubeAuditPending atomic.Int32
+	kubeAuditWork    sync.WaitGroup
+	kubeAuditMu      sync.Mutex
+	kubeAuditClosed  bool
+	kubeAuditCtx     context.Context
+	kubeAuditCancel  context.CancelFunc
 
 	wake      chan struct{} // the node key changed
 	approvals chan approval // the latest pending browser approval
@@ -277,12 +294,16 @@ func (conversation *conversation) Run(ctx context.Context) error {
 	// A certificate request's wait ends with the conversation: cancelled,
 	// then joined, before Run returns.
 	defer conversation.closeKubeCerts()
+	// So does a batch of operations waiting for its ack.
+	defer conversation.closeKubeAudits()
 	defer conversation.stopEndpointPacing()
 	defer conversation.stopEnforcementPacing()
 	defer conversation.stopRouteOfferPacing()
 	defer conversation.stopRouteHealthPacing()
 	defer conversation.stopRouteSelectionPacing()
 	for {
+		// Operations are checked only against a map the new stream sent.
+		conversation.sink.revokeFreshness()
 		nodeKey, generation, streamCtx, cancel := conversation.startStream(ctx)
 		if nodeKey.IsValid() {
 			err := conversation.serve(streamCtx, nodeKey, generation)
@@ -357,6 +378,9 @@ func (conversation *conversation) prove(nodeKey node.Key, gateway bool) {
 	defer conversation.mu.Unlock()
 	conversation.provenNodeKey = nodeKey
 	conversation.joinedGateway = conversation.joinedGateway || gateway
+	if gateway {
+		conversation.session.joinedGateway.Store(true)
+	}
 }
 
 // isGateway reports whether the session serves a Kubernetes gateway.
@@ -615,6 +639,10 @@ func (conversation *conversation) Receive(ctx context.Context, _ sharedmtcp.Mess
 		return conversation.logout(ctx)
 	case *mtcpv1.KubeCertRequest:
 		return conversation.kubeCert(ctx, m)
+	case *mtcpv1.KubeAuditIntents:
+		return conversation.kubeAuditIntents(ctx, m)
+	case *mtcpv1.KubeAuditOutcomes:
+		return conversation.kubeAuditOutcomes(m)
 	default:
 		return Violation(mtcpv1.Error_INVALID, "unexpected message")
 	}

@@ -83,6 +83,9 @@ type Session struct {
 	auditBytes   rateBudget
 	auditCeiling rateBudget
 	auditOver    bool
+	// joinedGateway: the session joined a Kubernetes cluster, so it serves
+	// a gateway whatever its hello said.
+	joinedGateway atomic.Bool
 }
 
 func newSession(server *Server, transport recordConn, noise *sharedmtcp.Session, control key.ControlPrivate,
@@ -154,6 +157,12 @@ func (session *Session) RotationWait() time.Duration {
 // IsGateway reports whether the machine key belongs to a Kubernetes
 // gateway: then the session proved its node key before anything else.
 func (session *Session) IsGateway() bool { return session.gate.Gateway }
+
+// servesGateway reports a gateway's session: by its hello, or since it
+// joined a cluster in it (review b0b3 L4).
+func (session *Session) servesGateway() bool {
+	return session.gate.Gateway || session.joinedGateway.Load()
+}
 
 // Supports reports whether both sides negotiated a capability.
 func (session *Session) Supports(capability string) bool {
@@ -480,7 +489,7 @@ func (session *Session) admitInbound(now time.Time, message inbound) bool {
 func (session *Session) dispatch(conversation Conversation, message inbound) bool {
 	now := session.server.options.Now()
 	session.auditOver = false
-	if isAuditMessage(message.t) && session.gate.Gateway && session.Supports(CapabilityKubeAudit) {
+	if isAuditMessage(message.t) && session.servesGateway() && session.Supports(CapabilityKubeAudit) {
 		// A gateway's own budget (K1b0 §3.5): never the inbound one, so audit
 		// never ends its map stream; the ceiling bounds the work it makes.
 		// Any other sender spends the inbound budget, and the conversation

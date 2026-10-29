@@ -88,6 +88,13 @@ type mapSink struct {
 	authoritySeq   uint64
 	authorityAsOf  time.Time
 	authorityFresh bool
+	// authorityStood is the latest time Core itself read the authority of
+	// Network revision stoodRevision as still standing: a snapshot's or
+	// delta's read, or a later confirmation, acknowledged or not (K1b0
+	// §3.3, review v2 M1). Sending the same revision again, as a resync
+	// does, never moves it back (review b0b3 M1).
+	authorityStood time.Time
+	stoodRevision  int64
 	freshSent      uint64
 	// freshPending: a goroutine is about to confirm an acknowledgement.
 	freshPending bool
@@ -172,6 +179,9 @@ func (sink *mapSink) sendSnapshotLocked(_ context.Context, snapshot mapsession.S
 // snapshot's authority.
 func (sink *mapSink) noteAuthorityLocked(snapshot mapsession.Snapshot) {
 	sink.authoritySeq, sink.authorityAsOf = sink.seq, snapshot.ReadAtLocal()
+	if snapshot.NetworkRevision() != sink.stoodRevision || sink.authorityAsOf.After(sink.authorityStood) {
+		sink.authorityStood, sink.stoodRevision = sink.authorityAsOf, snapshot.NetworkRevision()
+	}
 	sink.authorityFresh = snapshot.Kubernetes().Computed() && len(snapshot.SharingScopes()) == 0
 }
 
@@ -180,10 +190,29 @@ func (sink *mapSink) noteAuthorityLocked(snapshot mapsession.Snapshot) {
 func (sink *mapSink) ConfirmFresh(_ context.Context, current mapsession.Snapshot, asOf time.Time) error {
 	sink.mu.Lock()
 	defer sink.mu.Unlock()
-	if !sink.confirmableLocked() || sink.current.NetworkRevision() != current.NetworkRevision() {
+	if !sink.hasCurrent || sink.current.NetworkRevision() != current.NetworkRevision() {
+		return nil
+	}
+	if current.NetworkRevision() != sink.stoodRevision || asOf.After(sink.authorityStood) {
+		sink.authorityStood, sink.stoodRevision = asOf, current.NetworkRevision()
+	}
+	if !sink.confirmableLocked() {
 		return nil
 	}
 	return sink.sendFreshLocked(asOf)
+}
+
+// kubeAuditMap returns the map sent with Kubernetes access and when Core
+// last read its authority as standing; false when there is none to check
+// operations against: no map, a map without access, of shared scopes, or
+// whose authority was paused or withdrawn.
+func (sink *mapSink) kubeAuditMap() (mapsession.Snapshot, time.Time, bool) {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if !sink.hasCurrent || !sink.authorityFresh {
+		return mapsession.Snapshot{}, time.Time{}, false
+	}
+	return sink.current, sink.authorityStood, true
 }
 
 // confirmableLocked reports whether the node holds and acknowledged an
@@ -618,7 +647,12 @@ func (sink *mapSink) resync(ctx context.Context, view *mtcpv1.View) error {
 	if !sink.hasCurrent || view.GetEpoch() < sink.epoch && view.GetEpoch() != 0 {
 		return nil
 	}
-	return sink.sendSnapshotLocked(ctx, sink.current)
+	// Sending the map again never makes a paused or withdrawn authority
+	// current (review b0b3 L3).
+	fresh := sink.authorityFresh
+	err := sink.sendSnapshotLocked(ctx, sink.current)
+	sink.authorityFresh = sink.authorityFresh && fresh
+	return err
 }
 
 // pong reports whether a Pong acknowledges the last KeyUpdate.

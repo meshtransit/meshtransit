@@ -7,6 +7,7 @@ import (
 
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
 	"meshtransit.net/core/internal/adapter/kubetoken"
+	"meshtransit.net/core/internal/domain/kubeaudit"
 	"meshtransit.net/core/internal/domain/kubeca/certqueue"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -50,6 +51,12 @@ type Metrics struct {
 	// kubeCerts and kubeCertWait count gateway.cert1 answers (mtcp-v1 §6.9).
 	kubeCerts    *prometheus.CounterVec
 	kubeCertWait prometheus.Histogram
+	// kubeAudits and kubeAuditWait count gateway.audit1 intents answered
+	// and how long a batch took; kubeAuditReports their outcomes and
+	// denials taken or dropped (K1b0 §8).
+	kubeAudits       *prometheus.CounterVec
+	kubeAuditWait    prometheus.Histogram
+	kubeAuditReports *prometheus.CounterVec
 }
 
 // The closed set of route statuses and cut Sites counted when sent.
@@ -255,6 +262,21 @@ func NewMetrics() *Metrics {
 			Help:    "How long a Kubernetes gateway certificate request took to answer.",
 			Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 3, 5, 8},
 		}),
+		// Watch: refused{reason=overloaded|unavailable} over 1% for 5
+		// minutes, or a p99 wait over 200 ms (K1b0 §8).
+		kubeAudits: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "meshtransit_kubernetes_operations_total",
+			Help: "Kubernetes gateway operation intents answered, by result and reason.",
+		}, []string{"result", "reason"}),
+		kubeAuditWait: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "meshtransit_kubernetes_operation_ack_seconds",
+			Help:    "How long a batch of Kubernetes operation intents took to answer.",
+			Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.2, 0.5, 1, 2},
+		}),
+		kubeAuditReports: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "meshtransit_kubernetes_operation_outcomes_total",
+			Help: "Kubernetes operation outcomes and denials queued, or dropped, by kind.",
+		}, []string{"kind"}),
 		keyExpiry: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "meshtransit_mtcp_control_key_not_after_timestamp_seconds",
 			Help: "Expiry of the latest control key this replica answers with (Unix seconds).",
@@ -283,6 +305,15 @@ func NewMetrics() *Metrics {
 		metrics.gatewayKeyAudit.WithLabelValues(result)
 	}
 	metrics.kubeCerts.WithLabelValues("issued", "")
+	metrics.kubeAudits.WithLabelValues("accepted", "")
+	for _, outcome := range []kubeaudit.Outcome{kubeaudit.OutcomeConflict, kubeaudit.OutcomeInvalid,
+		kubeaudit.OutcomeGateway, kubeaudit.OutcomeDevice, kubeaudit.OutcomeNotGranted, kubeaudit.OutcomeStale,
+		kubeaudit.OutcomeLimited, kubeaudit.OutcomeOverloaded, kubeaudit.OutcomeUnavailable} {
+		metrics.kubeAudits.WithLabelValues("refused", string(outcome))
+	}
+	for _, kind := range []string{"outcome", "denial", "dropped"} {
+		metrics.kubeAuditReports.WithLabelValues(kind)
+	}
 	return metrics
 }
 
@@ -290,7 +321,8 @@ func NewMetrics() *Metrics {
 func (metrics *Metrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{metrics.handshakes, metrics.sessions, metrics.messages, metrics.streamEnds,
 		metrics.sheds, metrics.unproven, metrics.forwarding, metrics.keyExpiry, metrics.limits, metrics.mapNames,
-		metrics.expiring, metrics.routeOffers, metrics.exitOffers, metrics.routeOfferDropped, metrics.routes, metrics.dnsRelayDropped, metrics.kubeClusters, metrics.gatewayKeyAudit, metrics.kubeCerts, metrics.kubeCertWait, routedFilterOmitted,
+		metrics.expiring, metrics.routeOffers, metrics.exitOffers, metrics.routeOfferDropped, metrics.routes, metrics.dnsRelayDropped, metrics.kubeClusters, metrics.gatewayKeyAudit, metrics.kubeCerts, metrics.kubeCertWait,
+		metrics.kubeAudits, metrics.kubeAuditWait, metrics.kubeAuditReports, routedFilterOmitted,
 		exitFilterOmitted}
 }
 
@@ -500,4 +532,30 @@ func (metrics *Metrics) gatewayKeyReported(result string) {
 		return
 	}
 	metrics.gatewayKeyAudit.WithLabelValues(result).Inc()
+}
+
+// kubeAuditAnswered counts one batch's answers and, for one the writer
+// answered (took ≥ 0), how long it took; a nil Metrics counts nothing.
+func (metrics *Metrics) kubeAuditAnswered(answers []kubeaudit.Answer, took time.Duration) {
+	if metrics == nil {
+		return
+	}
+	for _, answer := range answers {
+		if answer.Outcome.Recorded() {
+			metrics.kubeAudits.WithLabelValues("accepted", "").Inc()
+			continue
+		}
+		metrics.kubeAudits.WithLabelValues("refused", string(answer.Outcome)).Inc()
+	}
+	if took >= 0 {
+		metrics.kubeAuditWait.Observe(took.Seconds())
+	}
+}
+
+// kubeAuditReported counts outcomes and denials queued or dropped.
+func (metrics *Metrics) kubeAuditReported(kind string, count int) {
+	if metrics == nil || count == 0 {
+		return
+	}
+	metrics.kubeAuditReports.WithLabelValues(kind).Add(float64(count))
 }

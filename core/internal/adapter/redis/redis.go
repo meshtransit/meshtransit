@@ -83,6 +83,8 @@ type Client struct {
 	loadDeliveries     loadDeliveriesFunc
 	replicaLoad        replicaLoadFunc
 	kubernetesCAMarks  kubernetesCAMarksFunc
+	// kubernetesOperationLimits takes gateways' operations (K1b0 §6).
+	kubernetesOperationLimits kubernetesOperationLimitsFunc
 	// withdrawReplicaLoad removes one control replica's load field.
 	withdrawReplicaLoad func(ctx context.Context, key, replicaID string) error
 	metrics             *redisMetrics
@@ -118,9 +120,10 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 		publish: func(publishCtx context.Context, channel string, payload []byte) error {
 			return client.Publish(publishCtx, channel, payload).Err()
 		},
-		replicaLoad:       runReplicaLoadScript(client),
-		kubernetesCAMarks: runKubernetesCAMarksScript(client),
-		gatewayScript:     runGatewayScript(client),
+		replicaLoad:               runReplicaLoadScript(client),
+		kubernetesCAMarks:         runKubernetesCAMarksScript(client),
+		kubernetesOperationLimits: runKubernetesOperationLimitsScript(client),
+		gatewayScript:             runGatewayScript(client),
 		withdrawReplicaLoad: func(withdrawCtx context.Context, key, replicaID string) error {
 			return client.HDel(withdrawCtx, key, replicaID).Err()
 		},

@@ -713,6 +713,28 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 					app.OwnedService{Name: "kubernetes-certificate-hints", Service: hints})
 			}
 		}
+		// Gateways have Core record their type A operations before
+		// forwarding them (gateway.audit1, K1b0) once the runtime role may
+		// write them; probed once, as the capability list is fixed. Before
+		// the listener: shut down after it drained the sessions.
+		if processConfig.KubernetesJoin && processConfig.Control.Map.SharedInventory {
+			probeCtx, cancelProbe := context.WithTimeout(ctx, 10*time.Second)
+			audit, auditErr := composeKubeAudit(probeCtx, storagePools.runtime, redisClient)
+			cancelProbe()
+			switch {
+			case errors.Is(auditErr, errInvalidKubeAuditComposition):
+				logger.ErrorContext(ctx, "startup failed", "error_code", "mtcp_composition_failure", "error", auditErr)
+				return 1
+			case audit == nil:
+				logger.WarnContext(ctx, "Kubernetes operation records not offered to gateways",
+					"error_code", "kubernetes_operations_unavailable", "error", auditErr)
+			default:
+				deps.kubeAudit = audit
+				additionalMetrics = append(additionalMetrics, audit.metrics...)
+				roleServices = append(roleServices,
+					app.OwnedService{Name: "kubernetes-operation-writer", Service: audit})
+			}
+		}
 		if relay := processConfig.RelayAuthority; relay != nil && relay.TicketDeployment != nil {
 			deps.relayZones = relay.TicketZonesV2
 		}

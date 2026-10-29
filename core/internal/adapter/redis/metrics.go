@@ -11,36 +11,37 @@ import (
 type redisCommand string
 
 const (
-	redisCommandPing                 redisCommand = "ping"
-	redisCommandPublish              redisCommand = "publish"
-	redisCommandSubscribe            redisCommand = "subscribe"
-	redisCommandReceive              redisCommand = "receive"
-	redisCommandAcquire              redisCommand = "presence_acquire"
-	redisCommandRenew                redisCommand = "presence_renew"
-	redisCommandRelease              redisCommand = "presence_release"
-	redisCommandGatewayAcquire       redisCommand = "gateway_presence_acquire"
-	redisCommandGatewayRenew         redisCommand = "gateway_presence_renew"
-	redisCommandGatewayRelease       redisCommand = "gateway_presence_release"
-	redisCommandGatewayHandOff       redisCommand = "gateway_presence_handoff"
-	redisCommandGatewayCheck         redisCommand = "gateway_rotation_check"
-	redisCommandObserveEndpoints     redisCommand = "endpoints_observe"
-	redisCommandFlushEndpoints       redisCommand = "endpoints_flush"
-	redisCommandLoadEndpoints        redisCommand = "endpoints_load"
-	redisCommandLoadConnectivity     redisCommand = "connectivity_load"
-	redisCommandRateLimit            redisCommand = "rate_limit"
-	redisCommandRecordDelivery       redisCommand = "delivery_record"
-	redisCommandTouchDelivery        redisCommand = "delivery_touch"
-	redisCommandLoadDeliveries       redisCommand = "delivery_load"
-	redisCommandRecordEnforcement    redisCommand = "enforcement_record"
-	redisCommandRecordPaths          redisCommand = "paths_record"
-	redisCommandRecordConnectivity   redisCommand = "connectivity_record"
-	redisCommandRecordRouteHealth    redisCommand = "route_health_record"
-	redisCommandRecordDNSHealth      redisCommand = "dns_health_record"
-	redisCommandRecordRouteSelection redisCommand = "route_selection_record"
-	redisCommandLoadSiteSelection    redisCommand = "site_selection_load"
-	redisCommandLoadDNSIndex         redisCommand = "dns_index_load"
-	redisCommandReplicaLoad          redisCommand = "replica_load"
-	redisCommandKubernetesCAMarks    redisCommand = "kubernetes_ca_marks"
+	redisCommandPing                      redisCommand = "ping"
+	redisCommandPublish                   redisCommand = "publish"
+	redisCommandSubscribe                 redisCommand = "subscribe"
+	redisCommandReceive                   redisCommand = "receive"
+	redisCommandAcquire                   redisCommand = "presence_acquire"
+	redisCommandRenew                     redisCommand = "presence_renew"
+	redisCommandRelease                   redisCommand = "presence_release"
+	redisCommandGatewayAcquire            redisCommand = "gateway_presence_acquire"
+	redisCommandGatewayRenew              redisCommand = "gateway_presence_renew"
+	redisCommandGatewayRelease            redisCommand = "gateway_presence_release"
+	redisCommandGatewayHandOff            redisCommand = "gateway_presence_handoff"
+	redisCommandGatewayCheck              redisCommand = "gateway_rotation_check"
+	redisCommandObserveEndpoints          redisCommand = "endpoints_observe"
+	redisCommandFlushEndpoints            redisCommand = "endpoints_flush"
+	redisCommandLoadEndpoints             redisCommand = "endpoints_load"
+	redisCommandLoadConnectivity          redisCommand = "connectivity_load"
+	redisCommandRateLimit                 redisCommand = "rate_limit"
+	redisCommandRecordDelivery            redisCommand = "delivery_record"
+	redisCommandTouchDelivery             redisCommand = "delivery_touch"
+	redisCommandLoadDeliveries            redisCommand = "delivery_load"
+	redisCommandRecordEnforcement         redisCommand = "enforcement_record"
+	redisCommandRecordPaths               redisCommand = "paths_record"
+	redisCommandRecordConnectivity        redisCommand = "connectivity_record"
+	redisCommandRecordRouteHealth         redisCommand = "route_health_record"
+	redisCommandRecordDNSHealth           redisCommand = "dns_health_record"
+	redisCommandRecordRouteSelection      redisCommand = "route_selection_record"
+	redisCommandLoadSiteSelection         redisCommand = "site_selection_load"
+	redisCommandLoadDNSIndex              redisCommand = "dns_index_load"
+	redisCommandReplicaLoad               redisCommand = "replica_load"
+	redisCommandKubernetesCAMarks         redisCommand = "kubernetes_ca_marks"
+	redisCommandKubernetesOperationLimits redisCommand = "kubernetes_operation_limits"
 )
 
 var redisCommands = [...]redisCommand{
@@ -74,6 +75,7 @@ var redisCommands = [...]redisCommand{
 	redisCommandLoadDNSIndex,
 	redisCommandReplicaLoad,
 	redisCommandKubernetesCAMarks,
+	redisCommandKubernetesOperationLimits,
 }
 
 // endpointAnnouncementOutcomes is the closed set of what an endpoint

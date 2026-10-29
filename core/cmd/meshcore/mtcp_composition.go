@@ -115,6 +115,16 @@ func kubernetesClusterCapabilities(offered bool) []string {
 	return []string{mtcpadapter.CapabilityKubeCA}
 }
 
+// kubeAuditCapabilities offers gateway.audit1, gateways' type A
+// operations recorded before they are forwarded (mtcp-v1 §6.10), when
+// schema 245 was granted at startup.
+func kubeAuditCapabilities(audit *kubeAudit) []string {
+	if audit == nil {
+		return nil
+	}
+	return []string{mtcpadapter.CapabilityKubeAudit}
+}
+
 // mtcpDependencies are the application services MTCP sessions use. The
 // browser fields are nil when browser registration is off.
 type mtcpDependencies struct {
@@ -156,6 +166,8 @@ type mtcpDependencies struct {
 	// kubeCertificates, when set, queues gateways' certificate requests
 	// (gateway.cert1).
 	kubeCertificates mtcpadapter.KubeCertificates
+	// kubeAudit, when set, records gateways' operations (gateway.audit1).
+	kubeAudit *kubeAudit
 }
 
 // mtcpMapSessions is mapsession.Service: endpoints and snapshot opening.
@@ -237,6 +249,11 @@ func composeMTCP(
 	applicationOptions.MachineKeyRotations = deps.gatewayKeys
 	applicationOptions.GatewayPresence = deps.gatewayPresence
 	applicationOptions.KubeCertificates = deps.kubeCertificates
+	if deps.kubeAudit != nil {
+		applicationOptions.KubeAudit = deps.kubeAudit.intents
+		applicationOptions.KubeAuditReports = deps.kubeAudit.reports
+		applicationOptions.KubeAuditLimits = deps.kubeAudit.limits
+	}
 	if deps.clusterJoins != nil {
 		applicationOptions.ClusterJoins = deps.clusterJoins
 		applicationOptions.ClusterJoinSecrets = kubecluster.SystemSecrets{}
@@ -253,8 +270,9 @@ func composeMTCP(
 		Capabilities: append(append(mtcpCapabilities(controlConfig.Map.EnableDeviceAliases, deps.relayZones,
 			deps.subnetRoutes), exitCapabilities(deps.exitNodes)...), append(captiveCapabilities(deps.captiveWindows),
 			append(append(dnsCapabilities(deps.dnsZones), kubernetesCapabilities(deps.kubernetesAccess)...),
-				append(kubeCertCapabilities(deps.kubeCertificates),
-					kubernetesClusterCapabilities(deps.kubernetesClusters)...)...)...)...),
+				append(append(kubeCertCapabilities(deps.kubeCertificates),
+					kubernetesClusterCapabilities(deps.kubernetesClusters)...),
+					kubeAuditCapabilities(deps.kubeAudit)...)...)...)...),
 		Logger:         logger,
 		Metrics:        metrics,
 		HandshakeRate:  controlConfig.MTCP.HandshakeRate,
