@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 248 {
-		t.Fatalf("len(Catalog()) = %d, want 248", len(catalog))
+	if len(catalog) != 249 {
+		t.Fatalf("len(Catalog()) = %d, want 249", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 248 {
-		t.Fatalf("LatestVersion() = %d, want 248", LatestVersion())
+	if LatestVersion() != 249 {
+		t.Fatalf("LatestVersion() = %d, want 249", LatestVersion())
 	}
 }
 
@@ -7406,6 +7406,44 @@ func TestMigration248KubernetesClusterReplicaCAReads(t *testing.T) {
 	} {
 		if strings.Contains(migration.SQL, never) {
 			t.Errorf("migration 248 has %q", never)
+		}
+	}
+}
+
+func TestMigration249KubernetesOperationReads(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 249 || catalog[248].Version != 249 {
+		t.Fatalf("the catalog has no migration 249 (%d migrations)", len(catalog))
+	}
+	migration := catalog[248]
+	for _, want := range []string{
+		"ON mesh_audit.kubernetes_operation_denial (kubernetes_cluster_id, recorded_at DESC);",
+		"p_workspace_public_id, 'audit.read', v_now);",
+		"v_longest INTERVAL := CASE WHEN v_filtered THEN INTERVAL '1 day' ELSE INTERVAL '31 days' END;",
+		"OR p_to - p_from > v_longest",
+		"OR p_scan_budget IS NULL OR p_scan_budget NOT BETWEEN 1 AND 50000",
+		"LIMIT p_scan_budget",
+		"(operation.received_at, operation.audit_id) < (p_after_at, p_after_id)",
+		"WHERE operation.received_at = pg_catalog.uuid_extract_timestamp(p_audit_id)",
+		"AND result.recorded_at < p_operation.received_at + INTERVAL '1 day'",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.list_kubernetes_operations_v1(",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.kubernetes_operation_denial_counts_v1(",
+		"AND operation.received_at <= COALESCE(p_after_at, 'infinity'::TIMESTAMPTZ)",
+		"LIMIT 50001",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 249 lacks %q", want)
+		}
+	}
+	// Token and intent bytes stay inside Core; the helpers stay internal.
+	for _, never := range []string{
+		"'token_id'", "'intent_id'", "'intent_digest'",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.kubernetes_operation_reader_internal_v1",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.kubernetes_operation_document_internal_v1",
+	} {
+		if strings.Contains(migration.SQL, never) {
+			t.Errorf("migration 249 has %q", never)
 		}
 	}
 }

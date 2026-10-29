@@ -4,11 +4,17 @@ package integration
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 
 	"meshtransit.net/core/internal/domain/enrollment"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
@@ -24,7 +30,9 @@ import (
 // newest first; one row reads by ID; a session without the cluster
 // permissions is forbidden and an unknown ID is not found (K1d d1a).
 func assertKubernetesClusterPages(ctx context.Context, t *testing.T, admin *pgx.Conn, service *kubecluster.Service,
-	owner, custom accountsession.Session, scope network.Scope, clusterID kubecluster.ID, detail kubecluster.Detail) {
+	store *postgresadapter.KubernetesClusterStore,
+	owner, custom accountsession.Session, scope network.Scope, clusterID kubecluster.ID, detail kubecluster.Detail,
+	recordOperations func()) {
 	t.Helper()
 	query := kubecluster.PageQuery{Session: owner, Scope: scope, ClusterID: clusterID, Limit: 1}
 	keys := map[enrollment.CredentialID]bool{}
@@ -106,12 +114,19 @@ func assertKubernetesClusterPages(ctx context.Context, t *testing.T, admin *pgx.
 	assertKubernetesReplicaReads(ctx, t, admin, service, owner, scope, clusterID, detail)
 	// A reader of the Network without the cluster permissions (an auditor)
 	// reads the replicas and CAs (Q139), not the keys.
+	if _, err := service.ListOperations(ctx, kubecluster.OperationQuery{Session: custom, Scope: scope,
+		ClusterID: clusterID, From: time.Now().Add(-time.Hour), To: time.Now(), Limit: 1}); !errors.Is(err,
+		kubecluster.ErrForbidden) {
+		t.Fatalf("a session without audit.read listed operations: %v", err)
+	}
 	removeAuditor := seedEnrollmentKeyRole(ctx, t, admin, custom, 1993, "auditor")
 	defer removeAuditor()
 	if _, err := service.ListJoinKeys(ctx, kubecluster.PageQuery{Session: custom, Scope: scope,
 		ClusterID: clusterID, Limit: 1}); !errors.Is(err, kubecluster.ErrForbidden) {
 		t.Fatalf("an auditor listed join keys: %v", err)
 	}
+	recordOperations()
+	auditID := assertKubernetesOperationReads(ctx, t, admin, service, store, owner, custom, scope, clusterID)
 	if _, err := service.ListReplicas(ctx, kubecluster.PageQuery{Session: custom, Scope: scope,
 		ClusterID: clusterID, Limit: 1}); err != nil {
 		t.Fatalf("a Network reader listed no replicas: %v", err)
@@ -120,14 +135,15 @@ func assertKubernetesClusterPages(ctx context.Context, t *testing.T, admin *pgx.
 		ClusterID: clusterID, Limit: 1}); err != nil {
 		t.Fatalf("a Network reader listed no CAs: %v", err)
 	}
-	assertKubernetesPagesStayInTheirCluster(ctx, t, service, owner, scope, clusterID, detail)
+	assertKubernetesPagesStayInTheirCluster(ctx, t, service, owner, scope, clusterID, detail, auditID)
 	assertKubernetesPagesBreakTies(ctx, t, admin, service, owner, scope, clusterID, len(detail.Requests))
 }
 
 // A key or request of one cluster is not found under another cluster of the
 // same Network, and paging one cluster lists none of the other's.
 func assertKubernetesPagesStayInTheirCluster(ctx context.Context, t *testing.T, service *kubecluster.Service,
-	owner accountsession.Session, scope network.Scope, clusterID kubecluster.ID, detail kubecluster.Detail) {
+	owner accountsession.Session, scope network.Scope, clusterID kubecluster.ID, detail kubecluster.Detail,
+	auditID publicid.ID) {
 	t.Helper()
 	other := kubecluster.ID(mustPublicID(t))
 	if _, err := service.Create(ctx, kubecluster.Creation{Session: owner, Scope: scope, ID: other,
@@ -150,6 +166,9 @@ func assertKubernetesPagesStayInTheirCluster(ctx context.Context, t *testing.T, 
 	if _, err := service.ReadReplicaRequest(ctx, owner, scope, other, detail.Requests[0].ID()); !errors.Is(err,
 		kubecluster.ErrNotFound) {
 		t.Fatalf("this cluster's request read under another: %v", err)
+	}
+	if _, err := service.ReadOperation(ctx, owner, scope, other, auditID); !errors.Is(err, kubecluster.ErrNotFound) {
+		t.Fatalf("this cluster's operation read under another: %v", err)
 	}
 	if _, err := service.ReadReplica(ctx, owner, scope, other, detail.Replicas[0].DeviceID); !errors.Is(err,
 		kubecluster.ErrNotFound) {
@@ -312,5 +331,163 @@ func assertKubernetesCAReads(ctx context.Context, t *testing.T, service *kubeclu
 	if _, err := service.ReadCertificateAuthority(ctx, owner, scope, clusterID, mustPublicID(t)); !errors.Is(err,
 		kubecluster.ErrNotFound) {
 		t.Fatalf("an unknown CA: %v", err)
+	}
+}
+
+// The operation reads (schema 249): an audit reader pages the cluster's
+// recorded operations newest first, filters them, reads one by audit ID,
+// sums the denials; a one-day range touches at most two partitions.
+func assertKubernetesOperationReads(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	service *kubecluster.Service, store *postgresadapter.KubernetesClusterStore, owner, auditor accountsession.Session,
+	scope network.Scope, clusterID kubecluster.ID) publicid.ID {
+	t.Helper()
+	now := time.Now().UTC()
+	query := kubecluster.OperationQuery{Session: auditor, Scope: scope, ClusterID: clusterID,
+		From: now.Add(-kubecluster.MaximumOperationRange + time.Minute), To: now.Add(time.Minute), Limit: 1}
+	var all []kubecluster.Operation
+	for range 64 {
+		page, err := service.ListOperations(ctx, query)
+		if err != nil || page.Truncated {
+			t.Fatalf("ListOperations() = %+v, %v", page, err)
+		}
+		all = append(all, page.Operations...)
+		if page.Next.IsZero() {
+			break
+		}
+		query.After = page.Next
+	}
+	if len(all) == 0 {
+		t.Fatal("the cluster's recorded operations read as none")
+	}
+	for index, operation := range all {
+		if index > 0 && !operation.ReceivedAt.Before(all[index-1].ReceivedAt) &&
+			!(operation.ReceivedAt.Equal(all[index-1].ReceivedAt) && operation.AuditID.String() < all[index-1].AuditID.String()) {
+			t.Fatalf("operations out of order at %d", index)
+		}
+		if !operation.GatewayDeviceID.IsValid() || len(operation.Groups) == 0 {
+			t.Fatalf("operation %+v lacks its gateway or groups", operation)
+		}
+	}
+	first := all[len(all)-1]
+	read, err := service.ReadOperation(ctx, auditor, scope, clusterID, first.AuditID)
+	if err != nil || read.AuditID != first.AuditID || read.Verb != first.Verb || read.OwnerRef != first.OwnerRef {
+		t.Fatalf("ReadOperation() = %+v, %v", read, err)
+	}
+	if _, err := service.ReadOperation(ctx, auditor, scope, clusterID, mustPublicID(t)); !errors.Is(err,
+		kubecluster.ErrNotFound) {
+		t.Fatalf("an unknown audit ID: %v", err)
+	}
+	filtered := kubecluster.OperationQuery{Session: auditor, Scope: scope, ClusterID: clusterID,
+		From: now.Add(-23 * time.Hour), To: now.Add(time.Minute), OwnerRef: first.OwnerRef, Class: first.Class,
+		Limit: kubecluster.MaximumPageSize}
+	page, err := service.ListOperations(ctx, filtered)
+	if err != nil || len(page.Operations) == 0 {
+		t.Fatalf("filtered ListOperations() = %+v, %v", page, err)
+	}
+	for _, operation := range page.Operations {
+		if operation.OwnerRef != first.OwnerRef || operation.Class != first.Class {
+			t.Fatalf("the filter kept %+v", operation)
+		}
+	}
+	filtered.Class = "proxy"
+	if page, err := service.ListOperations(ctx, filtered); err != nil || len(page.Operations) != 0 {
+		t.Fatalf("a class with no operation kept %+v, %v", page, err)
+	}
+	if _, err := service.CountDenials(ctx, auditor, scope, clusterID, now.Add(-24*time.Hour),
+		now.Add(time.Minute)); err != nil {
+		t.Fatalf("CountDenials(): %v", err)
+	}
+	// An administrator holds audit.read in the Workspace: the Workspace
+	// path of the reader (review d1c M2).
+	if page, err := service.ListOperations(ctx, kubecluster.OperationQuery{Session: owner, Scope: scope,
+		ClusterID: clusterID, From: now.Add(-time.Hour), To: now.Add(time.Minute), Limit: 1}); err != nil ||
+		len(page.Operations) != 1 {
+		t.Fatalf("a Workspace administrator's operations = %+v, %v", page, err)
+	}
+	assertKubernetesOperationScanBudget(ctx, t, store, auditor, scope, clusterID, now)
+	var plan string
+	if err := admin.QueryRow(ctx, `EXPLAIN (FORMAT JSON) SELECT operation.audit_id
+FROM mesh_audit.kubernetes_operation AS operation
+WHERE operation.kubernetes_cluster_id = 1 AND operation.received_at >= now() - INTERVAL '1 day'
+  AND operation.received_at < now()
+ORDER BY operation.received_at DESC, operation.audit_id DESC LIMIT 50000`).Scan(&plan); err != nil {
+		t.Fatal(err)
+	}
+	if partitions := strings.Count(plan, `"Relation Name": "kubernetes_operation_`); partitions == 0 || partitions > 2 {
+		t.Fatalf("a day of operations reads %d partitions: %s", partitions, plan)
+	}
+	return first.AuditID
+}
+
+// assertKubernetesOperationScanBudget pages a filter with a budget of one
+// row (review d1c H1): pages stop at the budget, kept or not, and every
+// kept row comes exactly once across the pages, also when the last row
+// scanned is the one kept.
+func assertKubernetesOperationScanBudget(ctx context.Context, t *testing.T,
+	store *postgresadapter.KubernetesClusterStore, auditor accountsession.Session, scope network.Scope,
+	clusterID kubecluster.ID, now time.Time) {
+	t.Helper()
+	query := kubecluster.OperationQuery{Session: auditor, Scope: scope, ClusterID: clusterID,
+		From: now.Add(-23 * time.Hour), To: now.Add(time.Minute), Class: "exec", Limit: 10,
+		ScanBudget: kubecluster.OperationScanBudget}
+	whole, err := store.ListOperations(ctx, query)
+	if err != nil || len(whole.Operations) == 0 || whole.Truncated || !whole.Next.IsZero() {
+		t.Fatalf("the exec operations = %+v, %v", whole, err)
+	}
+	query.ScanBudget = 1
+	seen := map[publicid.ID]int{}
+	var keptAndTruncated, emptyAndTruncated bool
+	for range 256 {
+		page, err := store.ListOperations(ctx, query)
+		if err != nil {
+			t.Fatalf("a page of one scanned row: %v", err)
+		}
+		for _, operation := range page.Operations {
+			seen[operation.AuditID]++
+		}
+		keptAndTruncated = keptAndTruncated || page.Truncated && len(page.Operations) == 1
+		emptyAndTruncated = emptyAndTruncated || page.Truncated && len(page.Operations) == 0
+		if page.Next.IsZero() {
+			break
+		}
+		query.After = page.Next
+	}
+	for _, operation := range whole.Operations {
+		if seen[operation.AuditID] != 1 {
+			t.Fatalf("operation %s came %d times", operation.AuditID, seen[operation.AuditID])
+		}
+	}
+	if len(seen) != len(whole.Operations) || !keptAndTruncated || !emptyAndTruncated {
+		t.Fatalf("budget pages: %d kept of %d, kept and truncated %t, empty and truncated %t", len(seen),
+			len(whole.Operations), keptAndTruncated, emptyAndTruncated)
+	}
+}
+
+// recordClusterOperations records three operations through the cluster's
+// gateway, for one standard Device of its Network (the K1b0 assertions
+// erase theirs).
+func recordClusterOperations(ctx context.Context, t *testing.T, admin, runtime *pgx.Conn, keys replicaKeys,
+	gatewayDevice string) {
+	t.Helper()
+	gateway := hex.EncodeToString(fingerprintOf(keys)) + ":" + hex.EncodeToString(nodeKeyOf(keys))
+	var peer string
+	if err := admin.QueryRow(ctx, `SELECT peer.public_id::TEXT FROM mesh.device AS peer
+JOIN mesh.device AS gateway ON gateway.workspace_id = peer.workspace_id AND gateway.network_id = peer.network_id
+WHERE gateway.public_id = $1::UUID AND peer.kind <> 'kubernetes_gateway' AND peer.state = 'active'
+  AND peer.deleted_at IS NULL
+ORDER BY peer.id LIMIT 1`, gatewayDevice).Scan(&peer); err != nil {
+		t.Fatalf("a standard Device of the gateway's Network: %v", err)
+	}
+	rows := make([]map[string]any, 0, 3)
+	for index, class := range []string{"write", "write", "exec"} {
+		sum := sha256.Sum256([]byte("pages-" + strconv.Itoa(index)))
+		row := operationRow(t, gateway, peer, byte(200+index), hex.EncodeToString(sum[:]))
+		row["class"] = class
+		rows = append(rows, row)
+	}
+	for index, answer := range recordOperations(ctx, t, runtime, rows...) {
+		if answer["outcome"] != "accepted" {
+			t.Fatalf("operation %d answered %v", index, answer)
+		}
 	}
 }

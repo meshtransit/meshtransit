@@ -40,6 +40,10 @@ const (
 	kubernetesReplicaReadOperation = "kubernetes_replica_read"
 	kubernetesCAListOperation      = "kubernetes_ca_list"
 	kubernetesCAReadOperation      = "kubernetes_ca_read"
+	// K1d d1c: operations and denials for audit readers.
+	kubernetesOperationListOperation = "kubernetes_operation_list"
+	kubernetesOperationReadOperation = "kubernetes_operation_read"
+	kubernetesDenialCountsOperation  = "kubernetes_operation_denial_counts"
 )
 
 // KubernetesClusterManager manages a Network's Kubernetes clusters, their
@@ -67,6 +71,11 @@ type KubernetesClusterManager interface {
 	ListCertificateAuthorities(context.Context, kubecluster.PageQuery) (kubecluster.CAPage, error)
 	ReadCertificateAuthority(context.Context, accountsession.Session, network.Scope, kubecluster.ID,
 		publicid.ID) (kubecluster.CertificateAuthority, error)
+	ListOperations(context.Context, kubecluster.OperationQuery) (kubecluster.OperationPage, error)
+	ReadOperation(context.Context, accountsession.Session, network.Scope, kubecluster.ID,
+		publicid.ID) (kubecluster.Operation, error)
+	CountDenials(context.Context, accountsession.Session, network.Scope, kubecluster.ID, time.Time,
+		time.Time) (kubecluster.DenialSums, error)
 }
 
 type kubernetesClusterPath struct {
@@ -76,6 +85,9 @@ type kubernetesClusterPath struct {
 	requestID kubecluster.RequestID
 	deviceID  node.ID
 	caID      publicid.ID
+	auditID   publicid.ID
+	// operations is the operation list's or denial counts' query.
+	operations kubernetesOperationQuery
 	// page is the list's page; only the lists take one.
 	page    kubernetesPage
 	methods restMethods
@@ -98,6 +110,8 @@ type kubernetesClusterPath struct {
 //	POST        kubernetes-clusters/{c}/replica-requests/{r}/actions/approve|reject
 //	GET         kubernetes-clusters/{c}/replicas[/{device}]                list, read (K1d d1b)
 //	GET         kubernetes-clusters/{c}/certificate-authorities[/{ca}]     list, read (K1d d1b)
+//	GET         kubernetes-clusters/{c}/operations[/{audit_id}]            list, read (K1d d1c)
+//	GET         kubernetes-clusters/{c}/operation-denial-counts            sums (K1d d1c)
 //
 // Only GET of a list takes a query: page_size and page_token (K1d).
 func parseKubernetesClusterPath(request *http.Request) (kubernetesClusterPath, bool) {
@@ -135,6 +149,13 @@ func parseKubernetesClusterPath(request *http.Request) (kubernetesClusterPath, b
 		path.operation = operations[request.Method]
 	}
 	switch {
+	case path.operation == kubernetesOperationListOperation || path.operation == kubernetesDenialCountsOperation:
+		query, ok := parseKubernetesOperationQuery(request.URL.RawQuery, path.scope, path.clusterID,
+			path.operation == kubernetesOperationListOperation)
+		if !ok {
+			return kubernetesClusterPath{}, false
+		}
+		path.operations = query
 	case isKubernetesPagedList(path.operation):
 		page, ok := parseKubernetesPage(request.URL.RawQuery, path.scope, path.clusterID, path.operation)
 		if !ok {
@@ -178,6 +199,19 @@ func (path *kubernetesClusterPath) route(rest []string) (map[string]string, bool
 	case len(rest) == 2 && rest[1] == "certificate-authorities":
 		path.methods = restMethods{http.MethodGet}
 		return map[string]string{http.MethodGet: kubernetesCAListOperation}, true
+	case len(rest) == 2 && rest[1] == "operations":
+		path.methods = restMethods{http.MethodGet}
+		return map[string]string{http.MethodGet: kubernetesOperationListOperation}, true
+	case len(rest) == 2 && rest[1] == "operation-denial-counts":
+		path.methods = restMethods{http.MethodGet}
+		return map[string]string{http.MethodGet: kubernetesDenialCountsOperation}, true
+	case len(rest) == 3 && rest[1] == "operations":
+		audit, ok := child(2)
+		if !ok {
+			return nil, false
+		}
+		path.auditID, path.methods = audit, restMethods{http.MethodGet}
+		return map[string]string{http.MethodGet: kubernetesOperationReadOperation}, true
 	case len(rest) == 3 && rest[1] == "replicas":
 		device, ok := child(2)
 		if !ok {
@@ -291,6 +325,8 @@ func (handler *ManagementHandler) handleKubernetesClusters(ctx context.Context, 
 	case kubernetesReplicaListOperation, kubernetesReplicaReadOperation, kubernetesCAListOperation,
 		kubernetesCAReadOperation:
 		return handler.readKubernetesReplicasAndCAs(ctx, response, correlationID, path, session, fail)
+	case kubernetesOperationListOperation, kubernetesOperationReadOperation, kubernetesDenialCountsOperation:
+		return handler.readKubernetesOperations(ctx, response, correlationID, path, session, fail)
 	case kubernetesClusterDeleteOperation:
 		expectedVersion, precondition := parseIfMatch(request.Header.Values("If-Match"))
 		if precondition != nil {

@@ -45,7 +45,10 @@ type kubernetesClusterStub struct {
 	failure      error
 	pages        []kubecluster.PageQuery
 	// next is the cursor list pages return.
-	next kubecluster.PageCursor
+	next             kubecluster.PageCursor
+	truncated        bool
+	operationQueries []kubecluster.OperationQuery
+	denialRanges     [][2]time.Time
 }
 
 func (stub *kubernetesClusterStub) ListJoinKeys(_ context.Context,
@@ -136,6 +139,51 @@ func (stub *kubernetesClusterStub) ReadCertificateAuthority(_ context.Context, _
 		return kubecluster.CertificateAuthority{}, kubecluster.ErrNotFound
 	}
 	return kubernetesTestCA(), nil
+}
+
+func (stub *kubernetesClusterStub) ListOperations(_ context.Context,
+	query kubecluster.OperationQuery) (kubecluster.OperationPage, error) {
+	stub.calls = append(stub.calls, "list-operations")
+	stub.operationQueries = append(stub.operationQueries, query)
+	if stub.failure != nil {
+		return kubecluster.OperationPage{}, stub.failure
+	}
+	return kubecluster.OperationPage{Operations: []kubecluster.Operation{kubernetesTestOperation()},
+		Next: stub.next, Truncated: stub.truncated}, nil
+}
+
+func (stub *kubernetesClusterStub) ReadOperation(_ context.Context, _ accountsession.Session, _ network.Scope,
+	_ kubecluster.ID, auditID publicid.ID) (kubecluster.Operation, error) {
+	stub.calls = append(stub.calls, "read-operation")
+	if stub.failure != nil {
+		return kubecluster.Operation{}, stub.failure
+	}
+	if auditID != kubernetesTestOperation().AuditID {
+		return kubecluster.Operation{}, kubecluster.ErrNotFound
+	}
+	return kubernetesTestOperation(), nil
+}
+
+func (stub *kubernetesClusterStub) CountDenials(_ context.Context, _ accountsession.Session, _ network.Scope,
+	_ kubecluster.ID, from, to time.Time) (kubecluster.DenialSums, error) {
+	stub.calls = append(stub.calls, "count-denials")
+	stub.denialRanges = append(stub.denialRanges, [2]time.Time{from, to})
+	if stub.failure != nil {
+		return kubecluster.DenialSums{}, stub.failure
+	}
+	return kubecluster.DenialSums{Counts: []kubecluster.DenialCount{{Reason: "forbidden", Count: 3, FirstAt: from,
+		LastAt: to}}}, nil
+}
+
+const kubernetesTestAuditID = "01890f00-0000-7000-8000-000000000b08"
+
+func kubernetesTestOperation() kubecluster.Operation {
+	id, _ := publicid.Parse(kubernetesTestAuditID)
+	return kubecluster.Operation{AuditID: id, ReceivedAt: time.Date(2026, time.October, 29, 13, 14, 58, 0, time.UTC),
+		Class: "write", Groups: []string{"edit"}, Verb: "delete", Resource: "pods", Namespace: "default",
+		Name: "diff-target", OwnerKind: "member", OwnerRef: "01890f00-0000-7000-8000-000000000011",
+		NetworkRevision: 51, GatewayDeviceID: kubernetesTestDevice(), PeerDeviceID: kubernetesTestDevice(),
+		HasOutcome: true, Status: 200, DurationMS: 12}
 }
 
 func kubernetesTestReplica() kubecluster.Replica {
@@ -494,6 +542,24 @@ func TestKubernetesClusterHTTPBoundary(t *testing.T) {
 			"?page_size=1", "", "", nil, 404, "", "", ""},
 		{"no POST on replicas", http.MethodPost, cluster + "/replicas", `{}`, "", nil, 405, "", "method_not_allowed",
 			""},
+		{"list operations", http.MethodGet, cluster + "/operations", "", "", nil, 200, "list-operations",
+			`"name":"diff-target","impersonated":"","owner_kind":"member"`, "token_id"},
+		{"list operations, a filter", http.MethodGet, cluster + "/operations?class=write&person=x&device=" +
+			kubernetesTestDevice().String(), "", "", nil, 200, "list-operations", `"scan_truncated":false`, ""},
+		{"list operations, a range", http.MethodGet, cluster + "/operations?from=2026-10-29T00:00:00Z&to=" +
+			"2026-10-30T00:00:00Z", "", "", nil, 200, "list-operations", `"from":"2026-10-29T00:00:00Z"`, ""},
+		{"operations, a bad time", http.MethodGet, cluster + "/operations?from=yesterday", "", "", nil, 404, "", "",
+			""},
+		{"operations, an unknown query", http.MethodGet, cluster + "/operations?verb=delete", "", "", nil, 404, "",
+			"", ""},
+		{"read an operation", http.MethodGet, cluster + "/operations/" + kubernetesTestAuditID, "", "", nil, 200,
+			"read-operation", `"status":200,"duration_ms":12`, ""},
+		{"denial counts", http.MethodGet, cluster + "/operation-denial-counts?from=2026-10-29T00:00:00Z", "", "",
+			nil, 200, "count-denials", `"reason":"forbidden","count":3`, ""},
+		{"denial counts take no class", http.MethodGet, cluster + "/operation-denial-counts?class=write", "", "",
+			nil, 404, "", "", ""},
+		{"operations without audit.read", http.MethodGet, cluster + "/operations", "", "", kubecluster.ErrForbidden,
+			403, "list-operations", "", ""},
 		{"read a request", http.MethodGet, request, "", "", nil, 200, "read-request",
 			`"machine_key_fingerprint":"` + strings.Repeat("a", 64) + `"`, ""},
 		{"approve", http.MethodPost, request + "/actions/approve", `{"code":"4KH7I-REC2B"}`, "", nil, 200,
@@ -928,6 +994,62 @@ func TestKubernetesClusterPages(t *testing.T) {
 		"/replica-requests/" + kubernetesTestRequest} {
 		if status, _ := get(cluster + path); status != http.StatusForbidden {
 			t.Errorf("a Network reader got %s: %d", path, status)
+		}
+	}
+}
+
+// An operations token carries the range and filters: the next page reads
+// the same range even when now moved, a token of another cluster is
+// refused, and a query that contradicts the token is refused (K1d d1c).
+func TestKubernetesOperationPages(t *testing.T) {
+	t.Parallel()
+	options := validManagementHandlerOptions(t)
+	after, _ := publicid.Parse(kubernetesTestAuditID)
+	next := kubecluster.PageCursor{At: time.Date(2026, time.October, 29, 13, 14, 58, 123000000, time.UTC), ID: after}
+	stub := &kubernetesClusterStub{next: next, truncated: true}
+	options.KubernetesClusters = stub
+	handler, err := NewManagementHandler(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cluster := "/" + kubernetesTestCluster
+	get := func(path string) (int, string) {
+		t.Helper()
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, newManagementRequest(t, http.MethodGet, kubernetesClustersTestPath(path), ""))
+		return response.Code, response.Body.String()
+	}
+	status, body := get(cluster + "/operations?class=exec&page_size=5")
+	var page struct {
+		Data struct {
+			From, To      string
+			Truncated     bool   `json:"scan_truncated"`
+			NextPageToken string `json:"next_page_token"`
+		} `json:"data"`
+	}
+	if status != 200 || json.Unmarshal([]byte(body), &page) != nil || page.Data.NextPageToken == "" ||
+		!page.Data.Truncated {
+		t.Fatalf("first page: %d %s", status, body)
+	}
+	first := stub.operationQueries[0]
+	if first.Class != "exec" || first.Limit != 5 || first.To.Sub(first.From) != kubernetesDefaultOperationRange {
+		t.Fatalf("first query %+v", first)
+	}
+	if status, body := get(cluster + "/operations?page_size=5&page_token=" + page.Data.NextPageToken); status != 200 {
+		t.Fatalf("next page: %d %s", status, body)
+	}
+	second := stub.operationQueries[1]
+	if !second.From.Equal(first.From) || !second.To.Equal(first.To) || second.Class != "exec" ||
+		!second.After.At.Equal(next.At) || second.After.ID != next.ID {
+		t.Fatalf("second query %+v, first %+v", second, first)
+	}
+	for _, path := range []string{
+		cluster + "/operations?class=write&page_token=" + page.Data.NextPageToken,
+		"/01890f00-0000-7000-8000-000000000b09/operations?page_token=" + page.Data.NextPageToken,
+		cluster + "/join-keys?page_token=" + page.Data.NextPageToken,
+	} {
+		if status, _ := get(path); status != 404 {
+			t.Errorf("%s: %d, want 404", path, status)
 		}
 	}
 }

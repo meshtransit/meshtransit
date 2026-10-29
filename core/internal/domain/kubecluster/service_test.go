@@ -54,6 +54,7 @@ type recordingStore struct {
 	signingReads []kubecluster.ID
 	replacements []kubecluster.TrustReplacement
 	pages        []kubecluster.PageQuery
+	operations   []kubecluster.OperationQuery
 }
 
 func (store *recordingStore) ListJoinKeys(_ context.Context,
@@ -98,6 +99,22 @@ func (store *recordingStore) ListCertificateAuthorities(_ context.Context,
 func (*recordingStore) ReadCertificateAuthority(context.Context, accountsession.Session, network.Scope,
 	kubecluster.ID, publicid.ID) (kubecluster.CertificateAuthority, error) {
 	return kubecluster.CertificateAuthority{}, nil
+}
+
+func (store *recordingStore) ListOperations(_ context.Context,
+	query kubecluster.OperationQuery) (kubecluster.OperationPage, error) {
+	store.operations = append(store.operations, query)
+	return kubecluster.OperationPage{}, nil
+}
+
+func (*recordingStore) ReadOperation(context.Context, accountsession.Session, network.Scope, kubecluster.ID,
+	publicid.ID) (kubecluster.Operation, error) {
+	return kubecluster.Operation{}, nil
+}
+
+func (*recordingStore) CountDenials(context.Context, accountsession.Session, network.Scope, kubecluster.ID,
+	time.Time, time.Time) (kubecluster.DenialSums, error) {
+	return kubecluster.DenialSums{}, nil
 }
 
 func (store *recordingStore) ReplaceSigningTrust(_ context.Context,
@@ -431,5 +448,46 @@ func TestServicePages(t *testing.T) {
 	if _, err := service.ReadReplicaRequest(context.Background(), session, scope, kubecluster.ID{},
 		kubecluster.RequestID(mustID(t, "000000000b03"))); !errors.Is(err, kubecluster.ErrInvalid) {
 		t.Fatalf("ReadReplicaRequest() without a cluster: %v", err)
+	}
+}
+
+// An operations page asks for a range of at most 31 days, 1 day with a
+// filter, a known class; anything else never reaches the store (K1d d1c).
+func TestServiceOperations(t *testing.T) {
+	t.Parallel()
+	service, store, session, scope, now := serviceFixture(t)
+	cluster := kubecluster.ID(mustID(t, "000000000301"))
+	base := kubecluster.OperationQuery{Session: session, Scope: scope, ClusterID: cluster,
+		From: now.Add(-kubecluster.MaximumOperationRange), To: now, Limit: 10}
+	for name, change := range map[string]func(*kubecluster.OperationQuery){
+		"empty range":         func(query *kubecluster.OperationQuery) { query.From = query.To },
+		"over 31 days":        func(query *kubecluster.OperationQuery) { query.From = query.From.Add(-time.Second) },
+		"a filter over a day": func(query *kubecluster.OperationQuery) { query.Class = "write" },
+		"an unknown class":    func(query *kubecluster.OperationQuery) { query.From, query.Class = now.Add(-time.Hour), "read" },
+		"a long person": func(query *kubecluster.OperationQuery) {
+			query.From, query.OwnerRef = now.Add(-time.Hour), strings.Repeat("a", 1025)
+		},
+		"no rows":       func(query *kubecluster.OperationQuery) { query.Limit = 0 },
+		"a half cursor": func(query *kubecluster.OperationQuery) { query.After = kubecluster.PageCursor{At: now} },
+	} {
+		query := base
+		change(&query)
+		if _, err := service.ListOperations(context.Background(), query); !errors.Is(err, kubecluster.ErrInvalid) {
+			t.Errorf("%s: ListOperations() error = %v", name, err)
+		}
+	}
+	if len(store.operations) != 0 {
+		t.Fatalf("invalid queries reached the store: %+v", store.operations)
+	}
+	filtered := base
+	filtered.From, filtered.Class = now.Add(-kubecluster.MaximumFilteredOperationRange), "exec"
+	for _, query := range []kubecluster.OperationQuery{base, filtered} {
+		if _, err := service.ListOperations(context.Background(), query); err != nil {
+			t.Fatalf("ListOperations(%+v) error = %v", query, err)
+		}
+	}
+	if _, err := service.CountDenials(context.Background(), session, scope, cluster, now.Add(-32*24*time.Hour),
+		now); !errors.Is(err, kubecluster.ErrInvalid) {
+		t.Fatalf("CountDenials() over 31 days: %v", err)
 	}
 }

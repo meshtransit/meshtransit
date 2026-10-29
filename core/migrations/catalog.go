@@ -627,6 +627,8 @@ func Catalog() []Migration {
 			kubernetesClusterPagesSQL),
 		newMigration(248, "A cluster's replicas and certificate authorities read a page at a time",
 			kubernetesClusterReplicaCAReadsSQL),
+		newMigration(249, "Audit readers read a cluster's Kubernetes operations with a bounded scan",
+			kubernetesOperationReadsSQL),
 	}
 }
 
@@ -1150,3 +1152,6 @@ var kubernetesClusterPagesSQL string
 
 //go:embed 000248_kubernetes_cluster_replica_ca_reads.up.sql
 var kubernetesClusterReplicaCAReadsSQL string
+
+//go:embed 000249_kubernetes_operation_reads.up.sql
+var kubernetesOperationReadsSQL string

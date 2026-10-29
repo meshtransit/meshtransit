@@ -150,6 +150,11 @@ type Store interface {
 	ListCertificateAuthorities(ctx context.Context, query PageQuery) (CAPage, error)
 	ReadCertificateAuthority(ctx context.Context, session accountsession.Session, scope network.Scope,
 		clusterID ID, caID publicid.ID) (CertificateAuthority, error)
+	ListOperations(ctx context.Context, query OperationQuery) (OperationPage, error)
+	ReadOperation(ctx context.Context, session accountsession.Session, scope network.Scope, clusterID ID,
+		auditID publicid.ID) (Operation, error)
+	CountDenials(ctx context.Context, session accountsession.Session, scope network.Scope, clusterID ID,
+		from, to time.Time) (DenialSums, error)
 }
 
 // Clock reads the host's time; it only refuses sessions that already ended.
