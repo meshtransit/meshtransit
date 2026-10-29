@@ -63,6 +63,11 @@ type Config struct {
 	// (MESHGW_CERTIFICATE_RENEW_AFTER, a Go duration of 15 minutes or more;
 	// a4 design §10 L4). Zero: Core's time.
 	CertificateRenewAfter time.Duration
+	// CertificateDir, for a K1 gateway, keeps its certificate across a
+	// container restart (MESHGW_CERTIFICATE_DIR, absolute): an emptyDir
+	// in memory, never a disk or a backup (K1b design §3, Q52). Empty:
+	// asked for again at each start.
+	CertificateDir string
 	// PodName, Namespace and NodeName are what the replica reports about
 	// itself while it waits for approval, for display only.
 	PodName, Namespace, NodeName string
@@ -127,7 +132,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("meshgw: the Device name %q is over %d bytes", hostname, maxHostnameBytes)
 	}
 	keyName := "key-" + strconv.Itoa(ordinal)
-	joinKeyFile, podTokenFile, certificates, renewAfter := "", "", false, time.Duration(0)
+	joinKeyFile, podTokenFile, certificates, renewAfter, certificateDir := "", "", false, time.Duration(0), ""
 	if joinDir := value("MESHGW_JOIN_DIR", ""); joinDir != "" {
 		if !filepath.IsAbs(joinDir) {
 			return Config{}, fmt.Errorf("meshgw: MESHGW_JOIN_DIR %q must be absolute", joinDir)
@@ -144,6 +149,17 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		default:
 			return Config{}, errors.New(`meshgw: MESHGW_CERTIFICATES must be "on" or "off"`)
 		}
+		if certificateDir = value("MESHGW_CERTIFICATE_DIR", ""); certificateDir != "" {
+			// The key never goes to the state directory, which the state
+			// Secret mirrors (review b7a L7).
+			certificateDir = filepath.Clean(certificateDir)
+			state := filepath.Clean(stateDir)
+			if !filepath.IsAbs(certificateDir) || certificateDir == state ||
+				strings.HasPrefix(certificateDir, state+string(filepath.Separator)) {
+				return Config{}, fmt.Errorf("meshgw: MESHGW_CERTIFICATE_DIR %q must be absolute, outside the state "+
+					"directory", certificateDir)
+			}
+		}
 		if raw := value("MESHGW_CERTIFICATE_RENEW_AFTER", ""); raw != "" {
 			parsed, err := time.ParseDuration(raw)
 			if err != nil || parsed < kubecert.MinimumRenewAfter {
@@ -154,8 +170,8 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	}
 	cfg := Config{
 		JoinKeyFile: joinKeyFile, PodTokenFile: podTokenFile, Certificates: certificates,
-		CertificateRenewAfter: renewAfter,
-		PodName:               getenv("POD_NAME"), Namespace: value("POD_NAMESPACE", ""), NodeName: value("NODE_NAME", ""),
+		CertificateRenewAfter: renewAfter, CertificateDir: certificateDir,
+		PodName: getenv("POD_NAME"), Namespace: value("POD_NAMESPACE", ""), NodeName: value("NODE_NAME", ""),
 		Ordinal:            ordinal,
 		ControlURL:         controlURL,
 		ControlFingerprint: fingerprint,
@@ -169,6 +185,9 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		KubeAPIPort:        kubeAPIPort,
 		KubeAPIBackend:     net.JoinHostPort(apiHost, apiPort),
 		Cluster:            cluster,
+	}
+	if joinKeyFile == "" && value("MESHGW_CERTIFICATE_DIR", "") != "" {
+		return Config{}, errors.New("meshgw: MESHGW_CERTIFICATE_DIR needs MESHGW_JOIN_DIR")
 	}
 	if joinKeyFile == "" {
 		// A gateway that enrolls (K0) only passes kubectl through: proxy

@@ -38,6 +38,10 @@ type Options struct {
 	// after its issue when that is sooner than Core asks; zero: never. At
 	// least MinimumRenewAfter, so a fleet cannot hit Core's 12 an hour.
 	RenewAfter time.Duration
+	// StoreDir, when set, keeps the certificate and its key in a file there
+	// (an emptyDir in memory), so a restarted container takes it back
+	// rather than asking Core (K1b design §3, Q52).
+	StoreDir string
 }
 
 // MinimumRenewAfter is the shortest Options.RenewAfter: the reissue floor,
@@ -70,6 +74,10 @@ type Manager struct {
 	mapSeen bool
 	early   *earlyPlan
 	planned map[[64]byte]earlyPlan // CA pairs an early renewal was planned for, and when
+	// restored: the certificate came from the store, not yet checked
+	// against a map; renewSoon: it was, of other CAs, and its early renewal
+	// comes within recheck, until a certificate is issued (Q71).
+	restored, renewSoon bool
 
 	mu       sync.Mutex
 	current  *Certificate
@@ -149,6 +157,7 @@ func (manager *Manager) Current() (Certificate, bool) {
 // Run keeps the certificate until ctx ends. The first request waits for the
 // first map (the stream sends nothing before it, §10 L3).
 func (manager *Manager) Run(ctx context.Context) error {
+	manager.restore(ctx)
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	for {
@@ -179,6 +188,9 @@ func (manager *Manager) Run(ctx context.Context) error {
 // the refusal backoff (docs review a4 M2).
 func (manager *Manager) mapArrived(ca *networkmap.KubernetesCA, now time.Time) {
 	manager.mapCA = ca
+	if manager.restoredMap(ca) {
+		manager.renewSoon = true
+	}
 	if !manager.mapSeen {
 		manager.mapSeen, manager.attempts, manager.nextAt = true, 0, time.Time{}
 	}
@@ -240,12 +252,17 @@ func (manager *Manager) waitedOut(now time.Time) bool {
 
 func (manager *Manager) validCurrent(now time.Time) (*Certificate, bool) {
 	manager.mu.Lock()
-	defer manager.mu.Unlock()
-	if manager.current != nil && !manager.current.NotAfter.After(now) {
-		// Expired: dropped; the gateway asks with its token.
+	expired := manager.current != nil && !manager.current.NotAfter.After(now)
+	if expired {
+		// Expired: dropped, with its file; the gateway asks with its token.
 		manager.current = nil
 	}
-	return manager.current, manager.current != nil
+	current := manager.current
+	manager.mu.Unlock()
+	if expired {
+		manager.forget()
+	}
+	return current, current != nil
 }
 
 // dueAt is when the current certificate renews: Core's time, or an early

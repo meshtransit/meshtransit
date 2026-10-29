@@ -93,6 +93,8 @@ func (manager *Manager) issued(ctx context.Context, now time.Time, result contro
 	manager.mu.Unlock()
 	manager.pending, manager.attempts, manager.failures, manager.unsupported, manager.refusals = nil, 0, 0, 0, 0
 	manager.forceToken, manager.early = false, nil
+	manager.restored, manager.renewSoon = false, false
+	manager.save(ctx, cert)
 	manager.planEarly(now)
 	manager.nextAt = manager.dueAt(&cert, now)
 	manager.options.Logger.InfoContext(ctx, "kubernetes gateway certificate issued",
@@ -118,6 +120,9 @@ func (manager *Manager) refused(ctx context.Context, now time.Time, result contr
 	wait := max(result.RetryAfter, failureBackoff(manager.refusals))
 	switch action {
 	case ActionToken:
+		// The stored certificate no longer renews: a restart must not bring
+		// it back (review b7a M2).
+		manager.forget()
 		manager.forceToken = true
 		// The first switch to the token is quick; one Core keeps refusing
 		// waits longer each time (a4b2 review L1).
@@ -143,6 +148,7 @@ func (manager *Manager) refused(ctx context.Context, now time.Time, result contr
 			"error_code", "kubernetes_certificate_request_malformed", "reason", result.Reason)
 		manager.newKeyLater(now)
 	case ActionStop:
+		manager.forget()
 		manager.nextAt = now.Add(max(wait, stopWait/2+random(stopWait)))
 	}
 }
@@ -195,8 +201,19 @@ func (manager *Manager) planEarly(now time.Time) {
 		plan = earlyPlan{at: now.Add(random(spread)), root: root}
 		manager.rememberPlan(pair, plan)
 	}
+	if soon := now.Add(jitter(recheck)); manager.renewSoon && soon.Before(plan.at) {
+		// A restored certificate of other CAs renews within recheck, not at
+		// the fleet's spread: this replica already lost time restarting.
+		// Kept for the pair, so the next map does not undo it (Q71;
+		// re-review b7a N1).
+		plan.at = soon
+		manager.rememberPlan(pair, plan)
+	}
 	manager.early = &plan
-	if manager.pending == nil && plan.at.Before(manager.nextAt) {
+	// A plan brings the next request forward, never past a backoff after a
+	// refusal or a failure: a map would otherwise have a refused gateway
+	// ask again at every map (re-review b7a H2).
+	if manager.pending == nil && manager.refusals == 0 && manager.failures == 0 && plan.at.Before(manager.nextAt) {
 		manager.nextAt = manager.dueAt(current, now)
 	}
 }

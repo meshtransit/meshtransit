@@ -152,6 +152,7 @@ func newRuntime(cfg Config, stacks *Stacks, profiles *profile.Store, identities 
 		GatewayTokenFile: cfg.PodTokenFile,
 		// K1a4a a4: the replica's TLS certificate, key in memory only.
 		GatewayCertificates: cfg.Certificates, GatewayCertificateRenewAfter: cfg.CertificateRenewAfter,
+		GatewayCertificateDir: cfg.CertificateDir,
 		// K1b: type A operations go to Core on the map stream.
 		KubeAudits: audits.calls, KubeAuditReports: audits.reports,
 	})

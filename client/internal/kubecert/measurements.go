@@ -33,7 +33,8 @@ type Measurements struct {
 	WaitingSince time.Time
 	WaitingFor   time.Duration
 	// Requests counts answers by outcome (issued, refused, retry,
-	// verify_failed, error) and reason.
+	// verify_failed, error) and reason, and the stored certificate's fate
+	// (restored, restore_refused, restored_renew): not answers.
 	Requests map[[2]string]uint64
 }
 

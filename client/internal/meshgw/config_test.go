@@ -271,3 +271,25 @@ func TestLoadConfigAPIServerOverride(t *testing.T) {
 		t.Fatalf("%+v, %v", cfg.Kube, err)
 	}
 }
+
+// MESHGW_CERTIFICATE_DIR keeps the certificate across a restart; it must
+// be absolute.
+func TestLoadConfigCertificateDir(t *testing.T) {
+	t.Parallel()
+	env := proxyEnv(t)
+	env["MESHGW_CERTIFICATE_DIR"] = "/var/run/meshgw/certificate"
+	if cfg, err := loadFrom(env); err != nil || cfg.CertificateDir != "/var/run/meshgw/certificate" {
+		t.Fatalf("%q, %v", cfg.CertificateDir, err)
+	}
+	for _, refused := range []string{"certificate", env["MESHGW_STATE_DIR"], env["MESHGW_STATE_DIR"] + "/cert"} {
+		env["MESHGW_CERTIFICATE_DIR"] = refused
+		if _, err := loadFrom(env); err == nil {
+			t.Fatalf("%q was taken", refused)
+		}
+	}
+	enrolled, _ := testEnv(t)
+	enrolled["MESHGW_CERTIFICATE_DIR"] = "/var/run/meshgw/certificate"
+	if _, err := loadFrom(enrolled); err == nil {
+		t.Fatal("taken without MESHGW_JOIN_DIR")
+	}
+}

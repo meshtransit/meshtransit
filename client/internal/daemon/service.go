@@ -408,6 +408,8 @@ type Service struct {
 	gatewayTokenFile string
 	// gatewayRenewAfter: Options.GatewayCertificateRenewAfter.
 	gatewayRenewAfter time.Duration
+	// gatewayCertificateDir: Options.GatewayCertificateDir.
+	gatewayCertificateDir string
 	// kubeAudits and kubeAuditReports: Options.KubeAudits and
 	// KubeAuditReports.
 	kubeAudits       <-chan controlplane.KubeAuditCall
@@ -575,6 +577,9 @@ type Options struct {
 	// GatewayCertificateRenewAfter, tests and demos only: see
 	// kubecert.Options.RenewAfter.
 	GatewayCertificateRenewAfter time.Duration
+	// GatewayCertificateDir, when set, keeps the certificate across a
+	// container restart: kubecert.Options.StoreDir.
+	GatewayCertificateDir string
 	// KubeAudits and KubeAuditReports, with Gateway, carry the kubeaudit
 	// recorder's batches and outcomes to the map stream (gateway.audit1,
 	// K1b); nil: the gateway records nothing.
@@ -661,44 +666,45 @@ func New(
 	registrationGate <- struct{}{}
 
 	service := &Service{
-		profiles:             profiles,
-		identities:           identities,
-		build:                build,
-		prober:               prober,
-		dataPlane:            options.DataPlane,
-		dns:                  options.DNS,
-		hostname:             options.Hostname,
-		configuredCandidates: configuredSet,
-		enableDeviceAliases:  options.EnableDeviceAliases,
-		enableSubnetRoutes:   options.EnableSubnetRoutes,
-		enableSubnetRouter:   options.EnableSubnetRouter,
-		enableExitNode:       options.EnableExitNode,
-		enableExits:          options.EnableExits,
-		gateway:              options.Gateway,
-		gatewayTokenFile:     options.GatewayTokenFile,
-		gatewayRenewAfter:    options.GatewayCertificateRenewAfter,
-		kubeAudits:           options.KubeAudits,
-		kubeAuditReports:     options.KubeAuditReports,
-		gatewayCommitWait:    gatewayCommitBound,
-		rotationPersistWait:  rotationPersistTimeout,
-		exitForwarder:        exitForwarderFor(options),
-		exitPins:             pins,
-		captive:              captiveRelays,
-		routeSettingsPath:    options.RouteSettingsPath,
-		restartMarkerPath:    options.RestartMarkerPath,
-		loadRouteSettings:    options.LoadRouteSettings,
-		clock:                options.Clock,
-		runtimeRetryDelay:    jitteredRuntimeRetryDelay,
-		endpointRefreshDelay: randomEndpointRefreshDelay,
-		newDiscoKey:          key.NewDiscoPrivate,
-		logger:               options.Logger,
-		networkChanges:       options.NetworkChanges,
-		syncSignal:           make(chan struct{}, 1),
-		registrationGate:     registrationGate,
-		pathProbes:           pathdiscovery.NewProbeTelemetry(),
-		nat:                  newNATState(),
-		portMapper:           options.PortMapper,
-		cloud:                options.CloudAddresses,
+		profiles:              profiles,
+		identities:            identities,
+		build:                 build,
+		prober:                prober,
+		dataPlane:             options.DataPlane,
+		dns:                   options.DNS,
+		hostname:              options.Hostname,
+		configuredCandidates:  configuredSet,
+		enableDeviceAliases:   options.EnableDeviceAliases,
+		enableSubnetRoutes:    options.EnableSubnetRoutes,
+		enableSubnetRouter:    options.EnableSubnetRouter,
+		enableExitNode:        options.EnableExitNode,
+		enableExits:           options.EnableExits,
+		gateway:               options.Gateway,
+		gatewayTokenFile:      options.GatewayTokenFile,
+		gatewayRenewAfter:     options.GatewayCertificateRenewAfter,
+		gatewayCertificateDir: options.GatewayCertificateDir,
+		kubeAudits:            options.KubeAudits,
+		kubeAuditReports:      options.KubeAuditReports,
+		gatewayCommitWait:     gatewayCommitBound,
+		rotationPersistWait:   rotationPersistTimeout,
+		exitForwarder:         exitForwarderFor(options),
+		exitPins:              pins,
+		captive:               captiveRelays,
+		routeSettingsPath:     options.RouteSettingsPath,
+		restartMarkerPath:     options.RestartMarkerPath,
+		loadRouteSettings:     options.LoadRouteSettings,
+		clock:                 options.Clock,
+		runtimeRetryDelay:     jitteredRuntimeRetryDelay,
+		endpointRefreshDelay:  randomEndpointRefreshDelay,
+		newDiscoKey:           key.NewDiscoPrivate,
+		logger:                options.Logger,
+		networkChanges:        options.NetworkChanges,
+		syncSignal:            make(chan struct{}, 1),
+		registrationGate:      registrationGate,
+		pathProbes:            pathdiscovery.NewProbeTelemetry(),
+		nat:                   newNATState(),
+		portMapper:            options.PortMapper,
+		cloud:                 options.CloudAddresses,
 		syncState: syncStatus{
 			state:     ControlSessionInactive,
 			dataPlane: initialDataPlane,

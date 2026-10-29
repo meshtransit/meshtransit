@@ -54,7 +54,8 @@ type GatewayCertificateStatus struct {
 	// clock); zero: none waits. WaitingFor is how long it has waited.
 	WaitingSince time.Time
 	WaitingFor   time.Duration
-	// Requests counts Core's answers by "outcome/reason".
+	// Requests counts Core's answers by "outcome/reason", and the stored
+	// certificate's fate (restored, restore_refused, restored_renew).
 	Requests map[string]uint64
 }
 
@@ -68,7 +69,7 @@ func newGatewayCertificates(s *Service) (*gatewayCertificates, error) {
 			token, err := ReadPodToken(s.gatewayTokenFile)
 			return string(token), err
 		},
-		Now: s.coreNow, Logger: s.logger, RenewAfter: s.gatewayRenewAfter,
+		Now: s.coreNow, Logger: s.logger, RenewAfter: s.gatewayRenewAfter, StoreDir: s.gatewayCertificateDir,
 	})
 	if err != nil {
 		return nil, err
