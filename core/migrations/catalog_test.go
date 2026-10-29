@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 244 {
-		t.Fatalf("len(Catalog()) = %d, want 244", len(catalog))
+	if len(catalog) != 245 {
+		t.Fatalf("len(Catalog()) = %d, want 245", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 244 {
-		t.Fatalf("LatestVersion() = %d, want 244", LatestVersion())
+	if LatestVersion() != 245 {
+		t.Fatalf("LatestVersion() = %d, want 245", LatestVersion())
 	}
 }
 
@@ -7277,5 +7277,41 @@ func TestMigration244KubernetesClientCAs(t *testing.T) {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("migration 244 reads %q", forbidden)
 		}
+	}
+}
+
+func TestMigration245KubernetesOperationEvents(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 245 || catalog[244].Version != 245 {
+		t.Fatalf("the catalog has no migration 245 (%d migrations)", len(catalog))
+	}
+	migration := catalog[244]
+	for _, want := range []string{
+		"CREATE TABLE mesh_audit.kubernetes_operation (",
+		") PARTITION BY RANGE (received_at);",
+		"received_at = pg_catalog.uuid_extract_timestamp(audit_id)",
+		"ON mesh_audit.kubernetes_operation (gateway_device_id, intent_id, received_at)",
+		"BEFORE UPDATE ON mesh_audit.kubernetes_operation",
+		"SELECT mesh_ops.ensure_kubernetes_operation_partitions_v1(3);",
+		"PERFORM pg_catalog.pg_advisory_xact_lock(v_lock);",
+		"WHERE operation.received_at > v_now - INTERVAL '10 minutes'",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.record_kubernetes_operations_v1(JSONB) TO mesh_runtime",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.record_kubernetes_operation_outcomes_v1(JSONB, JSONB) TO mesh_runtime",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.maintain_kubernetes_operation_partitions_v1(INTEGER) TO mesh_worker",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.erase_kubernetes_operations_v1(UUID, TEXT, TEXT, INTEGER) TO mesh_worker",
+		"pg_catalog.current_setting('transaction_isolation') <> 'read committed'",
+		"'ALTER TABLE mesh_audit.%I ATTACH PARTITION mesh_audit.%I FOR VALUES FROM (%L) TO (%L)'",
+		"SET lock_timeout = '200ms'",
+		"mesh_ops.kubernetes_operation_intent_valid_internal_v1(element.value) AS valid",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 245 lacks %q", want)
+		}
+	}
+	// No DEFAULT partition: a row outside the months fails, and is alerted
+	// on before (design §4).
+	if strings.Contains(migration.SQL, "DEFAULT;") || strings.Contains(migration.SQL, "PARTITION OF mesh_audit.kubernetes_operation DEFAULT") {
+		t.Error("migration 245 creates a DEFAULT partition")
 	}
 }

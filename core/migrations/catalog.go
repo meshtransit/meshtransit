@@ -619,6 +619,8 @@ func Catalog() []Migration {
 			kubernetesGatewayCertificateFleetSQL),
 		newMigration(244, "A client's map names its clusters' TLS name and the roots it trusts",
 			kubernetesClientCAsSQL),
+		newMigration(245, "Kubernetes gateways record type A operations before forwarding them",
+			kubernetesOperationEventsSQL),
 	}
 }
 
@@ -1130,3 +1132,6 @@ var kubernetesGatewayCertificateFleetSQL string
 
 //go:embed 000244_kubernetes_client_cas.up.sql
 var kubernetesClientCAsSQL string
+
+//go:embed 000245_kubernetes_operation_events.up.sql
+var kubernetesOperationEventsSQL string

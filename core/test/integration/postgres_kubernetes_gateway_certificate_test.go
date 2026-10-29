@@ -238,6 +238,7 @@ WHERE purpose = 'cert' AND jti = 'pod-token-1'`).Scan(&uses); err != nil || uses
 	assertCertificateQueue(ctx, t, admin, runtime, runtimePool, store, worker, fixture, keys, certificate)
 	assertMapKubernetesCAs(ctx, t, admin, runtime, fixture, root, intermediate)
 	assertMapKubernetesClientCAs(ctx, t, admin, runtime, fixture, root, intermediate)
+	assertKubernetesOperations(ctx, t, admin, runtime, keys, deviceID)
 	assertCertificateLeases(ctx, t, admin, runtime, store, fixture, keys)
 	assertCertificatePrivileges(ctx, t, admin)
 	assertCertificatePruning(ctx, t, admin, store, fixture, first.publicID)

@@ -1,0 +1,243 @@
+//go:build integration
+
+package integration
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+)
+
+// operationRow is one intent as control hands schema 245's writer.
+func operationRow(t *testing.T, gateway, peer string, intent byte, digest string) map[string]any {
+	t.Helper()
+	return map[string]any{
+		"gateway": gateway, "intent_id": hex.EncodeToString(append(make([]byte, 15), intent)), "digest": digest,
+		"audit_id": mustPublicID(t).String(), "peer": peer, "owner_kind": "member", "owner_ref": "p:1",
+		"network_revision": 7, "class": "write", "groups": []string{"edit"}, "verb": "delete",
+		"api_group": "apps", "resource": "deployments", "subresource": "", "namespace": "default",
+		"name": "web", "impersonated": "", "token_id": "0a0b", "observed_ms": time.Now().UnixMilli(),
+		"clock_skew": false,
+	}
+}
+
+func recordOperations(ctx context.Context, t *testing.T, runtime *pgx.Conn, rows ...map[string]any) []map[string]any {
+	t.Helper()
+	encoded, err := json.Marshal(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var answer string
+	if err := runtime.QueryRow(ctx, `SELECT mesh_ops.record_kubernetes_operations_v1($1::JSONB)::TEXT`,
+		string(encoded)).Scan(&answer); err != nil {
+		t.Fatalf("record operations: %v", err)
+	}
+	var decoded struct {
+		Answers []map[string]any `json:"answers"`
+	}
+	if err := json.Unmarshal([]byte(answer), &decoded); err != nil || len(decoded.Answers) != len(rows) {
+		t.Fatalf("answers %s: %v", answer, err)
+	}
+	return decoded.Answers
+}
+
+// assertKubernetesOperations qualifies schema 245 (K1b0 design §4): a
+// gateway's type A intents are recorded under the gateway its keys name,
+// for a peer of its own Network; sent again they answer the first audit_id,
+// with other content conflict; rows never change; outcomes and denials go
+// under the gateway that sent them; partitions are kept; only the roles
+// named run each function.
+func assertKubernetesOperations(ctx context.Context, t *testing.T, admin, runtime *pgx.Conn, keys replicaKeys,
+	deviceID string,
+) {
+	t.Helper()
+	gateway := hex.EncodeToString(fingerprintOf(keys)) + ":" + hex.EncodeToString(nodeKeyOf(keys))
+	var peer string
+	if err := admin.QueryRow(ctx, `SELECT peer.public_id::TEXT FROM mesh.device AS peer
+JOIN mesh.device AS gateway ON gateway.workspace_id = peer.workspace_id AND gateway.network_id = peer.network_id
+WHERE gateway.public_id = $1::UUID AND peer.kind <> 'kubernetes_gateway' AND peer.state = 'active'
+  AND peer.deleted_at IS NULL
+ORDER BY peer.id LIMIT 1`, deviceID).Scan(&peer); err != nil {
+		t.Fatalf("a standard Device of the gateway's Network: %v", err)
+	}
+	digest := func(text string) string {
+		sum := sha256.Sum256([]byte(text))
+		return hex.EncodeToString(sum[:])
+	}
+	first := operationRow(t, gateway, peer, 1, digest("first"))
+	otherGateway := operationRow(t, hex.EncodeToString(make([]byte, 32))+":"+hex.EncodeToString(make([]byte, 32)),
+		peer, 2, digest("other"))
+	selfPeer := operationRow(t, gateway, deviceID, 3, digest("self"))
+	unknownPeer := operationRow(t, gateway, mustPublicID(t).String(), 4, digest("unknown"))
+	answers := recordOperations(ctx, t, runtime, first, otherGateway, selfPeer, unknownPeer)
+	for index, want := range []string{"accepted", "gateway", "device", "device"} {
+		if answers[index]["outcome"] != want {
+			t.Fatalf("answer %d = %v, want %s", index, answers[index], want)
+		}
+	}
+	if answers[0]["audit_id"] != first["audit_id"] {
+		t.Fatalf("accepted answer %v", answers[0])
+	}
+	// Sent again: the first audit_id; another content: conflict.
+	again := operationRow(t, gateway, peer, 1, digest("first"))
+	changed := operationRow(t, gateway, peer, 1, digest("changed"))
+	answers = recordOperations(ctx, t, runtime, again, changed)
+	if answers[0]["outcome"] != "duplicate" || answers[0]["audit_id"] != first["audit_id"] ||
+		answers[1]["outcome"] != "conflict" || answers[1]["audit_id"] != nil {
+		t.Fatalf("sent again: %v", answers)
+	}
+	// The row is the gateway's, for its cluster and Network, as recorded.
+	var cluster, peerID, gatewayID int64
+	var groups []string
+	if err := admin.QueryRow(ctx, `SELECT operation.kubernetes_cluster_id, operation.peer_device_id,
+    operation.gateway_device_id, operation.groups
+FROM mesh_audit.kubernetes_operation AS operation WHERE operation.audit_id = $1::UUID`,
+		first["audit_id"]).Scan(&cluster, &peerID, &gatewayID, &groups); err != nil {
+		t.Fatal(err)
+	}
+	var expectedGateway int64
+	if err := admin.QueryRow(ctx, `SELECT id FROM mesh.device WHERE public_id = $1::UUID`, deviceID).Scan(
+		&expectedGateway); err != nil || gatewayID != expectedGateway || len(groups) != 1 || cluster == 0 {
+		t.Fatalf("recorded gateway %d (want %d), groups %v, cluster %d: %v", gatewayID, expectedGateway, groups,
+			cluster, err)
+	}
+	// Append only.
+	if _, err := admin.Exec(ctx, `UPDATE mesh_audit.kubernetes_operation SET verb = 'get'
+WHERE audit_id = $1::UUID`, first["audit_id"]); sqlState(t, err) != "42501" {
+		t.Fatalf("an operation changed: %v", err)
+	}
+	// One gateway's intent out of form, or sent twice in one batch, is
+	// answered on its own; the other rows of the batch are recorded (review
+	// b0a H1, H2).
+	malformed := operationRow(t, gateway, peer, 6, digest("malformed"))
+	malformed["observed_ms"] = "99999999999999999999"
+	malformed["intent_id"] = "ZZ"
+	twice := operationRow(t, gateway, peer, 7, digest("twice"))
+	twiceAgain := operationRow(t, gateway, peer, 7, digest("twice"))
+	twiceChanged := operationRow(t, gateway, peer, 7, digest("twice changed"))
+	valid := operationRow(t, gateway, peer, 8, digest("valid"))
+	answers = recordOperations(ctx, t, runtime, malformed, twice, twiceAgain, twiceChanged, valid)
+	if answers[0]["outcome"] != "invalid" || answers[1]["outcome"] != "accepted" ||
+		answers[2]["outcome"] != "duplicate" || answers[2]["audit_id"] != twice["audit_id"] ||
+		answers[3]["outcome"] != "conflict" || answers[4]["outcome"] != "accepted" {
+		t.Fatalf("a mixed batch: %v", answers)
+	}
+	var recorded int
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM mesh_audit.kubernetes_operation
+WHERE audit_id IN ($1::UUID, $2::UUID, $3::UUID)`, twice["audit_id"], twiceAgain["audit_id"],
+		valid["audit_id"]).Scan(&recorded); err != nil || recorded != 2 {
+		t.Fatalf("recorded %d of the mixed batch (%v), want 2", recorded, err)
+	}
+	// Only at READ COMMITTED.
+	tx, err := runtime.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodedRows, _ := json.Marshal([]any{operationRow(t, gateway, peer, 9, digest("rr"))})
+	_, err = tx.Exec(ctx, `SELECT mesh_ops.record_kubernetes_operations_v1($1::JSONB)`, string(encodedRows))
+	_ = tx.Rollback(ctx)
+	if sqlState(t, err) != "25001" {
+		t.Fatalf("recorded at REPEATABLE READ: %v", err)
+	}
+	// A clock out of range refuses the whole batch.
+	late := operationRow(t, gateway, peer, 5, digest("late"))
+	late["audit_id"] = "01890f00-0000-7000-8000-000000000001"
+	encoded, _ := json.Marshal([]any{late})
+	if _, err := runtime.Exec(ctx, `SELECT mesh_ops.record_kubernetes_operations_v1($1::JSONB)`,
+		string(encoded)); sqlState(t, err) != "22023" {
+		t.Fatalf("a batch of another clock: %v", err)
+	}
+
+	// Outcomes and denials go under the gateway that sent them; an unknown
+	// gateway's are skipped.
+	outcomes, _ := json.Marshal([]map[string]any{
+		{"gateway": gateway, "audit_id": first["audit_id"], "status": 200, "duration_ms": 12},
+		{"gateway": otherGateway["gateway"], "audit_id": first["audit_id"], "status": 500, "duration_ms": 1},
+	})
+	denials, _ := json.Marshal([]map[string]any{
+		{"gateway": gateway, "peer": peer, "reason": "forbidden", "count": 3,
+			"first_ms": time.Now().Add(-time.Second).UnixMilli(), "last_ms": time.Now().UnixMilli()},
+	})
+	var written string
+	if err := runtime.QueryRow(ctx, `SELECT mesh_ops.record_kubernetes_operation_outcomes_v1($1::JSONB,
+    $2::JSONB)::TEXT`, string(outcomes), string(denials)).Scan(&written); err != nil ||
+		written != `{"denials": 1, "outcomes": 1}` {
+		t.Fatalf("outcomes = %s, %v", written, err)
+	}
+
+	// Partitions: three months ahead; a month past retention is dropped.
+	if _, err := admin.Exec(ctx, `CREATE TABLE mesh_audit.kubernetes_operation_denial_2020_01
+PARTITION OF mesh_audit.kubernetes_operation_denial
+FOR VALUES FROM ('2020-01-01 00:00:00+00') TO ('2020-02-01 00:00:00+00')`); err != nil {
+		t.Fatal(err)
+	}
+	var maintained string
+	if err := admin.QueryRow(ctx, `SELECT mesh_ops.maintain_kubernetes_operation_partitions_v1(13)::TEXT`).Scan(
+		&maintained); err != nil || maintained != `{"ahead": 3, "dropped": ["kubernetes_operation_denial_2020_01"]}` {
+		t.Fatalf("maintain = %s, %v", maintained, err)
+	}
+
+	// Roles: the runtime records; only the worker maintains and erases.
+	for role, functions := range map[string]map[string]bool{
+		"mesh_runtime": {
+			"mesh_ops.record_kubernetes_operations_v1(jsonb)":                    true,
+			"mesh_ops.record_kubernetes_operation_outcomes_v1(jsonb, jsonb)":     true,
+			"mesh_ops.maintain_kubernetes_operation_partitions_v1(integer)":      false,
+			"mesh_ops.erase_kubernetes_operations_v1(uuid, text, text, integer)": false,
+			"mesh_ops.ensure_kubernetes_operation_partitions_v1(integer)":        false,
+		},
+		"mesh_worker": {
+			"mesh_ops.record_kubernetes_operations_v1(jsonb)":                    false,
+			"mesh_ops.maintain_kubernetes_operation_partitions_v1(integer)":      true,
+			"mesh_ops.erase_kubernetes_operations_v1(uuid, text, text, integer)": true,
+		},
+		"mesh_observer": {
+			"mesh_ops.record_kubernetes_operations_v1(jsonb)":                    false,
+			"mesh_ops.erase_kubernetes_operations_v1(uuid, text, text, integer)": false,
+		},
+	} {
+		for function, want := range functions {
+			var granted bool
+			if err := admin.QueryRow(ctx, `SELECT pg_catalog.has_function_privilege($1, $2, 'EXECUTE')`, role,
+				function).Scan(&granted); err != nil || granted != want {
+				t.Fatalf("%s on %s = %v (%v), want %v", role, function, granted, err, want)
+			}
+		}
+	}
+	for _, table := range []string{"kubernetes_operation", "kubernetes_operation_outcome", "kubernetes_operation_denial"} {
+		var readable bool
+		if err := admin.QueryRow(ctx, `SELECT pg_catalog.has_table_privilege('mesh_runtime', $1, 'SELECT')
+    OR pg_catalog.has_table_privilege('mesh_runtime', $1, 'DELETE')`, "mesh_audit."+table).Scan(
+			&readable); err != nil || readable {
+			t.Fatalf("mesh_runtime reads or deletes %s directly (%v)", table, err)
+		}
+	}
+
+	// Erasing the Workspace removes its rows a batch at a time, and records
+	// who asked each time.
+	erase := func() string {
+		t.Helper()
+		var erased string
+		if err := admin.QueryRow(ctx, `SELECT mesh_ops.erase_kubernetes_operations_v1(workspace.public_id,
+    'soc@example.com', 'ERASE-1', 2)::TEXT
+FROM mesh.device AS device JOIN mesh.workspace AS workspace ON workspace.id = device.workspace_id
+WHERE device.public_id = $1::UUID`, deviceID).Scan(&erased); err != nil {
+			t.Fatalf("erase: %v", err)
+		}
+		return erased
+	}
+	if first, second := erase(), erase(); first != `{"denials": 1, "outcomes": 1, "remaining": true, "operations": 2}` ||
+		second != `{"denials": 0, "outcomes": 0, "remaining": false, "operations": 1}` {
+		t.Fatalf("erase = %s, then %s", first, second)
+	}
+	var erasures int
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM mesh_audit.kubernetes_operation_erasure
+WHERE actor = 'soc@example.com' AND change_ref = 'ERASE-1'`).Scan(&erasures); err != nil || erasures != 2 {
+		t.Fatalf("erasures recorded %d (%v), want 2", erasures, err)
+	}
+}
