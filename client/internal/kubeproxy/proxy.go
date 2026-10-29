@@ -51,6 +51,7 @@ type Server struct {
 	backend  *url.URL
 	reverse  *httputil.ReverseProxy
 	sessions *registry
+	gate     *gate
 }
 
 // New makes a proxy; Serve serves it.
@@ -60,7 +61,11 @@ func New(options Options) (*Server, error) {
 	}
 	backend, _ := url.Parse(options.Backend)
 	backend.Path = ""
-	server := &Server{options: options, groups: map[string]Group{}, backend: backend, sessions: newRegistry()}
+	if options.Limits == (Limits{}) {
+		options.Limits = DefaultLimits()
+	}
+	server := &Server{options: options, groups: map[string]Group{}, backend: backend, sessions: newRegistry(),
+		gate: newGate(options.Limits)}
 	transports, err := newTransports(options.BackendCA, server.remint)
 	if err != nil {
 		return nil, err
@@ -127,6 +132,13 @@ func (server *Server) TLSConfig() *tls.Config {
 				if _, _, known := conn.bind(server.options.Peer); !known {
 					return nil, errors.New("kubeproxy: a source no Device holds")
 				}
+				if limit, joined := conn.join(); !joined {
+					if limit == "" {
+						return nil, errors.New("kubeproxy: the connection closed")
+					}
+					server.gate.count(limit)
+					return nil, errors.New("kubeproxy: the Device holds too many connections")
+				}
 			}
 			certificate, ok := server.options.Certificate()
 			if !ok || certificate.Leaf == nil {
@@ -148,8 +160,16 @@ func (server *Server) Serve(ctx context.Context, listener net.Listener) error {
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    64 << 10,
-		ConnContext:       withIdentity,
-		BaseContext:       func(net.Listener) context.Context { return ctx },
+		// Bounded windows so a client that sends and never has its body
+		// read, or never reads, holds little; one that stops reading for
+		// 60 s is dropped (K1b design §8).
+		HTTP2: &http.HTTP2Config{MaxConcurrentStreams: 64 + 200, MaxReceiveBufferPerConnection: 256 << 10,
+			MaxReceiveBufferPerStream: 64 << 10, WriteByteTimeout: clientWriteTimeout,
+			// A client gone without a word does not hold its place for the
+			// life of a quiet watch (review b6b M2).
+			SendPingTimeout: 30 * time.Second, PingTimeout: 15 * time.Second},
+		ConnContext: withIdentity,
+		BaseContext: func(net.Listener) context.Context { return ctx },
 		// Failed handshakes and the like, at debug: a scan is not an event.
 		ErrorLog: slog.NewLogLogger(server.options.Logger.Handler(), slog.LevelDebug),
 	}
@@ -157,7 +177,7 @@ func (server *Server) Serve(ctx context.Context, listener net.Listener) error {
 	// which Close leaves open (review b5a L3).
 	stop := context.AfterFunc(ctx, func() { _ = served.Close() })
 	defer stop()
-	err := served.ServeTLS(identifying{Listener: listener}, "", "")
+	err := served.ServeTLS(identifying{Listener: listener, gate: server.gate, logger: server.options.Logger}, "", "")
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
@@ -182,6 +202,9 @@ type plan struct {
 	// for a request with a body, which cannot be sent again.
 	remint func() (Bearer, error)
 }
+
+// coreRefusals are the reasons Core refuses to record an operation.
+var coreRefusals = []string{"limited", "invalid", "conflict", "device", "not_granted"}
 
 // statusClientGone is reported for a request whose client left before the
 // API server answered it.
@@ -270,9 +293,9 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	class, info := kubereq.Classify(kubereq.Request{Method: r.Method, URL: out, Header: r.Header},
 		kubereq.Options{Privileged: group.Privileged, Impersonating: len(impersonate) > 0,
 			SecretResources: server.options.SecretResources})
-	// The session is registered, then checked again: a map that changed
-	// since choose is seen here, one that changes after by the sweep
-	// (K1b design §8).
+	// The session is registered within the limits, then checked again: a
+	// map that changed since choose is seen here, one that changes after by
+	// the sweep (K1b design §8).
 	ctx, cancel := context.WithCancelCause(r.Context())
 	defer cancel(nil)
 	held := &session{device: peer.DeviceID, key: peer.Key, source: who.source, group: group,
@@ -280,7 +303,15 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if held.kind == kindUpgrade && r.ProtoMajor == 1 {
 		held.close = func() { _ = who.Conn.Close() }
 	}
-	done := server.sessions.add(held)
+	if limit := server.admit(held, info); limit != "" {
+		server.limited(w, peer.DeviceID, limit)
+		return
+	}
+	done, limit := server.sessions.add(held, server.options.Limits)
+	if limit != "" {
+		server.limited(w, peer.DeviceID, limit)
+		return
+	}
 	defer done()
 	if ended := server.ended(held); ended != "" {
 		server.cutAnswer(w, peer.DeviceID, group, ended, false)
@@ -289,6 +320,28 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	server.forward(w, r.WithContext(ctx), forwarding{who: who, peer: peer, group: group, out: out, class: class,
 		info: info, impersonate: impersonate, impersonated: impersonated, started: started, session: held})
 }
+
+// admit applies the limits that are not counts of sessions: the Device's
+// rate, and memory pressure for what holds memory long (K1b design §8).
+func (server *Server) admit(held *session, info kubereq.Info) string {
+	if !server.gate.allow(held.device, time.Now()) {
+		return limitRate
+	}
+	if server.options.Pressure != nil && (held.kind != kindRequest || info.Verb == "list") && server.options.Pressure() {
+		return limitMemory
+	}
+	return ""
+}
+
+// limited answers a request past a limit: 429, try again in a second.
+func (server *Server) limited(w http.ResponseWriter, device, limit string) {
+	server.gate.count(limit)
+	server.deny(w, device, "limited", http.StatusTooManyRequests, "the gateway is at its limit of "+
+		strings.ReplaceAll(limit, "_", " ")+"; try again", time.Second)
+}
+
+// Limited counts what was refused at a limit, by limit.
+func (server *Server) Limited() map[string]uint64 { return server.gate.Limited() }
 
 // sessionKind is a request's kind for the registry.
 func sessionKind(r *http.Request, out *url.URL, info kubereq.Info) string {
@@ -437,6 +490,16 @@ func (server *Server) remint(request *http.Request) (Bearer, bool) {
 
 // unrecorded answers a type A operation Core did not record.
 func (server *Server) unrecorded(w http.ResponseWriter, device string, answer kubeaudit.Answer) {
+	reason := answer.Refused
+	switch {
+	case answer.Err != nil:
+		reason = "no_answer"
+	case !slices.Contains(coreRefusals, reason):
+		// Core's text: a known reason or "other", so no label grows
+		// unbounded (review b6b M3).
+		reason = "other"
+	}
+	server.gate.countUnrecorded(reason)
 	switch {
 	case answer.Err != nil:
 		refuse(w, http.StatusServiceUnavailable,
@@ -668,8 +731,11 @@ func newTransports(caFile string, remint func(*http.Request) (Bearer, bool)) (ht
 	dial := (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext
 	requests := &http.Transport{TLSClientConfig: secured(), ForceAttemptHTTP2: true, IdleConnTimeout: 90 * time.Second,
 		DialContext: dial, TLSHandshakeTimeout: 10 * time.Second,
-		HTTP2: &http.HTTP2Config{MaxReceiveBufferPerStream: 128 << 10, SendPingTimeout: 30 * time.Second,
-			PingTimeout: 15 * time.Second}}
+		// A small window per stream bounds memory; a large one per
+		// connection keeps one stalled stream from holding the others
+		// sharing it (K1b design §8).
+		HTTP2: &http.HTTP2Config{MaxReceiveBufferPerStream: 128 << 10, MaxReceiveBufferPerConnection: 16 << 20,
+			SendPingTimeout: 30 * time.Second, PingTimeout: 15 * time.Second}}
 	upgrades := &http.Transport{TLSClientConfig: secured(), IdleConnTimeout: 90 * time.Second,
 		DialContext: dial, TLSHandshakeTimeout: 10 * time.Second,
 		TLSNextProto: map[string]func(string, *tls.Conn) http.RoundTripper{}}

@@ -111,6 +111,11 @@ type Options struct {
 	// Events record each use of a privileged group on the cluster's side;
 	// required when a group is privileged (K1b design §4).
 	Events PrivilegedEvents
+	// Limits bound connections and sessions; zero: DefaultLimits.
+	Limits Limits
+	// Pressure, when set, reports the heap past its watermark: new
+	// watches, followed logs, upgrades and lists are refused (§8).
+	Pressure func() bool
 	// Wake, when set, has Run sweep the sessions at once (rbaccheck's
 	// verdicts changed); a map change waits for the next second's sweep.
 	Wake    <-chan struct{}
@@ -143,6 +148,8 @@ func (options Options) validate() error {
 		return errors.New("kubeproxy: missing dependencies")
 	case options.StaleAfter < minimumStale || options.StaleAfter > maximumStale:
 		return errors.New("kubeproxy: staleAfter must be 2 to 15 minutes")
+	case options.Limits != (Limits{}) && !options.Limits.valid():
+		return errors.New("kubeproxy: invalid limits")
 	case options.Events == nil && slices.ContainsFunc(options.Groups, func(group Group) bool { return group.Privileged }):
 		return errors.New("kubeproxy: a privileged group needs the cluster's Events")
 	}

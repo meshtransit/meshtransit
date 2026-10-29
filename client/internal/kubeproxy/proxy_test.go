@@ -122,7 +122,7 @@ func newFixture(t *testing.T) *fixture { t.Helper(); return newFixtureAt(t, "") 
 
 // newFixtureAt is newFixture with the proxy sent to backendURL instead,
 // when not empty.
-func newFixtureAt(t *testing.T, backendURL string) *fixture {
+func newFixtureAt(t *testing.T, backendURL string, configure ...func(*Options)) *fixture {
 	t.Helper()
 	f := &fixture{t: t, records: &fakeRecords{answer: kubeaudit.Answer{Recorded: true, AuditID: [16]byte{7}}},
 		tokens: &fakeTokens{}, seen: make(chan seen, 16), events: &fakeEvents{}, wake: make(chan struct{}, 1)}
@@ -185,7 +185,7 @@ func newFixtureAt(t *testing.T, backendURL string) *fixture {
 	for _, group := range []string{"view", "edit", "sre"} {
 		f.verdicts.Store(group, rbaccheck.Verdict{Enabled: true, Impersonation: group == "sre"})
 	}
-	server, err := New(Options{
+	options := Options{
 		Cluster: clusterName, Namespace: "meshtransit", Backend: backendURL, BackendCA: ca,
 		Groups: []Group{{Name: "view", Default: true}, {Name: "edit"},
 			{Name: "sre", Privileged: true, AllowedPrincipals: []string{"person-1"}, AllowImpersonation: true}},
@@ -205,7 +205,11 @@ func newFixtureAt(t *testing.T, backendURL string) *fixture {
 		},
 		Records: f.records, Tokens: f.tokens, Events: f.events, Wake: f.wake, Version: "test",
 		Logger: slog.New(slog.DiscardHandler),
-	})
+	}
+	for _, change := range configure {
+		change(&options)
+	}
+	server, err := New(options)
 	if err != nil {
 		t.Fatal(err)
 	}

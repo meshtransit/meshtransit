@@ -78,6 +78,24 @@ func (runtime *kubeRuntime) writeMetrics(w io.Writer) {
 	_, _ = fmt.Fprintf(w, "# HELP meshgw_kube_listener_open Whether the kubectl listener is open.\n"+
 		"# TYPE meshgw_kube_listener_open gauge\nmeshgw_kube_listener_open %d\n",
 		boolMetric(runtime.listener.Listening()))
+	writeLabelled(w, "meshgw_kube_limited_total", "counter", "Connections and requests refused at a limit, by limit.",
+		"limit", runtime.proxy.Limited())
+	writeLabelled(w, "meshgw_kube_audit_refused_total", "counter",
+		"Type A operations Core did not record, by reason.", "reason", runtime.proxy.Unrecorded())
+	audit := runtime.recorder.Snapshot()
+	writeLabelled(w, "meshgw_kube_audit_queue", "gauge", "Type A intents waiting for Core, by state.", "state",
+		map[string]int{"queued": audit.Queued, "in_flight": audit.InFlight})
+	_, _ = fmt.Fprintf(w, "# HELP meshgw_kube_audit_rate Intents a second the gateway sends Core now.\n"+
+		"# TYPE meshgw_kube_audit_rate gauge\nmeshgw_kube_audit_rate %g\n"+
+		"# HELP meshgw_kube_audit_paused Whether Core asked the gateway to wait.\n"+
+		"# TYPE meshgw_kube_audit_paused gauge\nmeshgw_kube_audit_paused %d\n"+
+		"# HELP meshgw_kube_audit_reports_dropped_total Outcomes dropped when their queue was full.\n"+
+		"# TYPE meshgw_kube_audit_reports_dropped_total counter\nmeshgw_kube_audit_reports_dropped_total %d\n"+
+		"# HELP meshgw_kube_memory_pressure Whether the heap is past its watermark.\n"+
+		"# TYPE meshgw_kube_memory_pressure gauge\nmeshgw_kube_memory_pressure %d\n"+
+		"# HELP meshgw_heap_bytes Live heap at the last GC.\n# TYPE meshgw_heap_bytes gauge\nmeshgw_heap_bytes %d\n",
+		audit.Rate, boolMetric(audit.Paused), audit.DroppedReports, boolMetric(runtime.memory.Pressure()),
+		runtime.memory.heap.Load())
 }
 
 // oldestCheck is the oldest of the groups' last whole checks in Unix

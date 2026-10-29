@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/netip"
 	"sync"
 	"time"
@@ -55,6 +56,7 @@ type kubeRuntime struct {
 	logger   *slog.Logger
 	// groupNames are the configured groups, in order, for status.
 	groupNames []string
+	memory     *memoryWatch
 }
 
 // newKubeRuntime builds the request path of a proxying gateway.
@@ -62,7 +64,7 @@ type kubeRuntime struct {
 // boundSecretUID is the UID of the replica's state Secret, which minted
 // tokens are bound to.
 func newKubeRuntime(cfg Config, service *daemon.Service, coreNow func() time.Time, audits kubeAuditChannels,
-	stacks stackSource, boundSecretUID string, logger *slog.Logger,
+	stacks stackSource, boundSecretUID string, memoryLimit int64, logger *slog.Logger,
 ) (*kubeRuntime, error) {
 	kube := cfg.Kube
 	if kube.APIServerOverride {
@@ -86,7 +88,8 @@ func newKubeRuntime(cfg Config, service *daemon.Service, coreNow func() time.Tim
 		minter.Close()
 		return nil, err
 	}
-	runtime := &kubeRuntime{recorder: recorder, minters: []*kubetoken.Minter{minter, checkMinter}, logger: logger}
+	runtime := &kubeRuntime{recorder: recorder, minters: []*kubetoken.Minter{minter, checkMinter}, logger: logger,
+		memory: newMemoryWatch(memoryLimit)}
 	fail := func(err error) (*kubeRuntime, error) {
 		runtime.close()
 		return nil, err
@@ -126,7 +129,8 @@ func newKubeRuntime(cfg Config, service *daemon.Service, coreNow func() time.Tim
 		Certificate: service.GatewayCertificate, MapFreshAt: service.MapFreshAt, StaleAfter: kube.StaleAfter,
 		CoreNow: coreNow, Verdict: runtime.checker.Verdict, Records: recorder,
 		Tokens: kubeproxy.MinterTokens{Minter: minter}, SecretResources: kube.SecretResources,
-		Events: events, Wake: runtime.checker.Changes(),
+		Events: events, Wake: runtime.checker.Changes(), Pressure: runtime.memory.Pressure,
+		Limits:  limitsFor(memoryLimit),
 		Version: version.Current().Version, Logger: logger.With("component", "kube_proxy"),
 	})
 	if err != nil {
@@ -139,6 +143,21 @@ func newKubeRuntime(cfg Config, service *daemon.Service, coreNow func() time.Tim
 		Logger: logger.With("component", "kube_api"),
 	}
 	return runtime, nil
+}
+
+// connectionBudget is what one mesh connection may hold at worst while
+// the netstack keeps gVisor's 1 MiB send and receive buffers (Q70, review
+// b6b H2): with headroom, 4 MiB.
+const connectionBudget = 4 << 20
+
+// limitsFor bounds the replica's connections by its memory until the
+// gateway's own netstack caps those buffers: a 1 GiB pod takes about 200.
+func limitsFor(memoryLimit int64) kubeproxy.Limits {
+	limits := kubeproxy.DefaultLimits()
+	if memoryLimit > 0 && memoryLimit < math.MaxInt64 {
+		limits.Connections = int(min(int64(limits.Connections), max(64, memoryLimit/connectionBudget)))
+	}
+	return limits
 }
 
 // kubeOpen reports whether the replica may take kubectl: a valid
@@ -170,7 +189,7 @@ func newMinter(cfg Config, boundSecretUID string, options kubetoken.Options) (*k
 func (runtime *kubeRuntime) run(ctx context.Context) {
 	var running sync.WaitGroup
 	for _, part := range []func(context.Context) error{runtime.recorder.Run, runtime.checker.Run,
-		runtime.listener.Run, runtime.proxy.Run} {
+		runtime.listener.Run, runtime.proxy.Run, runtime.memory.Run} {
 		running.Go(func() {
 			if err := part(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				runtime.logger.Error("kube request path stopped", "error", err)
@@ -208,13 +227,13 @@ type kubectlPath struct {
 // listening, whatever Core's state or the map's age (Q51); a passthrough
 // one while it listens.
 func newKubectlPath(cfg Config, service *daemon.Service, coreNow func() time.Time, audits kubeAuditChannels,
-	stacks stackSource, boundSecretUID string, logger *slog.Logger,
+	stacks stackSource, boundSecretUID string, memoryLimit int64, logger *slog.Logger,
 ) (kubectlPath, kubectlReadiness, error) {
 	if cfg.Kube.Mode == KubeModeProxy {
 		if boundSecretUID == "" {
 			return kubectlPath{}, kubectlReadiness{}, errors.New("meshgw: the state Secret has no UID to bind tokens to")
 		}
-		runtime, err := newKubeRuntime(cfg, service, coreNow, audits, stacks, boundSecretUID, logger)
+		runtime, err := newKubeRuntime(cfg, service, coreNow, audits, stacks, boundSecretUID, memoryLimit, logger)
 		if err != nil {
 			return kubectlPath{}, kubectlReadiness{}, err
 		}

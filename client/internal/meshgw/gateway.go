@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
+	"runtime/debug"
 	"time"
 
 	"meshtransit.net/client/internal/daemon"
@@ -39,6 +41,7 @@ const (
 func Run(ctx context.Context, cfg Config, logger *slog.Logger) (err error) {
 	ctx, fail := context.WithCancelCause(ctx)
 	defer fail(nil)
+	memoryLimit := applyMemoryLimit(os.Getenv, readFile, debug.SetMemoryLimit, logger)
 
 	mirror, err := restoreState(ctx, cfg, logger)
 	if err != nil {
@@ -61,7 +64,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) (err error) {
 	if err != nil {
 		return err
 	}
-	kubectl, ready, err := newKubectlPath(cfg, service, coreNow, audits, stacks, mirror.UID(), logger)
+	kubectl, ready, err := newKubectlPath(cfg, service, coreNow, audits, stacks, mirror.UID(), memoryLimit, logger)
 	if err != nil {
 		return err
 	}

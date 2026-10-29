@@ -85,26 +85,45 @@ type registry struct {
 	// how long they took to end once cut.
 	cuts       map[string]uint64
 	cutSeconds histogram
+	// devices counts each Device's open sessions by kind, for the limits.
+	devices map[string]map[string]int
 }
 
 func newRegistry() *registry {
 	return &registry{live: map[*session]struct{}{}, cuts: map[string]uint64{},
-		cutSeconds: histogram{bounds: cutBuckets, counts: make([]uint64, len(cutBuckets)+1)}}
+		cutSeconds: histogram{bounds: cutBuckets, counts: make([]uint64, len(cutBuckets)+1)},
+		devices:    map[string]map[string]int{}}
 }
 
-// add registers a session; done removes it once it ended.
-func (sessions *registry) add(held *session) (done func()) {
+// add registers a session within the limits; done removes it once it
+// ended. A session past a limit is not added: limit names it.
+func (sessions *registry) add(held *session, limits Limits) (done func(), limit string) {
 	sessions.mu.Lock()
+	defer sessions.mu.Unlock()
+	if limit := sessions.admit(held, limits); limit != "" {
+		return nil, limit
+	}
 	sessions.live[held] = struct{}{}
-	sessions.mu.Unlock()
+	kinds := sessions.devices[held.device]
+	if kinds == nil {
+		kinds = map[string]int{}
+		sessions.devices[held.device] = kinds
+	}
+	kinds[held.kind]++
 	return func() {
 		sessions.mu.Lock()
 		defer sessions.mu.Unlock()
 		delete(sessions.live, held)
+		if kinds[held.kind]--; kinds[held.kind] == 0 {
+			delete(kinds, held.kind)
+			if len(kinds) == 0 {
+				delete(sessions.devices, held.device)
+			}
+		}
 		if held.cutReason != "" {
 			sessions.cutSeconds.observe(time.Since(held.cutAt).Seconds())
 		}
-	}
+	}, ""
 }
 
 // open is the sessions now, to check outside the lock.
