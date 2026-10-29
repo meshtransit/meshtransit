@@ -2568,7 +2568,7 @@
       "get": {
         "operationId": "listKubernetesJoinKeys",
         "summary": "List a cluster's join keys",
-        "description": "Requires kubernetes_cluster.manage or kubernetes_cluster.approve. The newest 50, never with their secret.",
+        "description": "Requires kubernetes_cluster.manage or kubernetes_cluster.approve. Newest first, a page at a time, never with their secret. A page_token of another list, cluster or Network, or a malformed query, answers 404.",
         "security": [
           {
             "accountSessionBearer": []
@@ -2589,6 +2589,20 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 10
+            }
+          },
+          {
+            "$ref": "#/components/parameters/PageToken"
           }
         ],
         "responses": {
@@ -2621,10 +2635,15 @@
                       "properties": {
                         "join_keys": {
                           "type": "array",
-                          "maxItems": 50,
+                          "maxItems": 100,
                           "items": {
                             "$ref": "#/components/schemas/KubernetesJoinKey"
                           }
+                        },
+                        "next_page_token": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512
                         }
                       }
                     },
@@ -3945,7 +3964,7 @@
       "get": {
         "operationId": "listKubernetesReplicaRequests",
         "summary": "List a cluster's replica requests",
-        "description": "Requires kubernetes_cluster.manage or kubernetes_cluster.approve. The newest 50.",
+        "description": "Requires kubernetes_cluster.manage or kubernetes_cluster.approve. Newest first, a page at a time. A page_token of another list, cluster or Network, or a malformed query, answers 404.",
         "security": [
           {
             "accountSessionBearer": []
@@ -3966,6 +3985,20 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 10
+            }
+          },
+          {
+            "$ref": "#/components/parameters/PageToken"
           }
         ],
         "responses": {
@@ -3998,10 +4031,15 @@
                       "properties": {
                         "replica_requests": {
                           "type": "array",
-                          "maxItems": 50,
+                          "maxItems": 100,
                           "items": {
                             "$ref": "#/components/schemas/KubernetesReplicaRequest"
                           }
+                        },
+                        "next_page_token": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512
                         }
                       }
                     },

@@ -462,6 +462,7 @@ WHERE kubernetes_cluster_id = (SELECT id FROM mesh.kubernetes_cluster WHERE publ
 		detail.Replicas[0].Ordinal != 0 || detail.Cluster.Replicas() != 1 {
 		t.Fatalf("Read() = %+v, %v", detail, err)
 	}
+	assertKubernetesClusterPages(ctx, t, admin, service, owner, custom, scope, clusterID, detail)
 	removeGatewayDevice(ctx, t, admin, gatewayDevice)
 	assertRetiredGatewayKey(ctx, t, runtime, first)
 	assertRemovedGatewayKeyEvent(ctx, t, admin, runtimePool, gatewayDevice)

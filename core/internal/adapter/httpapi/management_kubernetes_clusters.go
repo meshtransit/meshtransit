@@ -49,6 +49,12 @@ type KubernetesClusterManager interface {
 	RevokeJoinKey(context.Context, kubecluster.KeyRevocation) (kubecluster.JoinKey, error)
 	Approve(context.Context, kubecluster.Decision, string) (kubecluster.ReplicaRequestView, error)
 	Reject(context.Context, kubecluster.Decision) (kubecluster.ReplicaRequestView, error)
+	ListJoinKeys(context.Context, kubecluster.PageQuery) (kubecluster.JoinKeyPage, error)
+	ReadJoinKey(context.Context, accountsession.Session, network.Scope, kubecluster.ID,
+		enrollment.CredentialID) (kubecluster.JoinKey, error)
+	ListReplicaRequests(context.Context, kubecluster.PageQuery) (kubecluster.RequestPage, error)
+	ReadReplicaRequest(context.Context, accountsession.Session, network.Scope, kubecluster.ID,
+		kubecluster.RequestID) (kubecluster.ReplicaRequestView, error)
 }
 
 type kubernetesClusterPath struct {
@@ -56,7 +62,9 @@ type kubernetesClusterPath struct {
 	clusterID kubecluster.ID
 	keyID     enrollment.CredentialID
 	requestID kubecluster.RequestID
-	methods   restMethods
+	// page is the list's page; only the key and request lists take one.
+	page    kubernetesPage
+	methods restMethods
 	// operation is what the request's method does at the path; empty when
 	// the path does not accept the method.
 	operation string
@@ -75,9 +83,10 @@ type kubernetesClusterPath struct {
 //	GET         kubernetes-clusters/{c}/replica-requests/{r}              read
 //	POST        kubernetes-clusters/{c}/replica-requests/{r}/actions/approve|reject
 //
-// None takes a query.
+// Only GET of the key and request lists takes a query: page_size and
+// page_token (K1d d1a).
 func parseKubernetesClusterPath(request *http.Request) (kubernetesClusterPath, bool) {
-	if request == nil || request.URL == nil || request.URL.RawPath != "" || request.URL.RawQuery != "" {
+	if request == nil || request.URL == nil || request.URL.RawPath != "" {
 		return kubernetesClusterPath{}, false
 	}
 	segments := strings.Split(strings.TrimPrefix(request.URL.Path, "/"), "/")
@@ -109,6 +118,16 @@ func parseKubernetesClusterPath(request *http.Request) (kubernetesClusterPath, b
 	}
 	if path.methods.allows(request.Method) {
 		path.operation = operations[request.Method]
+	}
+	switch {
+	case path.operation == kubernetesJoinKeyListOperation || path.operation == kubernetesRequestListOperation:
+		page, ok := parseKubernetesPage(request.URL.RawQuery, path.scope, path.clusterID, path.operation)
+		if !ok {
+			return kubernetesClusterPath{}, false
+		}
+		path.page = page
+	case request.URL.RawQuery != "":
+		return kubernetesClusterPath{}, false
 	}
 	return path, true
 }
@@ -229,9 +248,11 @@ func (handler *ManagementHandler) handleKubernetesClusters(ctx context.Context, 
 		}{path.scope.NetworkID().String(), bodies})
 	case kubernetesClusterCreateOperation:
 		return handler.createKubernetesCluster(ctx, response, request, correlationID, path, session, fail)
-	case kubernetesClusterReadOperation, kubernetesJoinKeyListOperation, kubernetesJoinKeyReadOperation,
-		kubernetesRequestListOperation, kubernetesRequestReadOperation:
+	case kubernetesClusterReadOperation:
 		return handler.readKubernetesCluster(ctx, response, correlationID, path, session, fail)
+	case kubernetesJoinKeyListOperation, kubernetesJoinKeyReadOperation, kubernetesRequestListOperation,
+		kubernetesRequestReadOperation:
+		return handler.readKubernetesClusterRows(ctx, response, correlationID, path, session, fail)
 	case kubernetesClusterDeleteOperation:
 		expectedVersion, precondition := parseIfMatch(request.Header.Values("If-Match"))
 		if precondition != nil {
@@ -357,58 +378,60 @@ func (handler *ManagementHandler) readKubernetesCluster(ctx context.Context, res
 	if err != nil {
 		return fail(classifyKubernetesClusterError(err))
 	}
-	body := newKubernetesClusterDetailBody(detail)
-	notFound := managementError{Status: http.StatusNotFound, Code: "kubernetes_cluster_not_found",
-		Message: "The Kubernetes cluster, key or request is not in this Network"}
-	// A caller who may only read the Network sees no keys or requests.
-	forbidden := classifyKubernetesClusterError(kubecluster.ErrForbidden)
-	switch path.operation {
-	case kubernetesJoinKeyListOperation, kubernetesJoinKeyReadOperation:
-		if body.JoinKeys == nil {
-			return fail(forbidden)
-		}
-	case kubernetesRequestListOperation, kubernetesRequestReadOperation:
-		if body.Requests == nil {
-			return fail(forbidden)
-		}
-	}
-	switch path.operation {
-	case kubernetesJoinKeyListOperation:
-		writeKubernetesData(ctx, handler, response, correlationID, http.StatusOK, struct {
-			JoinKeys []kubernetesJoinKeyBody `json:"join_keys"`
-		}{*body.JoinKeys})
-	case kubernetesRequestListOperation:
-		writeKubernetesData(ctx, handler, response, correlationID, http.StatusOK, struct {
-			Requests []kubernetesRequestBody `json:"replica_requests"`
-		}{*body.Requests})
-	case kubernetesJoinKeyReadOperation:
-		for _, key := range valueOrEmpty(body.JoinKeys) {
-			if key.KeyID == path.keyID.String() {
-				writeKubernetesData(ctx, handler, response, correlationID, http.StatusOK, key)
-				return "success"
-			}
-		}
-		return fail(notFound)
-	case kubernetesRequestReadOperation:
-		for _, request := range valueOrEmpty(body.Requests) {
-			if request.RequestID == path.requestID.String() {
-				writeKubernetesData(ctx, handler, response, correlationID, http.StatusOK, request)
-				return "success"
-			}
-		}
-		return fail(notFound)
-	default:
-		response.Header().Set("ETag", strongVersionETag(detail.Cluster.Version()))
-		writeKubernetesData(ctx, handler, response, correlationID, http.StatusOK, body)
-	}
+	response.Header().Set("ETag", strongVersionETag(detail.Cluster.Version()))
+	writeKubernetesData(ctx, handler, response, correlationID, http.StatusOK, newKubernetesClusterDetailBody(detail))
 	return "success"
 }
 
-func valueOrEmpty[T any](values *[]T) []T {
-	if values == nil {
-		return nil
+// readKubernetesClusterRows serves a page or one row of a cluster's join
+// keys or replica requests (K1d d1a, TD-API-60).
+func (handler *ManagementHandler) readKubernetesClusterRows(ctx context.Context, response http.ResponseWriter,
+	correlationID publicid.ID, path kubernetesClusterPath, session accountsession.Session,
+	fail func(managementError) string) string {
+	manager := handler.kubernetesClusters
+	query := kubecluster.PageQuery{Session: session, Scope: path.scope, ClusterID: path.clusterID,
+		After: path.page.after, Limit: path.page.limit}
+	switch path.operation {
+	case kubernetesJoinKeyListOperation:
+		page, err := manager.ListJoinKeys(ctx, query)
+		if err != nil {
+			return fail(classifyKubernetesClusterError(err))
+		}
+		bodies := make([]kubernetesJoinKeyBody, len(page.Keys))
+		for index, key := range page.Keys {
+			bodies[index] = newKubernetesJoinKeyBody(key)
+		}
+		writeKubernetesData(ctx, handler, response, correlationID, http.StatusOK, struct {
+			JoinKeys      []kubernetesJoinKeyBody `json:"join_keys"`
+			NextPageToken string                  `json:"next_page_token,omitempty"`
+		}{bodies, encodeKubernetesPageToken(path.scope, path.clusterID, path.operation, page.Next)})
+	case kubernetesRequestListOperation:
+		page, err := manager.ListReplicaRequests(ctx, query)
+		if err != nil {
+			return fail(classifyKubernetesClusterError(err))
+		}
+		bodies := make([]kubernetesRequestBody, len(page.Requests))
+		for index, request := range page.Requests {
+			bodies[index] = newKubernetesRequestBody(request)
+		}
+		writeKubernetesData(ctx, handler, response, correlationID, http.StatusOK, struct {
+			Requests      []kubernetesRequestBody `json:"replica_requests"`
+			NextPageToken string                  `json:"next_page_token,omitempty"`
+		}{bodies, encodeKubernetesPageToken(path.scope, path.clusterID, path.operation, page.Next)})
+	case kubernetesJoinKeyReadOperation:
+		key, err := manager.ReadJoinKey(ctx, session, path.scope, path.clusterID, path.keyID)
+		if err != nil {
+			return fail(classifyKubernetesClusterError(err))
+		}
+		writeKubernetesData(ctx, handler, response, correlationID, http.StatusOK, newKubernetesJoinKeyBody(key))
+	default:
+		request, err := manager.ReadReplicaRequest(ctx, session, path.scope, path.clusterID, path.requestID)
+		if err != nil {
+			return fail(classifyKubernetesClusterError(err))
+		}
+		writeKubernetesData(ctx, handler, response, correlationID, http.StatusOK, newKubernetesRequestBody(request))
 	}
-	return *values
+	return "success"
 }
 
 func (handler *ManagementHandler) decideKubernetesRequest(ctx context.Context, response http.ResponseWriter,

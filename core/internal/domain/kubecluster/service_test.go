@@ -52,6 +52,29 @@ type recordingStore struct {
 	creations    []kubecluster.Creation
 	signingReads []kubecluster.ID
 	replacements []kubecluster.TrustReplacement
+	pages        []kubecluster.PageQuery
+}
+
+func (store *recordingStore) ListJoinKeys(_ context.Context,
+	query kubecluster.PageQuery) (kubecluster.JoinKeyPage, error) {
+	store.pages = append(store.pages, query)
+	return kubecluster.JoinKeyPage{}, nil
+}
+
+func (*recordingStore) ReadJoinKey(context.Context, accountsession.Session, network.Scope, kubecluster.ID,
+	enrollment.CredentialID) (kubecluster.JoinKey, error) {
+	return kubecluster.JoinKey{}, nil
+}
+
+func (store *recordingStore) ListReplicaRequests(_ context.Context,
+	query kubecluster.PageQuery) (kubecluster.RequestPage, error) {
+	store.pages = append(store.pages, query)
+	return kubecluster.RequestPage{}, nil
+}
+
+func (*recordingStore) ReadReplicaRequest(context.Context, accountsession.Session, network.Scope, kubecluster.ID,
+	kubecluster.RequestID) (kubecluster.ReplicaRequestView, error) {
+	return kubecluster.ReplicaRequestView{}, nil
 }
 
 func (store *recordingStore) ReplaceSigningTrust(_ context.Context,
@@ -335,5 +358,55 @@ func TestServiceReadSigning(t *testing.T) {
 	}
 	if len(store.signingReads) != 1 || store.signingReads[0] != id {
 		t.Fatalf("store reads = %v", store.signingReads)
+	}
+}
+
+// A page asks for 1 to 100 rows after a whole cursor or none; anything
+// else never reaches the store (K1d d1a).
+func TestServicePages(t *testing.T) {
+	t.Parallel()
+	service, store, session, scope, now := serviceFixture(t)
+	cluster := kubecluster.ID(mustID(t, "000000000301"))
+	after := kubecluster.PageCursor{At: now, ID: mustID(t, "000000000b02")}
+	for name, query := range map[string]kubecluster.PageQuery{
+		"no rows":         {Limit: 0},
+		"too many rows":   {Limit: kubecluster.MaximumPageSize + 1},
+		"no cluster":      {Limit: 1, ClusterID: kubecluster.ID{}},
+		"a time, no ID":   {Limit: 1, After: kubecluster.PageCursor{At: now}},
+		"an ID, no time":  {Limit: 1, After: kubecluster.PageCursor{ID: after.ID}},
+		"another network": {Limit: 1, Scope: network.Scope{}},
+	} {
+		query.Session = session
+		if query.ClusterID == (kubecluster.ID{}) && name != "no cluster" {
+			query.ClusterID = cluster
+		}
+		if name != "another network" {
+			query.Scope = scope
+		}
+		if _, err := service.ListJoinKeys(context.Background(), query); !errors.Is(err, kubecluster.ErrInvalid) {
+			t.Errorf("%s: ListJoinKeys() error = %v", name, err)
+		}
+		if _, err := service.ListReplicaRequests(context.Background(), query); !errors.Is(err, kubecluster.ErrInvalid) {
+			t.Errorf("%s: ListReplicaRequests() error = %v", name, err)
+		}
+	}
+	if len(store.pages) != 0 {
+		t.Fatalf("invalid pages reached the store: %+v", store.pages)
+	}
+	for _, query := range []kubecluster.PageQuery{
+		{Session: session, Scope: scope, ClusterID: cluster, Limit: 1},
+		{Session: session, Scope: scope, ClusterID: cluster, Limit: kubecluster.MaximumPageSize, After: after},
+	} {
+		if _, err := service.ListJoinKeys(context.Background(), query); err != nil {
+			t.Fatalf("ListJoinKeys(%+v) error = %v", query, err)
+		}
+	}
+	if _, err := service.ReadJoinKey(context.Background(), session, scope, cluster,
+		enrollment.CredentialID{}); !errors.Is(err, kubecluster.ErrInvalid) {
+		t.Fatalf("ReadJoinKey() without a key: %v", err)
+	}
+	if _, err := service.ReadReplicaRequest(context.Background(), session, scope, kubecluster.ID{},
+		kubecluster.RequestID(mustID(t, "000000000b03"))); !errors.Is(err, kubecluster.ErrInvalid) {
+		t.Fatalf("ReadReplicaRequest() without a cluster: %v", err)
 	}
 }

@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 246 {
-		t.Fatalf("len(Catalog()) = %d, want 246", len(catalog))
+	if len(catalog) != 247 {
+		t.Fatalf("len(Catalog()) = %d, want 247", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 246 {
-		t.Fatalf("LatestVersion() = %d, want 246", LatestVersion())
+	if LatestVersion() != 247 {
+		t.Fatalf("LatestVersion() = %d, want 247", LatestVersion())
 	}
 }
 
@@ -7347,5 +7347,31 @@ func TestMigration246KubernetesGatewaySessionTokens(t *testing.T) {
 	// The lock helper returns a whole Device row: never callable at runtime.
 	if strings.Contains(migration.SQL, "GRANT EXECUTE ON FUNCTION mesh_ops.lock_current_kubernetes_gateway_internal_v1") {
 		t.Error("migration 246 grants the internal lock helper")
+	}
+}
+
+func TestMigration247KubernetesClusterPages(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 247 || catalog[246].Version != 247 {
+		t.Fatalf("the catalog has no migration 247 (%d migrations)", len(catalog))
+	}
+	migration := catalog[246]
+	for _, want := range []string{
+		"ON mesh.enrollment_credential (enrollment_profile_id, valid_from DESC, public_id DESC);",
+		"(credential.valid_from, credential.public_id) < (p_after_at, p_after_id)",
+		"(request.created_at, request.public_id) < (p_after_at, p_after_id)",
+		"LIMIT p_limit + 1",
+		"RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'Kubernetes cluster permission required';",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.list_kubernetes_join_keys_v1(",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_kubernetes_replica_request_v1(",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 247 lacks %q", want)
+		}
+	}
+	// The scope helper is internal: only the functions above call it.
+	if strings.Contains(migration.SQL, "GRANT EXECUTE ON FUNCTION mesh_ops.kubernetes_cluster_manager_read_internal_v1") {
+		t.Error("migration 247 grants the internal scope helper")
 	}
 }

@@ -597,7 +597,10 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	}
 	queryAllowed := approvalRead && approvalPath.kind == policyApprovalPathCollection || managementScopeRead ||
 		inventoryRead || distributionRead || historyRead || enforcementRead ||
-		resourceSharingCollectionRead || accessGraphRead || auditRead || isDNSZoneDeleteWithNames(request)
+		resourceSharingCollectionRead || accessGraphRead || auditRead || isDNSZoneDeleteWithNames(request) ||
+		// The cluster parser admits a query only on the key and request
+		// lists, and only page_size and page_token (K1d d1a).
+		isKubernetesClusterRead(request)
 	if (!queryAllowed && target.RawQuery != "") || len(target.RawQuery) > maximumCallbackQueryBytes {
 		return false
 	}

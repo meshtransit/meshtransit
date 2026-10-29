@@ -18,6 +18,7 @@ import (
 	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 const (
@@ -42,6 +43,67 @@ type kubernetesClusterStub struct {
 	decisions    []kubecluster.Decision
 	codes        []string
 	failure      error
+	pages        []kubecluster.PageQuery
+	// next is the cursor list pages return.
+	next kubecluster.PageCursor
+}
+
+func (stub *kubernetesClusterStub) ListJoinKeys(_ context.Context,
+	query kubecluster.PageQuery) (kubecluster.JoinKeyPage, error) {
+	stub.calls = append(stub.calls, "list-keys")
+	stub.pages = append(stub.pages, query)
+	if err := stub.rowsFailure(); err != nil {
+		return kubecluster.JoinKeyPage{}, err
+	}
+	return kubecluster.JoinKeyPage{Keys: []kubecluster.JoinKey{kubernetesTestKeyValue(&testing.T{},
+		kubecluster.KeyActive)}, Next: stub.next}, nil
+}
+
+func (stub *kubernetesClusterStub) ReadJoinKey(_ context.Context, _ accountsession.Session, _ network.Scope,
+	_ kubecluster.ID, key enrollment.CredentialID) (kubecluster.JoinKey, error) {
+	stub.calls = append(stub.calls, "read-key")
+	if err := stub.rowsFailure(); err != nil {
+		return kubecluster.JoinKey{}, err
+	}
+	if key.String() != kubernetesTestKey {
+		return kubecluster.JoinKey{}, kubecluster.ErrNotFound
+	}
+	return kubernetesTestKeyValue(&testing.T{}, kubecluster.KeyActive), nil
+}
+
+func (stub *kubernetesClusterStub) ListReplicaRequests(_ context.Context,
+	query kubecluster.PageQuery) (kubecluster.RequestPage, error) {
+	stub.calls = append(stub.calls, "list-requests")
+	stub.pages = append(stub.pages, query)
+	if err := stub.rowsFailure(); err != nil {
+		return kubecluster.RequestPage{}, err
+	}
+	return kubecluster.RequestPage{Requests: []kubecluster.ReplicaRequestView{
+		kubernetesTestRequestValue(&testing.T{}, kubecluster.RequestPending)}, Next: stub.next}, nil
+}
+
+func (stub *kubernetesClusterStub) ReadReplicaRequest(_ context.Context, _ accountsession.Session,
+	_ network.Scope, _ kubecluster.ID, request kubecluster.RequestID) (kubecluster.ReplicaRequestView, error) {
+	stub.calls = append(stub.calls, "read-request")
+	if err := stub.rowsFailure(); err != nil {
+		return kubecluster.ReplicaRequestView{}, err
+	}
+	if request.String() != kubernetesTestRequest {
+		return kubecluster.ReplicaRequestView{}, kubecluster.ErrNotFound
+	}
+	return kubernetesTestRequestValue(&testing.T{}, kubecluster.RequestPending), nil
+}
+
+// rowsFailure is what Core answers a reader of keys and requests: a
+// reader of the Network alone is forbidden.
+func (stub *kubernetesClusterStub) rowsFailure() error {
+	if stub.failure != nil {
+		return stub.failure
+	}
+	if stub.readOnly {
+		return kubecluster.ErrForbidden
+	}
+	return nil
 }
 
 func kubernetesTestClusterValue(t testing.TB) kubecluster.Cluster {
@@ -337,14 +399,18 @@ func TestKubernetesClusterHTTPBoundary(t *testing.T) {
 		{"issue no uses", http.MethodPost, cluster + "/join-keys", `{}`, "", nil, 400, "", "invalid_request", ""},
 		{"issue too long", http.MethodPost, cluster + "/join-keys", `{"uses":1,"key_lifetime_seconds":3601}`, "",
 			nil, 400, "", "invalid_request", ""},
-		{"list keys", http.MethodGet, cluster + "/join-keys", "", "", nil, 200, "read", `"join_keys":[{`, secret},
-		{"read a key", http.MethodGet, cluster + "/join-keys/" + kubernetesTestKey, "", "", nil, 200, "read",
+		{"list keys", http.MethodGet, cluster + "/join-keys", "", "", nil, 200, "list-keys", `"join_keys":[{`, secret},
+		{"list keys, a page", http.MethodGet, cluster + "/join-keys?page_size=100", "", "", nil, 200, "list-keys",
+			`"join_keys":[{`, "next_page_token"},
+		{"list keys, page too big", http.MethodGet, cluster + "/join-keys?page_size=101", "", "", nil, 404, "", "", ""},
+		{"list keys, other query", http.MethodGet, cluster + "/join-keys?limit=10", "", "", nil, 404, "", "", ""},
+		{"read a key", http.MethodGet, cluster + "/join-keys/" + kubernetesTestKey, "", "", nil, 200, "read-key",
 			`"key_id":"` + kubernetesTestKey + `"`, secret},
 		{"revoke", http.MethodPost, cluster + "/join-keys/" + kubernetesTestKey + "/actions/revoke", `{}`, "", nil,
 			200, "revoke", `"state":"revoked"`, ""},
-		{"list requests", http.MethodGet, cluster + "/replica-requests", "", "", nil, 200, "read",
+		{"list requests", http.MethodGet, cluster + "/replica-requests", "", "", nil, 200, "list-requests",
 			`"reported_by_pod":{"pod":"meshgw-0"}`, ""},
-		{"read a request", http.MethodGet, request, "", "", nil, 200, "read",
+		{"read a request", http.MethodGet, request, "", "", nil, 200, "read-request",
 			`"machine_key_fingerprint":"` + strings.Repeat("a", 64) + `"`, ""},
 		{"approve", http.MethodPost, request + "/actions/approve", `{"code":"4KH7I-REC2B"}`, "", nil, 200,
 			"approve", `"reserved_name":"prod-0"`, ""},
@@ -719,5 +785,65 @@ func TestKubernetesSigningTrustRead(t *testing.T) {
 		!strings.Contains(body, `"trust":{"issuer":"https://kubernetes.default.svc.cluster.local"`) ||
 		!strings.Contains(body, `"can_replace_trust":false`) {
 		t.Fatalf("GET = %d %s %s", response.Code, response.Header().Get("ETag"), body)
+	}
+}
+
+// A page's token reaches the next page as its cursor; a token of another
+// list or cluster is refused, and a reader of the Network alone is
+// forbidden (K1d d1a).
+func TestKubernetesClusterPages(t *testing.T) {
+	t.Parallel()
+	options := validManagementHandlerOptions(t)
+	after, _ := publicid.Parse(kubernetesTestKey)
+	next := kubecluster.PageCursor{At: time.Date(2026, time.October, 25, 8, 0, 0, 123456000, time.UTC), ID: after}
+	stub := &kubernetesClusterStub{next: next}
+	options.KubernetesClusters = stub
+	handler, err := NewManagementHandler(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cluster := "/" + kubernetesTestCluster
+	get := func(path string) (int, string) {
+		t.Helper()
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, newManagementRequest(t, http.MethodGet, kubernetesClustersTestPath(path), ""))
+		return response.Code, response.Body.String()
+	}
+	status, body := get(cluster + "/join-keys?page_size=1")
+	var page struct {
+		Data struct {
+			NextPageToken string `json:"next_page_token"`
+		} `json:"data"`
+	}
+	if status != http.StatusOK || json.Unmarshal([]byte(body), &page) != nil || page.Data.NextPageToken == "" {
+		t.Fatalf("first page: %d %s", status, body)
+	}
+	if status, body := get(cluster + "/join-keys?page_size=1&page_token=" + page.Data.NextPageToken); status != 200 {
+		t.Fatalf("next page: %d %s", status, body)
+	}
+	if len(stub.pages) != 2 || stub.pages[0].Limit != 1 || !stub.pages[0].After.IsZero() ||
+		!stub.pages[1].After.At.Equal(next.At) || stub.pages[1].After.ID != next.ID {
+		t.Fatalf("pages %+v", stub.pages)
+	}
+	if status, _ := get(cluster + "/replica-requests?page_token=" + page.Data.NextPageToken); status != 404 {
+		t.Fatalf("a key token paged the requests: %d", status)
+	}
+	other := "/01890f00-0000-7000-8000-000000000b09"
+	if status, _ := get(other + "/join-keys?page_token=" + page.Data.NextPageToken); status != 404 {
+		t.Fatalf("a token paged another cluster: %d", status)
+	}
+	if status, _ := get(cluster + "/join-keys?page_token=" + page.Data.NextPageToken + "x"); status != 404 {
+		t.Fatalf("a changed token was accepted: %d", status)
+	}
+	if status, body := get(cluster + "/join-keys"); status != 200 || len(stub.pages) != 3 ||
+		stub.pages[2].Limit != kubernetesDefaultPageSize {
+		t.Fatalf("default page: %d %s %+v", status, body, stub.pages)
+	}
+	stub.readOnly = true
+	for _, path := range []string{"/join-keys", "/join-keys/" + kubernetesTestKey, "/replica-requests",
+		"/replica-requests/" + kubernetesTestRequest} {
+		if status, _ := get(cluster + path); status != http.StatusForbidden {
+			t.Errorf("a Network reader got %s: %d", path, status)
+		}
 	}
 }

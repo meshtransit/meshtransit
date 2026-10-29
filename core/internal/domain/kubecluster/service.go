@@ -138,6 +138,12 @@ type Store interface {
 	IssueJoinKey(ctx context.Context, issue KeyIssue) (JoinKey, error)
 	RevokeJoinKey(ctx context.Context, revocation KeyRevocation) (JoinKey, error)
 	DecideReplicaRequest(ctx context.Context, decision Decision) (ReplicaRequestView, error)
+	ListJoinKeys(ctx context.Context, query PageQuery) (JoinKeyPage, error)
+	ReadJoinKey(ctx context.Context, session accountsession.Session, scope network.Scope, clusterID ID,
+		keyID enrollment.CredentialID) (JoinKey, error)
+	ListReplicaRequests(ctx context.Context, query PageQuery) (RequestPage, error)
+	ReadReplicaRequest(ctx context.Context, session accountsession.Session, scope network.Scope, clusterID ID,
+		requestID RequestID) (ReplicaRequestView, error)
 }
 
 // Clock reads the host's time; it only refuses sessions that already ended.

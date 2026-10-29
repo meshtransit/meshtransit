@@ -623,6 +623,8 @@ func Catalog() []Migration {
 			kubernetesOperationEventsSQL),
 		newMigration(246, "A Kubernetes gateway presents its pod token on every session",
 			kubernetesGatewaySessionTokensSQL),
+		newMigration(247, "A cluster's join keys and replica requests read a page at a time",
+			kubernetesClusterPagesSQL),
 	}
 }
 
@@ -1140,3 +1142,6 @@ var kubernetesOperationEventsSQL string
 
 //go:embed 000246_kubernetes_gateway_session_tokens.up.sql
 var kubernetesGatewaySessionTokensSQL string
+
+//go:embed 000247_kubernetes_cluster_pages.up.sql
+var kubernetesClusterPagesSQL string

@@ -4,14 +4,41 @@ import (
 	"net/http"
 	"slices"
 	"testing"
+	"time"
+
+	"meshtransit.net/core/internal/domain/kubecluster"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/workspace"
 )
 
 // The Console reaches the cluster list, a cluster's read, its keys and its
-// replica decisions through the account-session cookie, never with a query.
+// replica decisions through the account-session cookie; only the key and
+// request lists take a query, a page (K1d d1a).
 func TestBrowserManagementAdmitsKubernetesClusterRoutes(t *testing.T) {
 	t.Parallel()
 	browser, _ := newBrowserManagementFixture(t)
 	const cluster, child = "/01890f00-0000-7000-8000-000000000a01", "/01890f00-0000-7000-8000-000000000a02"
+	for _, path := range []string{
+		kubernetesClustersTestPath(cluster + "/join-keys?page_size=10"),
+		kubernetesClustersTestPath(cluster + "/replica-requests?page_size=100"),
+		kubernetesClustersTestPath(cluster + "/join-keys?page_size=10&page_token=" + kubernetesBrowserPageToken(t)),
+	} {
+		if !browser.validRequest(browserManagementReadRequest(t, path)) {
+			t.Errorf("the browser cannot read a page %s", path)
+		}
+	}
+	for _, path := range []string{
+		kubernetesClustersTestPath(cluster + "?page_size=10"),
+		kubernetesClustersTestPath(cluster + "/join-keys" + child + "?page_size=10"),
+		kubernetesClustersTestPath(cluster + "/signing?page_size=10"),
+		kubernetesClustersTestPath(cluster + "/join-keys?page_size=101"),
+		kubernetesClustersTestPath(cluster + "/replica-requests?page_token=x"),
+	} {
+		if browser.validRequest(browserManagementReadRequest(t, path)) {
+			t.Errorf("the browser admitted GET %s", path)
+		}
+	}
 	for _, path := range []string{
 		kubernetesClustersTestPath(""),
 		kubernetesClustersTestPath(cluster),
@@ -148,4 +175,32 @@ func TestBrowserManagementIssuesJoinKeysUncached(t *testing.T) {
 	if err == nil && refused.Code < http.StatusBadRequest || len(fixture.kubernetesClusters.codes) != 0 {
 		t.Fatalf("approve without proof = %v, %d, codes %v", err, refused.Code, fixture.kubernetesClusters.codes)
 	}
+}
+
+// kubernetesBrowserPageToken is the next-page token of the fixture
+// cluster's key list.
+func kubernetesBrowserPageToken(t *testing.T) string {
+	t.Helper()
+	scope, err := network.NewScope(workspace.ID(mustBrowserPublicID(t, managementWorkspaceID())),
+		network.ID(mustBrowserPublicID(t, networkMemberTestNetwork)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cluster, _ := kubecluster.ParseID("01890f00-0000-7000-8000-000000000a01")
+	token := encodeKubernetesPageToken(scope, cluster, kubernetesJoinKeyListOperation, kubecluster.PageCursor{
+		At: time.Date(2026, time.October, 30, 1, 0, 0, 0, time.UTC), ID: mustBrowserPublicID(t,
+			"01890f00-0000-7000-8000-000000000a02")})
+	if token == "" {
+		t.Fatal("no token")
+	}
+	return token
+}
+
+func mustBrowserPublicID(t *testing.T, value string) publicid.ID {
+	t.Helper()
+	id, err := publicid.Parse(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
