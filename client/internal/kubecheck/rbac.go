@@ -141,6 +141,21 @@ func (checker Checker) trusted(who subject) bool {
 	return false
 }
 
+// kubeadmBindings are the bindings kubeadm makes for its admin group and
+// for the API server's client to kubelets: their subjects are trusted
+// there only, with that role, so the same name bound elsewhere (or on a
+// cluster that is not kubeadm's) is still reported (review c4).
+var kubeadmBindings = map[string]struct{ role, kind, subject string }{
+	"kubeadm:cluster-admins":           {"cluster-admin", "Group", "kubeadm:cluster-admins"},
+	"kubeadm:apiserver-kubelet-client": {"system:kubelet-api-admin", "User", "kube-apiserver-kubelet-client"},
+}
+
+func kubeadmOwn(binding roleBinding, who subject) bool {
+	expected, ok := kubeadmBindings[binding.Metadata.Name]
+	return ok && binding.RoleRef.Kind == "ClusterRole" && binding.RoleRef.Name == expected.role &&
+		who.Kind == expected.kind && who.Name == expected.subject
+}
+
 // rbac warns about subjects as good as the gateway (K1c §2, §8). Bindings
 // Kubernetes makes for itself (kubernetes.io/bootstrapping=rbac-defaults)
 // are trusted; other kube-system accounts are reported apart. Webhook
@@ -172,7 +187,7 @@ func (checker Checker) rbac(ctx context.Context, report *Report) {
 		return
 	}
 	seen := map[string]bool{}
-	reportBinding := func(raw json.RawMessage, wanted []right, scope string) error {
+	reportBinding := func(raw json.RawMessage, wanted []right, scope string, cluster bool) error {
 		var binding roleBinding
 		if err := json.Unmarshal(raw, &binding); err != nil {
 			return err
@@ -192,7 +207,8 @@ func (checker Checker) rbac(ctx context.Context, report *Report) {
 		}
 		for _, who := range binding.Subjects {
 			who = account(who)
-			if checker.trusted(who) || (defaults && who.Kind == "ServiceAccount" && who.Namespace == "kube-system") {
+			if checker.trusted(who) || (cluster && kubeadmOwn(binding, who)) ||
+				(defaults && who.Kind == "ServiceAccount" && who.Namespace == "kube-system") {
 				continue
 			}
 			code := "namespace_access"
@@ -214,14 +230,16 @@ func (checker Checker) rbac(ctx context.Context, report *Report) {
 	}
 	inNamespace := "in namespace " + checker.Config.Namespace
 	err := listAll(ctx, checker.API, base+"clusterrolebindings", func(raw json.RawMessage) error {
-		if err := reportBinding(raw, namespaceRights, inNamespace); err != nil {
+		if err := reportBinding(raw, namespaceRights, inNamespace, true); err != nil {
 			return err
 		}
-		return reportBinding(raw, clusterRights, "across the cluster")
+		return reportBinding(raw, clusterRights, "across the cluster", true)
 	})
 	if err == nil {
 		err = listAll(ctx, checker.API, checker.path(base+"namespaces/%s/rolebindings", checker.Config.Namespace),
-			func(raw json.RawMessage) error { return reportBinding(raw, namespaceRights, inNamespace) })
+			// kubeadm's bindings are ClusterRoleBindings: a RoleBinding of
+			// the same name is not trusted.
+			func(raw json.RawMessage) error { return reportBinding(raw, namespaceRights, inNamespace, false) })
 	}
 	if err != nil {
 		checker.unreadable(report, "RBAC", err)

@@ -35,8 +35,12 @@ spec:
         resources: ["pods/exec", "pods/attach", "pods/portforward", "pods/proxy"]
       {{- end }}
   variables:
+    # An absent field is an error in CEL, and an error here refuses every pod:
+    # request.subResource is set only for a subresource (K1c c4).
+    - name: subResource
+      expression: "has(request.subResource) ? request.subResource : ''"
     - name: pod
-      expression: "request.resource.resource == 'pods' && request.subResource == ''"
+      expression: "request.resource.resource == 'pods' && variables.subResource == ''"
     - name: owner
       expression: >-
         has(object.metadata) && has(object.metadata.ownerReferences) ? object.metadata.ownerReferences : []
@@ -74,7 +78,7 @@ spec:
          (!has(object.spec.initContainers) || object.spec.initContainers.all(c, has(oldObject.spec.initContainers) &&
           oldObject.spec.initContainers.exists(o, o.name == c.name && has(o.image) && has(c.image) && o.image == c.image))))
       message: images do not change in place in the gateway's namespace
-    - expression: "request.subResource != 'ephemeralcontainers'"
+    - expression: "variables.subResource != 'ephemeralcontainers'"
       message: no ephemeral containers in the gateway's namespace
     - expression: "request.operation != 'CONNECT'"
       message: no exec, attach, port-forward or proxy in the gateway's namespace (gatewayNamespace.allowDebug)

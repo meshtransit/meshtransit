@@ -24,6 +24,12 @@ func TestCheckRBAC(t *testing.T) {
 	api.objects[rbacBase+"clusterrolebindings"] = `{"items":[
 		{"metadata":{"name":"masters"},"roleRef":{"kind":"ClusterRole","name":"cluster-admin"},
 		 "subjects":[{"kind":"Group","name":"system:masters"}]},
+		{"metadata":{"name":"kubeadm:cluster-admins"},"roleRef":{"kind":"ClusterRole","name":"cluster-admin"},
+		 "subjects":[{"kind":"Group","name":"kubeadm:cluster-admins"}]},
+		{"metadata":{"name":"kubeadm:apiserver-kubelet-client"},"roleRef":{"kind":"ClusterRole","name":"monitor"},
+		 "subjects":[{"kind":"User","name":"kube-apiserver-kubelet-client"}]},
+		{"metadata":{"name":"lookalike"},"roleRef":{"kind":"ClusterRole","name":"cluster-admin"},
+		 "subjects":[{"kind":"Group","name":"kubeadm:cluster-admins"}]},
 		{"metadata":{"name":"defaults","labels":{"kubernetes.io/bootstrapping":"rbac-defaults"}},
 		 "roleRef":{"kind":"ClusterRole","name":"cluster-admin"},
 		 "subjects":[{"kind":"ServiceAccount","name":"generic","namespace":"kube-system"}]},
@@ -60,12 +66,20 @@ func TestCheckRBAC(t *testing.T) {
 		"cluster_access User carol may impersonate users",
 		"namespace_access ServiceAccount build/deploy may get secrets",
 		"rbac_webhooks_unseen",
+		// The kubeadm names are trusted only in kubeadm's bindings with
+		// their roles: a lookalike, and the kubelet client under another
+		// role, are reported.
+		"Group kubeadm:cluster-admins may create pods, create pods/exec, get pods/exec, create pods/attach, get pods/attach, update pods/ephemeralcontainers, patch pods/ephemeralcontainers, get secrets, list secrets, watch secrets, create serviceaccounts/token, impersonate serviceaccounts, create apps/statefulsets, update apps/statefulsets, patch apps/statefulsets, create batch/jobs, update batch/jobs, patch batch/jobs, create rbac.authorization.k8s.io/rolebindings, update rbac.authorization.k8s.io/rolebindings, patch rbac.authorization.k8s.io/rolebindings, bind rbac.authorization.k8s.io/roles, escalate rbac.authorization.k8s.io/roles, bind rbac.authorization.k8s.io/clusterroles, escalate rbac.authorization.k8s.io/clusterroles in namespace mt (binding lookalike)",
+		"cluster_access User kube-apiserver-kubelet-client may get nodes/proxy",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("missing %q in\n%s", want, text)
 		}
 	}
-	for _, unwanted := range []string{"system:masters", "kube-system/generic", "mt/meshgw", "devs", "dave"} {
+	for _, unwanted := range []string{
+		"system:masters", "kube-system/generic", "mt/meshgw", "devs", "dave",
+		"binding kubeadm:cluster-admins",
+	} {
 		if strings.Contains(text, unwanted) {
 			t.Errorf("%q reported in\n%s", unwanted, text)
 		}

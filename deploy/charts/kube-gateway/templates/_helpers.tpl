@@ -89,7 +89,8 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 [{{- range $index, $item := . -}}{{- if $index }}, {{ end -}}'{{ $item }}'{{- end -}}]
 {{- end -}}
 
-{{/* A pod (object or oldObject) targeting the gateway pool (Q97). */}}
+{{/* A pod (object or oldObject) targeting the gateway pool (Q97): its taint's key, or the pool label in a
+     selector that chooses it (an affinity avoiding the pool, NotIn or DoesNotExist, does not; review c4). */}}
 {{- define "kg.targetsPool" -}}
 (has({{ . }}.spec.tolerations) && {{ . }}.spec.tolerations.exists(t, has(t.key) && t.key == 'meshtransit.net/gateway')) ||
 (has({{ . }}.spec.nodeSelector) && 'node-restriction.kubernetes.io/meshtransit-gateway-pool' in {{ . }}.spec.nodeSelector) ||
@@ -98,11 +99,11 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
    has({{ . }}.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms) &&
    {{ . }}.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms.exists(term,
      has(term.matchExpressions) &&
-     term.matchExpressions.exists(e, e.key == 'node-restriction.kubernetes.io/meshtransit-gateway-pool'))) ||
+     term.matchExpressions.exists(e, e.key == 'node-restriction.kubernetes.io/meshtransit-gateway-pool' && e.operator in ['In', 'Exists', 'Gt', 'Lt']))) ||
   (has({{ . }}.spec.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution) &&
    {{ . }}.spec.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution.exists(p,
      has(p.preference) && has(p.preference.matchExpressions) &&
-     p.preference.matchExpressions.exists(e, e.key == 'node-restriction.kubernetes.io/meshtransit-gateway-pool')))))
+     p.preference.matchExpressions.exists(e, e.key == 'node-restriction.kubernetes.io/meshtransit-gateway-pool' && e.operator in ['In', 'Exists', 'Gt', 'Lt'])))))
 {{- end -}}
 
 {{/* A pod tolerating every taint. */}}
