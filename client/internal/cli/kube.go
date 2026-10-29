@@ -15,6 +15,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -45,6 +46,8 @@ func runKube(ctx context.Context, args []string, stdout, stderr io.Writer, isJSO
 		return runKubeLogin(ctx, args[1:], stdout, stderr, isJSON, client)
 	case "logout":
 		return runKubeLogout(ctx, args[1:], stdout, stderr, isJSON, client)
+	case "doctor":
+		return runKubeDoctor(ctx, args[1:], stdout, stderr, isJSON, client)
 	default:
 		writeKubeUsage(stderr)
 		return 2
@@ -52,13 +55,24 @@ func runKube(ctx context.Context, args []string, stdout, stderr io.Writer, isJSO
 }
 
 func writeKubeUsage(stderr io.Writer) {
-	_, _ = fmt.Fprintln(stderr, "usage: meshctl kube list\n"+
+	_, _ = fmt.Fprintln(stderr, "usage: meshctl kube list [--groups]\n"+
+		"       meshctl kube doctor [<cluster>] [--kubeconfig <file>]   (the cluster comes first)\n"+
 		"       meshctl kube login <cluster> [--group <group>] [--use] [--kubeconfig <file>] [--force]\n"+
 		"       meshctl kube logout <cluster> | --all [--any-profile] [--kubeconfig <file>]")
 }
 
+// kubeListEntry is a cluster as meshctl kube list --json shows it.
+type kubeListEntry struct {
+	localapi.KubernetesClusterStatus
+	Groups      []string `json:"groups,omitempty"`
+	GroupsError string   `json:"groups_error,omitempty"`
+}
+
 func runKubeList(ctx context.Context, args []string, stdout, stderr io.Writer, isJSON bool, client DaemonClient) int {
-	if len(args) != 0 {
+	flags := flag.NewFlagSet("kube list", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	withGroups := flags.Bool("groups", false, "ask each cluster's gateway which groups this Device holds")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		writeKubeUsage(stderr)
 		return 2
 	}
@@ -66,18 +80,59 @@ func runKubeList(ctx context.Context, args []string, stdout, stderr io.Writer, i
 	if err != nil {
 		return writeRuntimeError(stderr, err)
 	}
-	if isJSON {
-		return writeJSON(stdout, stderr, kubeClusters(status))
+	entries := make([]kubeListEntry, len(kubeClusters(status)))
+	for index, cluster := range kubeClusters(status) {
+		entries[index].KubernetesClusterStatus = cluster
 	}
-	if len(status.KubernetesClusters) == 0 {
+	if *withGroups {
+		kubeGroups(ctx, entries, kubeMeshPrefixes(status))
+	}
+	if isJSON {
+		return writeJSON(stdout, stderr, entries)
+	}
+	if len(entries) == 0 {
 		_, _ = fmt.Fprintln(stdout, "No Kubernetes clusters in this Network's map.")
 		return 0
 	}
-	for _, cluster := range status.KubernetesClusters {
-		_, _ = fmt.Fprintf(stdout, "%-24s %-40s %-11s %s\n", cluster.Name, valueOr(cluster.DNSName, "-"), cluster.State,
-			valueOr(cluster.CAFileState, "-"))
+	for _, entry := range entries {
+		line := fmt.Sprintf("%-24s %-40s %-11s %s", entry.Name, valueOr(entry.DNSName, "-"), entry.State,
+			valueOr(entry.CAFileState, "-"))
+		switch {
+		case len(entry.Groups) > 0:
+			line += "  groups: " + strings.Join(entry.Groups, ", ")
+		case entry.GroupsError != "":
+			line += "  groups: (" + entry.GroupsError + ")"
+		}
+		_, _ = fmt.Fprintln(stdout, line)
 	}
 	return 0
+}
+
+// kubeGroups asks the gateways of usable clusters, four at a time.
+func kubeGroups(ctx context.Context, entries []kubeListEntry, prefixes []netip.Prefix) {
+	slots := make(chan struct{}, 4)
+	done := make(chan struct{})
+	pending := 0
+	for index := range entries {
+		if err := usableKubeCluster(entries[index].KubernetesClusterStatus); err != nil {
+			entries[index].GroupsError = err.Error() // review e3 L10
+			continue
+		}
+		pending++
+		go func() {
+			slots <- struct{}{}
+			defer func() { <-slots; done <- struct{}{} }()
+			answer, err := kubeWhoami(ctx, entries[index].KubernetesClusterStatus, prefixes)
+			if err != nil {
+				entries[index].GroupsError = err.Error()
+				return
+			}
+			entries[index].Groups = answer.Groups
+		}()
+	}
+	for range pending {
+		<-done
+	}
 }
 
 func kubeClusters(status localapi.Status) []localapi.KubernetesClusterStatus {
@@ -128,9 +183,9 @@ func runKubeLogin(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		_, _ = fmt.Fprintf(stderr, "meshctl: %s: %v\n", cluster.Name, err)
 		return 1
 	}
-	answer, err := kubeWhoami(ctx, cluster)
+	answer, err := kubeWhoami(ctx, cluster, kubeMeshPrefixes(status))
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "meshctl: %s: %v (meshctl doctor, meshctl status)\n", cluster.Name, err)
+		_, _ = fmt.Fprintf(stderr, "meshctl: %s: %v (meshctl kube doctor %s)\n", cluster.Name, err, cluster.Name)
 		return 1
 	}
 	if *group != "" && !slices.Contains(answer.Groups, *group) {
@@ -368,6 +423,77 @@ func kubeContextName(network, cluster, group string) string {
 	return strings.Trim(name, "-")
 }
 
+// kubeResolve and kubeMeshPrefixes are the resolver and the Network's
+// address space; tests replace them to reach a gateway on loopback. No
+// test that does calls t.Parallel.
+var (
+	kubeResolve      = net.DefaultResolver.LookupNetIP
+	kubeMeshPrefixes = meshPrefixes
+)
+
+// meshPrefixes are where a cluster's gateway can be (review e3 H1): the
+// CGNAT overlay and the Workspace's IPv6 /48 this Device's own address is
+// in — never the alias range a cluster is not reached through, nor any ULA
+// a LAN hands out.
+func meshPrefixes(status localapi.Status) []netip.Prefix {
+	prefixes := []netip.Prefix{netip.MustParsePrefix("100.64.0.0/10")}
+	for _, self := range status.SelfAddresses {
+		prefix, err := netip.ParsePrefix(self)
+		if err != nil || !prefix.Addr().Is6() {
+			continue
+		}
+		if workspace, err := prefix.Addr().Prefix(48); err == nil {
+			prefixes = append(prefixes, workspace)
+		}
+	}
+	return prefixes
+}
+
+func inPrefixes(address netip.Addr, prefixes []netip.Prefix) bool {
+	for _, prefix := range prefixes {
+		if prefix.Contains(address.Unmap()) {
+			return true
+		}
+	}
+	return false
+}
+
+// kubeMeshAddress resolves a cluster's mesh name (host[:port], port 443 by
+// default) and returns the first address inside the mesh, with every
+// address the name resolved to: one outside means the name did not come
+// from meshd (its DNS off, or a resolver answering for mesh.internal), and
+// nothing is dialed.
+func kubeMeshAddress(ctx context.Context, dnsName string, prefixes []netip.Prefix) (string, []netip.Addr, error) {
+	host, port, err := net.SplitHostPort(dnsName)
+	if err != nil {
+		host, port = dnsName, "443"
+	}
+	if host == "" {
+		return "", nil, errors.New("the cluster has no mesh name yet")
+	}
+	ctx, cancel := context.WithTimeout(ctx, kubeWhoamiTimeout)
+	defer cancel()
+	addresses, err := kubeResolve(ctx, "ip", host)
+	if err != nil {
+		return "", nil, fmt.Errorf("resolving %s: %w (is meshd's DNS on?)", host, err)
+	}
+	for _, address := range addresses {
+		if inPrefixes(address, prefixes) {
+			return net.JoinHostPort(address.Unmap().String(), port), addresses, nil
+		}
+	}
+	return "", addresses, fmt.Errorf("%s resolves outside the mesh, to %s (is meshd's DNS on?)", host,
+		joinAddresses(addresses))
+}
+
+func joinAddresses(addresses []netip.Addr) string {
+	texts := make([]string, len(addresses))
+	for index, address := range addresses {
+		texts[index] = address.String()
+	}
+	return strings.Join(texts, ", ")
+}
+
 // kubeWhoamiAnswer is the gateway's /mt/v1/whoami.
 type kubeWhoamiAnswer struct {
 	Person       string   `json:"person,omitempty"`
@@ -419,19 +545,29 @@ func kubeRoots(cluster localapi.KubernetesClusterStatus) (*x509.CertPool, error)
 // kubeWhoami asks the cluster's gateway who this Device is, over TLS that
 // trusts the cluster's roots only, straight to its mesh address: never a
 // proxy (review v1 M3).
-func kubeWhoami(ctx context.Context, cluster localapi.KubernetesClusterStatus) (kubeWhoamiAnswer, error) {
+func kubeWhoami(ctx context.Context, cluster localapi.KubernetesClusterStatus, prefixes []netip.Prefix,
+) (kubeWhoamiAnswer, error) {
 	roots, err := kubeRoots(cluster)
 	if err != nil {
 		return kubeWhoamiAnswer{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, kubeWhoamiTimeout)
 	defer cancel()
+	address, _, err := kubeMeshAddress(ctx, cluster.DNSName, prefixes)
+	if err != nil {
+		return kubeWhoamiAnswer{}, err
+	}
+	dialer := &net.Dialer{Timeout: kubeWhoamiTimeout}
 	transport := &http.Transport{
 		Proxy:             nil,
 		ForceAttemptHTTP2: true,
 		TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: cluster.TLSServerName,
 			MinVersion: tls.VersionTLS13},
-		DialContext: (&net.Dialer{Timeout: kubeWhoamiTimeout}).DialContext,
+		// Straight to the mesh address checked above, whatever the URL's host
+		// resolves to later (K1e design §4).
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return dialer.DialContext(ctx, network, address)
+		},
 	}
 	defer transport.CloseIdleConnections()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+cluster.DNSName+"/mt/v1/whoami", nil)

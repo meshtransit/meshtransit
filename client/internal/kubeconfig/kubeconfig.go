@@ -773,3 +773,69 @@ func writablePath(file string) (string, error) {
 	}
 	return path, nil
 }
+
+// Found is a managed context as a kubeconfig holds it: its cluster's
+// server, CA file and proxy, whether that cluster entry is missing, and
+// the earlier file whose entry of the same name kubectl uses instead.
+type Found struct {
+	File, Name, Server, CAFile, ProxyURL string
+	Marker                               Marker
+	ClusterMissing                       bool
+	ShadowedBy                           string
+}
+
+// Find lists the managed contexts of clusterID in every file that holds
+// one; a file named twice is read once.
+func Find(files []string, clusterID string) ([]Found, error) {
+	documents, err := readAll(files)
+	if err != nil {
+		return nil, err
+	}
+	var found []Found
+	seen := map[string]bool{}
+	for index, document := range documents {
+		if document == nil {
+			continue
+		}
+		file := files[index] //nolint:gosec // G602: documents is files'.
+		if resolved, err := filepath.EvalSymlinks(file); err == nil {
+			if seen[resolved] {
+				continue
+			}
+			seen[resolved] = true
+		}
+		for _, entry := range document.list("contexts").Content {
+			marker, ok := markerOf(entry, "contexts")
+			if !ok || marker.ClusterID != clusterID {
+				continue
+			}
+			context := Found{File: file, Name: nameOf(entry), Marker: marker}
+			clusterName := scalarValue(get(get(entry, "context"), "cluster"))
+			if cluster := document.findName("clusters", clusterName); cluster != nil {
+				body := get(cluster, "cluster")
+				context.Server = scalarValue(get(body, "server"))
+				context.CAFile = scalarValue(get(body, "certificate-authority"))
+				context.ProxyURL = scalarValue(get(body, "proxy-url"))
+			} else {
+				context.ClusterMissing = true
+			}
+			// client-go merges first file wins (review e3 M5).
+			for earlier := range index {
+				if documents[earlier] != nil && (documents[earlier].findName("contexts", context.Name) != nil ||
+					documents[earlier].findName("clusters", clusterName) != nil) {
+					context.ShadowedBy = files[earlier]
+					break
+				}
+			}
+			found = append(found, context)
+		}
+	}
+	return found, nil
+}
+
+func scalarValue(node *yaml.Node) string {
+	if node == nil || node.Kind != yaml.ScalarNode {
+		return ""
+	}
+	return node.Value
+}

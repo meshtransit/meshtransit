@@ -10,10 +10,12 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +30,12 @@ import (
 // root of its own signs, as Core's CA does.
 func kubeGateway(t *testing.T, groups string) (localapi.KubernetesClusterStatus, string) {
 	t.Helper()
+	// The fake gateway listens on loopback, outside the mesh's overlay.
+	previous := kubeMeshPrefixes
+	kubeMeshPrefixes = func(localapi.Status) []netip.Prefix {
+		return []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
+	}
+	t.Cleanup(func() { kubeMeshPrefixes = previous })
 	rootKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -189,5 +197,108 @@ func TestWithSuffixTellsEntriesApart(t *testing.T) {
 	b := withSuffix("mt-acme-prod-a-b", kubeconfig.Marker{ProfileID: "p", ClusterID: "c", Group: "a_b"})
 	if a == b || len(withSuffix(strings.Repeat("x", 70), kubeconfig.Marker{})) > 63 {
 		t.Fatalf("suffixes %q %q", a, b)
+	}
+}
+
+// doctor walks the steps and names the first that fails, with its fix.
+func TestKubeDoctor(t *testing.T) {
+	cluster, caFile := kubeGateway(t, `"view"`)
+	client := &fakeClient{status: localapi.Status{ActiveProfileID: "0a0a", NetworkName: "acme",
+		ControlSession: "synchronized", KubernetesClusters: []localapi.KubernetesClusterStatus{cluster}}}
+	kubeconfigFile := filepath.Join(t.TempDir(), "config")
+	var stdout, stderr bytes.Buffer
+	if code := Run(t.Context(), []string{"kube", "doctor", "prod", "--kubeconfig", kubeconfigFile}, &stdout, &stderr,
+		testOptions(client)); code != 1 || !strings.Contains(stdout.String(), "FAIL kubectl context: none yet") ||
+		!strings.Contains(stdout.String(), "ok   gateway answers: groups: view") {
+		t.Fatalf("before login = %d:\n%s%s", code, stdout.String(), stderr.String())
+	}
+	if code := Run(t.Context(), []string{"kube", "login", "prod", "--kubeconfig", kubeconfigFile}, &stdout, &stderr,
+		testOptions(client)); code != 0 {
+		t.Fatalf("login = %d: %s", code, stderr.String())
+	}
+	stdout.Reset()
+	if code := Run(t.Context(), []string{"kube", "doctor", "prod", "--kubeconfig", kubeconfigFile}, &stdout, &stderr,
+		testOptions(client)); code != 0 {
+		t.Fatalf("after login = %d:\n%s", code, stdout.String())
+	}
+	// A withheld CA file stops at its step.
+	if err := os.WriteFile(caFile, []byte("# MeshTransit: CA withheld (disconnected)\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	if code := Run(t.Context(), []string{"kube", "doctor", "prod"}, &stdout, &stderr, testOptions(client)); code != 1 ||
+		!strings.Contains(stdout.String(), "FAIL CA file: meshd withheld its CA file") ||
+		strings.Contains(stdout.String(), "gateway answers") {
+		t.Fatalf("withheld:\n%s", stdout.String())
+	}
+}
+
+func TestKubeProxyWarning(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "http://proxy:3128")
+	host := "prod.kube.acme.mesh.internal"
+	for noProxy, covered := range map[string]bool{
+		"":                              false,
+		"localhost,.mesh.internal":      true,
+		"MESH.INTERNAL":                 true,
+		"*.mesh.internal":               true,
+		"mesh.internal:443":             true,
+		"mesh.internal:6443":            false,
+		".prod.kube.acme.mesh.internal": false, // a leading dot is subdomains only
+		"10.0.0.0/8":                    false,
+		"*":                             true,
+	} {
+		t.Setenv("NO_PROXY", noProxy)
+		if got := kubeProxyWarning(host) == ""; got != covered {
+			t.Errorf("NO_PROXY=%q: covered %t, want %t", noProxy, got, covered)
+		}
+	}
+}
+
+// The mesh is the CGNAT overlay and this Workspace's /48, never the alias
+// range (a proxy's fake IPs) nor a LAN's ULA (review e3 H1).
+func TestMeshPrefixes(t *testing.T) {
+	t.Parallel()
+	prefixes := meshPrefixes(localapi.Status{SelfAddresses: []string{"100.64.1.2/32", "fd7a:1234:5678:1::5/128"}})
+	for address, inside := range map[string]bool{
+		"100.64.9.9":          true,
+		"fd7a:1234:5678:2::9": true,
+		"198.18.0.7":          false,
+		"fd00::1":             false,
+		"fd7a:1234:5679::1":   false,
+		"192.168.1.10":        false,
+		"::ffff:100.64.3.4":   true,
+	} {
+		if got := inPrefixes(netip.MustParseAddr(address), prefixes); got != inside {
+			t.Errorf("%s: inside %t, want %t", address, got, inside)
+		}
+	}
+}
+
+func TestKubeListGroups(t *testing.T) {
+	cluster, _ := kubeGateway(t, `"view"`)
+	pending := localapi.KubernetesClusterStatus{ID: "01890f90-0000-7000-8000-0000000000b2", Name: "dev", State: "pending"}
+	client := &fakeClient{status: localapi.Status{ActiveProfileID: "0a0a",
+		KubernetesClusters: []localapi.KubernetesClusterStatus{cluster, pending}}}
+	var stdout, stderr bytes.Buffer
+	if code := Run(t.Context(), []string{"--json", "kube", "list", "--groups"}, &stdout, &stderr,
+		testOptions(client)); code != 0 {
+		t.Fatalf("list = %d: %s", code, stderr.String())
+	}
+	var entries []kubeListEntry
+	if err := json.Unmarshal(stdout.Bytes(), &entries); err != nil || len(entries) != 2 {
+		t.Fatalf("entries %s, %v", stdout.String(), err)
+	}
+	if len(entries[0].Groups) != 1 || entries[0].Groups[0] != "view" || entries[1].GroupsError == "" {
+		t.Fatalf("groups: %+v", entries)
+	}
+}
+
+func TestKubeDoctorReconnectingWarns(t *testing.T) {
+	check, warning := kubeDaemonCheck(localapi.Status{ControlSession: "reconnecting"})
+	if !check.OK || warning == "" {
+		t.Fatalf("reconnecting: %+v %q", check, warning)
+	}
+	if check, _ := kubeDaemonCheck(localapi.Status{ControlSession: "down"}); check.OK || check.Fix != "meshctl up" {
+		t.Fatalf("down: %+v", check)
 	}
 }

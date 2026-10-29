@@ -297,3 +297,35 @@ func TestLoginRetriesWhenTheFileChanges(t *testing.T) {
 		t.Fatalf("lost a change or ours: %s", raw)
 	}
 }
+
+// Find reports a context kubectl would not use as written (review e3 M5).
+func TestFind(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	earlier, ours := filepath.Join(dir, "earlier"), filepath.Join(dir, "ours")
+	if _, err := Login([]string{ours}, entry(""), false, false); err != nil {
+		t.Fatal(err)
+	}
+	found, err := Find([]string{earlier, ours, ours}, entry("").Marker.ClusterID)
+	if err != nil || len(found) != 1 || found[0].Server != entry("").Server || found[0].ShadowedBy != "" ||
+		found[0].ClusterMissing {
+		t.Fatalf("Find() = %+v, %v", found, err)
+	}
+	if err := os.WriteFile(earlier, []byte("apiVersion: v1\ncontexts:\n- name: mt-acme-prod\n  context: {cluster: x, user: y}\n"),
+		0o600); err != nil {
+		t.Fatal(err)
+	}
+	if found, err = Find([]string{earlier, ours}, entry("").Marker.ClusterID); err != nil || len(found) != 1 ||
+		found[0].ShadowedBy != earlier {
+		t.Fatalf("shadowed: %+v, %v", found, err)
+	}
+	raw := strings.Replace(string(must(os.ReadFile(ours))), "- name: mt-acme-prod\n    cluster:", //nolint:gosec // The test's own file.
+		"- name: renamed\n    cluster:", 1)
+	if err := os.WriteFile(ours, []byte(raw), 0o600); err != nil { //nolint:gosec // G703: the test's own file.
+		t.Fatal(err)
+	}
+	if found, err = Find([]string{ours}, entry("").Marker.ClusterID); err != nil || len(found) != 1 ||
+		!found[0].ClusterMissing {
+		t.Fatalf("missing cluster: %+v, %v\n%s", found, err, raw)
+	}
+}
