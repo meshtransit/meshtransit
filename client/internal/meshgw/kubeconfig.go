@@ -8,9 +8,11 @@ import (
 	"io"
 	"net"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"meshtransit.net/client/internal/kubeproxy"
 	"meshtransit.net/client/internal/kubereq"
@@ -37,12 +39,13 @@ const (
 	maximumReplicas        = 10
 	defaultKubeStaleAfter  = 5 * time.Minute
 	maximumKubeGroupsBytes = 64 << 10
+	maximumAudienceBytes   = 512
 )
 
 // proxyOnlyVariables configure the proxy only.
 var proxyOnlyVariables = []string{
 	"MESHGW_KUBE_GROUPS", "MESHGW_SECRET_RESOURCES", "MESHGW_KUBE_STALE_AFTER",
-	"MESHGW_KUBE_API_BACKEND", "MESHGW_GUARDED_NAMESPACES",
+	"MESHGW_KUBE_API_BACKEND", "MESHGW_GUARDED_NAMESPACES", "MESHGW_API_AUDIENCES",
 }
 
 // KubeConfig is how a K1 gateway serves kubectl (K1b).
@@ -64,6 +67,11 @@ type KubeConfig struct {
 	APIServer, APICAFile, APITokenFile string
 	// APIServerOverride reports MESHGW_KUBE_API_BACKEND set: tests only.
 	APIServerOverride bool
+	// APIAudiences are the API server's audiences the chart expects
+	// (MESHGW_API_AUDIENCES, by commas): the token VAP admits only tokens
+	// for exactly these, and the gateway reports a cluster whose own differ
+	// (K1c Q91). Empty: not checked.
+	APIAudiences []string
 	// StatefulSet, Replicas, ServiceAccount and Secrets name the gateway's
 	// objects for rbaccheck; GuardedNamespaces add to kube-system
 	// (MESHGW_GUARDED_NAMESPACES).
@@ -148,6 +156,16 @@ func loadKubeConfig(getenv func(string) string, cfg Config, apiServer string, ce
 		return KubeConfig{}, fmt.Errorf("meshgw: replica %d is past MESHGW_REPLICAS=%d: raise it with the StatefulSet",
 			cfg.Ordinal, replicas)
 	}
+	// A comma list (the chart joins its values), never JSON: brackets and
+	// quotes would be taken as part of an audience (review c2a M1).
+	audiences := splitList(value("MESHGW_API_AUDIENCES", ""))
+	for index, audience := range audiences {
+		if len(audience) > maximumAudienceBytes || strings.ContainsFunc(audience, unicode.IsSpace) ||
+			strings.ContainsFunc(audience, unicode.IsControl) || strings.ContainsAny(audience, `"[]`) ||
+			slices.Contains(audiences[:index], audience) {
+			return KubeConfig{}, fmt.Errorf("meshgw: MESHGW_API_AUDIENCES: %q is not an audience, or repeats", audience)
+		}
+	}
 	statefulSet := cfg.PodName[:strings.LastIndexByte(cfg.PodName, '-')]
 	serviceAccount := value("MESHGW_SERVICE_ACCOUNT", defaultServiceAccount)
 	if !isDNSSubdomain(statefulSet) || !isDNSSubdomain(serviceAccount) {
@@ -164,7 +182,7 @@ func loadKubeConfig(getenv func(string) string, cfg Config, apiServer string, ce
 		APIServer: server, APICAFile: value("MESHGW_KUBE_API_CA_FILE", defaultAPICAFile),
 		APITokenFile: value("MESHGW_KUBE_API_TOKEN_FILE", defaultAPITokenFile), APIServerOverride: override != "",
 		StatefulSet: statefulSet, Replicas: replicas, ServiceAccount: serviceAccount, Secrets: secrets,
-		GuardedNamespaces: splitList(value("MESHGW_GUARDED_NAMESPACES", "")),
+		GuardedNamespaces: splitList(value("MESHGW_GUARDED_NAMESPACES", "")), APIAudiences: audiences,
 	}, nil
 }
 

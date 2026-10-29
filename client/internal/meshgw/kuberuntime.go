@@ -59,6 +59,9 @@ type kubeRuntime struct {
 	// readiness alike.
 	open   func() (bool, string)
 	logger *slog.Logger
+	// apiAudiences are the API server's audiences as the gateway's own
+	// token names them, for status.
+	apiAudiences []string
 	// groupNames are the configured groups, in order, for status.
 	groupNames []string
 	memory     *memoryWatch
@@ -130,6 +133,7 @@ func newKubeRuntime(cfg Config, service *daemon.Service, coreNow func() time.Tim
 	if err != nil {
 		return fail(fmt.Errorf("meshgw: %w", err))
 	}
+	runtime.apiAudiences = checkAudiences(kube, logger)
 	if !buffersFit(memoryLimit, cfg.TCP) {
 		logger.Warn("TCP buffers leave less memory than the fewest connections need", "error_code",
 			"kubernetes_tcp_buffers_exceed_memory", "receive", cfg.TCP.Receive, "send", cfg.TCP.Send,
@@ -227,6 +231,29 @@ func anyGroupEnabled(groups []kubeproxy.Group, verdict func(string) rbaccheck.Ve
 		}
 	}
 	return false
+}
+
+// checkAudiences reads the API server's audiences from the gateway's own
+// token and reports, once at start, a cluster whose audiences differ from
+// the chart's: every mint would then be refused by the token VAP and every
+// group turned off, so the log names the value to set (K1c §7 c2).
+//
+// The snapshot is taken once: a cluster that changes its API audiences
+// shows the new ones after a restart, once the kubelet has refreshed the
+// token (up to a day).
+func checkAudiences(kube KubeConfig, logger *slog.Logger) []string {
+	audiences, err := kubetoken.ReadAudiences(kube.APITokenFile)
+	if err != nil {
+		logger.Warn("the API server's audiences are unknown", "error_code", "kubernetes_audiences_unknown",
+			"token_file", kube.APITokenFile, "error", err)
+		return nil
+	}
+	if len(kube.APIAudiences) > 0 && !kubetoken.SameAudiences(audiences, kube.APIAudiences) {
+		logger.Error("the gateway's API token names other audiences than apiServerAudiences admits: set "+
+			"apiServerAudiences to the token's", "error_code", "kubernetes_audience_mismatch",
+			"token_audiences", audiences, "configured", kube.APIAudiences, "token_file", kube.APITokenFile)
+	}
+	return audiences
 }
 
 // kubeOpen reports whether the replica may take kubectl: a valid

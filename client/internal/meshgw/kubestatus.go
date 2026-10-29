@@ -27,6 +27,10 @@ type kubeStatus struct {
 	Groups    []groupStatus     `json:"groups"`
 	Sessions  map[string]int    `json:"sessions"`
 	Cut       map[string]uint64 `json:"sessions_cut"`
+	// APIAudiences are the API server's audiences, read from the
+	// gateway's own token at start: what the chart's apiServerAudiences
+	// must be (K1c §7 c2).
+	APIAudiences []string `json:"api_audiences,omitempty"`
 }
 
 func (runtime *kubeRuntime) groups() []groupStatus {
@@ -47,7 +51,7 @@ func (runtime *kubeRuntime) status() any {
 	return kubeStatus{
 		Mode: KubeModeProxy, Listening: runtime.listener.Listening(),
 		Closed: runtime.listener.ClosedReason(), Groups: runtime.groups(), Sessions: sessions.Open,
-		Cut: sessions.Cut,
+		Cut: sessions.Cut, APIAudiences: runtime.apiAudiences,
 	}
 }
 
