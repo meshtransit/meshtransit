@@ -163,6 +163,24 @@ func (g *gate) accept(source netip.Addr) string {
 	return ""
 }
 
+// ConnectionStats are the replica's connections: open, not yet named for
+// a Device, and the most one Device holds.
+type ConnectionStats struct {
+	Open, Unidentified, MostByDevice, Devices int
+}
+
+// Connections reports the replica's connections.
+func (server *Server) Connections() ConnectionStats {
+	g := server.gate
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	stats := ConnectionStats{Open: g.open, Unidentified: g.unidentified, Devices: len(g.devices)}
+	for _, count := range g.devices {
+		stats.MostByDevice = max(stats.MostByDevice, count)
+	}
+	return stats
+}
+
 // named moves a connection from source out of those not yet named.
 // The caller holds the lock.
 func (g *gate) named(source netip.Addr) {

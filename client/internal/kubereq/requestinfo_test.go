@@ -146,8 +146,13 @@ func TestParseFieldSelectorName(t *testing.T) {
 		{http.MethodGet, "/api/v1/secrets?fieldSelector=a%3Db,metadata.name%3Dx", "list", "x"},
 		{http.MethodGet, "/api/v1/secrets?fieldSelector=metadata.name%3Da%5C,b", "list", "a,b"}, // an escaped ","
 		{http.MethodGet, "/api/v1/secrets?fieldSelector=metadata.name%3Da%5Cx", "list", ""},     // a bad escape
-		// A label selector is not parsed here: a name is kept only without one.
-		{http.MethodGet, "/api/v1/secrets?fieldSelector=metadata.name%3Dx&labelSelector=a%3Db", "list", ""},
+		// The label selector decodes too: a valid one keeps the name, an
+		// invalid one fails the decode (difftest b7b).
+		{http.MethodGet, "/api/v1/secrets?fieldSelector=metadata.name%3Dx&labelSelector=a%3Db", "list", "x"},
+		{http.MethodGet, "/api/v1/secrets?fieldSelector=metadata.name%3Dx&labelSelector=app.kubernetes.io%2Fname%20in%20(a,b),!c", "list", "x"},
+		{http.MethodGet, "/api/v1/secrets?fieldSelector=metadata.name%3Dx&labelSelector=a%3D%3Db%2B", "list", ""},
+		{http.MethodGet, "/api/v1/secrets?fieldSelector=metadata.name%3Dx&labelSelector=a%20in%20b", "list", ""},
+		{http.MethodGet, "/api/v1/secrets?fieldSelector=metadata.name%3Dx&labelSelector=-a", "list", ""},
 		{http.MethodGet, "/api/v1/secrets?fieldSelector=metadata.name%3D..", "list", ""},          // not a path segment
 		{http.MethodGet, "/api/v1/secrets?fieldSelector=metadata.name%3Dx&limit=abc", "list", ""}, // options do not decode
 		{http.MethodGet, "/api/v1/secrets?fieldSelector=metadata.name%3Dx&timeoutSeconds=1.5", "list", ""},

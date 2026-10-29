@@ -173,7 +173,9 @@ func selectedName(query url.Values) string {
 			}
 		}
 	}
-	if _, labelled := query["labelSelector"]; labelled {
+	// The API server decodes the label selector too: an invalid one fails
+	// the whole decode, and no name is taken (difftest b7b).
+	if labels, labelled := query["labelSelector"]; labelled && !validLabelSelector(labels[0]) {
 		return ""
 	}
 	selectors := query["fieldSelector"]
@@ -193,4 +195,119 @@ func splitPath(path string) []string {
 		return []string{}
 	}
 	return strings.Split(path, "/")
+}
+
+// validLabelSelector reports a label selector the API server parses:
+// comma-separated requirements, each "key", "!key", "key=value",
+// "key==value", "key!=value", "key in (values)" or "key notin (values)",
+// with Kubernetes' qualified names and label values.
+func validLabelSelector(selector string) bool {
+	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		return true
+	}
+	for _, requirement := range splitRequirements(selector) {
+		if !validRequirement(strings.TrimSpace(requirement)) {
+			return false
+		}
+	}
+	return true
+}
+
+// splitRequirements splits on commas outside parentheses.
+func splitRequirements(selector string) []string {
+	var parts []string
+	depth, start := 0, 0
+	for index, character := range selector {
+		switch character {
+		case '(':
+			depth++
+		case ')':
+			depth--
+		case ',':
+			if depth == 0 {
+				parts = append(parts, selector[start:index])
+				start = index + 1
+			}
+		}
+	}
+	return append(parts, selector[start:])
+}
+
+func validRequirement(requirement string) bool {
+	if key, found := strings.CutPrefix(requirement, "!"); found {
+		return validLabelKey(strings.TrimSpace(key))
+	}
+	for _, operator := range []string{"!=", "==", "="} {
+		if key, value, found := strings.Cut(requirement, operator); found {
+			return validLabelKey(strings.TrimSpace(key)) && validLabelValue(strings.TrimSpace(value))
+		}
+	}
+	fields := strings.Fields(requirement)
+	if len(fields) == 1 {
+		return validLabelKey(fields[0])
+	}
+	key, rest, found := strings.Cut(requirement, " ")
+	if !found || !validLabelKey(key) {
+		return false
+	}
+	rest = strings.TrimSpace(rest)
+	for _, operator := range []string{"notin", "in"} {
+		if set, found := strings.CutPrefix(rest, operator); found {
+			set = strings.TrimSpace(set)
+			if !strings.HasPrefix(set, "(") || !strings.HasSuffix(set, ")") {
+				return false
+			}
+			for _, value := range strings.Split(set[1:len(set)-1], ",") {
+				if !validLabelValue(strings.TrimSpace(value)) {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	return false
+}
+
+// validLabelKey is a qualified name with an optional DNS subdomain prefix.
+func validLabelKey(key string) bool {
+	prefix, name, prefixed := strings.Cut(key, "/")
+	if !prefixed {
+		name, prefix = prefix, ""
+	} else if prefix == "" || len(prefix) > 253 || !dnsSubdomain(prefix) {
+		return false
+	}
+	return name != "" && len(name) <= 63 && labelCharacters(name)
+}
+
+// validLabelValue is empty or a label value of at most 63 characters.
+func validLabelValue(value string) bool {
+	return value == "" || len(value) <= 63 && labelCharacters(value)
+}
+
+// labelCharacters: alphanumerics at both ends, '-', '_' and '.' inside.
+func labelCharacters(text string) bool {
+	alphanumeric := func(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' }
+	for index := range len(text) {
+		c := text[index]
+		if !alphanumeric(c) && (index == 0 || index == len(text)-1 || (c != '-' && c != '_' && c != '.')) {
+			return false
+		}
+	}
+	return true
+}
+
+func dnsSubdomain(name string) bool {
+	for _, label := range strings.Split(name, ".") {
+		if label == "" || len(label) > 63 {
+			return false
+		}
+		for index := range len(label) {
+			c := label[index]
+			if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9') && (index == 0 || index == len(label)-1 || c != '-') {
+				return false
+			}
+		}
+	}
+	return true
 }

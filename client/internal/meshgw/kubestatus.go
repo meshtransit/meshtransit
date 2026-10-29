@@ -78,6 +78,11 @@ func (runtime *kubeRuntime) writeMetrics(w io.Writer) {
 	_, _ = fmt.Fprintf(w, "# HELP meshgw_kube_listener_open Whether the kubectl listener is open.\n"+
 		"# TYPE meshgw_kube_listener_open gauge\nmeshgw_kube_listener_open %d\n",
 		boolMetric(runtime.listener.Listening()))
+	connections := runtime.proxy.Connections()
+	// Disjoint states, so sum() is every connection (review b7b L).
+	writeLabelled(w, "meshgw_kube_connections", "gauge", "kubectl connections, named for a Device or not yet.",
+		"state", map[string]int{"identified": connections.Open - connections.Unidentified,
+			"unidentified": connections.Unidentified})
 	writeLabelled(w, "meshgw_kube_limited_total", "counter", "Connections and requests refused at a limit, by limit.",
 		"limit", runtime.proxy.Limited())
 	writeLabelled(w, "meshgw_kube_audit_refused_total", "counter",

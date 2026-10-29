@@ -453,7 +453,8 @@ func (server *Server) forward(w http.ResponseWriter, r *http.Request, request fo
 		}
 		server.options.Logger.Info("kube request", "audit_id", formatAuditID(carried.auditID),
 			"device_id", request.peer.DeviceID, "group", request.group.Name, "class", string(request.class),
-			"verb", request.info.Verb, "resource", request.info.Resource, "subresource", request.info.Subresource,
+			"verb", request.info.Verb, "api_group", request.info.APIGroup, "resource", request.info.Resource,
+			"subresource", request.info.Subresource,
 			"namespace", request.info.Namespace, "name", request.info.Name, "status", status,
 			"duration_ms", time.Since(request.started).Milliseconds())
 	}()
