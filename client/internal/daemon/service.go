@@ -165,6 +165,10 @@ type Status struct {
 	// GatewayCertificate is a gateway's replica certificate; nil when it
 	// asks for none.
 	GatewayCertificate *GatewayCertificateStatus
+	// KubernetesClusters are the clusters the node may reach and how far it
+	// trusts their gateways (mtcp-v1 §7.11), as of the last map; nil when
+	// the node does not take them.
+	KubernetesClusters []KubernetesClusterView
 	PeerPaths          dataplane.PeerPathSnapshot
 	SubnetRoutes       dataplane.SubnetRouteStatus
 	// RouteSites is the router each Site's traffic goes to.
@@ -497,6 +501,8 @@ type syncStatus struct {
 	policyRuleCount int
 	dataPlane       string
 	dns             string
+	// kubernetesClusters are the last map's clusters (§7.11).
+	kubernetesClusters []KubernetesClusterView
 }
 
 type endpointRefreshRequest struct {
@@ -1433,16 +1439,17 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					}
 					s.recordRuntimeRecovery()
 					s.setSyncStatus(syncStatus{
-						profileID:       active.ID,
-						state:           ControlSessionSynchronized,
-						revision:        snapshot.Revision,
-						networkName:     snapshot.NetworkName,
-						selfAddresses:   selfAddresses,
-						selfKeyExpiry:   snapshot.Self.KeyExpiry,
-						peerCount:       len(snapshot.Peers),
-						policyRuleCount: len(snapshot.Policy),
-						dataPlane:       dataPlaneState,
-						dns:             dnsState,
+						profileID:          active.ID,
+						state:              ControlSessionSynchronized,
+						revision:           snapshot.Revision,
+						networkName:        snapshot.NetworkName,
+						selfAddresses:      selfAddresses,
+						selfKeyExpiry:      snapshot.Self.KeyExpiry,
+						peerCount:          len(snapshot.Peers),
+						policyRuleCount:    len(snapshot.Policy),
+						dataPlane:          dataPlaneState,
+						dns:                dnsState,
+						kubernetesClusters: kubernetesClusterViews(snapshot.KubernetesClusters),
 					})
 					if retryDNS != nil {
 						dnsRetries.schedule(retryDNS)
@@ -2497,6 +2504,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		PeerCount:          syncState.peerCount,
 		MapFreshAt:         s.mapFreshAtValue(),
 		GatewayCertificate: s.gatewayCertificateStatus(),
+		KubernetesClusters: kubernetesClustersAt(syncState.kubernetesClusters, s.clock()),
 		PolicyRuleCount:    syncState.policyRuleCount,
 		PeerPaths:          peerPaths,
 		SubnetRoutes:       subnetRoutes,

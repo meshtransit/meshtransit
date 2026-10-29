@@ -97,6 +97,9 @@ func (c *Client) StreamNetmap(ctx context.Context, controlURL string, material c
 		client: c, origin: origin, keys: keys, options: options, handler: handler,
 		disco: disco, reports: reports,
 	}
+	var releaseKubeHold func()
+	stream.kubeClusters, releaseKubeHold = c.kubeHold(origin, keys)
+	defer releaseKubeHold()
 	if len(options.NextControlKey) != 0 {
 		raw, err := controlplane.ParseControlPublicKey(options.NextControlKey)
 		if err != nil {
@@ -321,6 +324,9 @@ type netmapStream struct {
 	// connected is whether the current session has a usable map (reported
 	// through NetmapOptions.ConnectionChanged).
 	connected bool
+	// kubeClusters is what the node holds of its Kubernetes clusters
+	// across sessions and streams of the profile (kube.ca1, §7.11).
+	kubeClusters *kubeClusterHold
 }
 
 // setConnected reports a change of the control connection.
@@ -462,6 +468,11 @@ func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, e
 	state.takesKubernetesCA = c.gateway != nil && stream.options.KubeCerts != nil
 	state.takesServedExits = stream.options.EnableExitNode
 	state.takesExits = stream.options.EnableExits
+	// Any node but a gateway takes its clusters' roots (K1a4d Q41).
+	state.takesClusters = c.gateway == nil
+	state.clustersNegotiated = state.takesClusters &&
+		slices.Contains(s.reply.GetCapabilities(), kubeClusterCapability)
+	state.kubeClusters = stream.kubeClusters
 	run := &sessionRun{stream: stream, s: s, state: state, controlTime: time.UnixMilli(s.reply.GetServerTimeMs())}
 	return run.loop(ctx, inbox)
 }
@@ -1367,6 +1378,11 @@ func streamCapabilities(options controlplane.NetmapOptions, gateway bool) []stri
 		// Names and every zone kind (DNS design D2), and the root zone with
 		// DNS evidence (D1b), need forward zones.
 		capabilities = append(capabilities, "dns.forward1", "dns.records1", "dns.root1")
+	}
+	if !gateway {
+		// Any other node takes the clusters it may reach and their roots
+		// (§7.11), for kubectl over the mesh (K1e).
+		capabilities = append(capabilities, kubeClusterCapability)
 	}
 	if gateway {
 		// A Kubernetes gateway takes its peers' Kubernetes access (§7.8).

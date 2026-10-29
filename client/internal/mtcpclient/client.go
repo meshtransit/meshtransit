@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"meshtransit.net/client/internal/controlplane"
@@ -52,6 +53,48 @@ type Client struct {
 	now        func() time.Time
 	// gateway is set for a Kubernetes gateway replica (NewGateway).
 	gateway *gatewayClock
+	// kubeHolds keep, by Device (origin and machine key), what the node
+	// holds of its Kubernetes clusters across streams: the daemon opens a
+	// new stream on recovery or a control key change, which is no restart
+	// of meshd (§7.11, review d3 M4).
+	kubeHoldsMu sync.Mutex
+	kubeHolds   map[string]*heldKubeClusters
+}
+
+// heldKubeClusters is a Device's hold and whether a stream uses it.
+type heldKubeClusters struct {
+	hold  kubeClusterHold
+	inUse bool
+}
+
+// maxKubeHolds bounds the Devices whose holds a process keeps: a new
+// machine key (a logout, a new registration) leaves the old one behind.
+const maxKubeHolds = 8
+
+// kubeHold returns the Device's hold of its Kubernetes clusters for one
+// stream, and its release. A second stream of the same Device at once gets
+// a hold of its own, so two never write one.
+func (c *Client) kubeHold(origin *url.URL, keys profileKeys) (*kubeClusterHold, func()) {
+	device := origin.String() + " " + keys.machine.Public().String()
+	c.kubeHoldsMu.Lock()
+	defer c.kubeHoldsMu.Unlock()
+	held, found := c.kubeHolds[device]
+	if found && held.inUse {
+		return &kubeClusterHold{}, func() {}
+	}
+	if !found {
+		if c.kubeHolds == nil || len(c.kubeHolds) >= maxKubeHolds {
+			c.kubeHolds = map[string]*heldKubeClusters{}
+		}
+		held = &heldKubeClusters{}
+		c.kubeHolds[device] = held
+	}
+	held.inUse = true
+	return &held.hold, func() {
+		c.kubeHoldsMu.Lock()
+		held.inUse = false
+		c.kubeHoldsMu.Unlock()
+	}
 }
 
 // New returns a client that uses system trust roots, TLS 1.2 or newer,

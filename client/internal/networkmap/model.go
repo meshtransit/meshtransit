@@ -39,6 +39,10 @@ type Snapshot struct {
 	// KubernetesCA is a Kubernetes gateway's cluster's CAs (mtcp-v1 §7.10);
 	// nil when the map does not name them (absent).
 	KubernetesCA *KubernetesCA
+	// KubernetesClusters are the clusters the node may reach and their
+	// roots (mtcp-v1 §7.11), sorted by ID; nil for a node that does not take
+	// them (a gateway), what the node holds otherwise, empty or not.
+	KubernetesClusters []KubernetesCluster
 	// DroppedAliasPeers counts the shared Devices the client left out of
 	// this map because their alias could not be used (expired, invalid or
 	// colliding); for the log, never for authority.

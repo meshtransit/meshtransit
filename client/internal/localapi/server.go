@@ -514,6 +514,7 @@ func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request)
 		SubnetRouter:       mapSubnetRouterStatus(status.SubnetRouter),
 		ExitNode:           mapExitNodeStatus(status.ExitNode),
 		Exit:               mapExitStatus(status.Exit, status.ExitRoute),
+		KubernetesClusters: mapKubernetesClusters(status.KubernetesClusters),
 		Captive:            mapCaptiveStatus(status.Captive),
 		PathProbes:         mapPathProbeStatus(status.PathProbes),
 		Relay:              mapRelayStatus(status.Relay),
@@ -1107,4 +1108,20 @@ func (s *Server) handleCaptiveCheck(writer http.ResponseWriter, request *http.Re
 	}
 	s.service.CheckCaptiveWindow()
 	s.writeJSON(writer, http.StatusOK, captiveCheckResponse{APIVersion: apiVersion})
+}
+
+// mapKubernetesClusters is the wire form of the node's clusters; nil when
+// it takes none.
+func mapKubernetesClusters(clusters []daemon.KubernetesClusterView) []kubernetesClusterStatus {
+	if len(clusters) == 0 {
+		return nil
+	}
+	mapped := make([]kubernetesClusterStatus, 0, len(clusters))
+	for _, cluster := range clusters {
+		mapped = append(mapped, kubernetesClusterStatus{
+			ID: cluster.ID, Name: cluster.Name, DNSName: cluster.DNSName, TLSServerName: cluster.TLSServerName,
+			State: cluster.State, Roots: cluster.RootFingerprints, RootsExcluded: cluster.RootsExcluded,
+		})
+	}
+	return mapped
 }

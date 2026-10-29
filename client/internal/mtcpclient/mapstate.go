@@ -65,8 +65,16 @@ type mapState struct {
 	exits            *mtcpv1.ExitConfig
 	// takesExits: the node declared routes.exit.v1.
 	takesExits bool
-	relayMap   []byte
-	revisions  []*mtcpv1.NetworkRevision
+	// takesClusters: the node declared kube.ca1, so its map names the
+	// clusters it holds (§7.11); clustersNegotiated: Core offered it too, so
+	// every snapshot carries them. kubeClusters is the stream's hold, which
+	// outlives the session; clock dates it.
+	takesClusters      bool
+	clustersNegotiated bool
+	kubeClusters       *kubeClusterHold
+	clock              func() time.Time
+	relayMap           []byte
+	revisions          []*mtcpv1.NetworkRevision
 
 	signingKeys []mtrp.TrustedKey
 	ticket      []byte
@@ -89,6 +97,10 @@ func (state *mapState) applySnapshot(snapshot *mtcpv1.MapSnapshot) error {
 	if state.ready && view.GetEpoch() <= state.epoch {
 		return fmt.Errorf("%w: snapshot epoch went back", controlplane.ErrNetmapInvalid)
 	}
+	clusters, err := state.nextKubeClusters(snapshot.GetKubernetesClusters(), true)
+	if err != nil {
+		return err
+	}
 	peers := make(map[string]*mtcpv1.Device, len(snapshot.GetPeers()))
 	for _, peer := range snapshot.GetPeers() {
 		if peer.GetDeviceId() == "" {
@@ -107,6 +119,7 @@ func (state *mapState) applySnapshot(snapshot *mtcpv1.MapSnapshot) error {
 	state.servedExits, state.exits = snapshot.GetServedExits(), snapshot.GetExits()
 	state.relayMap = bytes.Clone(snapshot.GetRelayMap())
 	state.revisions = snapshot.GetNetworkRevisions()
+	state.holdKubeClusters(clusters)
 	return nil
 }
 
@@ -142,6 +155,10 @@ func (state *mapState) applyDelta(delta *mtcpv1.MapDelta) error {
 	if len(peers) > maxMapPeers {
 		return fmt.Errorf("%w: too many peers", controlplane.ErrNetmapInvalid)
 	}
+	clusters, err := state.nextKubeClusters(delta.GetKubernetesClusters(), false)
+	if err != nil {
+		return err
+	}
 	state.seq = view.GetSeq()
 	state.peers = peers
 	if delta.GetSelf() != nil {
@@ -173,6 +190,7 @@ func (state *mapState) applyDelta(delta *mtcpv1.MapDelta) error {
 	if len(delta.GetNetworkRevisions()) != 0 {
 		state.revisions = delta.GetNetworkRevisions()
 	}
+	state.holdKubeClusters(clusters)
 	return nil
 }
 
@@ -317,6 +335,9 @@ func (state *mapState) build(input snapshotInput) (networkmap.Snapshot, error) {
 	}
 	if state.takesKubernetesCA {
 		snapshot.KubernetesCA = state.kubernetesCA()
+	}
+	if state.takesClusters && state.kubeClusters != nil {
+		snapshot.KubernetesClusters = state.kubeClusters.clusters(input.now)
 	}
 	// A share whose alias cannot be used now (expired, invalid, colliding,
 	// or a clock ahead of Core's) is left out, not the whole map.
@@ -926,4 +947,37 @@ func exactPrefix(encoded *mtcpv1.Prefix) (netip.Prefix, error) {
 		return netip.Prefix{}, fmt.Errorf("%w: route prefix has host bits", controlplane.ErrNetmapInvalid)
 	}
 	return prefix, nil
+}
+
+// nextKubeClusters checks a message's clusters field and returns the hold
+// after it, nil when it changes nothing. A snapshot on a session that
+// negotiated kube.ca1 must carry it (§7.11); a field Core sends unasked is
+// ignored, as any other.
+func (state *mapState) nextKubeClusters(field *mtcpv1.KubernetesClusters, snapshot bool) (*kubeClusterHold, error) {
+	if !state.clustersNegotiated || state.kubeClusters == nil {
+		return nil, nil
+	}
+	if field == nil {
+		if snapshot {
+			return nil, fmt.Errorf("%w: snapshot without Kubernetes clusters", controlplane.ErrNetmapInvalid)
+		}
+		return nil, nil
+	}
+	if err := checkKubeClusters(field); err != nil {
+		return nil, err
+	}
+	now := time.Now
+	if state.clock != nil {
+		now = state.clock
+	}
+	next := state.kubeClusters.apply(field, now())
+	return &next, nil
+}
+
+// holdKubeClusters keeps a hold nextKubeClusters returned, once the
+// message is otherwise applied.
+func (state *mapState) holdKubeClusters(next *kubeClusterHold) {
+	if next != nil {
+		*state.kubeClusters = *next
+	}
 }

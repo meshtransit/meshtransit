@@ -35,24 +35,40 @@ type statusResponse struct {
 	DeviceExpiresAt string `json:"device_expires_at,omitempty"`
 	// DeviceExpiry is unknown, never, ok, soon (14 days or less), imminent
 	// (a day or less) or expired.
-	DeviceExpiry      string                `json:"device_expiry"`
-	PeerCount         int                   `json:"peer_count"`
-	PolicyRuleCount   int                   `json:"policy_rule_count"`
-	PeerPaths         pathStatus            `json:"paths"`
-	SubnetRoutes      subnetRouteStatus     `json:"subnet_routes"`
-	SubnetRouter      subnetRouterStatus    `json:"subnet_router"`
-	ExitNode          exitNodeStatus        `json:"exit_node"`
-	Exit              *exitStatus           `json:"exit,omitempty"`
-	Captive           *captiveStatus        `json:"captive,omitempty"`
-	PathProbes        pathProbeStatus       `json:"path_probes"`
-	Relay             relayStatus           `json:"relay"`
-	NetworkChanges    networkChangeStatus   `json:"network_changes"`
-	RuntimeRecovery   runtimeRecoveryStatus `json:"runtime_recovery"`
-	Runtime           runtimeStatus         `json:"runtime"`
-	NAT               natStatus             `json:"nat"`
-	PortMapping       portMappingStatus     `json:"port_mapping"`
-	Cloud             cloudStatus           `json:"cloud"`
-	CompatibilityNote string                `json:"compatibility_note"`
+	DeviceExpiry    string             `json:"device_expiry"`
+	PeerCount       int                `json:"peer_count"`
+	PolicyRuleCount int                `json:"policy_rule_count"`
+	PeerPaths       pathStatus         `json:"paths"`
+	SubnetRoutes    subnetRouteStatus  `json:"subnet_routes"`
+	SubnetRouter    subnetRouterStatus `json:"subnet_router"`
+	ExitNode        exitNodeStatus     `json:"exit_node"`
+	Exit            *exitStatus        `json:"exit,omitempty"`
+	// KubernetesClusters are the clusters the node may reach (mtcp-v1
+	// §7.11); omitted when it does not take them.
+	KubernetesClusters []kubernetesClusterStatus `json:"kubernetes_clusters,omitempty"`
+	Captive            *captiveStatus            `json:"captive,omitempty"`
+	PathProbes         pathProbeStatus           `json:"path_probes"`
+	Relay              relayStatus               `json:"relay"`
+	NetworkChanges     networkChangeStatus       `json:"network_changes"`
+	RuntimeRecovery    runtimeRecoveryStatus     `json:"runtime_recovery"`
+	Runtime            runtimeStatus             `json:"runtime"`
+	NAT                natStatus                 `json:"nat"`
+	PortMapping        portMappingStatus         `json:"port_mapping"`
+	Cloud              cloudStatus               `json:"cloud"`
+	CompatibilityNote  string                    `json:"compatibility_note"`
+}
+
+// kubernetesClusterStatus is one cluster the node may reach: state is
+// pending, trusted, incomplete, invalid or unavailable; roots are SHA-256
+// fingerprints (hex), never DER.
+type kubernetesClusterStatus struct {
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	DNSName       string   `json:"dns_name,omitempty"`
+	TLSServerName string   `json:"tls_server_name,omitempty"`
+	State         string   `json:"state"`
+	Roots         []string `json:"root_fingerprints,omitempty"`
+	RootsExcluded int      `json:"roots_excluded,omitempty"`
 }
 
 // cloudStatus is the wire form of the instance's cloud public addresses.
