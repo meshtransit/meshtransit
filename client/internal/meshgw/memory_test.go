@@ -51,11 +51,9 @@ func TestApplyMemoryLimit(t *testing.T) {
 // The heap past 70% of the soft limit presses; no limit never does.
 func TestMemoryWatch(t *testing.T) {
 	t.Parallel()
-	heap := uint64(0)
-	watch := newMemoryWatch(1000)
-	watch.read = func() uint64 { return heap }
 	for value, want := range map[uint64]bool{600: false, 700: false, 701: true} {
-		heap = value
+		watch := newMemoryWatch(1000)
+		watch.read = func() uint64 { return value }
 		watch.check()
 		if watch.Pressure() != want {
 			t.Fatalf("heap %d: %t", value, watch.Pressure())
@@ -120,10 +118,24 @@ func TestApplyMemoryLimitCgroupV1(t *testing.T) {
 		logger); got != math.MaxInt64 {
 		t.Fatalf("no file: %d", got)
 	}
-	if got := limitsFor(912680550).Connections; got != 217 {
-		t.Fatalf("connections for 870 MiB: %d", got)
-	}
-	if got := limitsFor(math.MaxInt64).Connections; got != 1024 {
-		t.Fatalf("connections without a limit: %d", got)
+}
+
+// The replica's connections and streams fit its memory, at most the
+// design's counts (review TD-CLI-82 M1).
+func TestLimitsForMemory(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string]struct {
+		limit                int64
+		connections, streams int
+	}{
+		"512 MiB pod": {456340275, 514, 858},
+		"1 GiB pod":   {912680550, 1024, 1972},
+		"128 MiB pod": {114085068, 64, 128},
+		"no limit":    {math.MaxInt64, 1024, 2048},
+	} {
+		limits := limitsFor(test.limit)
+		if limits.Connections != test.connections || limits.Streams != test.streams {
+			t.Errorf("%s: %d connections, %d streams", name, limits.Connections, limits.Streams)
+		}
 	}
 }

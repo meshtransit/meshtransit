@@ -12,7 +12,6 @@ import (
 	"sync/atomic"
 
 	"golang.zx2c4.com/wireguard/tun"
-	"golang.zx2c4.com/wireguard/tun/netstack"
 
 	"meshtransit.net/client/internal/netadmin"
 )
@@ -47,7 +46,7 @@ type Stacks struct {
 // Stack is one address set's stack, for the forwarder: it dials and listens
 // on Net until Retired closes, then binds again on the next Current.
 type Stack struct {
-	Net       *netstack.Net
+	Net       *meshStack
 	Addresses []netip.Addr
 	Retired   <-chan struct{}
 }
@@ -147,12 +146,11 @@ func (s *Stacks) Close() error {
 }
 
 // netStack is one gVisor stack and the goroutine that reads every packet it
-// sends. The reader runs for the stack's whole life: the stack's own
-// goroutines block until someone reads, and closing the stack while nobody
-// reads can panic in wireguard-go's netstack (TD-CLI-74).
+// sends. The reader runs for the stack's whole life, so the stack's own
+// goroutines never wait on the data plane (TD-CLI-74).
 type netStack struct {
-	device    tun.Device
-	net       *netstack.Net
+	device    *meshStack
+	net       *meshStack
 	addresses []netip.Addr
 	mtu       int
 	buffers   *sync.Pool
@@ -170,12 +168,12 @@ type packet struct {
 }
 
 func newNetStack(addresses []netip.Addr, mtu int, buffers *sync.Pool, dropped *atomic.Uint64) (*netStack, error) {
-	device, network, err := netstack.CreateNetTUN(addresses, nil, mtu)
+	device, err := newMeshStack(addresses, mtu)
 	if err != nil {
 		return nil, fmt.Errorf("meshgw: creating the gateway stack: %w", err)
 	}
 	created := &netStack{
-		device: device, net: network, addresses: slices.Clone(addresses), mtu: mtu, buffers: buffers,
+		device: device, net: device, addresses: slices.Clone(addresses), mtu: mtu, buffers: buffers,
 		dropped: dropped, retired: make(chan struct{}), reading: make(chan struct{}),
 	}
 	go created.read()
@@ -198,6 +196,10 @@ func (s *netStack) read() {
 		}
 		if err != nil || n == 0 {
 			s.buffers.Put(buffer)
+			if err != nil {
+				// A packet that did not fit: counted, never silent.
+				s.dropped.Add(1)
+			}
 			continue
 		}
 		current := s.attached.Load()

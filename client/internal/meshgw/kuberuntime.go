@@ -145,19 +145,38 @@ func newKubeRuntime(cfg Config, service *daemon.Service, coreNow func() time.Tim
 	return runtime, nil
 }
 
-// connectionBudget is what one mesh connection may hold at worst while
-// the netstack keeps gVisor's 1 MiB send and receive buffers (Q70, review
-// b6b H2): with headroom, 4 MiB.
-const connectionBudget = 4 << 20
+// The replica's memory, in the design's terms (§8): a fixed part (token
+// cache, map, runtime), then what each connection and each stream to the
+// API server may hold at worst. A connection: 256 KiB received (the stack's
+// and HTTP/2's windows hold the same bytes), 96 KiB to send, TLS records
+// and goroutines. A stream: its 128 KiB window to the API server and a
+// 32 KiB copy buffer.
+const (
+	fixedMemory      = 100 << 20
+	connectionMemory = 400 << 10
+	streamMemory     = 160 << 10
+	// streamsShare of what is left after the fixed part goes to streams,
+	// the rest to connections.
+	streamsShare = 0.4
+)
 
-// limitsFor bounds the replica's connections by its memory until the
-// gateway's own netstack caps those buffers: a 1 GiB pod takes about 200.
+// limitsFor sizes the replica's connections and streams to its soft memory
+// limit, at most the design's 1,024 and 2,048 (review TD-CLI-82 M1): a
+// 512 MiB pod (435 MiB soft) takes about 510 connections and 860 streams; a
+// 1 GiB pod (870 MiB soft) 1,024 and about 1,970.
 func limitsFor(memoryLimit int64) kubeproxy.Limits {
 	limits := kubeproxy.DefaultLimits()
-	if memoryLimit > 0 && memoryLimit < math.MaxInt64 {
-		limits.Connections = int(min(int64(limits.Connections), max(64, memoryLimit/connectionBudget)))
+	if memoryLimit <= 0 || memoryLimit == math.MaxInt64 {
+		return limits
 	}
+	left := max(0, float64(memoryLimit-fixedMemory))
+	limits.Streams = clampCount(left*streamsShare/streamMemory, 128, limits.Streams)
+	limits.Connections = clampCount(left*(1-streamsShare)/connectionMemory, 64, limits.Connections)
 	return limits
+}
+
+func clampCount(value float64, lowest, highest int) int {
+	return int(min(float64(highest), max(float64(lowest), value)))
 }
 
 // kubeOpen reports whether the replica may take kubectl: a valid
