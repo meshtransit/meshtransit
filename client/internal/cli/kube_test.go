@@ -302,3 +302,57 @@ func TestKubeDoctorReconnectingWarns(t *testing.T) {
 		t.Fatalf("down: %+v", check)
 	}
 }
+
+func TestKubeAuditCheckExitCodes(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	records := filepath.Join(dir, "records.json")
+	if err := os.WriteFile(records, []byte(`{"format":"meshtransit-kube-operations/v1","gateway_namespace":"mt-kube",`+
+		`"from":"2026-10-30T09:00:00Z","to":"2026-10-30T11:00:00Z","records_from":"2026-10-30T08:55:00Z",`+
+		`"records_to":"2026-10-30T11:05:00Z","records":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, content string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	unrecorded := write("bypass.log", `{"kind":"Event","apiVersion":"audit.k8s.io/v1","auditID":"bbbbbbbb-0000-4000-8000-000000000004","stage":"ResponseComplete",`+
+		`"verb":"delete","requestURI":"/api/v1/namespaces/a/pods/p","user":{"username":"system:serviceaccount:mt-kube:mt-edit"},`+
+		`"objectRef":{"resource":"pods","namespace":"a","name":"p"},"requestReceivedTimestamp":"2026-10-30T10:00:00Z"}`)
+	// A read: no record needed.
+	clean := write("clean.log", `{"kind":"Event","apiVersion":"audit.k8s.io/v1","auditID":"cccccccc-0000-4000-8000-000000000005",`+
+		`"stage":"ResponseComplete","verb":"get","requestURI":"/api/v1/namespaces/a/pods/p",`+
+		`"user":{"username":"system:serviceaccount:mt-kube:mt-edit"},`+
+		`"objectRef":{"resource":"pods","namespace":"a","name":"p"},"requestReceivedTimestamp":"2026-10-30T10:00:00Z"}`)
+	// A log of no audit events is an error, not a clean result.
+	empty := write("empty.log", "")
+	unseenRecords := filepath.Join(dir, "unseen.json")
+	if err := os.WriteFile(unseenRecords, []byte(`{"format":"meshtransit-kube-operations/v1","gateway_namespace":`+
+		`"mt-kube","from":"2026-10-30T09:00:00Z","to":"2026-10-30T11:00:00Z","records_from":"2026-10-30T08:55:00Z",`+
+		`"records_to":"2026-10-30T11:05:00Z","records":[{"audit_id":"01a1b2c3-0000-7000-8000-000000000001",`+
+		`"received_at":"2026-10-30T10:00:00Z","class":"write","groups":["edit"],"verb":"delete","resource":"pods"}]}`),
+		0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		args []string
+		want int
+	}{
+		{[]string{"kube", "audit-check", unrecorded, "--records", records}, auditCheckMismatch},
+		{[]string{"kube", "audit-check", clean, "--records", records}, auditCheckClean},
+		{[]string{"kube", "audit-check", clean}, auditCheckUsage},
+		{[]string{"kube", "audit-check", "--records", records, clean}, auditCheckClean},
+		{[]string{"kube", "audit-check", clean, "--records", records, clean}, auditCheckUsage},
+		{[]string{"kube", "audit-check", clean, "--records", unseenRecords}, auditCheckIncomplete},
+		{[]string{"kube", "audit-check", empty, "--records", records}, auditCheckError},
+		{[]string{"kube", "audit-check", filepath.Join(dir, "missing.log"), "--records", records}, auditCheckError},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := Run(t.Context(), test.args, &stdout, &stderr, testOptions(&fakeClient{})); code != test.want {
+			t.Errorf("%v = %d, want %d: %s%s", test.args[2:], code, test.want, stdout.String(), stderr.String())
+		}
+	}
+}

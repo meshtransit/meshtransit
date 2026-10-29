@@ -48,6 +48,8 @@ func runKube(ctx context.Context, args []string, stdout, stderr io.Writer, isJSO
 		return runKubeLogout(ctx, args[1:], stdout, stderr, isJSON, client)
 	case "doctor":
 		return runKubeDoctor(ctx, args[1:], stdout, stderr, isJSON, client)
+	case "audit-check":
+		return runKubeAuditCheck(args[1:], stdout, stderr, isJSON)
 	default:
 		writeKubeUsage(stderr)
 		return 2
@@ -57,6 +59,7 @@ func runKube(ctx context.Context, args []string, stdout, stderr io.Writer, isJSO
 func writeKubeUsage(stderr io.Writer) {
 	_, _ = fmt.Fprintln(stderr, "usage: meshctl kube list [--groups]\n"+
 		"       meshctl kube doctor [<cluster>] [--kubeconfig <file>]   (the cluster comes first)\n"+
+		"       meshctl kube audit-check <audit.log> --records <records.json>\n"+
 		"       meshctl kube login <cluster> [--group <group>] [--use] [--kubeconfig <file>] [--force]\n"+
 		"       meshctl kube logout <cluster> | --all [--any-profile] [--kubeconfig <file>]")
 }

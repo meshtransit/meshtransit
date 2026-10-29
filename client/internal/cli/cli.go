@@ -1206,6 +1206,8 @@ Commands:
   kube list                               List the Kubernetes clusters this Device may reach
   kube login CLUSTER [--group G] [--use]  Add a kubectl context for a cluster (no credential is written)
   kube logout CLUSTER|--all               Remove the kubectl contexts meshctl added
+  kube doctor [CLUSTER]                   Check, step by step, why kubectl cannot reach a cluster
+  kube audit-check LOG --records FILE     Find writes in an API server audit log that Core never recorded
   doctor control                          Probe active control compatibility
   version                                 Show meshctl build information
   help                                    Show this help
