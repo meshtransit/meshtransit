@@ -33,6 +33,7 @@ var errStacksClosed = errors.New("meshgw: the stacks are closed")
 // Only a new address set makes a new stack (k8s-gateway-plan §4.4).
 type Stacks struct {
 	mtu     int
+	tcp     TCPBuffers
 	logger  *slog.Logger
 	changes chan struct{}
 	buffers *sync.Pool
@@ -51,13 +52,17 @@ type Stack struct {
 	Retired   <-chan struct{}
 }
 
-// NewStacks returns an opener whose stacks carry packets up to mtu bytes.
-func NewStacks(mtu int, logger *slog.Logger) *Stacks {
+// NewStacks returns an opener whose stacks carry packets up to mtu bytes,
+// with tcp's TCP sizes; zero sizes are the defaults.
+func NewStacks(mtu int, tcp TCPBuffers, logger *slog.Logger) *Stacks {
+	if tcp == (TCPBuffers{}) {
+		tcp = DefaultTCPBuffers()
+	}
 	buffers := &sync.Pool{New: func() any {
 		buffer := make([]byte, mtu)
 		return &buffer
 	}}
-	return &Stacks{mtu: mtu, logger: logger, changes: make(chan struct{}, 1), buffers: buffers}
+	return &Stacks{mtu: mtu, tcp: tcp, logger: logger, changes: make(chan struct{}, 1), buffers: buffers}
 }
 
 // OpenTUN returns a TUN with exactly the map's addresses and routes. The
@@ -80,7 +85,7 @@ func (s *Stacks) OpenTUN(_ context.Context, config netadmin.TUNConfig) (netadmin
 	var retired *netStack
 	started := s.current == nil || !slices.Equal(s.current.addresses, addresses)
 	if started {
-		next, err := newNetStack(addresses, s.mtu, s.buffers, &s.dropped)
+		next, err := newNetStack(addresses, s.mtu, s.tcp, s.buffers, &s.dropped)
 		if err != nil {
 			s.mu.Unlock()
 			return netadmin.TUN{}, err
@@ -167,8 +172,9 @@ type packet struct {
 	n      int
 }
 
-func newNetStack(addresses []netip.Addr, mtu int, buffers *sync.Pool, dropped *atomic.Uint64) (*netStack, error) {
-	device, err := newMeshStack(addresses, mtu)
+func newNetStack(addresses []netip.Addr, mtu int, tcp TCPBuffers, buffers *sync.Pool, dropped *atomic.Uint64,
+) (*netStack, error) {
+	device, err := newMeshStack(addresses, mtu, tcp)
 	if err != nil {
 		return nil, fmt.Errorf("meshgw: creating the gateway stack: %w", err)
 	}

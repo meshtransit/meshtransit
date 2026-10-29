@@ -26,11 +26,15 @@ import (
 
 // The gateway's TCP sizes (K1b design §8; TD-CLI-82): what one connection
 // holds at worst, whatever its client does, is bounded here rather than
-// by gVisor's 1 MiB defaults.
+// by gVisor's 1 MiB defaults. The defaults hold unless the cluster sets
+// MESHGW_TCP_RECEIVE_BUFFER or MESHGW_TCP_SEND_BUFFER (K1c Q88).
 const (
 	tcpReceiveBuffer = 256 << 10
 	tcpSendBuffer    = 96 << 10
 	tcpMinimumBuffer = 4 << 10
+	// A configured buffer lies within these.
+	tcpSmallestBuffer = 16 << 10
+	tcpLargestBuffer  = 4 << 20
 	// A peer gone without a word is found within a minute and a half:
 	// probes after 30 s idle, every 15 s, four unanswered close it.
 	keepaliveIdle     = 30 * time.Second
@@ -45,6 +49,26 @@ const (
 	nicID     = 1
 )
 
+// TCPBuffers are what one connection's TCP may hold, received and to send.
+type TCPBuffers struct {
+	Receive, Send int
+}
+
+// valid reports both sizes within the bounds a cluster may set.
+func (buffers TCPBuffers) valid() bool {
+	return validBufferSize(buffers.Receive) && validBufferSize(buffers.Send)
+}
+
+// validBufferSize reports a size within the bounds a cluster may set.
+func validBufferSize(size int) bool {
+	return size >= tcpSmallestBuffer && size <= tcpLargestBuffer
+}
+
+// DefaultTCPBuffers are the design's sizes (Q70, Q72).
+func DefaultTCPBuffers() TCPBuffers {
+	return TCPBuffers{Receive: tcpReceiveBuffer, Send: tcpSendBuffer}
+}
+
 // errNotIP is a packet that is neither IPv4 nor IPv6.
 var errNotIP = errors.New("meshgw: a packet that is not IP")
 
@@ -53,15 +77,20 @@ var errNotIP = errors.New("meshgw: a packet that is not IP")
 // connections keep TCP keepalive. It replaces wireguard-go's netstack, whose
 // stack the gateway cannot configure (Q70, TD-CLI-82).
 type meshStack struct {
-	stack  *stack.Stack
-	link   *channel.Endpoint
-	ctx    context.Context
-	cancel context.CancelFunc
+	stack   *stack.Stack
+	receive int
+	link    *channel.Endpoint
+	ctx     context.Context
+	cancel  context.CancelFunc
 }
 
 // newMeshStack makes a stack holding addresses, sending packets of at most
-// mtu bytes.
-func newMeshStack(addresses []netip.Addr, mtu int) (*meshStack, error) {
+// mtu bytes, with buffers' TCP sizes.
+func newMeshStack(addresses []netip.Addr, mtu int, buffers TCPBuffers) (*meshStack, error) {
+	if !buffers.valid() {
+		return nil, fmt.Errorf("meshgw: TCP buffers %d/%d outside %d-%d bytes", buffers.Receive, buffers.Send,
+			tcpSmallestBuffer, tcpLargestBuffer)
+	}
 	created := stack.New(stack.Options{
 		NetworkProtocols: []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol},
 		TransportProtocols: []stack.TransportProtocolFactory{
@@ -77,10 +106,10 @@ func newMeshStack(addresses []netip.Addr, mtu int) (*meshStack, error) {
 	sack := tcpip.TCPSACKEnabled(true)
 	moderate := tcpip.TCPModerateReceiveBufferOption(false)
 	receive := tcpip.TCPReceiveBufferSizeRangeOption{
-		Min: tcpMinimumBuffer, Default: tcpReceiveBuffer,
-		Max: tcpReceiveBuffer,
+		Min: tcpMinimumBuffer, Default: buffers.Receive,
+		Max: buffers.Receive,
 	}
-	send := tcpip.TCPSendBufferSizeRangeOption{Min: tcpMinimumBuffer, Default: tcpSendBuffer, Max: tcpSendBuffer}
+	send := tcpip.TCPSendBufferSizeRangeOption{Min: tcpMinimumBuffer, Default: buffers.Send, Max: buffers.Send}
 	for _, option := range []tcpip.SettableTransportProtocolOption{&sack, &moderate, &receive, &send} {
 		if err := created.SetTransportProtocolOption(tcp.ProtocolNumber, option); err != nil {
 			return fail("setting a TCP option", err)
@@ -109,7 +138,7 @@ func newMeshStack(addresses []netip.Addr, mtu int) (*meshStack, error) {
 		{Destination: header.IPv6EmptySubnet, NIC: nicID},
 	})
 	ctx, cancel := context.WithCancel(context.Background())
-	return &meshStack{stack: created, link: link, ctx: ctx, cancel: cancel}, nil
+	return &meshStack{stack: created, receive: buffers.Receive, link: link, ctx: ctx, cancel: cancel}, nil
 }
 
 // Read gives the next packet the stack sent, waiting for one; os.ErrClosed
@@ -183,7 +212,7 @@ func (s *meshStack) ListenTCPAddrPort(address netip.AddrPort) (net.Listener, err
 		return nil, fmt.Errorf("meshgw: a TCP endpoint: %s", err)
 	}
 	// Accepted connections take the listener's receive buffer.
-	endpoint.SocketOptions().SetReceiveBufferSize(tcpReceiveBuffer, false)
+	endpoint.SocketOptions().SetReceiveBufferSize(int64(s.receive), false)
 	full := tcpip.FullAddress{NIC: nicID, Addr: tcpip.AddrFromSlice(address.Addr().AsSlice()), Port: address.Port()}
 	if err := endpoint.Bind(full); err != nil {
 		endpoint.Close()

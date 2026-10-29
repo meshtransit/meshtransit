@@ -15,6 +15,10 @@ import (
 // clientWriteTimeout bounds a write to a client that does not read.
 const clientWriteTimeout = 60 * time.Second
 
+// ConnectionReceiveWindow is what HTTP/2 may queue from one client
+// connection; the gateway's memory sizing counts it (K1b design §8).
+const ConnectionReceiveWindow = 256 << 10
+
 // identified is a connection and the Device it serves (K1-I1): named in
 // its TLS handshake, from the key its packets come under, then held for
 // every request after. Naming it there, not in Accept, keeps one slow

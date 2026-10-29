@@ -2,6 +2,7 @@ package meshgw
 
 import (
 	"context"
+	"crypto/tls"
 	"io"
 	"log/slog"
 	"net/http"
@@ -25,6 +26,24 @@ func TestReadiness(t *testing.T) {
 		"relay":        {daemon.Status{ControlSession: daemon.ControlSessionSynchronized, DataPlane: string(dataplane.StateEncryptedRelay)}, true},
 		"no peers yet": {daemon.Status{ControlSession: daemon.ControlSessionSynchronized, DataPlane: string(dataplane.StateIdle)}, true},
 		"connecting":   {daemon.Status{ControlSession: daemon.ControlSessionConnecting, DataPlane: string(dataplane.StateEncrypted)}, false},
+		// A rebuilt stream follows a torn-down data plane, whatever map came
+		// before and whatever data plane state was copied (review K1c c1 H1).
+		"connecting after a map": {daemon.Status{
+			ControlSession: daemon.ControlSessionConnecting,
+			DataPlane:      string(dataplane.StateIdle), MapFreshAt: time.Unix(1_800_000_000, 0),
+		}, false},
+		"connecting with a stale data plane state": {daemon.Status{
+			ControlSession: daemon.ControlSessionConnecting,
+			DataPlane:      string(dataplane.StateEncrypted), MapFreshAt: time.Unix(1_800_000_000, 0),
+		}, false},
+		"blocked with a map": {daemon.Status{
+			ControlSession: daemon.ControlSessionBlocked,
+			DataPlane:      string(dataplane.StateEncrypted), MapFreshAt: time.Unix(1_800_000_000, 0),
+		}, false},
+		"suspended with a map": {daemon.Status{
+			ControlSession: daemon.ControlSessionSuspended,
+			DataPlane:      string(dataplane.StateEncrypted), MapFreshAt: time.Unix(1_800_000_000, 0),
+		}, false},
 		"reconnecting": {daemon.Status{ControlSession: daemon.ControlSessionReconnecting, DataPlane: string(dataplane.StateEncrypted)}, true},
 		"failed":       {daemon.Status{ControlSession: daemon.ControlSessionSynchronized, DataPlane: string(dataplane.StateFailed)}, false},
 		"unsupported":  {daemon.Status{ControlSession: daemon.ControlSessionSynchronized, DataPlane: string(dataplane.StatePolicyUnsupported)}, false},
@@ -228,5 +247,29 @@ func TestProbesServeStatusAndAddedMetrics(t *testing.T) {
 	}
 	if _, body := get(t, server.URL+"/metrics"); !strings.Contains(body, "meshgw_kube_listener_open 1\n") {
 		t.Fatalf("/metrics %s", body)
+	}
+}
+
+// A check that names its own reason, as the kubectl listener's opening does,
+// reports that reason; a map past the stale bound makes the replica unready
+// for the same reason the listener closes (K1c Q87, review c1 M4).
+func TestProbesReportAnOpenCheck(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(1_800_000_000, 0)
+	fresh := now.Add(-6 * time.Minute)
+	open := kubeOpen(func() (*tls.Certificate, bool) { return nil, true },
+		func() time.Time { return fresh }, 5*time.Minute, func() time.Time { return now })
+	probes := NewProbes(func(context.Context) (daemon.Status, error) {
+		return daemon.Status{ControlSession: daemon.ControlSessionReconnecting}, nil
+	}, time.Second)
+	probes.checks = append(probes.checks, check{open: open})
+	probes.observe(t.Context())
+	if last := probes.current(); last.ready || last.reason != "map not confirmed within 5m0s" {
+		t.Fatalf("stale map: %+v", last)
+	}
+	fresh = now.Add(-4 * time.Minute)
+	probes.observe(t.Context())
+	if last := probes.current(); !last.ready {
+		t.Fatalf("fresh map: %+v", last)
 	}
 }

@@ -250,7 +250,7 @@ func TestLoad(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 	gatewaySocket, harnessSocket := filepath.Join(dir, "gw"), filepath.Join(dir, "devices")
-	gateway, err := newMeshStack([]netip.Addr{loadGatewayAddress}, netstackMTU)
+	gateway, err := newMeshStack([]netip.Addr{loadGatewayAddress}, netstackMTU, DefaultTCPBuffers())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +304,7 @@ func TestLoad(t *testing.T) {
 			softLimit = parsed
 		}
 	}
-	limits := limitsFor(softLimit)
+	limits := limitsFor(softLimit, DefaultTCPBuffers())
 	memory := newMemoryWatch(softLimit)
 	proxy, err := kubeproxy.New(kubeproxy.Options{
 		Cluster: "load", Namespace: "mt", Groups: []kubeproxy.Group{{Name: "edit", Default: true}},
@@ -348,7 +348,7 @@ func TestLoad(t *testing.T) {
 	for _, count := range sessions.Open {
 		open += count
 	}
-	budget := uint64(connections.Open)*connectionMemory + uint64(open)*streamMemory
+	budget := uint64(connections.Open)*uint64(connectionMemory(DefaultTCPBuffers())) + uint64(open)*streamMemory
 	t.Logf("gateway: connections %+v, sessions %v (%d)", connections, sessions.Open, open)
 	t.Logf("limited %v; memory pressure %t", proxy.Limited(), memory.Pressure())
 	t.Logf("gateway live heap %d MiB before, %d MiB under load, budget for what it holds %d MiB; goroutines %d",
@@ -439,7 +439,7 @@ func TestLoadHarness(t *testing.T) {
 	}()
 	for index := range loadDevices {
 		address := loadDeviceAddress(index)
-		stack, err := newMeshStack([]netip.Addr{address}, netstackMTU)
+		stack, err := newMeshStack([]netip.Addr{address}, netstackMTU, DefaultTCPBuffers())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -653,8 +653,8 @@ func TestThroughput(t *testing.T) {
 		200 * time.Millisecond,
 	} {
 		gatewayAddress, deviceAddress := netip.MustParseAddr("100.64.0.1"), netip.MustParseAddr("100.64.1.1")
-		gateway, _ := newMeshStack([]netip.Addr{gatewayAddress}, netstackMTU)
-		device, _ := newMeshStack([]netip.Addr{deviceAddress}, netstackMTU)
+		gateway, _ := newMeshStack([]netip.Addr{gatewayAddress}, netstackMTU, DefaultTCPBuffers())
+		device, _ := newMeshStack([]netip.Addr{deviceAddress}, netstackMTU, DefaultTCPBuffers())
 		go delayedPump(gateway, device, rtt/2)
 		go delayedPump(device, gateway, rtt/2)
 		proxy, err := kubeproxy.New(kubeproxy.Options{

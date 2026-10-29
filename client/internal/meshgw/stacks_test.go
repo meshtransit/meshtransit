@@ -35,7 +35,7 @@ func gatewayConfig(addrs ...netip.Addr) netadmin.TUNConfig {
 
 func newTestStacks(t *testing.T) *Stacks {
 	t.Helper()
-	stacks := NewStacks(netstackMTU, slog.New(slog.DiscardHandler))
+	stacks := NewStacks(netstackMTU, DefaultTCPBuffers(), slog.New(slog.DiscardHandler))
 	t.Cleanup(func() { _ = stacks.Close() })
 	return stacks
 }
@@ -347,7 +347,7 @@ func TestStacksCloseUnderTrafficLeaksNothing(t *testing.T) {
 
 func closeUnderTraffic(t *testing.T) {
 	t.Helper()
-	stacks := NewStacks(netstackMTU, slog.New(slog.DiscardHandler))
+	stacks := NewStacks(netstackMTU, DefaultTCPBuffers(), slog.New(slog.DiscardHandler))
 	clientDevice, clientNet := newClient(t)
 	w := &wire{t: t, client: clientDevice}
 	w.pumps.Add(1)

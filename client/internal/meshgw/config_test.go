@@ -57,6 +57,7 @@ func TestLoadConfigReadsThePod(t *testing.T) {
 		KubeAPIPort:        443,
 		KubeAPIBackend:     "[fd00:10:96::1]:443",
 		Cluster:            "kinda",
+		TCP:                DefaultTCPBuffers(),
 		Kube:               KubeConfig{Mode: KubeModePassthrough},
 	}
 	if !reflect.DeepEqual(cfg, want) {
@@ -78,6 +79,9 @@ func TestLoadConfigRefusesBadValues(t *testing.T) {
 		"listen port too low":   func(env map[string]string) { env["MESHGW_LISTEN_PORT"] = "80" },
 		"listen port not a num": func(env map[string]string) { env["MESHGW_LISTEN_PORT"] = "x" },
 		"not in a pod":          func(env map[string]string) { delete(env, "KUBERNETES_SERVICE_HOST") },
+		"receive buffer small":  func(env map[string]string) { env["MESHGW_TCP_RECEIVE_BUFFER"] = "16383" },
+		"send buffer large":     func(env map[string]string) { env["MESHGW_TCP_SEND_BUFFER"] = "4194305" },
+		"buffer with a unit":    func(env map[string]string) { env["MESHGW_TCP_SEND_BUFFER"] = "96Ki" },
 		"name too long": func(env map[string]string) {
 			env["MESHGW_CLUSTER"] = strings.Repeat("a", 40)
 			env["POD_NAME"] = "meshgw-1234567890123456"
@@ -91,6 +95,21 @@ func TestLoadConfigRefusesBadValues(t *testing.T) {
 				t.Fatal("LoadConfig() error = nil")
 			}
 		})
+	}
+}
+
+// A cluster sets its TCP sizes in bytes, within the bounds (K1c Q88).
+func TestLoadConfigTCPBuffers(t *testing.T) {
+	t.Parallel()
+	env, _ := testEnv(t)
+	env["MESHGW_TCP_RECEIVE_BUFFER"] = "16384"
+	env["MESHGW_TCP_SEND_BUFFER"] = "4194304"
+	cfg, err := loadFrom(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TCP != (TCPBuffers{Receive: 16 << 10, Send: 4 << 20}) {
+		t.Fatalf("TCP = %+v", cfg.TCP)
 	}
 }
 

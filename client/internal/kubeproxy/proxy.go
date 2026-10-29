@@ -166,7 +166,7 @@ func (server *Server) Serve(ctx context.Context, listener net.Listener) error {
 		// read, or never reads, holds little; one that stops reading for
 		// 60 s is dropped (K1b design §8).
 		HTTP2: &http.HTTP2Config{
-			MaxConcurrentStreams: 64 + 200, MaxReceiveBufferPerConnection: 256 << 10,
+			MaxConcurrentStreams: 64 + 200, MaxReceiveBufferPerConnection: ConnectionReceiveWindow,
 			MaxReceiveBufferPerStream: 64 << 10, WriteByteTimeout: clientWriteTimeout,
 			// A client gone without a word does not hold its place for the
 			// life of a quiet watch (review b6b M2).

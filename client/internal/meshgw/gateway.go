@@ -54,7 +54,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) (err error) {
 	}
 	defer func() { err = errors.Join(err, identities.Close(), profiles.Close()) }()
 
-	stacks := NewStacks(MTU, logger.With("component", "stacks"))
+	stacks := NewStacks(MTU, cfg.TCP, logger.With("component", "stacks"))
 	defer func() { err = errors.Join(err, stacks.Close()) }()
 	var audits kubeAuditChannels
 	if cfg.Kube.Mode == KubeModeProxy {

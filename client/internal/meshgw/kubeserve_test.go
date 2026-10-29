@@ -115,7 +115,7 @@ func TestKubeOpen(t *testing.T) {
 	never := time.Time{}
 	fresh.Store(&never)
 	open := kubeOpen(func() (*tls.Certificate, bool) { return nil, valid.Load() },
-		func() time.Time { return *fresh.Load() }, 5*time.Minute)
+		func() time.Time { return *fresh.Load() }, 5*time.Minute, time.Now)
 	if ok, why := open(); ok || why != "no valid certificate" {
 		t.Fatalf("%t %q", ok, why)
 	}

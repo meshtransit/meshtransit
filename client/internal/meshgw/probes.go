@@ -54,10 +54,12 @@ type Probes struct {
 	reports map[string]func() any
 }
 
-// check is one more condition of readiness, with the reason it gives.
+// check is one more condition of readiness, with the reason it gives;
+// open, when set, gives its own reason instead.
 type check struct {
 	reason string
 	ok     func() bool
+	open   func() (bool, string)
 }
 
 type observed struct {
@@ -131,7 +133,17 @@ func (p *Probes) observe(ctx context.Context) {
 	}
 	ready, reason := readiness(status)
 	for _, required := range p.checks {
-		if ready && !required.ok() {
+		if !ready {
+			break
+		}
+		switch {
+		case required.open != nil:
+			if ok, why := required.open(); !ok {
+				ready, reason = false, why
+			}
+		case required.ok == nil || !required.ok():
+			// A check without a condition holds the replica unready
+			// rather than panic.
 			ready, reason = false, required.reason
 		}
 	}
@@ -176,6 +188,10 @@ func (p *Probes) current() observed {
 // or reconnecting with the last map still in force as the daemon reports it
 // online, and its data plane works. Idle counts, as a gateway no rule
 // reaches yet has no peers; so does waiting for a peer's endpoint.
+//
+// Connecting is not ready even after an earlier map: the daemon tears its
+// data plane down before it rebuilds the stream (review K1c c1 H1); the
+// probe's failure threshold absorbs a short rebuild.
 func readiness(status daemon.Status) (bool, string) {
 	switch status.ControlSession {
 	case daemon.ControlSessionSynchronized, daemon.ControlSessionReconnecting:

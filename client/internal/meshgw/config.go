@@ -82,6 +82,9 @@ type Config struct {
 	KubeAPIBackend string
 	// Cluster is the cluster's name (MESHGW_CLUSTER).
 	Cluster string
+	// TCP is what each connection's TCP may hold on the mesh side
+	// (MESHGW_TCP_RECEIVE_BUFFER, MESHGW_TCP_SEND_BUFFER, in bytes; K1c Q88).
+	TCP TCPBuffers
 	// Kube is how the gateway serves kubectl: a K0 gateway, which enrolls,
 	// passes TCP through; a K1 one proxies by default (K1b).
 	Kube KubeConfig
@@ -168,7 +171,12 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 			renewAfter = parsed
 		}
 	}
+	tcp, err := tcpBuffers(value)
+	if err != nil {
+		return Config{}, err
+	}
 	cfg := Config{
+		TCP:         tcp,
 		JoinKeyFile: joinKeyFile, PodTokenFile: podTokenFile, Certificates: certificates,
 		CertificateRenewAfter: renewAfter, CertificateDir: certificateDir,
 		PodName: getenv("POD_NAME"), Namespace: value("POD_NAMESPACE", ""), NodeName: value("NODE_NAME", ""),
@@ -227,6 +235,28 @@ func ReadEnvelopeKey(path string) ([]byte, error) {
 		return nil, fmt.Errorf("meshgw: the envelope key in %s must be %d bytes", path, envelopeKeyBytes)
 	}
 	return key, nil
+}
+
+// tcpBuffers reads the TCP sizes a cluster may set, in bytes, each within
+// 16 KiB and 4 MiB; unset keeps the design's sizes.
+func tcpBuffers(value func(name, fallback string) string) (TCPBuffers, error) {
+	buffers := DefaultTCPBuffers()
+	for _, setting := range []struct {
+		name string
+		into *int
+	}{{"MESHGW_TCP_RECEIVE_BUFFER", &buffers.Receive}, {"MESHGW_TCP_SEND_BUFFER", &buffers.Send}} {
+		raw := value(setting.name, "")
+		if raw == "" {
+			continue
+		}
+		size, err := strconv.Atoi(raw)
+		if err != nil || !validBufferSize(size) {
+			return TCPBuffers{}, fmt.Errorf("meshgw: %s %q must be bytes from %d to %d", setting.name, raw,
+				tcpSmallestBuffer, tcpLargestBuffer)
+		}
+		*setting.into = size
+	}
+	return buffers, nil
 }
 
 // podOrdinal is the StatefulSet ordinal at the end of a pod's name.

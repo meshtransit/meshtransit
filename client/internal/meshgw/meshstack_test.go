@@ -26,7 +26,7 @@ import (
 // (TD-CLI-82).
 func TestMeshStackBufferSizes(t *testing.T) {
 	t.Parallel()
-	stack, err := newMeshStack([]netip.Addr{gatewayAddr}, netstackMTU)
+	stack, err := newMeshStack([]netip.Addr{gatewayAddr}, netstackMTU, DefaultTCPBuffers())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,10 +45,37 @@ func TestMeshStackBufferSizes(t *testing.T) {
 	}
 }
 
+// A cluster's sizes reach the stack, and sizes out of bounds are refused
+// (K1c Q88).
+func TestMeshStackConfiguredBuffers(t *testing.T) {
+	t.Parallel()
+	buffers := TCPBuffers{Receive: 1 << 20, Send: 512 << 10}
+	stack, err := newMeshStack([]netip.Addr{gatewayAddr}, netstackMTU, buffers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stack.Close() }()
+	var receive tcpip.TCPReceiveBufferSizeRangeOption
+	var send tcpip.TCPSendBufferSizeRangeOption
+	for _, option := range []tcpip.GettableTransportProtocolOption{&receive, &send} {
+		if err := stack.stack.TransportProtocolOption(tcp.ProtocolNumber, option); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if receive.Max != buffers.Receive || send.Max != buffers.Send || stack.receive != buffers.Receive {
+		t.Fatalf("receive %+v, send %+v, listener %d", receive, send, stack.receive)
+	}
+	for _, bad := range []TCPBuffers{{}, {Receive: 1 << 20}, {Receive: 8 << 20, Send: 96 << 10}} {
+		if _, err := newMeshStack([]netip.Addr{gatewayAddr}, netstackMTU, bad); err == nil {
+			t.Errorf("%+v taken", bad)
+		}
+	}
+}
+
 // An accepted connection probes an idle peer.
 func TestMeshStackKeepAlive(t *testing.T) {
 	t.Parallel()
-	stack, err := newMeshStack([]netip.Addr{gatewayAddr}, netstackMTU)
+	stack, err := newMeshStack([]netip.Addr{gatewayAddr}, netstackMTU, DefaultTCPBuffers())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +229,7 @@ func TestMeshStackAcceptedEndpoint(t *testing.T) {
 // Closing the listener wakes an Accept waiting on it.
 func TestMeshStackCloseWakesAccept(t *testing.T) {
 	t.Parallel()
-	stack, err := newMeshStack([]netip.Addr{gatewayAddr}, netstackMTU)
+	stack, err := newMeshStack([]netip.Addr{gatewayAddr}, netstackMTU, DefaultTCPBuffers())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +259,7 @@ func TestMeshStackCloseWakesAccept(t *testing.T) {
 // refused, the batch's others still taken.
 func TestMeshStackReadWrite(t *testing.T) {
 	t.Parallel()
-	stack, err := newMeshStack([]netip.Addr{gatewayAddr}, netstackMTU)
+	stack, err := newMeshStack([]netip.Addr{gatewayAddr}, netstackMTU, DefaultTCPBuffers())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -55,7 +55,10 @@ type kubeRuntime struct {
 	checker  *rbaccheck.Checker
 	minters  []*kubetoken.Minter
 	listener *KubeProxyListener
-	logger   *slog.Logger
+	// open is whether the replica takes kubectl, for its listener and its
+	// readiness alike.
+	open   func() (bool, string)
+	logger *slog.Logger
 	// groupNames are the configured groups, in order, for status.
 	groupNames []string
 	memory     *memoryWatch
@@ -127,6 +130,11 @@ func newKubeRuntime(cfg Config, service *daemon.Service, coreNow func() time.Tim
 	if err != nil {
 		return fail(fmt.Errorf("meshgw: %w", err))
 	}
+	if !buffersFit(memoryLimit, cfg.TCP) {
+		logger.Warn("TCP buffers leave less memory than the fewest connections need", "error_code",
+			"kubernetes_tcp_buffers_exceed_memory", "receive", cfg.TCP.Receive, "send", cfg.TCP.Send,
+			"memory_limit", memoryLimit)
+	}
 	runtime.proxy, err = kubeproxy.New(kubeproxy.Options{
 		Cluster: kube.Cluster, Namespace: cfg.Namespace, Groups: kube.Groups,
 		Backend: kube.APIServer, BackendCA: kube.APICAFile,
@@ -138,16 +146,17 @@ func newKubeRuntime(cfg Config, service *daemon.Service, coreNow func() time.Tim
 		CoreNow: coreNow, Verdict: runtime.checker.Verdict, Records: recorder,
 		Tokens: kubeproxy.MinterTokens{Minter: minter}, SecretResources: kube.SecretResources,
 		Events: events, Wake: runtime.checker.Changes(), Pressure: runtime.memory.Pressure,
-		Limits:  limitsFor(memoryLimit),
+		Limits:  limitsFor(memoryLimit, cfg.TCP),
 		Version: version.Current().Version, Logger: logger.With("component", "kube_proxy"),
 	})
 	if err != nil {
 		return fail(fmt.Errorf("meshgw: %w", err))
 	}
+	runtime.open = kubeOpen(service.GatewayCertificate, service.MapFreshAt, kube.StaleAfter, time.Now)
 	runtime.listener = &KubeProxyListener{
 		Stacks: stacks, Port: uint16(cfg.KubeAPIPort), //nolint:gosec // validated 1-65535
 		Server: runtime.proxy,
-		Open:   kubeOpen(service.GatewayCertificate, service.MapFreshAt, kube.StaleAfter),
+		Open:   runtime.open,
 		Logger: logger.With("component", "kube_api"),
 	}
 	return runtime, nil
@@ -155,31 +164,54 @@ func newKubeRuntime(cfg Config, service *daemon.Service, coreNow func() time.Tim
 
 // The replica's memory, in the design's terms (§8): a fixed part (token
 // cache, map, runtime), then what each connection and each stream to the
-// API server may hold at worst. A connection: 256 KiB received (the stack's
-// and HTTP/2's windows hold the same bytes), 96 KiB to send, TLS records
-// and goroutines. A stream: its 128 KiB window to the API server and a
-// 32 KiB copy buffer.
+// API server may hold at worst. A connection: the larger of its TCP
+// receive buffer and HTTP/2's connection window (256 KiB each by default),
+// its TCP send buffer (96 KiB), then TLS records and goroutines. A stream:
+// its 128 KiB window to the API server and a 32 KiB copy buffer.
 const (
-	fixedMemory      = 100 << 20
-	connectionMemory = 400 << 10
-	streamMemory     = 160 << 10
+	fixedMemory        = 100 << 20
+	connectionOverhead = 48 << 10
+	streamMemory       = 160 << 10
+	// minimumConnections is the floor of a replica's connections.
+	minimumConnections = 64
 	// streamsShare of what is left after the fixed part goes to streams,
 	// the rest to connections.
 	streamsShare = 0.4
 )
 
+// connectionMemory is what one connection may hold with tcp's buffers:
+// 400 KiB with the defaults. HTTP/2 may queue its whole connection window
+// whatever the stack's buffer, so received bytes count at least that much
+// (review K1c c1 M2).
+func connectionMemory(tcp TCPBuffers) float64 {
+	return float64(max(tcp.Receive, kubeproxy.ConnectionReceiveWindow) + tcp.Send + connectionOverhead)
+}
+
+// buffersFit reports whether the floor of connections fits the memory a
+// limit leaves for them with tcp's buffers; a cluster setting very large
+// buffers on a small pod is warned at start (review K1c c1 M3).
+func buffersFit(memoryLimit int64, tcp TCPBuffers) bool {
+	if memoryLimit <= 0 || memoryLimit == math.MaxInt64 {
+		return true
+	}
+	left := max(0, float64(memoryLimit-fixedMemory))
+	return minimumConnections*connectionMemory(tcp) <= left*(1-streamsShare)
+}
+
 // limitsFor sizes the replica's connections and streams to its soft memory
-// limit, at most the design's 1,024 and 2,048 (review TD-CLI-82 M1): a
-// 512 MiB pod (435 MiB soft) takes about 510 connections and 860 streams; a
-// 1 GiB pod (870 MiB soft) 1,024 and about 1,970.
-func limitsFor(memoryLimit int64) kubeproxy.Limits {
+// limit, at most the design's 1,024 and 2,048 (review TD-CLI-82 M1): with
+// the default buffers a 512 MiB pod (435 MiB soft) takes about 510
+// connections and 860 streams; a 1 GiB pod (870 MiB soft) 1,024 and about
+// 1,970. Larger buffers leave fewer connections (K1c Q88).
+func limitsFor(memoryLimit int64, tcp TCPBuffers) kubeproxy.Limits {
 	limits := kubeproxy.DefaultLimits()
 	if memoryLimit <= 0 || memoryLimit == math.MaxInt64 {
 		return limits
 	}
 	left := max(0, float64(memoryLimit-fixedMemory))
 	limits.Streams = clampCount(left*streamsShare/streamMemory, 128, limits.Streams)
-	limits.Connections = clampCount(left*(1-streamsShare)/connectionMemory, 64, limits.Connections)
+	limits.Connections = clampCount(left*(1-streamsShare)/connectionMemory(tcp), minimumConnections,
+		limits.Connections)
 	return limits
 }
 
@@ -187,15 +219,27 @@ func clampCount(value float64, lowest, highest int) int {
 	return int(min(float64(highest), max(float64(lowest), value)))
 }
 
+// anyGroupEnabled reports whether rbaccheck has turned on any of groups.
+func anyGroupEnabled(groups []kubeproxy.Group, verdict func(string) rbaccheck.Verdict) bool {
+	for _, group := range groups {
+		if verdict(group.Name).Enabled {
+			return true
+		}
+	}
+	return false
+}
+
 // kubeOpen reports whether the replica may take kubectl: a valid
-// certificate and a map Core confirmed within staleAfter.
+// certificate and a map Core confirmed within staleAfter of now. The
+// listener and readiness both ask it (K1c Q87).
 func kubeOpen(certificate func() (*tls.Certificate, bool), freshAt func() time.Time, staleAfter time.Duration,
+	now func() time.Time,
 ) func() (bool, string) {
 	return func() (bool, string) {
 		if _, valid := certificate(); !valid {
 			return false, "no valid certificate"
 		}
-		if fresh := freshAt(); fresh.IsZero() || time.Since(fresh) > staleAfter {
+		if fresh := freshAt(); fresh.IsZero() || now().Sub(fresh) > staleAfter {
 			return false, "map not confirmed within " + staleAfter.String()
 		}
 		return true, ""
@@ -252,8 +296,11 @@ type kubectlPath struct {
 }
 
 // newKubectlPath builds the path cfg.Kube.Mode names. A proxying replica
-// is ready with a valid certificate and every address it may listen on
-// listening, whatever Core's state or the map's age (Q51); a passthrough
+// is ready while it serves: a valid certificate, a map Core confirmed within
+// the stale bound, every address it may listen on listening, and some group
+// rbaccheck turned on (K1c Q87,
+// replacing Q51's map-blind readiness: the PDB evicts unready pods anyway,
+// so readiness need not hide a replica that cannot serve); a passthrough
 // one while it listens.
 func newKubectlPath(cfg Config, service *daemon.Service, coreNow func() time.Time, audits kubeAuditChannels,
 	stacks stackSource, boundSecretUID string, memoryLimit int64, logger *slog.Logger,
@@ -267,8 +314,12 @@ func newKubectlPath(cfg Config, service *daemon.Service, coreNow func() time.Tim
 			return kubectlPath{}, kubectlReadiness{}, err
 		}
 		return kubectlPath{run: runtime.run, close: runtime.close}, kubectlReadiness{checks: []check{
-			{reason: "no valid certificate", ok: func() bool { _, valid := service.GatewayCertificate(); return valid }},
+			{open: runtime.open},
 			{reason: "kube API cannot listen", ok: func() bool { return !runtime.listener.BindFailing() }},
+			// A replica whose every group is off, or not checked yet, serves
+			// no one: a bad value (a wrong audience) stops a rollout at its
+			// first replica (K1c Q87).
+			{reason: "no Kubernetes group enabled", ok: func() bool { return anyGroupEnabled(cfg.Kube.Groups, runtime.checker.Verdict) }},
 		}, metrics: runtime.writeMetrics, status: map[string]func() any{"kube": runtime.status}}, nil
 	}
 	if cfg.JoinKeyFile != "" {
