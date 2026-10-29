@@ -218,8 +218,10 @@ func TestVerifyRefusesHeaders(t *testing.T) {
 		"HS256 public key":   {func(h map[string]any) { h["alg"] = "HS256" }, "HS256", ReasonMalformed},
 		"PS256":              {func(h map[string]any) { h["alg"] = "PS256" }, "RS256", ReasonMalformed},
 		"RS256 on an EC key": {func(h map[string]any) { h["kid"] = "ec-1" }, "RS256", ReasonSignature},
-		"ES256 on an RSA key": {func(h map[string]any) { h["alg"], h["kid"] = "ES256", "rsa-1" }, "ES256",
-			ReasonSignature},
+		"ES256 on an RSA key": {
+			func(h map[string]any) { h["alg"], h["kid"] = "ES256", "rsa-1" }, "ES256",
+			ReasonSignature,
+		},
 		"no kid":       {func(h map[string]any) { delete(h, "kid") }, "RS256", ReasonMalformed},
 		"unknown kid":  {func(h map[string]any) { h["kid"] = "other" }, "RS256", ReasonUnknownKey},
 		"kid a number": {func(h map[string]any) { h["kid"] = 7 }, "RS256", ReasonMalformed},
@@ -263,8 +265,10 @@ func TestVerifyRefusesFormats(t *testing.T) {
 		"JSON serialization":  {`{"payload":"` + parts[1] + `","signatures":[]}`, ReasonMalformed},
 		"padded segment":      {parts[0] + "=." + parts[1] + "." + parts[2], ReasonMalformed},
 		"whitespace":          {" " + valid, ReasonMalformed},
-		"line break in a segment": {parts[0] + "." + parts[1][:10] + "\n" + parts[1][10:] + "." + parts[2],
-			ReasonMalformed},
+		"line break in a segment": {
+			parts[0] + "." + parts[1][:10] + "\n" + parts[1][10:] + "." + parts[2],
+			ReasonMalformed,
+		},
 		"too large":              {valid + strings.Repeat("A", MaxTokenSize), ReasonMalformed},
 		"bad signature":          {parts[0] + "." + parts[1] + "." + b64(make([]byte, 256)), ReasonSignature},
 		"duplicate header kid":   {duplicateInput + "." + sign(t, "RS256", duplicateInput), ReasonMalformed},
@@ -347,15 +351,19 @@ func TestVerifyRefusesClaims(t *testing.T) {
 			b["sub"] = "system:serviceaccount:default:meshgw"
 			pod(b)["namespace"] = "default"
 		}, ReasonIdentity},
-		"subject disagrees": {func(b map[string]any) { b["sub"] = "system:serviceaccount:mt-kube-k1:other" },
-			ReasonMalformed},
+		"subject disagrees": {
+			func(b map[string]any) { b["sub"] = "system:serviceaccount:mt-kube-k1:other" },
+			ReasonMalformed,
+		},
 		"subject not a SA":   {func(b map[string]any) { b["sub"] = "admin" }, ReasonMalformed},
 		"namespace mismatch": {func(b map[string]any) { pod(b)["namespace"] = "other" }, ReasonMalformed},
 		"SA mismatch": {func(b map[string]any) {
 			pod(b)["serviceaccount"] = map[string]any{"name": "other", "uid": "u"}
 		}, ReasonMalformed},
-		"other pod": {func(b map[string]any) { pod(b)["pod"] = map[string]any{"name": "meshgw-0", "uid": "u"} },
-			ReasonIdentity},
+		"other pod": {
+			func(b map[string]any) { pod(b)["pod"] = map[string]any{"name": "meshgw-0", "uid": "u"} },
+			ReasonIdentity,
+		},
 		"pod of another StatefulSet": {func(b map[string]any) {
 			pod(b)["pod"] = map[string]any{"name": "other-1", "uid": "u"}
 		}, ReasonIdentity},
@@ -486,5 +494,60 @@ func TestUnknownKeyRefusalNamesTheKey(t *testing.T) {
 	_, err := Verify(token(t, header("RS256", "rsa-1"), claims(), "ES256"), rotationExpectation(t), testNow)
 	if refused, ok := errors.AsType[*RefusedError](err); !ok || refused.KeyID != "" {
 		t.Fatalf("Verify(bad signature) = %+v", refused)
+	}
+}
+
+// A session's tolerance applies each way: iat and nbf ahead of Core are
+// clock skew, exp behind Core within the tolerance still verifies (mtcp-v1
+// §6.7); without it, a rotation's rules hold.
+func TestVerifySessionSkew(t *testing.T) {
+	t.Parallel()
+	const skew = 120 * time.Second
+	for name, test := range map[string]struct {
+		change func(map[string]any)
+		want   Reason // empty: verifies
+	}{
+		"iat at the tolerance": {func(b map[string]any) {
+			b["iat"], b["nbf"] = testNow.Add(skew).Unix(), testNow.Add(skew).Unix()
+			b["exp"] = testNow.Add(skew + 10*time.Minute).Unix()
+		}, ""},
+		"iat past the tolerance": {func(b map[string]any) {
+			b["iat"], b["nbf"] = testNow.Add(skew+time.Second).Unix(), testNow.Add(skew+time.Second).Unix()
+			b["exp"] = testNow.Add(skew + 10*time.Minute).Unix()
+		}, ReasonClockSkew},
+		"nbf past the tolerance": {func(b map[string]any) {
+			b["nbf"] = testNow.Add(skew + time.Second).Unix()
+		}, ReasonClockSkew},
+		"expired within the tolerance": {func(b map[string]any) {
+			b["iat"], b["nbf"] = testNow.Add(-9*time.Minute).Unix(), testNow.Add(-9*time.Minute).Unix()
+			b["exp"] = testNow.Add(-skew + time.Second).Unix()
+		}, ""},
+		"expired at the tolerance": {func(b map[string]any) {
+			b["iat"], b["nbf"] = testNow.Add(-10*time.Minute).Unix(), testNow.Add(-10*time.Minute).Unix()
+			b["exp"] = testNow.Add(-skew).Unix()
+		}, ReasonExpired},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			body := claims()
+			test.change(body)
+			expect := rotationExpectation(t)
+			expect.SessionSkew = skew
+			_, err := Verify(token(t, header("RS256", "rsa-1"), body, "RS256"), expect, testNow)
+			refused, _ := errors.AsType[*RefusedError](err)
+			switch {
+			case test.want == "" && err != nil:
+				t.Fatalf("Verify() error = %v", err)
+			case test.want != "" && (refused == nil || refused.Reason != test.want):
+				t.Fatalf("Verify() error = %v, want %s", err, test.want)
+			}
+		})
+	}
+	// The rotation's rule is unchanged: 31 s ahead is expired, not skew.
+	body := claims()
+	body["iat"] = testNow.Add(31 * time.Second).Unix()
+	_, err := Verify(token(t, header("RS256", "rsa-1"), body, "RS256"), rotationExpectation(t), testNow)
+	if refused, _ := errors.AsType[*RefusedError](err); refused == nil || refused.Reason != ReasonExpired {
+		t.Fatalf("rotation: %v", err)
 	}
 }

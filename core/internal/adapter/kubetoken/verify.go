@@ -55,6 +55,10 @@ const (
 	ReasonExpired    Reason = "token_expired"
 	ReasonAudience   Reason = "token_audience"
 	ReasonIdentity   Reason = "token_identity"
+	// ReasonClockSkew: iat or nbf further ahead of Core's clock than a
+	// session tolerates (Expectation.SessionSkew only); the cluster's clock
+	// is wrong.
+	ReasonClockSkew Reason = "token_clock_skew"
 )
 
 // RefusedError reports a refused token. It carries only the reason, never
@@ -81,6 +85,11 @@ type Expectation struct {
 	Namespace      string
 	ServiceAccount string
 	PodName        string
+	// SessionSkew, when set, is the tolerance each way of a gateway
+	// session's token (mtcp-v1 §6.7): iat and nbf at most that far ahead of
+	// Core's clock (else ReasonClockSkew), exp at most that far behind it.
+	// Zero is a rotation's or a join's rule: ClockSkew ahead, none behind.
+	SessionSkew time.Duration
 }
 
 // comparesIdentity reports whether the expectation names an identity, and
@@ -168,7 +177,7 @@ func Verify(raw string, expect Expectation, now time.Time) (Claims, error) {
 		return Claims{}, err
 	}
 	claims.KeyThumbprint = key.Thumbprint
-	if err := checkTimes(claims, now); err != nil {
+	if err := checkTimes(claims, now, expect.SessionSkew); err != nil {
 		return Claims{}, err
 	}
 	if claims.Issuer != expect.Issuer {
@@ -330,10 +339,21 @@ func numericDate(raw json.RawMessage) (time.Time, error) {
 	return time.Unix(seconds, 0).UTC(), nil
 }
 
-// checkTimes refuses a token that is not valid at now, by Core's clock.
-func checkTimes(claims Claims, now time.Time) error {
-	latest := now.Add(ClockSkew)
-	if !claims.Expiry.After(now) || claims.NotBefore.After(latest) || claims.IssuedAt.After(latest) {
+// checkTimes refuses a token that is not valid at now, by Core's clock,
+// with a session's tolerance when sessionSkew is set.
+func checkTimes(claims Claims, now time.Time, sessionSkew time.Duration) error {
+	if sessionSkew <= 0 {
+		latest := now.Add(ClockSkew)
+		if !claims.Expiry.After(now) || claims.NotBefore.After(latest) || claims.IssuedAt.After(latest) {
+			return refuse(ReasonExpired)
+		}
+		return nil
+	}
+	latest := now.Add(sessionSkew)
+	if claims.NotBefore.After(latest) || claims.IssuedAt.After(latest) {
+		return refuse(ReasonClockSkew)
+	}
+	if !claims.Expiry.After(now.Add(-sessionSkew)) {
 		return refuse(ReasonExpired)
 	}
 	return nil

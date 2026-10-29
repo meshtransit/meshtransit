@@ -86,6 +86,16 @@ type Session struct {
 	// joinedGateway: the session joined a Kubernetes cluster, so it serves
 	// a gateway whatever its hello said.
 	joinedGateway atomic.Bool
+	// token is a gateway session's pod token (gateway.token1); the run
+	// loop alone uses it. tokenProven mirrors token.proven for the session
+	// that replaces this one.
+	token       gatewayTokenState
+	tokenProven atomic.Bool
+	// joinedAt (Unix ns) and joinedNodeKey are set once the session's
+	// cluster join ratcheted its Device (ratchetJoinedGateway, which runs
+	// off the run loop).
+	joinedAt      atomic.Int64
+	joinedNodeKey atomic.Pointer[node.Key]
 }
 
 func newSession(server *Server, transport recordConn, noise *sharedmtcp.Session, control key.ControlPrivate,
@@ -95,7 +105,9 @@ func newSession(server *Server, transport recordConn, noise *sharedmtcp.Session,
 		inboundMessages: newRateBudget(inboundMessageBurst, inboundMessageRate),
 		inboundBytes:    newRateBudget(inboundByteBurst, inboundByteRate),
 		auditBytes:      newRateBudget(auditByteBurst, auditByteRate),
-		auditCeiling:    newRateBudget(auditCeilingBurst, auditCeilingRate)}
+		auditCeiling:    newRateBudget(auditCeilingBurst, auditCeilingRate),
+		token:           gatewayTokenState{refresh: newRateBudget(gatewayTokenRefreshBurst, gatewayTokenRefreshRate)},
+	}
 }
 
 // isAuditMessage reports a gateway.audit1 message from the node.
@@ -378,6 +390,9 @@ func (session *Session) run(parent context.Context, establishBy time.Time, relea
 		case message := <-messages:
 			pending = append(pending, message)
 		case now := <-keepalive.C:
+			if !session.gatewayTokenClock(session.server.options.Now()) {
+				return
+			}
 			last := time.Unix(0, session.lastSend.Load())
 			if now.Sub(last) >= session.server.options.Keepalive {
 				if err := session.Send(sharedmtcp.MessagePing, &mtcpv1.Ping{}); err != nil {
@@ -437,13 +452,32 @@ func (session *Session) checkNodeKeyProof(message proto.Message) bool {
 		// A gateway's clock is synchronized: a timestamp far ahead would
 		// shut its real pod out as a replay until time caught up.
 		return refuse("gateway_future_timestamp", sharedmtcp.GateAhead)
-	case !gate.Accepted:
+	}
+	// The pod token before the replay check: a copy of the Secret without
+	// one neither contests the keys nor records its timestamp (K1c-T §3.3).
+	tokens := session.server.options.GatewayTokens
+	tokenProven := false
+	if tokens != nil {
+		var result, refused string
+		tokenProven, result, refused = session.handshakeToken(proof.GetPodToken(), node.Key(nodeKey))
+		if refused != "" {
+			return refuse(result, refused)
+		}
+	}
+	if !gate.Accepted {
 		// A valid proof cannot be replayed (it binds this handshake): a
 		// second holder of the keys took a newer timestamp, so the key is
 		// contested and neither holder rotates (§6.8).
 		session.server.contest(session.machine)
 		report(kubecluster.KeyEventReplayedHandshake)
 		return refuse("replay", sharedmtcp.GateReplayed)
+	}
+	if tokens != nil {
+		if !session.commitGatewayTokenTimestamp(nodeKey, tokenProven, refuse) {
+			return false
+		}
+		session.provenNodeKey = node.Key(nodeKey)
+		return true
 	}
 	committed, err := session.server.commitGatewayTimestamp(session.ctx, session.machine, nodeKey,
 		session.hello.GetTimestampMs())
@@ -489,6 +523,11 @@ func (session *Session) admitInbound(now time.Time, message inbound) bool {
 func (session *Session) dispatch(conversation Conversation, message inbound) bool {
 	now := session.server.options.Now()
 	session.auditOver = false
+	// A gateway past its pod token's deadline is cut before anything it
+	// sends is served (mtcp-v1 §6.7); the keepalive tick checks too.
+	if !session.gatewayTokenClock(now) {
+		return false
+	}
 	if isAuditMessage(message.t) && session.servesGateway() && session.Supports(CapabilityKubeAudit) {
 		// A gateway's own budget (K1b0 §3.5): never the inbound one, so audit
 		// never ends its map stream; the ceiling bounds the work it makes.
@@ -520,6 +559,9 @@ func (session *Session) dispatch(conversation Conversation, message inbound) boo
 	case sharedmtcp.MessageNodeKeyProof:
 		session.SendError(mtcpv1.Error_INVALID, "a node key proof must be the first record", false)
 		return true
+	case sharedmtcp.MessageGatewayPodToken:
+		token, _ := message.message.(*mtcpv1.GatewayPodToken)
+		return session.refreshGatewayToken(now, token)
 	}
 	if err := conversation.Receive(session.ctx, message.t, message.message); err != nil {
 		var violation protocolError

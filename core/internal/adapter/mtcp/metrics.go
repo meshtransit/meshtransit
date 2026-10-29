@@ -9,6 +9,7 @@ import (
 	"meshtransit.net/core/internal/adapter/kubetoken"
 	"meshtransit.net/core/internal/domain/kubeaudit"
 	"meshtransit.net/core/internal/domain/kubeca/certqueue"
+	"meshtransit.net/core/internal/domain/kubecluster"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -57,6 +58,14 @@ type Metrics struct {
 	kubeAudits       *prometheus.CounterVec
 	kubeAuditWait    prometheus.Histogram
 	kubeAuditReports *prometheus.CounterVec
+	// gatewayTokenOffset is Core's clock minus a valid pod token's iat
+	// (mostly the token's age; negative: the cluster runs ahead);
+	// gatewayTokenRemaining, how long a valid token had left.
+	gatewayTokenOffset    prometheus.Histogram
+	gatewayTokenRemaining prometheus.Histogram
+	// gatewayTokenMode is 1 for this replica's gateway token mode, "off"
+	// without gateway.token1 (design §3.4 L1).
+	gatewayTokenMode *prometheus.GaugeVec
 }
 
 // The closed set of route statuses and cut Sites counted when sent.
@@ -120,7 +129,26 @@ const (
 	// limitGatewayContestOverridden: a rotation with a valid token while the
 	// keys were marked contested (design §7.4); counted, not refused.
 	limitGatewayContestOverridden = "gateway_contest_overridden"
+	// limitGatewayTokenObserved counts what mode observe let through and
+	// would have refused; limitGatewayTokenRefresh, GatewayPodToken over
+	// its rate (mtcp-v1 §6.7).
+	limitGatewayTokenObserved = "gateway_token_observed"
+	limitGatewayTokenRefresh  = "gateway_token_refresh"
 )
+
+// gatewaySessionTokenLimit names a session refused for its pod token.
+func gatewaySessionTokenLimit(reason kubecluster.KeyEventReason) string {
+	return "gateway_" + string(reason)
+}
+
+// gatewaySessionTokenReasons are the session refusal reasons (schema 246).
+var gatewaySessionTokenReasons = []kubecluster.KeyEventReason{
+	kubecluster.KeyEventSessionTokenMissing, kubecluster.KeyEventSessionTokenMalformed,
+	kubecluster.KeyEventSessionTokenUnknownKey, kubecluster.KeyEventSessionTokenSignature,
+	kubecluster.KeyEventSessionTokenExpired, kubecluster.KeyEventSessionTokenAudience,
+	kubecluster.KeyEventSessionTokenIdentity, kubecluster.KeyEventSessionTrustMissing,
+	kubecluster.KeyEventSessionTrustUnavailable, kubecluster.KeyEventSessionClockSkew,
+}
 
 // gatewayTokenLimit names the limit of a token refusal reason.
 func gatewayTokenLimit(reason kubetoken.Reason) string { return "gateway_" + string(reason) }
@@ -129,7 +157,7 @@ var sessionLimits = []string{limitInbound, limitAudit, limitAuditCeiling, limitR
 	limitRouteOffer, limitRouteHealth, limitDNSHealth, limitRouteSelection, limitSendDeadline,
 	limitGatewayPresenceElsewhere, limitGatewayPresencePending, limitGatewayPresenceUnknown,
 	limitClusterJoinToken, limitGatewayTrustMissing, limitGatewayTrustUnavailable, limitGatewayTokenStore,
-	limitGatewayContestOverridden,
+	limitGatewayContestOverridden, limitGatewayTokenObserved, limitGatewayTokenRefresh,
 	gatewayTokenLimit(kubetoken.ReasonMissing), gatewayTokenLimit(kubetoken.ReasonMalformed),
 	gatewayTokenLimit(kubetoken.ReasonUnknownKey), gatewayTokenLimit(kubetoken.ReasonSignature),
 	gatewayTokenLimit(kubetoken.ReasonExpired), gatewayTokenLimit(kubetoken.ReasonAudience),
@@ -152,6 +180,8 @@ var handshakeResults = []string{
 	// second holder of its keys was refused a stale timestamp; a gateway's
 	// timestamp was too far ahead.
 	"gateway_replaced", "gateway_contested", "gateway_future_timestamp",
+	// A gateway refused for its pod token (gateway.token1, mtcp-v1 §6.7).
+	"gateway_token_required", "gateway_token_refused",
 }
 
 // NewMetrics constructs unregistered collectors.
@@ -277,6 +307,23 @@ func NewMetrics() *Metrics {
 			Name: "meshtransit_kubernetes_operation_outcomes_total",
 			Help: "Kubernetes operation outcomes and denials queued, or dropped, by kind.",
 		}, []string{"kind"}),
+		// Watch: offsets below 0 (a cluster ahead of Core); alert under -60.
+		gatewayTokenOffset: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "meshtransit_mtcp_gateway_token_age_seconds",
+			Help:    "Core's clock minus the iat of each valid gateway pod token; negative: the cluster runs ahead.",
+			Buckets: []float64{-120, -60, -30, -10, 0, 60, 300, 480, 600, 900},
+		}),
+		// Alert: replicas disagree, count(count by (mode) (... == 1)) > 1.
+		gatewayTokenMode: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "meshtransit_mtcp_gateway_token_mode",
+			Help: "1 for the gateway pod token mode this replica holds gateways to; off without gateway.token1.",
+		}, []string{"mode"}),
+		// Alert: a p10 under 60 s (kubelet refreshes late, sessions near cut).
+		gatewayTokenRemaining: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "meshtransit_mtcp_gateway_token_remaining_seconds",
+			Help:    "How long each valid gateway pod token had left when Core checked it.",
+			Buckets: []float64{-120, 0, 30, 60, 120, 240, 480, 600, 900},
+		}),
 		keyExpiry: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "meshtransit_mtcp_control_key_not_after_timestamp_seconds",
 			Help: "Expiry of the latest control key this replica answers with (Unix seconds).",
@@ -287,6 +334,9 @@ func NewMetrics() *Metrics {
 	}
 	for _, limit := range sessionLimits {
 		metrics.limits.WithLabelValues(limit)
+	}
+	for _, reason := range gatewaySessionTokenReasons {
+		metrics.limits.WithLabelValues(gatewaySessionTokenLimit(reason))
 	}
 	for _, reason := range streamEndReasons {
 		metrics.streamEnds.WithLabelValues(reason)
@@ -322,7 +372,8 @@ func (metrics *Metrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{metrics.handshakes, metrics.sessions, metrics.messages, metrics.streamEnds,
 		metrics.sheds, metrics.unproven, metrics.forwarding, metrics.keyExpiry, metrics.limits, metrics.mapNames,
 		metrics.expiring, metrics.routeOffers, metrics.exitOffers, metrics.routeOfferDropped, metrics.routes, metrics.dnsRelayDropped, metrics.kubeClusters, metrics.gatewayKeyAudit, metrics.kubeCerts, metrics.kubeCertWait,
-		metrics.kubeAudits, metrics.kubeAuditWait, metrics.kubeAuditReports, routedFilterOmitted,
+		metrics.kubeAudits, metrics.kubeAuditWait, metrics.kubeAuditReports, metrics.gatewayTokenOffset,
+		metrics.gatewayTokenRemaining, metrics.gatewayTokenMode, routedFilterOmitted,
 		exitFilterOmitted}
 }
 
@@ -379,6 +430,36 @@ func (metrics *Metrics) limited(limit string) {
 }
 
 func (metrics *Metrics) untrustedForwarding() { metrics.forwarding.Inc() }
+
+// gatewayTokensHeld sets this replica's gateway token mode; nil tokens is
+// off.
+func (metrics *Metrics) gatewayTokensHeld(tokens *GatewayTokens) {
+	held := "off"
+	if tokens != nil {
+		held = string(tokens.Mode)
+	}
+	modes := []string{
+		"off", string(kubecluster.GatewayTokenObserve), string(kubecluster.GatewayTokenRatchet),
+		string(kubecluster.GatewayTokenRequired),
+	}
+	for _, mode := range modes {
+		value := 0.0
+		if mode == held {
+			value = 1
+		}
+		metrics.gatewayTokenMode.WithLabelValues(mode).Set(value)
+	}
+}
+
+// gatewayTokenAccepted observes a valid gateway pod token; a nil Metrics
+// observes nothing.
+func (metrics *Metrics) gatewayTokenAccepted(age, remaining time.Duration) {
+	if metrics == nil {
+		return
+	}
+	metrics.gatewayTokenOffset.Observe(age.Seconds())
+	metrics.gatewayTokenRemaining.Observe(remaining.Seconds())
+}
 
 // routeOffer counts one stored offer; a nil Metrics counts nothing.
 func (metrics *Metrics) routeOffer(result string) {

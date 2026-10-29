@@ -19,8 +19,10 @@ const (
 FROM mesh_ops.accept_mtcp_timestamp_v3($1::BYTEA, $2::BYTEA, $3::BIGINT)`
 	commitMTCPGatewayTimestampV2SQL = `SELECT result, ratcheted
 FROM mesh_ops.commit_mtcp_gateway_timestamp_v2($1::BYTEA, $2::BYTEA, $3::BIGINT, $4::BOOLEAN, $5::TEXT)`
+	//nolint:gosec // G101: SQL naming a pod token function, not a credential.
 	ratchetKubernetesGatewayTokenSQL = `SELECT mesh_ops.ratchet_kubernetes_gateway_token_v1($1::BYTEA, $2::BYTEA)`
-	gatewayTokensGrantedSQL          = `SELECT COALESCE(pg_catalog.has_function_privilege(pg_catalog.to_regprocedure(
+	//nolint:gosec // G101: SQL naming pod token functions, not a credential.
+	gatewayTokensGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(pg_catalog.to_regprocedure(
     'mesh_ops.commit_mtcp_gateway_timestamp_v2(bytea,bytea,bigint,boolean,text)'), 'EXECUTE'), FALSE)
   AND COALESCE(pg_catalog.has_function_privilege(pg_catalog.to_regprocedure(
     'mesh_ops.accept_mtcp_timestamp_v3(bytea,bytea,bigint)'), 'EXECUTE'), FALSE)

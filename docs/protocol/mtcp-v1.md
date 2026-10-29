@@ -569,14 +569,20 @@ Mode `observe` refuses nothing for the token and counts what it would have
 refused; it still ratchets Devices.
 
 Each refusal is a fatal `Error{NOT_AUTHORIZED}`; a gateway reads its token
-again and reconnects with its usual backoff. A `GatewayPodToken` on a
-session without `gateway.token1`, or before the session is established, is
-`Error{INVALID}`; on a session that presented no token at its handshake it
+again and reconnects with its usual backoff. When Core cannot read the
+cluster's trust it answers `Error{NOT_AUTHORIZED, "handshake check
+unavailable"}` at a handshake and keeps a running session: its own database
+never ends a session. A `GatewayPodToken` on an established session without
+`gateway.token1` is `Error{INVALID}`, and one sent before the session is
+established ends it; on a session that presented no token at its handshake it
 starts the session's deadline but never ratchets the Device. A refused
 `GatewayPodToken` (refused, ahead of Core's clock) is counted and audited;
 it ends the session in mode `required`, and in mode `ratchet` when the
 Device is ratcheted or the session holds a deadline from a valid token;
-in mode `observe` it never does. A `NodeKeyProof.pod_token` without
+in mode `observe` it never does. The session that completed a cluster join
+(6.6) with `gateway.token1` ratchets its new Device and must send a valid
+`GatewayPodToken` within 4 minutes, outside mode `observe`. A
+`NodeKeyProof.pod_token` without
 `gateway.token1` negotiated, or from a node that is not a gateway, is
 ignored.
 

@@ -143,6 +143,8 @@ type dialOptions struct {
 	timestamp int64
 	version   uint32
 	keyID     string
+	// capabilities are listed after the default ones.
+	capabilities []string
 }
 
 // refusal is the status line and headers of a refused upgrade.
@@ -173,7 +175,8 @@ func (f *fixture) dial(options dialOptions) (*client, *refusal, error) {
 	handshake, init, err := sharedmtcp.StartClient(sharedmtcp.ClientConfig{
 		Machine: options.machine, Control: f.control.Public(),
 		Hello: &mtcpv1.ClientHello{ProtocolVersion: options.version, TimestampMs: options.timestamp,
-			Capabilities: []string{"map.zstd", "stats.path1"}, NodeKey: helloNodeKey(options.nodeKey)},
+			Capabilities: append([]string{"map.zstd", "stats.path1"}, options.capabilities...),
+			NodeKey:      helloNodeKey(options.nodeKey)},
 	})
 	if err != nil {
 		f.t.Fatal(err)

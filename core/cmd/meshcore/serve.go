@@ -19,6 +19,7 @@ import (
 	"meshtransit.net/core/internal/control/rebalance"
 	"meshtransit.net/core/internal/domain/enrollment"
 	"meshtransit.net/core/internal/domain/kubeca/lifecycle"
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/network/revisionworker"
 	"meshtransit.net/core/internal/domain/relay"
@@ -685,6 +686,29 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			return 1
 		}
 		deps.gatewayKeys = gatewayKeys
+		// Gateways present their pod token on every session (gateway.token1,
+		// K1c-T) once the runtime role may use schema 246; probed once, as the
+		// capability list is fixed. Whatever the join flag: gateways that
+		// joined before still connect.
+		probeCtx, cancelProbe := context.WithTimeout(ctx, 10*time.Second)
+		tokensGranted, tokensErr := timestamps.GatewayTokensGranted(probeCtx)
+		cancelProbe()
+		switch {
+		case tokensErr != nil:
+			// Never a silent downgrade: a replica that skipped the ratchet
+			// would admit a copy of a gateway's Secret (t2 review H1).
+			logger.ErrorContext(ctx, "startup failed", "error_code", "mtcp_composition_failure", "error", tokensErr)
+			return 1
+		case !tokensGranted && processConfig.KubernetesGatewayToken == kubecluster.GatewayTokenRequired:
+			logger.ErrorContext(ctx, "startup failed: pod tokens are required but the database lacks schema 246",
+				"error_code", "kubernetes_gateway_tokens_unavailable")
+			return 1
+		case !tokensGranted:
+			logger.WarnContext(ctx, "Kubernetes gateway pod tokens not required on sessions",
+				"error_code", "kubernetes_gateway_tokens_unavailable")
+		default:
+			deps.gatewayTokens = composeGatewayTokens(timestamps, gatewayKeys, processConfig.KubernetesGatewayToken)
+		}
 		if processConfig.KubernetesJoin {
 			joins, joinErr := composeClusterJoins(*processConfig.Enrollment, storagePools.runtime)
 			if joinErr != nil {

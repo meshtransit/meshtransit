@@ -125,6 +125,23 @@ func kubeAuditCapabilities(audit *kubeAudit) []string {
 	return []string{mtcpadapter.CapabilityKubeAudit}
 }
 
+// gatewayTokenCapabilities offers gateway.token1, a gateway's pod token on
+// every session (mtcp-v1 §6.7), when schema 246 was granted at startup.
+func gatewayTokenCapabilities(tokens *mtcpadapter.GatewayTokens) []string {
+	if tokens == nil {
+		return nil
+	}
+	return []string{mtcpadapter.CapabilityGatewayToken}
+}
+
+// composeGatewayTokens holds gateways to their pod token on every session,
+// against the trust their rotations read (schema 246).
+func composeGatewayTokens(timestamps *postgresadapter.MTCPTimestampStore, trust kubecluster.MachineKeyRotations,
+	mode kubecluster.GatewayTokenMode,
+) *mtcpadapter.GatewayTokens {
+	return &mtcpadapter.GatewayTokens{Guard: mtcpTimestampGuard{store: timestamps}, Trust: trust, Mode: mode}
+}
+
 // mtcpDependencies are the application services MTCP sessions use. The
 // browser fields are nil when browser registration is off.
 type mtcpDependencies struct {
@@ -161,6 +178,9 @@ type mtcpDependencies struct {
 	clusterJoins mtcpadapter.ClusterJoins
 	// gatewayKeys moves Kubernetes gateways to new machine keys.
 	gatewayKeys kubecluster.MachineKeyRotations
+	// gatewayTokens, when set, holds gateways to their pod token on every
+	// session (gateway.token1, schema 246).
+	gatewayTokens *mtcpadapter.GatewayTokens
 	// gatewayPresence says whether a gateway's stream may rotate its keys.
 	gatewayPresence mapsession.GatewayPresenceStore
 	// kubeCertificates, when set, queues gateways' certificate requests
@@ -272,7 +292,7 @@ func composeMTCP(
 			append(append(dnsCapabilities(deps.dnsZones), kubernetesCapabilities(deps.kubernetesAccess)...),
 				append(append(kubeCertCapabilities(deps.kubeCertificates),
 					kubernetesClusterCapabilities(deps.kubernetesClusters)...),
-					kubeAuditCapabilities(deps.kubeAudit)...)...)...)...),
+					append(kubeAuditCapabilities(deps.kubeAudit), gatewayTokenCapabilities(deps.gatewayTokens)...)...)...)...)...),
 		Logger:         logger,
 		Metrics:        metrics,
 		HandshakeRate:  controlConfig.MTCP.HandshakeRate,
@@ -281,9 +301,10 @@ func composeMTCP(
 		UnauthenticatedPerSource: controlConfig.MTCP.UnauthenticatedPerSource,
 		UnprovenLimit:            controlConfig.MTCP.UnprovenLifetime,
 		// MTCP connections count against the listener's connection bound.
-		MaxSessions: controlConfig.MaxSessions,
-		DrainWindow: controlConfig.DrainWindow,
-		GatewayKeys: deps.gatewayKeyEvents,
+		MaxSessions:   controlConfig.MaxSessions,
+		DrainWindow:   controlConfig.DrainWindow,
+		GatewayKeys:   deps.gatewayKeyEvents,
+		GatewayTokens: deps.gatewayTokens,
 	})
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidMTCPComposition, err)
@@ -324,6 +345,11 @@ func (guard mtcpTimestampGuard) AcceptTimestamp(ctx context.Context, machineFing
 	if err != nil {
 		return mtcpadapter.TimestampCheck{}, err
 	}
+	return timestampCheck(check), nil
+}
+
+// timestampCheck is the store's answer in the server's terms.
+func timestampCheck(check postgresadapter.MTCPTimestampCheck) mtcpadapter.TimestampCheck {
 	machine := mtcpadapter.MachineUnbound
 	switch check.MachineState {
 	case "current":
@@ -332,10 +358,35 @@ func (guard mtcpTimestampGuard) AcceptTimestamp(ctx context.Context, machineFing
 		machine = mtcpadapter.MachineRetired
 	}
 	return mtcpadapter.TimestampCheck{Accepted: check.Accepted, Gateway: check.Gateway, Machine: machine,
-		NodeCurrent: check.NodeCurrent}, nil
+		NodeCurrent: check.NodeCurrent}
 }
 
 func (guard mtcpTimestampGuard) CommitGatewayTimestamp(ctx context.Context, machineFingerprint [32]byte,
 	nodeKey []byte, timestampMS int64) (bool, error) {
 	return guard.store.CommitGatewayTimestamp(ctx, machineFingerprint, nodeKey, timestampMS)
+}
+
+// AcceptTimestampV3 is AcceptTimestamp with schema 246's ratchet.
+func (guard mtcpTimestampGuard) AcceptTimestampV3(ctx context.Context, machineFingerprint [32]byte,
+	nodeKey []byte, timestampMS int64) (mtcpadapter.TimestampCheck, error) {
+	check, err := guard.store.AcceptTimestampV3(ctx, machineFingerprint, nodeKey, timestampMS)
+	if err != nil {
+		return mtcpadapter.TimestampCheck{}, err
+	}
+	answer := timestampCheck(check)
+	answer.TokenRatcheted = check.TokenRatcheted
+	return answer, nil
+}
+
+func (guard mtcpTimestampGuard) CommitGatewayTimestampV2(ctx context.Context, machineFingerprint [32]byte,
+	nodeKey []byte, timestampMS int64, tokenProven bool, mode kubecluster.GatewayTokenMode,
+) (kubecluster.GatewayTimestampResult, bool, error) {
+	commit, err := guard.store.CommitGatewayTimestampV2(ctx, machineFingerprint, nodeKey, timestampMS, tokenProven,
+		mode)
+	return commit.Result, commit.Ratcheted, err
+}
+
+func (guard mtcpTimestampGuard) RatchetGatewayToken(ctx context.Context, machineFingerprint [32]byte,
+	nodeKey []byte) (bool, error) {
+	return guard.store.RatchetGatewayToken(ctx, machineFingerprint, nodeKey)
 }

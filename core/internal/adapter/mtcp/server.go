@@ -93,6 +93,9 @@ type TimestampCheck struct {
 	// NodeCurrent: the ClientHello node key is the current key of the
 	// Device that holds the machine key.
 	NodeCurrent bool
+	// TokenRatcheted: the gateway Device holding the machine key proved
+	// its pod token on a session before (schema 246, GatewayTokens only).
+	TokenRatcheted bool
 }
 
 // SessionHandler gives each established session to the application.
@@ -140,7 +143,11 @@ type Options struct {
 	// contested keys in the audit trail, off the handshake path (schema
 	// 229). Nil: the handshake metrics alone count them.
 	GatewayKeys GatewayKeyRecorder
-	Now         func() time.Time
+	// GatewayTokens, when set, holds Kubernetes gateways to their pod token
+	// on every session (gateway.token1, schema 246); Capabilities lists it
+	// exactly when it is set.
+	GatewayTokens *GatewayTokens
+	Now           func() time.Time
 }
 
 // Server serves MTCP on the control listener. It is an http.Handler for
@@ -218,6 +225,10 @@ func NewServer(options Options) (*Server, error) {
 	if options.Now == nil {
 		options.Now = time.Now
 	}
+	if !options.GatewayTokens.valid() ||
+		(options.GatewayTokens != nil) != slices.Contains(options.Capabilities, CapabilityGatewayToken) {
+		return nil, ErrInvalidServer
+	}
 	keys := make(map[key.KeyID]ControlKey, len(options.Keys))
 	for _, controlKey := range options.Keys {
 		if controlKey.Private.IsZero() || controlKey.NotAfter.IsZero() {
@@ -229,6 +240,7 @@ func NewServer(options Options) (*Server, error) {
 		return nil, ErrInvalidServer
 	}
 	options.Metrics.controlKeysExpire(options.Keys)
+	options.Metrics.gatewayTokensHeld(options.GatewayTokens)
 	rate := handshakeLimit(options.HandshakeRate, defaultHandshakeRate)
 	burst := handshakeLimit(options.HandshakeBurst, defaultHandshakeBurst)
 	server := &Server{options: options, keys: keys,
@@ -524,7 +536,18 @@ func (server *Server) acceptTimestamp(ctx context.Context, machine key.MachinePu
 		return TimestampCheck{}, false
 	}
 	check := TimestampCheck{Accepted: true}
-	if server.options.Guard != nil {
+	if tokens := server.options.GatewayTokens; tokens != nil {
+		guardCtx, cancel := context.WithTimeout(ctx, writeTimeout)
+		defer cancel()
+		var err error
+		check, err = tokens.Guard.AcceptTimestampV3(guardCtx, node.MachineKey(machine).Fingerprint(), nodeKey,
+			timestampMS)
+		if err != nil {
+			server.options.Logger.WarnContext(ctx, "mtcp timestamp check failed",
+				"error_code", "mtcp_timestamp_unavailable")
+			return TimestampCheck{}, false
+		}
+	} else if server.options.Guard != nil {
 		guardCtx, cancel := context.WithTimeout(ctx, writeTimeout)
 		defer cancel()
 		var err error
@@ -596,7 +619,10 @@ func (server *Server) establish(session *Session) error {
 	server.byMachine[session.machine] = session
 	// A gateway session that pushes out a live one is contested: a copy of
 	// the gateway's Secret, or the real pod pushing a copy back.
-	contested := previous != nil && previous.ctx.Err() == nil && session.gate.Gateway
+	// A session with a pod token taking over one without is the pod moving
+	// to gateway.token1, not a second holder (review v2 N6).
+	contested := previous != nil && previous.ctx.Err() == nil && session.gate.Gateway &&
+		(!session.tokenProven.Load() || previous.tokenProven.Load())
 	if contested {
 		server.contestLocked(session.machine)
 	}

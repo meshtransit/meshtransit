@@ -221,6 +221,9 @@ func (conversation *conversation) checkClusterJoin(ctx context.Context, keys pro
 		return false
 	}
 	conversation.prove(keys.node, true)
+	if !conversation.session.ratchetJoinedGateway(ctx, keys.node) {
+		return true
+	}
 	conversation.authorize(keys.node, keys.disco, completion.Result.Hostname(), true)
 	return true
 }

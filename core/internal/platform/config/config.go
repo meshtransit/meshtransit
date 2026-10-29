@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"meshtransit.net/core/internal/domain/kubecluster"
+
 	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/platform/app"
 )
@@ -68,6 +70,9 @@ type Config struct {
 	// KubernetesJoin lets gateway replicas join their clusters over MTCP
 	// (MESHTRANSIT_KUBERNETES_JOIN).
 	KubernetesJoin bool
+	// KubernetesGatewayToken is how strictly gateways must present their
+	// pod token on every session (MESHTRANSIT_KUBERNETES_GATEWAY_TOKEN).
+	KubernetesGatewayToken kubecluster.GatewayTokenMode
 	// DNSZones are the DNS zone settings (MESHTRANSIT_DNS_ZONES_ENABLED,
 	// MESHTRANSIT_DNS_PROTECTED_NAMES).
 	DNSZones DNSZonesConfig
@@ -212,6 +217,10 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, err
 	}
 	kubernetesJoin, err := loadKubernetesJoin(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+	kubernetesGatewayToken, err := loadKubernetesGatewayToken(lookup)
 	if err != nil {
 		return Config{}, err
 	}
@@ -375,6 +384,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		ExitNodes:               exitNodes,
 		ExitSpread:              exitSpread,
 		KubernetesJoin:          kubernetesJoin,
+		KubernetesGatewayToken:  kubernetesGatewayToken,
 		DNSZones:                dnsZones,
 		GeoIPCountryFile:        geoIPCountryFile,
 		Dependencies:            dependencyConfig,
