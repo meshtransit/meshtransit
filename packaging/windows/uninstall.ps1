@@ -46,6 +46,8 @@ $kept = ($machinePath -split ';') | Where-Object { $_ -and $_ -ne $installDir }
 # The script may run from the install directory; remove it last.
 Get-ChildItem -Path $installDir -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -ne 'uninstall.ps1' } | Remove-Item -Force -Recurse
+# Kubernetes CA files: no meshd keeps them current any more (K1e).
+Remove-Item -Force -Recurse -Path (Join-Path $env:ProgramData 'MeshTransit\kube') -ErrorAction SilentlyContinue
 if ($Purge) {
     Remove-Item -Force -Recurse -Path (Join-Path $env:ProgramData 'MeshTransit') -ErrorAction SilentlyContinue
     if (Get-LocalGroup -Name 'MeshTransit Users' -ErrorAction SilentlyContinue) {

@@ -18,6 +18,9 @@ const (
 	// DefaultRouteSettingsPath holds the host's subnet route settings in a
 	// directory only SYSTEM and administrators may access (routesettings).
 	DefaultRouteSettingsPath = `C:\ProgramData\MeshTransit\settings\routes.json`
+	// DefaultKubeCADir holds the Kubernetes CA files kubectl reads (K1e):
+	// meshd creates it with users' read access.
+	DefaultKubeCADir = `C:\ProgramData\MeshTransit\kube`
 	// DefaultCaptiveWindowPath is the captive portal window root opens
 	// (meshctl exit captive), next to the route settings: the service
 	// removes it when it starts and once the window closes.

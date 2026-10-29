@@ -142,6 +142,7 @@ func runContext(parent context.Context, args []string, stdout, stderr io.Writer)
 	daemonOptions.EnableExits = cfg.EnableExits
 	daemonOptions.ExitPinsDir = cfg.StateDir
 	daemonOptions.RouteSettingsPath = cfg.RouteSettingsFile
+	daemonOptions.KubeCADir = cfg.KubeCADir
 	if runtime.GOOS == "linux" {
 		// Written by the package's postinst before it restarts meshd.
 		daemonOptions.RestartMarkerPath = "/run/meshd/restart-expected"

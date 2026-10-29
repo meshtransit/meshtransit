@@ -37,6 +37,8 @@ ifconfig lo0 -alias 192.0.2.53 2>/dev/null || true
 
 rm -f /usr/local/bin/meshctl /etc/newsyslog.d/meshtransit.conf
 rm -rf /usr/local/libexec/meshtransit /var/run/meshd /var/run/meshnetd
+# Kubernetes CA files: no meshd keeps them current any more (K1e).
+rm -rf "$support/kube"
 
 if $purge; then
 	rm -rf "$support" /var/log/meshtransit

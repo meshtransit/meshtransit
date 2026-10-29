@@ -1121,6 +1121,8 @@ func mapKubernetesClusters(clusters []daemon.KubernetesClusterView) []kubernetes
 		mapped = append(mapped, kubernetesClusterStatus{
 			ID: cluster.ID, Name: cluster.Name, DNSName: cluster.DNSName, TLSServerName: cluster.TLSServerName,
 			State: cluster.State, Roots: cluster.RootFingerprints, RootsExcluded: cluster.RootsExcluded,
+			HeldUntil: formatStatusTime(cluster.HeldUntil), CAFile: cluster.CAFile, CAFileState: cluster.CAFileState,
+			CAFileReason: cluster.CAFileReason,
 		})
 	}
 	return mapped

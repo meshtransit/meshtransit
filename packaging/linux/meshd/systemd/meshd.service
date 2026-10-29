@@ -37,6 +37,8 @@ ProtectKernelModules=yes
 ProtectKernelTunables=yes
 ProtectSystem=strict
 ReadWritePaths=/run/meshd
+# The Kubernetes CA files (K1e); "-": a missing directory never stops meshd.
+ReadWritePaths=-/var/lib/meshtransit/kube
 RemoveIPC=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 RestrictNamespaces=yes

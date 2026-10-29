@@ -69,6 +69,14 @@ type kubernetesClusterStatus struct {
 	State         string   `json:"state"`
 	Roots         []string `json:"root_fingerprints,omitempty"`
 	RootsExcluded int      `json:"roots_excluded,omitempty"`
+	// HeldUntil is when what meshd holds stops counting while Core cannot
+	// say (RFC 3339); empty otherwise.
+	HeldUntil string `json:"held_until,omitempty"`
+	// CAFile is the cluster's CA file kubectl reads; CAFileState is
+	// current, withheld, stale, expired, missing or error (K1e design §3.4).
+	CAFile       string `json:"ca_file,omitempty"`
+	CAFileState  string `json:"ca_file_state,omitempty"`
+	CAFileReason string `json:"ca_file_reason,omitempty"`
 }
 
 // cloudStatus is the wire form of the instance's cloud public addresses.

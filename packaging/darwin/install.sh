@@ -6,6 +6,7 @@
 #   /usr/local/bin/meshctl                                     command line
 #   /Library/LaunchDaemons/net.meshtransit.{meshnetd,meshnetd-captive,meshd}.plist
 #   /Library/Application Support/MeshTransit/                  key and state
+#   /Library/Application Support/MeshTransit/kube/             Kubernetes CA files (public)
 #   /var/log/meshtransit/                                      logs
 #
 # meshd runs as the hidden user _meshd; members of the meshtransit group (the
@@ -95,6 +96,8 @@ install -o root -g wheel -m 0755 "$source_dir/meshctl" /usr/local/bin/meshctl
 
 install -d -o root -g wheel -m 0755 "$support"
 install -d -o _meshd -g _meshd -m 0700 "$support/state"
+# Kubernetes CA files kubectl reads (K1e): public, written by meshd only.
+install -d -o _meshd -g wheel -m 0755 "$support/kube"
 "$libexec/meshcred" provision
 
 install -d -o root -g wheel -m 0755 /var/log/meshtransit

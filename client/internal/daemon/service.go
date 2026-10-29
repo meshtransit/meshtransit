@@ -435,6 +435,9 @@ type Service struct {
 	// exitRelayPool is the Exit Pool whose relay list the forwarder holds.
 	exitRelayPool string
 	exitPins      *exitPins
+	// kubeCA keeps the Kubernetes CA files kubectl reads (K1e); nil
+	// without KubeCADir.
+	kubeCA *kubeCAFiles
 	// captive tracks a captive portal while the host uses an exit node,
 	// which captiveDetector finds (exit node design §17.3).
 	captive           *captiveTracker
@@ -541,6 +544,9 @@ type Options struct {
 	// approved are kept; empty keeps them in memory.
 	ExitPinsDir       string
 	RouteSettingsPath string
+	// KubeCADir holds the Kubernetes CA files kubectl reads (K1e design
+	// §3); empty writes none.
+	KubeCADir string
 	// LoadRouteSettings reads RouteSettingsPath; nil uses routesettings.Load,
 	// which requires a file only root can change. A mobile app keeps its
 	// settings in storage private to it.
@@ -721,6 +727,14 @@ func New(
 		}
 		service.certificates = certificates
 	}
+	if !options.Gateway && options.KubeCADir != "" {
+		logger := service.logger
+		if logger == nil {
+			logger = slog.New(slog.DiscardHandler)
+		}
+		service.kubeCA = newKubeCAFiles(options.KubeCADir, logger.With("component", "kube_ca"), options.Clock,
+			service.controlLive)
+	}
 	return service, nil
 }
 
@@ -764,6 +778,19 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		go watchExitUplink(uplinkCtx, s.exitNodeStatus, routeHealthPoll)
 	}
 
+	if s.kubeCA != nil {
+		// Its last pass withholds the files: a graceful stop (K1e Q118).
+		kubeCACtx, stopKubeCA := context.WithCancel(ctx)
+		kubeCADone := make(chan struct{})
+		go func() {
+			defer close(kubeCADone)
+			s.kubeCA.run(kubeCACtx)
+		}()
+		defer func() {
+			stopKubeCA()
+			<-kubeCADone
+		}()
+	}
 	// Signals raised before the supervisor starts are already reflected in the
 	// persisted stores that the first loop iteration reads.
 	select {
@@ -784,12 +811,19 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			if err := s.stopRuntime(); err != nil {
 				return err
 			}
-			s.setSyncStatus(syncStatus{
-				profileID: s.profiles.Snapshot().ActiveProfileID,
+			s.kubeCA.stop()
+			downProfile := s.profiles.Snapshot().ActiveProfileID
+			down := syncStatus{
+				profileID: downProfile,
 				state:     ControlSessionDown,
 				dataPlane: s.defaultDataPlaneState(),
 				dns:       DNSInactive,
-			})
+			}
+			if previous := s.getSyncStatus(); previous.profileID == downProfile {
+				// Status still lists the clusters, their files withheld (e1b L1).
+				down.kubernetesClusters = previous.kubernetesClusters
+			}
+			s.setSyncStatus(down)
 			s.downAcks.Add(1)
 			if err := s.waitForSyncSignal(ctx); err != nil {
 				return err
@@ -802,6 +836,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			if err := s.stopRuntime(); err != nil {
 				return err
 			}
+			s.kubeCA.stop()
 			s.setSyncStatus(syncStatus{
 				state:     ControlSessionInactive,
 				dataPlane: s.defaultDataPlaneState(),
@@ -816,6 +851,8 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		if err != nil {
 			return fmt.Errorf("reading active profile for control sync: %w", err)
 		}
+		// A profile change stops serving the profile before (K1e §3.3).
+		s.kubeCA.serve(active.ID)
 		record, err := s.identities.Get(ctx, active.ID)
 		if err == nil && record.IsRegistered() && record.IsGateway() != s.gateway {
 			// A gateway's state under meshd, or the other way round: its
@@ -826,6 +863,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			if err := s.stopRuntime(); err != nil {
 				return err
 			}
+			s.kubeCA.stop()
 			s.setSyncStatus(syncStatus{
 				profileID: active.ID,
 				state:     ControlSessionInactive,
@@ -1476,6 +1514,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 						dns:                dnsState,
 						kubernetesClusters: kubernetesClusterViews(snapshot.KubernetesClusters),
 					})
+					s.kubeCA.observe(active.ID, snapshot)
 					if retryDNS != nil {
 						dnsRetries.schedule(retryDNS)
 					}
@@ -2538,7 +2577,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		PeerCount:          syncState.peerCount,
 		MapFreshAt:         s.mapFreshAtValue(),
 		GatewayCertificate: s.gatewayCertificateStatus(),
-		KubernetesClusters: kubernetesClustersAt(syncState.kubernetesClusters, s.clock()),
+		KubernetesClusters: s.kubernetesClusterStatus(syncState),
 		PolicyRuleCount:    syncState.policyRuleCount,
 		PeerPaths:          peerPaths,
 		SubnetRoutes:       subnetRoutes,

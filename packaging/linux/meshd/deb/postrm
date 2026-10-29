@@ -26,6 +26,9 @@ case "$1" in
         rmdir -- \
             "${root_prefix}/run/meshd" \
             "${root_prefix}/run/meshnetd" 2>/dev/null || true
+        # Kubernetes CA files: no meshd keeps them current any more (K1e).
+        rm -rf -- "${root_prefix}/var/lib/meshtransit/kube"
+        rmdir -- "${root_prefix}/var/lib/meshtransit" 2>/dev/null || true
         ;;
 esac
 

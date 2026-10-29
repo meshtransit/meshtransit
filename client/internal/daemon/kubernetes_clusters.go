@@ -21,6 +21,9 @@ type KubernetesClusterView struct {
 	// HeldUntil is when what the node holds stops counting while Core
 	// cannot say; zero otherwise.
 	HeldUntil time.Time
+	// CAFile, CAFileState and CAFileReason are the cluster's CA file (K1e
+	// design §3.4); empty without one.
+	CAFile, CAFileState, CAFileReason string
 }
 
 // kubernetesClustersAt returns views as of now: one held past HeldUntil

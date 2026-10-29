@@ -41,6 +41,8 @@ type Config struct {
 	// one to use.
 	EnableExits       bool
 	RouteSettingsFile string
+	// KubeCADir holds the Kubernetes CA files (K1e); empty: none written.
+	KubeCADir string
 	// ControlProtocol is accepted for existing unit files: auto and mtcp
 	// both mean MTCP v1, the only control protocol.
 	ControlProtocol string
@@ -112,6 +114,9 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 			"(Linux, requires --enable-data-plane)")
 	flags.StringVar(&cfg.RouteSettingsFile, "routes-file", DefaultRouteSettingsPath,
 		"root-owned subnet route settings file, read to offer subnets as a router")
+	flags.StringVar(&cfg.KubeCADir, "kube-ca-dir", DefaultKubeCADir,
+		"directory for the Kubernetes CA files kubectl reads, readable by every user; empty: none. "+
+			"Its parent must be writable only by root (Windows: only the default works)")
 	flags.StringVar(&cfg.ControlProtocol, "control-protocol", "auto",
 		"control protocol: auto or mtcp (both MTCP v1; kept for existing unit files)")
 	flags.StringVar(&cfg.PortMapping, "port-mapping", "auto",
@@ -244,6 +249,10 @@ func validate(cfg Config) error {
 	if !filepath.IsAbs(cfg.IdentityKeyPath) ||
 		filepath.Clean(cfg.IdentityKeyPath) == string(filepath.Separator) {
 		return errors.New("identity key path must be an absolute file")
+	}
+	if cfg.KubeCADir != "" && (!filepath.IsAbs(cfg.KubeCADir) ||
+		filepath.Clean(cfg.KubeCADir) == string(filepath.Separator)) {
+		return errors.New("the Kubernetes CA directory must be absolute and not the filesystem root")
 	}
 	if !filepath.IsAbs(cfg.NetAdminSocketPath) {
 		return errors.New("netadmin socket path must be absolute")

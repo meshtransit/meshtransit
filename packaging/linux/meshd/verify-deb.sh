@@ -139,6 +139,13 @@ grep -Fq 'd /run/meshd 0750 meshd meshtransit -' \
     "${work_dir}/root/usr/lib/tmpfiles.d/meshd.conf"
 grep -Fq 'd /run/meshnetd 0750 root meshd -' \
     "${work_dir}/root/usr/lib/tmpfiles.d/meshd.conf"
+# K1e: the Kubernetes CA files, public and meshd's alone.
+grep -Fqx 'd /var/lib/meshtransit 0755 root root -' \
+    "${work_dir}/root/usr/lib/tmpfiles.d/meshd.conf"
+grep -Fqx 'd /var/lib/meshtransit/kube 0755 meshd meshd -' \
+    "${work_dir}/root/usr/lib/tmpfiles.d/meshd.conf"
+grep -Fqx 'ReadWritePaths=-/var/lib/meshtransit/kube' \
+    "${work_dir}/root/usr/lib/systemd/system/meshd.service"
 
 if command -v systemd-analyze >/dev/null; then
     cp "${work_dir}/root/usr/lib/systemd/system/meshd.service" \
