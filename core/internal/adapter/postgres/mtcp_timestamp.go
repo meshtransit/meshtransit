@@ -4,12 +4,29 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"meshtransit.net/core/internal/domain/kubecluster"
 )
 
 const acceptMTCPTimestampSQL = `SELECT accepted, gateway, machine_state, node_current
 FROM mesh_ops.accept_mtcp_timestamp_v2($1::BYTEA, $2::BYTEA, $3::BIGINT)`
 
 const commitMTCPGatewayTimestampSQL = `SELECT mesh_ops.commit_mtcp_gateway_timestamp_v1($1::BYTEA, $2::BYTEA, $3::BIGINT)`
+
+// Schema 246: a gateway's pod token on every session (K1c-T).
+const (
+	acceptMTCPTimestampV3SQL = `SELECT accepted, gateway, machine_state, node_current, token_ratcheted
+FROM mesh_ops.accept_mtcp_timestamp_v3($1::BYTEA, $2::BYTEA, $3::BIGINT)`
+	commitMTCPGatewayTimestampV2SQL = `SELECT result, ratcheted
+FROM mesh_ops.commit_mtcp_gateway_timestamp_v2($1::BYTEA, $2::BYTEA, $3::BIGINT, $4::BOOLEAN, $5::TEXT)`
+	ratchetKubernetesGatewayTokenSQL = `SELECT mesh_ops.ratchet_kubernetes_gateway_token_v1($1::BYTEA, $2::BYTEA)`
+	gatewayTokensGrantedSQL          = `SELECT COALESCE(pg_catalog.has_function_privilege(pg_catalog.to_regprocedure(
+    'mesh_ops.commit_mtcp_gateway_timestamp_v2(bytea,bytea,bigint,boolean,text)'), 'EXECUTE'), FALSE)
+  AND COALESCE(pg_catalog.has_function_privilege(pg_catalog.to_regprocedure(
+    'mesh_ops.accept_mtcp_timestamp_v3(bytea,bytea,bigint)'), 'EXECUTE'), FALSE)
+  AND COALESCE(pg_catalog.has_function_privilege(pg_catalog.to_regprocedure(
+    'mesh_ops.ratchet_kubernetes_gateway_token_v1(bytea,bytea)'), 'EXECUTE'), FALSE)`
+)
 
 // MTCPTimestampCheck is what schema 226 says about a handshake's keys.
 type MTCPTimestampCheck struct {
@@ -20,6 +37,16 @@ type MTCPTimestampCheck struct {
 	// MachineState is current, retired or unbound.
 	MachineState string
 	NodeCurrent  bool
+	// TokenRatcheted: the gateway Device holding the machine key proved its
+	// pod token on a session before (schema 246; AcceptTimestampV3 only).
+	TokenRatcheted bool
+}
+
+// GatewayTimestampCommit is what CommitGatewayTimestampV2 did.
+type GatewayTimestampCommit struct {
+	Result kubecluster.GatewayTimestampResult
+	// Ratcheted: the Device is ratcheted now.
+	Ratcheted bool
 }
 
 // ErrMTCPTimestamp classifies an unavailable MTCP timestamp check.
@@ -45,12 +72,13 @@ func NewMTCPTimestampStore(pool *Pool) (*MTCPTimestampStore, error) {
 // active Device for nodeKey are accepted: the caller's per-replica cache
 // decides for them. A gateway's timestamp is compared, not written.
 func (store *MTCPTimestampStore) AcceptTimestamp(ctx context.Context, machineFingerprint [32]byte, nodeKey []byte,
-	timestampMS int64) (MTCPTimestampCheck, error) {
-	if len(nodeKey) != 0 && len(nodeKey) != 32 {
+	timestampMS int64,
+) (MTCPTimestampCheck, error) {
+	if len(nodeKey) != 0 && len(nodeKey) != 32 || timestampMS <= 0 {
 		return MTCPTimestampCheck{}, ErrMTCPTimestamp
 	}
 	var check MTCPTimestampCheck
-	err := store.run(ctx, timestampMS, func(transaction resourceAuthorityDatabaseTransaction) error {
+	err := store.run(ctx, func(transaction resourceAuthorityDatabaseTransaction) error {
 		return transaction.QueryRow(ctx, acceptMTCPTimestampSQL, machineFingerprint[:], nodeKey, timestampMS).
 			Scan(&check.Accepted, &check.Gateway, &check.MachineState, &check.NodeCurrent)
 	})
@@ -65,25 +93,104 @@ func (store *MTCPTimestampStore) AcceptTimestamp(ctx context.Context, machineFin
 	}
 }
 
+// GatewayTokensGranted reports whether the runtime role may use schema
+// 246's handshake functions, probed once at startup: Core offers
+// gateway.token1 only then.
+func (store *MTCPTimestampStore) GatewayTokensGranted(ctx context.Context) (bool, error) {
+	var granted bool
+	err := store.run(ctx, func(transaction resourceAuthorityDatabaseTransaction) error {
+		return transaction.QueryRow(ctx, gatewayTokensGrantedSQL).Scan(&granted)
+	})
+	return granted, err
+}
+
+// AcceptTimestampV3 is AcceptTimestamp with whether the gateway Device
+// holding the machine key is ratcheted (schema 246).
+func (store *MTCPTimestampStore) AcceptTimestampV3(ctx context.Context, machineFingerprint [32]byte,
+	nodeKey []byte, timestampMS int64,
+) (MTCPTimestampCheck, error) {
+	if len(nodeKey) != 0 && len(nodeKey) != 32 || timestampMS <= 0 {
+		return MTCPTimestampCheck{}, ErrMTCPTimestamp
+	}
+	var check MTCPTimestampCheck
+	err := store.run(ctx, func(transaction resourceAuthorityDatabaseTransaction) error {
+		return transaction.QueryRow(ctx, acceptMTCPTimestampV3SQL, machineFingerprint[:], nodeKey, timestampMS).
+			Scan(&check.Accepted, &check.Gateway, &check.MachineState, &check.NodeCurrent, &check.TokenRatcheted)
+	})
+	if err != nil {
+		return MTCPTimestampCheck{}, err
+	}
+	switch {
+	case check.MachineState != "current" && check.MachineState != "retired" && check.MachineState != "unbound",
+		check.TokenRatcheted && (!check.Gateway || check.MachineState != "current"):
+		return MTCPTimestampCheck{}, ErrMTCPTimestamp
+	}
+	return check, nil
+}
+
+// CommitGatewayTimestampV2 records a gateway's timestamp after its session
+// proved its node key, and its ratchet, one Device at a time (schema 246):
+// tokenProven is whether the session proved its pod token.
+func (store *MTCPTimestampStore) CommitGatewayTimestampV2(ctx context.Context, machineFingerprint [32]byte,
+	nodeKey []byte, timestampMS int64, tokenProven bool, mode kubecluster.GatewayTokenMode,
+) (GatewayTimestampCommit, error) {
+	if len(nodeKey) != 32 || timestampMS <= 0 || !mode.IsKnown() {
+		return GatewayTimestampCommit{}, ErrMTCPTimestamp
+	}
+	var commit GatewayTimestampCommit
+	err := store.run(ctx, func(transaction resourceAuthorityDatabaseTransaction) error {
+		return transaction.QueryRow(ctx, commitMTCPGatewayTimestampV2SQL, machineFingerprint[:], nodeKey,
+			timestampMS, tokenProven, string(mode)).Scan(&commit.Result, &commit.Ratcheted)
+	})
+	if err != nil {
+		return GatewayTimestampCommit{}, err
+	}
+	// A committed proven token always leaves the Device ratcheted.
+	if !commit.Result.IsKnown() ||
+		commit.Result == kubecluster.GatewayTimestampCommitted && tokenProven && !commit.Ratcheted {
+		return GatewayTimestampCommit{}, ErrMTCPTimestamp
+	}
+	return commit, nil
+}
+
+// RatchetGatewayToken ratchets the gateway Device holding both keys now,
+// for the session that completed its cluster join with a pod token Core
+// checked: false when no gateway Device holds them.
+func (store *MTCPTimestampStore) RatchetGatewayToken(ctx context.Context, machineFingerprint [32]byte,
+	nodeKey []byte,
+) (bool, error) {
+	if len(nodeKey) != 32 {
+		return false, ErrMTCPTimestamp
+	}
+	var ratcheted bool
+	err := store.run(ctx, func(transaction resourceAuthorityDatabaseTransaction) error {
+		return transaction.QueryRow(ctx, ratchetKubernetesGatewayTokenSQL, machineFingerprint[:], nodeKey).
+			Scan(&ratcheted)
+	})
+	return ratcheted, err
+}
+
 // CommitGatewayTimestamp records a gateway's timestamp after its session
 // proved its node key: false when the keys are no longer the gateway's
 // current ones or the timestamp is not newer.
 func (store *MTCPTimestampStore) CommitGatewayTimestamp(ctx context.Context, machineFingerprint [32]byte,
-	nodeKey []byte, timestampMS int64) (bool, error) {
-	if len(nodeKey) != 32 {
+	nodeKey []byte, timestampMS int64,
+) (bool, error) {
+	if len(nodeKey) != 32 || timestampMS <= 0 {
 		return false, ErrMTCPTimestamp
 	}
 	var committed bool
-	err := store.run(ctx, timestampMS, func(transaction resourceAuthorityDatabaseTransaction) error {
+	err := store.run(ctx, func(transaction resourceAuthorityDatabaseTransaction) error {
 		return transaction.QueryRow(ctx, commitMTCPGatewayTimestampSQL, machineFingerprint[:], nodeKey,
 			timestampMS).Scan(&committed)
 	})
 	return committed, err
 }
 
-func (store *MTCPTimestampStore) run(ctx context.Context, timestampMS int64,
-	statement func(resourceAuthorityDatabaseTransaction) error) (resultErr error) {
-	if store == nil || store.database == nil || ctx == nil || timestampMS <= 0 {
+func (store *MTCPTimestampStore) run(ctx context.Context,
+	statement func(resourceAuthorityDatabaseTransaction) error,
+) (resultErr error) {
+	if store == nil || store.database == nil || ctx == nil {
 		return ErrMTCPTimestamp
 	}
 	startedAt := time.Now()

@@ -621,6 +621,8 @@ func Catalog() []Migration {
 			kubernetesClientCAsSQL),
 		newMigration(245, "Kubernetes gateways record type A operations before forwarding them",
 			kubernetesOperationEventsSQL),
+		newMigration(246, "A Kubernetes gateway presents its pod token on every session",
+			kubernetesGatewaySessionTokensSQL),
 	}
 }
 
@@ -1135,3 +1137,6 @@ var kubernetesClientCAsSQL string
 
 //go:embed 000245_kubernetes_operation_events.up.sql
 var kubernetesOperationEventsSQL string
+
+//go:embed 000246_kubernetes_gateway_session_tokens.up.sql
+var kubernetesGatewaySessionTokensSQL string

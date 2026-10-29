@@ -38,8 +38,9 @@ const (
 )
 
 // KubernetesGatewayKeyEventStore records a gateway's stale or contested
-// keys and its refused rotation tokens, each with its sealed audit event,
-// through the runtime pool of the control plane (schemas 229, 233).
+// keys and its refused rotation and session tokens, each with its sealed
+// audit event, through the runtime pool of the control plane (schemas 229,
+// 233, 246).
 type KubernetesGatewayKeyEventStore struct{ database outboxDatabase }
 
 // NewKubernetesGatewayKeyEventStore accepts the runtime pool only.
@@ -56,13 +57,14 @@ func NewKubernetesGatewayKeyEventStore(pool *Pool) (*KubernetesGatewayKeyEventSt
 // meets a lock is busy.
 func (store *KubernetesGatewayKeyEventStore) Record(ctx context.Context, machine [32]byte,
 	reason kubecluster.KeyEventReason, suppressed int, keyID string) (outcome kubecluster.KeyEventOutcome,
-	resultErr error) {
+	resultErr error,
+) {
 	if ctx == nil || store == nil || store.database == nil || machine == ([32]byte{}) || !reason.IsKnown() ||
 		suppressed < 0 || suppressed > kubecluster.MaximumSuppressedReports ||
-		keyID != "" && (reason != kubecluster.KeyEventTokenUnknownKey || !kubejoin.ValidKeyID(keyID)) {
+		keyID != "" && (!reason.UnknownKey() || !kubejoin.ValidKeyID(keyID)) {
 		return 0, ErrInvalidKubernetesGatewayKeyEventStore
 	}
-	// Schema 235: a kid only with a key the trust lacks.
+	// Schemas 235, 246: a kid only with a key the trust lacks.
 	var tokenKeyID any
 	if keyID != "" {
 		tokenKeyID = keyID
@@ -152,7 +154,8 @@ type gatewayKeyEventProof struct {
 }
 
 func decodeGatewayKeyEventProof(encoded string, event publicid.ID,
-	reason kubecluster.KeyEventReason) (gatewayKeyEventProof, error) {
+	reason kubecluster.KeyEventReason,
+) (gatewayKeyEventProof, error) {
 	var proof gatewayKeyEventProof
 	if err := decodeStrictJSON(encoded, 16384, &proof); err != nil {
 		return gatewayKeyEventProof{}, ErrKubernetesGatewayKeyEventStore
@@ -184,7 +187,8 @@ func decodeGatewayKeyEventProof(encoded string, event publicid.ID,
 // returned. The system actor and correlation are zero, as for enforcement
 // evidence; the semantic hash is the payload's.
 func hashGatewayKeyEvent(proof gatewayKeyEventProof, change, event publicid.ID) ([sha256.Size]byte, []byte,
-	error) {
+	error,
+) {
 	previous, err := hex.DecodeString(proof.PreviousHash)
 	if err != nil || len(previous) != sha256.Size {
 		return [sha256.Size]byte{}, nil, ErrKubernetesGatewayKeyEventStore

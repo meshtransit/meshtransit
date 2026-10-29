@@ -12,6 +12,7 @@ func TestKeyEventReasons(t *testing.T) {
 		stale     = "kubernetes_gateway.stale_key_presented"
 		contested = "kubernetes_gateway.keys_contested"
 		refused   = "kubernetes_gateway.rotation_token_refused"
+		session   = "kubernetes_gateway.session_token_refused"
 	)
 	for reason, action := range map[kubecluster.KeyEventReason]string{
 		kubecluster.KeyEventRetiredMachineKey: stale,
@@ -27,13 +28,26 @@ func TestKeyEventReasons(t *testing.T) {
 		kubecluster.KeyEventTokenIdentity:     refused,
 		kubecluster.KeyEventTrustMissing:      refused,
 		kubecluster.KeyEventTrustUnavailable:  refused,
+
+		kubecluster.KeyEventSessionTokenMissing:     session,
+		kubecluster.KeyEventSessionTokenMalformed:   session,
+		kubecluster.KeyEventSessionTokenUnknownKey:  session,
+		kubecluster.KeyEventSessionTokenSignature:   session,
+		kubecluster.KeyEventSessionTokenExpired:     session,
+		kubecluster.KeyEventSessionTokenAudience:    session,
+		kubecluster.KeyEventSessionTokenIdentity:    session,
+		kubecluster.KeyEventSessionTrustMissing:     session,
+		kubecluster.KeyEventSessionTrustUnavailable: session,
+		kubecluster.KeyEventSessionClockSkew:        session,
 	} {
 		if !reason.IsKnown() || reason.StaleKey() != (action == stale) || reason.Action() != action ||
-			reason.TokenRefused() != (action == refused) {
+			reason.TokenRefused() != (action == refused) || reason.SessionTokenRefused() != (action == session) ||
+			reason.UnknownKey() != (reason == kubecluster.KeyEventTokenUnknownKey ||
+				reason == kubecluster.KeyEventSessionTokenUnknownKey) {
 			t.Errorf("%s: known %t, stale %t, action %q", reason, reason.IsKnown(), reason.StaleKey(), reason.Action())
 		}
 	}
-	for _, reason := range []kubecluster.KeyEventReason{"", "session_replaced", "RETIRED_MACHINE_KEY", "replayed", "token_"} {
+	for _, reason := range []kubecluster.KeyEventReason{"", "session_replaced", "RETIRED_MACHINE_KEY", "replayed", "token_", "session_", "session_token_refused", "clock_skew"} {
 		if reason.IsKnown() {
 			t.Errorf("%q is known", reason)
 		}

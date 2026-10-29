@@ -59,6 +59,8 @@ const (
 	MessageKubeAuditIntents  MessageType = 0x1a
 	MessageKubeAuditAck      MessageType = 0x1b
 	MessageKubeAuditOutcomes MessageType = 0x1c
+	// MessageGatewayPodToken is gateway.token1 (mtcp-v1 §6.7).
+	MessageGatewayPodToken MessageType = 0x1d
 )
 
 // Direction is who sends a message.
@@ -129,7 +131,13 @@ var specs = map[MessageType]messageSpec{
 	MessageLifecycle:       {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.Lifecycle{} }},
 	MessageKeyUpdate:       {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.KeyUpdate{} }},
 	MessageNotice:          {CoreToNode, 8 * kib, func() proto.Message { return &mtcpv1.Notice{} }},
-	MessageNodeKeyProof:    {NodeToCore, 256, func() proto.Message { return &mtcpv1.NodeKeyProof{} }},
+	// A gateway's proof adds its pod token (gateway.token1).
+	MessageNodeKeyProof: {
+		NodeToCore, 256 + kubejoin.MaxTokenSize, func() proto.Message { return &mtcpv1.NodeKeyProof{} },
+	},
+	MessageGatewayPodToken: {
+		NodeToCore, 64 + kubejoin.MaxTokenSize, func() proto.Message { return &mtcpv1.GatewayPodToken{} },
+	},
 	MessageRotateMachineKey: {
 		NodeToCore, 256 + kubejoin.MaxTokenSize, func() proto.Message { return &mtcpv1.RotateMachineKey{} },
 	},

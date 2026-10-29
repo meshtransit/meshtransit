@@ -42,13 +42,30 @@ const (
 	KeyEventTrustUnavailable KeyEventReason = "trust_unavailable"
 )
 
+// Reasons a gateway's session was refused for its pod token (schema 246,
+// K1c-T design §3.6). The database derives an event's action from its
+// reason, so they are distinct from a rotation's. session_token_missing on a
+// ratcheted Device is the main sign of a copy of the gateway's Secret.
+const (
+	KeyEventSessionTokenMissing     KeyEventReason = "session_token_missing"
+	KeyEventSessionTokenMalformed   KeyEventReason = "session_token_malformed"
+	KeyEventSessionTokenUnknownKey  KeyEventReason = "session_token_unknown_key"
+	KeyEventSessionTokenSignature   KeyEventReason = "session_token_signature"
+	KeyEventSessionTokenExpired     KeyEventReason = "session_token_expired"
+	KeyEventSessionTokenAudience    KeyEventReason = "session_token_audience"
+	KeyEventSessionTokenIdentity    KeyEventReason = "session_token_identity"
+	KeyEventSessionTrustMissing     KeyEventReason = "session_trust_missing"
+	KeyEventSessionTrustUnavailable KeyEventReason = "session_trust_unavailable"
+	KeyEventSessionClockSkew        KeyEventReason = "session_clock_skew"
+)
+
 // IsKnown reports one of the reasons above.
 func (reason KeyEventReason) IsKnown() bool {
 	switch reason {
 	case KeyEventRetiredMachineKey, KeyEventStaleNodeKey, KeyEventSessionFight, KeyEventReplayedHandshake:
 		return true
 	}
-	return reason.TokenRefused()
+	return reason.TokenRefused() || reason.SessionTokenRefused()
 }
 
 // StaleKey reports a stale key, as opposed to keys two holders contest.
@@ -67,6 +84,24 @@ func (reason KeyEventReason) TokenRefused() bool {
 	return false
 }
 
+// SessionTokenRefused reports a session refused for its pod token.
+func (reason KeyEventReason) SessionTokenRefused() bool {
+	switch reason {
+	case KeyEventSessionTokenMissing, KeyEventSessionTokenMalformed, KeyEventSessionTokenUnknownKey,
+		KeyEventSessionTokenSignature, KeyEventSessionTokenExpired, KeyEventSessionTokenAudience,
+		KeyEventSessionTokenIdentity, KeyEventSessionTrustMissing, KeyEventSessionTrustUnavailable,
+		KeyEventSessionClockSkew:
+		return true
+	}
+	return false
+}
+
+// UnknownKey reports a token signed by a key the cluster's trust lacks:
+// only such an event names the token's kid (schemas 235, 246).
+func (reason KeyEventReason) UnknownKey() bool {
+	return reason == KeyEventTokenUnknownKey || reason == KeyEventSessionTokenUnknownKey
+}
+
 // Action is the audit action of a known reason, as the database derives
 // it; empty for an unknown one.
 func (reason KeyEventReason) Action() string {
@@ -75,6 +110,8 @@ func (reason KeyEventReason) Action() string {
 		return "kubernetes_gateway.stale_key_presented"
 	case reason.TokenRefused():
 		return "kubernetes_gateway.rotation_token_refused"
+	case reason.SessionTokenRefused():
+		return "kubernetes_gateway.session_token_refused"
 	case reason.IsKnown():
 		return "kubernetes_gateway.keys_contested"
 	}

@@ -80,6 +80,7 @@ WHERE device.kind <> 'kubernetes_gateway' ORDER BY machine.id LIMIT 1`).Scan(&or
 	rows, err := admin.Query(ctx, `SELECT event.action, event.payload::TEXT
 FROM mesh_audit.audit_event AS event
 WHERE event.target_kind = 'kubernetes_gateway_key_event' AND event.payload ->> 'device_id' = $1
+  AND event.action IN ('kubernetes_gateway.stale_key_presented', 'kubernetes_gateway.keys_contested')
 ORDER BY event.event_identity_id`, deviceID)
 	if err != nil {
 		t.Fatal(err)
@@ -103,7 +104,8 @@ ORDER BY event.event_identity_id`, deviceID)
 	}
 	var outbox int
 	if err := admin.QueryRow(ctx, `SELECT pg_catalog.count(*) FROM mesh_ops.outbox_event
-WHERE event_class LIKE 'kubernetes_gateway.%' AND payload ->> 'device_id' = $1`, deviceID).Scan(&outbox); err != nil ||
+WHERE event_class IN ('kubernetes_gateway.stale_key_presented', 'kubernetes_gateway.keys_contested')
+  AND payload ->> 'device_id' = $1`, deviceID).Scan(&outbox); err != nil ||
 		outbox != 3 {
 		t.Fatalf("outbox rows %d, %v", outbox, err)
 	}

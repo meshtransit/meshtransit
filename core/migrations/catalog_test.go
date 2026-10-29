@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 245 {
-		t.Fatalf("len(Catalog()) = %d, want 245", len(catalog))
+	if len(catalog) != 246 {
+		t.Fatalf("len(Catalog()) = %d, want 246", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 245 {
-		t.Fatalf("LatestVersion() = %d, want 245", LatestVersion())
+	if LatestVersion() != 246 {
+		t.Fatalf("LatestVersion() = %d, want 246", LatestVersion())
 	}
 }
 
@@ -7313,5 +7313,39 @@ func TestMigration245KubernetesOperationEvents(t *testing.T) {
 	// on before (design §4).
 	if strings.Contains(migration.SQL, "DEFAULT;") || strings.Contains(migration.SQL, "PARTITION OF mesh_audit.kubernetes_operation DEFAULT") {
 		t.Error("migration 245 creates a DEFAULT partition")
+	}
+}
+
+func TestMigration246KubernetesGatewaySessionTokens(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 246 || catalog[245].Version != 246 {
+		t.Fatalf("the catalog has no migration 246 (%d migrations)", len(catalog))
+	}
+	migration := catalog[245]
+	for _, want := range []string{
+		"CREATE TABLE mesh_ops.kubernetes_gateway_token_proof (",
+		"REFERENCES mesh.device (workspace_id, network_id, id) ON DELETE CASCADE",
+		"ALTER TABLE mesh_ops.kubernetes_gateway_token_proof FORCE ROW LEVEL SECURITY;",
+		"'meshtransit/gateway-token-proof/' || v_device.public_id::TEXT",
+		"-- Read after the lock: a ratchet another replica committed is seen.",
+		"IF NOT p_token_proven AND (p_mode = 'required' OR (v_ratcheted AND p_mode = 'ratchet')) THEN",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.accept_mtcp_timestamp_v3(BYTEA, BYTEA, BIGINT) TO mesh_runtime",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.commit_mtcp_gateway_timestamp_v2(BYTEA, BYTEA, BIGINT, BOOLEAN, TEXT)",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.ratchet_kubernetes_gateway_token_v1(BYTEA, BYTEA) TO mesh_runtime",
+		"THEN 'kubernetes_gateway.session_token_refused'",
+		"ADD CONSTRAINT kubernetes_gateway_key_event_reason_v3_check CHECK (",
+		"DROP CONSTRAINT kubernetes_gateway_key_event_reason_v2_check",
+		"p_reason NOT IN ('token_unknown_key', 'session_token_unknown_key')",
+		"CREATE OR REPLACE FUNCTION mesh_ops.record_kubernetes_gateway_key_event_v3(",
+		"SET lock_timeout = '2s'",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 246 lacks %q", want)
+		}
+	}
+	// The lock helper returns a whole Device row: never callable at runtime.
+	if strings.Contains(migration.SQL, "GRANT EXECUTE ON FUNCTION mesh_ops.lock_current_kubernetes_gateway_internal_v1") {
+		t.Error("migration 246 grants the internal lock helper")
 	}
 }

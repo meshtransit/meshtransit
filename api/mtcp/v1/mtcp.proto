@@ -188,6 +188,16 @@ message Logout {}
 // its ClientHello node key (mtcp-v1 §6.7). A Kubernetes gateway must send it.
 message NodeKeyProof {
   bytes proof = 1;
+  // The gateway's pod ServiceAccount token, audience
+  // meshtransit.net/kubernetes-gateway, when gateway.token1 was negotiated
+  // (mtcp-v1 §6.7); never logged.
+  string pod_token = 2 [debug_redact = true];
+}
+
+// GatewayPodToken refreshes the pod token a gateway session presented
+// (mtcp-v1 §6.7, gateway.token1); never logged.
+message GatewayPodToken {
+  string pod_token = 1 [debug_redact = true];
 }
 
 // RotateMachineKey moves a Kubernetes gateway to a new machine key; Core

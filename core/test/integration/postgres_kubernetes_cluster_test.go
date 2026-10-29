@@ -352,6 +352,7 @@ WHERE workspace_id = 103 AND network_id = 203 ORDER BY id LIMIT 1`).Scan(&heldMa
 	gatewayDevice := assertReplicaCompletes(ctx, t, admin, completions, ticket, first)
 	assertGatewayJoinedItsGroup(ctx, t, admin, policyGroup, gatewayDevice)
 	assertGatewaySessionProof(ctx, t, admin, runtime, runtimePool, first, gatewayDevice)
+	assertGatewayTokenRatchet(ctx, t, admin, runtime, runtimePool, first, gatewayDevice)
 	assertGatewayRotationTokens(ctx, t, admin, runtime, first, gatewayDevice)
 	assertJoinTrust(ctx, t, admin, service, store, owner, scope, clusterID, first)
 	gatewayKeys := assertGatewayMachineKeyRotation(ctx, t, admin, runtime, runtimePool, first, gatewayDevice)
@@ -676,6 +677,7 @@ func assertGatewayReferenceCoverage(ctx context.Context, t *testing.T, admin *pg
 		"mesh.device_owner_change":                        "when a Device changed owner, written by a trigger only; a gateway never does",
 		"mesh.kubernetes_gateway_certificate":             "a gateway's own certificates",
 		"mesh_ops.kubernetes_gateway_certificate_request": "a gateway's own certificate requests",
+		"mesh_ops.kubernetes_gateway_token_proof":         "a gateway's own pod token ratchet",
 	}
 	rows, err := admin.Query(ctx, `SELECT DISTINCT constraint_row.conrelid::REGCLASS::TEXT
 FROM pg_catalog.pg_constraint AS constraint_row

@@ -233,7 +233,7 @@ payload     bytes[...]
 | 0x12 | `RotateNodeKey` | N→C | 12 KiB (4 KiB plus a pod token of 8 KiB) |
 | 0x13 | `Logout` | N→C | 1 KiB |
 | 0x14 | `RotateNodeKeyResponse` | C→N | 1 KiB |
-| 0x15 | `NodeKeyProof` | N→C | 256 B |
+| 0x15 | `NodeKeyProof` | N→C | 8,448 B (256 B plus a pod token of 8 KiB) |
 | 0x16 | `RotateMachineKey` | N→C | 8,448 B (256 B plus a pod token of 8 KiB) |
 | 0x17 | `RotateMachineKeyResponse` | C→N | 256 B |
 | 0x18 | `KubeCertRequest` | N→C | 13 KiB (5 KiB plus a pod token of 8 KiB) |
@@ -241,6 +241,7 @@ payload     bytes[...]
 | 0x1A | `KubeAuditIntents` | N→C | 128 KiB |
 | 0x1B | `KubeAuditAck` | C→N | 32 KiB |
 | 0x1C | `KubeAuditOutcomes` | N→C | 128 KiB |
+| 0x1D | `GatewayPodToken` | N→C | 8,256 B (64 B plus a pod token of 8 KiB) |
 | 0x20 | `MapSnapshot` | C→N | 32 MiB |
 | 0x21 | `MapDelta` | C→N | 8 MiB |
 | 0x22 | `MapAck` | N→C | 256 B |
@@ -525,7 +526,59 @@ on.
 
 A copy of a gateway's current machine and node keys (its Kubernetes Secret)
 can still connect as the gateway and replace the real pod's session until
-an administrator removes the Device; a copy of former keys gets nothing.
+an administrator removes the Device, unless the Device is ratcheted (below);
+a copy of former keys gets nothing.
+
+**Pod token on every session (`gateway.token1`).** Every Core whose database
+has the gateway token functions offers `gateway.token1`; only how strictly it
+holds gateways to it is configured. With it negotiated, a gateway puts its
+current pod token (audience `meshtransit.net/kubernetes-gateway`, the token
+of 6.6 and 6.8) in `NodeKeyProof.pod_token`, rereads its token file every
+20 s, and sends `GatewayPodToken{pod_token}` as soon as the file changes and
+at least every 2 minutes. Core checks a token against the cluster's trust,
+the gateway's namespace, ServiceAccount and pod as at a rotation (6.8), with
+a tolerance of 120 s each way on `iat` and `exp`; a token may be presented
+again while it is valid. A `GatewayPodToken` identical to the last one is
+not checked again; a valid new one moves the session's deadline to the
+later of its `exp` and the deadline before; the session ends at the last deadline plus 120 s.
+
+Core checks the token after the proof and the timestamp ahead of its clock,
+and before the replay check: a session refused for its token neither
+contests the keys nor records its timestamp. Once a session of a gateway
+Device proved its pod token, or the session that completed its join had
+`gateway.token1`, the Device is ratcheted: its sessions without a token, or
+without `gateway.token1`, are refused from then on in modes `ratchet` and
+`required`. Core records the ratchet
+with the handshake timestamp, one Device at a time, so another replica
+cannot admit a session without a token past it. A token present but refused
+on a Device not yet ratcheted is audited and the session goes on as one
+without a token.
+
+| Session | Mode `observe` | `ratchet` (default) | `required` |
+|---|---|---|---|
+| valid token | proven, ratchets | proven, ratchets | proven, ratchets |
+| no token, Device not ratcheted | goes on | goes on | fatal `"pod token required"` |
+| no token, Device ratcheted | goes on, counted | fatal `"pod token required"` | fatal `"pod token required"` |
+| token refused, Device not ratcheted | goes on, audited | goes on, audited | fatal `"pod token refused"` |
+| token refused, Device ratcheted | goes on, counted | fatal `"pod token refused"` | fatal `"pod token refused"` |
+| token issued more than 120 s ahead of Core, Device not ratcheted | goes on, counted | goes on, audited | fatal `"pod token clock skew"` |
+| token issued more than 120 s ahead of Core, Device ratcheted | goes on, counted | fatal `"pod token clock skew"` | fatal `"pod token clock skew"` |
+| session past its last token's `exp` plus 120 s | goes on, counted | fatal `"pod token expired"` | fatal `"pod token expired"` |
+
+Mode `observe` refuses nothing for the token and counts what it would have
+refused; it still ratchets Devices.
+
+Each refusal is a fatal `Error{NOT_AUTHORIZED}`; a gateway reads its token
+again and reconnects with its usual backoff. A `GatewayPodToken` on a
+session without `gateway.token1`, or before the session is established, is
+`Error{INVALID}`; on a session that presented no token at its handshake it
+starts the session's deadline but never ratchets the Device. A refused
+`GatewayPodToken` (refused, ahead of Core's clock) is counted and audited;
+it ends the session in mode `required`, and in mode `ratchet` when the
+Device is ratcheted or the session holds a deadline from a valid token;
+in mode `observe` it never does. A `NodeKeyProof.pod_token` without
+`gateway.token1` negotiated, or from a node that is not a gateway, is
+ignored.
 
 ### 6.8 Gateway machine key rotation
 
@@ -1738,6 +1791,7 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `relay.zones2` | Node hands relays MTT2 tickets and their ZONES (MTRP §5.4, §6.1). Core offers it only once every relay accepts them |
 | `captive.audit1` | Node sends `CaptiveWindowReport` (8.5); only with `routes.exit.v1` |
 | `gateway.cert1` | A Kubernetes gateway asks for its replica certificate with `KubeCertRequest` (6.9) and reads `kubernetes_ca` on its `self` (7.10); Core offers it whenever it queues certificate requests, whether or not a signer is up |
+| `gateway.token1` | A Kubernetes gateway presents its pod token in `NodeKeyProof` and refreshes it with `GatewayPodToken` (6.7); Core offers it whenever its database has the gateway token functions, and holds ratcheted gateways to it |
 | `gateway.audit1` | A Kubernetes gateway records type A operations before forwarding them and reports outcomes (6.10); Core offers it with Kubernetes join and its shared Network view, once it could write them at startup |
 | `kube.ca1` | Any node reads `kubernetes_clusters` in its map: the clusters it may reach and their roots (7.11); Core offers it where Kubernetes join is on, it builds maps from its shared Network view, and it could read the roots when it started |
 | `gateway.kube.v1` | A Kubernetes gateway applies its peers' `kubernetes` and `owner` (7.8), acknowledges map messages after applying them and takes `MapFresh` (7.9); Core offers it only where maps come from its shared Network view |
@@ -1764,6 +1818,7 @@ Unknown names are ignored. Core sends a feature only when both sides list it.
 | `EnforcementReport` per session (8.4) | 4 at once, then 1 per second; over it the latest report is kept, replacing any kept before, and stored when the budget allows |
 | `RouteHealthReport` per session (8.3) | 2 at once, then 1 per 2 s; over it the latest report is kept, replacing any kept before, and stored when the budget allows |
 | `RouteSelectionReport` per session (8.3) | 2 at once, then 1 per 5 s; over it the latest report is kept, replacing any kept before, and stored when the budget allows |
+| `GatewayPodToken` per session (6.7) | 2 at once, then 1 per 15 s; the handshake's `NodeKeyProof` does not count; over it fatal `Error{OVERLOADED, retry_after_ms}` |
 | `DnsHealthReport` per session (8.6) | 1 per 20 s; a sooner one is dropped, the node's next one counts |
 | Offers of `HostinfoReport` stored per session (8.2) | 4 at once, then 1 per 10 s; over it the latest offer is kept, replacing any kept before, and stored when the budget allows. An offer sent before the session serves a Device is stored once it does |
 | A Device's live presence lease moving to another Core replica | 10 per minute; past it the stream ends with `Lifecycle{RECONNECT, retry_after_ms}` until the minute is over. Two processes sharing one machine key are bounded to that rate, not stopped; a reconnect after a replica ended, a rolling update or a rebalance moves it once. A refused attempt still costs Core the snapshot and relay ticket it prepared, but not their delivery |
@@ -1832,7 +1887,7 @@ secrets or other tenants' data, and is at most 512 bytes.
 | C20 | A Device announces endpoints that point its peers' probes at a victim: the overlay, a relay, Core | Core drops overlay, special-purpose, relay and operator-denied addresses, also through NAT64, when a report arrives and when it sends a map; nodes refuse overlay and relay addresses as candidates; each node's pings to a peer's unanswered candidates are bounded by a backoff and a per-Device budget: at most 144 at once and 0.4/s in the long run, so a victim named by M Devices receives at most 0.4 × M pings/s from each node that has them in its map (section 8.1, disco-v2 §4.4) |
 | C21 | One session makes Core work in a loop with cheap messages: map resyncs that each encode the whole map, enforcement reports that each write Redis, browser approvals that each write the database, or a flood of any message | Per-session budgets for each, and one for all messages and bytes (section 14); a node that follows the protocol stays well inside them, and reconnecting is bounded by the per-source handshake rate |
 | C22 | A leaked cluster join key makes its holder a Kubernetes gateway, which sees who connects and carries kubectl traffic | The key opens only a request with no Device; an administrator approves it by a code bound to the replica's own keys, read from the real pod's log and checked by Core and its database; five wrong codes cancel; at most twice the key's uses wait; the key lives an hour at most (6.6) |
-| C23 | A copy of a Kubernetes gateway's Secret, or an older Core, serves, logs out or re-keys the gateway | A gateway proves its node key as its session's first record; until then nothing is established or replaced and its timestamp is not recorded; the database resolves a gateway only for a transaction marked proven, which older Core never marks; gateways cannot log out or register again; former machine keys are kept and refused, and a gateway moves to a new machine key at every start (6.7, 6.8); a gateway session that pushes out a live one on the same replica contests the key, and no session of it rotates for 15 seconds (6.8). A copy of the current Secret remains a gateway until an administrator removes it, and on another replica than the real pod's, or by starving the handshakes of the pod's source address, it can rotate the keys and lock the pod out |
+| C23 | A copy of a Kubernetes gateway's Secret, or an older Core, serves, logs out or re-keys the gateway | A gateway proves its node key as its session's first record; until then nothing is established or replaced and its timestamp is not recorded; the database resolves a gateway only for a transaction marked proven, which older Core never marks; gateways cannot log out or register again; former machine keys are kept and refused, and a gateway moves to a new machine key at every start (6.7, 6.8); a gateway session that pushes out a live one on the same replica contests the key, and no session of it rotates for 15 seconds (6.8). A copy of the current Secret remains a gateway until an administrator removes it, and on another replica than the real pod's, or by starving the handshakes of the pod's source address, it can rotate the keys and lock the pod out; with `gateway.token1` a ratcheted gateway's sessions need a valid pod token of its pod too, so a copy of the Secret alone gets nothing (6.7) |
 
 ## 17. Test vectors
 
