@@ -749,6 +749,8 @@ forward it.
 - **`KubeAuditOutcomes`:** at most 1,024 outcomes (`audit_id`, HTTP status,
   duration) and 256 type B counts (peer, reason, count, first and last
   times), at most 128 KiB. Core answers nothing and may drop them under load.
+  Status 0 means the gateway did not forward the operation: its ack came
+  after the gateway had already refused the request.
 - **Budget:** these messages spend their own budget of 512 KiB at once and
   256 KiB/s, not the session's (section 14): over it intents are refused
   `limited` and outcomes dropped. Past four times it the session ends with
