@@ -1,0 +1,176 @@
+{{- $fullname := include "kg.fullname" . -}}
+{{- $check := include "kg.checkName" . -}}
+{{- $preflight := include "kg.preflight" . -}}
+{{- $events := "test" -}}
+{{- if $preflight }}{{- $events = "test,pre-install,pre-upgrade" -}}{{- end -}}
+{{- $policies := list (dict "name" "meshtransit-kube-gateway-token" "binding" "meshtransit-kube-gateway-token" "enforcement" "deny")
+    (dict "name" "meshtransit-kube-gateway-token-others" "binding" "meshtransit-kube-gateway-token-others" "enforcement" "deny")
+    (dict "name" "meshtransit-kube-gateway-namespace" "binding" "meshtransit-kube-gateway-namespace" "enforcement" "deny")
+    (dict "name" "meshtransit-kube-gateway-binding" "binding" "meshtransit-kube-gateway-binding" "enforcement" "deny-or-warn") -}}
+{{- if .Values.gatewayPool.enabled }}
+{{- $broad := ternary "deny-or-warn" "deny" .Values.placement.acceptUnenforced -}}
+{{- $policies = append $policies (dict "name" "meshtransit-kube-gateway-placement-target" "binding" "meshtransit-kube-gateway-placement-target" "enforcement" "deny") -}}
+{{- $policies = append $policies (dict "name" "meshtransit-kube-gateway-placement-broad" "binding" "meshtransit-kube-gateway-placement-broad" "enforcement" $broad) -}}
+{{- end -}}
+{{- $hashes := include "kg.policyHashes" . | fromJson -}}
+{{- $hashed := list -}}
+{{- range $policy := $policies -}}
+{{- $hashed = append $hashed (merge (dict "policyHash" (get $hashes $policy.name) "bindingHash" (get $hashes (printf "binding/%s" $policy.binding))) $policy) -}}
+{{- end -}}
+{{- $policies = $hashed -}}
+{{- $config := dict "namespace" .Release.Namespace "statefulSet" $fullname "replicas" (int .Values.replicas)
+    "statusPort" 9090 "apiAudiences" .Values.apiServerAudiences "policies" $policies
+    "serviceAccount" $fullname "checkServiceAccount" $check
+    "preflight" (dict "exemptNamespaces" .Values.nodeLevelNamespaces "bindingEnforced" .Values.binding.enforce
+      "trustedSchedulerNames" .Values.preflight.trustedSchedulerNames) -}}
+# The check's configuration and read-only rights exist only while a check
+# runs (Q95, Q102).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $check }}
+  labels: {{- include "kg.labels" . | nindent 4 }}
+  {{- include "kg.hookMeta" (dict "events" $events) | nindent 2 }}
+data:
+  MESHGW_CHECK_CONFIG: {{ toJson $config | quote }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $check }}
+  labels: {{- include "kg.labels" . | nindent 4 }}
+  {{- include "kg.hookMeta" (dict "events" $events) | nindent 2 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $check }}
+  labels: {{- include "kg.labels" . | nindent 4 }}
+  {{- include "kg.hookMeta" (dict "events" $events) | nindent 2 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "events"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $check }}
+  labels: {{- include "kg.labels" . | nindent 4 }}
+  {{- include "kg.hookMeta" (dict "events" $events) | nindent 2 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $check }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $check }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kg.clusterName" . }}-check
+  labels: {{- include "kg.labels" . | nindent 4 }}
+  {{- include "kg.hookMeta" (dict "events" $events) | nindent 2 }}
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    resourceNames: [{{ .Release.Namespace | quote }}]
+    verbs: ["get"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles", "clusterrolebindings"]
+    verbs: ["list"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingadmissionpolicies", "validatingadmissionpolicybindings"]
+    verbs: ["get"]
+  {{- if $preflight }}
+  # The preflight reads every pod template in the cluster while it runs.
+  - apiGroups: ["apps"]
+    resources: ["daemonsets", "deployments", "statefulsets", "replicasets"]
+    verbs: ["list"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["pods", "replicationcontrollers"]
+    verbs: ["list"]
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kg.clusterName" . }}-check
+  labels: {{- include "kg.labels" . | nindent 4 }}
+  {{- include "kg.hookMeta" (dict "events" $events) | nindent 2 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kg.clusterName" . }}-check
+subjects:
+  - kind: ServiceAccount
+    name: {{ $check }}
+    namespace: {{ .Release.Namespace }}
+{{- range $job := list (dict "name" $check "events" "test" "args" (list)) (dict "name" (printf "%s-preflight" $fullname) "events" "pre-install,pre-upgrade" "args" (list "--preflight")) }}
+{{- if or (eq $job.events "test") $preflight }}
+---
+# Kept until the next run, so its log and termination message can be read;
+# the result is also an Event on the StatefulSet.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $job.name }}
+  labels: {{- include "kg.labels" $ | nindent 4 }}
+  annotations:
+    helm.sh/hook: {{ $job.events }}
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        {{- include "kg.selectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: check
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ $check }}
+      enableServiceLinks: false
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: check
+          image: {{ include "kg.image" $ }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          command: ["/meshgw", "check"]
+          {{- with $job.args }}
+          args: {{ toJson . }}
+          {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ $check }}
+          terminationMessagePolicy: File
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+{{- end }}
+{{- end }}

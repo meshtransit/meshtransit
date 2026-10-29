@@ -1,0 +1,4 @@
+# KSV-0109: the gateway's ConfigMap names Secrets (MESHGW_ENVELOPE_SECRET,
+# MESHGW_JOIN_SECRET, MESHGW_STATE_SECRET_PREFIX) and Secret-like resources
+# (MESHGW_SECRET_RESOURCES); it holds no secret value.
+KSV-0109

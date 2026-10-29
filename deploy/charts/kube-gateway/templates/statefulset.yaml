@@ -1,0 +1,147 @@
+{{- $fullname := include "kg.fullname" . -}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fullname }}
+  labels: {{- include "kg.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ $fullname }}
+  replicas: {{ .Values.replicas }}
+  # Every replica starts at once, so every approval shows in the Console.
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels: {{- include "kg.gatewaySelector" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "kg.gatewaySelector" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include "kg.configData" . | sha256sum }}
+        # The certificate's key is never in a backup (K1b Q52).
+        backup.velero.io/backup-volumes-excludes: certificate
+    spec:
+      serviceAccountName: {{ $fullname }}
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      {{- if .Values.gatewayPool.enabled }}
+      # The gateway pool (Q83): only an administrator sets this label.
+      nodeSelector:
+        node-restriction.kubernetes.io/meshtransit-gateway-pool: {{ .Values.gatewayPool.name | quote }}
+      tolerations:
+        - key: meshtransit.net/gateway
+          operator: Equal
+          value: {{ .Values.gatewayPool.name | quote }}
+          effect: NoSchedule
+      {{- end }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: {{ ternary "ScheduleAnyway" "DoNotSchedule" .Values.spread.allowSameNode }}
+          nodeAffinityPolicy: Honor
+          nodeTaintsPolicy: Honor
+          labelSelector:
+            matchLabels: {{- include "kg.gatewaySelector" . | nindent 14 }}
+      containers:
+        - name: meshgw
+          image: {{ include "kg.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          envFrom:
+            - configMapRef:
+                name: {{ $fullname }}
+          ports:
+            - name: wireguard
+              containerPort: 41641
+              protocol: UDP
+            - name: probes
+              containerPort: 9090
+          # Ready while it serves (Q87); 40 s absorb a control stream that is
+          # rebuilt.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: probes
+            periodSeconds: 5
+            failureThreshold: 8
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: probes
+            periodSeconds: 10
+            failureThreshold: 3
+          # A moment for the map to move peers off the replica.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: state
+              mountPath: /var/lib/meshgw
+            - name: envelope
+              mountPath: /etc/meshgw/envelope
+              readOnly: true
+            - name: join
+              mountPath: /etc/meshgw/join
+              readOnly: true
+            - name: meshtransit-token
+              mountPath: /var/run/secrets/meshtransit
+              readOnly: true
+            - name: certificate
+              mountPath: /var/run/meshgw/certificate
+      volumes:
+        - name: certificate
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        - name: state
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+        - name: envelope
+          secret:
+            secretName: {{ .Values.envelope.existingSecret }}
+            defaultMode: 0400
+        # Read only while a replica must join; may be deleted after.
+        - name: join
+          secret:
+            secretName: {{ .Values.join.existingSecret }}
+            defaultMode: 0400
+            optional: true
+        # For Core only: never an API server token.
+        - name: meshtransit-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: meshtransit.net/kubernetes-gateway
+                  expirationSeconds: 600
+                  path: token

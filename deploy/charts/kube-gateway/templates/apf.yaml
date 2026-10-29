@@ -1,0 +1,72 @@
+{{- if .Values.apf.enabled }}
+{{- $cluster := include "kg.clusterName" . -}}
+# People reach the API server through their groups' accounts: their own
+# priority level, one flow per account, never crowding out controllers.
+apiVersion: flowcontrol.apiserver.k8s.io/v1
+kind: PriorityLevelConfiguration
+metadata:
+  name: {{ $cluster }}-users
+  labels: {{- include "kg.labels" . | nindent 4 }}
+spec:
+  type: Limited
+  limited:
+    nominalConcurrencyShares: 20
+    lendablePercent: 50
+    borrowingLimitPercent: 100
+    limitResponse:
+      type: Queue
+      queuing: {queues: 16, handSize: 4, queueLengthLimit: 50}
+---
+apiVersion: flowcontrol.apiserver.k8s.io/v1
+kind: PriorityLevelConfiguration
+metadata:
+  name: {{ $cluster }}-mint
+  labels: {{- include "kg.labels" . | nindent 4 }}
+spec:
+  type: Limited
+  limited:
+    nominalConcurrencyShares: 10
+    limitResponse:
+      type: Queue
+      queuing: {queues: 16, handSize: 4, queueLengthLimit: 50}
+---
+apiVersion: flowcontrol.apiserver.k8s.io/v1
+kind: FlowSchema
+metadata:
+  name: {{ $cluster }}-users
+  labels: {{- include "kg.labels" . | nindent 4 }}
+spec:
+  priorityLevelConfiguration:
+    name: {{ $cluster }}-users
+  matchingPrecedence: 1000
+  distinguisherMethod:
+    type: ByUser
+  rules:
+    - subjects:
+        {{- range .Values.groups }}
+        - kind: ServiceAccount
+          serviceAccount: {namespace: {{ $.Release.Namespace }}, name: mt-{{ .name }}}
+        {{- end }}
+      resourceRules:
+        - {verbs: ["*"], apiGroups: ["*"], resources: ["*"], clusterScope: true, namespaces: ["*"]}
+      nonResourceRules:
+        - {verbs: ["*"], nonResourceURLs: ["*"]}
+---
+apiVersion: flowcontrol.apiserver.k8s.io/v1
+kind: FlowSchema
+metadata:
+  name: {{ $cluster }}-mint
+  labels: {{- include "kg.labels" . | nindent 4 }}
+spec:
+  priorityLevelConfiguration:
+    name: {{ $cluster }}-mint
+  matchingPrecedence: 900
+  distinguisherMethod:
+    type: ByUser
+  rules:
+    - subjects:
+        - kind: ServiceAccount
+          serviceAccount: {namespace: {{ .Release.Namespace }}, name: {{ include "kg.fullname" . }}}
+      resourceRules:
+        - {verbs: ["create"], apiGroups: [""], resources: ["serviceaccounts/token"], namespaces: [{{ .Release.Namespace | quote }}]}
+{{- end }}

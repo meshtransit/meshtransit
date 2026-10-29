@@ -1,0 +1,93 @@
+{{- $fullname := include "kg.fullname" . -}}
+{{- $cluster := include "kg.clusterName" . -}}
+{{- $checkImage := printf "^%s@sha256:[0-9a-f]{64}$" (regexQuoteMeta .Values.image.repository) -}}
+{{- if not .Values.image.digest -}}
+{{- /* Labs pin a tag: any tag, so a pre-upgrade hook with a new one passes (review c3 L1). */ -}}
+{{- $checkImage = printf "^%s:[A-Za-z0-9_.-]+$" (regexQuoteMeta .Values.image.repository) -}}
+{{- end -}}
+# In the gateway's namespace only two kinds of pod run (Q86): the gateway,
+# made by the StatefulSet controller with the pinned image and the gateway's
+# account; and the check, made by the job controller for the check or
+# preflight Job, with no Secret it could read (Q99). Images do not change in
+# place, ephemeral containers are refused, and so are exec, attach,
+# port-forward and proxy (break-glass: gatewayNamespace.allowDebug).
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $cluster }}-namespace
+  labels: {{- include "kg.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["pods/ephemeralcontainers"]
+      {{- if not .Values.gatewayNamespace.allowDebug }}
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CONNECT"]
+        resources: ["pods/exec", "pods/attach", "pods/portforward", "pods/proxy"]
+      {{- end }}
+  variables:
+    - name: pod
+      expression: "request.resource.resource == 'pods' && request.subResource == ''"
+    - name: owner
+      expression: >-
+        has(object.metadata) && has(object.metadata.ownerReferences) ? object.metadata.ownerReferences : []
+    - name: gateway
+      expression: >-
+        request.userInfo.username in {{ include "kg.celList" .Values.controllerIdentities.statefulSet }} &&
+        has(object.spec.serviceAccountName) && object.spec.serviceAccountName == '{{ $fullname }}' &&
+        !has(object.spec.initContainers) &&
+        (!has(object.spec.imagePullSecrets) || object.spec.imagePullSecrets.all(s, has(s.name) && s.name in {{ include "kg.pullSecrets" . }})) &&
+        object.spec.containers.all(c, has(c.image) && c.image == '{{ include "kg.image" . }}') &&
+        variables.owner.exists(o, o.kind == 'StatefulSet' && o.name == '{{ $fullname }}')
+    - name: check
+      expression: >-
+        request.userInfo.username in {{ include "kg.celList" .Values.controllerIdentities.job }} &&
+        has(object.spec.serviceAccountName) && object.spec.serviceAccountName == '{{ include "kg.checkName" . }}' &&
+        !has(object.spec.initContainers) && size(object.spec.containers) == 1 &&
+        (!has(object.spec.nodeName) || object.spec.nodeName == '') &&
+        (!has(object.spec.imagePullSecrets) || object.spec.imagePullSecrets.all(s, has(s.name) && s.name in {{ include "kg.pullSecrets" . }})) &&
+        object.spec.containers.all(c, has(c.image) && c.image.matches(r'{{ $checkImage }}') &&
+          has(c.command) && c.command == ['/meshgw', 'check'] &&
+          (!has(c.args) || c.args == [] || c.args == ['--preflight']) &&
+          (!has(c.env) || c.env.all(e, !has(e.valueFrom) || !has(e.valueFrom.secretKeyRef))) &&
+          (!has(c.envFrom) || c.envFrom.all(f, !has(f.secretRef)))) &&
+        (!has(object.spec.volumes) || object.spec.volumes.all(v, !has(v.secret) &&
+          (!has(v.projected) || !has(v.projected.sources) || v.projected.sources.all(s, !has(s.secret))))) &&
+        variables.owner.exists(o, o.kind == 'Job' &&
+          (o.name == '{{ include "kg.checkName" . }}' || o.name == '{{ $fullname }}-preflight'))
+  validations:
+    - expression: "!variables.pod || request.operation != 'CREATE' || variables.gateway || variables.check"
+      message: in the gateway's namespace only the gateway's StatefulSet and its check Jobs make pods
+    - expression: >-
+        !variables.pod || request.operation != 'UPDATE' ||
+        (object.spec.containers.all(c, oldObject.spec.containers.exists(o, o.name == c.name &&
+          has(o.image) && has(c.image) && o.image == c.image)) &&
+         (!has(object.spec.initContainers) || object.spec.initContainers.all(c, has(oldObject.spec.initContainers) &&
+          oldObject.spec.initContainers.exists(o, o.name == c.name && has(o.image) && has(c.image) && o.image == c.image))))
+      message: images do not change in place in the gateway's namespace
+    - expression: "request.subResource != 'ephemeralcontainers'"
+      message: no ephemeral containers in the gateway's namespace
+    - expression: "request.operation != 'CONNECT'"
+      message: no exec, attach, port-forward or proxy in the gateway's namespace (gatewayNamespace.allowDebug)
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $cluster }}-namespace
+  labels: {{- include "kg.labels" . | nindent 4 }}
+spec:
+  policyName: {{ $cluster }}-namespace
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ .Release.Namespace }}

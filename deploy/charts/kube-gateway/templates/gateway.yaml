@@ -1,0 +1,172 @@
+{{- include "kg.validate" . -}}
+{{- $fullname := include "kg.fullname" . -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $fullname }}
+  labels: {{- include "kg.labels" . | nindent 4 }}
+{{- range $ordinal := until (int .Values.replicas) }}
+---
+# A replica's state (identity and profile), filled by the gateway. Never
+# rendered with data, kept on uninstall and by Argo CD (Q80): losing it
+# means the replica joins again.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "kg.statePrefix" $ }}-{{ $ordinal }}
+  labels: {{- include "kg.labels" $ | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+type: Opaque
+{{- end }}
+---
+# Each replica reads and writes only the state Secrets (create cannot be
+# limited by name, so the chart makes them).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fullname }}-state
+  labels: {{- include "kg.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      {{- range $ordinal := until (int .Values.replicas) }}
+      - {{ include "kg.statePrefix" $ }}-{{ $ordinal }}
+      {{- end }}
+    verbs: ["get", "update"]
+---
+# The gateway mints only its groups' tokens (and the token VAP holds each
+# mint to its own replica's state Secret); privileged sessions are Events.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fullname }}-mint
+  labels: {{- include "kg.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    resourceNames: {{ include "kg.groupAccounts" . }}
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+{{- range $role := list "state" "mint" }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $fullname }}-{{ $role }}
+  labels: {{- include "kg.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $fullname }}-{{ $role }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $fullname }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- range $group := .Values.groups }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mt-{{ $group.name }}
+  labels: {{- include "kg.labels" $ | nindent 4 }}
+automountServiceAccountToken: false
+{{- if $group.namespaces }}
+{{- range $namespace := $group.namespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mt-{{ $group.name }}
+  namespace: {{ $namespace }}
+  labels: {{- include "kg.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $group.clusterRole }}
+subjects:
+  - kind: ServiceAccount
+    name: mt-{{ $group.name }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- else }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kg.clusterName" $ }}-{{ $group.name }}
+  labels: {{- include "kg.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $group.clusterRole }}
+subjects:
+  - kind: ServiceAccount
+    name: mt-{{ $group.name }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullname }}
+  labels: {{- include "kg.labels" . | nindent 4 }}
+data:
+  {{- include "kg.configData" . | nindent 2 }}
+---
+# A StatefulSet needs a governing Service; nothing connects to it. Port
+# 9090 serves only /status, /metrics and the probes.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}
+  labels: {{- include "kg.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector: {{- include "kg.gatewaySelector" . | nindent 4 }}
+  ports:
+    - name: probes
+      port: 9090
+---
+# Unready pods never block a drain, even with Core down (K1b Q51, K1c Q87).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $fullname }}
+  labels: {{- include "kg.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  selector:
+    matchLabels: {{- include "kg.gatewaySelector" . | nindent 6 }}
+---
+# The replicas and the check pods (two at most, hooks).
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: {{ $fullname }}
+  labels: {{- include "kg.labels" . | nindent 4 }}
+spec:
+  hard:
+    pods: {{ add (int .Values.replicas) 2 | quote }}
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: {{ $fullname }}
+  labels: {{- include "kg.labels" . | nindent 4 }}
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 128Mi
+      defaultRequest:
+        cpu: 50m
+        memory: 128Mi

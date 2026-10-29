@@ -1,0 +1,123 @@
+# MeshTransit Kubernetes gateway (K1c). Every value is checked when the
+# chart renders: values.schema.json for shape, templates/_validate.tpl for
+# the rules between values (docs: design K1c §6).
+
+# The cluster's name on Core (MESHGW_CLUSTER): a DNS label of up to 40
+# characters, as created in the Console.
+cluster: ""
+
+# Core: its https URL and the pin of its key (sha256:...), checked on every
+# start; the gateway never trusts on first use.
+control:
+  url: https://control.meshtransit.net
+  fingerprint: ""
+
+# Replicas (1-5). Each needs key-<n> in the envelope and join Secrets.
+replicas: 2
+
+# Pin the image by digest; a tag alone is refused unless allowTag (labs).
+image:
+  repository: ""
+  digest: ""
+  tag: ""
+  allowTag: false
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# Secrets the chart never creates (Q80): create them with kubectl create
+# secret (never kubectl apply), or External Secrets.
+envelope:
+  existingSecret: meshgw-envelope
+join:
+  existingSecret: meshgw-join
+
+# The API server's audiences: what it fills into a token minted without
+# any. `helm test` prints this cluster's value when it differs.
+apiServerAudiences: []
+
+# Kubernetes groups: each a ServiceAccount mt-<name> bound to clusterRole,
+# in namespaces or, without them, the whole cluster. Exactly one default,
+# never privileged. A privileged group lists the people allowed
+# (allowedPrincipals) and may keep impersonation (allowImpersonation).
+groups:
+  - name: view
+    clusterRole: view
+    default: true
+
+# More resources read like Secrets (type A records), resource.group.
+secretResources: []
+
+# The gateway pool: nodes labelled
+# node-restriction.kubernetes.io/meshtransit-gateway-pool=<name> and tainted
+# meshtransit.net/gateway=<name>:NoSchedule by an administrator.
+gatewayPool:
+  enabled: true
+  name: ""
+
+# Namespaces whose pods may run on every node (CNI, CSI, agents): exempt
+# from the placement policies and guarded by the RBAC self-check. Whoever
+# runs pods there is as trusted as the gateway.
+nodeLevelNamespaces: [kube-system]
+
+# Broad placement guard (tolerating every taint, naming a node): warn and
+# audit until enforce, after the preflight is clean. Targeting the pool is
+# always denied.
+placement:
+  enforce: false
+  acceptUnenforced: false
+# Only the scheduler and these usernames bind pods: warn until enforce.
+binding:
+  enforce: false
+  trustedBinders: []
+preflight:
+  trustedSchedulerNames: []
+  skip: false
+
+# Who creates pods in the gateway's namespace (measured per distro, K1f).
+controllerIdentities:
+  statefulSet:
+    - system:serviceaccount:kube-system:statefulset-controller
+    - system:kube-controller-manager
+  job:
+    - system:serviceaccount:kube-system:job-controller
+    - system:kube-controller-manager
+
+# Debug access (exec, attach, port-forward, proxy) into the namespace:
+# refused unless true (break-glass, audited by the API server).
+gatewayNamespace:
+  allowDebug: false
+
+spread:
+  allowSameNode: false
+
+# Seconds a map Core has not confirmed stays usable (120-900).
+staleAfterSeconds: 300
+
+network:
+  tcpSendBufferBytes: 98304
+  tcpReceiveBufferBytes: 262144
+
+# Memory request equals limit unless allowBurstable (Q103).
+resources:
+  requests:
+    cpu: 250m
+    memory: 1Gi
+  limits:
+    cpu: "2"
+    memory: 1Gi
+allowBurstable: false
+priorityClassName: ""
+
+# Who may scrape :9090 (/metrics): NetworkPolicy peers.
+metrics:
+  allowFrom: []
+  serviceMonitor: false
+
+networkPolicy:
+  extraEgress: []
+
+apf:
+  enabled: true
+
+nameOverride: ""
+fullnameOverride: ""

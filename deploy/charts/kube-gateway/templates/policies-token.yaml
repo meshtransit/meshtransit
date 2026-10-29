@@ -1,0 +1,101 @@
+{{- $fullname := include "kg.fullname" . -}}
+{{- $cluster := include "kg.clusterName" . -}}
+{{- $accounts := include "kg.groupAccounts" . | fromJsonArray -}}
+{{- $user := include "kg.serviceAccountUser" . -}}
+# The gateway mints only its groups' tokens: for 600 s, for the API
+# server's own audiences (as a set), bound to the minting replica's own
+# state Secret (K1b Q69, K1c Q91). Every access is guarded with has(): a
+# CEL error here fails closed.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $cluster }}-token
+  labels: {{- include "kg.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["serviceaccounts/token"]
+  matchConditions:
+    - name: the-gateway
+      expression: request.userInfo.username == '{{ $user }}'
+  variables:
+    - name: podName
+      expression: >-
+        has(request.userInfo.extra) && 'authentication.kubernetes.io/pod-name' in request.userInfo.extra &&
+        size(request.userInfo.extra['authentication.kubernetes.io/pod-name']) == 1
+        ? request.userInfo.extra['authentication.kubernetes.io/pod-name'][0] : ''
+    - name: ordinal
+      expression: >-
+        variables.podName.matches('^{{ $fullname }}-[0-9]{1,2}$')
+        ? variables.podName.substring({{ add (len $fullname) 1 }}) : ''
+    - name: audiences
+      expression: "{{ include "kg.celList" .Values.apiServerAudiences }}"
+  validations:
+    - expression: "request.namespace == '{{ .Release.Namespace }}' && request.name in {{ include "kg.celList" $accounts }}"
+      message: the gateway mints only its groups' tokens
+    - expression: has(object.spec.expirationSeconds) && object.spec.expirationSeconds == 600
+      message: the gateway's tokens live 600 s
+    - expression: >-
+        has(object.spec.audiences) && size(object.spec.audiences) > 0 &&
+        object.spec.audiences.all(a, a in variables.audiences) &&
+        variables.audiences.all(a, a in object.spec.audiences)
+      message: the gateway's tokens are for the API server's audiences only (apiServerAudiences)
+    - expression: >-
+        variables.ordinal != '' && int(variables.ordinal) < {{ add (int .Values.replicas) 2 }} &&
+        has(object.spec.boundObjectRef) && has(object.spec.boundObjectRef.kind) &&
+        object.spec.boundObjectRef.kind == 'Secret' && has(object.spec.boundObjectRef.name) &&
+        object.spec.boundObjectRef.name == '{{ include "kg.statePrefix" . }}-' + variables.ordinal
+      message: a token is bound to the minting replica's own state Secret
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $cluster }}-token
+  labels: {{- include "kg.labels" . | nindent 4 }}
+spec:
+  policyName: {{ $cluster }}-token
+  validationActions: [Deny]
+---
+# Nobody else mints the groups' tokens; the gateway's own account gets
+# tokens only from the kubelet, for a gateway pod (review v2 C1).
+# Break-glass: delete this binding.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $cluster }}-token-others
+  labels: {{- include "kg.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["serviceaccounts/token"]
+  matchConditions:
+    - name: a-gateway-account
+      expression: >-
+        request.namespace == '{{ .Release.Namespace }}' &&
+        (request.name in {{ include "kg.celList" $accounts }} || request.name == '{{ $fullname }}')
+    - name: not-the-gateway
+      expression: request.userInfo.username != '{{ $user }}'
+  validations:
+    - expression: >-
+        request.name == '{{ $fullname }}' && request.userInfo.username.startsWith('system:node:') &&
+        has(object.spec.boundObjectRef) && has(object.spec.boundObjectRef.kind) &&
+        object.spec.boundObjectRef.kind == 'Pod' && has(object.spec.boundObjectRef.name) &&
+        object.spec.boundObjectRef.name.matches('^{{ $fullname }}-[0-9]{1,2}$')
+      message: only the gateway mints its groups' tokens, and only the kubelet its own, for a gateway pod
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $cluster }}-token-others
+  labels: {{- include "kg.labels" . | nindent 4 }}
+spec:
+  policyName: {{ $cluster }}-token-others
+  validationActions: [Deny]

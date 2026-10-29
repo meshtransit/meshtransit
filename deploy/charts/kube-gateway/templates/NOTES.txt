@@ -1,0 +1,36 @@
+MeshTransit gateway for cluster {{ .Values.cluster }} ({{ .Values.replicas }} replicas) in {{ .Release.Namespace }}.
+
+Each replica waits for an administrator to approve it in the Console with the
+code it logs:
+  kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/component=gateway --prefix --tail=-1 | grep "enroll code"
+
+Then check the install:
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
+{{- if not .Values.image.digest }}
+
+WARNING: the image is pinned by tag only (image.allowTag). Pin it by digest
+outside a lab.
+{{- end }}
+{{- if not .Values.gatewayPool.enabled }}
+
+WARNING: gatewayPool is off. The gateway shares nodes with other workloads;
+whoever runs a privileged pod on its node holds its account.
+{{- end }}
+{{- if and .Values.gatewayPool.enabled (not .Values.placement.enforce) }}
+
+The broad placement guard only warns: pods tolerating every taint or naming a
+node can still land on the gateway pool. Set placement.enforce=true and
+upgrade: the pre-upgrade preflight stops the upgrade if anything would be
+refused (README section 4).
+{{- end }}
+{{- if .Values.spread.allowSameNode }}
+
+WARNING: replicas may share a node (spread.allowSameNode).
+{{- end }}
+{{- if .Values.preflight.skip }}
+
+WARNING: the preflight was skipped (preflight.skip).
+{{- end }}
+
+Never upgrade with --force, and never sync with Argo CD Replace=true: they
+empty the replicas' state Secrets and every replica must join again.

@@ -1,0 +1,9 @@
+apiVersion: v2
+name: meshtransit-kube-gateway
+description: MeshTransit gateway for a Kubernetes cluster - kubectl over the mesh, per person, recorded
+type: application
+version: 0.1.0
+appVersion: "k1c"
+kubeVersion: ">=1.32.0-0"
+annotations:
+  artifacthub.io/license: Apache-2.0

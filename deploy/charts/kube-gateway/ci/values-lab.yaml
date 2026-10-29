@@ -1,0 +1,15 @@
+cluster: kinda-k1
+control:
+  url: https://control.meshtransit.net
+  fingerprint: sha256:9af0dbfdffaca2f5e428a33b9dfdd57e46aafd0b41010bfbb08daaf508f18f3a
+fullnameOverride: meshgw
+image:
+  repository: docker.io/library/meshgw
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  pullPolicy: Never
+apiServerAudiences: [https://kubernetes.default.svc.cluster.local]
+groups:
+  - {name: view, clusterRole: view, default: true}
+  - {name: edit, clusterRole: edit, namespaces: [default]}
+gatewayPool: {enabled: true, name: kinda-k1}
+nodeLevelNamespaces: [kube-system, local-path-storage]

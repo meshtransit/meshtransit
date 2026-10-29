@@ -1,0 +1,88 @@
+{{- $fullname := include "kg.fullname" . -}}
+# kubectl arrives over the mesh inside its encrypted UDP: in the cluster,
+# only the check (and metrics.allowFrom) reach the probes' port. Egress is a
+# mesh node's: DNS, Core and relays on TCP 443, the API server on 443 or
+# 6443, UDP anywhere for peers and STUN; cloud metadata stays closed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}
+  labels: {{- include "kg.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "kg.gatewaySelector" . | nindent 6 }}
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "kg.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: check
+        {{- with .Values.metrics.allowFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: 9090
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: ["169.254.0.0/16"]
+        - ipBlock:
+            cidr: ::/0
+            except: ["fe80::/10", "fd00:ec2::254/128"]
+      ports:
+        - {protocol: TCP, port: 443}
+        - {protocol: TCP, port: 6443}
+        - {protocol: UDP, port: 1, endPort: 65535}
+    {{- with .Values.networkPolicy.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+---
+# The check reads the API server and the replicas' probes only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "kg.checkName" . }}
+  labels: {{- include "kg.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "kg.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: check
+  policyTypes: ["Ingress", "Egress"]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    - to:
+        - podSelector:
+            matchLabels: {{- include "kg.gatewaySelector" . | nindent 14 }}
+      ports:
+        - {protocol: TCP, port: 9090}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: ["169.254.0.0/16"]
+        - ipBlock:
+            cidr: ::/0
+            except: ["fe80::/10", "fd00:ec2::254/128"]
+      ports:
+        - {protocol: TCP, port: 443}
+        - {protocol: TCP, port: 6443}
+    {{- with .Values.networkPolicy.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}

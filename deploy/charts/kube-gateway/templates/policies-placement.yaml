@@ -1,0 +1,126 @@
+{{- if .Values.gatewayPool.enabled }}
+{{- $cluster := include "kg.clusterName" . -}}
+{{- $label := "node-restriction.kubernetes.io/meshtransit-gateway-pool" -}}
+# Pods outside the exempt namespaces never target the gateway pool: its
+# taint's key, or its label in a selector (Q97). Always denied. An update is
+# refused only for what it adds, so pods made earlier can still be changed.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $cluster }}-placement-target
+  labels: {{- include "kg.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  variables:
+    - name: targets
+      expression: >-
+        {{ include "kg.targetsPool" "object" | nindent 8 | trim }}
+    - name: targetedBefore
+      expression: >-
+        request.operation == 'UPDATE' && ({{ include "kg.targetsPool" "oldObject" | nindent 8 | trim }})
+  validations:
+    - expression: "!variables.targets || variables.targetedBefore"
+      message: pods here may not tolerate the gateway pool's taint or select the gateway pool
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $cluster }}-placement-target
+  labels: {{- include "kg.labels" . | nindent 4 }}
+spec:
+  policyName: {{ $cluster }}-placement-target
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values: {{ include "kg.placementExempt" . }}
+---
+# Broad placement: tolerating every taint, or naming a node at creation.
+# Warn and audit until placement.enforce, after the preflight (Q90).
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $cluster }}-placement-broad
+  labels: {{- include "kg.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  variables:
+    - name: toleratesAll
+      expression: >-
+        {{ include "kg.toleratesAll" "object" | nindent 8 | trim }}
+    - name: toleratedAllBefore
+      expression: >-
+        request.operation == 'UPDATE' && ({{ include "kg.toleratesAll" "oldObject" | nindent 8 | trim }})
+  validations:
+    - expression: "request.operation != 'CREATE' || !has(object.spec.nodeName) || object.spec.nodeName == ''"
+      message: pods here may not name a node (a gateway runs on some)
+    - expression: "!variables.toleratesAll || variables.toleratedAllBefore"
+      message: pods here may not tolerate every taint
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $cluster }}-placement-broad
+  labels: {{- include "kg.labels" . | nindent 4 }}
+spec:
+  policyName: {{ $cluster }}-placement-broad
+  validationActions: {{ ternary "[Deny]" "[Warn, Audit]" .Values.placement.enforce }}
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values: {{ include "kg.placementExempt" . }}
+{{- end }}
+---
+# Only the scheduler, and binders the operator trusts, bind pods to nodes
+# past their taints (Q98): warn until binding.enforce. The gateway's own
+# namespace is not exempt.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "kg.clusterName" . }}-binding
+  labels: {{- include "kg.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["bindings", "pods/binding"]
+  matchConditions:
+    - name: not-a-trusted-binder
+      expression: "!(request.userInfo.username in {{ include "kg.celList" (prepend .Values.binding.trustedBinders "system:kube-scheduler") }})"
+  validations:
+    - expression: "false"
+      message: only the scheduler binds pods to nodes here
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ include "kg.clusterName" . }}-binding
+  labels: {{- include "kg.labels" . | nindent 4 }}
+spec:
+  policyName: {{ include "kg.clusterName" . }}-binding
+  validationActions: {{ ternary "[Deny]" "[Warn, Audit]" .Values.binding.enforce }}
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values: {{ toJson .Values.nodeLevelNamespaces }}

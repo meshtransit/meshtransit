@@ -1,0 +1,349 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "cluster",
+    "control",
+    "replicas",
+    "image",
+    "envelope",
+    "join",
+    "apiServerAudiences",
+    "groups",
+    "gatewayPool",
+    "nodeLevelNamespaces",
+    "resources"
+  ],
+  "properties": {
+    "cluster": {
+      "type": "string",
+      "maxLength": 40
+    },
+    "control": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "url",
+        "fingerprint"
+      ],
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "fingerprint": {
+          "type": "string"
+        }
+      }
+    },
+    "replicas": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._/:-]*$"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^(sha256:[0-9a-f]{64})?$"
+        },
+        "tag": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{0,128}$"
+        },
+        "allowTag": {
+          "type": "boolean"
+        },
+        "pullPolicy": {
+          "enum": [
+            "IfNotPresent",
+            "Always",
+            "Never"
+          ]
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$"
+          }
+        }
+      }
+    },
+    "envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "existingSecret": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$"
+        }
+      }
+    },
+    "join": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "existingSecret": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$"
+        }
+      }
+    },
+    "apiServerAudiences": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512,
+        "pattern": "^[^\\s,\"'\\[\\]\\\\]+$"
+      },
+      "uniqueItems": true
+    },
+    "groups": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "clusterRole"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "clusterRole": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9:._-]+$"
+          },
+          "default": {
+            "type": "boolean"
+          },
+          "namespaces": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+            },
+            "uniqueItems": true
+          },
+          "privileged": {
+            "type": "boolean"
+          },
+          "allowedPrincipals": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_.:-]+$"
+            }
+          },
+          "allowImpersonation": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "secretResources": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "gatewayPool": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^([a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?)?$"
+        }
+      }
+    },
+    "nodeLevelNamespaces": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+      }
+    },
+    "placement": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enforce": {
+          "type": "boolean"
+        },
+        "acceptUnenforced": {
+          "type": "boolean"
+        }
+      }
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enforce": {
+          "type": "boolean"
+        },
+        "trustedBinders": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9:._@-]+$"
+          }
+        }
+      }
+    },
+    "preflight": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "trustedSchedulerNames": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+          }
+        },
+        "skip": {
+          "type": "boolean"
+        }
+      }
+    },
+    "controllerIdentities": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "statefulSet": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9:._-]+$"
+          }
+        },
+        "job": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9:._-]+$"
+          }
+        }
+      }
+    },
+    "gatewayNamespace": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowDebug": {
+          "type": "boolean"
+        }
+      }
+    },
+    "spread": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowSameNode": {
+          "type": "boolean"
+        }
+      }
+    },
+    "staleAfterSeconds": {
+      "type": "integer",
+      "minimum": 120,
+      "maximum": 900
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tcpSendBufferBytes": {
+          "type": "integer",
+          "minimum": 16384,
+          "maximum": 4194304
+        },
+        "tcpReceiveBufferBytes": {
+          "type": "integer",
+          "minimum": 16384,
+          "maximum": 4194304
+        }
+      }
+    },
+    "resources": {
+      "type": "object"
+    },
+    "allowBurstable": {
+      "type": "boolean"
+    },
+    "priorityClassName": {
+      "type": "string"
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowFrom": {
+          "type": "array"
+        },
+        "serviceMonitor": {
+          "type": "boolean"
+        }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "extraEgress": {
+          "type": "array"
+        }
+      }
+    },
+    "apf": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "nameOverride": {
+      "type": "string",
+      "pattern": "^([a-z0-9]([a-z0-9-]{0,50}[a-z0-9])?)?$"
+    },
+    "fullnameOverride": {
+      "type": "string",
+      "pattern": "^([a-z0-9]([a-z0-9-]{0,50}[a-z0-9])?)?$"
+    }
+  }
+}

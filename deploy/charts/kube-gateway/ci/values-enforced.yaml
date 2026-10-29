@@ -1,0 +1,9 @@
+# Enforced placement and binding, a privileged group, tag pinning refused.
+placement: {enforce: true}
+binding: {enforce: true, trustedBinders: ["system:serviceaccount:volcano-system:volcano-scheduler"]}
+preflight: {trustedSchedulerNames: [volcano]}
+groups:
+  - {name: view, clusterRole: view, default: true}
+  - {name: sre, clusterRole: cluster-admin, privileged: true, allowedPrincipals: [prs_01J0000000000000000000000], allowImpersonation: true}
+replicas: 3
+metrics: {serviceMonitor: true}
