@@ -13,40 +13,56 @@ type VersionInfo struct {
 
 // Status is the stable v1 daemon status response.
 type Status struct {
-	APIVersion         string                 `json:"api_version"`
-	Daemon             VersionInfo            `json:"daemon"`
-	State              string                 `json:"state"`
-	DataPlane          string                 `json:"data_plane"`
-	DNS                string                 `json:"dns"`
-	DNSError           string                 `json:"dns_error,omitempty"`
-	ActiveProfileID    string                 `json:"active_profile_id"`
-	ProfileCount       int                    `json:"profile_count"`
-	ControlTrust       string                 `json:"control_trust"`
-	Registration       string                 `json:"registration"`
-	ControlFingerprint string                 `json:"control_key_fingerprint,omitempty"`
-	ControlSession     string                 `json:"control_session"`
-	NetmapRevision     uint64                 `json:"netmap_revision"`
-	NetworkName        string                 `json:"network_name,omitempty"`
-	SelfAddresses      []string               `json:"self_addresses,omitempty"`
-	DeviceExpiresAt    string                 `json:"device_expires_at,omitempty"`
-	DeviceExpiry       string                 `json:"device_expiry,omitempty"`
-	PeerCount          int                    `json:"peer_count"`
-	PolicyRuleCount    int                    `json:"policy_rule_count"`
-	PeerPaths          PathStatus             `json:"paths"`
-	SubnetRoutes       *SubnetRouteStatus     `json:"subnet_routes,omitempty"`
-	SubnetRouter       *SubnetRouterStatus    `json:"subnet_router,omitempty"`
-	ExitNode           *ExitNodeStatus        `json:"exit_node,omitempty"`
-	Exit               *ExitStatus            `json:"exit,omitempty"`
-	Captive            *CaptiveStatus         `json:"captive,omitempty"`
-	PathProbes         *PathProbeStatus       `json:"path_probes,omitempty"`
-	Relay              RelayStatus            `json:"relay"`
-	NetworkChanges     NetworkChangeStatus    `json:"network_changes"`
-	RuntimeRecovery    *RuntimeRecoveryStatus `json:"runtime_recovery,omitempty"`
-	Runtime            *RuntimeStatus         `json:"runtime,omitempty"`
-	NAT                *NATStatus             `json:"nat,omitempty"`
-	PortMapping        *PortMappingStatus     `json:"port_mapping,omitempty"`
-	Cloud              *CloudStatus           `json:"cloud,omitempty"`
-	CompatibilityNote  string                 `json:"compatibility_note"`
+	APIVersion         string              `json:"api_version"`
+	Daemon             VersionInfo         `json:"daemon"`
+	State              string              `json:"state"`
+	DataPlane          string              `json:"data_plane"`
+	DNS                string              `json:"dns"`
+	DNSError           string              `json:"dns_error,omitempty"`
+	ActiveProfileID    string              `json:"active_profile_id"`
+	ProfileCount       int                 `json:"profile_count"`
+	ControlTrust       string              `json:"control_trust"`
+	Registration       string              `json:"registration"`
+	ControlFingerprint string              `json:"control_key_fingerprint,omitempty"`
+	ControlSession     string              `json:"control_session"`
+	NetmapRevision     uint64              `json:"netmap_revision"`
+	NetworkName        string              `json:"network_name,omitempty"`
+	SelfAddresses      []string            `json:"self_addresses,omitempty"`
+	DeviceExpiresAt    string              `json:"device_expires_at,omitempty"`
+	DeviceExpiry       string              `json:"device_expiry,omitempty"`
+	PeerCount          int                 `json:"peer_count"`
+	PolicyRuleCount    int                 `json:"policy_rule_count"`
+	PeerPaths          PathStatus          `json:"paths"`
+	SubnetRoutes       *SubnetRouteStatus  `json:"subnet_routes,omitempty"`
+	SubnetRouter       *SubnetRouterStatus `json:"subnet_router,omitempty"`
+	ExitNode           *ExitNodeStatus     `json:"exit_node,omitempty"`
+	Exit               *ExitStatus         `json:"exit,omitempty"`
+	// KubernetesClusters are the clusters this machine may reach (mtcp-v1
+	// §7.11); omitted when it takes none.
+	KubernetesClusters []KubernetesClusterStatus `json:"kubernetes_clusters,omitempty"`
+	Captive            *CaptiveStatus            `json:"captive,omitempty"`
+	PathProbes         *PathProbeStatus          `json:"path_probes,omitempty"`
+	Relay              RelayStatus               `json:"relay"`
+	NetworkChanges     NetworkChangeStatus       `json:"network_changes"`
+	RuntimeRecovery    *RuntimeRecoveryStatus    `json:"runtime_recovery,omitempty"`
+	Runtime            *RuntimeStatus            `json:"runtime,omitempty"`
+	NAT                *NATStatus                `json:"nat,omitempty"`
+	PortMapping        *PortMappingStatus        `json:"port_mapping,omitempty"`
+	Cloud              *CloudStatus              `json:"cloud,omitempty"`
+	CompatibilityNote  string                    `json:"compatibility_note"`
+}
+
+// KubernetesClusterStatus is one cluster this machine may reach: state is
+// pending, trusted, incomplete, invalid or unavailable; roots are SHA-256
+// fingerprints (hex).
+type KubernetesClusterStatus struct {
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	DNSName       string   `json:"dns_name,omitempty"`
+	TLSServerName string   `json:"tls_server_name,omitempty"`
+	State         string   `json:"state"`
+	Roots         []string `json:"root_fingerprints,omitempty"`
+	RootsExcluded int      `json:"roots_excluded,omitempty"`
 }
 
 // CloudStatus is the instance's public addresses from its cloud provider's

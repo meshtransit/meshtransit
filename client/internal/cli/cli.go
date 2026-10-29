@@ -567,7 +567,7 @@ func runStatus(
 	deviceExpiry := formatDeviceExpiry(status.DeviceExpiry, status.DeviceExpiresAt, time.Now())
 	_, _ = fmt.Fprintf(
 		stdout,
-		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nNetwork changes: %s\nRuntime recovery: %s\nRuntime: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\nNetwork: %s\nSelf addresses: %s\nDevice expiry: %s\nPeers: %d\nPeer paths: %s\nSubnet routes: %s\nSubnet router: %s\nExit node: %s\nExit: %s\nPath transitions: %s\nPath probes: %s\nRelay: %s\nNAT: %s\nPort mapping: %s\nCloud: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
+		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nNetwork changes: %s\nRuntime recovery: %s\nRuntime: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\nNetwork: %s\nSelf addresses: %s\nDevice expiry: %s\nPeers: %d\nPeer paths: %s\nSubnet routes: %s\nSubnet router: %s\nExit node: %s\nExit: %s\nKubernetes clusters: %s\nPath transitions: %s\nPath probes: %s\nRelay: %s\nNAT: %s\nPort mapping: %s\nCloud: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
 		status.Daemon.Version,
 		status.State,
 		status.DataPlane,
@@ -590,6 +590,7 @@ func runStatus(
 		formatSubnetRouterStatus(status.SubnetRouter),
 		formatExitNodeStatus(status.ExitNode),
 		formatExitStatus(status.Exit)+formatCaptive(status.Captive),
+		formatKubernetesClusters(status.KubernetesClusters),
 		formatPathTransitionStatus(status.PeerPaths),
 		formatPathProbeStatus(status.PathProbes),
 		formatRelayStatus(status.Relay),
@@ -602,6 +603,19 @@ func runStatus(
 	)
 
 	return 0
+}
+
+// formatKubernetesClusters names each cluster this machine may reach with
+// how far it trusts the cluster's gateways.
+func formatKubernetesClusters(clusters []localapi.KubernetesClusterStatus) string {
+	if len(clusters) == 0 {
+		return "none"
+	}
+	parts := make([]string, 0, len(clusters))
+	for _, cluster := range clusters {
+		parts = append(parts, cluster.Name+" "+cluster.State)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // formatDNSStatus is the DNS state, with the host's refusal when it failed.
