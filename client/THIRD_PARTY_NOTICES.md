@@ -23,3 +23,11 @@
 The license texts of every module in the table above are reproduced under `client/third_party/licenses/`. Product commands, API names, and documentation must not imply endorsement by any dependency's copyright holders or contributors.
 
 Before a release, regenerate the module graph, verify `go.sum`, scan reachable dependencies, and update this notice if the dependency set or license obligations change.
+
+## Code adapted from other projects
+
+| Source | Adapted into | License |
+| --- | --- | --- |
+| Kubernetes `k8s.io/apiserver@v0.35.1` `pkg/endpoints/request/requestinfo.go` and its tests; `k8s.io/apimachinery@v0.35.3` `pkg/fields/selector.go`, and the rules of its `pkg/runtime/conversion.go` (`Convert_Slice_string_To_bool`) and `pkg/api/validation/path/name.go` (Copyright The Kubernetes Authors) | `client/internal/kubereq`, used only by `meshgw`: reading a Kubernetes API request as the API server does. Each adapted file keeps its copyright header and says what changed | Apache-2.0 |
+
+The Apache-2.0 text is `LICENSES/Apache-2.0.txt` at the repository root.
