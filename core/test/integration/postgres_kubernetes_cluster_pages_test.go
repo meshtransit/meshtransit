@@ -6,13 +6,16 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"meshtransit.net/core/internal/domain/enrollment"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/kubeca"
 	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/publicid"
 )
 
@@ -100,6 +103,23 @@ func assertKubernetesClusterPages(ctx context.Context, t *testing.T, admin *pgx.
 		kubecluster.ErrForbidden) {
 		t.Fatalf("a session without the cluster permissions read a key: %v", err)
 	}
+	assertKubernetesReplicaReads(ctx, t, admin, service, owner, scope, clusterID, detail)
+	// A reader of the Network without the cluster permissions (an auditor)
+	// reads the replicas and CAs (Q139), not the keys.
+	removeAuditor := seedEnrollmentKeyRole(ctx, t, admin, custom, 1993, "auditor")
+	defer removeAuditor()
+	if _, err := service.ListJoinKeys(ctx, kubecluster.PageQuery{Session: custom, Scope: scope,
+		ClusterID: clusterID, Limit: 1}); !errors.Is(err, kubecluster.ErrForbidden) {
+		t.Fatalf("an auditor listed join keys: %v", err)
+	}
+	if _, err := service.ListReplicas(ctx, kubecluster.PageQuery{Session: custom, Scope: scope,
+		ClusterID: clusterID, Limit: 1}); err != nil {
+		t.Fatalf("a Network reader listed no replicas: %v", err)
+	}
+	if _, err := service.ListCertificateAuthorities(ctx, kubecluster.PageQuery{Session: custom, Scope: scope,
+		ClusterID: clusterID, Limit: 1}); err != nil {
+		t.Fatalf("a Network reader listed no CAs: %v", err)
+	}
 	assertKubernetesPagesStayInTheirCluster(ctx, t, service, owner, scope, clusterID, detail)
 	assertKubernetesPagesBreakTies(ctx, t, admin, service, owner, scope, clusterID, len(detail.Requests))
 }
@@ -130,6 +150,19 @@ func assertKubernetesPagesStayInTheirCluster(ctx context.Context, t *testing.T, 
 	if _, err := service.ReadReplicaRequest(ctx, owner, scope, other, detail.Requests[0].ID()); !errors.Is(err,
 		kubecluster.ErrNotFound) {
 		t.Fatalf("this cluster's request read under another: %v", err)
+	}
+	if _, err := service.ReadReplica(ctx, owner, scope, other, detail.Replicas[0].DeviceID); !errors.Is(err,
+		kubecluster.ErrNotFound) {
+		t.Fatalf("this cluster's replica read under another: %v", err)
+	}
+	cas, err := service.ListCertificateAuthorities(ctx, kubecluster.PageQuery{Session: owner, Scope: scope,
+		ClusterID: clusterID, Limit: 1})
+	if err != nil || len(cas.CAs) != 1 {
+		t.Fatalf("this cluster's CAs = %+v, %v", cas, err)
+	}
+	if _, err := service.ReadCertificateAuthority(ctx, owner, scope, other, cas.CAs[0].ID); !errors.Is(err,
+		kubecluster.ErrNotFound) {
+		t.Fatalf("this cluster's CA read under another: %v", err)
 	}
 	page, err := service.ListJoinKeys(ctx, kubecluster.PageQuery{Session: owner, Scope: scope, ClusterID: other,
 		Limit: kubecluster.MaximumPageSize})
@@ -192,5 +225,92 @@ WHERE request.kubernetes_cluster_id = (SELECT id FROM mesh.kubernetes_cluster WH
 	}
 	if len(seen) != count {
 		t.Fatalf("paged %d tied requests, want %d", len(seen), count)
+	}
+}
+
+// The replica reads (schema 248) list the cluster's live gateway Devices,
+// one by ID, and nothing for an unknown Device.
+func assertKubernetesReplicaReads(ctx context.Context, t *testing.T, admin *pgx.Conn, service *kubecluster.Service,
+	owner accountsession.Session, scope network.Scope, clusterID kubecluster.ID, detail kubecluster.Detail) {
+	t.Helper()
+	// The gateway proved a pod token: the reads show when (review d1b M1).
+	var proven time.Time
+	if err := admin.QueryRow(ctx, `INSERT INTO mesh_ops.kubernetes_gateway_token_proof
+    (device_id, workspace_id, network_id, first_proven_at)
+SELECT device.id, device.workspace_id, device.network_id, pg_catalog.date_trunc('second', now())
+FROM mesh.device AS device WHERE device.public_id = $1::UUID
+ON CONFLICT (device_id) DO UPDATE SET first_proven_at = mesh_ops.kubernetes_gateway_token_proof.first_proven_at
+RETURNING first_proven_at`, detail.Replicas[0].DeviceID.String()).Scan(&proven); err != nil {
+		t.Fatalf("record a token proof: %v", err)
+	}
+	page, err := service.ListReplicas(ctx, kubecluster.PageQuery{Session: owner, Scope: scope, ClusterID: clusterID,
+		Limit: kubecluster.MaximumPageSize})
+	if err != nil || len(page.Replicas) != len(detail.Replicas) || !page.Next.IsZero() {
+		t.Fatalf("ListReplicas() = %+v, %v", page, err)
+	}
+	for index, replica := range page.Replicas {
+		want := detail.Replicas[index]
+		if replica.DeviceID != want.DeviceID || replica.Name != want.Name || replica.Ordinal != want.Ordinal {
+			t.Fatalf("replica %d = %+v, want %+v", index, replica, want)
+		}
+		read, err := service.ReadReplica(ctx, owner, scope, clusterID, replica.DeviceID)
+		if err != nil || read.DeviceID != replica.DeviceID || !read.TokenFirstProvenAt.Equal(replica.TokenFirstProvenAt) {
+			t.Fatalf("ReadReplica() = %+v, %v", read, err)
+		}
+		if index == 0 && !replica.TokenFirstProvenAt.Equal(proven) {
+			t.Fatalf("the replica's first token proof = %v, want %v", replica.TokenFirstProvenAt, proven)
+		}
+	}
+	if _, err := service.ReadReplica(ctx, owner, scope, clusterID, node.ID(mustPublicID(t))); !errors.Is(err,
+		kubecluster.ErrNotFound) {
+		t.Fatalf("an unknown replica: %v", err)
+	}
+}
+
+// The CA reads (schema 248) page every CA of the cluster once, newest
+// first, and tell a CA an operator retired, not who did.
+func assertKubernetesCAReads(ctx context.Context, t *testing.T, service *kubecluster.Service,
+	owner accountsession.Session, scope network.Scope, clusterID kubecluster.ID, retired publicid.ID,
+	operator kubeca.Operator) {
+	t.Helper()
+	query := kubecluster.PageQuery{Session: owner, Scope: scope, ClusterID: clusterID, Limit: 1}
+	seen := map[publicid.ID]kubecluster.CertificateAuthority{}
+	for range 64 {
+		page, err := service.ListCertificateAuthorities(ctx, query)
+		if err != nil || len(page.CAs) > 1 {
+			t.Fatalf("ListCertificateAuthorities() = %+v, %v", page, err)
+		}
+		for _, ca := range page.CAs {
+			if _, twice := seen[ca.ID]; twice || len(ca.Certificate) == 0 || len(ca.Fingerprint) != 64 {
+				t.Fatalf("CA %+v twice or without its certificate", ca)
+			}
+			seen[ca.ID] = ca
+		}
+		if page.Next.IsZero() {
+			break
+		}
+		query.After = page.Next
+	}
+	var roots, intermediates int
+	for _, ca := range seen {
+		switch ca.Kind {
+		case kubecluster.CARoot:
+			roots++
+		case kubecluster.CAIntermediate:
+			intermediates++
+		}
+	}
+	if roots == 0 || intermediates == 0 {
+		t.Fatalf("the CA reads hold %d roots and %d intermediates", roots, intermediates)
+	}
+	read, err := service.ReadCertificateAuthority(ctx, owner, scope, clusterID, retired)
+	// An operator retired it: the read says so, never who (review d1b H1).
+	if err != nil || read.State != "retired" || !read.ChangedByOperator ||
+		read.RetiredAt.IsZero() || read.Kind != kubecluster.CAIntermediate || read.IssuerID == (publicid.ID{}) {
+		t.Fatalf("ReadCertificateAuthority(retired) = %+v, %v", read, err)
+	}
+	if _, err := service.ReadCertificateAuthority(ctx, owner, scope, clusterID, mustPublicID(t)); !errors.Is(err,
+		kubecluster.ErrNotFound) {
+		t.Fatalf("an unknown CA: %v", err)
 	}
 }

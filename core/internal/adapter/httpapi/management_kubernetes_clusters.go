@@ -13,6 +13,7 @@ import (
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/domain/workspace"
 )
@@ -34,6 +35,11 @@ const (
 	// K1.1b: an administrator reads and replaces the signing trust.
 	kubernetesSigningTrustReadOperation    = "kubernetes_signing_trust_read"
 	kubernetesSigningTrustReplaceOperation = "kubernetes_signing_trust_replace"
+	// K1d d1b: replicas and certificate authorities for any reader.
+	kubernetesReplicaListOperation = "kubernetes_replica_list"
+	kubernetesReplicaReadOperation = "kubernetes_replica_read"
+	kubernetesCAListOperation      = "kubernetes_ca_list"
+	kubernetesCAReadOperation      = "kubernetes_ca_read"
 )
 
 // KubernetesClusterManager manages a Network's Kubernetes clusters, their
@@ -55,6 +61,12 @@ type KubernetesClusterManager interface {
 	ListReplicaRequests(context.Context, kubecluster.PageQuery) (kubecluster.RequestPage, error)
 	ReadReplicaRequest(context.Context, accountsession.Session, network.Scope, kubecluster.ID,
 		kubecluster.RequestID) (kubecluster.ReplicaRequestView, error)
+	ListReplicas(context.Context, kubecluster.PageQuery) (kubecluster.ReplicaPage, error)
+	ReadReplica(context.Context, accountsession.Session, network.Scope, kubecluster.ID,
+		node.ID) (kubecluster.Replica, error)
+	ListCertificateAuthorities(context.Context, kubecluster.PageQuery) (kubecluster.CAPage, error)
+	ReadCertificateAuthority(context.Context, accountsession.Session, network.Scope, kubecluster.ID,
+		publicid.ID) (kubecluster.CertificateAuthority, error)
 }
 
 type kubernetesClusterPath struct {
@@ -62,7 +74,9 @@ type kubernetesClusterPath struct {
 	clusterID kubecluster.ID
 	keyID     enrollment.CredentialID
 	requestID kubecluster.RequestID
-	// page is the list's page; only the key and request lists take one.
+	deviceID  node.ID
+	caID      publicid.ID
+	// page is the list's page; only the lists take one.
 	page    kubernetesPage
 	methods restMethods
 	// operation is what the request's method does at the path; empty when
@@ -82,9 +96,10 @@ type kubernetesClusterPath struct {
 //	GET|PUT     kubernetes-clusters/{c}/signing-trust                     trust read, replace (K1.1b)
 //	GET         kubernetes-clusters/{c}/replica-requests/{r}              read
 //	POST        kubernetes-clusters/{c}/replica-requests/{r}/actions/approve|reject
+//	GET         kubernetes-clusters/{c}/replicas[/{device}]                list, read (K1d d1b)
+//	GET         kubernetes-clusters/{c}/certificate-authorities[/{ca}]     list, read (K1d d1b)
 //
-// Only GET of the key and request lists takes a query: page_size and
-// page_token (K1d d1a).
+// Only GET of a list takes a query: page_size and page_token (K1d).
 func parseKubernetesClusterPath(request *http.Request) (kubernetesClusterPath, bool) {
 	if request == nil || request.URL == nil || request.URL.RawPath != "" {
 		return kubernetesClusterPath{}, false
@@ -120,7 +135,7 @@ func parseKubernetesClusterPath(request *http.Request) (kubernetesClusterPath, b
 		path.operation = operations[request.Method]
 	}
 	switch {
-	case path.operation == kubernetesJoinKeyListOperation || path.operation == kubernetesRequestListOperation:
+	case isKubernetesPagedList(path.operation):
 		page, ok := parseKubernetesPage(request.URL.RawQuery, path.scope, path.clusterID, path.operation)
 		if !ok {
 			return kubernetesClusterPath{}, false
@@ -157,6 +172,26 @@ func (path *kubernetesClusterPath) route(rest []string) (map[string]string, bool
 	case len(rest) == 2 && rest[1] == "replica-requests":
 		path.methods = restMethods{http.MethodGet}
 		return map[string]string{http.MethodGet: kubernetesRequestListOperation}, true
+	case len(rest) == 2 && rest[1] == "replicas":
+		path.methods = restMethods{http.MethodGet}
+		return map[string]string{http.MethodGet: kubernetesReplicaListOperation}, true
+	case len(rest) == 2 && rest[1] == "certificate-authorities":
+		path.methods = restMethods{http.MethodGet}
+		return map[string]string{http.MethodGet: kubernetesCAListOperation}, true
+	case len(rest) == 3 && rest[1] == "replicas":
+		device, ok := child(2)
+		if !ok {
+			return nil, false
+		}
+		path.deviceID, path.methods = node.ID(device), restMethods{http.MethodGet}
+		return map[string]string{http.MethodGet: kubernetesReplicaReadOperation}, true
+	case len(rest) == 3 && rest[1] == "certificate-authorities":
+		ca, ok := child(2)
+		if !ok {
+			return nil, false
+		}
+		path.caID, path.methods = ca, restMethods{http.MethodGet}
+		return map[string]string{http.MethodGet: kubernetesCAReadOperation}, true
 	case len(rest) == 2 && rest[1] == "signing":
 		path.methods = restMethods{http.MethodGet}
 		return map[string]string{http.MethodGet: kubernetesClusterSigningOperation}, true
@@ -253,6 +288,9 @@ func (handler *ManagementHandler) handleKubernetesClusters(ctx context.Context, 
 	case kubernetesJoinKeyListOperation, kubernetesJoinKeyReadOperation, kubernetesRequestListOperation,
 		kubernetesRequestReadOperation:
 		return handler.readKubernetesClusterRows(ctx, response, correlationID, path, session, fail)
+	case kubernetesReplicaListOperation, kubernetesReplicaReadOperation, kubernetesCAListOperation,
+		kubernetesCAReadOperation:
+		return handler.readKubernetesReplicasAndCAs(ctx, response, correlationID, path, session, fail)
 	case kubernetesClusterDeleteOperation:
 		expectedVersion, precondition := parseIfMatch(request.Header.Values("If-Match"))
 		if precondition != nil {

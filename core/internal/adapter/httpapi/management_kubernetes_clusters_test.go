@@ -94,6 +94,67 @@ func (stub *kubernetesClusterStub) ReadReplicaRequest(_ context.Context, _ accou
 	return kubernetesTestRequestValue(&testing.T{}, kubecluster.RequestPending), nil
 }
 
+func (stub *kubernetesClusterStub) ListReplicas(_ context.Context,
+	query kubecluster.PageQuery) (kubecluster.ReplicaPage, error) {
+	stub.calls = append(stub.calls, "list-replicas")
+	stub.pages = append(stub.pages, query)
+	if stub.failure != nil {
+		return kubecluster.ReplicaPage{}, stub.failure
+	}
+	return kubecluster.ReplicaPage{Replicas: []kubecluster.Replica{kubernetesTestReplica()}, Next: stub.next}, nil
+}
+
+func (stub *kubernetesClusterStub) ReadReplica(_ context.Context, _ accountsession.Session, _ network.Scope,
+	_ kubecluster.ID, device node.ID) (kubecluster.Replica, error) {
+	stub.calls = append(stub.calls, "read-replica")
+	if stub.failure != nil {
+		return kubecluster.Replica{}, stub.failure
+	}
+	if device != kubernetesTestDevice() {
+		return kubecluster.Replica{}, kubecluster.ErrNotFound
+	}
+	return kubernetesTestReplica(), nil
+}
+
+func (stub *kubernetesClusterStub) ListCertificateAuthorities(_ context.Context,
+	query kubecluster.PageQuery) (kubecluster.CAPage, error) {
+	stub.calls = append(stub.calls, "list-cas")
+	stub.pages = append(stub.pages, query)
+	if stub.failure != nil {
+		return kubecluster.CAPage{}, stub.failure
+	}
+	return kubecluster.CAPage{CAs: []kubecluster.CertificateAuthority{kubernetesTestCA()}, Next: stub.next}, nil
+}
+
+func (stub *kubernetesClusterStub) ReadCertificateAuthority(_ context.Context, _ accountsession.Session,
+	_ network.Scope, _ kubecluster.ID, ca publicid.ID) (kubecluster.CertificateAuthority, error) {
+	stub.calls = append(stub.calls, "read-ca")
+	if stub.failure != nil {
+		return kubecluster.CertificateAuthority{}, stub.failure
+	}
+	if ca != kubernetesTestCA().ID {
+		return kubecluster.CertificateAuthority{}, kubecluster.ErrNotFound
+	}
+	return kubernetesTestCA(), nil
+}
+
+func kubernetesTestReplica() kubecluster.Replica {
+	created := time.Date(2026, time.October, 26, 8, 0, 0, 0, time.UTC)
+	return kubecluster.Replica{DeviceID: kubernetesTestDevice(), Name: "prod-0", Ordinal: 0, State: "active",
+		CreatedAt: created, TokenFirstProvenAt: created.Add(time.Minute)}
+}
+
+const kubernetesTestCAID = "01890f00-0000-7000-8000-000000000b07"
+
+func kubernetesTestCA() kubecluster.CertificateAuthority {
+	id, _ := publicid.Parse(kubernetesTestCAID)
+	created := time.Date(2026, time.October, 26, 1, 18, 0, 0, time.UTC)
+	return kubecluster.CertificateAuthority{ID: id, Kind: kubecluster.CARoot, State: "active", Reason: "admin",
+		StateReason: "admin", Fingerprint: strings.Repeat("9a", 32), Certificate: []byte("der bytes of a root"),
+		ClusterDNSName: "kinda-k1.kube.example.mesh.internal", NotBefore: created,
+		NotAfter: created.AddDate(10, 0, 0), CreatedAt: created, ActivatedAt: created, Version: 2}
+}
+
 // rowsFailure is what Core answers a reader of keys and requests: a
 // reader of the Network alone is forbidden.
 func (stub *kubernetesClusterStub) rowsFailure() error {
@@ -338,7 +399,12 @@ func TestParseKubernetesClusterPath(t *testing.T) {
 		{http.MethodPost, kubernetesClustersTestPath(cluster + "/replica-requests/" + kubernetesTestRequest +
 			"/actions/delete"), false, ""},
 		{http.MethodGet, kubernetesClustersTestPath("/" + strings.ToUpper(kubernetesTestCluster)), false, ""},
-		{http.MethodGet, kubernetesClustersTestPath(cluster + "/replicas"), false, ""},
+		{http.MethodGet, kubernetesClustersTestPath(cluster + "/replicas"), true, kubernetesReplicaListOperation},
+		{http.MethodGet, kubernetesClustersTestPath(cluster + "/certificate-authorities"), true,
+			kubernetesCAListOperation},
+		{http.MethodGet, kubernetesClustersTestPath(cluster + "/replicas/x"), false, ""},
+		{http.MethodGet, kubernetesClustersTestPath(cluster + "/certificate-authorities/" + kubernetesTestCAID +
+			"/actions/retire"), false, ""},
 	} {
 		request := httptest.NewRequestWithContext(t.Context(), test.method, test.path, nil)
 		path, ok := parseKubernetesClusterPath(request)
@@ -410,6 +476,24 @@ func TestKubernetesClusterHTTPBoundary(t *testing.T) {
 			200, "revoke", `"state":"revoked"`, ""},
 		{"list requests", http.MethodGet, cluster + "/replica-requests", "", "", nil, 200, "list-requests",
 			`"reported_by_pod":{"pod":"meshgw-0"}`, ""},
+		{"list replicas", http.MethodGet, cluster + "/replicas?page_size=10", "", "", nil, 200, "list-replicas",
+			`"token_first_proven_at":"2026-10-26T08:01:00Z"`, ""},
+		{"read a replica", http.MethodGet, cluster + "/replicas/" + kubernetesTestDevice().String(), "", "", nil, 200,
+			"read-replica", `"name":"prod-0"`, ""},
+		{"list CAs", http.MethodGet, cluster + "/certificate-authorities", "", "", nil, 200, "list-cas",
+			`"fingerprint_sha256":"` + strings.Repeat("9a", 32) + `"`, "changed_by\""},
+		{"read a CA", http.MethodGet, cluster + "/certificate-authorities/" + kubernetesTestCAID, "", "", nil, 200,
+			"read-ca", `"certificate_pem":"-----BEGIN CERTIFICATE-----\n`, ""},
+		{"read an unknown CA", http.MethodGet, cluster + "/certificate-authorities/" + kubernetesTestKey, "", "",
+			nil, 404, "read-ca", "kubernetes_cluster_not_found", ""},
+		{"a CA page over 50", http.MethodGet, cluster + "/certificate-authorities?page_size=51", "", "", nil, 404,
+			"", "", ""},
+		{"a replica page of 100", http.MethodGet, cluster + "/replicas?page_size=100", "", "", nil, 200,
+			"list-replicas", `"replicas":[`, ""},
+		{"a CA takes no query", http.MethodGet, cluster + "/certificate-authorities/" + kubernetesTestCAID +
+			"?page_size=1", "", "", nil, 404, "", "", ""},
+		{"no POST on replicas", http.MethodPost, cluster + "/replicas", `{}`, "", nil, 405, "", "method_not_allowed",
+			""},
 		{"read a request", http.MethodGet, request, "", "", nil, 200, "read-request",
 			`"machine_key_fingerprint":"` + strings.Repeat("a", 64) + `"`, ""},
 		{"approve", http.MethodPost, request + "/actions/approve", `{"code":"4KH7I-REC2B"}`, "", nil, 200,

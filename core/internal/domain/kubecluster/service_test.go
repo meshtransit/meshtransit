@@ -13,6 +13,7 @@ import (
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/domain/workspace"
 	"meshtransit.net/shared/kubejoin"
@@ -75,6 +76,28 @@ func (store *recordingStore) ListReplicaRequests(_ context.Context,
 func (*recordingStore) ReadReplicaRequest(context.Context, accountsession.Session, network.Scope, kubecluster.ID,
 	kubecluster.RequestID) (kubecluster.ReplicaRequestView, error) {
 	return kubecluster.ReplicaRequestView{}, nil
+}
+
+func (store *recordingStore) ListReplicas(_ context.Context,
+	query kubecluster.PageQuery) (kubecluster.ReplicaPage, error) {
+	store.pages = append(store.pages, query)
+	return kubecluster.ReplicaPage{}, nil
+}
+
+func (*recordingStore) ReadReplica(context.Context, accountsession.Session, network.Scope, kubecluster.ID,
+	node.ID) (kubecluster.Replica, error) {
+	return kubecluster.Replica{}, nil
+}
+
+func (store *recordingStore) ListCertificateAuthorities(_ context.Context,
+	query kubecluster.PageQuery) (kubecluster.CAPage, error) {
+	store.pages = append(store.pages, query)
+	return kubecluster.CAPage{}, nil
+}
+
+func (*recordingStore) ReadCertificateAuthority(context.Context, accountsession.Session, network.Scope,
+	kubecluster.ID, publicid.ID) (kubecluster.CertificateAuthority, error) {
+	return kubecluster.CertificateAuthority{}, nil
 }
 
 func (store *recordingStore) ReplaceSigningTrust(_ context.Context,

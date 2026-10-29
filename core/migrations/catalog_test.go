@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 247 {
-		t.Fatalf("len(Catalog()) = %d, want 247", len(catalog))
+	if len(catalog) != 248 {
+		t.Fatalf("len(Catalog()) = %d, want 248", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 247 {
-		t.Fatalf("LatestVersion() = %d, want 247", LatestVersion())
+	if LatestVersion() != 248 {
+		t.Fatalf("LatestVersion() = %d, want 248", LatestVersion())
 	}
 }
 
@@ -7373,5 +7373,39 @@ func TestMigration247KubernetesClusterPages(t *testing.T) {
 	// The scope helper is internal: only the functions above call it.
 	if strings.Contains(migration.SQL, "GRANT EXECUTE ON FUNCTION mesh_ops.kubernetes_cluster_manager_read_internal_v1") {
 		t.Error("migration 247 grants the internal scope helper")
+	}
+}
+
+func TestMigration248KubernetesClusterReplicaCAReads(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 248 || catalog[247].Version != 248 {
+		t.Fatalf("the catalog has no migration 248 (%d migrations)", len(catalog))
+	}
+	migration := catalog[247]
+	for _, want := range []string{
+		"ON mesh.kubernetes_cluster_ca (kubernetes_cluster_id, created_at DESC, public_id DESC);",
+		"(device.created_at, device.public_id) < (p_after_at, p_after_id)",
+		"(ca.created_at, ca.public_id) < (p_after_at, p_after_id)",
+		"'network.read');",
+		"'token_first_proven_at', (",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.list_kubernetes_cluster_cas_v1(",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_kubernetes_cluster_replica_v1(",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 248 lacks %q", want)
+		}
+	}
+	// A CA's private key never leaves the worker; the helpers stay internal.
+	for _, never := range []string{
+		"private_key_ciphertext",
+		"'changed_by', p_ca",
+		"'change_ref'",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.kubernetes_cluster_reader_internal_v1",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.kubernetes_cluster_ca_document_internal_v1",
+	} {
+		if strings.Contains(migration.SQL, never) {
+			t.Errorf("migration 248 has %q", never)
+		}
 	}
 }

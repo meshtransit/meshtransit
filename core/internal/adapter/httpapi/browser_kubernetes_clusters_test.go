@@ -22,6 +22,10 @@ func TestBrowserManagementAdmitsKubernetesClusterRoutes(t *testing.T) {
 	for _, path := range []string{
 		kubernetesClustersTestPath(cluster + "/join-keys?page_size=10"),
 		kubernetesClustersTestPath(cluster + "/replica-requests?page_size=100"),
+		kubernetesClustersTestPath(cluster + "/replicas?page_size=10"),
+		kubernetesClustersTestPath(cluster + "/certificate-authorities?page_size=10"),
+		kubernetesClustersTestPath(cluster + "/replicas" + child),
+		kubernetesClustersTestPath(cluster + "/certificate-authorities" + child),
 		kubernetesClustersTestPath(cluster + "/join-keys?page_size=10&page_token=" + kubernetesBrowserPageToken(t)),
 	} {
 		if !browser.validRequest(browserManagementReadRequest(t, path)) {

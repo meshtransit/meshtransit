@@ -144,6 +144,12 @@ type Store interface {
 	ListReplicaRequests(ctx context.Context, query PageQuery) (RequestPage, error)
 	ReadReplicaRequest(ctx context.Context, session accountsession.Session, scope network.Scope, clusterID ID,
 		requestID RequestID) (ReplicaRequestView, error)
+	ListReplicas(ctx context.Context, query PageQuery) (ReplicaPage, error)
+	ReadReplica(ctx context.Context, session accountsession.Session, scope network.Scope, clusterID ID,
+		deviceID node.ID) (Replica, error)
+	ListCertificateAuthorities(ctx context.Context, query PageQuery) (CAPage, error)
+	ReadCertificateAuthority(ctx context.Context, session accountsession.Session, scope network.Scope,
+		clusterID ID, caID publicid.ID) (CertificateAuthority, error)
 }
 
 // Clock reads the host's time; it only refuses sessions that already ended.

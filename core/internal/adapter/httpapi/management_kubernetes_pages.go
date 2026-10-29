@@ -67,10 +67,13 @@ func parseKubernetesPage(raw string, scope network.Scope, clusterID kubecluster.
 			return kubernetesPage{}, false
 		}
 	}
+	maximum := kubecluster.MaximumPageSize
+	if list == kubernetesCAListOperation {
+		maximum = kubecluster.MaximumCAPageSize
+	}
 	if value := values.Get("page_size"); value != "" {
 		page.limit, err = strconv.Atoi(value)
-		if err != nil || page.limit < 1 || page.limit > kubecluster.MaximumPageSize ||
-			strconv.Itoa(page.limit) != value {
+		if err != nil || page.limit < 1 || page.limit > maximum || strconv.Itoa(page.limit) != value {
 			return kubernetesPage{}, false
 		}
 	}

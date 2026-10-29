@@ -7,6 +7,7 @@ import (
 	"meshtransit.net/core/internal/domain/enrollment"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/publicid"
 )
 
@@ -100,4 +101,98 @@ func (service *Service) ReadReplicaRequest(ctx context.Context, session accounts
 		return ReplicaRequestView{}, ErrInvalid
 	}
 	return service.store.ReadReplicaRequest(ctx, session, scope, clusterID, requestID)
+}
+
+// ReplicaPage is a page of a cluster's replicas; Next is zero on the last
+// page.
+type ReplicaPage struct {
+	Replicas []Replica
+	Next     PageCursor
+}
+
+// CAKind is a CA's tier.
+type CAKind string
+
+const (
+	// CARoot is a cluster's root: clients trust it.
+	CARoot CAKind = "root"
+	// CAIntermediate signs the gateways' certificates.
+	CAIntermediate CAKind = "intermediate"
+)
+
+// CertificateAuthority is one of a cluster's CAs as anyone in the Network
+// may see it: never its private key (K1d d1b).
+type CertificateAuthority struct {
+	ID             publicid.ID
+	Kind           CAKind
+	IssuerID       publicid.ID
+	State          string
+	Reason         string
+	StateReason    string
+	Fingerprint    string
+	Certificate    []byte
+	ClusterDNSName string
+	NotBefore      time.Time
+	NotAfter       time.Time
+	CreatedAt      time.Time
+	ActivatedAt    time.Time
+	RetiringAt     time.Time
+	RetiredAt      time.Time
+	// ChangedByOperator reports a change an operator made by command; who
+	// and why stay in the audit trail.
+	ChangedByOperator bool
+	Version           int64
+}
+
+// CAPage is a page of a cluster's CAs; Next is zero on the last page.
+type CAPage struct {
+	CAs  []CertificateAuthority
+	Next PageCursor
+}
+
+// ListReplicas returns a page of a cluster's replicas (network.read).
+func (service *Service) ListReplicas(ctx context.Context, query PageQuery) (ReplicaPage, error) {
+	if err := service.admitPage(ctx, query); err != nil {
+		return ReplicaPage{}, err
+	}
+	return service.store.ListReplicas(ctx, query)
+}
+
+// ReadReplica returns one of a cluster's replicas.
+func (service *Service) ReadReplica(ctx context.Context, session accountsession.Session, scope network.Scope,
+	clusterID ID, deviceID node.ID) (Replica, error) {
+	if err := service.admit(ctx, session, scope); err != nil {
+		return Replica{}, err
+	}
+	if !clusterID.IsValid() || !deviceID.IsValid() {
+		return Replica{}, ErrInvalid
+	}
+	return service.store.ReadReplica(ctx, session, scope, clusterID, deviceID)
+}
+
+// MaximumCAPageSize bounds a page of CAs: a certificate takes up to 8 KiB.
+const MaximumCAPageSize = 50
+
+// ListCertificateAuthorities returns a page of a cluster's CAs
+// (network.read).
+func (service *Service) ListCertificateAuthorities(ctx context.Context, query PageQuery) (CAPage, error) {
+	if err := service.admitPage(ctx, query); err != nil {
+		return CAPage{}, err
+	}
+	if query.Limit > MaximumCAPageSize {
+		return CAPage{}, ErrInvalid
+	}
+	return service.store.ListCertificateAuthorities(ctx, query)
+}
+
+// ReadCertificateAuthority returns one of a cluster's CAs.
+func (service *Service) ReadCertificateAuthority(ctx context.Context, session accountsession.Session,
+	scope network.Scope, clusterID ID, caID publicid.ID) (CertificateAuthority, error) {
+	if err := service.admit(ctx, session, scope); err != nil {
+		return CertificateAuthority{}, err
+	}
+	if !clusterID.IsValid() || !caID.IsValid() {
+		return CertificateAuthority{}, ErrInvalid
+	}
+	return service.store.ReadCertificateAuthority(ctx, session, scope, clusterID, caID)
 }

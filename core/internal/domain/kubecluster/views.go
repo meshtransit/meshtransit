@@ -260,6 +260,10 @@ type Replica struct {
 	Ordinal   int
 	State     string
 	CreatedAt time.Time
+	// TokenFirstProvenAt is when the replica first proved a pod token
+	// (the K1c-T ratchet), zero when it never did; set by the replica
+	// reads of K1d only.
+	TokenFirstProvenAt time.Time
 }
 
 // Detail is one cluster with its replicas and, for administrators who may

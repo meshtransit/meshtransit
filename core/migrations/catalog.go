@@ -625,6 +625,8 @@ func Catalog() []Migration {
 			kubernetesGatewaySessionTokensSQL),
 		newMigration(247, "A cluster's join keys and replica requests read a page at a time",
 			kubernetesClusterPagesSQL),
+		newMigration(248, "A cluster's replicas and certificate authorities read a page at a time",
+			kubernetesClusterReplicaCAReadsSQL),
 	}
 }
 
@@ -1145,3 +1147,6 @@ var kubernetesGatewaySessionTokensSQL string
 
 //go:embed 000247_kubernetes_cluster_pages.up.sql
 var kubernetesClusterPagesSQL string
+
+//go:embed 000248_kubernetes_cluster_replica_ca_reads.up.sql
+var kubernetesClusterReplicaCAReadsSQL string
