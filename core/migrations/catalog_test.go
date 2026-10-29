@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 243 {
-		t.Fatalf("len(Catalog()) = %d, want 243", len(catalog))
+	if len(catalog) != 244 {
+		t.Fatalf("len(Catalog()) = %d, want 244", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 243 {
-		t.Fatalf("LatestVersion() = %d, want 243", LatestVersion())
+	if LatestVersion() != 244 {
+		t.Fatalf("LatestVersion() = %d, want 244", LatestVersion())
 	}
 }
 
@@ -7245,6 +7245,37 @@ func TestMigration243KubernetesGatewayCertificateFleet(t *testing.T) {
 	for _, forbidden := range []string{"issued.certificate", "public_key", "token", "device.name", "hostname"} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("migration 243 reads %q", forbidden)
+		}
+	}
+}
+
+func TestMigration244KubernetesClientCAs(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 244 || catalog[243].Version != 244 {
+		t.Fatalf("the catalog has no migration 244 (%d migrations)", len(catalog))
+	}
+	migration := catalog[243]
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.load_map_network_kubernetes_cas_v2(p_limit INTEGER)",
+		"CREATE FUNCTION mesh_ops.load_map_kubernetes_ca_roots_v1(p_fingerprints BYTEA[])",
+		"ca.state IN ('next', 'active', 'retiring')",
+		"WHERE ca.workspace_id = v_workspace_id AND ca.network_id = v_network_id\n               AND ca.kubernetes_cluster_id = cluster.id",
+		"pg_catalog.cardinality(p_fingerprints) NOT BETWEEN 1 AND 1024",
+		"ca.kind = 'root' AND ca.state <> 'retired'",
+		"ca.workspace_id = v_workspace_id AND ca.network_id = v_network_id",
+		"WHERE guard.restore_suspected",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_map_network_kubernetes_cas_v2(INTEGER) TO mesh_runtime",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_map_kubernetes_ca_roots_v1(BYTEA[]) TO mesh_runtime",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 244 lacks %q", want)
+		}
+	}
+	// Public CA material only: never a private key, its wrapping or a data key.
+	for _, forbidden := range []string{"private_key", "wrapped", "data_key", "nonce"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("migration 244 reads %q", forbidden)
 		}
 	}
 }

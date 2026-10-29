@@ -57,6 +57,9 @@ type cachedInventory struct {
 	// (schema 242), when kubernetesCAsRead.
 	kubernetesCAs     map[kubecluster.Name]appmapsession.KubernetesCA
 	kubernetesCAsRead bool
+	// kubernetesTrust is what a client trusts the Network's clusters by
+	// (schema 244, K1a4d); unread unless read.
+	kubernetesTrust appmapsession.KubernetesTrust
 }
 
 // sharesAbsent reports whether no share reader can return anything for the

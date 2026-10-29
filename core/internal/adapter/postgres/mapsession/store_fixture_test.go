@@ -2,6 +2,7 @@ package mapsession
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
@@ -97,7 +98,17 @@ type fakeTransaction struct {
 	// rule groups reader.
 	kubernetesSources [][]any
 	// kubernetesCAs is what schema 242's reader returns; nil: not granted.
-	kubernetesCAs        *string
+	kubernetesCAs *string
+	// kubernetesTrust is what schema 244's v2 reader returns; nil: not
+	// granted. kubernetesTrustErr fails it; kubernetesRoots answers the
+	// DER reader for its fingerprints, and kubernetesRootsErr fails it.
+	kubernetesTrust    *string
+	kubernetesTrustErr error
+	kubernetesRoots    map[[32]byte][]byte
+	kubernetesRootsErr error
+	rootReads          int
+	// execErrs fails the statements it names, before execErr.
+	execErrs             map[string]error
 	kubernetesRuleGroups [][]any
 }
 
@@ -140,6 +151,9 @@ func (transaction *fakeTransaction) Exec(
 	arguments ...any,
 ) error {
 	transaction.record(query, arguments)
+	if err, ok := transaction.execErrs[query]; ok {
+		return err
+	}
 	return transaction.execErr
 }
 
@@ -206,6 +220,19 @@ func (transaction *fakeTransaction) Query(
 		return &grantRows{granted: transaction.kubernetesCAs != nil}, nil
 	case loadKubernetesCAsSQL:
 		return &genericRows{rows: [][]any{{*transaction.kubernetesCAs}}}, nil
+	case kubernetesTrustGrantedSQL:
+		return &grantRows{granted: transaction.kubernetesTrust != nil}, nil
+	case loadKubernetesCAsV2SQL:
+		if transaction.kubernetesTrustErr != nil {
+			return nil, transaction.kubernetesTrustErr
+		}
+		return &genericRows{rows: [][]any{{*transaction.kubernetesTrust}}}, nil
+	case loadKubernetesRootsSQL:
+		transaction.rootReads++
+		if transaction.kubernetesRootsErr != nil {
+			return nil, transaction.kubernetesRootsErr
+		}
+		return &genericRows{rows: [][]any{{transaction.rootAnswer(arguments[0])}}}, nil
 	case loadKubernetesSourcesSQL:
 		return &genericRows{rows: transaction.kubernetesSources}, nil
 	case loadKubernetesRuleGroupsSQL:
@@ -793,4 +820,16 @@ func (networkHeaderRow) Scan(destinations ...any) error {
 	*destinations[2].(**string) = textPointer(testWorkspaceCode)
 	*destinations[3].(**string) = textPointer(testNetworkCode)
 	return nil
+}
+
+// rootAnswer answers schema 244's DER reader for the fingerprints asked.
+func (transaction *fakeTransaction) rootAnswer(argument any) string {
+	fingerprints, _ := argument.([][]byte)
+	var roots []string
+	for _, fingerprint := range fingerprints {
+		if der, ok := transaction.kubernetesRoots[[32]byte(fingerprint)]; ok {
+			roots = append(roots, fmt.Sprintf("%q", hex.EncodeToString(der)))
+		}
+	}
+	return `{"withheld":false,"roots":[` + strings.Join(roots, ",") + `]}`
 }

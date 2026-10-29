@@ -22,6 +22,10 @@ const (
 	// OperationReadNetworkRevision reads one Network's revision for an exit
 	// node's stream.
 	OperationReadNetworkRevision
+	// OperationReadKubernetesTrust reads, with a Network's inventory, its
+	// clusters' CAs and roots (schema 244); its failures fall back to
+	// schema 242 and are reported here only.
+	OperationReadKubernetesTrust
 )
 
 // Observer records bounded operation latency and outcome without identity labels.

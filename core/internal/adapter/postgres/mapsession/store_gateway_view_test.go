@@ -157,7 +157,10 @@ func TestGatewayMapNamesItsClusterCAs(t *testing.T) {
 			`","signing":"` + signing + `"}]}`), known: true, root: true, signing: true},
 		"no intermediate": {cas: pointer(`{"withheld":false,"clusters":[{"name":"kinda-k1","root":"` + root +
 			`","signing":null}]}`), known: true, root: true},
-		"no CA yet":         {cas: pointer(`{"withheld":false,"clusters":[]}`), known: true},
+		"no CA yet": {cas: pointer(`{"withheld":false,"clusters":[{"name":"kinda-k1","root":null,` +
+			`"signing":null}]}`), known: true},
+		// Every active cluster is listed; one missing was left out.
+		"not listed":        {cas: pointer(`{"withheld":false,"clusters":[]}`)},
 		"restore suspected": {cas: pointer(`{"withheld":true,"clusters":[]}`)},
 		"reader missing":    {},
 		"malformed":         {cas: pointer(`{"withheld":false,"clusters":[{"name":"kinda-k1","root":"ab"}]}`)},

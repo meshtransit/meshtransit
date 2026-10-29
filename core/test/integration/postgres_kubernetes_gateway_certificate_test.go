@@ -237,11 +237,12 @@ WHERE purpose = 'cert' AND jti = 'pod-token-1'`).Scan(&uses); err != nil || uses
 	assertCertificateLimits(ctx, t, admin, runtime, worker, keys, deviceID, certificate)
 	assertCertificateQueue(ctx, t, admin, runtime, runtimePool, store, worker, fixture, keys, certificate)
 	assertMapKubernetesCAs(ctx, t, admin, runtime, fixture, root, intermediate)
+	assertMapKubernetesClientCAs(ctx, t, admin, runtime, fixture, root, intermediate)
 	assertCertificateLeases(ctx, t, admin, runtime, store, fixture, keys)
 	assertCertificatePrivileges(ctx, t, admin)
 	assertCertificatePruning(ctx, t, admin, store, fixture, first.publicID)
 	assertCertificateCAChange(ctx, t, admin, runtime, store, worker, fixture, keys, intermediate)
-	assertCertificateRestoreGuard(ctx, t, runtime, store, fixture, keys)
+	assertCertificateRestoreGuard(ctx, t, admin, runtime, store, fixture, keys, root)
 }
 
 // activeClusterCAs returns the fixture cluster's active root and
@@ -671,8 +672,9 @@ func signedIssue(ctx context.Context, t *testing.T, claim signing.Claim, now tim
 // assertCertificateRestoreGuard: once a restore is marked nothing is
 // claimed or issued, until reconcile retired every intermediate and cleared
 // the guard.
-func assertCertificateRestoreGuard(ctx context.Context, t *testing.T, runtime *pgx.Conn,
+func assertCertificateRestoreGuard(ctx context.Context, t *testing.T, admin, runtime *pgx.Conn,
 	store *postgresadapter.KubernetesGatewayCertificateStore, fixture clusterCAFixture, keys replicaKeys,
+	root kubeca.StoredCA,
 ) {
 	t.Helper()
 	guard, err := fixture.store.ReadGuard(ctx, fixture.installation)
@@ -690,6 +692,7 @@ func assertCertificateRestoreGuard(ctx context.Context, t *testing.T, runtime *p
 	if err := lifecycle.MarkRestored(ctx, fixture.store, fixture.installation, operator); err != nil {
 		t.Fatal(err)
 	}
+	assertMapKubernetesClientCAsWithheld(ctx, t, admin, runtime, fixture, root)
 	if batch, err := store.Claim(ctx, fixture.installation, 8, 30*time.Second); err != nil || !batch.Suspected ||
 		len(batch.Claims) != 0 {
 		t.Fatalf("a claim while a restore is suspected = %+v, %v", batch, err)

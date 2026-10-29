@@ -111,6 +111,11 @@ type Store struct {
 	// kubernetesCAsGranted: schema 242's reader of clusters' CAs is
 	// granted (probed until it is).
 	kubernetesCAsGranted atomic.Bool
+	// kubernetesTrustGranted: schema 244's readers are granted (probed
+	// until they are); kubernetesRootCache holds roots' DER for every
+	// Network (K1a4d design §3.3).
+	kubernetesTrustGranted atomic.Bool
+	kubernetesRootCache    *kubernetesRootCache
 }
 
 // InventoryStats counts how map snapshots got their candidates.
@@ -167,6 +172,14 @@ type InventoryStats struct {
 	// withheld (a restore suspected); KubernetesCAsRejected those whose
 	// answer could not be trusted (schema 242, mtcp-v1 §7.10).
 	KubernetesCAsWithheld, KubernetesCAsRejected uint64
+	// KubernetesTrustUnread counts inventory reads whose clients' trust
+	// (schema 244) could not be read or trusted; KubernetesRootsMissing
+	// roots whose DER they could not get (K1a4d design §3.2, §3.3).
+	KubernetesTrustUnread, KubernetesRootsMissing uint64
+	// KubernetesGatewayCAsOmitted counts clusters left out of their
+	// gateways' CAs because the root a gateway's map would name is not one
+	// the cluster's clients trust (review d1 L8).
+	KubernetesGatewayCAsOmitted uint64
 }
 
 // policyShadowInterval: one in this many reads that could expand the
@@ -178,7 +191,8 @@ type inventoryStats struct {
 	shared, reads, direct, policyMismatch, derived, unchanged, sharingDeclines, changeReads, changeFallbacks,
 	sharesSkipped, shareRechecks, policiesExpanded, policyShadowChecks, policyCandidates,
 	guardrailCuts, kubernetesWithheldUnread, kubernetesWithheldEvidence, kubernetesWithheldDirect,
-	kubernetesWithheldProjections, kubernetesCAsWithheld, kubernetesCAsRejected atomic.Uint64
+	kubernetesWithheldProjections, kubernetesCAsWithheld, kubernetesCAsRejected, kubernetesTrustUnread,
+	kubernetesRootsMissing, kubernetesGatewayCAsOmitted atomic.Uint64
 }
 
 // InventoryStats returns the counters since the store was built.
@@ -195,7 +209,10 @@ func (store *Store) InventoryStats() InventoryStats {
 		KubernetesWithheldDirect:      store.stats.kubernetesWithheldDirect.Load(),
 		KubernetesWithheldProjections: store.stats.kubernetesWithheldProjections.Load(),
 		KubernetesCAsWithheld:         store.stats.kubernetesCAsWithheld.Load(),
-		KubernetesCAsRejected:         store.stats.kubernetesCAsRejected.Load()}
+		KubernetesCAsRejected:         store.stats.kubernetesCAsRejected.Load(),
+		KubernetesTrustUnread:         store.stats.kubernetesTrustUnread.Load(),
+		KubernetesRootsMissing:        store.stats.kubernetesRootsMissing.Load(),
+		KubernetesGatewayCAsOmitted:   store.stats.kubernetesGatewayCAsOmitted.Load()}
 }
 
 // policyMatches checks, for a read that read the Device's own packet policy,
@@ -229,7 +246,8 @@ func newStore(database database, options Options, observer Observer) (*Store, er
 	if database == nil || observer == nil || !validOptions(options) {
 		return nil, ErrInvalidStore
 	}
-	store := &Store{database: database, options: options, observer: observer}
+	store := &Store{database: database, options: options, observer: observer,
+		kubernetesRootCache: newKubernetesRootCache(maximumKubernetesRootCacheBytes)}
 	if options.SharedInventory {
 		store.inventories = newInventoryCache(options.InventoryMaxAge)
 	}

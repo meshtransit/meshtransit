@@ -124,11 +124,14 @@ func decodeKubernetesCAs(encoded string) (cas map[kubecluster.Name]appmapsession
 
 // withKubernetesCA adds to a gateway replica's view its cluster's CAs, when
 // the inventory read them: a cluster without CAs names none (both empty).
+// Every active cluster is read, so one missing (left out, review d1 L8)
+// leaves them absent (§7.10): its gateways keep their certificates.
 func (cached cachedInventory) withKubernetesCA(view appmapsession.KubernetesView,
 	cluster kubecluster.Name,
 ) appmapsession.KubernetesView {
-	if !cached.kubernetesCAsRead {
+	ca, read := cached.kubernetesCAs[cluster]
+	if !cached.kubernetesCAsRead || !read {
 		return view
 	}
-	return view.WithCA(cached.kubernetesCAs[cluster])
+	return view.WithCA(ca)
 }

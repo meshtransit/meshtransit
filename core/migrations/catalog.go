@@ -617,6 +617,8 @@ func Catalog() []Migration {
 		newMigration(242, "A Kubernetes gateway's map names its cluster's root and signing CA", mapKubernetesClusterCAsSQL),
 		newMigration(243, "The signer reads the gateway certificate fleet for its gauges",
 			kubernetesGatewayCertificateFleetSQL),
+		newMigration(244, "A client's map names its clusters' TLS name and the roots it trusts",
+			kubernetesClientCAsSQL),
 	}
 }
 
@@ -1125,3 +1127,6 @@ var mapKubernetesClusterCAsSQL string
 
 //go:embed 000243_kubernetes_gateway_certificate_fleet.up.sql
 var kubernetesGatewayCertificateFleetSQL string
+
+//go:embed 000244_kubernetes_client_cas.up.sql
+var kubernetesClientCAsSQL string

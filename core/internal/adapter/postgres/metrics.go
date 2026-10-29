@@ -33,6 +33,7 @@ const (
 	postgresOperationMapSessionClientVersion   postgresOperation = "map_session_client_version"
 	postgresOperationMapSessionInventory       postgresOperation = "map_session_inventory"
 	postgresOperationMapSessionRevision        postgresOperation = "map_session_revision"
+	postgresOperationMapSessionKubernetesTrust postgresOperation = "map_session_kubernetes_trust"
 	postgresOperationPolicyPublicationBegin    postgresOperation = "policy_publication_begin"
 	postgresOperationPolicyPublicationResolve  postgresOperation = "policy_publication_resolve"
 	postgresOperationPolicyPublicationApply    postgresOperation = "policy_publication_apply"
@@ -145,6 +146,7 @@ var (
 		postgresOperationMapSessionClientVersion,
 		postgresOperationMapSessionInventory,
 		postgresOperationMapSessionRevision,
+		postgresOperationMapSessionKubernetesTrust,
 		postgresOperationPolicyPublicationBegin,
 		postgresOperationPolicyPublicationResolve,
 		postgresOperationPolicyPublicationApply,
@@ -487,6 +489,7 @@ func (operation postgresOperation) validForRole(role PoolRole) bool {
 			operation == postgresOperationIntakeReplay ||
 			operation == postgresOperationMapSessionSnapshot || operation == postgresOperationMapSessionClientVersion ||
 			operation == postgresOperationMapSessionInventory || operation == postgresOperationMapSessionRevision ||
+			operation == postgresOperationMapSessionKubernetesTrust ||
 			operation == postgresOperationPolicyPublicationBegin ||
 			operation == postgresOperationPolicyPublicationResolve ||
 			operation == postgresOperationPolicyPublicationApply ||
