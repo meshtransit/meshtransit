@@ -188,8 +188,10 @@ func parseGroups(raw string) ([]kubeproxy.Group, error) {
 	groups := make([]kubeproxy.Group, 0, len(specs))
 	defaults := 0
 	for _, spec := range specs {
-		groups = append(groups, kubeproxy.Group{Name: spec.Name, Default: spec.Default, Privileged: spec.Privileged,
-			AllowedPrincipals: spec.AllowedPrincipals, AllowImpersonation: spec.AllowImpersonation})
+		groups = append(groups, kubeproxy.Group{
+			Name: spec.Name, Default: spec.Default, Privileged: spec.Privileged,
+			AllowedPrincipals: spec.AllowedPrincipals, AllowImpersonation: spec.AllowImpersonation,
+		})
 		if spec.Default {
 			defaults++
 		}

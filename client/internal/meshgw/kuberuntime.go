@@ -41,8 +41,10 @@ type kubeAuditChannels struct {
 }
 
 func newKubeAuditChannels() kubeAuditChannels {
-	return kubeAuditChannels{calls: make(chan controlplane.KubeAuditCall),
-		reports: make(chan controlplane.KubeAuditReport)}
+	return kubeAuditChannels{
+		calls:   make(chan controlplane.KubeAuditCall),
+		reports: make(chan controlplane.KubeAuditReport),
+	}
 }
 
 // kubeRuntime is a proxying gateway's request path: the proxy, the
@@ -88,8 +90,10 @@ func newKubeRuntime(cfg Config, service *daemon.Service, coreNow func() time.Tim
 		minter.Close()
 		return nil, err
 	}
-	runtime := &kubeRuntime{recorder: recorder, minters: []*kubetoken.Minter{minter, checkMinter}, logger: logger,
-		memory: newMemoryWatch(memoryLimit)}
+	runtime := &kubeRuntime{
+		recorder: recorder, minters: []*kubetoken.Minter{minter, checkMinter}, logger: logger,
+		memory: newMemoryWatch(memoryLimit),
+	}
 	fail := func(err error) (*kubeRuntime, error) {
 		runtime.close()
 		return nil, err
@@ -101,8 +105,10 @@ func newKubeRuntime(cfg Config, service *daemon.Service, coreNow func() time.Tim
 	checkGroups := make([]rbaccheck.Group, 0, len(kube.Groups))
 	for _, group := range kube.Groups {
 		runtime.groupNames = append(runtime.groupNames, group.Name)
-		checkGroups = append(checkGroups, rbaccheck.Group{Name: group.Name, Privileged: group.Privileged,
-			AllowImpersonation: group.AllowImpersonation})
+		checkGroups = append(checkGroups, rbaccheck.Group{
+			Name: group.Name, Privileged: group.Privileged,
+			AllowImpersonation: group.AllowImpersonation,
+		})
 	}
 	runtime.checker, err = rbaccheck.New(rbaccheck.Options{
 		Groups: checkGroups, Reviewer: reviewer, Tokens: &rbaccheck.MinterTokens{Minter: checkMinter},
@@ -113,9 +119,11 @@ func newKubeRuntime(cfg Config, service *daemon.Service, coreNow func() time.Tim
 	if err != nil {
 		return fail(fmt.Errorf("meshgw: %w", err))
 	}
-	events, err := kubeevent.New(kubeevent.Options{Server: kube.APIServer, CAFile: kube.APICAFile,
+	events, err := kubeevent.New(kubeevent.Options{
+		Server: kube.APIServer, CAFile: kube.APICAFile,
 		TokenFile: kube.APITokenFile, Namespace: cfg.Namespace, Instance: cfg.PodName,
-		Window: privilegedEventWindow, Logger: logger.With("component", "kube_events")})
+		Window: privilegedEventWindow, Logger: logger.With("component", "kube_events"),
+	})
 	if err != nil {
 		return fail(fmt.Errorf("meshgw: %w", err))
 	}
@@ -207,8 +215,10 @@ func newMinter(cfg Config, boundSecretUID string, options kubetoken.Options) (*k
 // run runs the recorder, the checker and the listener until ctx ends.
 func (runtime *kubeRuntime) run(ctx context.Context) {
 	var running sync.WaitGroup
-	for _, part := range []func(context.Context) error{runtime.recorder.Run, runtime.checker.Run,
-		runtime.listener.Run, runtime.proxy.Run, runtime.memory.Run} {
+	for _, part := range []func(context.Context) error{
+		runtime.recorder.Run, runtime.checker.Run,
+		runtime.listener.Run, runtime.proxy.Run, runtime.memory.Run,
+	} {
 		running.Go(func() {
 			if err := part(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				runtime.logger.Error("kube request path stopped", "error", err)
@@ -282,7 +292,9 @@ func newKubectlPath(cfg Config, service *daemon.Service, coreNow func() time.Tim
 			status: map[string]func() any{"kube": func() any {
 				return map[string]any{"mode": KubeModePassthrough, "listening": forwarder.Listening()}
 			}},
-			counters: []Counter{{Name: "meshgw_kube_api_connections_total", Help: "kubectl connections carried.",
-				Value: forwarder.Total}},
+			counters: []Counter{{
+				Name: "meshgw_kube_api_connections_total", Help: "kubectl connections carried.",
+				Value: forwarder.Total,
+			}},
 		}, nil
 }

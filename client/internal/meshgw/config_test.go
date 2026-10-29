@@ -202,8 +202,10 @@ func TestLoadConfigProxyMode(t *testing.T) {
 		!reflect.DeepEqual(kube.GuardedNamespaces, []string{"ingress"}) {
 		t.Fatalf("%+v", kube)
 	}
-	if want := []string{"meshgw-envelope", "meshgw-join", "meshgw-state-0", "meshgw-state-1", "meshgw-state-2",
-		"meshgw-state-3", "meshgw-state-4"}; !reflect.DeepEqual(kube.Secrets, want) {
+	if want := []string{
+		"meshgw-envelope", "meshgw-join", "meshgw-state-0", "meshgw-state-1", "meshgw-state-2",
+		"meshgw-state-3", "meshgw-state-4",
+	}; !reflect.DeepEqual(kube.Secrets, want) {
 		t.Fatalf("secrets %v", kube.Secrets)
 	}
 	if len(kube.SecretResources) != 2 || kube.SecretResources[0].Group != "bitnami.com" ||

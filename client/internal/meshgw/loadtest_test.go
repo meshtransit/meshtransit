@@ -58,10 +58,12 @@ const loadCluster = "load.kube.test"
 func loadCertificate(t *testing.T) (*tls.Certificate, *x509.CertPool) {
 	t.Helper()
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: loadCluster},
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: loadCluster},
 		DNSNames: []string{loadCluster}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
 		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		IsCA: true, BasicConstraintsValid: true}
+		IsCA: true, BasicConstraintsValid: true,
+	}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 	if err != nil {
 		t.Fatal(err)
@@ -260,8 +262,10 @@ func TestLoad(t *testing.T) {
 
 	certificate, _ := loadCertificate(t)
 	certificateFile := filepath.Join(dir, "gateway.crt")
-	if err := os.WriteFile(certificateFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE",
-		Bytes: certificate.Leaf.Raw}), 0o600); err != nil {
+	if err := os.WriteFile(certificateFile, pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: certificate.Leaf.Raw,
+	}), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	child := exec.Command(os.Args[0], "-test.run", "^TestLoadHarness$", "-test.v", "-test.timeout", "15m")
@@ -307,9 +311,13 @@ func TestLoad(t *testing.T) {
 		Backend: backend, BackendCA: ca,
 		Peer: func(source netip.Addr) (kubeproxy.Peer, bool) {
 			key, ok := keys[source]
-			return kubeproxy.Peer{DeviceID: "device-" + source.String(), Name: source.String(), Key: key,
-				Access: &networkmap.KubernetesAccess{OwnerRef: "person",
-					Grants: []networkmap.KubernetesGrant{{Group: "edit", ValidUntil: time.Now().Add(time.Hour)}}}}, ok
+			return kubeproxy.Peer{
+				DeviceID: "device-" + source.String(), Name: source.String(), Key: key,
+				Access: &networkmap.KubernetesAccess{
+					OwnerRef: "person",
+					Grants:   []networkmap.KubernetesGrant{{Group: "edit", ValidUntil: time.Now().Add(time.Hour)}},
+				},
+			}, ok
 		},
 		Certificate: func() (*tls.Certificate, bool) { return certificate, true },
 		MapFreshAt:  time.Now, StaleAfter: 5 * time.Minute, CoreNow: time.Now,
@@ -483,9 +491,11 @@ func TestLoadHarness(t *testing.T) {
 				}
 				// Small client windows: the harness's buffers are not the
 				// gateway's anyway, but they need not be large.
-				transport := &http.Transport{ForceAttemptHTTP2: true,
-					DialTLSContext: func(context.Context, string, string) (net.Conn, error) { return conn, nil },
-					HTTP2:          &http.HTTP2Config{MaxReceiveBufferPerStream: 64 << 10, MaxReceiveBufferPerConnection: 1 << 20}}
+				transport := &http.Transport{
+					ForceAttemptHTTP2: true,
+					DialTLSContext:    func(context.Context, string, string) (net.Conn, error) { return conn, nil },
+					HTTP2:             &http.HTTP2Config{MaxReceiveBufferPerStream: 64 << 10, MaxReceiveBufferPerConnection: 1 << 20},
+				}
 				client := &http.Client{Transport: transport}
 				for stream := range loadStreamsPerConnection {
 					go func() {
@@ -547,8 +557,10 @@ func loadDial(ctx context.Context, stack *meshStack, gateway netip.Addr, pool *x
 ) (net.Conn, error) {
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	raw, err := gonet.DialContextTCP(dialCtx, stack.stack, tcpip.FullAddress{NIC: nicID,
-		Addr: tcpip.AddrFrom4(gateway.As4()), Port: 443}, ipv4.ProtocolNumber)
+	raw, err := gonet.DialContextTCP(dialCtx, stack.stack, tcpip.FullAddress{
+		NIC:  nicID,
+		Addr: tcpip.AddrFrom4(gateway.As4()), Port: 443,
+	}, ipv4.ProtocolNumber)
 	if err != nil {
 		return nil, err
 	}
@@ -636,8 +648,10 @@ func TestThroughput(t *testing.T) {
 		t.Fatal(err)
 	}
 	certificate, pool := loadCertificate(t)
-	for _, rtt := range []time.Duration{10 * time.Millisecond, 50 * time.Millisecond, 100 * time.Millisecond,
-		200 * time.Millisecond} {
+	for _, rtt := range []time.Duration{
+		10 * time.Millisecond, 50 * time.Millisecond, 100 * time.Millisecond,
+		200 * time.Millisecond,
+	} {
 		gatewayAddress, deviceAddress := netip.MustParseAddr("100.64.0.1"), netip.MustParseAddr("100.64.1.1")
 		gateway, _ := newMeshStack([]netip.Addr{gatewayAddress}, netstackMTU)
 		device, _ := newMeshStack([]netip.Addr{deviceAddress}, netstackMTU)
@@ -648,8 +662,11 @@ func TestThroughput(t *testing.T) {
 			Backend: server.URL, BackendCA: ca,
 			Peer: func(netip.Addr) (kubeproxy.Peer, bool) {
 				return kubeproxy.Peer{DeviceID: "device", Key: [32]byte{1}, Access: &networkmap.KubernetesAccess{
-					OwnerRef: "person", Grants: []networkmap.KubernetesGrant{{Group: "edit",
-						ValidUntil: time.Now().Add(time.Hour)}}}}, true
+					OwnerRef: "person", Grants: []networkmap.KubernetesGrant{{
+						Group:      "edit",
+						ValidUntil: time.Now().Add(time.Hour),
+					}},
+				}}, true
 			},
 			Certificate: func() (*tls.Certificate, bool) { return certificate, true },
 			MapFreshAt:  time.Now, StaleAfter: 5 * time.Minute, CoreNow: time.Now,

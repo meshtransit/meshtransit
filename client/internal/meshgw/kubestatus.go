@@ -33,18 +33,22 @@ func (runtime *kubeRuntime) groups() []groupStatus {
 	groups := make([]groupStatus, 0, len(runtime.groupNames))
 	for _, name := range runtime.groupNames {
 		verdict := runtime.checker.Verdict(name)
-		groups = append(groups, groupStatus{Name: name, Enabled: verdict.Enabled,
+		groups = append(groups, groupStatus{
+			Name: name, Enabled: verdict.Enabled,
 			Impersonation: verdict.Impersonation, Reason: verdict.Reason, Detail: verdict.Detail,
-			CheckedAt: verdict.CheckedAt})
+			CheckedAt: verdict.CheckedAt,
+		})
 	}
 	return groups
 }
 
 func (runtime *kubeRuntime) status() any {
 	sessions := runtime.proxy.Sessions()
-	return kubeStatus{Mode: KubeModeProxy, Listening: runtime.listener.Listening(),
+	return kubeStatus{
+		Mode: KubeModeProxy, Listening: runtime.listener.Listening(),
 		Closed: runtime.listener.ClosedReason(), Groups: runtime.groups(), Sessions: sessions.Open,
-		Cut: sessions.Cut}
+		Cut: sessions.Cut,
+	}
 }
 
 // writeMetrics writes the proxy's metrics (K1b design §11): sessions, cuts
@@ -81,8 +85,10 @@ func (runtime *kubeRuntime) writeMetrics(w io.Writer) {
 	connections := runtime.proxy.Connections()
 	// Disjoint states, so sum() is every connection (review b7b L).
 	writeLabelled(w, "meshgw_kube_connections", "gauge", "kubectl connections, named for a Device or not yet.",
-		"state", map[string]int{"identified": connections.Open - connections.Unidentified,
-			"unidentified": connections.Unidentified})
+		"state", map[string]int{
+			"identified":   connections.Open - connections.Unidentified,
+			"unidentified": connections.Unidentified,
+		})
 	writeLabelled(w, "meshgw_kube_limited_total", "counter", "Connections and requests refused at a limit, by limit.",
 		"limit", runtime.proxy.Limited())
 	writeLabelled(w, "meshgw_kube_audit_refused_total", "counter",

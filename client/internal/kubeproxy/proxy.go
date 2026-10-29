@@ -64,8 +64,10 @@ func New(options Options) (*Server, error) {
 	if options.Limits == (Limits{}) {
 		options.Limits = DefaultLimits()
 	}
-	server := &Server{options: options, groups: map[string]Group{}, backend: backend, sessions: newRegistry(),
-		gate: newGate(options.Limits)}
+	server := &Server{
+		options: options, groups: map[string]Group{}, backend: backend, sessions: newRegistry(),
+		gate: newGate(options.Limits),
+	}
 	transports, err := newTransports(options.BackendCA, server.remint)
 	if err != nil {
 		return nil, err
@@ -163,11 +165,13 @@ func (server *Server) Serve(ctx context.Context, listener net.Listener) error {
 		// Bounded windows so a client that sends and never has its body
 		// read, or never reads, holds little; one that stops reading for
 		// 60 s is dropped (K1b design §8).
-		HTTP2: &http.HTTP2Config{MaxConcurrentStreams: 64 + 200, MaxReceiveBufferPerConnection: 256 << 10,
+		HTTP2: &http.HTTP2Config{
+			MaxConcurrentStreams: 64 + 200, MaxReceiveBufferPerConnection: 256 << 10,
 			MaxReceiveBufferPerStream: 64 << 10, WriteByteTimeout: clientWriteTimeout,
 			// A client gone without a word does not hold its place for the
 			// life of a quiet watch (review b6b M2).
-			SendPingTimeout: 30 * time.Second, PingTimeout: 15 * time.Second},
+			SendPingTimeout: 30 * time.Second, PingTimeout: 15 * time.Second,
+		},
 		ConnContext: withIdentity,
 		BaseContext: func(net.Listener) context.Context { return ctx },
 		// Failed handshakes and the like, at debug: a scan is not an event.
@@ -213,8 +217,10 @@ const statusClientGone = 499
 type planKey struct{}
 
 // allowedMethods are the methods forwarded; OPTIONS is answered here.
-var allowedMethods = []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch,
-	http.MethodDelete}
+var allowedMethods = []string{
+	http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch,
+	http.MethodDelete,
+}
 
 // ServeHTTP checks a request and forwards it (K1b design §4–§7).
 func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -291,15 +297,19 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	out := server.outbound(rest, r.URL.RawQuery)
 	class, info := kubereq.Classify(kubereq.Request{Method: r.Method, URL: out, Header: r.Header},
-		kubereq.Options{Privileged: group.Privileged, Impersonating: len(impersonate) > 0,
-			SecretResources: server.options.SecretResources})
+		kubereq.Options{
+			Privileged: group.Privileged, Impersonating: len(impersonate) > 0,
+			SecretResources: server.options.SecretResources,
+		})
 	// The session is registered within the limits, then checked again: a
 	// map that changed since choose is seen here, one that changes after by
 	// the sweep (K1b design §8).
 	ctx, cancel := context.WithCancelCause(r.Context())
 	defer cancel(nil)
-	held := &session{device: peer.DeviceID, key: peer.Key, source: who.source, group: group,
-		kind: sessionKind(r, out, info), impersonating: len(impersonate) > 0, cancel: cancel}
+	held := &session{
+		device: peer.DeviceID, key: peer.Key, source: who.source, group: group,
+		kind: sessionKind(r, out, info), impersonating: len(impersonate) > 0, cancel: cancel,
+	}
 	if held.kind == kindUpgrade && r.ProtoMajor == 1 {
 		held.close = func() { _ = who.Conn.Close() }
 	}
@@ -317,8 +327,10 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		server.cutAnswer(w, peer.DeviceID, group, ended, false)
 		return
 	}
-	server.forward(w, r.WithContext(ctx), forwarding{who: who, peer: peer, group: group, out: out, class: class,
-		info: info, impersonate: impersonate, impersonated: impersonated, started: started, session: held})
+	server.forward(w, r.WithContext(ctx), forwarding{
+		who: who, peer: peer, group: group, out: out, class: class,
+		info: info, impersonate: impersonate, impersonated: impersonated, started: started, session: held,
+	})
 }
 
 // admit applies the limits that are not counts of sessions: the Device's
@@ -396,10 +408,12 @@ func (server *Server) forward(w http.ResponseWriter, r *http.Request, request fo
 			time.Second)
 		return
 	}
-	carried := &plan{out: request.out, token: token, source: request.who.source.String(),
+	carried := &plan{
+		out: request.out, token: token, source: request.who.source.String(),
 		device: request.peer.DeviceID, group: request.group, agent: agentOf(r.Header.Get("User-Agent")),
 		impersonate: request.impersonate,
-		version:     server.options.Version}
+		version:     server.options.Version,
+	}
 	if r.ContentLength == 0 && !request.class.TypeA() {
 		// A request without a body can be sent again with a new token once
 		// (review b5a M4). Not a type A one: Core's record names the token
@@ -464,9 +478,11 @@ func (server *Server) forward(w http.ResponseWriter, r *http.Request, request fo
 // announce has the cluster record a privileged group's use; false when the
 // first use of its window could not be, which refuses it (K1b design §4).
 func (server *Server) announce(ctx context.Context, request forwarding, owner string, auditID [16]byte) bool {
-	counted, err := server.options.Events.Privileged(ctx, kubeevent.Use{Device: request.peer.DeviceID,
+	counted, err := server.options.Events.Privileged(ctx, kubeevent.Use{
+		Device:     request.peer.DeviceID,
 		DeviceName: request.peer.Name, Owner: owner, Group: request.group.Name,
-		Source: request.who.source.String(), AuditID: formatAuditID(auditID)})
+		Source: request.who.source.String(), AuditID: formatAuditID(auditID),
+	})
 	if err != nil && cutReasonOf(ctx) == "" {
 		server.options.Logger.Error("Kubernetes privileged session Event failed", "error_code",
 			"kubernetes_privileged_event_failed", "device_id", request.peer.DeviceID, "group", request.group.Name,
@@ -730,16 +746,22 @@ func newTransports(caFile string, remint func(*http.Request) (Bearer, bool)) (ht
 	}
 	secured := func() *tls.Config { return &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12} }
 	dial := (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext
-	requests := &http.Transport{TLSClientConfig: secured(), ForceAttemptHTTP2: true, IdleConnTimeout: 90 * time.Second,
+	requests := &http.Transport{
+		TLSClientConfig: secured(), ForceAttemptHTTP2: true, IdleConnTimeout: 90 * time.Second,
 		DialContext: dial, TLSHandshakeTimeout: 10 * time.Second,
 		// A small window per stream bounds memory; a large one per
 		// connection keeps one stalled stream from holding the others
 		// sharing it (K1b design §8).
-		HTTP2: &http.HTTP2Config{MaxReceiveBufferPerStream: 128 << 10, MaxReceiveBufferPerConnection: 16 << 20,
-			SendPingTimeout: 30 * time.Second, PingTimeout: 15 * time.Second}}
-	upgrades := &http.Transport{TLSClientConfig: secured(), IdleConnTimeout: 90 * time.Second,
+		HTTP2: &http.HTTP2Config{
+			MaxReceiveBufferPerStream: 128 << 10, MaxReceiveBufferPerConnection: 16 << 20,
+			SendPingTimeout: 30 * time.Second, PingTimeout: 15 * time.Second,
+		},
+	}
+	upgrades := &http.Transport{
+		TLSClientConfig: secured(), IdleConnTimeout: 90 * time.Second,
 		DialContext: dial, TLSHandshakeTimeout: 10 * time.Second,
-		TLSNextProto: map[string]func(string, *tls.Conn) http.RoundTripper{}}
+		TLSNextProto: map[string]func(string, *tls.Conn) http.RoundTripper{},
+	}
 	return roundTrips{requests: requests, upgrades: upgrades, remint: remint}, nil
 }
 
