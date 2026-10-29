@@ -631,6 +631,8 @@ func Catalog() []Migration {
 			kubernetesOperationReadsSQL),
 		newMigration(250, "An administrator sets what audit-check treats as privileged and secret-like",
 			kubernetesAuditSettingsSQL),
+		newMigration(251, "Audit exporters export a cluster's operations for audit-check, a page at a time",
+			kubernetesOperationExportsSQL),
 	}
 }
 
@@ -1160,3 +1162,6 @@ var kubernetesOperationReadsSQL string
 
 //go:embed 000250_kubernetes_audit_settings.up.sql
 var kubernetesAuditSettingsSQL string
+
+//go:embed 000251_kubernetes_operation_exports.up.sql
+var kubernetesOperationExportsSQL string

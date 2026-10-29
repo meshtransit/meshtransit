@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 250 {
-		t.Fatalf("len(Catalog()) = %d, want 250", len(catalog))
+	if len(catalog) != 251 {
+		t.Fatalf("len(Catalog()) = %d, want 251", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 250 {
-		t.Fatalf("LatestVersion() = %d, want 250", LatestVersion())
+	if LatestVersion() != 251 {
+		t.Fatalf("LatestVersion() = %d, want 251", LatestVersion())
 	}
 }
 
@@ -7484,6 +7484,38 @@ func TestMigration250KubernetesAuditSettings(t *testing.T) {
 	} {
 		if strings.Contains(migration.SQL, never) {
 			t.Errorf("migration 250 has %q", never)
+		}
+	}
+}
+
+func TestMigration251KubernetesOperationExports(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 251 || catalog[250].Version != 251 {
+		t.Fatalf("the catalog has no migration 251 (%d migrations)", len(catalog))
+	}
+	migration := catalog[250]
+	for _, want := range []string{
+		"p_workspace_public_id, 'audit.export', v_now);",
+		"LIMIT 200001) AS counted)",
+		"OR p_records_to - p_records_from > INTERVAL '1 day 10 minutes'",
+		"p_limit NOT BETWEEN 1 AND 1000",
+		"(operation.received_at, operation.audit_id) > (p_after_at, p_after_id)",
+		"AND operation.received_at >= GREATEST(p_records_from, COALESCE(p_after_at, p_records_from))",
+		"AND result.recorded_at < listed.received_at + INTERVAL '1 day'",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.begin_kubernetes_operation_export_v1(",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.list_kubernetes_operation_export_v1(",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 251 lacks %q", want)
+		}
+	}
+	for _, never := range []string{
+		"'token_id'", "'intent_id'", "'owner_ref'",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.kubernetes_operation_exporter_internal_v1",
+	} {
+		if strings.Contains(migration.SQL, never) {
+			t.Errorf("migration 251 has %q", never)
 		}
 	}
 }

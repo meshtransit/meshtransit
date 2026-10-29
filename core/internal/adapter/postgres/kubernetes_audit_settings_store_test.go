@@ -14,7 +14,7 @@ func TestAuditSettingsExportAuthority(t *testing.T) {
 	}{
 		"a binding": {auditSettingsExportAuthority{catalogAuthority{BindingID: binding, RoleID: role,
 			BindingGeneration: 1, MembershipGeneration: 1}, "network"}, true},
-		"the owner": {auditSettingsExportAuthority{catalogAuthority{OwnerGeneration: 3}, "workspace"}, true},
+		"the owner":                     {auditSettingsExportAuthority{catalogAuthority{OwnerGeneration: 3}, "workspace"}, true},
 		"an owner without a generation": {auditSettingsExportAuthority{catalogAuthority{}, "workspace"}, false},
 		"a binding without its role": {auditSettingsExportAuthority{catalogAuthority{BindingID: binding},
 			"workspace"}, false},

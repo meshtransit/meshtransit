@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -45,11 +46,18 @@ type kubernetesClusterStub struct {
 	failure      error
 	pages        []kubecluster.PageQuery
 	// next is the cursor list pages return.
-	next             kubecluster.PageCursor
-	truncated        bool
-	operationQueries []kubecluster.OperationQuery
-	auditSettings    []kubecluster.AuditSettingsReplacement
-	denialRanges     [][2]time.Time
+	next              kubecluster.PageCursor
+	truncated         bool
+	operationQueries  []kubecluster.OperationQuery
+	auditSettings     []kubecluster.AuditSettingsReplacement
+	exports           []kubecluster.ExportQuery
+	exportNamespace   string
+	exportCount       int
+	exportRecords     int
+	exportPageFailure error
+	// exportPageDelay slows each page: the stream outlives the request.
+	exportPageDelay time.Duration
+	denialRanges    [][2]time.Time
 }
 
 func (stub *kubernetesClusterStub) ListJoinKeys(_ context.Context,
@@ -196,6 +204,39 @@ func (stub *kubernetesClusterStub) ReplaceAuditSettings(_ context.Context,
 	return kubecluster.AuditSettingsResult{Changed: true, Settings: kubecluster.AuditSettings{
 		PrivilegedGroups: replacement.PrivilegedGroups, SecretResources: replacement.SecretResources,
 		Version: replacement.ExpectedVersion + 1, UpdatedAt: time.Date(2026, time.October, 30, 2, 0, 0, 0, time.UTC)}}, nil
+}
+
+func (stub *kubernetesClusterStub) BeginExport(_ context.Context,
+	query kubecluster.ExportQuery) (kubecluster.ExportHeader, error) {
+	stub.calls = append(stub.calls, "begin-export")
+	stub.exports = append(stub.exports, query)
+	if stub.failure != nil {
+		return kubecluster.ExportHeader{}, stub.failure
+	}
+	return kubecluster.ExportHeader{ClusterID: query.ClusterID, GatewayNamespace: stub.exportNamespace,
+		Settings: kubecluster.AuditSettings{PrivilegedGroups: []string{"sre"}, Version: 1,
+			UpdatedAt: time.Date(2026, time.October, 30, 2, 0, 0, 0, time.UTC)}, Count: stub.exportCount}, nil
+}
+
+func (stub *kubernetesClusterStub) ExportPage(_ context.Context, _ kubecluster.ExportQuery,
+	after kubecluster.PageCursor) ([]kubecluster.ExportRecord, error) {
+	stub.calls = append(stub.calls, "export-page")
+	time.Sleep(stub.exportPageDelay)
+	if !after.IsZero() && stub.exportPageFailure != nil {
+		return nil, stub.exportPageFailure
+	}
+	if !after.IsZero() {
+		return nil, nil
+	}
+	records := make([]kubecluster.ExportRecord, min(stub.exportRecords, kubecluster.ExportPageSize))
+	start := time.Date(2026, time.October, 29, 13, 0, 0, 0, time.UTC)
+	for index := range records {
+		id, _ := publicid.New()
+		records[index] = kubecluster.ExportRecord{AuditID: id, ReceivedAt: start.Add(time.Duration(index) * time.Second),
+			Class: "write", Groups: []string{"edit"}, Verb: "delete", Resource: "pods", Namespace: "default",
+			Name: "p" + strconv.Itoa(index), Status: 200}
+	}
+	return records, nil
 }
 
 const kubernetesTestAuditID = "01890f00-0000-7000-8000-000000000b08"
@@ -1089,5 +1130,92 @@ func TestKubernetesOperationPages(t *testing.T) {
 		if status, _ := get(path); status != 404 {
 			t.Errorf("%s: %d, want 404", path, status)
 		}
+	}
+}
+
+// The export streams the file meshctl reads: header, records, complete;
+// refusals come before the body; a failure in the body leaves an invalid
+// token inside the records and aborts (K1d d1d-b). Not parallel: one
+// export a Workspace at a time.
+func TestKubernetesOperationExport(t *testing.T) {
+	t.Parallel()
+	var handler *ManagementHandler
+	serve := func(stub *kubernetesClusterStub, query string) (int, string, any) {
+		t.Helper()
+		options := validManagementHandlerOptions(t)
+		options.KubernetesClusters = stub
+		options.RequestTimeout = 100 * time.Millisecond
+		var err error
+		handler, err = NewManagementHandler(options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response := httptest.NewRecorder()
+		var aborted any
+		func() {
+			defer func() { aborted = recover() }()
+			handler.ServeHTTP(response, newManagementRequest(t, http.MethodGet,
+				kubernetesClustersTestPath("/"+kubernetesTestCluster+"/operation-exports"+query), ""))
+		}()
+		return response.Code, response.Body.String(), aborted
+	}
+	// Each page sleeps past the 100 ms request timeout: the stream has its
+	// own deadline (review d1d-b H1).
+	stub := &kubernetesClusterStub{exportNamespace: "mt-kube-k1", exportCount: 1001, exportRecords: 400,
+		exportPageDelay: 150 * time.Millisecond}
+	status, body, aborted := serve(stub, "?from=2026-10-28T00:00:00Z&to=2026-10-29T00:00:00Z")
+	var file struct {
+		Format           string           `json:"format"`
+		GatewayNamespace string           `json:"gateway_namespace"`
+		PrivilegedGroups []string         `json:"privileged_groups"`
+		RecordsFrom      string           `json:"records_from"`
+		RecordsTo        string           `json:"records_to"`
+		Records          []map[string]any `json:"records"`
+		Complete         bool             `json:"complete"`
+	}
+	if status != 200 || aborted != nil || json.Unmarshal([]byte(body), &file) != nil ||
+		file.Format != "meshtransit-kube-operations/v1" || file.GatewayNamespace != "mt-kube-k1" ||
+		len(file.Records) != 400 || !file.Complete || file.RecordsFrom != "2026-10-27T23:55:00Z" ||
+		file.RecordsTo != "2026-10-29T00:05:00Z" || len(file.PrivilegedGroups) != 1 {
+		t.Fatalf("export: %d, aborted %v, %.300s", status, aborted, body)
+	}
+	if len(stub.exports) != 1 || stub.exports[0].To.Sub(stub.exports[0].From) != 24*time.Hour {
+		t.Fatalf("export queries %+v", stub.exports)
+	}
+	for name, test := range map[string]struct {
+		stub   *kubernetesClusterStub
+		query  string
+		status int
+		code   string
+	}{
+		"too many":        {&kubernetesClusterStub{exportNamespace: "n", exportCount: 200001}, "", 422, "range_too_large"},
+		"no namespace":    {&kubernetesClusterStub{}, "", 409, "gateway_namespace_unknown"},
+		"over a day":      {&kubernetesClusterStub{exportNamespace: "n", failure: kubecluster.ErrInvalid}, "", 400, ""},
+		"no audit.export": {&kubernetesClusterStub{failure: kubecluster.ErrForbidden}, "", 403, ""},
+		"a filter":        {&kubernetesClusterStub{exportNamespace: "n"}, "?class=write", 404, ""},
+		"not settled": {&kubernetesClusterStub{exportNamespace: "n"}, "?to=" +
+			time.Now().UTC().Add(-time.Minute).Format(time.RFC3339), 422, "range_not_settled"},
+	} {
+		status, body, aborted := serve(test.stub, test.query)
+		if status != test.status || aborted != nil || !strings.Contains(body, test.code) {
+			t.Errorf("%s: %d %s (aborted %v)", name, status, body, aborted)
+		}
+	}
+	failing := &kubernetesClusterStub{exportNamespace: "n", exportRecords: 400,
+		exportPageFailure: kubecluster.ErrUnavailable}
+	_, body, aborted = serve(failing, "")
+	abortErr, _ := aborted.(error)
+	if !errors.Is(abortErr, http.ErrAbortHandler) || !strings.Contains(body, "\n!export_failed unavailable") ||
+		strings.Contains(body, `"complete"`) || json.Valid([]byte(body)) {
+		t.Fatalf("a failed export: aborted %v, tail %q", aborted, body[max(0, len(body)-80):])
+	}
+	if _, ok := handler.kubernetesExports.take(managementWorkspaceID()); !ok {
+		t.Fatal("no slot")
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, newManagementRequest(t, http.MethodGet,
+		kubernetesClustersTestPath("/"+kubernetesTestCluster+"/operation-exports"), ""))
+	if response.Code != 429 || !strings.Contains(response.Body.String(), "export_busy") {
+		t.Fatalf("a second export of the Workspace: %d %s", response.Code, response.Body.String())
 	}
 }

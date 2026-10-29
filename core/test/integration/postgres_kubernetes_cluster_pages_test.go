@@ -137,6 +137,7 @@ func assertKubernetesClusterPages(ctx context.Context, t *testing.T, admin *pgx.
 	recordOperations()
 	auditID := assertKubernetesOperationReads(ctx, t, admin, service, store, owner, custom, scope, clusterID)
 	assertKubernetesAuditSettings(ctx, t, admin, service, owner, custom, scope, clusterID)
+	assertKubernetesOperationExport(ctx, t, service, owner, scope, clusterID)
 	if _, err := service.ListReplicas(ctx, kubecluster.PageQuery{Session: custom, Scope: scope,
 		ClusterID: clusterID, Limit: 1}); err != nil {
 		t.Fatalf("a Network reader listed no replicas: %v", err)
@@ -581,5 +582,50 @@ ORDER BY event.occurred_at DESC, event.event_identity_id DESC LIMIT 1`, clusterI
 	if err != nil || read.Version != restored.Settings.Version || read.UpdatedAt.IsZero() ||
 		len(read.PrivilegedGroups) != 2 {
 		t.Fatalf("ReadAuditSettings() = %+v, %v", read, err)
+	}
+}
+
+// The export (schema 251): an audit exporter reads the header (the
+// gateway's namespace, the audit settings, a count) and every record of the
+// widened range once, oldest first, a page at a time; a range over a day is
+// refused.
+func assertKubernetesOperationExport(ctx context.Context, t *testing.T, service *kubecluster.Service,
+	exporter accountsession.Session, scope network.Scope, clusterID kubecluster.ID) {
+	t.Helper()
+	now := time.Now().UTC()
+	query := kubecluster.ExportQuery{Session: exporter, Scope: scope, ClusterID: clusterID,
+		From: now.Add(-time.Hour), To: now.Add(time.Minute)}
+	header, err := service.BeginExport(ctx, query)
+	if err != nil || header.GatewayNamespace == "" || header.Count < 3 || header.Settings.Version == 0 {
+		t.Fatalf("BeginExport() = %+v, %v", header, err)
+	}
+	var records []kubecluster.ExportRecord
+	var after kubecluster.PageCursor
+	for range 16 {
+		page, err := service.ExportPage(ctx, query, after)
+		if err != nil {
+			t.Fatalf("ExportPage(): %v", err)
+		}
+		records = append(records, page...)
+		if len(page) < kubecluster.ExportPageSize {
+			break
+		}
+		after = kubecluster.PageCursor{At: page[len(page)-1].ReceivedAt, ID: page[len(page)-1].AuditID}
+	}
+	if len(records) != header.Count {
+		t.Fatalf("the export holds %d records, the header counted %d", len(records), header.Count)
+	}
+	from, to := query.RecordsRange()
+	for index, record := range records {
+		if record.ReceivedAt.Before(from) || !record.ReceivedAt.Before(to) || len(record.Groups) == 0 ||
+			index > 0 && !records[index-1].ReceivedAt.Before(record.ReceivedAt) &&
+				!(records[index-1].ReceivedAt.Equal(record.ReceivedAt) &&
+					records[index-1].AuditID.String() < record.AuditID.String()) {
+			t.Fatalf("record %d out of range or order: %+v", index, record)
+		}
+	}
+	query.From = now.Add(-25 * time.Hour)
+	if _, err := service.BeginExport(ctx, query); !errors.Is(err, kubecluster.ErrInvalid) {
+		t.Fatalf("an export over a day: %v", err)
 	}
 }

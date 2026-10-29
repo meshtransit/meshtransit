@@ -375,6 +375,7 @@ type ManagementHandler struct {
 	sites                     SiteManager
 	exitPools                 ExitPoolManager
 	kubernetesClusters        KubernetesClusterManager
+	kubernetesExports         *kubernetesExportSlots
 	dnsZones                  DNSZoneManager
 	serviceNames              ServiceNameChecker
 	offerServiceNames         OfferServiceNameReader
@@ -466,6 +467,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		sites:                     options.Sites,
 		exitPools:                 options.ExitPools,
 		kubernetesClusters:        options.KubernetesClusters,
+		kubernetesExports:         newKubernetesExportSlots(),
 		dnsZones:                  options.DNSZones,
 		serviceNames:              options.ServiceNames,
 		offerServiceNames:         options.OfferServiceNames,

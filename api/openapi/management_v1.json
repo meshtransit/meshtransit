@@ -10,6 +10,241 @@
     }
   ],
   "paths": {
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/operation-exports": {
+      "get": {
+        "operationId": "exportKubernetesOperations",
+        "summary": "Export a cluster's recorded operations for meshctl kube audit-check",
+        "description": "Requires audit.export in the Workspace or the Network. The body is the meshtransit-kube-operations/v1 file meshctl reads, not wrapped in data: the header, the records from records_from to records_to (5 minutes past each side), then complete: true. A range of at most a day and 200000 records (422 range_too_large), ending at least 6 minutes ago so its records (5 minutes past to) have settled (422 range_not_settled; to defaults to 6 minutes ago); a cluster without a signing trust has no gateway namespace (409); one export a Workspace runs at a time on a replica (429). A failure while streaming writes a token no JSON reader accepts and cuts the connection: a cut file never reads as whole.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "Start (inclusive); default: a day before to.",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "End (exclusive); default: now. At most a day after from.",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The file",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "format",
+                    "cluster_id",
+                    "gateway_namespace",
+                    "privileged_groups",
+                    "secret_resources",
+                    "audit_settings_version",
+                    "audit_settings_updated_at",
+                    "from",
+                    "to",
+                    "records_from",
+                    "records_to",
+                    "records",
+                    "complete"
+                  ],
+                  "properties": {
+                    "format": {
+                      "type": "string",
+                      "const": "meshtransit-kube-operations/v1"
+                    },
+                    "cluster_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "gateway_namespace": {
+                      "type": "string"
+                    },
+                    "privileged_groups": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "secret_resources": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "audit_settings_version": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "audit_settings_updated_at": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "date-time"
+                    },
+                    "from": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "to": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "records_from": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "records_to": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "records": {
+                      "type": "array",
+                      "maxItems": 200000,
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "audit_id",
+                          "received_at",
+                          "class",
+                          "groups",
+                          "verb",
+                          "api_group",
+                          "resource",
+                          "subresource",
+                          "namespace",
+                          "name",
+                          "impersonated",
+                          "status"
+                        ],
+                        "properties": {
+                          "audit_id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "received_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "class": {
+                            "type": "string"
+                          },
+                          "groups": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "verb": {
+                            "type": "string"
+                          },
+                          "api_group": {
+                            "type": "string"
+                          },
+                          "resource": {
+                            "type": "string"
+                          },
+                          "subresource": {
+                            "type": "string"
+                          },
+                          "namespace": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "impersonated": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "integer",
+                            "description": "0 without an outcome within a day"
+                          }
+                        }
+                      }
+                    },
+                    "complete": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/audit-settings": {
       "get": {
         "operationId": "getKubernetesAuditSettings",

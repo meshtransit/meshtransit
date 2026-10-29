@@ -43,6 +43,7 @@ const (
 	// K1d d1c: operations and denials for audit readers.
 	kubernetesOperationListOperation        = "kubernetes_operation_list"
 	kubernetesOperationReadOperation        = "kubernetes_operation_read"
+	kubernetesOperationExportOperation      = "kubernetes_operation_export"
 	kubernetesAuditSettingsReadOperation    = "kubernetes_audit_settings_read"
 	kubernetesAuditSettingsReplaceOperation = "kubernetes_audit_settings_replace"
 	kubernetesDenialCountsOperation         = "kubernetes_operation_denial_counts"
@@ -82,6 +83,8 @@ type KubernetesClusterManager interface {
 		kubecluster.ID) (kubecluster.AuditSettings, error)
 	ReplaceAuditSettings(context.Context, kubecluster.AuditSettingsReplacement) (kubecluster.AuditSettingsResult,
 		error)
+	BeginExport(context.Context, kubecluster.ExportQuery) (kubecluster.ExportHeader, error)
+	ExportPage(context.Context, kubecluster.ExportQuery, kubecluster.PageCursor) ([]kubecluster.ExportRecord, error)
 }
 
 type kubernetesClusterPath struct {
@@ -119,6 +122,7 @@ type kubernetesClusterPath struct {
 //	GET         kubernetes-clusters/{c}/operations[/{audit_id}]            list, read (K1d d1c)
 //	GET         kubernetes-clusters/{c}/operation-denial-counts            sums (K1d d1c)
 //	GET|PUT     kubernetes-clusters/{c}/audit-settings                     read, replace (K1d d1d)
+//	GET         kubernetes-clusters/{c}/operation-exports                  export (K1d d1d)
 //
 // Only GET of a list takes a query: page_size and page_token (K1d).
 func parseKubernetesClusterPath(request *http.Request) (kubernetesClusterPath, bool) {
@@ -156,7 +160,8 @@ func parseKubernetesClusterPath(request *http.Request) (kubernetesClusterPath, b
 		path.operation = operations[request.Method]
 	}
 	switch {
-	case path.operation == kubernetesOperationListOperation || path.operation == kubernetesDenialCountsOperation:
+	case path.operation == kubernetesOperationListOperation || path.operation == kubernetesDenialCountsOperation ||
+		path.operation == kubernetesOperationExportOperation:
 		query, ok := parseKubernetesOperationQuery(request.URL.RawQuery, path.scope, path.clusterID,
 			path.operation == kubernetesOperationListOperation)
 		if !ok {
@@ -209,6 +214,9 @@ func (path *kubernetesClusterPath) route(rest []string) (map[string]string, bool
 	case len(rest) == 2 && rest[1] == "operations":
 		path.methods = restMethods{http.MethodGet}
 		return map[string]string{http.MethodGet: kubernetesOperationListOperation}, true
+	case len(rest) == 2 && rest[1] == "operation-exports":
+		path.methods = restMethods{http.MethodGet}
+		return map[string]string{http.MethodGet: kubernetesOperationExportOperation}, true
 	case len(rest) == 2 && rest[1] == "audit-settings":
 		path.methods = restMethods{http.MethodGet, http.MethodPut}
 		return map[string]string{http.MethodGet: kubernetesAuditSettingsReadOperation,
@@ -336,6 +344,8 @@ func (handler *ManagementHandler) handleKubernetesClusters(ctx context.Context, 
 	case kubernetesReplicaListOperation, kubernetesReplicaReadOperation, kubernetesCAListOperation,
 		kubernetesCAReadOperation:
 		return handler.readKubernetesReplicasAndCAs(ctx, response, correlationID, path, session, fail)
+	case kubernetesOperationExportOperation:
+		return handler.exportKubernetesOperations(ctx, response, correlationID, path, session, fail)
 	case kubernetesAuditSettingsReadOperation, kubernetesAuditSettingsReplaceOperation:
 		return handler.serveKubernetesAuditSettings(ctx, response, request, correlationID, path, session, fail)
 	case kubernetesOperationListOperation, kubernetesOperationReadOperation, kubernetesDenialCountsOperation:

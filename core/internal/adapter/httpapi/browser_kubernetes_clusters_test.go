@@ -26,6 +26,7 @@ func TestBrowserManagementAdmitsKubernetesClusterRoutes(t *testing.T) {
 		kubernetesClustersTestPath(cluster + "/operations?class=write&from=2026-10-29T00:00:00Z"),
 		kubernetesClustersTestPath(cluster + "/operations" + child),
 		kubernetesClustersTestPath(cluster + "/operation-denial-counts?to=2026-10-30T00:00:00Z"),
+		kubernetesClustersTestPath(cluster + "/operation-exports?from=2026-10-29T00:00:00Z&to=2026-10-30T00:00:00Z"),
 		kubernetesClustersTestPath(cluster + "/certificate-authorities?page_size=10"),
 		kubernetesClustersTestPath(cluster + "/replicas" + child),
 		kubernetesClustersTestPath(cluster + "/certificate-authorities" + child),
@@ -41,6 +42,7 @@ func TestBrowserManagementAdmitsKubernetesClusterRoutes(t *testing.T) {
 		kubernetesClustersTestPath(cluster + "/signing?page_size=10"),
 		kubernetesClustersTestPath(cluster + "/join-keys?page_size=101"),
 		kubernetesClustersTestPath(cluster + "/replica-requests?page_token=x"),
+		kubernetesClustersTestPath(cluster + "/operation-exports?class=write"),
 	} {
 		if browser.validRequest(browserManagementReadRequest(t, path)) {
 			t.Errorf("the browser admitted GET %s", path)

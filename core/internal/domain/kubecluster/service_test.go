@@ -57,6 +57,7 @@ type recordingStore struct {
 	pages         []kubecluster.PageQuery
 	operations    []kubecluster.OperationQuery
 	auditSettings []kubecluster.AuditSettingsReplacement
+	exports       []kubecluster.ExportQuery
 }
 
 func (store *recordingStore) ListJoinKeys(_ context.Context,
@@ -122,6 +123,17 @@ func (*recordingStore) CountDenials(context.Context, accountsession.Session, net
 func (*recordingStore) ReadAuditSettings(context.Context, accountsession.Session, network.Scope,
 	kubecluster.ID) (kubecluster.AuditSettings, error) {
 	return kubecluster.AuditSettings{}, nil
+}
+
+func (store *recordingStore) BeginExport(_ context.Context,
+	query kubecluster.ExportQuery) (kubecluster.ExportHeader, error) {
+	store.exports = append(store.exports, query)
+	return kubecluster.ExportHeader{}, nil
+}
+
+func (*recordingStore) ExportPage(context.Context, kubecluster.ExportQuery,
+	kubecluster.PageCursor) ([]kubecluster.ExportRecord, error) {
+	return nil, nil
 }
 
 func (store *recordingStore) ReplaceAuditSettings(_ context.Context,
@@ -545,5 +557,30 @@ func TestServiceAuditSettings(t *testing.T) {
 	}
 	if got := store.auditSettings[0].PrivilegedGroups; len(got) != 2 || got[0] != "admin" || got[1] != "sre" {
 		t.Fatalf("groups %v, want sorted and distinct", got)
+	}
+}
+
+// An export covers at most a day; its records reach 5 minutes past each
+// side (K1d d1d-b).
+func TestServiceExports(t *testing.T) {
+	t.Parallel()
+	service, store, session, scope, now := serviceFixture(t)
+	cluster := kubecluster.ID(mustID(t, "000000000301"))
+	query := kubecluster.ExportQuery{Session: session, Scope: scope, ClusterID: cluster,
+		From: now.Add(-kubecluster.MaximumExportRange - time.Second), To: now}
+	if _, err := service.BeginExport(context.Background(), query); !errors.Is(err, kubecluster.ErrInvalid) {
+		t.Fatalf("an export over a day: %v", err)
+	}
+	query.From = now.Add(-kubecluster.MaximumExportRange)
+	if _, err := service.BeginExport(context.Background(), query); err != nil || len(store.exports) != 1 {
+		t.Fatalf("a day's export: %v", err)
+	}
+	if _, err := service.ExportPage(context.Background(), query, kubecluster.PageCursor{At: now}); !errors.Is(err,
+		kubecluster.ErrInvalid) {
+		t.Fatalf("a half cursor: %v", err)
+	}
+	from, to := query.RecordsRange()
+	if from != query.From.Add(-5*time.Minute) || to != query.To.Add(5*time.Minute) {
+		t.Fatalf("RecordsRange() = %v, %v", from, to)
 	}
 }
