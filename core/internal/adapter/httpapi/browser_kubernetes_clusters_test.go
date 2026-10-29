@@ -211,3 +211,21 @@ func mustBrowserPublicID(t *testing.T, value string) publicid.ID {
 	}
 	return id
 }
+
+// The Console sets a cluster's audit settings with PUT (K1d d1d).
+func TestBrowserManagementAdmitsKubernetesAuditSettingsPut(t *testing.T) {
+	t.Parallel()
+	browser, _ := newBrowserManagementFixture(t)
+	request := browserManagementRequest(t, kubernetesClustersTestPath("/01890f00-0000-7000-8000-000000000a01/audit-settings"),
+		`{"privileged_groups":[],"secret_resources":[]}`)
+	request.Method = http.MethodPut
+	if !browser.validRequest(request) {
+		t.Fatal("the browser cannot PUT audit settings")
+	}
+	request = browserManagementRequest(t, kubernetesClustersTestPath("/01890f00-0000-7000-8000-000000000a01/replicas"),
+		`{}`)
+	request.Method = http.MethodPut
+	if browser.validRequest(request) {
+		t.Fatal("the browser admitted a PUT on replicas")
+	}
+}

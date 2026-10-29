@@ -48,6 +48,7 @@ type kubernetesClusterStub struct {
 	next             kubecluster.PageCursor
 	truncated        bool
 	operationQueries []kubecluster.OperationQuery
+	auditSettings    []kubecluster.AuditSettingsReplacement
 	denialRanges     [][2]time.Time
 }
 
@@ -173,6 +174,28 @@ func (stub *kubernetesClusterStub) CountDenials(_ context.Context, _ accountsess
 	}
 	return kubecluster.DenialSums{Counts: []kubecluster.DenialCount{{Reason: "forbidden", Count: 3, FirstAt: from,
 		LastAt: to}}}, nil
+}
+
+func (stub *kubernetesClusterStub) ReadAuditSettings(context.Context, accountsession.Session, network.Scope,
+	kubecluster.ID) (kubecluster.AuditSettings, error) {
+	stub.calls = append(stub.calls, "read-audit-settings")
+	if stub.failure != nil {
+		return kubecluster.AuditSettings{}, stub.failure
+	}
+	return kubecluster.AuditSettings{PrivilegedGroups: []string{"sre"}, SecretResources: []string{}, Version: 2,
+		UpdatedAt: time.Date(2026, time.October, 30, 2, 0, 0, 0, time.UTC)}, nil
+}
+
+func (stub *kubernetesClusterStub) ReplaceAuditSettings(_ context.Context,
+	replacement kubecluster.AuditSettingsReplacement) (kubecluster.AuditSettingsResult, error) {
+	stub.calls = append(stub.calls, "replace-audit-settings")
+	stub.auditSettings = append(stub.auditSettings, replacement)
+	if stub.failure != nil {
+		return kubecluster.AuditSettingsResult{}, stub.failure
+	}
+	return kubecluster.AuditSettingsResult{Changed: true, Settings: kubecluster.AuditSettings{
+		PrivilegedGroups: replacement.PrivilegedGroups, SecretResources: replacement.SecretResources,
+		Version: replacement.ExpectedVersion + 1, UpdatedAt: time.Date(2026, time.October, 30, 2, 0, 0, 0, time.UTC)}}, nil
 }
 
 const kubernetesTestAuditID = "01890f00-0000-7000-8000-000000000b08"
@@ -560,6 +583,21 @@ func TestKubernetesClusterHTTPBoundary(t *testing.T) {
 			nil, 404, "", "", ""},
 		{"operations without audit.read", http.MethodGet, cluster + "/operations", "", "", kubecluster.ErrForbidden,
 			403, "list-operations", "", ""},
+		{"read audit settings", http.MethodGet, cluster + "/audit-settings", "", "", nil, 200,
+			"read-audit-settings", `"privileged_groups":["sre"],"secret_resources":[],"version":2`, ""},
+		{"set audit settings first", http.MethodPut, cluster + "/audit-settings",
+			`{"privileged_groups":["sre"],"secret_resources":["secrets"]}`, `"0"`, nil, 200, "replace-audit-settings",
+			`"version":1`, ""},
+		{"replace audit settings", http.MethodPut, cluster + "/audit-settings",
+			`{"privileged_groups":[],"secret_resources":[]}`, `"2"`, nil, 200, "replace-audit-settings",
+			`"changed":true`, ""},
+		{"audit settings without If-Match", http.MethodPut, cluster + "/audit-settings",
+			`{"privileged_groups":[],"secret_resources":[]}`, "", nil, 428, "", "precondition_required", ""},
+		{"audit settings without a list", http.MethodPut, cluster + "/audit-settings", `{"privileged_groups":[]}`,
+			`"0"`, nil, 400, "", "invalid_request", ""},
+		{"stale audit settings", http.MethodPut, cluster + "/audit-settings",
+			`{"privileged_groups":[],"secret_resources":[]}`, `"1"`, kubecluster.ErrConflict, 409,
+			"replace-audit-settings", "", ""},
 		{"read a request", http.MethodGet, request, "", "", nil, 200, "read-request",
 			`"machine_key_fingerprint":"` + strings.Repeat("a", 64) + `"`, ""},
 		{"approve", http.MethodPost, request + "/actions/approve", `{"code":"4KH7I-REC2B"}`, "", nil, 200,

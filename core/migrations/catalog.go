@@ -629,6 +629,8 @@ func Catalog() []Migration {
 			kubernetesClusterReplicaCAReadsSQL),
 		newMigration(249, "Audit readers read a cluster's Kubernetes operations with a bounded scan",
 			kubernetesOperationReadsSQL),
+		newMigration(250, "An administrator sets what audit-check treats as privileged and secret-like",
+			kubernetesAuditSettingsSQL),
 	}
 }
 
@@ -1155,3 +1157,6 @@ var kubernetesClusterReplicaCAReadsSQL string
 
 //go:embed 000249_kubernetes_operation_reads.up.sql
 var kubernetesOperationReadsSQL string
+
+//go:embed 000250_kubernetes_audit_settings.up.sql
+var kubernetesAuditSettingsSQL string

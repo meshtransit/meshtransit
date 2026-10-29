@@ -10,6 +10,246 @@
     }
   ],
   "paths": {
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/audit-settings": {
+      "get": {
+        "operationId": "getKubernetesAuditSettings",
+        "summary": "Read what audit-check treats as privileged and secret-like for a cluster",
+        "description": "Requires network.read. Version 0 and empty lists until an administrator sets them; ETag is the version.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The settings",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/KubernetesAuditSettings"
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      },
+      "put": {
+        "operationId": "replaceKubernetesAuditSettings",
+        "summary": "Set what audit-check treats as privileged and secret-like for a cluster",
+        "description": "Requires kubernetes_cluster.manage and audit.export. If-Match is the version read (\"0\" before any). Lists are sorted and made distinct; the same lists change nothing (changed: false). An administrator types them as the gateway chart's values say: the gateway never sets them.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "privileged_groups",
+                  "secret_resources"
+                ],
+                "properties": {
+                  "privileged_groups": {
+                    "type": "array",
+                    "maxItems": 64,
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+                    }
+                  },
+                  "secret_resources": {
+                    "type": "array",
+                    "maxItems": 64,
+                    "items": {
+                      "type": "string",
+                      "maxLength": 253,
+                      "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The settings",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/KubernetesAuditSettings"
+                        }
+                      ],
+                      "type": "object",
+                      "properties": {
+                        "changed": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/operations": {
       "get": {
         "operationId": "listKubernetesOperations",
@@ -5589,6 +5829,46 @@
       }
     },
     "schemas": {
+      "KubernetesAuditSettings": {
+        "type": "object",
+        "required": [
+          "privileged_groups",
+          "secret_resources",
+          "version",
+          "updated_at"
+        ],
+        "properties": {
+          "privileged_groups": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+            }
+          },
+          "secret_resources": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "maxLength": 253,
+              "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$"
+            }
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        },
+        "description": "What meshctl kube audit-check treats as privileged groups and secret-like resources for a cluster"
+      },
       "KubernetesOperation": {
         "type": "object",
         "additionalProperties": false,

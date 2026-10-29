@@ -119,6 +119,15 @@ func assertKubernetesClusterPages(ctx context.Context, t *testing.T, admin *pgx.
 		kubecluster.ErrForbidden) {
 		t.Fatalf("a session without audit.read listed operations: %v", err)
 	}
+	// A Network administrator manages clusters but may not export audit
+	// data: it may not change what audit-check sees (review d1d-a M2).
+	removeNetworkAdmin := seedEnrollmentKeyRole(ctx, t, admin, custom, 1994, "network_admin")
+	if _, err := service.ReplaceAuditSettings(ctx, kubecluster.AuditSettingsReplacement{Session: custom,
+		Scope: scope, ClusterID: clusterID, PrivilegedGroups: []string{}, SecretResources: []string{},
+		CorrelationID: newCorrelationID(t)}); !errors.Is(err, kubecluster.ErrForbidden) {
+		t.Fatalf("a manager without audit.export changed the audit settings: %v", err)
+	}
+	removeNetworkAdmin()
 	removeAuditor := seedEnrollmentKeyRole(ctx, t, admin, custom, 1993, "auditor")
 	defer removeAuditor()
 	if _, err := service.ListJoinKeys(ctx, kubecluster.PageQuery{Session: custom, Scope: scope,
@@ -127,6 +136,7 @@ func assertKubernetesClusterPages(ctx context.Context, t *testing.T, admin *pgx.
 	}
 	recordOperations()
 	auditID := assertKubernetesOperationReads(ctx, t, admin, service, store, owner, custom, scope, clusterID)
+	assertKubernetesAuditSettings(ctx, t, admin, service, owner, custom, scope, clusterID)
 	if _, err := service.ListReplicas(ctx, kubecluster.PageQuery{Session: custom, Scope: scope,
 		ClusterID: clusterID, Limit: 1}); err != nil {
 		t.Fatalf("a Network reader listed no replicas: %v", err)
@@ -489,5 +499,87 @@ ORDER BY peer.id LIMIT 1`, gatewayDevice).Scan(&peer); err != nil {
 		if answer["outcome"] != "accepted" {
 			t.Fatalf("operation %d answered %v", index, answer)
 		}
+	}
+}
+
+// The audit settings (schema 250): version 0 and empty until set; an
+// administrator with kubernetes_cluster.manage and audit.export sets them
+// against the version read, sorted and distinct; the same lists change
+// nothing; a stale version conflicts; an auditor (audit.export, no manage)
+// is forbidden; each change is an event of the Network.
+func assertKubernetesAuditSettings(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	service *kubecluster.Service, owner, auditor accountsession.Session, scope network.Scope,
+	clusterID kubecluster.ID) {
+	t.Helper()
+	settings, err := service.ReadAuditSettings(ctx, auditor, scope, clusterID)
+	if err != nil || settings.Version != 0 || len(settings.PrivilegedGroups) != 0 || len(settings.SecretResources) != 0 {
+		t.Fatalf("ReadAuditSettings() before any = %+v, %v", settings, err)
+	}
+	replacement := kubecluster.AuditSettingsReplacement{Session: owner, Scope: scope, ClusterID: clusterID,
+		PrivilegedGroups: []string{"sre", "admin", "sre"}, SecretResources: []string{"secrets", "sealedsecrets.bitnami.com"},
+		CorrelationID: newCorrelationID(t)}
+	result, err := service.ReplaceAuditSettings(ctx, replacement)
+	if err != nil || !result.Changed || result.Settings.Version != 1 ||
+		strings.Join(result.Settings.PrivilegedGroups, ",") != "admin,sre" ||
+		strings.Join(result.Settings.SecretResources, ",") != "sealedsecrets.bitnami.com,secrets" {
+		t.Fatalf("ReplaceAuditSettings() = %+v, %v", result, err)
+	}
+	assertKubernetesEvent(ctx, t, admin, "kubernetes_cluster_audit_settings", clusterID.String(),
+		"kubernetes_cluster.audit_settings_replaced")
+	// The event names both bindings: manage and audit.export (review d1d-a M1).
+	var exportScope string
+	if err := admin.QueryRow(ctx, `SELECT event.payload -> 'export_authority' ->> 'scope'
+FROM mesh_audit.audit_event AS event
+WHERE event.target_kind = 'kubernetes_cluster_audit_settings' AND event.target_public_id = $1::UUID
+ORDER BY event.occurred_at DESC, event.event_identity_id DESC LIMIT 1`, clusterID.String()).Scan(&exportScope); err != nil || exportScope != "workspace" {
+		t.Fatalf("the event's audit.export binding scope = %q, %v", exportScope, err)
+	}
+	// Up to 64 privileged groups, more than a rule's 16 (review d1d-a H1).
+	for _, count := range []int{17, kubecluster.MaximumAuditSettingsEntries} {
+		groups := make([]string, count)
+		for index := range groups {
+			groups[index] = "g" + strconv.Itoa(index)
+		}
+		current, err := service.ReadAuditSettings(ctx, owner, scope, clusterID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wide := kubecluster.AuditSettingsReplacement{Session: owner, Scope: scope, ClusterID: clusterID,
+			ExpectedVersion: current.Version, PrivilegedGroups: groups, SecretResources: []string{},
+			CorrelationID: newCorrelationID(t)}
+		if saved, err := service.ReplaceAuditSettings(ctx, wide); err != nil || len(saved.Settings.PrivilegedGroups) != count {
+			t.Fatalf("%d privileged groups: %+v, %v", count, saved, err)
+		}
+	}
+	latest, err := service.ReadAuditSettings(ctx, owner, scope, clusterID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement.ExpectedVersion = latest.Version
+	replacement.CorrelationID = newCorrelationID(t)
+	restored, err := service.ReplaceAuditSettings(ctx, replacement)
+	if err != nil || !restored.Changed {
+		t.Fatalf("back to two groups = %+v, %v", restored, err)
+	}
+	replacement.ExpectedVersion, replacement.CorrelationID = restored.Settings.Version, newCorrelationID(t)
+	if same, err := service.ReplaceAuditSettings(ctx, replacement); err != nil || same.Changed ||
+		same.Settings.Version != restored.Settings.Version {
+		t.Fatalf("the same lists again = %+v, %v", same, err)
+	}
+	replacement.ExpectedVersion, replacement.CorrelationID = 1, newCorrelationID(t)
+	if _, err := service.ReplaceAuditSettings(ctx, replacement); !errors.Is(err, kubecluster.ErrConflict) {
+		t.Fatalf("a stale version: %v", err)
+	}
+	denied := replacement
+	denied.Session, denied.ExpectedVersion, denied.CorrelationID = auditor, restored.Settings.Version,
+		newCorrelationID(t)
+	denied.PrivilegedGroups = nil
+	if _, err := service.ReplaceAuditSettings(ctx, denied); !errors.Is(err, kubecluster.ErrForbidden) {
+		t.Fatalf("an auditor without kubernetes_cluster.manage changed the settings: %v", err)
+	}
+	read, err := service.ReadAuditSettings(ctx, auditor, scope, clusterID)
+	if err != nil || read.Version != restored.Settings.Version || read.UpdatedAt.IsZero() ||
+		len(read.PrivilegedGroups) != 2 {
+		t.Fatalf("ReadAuditSettings() = %+v, %v", read, err)
 	}
 }

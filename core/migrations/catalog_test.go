@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 249 {
-		t.Fatalf("len(Catalog()) = %d, want 249", len(catalog))
+	if len(catalog) != 250 {
+		t.Fatalf("len(Catalog()) = %d, want 250", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 249 {
-		t.Fatalf("LatestVersion() = %d, want 249", LatestVersion())
+	if LatestVersion() != 250 {
+		t.Fatalf("LatestVersion() = %d, want 250", LatestVersion())
 	}
 }
 
@@ -7444,6 +7444,46 @@ func TestMigration249KubernetesOperationReads(t *testing.T) {
 	} {
 		if strings.Contains(migration.SQL, never) {
 			t.Errorf("migration 249 has %q", never)
+		}
+	}
+}
+
+func TestMigration250KubernetesAuditSettings(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 250 || catalog[249].Version != 250 {
+		t.Fatalf("the catalog has no migration 250 (%d migrations)", len(catalog))
+	}
+	migration := catalog[249]
+	for _, want := range []string{
+		"CREATE TABLE mesh.kubernetes_cluster_audit_settings (",
+		"REFERENCES mesh.kubernetes_cluster (workspace_id, network_id, id) ON DELETE CASCADE",
+		"ALTER TABLE mesh.kubernetes_cluster_audit_settings FORCE ROW LEVEL SECURITY;",
+		"capture_authority_mutation('kubernetes_cluster_audit_settings', 'public_id');",
+		"CHECK (mesh_ops.kubernetes_privileged_groups_are_valid_v1(privileged_groups))",
+		"'export_authority', mesh_ops.enrollment_key_authority_internal_v1(",
+		"OR pg_catalog.array_ndims(p_groups) = 1 AND pg_catalog.array_lower(p_groups, 1) = 1)",
+		"p_secret_resources, 1, v_now, v_grant.actor_id)",
+		"'kubernetes_cluster.manage');",
+		"p_workspace_public_id, 'audit.export', v_now) AS granted",
+		"RAISE EXCEPTION USING ERRCODE = '40001', MESSAGE = 'Kubernetes audit settings version changed';",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.replace_kubernetes_audit_settings_v1(",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_kubernetes_audit_settings_v1(",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 250 lacks %q", want)
+		}
+	}
+	for _, never := range []string{
+		"GRANT EXECUTE ON FUNCTION mesh_ops.kubernetes_audit_settings_document_internal_v1",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.kubernetes_secret_resources_are_valid_v1",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.kubernetes_privileged_groups_are_valid_v1",
+		"mesh_ops.kubernetes_groups_are_valid_v1(",
+		"WHERE principal.public_id = p_principal_public_id",
+		"GRANT SELECT ON mesh.kubernetes_cluster_audit_settings",
+	} {
+		if strings.Contains(migration.SQL, never) {
+			t.Errorf("migration 250 has %q", never)
 		}
 	}
 }

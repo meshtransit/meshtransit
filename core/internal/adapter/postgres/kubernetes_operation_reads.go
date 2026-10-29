@@ -150,7 +150,7 @@ func (store *KubernetesClusterStore) ListOperations(ctx context.Context,
 		// The last row scanned may be the last kept (review d1c H1).
 		id, err := publicid.Parse(*read.LastScannedID)
 		scanned := kubecluster.PageCursor{At: read.LastScannedAt.UTC(), ID: id}
-		if err != nil || !(scanned.At.Equal(previous.At) && scanned.ID == previous.ID) &&
+		if err != nil || (!scanned.At.Equal(previous.At) || scanned.ID != previous.ID) &&
 			!beforeCursor(previous, scanned.At, scanned.ID) {
 			return kubecluster.OperationPage{}, kubecluster.ErrInvalid
 		}

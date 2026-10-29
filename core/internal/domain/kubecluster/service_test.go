@@ -3,6 +3,7 @@ package kubecluster_test
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -48,13 +49,14 @@ func (*sequentialSecrets) NewCredentialID() (enrollment.CredentialID, error) {
 
 // recordingStore records what reaches it and answers plausibly.
 type recordingStore struct {
-	issues       []kubecluster.KeyIssue
-	decisions    []kubecluster.Decision
-	creations    []kubecluster.Creation
-	signingReads []kubecluster.ID
-	replacements []kubecluster.TrustReplacement
-	pages        []kubecluster.PageQuery
-	operations   []kubecluster.OperationQuery
+	issues        []kubecluster.KeyIssue
+	decisions     []kubecluster.Decision
+	creations     []kubecluster.Creation
+	signingReads  []kubecluster.ID
+	replacements  []kubecluster.TrustReplacement
+	pages         []kubecluster.PageQuery
+	operations    []kubecluster.OperationQuery
+	auditSettings []kubecluster.AuditSettingsReplacement
 }
 
 func (store *recordingStore) ListJoinKeys(_ context.Context,
@@ -115,6 +117,17 @@ func (*recordingStore) ReadOperation(context.Context, accountsession.Session, ne
 func (*recordingStore) CountDenials(context.Context, accountsession.Session, network.Scope, kubecluster.ID,
 	time.Time, time.Time) (kubecluster.DenialSums, error) {
 	return kubecluster.DenialSums{}, nil
+}
+
+func (*recordingStore) ReadAuditSettings(context.Context, accountsession.Session, network.Scope,
+	kubecluster.ID) (kubecluster.AuditSettings, error) {
+	return kubecluster.AuditSettings{}, nil
+}
+
+func (store *recordingStore) ReplaceAuditSettings(_ context.Context,
+	replacement kubecluster.AuditSettingsReplacement) (kubecluster.AuditSettingsResult, error) {
+	store.auditSettings = append(store.auditSettings, replacement)
+	return kubecluster.AuditSettingsResult{}, nil
 }
 
 func (store *recordingStore) ReplaceSigningTrust(_ context.Context,
@@ -489,5 +502,48 @@ func TestServiceOperations(t *testing.T) {
 	if _, err := service.CountDenials(context.Background(), session, scope, cluster, now.Add(-32*24*time.Hour),
 		now); !errors.Is(err, kubecluster.ErrInvalid) {
 		t.Fatalf("CountDenials() over 31 days: %v", err)
+	}
+}
+
+// Audit settings arrive sorted and distinct; a group that is not an RFC
+// 1123 label, or a resource not in the chart's form, never reaches the
+// store (K1d d1d).
+func TestServiceAuditSettings(t *testing.T) {
+	t.Parallel()
+	service, store, session, scope, _ := serviceFixture(t)
+	cluster := kubecluster.ID(mustID(t, "000000000301"))
+	base := kubecluster.AuditSettingsReplacement{Session: session, Scope: scope, ClusterID: cluster,
+		CorrelationID: mustID(t, "000000000901")}
+	for name, change := range map[string]func(*kubecluster.AuditSettingsReplacement){
+		"an upper-case group":     func(r *kubecluster.AuditSettingsReplacement) { r.PrivilegedGroups = []string{"SRE"} },
+		"a resource with a slash": func(r *kubecluster.AuditSettingsReplacement) { r.SecretResources = []string{"x/y"} },
+		"a negative version":      func(r *kubecluster.AuditSettingsReplacement) { r.ExpectedVersion = -1 },
+		"no correlation":          func(r *kubecluster.AuditSettingsReplacement) { r.CorrelationID = publicid.ID{} },
+	} {
+		replacement := base
+		change(&replacement)
+		if _, err := service.ReplaceAuditSettings(context.Background(), replacement); !errors.Is(err,
+			kubecluster.ErrInvalid) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	many := base
+	for index := range kubecluster.MaximumAuditSettingsEntries + 1 {
+		many.PrivilegedGroups = append(many.PrivilegedGroups, "g"+strconv.Itoa(index))
+	}
+	if _, err := service.ReplaceAuditSettings(context.Background(), many); !errors.Is(err, kubecluster.ErrInvalid) {
+		t.Errorf("65 groups: %v", err)
+	}
+	if len(store.auditSettings) != 0 {
+		t.Fatalf("invalid settings reached the store: %+v", store.auditSettings)
+	}
+	valid := base
+	valid.PrivilegedGroups = []string{"sre", "admin", "sre"}
+	valid.SecretResources = []string{"sealedsecrets.bitnami.com", "secrets"}
+	if _, err := service.ReplaceAuditSettings(context.Background(), valid); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.auditSettings[0].PrivilegedGroups; len(got) != 2 || got[0] != "admin" || got[1] != "sre" {
+		t.Fatalf("groups %v, want sorted and distinct", got)
 	}
 }
