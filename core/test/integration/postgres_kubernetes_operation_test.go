@@ -11,6 +11,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/domain/kubeaudit"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 // operationRow is one intent as control hands schema 245's writer.
@@ -52,8 +56,8 @@ func recordOperations(ctx context.Context, t *testing.T, runtime *pgx.Conn, rows
 // with other content conflict; rows never change; outcomes and denials go
 // under the gateway that sent them; partitions are kept; only the roles
 // named run each function.
-func assertKubernetesOperations(ctx context.Context, t *testing.T, admin, runtime *pgx.Conn, keys replicaKeys,
-	deviceID string,
+func assertKubernetesOperations(ctx context.Context, t *testing.T, admin, runtime *pgx.Conn,
+	runtimePool *postgresadapter.Pool, keys replicaKeys, deviceID string,
 ) {
 	t.Helper()
 	gateway := hex.EncodeToString(fingerprintOf(keys)) + ":" + hex.EncodeToString(nodeKeyOf(keys))
@@ -106,6 +110,7 @@ FROM mesh_audit.kubernetes_operation AS operation WHERE operation.audit_id = $1:
 		t.Fatalf("recorded gateway %d (want %d), groups %v, cluster %d: %v", gatewayID, expectedGateway, groups,
 			cluster, err)
 	}
+	assertKubernetesOperationStore(ctx, t, runtimePool, keys, peer)
 	// Append only.
 	if _, err := admin.Exec(ctx, `UPDATE mesh_audit.kubernetes_operation SET verb = 'get'
 WHERE audit_id = $1::UUID`, first["audit_id"]); sqlState(t, err) != "42501" {
@@ -231,13 +236,69 @@ WHERE device.public_id = $1::UUID`, deviceID).Scan(&erased); err != nil {
 		}
 		return erased
 	}
-	if first, second := erase(), erase(); first != `{"denials": 1, "outcomes": 1, "remaining": true, "operations": 2}` ||
-		second != `{"denials": 0, "outcomes": 0, "remaining": false, "operations": 1}` {
+	// This test's three operations and the store's one; an outcome and a
+	// denial from each.
+	if first, second := erase(), erase(); first != `{"denials": 2, "outcomes": 2, "remaining": true, "operations": 2}` ||
+		second != `{"denials": 0, "outcomes": 0, "remaining": false, "operations": 2}` {
 		t.Fatalf("erase = %s, then %s", first, second)
 	}
 	var erasures int
 	if err := admin.QueryRow(ctx, `SELECT count(*) FROM mesh_audit.kubernetes_operation_erasure
 WHERE actor = 'soc@example.com' AND change_ref = 'ERASE-1'`).Scan(&erasures); err != nil || erasures != 2 {
 		t.Fatalf("erasures recorded %d (%v), want 2", erasures, err)
+	}
+}
+
+// assertKubernetesOperationStore: the runtime store writes rows with
+// synchronous commit and answers them; a duplicate sent again answers the
+// first audit_id; reports go under the gateway (K1b0 b0b2).
+func assertKubernetesOperationStore(ctx context.Context, t *testing.T, runtimePool *postgresadapter.Pool,
+	keys replicaKeys, peer string,
+) {
+	t.Helper()
+	store, err := postgresadapter.NewKubernetesOperationStore(runtimePool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if granted, err := store.Granted(ctx); err != nil || !granted {
+		t.Fatalf("Granted() = %v, %v", granted, err)
+	}
+	peerID, err := publicid.Parse(peer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateway := kubeaudit.Gateway{MachineFingerprint: [32]byte(fingerprintOf(keys)), NodeKey: [32]byte(nodeKeyOf(keys))}
+	row := func(last byte) kubeaudit.Row {
+		now := time.Now()
+		var id [16]byte
+		millis := uint64(now.UnixMilli())
+		for index := range 6 {
+			id[5-index] = byte(millis >> (8 * index))
+		}
+		id[6], id[8], id[15] = 0x70, 0x80, last
+		return kubeaudit.Row{Gateway: gateway, NetworkRevision: 7,
+			Owner: kubeaudit.Owner{Kind: "member", Ref: "p:1"},
+			Intent: kubeaudit.Intent{ID: id, Peer: peerID, Groups: []string{"edit"}, Class: kubeaudit.ClassExec,
+				Verb: "create", Resource: "pods", Subresource: "exec", Namespace: "default", Name: "web-0",
+				ObservedAt: now}}
+	}
+	// The store issues the audit_id; the same intent again answers it.
+	first := row(1)
+	answers, err := store.Record(ctx, []kubeaudit.Row{first})
+	if err != nil || answers[0].Outcome != kubeaudit.OutcomeAccepted || !answers[0].AuditID.IsValid() {
+		t.Fatalf("Record() = %+v, %v", answers, err)
+	}
+	firstID := answers[0].AuditID
+	answers, err = store.Record(ctx, []kubeaudit.Row{first})
+	if err != nil || answers[0].Outcome != kubeaudit.OutcomeDuplicate || answers[0].AuditID != firstID {
+		t.Fatalf("Record(again) = %+v, %v", answers, err)
+	}
+	outcomes, denials, err := store.RecordReports(ctx, []kubeaudit.Reports{{Gateway: gateway,
+		Finished: []kubeaudit.Finished{{AuditID: firstID, Status: 101, Duration: 3 * time.Second}},
+		Denials: []kubeaudit.Denials{{Peer: peerID, Reason: kubeaudit.DenialForbidden, Count: 2,
+			First: time.Now().Add(-time.Second), Last: time.Now()}},
+	}})
+	if err != nil || outcomes != 1 || denials != 1 {
+		t.Fatalf("RecordReports() = %d, %d, %v", outcomes, denials, err)
 	}
 }
