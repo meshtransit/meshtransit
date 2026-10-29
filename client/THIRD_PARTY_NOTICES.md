@@ -16,6 +16,7 @@
 | `google.golang.org/protobuf` | MTCP messages | BSD-3-Clause |
 | `golang.org/x/crypto`, `golang.org/x/net`, `golang.org/x/sync`, `golang.org/x/sys`, `golang.org/x/text` | peer-probe cryptography, DNS messages, concurrency helpers, system calls, text handling used by these modules | BSD-3-Clause |
 | `golang.org/x/exp`, `golang.org/x/time` | generic constraints and rate limiting inside `gvisor.dev/gvisor`, and the rate of the gateway's token mints (`meshgw`) | BSD-3-Clause |
+| `gopkg.in/yaml.v3` | editing kubeconfig files while keeping their other entries and order (`meshctl kube`) | MIT and Apache-2.0 |
 | `golang.org/x/mobile` | the Java and Objective-C bindings of `client/mobile` that the Android and iOS apps embed (ADR-052) | BSD-3-Clause |
 
 `golang.org/x/mod` and `golang.org/x/tools` (BSD-3-Clause) are required by the `gomobile` and `gobind` build tools pinned in `go.mod`; they run at build time and are not part of any shipped binary.

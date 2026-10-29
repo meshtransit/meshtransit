@@ -200,6 +200,8 @@ func Run(
 		return runDown(ctx, commandArgs[1:], stdout, stderr, global.isJSON, client)
 	case "logout":
 		return runLogout(ctx, commandArgs[1:], stdout, stderr, global.isJSON, client)
+	case "kube":
+		return runKube(ctx, commandArgs[1:], stdout, stderr, global.isJSON, client)
 	case "exit":
 		if len(commandArgs) == 2 && commandArgs[1] == "status" {
 			if global.isJSON {
@@ -1201,6 +1203,9 @@ Commands:
   exit status                             Show this machine's exit choice and the exit node in use
   exit approve ID...                      Use the exit nodes (or pool) status lists as waiting
   routes COMMAND                          Show or change subnet and exit route settings (meshctl routes show)
+  kube list                               List the Kubernetes clusters this Device may reach
+  kube login CLUSTER [--group G] [--use]  Add a kubectl context for a cluster (no credential is written)
+  kube logout CLUSTER|--all               Remove the kubectl contexts meshctl added
   doctor control                          Probe active control compatibility
   version                                 Show meshctl build information
   help                                    Show this help
