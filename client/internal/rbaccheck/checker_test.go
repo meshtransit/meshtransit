@@ -462,6 +462,47 @@ func TestCheckerGuardedNamespaces(t *testing.T) {
 	}
 }
 
+// Running code in a pod of a guarded namespace (the VAP's allowlist, whose
+// pods may sit by the gateway) turns a group off; while the namespace is
+// not guarded the same right does not (review b7b M2).
+func TestCheckerGuardsSessionsInAllowedNamespaces(t *testing.T) {
+	t.Parallel()
+	for _, right := range [][2]string{
+		{"create", "exec"}, {"get", "exec"}, {"create", "attach"}, {"get", "attach"},
+		{"create", "portforward"}, {"get", "portforward"},
+		{"patch", "ephemeralcontainers"}, {"update", "ephemeralcontainers"},
+	} {
+		for _, guarded := range []bool{true, false} {
+			reviewer := &fakeReviewer{allow: map[string]func(Attributes) bool{
+				"ops": func(attributes Attributes) bool {
+					return attributes.Namespace == "local-path-storage" && attributes.Verb == right[0] &&
+						attributes.Resource == "pods" && attributes.Subresource == right[1]
+				},
+			}}
+			options := testOptions(reviewer, fakeTokens{}, Group{Name: "ops"})
+			if guarded {
+				options.GuardedNamespaces = []string{"local-path-storage"}
+			}
+			checker, err := New(options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			checker.Pass(t.Context())
+			verdict := checker.Verdict("ops")
+			if !guarded {
+				if !verdict.Enabled {
+					t.Errorf("%v unguarded: turned off: %s", right, verdict.Reason)
+				}
+				continue
+			}
+			want := "may " + right[0] + " pods/" + right[1] + " in local-path-storage"
+			if verdict.Enabled || verdict.Reason != want {
+				t.Errorf("%v: %+v, want off for %q", right, verdict, want)
+			}
+		}
+	}
+}
+
 // A right held is found even when another review of its chunk fails.
 func TestCheckerFindsAHeldRightBesideAFailure(t *testing.T) {
 	t.Parallel()
