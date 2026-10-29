@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -57,7 +58,8 @@ func TestLoginCreatesAndKeepsOthers(t *testing.T) {
 	if got := names(config, "contexts"); len(got) != 1 || got[0] != "mt-acme-prod" || config["current-context"] != "mt-acme-prod" {
 		t.Fatalf("new file: %v", config)
 	}
-	if info, err := os.Stat(file); err != nil || info.Mode().Perm() != 0o600 {
+	// Windows keeps no Unix mode: the profile's ACL guards the file.
+	if info, err := os.Stat(file); err != nil || runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("mode %v, %v", info.Mode(), err)
 	}
 	cluster := config["clusters"].([]any)[0].(map[string]any)["cluster"].(map[string]any)

@@ -337,6 +337,12 @@ func write(path string, before, content []byte, existed bool) (bool, error) {
 		return false, err
 	}
 	beforeRename(path)
+	// The directory checked first may have been swapped since, for a
+	// junction or link elsewhere: check it again before the rename
+	// (review TD-CLI-87 M1).
+	if err := ownedByUser(filepath.Dir(path)); err != nil {
+		return false, err
+	}
 	now, err := os.ReadFile(path) //nolint:gosec // As readFile.
 	switch {
 	case errors.Is(err, fs.ErrNotExist) && !existed:
