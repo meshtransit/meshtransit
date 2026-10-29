@@ -154,6 +154,10 @@ func gatewayError(m *mtcpv1.Error) error {
 	case sharedmtcp.GateUnavailable:
 		// Core could not check the handshake: retry, never a verdict.
 		return fmt.Errorf("%w: %s", controlplane.ErrRegistrationTemporary, text)
+	case sharedmtcp.GateTokenClockSkew:
+		return fmt.Errorf("%w: %s", controlplane.ErrGatewayClusterClockSkew, text)
+	case sharedmtcp.GateTokenRequired, sharedmtcp.GateTokenRefused, sharedmtcp.GateTokenExpired:
+		return fmt.Errorf("%w: %s", controlplane.ErrGatewayPodToken, text)
 	}
 	return nil
 }

@@ -65,6 +65,13 @@ var (
 	// ErrGatewayClock: the handshake timestamp ran ahead of Core; the clock
 	// offset is corrected, so retry.
 	ErrGatewayClock = fmt.Errorf("%w: the clock is ahead of Core", ErrRegistrationTemporary)
+	// ErrGatewayPodToken: Core refused the gateway's session for its pod
+	// token (gateway.token1, mtcp-v1 §6.7): read it again and reconnect with
+	// the usual backoff; never stop for it.
+	ErrGatewayPodToken = fmt.Errorf("%w: the pod token was refused", ErrRegistrationTemporary)
+	// ErrGatewayClusterClockSkew: the pod token was issued further ahead of
+	// Core's clock than Core tolerates: the cluster's clock is wrong.
+	ErrGatewayClusterClockSkew = fmt.Errorf("%w: the cluster's clock runs ahead of Core", ErrGatewayPodToken)
 	// ErrGatewayProofUnsupported: Core does not take node key proofs yet.
 	ErrGatewayProofUnsupported = fmt.Errorf("%w: Core does not take node key proofs", ErrRegistrationTemporary)
 	// ErrMachineKeyRotationRefused: Core surely did not apply a machine key

@@ -53,6 +53,9 @@ type Client struct {
 	now        func() time.Time
 	// gateway is set for a Kubernetes gateway replica (NewGateway).
 	gateway *gatewayClock
+	// podToken, set on a gateway (SetPodTokenSource), reads its pod token
+	// for every session (gateway.token1); empty: none to send.
+	podToken func() controlplane.PodToken
 	// kubeHolds keep, by Device (origin and machine key), what the node
 	// holds of its Kubernetes clusters across streams: the daemon opens a
 	// new stream on recovery or a control key change, which is no restart

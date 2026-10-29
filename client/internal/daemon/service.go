@@ -1749,7 +1749,16 @@ func (s *Service) recoverRuntime(ctx context.Context, retry time.Duration, synch
 }
 
 func (s *Service) logControlSessionFailure(message string, err error) {
-	if s != nil && s.logger != nil && err != nil && !errors.Is(err, context.Canceled) {
+	if s == nil || s.logger == nil || err == nil || errors.Is(err, context.Canceled) {
+		return
+	}
+	// A gateway's pod token refusals carry their own codes (K1c-T §3.2).
+	switch {
+	case errors.Is(err, controlplane.ErrGatewayClusterClockSkew):
+		s.logger.Error(message, "error_code", "kubernetes_cluster_clock_skew", "error", err)
+	case errors.Is(err, controlplane.ErrGatewayPodToken):
+		s.logger.Warn(message, "error_code", "kubernetes_pod_token_refused", "error", err)
+	default:
 		s.logger.Warn(message, "error", err)
 	}
 }

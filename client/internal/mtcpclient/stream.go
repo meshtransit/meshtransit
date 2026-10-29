@@ -551,6 +551,13 @@ func (run *sessionRun) loop(ctx context.Context, inbox <-chan incoming) (bool, t
 	defer healthBeat.Stop()
 	selectionBeat := time.NewTicker(routeSelectionHeartbeat)
 	defer selectionBeat.Stop()
+	// Only a gateway session with gateway.token1 rereads its pod token.
+	var podTokenBeat <-chan time.Time
+	if run.s.tokens {
+		ticker := time.NewTicker(podTokenReread)
+		defer ticker.Stop()
+		podTokenBeat = ticker.C
+	}
 	endpointTimer := time.NewTimer(time.Hour)
 	endpointTimer.Stop()
 	defer endpointTimer.Stop()
@@ -596,6 +603,10 @@ func (run *sessionRun) loop(ctx context.Context, inbox <-chan incoming) (bool, t
 		case <-healthBeat.C:
 			if err := run.sendRouteHealth(); err != nil {
 				return run.mapped, 0, err
+			}
+		case <-podTokenBeat:
+			if err := run.refreshPodToken(run.stream.client.now()); err != nil {
+				return run.mapped, 0, errors.Join(errSessionEnded, err)
 			}
 		case <-selectionBeat.C:
 			if err := run.sendRouteSelection(); err != nil {

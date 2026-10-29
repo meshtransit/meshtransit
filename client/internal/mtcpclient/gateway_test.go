@@ -392,6 +392,11 @@ func TestGatewayGateErrorsTemporary(t *testing.T) {
 	}{
 		{sharedmtcp.GateProveFirst, controlplane.ErrGatewayProofRequired},
 		{sharedmtcp.GateUnavailable, controlplane.ErrRegistrationTemporary},
+		// K1c-T: a pod token refusal is retried with the usual backoff.
+		{sharedmtcp.GateTokenRequired, controlplane.ErrGatewayPodToken},
+		{sharedmtcp.GateTokenRefused, controlplane.ErrGatewayPodToken},
+		{sharedmtcp.GateTokenExpired, controlplane.ErrGatewayPodToken},
+		{sharedmtcp.GateTokenClockSkew, controlplane.ErrGatewayClusterClockSkew},
 	} {
 		got := gatewayError(&mtcpv1.Error{Code: mtcpv1.Error_NOT_AUTHORIZED, Fatal: true, Message: test.message})
 		if !errors.Is(got, test.want) {
@@ -491,5 +496,58 @@ func TestOrdinarySessionUnchanged(t *testing.T) {
 	hellos, _ := core.sessions()
 	if got := hellos[len(hellos)-1].GetTimestampMs(); got != fixed.UnixMilli() {
 		t.Fatalf("hello timestamp %d, want the client's own %d", got, fixed.UnixMilli())
+	}
+}
+
+// With gateway.token1 negotiated, the proof carries the pod token read for
+// the session; without it, none is sent (mtcp-v1 §6.7).
+func TestGatewayProofCarriesThePodToken(t *testing.T) {
+	t.Parallel()
+	for _, offered := range []bool{true, false} {
+		var presented atomic.Pointer[string]
+		core := provingCore(t, nil, answerPings)
+		core.set(func(fake *fakeCore) {
+			if offered {
+				fake.extra = append(fake.extra, gatewayTokenCapability)
+			}
+			fake.serve = func(s *coreSession) {
+				_, first, err := s.receive(5 * time.Second)
+				if err != nil {
+					return
+				}
+				if proof, ok := first.(*mtcpv1.NodeKeyProof); ok {
+					token := proof.GetPodToken()
+					presented.Store(&token)
+				}
+				answerPings(s)
+			}
+		})
+		trust := gatewayTrust(t, core)
+		client := core.gatewayClient()
+		client.SetPodTokenSource(func() controlplane.PodToken { return "pod-token-1" })
+		if err := client.ProbeGateway(t.Context(), core.origin(), trust.Material, trust.Fingerprint); err != nil {
+			t.Fatalf("offered %t: Probe() = %v", offered, err)
+		}
+		hellos, _ := core.sessions()
+		if last := hellos[len(hellos)-1]; !slices.Contains(last.GetCapabilities(), gatewayTokenCapability) {
+			t.Fatalf("hello %v lacks gateway.token1", last)
+		}
+		want := ""
+		if offered {
+			want = "pod-token-1"
+		}
+		if got := presented.Load(); got == nil || *got != want {
+			t.Fatalf("offered %t: the proof carried %v, want %q", offered, got, want)
+		}
+	}
+}
+
+// A client that is not a gateway's never takes a token source.
+func TestPodTokenSourceIsAGatewaysOnly(t *testing.T) {
+	t.Parallel()
+	client := New()
+	client.SetPodTokenSource(func() controlplane.PodToken { return "x" })
+	if client.podToken != nil {
+		t.Fatal("meshd took a pod token source")
 	}
 }

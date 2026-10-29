@@ -142,6 +142,11 @@ func newRuntime(cfg Config, stacks *Stacks, profiles *profile.Store, identities 
 	control := mtcpclient.New()
 	if cfg.JoinKeyFile != "" {
 		control = mtcpclient.NewGateway()
+		if cfg.PodTokenFile != "" {
+			// K1c-T: the pod token on every session, read again each time.
+			control.SetPodTokenSource(podTokenSource(cfg.PodTokenFile,
+				logger.With("component", "pod_token"), control.CoreNow))
+		}
 	}
 	service, err = daemon.New(profiles, identities, version.Current(), control, daemon.Options{
 		Hostname:  cfg.Hostname,

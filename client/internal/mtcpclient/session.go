@@ -111,6 +111,11 @@ type session struct {
 	sendMu    sync.Mutex
 	keepalive time.Duration
 	idle      time.Duration
+	// podToken is the pod token the session presented, when it negotiated
+	// gateway.token1; the session's run refreshes it.
+	podToken     controlplane.PodToken
+	podTokenSent time.Time
+	tokens       bool
 }
 
 // sessionOptions describe the node opening a session.
@@ -124,6 +129,10 @@ type sessionOptions struct {
 	// NodeKeyProof for nodeKey (mtcp-v1 §6.7).
 	prove key.NodePrivate
 }
+
+// gatewayTokenCapability is gateway.token1: a gateway presents its pod
+// token in its proof and refreshes it (mtcp-v1 §6.7).
+const gatewayTokenCapability = "gateway.token1"
 
 // open dials origin, tries the HTTP upgrade and falls back to WebSocket
 // when the upgrade is refused, then completes the handshake (mtcp-v1 §2–3).
@@ -139,6 +148,9 @@ func (c *Client) open(ctx context.Context, origin *url.URL, options sessionOptio
 			return next
 		}
 		capabilities = append(slices.Clone(capabilities), gatewayCapability)
+		if c.podToken != nil {
+			capabilities = append(capabilities, gatewayTokenCapability)
+		}
 	}
 	hello := &mtcpv1.ClientHello{
 		ProtocolVersion: sharedmtcp.Version, TimestampMs: timestamp(), NodeKey: options.nodeKey,
@@ -206,6 +218,10 @@ func (c *Client) open(ctx context.Context, origin *url.URL, options sessionOptio
 		assembler: sharedmtcp.NewAssembler(sharedmtcp.CoreToNode), keepalive: keepalive, idle: idle,
 	}
 	if !options.prove.IsZero() {
+		if c.podToken != nil && slices.Contains(reply.GetCapabilities(), gatewayTokenCapability) {
+			// Read for each session: kubelet rewrites the file (K1c-T §3.7).
+			s.tokens, s.podToken, s.podTokenSent = true, c.podToken(), c.now()
+		}
 		if err := s.proveNodeKey(options.prove); err != nil {
 			s.close()
 			return nil, err
@@ -224,7 +240,10 @@ func (s *session) proveNodeKey(node key.NodePrivate) error {
 	if err != nil {
 		return controlplane.ErrInvalidMaterial
 	}
-	if err := s.send(sharedmtcp.MessageNodeKeyProof, &mtcpv1.NodeKeyProof{Proof: proof[:]}); err != nil {
+	// The pod token rides on the proof once gateway.token1 is negotiated;
+	// none when the file cannot be read, and Core decides (§6.7).
+	if err := s.send(sharedmtcp.MessageNodeKeyProof,
+		&mtcpv1.NodeKeyProof{Proof: proof[:], PodToken: s.podToken.Reveal()}); err != nil {
 		return temporary(err)
 	}
 	return nil
