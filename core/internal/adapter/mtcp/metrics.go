@@ -325,7 +325,7 @@ func NewMetrics() *Metrics {
 		}),
 		kubeAuditReports: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "meshtransit_kubernetes_operation_outcomes_total",
-			Help: "Kubernetes operation outcomes and denials queued, or dropped, by kind.",
+			Help: "Kubernetes operation outcomes and denials queued, or dropped, by kind; sample_dropped: denial samples left out (K2).",
 		}, []string{"kind"}),
 		// Watch: offsets below 0 (a cluster ahead of Core); alert under -60.
 		gatewayTokenOffset: prometheus.NewHistogram(prometheus.HistogramOpts{
@@ -381,7 +381,7 @@ func NewMetrics() *Metrics {
 		kubeaudit.OutcomeLimited, kubeaudit.OutcomeOverloaded, kubeaudit.OutcomeUnavailable} {
 		metrics.kubeAudits.WithLabelValues("refused", string(outcome))
 	}
-	for _, kind := range []string{"outcome", "denial", "dropped"} {
+	for _, kind := range []string{"outcome", "denial", "dropped", "sample_dropped"} {
 		metrics.kubeAuditReports.WithLabelValues(kind)
 	}
 	return metrics

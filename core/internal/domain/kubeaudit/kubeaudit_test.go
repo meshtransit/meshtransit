@@ -92,3 +92,53 @@ func TestIntentDigest(t *testing.T) {
 		}
 	}
 }
+
+// An intent names a profile of 32 bytes, report_allowed only with one; the
+// profile joins the digest only when there is one, so earlier intents keep
+// theirs (K2 §29).
+func TestIntentProfile(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	intent := validIntent(t, now)
+	before := intent.Digest()
+	profiled := intent
+	profiled.Profile = make([]byte, 32)
+	profiled.Profile[0] = 1
+	reported := profiled
+	reported.ReportAllowed = true
+	if !profiled.Valid(now) || !reported.Valid(now) || profiled.Digest() == before ||
+		reported.Digest() == profiled.Digest() || intent.Digest() != before {
+		t.Fatal("profile digests")
+	}
+	for name, change := range map[string]func(*Intent){
+		"short profile":          func(intent *Intent) { intent.Profile = []byte{1} },
+		"report without profile": func(intent *Intent) { intent.ReportAllowed = true },
+	} {
+		other := intent
+		change(&other)
+		if other.Valid(now) {
+			t.Errorf("%s: valid", name)
+		}
+	}
+}
+
+// A denial sample holds a verb and fields in the schema's bounds.
+func TestDenialSample(t *testing.T) {
+	t.Parallel()
+	sample := DenialSample{Verb: "delete", Resource: "pods", Namespace: "team-a", Scope: [32]byte{1}}
+	if !sample.Valid() || !DenialProfile.Profile() || DenialForbidden.Profile() {
+		t.Fatal("a sample in form")
+	}
+	for name, change := range map[string]func(*DenialSample){
+		"no verb":   func(sample *DenialSample) { sample.Verb = "" },
+		"no scope":  func(sample *DenialSample) { sample.Scope = [32]byte{} },
+		"control":   func(sample *DenialSample) { sample.Namespace = "team\x07" },
+		"long verb": func(sample *DenialSample) { sample.Verb = string(make([]byte, 33)) },
+	} {
+		other := sample
+		change(&other)
+		if other.Valid() {
+			t.Errorf("%s: valid", name)
+		}
+	}
+}

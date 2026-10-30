@@ -3,10 +3,13 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -111,6 +114,7 @@ FROM mesh_audit.kubernetes_operation AS operation WHERE operation.audit_id = $1:
 			cluster, err)
 	}
 	assertKubernetesOperationStore(ctx, t, runtimePool, keys, peer)
+	assertKubernetesOperationProfiles(ctx, t, admin, runtimePool, keys, peer)
 	// Append only.
 	if _, err := admin.Exec(ctx, `UPDATE mesh_audit.kubernetes_operation SET verb = 'get'
 WHERE audit_id = $1::UUID`, first["audit_id"]); sqlState(t, err) != "42501" {
@@ -192,17 +196,22 @@ FOR VALUES FROM ('2020-01-01 00:00:00+00') TO ('2020-02-01 00:00:00+00')`); err 
 		"mesh_runtime": {
 			"mesh_ops.record_kubernetes_operations_v1(jsonb)":                    true,
 			"mesh_ops.record_kubernetes_operation_outcomes_v1(jsonb, jsonb)":     true,
+			"mesh_ops.record_kubernetes_operations_v2(jsonb)":                    true,
+			"mesh_ops.record_kubernetes_operation_outcomes_v2(jsonb, jsonb)":     true,
 			"mesh_ops.maintain_kubernetes_operation_partitions_v1(integer)":      false,
 			"mesh_ops.erase_kubernetes_operations_v1(uuid, text, text, integer)": false,
 			"mesh_ops.ensure_kubernetes_operation_partitions_v1(integer)":        false,
 		},
 		"mesh_worker": {
 			"mesh_ops.record_kubernetes_operations_v1(jsonb)":                    false,
+			"mesh_ops.record_kubernetes_operations_v2(jsonb)":                    false,
+			"mesh_ops.record_kubernetes_operation_outcomes_v2(jsonb, jsonb)":     false,
 			"mesh_ops.maintain_kubernetes_operation_partitions_v1(integer)":      true,
 			"mesh_ops.erase_kubernetes_operations_v1(uuid, text, text, integer)": true,
 		},
 		"mesh_observer": {
 			"mesh_ops.record_kubernetes_operations_v1(jsonb)":                    false,
+			"mesh_ops.record_kubernetes_operations_v2(jsonb)":                    false,
 			"mesh_ops.erase_kubernetes_operations_v1(uuid, text, text, integer)": false,
 		},
 	} {
@@ -236,16 +245,17 @@ WHERE device.public_id = $1::UUID`, deviceID).Scan(&erased); err != nil {
 		}
 		return erased
 	}
-	// This test's three operations and the store's one; an outcome and a
-	// denial from each.
-	if first, second := erase(), erase(); first != `{"denials": 2, "outcomes": 2, "remaining": true, "operations": 2}` ||
-		second != `{"denials": 0, "outcomes": 0, "remaining": false, "operations": 2}` {
-		t.Fatalf("erase = %s, then %s", first, second)
+	// This test's three operations and the stores' two; two outcomes and
+	// three denials (one of a profile, with its sample).
+	if first, second, third := erase(), erase(), erase(); first != `{"denials": 2, "outcomes": 2, "remaining": true, "operations": 2}` ||
+		second != `{"denials": 1, "outcomes": 0, "remaining": true, "operations": 2}` ||
+		third != `{"denials": 0, "outcomes": 0, "remaining": false, "operations": 1}` {
+		t.Fatalf("erase = %s, then %s, then %s", first, second, third)
 	}
 	var erasures int
 	if err := admin.QueryRow(ctx, `SELECT count(*) FROM mesh_audit.kubernetes_operation_erasure
-WHERE actor = 'soc@example.com' AND change_ref = 'ERASE-1'`).Scan(&erasures); err != nil || erasures != 2 {
-		t.Fatalf("erasures recorded %d (%v), want 2", erasures, err)
+WHERE actor = 'soc@example.com' AND change_ref = 'ERASE-1'`).Scan(&erasures); err != nil || erasures != 3 {
+		t.Fatalf("erasures recorded %d (%v), want 3", erasures, err)
 	}
 }
 
@@ -300,5 +310,176 @@ func assertKubernetesOperationStore(ctx context.Context, t *testing.T, runtimePo
 	}})
 	if err != nil || outcomes != 1 || denials != 1 {
 		t.Fatalf("RecordReports() = %d, %d, %v", outcomes, denials, err)
+	}
+}
+
+// assertKubernetesOperationProfiles qualifies schema 261 (K2 §29): an
+// operation keeps the profile that let it through, and a denial of a
+// profile reason its sample; a sample without a profile reason is not
+// written.
+func assertKubernetesOperationProfiles(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	runtimePool *postgresadapter.Pool, keys replicaKeys, peer string,
+) {
+	t.Helper()
+	store, err := postgresadapter.NewKubernetesOperationStore(runtimePool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peerID, err := publicid.Parse(peer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateway := kubeaudit.Gateway{MachineFingerprint: [32]byte(fingerprintOf(keys)), NodeKey: [32]byte(nodeKeyOf(keys))}
+	now := time.Now()
+	var id [16]byte
+	millis := uint64(now.UnixMilli())
+	for index := range 6 {
+		id[5-index] = byte(millis >> (8 * index))
+	}
+	id[6], id[8], id[15] = 0x70, 0x80, 0x61
+	scope := [32]byte{0x61, 0x62}
+	answers, err := store.Record(ctx, []kubeaudit.Row{{Gateway: gateway, NetworkRevision: 7,
+		Owner: kubeaudit.Owner{Kind: "member", Ref: "p:1"},
+		Intent: kubeaudit.Intent{ID: id, Peer: peerID, Groups: []string{"edit"}, Class: kubeaudit.ClassWrite,
+			Verb: "patch", Resource: "deployments", APIGroup: "apps", Namespace: "team-a", Name: "web",
+			ObservedAt: now, Profile: scope[:], ReportAllowed: true}}})
+	if err != nil || answers[0].Outcome != kubeaudit.OutcomeAccepted {
+		t.Fatalf("Record(profile) = %+v, %v", answers, err)
+	}
+	var stored []byte
+	var reported bool
+	if err := admin.QueryRow(ctx, `SELECT profile_hash, report_allowed FROM mesh_audit.kubernetes_operation
+WHERE audit_id = $1::UUID`, answers[0].AuditID.String()).Scan(&stored, &reported); err != nil ||
+		!bytes.Equal(stored, scope[:]) || !reported {
+		t.Fatalf("stored profile = %x %v, %v", stored, reported, err)
+	}
+	sample := &kubeaudit.DenialSample{Verb: "delete", Resource: "pods", Namespace: "team-a", Scope: scope}
+	_, denials, err := store.RecordReports(ctx, []kubeaudit.Reports{{Gateway: gateway, Denials: []kubeaudit.Denials{
+		{Peer: peerID, Reason: kubeaudit.DenialProfile, Count: 3, First: now.Add(-time.Second), Last: now,
+			Sample: sample},
+		{Peer: peerID, Reason: kubeaudit.DenialForbidden, Count: 1, First: now.Add(-time.Second), Last: now,
+			Sample: sample},
+	}}})
+	if err != nil || denials != 1 {
+		t.Fatalf("RecordReports(samples) = %d, %v", denials, err)
+	}
+	// Sent again: the same profile is a duplicate of the first, another
+	// report_allowed a conflict.
+	again, err := store.Record(ctx, []kubeaudit.Row{{Gateway: gateway, NetworkRevision: 7,
+		Owner: kubeaudit.Owner{Kind: "member", Ref: "p:1"},
+		Intent: kubeaudit.Intent{ID: id, Peer: peerID, Groups: []string{"edit"}, Class: kubeaudit.ClassWrite,
+			Verb: "patch", Resource: "deployments", APIGroup: "apps", Namespace: "team-a", Name: "web",
+			ObservedAt: now, Profile: scope[:], ReportAllowed: true}}})
+	if err != nil || again[0].Outcome != kubeaudit.OutcomeDuplicate || again[0].AuditID != answers[0].AuditID {
+		t.Fatalf("Record(profile again) = %+v, %v", again, err)
+	}
+	other, err := store.Record(ctx, []kubeaudit.Row{{Gateway: gateway, NetworkRevision: 7,
+		Owner: kubeaudit.Owner{Kind: "member", Ref: "p:1"},
+		Intent: kubeaudit.Intent{ID: id, Peer: peerID, Groups: []string{"edit"}, Class: kubeaudit.ClassWrite,
+			Verb: "patch", Resource: "deployments", APIGroup: "apps", Namespace: "team-a", Name: "web",
+			ObservedAt: now, Profile: scope[:]}}})
+	if err != nil || other[0].Outcome != kubeaudit.OutcomeConflict {
+		t.Fatalf("Record(other report) = %+v, %v", other, err)
+	}
+	assertKubernetesOperationProfileInput(ctx, t, admin, gateway, peer)
+	assertKubernetesOperationFuturePartition(ctx, t, admin)
+	var verb, namespace string
+	var sampled []byte
+	if err := admin.QueryRow(ctx, `SELECT sample_verb, sample_namespace, sample_scope
+FROM mesh_audit.kubernetes_operation_denial WHERE reason = 'profile_denied' ORDER BY recorded_at DESC LIMIT 1`).Scan(
+		&verb, &namespace, &sampled); err != nil || verb != "delete" || namespace != "team-a" ||
+		!bytes.Equal(sampled, scope[:]) {
+		t.Fatalf("stored sample = %s %s %x, %v", verb, namespace, sampled, err)
+	}
+}
+
+// assertKubernetesOperationProfileInput: the v2 writer refuses a profile or
+// report_allowed out of form as invalid, and skips a denial whose sample is
+// out of form (review d4a M3).
+func assertKubernetesOperationProfileInput(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	gateway kubeaudit.Gateway, peer string,
+) {
+	t.Helper()
+	key := hex.EncodeToString(gateway.MachineFingerprint[:]) + ":" + hex.EncodeToString(gateway.NodeKey[:])
+	scope := strings.Repeat("ab", 32)
+	for name, change := range map[string]func(map[string]any){
+		"upper case profile":       func(row map[string]any) { row["profile"] = strings.ToUpper(scope) },
+		"short profile":            func(row map[string]any) { row["profile"] = scope[:62] },
+		"empty profile":            func(row map[string]any) { row["profile"] = "" },
+		"report as a string":       func(row map[string]any) { row["profile"], row["report_allowed"] = scope, "true" },
+		"report without a profile": func(row map[string]any) { row["report_allowed"] = true },
+	} {
+		row := operationRow(t, key, peer, 0x70, strings.Repeat("cd", 32))
+		change(row)
+		encoded, err := json.Marshal([]map[string]any{row})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var answer string
+		if err := admin.QueryRow(ctx, `SELECT mesh_ops.record_kubernetes_operations_v2($1::JSONB)::TEXT`,
+			string(encoded)).Scan(&answer); err != nil || !strings.Contains(answer, `"invalid"`) {
+			t.Errorf("%s: %s, %v", name, answer, err)
+		}
+	}
+	denial := func(sample map[string]any) string {
+		encoded, _ := json.Marshal([]map[string]any{{"gateway": key, "peer": peer, "reason": "profile_denied",
+			"count": "1", "first_ms": fmt.Sprint(time.Now().UnixMilli()), "last_ms": fmt.Sprint(time.Now().UnixMilli()),
+			"sample": sample}})
+		return string(encoded)
+	}
+	for name, sample := range map[string]map[string]any{
+		"no scope":       {"verb": "get", "api_group": "", "resource": "pods", "subresource": "", "namespace": "a"},
+		"short scope":    {"verb": "get", "api_group": "", "resource": "pods", "subresource": "", "namespace": "a", "scope": scope[:63]},
+		"no subresource": {"verb": "get", "api_group": "", "resource": "pods", "namespace": "a", "scope": scope},
+		"not an object":  nil,
+	} {
+		payload := denial(sample)
+		if name == "not an object" {
+			payload = strings.Replace(denial(map[string]any{}), `"sample":{}`, `"sample":"get"`, 1)
+		}
+		var answer string
+		if err := admin.QueryRow(ctx, `SELECT mesh_ops.record_kubernetes_operation_outcomes_v2('[]'::JSONB,
+    $1::JSONB)::TEXT`, payload).Scan(&answer); err != nil || !strings.Contains(answer, `"denials": 0`) {
+			t.Errorf("sample %s: %s, %v", name, answer, err)
+		}
+	}
+}
+
+// assertKubernetesOperationFuturePartition: a partition made after schema
+// 261 has the profile columns and their constraints (review d4a M3).
+func assertKubernetesOperationFuturePartition(ctx context.Context, t *testing.T, admin *pgx.Conn) {
+	t.Helper()
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT mesh_ops.ensure_kubernetes_operation_partitions_v1(4)`); err != nil {
+		t.Fatal(err)
+	}
+	insert := func(profile []byte) error {
+		if _, err := tx.Exec(ctx, `SAVEPOINT future`); err != nil {
+			t.Fatal(err)
+		}
+		_, err := tx.Exec(ctx, `WITH id AS (SELECT pg_catalog.uuidv7(INTERVAL '75 days') AS value)
+INSERT INTO mesh_audit.kubernetes_operation (received_at, audit_id, workspace_id, network_id, kubernetes_cluster_id,
+    gateway_device_id, peer_device_id, owner_kind, owner_ref, network_revision, class, groups, verb, api_group,
+    resource, subresource, namespace, name, impersonated, token_id, observed_at, clock_skew, intent_id,
+    intent_digest, profile_hash, report_allowed)
+SELECT pg_catalog.uuid_extract_timestamp(id.value), id.value, 1, 1, 1, 1, 1, 'member', 'p:1', 1, 'write',
+    '{edit}', 'get', '', 'pods', '', 'a', 'web', '', ''::BYTEA, pg_catalog.now(), FALSE,
+    pg_catalog.decode(pg_catalog.repeat('00', 16), 'hex'), pg_catalog.decode(pg_catalog.repeat('00', 32), 'hex'),
+    $1::BYTEA, $1::BYTEA IS NOT NULL
+FROM id`, profile)
+		if _, rollbackErr := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT future`); rollbackErr != nil {
+			t.Fatal(rollbackErr)
+		}
+		return err
+	}
+	if err := insert(bytes.Repeat([]byte{1}, 32)); err != nil {
+		t.Fatalf("a profiled row in a new month: %v", err)
+	}
+	if err := insert(bytes.Repeat([]byte{1}, 16)); err == nil || !strings.Contains(err.Error(), "23514") {
+		t.Fatalf("a short profile in a new month: %v", err)
 	}
 }

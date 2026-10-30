@@ -29,9 +29,11 @@ const (
 
 // Bounds of an intent's fields (design §3.2), the same the schema checks.
 const (
-	MaximumIntents      = 128
-	MaximumGroups       = 16
-	maximumGroup        = 63
+	MaximumIntents = 128
+	MaximumGroups  = 16
+	maximumGroup   = 63
+	// profileSize is a scope hash's (K2).
+	profileSize         = 32
 	maximumVerb         = 32
 	maximumAPIGroup     = 253
 	maximumResource     = 63
@@ -63,6 +65,11 @@ type Intent struct {
 	Impersonated string
 	TokenID      []byte
 	ObservedAt   time.Time
+	// Profile is the scope hash of the grant that let the request through
+	// (K2, mtcp-v1 §7.12): empty for a whole grant. ReportAllowed: a
+	// reporting grant let through what its profile would deny.
+	Profile       []byte
+	ReportAllowed bool
 }
 
 // Valid reports an intent whose every field is in form at now (design
@@ -83,6 +90,9 @@ func (intent Intent) Valid(now time.Time) bool {
 		if !cleanText(group, 1, maximumGroup) {
 			return false
 		}
+	}
+	if len(intent.Profile) != 0 && len(intent.Profile) != profileSize || intent.ReportAllowed && len(intent.Profile) == 0 {
+		return false
 	}
 	for _, field := range []struct {
 		value         string
@@ -152,6 +162,17 @@ func (intent Intent) Digest() [32]byte {
 	var observed [8]byte
 	binary.BigEndian.PutUint64(observed[:], uint64(intent.ObservedAt.UnixMilli()))
 	hash.Write(observed[:])
+	// The profile only when there is one, so an intent without keeps the
+	// digest it had before K2.
+	if len(intent.Profile) > 0 || intent.ReportAllowed {
+		hash.Write([]byte("profile"))
+		write(string(intent.Profile))
+		if intent.ReportAllowed {
+			hash.Write([]byte{1})
+		} else {
+			hash.Write([]byte{0})
+		}
+	}
 	return [32]byte(hash.Sum(nil))
 }
 
@@ -230,7 +251,17 @@ const (
 	DenialStale           DenialReason = "stale"
 	DenialLimited         DenialReason = "limited"
 	DenialOther           DenialReason = "other"
+	// DenialProfile and DenialProfileWouldDeny come from a gateway that
+	// takes access profiles (K2): a profile refused the requests, or a
+	// reporting grant let them through though its profile would refuse.
+	DenialProfile          DenialReason = "profile_denied"
+	DenialProfileWouldDeny DenialReason = "profile_would_deny"
 )
+
+// Profile reports a reason of a profile (K2).
+func (reason DenialReason) Profile() bool {
+	return reason == DenialProfile || reason == DenialProfileWouldDeny
+}
 
 // Denials counts a peer's refused requests of one reason over a span.
 type Denials struct {
@@ -238,6 +269,23 @@ type Denials struct {
 	Reason      DenialReason
 	Count       int
 	First, Last time.Time
+	// Sample is one request of the span, for a profile reason only.
+	Sample *DenialSample
+}
+
+// DenialSample is one request a profile refused or would refuse: what it
+// asked, never its body, its name or its credentials (K2 §7.5).
+type DenialSample struct {
+	Verb, APIGroup, Resource, Subresource, Namespace string
+	// Scope is the scope hash of the peer's grant that refused it.
+	Scope [32]byte
+}
+
+// Valid reports fields in the schema's bounds, clean text, a verb.
+func (sample DenialSample) Valid() bool {
+	return cleanText(sample.Verb, 1, maximumVerb) && cleanText(sample.APIGroup, 0, maximumAPIGroup) &&
+		cleanText(sample.Resource, 0, maximumResource) && cleanText(sample.Subresource, 0, maximumResource) &&
+		cleanText(sample.Namespace, 0, maximumNamespace) && sample.Scope != [32]byte{}
 }
 
 // Reports are one gateway's finished operations and denials.

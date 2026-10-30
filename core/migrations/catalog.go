@@ -651,6 +651,8 @@ func Catalog() []Migration {
 			kubernetesAccessProfileWriterSQL),
 		newMigration(260, "Maps read the access profiles of rules to Kubernetes clusters",
 			kubernetesMapRuleAccessSQL),
+		newMigration(261, "Kubernetes operations name the access profile that let them through",
+			kubernetesOperationProfilesSQL),
 	}
 }
 
@@ -1210,3 +1212,6 @@ var kubernetesAccessProfileWriterSQL string
 
 //go:embed 000260_kubernetes_map_rule_access.up.sql
 var kubernetesMapRuleAccessSQL string
+
+//go:embed 000261_kubernetes_operation_profiles.up.sql
+var kubernetesOperationProfilesSQL string

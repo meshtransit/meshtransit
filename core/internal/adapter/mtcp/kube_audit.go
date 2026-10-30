@@ -287,6 +287,7 @@ func decodeKubeAuditIntent(encoded *mtcpv1.KubeAuditIntent) (kubeaudit.Intent, b
 		Subresource: encoded.GetSubresource(), Namespace: encoded.GetNamespace(), Name: encoded.GetName(),
 		Impersonated: encoded.GetImpersonated(), TokenID: encoded.GetTokenId(),
 		ObservedAt: time.UnixMilli(encoded.GetObservedMs()),
+		Profile:    encoded.GetProfile(), ReportAllowed: encoded.GetReportAllowed(),
 	}, true
 }
 
@@ -370,11 +371,18 @@ func (conversation *conversation) kubeAuditOutcomes(message *mtcpv1.KubeAuditOut
 			report.Finished = append(report.Finished, finished)
 		}
 	}
+	profiles := conversation.session.Supports(CapabilityKubeProfiles)
+	samplesDropped := 0
 	for _, encoded := range message.GetDenials() {
-		if denials, valid := decodeKubeAuditDenials(encoded); valid {
+		denials, valid := decodeKubeAuditDenials(encoded, profiles)
+		if valid {
 			report.Denials = append(report.Denials, denials)
 		}
+		if valid && encoded.GetSample() != nil && denials.Sample == nil {
+			samplesDropped++
+		}
 	}
+	metrics.kubeAuditReported("sample_dropped", samplesDropped)
 	kept := len(report.Finished) + len(report.Denials)
 	if kept > 0 && !reports.Submit(report) {
 		metrics.kubeAuditReported("dropped", total)
@@ -399,13 +407,30 @@ func decodeKubeAuditOutcome(encoded *mtcpv1.KubeAuditOutcome) (kubeaudit.Finishe
 	return kubeaudit.Finished{AuditID: id, Status: int(encoded.GetStatus()), Duration: duration}, true
 }
 
-func decodeKubeAuditDenials(encoded *mtcpv1.KubeAuditDenials) (kubeaudit.Denials, bool) {
+// decodeKubeAuditDenials reads one denial window; its profile reasons only
+// from a gateway.kube.v2 session (profiles). A sample is kept only from such
+// a session, with a profile reason and in form; else the window stays and
+// the sample is dropped (mtcp-v1 §6.10, review d4a M2).
+func decodeKubeAuditDenials(encoded *mtcpv1.KubeAuditDenials, profiles bool) (kubeaudit.Denials, bool) {
 	reason := kubeaudit.DenialReason(encoded.GetReason())
 	switch reason {
 	case kubeaudit.DenialUnauthenticated, kubeaudit.DenialForbidden, kubeaudit.DenialNotGranted,
 		kubeaudit.DenialStale, kubeaudit.DenialLimited, kubeaudit.DenialOther:
+	case kubeaudit.DenialProfile, kubeaudit.DenialProfileWouldDeny:
+		if !profiles {
+			return kubeaudit.Denials{}, false
+		}
 	default:
 		return kubeaudit.Denials{}, false
+	}
+	var sample *kubeaudit.DenialSample
+	if wire := encoded.GetSample(); wire != nil && profiles && reason.Profile() && len(wire.GetScope()) == 32 {
+		candidate := &kubeaudit.DenialSample{Verb: wire.GetVerb(), APIGroup: wire.GetApiGroup(),
+			Resource: wire.GetResource(), Subresource: wire.GetSubresource(), Namespace: wire.GetNamespace(),
+			Scope: [32]byte(wire.GetScope())}
+		if candidate.Valid() {
+			sample = candidate
+		}
 	}
 	first, last := encoded.GetFirstMs(), encoded.GetLastMs()
 	if encoded.GetCount() < 1 || encoded.GetCount() > kubeAuditMaximumCount || first < 0 || first > last ||
@@ -413,7 +438,7 @@ func decodeKubeAuditDenials(encoded *mtcpv1.KubeAuditDenials) (kubeaudit.Denials
 		return kubeaudit.Denials{}, false
 	}
 	denials := kubeaudit.Denials{Reason: reason, Count: int(encoded.GetCount()), First: time.UnixMilli(first),
-		Last: time.UnixMilli(last)}
+		Last: time.UnixMilli(last), Sample: sample}
 	if peer := encoded.GetPeerDeviceId(); peer != "" {
 		id, err := publicid.Parse(peer)
 		if err != nil {

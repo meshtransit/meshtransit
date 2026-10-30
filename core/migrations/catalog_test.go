@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 260 {
-		t.Fatalf("len(Catalog()) = %d, want 260", len(catalog))
+	if len(catalog) != 261 {
+		t.Fatalf("len(Catalog()) = %d, want 261", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 260 {
-		t.Fatalf("LatestVersion() = %d, want 260", LatestVersion())
+	if LatestVersion() != 261 {
+		t.Fatalf("LatestVersion() = %d, want 261", LatestVersion())
 	}
 }
 
@@ -7775,5 +7775,31 @@ func TestMigration260KubernetesMapRuleAccess(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "FUNCTION mesh_ops.load_map_network_kubernetes_rule_groups_v1(") {
 		t.Error("migration 260 changes the map reader of a Core before d3")
+	}
+}
+
+func TestMigration261KubernetesOperationProfiles(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 261 || catalog[260].Version != 261 {
+		t.Fatalf("the catalog has no migration 261 (%d migrations)", len(catalog))
+	}
+	migration := catalog[260]
+	for _, want := range []string{
+		"ADD COLUMN profile_hash BYTEA,",
+		"CONSTRAINT kubernetes_operation_profile_check",
+		"'profile_denied',",
+		"CONSTRAINT kubernetes_operation_denial_sample_check",
+		"CREATE FUNCTION mesh_ops.record_kubernetes_operations_v2(",
+		"CREATE FUNCTION mesh_ops.record_kubernetes_operation_outcomes_v2(",
+		"mesh_ops.kubernetes_operation_intent_valid_internal_v2(element.value) AS valid",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.record_kubernetes_operations_v2(JSONB) TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 261 lacks %q", want)
+		}
+	}
+	if strings.Count(migration.SQL, ") NOT VALID") != 3 {
+		t.Error("migration 261 validates a constraint over existing partitions")
 	}
 }

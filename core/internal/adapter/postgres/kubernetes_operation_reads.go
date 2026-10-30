@@ -222,5 +222,41 @@ func (store *KubernetesClusterStore) CountDenials(ctx context.Context, session a
 		sums.Counts = append(sums.Counts, kubecluster.DenialCount{Reason: document.Reason, Count: document.Count,
 			FirstAt: document.FirstAt.UTC(), LastAt: document.LastAt.UTC()})
 	}
+	sums.Counts = foldProfileDenials(sums.Counts)
 	return sums, nil
+}
+
+// foldProfileDenials answers profile reasons (K2) as the readers of today
+// know them, until the Console of K2f shows them (review d4a H1): a request
+// a profile refused is one MeshTransit did not grant, and one a reporting
+// grant let through was no denial. Counts keep their order.
+func foldProfileDenials(counts []kubecluster.DenialCount) []kubecluster.DenialCount {
+	folded := make([]kubecluster.DenialCount, 0, len(counts))
+	refused := -1
+	for _, count := range counts {
+		switch count.Reason {
+		case "profile_would_deny":
+			continue
+		case "profile_denied":
+			count.Reason = "not_granted"
+		}
+		if count.Reason != "not_granted" {
+			folded = append(folded, count)
+			continue
+		}
+		if refused < 0 {
+			refused = len(folded)
+			folded = append(folded, count)
+			continue
+		}
+		held := &folded[refused]
+		held.Count += count.Count
+		if count.FirstAt.Before(held.FirstAt) {
+			held.FirstAt = count.FirstAt
+		}
+		if count.LastAt.After(held.LastAt) {
+			held.LastAt = count.LastAt
+		}
+	}
+	return folded
 }

@@ -15,13 +15,14 @@ import (
 	"meshtransit.net/core/internal/domain/publicid"
 )
 
-// Schema 245 (K1b0): gateways' Kubernetes operations, outcomes and denials.
+// Schemas 245 (K1b0) and 261 (K2): gateways' Kubernetes operations, with the
+// access profile that let each through, outcomes, and denials with samples.
 const (
-	recordKubernetesOperationsSQL        = `SELECT mesh_ops.record_kubernetes_operations_v1($1::JSONB)::TEXT`
-	recordKubernetesOperationOutcomesSQL = `SELECT mesh_ops.record_kubernetes_operation_outcomes_v1($1::JSONB,
+	recordKubernetesOperationsSQL        = `SELECT mesh_ops.record_kubernetes_operations_v2($1::JSONB)::TEXT`
+	recordKubernetesOperationOutcomesSQL = `SELECT mesh_ops.record_kubernetes_operation_outcomes_v2($1::JSONB,
     $2::JSONB)::TEXT`
 	kubernetesOperationsGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
-    pg_catalog.to_regprocedure('mesh_ops.record_kubernetes_operations_v1(jsonb)'), 'EXECUTE'), FALSE)`
+    pg_catalog.to_regprocedure('mesh_ops.record_kubernetes_operations_v2(jsonb)'), 'EXECUTE'), FALSE)`
 	// maximumKubernetesOperationAnswer fits 1,000 answers of an outcome and
 	// a UUID.
 	maximumKubernetesOperationAnswer = 128 << 10
@@ -159,6 +160,9 @@ type operationRow struct {
 	TokenID         string   `json:"token_id"`
 	ObservedMs      string   `json:"observed_ms"`
 	ClockSkew       bool     `json:"clock_skew"`
+	// Profile is the scope hash in hex, absent for a whole grant.
+	Profile       string `json:"profile,omitempty"`
+	ReportAllowed bool   `json:"report_allowed"`
 }
 
 func operationRows(rows []kubeaudit.Row) []operationRow {
@@ -177,10 +181,22 @@ func operationRows(rows []kubeaudit.Row) []operationRow {
 			Resource: row.Intent.Resource, Subresource: row.Intent.Subresource, Namespace: row.Intent.Namespace,
 			Name: row.Intent.Name, Impersonated: row.Intent.Impersonated,
 			TokenID: hex.EncodeToString(row.Intent.TokenID), ObservedMs: fmt.Sprint(row.Intent.ObservedAt.UnixMilli()),
-			ClockSkew: row.ClockSkew,
+			ClockSkew: row.ClockSkew, Profile: hex.EncodeToString(row.Intent.Profile),
+			ReportAllowed: row.Intent.ReportAllowed,
 		}
 	}
 	return encoded
+}
+
+// denialSampleRow is a denial's sample as record_kubernetes_operation_outcomes_v2
+// reads it; the scope hash in hex.
+type denialSampleRow struct {
+	Verb        string `json:"verb"`
+	APIGroup    string `json:"api_group"`
+	Resource    string `json:"resource"`
+	Subresource string `json:"subresource"`
+	Namespace   string `json:"namespace"`
+	Scope       string `json:"scope"`
 }
 
 // gatewayKey is how the schema names a gateway: hex machine key
@@ -239,12 +255,13 @@ func (store *KubernetesOperationStore) RecordReports(ctx context.Context, report
 		Duration string `json:"duration_ms"`
 	}
 	type denials struct {
-		Gateway string `json:"gateway"`
-		Peer    string `json:"peer,omitempty"`
-		Reason  string `json:"reason"`
-		Count   string `json:"count"`
-		First   string `json:"first_ms"`
-		Last    string `json:"last_ms"`
+		Gateway string           `json:"gateway"`
+		Peer    string           `json:"peer,omitempty"`
+		Reason  string           `json:"reason"`
+		Count   string           `json:"count"`
+		First   string           `json:"first_ms"`
+		Last    string           `json:"last_ms"`
+		Sample  *denialSampleRow `json:"sample,omitempty"`
 	}
 	outcomes, refusals := []finished{}, []denials{}
 	for _, report := range reports {
@@ -258,6 +275,11 @@ func (store *KubernetesOperationStore) RecordReports(ctx context.Context, report
 				First: fmt.Sprint(denied.First.UnixMilli()), Last: fmt.Sprint(denied.Last.UnixMilli())}
 			if denied.Peer.IsValid() {
 				entry.Peer = denied.Peer.String()
+			}
+			if sample := denied.Sample; sample != nil {
+				entry.Sample = &denialSampleRow{Verb: sample.Verb, APIGroup: sample.APIGroup, Resource: sample.Resource,
+					Subresource: sample.Subresource, Namespace: sample.Namespace,
+					Scope: hex.EncodeToString(sample.Scope[:])}
 			}
 			refusals = append(refusals, entry)
 		}
