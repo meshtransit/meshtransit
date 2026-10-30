@@ -139,3 +139,31 @@ func reviewMedia(contentType string) string {
 	media, _, _ := strings.Cut(contentType, ";")
 	return strings.ToLower(strings.TrimSpace(media))
 }
+
+// decodeRulesReviewProto reads a SelfSubjectRulesReview's namespace in
+// protobuf: raw = SelfSubjectRulesReview{metadata=1, spec=2{namespace=1}}.
+func decodeRulesReviewProto(body []byte, version string) (string, error) {
+	envelope, found := bytes.CutPrefix(body, protobufMagic)
+	if !found {
+		return "", errUnevaluable
+	}
+	unknown, err := protoFields(envelope, map[protowire.Number]protowire.Type{
+		1: protowire.BytesType, 2: protowire.BytesType, 3: protowire.BytesType,
+	})
+	if err != nil || len(unknown[3]) != 0 {
+		return "", errUnevaluable
+	}
+	typeMeta, err := protoStrings(unknown[1], 2)
+	if err != nil || typeMeta[0] != "authorization.k8s.io/"+version || typeMeta[1] != "SelfSubjectRulesReview" {
+		return "", errUnevaluable
+	}
+	review, err := protoFields(unknown[2], map[protowire.Number]protowire.Type{2: protowire.BytesType})
+	if err != nil {
+		return "", err
+	}
+	spec, err := protoStrings(review[2], 1)
+	if err != nil {
+		return "", err
+	}
+	return spec[0], nil
+}

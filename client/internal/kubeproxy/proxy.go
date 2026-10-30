@@ -352,8 +352,9 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else if scoped && selfRulesReview(info) && kubereq.SelfReview(r.Method, info) {
-		prepareRulesReview(r)
-		narrow = server.rulesNarrower(peer, group)
+		if narrow = server.rulesReview(w, r, info, peer, group); narrow == nil {
+			return
+		}
 	}
 	done, limit := server.sessions.add(held, server.options.Limits)
 	if limit != "" {

@@ -223,6 +223,7 @@ func (server *Server) accessReview(w http.ResponseWriter, r *http.Request, info 
 		return true
 	}
 	r.Body, r.ContentLength, r.TransferEncoding = io.NopCloser(bytes.NewReader(encoded)), int64(len(encoded)), nil
+	r.Header.Del("Content-Encoding")
 	r.Header.Set("Content-Type", "application/json")
 	return false
 }
@@ -263,6 +264,74 @@ type nonResourceRule struct {
 	NonResourceURLs []string `json:"nonResourceURLs,omitempty"`
 }
 
+// decodeRulesReview reads a SelfSubjectRulesReview's namespace, in JSON or
+// Kubernetes protobuf, as strictly as an access review's spec.
+func decodeRulesReview(body []byte, version, media string) (string, error) {
+	switch media {
+	case "application/json":
+		top, err := strictObject(body, "apiVersion", "kind", "metadata", "spec", "status")
+		if err != nil {
+			return "", err
+		}
+		apiVersion, err := strictString(top, "apiVersion")
+		if err != nil {
+			return "", err
+		}
+		kind, err := strictString(top, "kind")
+		if err != nil || apiVersion != "authorization.k8s.io/"+version || kind != "SelfSubjectRulesReview" {
+			return "", errUnevaluable
+		}
+		if !present(top, "spec") {
+			return "", nil
+		}
+		spec, err := strictObject(top["spec"], "namespace")
+		if err != nil {
+			return "", err
+		}
+		return strictString(spec, "namespace")
+	case protobufMedia:
+		return decodeRulesReviewProto(body, version)
+	}
+	return "", errUnevaluable
+}
+
+// rulesReview reads a SelfSubjectRulesReview of a group a profile narrows
+// and forwards it encoded again from the namespace the gateway read, which
+// the narrowing then uses (demo K2e: the answer does not echo it). One it
+// cannot read is answered here with no rules. It returns the narrowing, or
+// nil when it answered.
+func (server *Server) rulesReview(w http.ResponseWriter, r *http.Request, info kubereq.Info, peer Peer,
+	group Group,
+) func(*http.Response) error {
+	version := info.APIVersion
+	body, err := io.ReadAll(io.LimitReader(r.Body, maximumReviewBody+1))
+	namespace := ""
+	if err != nil || len(body) > maximumReviewBody {
+		err = errUnevaluable
+	} else {
+		namespace, err = decodeRulesReview(body, version, reviewMedia(r.Header.Get("Content-Type")))
+	}
+	var encoded []byte
+	if err == nil {
+		encoded, err = json.Marshal(map[string]any{
+			"apiVersion": "authorization.k8s.io/" + version, "kind": "SelfSubjectRulesReview",
+			"metadata": map[string]any{}, "spec": map[string]string{"namespace": namespace},
+		})
+	}
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write(server.narrowRules(r.Context(), nil, false, peer, group, ""))
+		return nil
+	}
+	r.Body, r.ContentLength, r.TransferEncoding = io.NopCloser(bytes.NewReader(encoded)), int64(len(encoded)), nil
+	r.Header.Del("Content-Encoding")
+	r.Header.Set("Content-Type", "application/json")
+	prepareRulesReview(r)
+	return server.rulesNarrower(peer, group, namespace)
+}
+
 // prepareRulesReview asks the API server for a plain JSON answer the
 // gateway can narrow.
 func prepareRulesReview(r *http.Request) {
@@ -275,7 +344,7 @@ func prepareRulesReview(r *http.Request) {
 // (paths by path), keeping only the verbs a grant allows for every name the
 // rule lists, nothing with a wildcard; marked incomplete, with a note. An
 // answer it cannot read becomes an empty one.
-func (server *Server) rulesNarrower(peer Peer, group Group) func(*http.Response) error {
+func (server *Server) rulesNarrower(peer Peer, group Group, namespace string) func(*http.Response) error {
 	return func(response *http.Response) error {
 		if response.StatusCode != http.StatusCreated && response.StatusCode != http.StatusOK {
 			return nil
@@ -283,7 +352,7 @@ func (server *Server) rulesNarrower(peer Peer, group Group) func(*http.Response)
 		body, err := io.ReadAll(io.LimitReader(response.Body, maximumRulesAnswer+1))
 		_ = response.Body.Close()
 		narrowed := server.narrowRules(response.Request.Context(), body, err == nil && len(body) <= maximumRulesAnswer,
-			peer, group)
+			peer, group, namespace)
 		response.Body = io.NopCloser(bytes.NewReader(narrowed))
 		response.ContentLength = int64(len(narrowed))
 		response.Header.Set("Content-Length", strconv.Itoa(len(narrowed)))
@@ -293,17 +362,14 @@ func (server *Server) rulesNarrower(peer Peer, group Group) func(*http.Response)
 	}
 }
 
-func (server *Server) narrowRules(ctx context.Context, body []byte, readable bool, peer Peer, group Group) []byte {
+// narrowRules narrows an answer for the namespace the gateway read in the
+// request and forwarded: the API server's answer does not echo it.
+func (server *Server) narrowRules(ctx context.Context, body []byte, readable bool, peer Peer, group Group,
+	namespace string,
+) []byte {
 	var top map[string]json.RawMessage
 	var status rulesStatus
-	namespace := ""
-	if readable && json.Unmarshal(body, &top) == nil && top != nil && json.Unmarshal(top["status"], &status) == nil {
-		var spec struct {
-			Namespace string `json:"namespace"`
-		}
-		_ = json.Unmarshal(top["spec"], &spec)
-		namespace = spec.Namespace
-	} else {
+	if !readable || json.Unmarshal(body, &top) != nil || top == nil || json.Unmarshal(top["status"], &status) != nil {
 		top = map[string]json.RawMessage{
 			"apiVersion": json.RawMessage(`"authorization.k8s.io/v1"`),
 			"kind":       json.RawMessage(`"SelfSubjectRulesReview"`),

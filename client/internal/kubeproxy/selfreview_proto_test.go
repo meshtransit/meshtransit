@@ -2,6 +2,7 @@ package kubeproxy
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -117,7 +118,7 @@ func TestNarrowRulesSplitsByResource(t *testing.T) {
 "status":{"resourceRules":[{"verbs":["get","delete"],"apiGroups":["","apps"],"resources":["pods","secrets","deployments"]}],
 "nonResourceRules":[{"verbs":["get","post"],"nonResourceURLs":["/healthz","/version"]}],"incomplete":false}}`
 	narrowed := string(server.narrowRules(t.Context(), []byte(body), true,
-		scopedPeer(t, now, enforcing("edit", scopeDeveloper, now.Add(time.Hour))), Group{Name: "edit"}))
+		scopedPeer(t, now, enforcing("edit", scopeDeveloper, now.Add(time.Hour))), Group{Name: "edit"}, "team-a"))
 	for _, want := range []string{
 		`{"verbs":["get"],"apiGroups":[""],"resources":["pods"]}`,
 		`{"verbs":["get"],"apiGroups":["apps"],"resources":["deployments"]}`,
@@ -150,7 +151,7 @@ func TestNarrowRulesNamesAndSubresources(t *testing.T) {
 {"verbs":["get"],"apiGroups":["apps"],"resources":["deployments"],"resourceNames":["web","db"]},
 {"verbs":["get"],"apiGroups":["apps"],"resources":["deployments"],"resourceNames":["web"]}],
 "nonResourceRules":[{"verbs":["get"],"nonResourceURLs":["/healthz","/version"]}]}}`
-	narrowed := string(server.narrowRules(t.Context(), []byte(body), true, peer, Group{Name: "edit"}))
+	narrowed := string(server.narrowRules(t.Context(), []byte(body), true, peer, Group{Name: "edit"}, "team-a"))
 	for _, want := range []string{
 		`{"verbs":["get"],"apiGroups":[""],"resources":["pods/log"]}`,
 		`{"verbs":["get"],"apiGroups":["apps"],"resources":["deployments"],"resourceNames":["web"]}`,
@@ -163,4 +164,76 @@ func TestNarrowRulesNamesAndSubresources(t *testing.T) {
 	if strings.Contains(narrowed, `"resources":["pods"]`) || strings.Contains(narrowed, `"db"`) {
 		t.Fatalf("broader than the profile: %s", narrowed)
 	}
+}
+
+// The API server's rules answer does not echo the namespace: the gateway
+// narrows by the one it read in the request, which it forwards encoded
+// again; a request it cannot read gets no rules (demo K2e).
+func TestProxyRulesReviewNamespaceFromTheRequest(t *testing.T) {
+	t.Parallel()
+	f := profiledFixture(t, nil, enforcing("edit", scopeDeveloper, time.Now().Add(time.Hour)))
+	const path = "/apis/authorization.k8s.io/v1/selfsubjectrulesreviews"
+	typeMeta := protoMessage(protoField(1, []byte("authorization.k8s.io/v1")), protoField(2, []byte("SelfSubjectRulesReview")))
+	review := protoField(2, protoField(1, []byte("team-a")))
+	body := append([]byte("k8s\x00"), protoMessage(protoField(1, typeMeta), protoField(2, review))...)
+	_, answer := f.post(path, protobufMedia, string(body))
+	forwarded := f.forwarded()
+	if forwarded.Header.Get("Content-Type") != "application/json" ||
+		!strings.Contains(forwarded.Body, `"spec":{"namespace":"team-a"}`) {
+		t.Fatalf("forwarded %q %s", forwarded.Header.Get("Content-Type"), forwarded.Body)
+	}
+	if forwarded.Header.Get("Accept") != "application/json" || forwarded.Header.Get("Accept-Encoding") == "br" ||
+		forwarded.Header.Get("Content-Length") != strconv.Itoa(len(forwarded.Body)) {
+		t.Fatalf("forwarded headers %v", forwarded.Header)
+	}
+	if !strings.Contains(answer, `{"verbs":["get","list"],"apiGroups":[""],"resources":["pods"]}`) {
+		t.Fatalf("not narrowed by the request's namespace: %s", answer)
+	}
+	_, other := f.post(path, "application/json",
+		`{"apiVersion":"authorization.k8s.io/v1","kind":"SelfSubjectRulesReview","spec":{"namespace":"team-c"}}`)
+	f.forwarded()
+	if strings.Contains(other, `"resources":["pods"]`) {
+		t.Fatalf("rules kept in a namespace the profile lacks: %s", other)
+	}
+	_, unread := f.post(path, "application/json",
+		`{"apiVersion":"authorization.k8s.io/v1","kind":"SelfSubjectRulesReview","Spec":{"namespace":"team-a"}}`)
+	f.nothingForwarded()
+	if !strings.Contains(unread, `"resourceRules":[]`) || !strings.Contains(unread, reviewUnevaluable) {
+		t.Fatalf("an unreadable request: %s", unread)
+	}
+}
+
+func TestDecodeRulesReview(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string]struct {
+		body, media, want string
+		ok                bool
+	}{
+		"json":           {`{"apiVersion":"authorization.k8s.io/v1","kind":"SelfSubjectRulesReview","spec":{"namespace":"a"}}`, "application/json", "a", true},
+		"json no spec":   {`{"apiVersion":"authorization.k8s.io/v1","kind":"SelfSubjectRulesReview"}`, "application/json", "", true},
+		"json case":      {`{"apiVersion":"authorization.k8s.io/v1","kind":"SelfSubjectRulesReview","spec":{"Namespace":"a"}}`, "application/json", "", false},
+		"json kind":      {`{"apiVersion":"authorization.k8s.io/v1","kind":"SelfSubjectAccessReview","spec":{}}`, "application/json", "", false},
+		"yaml":           {`kind: x`, "application/yaml", "", false},
+		"proto":          {string(rulesProto("v1", "SelfSubjectRulesReview", protoField(2, protoField(1, []byte("a"))))), protobufMedia, "a", true},
+		"proto kind":     {string(rulesProto("v1", "SelfSubjectAccessReview", protoField(2, protoField(1, []byte("a"))))), protobufMedia, "", false},
+		"proto ver":      {string(rulesProto("v1beta1", "SelfSubjectRulesReview", nil)), protobufMedia, "", false},
+		"proto magic":    {string(rulesProto("v1", "SelfSubjectRulesReview", nil)[4:]), protobufMedia, "", false},
+		"proto twice":    {string(rulesProto("v1", "SelfSubjectRulesReview", append(protoField(2, nil), protoField(2, nil)...))), protobufMedia, "", false},
+		"proto utf8":     {string(rulesProto("v1", "SelfSubjectRulesReview", protoField(2, protoField(1, []byte{0xff})))), protobufMedia, "", false},
+		"proto encoding": {string(rulesProto("v1", "SelfSubjectRulesReview", nil, protoField(3, []byte("gzip")))), protobufMedia, "", false},
+		"proto varint ns": {string(rulesProto("v1", "SelfSubjectRulesReview", protoField(2,
+			protowire.AppendVarint(protowire.AppendTag(nil, 1, protowire.VarintType), 1)))), protobufMedia, "", false},
+	} {
+		got, err := decodeRulesReview([]byte(test.body), "v1", test.media)
+		if (err == nil) != test.ok || got != test.want {
+			t.Errorf("%s: %q, %v", name, got, err)
+		}
+	}
+}
+
+// rulesProto is a SelfSubjectRulesReview in protobuf: raw holds review.
+func rulesProto(version, kind string, review []byte, extra ...[]byte) []byte {
+	typeMeta := protoMessage(protoField(1, []byte("authorization.k8s.io/"+version)), protoField(2, []byte(kind)))
+	envelope := protoMessage(append([][]byte{protoField(1, typeMeta), protoField(2, review)}, extra...)...)
+	return append([]byte("k8s\x00"), envelope...)
 }

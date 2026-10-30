@@ -14,7 +14,7 @@ import (
 // rulesAnswer is the fake API server's SelfSubjectRulesReview: what the
 // group's RBAC allows in team-a.
 const rulesAnswer = `{"apiVersion":"authorization.k8s.io/v1","kind":"SelfSubjectRulesReview",
-"metadata":{},"spec":{"namespace":"team-a"},"status":{
+"metadata":{},"spec":{},"status":{
 "resourceRules":[
  {"verbs":["get","list","delete"],"apiGroups":[""],"resources":["pods"]},
  {"verbs":["get","update"],"apiGroups":["apps"],"resources":["deployments"],"resourceNames":["web"]},
@@ -161,7 +161,7 @@ func TestNarrowRulesFailsClosed(t *testing.T) {
 	t.Parallel()
 	server := &Server{options: Options{CoreNow: time.Now}}
 	for _, body := range []string{"", "{", `{"status":[]}`} {
-		narrowed := server.narrowRules(t.Context(), []byte(body), true, Peer{}, Group{Name: "edit"})
+		narrowed := server.narrowRules(t.Context(), []byte(body), true, Peer{}, Group{Name: "edit"}, "")
 		var answer struct {
 			Status rulesStatus `json:"status"`
 		}
