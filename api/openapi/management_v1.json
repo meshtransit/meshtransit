@@ -1287,7 +1287,8 @@
                       "type": "object",
                       "additionalProperties": false,
                       "required": [
-                        "replicas"
+                        "replicas",
+                        "can_change_ratchet"
                       ],
                       "properties": {
                         "replicas": {
@@ -1301,6 +1302,10 @@
                           "type": "string",
                           "minLength": 1,
                           "maxLength": 512
+                        },
+                        "can_change_ratchet": {
+                          "type": "boolean",
+                          "description": "The caller holds kubernetes_cluster.approve, so may suspend or resume the replicas' ratchets; a hint, the action checks again."
                         }
                       }
                     },
@@ -1330,6 +1335,297 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/replicas/{device_id}/actions/suspend-token-ratchet": {
+      "post": {
+        "operationId": "suspendKubernetesReplicaTokenRatchet",
+        "summary": "Let a replica's sessions run without a pod token for a while",
+        "description": "Requires kubernetes_cluster.approve. For a replica that proved a pod token before (409 replica_not_ratcheted otherwise): its sessions may run without a token until duration_seconds (5 minutes to a day) from now, replacing a suspension it had; a token proven meanwhile ends the suspension. Sessions let through end when it does. A copy of the replica's Secret connects too while it holds: suspend only to fix a gateway that lost its token, with a change reference. After 10 suspensions and resumes by a person within an hour, a suspension is refused (429 ratchet_change_rate_limited); a resume never is. reason and change_ref hold no secrets or personal data.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "duration_seconds",
+                  "reason",
+                  "change_ref"
+                ],
+                "properties": {
+                  "duration_seconds": {
+                    "type": "integer",
+                    "minimum": 300,
+                    "maximum": 86400
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "description": "Why; printable, no line breaks."
+                  },
+                  "change_ref": {
+                    "type": "string",
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "description": "A ticket or incident reference; printable, no line breaks."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The ratchet is suspended until ratchet_suspended_until",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "changed",
+                        "ratchet_suspended_until"
+                      ],
+                      "properties": {
+                        "changed": {
+                          "type": "boolean"
+                        },
+                        "ratchet_suspended_until": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "format": "date-time"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/replicas/{device_id}/actions/resume-token-ratchet": {
+      "post": {
+        "operationId": "resumeKubernetesReplicaTokenRatchet",
+        "summary": "End a replica's ratchet suspension now",
+        "description": "Requires kubernetes_cluster.approve. Sessions without a token that the suspension let through end within 30 seconds. With nothing suspended nothing changes (changed false). Never rate limited; counts toward the 10 changes after which a person's suspensions are refused for the hour.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "description": "Why; printable, no line breaks."
+                  },
+                  "change_ref": {
+                    "type": "string",
+                    "maxLength": 256,
+                    "description": "Optional; printable, no line breaks."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The ratchet holds again",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "changed",
+                        "ratchet_suspended_until"
+                      ],
+                      "properties": {
+                        "changed": {
+                          "type": "boolean"
+                        },
+                        "ratchet_suspended_until": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "format": "date-time"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "503": {
             "$ref": "#/components/responses/Unavailable"
@@ -6644,7 +6940,8 @@
           "ordinal",
           "state",
           "created_at",
-          "token_first_proven_at"
+          "token_first_proven_at",
+          "ratchet_suspended_until"
         ],
         "properties": {
           "device_id": {
@@ -6672,9 +6969,17 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "ratchet_suspended_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When an approver's suspension of the replica's pod token ratchet ends (null: none holds)."
           }
         },
-        "description": "A gateway Device of the cluster and when it first proved a pod token (null: never)"
+        "description": "A gateway Device of the cluster, when it first proved a pod token (null: never) and until when its ratchet is suspended"
       },
       "KubernetesCertificateAuthority": {
         "type": "object",

@@ -59,6 +59,21 @@ type kubernetesClusterStub struct {
 	exportPageDelay time.Duration
 	denialRanges    [][2]time.Time
 	retires         []kubecluster.CARetireRequestCommand
+	ratchets        []kubecluster.RatchetChange
+}
+
+func (stub *kubernetesClusterStub) ChangeTokenRatchet(_ context.Context,
+	change kubecluster.RatchetChange) (kubecluster.RatchetChangeResult, error) {
+	stub.calls = append(stub.calls, "change-ratchet")
+	stub.ratchets = append(stub.ratchets, change)
+	if stub.failure != nil {
+		return kubecluster.RatchetChangeResult{}, stub.failure
+	}
+	if !change.Suspends() {
+		return kubecluster.RatchetChangeResult{Changed: change.Reason != "nothing"}, nil
+	}
+	return kubecluster.RatchetChangeResult{Changed: true,
+		SuspendedUntil: time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC)}, nil
 }
 
 func kubernetesTestRetireID() publicid.ID {
@@ -150,7 +165,8 @@ func (stub *kubernetesClusterStub) ListReplicas(_ context.Context,
 	if stub.failure != nil {
 		return kubecluster.ReplicaPage{}, stub.failure
 	}
-	return kubecluster.ReplicaPage{Replicas: []kubecluster.Replica{kubernetesTestReplica()}, Next: stub.next}, nil
+	return kubecluster.ReplicaPage{Replicas: []kubecluster.Replica{kubernetesTestReplica()}, Next: stub.next,
+		CanChangeRatchet: true}, nil
 }
 
 func (stub *kubernetesClusterStub) ReadReplica(_ context.Context, _ accountsession.Session, _ network.Scope,
@@ -534,6 +550,12 @@ func TestParseKubernetesClusterPath(t *testing.T) {
 		{http.MethodGet, kubernetesClustersTestPath(cluster + "/replica-requests"), true,
 			kubernetesRequestListOperation},
 		{http.MethodGet, kubernetesClustersTestPath(cluster + "/signing"), true, kubernetesClusterSigningOperation},
+		{http.MethodPost, kubernetesClustersTestPath(cluster + "/replicas/" + kubernetesTestKey +
+			"/actions/suspend-token-ratchet"), true, kubernetesRatchetSuspendOperation},
+		{http.MethodPost, kubernetesClustersTestPath(cluster + "/replicas/" + kubernetesTestKey +
+			"/actions/resume-token-ratchet"), true, kubernetesRatchetResumeOperation},
+		{http.MethodPost, kubernetesClustersTestPath(cluster + "/replicas/" + kubernetesTestKey +
+			"/actions/drop-token-ratchet"), false, ""},
 		{http.MethodGet, kubernetesClustersTestPath(cluster + "/signing-trust"), true,
 			kubernetesSigningTrustReadOperation},
 		{http.MethodPut, kubernetesClustersTestPath(cluster + "/signing-trust"), true,
@@ -580,6 +602,7 @@ func TestKubernetesClusterHTTPBoundary(t *testing.T) {
 	t.Parallel()
 	cluster := "/" + kubernetesTestCluster
 	request := cluster + "/replica-requests/" + kubernetesTestRequest
+	replica := cluster + "/replicas/" + kubernetesTestDevice().String()
 	secret := base64.RawURLEncoding.EncodeToString([]byte{
 		0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
 		30, 31})
@@ -626,7 +649,8 @@ func TestKubernetesClusterHTTPBoundary(t *testing.T) {
 		{"list requests", http.MethodGet, cluster + "/replica-requests", "", "", nil, 200, "list-requests",
 			`"reported_by_pod":{"pod":"meshgw-0"}`, ""},
 		{"list replicas", http.MethodGet, cluster + "/replicas?page_size=10", "", "", nil, 200, "list-replicas",
-			`"token_first_proven_at":"2026-10-26T08:01:00Z"`, ""},
+			`"token_first_proven_at":"2026-10-26T08:01:00Z","ratchet_suspended_until":null}],"can_change_ratchet":true`,
+			""},
 		{"read a replica", http.MethodGet, cluster + "/replicas/" + kubernetesTestDevice().String(), "", "", nil, 200,
 			"read-replica", `"name":"prod-0"`, ""},
 		{"list CAs", http.MethodGet, cluster + "/certificate-authorities", "", "", nil, 200, "list-cas",
@@ -658,6 +682,28 @@ func TestKubernetesClusterHTTPBoundary(t *testing.T) {
 		{"request a retire, too often", http.MethodPost, cluster + "/ca-retire-requests",
 			`{"ca_id":"` + kubernetesTestCAID + `","ca_version":3,"reason":"admin","change_ref":"x","note":""}`,
 			"", kubecluster.ErrRetireRateLimited, 429, "request-retire", "retire_rate_limited", ""},
+		{"suspend a ratchet", http.MethodPost, replica + "/actions/suspend-token-ratchet",
+			`{"duration_seconds":3600,"reason":"meshgw downgraded","change_ref":"INC-7"}`, "", nil, 200,
+			"change-ratchet", `"changed":true,"ratchet_suspended_until":"2026-10-30T09:00:00Z"`, ""},
+		{"suspend a ratchet over a day", http.MethodPost, replica + "/actions/suspend-token-ratchet",
+			`{"duration_seconds":86401,"reason":"x","change_ref":"x"}`, "", nil, 400, "", "invalid_request", ""},
+		{"suspend a ratchet, no duration", http.MethodPost, replica + "/actions/suspend-token-ratchet",
+			`{"reason":"x","change_ref":"x"}`, "", nil, 400, "", "invalid_request", ""},
+		{"suspend a ratchet never proven", http.MethodPost, replica + "/actions/suspend-token-ratchet",
+			`{"duration_seconds":600,"reason":"x","change_ref":"x"}`, "", kubecluster.ErrNotRatcheted, 409,
+			"change-ratchet", "replica_not_ratcheted", ""},
+		{"suspend ratchets too often", http.MethodPost, replica + "/actions/suspend-token-ratchet",
+			`{"duration_seconds":600,"reason":"x","change_ref":"x"}`, "", kubecluster.ErrRatchetRateLimited, 429,
+			"change-ratchet", "ratchet_change_rate_limited", ""},
+		{"resume a ratchet", http.MethodPost, replica + "/actions/resume-token-ratchet",
+			`{"reason":"meshgw fixed","change_ref":""}`, "", nil, 200, "change-ratchet",
+			`"changed":true,"ratchet_suspended_until":null`, ""},
+		{"resume a ratchet, nothing suspended", http.MethodPost, replica + "/actions/resume-token-ratchet",
+			`{"reason":"nothing","change_ref":""}`, "", nil, 200, "change-ratchet", `"changed":false`, ""},
+		{"resume a ratchet, a duration", http.MethodPost, replica + "/actions/resume-token-ratchet",
+			`{"duration_seconds":600,"reason":"x","change_ref":""}`, "", nil, 400, "", "invalid_request", ""},
+		{"no GET on a ratchet action", http.MethodGet, replica + "/actions/suspend-token-ratchet", "", "", nil, 405,
+			"", "method_not_allowed", ""},
 		{"list retire requests", http.MethodGet, cluster + "/ca-retire-requests?page_size=10", "", "", nil, 200,
 			"list-retires", `"refusal":"changed"`, ""},
 		{"a CA page over 50", http.MethodGet, cluster + "/certificate-authorities?page_size=51", "", "", nil, 404,

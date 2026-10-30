@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"meshtransit.net/core/internal/domain/captivewindow"
 	"time"
+
+	"meshtransit.net/core/internal/domain/captivewindow"
 
 	mtcpadapter "meshtransit.net/core/internal/adapter/mtcp"
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
@@ -384,6 +385,32 @@ func (guard mtcpTimestampGuard) CommitGatewayTimestampV2(ctx context.Context, ma
 	commit, err := guard.store.CommitGatewayTimestampV2(ctx, machineFingerprint, nodeKey, timestampMS, tokenProven,
 		mode)
 	return commit.Result, commit.Ratcheted, err
+}
+
+// AcceptTimestampV4 is AcceptTimestampV3 with schema 253's suspensions.
+func (guard mtcpTimestampGuard) AcceptTimestampV4(ctx context.Context, machineFingerprint [32]byte,
+	nodeKey []byte, timestampMS int64) (mtcpadapter.TimestampCheck, error) {
+	check, err := guard.store.AcceptTimestampV4(ctx, machineFingerprint, nodeKey, timestampMS)
+	if err != nil {
+		return mtcpadapter.TimestampCheck{}, err
+	}
+	answer := timestampCheck(check)
+	answer.TokenRatcheted = check.TokenRatcheted
+	answer.SuspendedUntil = check.SuspendedUntil
+	return answer, nil
+}
+
+func (guard mtcpTimestampGuard) CommitGatewayTimestampV3(ctx context.Context, machineFingerprint [32]byte,
+	nodeKey []byte, timestampMS int64, tokenProven bool, mode kubecluster.GatewayTokenMode,
+) (kubecluster.GatewayTimestampResult, bool, time.Time, error) {
+	commit, err := guard.store.CommitGatewayTimestampV3(ctx, machineFingerprint, nodeKey, timestampMS,
+		tokenProven, mode)
+	return commit.Result, commit.Ratcheted, commit.SuspendedUntil, err
+}
+
+func (guard mtcpTimestampGuard) ReadRatchetSuspension(ctx context.Context, machineFingerprint [32]byte,
+	nodeKey []byte) (time.Time, error) {
+	return guard.store.ReadRatchetSuspension(ctx, machineFingerprint, nodeKey)
 }
 
 func (guard mtcpTimestampGuard) RatchetGatewayToken(ctx context.Context, machineFingerprint [32]byte,

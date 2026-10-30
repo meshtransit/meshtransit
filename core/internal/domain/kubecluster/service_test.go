@@ -59,12 +59,19 @@ type recordingStore struct {
 	auditSettings []kubecluster.AuditSettingsReplacement
 	exports       []kubecluster.ExportQuery
 	retires       []kubecluster.CARetireRequestCommand
+	ratchets      []kubecluster.RatchetChange
 }
 
 func (store *recordingStore) RequestCARetire(_ context.Context,
 	command kubecluster.CARetireRequestCommand) (kubecluster.CARetireRequestResult, error) {
 	store.retires = append(store.retires, command)
 	return kubecluster.CARetireRequestResult{}, nil
+}
+
+func (store *recordingStore) ChangeTokenRatchet(_ context.Context,
+	change kubecluster.RatchetChange) (kubecluster.RatchetChangeResult, error) {
+	store.ratchets = append(store.ratchets, change)
+	return kubecluster.RatchetChangeResult{}, nil
 }
 
 func (store *recordingStore) ListCARetireRequests(_ context.Context,
@@ -635,5 +642,52 @@ func TestServiceRequestCARetire(t *testing.T) {
 	}
 	if len(store.retires) != 1 {
 		t.Fatalf("the valid request did not reach the store")
+	}
+}
+
+// A ratchet suspension lasts from 5 minutes to a day in whole seconds, with a
+// reason and a change reference; a resume needs only a reason (K1d §4.2).
+func TestServiceChangeTokenRatchet(t *testing.T) {
+	t.Parallel()
+	service, store, session, scope, _ := serviceFixture(t)
+	device, err := node.ParseID(mustID(t, "000000000501").String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := kubecluster.RatchetChange{Session: session, Scope: scope,
+		ClusterID: kubecluster.ID(mustID(t, "000000000301")), DeviceID: device, Duration: time.Hour,
+		Reason: "meshgw downgraded", ChangeRef: "INC-7", CorrelationID: mustID(t, "000000000901")}
+	for name, change := range map[string]func(*kubecluster.RatchetChange){
+		"no cluster":          func(c *kubecluster.RatchetChange) { c.ClusterID = kubecluster.ID{} },
+		"no Device":           func(c *kubecluster.RatchetChange) { c.DeviceID = node.ID{} },
+		"under 5 minutes":     func(c *kubecluster.RatchetChange) { c.Duration = 299 * time.Second },
+		"over a day":          func(c *kubecluster.RatchetChange) { c.Duration = 24*time.Hour + time.Second },
+		"a fraction":          func(c *kubecluster.RatchetChange) { c.Duration = 10*time.Minute + time.Millisecond },
+		"negative":            func(c *kubecluster.RatchetChange) { c.Duration = -time.Hour },
+		"no reason":           func(c *kubecluster.RatchetChange) { c.Reason = "" },
+		"no change reference": func(c *kubecluster.RatchetChange) { c.ChangeRef = "" },
+		"a control character": func(c *kubecluster.RatchetChange) { c.Reason = "a\x1bb" },
+		"a resume, no reason": func(c *kubecluster.RatchetChange) { c.Duration, c.Reason = 0, "" },
+		"no correlation":      func(c *kubecluster.RatchetChange) { c.CorrelationID = publicid.ID{} },
+		"a long change ref":   func(c *kubecluster.RatchetChange) { c.ChangeRef = strings.Repeat("x", 257) },
+	} {
+		command := base
+		change(&command)
+		if _, err := service.ChangeTokenRatchet(context.Background(), command); !errors.Is(err, kubecluster.ErrInvalid) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if len(store.ratchets) != 0 {
+		t.Fatalf("invalid changes reached the store: %+v", store.ratchets)
+	}
+	resume := base
+	resume.Duration, resume.ChangeRef = 0, ""
+	for _, valid := range []kubecluster.RatchetChange{base, resume} {
+		if _, err := service.ChangeTokenRatchet(context.Background(), valid); err != nil {
+			t.Fatalf("%+v: %v", valid, err)
+		}
+	}
+	if len(store.ratchets) != 2 || !store.ratchets[0].Suspends() || store.ratchets[1].Suspends() {
+		t.Fatalf("the store saw %+v", store.ratchets)
 	}
 }

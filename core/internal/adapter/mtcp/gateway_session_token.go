@@ -51,6 +51,23 @@ type GatewayTokenGuard interface {
 	RatchetGatewayToken(ctx context.Context, machineFingerprint [32]byte, nodeKey []byte) (bool, error)
 }
 
+// GatewayRatchetSuspensions is schema 253's handshake functions: an
+// approver suspends a gateway's ratchet for at most a day (K1d d2b). Nil
+// GatewayTokens.Suspensions keeps schema 246's, which ratchet regardless.
+type GatewayRatchetSuspensions interface {
+	AcceptTimestampV4(ctx context.Context, machineFingerprint [32]byte, nodeKey []byte,
+		timestampMS int64) (TimestampCheck, error)
+	CommitGatewayTimestampV3(ctx context.Context, machineFingerprint [32]byte, nodeKey []byte, timestampMS int64,
+		tokenProven bool, mode kubecluster.GatewayTokenMode) (result kubecluster.GatewayTimestampResult,
+		ratcheted bool, suspendedUntil time.Time, err error)
+	ReadRatchetSuspension(ctx context.Context, machineFingerprint [32]byte, nodeKey []byte) (time.Time, error)
+}
+
+// gatewaySuspensionReread is how often a session let through by a
+// suspended ratchet reads the suspension again, so a resume or a token
+// proven elsewhere ends it (Q166).
+const gatewaySuspensionReread = 30 * time.Second
+
 // GatewayTrustReader reads what a gateway's pod token must match, for the
 // keys its session proved (kubecluster.MachineKeyRotations has it).
 type GatewayTrustReader interface {
@@ -63,6 +80,8 @@ type GatewayTokens struct {
 	Guard GatewayTokenGuard
 	Trust GatewayTrustReader
 	Mode  kubecluster.GatewayTokenMode
+	// Suspensions is optional: schema 253 granted at startup.
+	Suspensions GatewayRatchetSuspensions
 }
 
 func (tokens *GatewayTokens) valid() bool {
@@ -84,6 +103,11 @@ type gatewayTokenState struct {
 	readAt   time.Time
 	refresh  rateBudget
 	observed bool // an expiry observe mode let through was counted
+	// suspendedUntil is the hard deadline of a session let through without
+	// a token by a suspended ratchet (no skew added); zero otherwise.
+	// suspensionReadAt is when it was last read.
+	suspendedUntil   time.Time
+	suspensionReadAt time.Time
 }
 
 // sessionTokenReason is the audit reason of a session refused for its
@@ -194,14 +218,19 @@ func (session *Session) reportTokenRefusal(refusal tokenRefusal) {
 func (session *Session) handshakeToken(raw string, nodeKey node.Key) (proven bool, result, refused string) {
 	tokens := session.server.options.GatewayTokens
 	ratcheted := session.gate.TokenRatcheted
+	// A suspended ratchet lets a session without a token through to the
+	// commit, which decides again under the Device's lock (K1d d2b).
+	suspended := tokens.Suspensions != nil && session.gate.SuspendedUntil.After(session.server.options.Now())
 	enforce := tokens.Mode == kubecluster.GatewayTokenRequired ||
-		tokens.Mode == kubecluster.GatewayTokenRatchet && ratcheted
+		tokens.Mode == kubecluster.GatewayTokenRatchet && ratcheted && !suspended
 	// A token sent without gateway.token1 is ignored (mtcp-v1 §6.7).
 	if !session.Supports(CapabilityGatewayToken) {
 		raw = ""
 	}
 	if raw == "" {
-		if enforce || ratcheted {
+		// A session a suspension lets in is not refused: the
+		// gateway_token_suspended metric counts it (review d2b L3).
+		if enforce || ratcheted && !suspended {
 			session.reportTokenRefusal(tokenRefusal{reason: kubecluster.KeyEventSessionTokenMissing})
 		}
 		if enforce {
@@ -242,9 +271,21 @@ func (session *Session) commitGatewayTokenTimestamp(nodeKey []byte, tokenProven 
 	ctx, cancel := context.WithTimeout(session.ctx, writeTimeout)
 	defer cancel()
 	timestamp := session.hello.GetTimestampMs()
-	result, ratcheted, err := server.options.GatewayTokens.Guard.CommitGatewayTimestampV2(ctx,
-		node.MachineKey(session.machine).Fingerprint(), nodeKey, timestamp, tokenProven,
-		server.options.GatewayTokens.Mode)
+	tokens := server.options.GatewayTokens
+	fingerprint := node.MachineKey(session.machine).Fingerprint()
+	var (
+		result         kubecluster.GatewayTimestampResult
+		ratcheted      bool
+		suspendedUntil time.Time
+		err            error
+	)
+	if tokens.Suspensions != nil {
+		result, ratcheted, suspendedUntil, err = tokens.Suspensions.CommitGatewayTimestampV3(ctx, fingerprint,
+			nodeKey, timestamp, tokenProven, tokens.Mode)
+	} else {
+		result, ratcheted, err = tokens.Guard.CommitGatewayTimestampV2(ctx, fingerprint, nodeKey, timestamp,
+			tokenProven, tokens.Mode)
+	}
 	switch {
 	case err != nil:
 		server.options.Logger.WarnContext(ctx, "mtcp gateway timestamp failed",
@@ -263,7 +304,14 @@ func (session *Session) commitGatewayTokenTimestamp(nodeKey []byte, tokenProven 
 	}
 	if !tokenProven {
 		session.token = gatewayTokenState{refresh: session.token.refresh}
-		if session.gate.TokenRatcheted {
+		switch {
+		case !suspendedUntil.IsZero():
+			// A suspended ratchet let it through: its end is a hard
+			// deadline, read again while the session runs (Q166).
+			session.token.suspendedUntil = suspendedUntil
+			session.token.suspensionReadAt = server.options.Now()
+			server.options.Metrics.limited(limitGatewayTokenSuspended)
+		case session.gate.TokenRatcheted:
 			// Mode observe let a session without a token through.
 			server.options.Metrics.limited(limitGatewayTokenObserved)
 		}
@@ -294,6 +342,7 @@ func (session *Session) refreshGatewayToken(now time.Time, message *mtcpv1.Gatew
 	refusal := session.checkRefresh(now, raw)
 	if refusal == nil {
 		session.token.last = digest
+		session.endSuspension()
 		return true
 	}
 	session.reportTokenRefusal(*refusal)
@@ -302,6 +351,12 @@ func (session *Session) refreshGatewayToken(now time.Time, message *mtcpv1.Gatew
 	if refusal.soft && !session.token.until.IsZero() || refusal.reason == kubecluster.KeyEventSessionTrustUnavailable {
 		// The deadline the session holds stands, and Core's own database
 		// never ends a session; the clock does if no token checks.
+		cut = false
+	}
+	if session.onSuspension() {
+		// A suspended ratchet let the session in without a token: a bad
+		// one (a stale projected volume) changes nothing, the suspension's
+		// end still holds (review d2b M3).
 		cut = false
 	}
 	if !cut {
@@ -392,6 +447,11 @@ func (session *Session) gatewayTokenClock(now time.Time) bool {
 	if tokens == nil {
 		return true
 	}
+	// A session that joined a cluster waits for its token as any other: the
+	// join ratchets the Device and clears its suspension.
+	if session.onSuspension() && session.joinedAt.Load() == 0 {
+		return session.suspensionClock(now)
+	}
 	expired := !session.token.until.IsZero() && now.After(session.token.until.Add(gatewayTokenSkew))
 	if joined := session.joinedAt.Load(); joined != 0 && session.token.until.IsZero() {
 		expired = now.After(time.Unix(0, joined).Add(gatewayJoinedTokenWait))
@@ -409,6 +469,85 @@ func (session *Session) gatewayTokenClock(now time.Time) bool {
 	session.reportTokenRefusal(tokenRefusal{reason: kubecluster.KeyEventSessionTokenExpired})
 	session.SendError(mtcpv1.Error_NOT_AUTHORIZED, sharedmtcp.GateTokenExpired, true)
 	return false
+}
+
+// onSuspension reports a session that a suspended ratchet let in and that
+// has proven no token since.
+func (session *Session) onSuspension() bool {
+	return !session.token.suspendedUntil.IsZero() && session.token.until.IsZero()
+}
+
+// endSuspension ends the Device's suspension once a session that relied on
+// it proves a token: the gateway is fixed, so the door closes now, as at a
+// handshake (review d2b M2). The Device is ratcheted already, so this only
+// clears the suspension. A failure keeps the session's mark, so the next
+// valid refresh tries again.
+func (session *Session) endSuspension() {
+	if session.token.suspendedUntil.IsZero() || session.token.until.IsZero() {
+		return
+	}
+	nodeKey, ok := session.tokenNodeKey()
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(session.ctx, writeTimeout)
+	defer cancel()
+	bytes := nodeKey.Bytes()
+	if _, err := session.server.options.GatewayTokens.Guard.RatchetGatewayToken(ctx,
+		node.MachineKey(session.machine).Fingerprint(), bytes[:]); err != nil {
+		session.server.options.Logger.WarnContext(ctx, "mtcp gateway ratchet suspension not ended",
+			"error_code", "gateway_ratchet_suspension_unavailable")
+		return
+	}
+	session.token.suspendedUntil = time.Time{}
+}
+
+// suspensionClock ends a session let through by a suspended ratchet when
+// the suspension ends, is resumed or a token proven elsewhere ends it,
+// reading it again every gatewaySuspensionReread. A read that fails keeps
+// the deadline it holds: Core's own database never ends a session early,
+// and never extends one (Q166).
+func (session *Session) suspensionClock(now time.Time) bool {
+	until := session.token.suspendedUntil
+	if now.Sub(session.token.suspensionReadAt) >= gatewaySuspensionReread && now.Before(until) {
+		session.token.suspensionReadAt = now
+		if read, ok := session.readSuspension(); ok {
+			// Never later than the deadline the session holds.
+			if read.IsZero() || read.Before(until) {
+				until = read
+			}
+		}
+		session.token.suspendedUntil = until
+	}
+	if !until.IsZero() && now.Before(until) {
+		return true
+	}
+	// Only mode ratchet hands out a deadline.
+	session.server.options.Metrics.limited(limitGatewayTokenSuspensionEnded)
+	session.reportTokenRefusal(tokenRefusal{reason: kubecluster.KeyEventSessionTokenMissing})
+	session.SendError(mtcpv1.Error_NOT_AUTHORIZED, sharedmtcp.GateTokenRequired, true)
+	return false
+}
+
+// readSuspension reads the Device's suspension for the keys the session
+// proved; false when it cannot be read.
+func (session *Session) readSuspension() (time.Time, bool) {
+	tokens := session.server.options.GatewayTokens
+	nodeKey, ok := session.tokenNodeKey()
+	if !ok || tokens.Suspensions == nil {
+		return time.Time{}, false
+	}
+	ctx, cancel := context.WithTimeout(session.ctx, writeTimeout)
+	defer cancel()
+	bytes := nodeKey.Bytes()
+	until, err := tokens.Suspensions.ReadRatchetSuspension(ctx, node.MachineKey(session.machine).Fingerprint(),
+		bytes[:])
+	if err != nil {
+		session.server.options.Logger.WarnContext(ctx, "mtcp gateway ratchet suspension unread",
+			"error_code", "gateway_ratchet_suspension_unavailable")
+		return time.Time{}, false
+	}
+	return until, true
 }
 
 // ratchetJoinedGateway ratchets the Device a session's cluster join just

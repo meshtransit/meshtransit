@@ -154,6 +154,10 @@ func kubernetesClusterDatabaseError(err error) error {
 			return kubecluster.ErrRetirePending
 		case "MTK42":
 			return kubecluster.ErrRetireRateLimited
+		case "MTK43":
+			return kubecluster.ErrNotRatcheted
+		case "MTK44":
+			return kubecluster.ErrRatchetRateLimited
 		}
 	}
 	if errors.Is(err, pgx.ErrNoRows) {

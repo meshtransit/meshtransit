@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 252 {
-		t.Fatalf("len(Catalog()) = %d, want 252", len(catalog))
+	if len(catalog) != 253 {
+		t.Fatalf("len(Catalog()) = %d, want 253", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 252 {
-		t.Fatalf("LatestVersion() = %d, want 252", LatestVersion())
+	if LatestVersion() != 253 {
+		t.Fatalf("LatestVersion() = %d, want 253", LatestVersion())
 	}
 }
 
@@ -7552,6 +7552,45 @@ func TestMigration252KubernetesCARetireRequests(t *testing.T) {
 	} {
 		if strings.Contains(migration.SQL, never) {
 			t.Errorf("migration 252 has %q", never)
+		}
+	}
+}
+
+func TestMigration253KubernetesGatewayRatchetSuspension(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 253 || catalog[252].Version != 253 {
+		t.Fatalf("the catalog has no migration 253 (%d migrations)", len(catalog))
+	}
+	migration := catalog[252]
+	for _, want := range []string{
+		"ratchet_suspended_until <= ratchet_suspended_at + INTERVAL '1 day'",
+		"(v_ratcheted AND p_mode = 'ratchet' AND NOT v_suspended)",
+		// Three-valued logic: a NULL end must not read as suspended.
+		"COALESCE(v_proof.ratchet_suspended_until > pg_catalog.clock_timestamp(), FALSE)",
+		"ON CONFLICT (device_id) DO UPDATE SET ratchet_suspended_until = NULL",
+		"'meshtransit/gateway-token-proof/' || o_device.public_id::TEXT",
+		"p_seconds NOT BETWEEN 300 AND 86400",
+		"'kubernetes_cluster.approve');",
+		"ERRCODE = 'MTK43'", "ERRCODE = 'MTK44'",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.commit_mtcp_gateway_timestamp_v3(",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_kubernetes_gateway_ratchet_suspension_v1(BYTEA, BYTEA) TO mesh_runtime;",
+		// Each change carries its audit event's change ID.
+		"capture_authority_mutation('kubernetes_gateway_ratchet_change', 'public_id')",
+		"set_config('mesh.change_public_id', p_change_public_id::TEXT, TRUE)",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 253 lacks %q", want)
+		}
+	}
+	for _, never := range []string{
+		// The ratchet's proof stays: a suspension never deletes it.
+		"DELETE FROM mesh_ops.kubernetes_gateway_token_proof",
+		"DROP FUNCTION mesh_ops.commit_mtcp_gateway_timestamp_v2",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.kubernetes_gateway_ratchet_target_internal_v1",
+	} {
+		if strings.Contains(migration.SQL, never) {
+			t.Errorf("migration 253 has %q", never)
 		}
 	}
 }

@@ -108,6 +108,9 @@ func (service *Service) ReadReplicaRequest(ctx context.Context, session accounts
 type ReplicaPage struct {
 	Replicas []Replica
 	Next     PageCursor
+	// CanChangeRatchet: the caller may suspend or resume the replicas'
+	// ratchets (K1d d2b); a hint for the Console, the change checks again.
+	CanChangeRatchet bool
 }
 
 // CAKind is a CA's tier.

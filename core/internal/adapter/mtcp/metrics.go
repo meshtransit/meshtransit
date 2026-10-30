@@ -134,6 +134,11 @@ const (
 	// its rate (mtcp-v1 §6.7).
 	limitGatewayTokenObserved = "gateway_token_observed"
 	limitGatewayTokenRefresh  = "gateway_token_refresh"
+	// limitGatewayTokenSuspended counts sessions without a token let
+	// through by a suspended ratchet; limitGatewayTokenSuspensionEnded,
+	// such sessions ended when the suspension did (K1d d2b).
+	limitGatewayTokenSuspended       = "gateway_token_suspended"
+	limitGatewayTokenSuspensionEnded = "gateway_token_suspension_ended"
 )
 
 // gatewaySessionTokenLimit names a session refused for its pod token.
@@ -158,6 +163,7 @@ var sessionLimits = []string{limitInbound, limitAudit, limitAuditCeiling, limitR
 	limitGatewayPresenceElsewhere, limitGatewayPresencePending, limitGatewayPresenceUnknown,
 	limitClusterJoinToken, limitGatewayTrustMissing, limitGatewayTrustUnavailable, limitGatewayTokenStore,
 	limitGatewayContestOverridden, limitGatewayTokenObserved, limitGatewayTokenRefresh,
+	limitGatewayTokenSuspended, limitGatewayTokenSuspensionEnded,
 	gatewayTokenLimit(kubetoken.ReasonMissing), gatewayTokenLimit(kubetoken.ReasonMalformed),
 	gatewayTokenLimit(kubetoken.ReasonUnknownKey), gatewayTokenLimit(kubetoken.ReasonSignature),
 	gatewayTokenLimit(kubetoken.ReasonExpired), gatewayTokenLimit(kubetoken.ReasonAudience),

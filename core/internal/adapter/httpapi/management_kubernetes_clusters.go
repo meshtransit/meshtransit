@@ -50,6 +50,9 @@ const (
 	// K1d d2a: approvers ask the CA worker to retire a CA.
 	kubernetesCARetireListOperation    = "kubernetes_ca_retire_request_list"
 	kubernetesCARetireRequestOperation = "kubernetes_ca_retire_request_create"
+	// K1d d2b: an approver suspends or resumes a replica's ratchet.
+	kubernetesRatchetSuspendOperation = "kubernetes_replica_token_ratchet_suspend"
+	kubernetesRatchetResumeOperation  = "kubernetes_replica_token_ratchet_resume"
 )
 
 // KubernetesClusterManager manages a Network's Kubernetes clusters, their
@@ -90,6 +93,7 @@ type KubernetesClusterManager interface {
 	ExportPage(context.Context, kubecluster.ExportQuery, kubecluster.PageCursor) ([]kubecluster.ExportRecord, error)
 	RequestCARetire(context.Context, kubecluster.CARetireRequestCommand) (kubecluster.CARetireRequestResult, error)
 	ListCARetireRequests(context.Context, kubecluster.PageQuery) (kubecluster.CARetireRequestPage, error)
+	ChangeTokenRatchet(context.Context, kubecluster.RatchetChange) (kubecluster.RatchetChangeResult, error)
 }
 
 type kubernetesClusterPath struct {
@@ -248,6 +252,18 @@ func (path *kubernetesClusterPath) route(rest []string) (map[string]string, bool
 		}
 		path.deviceID, path.methods = node.ID(device), restMethods{http.MethodGet}
 		return map[string]string{http.MethodGet: kubernetesReplicaReadOperation}, true
+	case len(rest) == 5 && rest[1] == "replicas" && rest[3] == "actions" &&
+		(rest[4] == "suspend-token-ratchet" || rest[4] == "resume-token-ratchet"):
+		device, ok := child(2)
+		if !ok {
+			return nil, false
+		}
+		path.deviceID, path.methods = node.ID(device), restMethods{http.MethodPost}
+		operation := kubernetesRatchetSuspendOperation
+		if rest[4] == "resume-token-ratchet" {
+			operation = kubernetesRatchetResumeOperation
+		}
+		return map[string]string{http.MethodPost: operation}, true
 	case len(rest) == 3 && rest[1] == "certificate-authorities":
 		ca, ok := child(2)
 		if !ok {
@@ -358,6 +374,8 @@ func (handler *ManagementHandler) handleKubernetesClusters(ctx context.Context, 
 		return handler.exportKubernetesOperations(ctx, response, correlationID, path, session, fail)
 	case kubernetesCARetireListOperation, kubernetesCARetireRequestOperation:
 		return handler.serveKubernetesCARetireRequests(ctx, response, request, correlationID, path, session, fail)
+	case kubernetesRatchetSuspendOperation, kubernetesRatchetResumeOperation:
+		return handler.changeKubernetesTokenRatchet(ctx, response, request, correlationID, path, session, fail)
 	case kubernetesAuditSettingsReadOperation, kubernetesAuditSettingsReplaceOperation:
 		return handler.serveKubernetesAuditSettings(ctx, response, request, correlationID, path, session, fail)
 	case kubernetesOperationListOperation, kubernetesOperationReadOperation, kubernetesDenialCountsOperation:
@@ -795,6 +813,15 @@ func classifyKubernetesClusterError(err error) managementError {
 	case errors.Is(err, kubecluster.ErrRetireRateLimited):
 		return managementError{Status: http.StatusTooManyRequests, Code: "retire_rate_limited",
 			Message:   "You asked to retire certificate authorities 5 times in the last hour; try again later",
+			Retryable: true}
+	// Schema 253 (K1d d2b): nothing to suspend, or a person who changed
+	// ratchets too often.
+	case errors.Is(err, kubecluster.ErrNotRatcheted):
+		return managementError{Status: http.StatusConflict, Code: "replica_not_ratcheted",
+			Message: "The replica never proved a pod token; its sessions need none"}
+	case errors.Is(err, kubecluster.ErrRatchetRateLimited):
+		return managementError{Status: http.StatusTooManyRequests, Code: "ratchet_change_rate_limited",
+			Message:   "You suspended or resumed ratchets 10 times in the last hour; suspend later (resuming always works)",
 			Retryable: true}
 	// Schema 235 (K1.1b): a pasted trust over another version, or a new
 	// identity while replicas run.

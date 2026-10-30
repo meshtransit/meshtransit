@@ -635,6 +635,8 @@ func Catalog() []Migration {
 			kubernetesOperationExportsSQL),
 		newMigration(252, "Approvers ask the CA worker to retire a cluster's CA",
 			kubernetesCARetireRequestsSQL),
+		newMigration(253, "Approvers suspend a gateway's pod token ratchet for at most a day",
+			kubernetesGatewayRatchetSuspensionSQL),
 	}
 }
 
@@ -1170,3 +1172,6 @@ var kubernetesOperationExportsSQL string
 
 //go:embed 000252_kubernetes_ca_retire_requests.up.sql
 var kubernetesCARetireRequestsSQL string
+
+//go:embed 000253_kubernetes_gateway_ratchet_suspension.up.sql
+var kubernetesGatewayRatchetSuspensionSQL string

@@ -264,6 +264,9 @@ type Replica struct {
 	// (the K1c-T ratchet), zero when it never did; set by the replica
 	// reads of K1d only.
 	TokenFirstProvenAt time.Time
+	// RatchetSuspendedUntil is when an approver's suspension of the
+	// replica's ratchet ends, zero when none holds (K1d d2b).
+	RatchetSuspendedUntil time.Time
 }
 
 // Detail is one cluster with its replicas and, for administrators who may

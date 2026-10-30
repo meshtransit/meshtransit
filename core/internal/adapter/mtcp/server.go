@@ -96,6 +96,9 @@ type TimestampCheck struct {
 	// TokenRatcheted: the gateway Device holding the machine key proved
 	// its pod token on a session before (schema 246, GatewayTokens only).
 	TokenRatcheted bool
+	// SuspendedUntil is when the Device's suspended ratchet holds again,
+	// zero when it is not suspended (schema 253, Suspensions only).
+	SuspendedUntil time.Time
 }
 
 // SessionHandler gives each established session to the application.
@@ -540,8 +543,13 @@ func (server *Server) acceptTimestamp(ctx context.Context, machine key.MachinePu
 		guardCtx, cancel := context.WithTimeout(ctx, writeTimeout)
 		defer cancel()
 		var err error
-		check, err = tokens.Guard.AcceptTimestampV3(guardCtx, node.MachineKey(machine).Fingerprint(), nodeKey,
-			timestampMS)
+		if tokens.Suspensions != nil {
+			check, err = tokens.Suspensions.AcceptTimestampV4(guardCtx, node.MachineKey(machine).Fingerprint(),
+				nodeKey, timestampMS)
+		} else {
+			check, err = tokens.Guard.AcceptTimestampV3(guardCtx, node.MachineKey(machine).Fingerprint(), nodeKey,
+				timestampMS)
+		}
 		if err != nil {
 			server.options.Logger.WarnContext(ctx, "mtcp timestamp check failed",
 				"error_code", "mtcp_timestamp_unavailable")

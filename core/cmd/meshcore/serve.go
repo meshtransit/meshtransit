@@ -708,6 +708,18 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 				"error_code", "kubernetes_gateway_tokens_unavailable")
 		default:
 			deps.gatewayTokens = composeGatewayTokens(timestamps, gatewayKeys, processConfig.KubernetesGatewayToken)
+			// Suspensions (schema 253, K1d d2b) only ever let a session
+			// without a token through: a replica that cannot use them holds
+			// every ratchet, so an unread probe never stops startup.
+			probeCtx, cancelProbe = context.WithTimeout(ctx, 10*time.Second)
+			suspensions, suspensionsErr := timestamps.RatchetSuspensionsGranted(probeCtx)
+			cancelProbe()
+			if suspensionsErr != nil || !suspensions {
+				logger.WarnContext(ctx, "Kubernetes gateway ratchet suspensions unavailable: every ratchet holds",
+					"error_code", "kubernetes_gateway_ratchet_suspensions_unavailable")
+			} else {
+				deps.gatewayTokens.Suspensions = mtcpTimestampGuard{store: timestamps}
+			}
 		}
 		if processConfig.KubernetesJoin {
 			joins, joinErr := composeClusterJoins(*processConfig.Enrollment, storagePools.runtime)

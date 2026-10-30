@@ -27,14 +27,15 @@ func isKubernetesPagedList(operation string) bool {
 // detail's fields and when it first proved a pod token.
 type kubernetesReplicaReadBody struct {
 	kubernetesReplicaBody
-	TokenFirstProvenAt *string `json:"token_first_proven_at"`
+	TokenFirstProvenAt    *string `json:"token_first_proven_at"`
+	RatchetSuspendedUntil *string `json:"ratchet_suspended_until"`
 }
 
 func newKubernetesReplicaReadBody(replica kubecluster.Replica) kubernetesReplicaReadBody {
 	return kubernetesReplicaReadBody{kubernetesReplicaBody: kubernetesReplicaBody{
 		DeviceID: replica.DeviceID.String(), Name: replica.Name, Ordinal: replica.Ordinal, State: replica.State,
 		CreatedAt: managementTime(replica.CreatedAt)}, TokenFirstProvenAt: optionalManagementTime(
-		replica.TokenFirstProvenAt)}
+		replica.TokenFirstProvenAt), RatchetSuspendedUntil: optionalManagementTime(replica.RatchetSuspendedUntil)}
 }
 
 func optionalManagementTime(at time.Time) *string {
@@ -113,9 +114,10 @@ func (handler *ManagementHandler) readKubernetesReplicasAndCAs(ctx context.Conte
 			bodies[index] = newKubernetesReplicaReadBody(replica)
 		}
 		writeKubernetesData(ctx, handler, response, correlationID, http.StatusOK, struct {
-			Replicas      []kubernetesReplicaReadBody `json:"replicas"`
-			NextPageToken string                      `json:"next_page_token,omitempty"`
-		}{bodies, next(page.Next)})
+			Replicas         []kubernetesReplicaReadBody `json:"replicas"`
+			NextPageToken    string                      `json:"next_page_token,omitempty"`
+			CanChangeRatchet bool                        `json:"can_change_ratchet"`
+		}{bodies, next(page.Next), page.CanChangeRatchet})
 	case kubernetesReplicaReadOperation:
 		replica, err := manager.ReadReplica(ctx, session, path.scope, path.clusterID, path.deviceID)
 		if err != nil {

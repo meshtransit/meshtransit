@@ -16,9 +16,10 @@ import (
 // Schema 248 (K1d d1b): pages and single rows of a cluster's replicas and
 // certificate authorities, for any reader of the Network.
 const (
-	listKubernetesReplicasSQL = `SELECT mesh_ops.list_kubernetes_cluster_replicas_v1(` + sessionArguments + `,
+	// Schema 253 (K1d d2b): v2 adds when a suspended ratchet holds again.
+	listKubernetesReplicasSQL = `SELECT mesh_ops.list_kubernetes_cluster_replicas_v2(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::UUID,$13::TIMESTAMPTZ,$14::UUID,$15::INTEGER)::TEXT`
-	readKubernetesReplicaSQL = `SELECT mesh_ops.read_kubernetes_cluster_replica_v1(` + sessionArguments + `,
+	readKubernetesReplicaSQL = `SELECT mesh_ops.read_kubernetes_cluster_replica_v2(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::UUID,$13::UUID)::TEXT`
 	listKubernetesCAsSQL = `SELECT mesh_ops.list_kubernetes_cluster_cas_v1(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::UUID,$13::TIMESTAMPTZ,$14::UUID,$15::INTEGER)::TEXT`
@@ -28,7 +29,8 @@ const (
 
 type kubernetesReplicaPageDocument struct {
 	kubernetesReplicaDocument
-	TokenFirstProvenAt *time.Time `json:"token_first_proven_at"`
+	TokenFirstProvenAt    *time.Time `json:"token_first_proven_at"`
+	RatchetSuspendedUntil *time.Time `json:"ratchet_suspended_until"`
 }
 
 func (document kubernetesReplicaPageDocument) replica() (kubecluster.Replica, error) {
@@ -41,6 +43,13 @@ func (document kubernetesReplicaPageDocument) replica() (kubecluster.Replica, er
 		State: document.State, CreatedAt: document.CreatedAt.UTC()}
 	if document.TokenFirstProvenAt != nil {
 		replica.TokenFirstProvenAt = document.TokenFirstProvenAt.UTC()
+	}
+	if document.RatchetSuspendedUntil != nil {
+		// Only a ratcheted replica is ever suspended.
+		if replica.TokenFirstProvenAt.IsZero() {
+			return kubecluster.Replica{}, kubecluster.ErrInvalid
+		}
+		replica.RatchetSuspendedUntil = document.RatchetSuspendedUntil.UTC()
 	}
 	return replica, nil
 }
@@ -140,6 +149,11 @@ func (store *KubernetesClusterStore) ListReplicas(ctx context.Context,
 	if len(documents) > query.Limit {
 		page.Next = previous
 	}
+	canChange, err := store.canApprove(ctx, query)
+	if err != nil {
+		return kubecluster.ReplicaPage{}, err
+	}
+	page.CanChangeRatchet = canChange
 	return page, nil
 }
 
@@ -198,7 +212,7 @@ func (store *KubernetesClusterStore) ListCertificateAuthorities(ctx context.Cont
 }
 
 // canApprove reads whether the caller may approve the Network's replicas,
-// so ask to retire a CA (schema 252).
+// so ask to retire a CA (schema 252) or change a replica's ratchet (253).
 func (store *KubernetesClusterStore) canApprove(ctx context.Context, query kubecluster.PageQuery) (bool, error) {
 	var allowed bool
 	err := store.transact(ctx, query.Scope, func(tx accountSessionTransaction) (bool, error) {
