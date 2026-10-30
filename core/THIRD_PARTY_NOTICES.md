@@ -29,6 +29,14 @@ resolved by `go.mod` and `go.sum`.
 | `golang.org/x/text` | `v0.42.0` | BSD-3-Clause |
 | `google.golang.org/protobuf` | `v1.36.11` | BSD-3-Clause |
 
+## Adapted source
+
+| Source | Where | License |
+| --- | --- | --- |
+| Kubernetes `k8s.io/kubernetes@v1.35.1` `pkg/apis/rbac/v1/evaluation_helpers.go`, `plugin/pkg/auth/authorizer/rbac/rbac.go` (`RuleAllows`) and the cases of their tests (Copyright The Kubernetes Authors) | `shared/kubeprofile`: matching a Kubernetes access profile's rules as the RBAC authorizer does (K2). The adapted files keep their copyright header and say what changed | Apache-2.0 |
+
+The Apache-2.0 text is `LICENSES/Apache-2.0.txt` at the repository root.
+
 ## Reviewed dependency set
 
 Core speaks MTCP v1 and MTRP v1 only (`docs/protocol/`), implemented in this
