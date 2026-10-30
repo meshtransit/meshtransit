@@ -802,6 +802,7 @@ func TestLoginDispatcherAdmitsKubernetesClusterQueries(t *testing.T) {
 		kubernetesClustersTestPath(cluster + "/ca-retire-requests?page_size=10"),
 		kubernetesClustersTestPath(cluster + "/operation-denial-counts?from=2026-10-29T00:00:00Z&to=2026-10-30T00:00:00Z"),
 		kubernetesClustersTestPath(cluster + "/operation-exports?from=2026-10-29T00:00:00Z"),
+		kubernetesClustersTestPath(cluster + "/approver-additions"),
 	} {
 		if !dispatcher.validRequest(newLoginHTTPRecorder(), browserManagementReadRequest(t, path)) {
 			t.Errorf("the dispatcher refused %s", path)

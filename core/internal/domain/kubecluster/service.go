@@ -162,6 +162,8 @@ type Store interface {
 	ExportPage(ctx context.Context, query ExportQuery, after PageCursor) ([]ExportRecord, error)
 	RequestCARetire(ctx context.Context, command CARetireRequestCommand) (CARetireRequestResult, error)
 	ChangeTokenRatchet(ctx context.Context, change RatchetChange) (RatchetChangeResult, error)
+	ReadApproverAdditions(ctx context.Context, session accountsession.Session, scope network.Scope,
+		clusterID ID) (ApproverAdditions, error)
 	ListCARetireRequests(ctx context.Context, query PageQuery) (CARetireRequestPage, error)
 }
 

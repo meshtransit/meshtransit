@@ -639,6 +639,8 @@ func Catalog() []Migration {
 			kubernetesGatewayRatchetSuspensionSQL),
 		newMigration(254, "Kubernetes gateways report their groups' RBAC check",
 			kubernetesGatewayGroupReportsSQL),
+		newMigration(255, "Readers of a Kubernetes cluster see approvers added within a day",
+			kubernetesClusterApproverAdditionsSQL),
 	}
 }
 
@@ -1180,3 +1182,6 @@ var kubernetesGatewayRatchetSuspensionSQL string
 
 //go:embed 000254_kubernetes_gateway_group_reports.up.sql
 var kubernetesGatewayGroupReportsSQL string
+
+//go:embed 000255_kubernetes_cluster_approver_additions.up.sql
+var kubernetesClusterApproverAdditionsSQL string

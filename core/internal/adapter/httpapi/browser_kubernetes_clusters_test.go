@@ -28,6 +28,7 @@ func TestBrowserManagementAdmitsKubernetesClusterRoutes(t *testing.T) {
 		kubernetesClustersTestPath(cluster + "/operation-denial-counts?to=2026-10-30T00:00:00Z"),
 		kubernetesClustersTestPath(cluster + "/operation-exports?from=2026-10-29T00:00:00Z&to=2026-10-30T00:00:00Z"),
 		kubernetesClustersTestPath(cluster + "/certificate-authorities?page_size=10"),
+		kubernetesClustersTestPath(cluster + "/approver-additions"),
 		kubernetesClustersTestPath(cluster + "/replicas" + child),
 		kubernetesClustersTestPath(cluster + "/certificate-authorities" + child),
 		kubernetesClustersTestPath(cluster + "/join-keys?page_size=10&page_token=" + kubernetesBrowserPageToken(t)),

@@ -53,6 +53,8 @@ const (
 	// K1d d2b: an approver suspends or resumes a replica's ratchet.
 	kubernetesRatchetSuspendOperation = "kubernetes_replica_token_ratchet_suspend"
 	kubernetesRatchetResumeOperation  = "kubernetes_replica_token_ratchet_resume"
+	// K1d d4a: recent grants of the right to approve replicas.
+	kubernetesApproverAdditionsOperation = "kubernetes_approver_additions_read"
 )
 
 // KubernetesClusterManager manages a Network's Kubernetes clusters, their
@@ -94,6 +96,8 @@ type KubernetesClusterManager interface {
 	RequestCARetire(context.Context, kubecluster.CARetireRequestCommand) (kubecluster.CARetireRequestResult, error)
 	ListCARetireRequests(context.Context, kubecluster.PageQuery) (kubecluster.CARetireRequestPage, error)
 	ChangeTokenRatchet(context.Context, kubecluster.RatchetChange) (kubecluster.RatchetChangeResult, error)
+	ReadApproverAdditions(context.Context, accountsession.Session, network.Scope,
+		kubecluster.ID) (kubecluster.ApproverAdditions, error)
 }
 
 type kubernetesClusterPath struct {
@@ -235,6 +239,9 @@ func (path *kubernetesClusterPath) route(rest []string) (map[string]string, bool
 		path.methods = collectionMethods
 		return map[string]string{http.MethodGet: kubernetesCARetireListOperation,
 			http.MethodPost: kubernetesCARetireRequestOperation}, true
+	case len(rest) == 2 && rest[1] == "approver-additions":
+		path.methods = restMethods{http.MethodGet}
+		return map[string]string{http.MethodGet: kubernetesApproverAdditionsOperation}, true
 	case len(rest) == 2 && rest[1] == "operation-denial-counts":
 		path.methods = restMethods{http.MethodGet}
 		return map[string]string{http.MethodGet: kubernetesDenialCountsOperation}, true
@@ -376,6 +383,15 @@ func (handler *ManagementHandler) handleKubernetesClusters(ctx context.Context, 
 		return handler.serveKubernetesCARetireRequests(ctx, response, request, correlationID, path, session, fail)
 	case kubernetesRatchetSuspendOperation, kubernetesRatchetResumeOperation:
 		return handler.changeKubernetesTokenRatchet(ctx, response, request, correlationID, path, session, fail)
+	case kubernetesApproverAdditionsOperation:
+		additions, err := manager.ReadApproverAdditions(ctx, session, path.scope, path.clusterID)
+		if err != nil {
+			return fail(classifyKubernetesClusterError(err))
+		}
+		writeKubernetesData(ctx, handler, response, correlationID, http.StatusOK, struct {
+			LatestAt *string `json:"latest_at"`
+			Count    int     `json:"count"`
+		}{optionalManagementTime(additions.LatestAt), additions.Count})
 	case kubernetesAuditSettingsReadOperation, kubernetesAuditSettingsReplaceOperation:
 		return handler.serveKubernetesAuditSettings(ctx, response, request, correlationID, path, session, fail)
 	case kubernetesOperationListOperation, kubernetesOperationReadOperation, kubernetesDenialCountsOperation:

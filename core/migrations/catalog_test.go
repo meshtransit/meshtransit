@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 254 {
-		t.Fatalf("len(Catalog()) = %d, want 254", len(catalog))
+	if len(catalog) != 255 {
+		t.Fatalf("len(Catalog()) = %d, want 255", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 254 {
-		t.Fatalf("LatestVersion() = %d, want 254", LatestVersion())
+	if LatestVersion() != 255 {
+		t.Fatalf("LatestVersion() = %d, want 255", LatestVersion())
 	}
 }
 
@@ -7625,6 +7625,36 @@ func TestMigration254KubernetesGatewayGroupReports(t *testing.T) {
 	} {
 		if strings.Contains(migration.SQL, never) {
 			t.Errorf("migration 254 has %q", never)
+		}
+	}
+}
+
+func TestMigration255KubernetesClusterApproverAdditions(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 255 || catalog[254].Version != 255 {
+		t.Fatalf("the catalog has no migration 255 (%d migrations)", len(catalog))
+	}
+	migration := catalog[254]
+	for _, want := range []string{
+		"mesh_ops.kubernetes_cluster_reader_internal_v1(",
+		"permission.permission_key = 'kubernetes_cluster.approve'",
+		"(assignment.network_id IS NULL OR assignment.network_id = v_cluster.network_id)",
+		"(binding.network_id IS NULL OR binding.network_id = v_cluster.network_id)",
+		"INTERVAL '24 hours'",
+		"TO mesh_runtime;",
+		// The newest ten of each kind, and people rather than grants.
+		"ORDER BY at DESC\n         LIMIT 10)",
+		"pg_catalog.count(DISTINCT granted.principal_id)",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 255 lacks %q", want)
+		}
+	}
+	// Never names who was given the right.
+	for _, never := range []string{"principal_id', ", "'principal"} {
+		if strings.Contains(migration.SQL, never) {
+			t.Errorf("migration 255 has %q", never)
 		}
 	}
 }

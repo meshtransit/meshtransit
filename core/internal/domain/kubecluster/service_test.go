@@ -68,6 +68,11 @@ func (store *recordingStore) RequestCARetire(_ context.Context,
 	return kubecluster.CARetireRequestResult{}, nil
 }
 
+func (store *recordingStore) ReadApproverAdditions(context.Context, accountsession.Session, network.Scope,
+	kubecluster.ID) (kubecluster.ApproverAdditions, error) {
+	return kubecluster.ApproverAdditions{}, nil
+}
+
 func (store *recordingStore) ChangeTokenRatchet(_ context.Context,
 	change kubecluster.RatchetChange) (kubecluster.RatchetChangeResult, error) {
 	store.ratchets = append(store.ratchets, change)

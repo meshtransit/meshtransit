@@ -358,6 +358,7 @@ WHERE workspace_id = 103 AND network_id = 203 ORDER BY id LIMIT 1`).Scan(&heldMa
 		clusterID)
 	assertGatewayGroupReports(ctx, t, admin, runtime, runtimePool, first, gatewayDevice, service, owner, scope,
 		clusterID)
+	assertApproverAdditions(ctx, t, admin, service, owner, scope, clusterID)
 	assertGatewayRotationTokens(ctx, t, admin, runtime, first, gatewayDevice)
 	assertJoinTrust(ctx, t, admin, service, store, owner, scope, clusterID, first)
 	gatewayKeys := assertGatewayMachineKeyRotation(ctx, t, admin, runtime, runtimePool, first, gatewayDevice)
@@ -900,4 +901,49 @@ func mustPublicID(t *testing.T) publicid.ID {
 		t.Fatal(err)
 	}
 	return id
+}
+
+// assertApproverAdditions: schema 255 reads the role assignments in force
+// that grant kubernetes_cluster.approve over the Workspace or the Network,
+// made within a day, as the fixture's own; never who.
+func assertApproverAdditions(ctx context.Context, t *testing.T, admin *pgx.Conn, service *kubecluster.Service,
+	owner accountsession.Session, scope network.Scope, clusterID kubecluster.ID) {
+	t.Helper()
+	additions, err := service.ReadApproverAdditions(ctx, owner, scope, clusterID)
+	if err != nil || !additions.Valid() {
+		t.Fatalf("ReadApproverAdditions() = %+v, %v", additions, err)
+	}
+	var want int
+	if err := admin.QueryRow(ctx, `SELECT LEAST(pg_catalog.count(DISTINCT granted.principal_id), 10) FROM (
+    SELECT assignment.principal_id FROM mesh.workspace_role_assignment AS assignment
+    JOIN mesh.builtin_role_permission AS role_permission ON role_permission.role_key = assignment.role_key
+    JOIN mesh.permission AS permission ON permission.id = role_permission.permission_id
+     AND permission.permission_key = 'kubernetes_cluster.approve'
+    JOIN mesh.workspace AS workspace ON workspace.id = assignment.workspace_id AND workspace.public_id = $1::UUID
+    WHERE assignment.state = 'active' AND assignment.valid_from <= pg_catalog.now()
+      AND (assignment.expires_at IS NULL OR assignment.expires_at > pg_catalog.now())
+      AND GREATEST(assignment.created_at, assignment.valid_from) > pg_catalog.now() - INTERVAL '24 hours'
+      AND (assignment.network_id IS NULL OR assignment.network_id =
+           (SELECT id FROM mesh.network WHERE public_id = $2::UUID))
+    UNION ALL
+    SELECT binding.principal_id FROM mesh.role_binding AS binding
+    JOIN mesh.role_permission AS role_permission
+      ON role_permission.role_definition_id = binding.role_definition_id AND role_permission.state = 'active'
+    JOIN mesh.permission AS permission ON permission.id = role_permission.permission_id
+     AND permission.permission_key = 'kubernetes_cluster.approve'
+    JOIN mesh.workspace AS workspace ON workspace.id = binding.workspace_id AND workspace.public_id = $1::UUID
+    WHERE binding.state = 'active' AND binding.valid_from <= pg_catalog.now()
+      AND (binding.expires_at IS NULL OR binding.expires_at > pg_catalog.now())
+      AND GREATEST(binding.created_at, binding.valid_from) > pg_catalog.now() - INTERVAL '24 hours'
+      AND (binding.network_id IS NULL OR binding.network_id =
+           (SELECT id FROM mesh.network WHERE public_id = $2::UUID))) AS granted`,
+		scope.WorkspaceID().String(), scope.NetworkID().String()).Scan(&want); err != nil {
+		t.Fatal(err)
+	}
+	if additions.Count != want || want == 0 {
+		t.Fatalf("approver additions: %d, want %d (the fixture's grants were made today)", additions.Count, want)
+	}
+	if _, err := service.ReadApproverAdditions(ctx, owner, scope, kubecluster.ID(mustPublicID(t))); err == nil {
+		t.Fatal("an unknown cluster was read")
+	}
 }

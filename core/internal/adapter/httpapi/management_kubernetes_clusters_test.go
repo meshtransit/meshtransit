@@ -62,6 +62,15 @@ type kubernetesClusterStub struct {
 	ratchets        []kubecluster.RatchetChange
 }
 
+func (stub *kubernetesClusterStub) ReadApproverAdditions(context.Context, accountsession.Session, network.Scope,
+	kubecluster.ID) (kubecluster.ApproverAdditions, error) {
+	stub.calls = append(stub.calls, "approver-additions")
+	if stub.failure != nil {
+		return kubecluster.ApproverAdditions{}, stub.failure
+	}
+	return kubecluster.ApproverAdditions{LatestAt: time.Date(2026, 10, 30, 3, 0, 0, 0, time.UTC), Count: 2}, nil
+}
+
 func (stub *kubernetesClusterStub) ChangeTokenRatchet(_ context.Context,
 	change kubecluster.RatchetChange) (kubecluster.RatchetChangeResult, error) {
 	stub.calls = append(stub.calls, "change-ratchet")
@@ -687,6 +696,10 @@ func TestKubernetesClusterHTTPBoundary(t *testing.T) {
 		{"request a retire, too often", http.MethodPost, cluster + "/ca-retire-requests",
 			`{"ca_id":"` + kubernetesTestCAID + `","ca_version":3,"reason":"admin","change_ref":"x","note":""}`,
 			"", kubecluster.ErrRetireRateLimited, 429, "request-retire", "retire_rate_limited", ""},
+		{"approver additions", http.MethodGet, cluster + "/approver-additions", "", "", nil, 200,
+			"approver-additions", `"latest_at":"2026-10-30T03:00:00Z","count":2`, ""},
+		{"approver additions take no query", http.MethodGet, cluster + "/approver-additions?page_size=1", "", "",
+			nil, 404, "", "", ""},
 		{"suspend a ratchet", http.MethodPost, replica + "/actions/suspend-token-ratchet",
 			`{"duration_seconds":3600,"reason":"meshgw downgraded","change_ref":"INC-7"}`, "", nil, 200,
 			"change-ratchet", `"changed":true,"ratchet_suspended_until":"2026-10-30T09:00:00Z"`, ""},
