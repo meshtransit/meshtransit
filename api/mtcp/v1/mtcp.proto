@@ -200,6 +200,41 @@ message GatewayPodToken {
   string pod_token = 1 [debug_redact = true];
 }
 
+// GatewayGroupReport is a gateway's latest RBAC check of the Kubernetes
+// groups it serves (mtcp-v1 §6.11, gateway.groups1): shown to people, never
+// a security decision.
+message GatewayGroupReport {
+  repeated GatewayGroupStatus groups = 1; // at most 64
+  bool truncated = 2; // the gateway serves more groups than it sent
+  int64 checked_at_ms = 3; // the gateway's last whole pass; 0: none yet
+}
+
+message GatewayGroupStatus {
+  string group = 1; // as Core names Kubernetes groups, at most 63 bytes
+  bool privileged = 2;
+  State state = 3;
+  Reason reason = 4;
+
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    ENABLED = 1;
+    DISABLED = 2;
+    PENDING = 3; // not checked yet
+  }
+
+  // Why a group is off, or enabled without impersonation; never the API
+  // server's own error text.
+  enum Reason {
+    REASON_UNSPECIFIED = 0;
+    NONE = 1;
+    NOT_CHECKED = 2;
+    CHECK_STALE = 3; // the check did not run for two intervals
+    API_ERROR = 4; // the API server failed the check twice in a row
+    RBAC_EXCEEDS = 5; // the group's account may do more than allowed
+    IMPERSONATION_OFF = 6; // enabled, but its account may impersonate: impersonation is off
+  }
+}
+
 // RotateMachineKey moves a Kubernetes gateway to a new machine key; Core
 // answers RotateMachineKeyResponse and ends the session (mtcp-v1 §6.8).
 message RotateMachineKey {

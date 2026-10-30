@@ -139,6 +139,11 @@ const (
 	// such sessions ended when the suspension did (K1d d2b).
 	limitGatewayTokenSuspended       = "gateway_token_suspended"
 	limitGatewayTokenSuspensionEnded = "gateway_token_suspension_ended"
+	// limitGatewayGroupReport counts group reports dropped within 30 s of
+	// the last one kept; limitGatewayGroupDropped, reports with no room to
+	// wait for the database (K1d d3).
+	limitGatewayGroupReport  = "gateway_group_report"
+	limitGatewayGroupDropped = "gateway_group_report_dropped"
 )
 
 // gatewaySessionTokenLimit names a session refused for its pod token.
@@ -163,7 +168,8 @@ var sessionLimits = []string{limitInbound, limitAudit, limitAuditCeiling, limitR
 	limitGatewayPresenceElsewhere, limitGatewayPresencePending, limitGatewayPresenceUnknown,
 	limitClusterJoinToken, limitGatewayTrustMissing, limitGatewayTrustUnavailable, limitGatewayTokenStore,
 	limitGatewayContestOverridden, limitGatewayTokenObserved, limitGatewayTokenRefresh,
-	limitGatewayTokenSuspended, limitGatewayTokenSuspensionEnded,
+	limitGatewayTokenSuspended, limitGatewayTokenSuspensionEnded, limitGatewayGroupReport,
+	limitGatewayGroupDropped,
 	gatewayTokenLimit(kubetoken.ReasonMissing), gatewayTokenLimit(kubetoken.ReasonMalformed),
 	gatewayTokenLimit(kubetoken.ReasonUnknownKey), gatewayTokenLimit(kubetoken.ReasonSignature),
 	gatewayTokenLimit(kubetoken.ReasonExpired), gatewayTokenLimit(kubetoken.ReasonAudience),

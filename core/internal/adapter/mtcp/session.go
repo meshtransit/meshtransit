@@ -96,6 +96,8 @@ type Session struct {
 	// off the run loop).
 	joinedAt      atomic.Int64
 	joinedNodeKey atomic.Pointer[node.Key]
+	// groupsAt is when the session's last kept group report came (§6.11).
+	groupsAt time.Time
 }
 
 func newSession(server *Server, transport recordConn, noise *sharedmtcp.Session, control key.ControlPrivate,
@@ -477,6 +479,7 @@ func (session *Session) checkNodeKeyProof(message proto.Message) bool {
 			return false
 		}
 		session.provenNodeKey = node.Key(nodeKey)
+		session.markGroupsUnsupported()
 		return true
 	}
 	committed, err := session.server.commitGatewayTimestamp(session.ctx, session.machine, nodeKey,
@@ -491,6 +494,7 @@ func (session *Session) checkNodeKeyProof(message proto.Message) bool {
 		return refuse("replay", sharedmtcp.GateReplayed)
 	}
 	session.provenNodeKey = node.Key(nodeKey)
+	session.markGroupsUnsupported()
 	return true
 }
 
@@ -562,6 +566,9 @@ func (session *Session) dispatch(conversation Conversation, message inbound) boo
 	case sharedmtcp.MessageGatewayPodToken:
 		token, _ := message.message.(*mtcpv1.GatewayPodToken)
 		return session.refreshGatewayToken(now, token)
+	case sharedmtcp.MessageGatewayGroupReport:
+		report, _ := message.message.(*mtcpv1.GatewayGroupReport)
+		return session.receiveGroupReport(now, report)
 	}
 	if err := conversation.Receive(session.ctx, message.t, message.message); err != nil {
 		var violation protocolError

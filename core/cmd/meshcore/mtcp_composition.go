@@ -135,6 +135,27 @@ func gatewayTokenCapabilities(tokens *mtcpadapter.GatewayTokens) []string {
 	return []string{mtcpadapter.CapabilityGatewayToken}
 }
 
+// gatewayGroupCapabilities offers gateway.groups1, gateways' group reports
+// (mtcp-v1 §6.11), when schema 254 was granted at startup.
+func gatewayGroupCapabilities(groups mtcpadapter.GatewayGroupRecorder) []string {
+	if groups == nil {
+		return nil
+	}
+	return []string{mtcpadapter.CapabilityGatewayGroups}
+}
+
+// gatewayGroupRecorder keeps gateways' group reports in the store; a report
+// that met a lock is written again later.
+type gatewayGroupRecorder struct {
+	store *postgresadapter.KubernetesGatewayGroupReportStore
+}
+
+func (recorder gatewayGroupRecorder) RecordGatewayGroups(ctx context.Context, machine [32]byte, nodeKey []byte,
+	report kubecluster.GatewayGroupReport) (bool, error) {
+	outcome, err := recorder.store.Record(ctx, machine, nodeKey, report)
+	return err == nil && outcome != postgresadapter.GatewayGroupReportBusy, err
+}
+
 // composeGatewayTokens holds gateways to their pod token on every session,
 // against the trust their rotations read (schema 246).
 func composeGatewayTokens(timestamps *postgresadapter.MTCPTimestampStore, trust kubecluster.MachineKeyRotations,
@@ -182,6 +203,9 @@ type mtcpDependencies struct {
 	// gatewayTokens, when set, holds gateways to their pod token on every
 	// session (gateway.token1, schema 246).
 	gatewayTokens *mtcpadapter.GatewayTokens
+	// gatewayGroups, when set, keeps gateways' group reports
+	// (gateway.groups1, schema 254).
+	gatewayGroups mtcpadapter.GatewayGroupRecorder
 	// gatewayPresence says whether a gateway's stream may rotate its keys.
 	gatewayPresence mapsession.GatewayPresenceStore
 	// kubeCertificates, when set, queues gateways' certificate requests
@@ -293,7 +317,8 @@ func composeMTCP(
 			append(append(dnsCapabilities(deps.dnsZones), kubernetesCapabilities(deps.kubernetesAccess)...),
 				append(append(kubeCertCapabilities(deps.kubeCertificates),
 					kubernetesClusterCapabilities(deps.kubernetesClusters)...),
-					append(kubeAuditCapabilities(deps.kubeAudit), gatewayTokenCapabilities(deps.gatewayTokens)...)...)...)...)...),
+					append(append(kubeAuditCapabilities(deps.kubeAudit), gatewayTokenCapabilities(deps.gatewayTokens)...),
+						gatewayGroupCapabilities(deps.gatewayGroups)...)...)...)...)...),
 		Logger:         logger,
 		Metrics:        metrics,
 		HandshakeRate:  controlConfig.MTCP.HandshakeRate,
@@ -306,6 +331,7 @@ func composeMTCP(
 		DrainWindow:   controlConfig.DrainWindow,
 		GatewayKeys:   deps.gatewayKeyEvents,
 		GatewayTokens: deps.gatewayTokens,
+		GatewayGroups: deps.gatewayGroups,
 	})
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidMTCPComposition, err)

@@ -150,6 +150,10 @@ type Options struct {
 	// on every session (gateway.token1, schema 246); Capabilities lists it
 	// exactly when it is set.
 	GatewayTokens *GatewayTokens
+	// GatewayGroups, when set, keeps Kubernetes gateways' group reports
+	// (gateway.groups1, schema 254); Capabilities lists it exactly when it
+	// is set.
+	GatewayGroups GatewayGroupRecorder
 	Now           func() time.Time
 }
 
@@ -176,7 +180,9 @@ type Server struct {
 	// streams its own sessions replaced within gatewayFightWindow.
 	fights     map[key.MachinePublic]gatewayFight
 	keyReports *gatewayKeyReporter
-	wg         sync.WaitGroup
+	// groupReports writes gateways' group reports; nil without them.
+	groupReports *gatewayGroupWriter
+	wg           sync.WaitGroup
 }
 
 type gatewayFight struct {
@@ -229,7 +235,8 @@ func NewServer(options Options) (*Server, error) {
 		options.Now = time.Now
 	}
 	if !options.GatewayTokens.valid() ||
-		(options.GatewayTokens != nil) != slices.Contains(options.Capabilities, CapabilityGatewayToken) {
+		(options.GatewayTokens != nil) != slices.Contains(options.Capabilities, CapabilityGatewayToken) ||
+		(options.GatewayGroups != nil) != slices.Contains(options.Capabilities, CapabilityGatewayGroups) {
 		return nil, ErrInvalidServer
 	}
 	keys := make(map[key.KeyID]ControlKey, len(options.Keys))
@@ -254,6 +261,7 @@ func NewServer(options Options) (*Server, error) {
 		gatewayContest: gatewayContestWindow, fights: make(map[key.MachinePublic]gatewayFight)}
 	server.keyReports = newGatewayKeyReporter(options.GatewayKeys, options.Metrics, options.Logger, options.Now,
 		gatewayKeyReportQueue)
+	server.groupReports = newGatewayGroupWriter(options.GatewayGroups, options.Metrics, options.Logger, options.Now)
 	options.Metrics.countExpiringDevices(server.expiringDevices)
 	return server, nil
 }
@@ -756,6 +764,7 @@ func (server *Server) Shutdown(ctx context.Context) error {
 	}()
 	// Key reports stop once every session that could report has ended.
 	defer server.keyReports.stop()
+	defer server.groupReports.stop()
 	select {
 	case <-done:
 		return nil

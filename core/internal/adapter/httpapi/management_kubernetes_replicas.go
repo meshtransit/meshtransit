@@ -27,15 +27,39 @@ func isKubernetesPagedList(operation string) bool {
 // detail's fields and when it first proved a pod token.
 type kubernetesReplicaReadBody struct {
 	kubernetesReplicaBody
-	TokenFirstProvenAt    *string `json:"token_first_proven_at"`
-	RatchetSuspendedUntil *string `json:"ratchet_suspended_until"`
+	TokenFirstProvenAt    *string                    `json:"token_first_proven_at"`
+	RatchetSuspendedUntil *string                    `json:"ratchet_suspended_until"`
+	Groups                kubernetesReplicaGroupBody `json:"groups"`
+}
+
+// kubernetesReplicaGroupBody is the gateway's latest group report (K1d d3).
+type kubernetesReplicaGroupBody struct {
+	Status     string                           `json:"status"`
+	ReportedAt *string                          `json:"reported_at"`
+	CheckedAt  *string                          `json:"checked_at"`
+	Truncated  bool                             `json:"truncated"`
+	Items      []kubecluster.GatewayGroupStatus `json:"items"`
 }
 
 func newKubernetesReplicaReadBody(replica kubecluster.Replica) kubernetesReplicaReadBody {
 	return kubernetesReplicaReadBody{kubernetesReplicaBody: kubernetesReplicaBody{
 		DeviceID: replica.DeviceID.String(), Name: replica.Name, Ordinal: replica.Ordinal, State: replica.State,
 		CreatedAt: managementTime(replica.CreatedAt)}, TokenFirstProvenAt: optionalManagementTime(
-		replica.TokenFirstProvenAt), RatchetSuspendedUntil: optionalManagementTime(replica.RatchetSuspendedUntil)}
+		replica.TokenFirstProvenAt), RatchetSuspendedUntil: optionalManagementTime(replica.RatchetSuspendedUntil),
+		Groups: newKubernetesReplicaGroupBody(replica.Groups)}
+}
+
+func newKubernetesReplicaGroupBody(groups kubecluster.ReplicaGroups) kubernetesReplicaGroupBody {
+	items := groups.Items
+	if items == nil {
+		items = []kubecluster.GatewayGroupStatus{}
+	}
+	status := groups.Status
+	if status == "" {
+		status = kubecluster.GroupReportNone
+	}
+	return kubernetesReplicaGroupBody{Status: status, ReportedAt: optionalManagementTime(groups.ReportedAt),
+		CheckedAt: optionalManagementTime(groups.CheckedAt), Truncated: groups.Truncated, Items: items}
 }
 
 func optionalManagementTime(at time.Time) *string {

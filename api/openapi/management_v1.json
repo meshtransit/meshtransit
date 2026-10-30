@@ -6941,7 +6941,8 @@
           "state",
           "created_at",
           "token_first_proven_at",
-          "ratchet_suspended_until"
+          "ratchet_suspended_until",
+          "groups"
         ],
         "properties": {
           "device_id": {
@@ -6977,9 +6978,98 @@
             ],
             "format": "date-time",
             "description": "When an approver's suspension of the replica's pod token ratchet ends (null: none holds)."
+          },
+          "groups": {
+            "$ref": "#/components/schemas/KubernetesReplicaGroups"
           }
         },
         "description": "A gateway Device of the cluster, when it first proved a pod token (null: never) and until when its ratchet is suspended"
+      },
+      "KubernetesReplicaGroups": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "reported_at",
+          "checked_at",
+          "truncated",
+          "items"
+        ],
+        "description": "The gateway's latest RBAC check of its groups (mtcp-v1 §6.11), shown to people only: current, stale (over 20 minutes old), unsupported (its meshgw does not report) or none yet.",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "current",
+              "stale",
+              "unsupported",
+              "none"
+            ]
+          },
+          "reported_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "checked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The gateway's last whole check (null: none yet)."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "The gateway serves more groups than it reported."
+          },
+          "items": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "group",
+                "privileged",
+                "state",
+                "reason"
+              ],
+              "properties": {
+                "group": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 63,
+                  "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+                },
+                "privileged": {
+                  "type": "boolean"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "enabled",
+                    "disabled",
+                    "pending"
+                  ]
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "none",
+                    "not_checked",
+                    "check_stale",
+                    "api_error",
+                    "rbac_exceeds",
+                    "impersonation_off"
+                  ]
+                }
+              }
+            }
+          }
+        }
       },
       "KubernetesCertificateAuthority": {
         "type": "object",

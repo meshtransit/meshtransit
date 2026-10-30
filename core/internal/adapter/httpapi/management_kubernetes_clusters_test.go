@@ -306,7 +306,10 @@ func kubernetesTestOperation() kubecluster.Operation {
 func kubernetesTestReplica() kubecluster.Replica {
 	created := time.Date(2026, time.October, 26, 8, 0, 0, 0, time.UTC)
 	return kubecluster.Replica{DeviceID: kubernetesTestDevice(), Name: "prod-0", Ordinal: 0, State: "active",
-		CreatedAt: created, TokenFirstProvenAt: created.Add(time.Minute)}
+		CreatedAt: created, TokenFirstProvenAt: created.Add(time.Minute), Groups: kubecluster.ReplicaGroups{
+			Status: kubecluster.GroupReportCurrent, ReportedAt: created.Add(2 * time.Minute),
+			Items: []kubecluster.GatewayGroupStatus{{Group: "edit", State: kubecluster.GroupStateDisabled,
+				Reason: kubecluster.GroupReasonRBACExceeds}}}}
 }
 
 const kubernetesTestCAID = "01890f00-0000-7000-8000-000000000b07"
@@ -649,7 +652,9 @@ func TestKubernetesClusterHTTPBoundary(t *testing.T) {
 		{"list requests", http.MethodGet, cluster + "/replica-requests", "", "", nil, 200, "list-requests",
 			`"reported_by_pod":{"pod":"meshgw-0"}`, ""},
 		{"list replicas", http.MethodGet, cluster + "/replicas?page_size=10", "", "", nil, 200, "list-replicas",
-			`"token_first_proven_at":"2026-10-26T08:01:00Z","ratchet_suspended_until":null}],"can_change_ratchet":true`,
+			`"ratchet_suspended_until":null,"groups":{"status":"current","reported_at":"2026-10-26T08:02:00Z",` +
+				`"checked_at":null,"truncated":false,"items":[{"group":"edit","privileged":false,"state":"disabled",` +
+				`"reason":"rbac_exceeds"}]}}],"can_change_ratchet":true`,
 			""},
 		{"read a replica", http.MethodGet, cluster + "/replicas/" + kubernetesTestDevice().String(), "", "", nil, 200,
 			"read-replica", `"name":"prod-0"`, ""},

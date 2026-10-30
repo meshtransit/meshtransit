@@ -256,6 +256,7 @@ payload     bytes[...]
 | 0x36 | `RouteSelectionReport` | N→C | 128 KiB |
 | 0x37 | `CaptiveWindowReport` | N→C | 4 KiB |
 | 0x38 | `DnsHealthReport` | N→C | 4 KiB |
+| 0x39 | `GatewayGroupReport` | N→C | 16 KiB |
 | 0x40 | `RelayTicket` | C→N | 256 KiB (4 KiB without `relay.zones2`) |
 | 0x50 | `Lifecycle` | C→N | 4 KiB |
 | 0x51 | `KeyUpdate` | C→N | 4 KiB |
@@ -821,6 +822,36 @@ forward it.
   hold the gateway's presence has every intent refused `unavailable`, and its
   outcomes are dropped. Without `gateway.audit1` these messages are answered
   with a non-fatal `Error{UNSUPPORTED}`; the session stays.
+
+### 6.11 Kubernetes gateway group status
+
+A Kubernetes gateway that negotiated `gateway.groups1` reports its latest
+RBAC check of the groups it serves with `GatewayGroupReport`: after each pass
+that changed a verdict, and at least every 10 minutes. Core keeps the latest
+report of each gateway Device and shows it to people; it never decides
+access from it. A gateway that serves no groups (a passthrough gateway)
+sends an empty report.
+
+- **`GatewayGroupReport`:** at most 64 groups, at most 16 KiB; `truncated`
+  when the gateway serves more; `checked_at_ms`, the gateway's last whole
+  pass (0: none yet). Each group: `group` (an RFC 1123 label of at most 63
+  bytes, distinct within the report), `privileged`, `state` and `reason`.
+- **States and reasons:** `ENABLED` with `NONE`, or `IMPERSONATION_OFF` for
+  a privileged group whose account may impersonate (impersonation is then
+  off); `PENDING` with `NOT_CHECKED`; `DISABLED` with `NOT_CHECKED`,
+  `CHECK_STALE` (no check for two intervals), `API_ERROR` (the API server
+  failed the check twice in a row) or `RBAC_EXCEEDS` (the group's account may
+  do more than allowed). The reason is an enum: a gateway never sends the API
+  server's own error text.
+- **Core:** takes reports only from a gateway session with `gateway.groups1`;
+  a report that breaks these rules ends the session with
+  `Error{INVALID}`. Core writes at most one report per 30 seconds per
+  session: one sent sooner waits for the rest of them, and a newer one
+  replaces it. A gateway session that opens without `gateway.groups1` while
+  Core offers it is shown as not reporting. `checked_at_ms` more than 5
+  minutes ahead of Core or 30 days behind is not shown.
+- Without `gateway.groups1` the message is answered with a non-fatal
+  `Error{UNSUPPORTED}`; the session stays.
 
 ## 7. Map
 
@@ -1799,6 +1830,7 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `gateway.cert1` | A Kubernetes gateway asks for its replica certificate with `KubeCertRequest` (6.9) and reads `kubernetes_ca` on its `self` (7.10); Core offers it whenever it queues certificate requests, whether or not a signer is up |
 | `gateway.token1` | A Kubernetes gateway presents its pod token in `NodeKeyProof` and refreshes it with `GatewayPodToken` (6.7); Core offers it whenever its database has the gateway token functions, and holds ratcheted gateways to it |
 | `gateway.audit1` | A Kubernetes gateway records type A operations before forwarding them and reports outcomes (6.10); Core offers it with Kubernetes join and its shared Network view, once it could write them at startup |
+| `gateway.groups1` | A Kubernetes gateway reports its groups' RBAC check with `GatewayGroupReport` (6.11); Core offers it once its database has the group report functions, and takes reports from gateway sessions only |
 | `kube.ca1` | Any node reads `kubernetes_clusters` in its map: the clusters it may reach and their roots (7.11); Core offers it where Kubernetes join is on, it builds maps from its shared Network view, and it could read the roots when it started |
 | `gateway.kube.v1` | A Kubernetes gateway applies its peers' `kubernetes` and `owner` (7.8), acknowledges map messages after applying them and takes `MapFresh` (7.9); Core offers it only where maps come from its shared Network view |
 

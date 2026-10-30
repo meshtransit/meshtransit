@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 253 {
-		t.Fatalf("len(Catalog()) = %d, want 253", len(catalog))
+	if len(catalog) != 254 {
+		t.Fatalf("len(Catalog()) = %d, want 254", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 253 {
-		t.Fatalf("LatestVersion() = %d, want 253", LatestVersion())
+	if LatestVersion() != 254 {
+		t.Fatalf("LatestVersion() = %d, want 254", LatestVersion())
 	}
 }
 
@@ -7591,6 +7591,40 @@ func TestMigration253KubernetesGatewayRatchetSuspension(t *testing.T) {
 	} {
 		if strings.Contains(migration.SQL, never) {
 			t.Errorf("migration 253 has %q", never)
+		}
+	}
+}
+
+func TestMigration254KubernetesGatewayGroupReports(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 254 || catalog[253].Version != 254 {
+		t.Fatalf("the catalog has no migration 254 (%d migrations)", len(catalog))
+	}
+	migration := catalog[253]
+	for _, want := range []string{
+		"REFERENCES mesh.device (workspace_id, network_id, id) ON DELETE CASCADE",
+		"mesh_ops.lock_current_kubernetes_gateway_internal_v1(p_machine_fingerprint, p_node_key)",
+		"ON CONFLICT (kubernetes_cluster_id, group_name, day) DO UPDATE SET alerts = alert.alerts + 1",
+		"WHERE alert.alerts < 4",
+		"capture_authority_mutation('kubernetes_gateway_group_event', 'public_id')",
+		"set_config('mesh.change_public_id', p_change_public_id::TEXT, TRUE)",
+		"'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'",
+		"INTERVAL '20 minutes' THEN 'stale'",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.record_kubernetes_gateway_group_report_v1(",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 254 lacks %q", want)
+		}
+	}
+	for _, never := range []string{
+		// The runtime reads and writes reports only through the functions.
+		"GRANT SELECT ON mesh_ops.kubernetes_gateway_group_report",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.kubernetes_cluster_replica_document_internal_v3",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.kubernetes_gateway_group_event_payload_internal_v1",
+	} {
+		if strings.Contains(migration.SQL, never) {
+			t.Errorf("migration 254 has %q", never)
 		}
 	}
 }

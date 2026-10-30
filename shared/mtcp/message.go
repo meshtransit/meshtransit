@@ -61,6 +61,8 @@ const (
 	MessageKubeAuditOutcomes MessageType = 0x1c
 	// MessageGatewayPodToken is gateway.token1 (mtcp-v1 §6.7).
 	MessageGatewayPodToken MessageType = 0x1d
+	// MessageGatewayGroupReport is gateway.groups1 (mtcp-v1 §6.11).
+	MessageGatewayGroupReport MessageType = 0x39
 )
 
 // Direction is who sends a message.
@@ -127,10 +129,14 @@ var specs = map[MessageType]messageSpec{
 	MessageCaptiveWindowReport: {NodeToCore, 4 * kib, func() proto.Message { return &mtcpv1.CaptiveWindowReport{} }},
 	// 64 resolvers of a 16-byte address and three numbers each.
 	MessageDNSHealthReport: {NodeToCore, 4 * kib, func() proto.Message { return &mtcpv1.DnsHealthReport{} }},
-	MessageRelayTicket:     {CoreToNode, 256 * kib, func() proto.Message { return &mtcpv1.RelayTicket{} }}, // MTT2 zones: 17 bytes × 10,001
-	MessageLifecycle:       {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.Lifecycle{} }},
-	MessageKeyUpdate:       {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.KeyUpdate{} }},
-	MessageNotice:          {CoreToNode, 8 * kib, func() proto.Message { return &mtcpv1.Notice{} }},
+	// 64 groups of a 63-byte name and three small numbers each.
+	MessageGatewayGroupReport: {
+		NodeToCore, 16 * kib, func() proto.Message { return &mtcpv1.GatewayGroupReport{} },
+	},
+	MessageRelayTicket: {CoreToNode, 256 * kib, func() proto.Message { return &mtcpv1.RelayTicket{} }}, // MTT2 zones: 17 bytes × 10,001
+	MessageLifecycle:   {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.Lifecycle{} }},
+	MessageKeyUpdate:   {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.KeyUpdate{} }},
+	MessageNotice:      {CoreToNode, 8 * kib, func() proto.Message { return &mtcpv1.Notice{} }},
 	// A gateway's proof adds its pod token (gateway.token1).
 	MessageNodeKeyProof: {
 		NodeToCore, 256 + kubejoin.MaxTokenSize, func() proto.Message { return &mtcpv1.NodeKeyProof{} },

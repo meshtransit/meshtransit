@@ -721,6 +721,23 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 				deps.gatewayTokens.Suspensions = mtcpTimestampGuard{store: timestamps}
 			}
 		}
+		// Gateways report their groups' RBAC check (gateway.groups1, K1d d3)
+		// once the runtime role may keep them: shown to people only, so an
+		// unread probe leaves the capability off and Core starts.
+		groupStore, groupErr := postgresadapter.NewKubernetesGatewayGroupReportStore(storagePools.runtime)
+		if groupErr == nil {
+			probeCtx, cancelProbe = context.WithTimeout(ctx, 10*time.Second)
+			granted, grantErr := groupStore.Granted(probeCtx)
+			cancelProbe()
+			groupErr = grantErr
+			if grantErr == nil && granted {
+				deps.gatewayGroups = gatewayGroupRecorder{store: groupStore}
+			}
+		}
+		if deps.gatewayGroups == nil {
+			logger.WarnContext(ctx, "Kubernetes gateway group reports unavailable",
+				"error_code", "kubernetes_gateway_group_reports_unavailable", "error", groupErr)
+		}
 		if processConfig.KubernetesJoin {
 			joins, joinErr := composeClusterJoins(*processConfig.Enrollment, storagePools.runtime)
 			if joinErr != nil {

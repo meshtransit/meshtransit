@@ -16,10 +16,11 @@ import (
 // Schema 248 (K1d d1b): pages and single rows of a cluster's replicas and
 // certificate authorities, for any reader of the Network.
 const (
-	// Schema 253 (K1d d2b): v2 adds when a suspended ratchet holds again.
-	listKubernetesReplicasSQL = `SELECT mesh_ops.list_kubernetes_cluster_replicas_v2(` + sessionArguments + `,
+	// Schema 253 (K1d d2b): v2 adds when a suspended ratchet holds again;
+	// schema 254 (d3): v3 adds the gateway's latest group report.
+	listKubernetesReplicasSQL = `SELECT mesh_ops.list_kubernetes_cluster_replicas_v3(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::UUID,$13::TIMESTAMPTZ,$14::UUID,$15::INTEGER)::TEXT`
-	readKubernetesReplicaSQL = `SELECT mesh_ops.read_kubernetes_cluster_replica_v2(` + sessionArguments + `,
+	readKubernetesReplicaSQL = `SELECT mesh_ops.read_kubernetes_cluster_replica_v3(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::UUID,$13::UUID)::TEXT`
 	listKubernetesCAsSQL = `SELECT mesh_ops.list_kubernetes_cluster_cas_v1(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::UUID,$13::TIMESTAMPTZ,$14::UUID,$15::INTEGER)::TEXT`
@@ -29,8 +30,32 @@ const (
 
 type kubernetesReplicaPageDocument struct {
 	kubernetesReplicaDocument
-	TokenFirstProvenAt    *time.Time `json:"token_first_proven_at"`
-	RatchetSuspendedUntil *time.Time `json:"ratchet_suspended_until"`
+	TokenFirstProvenAt    *time.Time                 `json:"token_first_proven_at"`
+	RatchetSuspendedUntil *time.Time                 `json:"ratchet_suspended_until"`
+	Groups                kubernetesReplicaGroupsDoc `json:"groups"`
+}
+
+type kubernetesReplicaGroupsDoc struct {
+	Status     string                           `json:"status"`
+	ReportedAt *time.Time                       `json:"reported_at"`
+	CheckedAt  *time.Time                       `json:"checked_at"`
+	Truncated  bool                             `json:"truncated"`
+	Items      []kubecluster.GatewayGroupStatus `json:"items"`
+}
+
+func (document kubernetesReplicaGroupsDoc) groups() (kubecluster.ReplicaGroups, bool) {
+	groups := kubecluster.ReplicaGroups{Status: document.Status, Truncated: document.Truncated,
+		Items: document.Items}
+	if document.ReportedAt != nil {
+		groups.ReportedAt = document.ReportedAt.UTC()
+	}
+	if document.CheckedAt != nil {
+		groups.CheckedAt = document.CheckedAt.UTC()
+	}
+	if groups.Items == nil {
+		groups.Items = []kubecluster.GatewayGroupStatus{}
+	}
+	return groups, document.Items != nil && kubecluster.ValidReplicaGroups(groups)
 }
 
 func (document kubernetesReplicaPageDocument) replica() (kubecluster.Replica, error) {
@@ -51,6 +76,11 @@ func (document kubernetesReplicaPageDocument) replica() (kubecluster.Replica, er
 		}
 		replica.RatchetSuspendedUntil = document.RatchetSuspendedUntil.UTC()
 	}
+	groups, ok := document.Groups.groups()
+	if !ok {
+		return kubecluster.Replica{}, kubecluster.ErrInvalid
+	}
+	replica.Groups = groups
 	return replica, nil
 }
 

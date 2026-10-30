@@ -637,6 +637,8 @@ func Catalog() []Migration {
 			kubernetesCARetireRequestsSQL),
 		newMigration(253, "Approvers suspend a gateway's pod token ratchet for at most a day",
 			kubernetesGatewayRatchetSuspensionSQL),
+		newMigration(254, "Kubernetes gateways report their groups' RBAC check",
+			kubernetesGatewayGroupReportsSQL),
 	}
 }
 
@@ -1175,3 +1177,6 @@ var kubernetesCARetireRequestsSQL string
 
 //go:embed 000253_kubernetes_gateway_ratchet_suspension.up.sql
 var kubernetesGatewayRatchetSuspensionSQL string
+
+//go:embed 000254_kubernetes_gateway_group_reports.up.sql
+var kubernetesGatewayGroupReportsSQL string

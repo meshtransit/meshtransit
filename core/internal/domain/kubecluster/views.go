@@ -267,6 +267,9 @@ type Replica struct {
 	// RatchetSuspendedUntil is when an approver's suspension of the
 	// replica's ratchet ends, zero when none holds (K1d d2b).
 	RatchetSuspendedUntil time.Time
+	// Groups is its gateway's latest group report (K1d d3); the replica
+	// reads of K1d only.
+	Groups ReplicaGroups
 }
 
 // Detail is one cluster with its replicas and, for administrators who may

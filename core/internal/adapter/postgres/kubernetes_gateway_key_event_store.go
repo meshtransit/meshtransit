@@ -189,6 +189,14 @@ func decodeGatewayKeyEventProof(encoded string, event publicid.ID,
 func hashGatewayKeyEvent(proof gatewayKeyEventProof, change, event publicid.ID) ([sha256.Size]byte, []byte,
 	error,
 ) {
+	return hashGatewayEvidence(gatewayKeyEventAggregateKind, proof, change, event)
+}
+
+// hashGatewayEvidence binds a gateway's event of aggregate kind to the
+// stream head the database returned (schemas 229, 254).
+func hashGatewayEvidence(kind string, proof gatewayKeyEventProof, change, event publicid.ID) ([sha256.Size]byte,
+	[]byte, error,
+) {
 	previous, err := hex.DecodeString(proof.PreviousHash)
 	if err != nil || len(previous) != sha256.Size {
 		return [sha256.Size]byte{}, nil, ErrKubernetesGatewayKeyEventStore
@@ -200,7 +208,7 @@ func hashGatewayKeyEvent(proof gatewayKeyEventProof, change, event publicid.ID) 
 	payloadHash := sha256.Sum256([]byte(proof.Payload))
 	hash, err := audit.HashEvent(audit.EventHashMaterial{
 		PreviousHash: [sha256.Size]byte(previous), EventID: event, ChangeID: change,
-		AggregateKind: gatewayKeyEventAggregateKind, AggregateID: aggregate, AggregateVersion: 1,
+		AggregateKind: kind, AggregateID: aggregate, AggregateVersion: 1,
 		NetworkRevision: proof.NetworkRevision, Action: proof.Action, Permission: enforcementLedgerPermission,
 		AfterSemanticHash: payloadHash, AuditPayloadHash: payloadHash,
 		OutboxEventClass: proof.Action, OutboxPayloadHash: payloadHash,
