@@ -169,16 +169,18 @@ func (server *Server) accessReview(w http.ResponseWriter, r *http.Request, info 
 	group Group, impersonated []kubeprofile.Attributes,
 ) bool {
 	version := info.APIVersion
-	media, _, _ := strings.Cut(r.Header.Get("Content-Type"), ";")
 	body, err := io.ReadAll(io.LimitReader(r.Body, maximumReviewBody+1))
 	var spec reviewSpec
-	switch {
+	switch media := reviewMedia(r.Header.Get("Content-Type")); {
 	case err != nil || len(body) > maximumReviewBody:
 		err = errUnevaluable
-	case !strings.EqualFold(strings.TrimSpace(media), "application/json"):
-		err = errUnevaluable
-	default:
+	case media == "application/json":
 		spec, err = decodeAccessReview(body, version)
+	case media == protobufMedia:
+		// kubectl sends built-in objects in protobuf (demo K2e).
+		spec, err = decodeAccessReviewProto(body, version)
+	default:
+		err = errUnevaluable
 	}
 	if err != nil {
 		answerAccessReview(w, version, spec, reviewUnevaluable)
@@ -269,9 +271,10 @@ func prepareRulesReview(r *http.Request) {
 }
 
 // rulesNarrower narrows a SelfSubjectRulesReview's answer to what the
-// group's grants allow (K2 §9.4): only the verbs a profile covers for every
-// group, resource and name the rule lists, nothing with a wildcard; marked
-// incomplete, with a note. An answer it cannot read becomes an empty one.
+// group's grants allow (K2 §9.4): each rule split by API group and resource
+// (paths by path), keeping only the verbs a grant allows for every name the
+// rule lists, nothing with a wildcard; marked incomplete, with a note. An
+// answer it cannot read becomes an empty one.
 func (server *Server) rulesNarrower(peer Peer, group Group) func(*http.Response) error {
 	return func(response *http.Response) error {
 		if response.StatusCode != http.StatusCreated && response.StatusCode != http.StatusOK {
@@ -316,16 +319,10 @@ func (server *Server) narrowRules(ctx context.Context, body []byte, readable boo
 	}
 	narrowed := rulesStatus{ResourceRules: []resourceRule{}, NonResourceRules: []nonResourceRule{}, Incomplete: true}
 	for _, rule := range status.ResourceRules {
-		if verbs := narrowing.resourceVerbs(rule); len(verbs) > 0 {
-			rule.Verbs = verbs
-			narrowed.ResourceRules = append(narrowed.ResourceRules, rule)
-		}
+		narrowed.ResourceRules = append(narrowed.ResourceRules, narrowing.resourceRules(rule)...)
 	}
 	for _, rule := range status.NonResourceRules {
-		if verbs := narrowing.pathVerbs(rule); len(verbs) > 0 {
-			rule.Verbs = verbs
-			narrowed.NonResourceRules = append(narrowed.NonResourceRules, rule)
-		}
+		narrowed.NonResourceRules = append(narrowed.NonResourceRules, narrowing.pathRules(rule)...)
 	}
 	notes := []string{}
 	if status.EvaluationError != "" {
@@ -384,64 +381,71 @@ func wildcard(values []string) bool {
 	return slices.ContainsFunc(values, func(value string) bool { return strings.Contains(value, "*") })
 }
 
-// resourceVerbs are the rule's verbs a grant allows for every group,
-// resource and name it lists.
-func (narrowing *ruleNarrowing) resourceVerbs(rule resourceRule) []string {
-	if wildcard(rule.Verbs) || wildcard(rule.APIGroups) || wildcard(rule.Resources) || len(rule.APIGroups) == 0 ||
-		len(rule.Resources) == 0 {
+// resourceRules split a rule by API group and resource, each with the verbs
+// a grant allows for every name the rule lists: RBAC roles list many
+// resources in one rule, which a profile seldom covers whole (demo K2e).
+func (narrowing *ruleNarrowing) resourceRules(rule resourceRule) []resourceRule {
+	if wildcard(rule.Verbs) || wildcard(rule.APIGroups) || wildcard(rule.Resources) {
 		return nil
 	}
 	names := rule.ResourceNames
 	if len(names) == 0 {
 		names = []string{""}
 	}
-	var kept []string
-	for _, verb := range rule.Verbs {
-		if narrowing.allEvery(rule, verb, names) {
-			kept = append(kept, verb)
+	var kept []resourceRule
+	for _, group := range rule.APIGroups {
+		for _, combined := range rule.Resources {
+			var verbs []string
+			for _, verb := range rule.Verbs {
+				if narrowing.everyName(group, combined, verb, names) {
+					verbs = append(verbs, verb)
+				}
+			}
+			if len(verbs) > 0 {
+				kept = append(kept, resourceRule{
+					Verbs: verbs, APIGroups: []string{group}, Resources: []string{combined},
+					ResourceNames: slices.Clone(rule.ResourceNames),
+				})
+			}
 		}
 	}
 	return kept
 }
 
-func (narrowing *ruleNarrowing) allEvery(rule resourceRule, verb string, names []string) bool {
-	for _, group := range rule.APIGroups {
-		for _, combined := range rule.Resources {
-			resource, subresource, _ := strings.Cut(combined, "/")
-			scope := narrowing.scope(group, resource)
-			namespace := ""
-			if scope == kubeprofile.ScopeNamespaced {
-				namespace = narrowing.namespace
-			}
-			for _, name := range names {
-				if !narrowing.allows(kubeprofile.Attributes{
-					ResourceRequest: true, Verb: verb, APIGroup: group,
-					Resource: resource, Subresource: subresource, Namespace: namespace, Name: name, Scope: scope,
-					MayCreate: mayCreate(verb),
-				}) {
-					return false
-				}
-			}
+func (narrowing *ruleNarrowing) everyName(group, combined, verb string, names []string) bool {
+	resource, subresource, _ := strings.Cut(combined, "/")
+	scope := narrowing.scope(group, resource)
+	namespace := ""
+	if scope == kubeprofile.ScopeNamespaced {
+		namespace = narrowing.namespace
+	}
+	for _, name := range names {
+		if !narrowing.allows(kubeprofile.Attributes{
+			ResourceRequest: true, Verb: verb, APIGroup: group,
+			Resource: resource, Subresource: subresource, Namespace: namespace, Name: name, Scope: scope,
+			MayCreate: mayCreate(verb),
+		}) {
+			return false
 		}
 	}
 	return true
 }
 
-func (narrowing *ruleNarrowing) pathVerbs(rule nonResourceRule) []string {
-	if wildcard(rule.Verbs) || wildcard(rule.NonResourceURLs) || len(rule.NonResourceURLs) == 0 {
+// pathRules split a path rule by path, each with the verbs a grant allows.
+func (narrowing *ruleNarrowing) pathRules(rule nonResourceRule) []nonResourceRule {
+	if wildcard(rule.Verbs) || wildcard(rule.NonResourceURLs) {
 		return nil
 	}
-	var kept []string
-	for _, verb := range rule.Verbs {
-		every := true
-		for _, path := range rule.NonResourceURLs {
-			if !narrowing.allows(kubeprofile.Attributes{Verb: verb, Path: path}) {
-				every = false
-				break
+	var kept []nonResourceRule
+	for _, path := range rule.NonResourceURLs {
+		var verbs []string
+		for _, verb := range rule.Verbs {
+			if narrowing.allows(kubeprofile.Attributes{Verb: verb, Path: path}) {
+				verbs = append(verbs, verb)
 			}
 		}
-		if every {
-			kept = append(kept, verb)
+		if len(verbs) > 0 {
+			kept = append(kept, nonResourceRule{Verbs: verbs, NonResourceURLs: []string{path}})
 		}
 	}
 	return kept
