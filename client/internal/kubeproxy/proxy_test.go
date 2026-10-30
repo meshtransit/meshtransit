@@ -40,6 +40,7 @@ const clusterName = "kinda-k1.kube.test"
 type seen struct {
 	Method, Path, Query string
 	Header              http.Header
+	Body                string
 }
 
 type fakeRecords struct {
@@ -141,8 +142,16 @@ func newFixtureAt(t *testing.T, backendURL string, configure ...func(*Options)) 
 		tokens: &fakeTokens{}, seen: make(chan seen, 16), events: &fakeEvents{}, wake: make(chan struct{}, 1),
 	}
 	backend := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		f.seen <- seen{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Header: r.Header.Clone()}
+		body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		f.seen <- seen{
+			Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Header: r.Header.Clone(),
+			Body: string(body),
+		}
 		switch {
+		case strings.HasSuffix(r.URL.Path, "/selfsubjectrulesreviews"):
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = io.WriteString(w, rulesAnswer)
 		case strings.HasSuffix(r.URL.Path, "/slow"):
 			<-r.Context().Done() // answers nothing until the gateway gives up
 			return

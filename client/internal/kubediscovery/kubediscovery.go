@@ -96,7 +96,7 @@ type Discovery struct {
 	failing bool
 	// staleLogged: the table outlived StaleAfter; logged once.
 	staleLogged atomic.Bool
-	fetches     atomic.Uint64
+	successes   atomic.Uint64
 	failures    atomic.Uint64
 }
 
@@ -197,12 +197,13 @@ func (d *Discovery) lookup(group, resource string) kubeprofile.ResourceScope {
 }
 
 // Status reports when the API server last confirmed the table, zero for
-// never, its resources, and the fetches and failures so far.
-func (d *Discovery) Status() (confirmedAt time.Time, resources int, fetches, failures uint64) {
+// never, its resources, and the fetches that read and that failed so far,
+// each its own counter (review e4–e6 M3).
+func (d *Discovery) Status() (confirmedAt time.Time, resources int, successes, failures uint64) {
 	if current := d.current.Load(); current != nil {
 		confirmedAt, resources = current.confirmedAt, len(current.scopes)
 	}
-	return confirmedAt, resources, d.fetches.Load(), d.failures.Load()
+	return confirmedAt, resources, d.successes.Load(), d.failures.Load()
 }
 
 // Fresh reports a table confirmed within StaleAfter.
@@ -255,7 +256,6 @@ func (d *Discovery) fetch(done chan struct{}) {
 	held := d.documents
 	d.mu.Unlock()
 	fetched, changed, err := d.fetchDocuments(ctx, held)
-	d.fetches.Add(1)
 	d.mu.Lock()
 	defer func() {
 		d.inflight = nil
@@ -271,6 +271,7 @@ func (d *Discovery) fetch(done chan struct{}) {
 		d.failing = true
 		return
 	}
+	d.successes.Add(1)
 	if d.failing {
 		d.options.Logger.Info("cluster discovery read again")
 	}

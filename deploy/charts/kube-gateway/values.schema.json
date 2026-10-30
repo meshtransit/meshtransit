@@ -282,6 +282,15 @@
       "minimum": 120,
       "maximum": 900
     },
+    "profiles": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
     "network": {
       "type": "object",
       "additionalProperties": false,

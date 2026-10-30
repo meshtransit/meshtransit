@@ -3,7 +3,9 @@ package kubeproxy
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
+	"time"
 )
 
 // whoamiAnswer is /mt/v1/whoami (K1b design §6): who the gateway takes the
@@ -17,6 +19,47 @@ type whoamiAnswer struct {
 	Cluster      string   `json:"cluster"`
 	Version      string   `json:"version"`
 	Username     string   `json:"username,omitempty"`
+	// Profiles narrow the groups held through scoped grants (K2 §9.4).
+	Profiles []whoamiProfile `json:"profiles,omitempty"`
+}
+
+// whoamiProfile is one scoped grant as whoami shows it.
+type whoamiProfile struct {
+	Group       string     `json:"group"`
+	Profile     string     `json:"profile"`
+	Namespaces  []string   `json:"namespaces"`
+	ClusterPart bool       `json:"cluster_part"`
+	Mode        string     `json:"mode"` // enforce or report
+	ReportUntil *time.Time `json:"report_until,omitempty"`
+	ValidUntil  time.Time  `json:"valid_until"`
+}
+
+// profilesOf lists the peer's scoped grants in force for groups it does
+// not hold whole, as whoami shows them.
+func (server *Server) profilesOf(peer Peer, now time.Time) []whoamiProfile {
+	var profiles []whoamiProfile
+	for _, group := range peer.Access.HeldAt(now) {
+		if peer.Access.WholeAt(now, group) {
+			continue
+		}
+		for _, grant := range peer.Access.ScopedAt(now, group) {
+			scope, named := peer.Scopes[grant.Scope]
+			if !named {
+				continue
+			}
+			shown := whoamiProfile{
+				Group: group, Profile: scope.ProfileName, Namespaces: scope.Scope.Namespaces(),
+				ClusterPart: scope.Scope.ClusterPart(), Mode: "enforce", ValidUntil: grant.ValidUntil.UTC(),
+			}
+			// A privileged group never reports (§9.5): decide enforces it.
+			if grant.Report && now.Before(grant.ReportUntil) && !server.groups[group].Privileged {
+				until := grant.ReportUntil.UTC()
+				shown.Mode, shown.ReportUntil = "report", &until
+			}
+			profiles = append(profiles, shown)
+		}
+	}
+	return profiles
 }
 
 func (server *Server) whoami(w http.ResponseWriter, _ *http.Request, peer Peer) {
@@ -27,6 +70,7 @@ func (server *Server) whoami(w http.ResponseWriter, _ *http.Request, peer Peer) 
 	if peer.Access != nil {
 		answer.Person = peer.Access.OwnerRef
 	}
+	answer.Profiles = server.profilesOf(peer, server.options.CoreNow())
 	if group, reason := server.choose(peer, ""); reason == "" {
 		answer.DefaultGroup, answer.Username = group.Name, server.username(group)
 	}
@@ -65,6 +109,11 @@ func (server *Server) selfReview(w http.ResponseWriter, path string, peer Peer, 
 	}
 	if peer.Access != nil && peer.Access.OwnerRef != "" {
 		extra["meshtransit.net/person"] = []string{peer.Access.OwnerRef}
+	}
+	for _, profile := range server.profilesOf(peer, server.options.CoreNow()) {
+		if profile.Group == group.Name && !slices.Contains(extra["meshtransit.net/profile"], profile.Profile) {
+			extra["meshtransit.net/profile"] = append(extra["meshtransit.net/profile"], profile.Profile)
+		}
 	}
 	answer := map[string]any{
 		"apiVersion": "authentication.k8s.io/" + version, "kind": "SelfSubjectReview",

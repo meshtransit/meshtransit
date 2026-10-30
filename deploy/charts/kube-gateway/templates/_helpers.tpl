@@ -163,6 +163,7 @@ MESHGW_GUARDED_NAMESPACES: {{ include "kg.guarded" . | quote }}
 MESHGW_SECRET_RESOURCES: {{ join "," .Values.secretResources | quote }}
 MESHGW_KUBE_STALE_AFTER: {{ printf "%ds" (int .Values.staleAfterSeconds) | quote }}
 MESHGW_API_AUDIENCES: {{ join "," .Values.apiServerAudiences | quote }}
+MESHGW_KUBE_PROFILES: {{ (.Values.profiles).enabled | default false | toString | quote }}
 MESHGW_TCP_SEND_BUFFER: {{ int .Values.network.tcpSendBufferBytes | quote }}
 MESHGW_TCP_RECEIVE_BUFFER: {{ int .Values.network.tcpReceiveBufferBytes | quote }}
 MESHGW_CERTIFICATE_DIR: /var/run/meshgw/certificate

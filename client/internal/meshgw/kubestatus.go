@@ -31,6 +31,50 @@ type kubeStatus struct {
 	// gateway's own token at start: what the chart's apiServerAudiences
 	// must be (K1c §7 c2).
 	APIAudiences []string `json:"api_audiences,omitempty"`
+	// Profiles is set when the gateway applies access profiles (K2).
+	Profiles *profilesStatus `json:"profiles,omitempty"`
+}
+
+// profilesStatus is the cluster's discovery as profiles see it.
+type profilesStatus struct {
+	DiscoveryFresh       bool      `json:"discovery_fresh"`
+	DiscoveryConfirmedAt time.Time `json:"discovery_confirmed_at,omitzero"`
+	DiscoveryResources   int       `json:"discovery_resources"`
+}
+
+func (runtime *kubeRuntime) profilesStatus() *profilesStatus {
+	if runtime.discovery == nil {
+		return nil
+	}
+	confirmedAt, resources, _, _ := runtime.discovery.Status()
+	return &profilesStatus{
+		DiscoveryFresh: runtime.discovery.Fresh(), DiscoveryConfirmedAt: confirmedAt,
+		DiscoveryResources: resources,
+	}
+}
+
+// writeProfileMetrics writes access profiles' metrics (K2 e5), when on.
+func (runtime *kubeRuntime) writeProfileMetrics(w io.Writer) {
+	if runtime.discovery == nil {
+		return
+	}
+	writeLabelled(w, "meshgw_kube_profile_decisions_total", "counter",
+		"Requests through scoped grants, by what their profiles decided.", "result", runtime.proxy.ProfileDecisions())
+	confirmedAt, resources, successes, failures := runtime.discovery.Status()
+	confirmed := int64(0)
+	if !confirmedAt.IsZero() {
+		confirmed = confirmedAt.Unix()
+	}
+	_, _ = fmt.Fprintf(w, "# HELP meshgw_kube_discovery_fresh Whether the cluster's discovery is fresh enough "+
+		"for profiles.\n# TYPE meshgw_kube_discovery_fresh gauge\nmeshgw_kube_discovery_fresh %d\n"+
+		"# HELP meshgw_kube_discovery_confirmed_timestamp_seconds When the API server last confirmed discovery; "+
+		"0 never.\n# TYPE meshgw_kube_discovery_confirmed_timestamp_seconds gauge\n"+
+		"meshgw_kube_discovery_confirmed_timestamp_seconds %d\n"+
+		"# HELP meshgw_kube_discovery_resources Resources discovery knows.\n"+
+		"# TYPE meshgw_kube_discovery_resources gauge\nmeshgw_kube_discovery_resources %d\n",
+		boolMetric(runtime.discovery.Fresh()), confirmed, resources)
+	writeLabelled(w, "meshgw_kube_discovery_fetches_total", "counter", "Discovery fetches, by outcome.", "outcome",
+		map[string]uint64{"ok": successes, "failed": failures})
 }
 
 func (runtime *kubeRuntime) groups() []groupStatus {
@@ -51,7 +95,7 @@ func (runtime *kubeRuntime) status() any {
 	return kubeStatus{
 		Mode: KubeModeProxy, Listening: runtime.listener.Listening(),
 		Closed: runtime.listener.ClosedReason(), Groups: runtime.groups(), Sessions: sessions.Open,
-		Cut: sessions.Cut, APIAudiences: runtime.apiAudiences,
+		Cut: sessions.Cut, APIAudiences: runtime.apiAudiences, Profiles: runtime.profilesStatus(),
 	}
 }
 
@@ -111,6 +155,7 @@ func (runtime *kubeRuntime) writeMetrics(w io.Writer) {
 		"# HELP meshgw_heap_bytes Live heap at the last GC.\n# TYPE meshgw_heap_bytes gauge\nmeshgw_heap_bytes %d\n",
 		audit.Rate, boolMetric(audit.Paused), audit.DroppedReports, boolMetric(runtime.memory.Pressure()),
 		runtime.memory.heap.Load())
+	runtime.writeProfileMetrics(w)
 }
 
 // oldestCheck is the oldest of the groups' last whole checks in Unix

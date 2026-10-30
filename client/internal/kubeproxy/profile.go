@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"meshtransit.net/client/internal/controlplane"
@@ -46,6 +47,34 @@ type profileDecision struct {
 	reported bool
 	// refusing are the scopes that refused it, for the message.
 	refusing []networkmap.KubernetesScope
+}
+
+// profileCounts count profile decisions by result.
+type profileCounts struct {
+	allowed, denied, reported, withheld atomic.Uint64
+}
+
+func (counts *profileCounts) count(decision profileDecision) {
+	switch {
+	case decision.whole:
+	case decision.reported:
+		counts.reported.Add(1)
+	case decision.allowed:
+		counts.allowed.Add(1)
+	default:
+		counts.denied.Add(1)
+	}
+}
+
+// ProfileDecisions counts what profiles decided, by result: allowed,
+// denied, reported (let through, would deny) and withheld (refused while
+// the map's scope table was unusable).
+func (server *Server) ProfileDecisions() map[string]uint64 {
+	counts := &server.decisions
+	return map[string]uint64{
+		"allowed": counts.allowed.Load(), "denied": counts.denied.Load(),
+		"reported": counts.reported.Load(), "withheld": counts.withheld.Load(),
+	}
 }
 
 // checkFor reads a request for the profiles: the outgoing URL's info, what
@@ -133,6 +162,7 @@ func decide(peer Peer, group Group, check profileCheck, now time.Time) profileDe
 		}
 		if len(decision.refusing) == 0 {
 			decision.scope = grant.Scope
+			decision.refusing = make([]networkmap.KubernetesScope, 0, len(grants)-index)
 		}
 		decision.refusing = append(decision.refusing, scope)
 	}

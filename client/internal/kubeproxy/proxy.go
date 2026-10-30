@@ -52,6 +52,9 @@ type Server struct {
 	reverse  *httputil.ReverseProxy
 	sessions *registry
 	gate     *gate
+	// decisions counts what profiles decided (K2 e5): requests through
+	// scoped grants only, never a whole grant's.
+	decisions profileCounts
 }
 
 // New makes a proxy; Serve serves it.
@@ -205,6 +208,8 @@ type plan struct {
 	// remint gives a new token once the API server refused this one; nil
 	// for a request with a body, which cannot be sent again.
 	remint func() (Bearer, error)
+	// narrow rewrites the API server's answer (a narrowed rules review).
+	narrow func(*http.Response) error
 }
 
 // coreRefusals are the reasons Core refuses to record an operation.
@@ -278,6 +283,7 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if peer.Withheld {
+		server.decisions.withheld.Add(1)
 		server.deny(w, peer.DeviceID, "stale", http.StatusServiceUnavailable,
 			"the gateway's map from MeshTransit is unusable; it asked for a new one", time.Second)
 		return
@@ -328,12 +334,26 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	scoped := !peer.Access.WholeAt(now, group.Name) && len(peer.Access.ScopedAt(now, group.Name)) > 0
 	held.check = server.checkFor(r.Context(), r, info, impersonate, scoped)
 	decision := decide(peer, group, held.check, now)
+	if !held.check.exempt {
+		server.decisions.count(decision)
+	}
 	if !decision.allowed {
 		server.refuseProfile(w, peer, group, held.check, decision)
 		return
 	}
 	if decision.reported {
 		server.options.Records.ProfileDenied(peer.DeviceID, true, held.check.sample(decision.scope))
+	}
+	// A self review of a group a profile narrows answers by the profile
+	// (K2 §9.4).
+	var narrow func(*http.Response) error
+	if scoped && selfAccessReview(info) && kubereq.SelfReview(r.Method, info) {
+		if server.accessReview(w, r, info, peer, group, held.check.impersonated) {
+			return
+		}
+	} else if scoped && selfRulesReview(info) && kubereq.SelfReview(r.Method, info) {
+		prepareRulesReview(r)
+		narrow = server.rulesNarrower(peer, group)
 	}
 	done, limit := server.sessions.add(held, server.options.Limits)
 	if limit != "" {
@@ -348,7 +368,7 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	server.forward(w, r.WithContext(ctx), forwarding{
 		who: who, peer: peer, group: group, out: out, class: class,
 		info: info, impersonate: impersonate, impersonated: impersonated, started: started, session: held,
-		decision: decision,
+		decision: decision, narrow: narrow,
 	})
 }
 
@@ -406,6 +426,8 @@ type forwarding struct {
 	started      time.Time
 	session      *session
 	decision     profileDecision
+	// narrow rewrites the API server's answer; nil: as it comes.
+	narrow func(*http.Response) error
 }
 
 // forward mints the token, has Core record a type A operation, and
@@ -432,7 +454,7 @@ func (server *Server) forward(w http.ResponseWriter, r *http.Request, request fo
 		out: request.out, token: token, source: request.who.source.String(),
 		device: request.peer.DeviceID, group: request.group, agent: agentOf(r.Header.Get("User-Agent")),
 		impersonate: request.impersonate,
-		version:     server.options.Version,
+		version:     server.options.Version, narrow: request.narrow,
 	}
 	if r.ContentLength == 0 && !request.class.TypeA() {
 		// A request without a body can be sent again with a new token once
@@ -709,6 +731,9 @@ func (server *Server) answered(response *http.Response) error {
 	if carried != nil {
 		carried.status.Store(int64(response.StatusCode))
 		carried.refusedToken = response.StatusCode == http.StatusUnauthorized
+		if carried.narrow != nil {
+			return carried.narrow(response)
+		}
 	}
 	return nil
 }

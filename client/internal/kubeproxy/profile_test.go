@@ -360,6 +360,9 @@ func TestProxyEnforcesProfiles(t *testing.T) {
 		f.records.intents[0].ReportAllowed {
 		t.Fatalf("intents: %+v", f.records.intents)
 	}
+	if decisions := f.server.ProfileDecisions(); decisions["allowed"] != 2 || decisions["denied"] != 2 {
+		t.Fatalf("decisions %v", decisions)
+	}
 	if strings.Join(f.records.denied, ",") != "profile_denied,profile_denied" || len(f.records.samples) != 2 ||
 		f.records.samples[0] != (controlplane.KubeAuditDenialSample{
 			Verb: "delete", Resource: "pods",

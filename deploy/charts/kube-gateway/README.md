@@ -132,6 +132,7 @@ the StatefulSet.
 | `network.*BufferBytes` | TCP buffers per connection; larger ones serve long round trips faster but leave fewer connections in the same memory |
 | `resources` | Memory request must equal the limit, written the same way (`1Gi` and `1Gi`, not `1024Mi`); 1 GiB holds about 1,024 kubectl connections. Very large TCP buffers on a small pod make the gateway warn `kubernetes_tcp_buffers_exceed_memory` at start |
 | `metrics.allowFrom` | NetworkPolicy peers allowed to scrape `:9090/metrics` |
+| `profiles.enabled` | Apply MeshTransit access profiles: a Policy rule may narrow a group to a profile in some namespaces; the group's RBAC stays the ceiling. Off by default; needs Core with profiles on. The gateway reads the cluster's discovery with its own ServiceAccount |
 
 Pods that target the gateway pool (its taint's key, or its label in a
 selector) are always refused outside `nodeLevelNamespaces`.

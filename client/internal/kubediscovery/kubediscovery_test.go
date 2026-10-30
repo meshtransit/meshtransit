@@ -387,9 +387,9 @@ func TestFailureKeepsTableUntilStale(t *testing.T) {
 	if got := f.discovery.lookup("", "pods"); got != kubeprofile.ScopeNamespaced {
 		t.Fatalf("a fetch after recovery: %v", got)
 	}
-	_, resources, fetches, failures := f.discovery.Status()
-	if resources != 4 || fetches != 3 || failures != 1 {
-		t.Fatalf("status: %d resources, %d fetches, %d failures", resources, fetches, failures)
+	_, resources, successes, failures := f.discovery.Status()
+	if resources != 4 || successes != 2 || failures != 1 {
+		t.Fatalf("status: %d resources, %d successes, %d failures", resources, successes, failures)
 	}
 }
 

@@ -532,6 +532,8 @@ type sessionRun struct {
 	kubeAuditTimer *time.Timer
 	// kubeAuditLate are batches whose calls timed out, kept a while.
 	kubeAuditLate map[[16]byte]kubeAuditLateBatch
+	// withheld asks for the map again while it withholds Kubernetes access.
+	withheld withheldResync
 }
 
 // A node acknowledges a snapshot at once, and deltas once ackBatch of them
@@ -544,6 +546,7 @@ const (
 )
 
 func (run *sessionRun) loop(ctx context.Context, inbox <-chan incoming) (bool, time.Duration, error) {
+	defer run.stopWithheld()
 	keepalive := time.NewTicker(run.s.keepalive)
 	defer keepalive.Stop()
 	heartbeat := time.NewTicker(enforcementHeartbeat)
@@ -655,6 +658,10 @@ func (run *sessionRun) loop(ctx context.Context, inbox <-chan incoming) (bool, t
 			}
 		case <-run.kubeAuditTimeout():
 			run.timeOutKubeAudits()
+		case <-run.withheldTimeout():
+			if err := run.resyncWithheld(); err != nil {
+				return run.mapped, 0, err
+			}
 		}
 	}
 }
@@ -668,7 +675,7 @@ func (run *sessionRun) handle(ctx context.Context, in incoming) (time.Duration, 
 		if err := run.state.applySnapshot(m); err != nil {
 			return 0, err
 		}
-		run.resyncing = false
+		run.resyncing, run.withheld.pending = false, false
 		return 0, run.mapChanged(ctx, m.GetView(), true)
 	case *mtcpv1.MapDelta:
 		if run.resyncing {
@@ -817,6 +824,7 @@ func (run *sessionRun) mapChanged(ctx context.Context, view *mtcpv1.View, snapsh
 		}
 	}
 	if gateway {
+		run.noteWithheld()
 		return nil // delivered above
 	}
 	return run.deliver(ctx)

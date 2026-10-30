@@ -96,6 +96,9 @@ func checkNamespaces(namespaces []string) ([]string, error) {
 // Namespaces returns the rule's namespaces, sorted.
 func (scope Scope) Namespaces() []string { return slices.Clone(scope.namespaces) }
 
+// ClusterPart reports whether the rule applies the profile's cluster part.
+func (scope Scope) ClusterPart() bool { return scope.clusterPart }
+
 // Allows reports whether the scope lets the request through (K2 §5.3).
 func (scope Scope) Allows(attributes Attributes) bool {
 	// A request the parser could not name allows nothing (§5.5, review K2a M1).
