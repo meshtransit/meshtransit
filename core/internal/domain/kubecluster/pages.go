@@ -148,6 +148,9 @@ type CertificateAuthority struct {
 type CAPage struct {
 	CAs  []CertificateAuthority
 	Next PageCursor
+	// CanRetire: the caller may ask to retire these CAs (K1d Q163); a hint
+	// for the Console, the request checks again.
+	CanRetire bool
 }
 
 // ListReplicas returns a page of a cluster's replicas (network.read).

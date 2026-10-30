@@ -142,9 +142,13 @@ func assertKubernetesClusterPages(ctx context.Context, t *testing.T, admin *pgx.
 		ClusterID: clusterID, Limit: 1}); err != nil {
 		t.Fatalf("a Network reader listed no replicas: %v", err)
 	}
-	if _, err := service.ListCertificateAuthorities(ctx, kubecluster.PageQuery{Session: custom, Scope: scope,
-		ClusterID: clusterID, Limit: 1}); err != nil {
-		t.Fatalf("a Network reader listed no CAs: %v", err)
+	if page, err := service.ListCertificateAuthorities(ctx, kubecluster.PageQuery{Session: custom, Scope: scope,
+		ClusterID: clusterID, Limit: 1}); err != nil || page.CanRetire {
+		t.Fatalf("a Network reader listed no CAs, or may retire them: %+v, %v", page.CanRetire, err)
+	}
+	if page, err := service.ListCertificateAuthorities(ctx, kubecluster.PageQuery{Session: owner, Scope: scope,
+		ClusterID: clusterID, Limit: 1}); err != nil || !page.CanRetire {
+		t.Fatalf("the owner may not retire CAs: %+v, %v", page.CanRetire, err)
 	}
 	assertKubernetesPagesStayInTheirCluster(ctx, t, service, owner, scope, clusterID, detail, auditID)
 	assertKubernetesPagesBreakTies(ctx, t, admin, service, owner, scope, clusterID, len(detail.Requests))

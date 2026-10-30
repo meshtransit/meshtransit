@@ -134,7 +134,8 @@ func (handler *ManagementHandler) readKubernetesReplicasAndCAs(ctx context.Conte
 		writeKubernetesData(ctx, handler, response, correlationID, http.StatusOK, struct {
 			CAs           []kubernetesCABody `json:"certificate_authorities"`
 			NextPageToken string             `json:"next_page_token,omitempty"`
-		}{bodies, next(page.Next)})
+			CanRetire     bool               `json:"can_retire"`
+		}{bodies, next(page.Next), page.CanRetire})
 	default:
 		ca, err := manager.ReadCertificateAuthority(ctx, session, path.scope, path.clusterID, path.caID)
 		if err != nil {

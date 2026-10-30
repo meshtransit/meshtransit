@@ -189,7 +189,26 @@ func (store *KubernetesClusterStore) ListCertificateAuthorities(ctx context.Cont
 	if len(documents) > query.Limit {
 		page.Next = previous
 	}
+	canRetire, err := store.canApprove(ctx, query)
+	if err != nil {
+		return kubecluster.CAPage{}, err
+	}
+	page.CanRetire = canRetire
 	return page, nil
+}
+
+// canApprove reads whether the caller may approve the Network's replicas,
+// so ask to retire a CA (schema 252).
+func (store *KubernetesClusterStore) canApprove(ctx context.Context, query kubecluster.PageQuery) (bool, error) {
+	var allowed bool
+	err := store.transact(ctx, query.Scope, func(tx accountSessionTransaction) (bool, error) {
+		if err := tx.QueryRow(ctx, kubernetesClusterCanApproveSQL, append(sessionQueryArguments(query.Session),
+			query.Scope.WorkspaceID().String(), query.Scope.NetworkID().String())...).Scan(&allowed); err != nil {
+			return false, kubernetesClusterDatabaseError(err)
+		}
+		return false, nil
+	})
+	return allowed, err
 }
 
 // ReadCertificateAuthority reads one of a cluster's CAs.

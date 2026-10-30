@@ -15,7 +15,9 @@ const (
  $10::UUID,$11::UUID,$12::UUID,$13::UUID,$14::BIGINT,$15::TEXT,$16::TEXT,$17::TEXT,$18::UUID)::TEXT`
 	listKubernetesCARetireRequestsSQL = `SELECT mesh_ops.list_kubernetes_ca_retire_requests_v1(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::UUID,$13::TIMESTAMPTZ,$14::UUID,$15::INTEGER)::TEXT`
-	caRetireRequestedAction = "kubernetes_cluster.ca_retire_requested"
+	caRetireRequestedAction        = "kubernetes_cluster.ca_retire_requested"
+	kubernetesClusterCanApproveSQL = `SELECT mesh_ops.kubernetes_cluster_can_approve_v1(` + sessionArguments + `,
+ $10::UUID,$11::UUID)`
 )
 
 type kubernetesCARetireRequestDocument struct {

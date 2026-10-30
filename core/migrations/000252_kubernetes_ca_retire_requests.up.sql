@@ -223,6 +223,32 @@ BEGIN
 END;
 $function$;
 
+-- Whether the caller may approve the Network's replicas, so ask to retire
+-- a CA: the CA page's can_retire, so the Console never guesses (Q163). It
+-- grants nothing and is looser than the request, which also checks the
+-- member's scope and the account principal: a rare caller may see the
+-- button and get 403.
+CREATE FUNCTION mesh_ops.kubernetes_cluster_can_approve_v1(
+    p_session_public_id UUID, p_deployment_public_id UUID, p_principal_public_id UUID,
+    p_identity_subject_public_id UUID, p_session_version BIGINT,
+    p_principal_authority_generation BIGINT, p_account_session_generation BIGINT,
+    p_provider_generation BIGINT, p_deployment_recovery_epoch BIGINT,
+    p_workspace_public_id UUID, p_network_public_id UUID
+)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+PARALLEL UNSAFE
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $function$
+    SELECT EXISTS (SELECT 1 FROM mesh_ops.resolve_network_permission_v2(
+        p_session_public_id, p_deployment_public_id, p_principal_public_id, p_identity_subject_public_id,
+        p_session_version, p_principal_authority_generation, p_account_session_generation,
+        p_provider_generation, p_deployment_recovery_epoch, p_workspace_public_id, p_network_public_id,
+        'kubernetes_cluster.approve', pg_catalog.transaction_timestamp()))
+$function$;
+
 -- A page of a cluster's requests, newest first, for those who approve its
 -- replicas or read the audit of its Workspace or Network (Q163): up to
 -- p_limit + 1 rows, so the caller knows whether more follow.
@@ -455,6 +481,12 @@ REVOKE ALL ON FUNCTION mesh_ops.request_kubernetes_ca_retire_v1(
 ) FROM PUBLIC, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;
 GRANT EXECUTE ON FUNCTION mesh_ops.request_kubernetes_ca_retire_v1(
     UUID, UUID, UUID, UUID, BIGINT, BIGINT, BIGINT, BIGINT, BIGINT, UUID, UUID, UUID, UUID, BIGINT, TEXT, TEXT, TEXT, UUID
+) TO mesh_runtime;
+REVOKE ALL ON FUNCTION mesh_ops.kubernetes_cluster_can_approve_v1(
+    UUID, UUID, UUID, UUID, BIGINT, BIGINT, BIGINT, BIGINT, BIGINT, UUID, UUID
+) FROM PUBLIC, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;
+GRANT EXECUTE ON FUNCTION mesh_ops.kubernetes_cluster_can_approve_v1(
+    UUID, UUID, UUID, UUID, BIGINT, BIGINT, BIGINT, BIGINT, BIGINT, UUID, UUID
 ) TO mesh_runtime;
 REVOKE ALL ON FUNCTION mesh_ops.list_kubernetes_ca_retire_requests_v1(
     UUID, UUID, UUID, UUID, BIGINT, BIGINT, BIGINT, BIGINT, BIGINT, UUID, UUID, UUID, TIMESTAMPTZ, UUID, INTEGER

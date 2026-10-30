@@ -1502,7 +1502,8 @@
                       "type": "object",
                       "additionalProperties": false,
                       "required": [
-                        "certificate_authorities"
+                        "certificate_authorities",
+                        "can_retire"
                       ],
                       "properties": {
                         "certificate_authorities": {
@@ -1516,6 +1517,10 @@
                           "type": "string",
                           "minLength": 1,
                           "maxLength": 512
+                        },
+                        "can_retire": {
+                          "type": "boolean",
+                          "description": "Whether the caller holds kubernetes_cluster.approve and may ask to retire these CAs; a hint, the request checks again."
                         }
                       }
                     },
