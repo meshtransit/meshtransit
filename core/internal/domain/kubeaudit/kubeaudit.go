@@ -1,7 +1,6 @@
 // Package kubeaudit records the Kubernetes operations a gateway must have
 // Core record before it forwards them (type A), and their outcomes and type
-// B denials (K1b0, docs/k8s-k1b0-operation-events-design.md; mtcp-v1
-// §6.10).
+// B denials (K1b0 design; mtcp-v1 §6.10).
 package kubeaudit
 
 import (

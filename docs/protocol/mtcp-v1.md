@@ -781,7 +781,9 @@ forward it.
   48 bits the gateway's milliseconds, unique for the gateway Device within 10
   minutes; more than 10 minutes from Core's clock it is `invalid`),
   `peer_device_id`, `groups` (at most 16, each at most 63 bytes), `class`, `verb`, `api_group`, `resource`, `subresource`, `namespace`,
-  `name`, `impersonated`, `token_id` (at most 32 bytes) and `observed_ms`.
+  `name`, `impersonated`, `token_id` (at most 32 bytes) and `observed_ms`;
+  with `gateway.kube.v2`, `profile` (empty or 32 bytes) and `report_allowed`
+  (7.12).
   Strings are UTF-8 without NUL or control characters, within the sizes in the
   proto (`verb` 32, `api_group` 253, `resource` and `subresource` 63,
   `namespace` 63, `name` 253, `impersonated` 253 bytes). The largest intent is
@@ -790,7 +792,10 @@ forward it.
 - **Checks:** the peer must be a peer the gateway's own current map grants
   Kubernetes access (7.8), the groups among those granted, and that map read
   within the gateway's `staleAfter` by Core's clock. Core takes the peer's
-  owner from that map, never from the gateway.
+  owner from that map, never from the gateway. A `profile` must be the scope of
+  one of that peer's grants of the first group in that map; an empty one
+  needs a whole grant of it, else `not_granted`. `profile` or `report_allowed`
+  from a session without `gateway.kube.v2` is `invalid`.
 - **`KubeAuditAck`:** the batch's `batch_id` and, in order, each intent's
   `intent_id` with either `audit_id` (16 bytes, UUIDv7) or `refused` and
   `retry_after_ms`. Core answers only after the record is durable. Sending an
@@ -808,7 +813,11 @@ forward it.
 
 - **`KubeAuditOutcomes`:** at most 1,024 outcomes (`audit_id`, HTTP status,
   duration) and 256 type B counts (peer, reason, count, first and last
-  times), at most 128 KiB. Core answers nothing and may drop them under load.
+  times), at most 128 KiB. With `gateway.kube.v2` a count may carry the
+  reasons `profile_denied` and `profile_would_deny` and one `sample` of the
+  window (verb, API group, resource, subresource, namespace and the scope
+  hash of the grant), at most one per peer and reason every 10 s; Core drops
+  samples from other sessions. Core answers nothing and may drop them under load.
   Status 0 means the gateway did not forward the operation: its ack came
   after the gateway had already refused the request.
 - **Budget:** these messages spend their own budget of 512 KiB at once and
@@ -916,6 +925,7 @@ message only after it applied it (7.9).
 | `routes` | Subnet routes the node may use (7.6); only with `routes.subnet.v1` |
 | `served` | Subnets the node forwards to as a router (7.6); only with `router.subnet.v1` |
 | `kubernetes_clusters` | Kubernetes clusters the node may reach and their roots (7.11); only with `kube.ca1` |
+| `kubernetes_scopes` | The access profiles and scopes of the gateway's cluster (7.12); only with `gateway.kube.v2` |
 
 `MapDelta` carries only what changed:
 
@@ -932,6 +942,7 @@ message only after it applied it (7.9).
 | `routes` | Replaces all routes when present; present and empty removes them |
 | `served` | Replaces all served routes when present; present and empty removes them |
 | `kubernetes_clusters` | Replaces the Kubernetes clusters when present; adds roots the node does not hold (7.11) |
+| `kubernetes_scopes` | Replaces the whole table when present (7.12) |
 
 A `device_id` appears at most once across `peers_upsert`, `peers_remove` and
 `peer_patches` in one delta. A patch for an unknown peer, or an upsert and a
@@ -1344,7 +1355,11 @@ builds maps from its shared Network view; it ignores it from any node that is
 not a gateway. No other map carries either field, and no peer of another
 Network ever does.
 
-- **Grants.** `grants` lists the groups, sorted, at least one. Each holds
+- **Grants.** `grants` lists the groups the peer holds whole, sorted and
+  distinct; `scoped_grants` (only with `gateway.kube.v2`, 7.12) the groups an
+  access profile narrows. At least one grant across both lists. Core sends
+  no scoped grant to a gateway without `gateway.kube.v2`, and no `kubernetes`
+  for a peer that is then left with none. Each holds
   until `valid_until_ms`, never 0: the earliest of the selector membership
   the rule matched the peer by, the peer's key expiry, and, for a member's
   Device (tagged or not), the end of its owner's Workspace and Network
@@ -1463,6 +1478,75 @@ gateways by. Peers of another Network never bring a cluster.
   none.
 - **Not negotiated.** A session on a Core that does not offer `kube.ca1` says
   nothing about the clusters: the node keeps what it holds.
+
+### 7.12 Kubernetes access profiles
+
+A Kubernetes gateway that negotiated `gateway.kube.v2` (with `gateway.kube.v1`)
+narrows a peer's groups by access profiles: a profile says what a rule may do
+(as RBAC's `PolicyRule`), a scope applies it in the rule's namespaces. A
+scoped grant is never the whole group, whatever its fields: what reaches the
+API server still carries the group's token, so the cluster's RBAC stays the
+ceiling. Matching is `shared/kubeprofile` (RBAC's rule match, stricter in the
+cases of the K2 design §5.4).
+
+- **Table.** `kubernetes_scopes` in every `MapSnapshot` (and in a `MapDelta`
+  when it changed, replacing it whole) carries every profile and scope of
+  the release of the gateway's cluster, not only those its peers use: every
+  replica of a cluster gets the same table, and membership changes never
+  change it. `profiles` and `scopes` are each strictly sorted by `hash`.
+  `profile_id` is shown to people only; it never decides or records anything.
+- **Scoped grants.** `KubernetesAccess.scoped_grants`: `group`, `scope` (the
+  hash of a scope of the table), `mode`, `report_until_ms` and
+  `valid_until_ms`. The key (`group`, `scope` bytewise, `mode` with
+  `MODE_UNSPECIFIED` first, `report_until_ms`) strictly increases. Core merges
+  grants of the same key by the latest `valid_until_ms`, never REPORT grants
+  of different `report_until_ms`, and keeps `report_until_ms ≤
+  valid_until_ms`. At most 64 grants per peer across both lists, counted
+  after merging. A whole grant of a group need not stand beside its scoped
+  grants (Core may drop those that end no later); the gateway takes the
+  union per group and never relies on it.
+- **Modes.** `MODE_UNSPECIFIED` enforces, with `report_until_ms` 0. `REPORT`
+  lets the whole group through until `report_until_ms` and counts what the
+  profile would deny; past it, or when it is more than 14 days ahead of the
+  gateway's view of Core's time, or on a group the gateway's configuration
+  marks privileged, it enforces. A gateway compares deadlines with the same
+  Core time it compares `valid_until_ms` with (7.8).
+- **Hashes.** A profile's `hash` is SHA-256 of `meshtransit.net/kubeprofile/v1`,
+  a zero byte, and its canonical JSON: the object `{"format":1,"name",
+  "namespaced","cluster"}`, keys in that order, an empty list left out; each
+  rule `{"apiGroups","resources","verbs","resourceNames","nonResourceURLs"}`
+  in that order, an empty list left out; every list sorted bytewise without
+  duplicates, and each part's rules sorted bytewise by their own encoding,
+  without duplicates. Strings escape only `"` and `\`; profiles hold printable
+  ASCII without `<`, `>` or `&`, so no encoder chooses an escape. A scope's
+  `hash` is SHA-256 of `meshtransit.net/kubescope/v1`, a zero byte, and
+  `{"format":1,"profile":<lowercase hex of the profile hash>,"namespaces":
+  [sorted, distinct],"cluster_part":<bool>}`. Known answers: the profile
+  `{"format":1,"name":"developer","namespaced":[{"apiGroups":["","apps","batch"],"resources":["configmaps","deployments","jobs","pods","pods/log","replicasets"],"verbs":["create","delete","get","list","patch","update","watch"]}],"cluster":[{"apiGroups":[""],"resources":["namespaces","nodes"],"verbs":["get","list","watch"]},{"verbs":["get"],"nonResourceURLs":["/metrics"]}]}`
+  hashes to `53380bea5c74774644eba2d5af3c5bb7e7455238f188ba121c49e62f896eed78`;
+  its scope in `team-a` and `team-b` with the cluster part on to
+  `98854cf3321a6507cda6499cd811740a836557e1d679ea651784f9d4d552faa4`
+  (`shared/kubeprofile` tests).
+- **Errors only narrow.** A gateway never refuses a map for its Kubernetes
+  part:
+
+  | Error | Effect |
+  |---|---|
+  | Table over its limits (14), out of order, a hash twice | The map is applied with every peer's Kubernetes access withheld (7.8): every request refused, every session cut. It holds until a valid table arrives, by snapshot or delta. The gateway asks a resync, backing off from 10 s to 5 minutes; that request leaves deltas applied as usual |
+  | A profile breaks `kubeprofile.Validate` or its hash is not its content's | That profile, and every scope of it, allows nothing |
+  | A scope's namespaces are not strictly sorted (`*` alone, or 1 to 64 DNS labels), its hash is not its content's, or its profile is not in the table | That scope allows nothing |
+  | A scoped grant's group is not a DNS label, or it names a scope not in the table (or not 32 bytes), an unknown `mode`, `report_until_ms` not 0 when enforcing, 0 or past `valid_until_ms` when reporting | That grant allows nothing |
+  | Grants out of order or twice, more than 64, an invalid whole grant | The peer has no Kubernetes access |
+
+  References resolve against the state after the whole message. An unknown
+  `KubernetesScopedGrant.mode` is the exception to section 12: it never makes
+  the message invalid.
+- **Audit (6.10).** An intent's `profile` is the scope hash of the grant
+  that let the request through, for the group it used (the first of
+  `groups`): empty when a whole grant of that group is in force; else the
+  first enforcing grant that allows it, in wire order; else the reporting
+  grant, with `report_allowed`. A reporting grant the gateway enforces
+  carries its scope without `report_allowed`.
 
 ## 8. Node reports
 
@@ -1789,8 +1873,9 @@ passes.
 
 Unknown enum values are handled as follows: an unknown `Lifecycle.state`
 behaves as `RECONNECT`; an endpoint with an unknown kind is ignored; an
-unknown health component or technique is ignored; any other unknown enum
-value makes the message `INVALID`.
+unknown health component or technique is ignored; an unknown
+`KubernetesScopedGrant.mode` makes that grant allow nothing (7.12); any other
+unknown enum value makes the message `INVALID`.
 
 
 - `protocol_version` 1 is this document. A future incompatible version gets a
@@ -1833,6 +1918,7 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `gateway.groups1` | A Kubernetes gateway reports its groups' RBAC check with `GatewayGroupReport` (6.11); Core offers it once its database has the group report functions, and takes reports from gateway sessions only |
 | `kube.ca1` | Any node reads `kubernetes_clusters` in its map: the clusters it may reach and their roots (7.11); Core offers it where Kubernetes join is on, it builds maps from its shared Network view, and it could read the roots when it started |
 | `gateway.kube.v1` | A Kubernetes gateway applies its peers' `kubernetes` and `owner` (7.8), acknowledges map messages after applying them and takes `MapFresh` (7.9); Core offers it only where maps come from its shared Network view |
+| `gateway.kube.v2` | A Kubernetes gateway applies access profiles: `kubernetes_scopes` and `scoped_grants` (7.12), the audit `profile` and profile denials (6.10). Only with `gateway.kube.v1`: a gateway listing it alone gets no `kubernetes` at all. Core offers it with `gateway.kube.v1` once its database has the profile functions |
 
 Unknown names are ignored. Core sends a feature only when both sides list it.
 
@@ -1852,6 +1938,7 @@ Unknown names are ignored. Core sends a feature only when both sides list it.
 | `RegisterRequest`, `RotateNodeKey` and `KubeCertRequest` per session | 4 at once, then 1 per second; over it `Error{OVERLOADED, retry_after_ms}`, or for `KubeCertRequest` a `KubeCertResult{RETRY, limited}` |
 | Kubernetes gateway certificates (6.9) | 12 issued per Device and hour; in flight 2 per Device, 20 per cluster, 200 per Workspace, 1,000 per installation; one request waiting per session |
 | Browser approvals issued or resumed per session (6.2) | 2 at once, then 1 per 10 s; over it `Error{OVERLOADED, retry_after_ms}`. A malformed resume handle is refused before it counts |
+| Kubernetes access profile table (7.12) | 128 profiles, 256 scopes, 256 KiB encoded; at most 64 grants per peer across both lists |
 | `MapResync` per session (7.1) | 2 at once, then 1 per 5 s; over it fatal `Error{OVERLOADED, retry_after_ms}`, and the node gets a fresh snapshot when it reconnects |
 | `EnforcementReport` per session (8.4) | 4 at once, then 1 per second; over it the latest report is kept, replacing any kept before, and stored when the budget allows |
 | `RouteHealthReport` per session (8.3) | 2 at once, then 1 per 2 s; over it the latest report is kept, replacing any kept before, and stored when the budget allows |

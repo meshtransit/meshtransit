@@ -53,7 +53,18 @@ type mapState struct {
 	// takesKubernetes: the node is a gateway that declared gateway.kube.v1;
 	// any other ignores peers' Kubernetes access.
 	takesKubernetes bool
-	served          *mtcpv1.ServedRoutes
+	// takesProfiles: the gateway declared gateway.kube.v2 too, so it reads
+	// the scope table and peers' scoped grants (§7.12); without it, as a v1
+	// gateway, it ignores them. scopes is the table the map holds.
+	takesProfiles bool
+	scopes        *mtcpv1.KubernetesScopeTable
+	// compiled is scopes compiled, for the table compiledFrom: a snapshot or
+	// a delta that carries a table replaces the pointer, so it is compiled
+	// once per table, not on every build.
+	compiled     compiledScopes
+	compiledFrom *mtcpv1.KubernetesScopeTable
+	compiledOnce bool
+	served       *mtcpv1.ServedRoutes
 	// takesServed: the node declared router.subnet.v1.
 	takesServed bool
 	servedExits *mtcpv1.ServedExits
@@ -119,6 +130,8 @@ func (state *mapState) applySnapshot(snapshot *mtcpv1.MapSnapshot) error {
 	state.servedExits, state.exits = snapshot.GetServedExits(), snapshot.GetExits()
 	state.relayMap = bytes.Clone(snapshot.GetRelayMap())
 	state.revisions = snapshot.GetNetworkRevisions()
+	// A snapshot without a table holds none (§7.12).
+	state.scopes = snapshot.GetKubernetesScopes()
 	state.holdKubeClusters(clusters)
 	return nil
 }
@@ -189,6 +202,10 @@ func (state *mapState) applyDelta(delta *mtcpv1.MapDelta) error {
 	}
 	if len(delta.GetNetworkRevisions()) != 0 {
 		state.revisions = delta.GetNetworkRevisions()
+	}
+	// A present table replaces the whole of it (§7.12).
+	if delta.GetKubernetesScopes() != nil {
+		state.scopes = delta.GetKubernetesScopes()
 	}
 	state.holdKubeClusters(clusters)
 	return nil
@@ -282,15 +299,34 @@ func (state *mapState) build(input snapshotInput) (networkmap.Snapshot, error) {
 		ids = append(ids, id)
 	}
 	slices.Sort(ids)
+	// References resolve against the whole map as it stands (§7.12).
+	var scopes compiledScopes
+	if state.takesKubernetes && state.takesProfiles {
+		if !state.compiledOnce || state.compiledFrom != state.scopes {
+			state.compiled, state.compiledFrom, state.compiledOnce = compileKubernetesScopes(state.scopes), state.scopes, true
+		}
+		scopes = state.compiled
+	}
 	peers := make([]networkmap.Node, 0, len(ids))
 	for _, id := range ids {
 		peer, err := convertDevice(state.peers[id], false, input.now)
 		if err != nil {
 			return networkmap.Snapshot{}, err
 		}
+		if peer.Kubernetes != nil && state.takesProfiles && !scopes.withheld {
+			access := state.peers[id].GetKubernetes()
+			scoped, ordered := scopedKubernetesGrants(access.GetScopedGrants(), scopes.scopes)
+			if !ordered || len(access.GetGrants())+len(access.GetScopedGrants()) > sharedmtcp.KubernetesPeerGrantsMaximum {
+				peer.Kubernetes = nil
+			} else {
+				peer.Kubernetes.Scoped = scoped
+			}
+		}
 		// A peer's malformed access costs that peer its access, never the
-		// gateway its map (fail closed for one peer).
-		if !state.takesKubernetes || peer.Alias != nil || networkmap.CheckKubernetesAccess(peer.Kubernetes) != nil {
+		// gateway its map (fail closed for one peer); an unusable table costs
+		// every peer theirs.
+		if !state.takesKubernetes || peer.Alias != nil || scopes.withheld ||
+			networkmap.CheckKubernetesAccess(peer.Kubernetes) != nil {
 			peer.Kubernetes = nil
 		}
 		if peer.Alias != nil {
@@ -308,7 +344,7 @@ func (state *mapState) build(input snapshotInput) (networkmap.Snapshot, error) {
 	}
 	snapshot := networkmap.Snapshot{
 		Revision: input.revision, ControlTime: input.controlTime, Self: self, Peers: peers, Policy: policy, DNS: dns,
-		Relays: map[int]networkmap.RelayRegion{},
+		Relays: map[int]networkmap.RelayRegion{}, KubernetesScopes: scopes.scopes, KubernetesWithheld: scopes.withheld,
 	}
 	if state.takesRoutes {
 		if snapshot.Routes, err = convertRoutes(state.routes); err != nil {

@@ -1,8 +1,7 @@
 // Package kubeprofile decides what a Kubernetes access profile lets through a
-// cluster's gateway (K2 design, docs/k8s-k2-access-profile-design.md). A
-// profile only narrows: what reaches the API server still carries the
-// token of the cluster group, so the cluster's RBAC stays the ceiling
-// (K2-I1). Its rules read as RBAC's PolicyRule and match as the RBAC
+// cluster's gateway (K2 design). A profile only narrows: what reaches the
+// API server still carries the token of the cluster group, so the cluster's
+// RBAC stays the ceiling (K2-I1). Its rules read as RBAC's PolicyRule and match as the RBAC
 // authorizer does, except where the design is stricter on purpose (S1–S7).
 // The gateway, Core's Explain and the Console's preview share this package
 // so that the three never disagree.
@@ -266,21 +265,30 @@ func resource(value string) bool {
 	return (name == resourceAll || dnsLabel(name)) && dnsLabel(subresource)
 }
 
-// resourceName is an object's name: printable ASCII without '/' or '%'.
+// htmlEscaped are the characters Go's JSON encoder escapes beyond '"' and
+// '\\': refused, so that the canonical form needs no encoder's choice
+// (mtcp-v1 §7.12).
+func htmlEscaped(character byte) bool {
+	return character == '<' || character == '>' || character == '&'
+}
+
+// resourceName is an object's name: printable ASCII without '/', '%', '<',
+// '>' or '&'.
 func resourceName(name string) bool {
 	if name == "" || len(name) > maximumName {
 		return false
 	}
 	for index := range len(name) {
 		character := name[index]
-		if character <= ' ' || character > '~' || character == '/' || character == '%' {
+		if character <= ' ' || character > '~' || character == '/' || character == '%' || htmlEscaped(character) {
 			return false
 		}
 	}
 	return true
 }
 
-// nonResourceURL is "*" or an absolute path, a '*' only at its end.
+// nonResourceURL is "*" or an absolute path, a '*' only at its end; no '%',
+// '<', '>' or '&'.
 func nonResourceURL(path string) bool {
 	if path == nonResourceAll {
 		return true
@@ -290,7 +298,7 @@ func nonResourceURL(path string) bool {
 	}
 	for index := range len(path) {
 		character := path[index]
-		if character <= ' ' || character > '~' || character == '%' ||
+		if character <= ' ' || character > '~' || character == '%' || htmlEscaped(character) ||
 			character == '*' && index != len(path)-1 {
 			return false
 		}

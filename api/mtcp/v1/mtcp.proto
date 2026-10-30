@@ -314,6 +314,10 @@ message KubeAuditIntent {
   string impersonated = 11;   // at most 253 bytes; empty: none
   bytes token_id = 12;        // the Device token's ID, at most 32 bytes
   int64 observed_ms = 13;     // when the gateway received the request
+  // gateway.kube.v2 (section 7.12): the scope hash of the grant that let the
+  // request through, for the group it used; empty: a grant of the whole group.
+  bytes profile = 14;
+  bool report_allowed = 15; // the grant is REPORT and its profile would deny
 }
 
 // KubeAuditAck answers each intent of a batch, in order (section 6.10).
@@ -344,10 +348,24 @@ message KubeAuditOutcome {
 
 message KubeAuditDenials {
   string peer_device_id = 1;
-  string reason = 2; // unauthenticated, forbidden, not_granted, stale, limited, other
+  // unauthenticated, forbidden, not_granted, stale, limited, other;
+  // gateway.kube.v2: profile_denied, profile_would_deny (section 7.12)
+  string reason = 2;
   uint32 count = 3;
   int64 first_ms = 4;
   int64 last_ms = 5;
+  KubeAuditDenialSample sample = 6; // gateway.kube.v2: one request of the window
+}
+
+// KubeAuditDenialSample is one request a profile refused or would refuse
+// (section 7.12): what it asked, never its body or its credentials.
+message KubeAuditDenialSample {
+  string verb = 1;        // 1 to 32 bytes
+  string api_group = 2;   // at most 253 bytes
+  string resource = 3;    // at most 63 bytes
+  string subresource = 4; // at most 63 bytes
+  string namespace = 5;   // at most 63 bytes
+  bytes scope = 6;        // 32 bytes: the scope hash of the peer's grant that refused it
 }
 
 // ---- Map ----
@@ -376,6 +394,7 @@ message MapSnapshot {
   ExitConfig exits = 11; // routes.exit.v1: Exit Pools this node may use (section 7.7)
   ServedExits served_exits = 12; // router.exit.v1: the Exit Pool this node is an exit node of
   KubernetesClusters kubernetes_clusters = 13; // kube.ca1: the clusters this node may reach and their roots (section 7.11)
+  KubernetesScopeTable kubernetes_scopes = 14; // gateway.kube.v2: the profiles and scopes of the cluster's release (section 7.12)
 }
 
 message MapDelta {
@@ -394,6 +413,7 @@ message MapDelta {
   ExitConfig exits = 13; // replaces Exit Pools when set; set and empty clears them
   ServedExits served_exits = 14; // replaces served Exit Pools when set; set and empty clears them
   KubernetesClusters kubernetes_clusters = 15; // kube.ca1: replaces the clusters when set (section 7.11)
+  KubernetesScopeTable kubernetes_scopes = 16; // gateway.kube.v2: replaces the table when set (section 7.12)
 }
 
 message MapAck {
@@ -478,15 +498,63 @@ message KubernetesCluster {
 }
 
 // KubernetesAccess is what a cluster's gateway may let a peer do in the
-// cluster: the Kubernetes groups it holds (7.8).
+// cluster: the Kubernetes groups it holds (7.8), whole or narrowed by an
+// access profile (7.12). At least one grant across both lists.
 message KubernetesAccess {
-  repeated KubernetesGrant grants = 1; // sorted by group; at least one
+  repeated KubernetesGrant grants = 1; // the whole group; sorted by group, distinct
   int64 owner_changed_ms = 2;          // when the peer last changed owner; 0: never
+  repeated KubernetesScopedGrant scoped_grants = 3; // gateway.kube.v2: strictly sorted by key (7.12)
 }
 
 message KubernetesGrant {
   string group = 1;
   int64 valid_until_ms = 2; // never 0
+}
+
+// KubernetesScopedGrant is a group as one rule narrows it (7.12): never the
+// whole group, whatever its fields.
+message KubernetesScopedGrant {
+  enum Mode {
+    MODE_UNSPECIFIED = 0; // ENFORCE
+    REPORT = 1;           // lets the whole group through until report_until_ms, counting what it would deny
+  }
+  string group = 1;
+  bytes scope = 2;            // 32 bytes: a scope of the map's table
+  Mode mode = 3;
+  int64 report_until_ms = 4;  // REPORT only; 0 otherwise
+  int64 valid_until_ms = 5;   // never 0
+}
+
+// KubernetesScopeTable is every profile and scope of the release of the
+// gateway's cluster (7.12), each list strictly sorted by hash.
+message KubernetesScopeTable {
+  repeated KubernetesProfile profiles = 1;
+  repeated KubernetesScope scopes = 2;
+}
+
+// KubernetesProfile is an access profile: its rules, as RBAC's PolicyRule.
+message KubernetesProfile {
+  bytes hash = 1;       // 32 bytes: its content hash (7.12)
+  string profile_id = 2; // shown to people only; never decides or records anything
+  string name = 3;
+  repeated KubernetesProfileRule namespaced = 4;
+  repeated KubernetesProfileRule cluster = 5;
+}
+
+message KubernetesProfileRule {
+  repeated string api_groups = 1;
+  repeated string resources = 2;
+  repeated string verbs = 3;
+  repeated string resource_names = 4;
+  repeated string non_resource_urls = 5;
+}
+
+// KubernetesScope is a profile as one rule applies it.
+message KubernetesScope {
+  bytes hash = 1;              // 32 bytes: its scope hash (7.12)
+  bytes profile = 2;           // 32 bytes: a profile of the table
+  repeated string namespaces = 3; // strictly sorted; "*" alone: every namespace
+  bool cluster_part = 4;
 }
 
 message PeerPatch {

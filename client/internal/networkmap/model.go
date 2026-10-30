@@ -52,6 +52,13 @@ type Snapshot struct {
 	// kube.ca1, so Core speaks for the list on it; with the session up and
 	// no hold, Core confirms the list (K1e, review e1a H3).
 	KubernetesClustersNegotiated bool
+	// KubernetesScopes are the scopes a gateway's peers' scoped grants name
+	// (mtcp-v1 §7.12), by scope hash: only the usable ones; nil when the
+	// gateway does not take profiles.
+	KubernetesScopes map[[32]byte]KubernetesScope
+	// KubernetesWithheld: the map's scope table was unusable as a whole, so
+	// every peer's Kubernetes access is withheld until a valid one comes.
+	KubernetesWithheld bool
 	// DroppedAliasPeers counts the shared Devices the client left out of
 	// this map because their alias could not be used (expired, invalid or
 	// colliding); for the log, never for authority.

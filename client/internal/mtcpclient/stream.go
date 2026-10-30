@@ -465,6 +465,7 @@ func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, e
 	state := newMapState(stream.options.EnableSubnetRoutes)
 	state.takesServed = stream.options.EnableSubnetRouter
 	state.takesKubernetes = c.gateway != nil
+	state.takesProfiles = c.gateway != nil && stream.options.KubeProfiles
 	state.takesKubernetesCA = c.gateway != nil && stream.options.KubeCerts != nil
 	state.takesServedExits = stream.options.EnableExitNode
 	state.takesExits = stream.options.EnableExits
@@ -1435,6 +1436,10 @@ func streamCapabilities(options controlplane.NetmapOptions, gateway bool) []stri
 	if gateway {
 		// A Kubernetes gateway takes its peers' Kubernetes access (§7.8).
 		capabilities = append(capabilities, "gateway.kube.v1")
+		if options.KubeProfiles {
+			// It narrows groups by access profiles (§7.12).
+			capabilities = append(capabilities, "gateway.kube.v2")
+		}
 		if options.KubeCerts != nil {
 			// It asks for its replica certificate (§6.9, §7.10).
 			capabilities = append(capabilities, kubeCertCapability)

@@ -2,8 +2,13 @@ package kubeprofile
 
 import "slices"
 
-// maximumNamespaces bounds the namespaces of a Policy rule (K2 §5.2).
-const maximumNamespaces = 64
+// maximumNamespaces bounds the namespaces of a Policy rule (K2 §5.2);
+// maximumRawNamespaces bounds them as sent, before duplicates are dropped,
+// so a long list costs no sorting first (review K2a M2).
+const (
+	maximumNamespaces    = 64
+	maximumRawNamespaces = 4 * maximumNamespaces
+)
 
 // allNamespaces stands alone for every namespace.
 const allNamespaces = "*"
@@ -59,20 +64,33 @@ func NewScope(profile Profile, namespaces []string, clusterPart bool) (Scope, er
 	if err := Validate(profile); err != nil {
 		return Scope{}, err
 	}
+	names, err := checkNamespaces(namespaces)
+	if err != nil {
+		return Scope{}, err
+	}
+	return Scope{profile: Normalize(profile), namespaces: names, everywhere: names[0] == allNamespaces,
+		clusterPart: clusterPart, valid: true}, nil
+}
+
+// checkNamespaces returns a rule's namespaces sorted and distinct: every
+// namespace ("*" alone) or 1 to 64 DNS labels.
+func checkNamespaces(namespaces []string) ([]string, error) {
+	if len(namespaces) > maximumRawNamespaces {
+		return nil, invalid("a rule needs 1 to %d namespaces", maximumNamespaces)
+	}
 	names := sortedSet(namespaces)
 	switch {
 	case len(names) == 0 || len(names) > maximumNamespaces:
-		return Scope{}, invalid("a rule needs 1 to %d namespaces", maximumNamespaces)
+		return nil, invalid("a rule needs 1 to %d namespaces", maximumNamespaces)
 	case slices.Equal(names, []string{allNamespaces}):
 	default:
 		for _, name := range names {
 			if !dnsLabel(name) {
-				return Scope{}, invalid("namespace %q is not a DNS label", name)
+				return nil, invalid("namespace %q is not a DNS label", name)
 			}
 		}
 	}
-	return Scope{profile: Normalize(profile), namespaces: names, everywhere: names[0] == allNamespaces,
-		clusterPart: clusterPart, valid: true}, nil
+	return names, nil
 }
 
 // Namespaces returns the rule's namespaces, sorted.

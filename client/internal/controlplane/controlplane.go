@@ -296,6 +296,10 @@ type NetmapOptions struct {
 	// dropped when they cannot be (mtcp-v1 §6.10).
 	KubeAudits       <-chan KubeAuditCall
 	KubeAuditReports <-chan KubeAuditReport
+	// KubeProfiles, for a Kubernetes gateway that applies access profiles:
+	// the stream declares gateway.kube.v2 and its maps carry the scope
+	// table and peers' scoped grants (mtcp-v1 §7.12).
+	KubeProfiles bool
 	// RouteSelection, with EnableSubnetRoutes, carries the router this node
 	// sends each Site's traffic to; each set is sent in a
 	// RouteSelectionReport when Core takes it (routes.selection1), again

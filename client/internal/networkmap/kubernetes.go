@@ -1,14 +1,17 @@
 package networkmap
 
 import (
+	"bytes"
 	"errors"
 	"slices"
 	"strings"
 	"time"
+
+	"meshtransit.net/shared/kubeprofile"
 )
 
-// maxKubernetesGrants bounds a peer's groups: one cluster's rules grant at
-// most 64 (K1a3 §3.1).
+// maxKubernetesGrants bounds a peer's grants across both lists: one
+// cluster's rules grant at most 64 (K1a3 §3.1, mtcp-v1 §7.12).
 const maxKubernetesGrants = 64
 
 // KubernetesAccess is what a Kubernetes gateway's map says a peer may do in
@@ -17,7 +20,11 @@ const maxKubernetesGrants = 64
 // never). Only a gateway that negotiated gateway.kube.v1 gets it, and only
 // on peers of its own Network.
 type KubernetesAccess struct {
-	Grants         []KubernetesGrant
+	// Grants are the groups the peer holds whole.
+	Grants []KubernetesGrant
+	// Scoped are the groups an access profile narrows (mtcp-v1 §7.12), only
+	// for a gateway that takes profiles. Never the whole group.
+	Scoped         []KubernetesScopedGrant
 	OwnerRef       string
 	OwnerChangedAt time.Time
 }
@@ -28,8 +35,28 @@ type KubernetesGrant struct {
 	ValidUntil time.Time
 }
 
-// GroupsAt returns the groups the peer holds at now, sorted: a grant past its
-// deadline is honoured no more, whatever Core sends next.
+// KubernetesScopedGrant is a group as one rule narrows it, until
+// ValidUntil: by the map's scope named Scope; Report lets the whole group
+// through until ReportUntil, counting what the profile would deny.
+type KubernetesScopedGrant struct {
+	Group       string
+	Scope       [32]byte
+	Report      bool
+	ReportUntil time.Time
+	ValidUntil  time.Time
+}
+
+// KubernetesScope is a scope of a gateway's map (mtcp-v1 §7.12): the
+// profile it applies, by hash and name, as one rule applies it.
+type KubernetesScope struct {
+	ProfileHash [32]byte
+	ProfileName string
+	Scope       kubeprofile.Scope
+}
+
+// GroupsAt returns the groups the peer holds whole at now, sorted: a grant
+// past its deadline is honoured no more, whatever Core sends next. Scoped
+// grants are never among them.
 func (access *KubernetesAccess) GroupsAt(now time.Time) []string {
 	if access == nil {
 		return nil
@@ -44,18 +71,26 @@ func (access *KubernetesAccess) GroupsAt(now time.Time) []string {
 }
 
 // CheckKubernetesAccess reports what is wrong with a peer's access, if
-// anything: one to 64 sorted, distinct groups, each a DNS label with a
-// deadline, and an owner that is the Workspace (empty), a member's public ID
-// or "tags:" and up to 256 sorted tag IDs (mtcp-v1 §7.8).
+// anything: one to 64 grants across both lists; whole grants sorted,
+// distinct groups; scoped grants strictly sorted by key (mtcp-v1 §7.12);
+// each group a DNS label with a deadline; and an owner that is the Workspace
+// (empty), a member's public ID or "tags:" and up to 256 sorted tag IDs
+// (mtcp-v1 §7.8).
 func CheckKubernetesAccess(access *KubernetesAccess) error {
 	if access == nil {
 		return nil
 	}
-	if len(access.Grants) == 0 || len(access.Grants) > maxKubernetesGrants {
+	if count := len(access.Grants) + len(access.Scoped); count == 0 || count > maxKubernetesGrants {
 		return errors.New("kubernetes grant count is invalid")
 	}
+	for index, grant := range access.Scoped {
+		if !ValidKubernetesGroup(grant.Group) || grant.ValidUntil.IsZero() ||
+			index > 0 && compareScopedGrants(access.Scoped[index-1], grant) >= 0 {
+			return errors.New("kubernetes scoped grant is invalid")
+		}
+	}
 	for index, grant := range access.Grants {
-		if !validKubernetesGroup(grant.Group) || grant.ValidUntil.IsZero() ||
+		if !ValidKubernetesGroup(grant.Group) || grant.ValidUntil.IsZero() ||
 			index > 0 && access.Grants[index-1].Group >= grant.Group {
 			return errors.New("kubernetes grant is invalid")
 		}
@@ -64,6 +99,24 @@ func CheckKubernetesAccess(access *KubernetesAccess) error {
 		return errors.New("kubernetes owner is invalid")
 	}
 	return nil
+}
+
+// compareScopedGrants orders scoped grants by their key (mtcp-v1 §7.12):
+// group, scope bytewise, enforcing before reporting, report deadline.
+func compareScopedGrants(left, right KubernetesScopedGrant) int {
+	if order := strings.Compare(left.Group, right.Group); order != 0 {
+		return order
+	}
+	if order := bytes.Compare(left.Scope[:], right.Scope[:]); order != 0 {
+		return order
+	}
+	if left.Report != right.Report {
+		if left.Report {
+			return 1
+		}
+		return -1
+	}
+	return left.ReportUntil.Compare(right.ReportUntil)
 }
 
 // maxKubernetesOwnerTags bounds the tags an owner reference lists.
@@ -107,9 +160,9 @@ func validPublicID(id string) bool {
 	return true
 }
 
-// validKubernetesGroup accepts one DNS label: lowercase letters, digits and
+// ValidKubernetesGroup accepts one DNS label: lowercase letters, digits and
 // inner hyphens, at most 63 bytes.
-func validKubernetesGroup(group string) bool {
+func ValidKubernetesGroup(group string) bool {
 	if group == "" || len(group) > 63 || group[0] == '-' || group[len(group)-1] == '-' {
 		return false
 	}
@@ -129,6 +182,7 @@ func CloneKubernetesAccess(access *KubernetesAccess) *KubernetesAccess {
 	}
 	cloned := *access
 	cloned.Grants = slices.Clone(access.Grants)
+	cloned.Scoped = slices.Clone(access.Scoped)
 	return &cloned
 }
 

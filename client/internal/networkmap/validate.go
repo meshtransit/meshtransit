@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"net/netip"
 	"strings"
 	"time"
@@ -62,6 +63,9 @@ func ValidateAndClone(snapshot Snapshot, now time.Time) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
 	if err := CheckKubernetesClusters(snapshot.KubernetesClusters); err != nil {
+		return Snapshot{}, fmt.Errorf("%w: %w", ErrInvalid, err)
+	}
+	if err := checkKubernetesScopes(snapshot); err != nil {
 		return Snapshot{}, fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
 	if snapshot.Audit.Enabled() && snapshot.Audit.NodeID() != snapshot.Self.ID {
@@ -591,6 +595,8 @@ func cloneSnapshot(snapshot Snapshot) Snapshot {
 		}
 	}
 	cloned.KubernetesClusters = cloneKubernetesClusters(snapshot.KubernetesClusters)
+	// A scope is a value whose lists nothing changes: the map is copied.
+	cloned.KubernetesScopes = maps.Clone(snapshot.KubernetesScopes)
 
 	return cloned
 }
@@ -626,4 +632,24 @@ func cloneNode(node Node) Node {
 	node.Endpoints = append([]netip.AddrPort(nil), node.Endpoints...)
 
 	return node
+}
+
+// checkKubernetesScopes holds a gateway's map to mtcp-v1 §7.12 whoever built
+// it: a withheld table leaves no peer any access, and every scoped grant
+// names a usable scope of the map.
+func checkKubernetesScopes(snapshot Snapshot) error {
+	for _, peer := range snapshot.Peers {
+		if peer.Kubernetes == nil {
+			continue
+		}
+		if snapshot.KubernetesWithheld {
+			return errors.New("a peer keeps Kubernetes access while the scope table is withheld")
+		}
+		for _, grant := range peer.Kubernetes.Scoped {
+			if _, found := snapshot.KubernetesScopes[grant.Scope]; !found {
+				return errors.New("a scoped grant names no scope of the map")
+			}
+		}
+	}
+	return nil
 }
