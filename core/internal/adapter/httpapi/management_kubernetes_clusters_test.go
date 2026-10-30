@@ -59,9 +59,11 @@ type kubernetesClusterStub struct {
 	exportPageFailure error
 	// exportPageDelay slows each page: the stream outlives the request.
 	exportPageDelay time.Duration
-	denialRanges    [][2]time.Time
-	retires         []kubecluster.CARetireRequestCommand
-	ratchets        []kubecluster.RatchetChange
+	// exportPages is the number of full pages served, at least one; served counts them.
+	exportPages, exportPagesServed int
+	denialRanges                   [][2]time.Time
+	retires                        []kubecluster.CARetireRequestCommand
+	ratchets                       []kubecluster.RatchetChange
 }
 
 func (stub *kubernetesClusterStub) ReadApproverAdditions(context.Context, accountsession.Session, network.Scope,
@@ -298,11 +300,13 @@ func (stub *kubernetesClusterStub) ExportPage(_ context.Context, _ kubecluster.E
 	if !after.IsZero() && stub.exportPageFailure != nil {
 		return nil, stub.exportPageFailure
 	}
-	if !after.IsZero() {
+	if !after.IsZero() && stub.exportPagesServed >= stub.exportPages {
 		return nil, nil
 	}
+	stub.exportPagesServed++
 	records := make([]kubecluster.ExportRecord, min(stub.exportRecords, kubecluster.ExportPageSize))
-	start := time.Date(2026, time.October, 29, 13, 0, 0, 0, time.UTC)
+	start := time.Date(2026, time.October, 29, 13, 0, 0, 0, time.UTC).
+		Add(time.Duration(stub.exportPagesServed-1) * kubecluster.ExportPageSize * time.Second)
 	for index := range records {
 		id, _ := publicid.New()
 		records[index] = kubecluster.ExportRecord{AuditID: id, ReceivedAt: start.Add(time.Duration(index) * time.Second),

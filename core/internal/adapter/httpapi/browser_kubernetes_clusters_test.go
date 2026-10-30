@@ -2,8 +2,12 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -260,5 +264,123 @@ func TestBrowserExplainKubernetesClusterRevalidatesBeforeReading(t *testing.T) {
 		fixture.explain != 0 {
 		t.Fatalf("status %d, auth %d, cluster calls %v, explained %d", response.Code, fixture.auth,
 			fixture.kubernetesClusters.calls, fixture.explain)
+	}
+}
+
+// The Console's export streams past the 256 KiB a buffered browser answer
+// holds; a refusal stays buffered (K1d d1d-b, the 502 at record 1044).
+func TestBrowserManagementStreamsKubernetesOperationExport(t *testing.T) {
+	t.Parallel()
+	browser, fixture := newBrowserManagementFixture(t)
+	fixture.kubernetesClusters.exportNamespace = "mt-kube-k1"
+	fixture.kubernetesClusters.exportRecords = kubecluster.ExportPageSize
+	fixture.kubernetesClusters.exportPages = 4
+	path := kubernetesClustersTestPath("/" + kubernetesTestCluster +
+		"/operation-exports?from=2026-10-29T00:00:00Z&to=2026-10-30T00:00:00Z")
+	streamed := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+	if err := browser.Handle(streamed, browserManagementReadRequest(t, path)); err != nil {
+		t.Fatal(err)
+	}
+	var file struct {
+		Records  []map[string]any `json:"records"`
+		Complete bool             `json:"complete"`
+	}
+	body := streamed.Body.Bytes()
+	if streamed.Code != http.StatusOK || len(body) <= maximumBrowserManagementResponseBytes ||
+		json.Unmarshal(body, &file) != nil || len(file.Records) != 4*kubecluster.ExportPageSize || !file.Complete {
+		t.Fatalf("export = %d, %d bytes, %d records", streamed.Code, len(body), len(file.Records))
+	}
+	if streamed.Header().Get("Content-Length") != "" || streamed.Header().Get("Set-Cookie") != "" ||
+		!strings.HasPrefix(streamed.Header().Get("Content-Disposition"), "attachment;") ||
+		streamed.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("export header %v", streamed.Header())
+	}
+
+	refusing, refusingFixture := newBrowserManagementFixture(t)
+	refusingFixture.kubernetesClusters.exportCount = 1
+	refused := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+	if err := refusing.Handle(refused, browserManagementReadRequest(t, path)); err != nil {
+		t.Fatal(err)
+	}
+	if refused.Code != http.StatusConflict || refused.Header().Get("Content-Length") == "" ||
+		!strings.Contains(refused.Body.String(), "gateway_namespace_unknown") {
+		t.Fatalf("refusal = %d, %v; %s", refused.Code, refused.Header(), refused.Body)
+	}
+}
+
+// A 200 the session no longer admits sends nothing: the export's next
+// write fails and it aborts.
+func TestBrowserStreamingResponseRefusesWithoutAdmission(t *testing.T) {
+	t.Parallel()
+	target := newLoginHTTPRecorder()
+	response := &browserStreamingResponse{browserManagementResponse: &browserManagementResponse{header: http.Header{}},
+		target: target, admit: func(http.Header) error { return ErrBrowserManagementUnavailable }}
+	response.WriteHeader(http.StatusOK)
+	if written, err := response.Write([]byte("{")); err == nil || written != 0 || target.Body.Len() != 0 ||
+		response.started {
+		t.Fatalf("write without admission = %d, %v; target %q", written, err, target.Body)
+	}
+}
+
+// Over a real connection the stream outlives the browser's request
+// timeout. Handle's read deadline cancelling it (review H1) is a race the
+// context's own timer usually wins, so this guards the stream, not the race.
+func TestBrowserManagementExportOutlivesRequestTimeout(t *testing.T) {
+	t.Parallel()
+	browser, fixture := newBrowserManagementFixture(t)
+	browser.management.timeout = 100 * time.Millisecond
+	fixture.kubernetesClusters.exportNamespace = "mt-kube-k1"
+	fixture.kubernetesClusters.exportRecords = kubecluster.ExportPageSize
+	fixture.kubernetesClusters.exportPages = 3
+	fixture.kubernetesClusters.exportPageDelay = 150 * time.Millisecond
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if err := browser.Handle(response, request); err != nil {
+			http.Error(response, err.Error(), http.StatusBadGateway)
+		}
+	}))
+	server.StartTLS()
+	t.Cleanup(server.Close)
+	model := browserManagementReadRequest(t, kubernetesClustersTestPath("/"+kubernetesTestCluster+
+		"/operation-exports?from=2026-10-29T00:00:00Z&to=2026-10-30T00:00:00Z"))
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+model.URL.RequestURI(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header, request.Host = model.Header.Clone(), model.Host
+	response, err := server.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	body, err := io.ReadAll(response.Body)
+	var file struct {
+		Records  []json.RawMessage `json:"records"`
+		Complete bool              `json:"complete"`
+	}
+	if err != nil || response.StatusCode != http.StatusOK || json.Unmarshal(body, &file) != nil ||
+		len(file.Records) != 3*kubecluster.ExportPageSize || !file.Complete {
+		t.Fatalf("export = %d, %v, %d records; tail %q", response.StatusCode, err, len(file.Records),
+			body[max(0, len(body)-80):])
+	}
+}
+
+// A streamed 200 with a header a browser answer never carries, or without
+// a session, sends nothing (review M2, L2).
+func TestBrowserManagementAdmitStreamRefuses(t *testing.T) {
+	t.Parallel()
+	browser, _ := newBrowserManagementFixture(t)
+	for name, test := range map[string]struct {
+		header    http.Header
+		admission *browserManagementAdmission
+	}{
+		"a cookie":   {http.Header{"Set-Cookie": {"x=1"}}, &browserManagementAdmission{browser: browser, hasSession: true}},
+		"a length":   {http.Header{"Content-Length": {"1"}}, &browserManagementAdmission{browser: browser, hasSession: true}},
+		"no session": {http.Header{"Content-Type": {"application/json"}}, &browserManagementAdmission{browser: browser}},
+	} {
+		target := newLoginHTTPRecorder()
+		if err := browser.admitStream(t.Context(), target, test.header, test.admission); err == nil ||
+			len(target.Header()) != 0 || target.Body.Len() != 0 {
+			t.Errorf("%s: admitted %v, header %v", name, err, target.Header())
+		}
 	}
 }

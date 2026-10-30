@@ -335,6 +335,15 @@ func isKubernetesSigningTrustWrite(request *http.Request) bool {
 	return ok && request.Method == http.MethodPut && path.operation == kubernetesSigningTrustReplaceOperation
 }
 
+// isKubernetesOperationExportRead is the export a browser session streams.
+func isKubernetesOperationExportRead(request *http.Request) bool {
+	if request == nil || request.Method != http.MethodGet {
+		return false
+	}
+	path, ok := parseKubernetesClusterPath(request)
+	return ok && path.operation == kubernetesOperationExportOperation
+}
+
 // isKubernetesClusterRead admits the reads.
 func isKubernetesClusterRead(request *http.Request) bool {
 	return request != nil && request.Method == http.MethodGet && isKubernetesClusterOperation(request)

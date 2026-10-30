@@ -265,7 +265,15 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	operation := "unknown"
 	started := time.Now()
 	browser.telemetry.opened()
-	defer func() { browser.telemetry.closed(operation, resultErr, time.Since(started)) }()
+	defer func() {
+		// A streamed export that fails aborts with a panic; it counts as a
+		// failure (review M1).
+		if aborted := recover(); aborted != nil {
+			browser.telemetry.closed(operation, ErrBrowserManagementDelivery, time.Since(started))
+			panic(aborted)
+		}
+		browser.telemetry.closed(operation, resultErr, time.Since(started))
+	}()
 	if response.Header() == nil || !pristineBrowserManagementResponse(response.Header()) {
 		return ErrInvalidBrowserManagement
 	}
@@ -352,6 +360,13 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	request = request.WithContext(ctx)
 	candidate := &browserManagementResponse{header: response.Header().Clone()}
 	admission := &browserManagementAdmission{browser: browser, requiresProof: request.Method != http.MethodGet}
+	var served http.ResponseWriter = candidate
+	var stream *browserStreamingResponse
+	if isKubernetesOperationExportRead(request) {
+		stream = &browserStreamingResponse{browserManagementResponse: candidate, target: response,
+			admit: func(header http.Header) error { return browser.admitStream(ctx, response, header, admission) }}
+		served = stream
+	}
 	if prepare {
 		if err := browser.prepare(ctx, candidate, request, admission); err != nil {
 			return err
@@ -389,7 +404,10 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 			return err
 		}
 	} else {
-		browser.management.serveHTTP(candidate, request, admission)
+		browser.management.serveHTTP(served, request, admission)
+	}
+	if stream != nil && stream.started {
+		return nil
 	}
 	logoutCompleted := logout && candidate.status == http.StatusNoContent
 	invalidCandidateBody := logoutCompleted && len(candidate.body) != 0 || !logoutCompleted && len(candidate.body) == 0
@@ -439,6 +457,38 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	if err != nil || written != len(candidate.body) {
 		return ErrBrowserManagementDelivery
 	}
+	return nil
+}
+
+// admitStream checks a streamed 200 as a buffered answer is checked, then
+// sends its header; the body follows unbuffered.
+func (browser *BrowserManagement) admitStream(ctx context.Context, response http.ResponseWriter,
+	candidate http.Header, admission *browserManagementAdmission) error {
+	candidate.Del("WWW-Authenticate")
+	candidate.Del("Location")
+	if !pristineBrowserManagementResponse(candidate) || !boundedLoginHeaders(candidate) {
+		return ErrInvalidBrowserManagement
+	}
+	// Up to 64 MiB goes only to a session (review L2).
+	if admission == nil || !admission.hasSession {
+		return ErrBrowserManagementUnavailable
+	}
+	if err := admission.validate(ctx); err != nil || ctx.Err() != nil {
+		return ErrBrowserManagementUnavailable
+	}
+	// Handle's read deadline ends with the request's timeout; reached, it
+	// cancels the request and with it the export (review H1). The export's
+	// own deadline bounds the connection instead.
+	controller := http.NewResponseController(response)
+	if controller.SetReadDeadline(time.Now().Add(kubernetesExportDeadline)) != nil {
+		return ErrBrowserManagementUnavailable
+	}
+	header := response.Header()
+	clear(header)
+	for name, values := range candidate {
+		header[name] = values
+	}
+	response.WriteHeader(http.StatusOK)
 	return nil
 }
 
