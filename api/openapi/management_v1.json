@@ -2923,6 +2923,79 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/policy/kubernetes-access": {
+      "get": {
+        "operationId": "getPolicyKubernetesAccess",
+        "summary": "Read a release's Kubernetes access profiles and rule access",
+        "description": "Requires current policy.read, policy.validate or policy.publish (K2f). The access profiles of the release at policy_revision and how each of its rules to a Kubernetes cluster grants its groups: {\"full\": true} or a profile in namespaces. Read apart from GET …/policy, whose keys stay as they were. A revision with no release reads as empty; ask the revision GET …/policy names.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "policy_revision",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "The release's policy revision, as the ETag of GET …/policy gives it."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The release's Kubernetes access; ETag binds policy_revision",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Correlation-ID": {
+                "$ref": "#/components/headers/CorrelationID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyKubernetesAccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/devices/{device_id}/actions/revoke": {
       "post": {
         "operationId": "revokeDevice",
@@ -8178,6 +8251,160 @@
           }
         },
         "description": "A Kubernetes access profile (K2 §5.1): what a rule to a cluster may do within the groups it grants. It only narrows: the cluster's RBAC of each group stays the ceiling. At least one rule; at most 16 KiB normalized."
+      },
+      "PolicyKubernetesAccessResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "correlation_id"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "policy_revision",
+              "profiles",
+              "rules"
+            ],
+            "properties": {
+              "policy_revision": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "profiles": {
+                "type": "array",
+                "maxItems": 256,
+                "items": {
+                  "$ref": "#/components/schemas/PolicyKubernetesProfileRead"
+                }
+              },
+              "rules": {
+                "type": "array",
+                "maxItems": 10000,
+                "items": {
+                  "$ref": "#/components/schemas/PolicyKubernetesRuleRead"
+                }
+              }
+            }
+          },
+          "correlation_id": {
+            "$ref": "#/components/schemas/PublicID"
+          }
+        }
+      },
+      "PolicyKubernetesProfileRead": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "description",
+          "namespaced",
+          "cluster",
+          "content_hash"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/PublicID"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "namespaced": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KubernetesAccessProfileRule"
+            }
+          },
+          "cluster": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KubernetesAccessProfileRule"
+            }
+          },
+          "content_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "description": "An access profile of the release, normalized, with the content hash its rules pin."
+      },
+      "PolicyKubernetesRuleRead": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "rule_id",
+          "cluster_id",
+          "groups"
+        ],
+        "properties": {
+          "rule_id": {
+            "$ref": "#/components/schemas/PublicID"
+          },
+          "cluster_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "groups": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "maxItems": 16,
+            "items": {
+              "type": "string"
+            },
+            "description": "null for a rule released before groups (K1a3), which grants nothing through the cluster's gateways."
+          },
+          "access": {
+            "$ref": "#/components/schemas/PolicyKubernetesAccessRead"
+          }
+        },
+        "description": "A rule to a Kubernetes cluster: its groups, and how it grants them (absent with null groups)."
+      },
+      "PolicyKubernetesAccessRead": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "full": {
+            "type": "boolean",
+            "const": true,
+            "description": "The rule grants its groups in full."
+          },
+          "profile_id": {
+            "$ref": "#/components/schemas/PublicID"
+          },
+          "namespaces": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "maxLength": 63
+            }
+          },
+          "cluster_part": {
+            "type": "boolean"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "enforce",
+              "report"
+            ]
+          },
+          "report_until": {
+            "type": "string",
+            "format": "date-time",
+            "description": "With mode report: when the rule enforces, as released."
+          }
+        },
+        "description": "How a released rule grants its groups: full, or a profile in namespaces."
       },
       "KubernetesAccess": {
         "type": "object",

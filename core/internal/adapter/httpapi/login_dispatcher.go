@@ -328,7 +328,7 @@ func (dispatcher *LoginDispatcher) validRequest(response http.ResponseWriter, re
 		isNetworkMemberRead(request) ||
 		// A cluster's paged lists and operation reads carry a query (K1d
 		// d1); the cluster parser admits only their own keys.
-		isKubernetesClusterRead(request) || target.RawQuery == ""
+		isKubernetesClusterRead(request) || isPolicyKubernetesAccessRead(request) || target.RawQuery == ""
 }
 
 // MetricsCollector permits private root registration only, never a public endpoint.

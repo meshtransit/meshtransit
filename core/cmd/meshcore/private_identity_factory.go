@@ -386,6 +386,14 @@ func composePrivateIdentityFactory(
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
+	// K2f: the Console reads a release's access profiles and rule access.
+	policyKubernetesAccess, err := postgresadapter.NewKubernetesClusterPolicyGroupStore(dependencies.Runtime,
+		postgresadapter.AccountSessionOptions{
+			StatementTimeout: managementOptions.StatementTimeout, IdleTimeout: managementOptions.IdleTimeout,
+		})
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
 	shareTargets, err := target.NewService(shareTargetStore, clock)
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
@@ -499,7 +507,7 @@ func composePrivateIdentityFactory(
 		ClaimIDs: oidcauth.SystemClaimIDs{}, IssueMaterial: oidcauth.SystemIssueMaterial{},
 		Revocations: revocations, PolicyPublications: policies, PolicyCompilations: policyCompiler,
 		PolicyExplanations: policyExplainer, AccessGraphs: policyExplainer, PolicySimulations: policySimulator,
-		ActivePolicies: activePolicies, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations, AliasRanges: aliasRanges, DeviceLifetimes: deviceLifetimes, AddressUsage: addressUsage, AuditHistory: auditHistory, AuditExports: auditExports, Guardrails: guardrails, Interchanges: interchanges, InterchangeTrust: interchangeTrust, DeviceGroups: deviceGroups, Sites: sites, ExitPools: exitPools, DNSZones: dnsZones, ServiceNames: dnsZones, OfferServiceNames: resources.imports, ContractServiceNames: contractServiceNames, SiteRouterObservations: dependencies.Redis, SiteRouterUse: dependencies.Redis, ExitNodeUse: dependencies.Redis, DNSZoneStatus: dependencies.Redis, DNSResolverDevices: deviceInventory, DNSZoneReceivers: dnsZoneStore, Countries: dependencies.Countries, IdentityGroups: identityGroups, DeviceTags: deviceTags, DeviceLifecycle: deviceLifecycle, MemberLifecycle: memberLifecycle, NetworkMembers: networkMembers, EnrollmentKeys: dependencies.EnrollmentKeys, KubernetesClusters: dependencies.KubernetesClusters, Invitations: invitations, InvitationPreviews: invitations, InvitationAcceptor: invitationStore, AccountSignups: signups,
+		ActivePolicies: activePolicies, PolicyKubernetesAccess: policyKubernetesAccess, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations, AliasRanges: aliasRanges, DeviceLifetimes: deviceLifetimes, AddressUsage: addressUsage, AuditHistory: auditHistory, AuditExports: auditExports, Guardrails: guardrails, Interchanges: interchanges, InterchangeTrust: interchangeTrust, DeviceGroups: deviceGroups, Sites: sites, ExitPools: exitPools, DNSZones: dnsZones, ServiceNames: dnsZones, OfferServiceNames: resources.imports, ContractServiceNames: contractServiceNames, SiteRouterObservations: dependencies.Redis, SiteRouterUse: dependencies.Redis, ExitNodeUse: dependencies.Redis, DNSZoneStatus: dependencies.Redis, DNSResolverDevices: deviceInventory, DNSZoneReceivers: dnsZoneStore, Countries: dependencies.Countries, IdentityGroups: identityGroups, DeviceTags: deviceTags, DeviceLifecycle: deviceLifecycle, MemberLifecycle: memberLifecycle, NetworkMembers: networkMembers, EnrollmentKeys: dependencies.EnrollmentKeys, KubernetesClusters: dependencies.KubernetesClusters, Invitations: invitations, InvitationPreviews: invitations, InvitationAcceptor: invitationStore, AccountSignups: signups,
 		SessionWorkspaces: sessionWorkspaces, ShareTargets: shareTargets,
 		PolicyApprovals: policyApprovals, PolicyApprovalCatalog: policyApprovalCatalog,
 		ResourceCreations: resources.creations, ResourceCatalog: resources.catalog, ResourceSharing: resources.sharing,

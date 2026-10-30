@@ -18,6 +18,7 @@ import (
 	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/identity/oidcauth"
+	policycompilation "meshtransit.net/core/internal/domain/policy/compilation"
 	"meshtransit.net/core/internal/platform/ratelimit"
 )
 
@@ -83,24 +84,26 @@ type privateIdentityPorts struct {
 	AccessGraphs        httpapi.AccessGraphLister
 	PolicySimulations   httpapi.PolicySimulator
 	ActivePolicies      httpapi.ActivePolicyReader
-	WorkspaceRenames    httpapi.WorkspaceRenamer
-	WorkspaceRoles      httpapi.WorkspaceRoleManager
-	WorkspaceCreations  httpapi.WorkspaceCreator
-	NetworkCreations    httpapi.NetworkCreator
-	AliasRanges         httpapi.NetworkAliasRanges
-	DeviceLifetimes     httpapi.NetworkDeviceLifetimes
-	AddressUsage        httpapi.NetworkAddressUsage
-	AuditHistory        httpapi.AuditHistoryReader
-	AuditExports        httpapi.AuditExporter
-	Guardrails          httpapi.GuardrailManager
-	Interchanges        httpapi.InterchangeManager
-	InterchangeTrust    httpapi.InterchangeRelayTrust
-	DeviceGroups        httpapi.DeviceGroupManager
-	Sites               httpapi.SiteManager
-	ExitPools           httpapi.ExitPoolManager
-	DNSZones            httpapi.DNSZoneManager
-	ServiceNames        httpapi.ServiceNameChecker
-	OfferServiceNames   httpapi.OfferServiceNameReader
+	// PolicyKubernetesAccess reads a release's Kubernetes access (K2f).
+	PolicyKubernetesAccess policycompilation.KubernetesAccessReader
+	WorkspaceRenames       httpapi.WorkspaceRenamer
+	WorkspaceRoles         httpapi.WorkspaceRoleManager
+	WorkspaceCreations     httpapi.WorkspaceCreator
+	NetworkCreations       httpapi.NetworkCreator
+	AliasRanges            httpapi.NetworkAliasRanges
+	DeviceLifetimes        httpapi.NetworkDeviceLifetimes
+	AddressUsage           httpapi.NetworkAddressUsage
+	AuditHistory           httpapi.AuditHistoryReader
+	AuditExports           httpapi.AuditExporter
+	Guardrails             httpapi.GuardrailManager
+	Interchanges           httpapi.InterchangeManager
+	InterchangeTrust       httpapi.InterchangeRelayTrust
+	DeviceGroups           httpapi.DeviceGroupManager
+	Sites                  httpapi.SiteManager
+	ExitPools              httpapi.ExitPoolManager
+	DNSZones               httpapi.DNSZoneManager
+	ServiceNames           httpapi.ServiceNameChecker
+	OfferServiceNames      httpapi.OfferServiceNameReader
 	// ContractServiceNames reads, replaces and uses a running share's
 	// service names.
 	ContractServiceNames httpapi.ContractServiceNameManager
@@ -234,6 +237,7 @@ func composePrivateIdentity(
 		AccessGraphs:           ports.AccessGraphs,
 		PolicySimulations:      ports.PolicySimulations,
 		ActivePolicies:         ports.ActivePolicies,
+		PolicyKubernetesAccess: ports.PolicyKubernetesAccess,
 		WorkspaceRenames:       ports.WorkspaceRenames,
 		WorkspaceRoles:         ports.WorkspaceRoles,
 		WorkspaceCreations:     ports.WorkspaceCreations,

@@ -51,6 +51,7 @@ const (
 	policyPublishOperation                    = "policy_publish"
 	policySimulateOperation                   = "policy_simulate"
 	policyReadOperation                       = "policy_read"
+	policyKubernetesAccessOperation           = "policy_kubernetes_access_read"
 	policyExplainOperation                    = "policy_explain"
 	accessGraphListOperation                  = "access_graph_list"
 	policyApprovalRequestOperation            = "policy_approval_request"
@@ -241,15 +242,18 @@ type ManagementHandlerOptions struct {
 	PolicyCompilations PolicyCompiler
 	PolicyExplanations PolicyExplainer
 	// AccessGraphs lists the effective graph; nil answers that route 503.
-	AccessGraphs       AccessGraphLister
-	PolicySimulations  PolicySimulator
-	ActivePolicies     ActivePolicyReader
-	WorkspaceRenames   WorkspaceRenamer
-	WorkspaceRoles     WorkspaceRoleManager
-	WorkspaceCreations WorkspaceCreator
-	SessionWorkspaces  SessionWorkspaceSelector
-	ShareTargets       ShareTargetResolver
-	NetworkCreations   NetworkCreator
+	AccessGraphs      AccessGraphLister
+	PolicySimulations PolicySimulator
+	ActivePolicies    ActivePolicyReader
+	// PolicyKubernetesAccess reads a release's access profiles and how its
+	// rules to clusters grant their groups (K2f).
+	PolicyKubernetesAccess compilation.KubernetesAccessReader
+	WorkspaceRenames       WorkspaceRenamer
+	WorkspaceRoles         WorkspaceRoleManager
+	WorkspaceCreations     WorkspaceCreator
+	SessionWorkspaces      SessionWorkspaceSelector
+	ShareTargets           ShareTargetResolver
+	NetworkCreations       NetworkCreator
 	// AliasRanges reads and sets receiving-Network alias ranges; nil answers 503.
 	AliasRanges NetworkAliasRanges
 	// DeviceLifetimes reads and sets how long signed-in Devices live; nil answers 503.
@@ -357,6 +361,7 @@ type ManagementHandler struct {
 	accessGraphs              AccessGraphLister
 	policySimulator           PolicySimulator
 	activePolicies            ActivePolicyReader
+	policyKubernetesAccess    compilation.KubernetesAccessReader
 	workspaceRenames          WorkspaceRenamer
 	workspaceRoles            WorkspaceRoleManager
 	workspaceCreations        WorkspaceCreator
@@ -449,6 +454,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		accessGraphs:              options.AccessGraphs,
 		policySimulator:           options.PolicySimulations,
 		activePolicies:            options.ActivePolicies,
+		policyKubernetesAccess:    options.PolicyKubernetesAccess,
 		workspaceRenames:          options.WorkspaceRenames,
 		workspaceRoles:            options.WorkspaceRoles,
 		workspaceCreations:        options.WorkspaceCreations,
@@ -578,6 +584,7 @@ func (handler *ManagementHandler) serveHTTP(
 	policyPath, policyMatched := parsePolicyPublishPath(request)
 	policySimulationPath, policySimulationMatched := parsePolicySimulationPath(request)
 	policyReadPath, policyReadMatched := parseActivePolicyPath(request)
+	policyKubernetesAccessPathValue, policyKubernetesAccessMatched := parsePolicyKubernetesAccessPath(request)
 	policyApprovalPath, policyApprovalMatched := parsePolicyApprovalPath(request)
 	accessGraphPath, accessGraphMatched := parseAccessGraphExplainPath(request)
 	accessGraphListPath, accessGraphListMatched := parseAccessGraphListPath(request)
@@ -607,7 +614,7 @@ func (handler *ManagementHandler) serveHTTP(
 	enrollmentKeyPathValue, enrollmentKeyMatched := parseEnrollmentKeyPath(request)
 	invitationPathValue, invitationMatched := parseInvitationPath(request)
 	if !deviceMatched && !policyMatched && !policySimulationMatched && !policyApprovalMatched &&
-		!accessGraphMatched && !accessGraphListMatched && !resourceMatched && !sharingMatched && !policyReadMatched && !workspaceRenameMatched &&
+		!accessGraphMatched && !accessGraphListMatched && !resourceMatched && !sharingMatched && !policyReadMatched && !policyKubernetesAccessMatched && !workspaceRenameMatched &&
 		!workspaceRoleMatched && !workspaceCollectionMatched && !networkCollectionMatched && !sessionWorkspaceMatched &&
 		!shareTargetMatched && !aliasRangeMatched && !deviceLifetimeMatched && !addressUsageMatched && !auditEventMatched &&
 		!auditExportMatched && !guardrailMatched && !interchangeMatched && !deviceGroupMatched && !siteMatched && !exitPoolMatched &&
@@ -679,6 +686,8 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = policySimulateOperation
 	} else if policyReadMatched {
 		operation = policyReadOperation
+	} else if policyKubernetesAccessMatched {
+		operation = policyKubernetesAccessOperation
 	} else if policyApprovalMatched {
 		operation = policyApprovalPath.operation(request.Method)
 	} else if accessGraphMatched {
@@ -691,7 +700,8 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = resourcePath.operation(request.Method)
 	}
 	allowedMethod := http.MethodPost
-	if policyReadMatched || accessGraphListMatched || auditEventMatched || auditExportMatched {
+	if policyReadMatched || policyKubernetesAccessMatched || accessGraphListMatched || auditEventMatched ||
+		auditExportMatched {
 		allowedMethod = http.MethodGet
 	} else if policyApprovalMatched {
 		allowedMethod = policyApprovalPath.allowedMethod(request.Method)
@@ -951,6 +961,11 @@ func (handler *ManagementHandler) serveHTTP(
 	}
 	if policyReadMatched {
 		resultCode = handler.readActivePolicy(ctx, response, correlationID, policyReadPath, session)
+		return
+	}
+	if policyKubernetesAccessMatched {
+		resultCode = handler.readPolicyKubernetesAccess(ctx, response, correlationID,
+			policyKubernetesAccessPathValue, session)
 		return
 	}
 	if policyApprovalMatched {
