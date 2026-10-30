@@ -785,3 +785,42 @@ func TestLoginDispatcherRegistrationKeepsInvitations(t *testing.T) {
 		t.Fatal("adding the registration page dropped the invitation prepare endpoint")
 	}
 }
+
+// The login dispatcher in front of browser management admits a cluster's
+// paged lists and operation reads with their query; it closed the
+// connection on them before (K1d d1, found on the POC).
+func TestLoginDispatcherAdmitsKubernetesClusterQueries(t *testing.T) {
+	t.Parallel()
+	dispatcher, _, _, _ := dispatcherTestGraphWithManagement(t)
+	cluster := "/" + kubernetesTestCluster
+	for _, path := range []string{
+		kubernetesClustersTestPath(cluster + "/replicas?page_size=10"),
+		kubernetesClustersTestPath(cluster + "/join-keys?page_size=10"),
+		kubernetesClustersTestPath(cluster + "/certificate-authorities?page_size=10"),
+		kubernetesClustersTestPath(cluster + "/operations?class=write"),
+		kubernetesClustersTestPath(cluster + "/replica-requests?page_size=10"),
+		kubernetesClustersTestPath(cluster + "/ca-retire-requests?page_size=10"),
+		kubernetesClustersTestPath(cluster + "/operation-denial-counts?from=2026-10-29T00:00:00Z&to=2026-10-30T00:00:00Z"),
+		kubernetesClustersTestPath(cluster + "/operation-exports?from=2026-10-29T00:00:00Z"),
+	} {
+		if !dispatcher.validRequest(newLoginHTTPRecorder(), browserManagementReadRequest(t, path)) {
+			t.Errorf("the dispatcher refused %s", path)
+		}
+	}
+	// Other queries on a cluster stay refused.
+	for _, path := range []string{
+		kubernetesClustersTestPath(cluster + "?page_size=10"),
+		kubernetesClustersTestPath(cluster + "/replicas?limit=10"),
+		kubernetesClustersTestPath(cluster + "/audit-settings?x=1"),
+	} {
+		if dispatcher.validRequest(newLoginHTTPRecorder(), browserManagementReadRequest(t, path)) {
+			t.Errorf("the dispatcher admitted %s", path)
+		}
+	}
+	// A query never rides on a write.
+	write := browserManagementReadRequest(t, kubernetesClustersTestPath(cluster+"/join-keys?page_size=10"))
+	write.Method = http.MethodPost
+	if dispatcher.validRequest(newLoginHTTPRecorder(), write) {
+		t.Error("the dispatcher admitted a write with a query")
+	}
+}
