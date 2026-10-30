@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 257 {
-		t.Fatalf("len(Catalog()) = %d, want 257", len(catalog))
+	if len(catalog) != 258 {
+		t.Fatalf("len(Catalog()) = %d, want 258", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 257 {
-		t.Fatalf("LatestVersion() = %d, want 257", LatestVersion())
+	if LatestVersion() != 258 {
+		t.Fatalf("LatestVersion() = %d, want 258", LatestVersion())
 	}
 }
 
@@ -7694,6 +7694,36 @@ func TestMigration257KubernetesClusterDeleteRevokedReplicas(t *testing.T) {
 	} {
 		if !strings.Contains(migration.SQL, want) {
 			t.Errorf("migration 257 lacks %q", want)
+		}
+	}
+}
+
+func TestMigration258KubernetesAccessProfiles(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 258 || catalog[257].Version != 258 {
+		t.Fatalf("the catalog has no migration 258 (%d migrations)", len(catalog))
+	}
+	migration := catalog[257]
+	for _, want := range []string{
+		"CREATE TABLE mesh.kubernetes_access_profile_content (",
+		"CREATE TABLE mesh.policy_release_kubernetes_profile (",
+		"kubernetes_access_profile_content_immutable",
+		"policy_release_kubernetes_profile_immutable",
+		"ALTER TABLE mesh.kubernetes_access_profile_content FORCE ROW LEVEL SECURITY;",
+		"ALTER TABLE mesh.policy_release_kubernetes_profile FORCE ROW LEVEL SECURITY;",
+		"compiled_policy_group_rule_kubernetes_profile_check",
+		"compiled_policy_group_rule_kubernetes_profile_fk",
+		"kubernetes_report_until <= created_at + INTERVAL '14 days'",
+		"mesh.kubernetes_profiles_aware",
+		"would lose its access profile",
+		"ON CONFLICT (policy_release_id, profile_public_id) DO NOTHING",
+		"CREATE TRIGGER compiled_policy_group_rule_kubernetes_groups",
+		"CREATE OR REPLACE FUNCTION mesh_ops.load_map_network_kubernetes_rule_groups_v1(",
+		"AND rule.kubernetes_groups IS NOT NULL AND rule.kubernetes_profile_public_id IS NULL",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 258 lacks %q", want)
 		}
 	}
 }

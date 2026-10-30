@@ -645,6 +645,8 @@ func Catalog() []Migration {
 			kubernetesClusterExplainReplicaSQL),
 		newMigration(257, "A Kubernetes cluster whose replicas were revoked can be deleted",
 			kubernetesClusterDeleteRevokedReplicasSQL),
+		newMigration(258, "Kubernetes access profiles in a policy release, kept from a Core before K2",
+			kubernetesAccessProfilesSQL),
 	}
 }
 
@@ -1195,3 +1197,6 @@ var kubernetesClusterExplainReplicaSQL string
 
 //go:embed 000257_kubernetes_cluster_delete_revoked_replicas.up.sql
 var kubernetesClusterDeleteRevokedReplicasSQL string
+
+//go:embed 000258_kubernetes_access_profiles.up.sql
+var kubernetesAccessProfilesSQL string
