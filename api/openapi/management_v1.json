@@ -7834,6 +7834,141 @@
           }
         }
       },
+      "KubernetesAccessProfileRule": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "apiGroups": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "string",
+              "maxLength": 253
+            }
+          },
+          "resources": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "string",
+              "maxLength": 253
+            }
+          },
+          "verbs": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "items": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "resourceNames": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "string",
+              "maxLength": 253
+            }
+          },
+          "nonResourceURLs": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "string",
+              "maxLength": 253
+            }
+          }
+        },
+        "description": "One rule as RBAC's PolicyRule (rbac.authorization.k8s.io/v1): a resource rule (apiGroups, resources, maybe resourceNames) or, in the cluster part only, a path rule (nonResourceURLs)."
+      },
+      "KubernetesAccessProfile": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "description"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/PublicID",
+            "description": "A UUIDv7 the client makes for a new profile and keeps across edits; unique to the Network."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 63,
+            "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+            "description": "Unique in the release; part of the content a rule pins."
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 512,
+            "description": "Shown only; not part of what the release grants."
+          },
+          "namespaced": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "$ref": "#/components/schemas/KubernetesAccessProfileRule"
+            },
+            "description": "Applied in the namespaces of the rule that uses the profile."
+          },
+          "cluster": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "$ref": "#/components/schemas/KubernetesAccessProfileRule"
+            },
+            "description": "Cluster-scoped resources and paths; only for a rule that turns the cluster part on."
+          }
+        },
+        "description": "A Kubernetes access profile (K2 §5.1): what a rule to a cluster may do within the groups it grants. It only narrows: the cluster's RBAC of each group stays the ceiling. At least one rule; at most 16 KiB normalized."
+      },
+      "KubernetesAccess": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "full": {
+            "type": "boolean",
+            "const": true,
+            "description": "The rule grants its groups in full; nothing else may be set."
+          },
+          "profile_id": {
+            "$ref": "#/components/schemas/PublicID",
+            "description": "A profile of the release."
+          },
+          "namespaces": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "maxLength": 63
+            },
+            "description": "[\"*\"] alone for every namespace, or 1 to 64 DNS labels."
+          },
+          "cluster_part": {
+            "type": "boolean",
+            "default": false
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "enforce",
+              "report"
+            ],
+            "default": "enforce"
+          },
+          "report_until": {
+            "type": "string",
+            "format": "date-time",
+            "description": "With mode report only: when the rule starts to enforce, after now and at most 14 days ahead."
+          }
+        },
+        "description": "With destination_kubernetes_cluster_id only: how the rule grants its Kubernetes groups, {\"full\": true} or through a profile. Absent or null keeps what the rule has in the active release, whatever kubernetes_groups says; {} is refused. A rule with a profile that moves to another source or cluster must say its access again (kubernetes_access_required)."
+      },
       "PublishPolicyRequest": {
         "type": "object",
         "additionalProperties": false,
@@ -7857,6 +7992,14 @@
             "items": {
               "$ref": "#/components/schemas/CompiledPolicyRule"
             }
+          },
+          "kubernetes_profiles": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {
+              "$ref": "#/components/schemas/KubernetesAccessProfile"
+            },
+            "description": "Every Kubernetes access profile of the release (K2), the whole set. Absent or null keeps the profiles of the active release; an empty list removes them all. A profile a kept or named rule applies must be in the set."
           }
         }
       },
@@ -7960,6 +8103,9 @@
             },
             "description": "With destination_kubernetes_cluster_id only: the Kubernetes groups the rule grants, names of groups declared in the cluster gateway's Helm values. Absent keeps the groups the rule has in the active release, while it comes from the same source to the same cluster; an empty list is refused; a new or retargeted rule to a cluster needs at least one."
           },
+          "kubernetes_access": {
+            "$ref": "#/components/schemas/KubernetesAccess"
+          },
           "protocol": {
             "type": "string",
             "enum": [
@@ -8061,6 +8207,14 @@
             "items": {
               "$ref": "#/components/schemas/CompiledPolicyRule"
             }
+          },
+          "kubernetes_profiles": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {
+              "$ref": "#/components/schemas/KubernetesAccessProfile"
+            },
+            "description": "Every Kubernetes access profile of the release (K2), the whole set. Absent or null keeps the profiles of the active release; an empty list removes them all. A profile a kept or named rule applies must be in the set."
           }
         }
       },
@@ -8073,6 +8227,14 @@
             "type": "array",
             "maxItems": 10000,
             "items": {"$ref": "#/components/schemas/CompiledPolicyRule"}
+          },
+          "kubernetes_profiles": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {
+              "$ref": "#/components/schemas/KubernetesAccessProfile"
+            },
+            "description": "Every Kubernetes access profile of the release (K2), the whole set. Absent or null keeps the profiles of the active release; an empty list removes them all. A profile a kept or named rule applies must be in the set."
           },
           "candidate_semantic_hash": {"$ref": "#/components/schemas/SHA256Digest"},
           "impact_hash": {"$ref": "#/components/schemas/SHA256Digest"},

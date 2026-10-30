@@ -412,20 +412,55 @@ func (transaction *policyPublicationTransaction) applyLocked(
 			return publication.Result{}, ErrPolicyPublicationEvidence
 		}
 	}
-	if groupRules, err := encodePolicyGroupRules(change); err != nil {
+	profiles, err := encodePolicyKubernetesProfiles(change)
+	if err != nil {
 		return publication.Result{}, err
-	} else if groupRules != nil {
-		// Attach through _v3 when the schema has it, so a rule that would
-		// lose its Kubernetes groups is refused, not carried; groups the
-		// release was hashed with never go through _v2, which drops them.
-		var aware bool
-		if err := transaction.database.QueryRow(ctx, kubernetesGroupRulesGrantedSQL).Scan(&aware); err != nil {
+	}
+	groupRules, err := encodePolicyGroupRules(change)
+	if err != nil {
+		return publication.Result{}, err
+	}
+	// Attach through _v4 when the schema has it, else _v3, so a rule that
+	// would lose its Kubernetes groups or profile is refused, not carried;
+	// what the release was hashed with never goes through a function that
+	// drops it.
+	var profilesAware, groupsAware bool
+	if profiles != nil || groupRules != nil {
+		if err := transaction.database.QueryRow(ctx, kubernetesProfileRulesGrantedSQL).Scan(&profilesAware); err != nil {
+			return publication.Result{}, fmt.Errorf("check policy profile rule function: %w", err)
+		}
+		if err := transaction.database.QueryRow(ctx, kubernetesGroupRulesGrantedSQL).Scan(&groupsAware); err != nil {
 			return publication.Result{}, fmt.Errorf("check policy group rule function: %w", err)
 		}
+	}
+	// Only a candidate compiled knowing the replaced release's profiles goes
+	// through _v4, which carries no profile it is not sent: any other keeps
+	// the trigger's guard of _v3 (review d2 M1).
+	knows := command.Candidate().KnowsKubernetesProfiles()
+	if profiles != nil {
+		// Before the rules, which pin them.
+		if !profilesAware || !knows {
+			return publication.Result{}, ErrPolicyPublicationEvidence
+		}
+		var attachedCount int
+		if err := transaction.database.QueryRow(ctx, attachPolicyKubernetesProfilesSQL,
+			change.MutationIDs().ReleaseID().String(), change.OccurredAt(), profiles).Scan(&attachedCount); err != nil {
+			return publication.Result{}, fmt.Errorf("attach policy Kubernetes profiles: %w", err)
+		}
+		if attachedCount != len(command.Candidate().KubernetesProfiles()) {
+			return publication.Result{}, ErrPolicyPublicationEvidence
+		}
+	}
+	if groupRules != nil {
 		attachQuery := attachPolicyGroupRulesSQL
-		if aware {
+		switch {
+		case profilesAware && knows:
+			attachQuery = attachProfilePolicyGroupRulesSQL
+		case command.Candidate().CoversKubernetesProfiles():
+			return publication.Result{}, ErrPolicyPublicationEvidence
+		case groupsAware:
 			attachQuery = attachKubernetesPolicyGroupRulesSQL
-		} else if command.Candidate().CoversKubernetesGroups() {
+		case command.Candidate().CoversKubernetesGroups():
 			return publication.Result{}, ErrPolicyPublicationEvidence
 		}
 		var attachedCount int

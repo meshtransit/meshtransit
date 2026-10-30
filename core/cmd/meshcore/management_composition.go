@@ -340,7 +340,7 @@ func composeManagementAPIWithKeys(
 	if policyCompiler, err = policyCompiler.WithKubernetesClusters(clusterGroups); err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)
 	}
-	if policyCompiler, err = policyCompiler.WithKubernetesRuleGroups(clusterGroups); err != nil {
+	if policyCompiler, err = policyCompiler.WithKubernetesAccess(clusterGroups, time.Now); err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)
 	}
 	if options.ExitNodes {

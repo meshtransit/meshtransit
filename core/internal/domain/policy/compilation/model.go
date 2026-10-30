@@ -14,6 +14,7 @@ import (
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/policy"
+	"meshtransit.net/core/internal/domain/policy/publication"
 	"meshtransit.net/core/internal/domain/resource"
 	"meshtransit.net/core/internal/domain/sharing"
 	"meshtransit.net/core/internal/domain/site"
@@ -59,7 +60,11 @@ type RuleIntentParams struct {
 	// KubernetesGroups are the groups a rule to a cluster grants, in any
 	// order (K1a3). Nil keeps the groups the rule has in the release the
 	// request replaces; an empty list is refused.
-	KubernetesGroups      []string
+	KubernetesGroups []string
+	// KubernetesAccess is how a rule to a cluster applies its groups (K2):
+	// in full or through a profile. Nil keeps what the rule has in the
+	// release the request replaces, whatever KubernetesGroups says.
+	KubernetesAccess      *KubernetesAccessIntent
 	Protocol              policy.Protocol
 	DestinationPortRanges []policy.PortRange
 }
@@ -83,6 +88,7 @@ type RuleIntent struct {
 	destinationExitPoolID         exitpool.ID
 	destinationCluster            kubecluster.ID
 	kubernetesGroups              []string
+	kubernetesAccess              *KubernetesAccessIntent
 	protocol                      policy.Protocol
 	destinationPortRanges         []policy.PortRange
 }
@@ -105,6 +111,7 @@ func NewRuleIntent(params RuleIntentParams) (RuleIntent, error) {
 		destinationExitPoolID:         params.DestinationExitPoolID,
 		destinationCluster:            params.DestinationKubernetesClusterID,
 		kubernetesGroups:              sortedKubernetesGroups(params.KubernetesGroups),
+		kubernetesAccess:              params.KubernetesAccess.clone(),
 		protocol:                      params.Protocol, destinationPortRanges: slices.Clone(params.DestinationPortRanges),
 	}
 	if !intent.IsValid() {
@@ -203,6 +210,7 @@ func (intent RuleIntent) WithKubernetesCluster(cluster kubecluster.ID) (RuleInte
 	named.destinationPrefixes = slices.Clone(intent.destinationPrefixes)
 	named.destinationPortRanges = slices.Clone(intent.destinationPortRanges)
 	named.kubernetesGroups = slices.Clone(intent.kubernetesGroups)
+	named.kubernetesAccess = intent.kubernetesAccess.clone()
 	if !named.IsValid() {
 		return RuleIntent{}, ErrInvalidRequest
 	}
@@ -216,6 +224,7 @@ func (intent RuleIntent) WithKubernetesGroups(groups []string) (RuleIntent, erro
 	named.destinationPrefixes = slices.Clone(intent.destinationPrefixes)
 	named.destinationPortRanges = slices.Clone(intent.destinationPortRanges)
 	named.kubernetesGroups = sortedKubernetesGroups(groups)
+	named.kubernetesAccess = intent.kubernetesAccess.clone()
 	if !named.IsValid() {
 		return RuleIntent{}, ErrInvalidRequest
 	}
@@ -281,7 +290,8 @@ func (intent RuleIntent) IsValid() bool {
 		!intent.protocol.IsValid() || intent.destinationPortRanges == nil ||
 		(!hasSite && len(intent.destinationPrefixes) > 0) ||
 		len(intent.destinationPrefixes) > site.MaximumPrefixesPerSite ||
-		!validKubernetesGroups(intent.kubernetesGroups) || intent.kubernetesGroups != nil && !hasCluster {
+		!validKubernetesGroups(intent.kubernetesGroups) || intent.kubernetesGroups != nil && !hasCluster ||
+		intent.kubernetesAccess != nil && (!hasCluster || !intent.kubernetesAccess.IsValid()) {
 		return false
 	}
 	if hasSite || hasExitPool {
@@ -337,19 +347,24 @@ type RequestParams struct {
 	Scope    network.Scope
 	Revision int64
 	Rules    []RuleIntent
+	// KubernetesProfiles are every access profile of the release (K2). Nil
+	// keeps those of the release the request replaces; empty removes them.
+	KubernetesProfiles []publication.KubernetesProfile
 }
 
 // Request is immutable typed policy intent for one successor revision.
 type Request struct {
-	scope    network.Scope
-	revision int64
-	rules    []RuleIntent
+	scope              network.Scope
+	revision           int64
+	rules              []RuleIntent
+	kubernetesProfiles []publication.KubernetesProfile
 }
 
 // NewRequest validates a bounded rule set with unique stable Access Rule IDs.
 func NewRequest(params RequestParams) (Request, error) {
 	request := Request{
 		scope: params.Scope, revision: params.Revision, rules: slices.Clone(params.Rules),
+		kubernetesProfiles: cloneProfiles(params.KubernetesProfiles),
 	}
 	if !request.IsValid() {
 		return Request{}, ErrInvalidRequest
@@ -366,10 +381,16 @@ func (request Request) Revision() int64 { return request.revision }
 // Rules returns caller-owned immutable rule intents.
 func (request Request) Rules() []RuleIntent { return slices.Clone(request.rules) }
 
+// KubernetesProfiles returns the release's access profiles, nil when the
+// request keeps those of the release it replaces.
+func (request Request) KubernetesProfiles() []publication.KubernetesProfile {
+	return cloneProfiles(request.kubernetesProfiles)
+}
+
 // IsValid reports whether every rule is exact-scoped, bounded, and uniquely identified.
 func (request Request) IsValid() bool {
 	if !request.scope.IsValid() || request.revision <= 1 || request.rules == nil ||
-		len(request.rules) > policy.MaximumRules {
+		len(request.rules) > policy.MaximumRules || !validRequestProfiles(request.kubernetesProfiles) {
 		return false
 	}
 	seen := make(map[policy.RuleID]struct{}, len(request.rules))

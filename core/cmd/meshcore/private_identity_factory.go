@@ -602,7 +602,7 @@ func privateIdentityManagementServices(
 	if policyCompiler, err = policyCompiler.WithKubernetesClusters(clusterGroups); err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition
 	}
-	if policyCompiler, err = policyCompiler.WithKubernetesRuleGroups(clusterGroups); err != nil {
+	if policyCompiler, err = policyCompiler.WithKubernetesAccess(clusterGroups, time.Now); err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition
 	}
 	accessGraphStore, err := postgresadapter.NewAccessGraphStore(

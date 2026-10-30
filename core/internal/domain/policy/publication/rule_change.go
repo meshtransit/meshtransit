@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -180,6 +182,10 @@ func FingerprintRules(candidate Candidate) (RuleFingerprintSet, error) {
 		if groups := rule.KubernetesGroups(); groups != nil {
 			traffic += "|kubernetes:" + strings.Join(groups, ",")
 		}
+		// So does a profile, only when the rule applies one (K2).
+		if access := rule.KubernetesAccess(); !access.IsZero() {
+			traffic += kubernetesAccessPart(access)
+		}
 		destinationKind, destination := groupRuleDestinationKind(rule.Destination().Kind()), rule.Destination().ID()
 		if cluster := rule.DestinationKubernetesClusterID(); cluster.IsValid() {
 			destinationKind, destination = DestinationKubernetesCluster, publicid.ID(cluster)
@@ -223,6 +229,18 @@ func FingerprintRules(candidate Candidate) (RuleFingerprintSet, error) {
 	}
 	slices.SortFunc(entries, compareRuleFingerprints)
 	return RuleFingerprintSet{entries: entries}, nil
+}
+
+// kubernetesAccessPart names a rule's profile in its fingerprint: ID and
+// content, namespaces, cluster part and report deadline (0 when enforcing).
+func kubernetesAccessPart(access KubernetesAccess) string {
+	hash := access.ProfileHash()
+	var until int64
+	if access.Report() {
+		until = access.ReportUntil().UnixMilli()
+	}
+	return fmt.Sprintf("|profile:%s@%s:%s:cluster=%t:report=%d", access.ProfileID(), hex.EncodeToString(hash[:]),
+		strings.Join(access.Namespaces(), ","), access.ClusterPart(), until)
 }
 
 // ruleSideToken names a group rule side in fingerprints. The tokens are

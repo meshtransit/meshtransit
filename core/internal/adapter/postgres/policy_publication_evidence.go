@@ -492,8 +492,67 @@ type policyGroupRulePayload struct {
 	Protocol                       string `json:"protocol"`
 	PortRangeFirst                 []int  `json:"port_range_first"`
 	PortRangeLast                  []int  `json:"port_range_last"`
-	// KubernetesGroups are read by attach_policy_group_rules_v3 only.
+	// KubernetesGroups are read by attach_policy_group_rules_v3 and _v4 only.
 	KubernetesGroups []string `json:"kubernetes_groups,omitempty"`
+	// The profile of a rule to a cluster, read by attach_policy_group_rules_v4
+	// only; absent for full groups.
+	KubernetesProfilePublicID string     `json:"kubernetes_profile_public_id,omitempty"`
+	KubernetesProfileHash     string     `json:"kubernetes_profile_hash,omitempty"`
+	KubernetesNamespaces      []string   `json:"kubernetes_namespaces,omitempty"`
+	KubernetesClusterPart     *bool      `json:"kubernetes_cluster_part,omitempty"`
+	KubernetesMode            string     `json:"kubernetes_mode,omitempty"`
+	KubernetesReportUntil     *time.Time `json:"kubernetes_report_until,omitempty"`
+}
+
+// withKubernetesAccess adds a rule's profile, if it applies one.
+func (item policyGroupRulePayload) withKubernetesAccess(access publication.KubernetesAccess) policyGroupRulePayload {
+	if access.IsZero() {
+		return item
+	}
+	hash, clusterPart := access.ProfileHash(), access.ClusterPart()
+	item.KubernetesProfilePublicID, item.KubernetesProfileHash = access.ProfileID().String(), hex.EncodeToString(hash[:])
+	item.KubernetesNamespaces, item.KubernetesClusterPart, item.KubernetesMode = access.Namespaces(), &clusterPart,
+		"enforce"
+	if access.Report() {
+		until := access.ReportUntil()
+		item.KubernetesMode, item.KubernetesReportUntil = "report", &until
+	}
+	return item
+}
+
+// policyKubernetesProfilePayload is one profile of a release for
+// attach_policy_kubernetes_profiles_v1: its content stored by hash, its
+// description by release.
+type policyKubernetesProfilePayload struct {
+	ProfilePublicID string                 `json:"profile_public_id"`
+	ContentHash     string                 `json:"content_hash"`
+	Name            string                 `json:"name"`
+	Rules           kubernetesProfileRules `json:"rules"`
+	Description     string                 `json:"description"`
+}
+
+// encodePolicyKubernetesProfiles encodes the release's profiles. Nil means
+// none.
+func encodePolicyKubernetesProfiles(change publication.Change) ([]byte, error) {
+	profiles := change.Command().Candidate().KubernetesProfiles()
+	if len(profiles) == 0 {
+		return nil, nil
+	}
+	payload := make([]policyKubernetesProfilePayload, len(profiles))
+	for index, profile := range profiles {
+		payload[index] = newPolicyKubernetesProfilePayload(profile)
+	}
+	return json.Marshal(payload)
+}
+
+// newPolicyKubernetesProfilePayload stores a profile as
+// read_policy_kubernetes_access_v1 gives it back.
+func newPolicyKubernetesProfilePayload(profile publication.KubernetesProfile) policyKubernetesProfilePayload {
+	hash, rules := profile.ContentHash(), profile.Profile()
+	return policyKubernetesProfilePayload{ProfilePublicID: profile.ID().String(),
+		ContentHash: hex.EncodeToString(hash[:]), Name: profile.Name(),
+		Rules:       kubernetesProfileRules{Namespaced: rules.Namespaced, Cluster: rules.Cluster},
+		Description: profile.Description()}
 }
 
 // encodePolicyGroupRules encodes the candidate's group rules for
@@ -523,7 +582,7 @@ func encodePolicyGroupRules(change publication.Change) ([]byte, error) {
 			ProjectionPublicID: projectionIDs[offset+index].String(), AccessRulePublicID: rule.RuleID().String(),
 			Protocol: rule.Protocol().String(), PortRangeFirst: first, PortRangeLast: last,
 			KubernetesGroups: rule.KubernetesGroups(),
-		}
+		}.withKubernetesAccess(rule.KubernetesAccess())
 		source, destination := rule.Source(), rule.Destination()
 		switch source.Kind() {
 		case publication.SideDeviceGroup:

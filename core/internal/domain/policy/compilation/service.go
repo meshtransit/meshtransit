@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"slices"
 	"strings"
+	"time"
 
 	"meshtransit.net/core/internal/domain/exitpool"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
@@ -60,20 +61,15 @@ type KubernetesClusterResolver interface {
 }
 
 // ReleasedClusterRule is a rule to a Kubernetes cluster as a release holds
-// it: the cluster, the source, and the Kubernetes groups, nil for a rule
-// released before K1a3 (its traffic is always TCP 443).
+// it: the cluster, the source, the Kubernetes groups, nil for a rule
+// released before K1a3 (its traffic is always TCP 443), and the profile it
+// narrows them to, zero for full groups (K2).
 type ReleasedClusterRule struct {
 	Cluster    kubecluster.ID
 	SourceKind publication.SideKind
 	SourceID   publicid.ID
 	Groups     []string
-}
-
-// KubernetesRuleGroupReader returns the rules to Kubernetes clusters of the
-// scope's release at a policy revision (K1a3).
-type KubernetesRuleGroupReader interface {
-	ReadPolicyKubernetesGroups(context.Context, accountsession.Session, network.Scope,
-		int64) (map[policy.RuleID]ReleasedClusterRule, error)
+	Access     publication.KubernetesAccess
 }
 
 // SiteResolver returns the active Sites of the scope with the given IDs, as
@@ -112,20 +108,37 @@ type Service struct {
 	sites        SiteResolver
 	exitPools    ExitPoolResolver
 	clusters     KubernetesClusterResolver
-	ruleGroups   KubernetesRuleGroupReader
+	access       KubernetesAccessReader
+	// accessRequired refuses a new rule to a cluster sent without its
+	// access, instead of granting its groups in full (Q195, K2f).
+	accessRequired bool
+	now            func() time.Time
 }
 
-// WithKubernetesRuleGroups returns a compiler that keeps, for a rule to a
-// cluster sent without groups, the groups it has in the release the request
-// replaces, and refuses a new one without groups. Without it a rule keeps
-// only the groups it names, and the database refuses one that would lose
-// some.
-func (service *Service) WithKubernetesRuleGroups(reader KubernetesRuleGroupReader) (*Service, error) {
-	if service == nil || reader == nil {
+// WithKubernetesAccess returns a compiler that keeps, for a rule to a
+// cluster sent without groups or without access, what it has in the release
+// the request replaces, refuses a new one without groups, and knows the
+// access profiles of releases, now telling it when report deadlines start.
+// Without it a rule keeps only the groups it names and applies no profile,
+// and the database refuses one that would lose some.
+func (service *Service) WithKubernetesAccess(reader KubernetesAccessReader, now func() time.Time) (*Service, error) {
+	if service == nil || reader == nil || now == nil {
 		return nil, ErrInvalidRequest
 	}
 	extended := *service
-	extended.ruleGroups = reader
+	extended.access, extended.now = reader, now
+	return &extended, nil
+}
+
+// WithKubernetesAccessRequired returns a compiler that refuses a new rule to
+// a cluster sent without its access (ErrKubernetesAccessRequired) instead of
+// granting its groups in full. It needs WithKubernetesAccess.
+func (service *Service) WithKubernetesAccessRequired() (*Service, error) {
+	if service == nil || service.access == nil {
+		return nil, ErrInvalidRequest
+	}
+	extended := *service
+	extended.accessRequired = true
 	return &extended, nil
 }
 
@@ -319,7 +332,11 @@ func (service *Service) Compile(
 		len(importedIDs),
 	)
 	var groupRules []publication.GroupRule
-	keptGroups := service.keptKubernetesGroups(ctx, session, request)
+	released := service.releasedAccess(ctx, session, request)
+	profiles, err := service.requestProfiles(request, released)
+	if err != nil {
+		return publication.Candidate{}, err
+	}
 	for _, intent := range request.rules {
 		destinationNodeID := intent.destinationNodeID
 		if intent.destinationSiteID.IsValid() || intent.destinationExitPoolID.IsValid() {
@@ -330,7 +347,7 @@ func (service *Service) Compile(
 			if err != nil {
 				return publication.Candidate{}, err
 			}
-			groups, err := keptGroups(intent, cluster)
+			groups, access, err := service.clusterRuleAccess(released, profiles, intent, cluster)
 			if err != nil {
 				return publication.Candidate{}, err
 			}
@@ -339,8 +356,8 @@ func (service *Service) Compile(
 				SourceIdentityGroupID: intent.sourceIdentityGroupID, SourceTagID: intent.sourceTagID,
 				DestinationNodeID: intent.destinationNodeID, DestinationGroupID: destinationGroup,
 				DestinationTagID: intent.destinationTagID, DestinationKubernetesClusterID: cluster,
-				KubernetesGroups: groups,
-				Protocol:         intent.protocol, DestinationPortRanges: intent.destinationPortRanges,
+				KubernetesGroups: groups, KubernetesAccess: access,
+				Protocol: intent.protocol, DestinationPortRanges: intent.destinationPortRanges,
 			})
 			if err != nil {
 				return publication.Candidate{}, ErrInvalidRequest
@@ -446,8 +463,17 @@ func (service *Service) Compile(
 	if err != nil {
 		return candidate, err
 	}
+	if len(profiles) > 0 {
+		if candidate, err = candidate.WithKubernetesProfiles(profiles); err != nil {
+			return publication.Candidate{}, ErrInvalidRequest
+		}
+	}
 	if len(groupRules) > 0 {
-		if candidate, err = candidate.WithGroupRules(groupRules); err != nil {
+		candidate, err = candidate.WithGroupRules(groupRules)
+		if errors.Is(err, publication.ErrKubernetesAccessLimit) {
+			return publication.Candidate{}, err
+		}
+		if err != nil {
 			return publication.Candidate{}, ErrInvalidRequest
 		}
 	}
@@ -464,6 +490,10 @@ func (service *Service) Compile(
 		if candidate, err = candidate.WithExitRules(exitRules); err != nil {
 			return publication.Candidate{}, ErrInvalidRequest
 		}
+	}
+	if service.access != nil {
+		// Every profile a rule keeps was read and is in the candidate.
+		candidate = candidate.WithKubernetesProfilesKnown()
 	}
 	return candidate, nil
 }

@@ -23,6 +23,9 @@ import (
 
 type simulatePolicyRequest struct {
 	Rules []publishPolicyRuleRequest `json:"rules"`
+	// KubernetesProfiles as in a publish: absent or null keeps those of the
+	// release the request replaces.
+	KubernetesProfiles *[]publishPolicyKubernetesProfileRequest `json:"kubernetes_profiles"`
 }
 
 type simulatePolicyResponse struct {
@@ -375,8 +378,12 @@ func decodePolicySimulationRequest(
 		}
 		rules[index] = rule
 	}
+	profiles, err := decodePolicyKubernetesProfiles(body.KubernetesProfiles)
+	if err != nil {
+		return compilation.Request{}, invalidManagementRequest()
+	}
 	compiled, err := compilation.NewRequest(compilation.RequestParams{
-		Scope: scope, Revision: baseRevision + 1, Rules: rules,
+		Scope: scope, Revision: baseRevision + 1, Rules: rules, KubernetesProfiles: profiles,
 	})
 	if err != nil {
 		return compilation.Request{}, invalidManagementRequest()
@@ -558,6 +565,9 @@ func encodeSimulatedExplanations(values []simulation.Explanation) []simulatedExp
 }
 
 func classifyPolicySimulationError(err error) managementError {
+	if answer, ok := classifyKubernetesAccessError(err); ok {
+		return answer
+	}
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		return managementError{
@@ -611,8 +621,6 @@ func classifyPolicySimulationError(err error) managementError {
 		}
 	case errors.Is(err, compilation.ErrKubernetesClusterUnavailable):
 		return kubernetesClusterUnavailableError
-	case errors.Is(err, compilation.ErrKubernetesGroupsRequired):
-		return kubernetesGroupsRequiredError
 	case errors.Is(err, simulation.ErrInvalidRequest), errors.Is(err, compilation.ErrInvalidRequest):
 		return *invalidManagementRequest()
 	case errors.Is(err, simulation.ErrInvalidBaseline), errors.Is(err, simulation.ErrInvalidResult):

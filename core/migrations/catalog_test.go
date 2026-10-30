@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 258 {
-		t.Fatalf("len(Catalog()) = %d, want 258", len(catalog))
+	if len(catalog) != 259 {
+		t.Fatalf("len(Catalog()) = %d, want 259", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 258 {
-		t.Fatalf("LatestVersion() = %d, want 258", LatestVersion())
+	if LatestVersion() != 259 {
+		t.Fatalf("LatestVersion() = %d, want 259", LatestVersion())
 	}
 }
 
@@ -7725,5 +7725,32 @@ func TestMigration258KubernetesAccessProfiles(t *testing.T) {
 		if !strings.Contains(migration.SQL, want) {
 			t.Errorf("migration 258 lacks %q", want)
 		}
+	}
+}
+
+func TestMigration259KubernetesAccessProfileWriter(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 259 || catalog[258].Version != 259 {
+		t.Fatalf("the catalog has no migration 259 (%d migrations)", len(catalog))
+	}
+	migration := catalog[258]
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.attach_policy_kubernetes_profiles_v1(",
+		"CREATE FUNCTION mesh_ops.attach_policy_group_rules_v4(",
+		"CREATE FUNCTION mesh_ops.read_policy_kubernetes_access_v1(",
+		"PERFORM pg_catalog.set_config('mesh.kubernetes_profiles_aware', 'on', TRUE);",
+		"PERFORM pg_catalog.set_config('mesh.kubernetes_profiles_aware', 'off', TRUE);",
+		"a Kubernetes access profile hash names other content",
+		"ON CONFLICT (workspace_id, network_id, content_hash) DO NOTHING",
+		"'profiles_hashed', COALESCE(pg_catalog.bool_or(rule.kubernetes_profile_hashed), FALSE)",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.attach_policy_group_rules_v4(UUID, TIMESTAMPTZ, JSONB) TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 259 lacks %q", want)
+		}
+	}
+	if strings.Contains(migration.SQL, "FUNCTION mesh_ops.attach_policy_group_rules_v3(") {
+		t.Error("migration 259 changes attach_policy_group_rules_v3")
 	}
 }

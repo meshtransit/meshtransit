@@ -9,6 +9,7 @@ import (
 	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/policy"
 	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/shared/kubeprofile"
 )
 
 const (
@@ -21,7 +22,11 @@ const (
 	policyHashDomainV7 = "meshtransit/policy-release/v7\x00"
 	// policyHashDomainV8 adds the Kubernetes groups of rules to a cluster
 	// (K1a3); a release whose rules name none keeps an earlier domain.
-	policyHashDomainV8               = "meshtransit/policy-release/v8\x00"
+	policyHashDomainV8 = "meshtransit/policy-release/v8\x00"
+	// policyHashDomainV9 adds the access profiles of rules to clusters and
+	// the profiles of the release (K2); a release whose rules apply none
+	// keeps an earlier domain.
+	policyHashDomainV9               = "meshtransit/policy-release/v9\x00"
 	resourceCompilerFormatV2         = 2
 	resourceGroupCompilerFormatV3    = 3
 	importedResourceCompilerFormatV4 = 4
@@ -60,10 +65,28 @@ type Candidate struct {
 	resourceDestinations         []ResourceDestination
 	resourceGroupDestinations    []ResourceGroupDestination
 	importedResourceDestinations []ImportedResourceDestination
-	groupRules                   []GroupRule
-	routeRules                   []RouteRule
-	exitRules                    []ExitRule
+	kubernetesProfiles           []KubernetesProfile
+	// knowsKubernetesProfiles: the compiler read the replaced release's
+	// profiles and rule access, so the candidate names every profile a rule
+	// keeps. Not part of what the release grants.
+	knowsKubernetesProfiles bool
+	groupRules              []GroupRule
+	routeRules              []RouteRule
+	exitRules               []ExitRule
 }
+
+// hashLevel is what a release hash covers of Kubernetes access: the domain
+// a Core of each era computes.
+type hashLevel byte
+
+const (
+	// hashBeforeGroups: no Kubernetes groups (before K1a3).
+	hashBeforeGroups hashLevel = iota
+	// hashGroups: groups, not profiles (domain v8, K1a3 to K2c).
+	hashGroups
+	// hashProfiles: groups and profiles (domain v9, K2).
+	hashProfiles
+)
 
 // NewCandidate validates and hashes one compiled policy artifact.
 func NewCandidate(snapshot policy.Snapshot, compilerFormatVersion int) (Candidate, error) {
@@ -197,6 +220,72 @@ func (candidate Candidate) ImportedResourceDestinations() []ImportedResourceDest
 	return cloneImportedResourceDestinations(candidate.importedResourceDestinations)
 }
 
+// WithKubernetesProfiles returns the candidate with the access profiles of
+// its release, attached before any group rule that applies one. IDs and names
+// are unique and there are at most MaximumKubernetesProfiles.
+func (candidate Candidate) WithKubernetesProfiles(profiles []KubernetesProfile) (Candidate, error) {
+	if !candidate.IsValid() || len(candidate.kubernetesProfiles) > 0 || len(candidate.groupRules) > 0 ||
+		len(candidate.routeRules) > 0 || len(candidate.exitRules) > 0 {
+		return Candidate{}, ErrInvalidCandidate
+	}
+	extended := candidate
+	extended.kubernetesProfiles = cloneKubernetesProfiles(profiles)
+	slices.SortFunc(extended.kubernetesProfiles, compareKubernetesProfiles)
+	extended.semanticHash = hashCandidate(extended)
+	if !extended.IsValid() {
+		return Candidate{}, ErrInvalidCandidate
+	}
+	return extended, nil
+}
+
+// WithKubernetesProfilesKnown marks a candidate compiled knowing the
+// profiles and rule access of the release it replaces: only such a
+// candidate may be written by a writer that hashes profiles, which no
+// longer carries a rule's profile it is not sent.
+func (candidate Candidate) WithKubernetesProfilesKnown() Candidate {
+	candidate.knowsKubernetesProfiles = true
+	return candidate
+}
+
+// KnowsKubernetesProfiles reports a candidate compiled knowing the profiles
+// of the release it replaces.
+func (candidate Candidate) KnowsKubernetesProfiles() bool { return candidate.knowsKubernetesProfiles }
+
+// KubernetesAccessChanged reports whether proposed changes what baseline
+// holds of Kubernetes access in a way an approver must see: any profile of
+// the release (ID, content, description), or a rule kept in both whose
+// profile use changes, or a rule that newly applies a profile. A rule
+// removed, or a rule without a profile in both, changes nothing here.
+func KubernetesAccessChanged(baseline, proposed Candidate) bool {
+	if len(baseline.kubernetesProfiles) != len(proposed.kubernetesProfiles) {
+		return true
+	}
+	for index, profile := range baseline.kubernetesProfiles {
+		other := proposed.kubernetesProfiles[index]
+		if profile.id != other.id || profile.contentHash != other.contentHash ||
+			profile.description != other.description {
+			return true
+		}
+	}
+	held := make(map[policy.RuleID]KubernetesAccess, len(baseline.groupRules))
+	for _, rule := range baseline.groupRules {
+		held[rule.ruleID] = rule.kubernetesAccess
+	}
+	for _, rule := range proposed.groupRules {
+		before, kept := held[rule.ruleID]
+		if (kept || !rule.kubernetesAccess.IsZero()) && !before.equal(rule.kubernetesAccess) {
+			return true
+		}
+	}
+	return false
+}
+
+// KubernetesProfiles returns caller-owned access profiles of the release,
+// sorted by ID.
+func (candidate Candidate) KubernetesProfiles() []KubernetesProfile {
+	return cloneKubernetesProfiles(candidate.kubernetesProfiles)
+}
+
 // WithGroupRules returns the candidate with Access Rules that select Device
 // Groups. Each rule ID is unique and used by no other rule of the candidate,
 // and the candidate stays within MaximumRules facts.
@@ -206,6 +295,9 @@ func (candidate Candidate) WithGroupRules(rules []GroupRule) (Candidate, error) 
 	if !candidate.IsValid() || len(candidate.groupRules) > 0 || len(candidate.routeRules) > 0 ||
 		len(candidate.exitRules) > 0 {
 		return Candidate{}, ErrInvalidCandidate
+	}
+	if err := CheckKubernetesAccessLimits(rules, candidate.kubernetesProfiles); err != nil {
+		return Candidate{}, err
 	}
 	extended := candidate
 	extended.groupRules = cloneGroupRules(rules)
@@ -280,6 +372,7 @@ func (candidate Candidate) IsValid() bool {
 		validResourceDestinations(candidate) &&
 		validResourceGroupDestinations(candidate) &&
 		validImportedResourceDestinations(candidate) &&
+		validKubernetesProfiles(candidate.kubernetesProfiles) &&
 		validGroupRules(candidate) &&
 		validRouteRules(candidate) &&
 		validExitRules(candidate) &&
@@ -310,25 +403,147 @@ func validGroupRules(candidate Candidate) bool {
 			return false
 		}
 	}
-	// A gateway reports at most 64 groups: one cluster's rules grant no more.
-	perCluster := make(map[kubecluster.ID]map[string]struct{})
+	// A rule applies a profile of the release, with the content it has there.
+	profiles := make(map[KubernetesProfileID][32]byte, len(candidate.kubernetesProfiles))
+	for _, profile := range candidate.kubernetesProfiles {
+		profiles[profile.id] = profile.contentHash
+	}
 	for _, rule := range candidate.groupRules {
+		if access := rule.kubernetesAccess; !access.IsZero() {
+			if hash, found := profiles[access.profileID]; !found || hash != access.profileHash {
+				return false
+			}
+		}
+	}
+	return CheckKubernetesAccessLimits(candidate.groupRules, candidate.kubernetesProfiles) == nil
+}
+
+// validKubernetesProfiles reports at most MaximumKubernetesProfiles valid
+// profiles, strictly sorted by ID, with distinct names.
+func validKubernetesProfiles(profiles []KubernetesProfile) bool {
+	if len(profiles) > MaximumKubernetesProfiles {
+		return false
+	}
+	names := make(map[string]struct{}, len(profiles))
+	for index, profile := range profiles {
+		if !profile.IsValid() || index > 0 && compareKubernetesProfiles(profiles[index-1], profile) >= 0 {
+			return false
+		}
+		if _, duplicate := names[profile.Name()]; duplicate {
+			return false
+		}
+		names[profile.Name()] = struct{}{}
+	}
+	return true
+}
+
+// clusterKubernetesAccess is what the rules to one cluster grant, as the
+// gateway's map will carry it.
+type clusterKubernetesAccess struct {
+	groups     map[string]struct{}
+	grantKeys  map[kubernetesGrantKey]struct{}
+	profiles   map[[32]byte]struct{}
+	scopes     map[[32]byte]struct{}
+	tableBytes int
+}
+
+// kubernetesGrantKey is what grants of one peer merge by (mtcp-v1 §7.12):
+// the group, then for a profile the scope, mode and report deadline.
+type kubernetesGrantKey struct {
+	group       string
+	scope       [32]byte
+	report      bool
+	reportUntil int64
+}
+
+// CheckKubernetesAccessLimits reports ErrKubernetesAccessLimit when the
+// rules to one cluster name more than 64 Kubernetes groups, make more than
+// 64 distinct grant keys, or a scope table over its profile, scope or byte
+// bounds: a gateway would refuse what the release grants. A profile the
+// rules apply is one of profiles; one that is not counts as the largest.
+func CheckKubernetesAccessLimits(rules []GroupRule, profiles []KubernetesProfile) error {
+	sizes := make(map[[32]byte]int, len(profiles))
+	for _, profile := range profiles {
+		sizes[profile.contentHash] = encodedProfileBound(profile.profile)
+	}
+	clusters := make(map[kubecluster.ID]*clusterKubernetesAccess)
+	for _, rule := range rules {
 		if rule.kubernetesGroups == nil {
 			continue
 		}
-		groups := perCluster[rule.cluster]
-		if groups == nil {
-			groups = make(map[string]struct{})
-			perCluster[rule.cluster] = groups
+		cluster := clusters[rule.cluster]
+		if cluster == nil {
+			cluster = &clusterKubernetesAccess{groups: map[string]struct{}{},
+				grantKeys: map[kubernetesGrantKey]struct{}{}, profiles: map[[32]byte]struct{}{},
+				scopes: map[[32]byte]struct{}{}}
+			clusters[rule.cluster] = cluster
 		}
+		access := rule.kubernetesAccess
 		for _, group := range rule.kubernetesGroups {
-			groups[group] = struct{}{}
+			cluster.groups[group] = struct{}{}
+			key := kubernetesGrantKey{group: group}
+			if !access.IsZero() {
+				key.scope, key.report = access.scopeHash, access.report
+				if access.report {
+					key.reportUntil = access.reportUntil.UnixMilli()
+				}
+			}
+			cluster.grantKeys[key] = struct{}{}
 		}
-		if len(groups) > kubecluster.MaximumClusterKubernetesGroups {
-			return false
+		if !access.IsZero() {
+			cluster.addScope(access, sizes)
+		}
+		if len(cluster.groups) > kubecluster.MaximumClusterKubernetesGroups ||
+			len(cluster.grantKeys) > MaximumClusterKubernetesGrantKeys ||
+			len(cluster.profiles) > MaximumClusterKubernetesProfiles ||
+			len(cluster.scopes) > MaximumClusterKubernetesScopes || cluster.tableBytes > MaximumClusterScopeTableBytes {
+			return ErrKubernetesAccessLimit
 		}
 	}
-	return true
+	return nil
+}
+
+// addScope counts the rule's scope and profile into the cluster's table
+// once each, by bounds of their encoded sizes.
+func (cluster *clusterKubernetesAccess) addScope(access KubernetesAccess, sizes map[[32]byte]int) {
+	if _, seen := cluster.scopes[access.scopeHash]; !seen {
+		cluster.scopes[access.scopeHash] = struct{}{}
+		cluster.tableBytes += encodedScopeBound(access.namespaces)
+	}
+	if _, seen := cluster.profiles[access.profileHash]; !seen {
+		cluster.profiles[access.profileHash] = struct{}{}
+		size, known := sizes[access.profileHash]
+		if !known {
+			size = MaximumClusterScopeTableBytes + 1
+		}
+		cluster.tableBytes += size
+	}
+}
+
+// encodedProfileBound bounds the bytes a profile takes in a scope table
+// (mtcp-v1 §7.12): its entry, hash, profile ID and name fields, and for each
+// rule its field and each string's tag, length and bytes, all fields
+// numbered below 16 and every length below 2^21.
+func encodedProfileBound(profile kubeprofile.Profile) int {
+	size := 4 + 34 + 40 + 4 + len(profile.Name)
+	for _, rule := range slices.Concat(profile.Namespaced, profile.Cluster) {
+		size += 4
+		for _, value := range slices.Concat(rule.APIGroups, rule.Resources, rule.Verbs, rule.ResourceNames,
+			rule.NonResourceURLs) {
+			size += 4 + len(value)
+		}
+	}
+	return size
+}
+
+// encodedScopeBound bounds the bytes a scope takes in a scope table: its
+// entry, its two hashes, cluster part and namespaces.
+func encodedScopeBound(namespaces []string) int {
+	size := 4 + 34 + 34 + 2
+	for _, namespace := range namespaces {
+		size += 2 + len(namespace)
+	}
+	return size
 }
 
 func validRouteRules(candidate Candidate) bool {
@@ -522,18 +737,34 @@ func validResourceGroupDestinations(candidate Candidate) bool {
 	return true
 }
 
-// hashCandidate hashes what the candidate grants, the Kubernetes groups of
-// its rules to clusters included.
+// hashCandidate hashes what the candidate grants, the Kubernetes groups and
+// access profiles of its rules to clusters included.
 func hashCandidate(candidate Candidate) SemanticHash {
-	return hashCandidateWith(candidate, candidate.CoversKubernetesGroups())
+	return hashCandidateWith(candidate, candidate.hashLevel())
 }
 
-// hashCandidateWith hashes the candidate in domain v8, with the Kubernetes
-// groups, or as a Core before K1a3 would, without them.
-func hashCandidateWith(candidate Candidate, kubernetesGroups bool) SemanticHash {
+// hashLevel is what the candidate's own hash covers: profiles when a rule
+// applies one, else groups when a rule names some.
+func (candidate Candidate) hashLevel() hashLevel {
+	switch {
+	case candidate.CoversKubernetesProfiles():
+		return hashProfiles
+	case candidate.CoversKubernetesGroups():
+		return hashGroups
+	default:
+		return hashBeforeGroups
+	}
+}
+
+// hashCandidateWith hashes the candidate as a Core of the level's era
+// would: in domain v9 with groups and profiles, v8 with groups only, or
+// before K1a3 without either.
+func hashCandidateWith(candidate Candidate, level hashLevel) SemanticHash {
 	rules := candidate.snapshot.Rules()
 	domain := policyHashDomainV1
-	if kubernetesGroups {
+	if level == hashProfiles {
+		domain = policyHashDomainV9
+	} else if level == hashGroups {
 		domain = policyHashDomainV8
 	} else if len(candidate.exitRules) > 0 {
 		domain = policyHashDomainV7
@@ -587,7 +818,7 @@ func hashCandidateWith(candidate Candidate, kubernetesGroups bool) SemanticHash 
 			present |= 1 << 4
 		}
 		encoded = append(encoded, present)
-	case policyHashDomainV8:
+	case policyHashDomainV8, policyHashDomainV9:
 		// v8 tags route and exit rules: either may come without the other.
 		present := presentSections(candidate)
 		if len(candidate.routeRules) > 0 {
@@ -707,10 +938,101 @@ func hashCandidateWith(candidate Candidate, kubernetesGroups bool) SemanticHash 
 	if len(candidate.exitRules) > 0 {
 		encoded = appendExitRules(encoded, candidate.exitRules)
 	}
-	if domain == policyHashDomainV8 {
+	if domain == policyHashDomainV8 || domain == policyHashDomainV9 {
 		encoded = appendKubernetesGroups(encoded, candidate.groupRules)
 	}
+	if domain == policyHashDomainV9 {
+		encoded = appendKubernetesAccess(encoded, candidate.groupRules)
+		encoded = appendKubernetesProfiles(encoded, candidate.kubernetesProfiles)
+	}
 	return SemanticHash(sha256.Sum256(encoded))
+}
+
+// appendKubernetesAccess encodes, for each group rule in release order,
+// whether it applies a profile and then the profile's ID and content, the
+// namespaces with their lengths after a count, the cluster part, the mode and
+// the report deadline in Unix milliseconds (0 when enforcing).
+func appendKubernetesAccess(encoded []byte, rules []GroupRule) []byte {
+	for _, rule := range rules {
+		access := rule.kubernetesAccess
+		if access.IsZero() {
+			encoded = append(encoded, 0)
+			continue
+		}
+		profileID := publicid.ID(access.profileID).Bytes()
+		encoded = append(encoded, 1)
+		encoded = append(encoded, profileID[:]...)
+		encoded = append(encoded, access.profileHash[:]...)
+		encoded = appendUint64(encoded, uint64(len(access.namespaces)))
+		for _, namespace := range access.namespaces {
+			encoded = appendUint64(encoded, uint64(len(namespace)))
+			encoded = append(encoded, namespace...)
+		}
+		encoded = append(encoded, boolByte(access.clusterPart), boolByte(access.report))
+		var until int64
+		if access.report {
+			until = access.reportUntil.UnixMilli()
+		}
+		encoded = appendInt64(encoded, until)
+	}
+	return encoded
+}
+
+// appendKubernetesProfiles encodes the release's profiles by ID after a
+// count: each ID and content hash. The name is in the content; the
+// description is not part of what the release grants.
+func appendKubernetesProfiles(encoded []byte, profiles []KubernetesProfile) []byte {
+	encoded = appendUint64(encoded, uint64(len(profiles)))
+	for _, profile := range profiles {
+		id := publicid.ID(profile.id).Bytes()
+		encoded = append(encoded, id[:]...)
+		encoded = append(encoded, profile.contentHash[:]...)
+	}
+	return encoded
+}
+
+func boolByte(value bool) byte {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+// CoversKubernetesProfiles reports whether any rule applies an access
+// profile, so that the semantic hash is of domain v9 and covers them.
+func (candidate Candidate) CoversKubernetesProfiles() bool {
+	return slices.ContainsFunc(candidate.groupRules, func(rule GroupRule) bool {
+		return !rule.kubernetesAccess.IsZero()
+	})
+}
+
+// SemanticHashAs returns the hash a Core computes for the release when it
+// covers Kubernetes groups only if groups, and profiles only if profiles:
+// what the stored flags of a release say it was hashed as. It is
+// SemanticHash when both hold.
+func (candidate Candidate) SemanticHashAs(groups, profiles bool) SemanticHash {
+	level := candidate.hashLevel()
+	if !profiles && level == hashProfiles {
+		level = hashGroups
+	}
+	if !groups {
+		level = hashBeforeGroups
+	}
+	return hashCandidateWith(candidate, level)
+}
+
+// HashesAs reports whether hash is the candidate's own, or one a Core of an
+// earlier era computed for it: without profiles, or without groups.
+func (candidate Candidate) HashesAs(hash SemanticHash) bool {
+	switch candidate.hashLevel() {
+	case hashProfiles:
+		return hash == candidate.semanticHash || hash == hashCandidateWith(candidate, hashGroups) ||
+			hash == hashCandidateWith(candidate, hashBeforeGroups)
+	case hashGroups:
+		return hash == candidate.semanticHash || hash == hashCandidateWith(candidate, hashBeforeGroups)
+	default:
+		return hash == candidate.semanticHash
+	}
 }
 
 // appendKubernetesGroups encodes, for each group rule in release order, the
@@ -738,7 +1060,7 @@ func (candidate Candidate) CoversKubernetesGroups() bool {
 // release: without Kubernetes groups. It equals SemanticHash when no rule
 // names any.
 func (candidate Candidate) LegacySemanticHash() SemanticHash {
-	return hashCandidateWith(candidate, false)
+	return hashCandidateWith(candidate, hashBeforeGroups)
 }
 
 // presentSections tags which optional sections follow the Device pairs, so

@@ -34,6 +34,9 @@ type publishPolicyRequest struct {
 	Reason             string                     `json:"reason"`
 	ApprovalEvidenceID json.RawMessage            `json:"approval_evidence_id"`
 	Rules              []publishPolicyRuleRequest `json:"rules"`
+	// KubernetesProfiles are every access profile of the release (K2);
+	// absent or null keeps those of the release it replaces.
+	KubernetesProfiles *[]publishPolicyKubernetesProfileRequest `json:"kubernetes_profiles"`
 }
 
 type publishPolicyRuleRequest struct {
@@ -54,9 +57,13 @@ type publishPolicyRuleRequest struct {
 	DestinationKubernetesCluster  string   `json:"destination_kubernetes_cluster_id"`
 	// KubernetesGroups are the groups a rule to a cluster grants; absent or
 	// null keeps those the rule has, and an empty list is refused (K1a3).
-	KubernetesGroups      *[]string                       `json:"kubernetes_groups"`
-	Protocol              string                          `json:"protocol"`
-	DestinationPortRanges []publishPolicyPortRangeRequest `json:"destination_port_ranges"`
+	KubernetesGroups *[]string `json:"kubernetes_groups"`
+	// KubernetesAccess is how a rule to a cluster grants its groups: in
+	// full or through a profile; absent or null keeps what the rule has
+	// (K2).
+	KubernetesAccess      *publishPolicyKubernetesAccessRequest `json:"kubernetes_access"`
+	Protocol              string                                `json:"protocol"`
+	DestinationPortRanges []publishPolicyPortRangeRequest       `json:"destination_port_ranges"`
 }
 
 type publishPolicyPortRangeRequest struct {
@@ -223,8 +230,12 @@ func decodePolicyPublicationRequest(
 			return decodedPolicyPublication{}, invalidManagementRequest()
 		}
 	}
+	profiles, err := decodePolicyKubernetesProfiles(body.KubernetesProfiles)
+	if err != nil {
+		return decodedPolicyPublication{}, invalidManagementRequest()
+	}
 	compilationRequest, err := compilation.NewRequest(compilation.RequestParams{
-		Scope: scope, Revision: baseRevision + 1, Rules: rules,
+		Scope: scope, Revision: baseRevision + 1, Rules: rules, KubernetesProfiles: profiles,
 	})
 	if err != nil {
 		return decodedPolicyPublication{}, invalidManagementRequest()
@@ -350,6 +361,10 @@ func decodePolicyRuleIntent(
 		}
 		kubernetesGroups = *input.KubernetesGroups
 	}
+	kubernetesAccess, err := decodePolicyKubernetesAccess(input.KubernetesAccess)
+	if err != nil {
+		return compilation.RuleIntent{}, err
+	}
 	portRanges := make([]policy.PortRange, len(input.DestinationPortRanges))
 	for index, inputRange := range input.DestinationPortRanges {
 		if inputRange.First <= 0 || inputRange.First > math.MaxUint16 ||
@@ -371,8 +386,8 @@ func decodePolicyRuleIntent(
 		DestinationImportedResourceID: destinationImportedResourceID,
 		DestinationSiteID:             destinationSiteID, DestinationPrefixes: destinationPrefixes,
 		DestinationExitPoolID: destinationExitPoolID, DestinationKubernetesClusterID: destinationCluster,
-		KubernetesGroups: kubernetesGroups,
-		Protocol:         protocol, DestinationPortRanges: portRanges,
+		KubernetesGroups: kubernetesGroups, KubernetesAccess: kubernetesAccess,
+		Protocol: protocol, DestinationPortRanges: portRanges,
 	})
 }
 
@@ -433,6 +448,9 @@ func classifyPolicyPublicationError(err error) managementError {
 			Status: http.StatusConflict, Code: "route_overlap",
 			Message: "rules grant overlapping prefixes of two Sites; a Device could not tell which router to use",
 		}
+	case errors.Is(err, policypublication.ErrKubernetesProfile):
+		answer, _ := classifyKubernetesAccessError(err)
+		return answer
 	case errors.Is(err, policypublication.ErrKubernetesGroups):
 		return managementError{
 			Status: http.StatusConflict, Code: "kubernetes_groups_conflict",
@@ -468,6 +486,9 @@ func classifyPolicyPublicationError(err error) managementError {
 }
 
 func classifyPolicyCompilationError(err error) managementError {
+	if answer, ok := classifyKubernetesAccessError(err); ok {
+		return answer
+	}
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		return managementError{
@@ -501,8 +522,6 @@ func classifyPolicyCompilationError(err error) managementError {
 		}
 	case errors.Is(err, compilation.ErrKubernetesClusterUnavailable):
 		return kubernetesClusterUnavailableError
-	case errors.Is(err, compilation.ErrKubernetesGroupsRequired):
-		return kubernetesGroupsRequiredError
 	case errors.Is(err, compilation.ErrSiteRoutesDisabled):
 		return managementError{
 			Status: http.StatusConflict, Code: "subnet_routes_disabled",

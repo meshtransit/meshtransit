@@ -647,6 +647,8 @@ func Catalog() []Migration {
 			kubernetesClusterDeleteRevokedReplicasSQL),
 		newMigration(258, "Kubernetes access profiles in a policy release, kept from a Core before K2",
 			kubernetesAccessProfilesSQL),
+		newMigration(259, "A Core that hashes Kubernetes access profiles writes and reads them",
+			kubernetesAccessProfileWriterSQL),
 	}
 }
 
@@ -1200,3 +1202,6 @@ var kubernetesClusterDeleteRevokedReplicasSQL string
 
 //go:embed 000258_kubernetes_access_profiles.up.sql
 var kubernetesAccessProfilesSQL string
+
+//go:embed 000259_kubernetes_access_profile_writer.up.sql
+var kubernetesAccessProfileWriterSQL string

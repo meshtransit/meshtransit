@@ -194,9 +194,10 @@ func (store *PolicySimulationStore) readSimulationBaselineOnce(
 		len(record.ExitRules) > policy.MaximumRules {
 		return simulation.Baseline{}, simulation.ErrInvalidBaseline
 	}
-	// The release's rules to clusters with their groups, in this snapshot,
-	// so the baseline rebuilds the release it was hashed as.
-	if record.HasActiveRelease && len(record.GroupRules) > 0 {
+	// The release's rules to clusters with their groups and profiles, and
+	// its profiles, in this snapshot, so the baseline rebuilds the release it
+	// was hashed as and holds the profiles a proposal keeps (review d2 M2).
+	if record.HasActiveRelease {
 		read, found, readErr := readPolicyKubernetesGroups(ctx, func(ctx context.Context, query string,
 			arguments ...any) scannedRow {
 			return transaction.QueryRow(ctx, query, arguments...)
@@ -244,8 +245,9 @@ type policySimulationBaselineRecord struct {
 	}
 	guardrails         []guardrail.Guardrail
 	providerGuardrails map[workspace.ID][]guardrail.Guardrail
-	// kubernetesGroups are the groups and clusters of the release's rules
-	// to clusters, and whether its hash covers them (schema 236).
+	// kubernetesGroups are the groups, clusters and profiles of the
+	// release's rules to clusters, its profiles, and what its hash covers of
+	// them (schemas 236, 259).
 	kubernetesGroups policyKubernetesGroups
 }
 
@@ -291,7 +293,8 @@ func decodePolicyGroupRules(payloads []policyGroupRulePayload,
 		}
 		params := publication.GroupRuleParams{RuleID: ruleID, Protocol: parsePolicyRuleProtocol(payload.Protocol),
 			DestinationKubernetesClusterID: kubernetesGroups.clusters[ruleID],
-			KubernetesGroups:               kubernetesGroups.groups[ruleID]}
+			KubernetesGroups:               kubernetesGroups.groups[ruleID],
+			KubernetesAccess:               kubernetesGroups.access[ruleID]}
 		parse := func(text string, target *node.ID) error {
 			if text == "" {
 				return nil
@@ -424,6 +427,13 @@ func (record policySimulationBaselineRecord) baseline(
 	if err != nil {
 		return simulation.Baseline{}, fmt.Errorf("reconstruct compiled baseline: %w", err)
 	}
+	// The release's profiles, before the rules that pin them.
+	if profiles := record.kubernetesGroups.profiles; len(profiles) > 0 {
+		if candidate, err = candidate.WithKubernetesProfiles(profiles); err != nil {
+			return simulation.Baseline{}, fmt.Errorf("reconstruct Kubernetes profiles: %w",
+				simulation.ErrInvalidBaseline)
+		}
+	}
 	if len(record.GroupRules) > 0 {
 		groupRules, groupErr := decodePolicyGroupRules(record.GroupRules, record.kubernetesGroups)
 		if groupErr != nil {
@@ -455,12 +465,9 @@ func (record policySimulationBaselineRecord) baseline(
 	if err != nil {
 		return simulation.Baseline{}, err
 	}
-	// A release a Core before K1a3 published was hashed without the groups
-	// the database carried for it.
-	rebuiltHash := candidate.SemanticHash()
-	if !record.kubernetesGroups.hashed {
-		rebuiltHash = candidate.LegacySemanticHash()
-	}
+	// A release a Core of an earlier era published was hashed without the
+	// groups or profiles the database carried for it.
+	rebuiltHash := candidate.SemanticHashAs(record.kubernetesGroups.hashed, record.kubernetesGroups.profilesHashed)
 	if rebuiltHash != semanticHash {
 		return simulation.Baseline{}, fmt.Errorf("compiled baseline semantic hash differs: %w", simulation.ErrInvalidBaseline)
 	}

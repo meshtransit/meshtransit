@@ -51,6 +51,10 @@ var (
 	ErrRequestExpired = errors.New("policy approval: request expired")
 	// ErrIndependentApproverRequired rejects proposer self-approval.
 	ErrIndependentApproverRequired = errors.New("policy approval: independent approver required")
+	// ErrKubernetesAccessUnreviewable refuses a request that changes
+	// Kubernetes access profiles or how rules apply them: the impact an
+	// approver sees does not show that yet (K2 review d2 M2, until K2f).
+	ErrKubernetesAccessUnreviewable = errors.New("policy approval: Kubernetes access changes cannot be reviewed yet")
 )
 
 // AuditReason is a bounded human explanation for a proposal or decision.

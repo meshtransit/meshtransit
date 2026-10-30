@@ -3,7 +3,6 @@ package compilation
 import (
 	"context"
 	"errors"
-	"slices"
 
 	"meshtransit.net/core/internal/domain/devicegroup"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
@@ -126,48 +125,6 @@ func classifyKubernetesClusterResolutionError(err error) error {
 		return errors.Join(ErrKubernetesClusterUnavailable, err)
 	default:
 		return errors.Join(ErrUnavailable, err)
-	}
-}
-
-// keptKubernetesGroups returns how a group rule gets its Kubernetes groups:
-// those it names, else those the replaced release (read once, when first
-// needed) holds for the same rule from the same source to the same cluster,
-// else none for a rule that had none there. A new rule to a cluster, or one
-// now from another source or to another cluster, without groups is refused:
-// its groups grant access somewhere else. Without a reader, only those it
-// names.
-func (service *Service) keptKubernetesGroups(ctx context.Context, session accountsession.Session,
-	request Request) func(RuleIntent, kubecluster.ID) ([]string, error) {
-	var base map[policy.RuleID]ReleasedClusterRule
-	read := false
-	return func(intent RuleIntent, cluster kubecluster.ID) ([]string, error) {
-		if intent.kubernetesGroups != nil || !cluster.IsValid() || service.ruleGroups == nil {
-			return intent.KubernetesGroups(), nil
-		}
-		if !read {
-			// The first release (revision 2) replaces none: every rule to a
-			// cluster is new.
-			if replaced := request.revision - 1; replaced > 1 {
-				held, err := service.ruleGroups.ReadPolicyKubernetesGroups(ctx, session, request.scope, replaced)
-				if err != nil {
-					return nil, err
-				}
-				base = held
-			}
-			read = true
-		}
-		released, held := base[intent.id]
-		if !held {
-			return nil, ErrKubernetesGroupsRequired
-		}
-		if released.Groups == nil {
-			return nil, nil // released before K1a3: it grants no group
-		}
-		kind, source := intent.sourceSide()
-		if released.Cluster != cluster || released.SourceKind != kind || released.SourceID != source {
-			return nil, ErrKubernetesGroupsRequired
-		}
-		return slices.Clone(released.Groups), nil
 	}
 }
 

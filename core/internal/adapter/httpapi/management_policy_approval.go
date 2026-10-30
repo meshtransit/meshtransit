@@ -169,10 +169,13 @@ func (handler *ManagementHandler) handlePolicyApproval(
 }
 
 type requestPolicyApprovalBody struct {
-	Rules                 []publishPolicyRuleRequest `json:"rules"`
-	CandidateSemanticHash string                     `json:"candidate_semantic_hash"`
-	ImpactHash            string                     `json:"impact_hash"`
-	Reason                string                     `json:"reason"`
+	Rules []publishPolicyRuleRequest `json:"rules"`
+	// KubernetesProfiles as in a publish: absent or null keeps those of the
+	// release the request replaces.
+	KubernetesProfiles    *[]publishPolicyKubernetesProfileRequest `json:"kubernetes_profiles"`
+	CandidateSemanticHash string                                   `json:"candidate_semantic_hash"`
+	ImpactHash            string                                   `json:"impact_hash"`
+	Reason                string                                   `json:"reason"`
 }
 
 type approvePolicyBody struct {
@@ -256,8 +259,12 @@ func (handler *ManagementHandler) decodePolicyApprovalRequest(
 		}
 		rules[index] = rule
 	}
+	profiles, err := decodePolicyKubernetesProfiles(body.KubernetesProfiles)
+	if err != nil {
+		return approval.RequestIntent{}, invalidManagementRequest()
+	}
 	compilationRequest, err := compilation.NewRequest(compilation.RequestParams{
-		Scope: scope, Revision: baseRevision + 1, Rules: rules,
+		Scope: scope, Revision: baseRevision + 1, Rules: rules, KubernetesProfiles: profiles,
 	})
 	if err != nil {
 		return approval.RequestIntent{}, invalidManagementRequest()
@@ -735,9 +742,16 @@ func policyApprovalDecisionResultMatches(result approval.Result, command approva
 }
 
 func classifyPolicyApprovalError(err error) managementError {
+	if answer, ok := classifyKubernetesAccessError(err); ok {
+		return answer
+	}
 	switch {
-	case errors.Is(err, compilation.ErrKubernetesGroupsRequired):
-		return kubernetesGroupsRequiredError
+	case errors.Is(err, approval.ErrKubernetesAccessUnreviewable):
+		return managementError{
+			Status: http.StatusConflict, Code: "kubernetes_access_unreviewable",
+			Message: "an approval request cannot change Kubernetes access profiles or how rules apply them yet; " +
+				"a policy publisher publishes such a change directly",
+		}
 	case errors.Is(err, compilation.ErrKubernetesClusterUnavailable):
 		return kubernetesClusterUnavailableError
 	case errors.Is(err, context.DeadlineExceeded):

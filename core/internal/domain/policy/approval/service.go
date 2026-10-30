@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"meshtransit.net/core/internal/domain/policy/publication"
 )
 
 const (
@@ -99,6 +101,9 @@ func (service *Service) Request(
 	}
 	if simulated.ProposedCandidate().SemanticHash() != intent.CandidateSemanticHash() {
 		return RequestResult{}, ErrCandidateChanged
+	}
+	if publication.KubernetesAccessChanged(simulated.Baseline().Candidate(), simulated.ProposedCandidate()) {
+		return RequestResult{}, ErrKubernetesAccessUnreviewable
 	}
 	if simulated.ImpactHash() != intent.ImpactHash() {
 		return RequestResult{}, ErrImpactChanged

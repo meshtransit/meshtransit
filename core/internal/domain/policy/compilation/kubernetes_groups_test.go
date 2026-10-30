@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 
 	"meshtransit.net/core/internal/domain/devicegroup"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
@@ -27,15 +28,19 @@ func mustCluster(t *testing.T, text string) kubecluster.ID {
 
 type ruleGroupReaderFixture struct {
 	base      map[policy.RuleID]compilation.ReleasedClusterRule
+	profiles  []publication.KubernetesProfile
 	err       error
 	revisions []int64
 }
 
-func (fixture *ruleGroupReaderFixture) ReadPolicyKubernetesGroups(_ context.Context, _ accountsession.Session,
-	_ network.Scope, revision int64) (map[policy.RuleID]compilation.ReleasedClusterRule, error) {
+func (fixture *ruleGroupReaderFixture) ReadPolicyKubernetesAccess(_ context.Context, _ accountsession.Session,
+	_ network.Scope, revision int64) (compilation.ReleasedKubernetesAccess, error) {
 	fixture.revisions = append(fixture.revisions, revision)
-	return fixture.base, fixture.err
+	return compilation.ReleasedKubernetesAccess{Rules: fixture.base, Profiles: fixture.profiles}, fixture.err
 }
+
+// fixedNow is the clock of compile tests.
+func fixedNow() time.Time { return time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC) }
 
 // An intent to a cluster names Kubernetes groups; no other intent does.
 func TestRuleIntentNamesKubernetesGroupsOnlyToACluster(t *testing.T) {
@@ -93,7 +98,7 @@ func TestServiceKeepsTheKubernetesGroupsOfTheReplacedRelease(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		service, err = service.WithKubernetesRuleGroups(reader)
+		service, err = service.WithKubernetesAccess(reader, fixedNow)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -169,7 +174,7 @@ func TestServiceReadsNoGroupsForTheFirstRelease(t *testing.T) {
 		DestinationKubernetesClusterID: fixture.cluster, Protocol: policy.ProtocolTCP,
 		DestinationPortRanges: []policy.PortRange{fixture.https}})
 	reader := &ruleGroupReaderFixture{}
-	service, err := service.WithKubernetesRuleGroups(reader)
+	service, err := service.WithKubernetesAccess(reader, fixedNow)
 	if err != nil {
 		t.Fatal(err)
 	}

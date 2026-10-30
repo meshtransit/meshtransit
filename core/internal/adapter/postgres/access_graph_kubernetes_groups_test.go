@@ -49,7 +49,7 @@ func TestGroupKubernetesClusterPaths(t *testing.T) {
 		return grouped, calls, groupErr
 	}
 	text := func(value string) *string { return &value }
-	const rules = `{"policy_revision":6,"hashed":true,"rules":[{"id":"01890f00-0000-7000-8000-000000000501",` +
+	const rules = `{"policy_revision":6,"groups_hashed":true,"profiles":[],"rules":[{"id":"01890f00-0000-7000-8000-000000000501",` +
 		`"cluster_id":"CLUSTER","source_kind":"device","source_id":"01890f00-0000-7000-8000-000000000301",` +
 		`"groups":["edit","view"]}]}`
 	cluster := "01890f00-0000-7000-8000-000000000b01"
@@ -67,11 +67,11 @@ func TestGroupKubernetesClusterPaths(t *testing.T) {
 		err     error
 		want    error
 	}{
-		"another revision": {text(`{"policy_revision":5,"hashed":false,"rules":[]}`), nil,
+		"another revision": {text(`{"policy_revision":5,"groups_hashed":false,"profiles":[],"rules":[]}`), nil,
 			accessgraph.ErrInvalidSnapshot},
 		"another cluster": {text(strings.ReplaceAll(rules, "CLUSTER", "01890f00-0000-7000-8000-000000000b02")), nil,
 			accessgraph.ErrInvalidSnapshot},
-		"unsorted groups": {text(`{"policy_revision":6,"hashed":true,"rules":[{"id":"01890f00-0000-7000-8000-` +
+		"unsorted groups": {text(`{"policy_revision":6,"groups_hashed":true,"profiles":[],"rules":[{"id":"01890f00-0000-7000-8000-` +
 			`000000000501","cluster_id":"` + cluster + `","source_kind":"device","source_id":"01890f00-0000-7000-` +
 			`8000-000000000301","groups":["view","edit"]}]}`), nil, accessgraph.ErrInvalidSnapshot},
 		"database": {nil, errors.New("connection reset"), accessgraph.ErrUnavailable},

@@ -117,6 +117,27 @@ const kubernetesGroupRulesGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_
     pg_catalog.to_regprocedure('mesh_ops.attach_policy_group_rules_v3(uuid,timestamp with time zone,jsonb)'),
     'EXECUTE'), FALSE)`
 
+// attachProfilePolicyGroupRulesSQL attaches group rules with the Kubernetes
+// groups and access profiles of rules to clusters, marking both hashed
+// (schema 259).
+const attachProfilePolicyGroupRulesSQL = `SELECT mesh_ops.attach_policy_group_rules_v4(
+    $1::UUID,
+    $2::TIMESTAMPTZ,
+    $3::JSONB
+)`
+
+// attachPolicyKubernetesProfilesSQL attaches the access profiles of a
+// release, before its rules (schema 259).
+const attachPolicyKubernetesProfilesSQL = `SELECT mesh_ops.attach_policy_kubernetes_profiles_v1(
+    $1::UUID,
+    $2::TIMESTAMPTZ,
+    $3::JSONB
+)`
+
+const kubernetesProfileRulesGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
+    pg_catalog.to_regprocedure('mesh_ops.attach_policy_group_rules_v4(uuid,timestamp with time zone,jsonb)'),
+    'EXECUTE'), FALSE)`
+
 const consumePolicyPublicationApprovalSQL = `SELECT
     mesh_ops.consume_policy_approval_for_publication_v1(
         $1::UUID, $2::UUID, $3::BYTEA, $4::INTEGER,
