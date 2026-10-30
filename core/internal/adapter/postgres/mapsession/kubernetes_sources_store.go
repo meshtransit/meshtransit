@@ -28,6 +28,10 @@ FROM mesh_ops.load_map_network_kubernetes_rule_groups_v1($1::BIGINT)`
 FROM mesh_ops.load_map_network_kubernetes_rule_access_v1($1::BIGINT)`
 	loadKubernetesProfilesSQL = `SELECT profile_public_id::TEXT, content_hash, name, rules::TEXT
 FROM mesh_ops.load_map_network_kubernetes_profiles_v1($1::BIGINT)`
+	kubernetesContactsGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
+    pg_catalog.to_regprocedure('mesh_ops.load_map_network_kubernetes_contacts_v1()'), 'EXECUTE'), FALSE)`
+	loadKubernetesContactsSQL = `SELECT cluster_name, access_contact
+FROM mesh_ops.load_map_network_kubernetes_contacts_v1()`
 	loadKubernetesSourcesSQL = `SELECT device_id, owner_kind, owner_ref, member_owned, owner_active,
     owner_valid_until, owner_changed_at, forwards
 FROM mesh_ops.load_map_network_kubernetes_sources_v1($1::INTEGER)`
@@ -266,6 +270,46 @@ func readKubernetesProfiles(ctx context.Context, transaction databaseTransaction
 	return profiles, nil
 }
 
+// readKubernetesContacts reads the clusters' access contacts when this role
+// may (schema 262); without, none. One out of form is left out: a contact
+// is shown only, never authority.
+func (store *Store) readKubernetesContacts(ctx context.Context,
+	transaction databaseTransaction) (map[kubecluster.Name]string, error) {
+	if !store.kubernetesContactsGranted.Load() {
+		granted, err := functionGranted(ctx, transaction, kubernetesContactsGrantedSQL)
+		if err != nil {
+			return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("check Kubernetes contact reader: %w", err))
+		}
+		if !granted {
+			return nil, nil
+		}
+		store.kubernetesContactsGranted.Store(true)
+	}
+	rows, err := transaction.Query(ctx, loadKubernetesContactsSQL)
+	if err != nil || rows == nil {
+		return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("read Kubernetes contacts: %w", nonNil(err)))
+	}
+	defer rows.Close()
+	contacts := make(map[kubecluster.Name]string)
+	for rows.Next() {
+		if len(contacts) == kubecluster.MaximumClustersPerNetwork {
+			break // shown only: never fail a map for it (review d4b L5)
+		}
+		var name, contact string
+		if err := rows.Scan(&name, &contact); err != nil {
+			return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("scan Kubernetes contact: %w", err))
+		}
+		cluster, err := kubecluster.ParseName(name)
+		if err == nil && kubecluster.ValidAccessContact(contact) {
+			contacts[cluster] = contact
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("iterate Kubernetes contacts: %w", err))
+	}
+	return contacts, nil
+}
+
 // maximumKubernetesProfiles bounds the profiles one release holds.
 const maximumKubernetesProfiles = 256
 
@@ -373,7 +417,11 @@ func (store *Store) kubernetesAccessView(cached cachedInventory, self node.ID, c
 	if count && crowded > 0 {
 		store.stats.kubernetesWithheldPeerGrants.Add(uint64(crowded))
 	}
-	view, err := appmapsession.NewKubernetesView(access, cached.policy.KubernetesScopeTableFor(self, replica, at))
+	table := cached.policy.KubernetesScopeTableFor(self, replica, at)
+	if !table.IsEmpty() {
+		table.AccessContact = cached.kubernetesContacts[cluster]
+	}
+	view, err := appmapsession.NewKubernetesView(access, table)
 	if err != nil {
 		return withheld(&store.stats.kubernetesWithheldEvidence)
 	}

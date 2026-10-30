@@ -530,6 +530,7 @@ message KubernetesScopedGrant {
 message KubernetesScopeTable {
   repeated KubernetesProfile profiles = 1;
   repeated KubernetesScope scopes = 2;
+  string access_contact = 3; // who to ask for more access, shown in a refusal; at most 256 bytes (7.12)
 }
 
 // KubernetesProfile is an access profile: its rules, as RBAC's PolicyRule.

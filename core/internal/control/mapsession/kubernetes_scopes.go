@@ -49,6 +49,9 @@ type KubernetesScope struct {
 type KubernetesScopeTable struct {
 	Profiles []KubernetesProfile
 	Scopes   []KubernetesScope
+	// AccessContact is the cluster's contact for more access (K2 §29.1),
+	// carried only with scopes; empty for none.
+	AccessContact string
 }
 
 // KubernetesScopedGrant is one group as a rule narrows it, until
@@ -163,7 +166,7 @@ func (table KubernetesScopeTable) Equal(other KubernetesScopeTable) bool {
 		return left.Hash == right.Hash && left.ID == right.ID
 	}) && slices.EqualFunc(table.Scopes, other.Scopes, func(left, right KubernetesScope) bool {
 		return left.Hash == right.Hash
-	})
+	}) && table.AccessContact == other.AccessContact
 }
 
 // compareKubernetesScopedGrants orders grants by their key (mtcp-v1 §7.12):

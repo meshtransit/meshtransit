@@ -4663,6 +4663,7 @@ type KubernetesScopeTable struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Profiles      []*KubernetesProfile   `protobuf:"bytes,1,rep,name=profiles,proto3" json:"profiles,omitempty"`
 	Scopes        []*KubernetesScope     `protobuf:"bytes,2,rep,name=scopes,proto3" json:"scopes,omitempty"`
+	AccessContact string                 `protobuf:"bytes,3,opt,name=access_contact,json=accessContact,proto3" json:"access_contact,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4709,6 +4710,13 @@ func (x *KubernetesScopeTable) GetScopes() []*KubernetesScope {
 		return x.Scopes
 	}
 	return nil
+}
+
+func (x *KubernetesScopeTable) GetAccessContact() string {
+	if x != nil {
+		return x.AccessContact
+	}
+	return ""
 }
 
 type KubernetesProfile struct {
@@ -9363,10 +9371,11 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\x04Mode\x12\x14\n" +
 	"\x10MODE_UNSPECIFIED\x10\x00\x12\n" +
 	"\n" +
-	"\x06REPORT\x10\x01\"\x98\x01\n" +
+	"\x06REPORT\x10\x01\"\xbf\x01\n" +
 	"\x14KubernetesScopeTable\x12B\n" +
 	"\bprofiles\x18\x01 \x03(\v2&.meshtransit.mtcp.v1.KubernetesProfileR\bprofiles\x12<\n" +
-	"\x06scopes\x18\x02 \x03(\v2$.meshtransit.mtcp.v1.KubernetesScopeR\x06scopes\"\xec\x01\n" +
+	"\x06scopes\x18\x02 \x03(\v2$.meshtransit.mtcp.v1.KubernetesScopeR\x06scopes\x12%\n" +
+	"\x0eaccess_contact\x18\x03 \x01(\tR\raccessContact\"\xec\x01\n" +
 	"\x11KubernetesProfile\x12\x12\n" +
 	"\x04hash\x18\x01 \x01(\fR\x04hash\x12\x1d\n" +
 	"\n" +

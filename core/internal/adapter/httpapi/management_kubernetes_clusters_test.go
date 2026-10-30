@@ -34,17 +34,18 @@ func kubernetesClustersTestPath(rest string) string {
 }
 
 type kubernetesClusterStub struct {
-	readOnly     bool
-	replacements []kubecluster.TrustReplacement
-	replaceErr   error
-	calls        []string
-	creations    []kubecluster.Creation
-	deletions    []kubecluster.Deletion
-	keys         []kubecluster.KeyRequest
-	decisions    []kubecluster.Decision
-	codes        []string
-	failure      error
-	pages        []kubecluster.PageQuery
+	accessReplacement kubecluster.AccessSettingsReplacement
+	readOnly          bool
+	replacements      []kubecluster.TrustReplacement
+	replaceErr        error
+	calls             []string
+	creations         []kubecluster.Creation
+	deletions         []kubecluster.Deletion
+	keys              []kubecluster.KeyRequest
+	decisions         []kubecluster.Decision
+	codes             []string
+	failure           error
+	pages             []kubecluster.PageQuery
 	// explainReplica is the replica ReadExplainReplica returns.
 	explainReplica node.ID
 	// next is the cursor list pages return.
@@ -257,6 +258,28 @@ func (stub *kubernetesClusterStub) CountDenials(_ context.Context, _ accountsess
 	}
 	return kubecluster.DenialSums{Counts: []kubecluster.DenialCount{{Reason: "forbidden", Count: 3, FirstAt: from,
 		LastAt: to}}}, nil
+}
+
+func (stub *kubernetesClusterStub) ReadAccessSettings(context.Context, accountsession.Session, network.Scope,
+	kubecluster.ID) (kubecluster.AccessSettings, error) {
+	stub.calls = append(stub.calls, "read-access-settings")
+	if stub.failure != nil {
+		return kubecluster.AccessSettings{}, stub.failure
+	}
+	return kubecluster.AccessSettings{AccessContact: "#platform", Version: 2,
+		UpdatedAt: time.Date(2026, time.October, 30, 2, 0, 0, 0, time.UTC)}, nil
+}
+
+func (stub *kubernetesClusterStub) ReplaceAccessSettings(_ context.Context,
+	replacement kubecluster.AccessSettingsReplacement) (kubecluster.AccessSettingsResult, error) {
+	stub.calls = append(stub.calls, "replace-access-settings")
+	stub.accessReplacement = replacement
+	if stub.failure != nil {
+		return kubecluster.AccessSettingsResult{}, stub.failure
+	}
+	return kubecluster.AccessSettingsResult{Changed: true, Settings: kubecluster.AccessSettings{
+		AccessContact: replacement.AccessContact, Version: replacement.ExpectedVersion + 1,
+		UpdatedAt: time.Date(2026, time.October, 30, 2, 0, 0, 0, time.UTC)}}, nil
 }
 
 func (stub *kubernetesClusterStub) ReadAuditSettings(context.Context, accountsession.Session, network.Scope,
@@ -780,6 +803,23 @@ func TestKubernetesClusterHTTPBoundary(t *testing.T) {
 		{"stale audit settings", http.MethodPut, cluster + "/audit-settings",
 			`{"privileged_groups":[],"secret_resources":[]}`, `"1"`, kubecluster.ErrConflict, 409,
 			"replace-audit-settings", "", ""},
+		{"read access settings", http.MethodGet, cluster + "/access-settings", "", "", nil, 200,
+			"read-access-settings", `"access_contact":"#platform","version":2`, ""},
+		{"set the access contact", http.MethodPut, cluster + "/access-settings",
+			`{"access_contact":"#k8s-access on Slack"}`, `"0"`, nil, 200, "replace-access-settings",
+			`"access_contact":"#k8s-access on Slack","version":1`, ""},
+		{"clear the access contact", http.MethodPut, cluster + "/access-settings", `{"access_contact":""}`, `"2"`,
+			nil, 200, "replace-access-settings", `"changed":true`, ""},
+		{"access contact without If-Match", http.MethodPut, cluster + "/access-settings", `{"access_contact":"a"}`,
+			"", nil, 428, "", "precondition_required", ""},
+		{"access contact with a line break", http.MethodPut, cluster + "/access-settings",
+			`{"access_contact":"call\nme"}`, `"0"`, nil, 400, "", "invalid_request", ""},
+		{"access contact too long", http.MethodPut, cluster + "/access-settings",
+			`{"access_contact":"` + strings.Repeat("a", 257) + `"}`, `"0"`, nil, 400, "", "invalid_request", ""},
+		{"access contact missing", http.MethodPut, cluster + "/access-settings", `{}`, `"0"`, nil, 400, "",
+			"invalid_request", ""},
+		{"stale access contact", http.MethodPut, cluster + "/access-settings", `{"access_contact":"a"}`, `"1"`,
+			kubecluster.ErrConflict, 409, "replace-access-settings", "", ""},
 		{"read a request", http.MethodGet, request, "", "", nil, 200, "read-request",
 			`"machine_key_fingerprint":"` + strings.Repeat("a", 64) + `"`, ""},
 		{"approve", http.MethodPost, request + "/actions/approve", `{"code":"4KH7I-REC2B"}`, "", nil, 200,

@@ -115,6 +115,8 @@ type fakeTransaction struct {
 	kubernetesProfilesGranted bool
 	kubernetesRuleAccess      [][]any
 	kubernetesProfiles        [][]any
+	// kubernetesContacts answer schema 262's reader when not nil.
+	kubernetesContacts [][]any
 }
 
 // gatewayRows answers the schema 231 gateway reader in numeric ID order.
@@ -248,6 +250,10 @@ func (transaction *fakeTransaction) Query(
 		return &genericRows{rows: transaction.kubernetesRuleAccess}, nil
 	case loadKubernetesProfilesSQL:
 		return &genericRows{rows: transaction.kubernetesProfiles}, nil
+	case kubernetesContactsGrantedSQL:
+		return &grantRows{granted: transaction.kubernetesContacts != nil}, nil
+	case loadKubernetesContactsSQL:
+		return &genericRows{rows: transaction.kubernetesContacts}, nil
 	case loadKubernetesGatewaysSQL:
 		if transaction.kubernetesGateways == nil {
 			return nil, errors.New("unexpected gateway read")

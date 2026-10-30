@@ -244,3 +244,33 @@ func TestUnchangedGatewayMapWithoutProfiles(t *testing.T) {
 		t.Fatalf("Unchanged() = %v, %v", unchanged, err)
 	}
 }
+
+// A gateway's table names its own cluster's access contact, never another
+// cluster's of the Network; a change of only
+// the contact changes the view, so a delta carries it (K2 §29.1).
+func TestGatewayTableCarriesTheAccessContact(t *testing.T) {
+	store, transaction, _ := gatewayStoreFixture(t)
+	profile := kubeprofile.Profile{Name: "developer", Namespaced: []kubeprofile.Rule{
+		{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get"}}}}
+	hash := must(kubeprofile.ContentHash(profile))
+	transaction.kubernetesProfilesGranted = true
+	transaction.kubernetesRuleAccess = [][]any{{testRuleID, []string{"view"}, "01890f00-0000-7000-8000-00000000cc01",
+		hash[:], []string{"team-a"}, false, "enforce", nil}}
+	transaction.kubernetesProfiles = [][]any{{"01890f00-0000-7000-8000-00000000cc01", hash[:], "developer",
+		`{"namespaced": [{"apiGroups": [""], "resources": ["pods"], "verbs": ["get"]}]}`}}
+	transaction.kubernetesContacts = [][]any{{"kinda-k1", "#k8s-access on Slack"}, {"other", "#other-team"},
+		{"third", "line\nbreak"}}
+	loaded, err := store.Load(t.Context(), validIdentity(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	table := loaded.Kubernetes().Scopes()
+	if table.AccessContact != "#k8s-access on Slack" || table.IsEmpty() {
+		t.Fatalf("table = %+v", table)
+	}
+	other := table
+	other.AccessContact = "platform@example.com"
+	if table.Equal(other) {
+		t.Fatal("a table with another contact is equal")
+	}
+}

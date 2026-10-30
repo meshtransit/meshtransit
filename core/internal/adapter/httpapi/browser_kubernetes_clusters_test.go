@@ -232,6 +232,12 @@ func TestBrowserManagementAdmitsKubernetesAuditSettingsPut(t *testing.T) {
 	if !browser.validRequest(request) {
 		t.Fatal("the browser cannot PUT audit settings")
 	}
+	request = browserManagementRequest(t, kubernetesClustersTestPath("/01890f00-0000-7000-8000-000000000a01/access-settings"),
+		`{"access_contact":""}`)
+	request.Method = http.MethodPut
+	if !browser.validRequest(request) {
+		t.Fatal("the browser cannot PUT access settings")
+	}
 	request = browserManagementRequest(t, kubernetesClustersTestPath("/01890f00-0000-7000-8000-000000000a01/replicas"),
 		`{}`)
 	request.Method = http.MethodPut

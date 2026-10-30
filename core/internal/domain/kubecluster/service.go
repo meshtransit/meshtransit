@@ -158,6 +158,9 @@ type Store interface {
 	ReadAuditSettings(ctx context.Context, session accountsession.Session, scope network.Scope,
 		clusterID ID) (AuditSettings, error)
 	ReplaceAuditSettings(ctx context.Context, replacement AuditSettingsReplacement) (AuditSettingsResult, error)
+	ReadAccessSettings(ctx context.Context, session accountsession.Session, scope network.Scope,
+		clusterID ID) (AccessSettings, error)
+	ReplaceAccessSettings(ctx context.Context, replacement AccessSettingsReplacement) (AccessSettingsResult, error)
 	BeginExport(ctx context.Context, query ExportQuery) (ExportHeader, error)
 	ExportPage(ctx context.Context, query ExportQuery, after PageCursor) ([]ExportRecord, error)
 	RequestCARetire(ctx context.Context, command CARetireRequestCommand) (CARetireRequestResult, error)

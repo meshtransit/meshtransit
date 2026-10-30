@@ -345,6 +345,7 @@ func (state *mapState) build(input snapshotInput) (networkmap.Snapshot, error) {
 	snapshot := networkmap.Snapshot{
 		Revision: input.revision, ControlTime: input.controlTime, Self: self, Peers: peers, Policy: policy, DNS: dns,
 		Relays: map[int]networkmap.RelayRegion{}, KubernetesScopes: scopes.scopes, KubernetesWithheld: scopes.withheld,
+		KubernetesAccessContact: scopes.contact,
 	}
 	if state.takesRoutes {
 		if snapshot.Routes, err = convertRoutes(state.routes); err != nil {

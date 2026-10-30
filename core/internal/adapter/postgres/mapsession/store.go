@@ -110,6 +110,8 @@ type Store struct {
 	kubernetesSourcesGranted atomic.Bool
 	// kubernetesProfilesGranted: this role may run the schema 260 readers.
 	kubernetesProfilesGranted atomic.Bool
+	// kubernetesContactsGranted: this role may run the schema 262 reader.
+	kubernetesContactsGranted atomic.Bool
 	// kubernetesCAsGranted: schema 242's reader of clusters' CAs is
 	// granted (probed until it is).
 	kubernetesCAsGranted atomic.Bool

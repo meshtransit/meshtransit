@@ -175,7 +175,8 @@ func validKubernetesAccess(entry KubernetesAccess, scopes map[[32]byte]struct{})
 }
 
 func cloneKubernetesScopeTable(table KubernetesScopeTable) KubernetesScopeTable {
-	return KubernetesScopeTable{Profiles: slices.Clone(table.Profiles), Scopes: slices.Clone(table.Scopes)}
+	return KubernetesScopeTable{Profiles: slices.Clone(table.Profiles), Scopes: slices.Clone(table.Scopes),
+		AccessContact: table.AccessContact}
 }
 
 // Scopes returns the scope table the map carries (K2); empty for a session

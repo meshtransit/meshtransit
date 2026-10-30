@@ -33,7 +33,8 @@ const (
 	// scope table.
 	MaximumClusterKubernetesScopes = 256
 	// MaximumClusterScopeTableBytes bounds the encoded scope table of one
-	// cluster, less room for the Network's contact text.
+	// cluster, less room for the cluster's access contact (field 3, at most
+	// 256 bytes).
 	MaximumClusterScopeTableBytes = 256<<10 - 1<<10
 )
 

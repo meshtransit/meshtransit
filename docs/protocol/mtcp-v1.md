@@ -1495,6 +1495,10 @@ cases of the K2 design §5.4).
   replica of a cluster gets the same table, and membership changes never
   change it. `profiles` and `scopes` are each strictly sorted by `hash`.
   `profile_id` is shown to people only; it never decides or records anything.
+  `access_contact` is who to ask for more access, the cluster's administrators'
+  text (at most 256 bytes, empty for none): the gateway shows it in a refusal
+  and nowhere else. One out of form (over 256 bytes, not UTF-8, a control or
+  format character) is shown as none; it never makes the table unusable.
 - **Scoped grants.** `KubernetesAccess.scoped_grants`: `group`, `scope` (the
   hash of a scope of the table), `mode`, `report_until_ms` and
   `valid_until_ms`. The key (`group`, `scope` bytewise, `mode` with

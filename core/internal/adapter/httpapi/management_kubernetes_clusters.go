@@ -41,12 +41,14 @@ const (
 	kubernetesCAListOperation      = "kubernetes_ca_list"
 	kubernetesCAReadOperation      = "kubernetes_ca_read"
 	// K1d d1c: operations and denials for audit readers.
-	kubernetesOperationListOperation        = "kubernetes_operation_list"
-	kubernetesOperationReadOperation        = "kubernetes_operation_read"
-	kubernetesOperationExportOperation      = "kubernetes_operation_export"
-	kubernetesAuditSettingsReadOperation    = "kubernetes_audit_settings_read"
-	kubernetesAuditSettingsReplaceOperation = "kubernetes_audit_settings_replace"
-	kubernetesDenialCountsOperation         = "kubernetes_operation_denial_counts"
+	kubernetesOperationListOperation         = "kubernetes_operation_list"
+	kubernetesOperationReadOperation         = "kubernetes_operation_read"
+	kubernetesOperationExportOperation       = "kubernetes_operation_export"
+	kubernetesAuditSettingsReadOperation     = "kubernetes_audit_settings_read"
+	kubernetesAuditSettingsReplaceOperation  = "kubernetes_audit_settings_replace"
+	kubernetesAccessSettingsReadOperation    = "kubernetes_access_settings_read"
+	kubernetesAccessSettingsReplaceOperation = "kubernetes_access_settings_replace"
+	kubernetesDenialCountsOperation          = "kubernetes_operation_denial_counts"
 	// K1d d2a: approvers ask the CA worker to retire a CA.
 	kubernetesCARetireListOperation    = "kubernetes_ca_retire_request_list"
 	kubernetesCARetireRequestOperation = "kubernetes_ca_retire_request_create"
@@ -90,6 +92,10 @@ type KubernetesClusterManager interface {
 	ReadAuditSettings(context.Context, accountsession.Session, network.Scope,
 		kubecluster.ID) (kubecluster.AuditSettings, error)
 	ReplaceAuditSettings(context.Context, kubecluster.AuditSettingsReplacement) (kubecluster.AuditSettingsResult,
+		error)
+	ReadAccessSettings(context.Context, accountsession.Session, network.Scope,
+		kubecluster.ID) (kubecluster.AccessSettings, error)
+	ReplaceAccessSettings(context.Context, kubecluster.AccessSettingsReplacement) (kubecluster.AccessSettingsResult,
 		error)
 	BeginExport(context.Context, kubecluster.ExportQuery) (kubecluster.ExportHeader, error)
 	ExportPage(context.Context, kubecluster.ExportQuery, kubecluster.PageCursor) ([]kubecluster.ExportRecord, error)
@@ -136,6 +142,7 @@ type kubernetesClusterPath struct {
 //	GET         kubernetes-clusters/{c}/operations[/{audit_id}]            list, read (K1d d1c)
 //	GET         kubernetes-clusters/{c}/operation-denial-counts            sums (K1d d1c)
 //	GET|PUT     kubernetes-clusters/{c}/audit-settings                     read, replace (K1d d1d)
+//	GET|PUT     kubernetes-clusters/{c}/access-settings                    read, replace (K2d d4b)
 //	GET         kubernetes-clusters/{c}/operation-exports                  export (K1d d1d)
 //	GET|POST    kubernetes-clusters/{c}/ca-retire-requests                 list, request (K1d d2a)
 //
@@ -236,6 +243,10 @@ func (path *kubernetesClusterPath) route(rest []string) (map[string]string, bool
 		path.methods = restMethods{http.MethodGet, http.MethodPut}
 		return map[string]string{http.MethodGet: kubernetesAuditSettingsReadOperation,
 			http.MethodPut: kubernetesAuditSettingsReplaceOperation}, true
+	case len(rest) == 2 && rest[1] == "access-settings":
+		path.methods = restMethods{http.MethodGet, http.MethodPut}
+		return map[string]string{http.MethodGet: kubernetesAccessSettingsReadOperation,
+			http.MethodPut: kubernetesAccessSettingsReplaceOperation}, true
 	case len(rest) == 2 && rest[1] == "ca-retire-requests":
 		path.methods = collectionMethods
 		return map[string]string{http.MethodGet: kubernetesCARetireListOperation,
@@ -404,6 +415,8 @@ func (handler *ManagementHandler) handleKubernetesClusters(ctx context.Context, 
 		}{optionalManagementTime(additions.LatestAt), additions.Count})
 	case kubernetesAuditSettingsReadOperation, kubernetesAuditSettingsReplaceOperation:
 		return handler.serveKubernetesAuditSettings(ctx, response, request, correlationID, path, session, fail)
+	case kubernetesAccessSettingsReadOperation, kubernetesAccessSettingsReplaceOperation:
+		return handler.serveKubernetesAccessSettings(ctx, response, request, correlationID, path, session, fail)
 	case kubernetesOperationListOperation, kubernetesOperationReadOperation, kubernetesDenialCountsOperation:
 		return handler.readKubernetesOperations(ctx, response, correlationID, path, session, fail)
 	case kubernetesClusterDeleteOperation:

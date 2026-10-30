@@ -16,8 +16,9 @@ func encodeKubernetesScopeTable(table mapsession.KubernetesScopeTable) *mtcpv1.K
 		return nil
 	}
 	encoded := &mtcpv1.KubernetesScopeTable{
-		Profiles: make([]*mtcpv1.KubernetesProfile, 0, len(table.Profiles)),
-		Scopes:   make([]*mtcpv1.KubernetesScope, 0, len(table.Scopes)),
+		Profiles:      make([]*mtcpv1.KubernetesProfile, 0, len(table.Profiles)),
+		Scopes:        make([]*mtcpv1.KubernetesScope, 0, len(table.Scopes)),
+		AccessContact: table.AccessContact,
 	}
 	for _, profile := range table.Profiles {
 		encoded.Profiles = append(encoded.Profiles, &mtcpv1.KubernetesProfile{Hash: profile.Hash[:],

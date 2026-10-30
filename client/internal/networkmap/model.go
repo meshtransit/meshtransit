@@ -59,6 +59,9 @@ type Snapshot struct {
 	// KubernetesWithheld: the map's scope table was unusable as a whole, so
 	// every peer's Kubernetes access is withheld until a valid one comes.
 	KubernetesWithheld bool
+	// KubernetesAccessContact is who to ask for more access, shown in a
+	// profile's refusal only; empty for none or one out of form (§7.12).
+	KubernetesAccessContact string
 	// DroppedAliasPeers counts the shared Devices the client left out of
 	// this map because their alias could not be used (expired, invalid or
 	// colliding); for the log, never for authority.

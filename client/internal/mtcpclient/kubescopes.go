@@ -5,6 +5,8 @@ import (
 	"cmp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
 	"meshtransit.net/client/internal/networkmap"
@@ -17,6 +19,7 @@ import (
 // as a whole; the counts say what was left out, for the gateway's metrics.
 type compiledScopes struct {
 	scopes          map[[32]byte]networkmap.KubernetesScope
+	contact         string
 	withheld        bool
 	invalidProfiles int
 	invalidScopes   int
@@ -26,7 +29,10 @@ type compiledScopes struct {
 // every peer's access is withheld; a profile or scope that is wrong is left
 // out alone, and with it what depends on it. An absent table holds nothing.
 func compileKubernetesScopes(table *mtcpv1.KubernetesScopeTable) compiledScopes {
-	compiled := compiledScopes{scopes: map[[32]byte]networkmap.KubernetesScope{}}
+	compiled := compiledScopes{
+		scopes:  map[[32]byte]networkmap.KubernetesScope{},
+		contact: accessContact(table.GetAccessContact()),
+	}
 	if sharedmtcp.ValidateKubernetesScopeTable(table) != nil {
 		return compiledScopes{withheld: true}
 	}
@@ -51,6 +57,23 @@ func compileKubernetesScopes(table *mtcpv1.KubernetesScopeTable) compiledScopes 
 	return compiled
 }
 
+// accessContact keeps a contact in form: at most 256 bytes of UTF-8
+// without control or format characters; else none (§7.12).
+func accessContact(contact string) string {
+	if len(contact) > maximumAccessContact || !utf8.ValidString(contact) {
+		return ""
+	}
+	for _, character := range contact {
+		if unicode.IsControl(character) || unicode.In(character, unicode.Cf, unicode.Zl, unicode.Zp) {
+			return ""
+		}
+	}
+	return contact
+}
+
+// maximumAccessContact bounds a cluster's access contact (§7.12).
+const maximumAccessContact = 256
+
 func convertKubernetesProfile(entry *mtcpv1.KubernetesProfile) kubeprofile.Profile {
 	rules := func(entries []*mtcpv1.KubernetesProfileRule) []kubeprofile.Rule {
 		if len(entries) == 0 {
@@ -58,19 +81,24 @@ func convertKubernetesProfile(entry *mtcpv1.KubernetesProfile) kubeprofile.Profi
 		}
 		out := make([]kubeprofile.Rule, len(entries))
 		for index, rule := range entries {
-			out[index] = kubeprofile.Rule{APIGroups: rule.GetApiGroups(), Resources: rule.GetResources(),
-				Verbs: rule.GetVerbs(), ResourceNames: rule.GetResourceNames(), NonResourceURLs: rule.GetNonResourceUrls()}
+			out[index] = kubeprofile.Rule{
+				APIGroups: rule.GetApiGroups(), Resources: rule.GetResources(),
+				Verbs: rule.GetVerbs(), ResourceNames: rule.GetResourceNames(), NonResourceURLs: rule.GetNonResourceUrls(),
+			}
 		}
 		return out
 	}
-	return kubeprofile.Profile{Name: entry.GetName(), Namespaced: rules(entry.GetNamespaced()),
-		Cluster: rules(entry.GetCluster())}
+	return kubeprofile.Profile{
+		Name: entry.GetName(), Namespaced: rules(entry.GetNamespaced()),
+		Cluster: rules(entry.GetCluster()),
+	}
 }
 
 // convertKubernetesScope checks a scope: its profile in the table, its
 // namespaces strictly sorted as sent, and its hash its content's.
 func convertKubernetesScope(entry *mtcpv1.KubernetesScope,
-	profiles map[[32]byte]kubeprofile.Profile) (networkmap.KubernetesScope, [32]byte, bool) {
+	profiles map[[32]byte]kubeprofile.Profile,
+) (networkmap.KubernetesScope, [32]byte, bool) {
 	var profileHash [32]byte
 	if len(entry.GetProfile()) != len(profileHash) {
 		return networkmap.KubernetesScope{}, [32]byte{}, false
@@ -102,7 +130,8 @@ func convertKubernetesScope(entry *mtcpv1.KubernetesScope,
 // grant that allows nothing (its group not a DNS label, its scope not
 // usable, its mode unknown, its report deadline wrong) is left out.
 func scopedKubernetesGrants(raw []*mtcpv1.KubernetesScopedGrant,
-	scopes map[[32]byte]networkmap.KubernetesScope) ([]networkmap.KubernetesScopedGrant, bool) {
+	scopes map[[32]byte]networkmap.KubernetesScope,
+) ([]networkmap.KubernetesScopedGrant, bool) {
 	for index := 1; index < len(raw); index++ {
 		if compareRawScopedGrants(raw[index-1], raw[index]) >= 0 {
 			return nil, false
@@ -126,8 +155,10 @@ func scopedKubernetesGrants(raw []*mtcpv1.KubernetesScopedGrant,
 		if _, found := scopes[scope]; !usable || !found {
 			continue
 		}
-		converted := networkmap.KubernetesScopedGrant{Group: grant.GetGroup(), Scope: scope, Report: report,
-			ValidUntil: time.UnixMilli(validUntil).UTC()}
+		converted := networkmap.KubernetesScopedGrant{
+			Group: grant.GetGroup(), Scope: scope, Report: report,
+			ValidUntil: time.UnixMilli(validUntil).UTC(),
+		}
 		if report {
 			converted.ReportUntil = time.UnixMilli(until).UTC()
 		}

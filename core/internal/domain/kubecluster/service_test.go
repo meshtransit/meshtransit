@@ -150,6 +150,17 @@ func (*recordingStore) CountDenials(context.Context, accountsession.Session, net
 	return kubecluster.DenialSums{}, nil
 }
 
+func (*recordingStore) ReadAccessSettings(context.Context, accountsession.Session, network.Scope,
+	kubecluster.ID) (kubecluster.AccessSettings, error) {
+	return kubecluster.AccessSettings{}, nil
+}
+
+func (*recordingStore) ReplaceAccessSettings(_ context.Context,
+	replacement kubecluster.AccessSettingsReplacement) (kubecluster.AccessSettingsResult, error) {
+	return kubecluster.AccessSettingsResult{Settings: kubecluster.AccessSettings{
+		AccessContact: replacement.AccessContact, Version: replacement.ExpectedVersion + 1}, Changed: true}, nil
+}
+
 func (*recordingStore) ReadAuditSettings(context.Context, accountsession.Session, network.Scope,
 	kubecluster.ID) (kubecluster.AuditSettings, error) {
 	return kubecluster.AuditSettings{}, nil

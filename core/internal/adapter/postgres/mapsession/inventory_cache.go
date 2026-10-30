@@ -60,6 +60,9 @@ type cachedInventory struct {
 	// kubernetesTrust is what a client trusts the Network's clusters by
 	// (schema 244, K1a4d); unread unless read.
 	kubernetesTrust appmapsession.KubernetesTrust
+	// kubernetesContacts are the clusters' access contacts (schema 262),
+	// by name; none unread.
+	kubernetesContacts map[kubecluster.Name]string
 }
 
 // sharesAbsent reports whether no share reader can return anything for the

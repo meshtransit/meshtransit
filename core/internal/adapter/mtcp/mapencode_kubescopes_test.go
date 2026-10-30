@@ -8,7 +8,9 @@ import (
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
 	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/dnsname"
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/node"
+	publication "meshtransit.net/core/internal/domain/policy/publication"
 	"meshtransit.net/shared/kubeprofile"
 	sharedmtcp "meshtransit.net/shared/mtcp"
 )
@@ -193,5 +195,31 @@ func TestSinkSendsTheScopeTableWhenItChanges(t *testing.T) {
 	if delta := message.(*mtcpv1.MapDelta); delta.GetKubernetesScopes() == nil ||
 		len(delta.GetKubernetesScopes().GetScopes()) != 0 {
 		t.Fatalf("the cleared table = %v", delta.GetKubernetesScopes())
+	}
+}
+
+// The table carries its cluster's access contact (§7.12).
+func TestEncodeKubernetesScopeTableContact(t *testing.T) {
+	t.Parallel()
+	encoded := encodeKubernetesScopeTable(mapsession.KubernetesScopeTable{
+		Scopes:        []mapsession.KubernetesScope{{Hash: [32]byte{1}, Profile: [32]byte{2}, Namespaces: []string{"a"}}},
+		AccessContact: "#k8s-access",
+	})
+	if encoded.GetAccessContact() != "#k8s-access" {
+		t.Fatalf("contact = %q", encoded.GetAccessContact())
+	}
+	if encodeKubernetesScopeTable(mapsession.KubernetesScopeTable{AccessContact: "#k8s-access"}) != nil {
+		t.Fatal("a contact alone made a table")
+	}
+}
+
+// Publication leaves room in a cluster's table for its access contact: a
+// full table with the longest contact stays within what a gateway takes
+// (review d4b L4).
+func TestScopeTableBudgetHoldsTheContact(t *testing.T) {
+	t.Parallel()
+	const contactField = 1 + 2 + kubecluster.MaximumAccessContact // tag, length, bytes
+	if publication.MaximumClusterScopeTableBytes+contactField > sharedmtcp.KubernetesScopeTableBytes {
+		t.Fatal("a full table with a contact passes what a gateway takes")
 	}
 }

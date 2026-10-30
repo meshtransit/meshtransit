@@ -190,6 +190,11 @@ func (store *Store) readInventory(
 				return cachedInventory{}, err
 			}
 		}
+		if kubernetes.profiles {
+			if cached.kubernetesContacts, err = store.readKubernetesContacts(ctx, transaction); err != nil {
+				return cachedInventory{}, err
+			}
+		}
 		if err := store.readInventoryKubernetesCAs(ctx, transaction, previous, &cached); err != nil {
 			return cachedInventory{}, err
 		}

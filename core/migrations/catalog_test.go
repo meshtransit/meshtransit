@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 261 {
-		t.Fatalf("len(Catalog()) = %d, want 261", len(catalog))
+	if len(catalog) != 262 {
+		t.Fatalf("len(Catalog()) = %d, want 262", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 261 {
-		t.Fatalf("LatestVersion() = %d, want 261", LatestVersion())
+	if LatestVersion() != 262 {
+		t.Fatalf("LatestVersion() = %d, want 262", LatestVersion())
 	}
 }
 
@@ -7801,5 +7801,27 @@ func TestMigration261KubernetesOperationProfiles(t *testing.T) {
 	}
 	if strings.Count(migration.SQL, ") NOT VALID") != 3 {
 		t.Error("migration 261 validates a constraint over existing partitions")
+	}
+}
+
+func TestMigration262KubernetesAccessSettings(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 262 || catalog[261].Version != 262 {
+		t.Fatalf("the catalog has no migration 262 (%d migrations)", len(catalog))
+	}
+	migration := catalog[261]
+	for _, want := range []string{
+		"CREATE TABLE mesh.kubernetes_cluster_access_settings (",
+		"ALTER TABLE mesh.kubernetes_cluster_access_settings FORCE ROW LEVEL SECURITY;",
+		"capture_authority_mutation('kubernetes_cluster_access_settings', 'public_id')",
+		"CREATE FUNCTION mesh_ops.replace_kubernetes_access_settings_v1(",
+		"SET network_revision = revision.network_revision + 1",
+		"'kubernetes_cluster.manage'",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_map_network_kubernetes_contacts_v1() TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 262 lacks %q", want)
+		}
 	}
 }

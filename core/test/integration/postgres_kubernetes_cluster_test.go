@@ -360,6 +360,7 @@ WHERE workspace_id = 103 AND network_id = 203 ORDER BY id LIMIT 1`).Scan(&heldMa
 	assertGatewayGroupReports(ctx, t, admin, runtime, runtimePool, first, gatewayDevice, service, owner, scope,
 		clusterID)
 	assertApproverAdditions(ctx, t, admin, service, owner, scope, clusterID)
+	assertKubernetesAccessSettings(ctx, t, admin, service, owner, scope, clusterID)
 	assertExplainReplica(ctx, t, service, owner, scope, clusterID, gatewayDevice)
 	assertGatewayRotationTokens(ctx, t, admin, runtime, first, gatewayDevice)
 	assertJoinTrust(ctx, t, admin, service, store, owner, scope, clusterID, first)
