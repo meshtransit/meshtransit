@@ -40,9 +40,11 @@ const (
 	// load.
 	fairShareFloor = 16
 	// sourceUnidentified bounds one address's connections not yet through
-	// their handshake: a Device's take milliseconds, so a few never bind
-	// (re-review b6b R1).
-	sourceUnidentified = 4
+	// their handshake: a Device's take milliseconds, so those that never
+	// bind stay few (re-review b6b R1). 12 lets a tool open its usual ten at
+	// once, as Terraform does: past it, a connection is closed unanswered
+	// and client-go does not send a POST again (K1f, Q188).
+	sourceUnidentified = 12
 	// maximumLimiters bounds the per-address and per-Device rate limiters
 	// kept; past it they start over, which only forgives.
 	maximumLimiters = 16384
@@ -141,12 +143,15 @@ func (g *gate) accept(source netip.Addr) string {
 	limiter, ok := g.handshakes[source]
 	if !ok {
 		prune(g.handshakes, time.Now())
-		limiter = rate.NewLimiter(rate.Limit(g.limits.SourceHandshakes), max(1, int(g.limits.SourceHandshakes)))
+		// The burst is a Device's connections: a tool may open all it may
+		// hold at once; SourceHandshakes paces the rest (K1f, Q188).
+		limiter = rate.NewLimiter(rate.Limit(g.limits.SourceHandshakes),
+			max(1, int(g.limits.SourceHandshakes), g.limits.DeviceConnections))
 		g.handshakes[source] = limiter
 	}
+	// The counts come first: a connection they refuse spends no handshake,
+	// so a refused burst leaves the source's budget whole (review Q188 L2).
 	switch {
-	case !limiter.Allow():
-		return limitHandshakes
 	case g.sources[source] >= g.limits.DeviceConnections:
 		return limitSourceConnections
 	case g.pending[source] >= sourceUnidentified:
@@ -155,6 +160,8 @@ func (g *gate) accept(source netip.Addr) string {
 		return limitConnections
 	case g.unidentified >= max(1, g.limits.Connections/4):
 		return limitUnidentified
+	case !limiter.Allow():
+		return limitHandshakes
 	}
 	g.open++
 	g.unidentified++

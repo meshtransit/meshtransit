@@ -109,13 +109,21 @@ func TestLimitsDeviceConnections(t *testing.T) {
 // A source past its handshakes a second has its connections closed.
 func TestLimitsSourceHandshakes(t *testing.T) {
 	t.Parallel()
-	f := limitedFixture(t, func(limits *Limits) { limits.SourceHandshakes = 0.001 })
+	f := limitedFixture(t, func(limits *Limits) { limits.SourceHandshakes, limits.DeviceConnections = 0.001, 1 })
 	roots := f.client.Transport.(*http.Transport).TLSClientConfig.RootCAs
 	first, err := tls.Dial("tcp", f.address, &tls.Config{RootCAs: roots, ServerName: clusterName})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = first.Close() }()
+	// The first goes before the second comes, so only the handshake rate,
+	// not the Device's one connection, can refuse the second.
+	_ = first.Close()
+	for deadline := time.Now().Add(5 * time.Second); f.server.Connections().Open != 0; {
+		if time.Now().After(deadline) {
+			t.Fatal("the first connection was not let go")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	second, err := tls.Dial("tcp", f.address, &tls.Config{RootCAs: roots, ServerName: clusterName})
 	if err == nil {
 		_ = second.SetReadDeadline(time.Now().Add(time.Second))
@@ -254,13 +262,13 @@ type nopConn struct{ net.Conn }
 
 func (nopConn) Close() error { return nil }
 
-// One source holds at most 4 connections not yet through their handshake
+// One source holds at most 12 connections not yet through their handshake
 // and a Device's in all; all those not yet named hold at most a quarter of
 // the replica's (review b6b N1, R1).
 func TestLimitsUnidentifiedConnections(t *testing.T) {
 	t.Parallel()
 	limits := DefaultLimits()
-	limits.SourceHandshakes, limits.Connections = 1000, 40
+	limits.SourceHandshakes, limits.Connections = 1000, 80
 	g := newGate(limits)
 	one := netip.MustParseAddr("100.64.1.9")
 	for range sourceUnidentified {
@@ -269,7 +277,7 @@ func TestLimitsUnidentifiedConnections(t *testing.T) {
 		}
 	}
 	if limit := g.accept(one); limit != limitSourceUnnamed {
-		t.Fatalf("a 5th unnamed from one source: %q", limit)
+		t.Fatalf("a 13th unnamed from one source: %q", limit)
 	}
 	// Named, they make room for more, up to a Device's connections.
 	for index := range sourceUnidentified {
@@ -288,10 +296,10 @@ func TestLimitsUnidentifiedConnections(t *testing.T) {
 	if limit := g.accept(one); limit != limitSourceConnections {
 		t.Fatalf("a 17th from one source: %q", limit)
 	}
-	// Other sources fill the unnamed quarter (10).
-	for index := range 10 {
-		source := netip.AddrFrom4([4]byte{100, 64, 2, byte(index / 4)})
-		if limit := g.accept(source); limit != "" && index < 10 {
+	// Other sources fill the unnamed quarter (20).
+	for index := range 20 {
+		source := netip.AddrFrom4([4]byte{100, 64, 2, byte(index / sourceUnidentified)})
+		if limit := g.accept(source); limit != "" {
 			t.Fatalf("unnamed %d: %q", index, limit)
 		}
 	}
@@ -301,11 +309,53 @@ func TestLimitsUnidentifiedConnections(t *testing.T) {
 	for range limits.DeviceConnections {
 		g.release(one, false)
 	}
-	for index := range 10 {
-		g.release(netip.AddrFrom4([4]byte{100, 64, 2, byte(index / 4)}), true)
+	for index := range 20 {
+		g.release(netip.AddrFrom4([4]byte{100, 64, 2, byte(index / sourceUnidentified)}), true)
 	}
 	if g.open != 0 || g.unidentified != 0 || len(g.sources) != 0 || len(g.pending) != 0 {
 		t.Fatalf("open %d, unidentified %d, sources %v, pending %v", g.open, g.unidentified, g.sources, g.pending)
+	}
+}
+
+// With the default limits one source opens a tool's ten at once and more
+// (12 not yet named), all a Device may hold (16) within its handshake
+// burst; a refused connection spends no handshake, and past the burst the
+// next is refused (K1f, Q188).
+func TestLimitsDefaultSourceBurst(t *testing.T) {
+	t.Parallel()
+	// The default burst with a rate too slow to refill during the test.
+	limits := DefaultLimits()
+	limits.SourceHandshakes = 0.001
+	g := newGate(limits)
+	one := netip.MustParseAddr("100.64.1.9")
+	for index := range sourceUnidentified {
+		if limit := g.accept(one); limit != "" {
+			t.Fatalf("connection %d at once: %q", index+1, limit)
+		}
+	}
+	for range 3 {
+		if limit := g.accept(one); limit != limitSourceUnnamed {
+			t.Fatalf("a 13th unnamed: %q", limit)
+		}
+	}
+	g.mu.Lock()
+	for range sourceUnidentified {
+		g.named(one)
+	}
+	g.mu.Unlock()
+	for index := range DefaultLimits().DeviceConnections - sourceUnidentified {
+		if limit := g.accept(one); limit != "" {
+			t.Fatalf("connection %d of the Device's: %q", sourceUnidentified+index+1, limit)
+		}
+		g.mu.Lock()
+		g.named(one)
+		g.mu.Unlock()
+	}
+	for range DefaultLimits().DeviceConnections {
+		g.release(one, false)
+	}
+	if limit := g.accept(one); limit != limitHandshakes {
+		t.Fatalf("past the burst: %q", limit)
 	}
 }
 
