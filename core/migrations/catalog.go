@@ -641,6 +641,8 @@ func Catalog() []Migration {
 			kubernetesGatewayGroupReportsSQL),
 		newMigration(255, "Readers of a Kubernetes cluster see approvers added within a day",
 			kubernetesClusterApproverAdditionsSQL),
+		newMigration(256, "Explain reaches a Kubernetes cluster through its first active replica",
+			kubernetesClusterExplainReplicaSQL),
 	}
 }
 
@@ -1185,3 +1187,6 @@ var kubernetesGatewayGroupReportsSQL string
 
 //go:embed 000255_kubernetes_cluster_approver_additions.up.sql
 var kubernetesClusterApproverAdditionsSQL string
+
+//go:embed 000256_kubernetes_cluster_explain_replica.up.sql
+var kubernetesClusterExplainReplicaSQL string

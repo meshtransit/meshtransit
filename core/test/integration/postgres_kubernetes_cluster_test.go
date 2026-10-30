@@ -359,6 +359,7 @@ WHERE workspace_id = 103 AND network_id = 203 ORDER BY id LIMIT 1`).Scan(&heldMa
 	assertGatewayGroupReports(ctx, t, admin, runtime, runtimePool, first, gatewayDevice, service, owner, scope,
 		clusterID)
 	assertApproverAdditions(ctx, t, admin, service, owner, scope, clusterID)
+	assertExplainReplica(ctx, t, service, owner, scope, clusterID, gatewayDevice)
 	assertGatewayRotationTokens(ctx, t, admin, runtime, first, gatewayDevice)
 	assertJoinTrust(ctx, t, admin, service, store, owner, scope, clusterID, first)
 	gatewayKeys := assertGatewayMachineKeyRotation(ctx, t, admin, runtime, runtimePool, first, gatewayDevice)
@@ -471,6 +472,11 @@ WHERE kubernetes_cluster_id = (SELECT id FROM mesh.kubernetes_cluster WHERE publ
 	assertKubernetesClusterPages(ctx, t, admin, service, store, owner, custom, scope, clusterID, detail,
 		func() { recordClusterOperations(ctx, t, admin, runtime, gatewayKeys, gatewayDevice) })
 	removeGatewayDevice(ctx, t, admin, gatewayDevice)
+	// With its only replica gone, the cluster has none to explain through.
+	if _, err := service.ReadExplainReplica(ctx, owner, scope, clusterID); !errors.Is(err,
+		kubecluster.ErrNoActiveReplica) {
+		t.Fatalf("ReadExplainReplica() after the replica left: %v", err)
+	}
 	assertRetiredGatewayKey(ctx, t, runtime, first)
 	assertRemovedGatewayKeyEvent(ctx, t, admin, runtimePool, gatewayDevice)
 	// A pod whose gateway is gone gets a final answer, not its Device again.
@@ -945,5 +951,20 @@ func assertApproverAdditions(ctx context.Context, t *testing.T, admin *pgx.Conn,
 	}
 	if _, err := service.ReadApproverAdditions(ctx, owner, scope, kubecluster.ID(mustPublicID(t))); err == nil {
 		t.Fatal("an unknown cluster was read")
+	}
+}
+
+// assertExplainReplica: schema 256 names the cluster's active replica of the
+// lowest ordinal, the one Explain answers through (K1d d4c).
+func assertExplainReplica(ctx context.Context, t *testing.T, service *kubecluster.Service,
+	owner accountsession.Session, scope network.Scope, clusterID kubecluster.ID, gatewayDevice string) {
+	t.Helper()
+	replica, err := service.ReadExplainReplica(ctx, owner, scope, clusterID)
+	if err != nil || replica.String() != gatewayDevice {
+		t.Fatalf("ReadExplainReplica() = %s, %v; want %s", replica, err, gatewayDevice)
+	}
+	if _, err := service.ReadExplainReplica(ctx, owner, scope, kubecluster.ID(mustPublicID(t))); !errors.Is(err,
+		kubecluster.ErrNotFound) {
+		t.Fatalf("an unknown cluster's replica: %v", err)
 	}
 }

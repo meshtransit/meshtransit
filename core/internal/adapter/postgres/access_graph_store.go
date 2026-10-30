@@ -159,6 +159,10 @@ func (store *AccessGraphStore) ReadActive(
 		snapshot); err != nil {
 		return accessgraph.Snapshot{}, err
 	}
+	if snapshot, err = groupKubernetesClusterPaths(ctx, transaction.QueryRow, session, query.Scope(),
+		evaluatedAt, snapshot); err != nil {
+		return accessgraph.Snapshot{}, err
+	}
 	if err := transaction.Commit(ctx); err != nil {
 		return accessgraph.Snapshot{}, accessGraphDatabaseError(ctx, err)
 	}
@@ -475,6 +479,35 @@ func accessGraphDatabaseError(ctx context.Context, err error) error {
 		return accessgraph.ErrForbidden
 	}
 	return errors.Join(accessgraph.ErrUnavailable, fmt.Errorf("read active policy explanation: %w", err))
+}
+
+// groupKubernetesClusterPaths adds to each path to a Kubernetes cluster the
+// groups its rule grants, read from the explained release in the same
+// snapshot (K1d d4c). A reader who may not read the policy's rules (only
+// policy.explain), or a revision with no release, leaves the paths without
+// groups.
+func groupKubernetesClusterPaths(ctx context.Context,
+	queryRow func(context.Context, string, ...any) resourceAuthorityRow, session accountsession.Session,
+	scope network.Scope, evaluatedAt time.Time, snapshot accessgraph.Snapshot) (accessgraph.Snapshot, error) {
+	if snapshot.PolicyRevision() < 1 || !slices.ContainsFunc(snapshot.Paths(), func(path accessgraph.Path) bool {
+		return path.DestinationKubernetesClusterID().IsValid()
+	}) {
+		return snapshot, nil
+	}
+	read, found, err := readPolicyKubernetesGroups(ctx, func(ctx context.Context, query string,
+		arguments ...any) scannedRow {
+		return queryRow(ctx, query, arguments...)
+	}, session, scope, snapshot.PolicyRevision(), evaluatedAt)
+	if errors.Is(err, errInvalidPolicyKubernetesGroups) {
+		return accessgraph.Snapshot{}, accessgraph.ErrInvalidSnapshot
+	}
+	if err != nil {
+		return accessgraph.Snapshot{}, accessGraphDatabaseError(ctx, err)
+	}
+	if !found {
+		return snapshot, nil
+	}
+	return snapshot.WithKubernetesGroups(read.groups, read.clusters)
 }
 
 // nameKubernetesClusterPaths names the cluster on every path through a

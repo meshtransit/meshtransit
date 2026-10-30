@@ -1,13 +1,16 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"slices"
 	"testing"
 	"time"
 
+	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/domain/workspace"
 )
@@ -230,5 +233,32 @@ func TestBrowserManagementAdmitsKubernetesAuditSettingsPut(t *testing.T) {
 	request.Method = http.MethodPut
 	if browser.validRequest(request) {
 		t.Fatal("the browser admitted a PUT on replicas")
+	}
+}
+
+// A browser asking about a cluster is admitted again before Core reads the
+// cluster's replicas: a session revoked meanwhile reads nothing (K1d d4c).
+func TestBrowserExplainKubernetesClusterRevalidatesBeforeReading(t *testing.T) {
+	t.Parallel()
+	browser, fixture := newBrowserManagementFixture(t)
+	proof := preparedBrowserProof(t, browser)
+	fixture.kubernetesClusters.explainReplica, _ = node.ParseID("01890f00-0000-7000-8000-000000000c03")
+	original := browser.management.sessions
+	browser.management.sessions = managementSessionAuthenticatorFunc(func(ctx context.Context,
+		token accountsession.Token) (accountsession.Session, error) {
+		// The front door admits the session; the handler's check finds it revoked.
+		fixture.sessionRevoked = fixture.auth >= 1
+		return original.Authenticate(ctx, token)
+	})
+	request := browserManagementRequest(t, validAccessGraphExplainPath(), explainKubernetesBody)
+	request.Header.Set("X-MeshTransit-CSRF", proof)
+	response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+	if err := browser.Handle(response, request); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusUnauthorized || fixture.auth != 2 || len(fixture.kubernetesClusters.calls) != 0 ||
+		fixture.explain != 0 {
+		t.Fatalf("status %d, auth %d, cluster calls %v, explained %d", response.Code, fixture.auth,
+			fixture.kubernetesClusters.calls, fixture.explain)
 	}
 }

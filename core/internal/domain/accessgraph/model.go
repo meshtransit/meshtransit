@@ -237,6 +237,9 @@ type Path struct {
 	// destinationCluster names the Kubernetes cluster whose own group a rule
 	// reached, in place of the group.
 	destinationCluster kubecluster.ID
+	// kubernetesGroups are the Kubernetes groups the rule to the cluster
+	// grants, when the reader may read them (K1d d4c).
+	kubernetesGroups []string
 }
 
 // NewPath validates one immutable explanation path.
@@ -330,6 +333,37 @@ func (snapshot Snapshot) WithKubernetesClusters(groups []kubecluster.PolicyGroup
 			return Snapshot{}, ErrInvalidSnapshot
 		}
 		named.paths[index] = path
+	}
+	return named, nil
+}
+
+// KubernetesGroups returns the Kubernetes groups the rule to the path's
+// cluster grants; nil when not read.
+func (path Path) KubernetesGroups() []string { return slices.Clone(path.kubernetesGroups) }
+
+// WithKubernetesGroups returns the snapshot with each path to a Kubernetes
+// cluster carrying the groups its rule grants (K1d d4c, Q143). groups and
+// clusters are by rule, as the release holds them; a path whose rule is
+// absent keeps none, and one whose rule names another cluster is refused.
+func (snapshot Snapshot) WithKubernetesGroups(groups map[policy.RuleID][]string,
+	clusters map[policy.RuleID]kubecluster.ID) (Snapshot, error) {
+	named := snapshot
+	named.paths = clonePaths(snapshot.paths)
+	for index, path := range named.paths {
+		granted, found := groups[path.ruleID]
+		if !path.destinationCluster.IsValid() || !found {
+			continue
+		}
+		if clusters[path.ruleID] != path.destinationCluster ||
+			len(granted) > kubecluster.MaximumRuleKubernetesGroups {
+			return Snapshot{}, ErrInvalidSnapshot
+		}
+		for _, group := range granted {
+			if !kubecluster.ValidKubernetesGroup(group) {
+				return Snapshot{}, ErrInvalidSnapshot
+			}
+		}
+		named.paths[index].kubernetesGroups = slices.Clone(granted)
 	}
 	return named, nil
 }
@@ -708,6 +742,7 @@ func clonePaths(paths []Path) []Path {
 		cloned[index] = path
 		cloned[index].destinationPortRanges = slices.Clone(path.destinationPortRanges)
 		cloned[index].destinationPrefixes = slices.Clone(path.destinationPrefixes)
+		cloned[index].kubernetesGroups = slices.Clone(path.kubernetesGroups)
 	}
 	return cloned
 }

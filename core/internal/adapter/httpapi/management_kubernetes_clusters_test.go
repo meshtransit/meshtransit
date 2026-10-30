@@ -45,6 +45,8 @@ type kubernetesClusterStub struct {
 	codes        []string
 	failure      error
 	pages        []kubecluster.PageQuery
+	// explainReplica is the replica ReadExplainReplica returns.
+	explainReplica node.ID
 	// next is the cursor list pages return.
 	next              kubecluster.PageCursor
 	truncated         bool
@@ -165,6 +167,15 @@ func (stub *kubernetesClusterStub) ReadReplicaRequest(_ context.Context, _ accou
 		return kubecluster.ReplicaRequestView{}, kubecluster.ErrNotFound
 	}
 	return kubernetesTestRequestValue(&testing.T{}, kubecluster.RequestPending), nil
+}
+
+func (stub *kubernetesClusterStub) ReadExplainReplica(_ context.Context, _ accountsession.Session,
+	scope network.Scope, clusterID kubecluster.ID) (node.ID, error) {
+	stub.calls = append(stub.calls, "explain-replica:"+clusterID.String()+":"+scope.NetworkID().String())
+	if stub.failure != nil {
+		return node.ID{}, stub.failure
+	}
+	return stub.explainReplica, nil
 }
 
 func (stub *kubernetesClusterStub) ListReplicas(_ context.Context,

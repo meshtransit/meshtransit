@@ -98,6 +98,7 @@ type KubernetesClusterManager interface {
 	ChangeTokenRatchet(context.Context, kubecluster.RatchetChange) (kubecluster.RatchetChangeResult, error)
 	ReadApproverAdditions(context.Context, accountsession.Session, network.Scope,
 		kubecluster.ID) (kubecluster.ApproverAdditions, error)
+	ReadExplainReplica(context.Context, accountsession.Session, network.Scope, kubecluster.ID) (node.ID, error)
 }
 
 type kubernetesClusterPath struct {
@@ -793,6 +794,9 @@ func classifyKubernetesClusterError(err error) managementError {
 		return managementError{Status: http.StatusConflict, Code: "replica_request_cancelled",
 			Message: fmt.Sprintf("%d wrong codes cancelled the request. The replica asks again with a new request.",
 				kubecluster.MaximumCodeAttempts)}
+	case errors.Is(err, kubecluster.ErrNoActiveReplica):
+		return managementError{Status: http.StatusConflict, Code: "kubernetes_cluster_no_active_replica",
+			Message: "the Kubernetes cluster has no active replica to explain through"}
 	case errors.Is(err, kubecluster.ErrForbidden):
 		return managementError{Status: http.StatusForbidden, Code: "permission_denied",
 			Message: "You cannot do this with the Kubernetes clusters of this Network"}

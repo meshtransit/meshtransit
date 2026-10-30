@@ -151,6 +151,7 @@ func newExplainedPolicyPaths(paths []accessgraph.Path) []explainedPolicyPath {
 		}
 		if path.DestinationKubernetesClusterID().IsValid() {
 			rendered[index].DestinationKubernetesClusterID = path.DestinationKubernetesClusterID().String()
+			rendered[index].KubernetesGroups = path.KubernetesGroups()
 		}
 		if path.SourceIdentityGroupID().IsValid() {
 			rendered[index].SourceIdentityGroupID = path.SourceIdentityGroupID().String()

@@ -164,6 +164,8 @@ type Store interface {
 	ChangeTokenRatchet(ctx context.Context, change RatchetChange) (RatchetChangeResult, error)
 	ReadApproverAdditions(ctx context.Context, session accountsession.Session, scope network.Scope,
 		clusterID ID) (ApproverAdditions, error)
+	ReadExplainReplica(ctx context.Context, session accountsession.Session, scope network.Scope,
+		clusterID ID) (node.ID, error)
 	ListCARetireRequests(ctx context.Context, query PageQuery) (CARetireRequestPage, error)
 }
 

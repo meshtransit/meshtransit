@@ -97,7 +97,9 @@ func TestManagementV1MutationContracts(t *testing.T) {
 		explainOperation.Post.Security[0]["accountSessionBearer"] == nil {
 		t.Fatal("Policy explanation does not require Account Session bearer authentication")
 	}
-	for _, status := range []string{"200", "400", "401", "403", "405", "429", "500", "503", "504"} {
+	// 404 and 409: a Kubernetes cluster asked about is unknown or has no
+	// active replica (K1d d4c).
+	for _, status := range []string{"200", "400", "401", "403", "404", "405", "409", "429", "500", "503", "504"} {
 		if _, ok := explainOperation.Post.Responses[status]; !ok {
 			t.Fatalf("Policy explanation responses omit status %s", status)
 		}
@@ -127,17 +129,21 @@ func TestManagementV1MutationContracts(t *testing.T) {
 	if err := json.Unmarshal(document.Components.Schemas["ExplainPolicyRequest"], &explainRequest); err != nil {
 		t.Fatalf("decode ExplainPolicyRequest: %v", err)
 	}
-	if len(explainRequest.AllOf) < 1 || len(explainRequest.AllOf[0].OneOf) != 4 ||
+	if len(explainRequest.AllOf) < 1 || len(explainRequest.AllOf[0].OneOf) != 5 ||
 		explainRequest.Properties["destination_device_id"] == nil ||
 		explainRequest.Properties["destination_resource_id"] == nil ||
 		explainRequest.Properties["destination_imported_resource_id"] == nil ||
 		explainRequest.Properties["destination_address"] == nil ||
+		explainRequest.Properties["destination_kubernetes_cluster_id"] == nil ||
 		len(explainRequest.AllOf[0].OneOf[2].Required) != 1 ||
 		explainRequest.AllOf[0].OneOf[2].Required[0] != "destination_imported_resource_id" ||
-		len(explainRequest.AllOf[0].OneOf[2].Not.AnyOf) != 3 ||
 		len(explainRequest.AllOf[0].OneOf[3].Required) != 1 ||
 		explainRequest.AllOf[0].OneOf[3].Required[0] != "destination_address" ||
-		len(explainRequest.AllOf[0].OneOf[3].Not.AnyOf) != 3 {
+		len(explainRequest.AllOf[0].OneOf[4].Required) != 1 ||
+		explainRequest.AllOf[0].OneOf[4].Required[0] != "destination_kubernetes_cluster_id" ||
+		slices.ContainsFunc(explainRequest.AllOf[0].OneOf, func(branch typedSelectorBranch) bool {
+			return len(branch.Not.AnyOf) != 4
+		}) {
 		t.Fatalf("ExplainPolicyRequest typed destination contract = %+v", explainRequest)
 	}
 	var explainTarget struct {

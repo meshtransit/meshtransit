@@ -3224,8 +3224,14 @@
           "403": {
             "$ref": "#/components/responses/Forbidden"
           },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
           "405": {
             "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
@@ -8635,7 +8641,8 @@
                   "anyOf": [
                     {"required": ["destination_resource_id"]},
                     {"required": ["destination_imported_resource_id"]},
-                    {"required": ["destination_address"]}
+                    {"required": ["destination_address"]},
+                    {"required": ["destination_kubernetes_cluster_id"]}
                   ]
                 }
               },
@@ -8645,7 +8652,8 @@
                   "anyOf": [
                     {"required": ["destination_device_id"]},
                     {"required": ["destination_imported_resource_id"]},
-                    {"required": ["destination_address"]}
+                    {"required": ["destination_address"]},
+                    {"required": ["destination_kubernetes_cluster_id"]}
                   ]
                 }
               },
@@ -8655,7 +8663,8 @@
                   "anyOf": [
                     {"required": ["destination_device_id"]},
                     {"required": ["destination_resource_id"]},
-                    {"required": ["destination_address"]}
+                    {"required": ["destination_address"]},
+                    {"required": ["destination_kubernetes_cluster_id"]}
                   ]
                 }
               },
@@ -8665,7 +8674,19 @@
                   "anyOf": [
                     {"required": ["destination_device_id"]},
                     {"required": ["destination_resource_id"]},
-                    {"required": ["destination_imported_resource_id"]}
+                    {"required": ["destination_imported_resource_id"]},
+                    {"required": ["destination_kubernetes_cluster_id"]}
+                  ]
+                }
+              },
+              {
+                "required": ["destination_kubernetes_cluster_id"],
+                "not": {
+                  "anyOf": [
+                    {"required": ["destination_device_id"]},
+                    {"required": ["destination_resource_id"]},
+                    {"required": ["destination_imported_resource_id"]},
+                    {"required": ["destination_address"]}
                   ]
                 }
               }
@@ -8689,6 +8710,10 @@
           "destination_device_id": {"$ref": "#/components/schemas/PublicID"},
           "destination_resource_id": {"$ref": "#/components/schemas/PublicID"},
           "destination_imported_resource_id": {"$ref": "#/components/schemas/PublicID"},
+          "destination_kubernetes_cluster_id": {
+            "$ref": "#/components/schemas/PublicID",
+            "description": "A Kubernetes cluster (the caller must also read it, network.read): explained through its active replica of the lowest ordinal, named in target.device_id. 404 kubernetes_cluster_not_found when unknown, 409 kubernetes_cluster_no_active_replica when it has no active replica."
+          },
           "destination_address": {
             "description": "A unicast address: the explanation's target is the Site that holds it or, for an Internet address no Site holds, the Exit Pool it is reached through.",
             "type": "string",
@@ -8919,6 +8944,10 @@
           "device_id": {"$ref": "#/components/schemas/PublicID"},
           "resource_id": {"$ref": "#/components/schemas/PublicID"},
           "imported_resource_id": {"$ref": "#/components/schemas/PublicID"},
+          "kubernetes_cluster_id": {
+            "$ref": "#/components/schemas/PublicID",
+            "description": "The Kubernetes cluster asked about; device_id is then the replica the answer came through."
+          },
           "address": {"type": "string", "minLength": 2, "maxLength": 45},
           "site_id": {
             "$ref": "#/components/schemas/PublicID",
@@ -9030,6 +9059,14 @@
           "destination_kubernetes_cluster_id": {
             "$ref": "#/components/schemas/PublicID",
             "description": "The destination Kubernetes cluster, when the path comes from a rule to a cluster; destination_device_id is then one of its replicas and destination_device_group_id is absent."
+          },
+          "kubernetes_groups": {
+            "description": "The Kubernetes groups the rule to the cluster grants. Absent when the caller may not read the Network's policy rules, or when the rule grants none (published before Kubernetes groups).",
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "uniqueItems": true,
+            "items": {"type": "string", "minLength": 1, "maxLength": 63, "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"}
           },
           "source_identity_group_id": {
             "$ref": "#/components/schemas/PublicID",

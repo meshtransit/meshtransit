@@ -11,6 +11,7 @@ import (
 
 	"meshtransit.net/core/internal/domain/accessgraph"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/policy"
@@ -27,6 +28,9 @@ type explainPolicyRequest struct {
 	DestinationDeviceID           string `json:"destination_device_id"`
 	DestinationResourceID         string `json:"destination_resource_id"`
 	DestinationImportedResourceID string `json:"destination_imported_resource_id"`
+	// DestinationKubernetesClusterID asks about a cluster through one of its
+	// active replicas (K1d d4c).
+	DestinationKubernetesClusterID string `json:"destination_kubernetes_cluster_id"`
 	// DestinationAddress asks about an address inside a Site.
 	DestinationAddress string `json:"destination_address"`
 	Protocol           string `json:"protocol"`
@@ -66,7 +70,10 @@ type explainedPolicyTarget struct {
 	DeviceID           string `json:"device_id,omitempty"`
 	ResourceID         string `json:"resource_id,omitempty"`
 	ImportedResourceID string `json:"imported_resource_id,omitempty"`
-	Address            string `json:"address,omitempty"`
+	// KubernetesClusterID names the cluster asked about; DeviceID is then
+	// the replica its answer came through.
+	KubernetesClusterID string `json:"kubernetes_cluster_id,omitempty"`
+	Address             string `json:"address,omitempty"`
 	// SiteID names the Site that holds Address, when one does.
 	SiteID string `json:"site_id,omitempty"`
 	// ExitPoolID names the Exit Pool an Internet address no Site holds is
@@ -108,9 +115,12 @@ type explainedPolicyPath struct {
 	DestinationDeviceGroupID string `json:"destination_device_group_id,omitempty"`
 	// A rule to a Kubernetes cluster names the cluster, not its own group.
 	DestinationKubernetesClusterID string `json:"destination_kubernetes_cluster_id,omitempty"`
-	SourceIdentityGroupID          string `json:"source_identity_group_id,omitempty"`
-	SourceDeviceTagID              string `json:"source_device_tag_id,omitempty"`
-	DestinationDeviceTagID         string `json:"destination_device_tag_id,omitempty"`
+	// KubernetesGroups are the groups the rule to the cluster grants; absent
+	// when the reader may not read the policy's rules.
+	KubernetesGroups       []string `json:"kubernetes_groups,omitempty"`
+	SourceIdentityGroupID  string   `json:"source_identity_group_id,omitempty"`
+	SourceDeviceTagID      string   `json:"source_device_tag_id,omitempty"`
+	DestinationDeviceTagID string   `json:"destination_device_tag_id,omitempty"`
 	// Set for a path to a Site: the Site and the prefixes the rule grants.
 	DestinationSiteID   string   `json:"destination_site_id,omitempty"`
 	DestinationPrefixes []string `json:"destination_prefixes,omitempty"`
@@ -149,7 +159,7 @@ func (handler *ManagementHandler) explainPolicy(
 	ctx context.Context,
 	input managementAccessGraphRequest,
 ) string {
-	query, decodeErr := decodeAccessGraphQuery(input.response, input.request, input.path)
+	params, clusterID, decodeErr := decodeAccessGraphQuery(input.response, input.request, input.path)
 	if decodeErr != nil {
 		writeManagementError(ctx, handler.logger, input.response, input.correlationID, *decodeErr)
 		return decodeErr.Code
@@ -158,6 +168,20 @@ func (handler *ManagementHandler) explainPolicy(
 		classified := classifyAuthenticationError(err)
 		writeManagementError(ctx, handler.logger, input.response, input.correlationID, classified)
 		return classified.Code
+	}
+	if clusterID.IsValid() {
+		replicaID, replicaErr := handler.explainedKubernetesReplica(ctx, input.session, params.Scope, clusterID)
+		if replicaErr != nil {
+			writeManagementError(ctx, handler.logger, input.response, input.correlationID, *replicaErr)
+			return replicaErr.Code
+		}
+		params.DestinationNodeID = replicaID
+	}
+	query, err := accessgraph.NewQuery(params)
+	if err != nil {
+		apiError := invalidManagementRequest()
+		writeManagementError(ctx, handler.logger, input.response, input.correlationID, *apiError)
+		return apiError.Code
 	}
 	result, err := handler.policyExplainer.Explain(ctx, input.session, query)
 	if err != nil {
@@ -175,55 +199,84 @@ func (handler *ManagementHandler) explainPolicy(
 	}
 
 	snapshot := result.Snapshot()
+	explained := newExplainedPolicy(query, result, handler.dnsSuffix)
+	if clusterID.IsValid() {
+		explained.Target.KubernetesClusterID = clusterID.String()
+	}
 	input.response.Header().Set("ETag", strongVersionETag(snapshot.PolicyRevision()))
 	input.response.Header().Set("Cache-Control", "no-store")
 	writeManagementJSON(ctx, handler.logger, input.response, http.StatusOK, explainPolicyResponse{
-		Data:          newExplainedPolicy(query, result, handler.dnsSuffix),
+		Data:          explained,
 		CorrelationID: input.correlationID.String(),
 	})
 	return "success"
 }
 
+// explainedKubernetesReplica returns the replica a question about a cluster
+// is answered through: its active replica with the lowest ordinal (K1d d4c,
+// Q179).
+func (handler *ManagementHandler) explainedKubernetesReplica(
+	ctx context.Context,
+	session accountsession.Session,
+	scope network.Scope,
+	clusterID kubecluster.ID,
+) (node.ID, *managementError) {
+	if handler.kubernetesClusters == nil {
+		return node.ID{}, &managementError{
+			Status: http.StatusServiceUnavailable, Code: "operation_unavailable",
+			Message: "the operation is temporarily unavailable", Retryable: true,
+		}
+	}
+	replica, err := handler.kubernetesClusters.ReadExplainReplica(ctx, session, scope, clusterID)
+	if err != nil {
+		classified := classifyKubernetesClusterError(err)
+		return node.ID{}, &classified
+	}
+	return replica, nil
+}
+
+// decodeAccessGraphQuery reads an explain request; a cluster destination
+// leaves DestinationNodeID to the replica chosen once the caller is admitted.
 func decodeAccessGraphQuery(
 	response http.ResponseWriter,
 	request *http.Request,
 	path accessGraphExplainPath,
-) (accessgraph.Query, *managementError) {
+) (accessgraph.QueryParams, kubecluster.ID, *managementError) {
 	workspaceID, err := workspace.ParseID(path.workspaceID)
 	if err != nil {
-		return accessgraph.Query{}, invalidManagementRequest()
+		return accessgraph.QueryParams{}, kubecluster.ID{}, invalidManagementRequest()
 	}
 	networkID, err := network.ParseID(path.networkID)
 	if err != nil {
-		return accessgraph.Query{}, invalidManagementRequest()
+		return accessgraph.QueryParams{}, kubecluster.ID{}, invalidManagementRequest()
 	}
 	scope, err := network.NewScope(workspaceID, networkID)
 	if err != nil || request.Body == nil ||
 		!validJSONContentType(singleHeader(request.Header, "Content-Type")) {
-		return accessgraph.Query{}, invalidManagementRequest()
+		return accessgraph.QueryParams{}, kubecluster.ID{}, invalidManagementRequest()
 	}
 	var body explainPolicyRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(response, request.Body, maximumAccessGraphBodyBytes))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&body); err != nil || ensureJSONEnd(decoder) != nil {
-		return accessgraph.Query{}, invalidManagementRequest()
+		return accessgraph.QueryParams{}, kubecluster.ID{}, invalidManagementRequest()
 	}
 	sourceID, err := node.ParseID(body.SourceDeviceID)
 	if err != nil {
-		return accessgraph.Query{}, invalidManagementRequest()
+		return accessgraph.QueryParams{}, kubecluster.ID{}, invalidManagementRequest()
 	}
 	var destinationID node.ID
 	if body.DestinationDeviceID != "" {
 		destinationID, err = node.ParseID(body.DestinationDeviceID)
 		if err != nil {
-			return accessgraph.Query{}, invalidManagementRequest()
+			return accessgraph.QueryParams{}, kubecluster.ID{}, invalidManagementRequest()
 		}
 	}
 	var destinationResourceID resource.ID
 	if body.DestinationResourceID != "" {
 		destinationResourceID, err = resource.ParseID(body.DestinationResourceID)
 		if err != nil {
-			return accessgraph.Query{}, invalidManagementRequest()
+			return accessgraph.QueryParams{}, kubecluster.ID{}, invalidManagementRequest()
 		}
 	}
 	var destinationImportedResourceID sharing.ImportedResourceID
@@ -232,41 +285,52 @@ func decodeAccessGraphQuery(
 			body.DestinationImportedResourceID,
 		)
 		if err != nil {
-			return accessgraph.Query{}, invalidManagementRequest()
+			return accessgraph.QueryParams{}, kubecluster.ID{}, invalidManagementRequest()
 		}
 	}
 	var destinationAddress netip.Addr
 	if body.DestinationAddress != "" {
 		destinationAddress, err = netip.ParseAddr(body.DestinationAddress)
 		if err != nil {
-			return accessgraph.Query{}, invalidManagementRequest()
+			return accessgraph.QueryParams{}, kubecluster.ID{}, invalidManagementRequest()
 		}
 	}
 	protocol := parsePolicyProtocol(body.Protocol)
 	var destinationPort int
 	if protocol == policy.ProtocolICMP {
 		if body.DestinationPort != nil {
-			return accessgraph.Query{}, invalidManagementRequest()
+			return accessgraph.QueryParams{}, kubecluster.ID{}, invalidManagementRequest()
 		}
 	} else {
 		if body.DestinationPort == nil || *body.DestinationPort < 1 ||
 			*body.DestinationPort > math.MaxUint16 {
-			return accessgraph.Query{}, invalidManagementRequest()
+			return accessgraph.QueryParams{}, kubecluster.ID{}, invalidManagementRequest()
 		}
 		destinationPort = *body.DestinationPort
 	}
-	query, err := accessgraph.NewQuery(accessgraph.QueryParams{
+	params := accessgraph.QueryParams{
 		Scope: scope, SourceNodeID: sourceID, DestinationNodeID: destinationID,
 		DestinationResourceID:         destinationResourceID,
 		DestinationImportedResourceID: destinationImportedResourceID,
 		DestinationAddress:            destinationAddress,
 		Protocol:                      protocol,
 		DestinationPort:               uint16(destinationPort),
-	})
-	if err != nil {
-		return accessgraph.Query{}, invalidManagementRequest()
 	}
-	return query, nil
+	var clusterID kubecluster.ID
+	if body.DestinationKubernetesClusterID != "" {
+		// A cluster stands alone as the destination.
+		clusterID, err = kubecluster.ParseID(body.DestinationKubernetesClusterID)
+		if err != nil || body.DestinationDeviceID != "" || body.DestinationResourceID != "" ||
+			body.DestinationImportedResourceID != "" || body.DestinationAddress != "" {
+			return accessgraph.QueryParams{}, kubecluster.ID{}, invalidManagementRequest()
+		}
+		return params, clusterID, nil
+	}
+	// Checked here too, so a malformed request fails before admission.
+	if _, err := accessgraph.NewQuery(params); err != nil {
+		return accessgraph.QueryParams{}, kubecluster.ID{}, invalidManagementRequest()
+	}
+	return params, clusterID, nil
 }
 
 func classifyAccessGraphError(err error) managementError {

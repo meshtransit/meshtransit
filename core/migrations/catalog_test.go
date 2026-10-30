@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 255 {
-		t.Fatalf("len(Catalog()) = %d, want 255", len(catalog))
+	if len(catalog) != 256 {
+		t.Fatalf("len(Catalog()) = %d, want 256", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 255 {
-		t.Fatalf("LatestVersion() = %d, want 255", LatestVersion())
+	if LatestVersion() != 256 {
+		t.Fatalf("LatestVersion() = %d, want 256", LatestVersion())
 	}
 }
 
@@ -7655,6 +7655,26 @@ func TestMigration255KubernetesClusterApproverAdditions(t *testing.T) {
 	for _, never := range []string{"principal_id', ", "'principal"} {
 		if strings.Contains(migration.SQL, never) {
 			t.Errorf("migration 255 has %q", never)
+		}
+	}
+}
+
+func TestMigration256KubernetesClusterExplainReplica(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 256 || catalog[255].Version != 256 {
+		t.Fatalf("the catalog has no migration 256 (%d migrations)", len(catalog))
+	}
+	migration := catalog[255]
+	for _, want := range []string{
+		"mesh_ops.kubernetes_cluster_reader_internal_v1(",
+		"device.kubernetes_cluster_id = v_cluster.id AND device.deleted_at IS NULL",
+		"AND device.state = 'active'",
+		"ORDER BY device.kubernetes_ordinal\n    LIMIT 1;",
+		"TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, strings.ReplaceAll(want, "\\n", "\n")) {
+			t.Errorf("migration 256 lacks %q", want)
 		}
 	}
 }
