@@ -841,6 +841,16 @@ type Found struct {
 // Find lists the managed contexts of clusterID in every file that holds
 // one; a file named twice is read once.
 func Find(files []string, clusterID string) ([]Found, error) {
+	return find(files, func(marker Marker) bool { return marker.ClusterID == clusterID })
+}
+
+// Managed lists every managed context, of any cluster: logout reads the
+// clusters of contexts whose cluster has left the map from them.
+func Managed(files []string) ([]Found, error) {
+	return find(files, func(Marker) bool { return true })
+}
+
+func find(files []string, keep func(Marker) bool) ([]Found, error) {
 	documents, err := readAll(files)
 	if err != nil {
 		return nil, err
@@ -860,7 +870,7 @@ func Find(files []string, clusterID string) ([]Found, error) {
 		}
 		for _, entry := range document.list("contexts").Content {
 			marker, ok := markerOf(entry, "contexts")
-			if !ok || marker.ClusterID != clusterID {
+			if !ok || !keep(marker) {
 				continue
 			}
 			context := Found{File: file, Name: nameOf(entry), Marker: marker}

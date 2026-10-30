@@ -113,6 +113,117 @@ func TestKubeLoginWritesAContext(t *testing.T) {
 	}
 }
 
+// A cluster that left the map (its rule removed) is still logged out of by
+// the names login gave its contexts; another cluster's contexts stay
+// (TD-CLI-92).
+func TestKubeLogoutOfAClusterGoneFromTheMap(t *testing.T) {
+	cluster, _ := kubeGateway(t, `"view","sre"`)
+	client := &fakeClient{status: localapi.Status{ActiveProfileID: "0a0a", NetworkName: "acme",
+		KubernetesClusters: []localapi.KubernetesClusterStatus{cluster}}}
+	kubeconfigFile := filepath.Join(t.TempDir(), "config")
+	var stdout, stderr bytes.Buffer
+	for _, group := range []string{"", "sre"} {
+		args := []string{"kube", "login", "prod", "--kubeconfig", kubeconfigFile}
+		if group != "" {
+			args = append(args, "--group", group)
+		}
+		if code := Run(t.Context(), args, &stdout, &stderr, testOptions(client)); code != 0 {
+			t.Fatalf("login %q = %d: %s", group, code, stderr.String())
+		}
+	}
+	other := cluster
+	other.ID, other.Name = "01890f90-0000-7000-8000-0000000000a2", "prod-eu"
+	client.status.KubernetesClusters = []localapi.KubernetesClusterStatus{other}
+	if code := Run(t.Context(), []string{"kube", "login", "prod-eu", "--kubeconfig", kubeconfigFile}, &stdout, &stderr,
+		testOptions(client)); code != 0 {
+		t.Fatalf("login prod-eu = %d: %s", code, stderr.String())
+	}
+	client.status.KubernetesClusters = nil
+	stdout.Reset()
+	if code := Run(t.Context(), []string{"kube", "logout", "prod", "--kubeconfig", kubeconfigFile}, &stdout, &stderr,
+		testOptions(client)); code != 0 || !strings.Contains(stdout.String(), "Removed 2") {
+		t.Fatalf("logout of a cluster gone = %d: %s %s", code, stdout.String(), stderr.String())
+	}
+	written, err := os.ReadFile(kubeconfigFile) //nolint:gosec // The test's own file.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(written), "name: mt-acme-prod\n") || strings.Contains(string(written), "mt-acme-prod-sre") ||
+		!strings.Contains(string(written), "mt-acme-prod-eu") {
+		t.Fatalf("kubeconfig after logout:\n%s", written)
+	}
+	stderr.Reset()
+	if code := Run(t.Context(), []string{"kube", "logout", "staging", "--kubeconfig", kubeconfigFile}, &stdout, &stderr,
+		testOptions(client)); code != 1 || !strings.Contains(stderr.String(), "no context meshctl wrote") {
+		t.Fatalf("logout of an unknown cluster = %d: %s", code, stderr.String())
+	}
+}
+
+// Logging out of a cluster gone from the map never touches a cluster still
+// in it whose context took the same name first, finds the gone one's
+// suffixed context and its ID, and keeps another profile's (review TD-CLI-92).
+func TestKubeLogoutOfAGoneClusterKeepsOthers(t *testing.T) {
+	cluster, _ := kubeGateway(t, `"view"`)
+	kept := cluster
+	kept.ID, kept.Name = "01890f90-0000-7000-8000-0000000000b1", "prod--eu"
+	gone := cluster
+	gone.ID, gone.Name = "01890f90-0000-7000-8000-0000000000b2", "prod-eu"
+	kubeconfigFile := filepath.Join(t.TempDir(), "config")
+	var stdout, stderr bytes.Buffer
+	login := func(profile string, status localapi.KubernetesClusterStatus) {
+		t.Helper()
+		client := &fakeClient{status: localapi.Status{ActiveProfileID: profile, NetworkName: "acme",
+			KubernetesClusters: []localapi.KubernetesClusterStatus{status}}}
+		if code := Run(t.Context(), []string{"kube", "login", status.Name, "--kubeconfig", kubeconfigFile}, &stdout,
+			&stderr, testOptions(client)); code != 0 {
+			t.Fatalf("login %s = %d: %s", status.Name, code, stderr.String())
+		}
+	}
+	login("0a0a", kept) // takes mt-acme-prod-eu
+	login("0a0a", gone) // collides: a suffixed name
+	login("0b0b", gone) // another profile's
+	contexts := func() []kubeconfig.Found {
+		t.Helper()
+		found, err := kubeconfig.Managed([]string{kubeconfigFile})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return found
+	}
+	if len(contexts()) != 3 {
+		t.Fatalf("contexts = %+v", contexts())
+	}
+	client := &fakeClient{status: localapi.Status{ActiveProfileID: "0a0a", NetworkName: "acme",
+		KubernetesClusters: []localapi.KubernetesClusterStatus{kept}}}
+	stdout.Reset()
+	if code := Run(t.Context(), []string{"kube", "logout", "prod-eu", "--kubeconfig", kubeconfigFile}, &stdout, &stderr,
+		testOptions(client)); code != 0 || !strings.Contains(stdout.String(), "Removed 1") {
+		t.Fatalf("logout of the gone cluster = %d: %s %s", code, stdout.String(), stderr.String())
+	}
+	var ids []string
+	for _, context := range contexts() {
+		ids = append(ids, context.Marker.ProfileID+"/"+context.Marker.ClusterID)
+	}
+	if strings.Join(ids, " ") != "0a0a/"+kept.ID+" 0b0b/"+gone.ID {
+		t.Fatalf("left %v, want the cluster in the map and the other profile's", ids)
+	}
+	// Both gone, the name is ambiguous: refused, by ID it is not.
+	login("0a0a", gone)
+	client.status.KubernetesClusters = nil
+	stderr.Reset()
+	if code := Run(t.Context(), []string{"kube", "logout", "prod-eu", "--kubeconfig", kubeconfigFile}, &stdout, &stderr,
+		testOptions(client)); code != 1 || !strings.Contains(stderr.String(), "log out by cluster ID") {
+		t.Fatalf("ambiguous logout = %d: %s", code, stderr.String())
+	}
+	// By its ID, once its name tells nothing.
+	client.status.NetworkName = "renamed"
+	stdout.Reset()
+	if code := Run(t.Context(), []string{"kube", "logout", gone.ID, "--kubeconfig", kubeconfigFile}, &stdout, &stderr,
+		testOptions(client)); code != 0 || !strings.Contains(stdout.String(), "Removed 1") {
+		t.Fatalf("logout by ID = %d: %s %s", code, stdout.String(), stderr.String())
+	}
+}
+
 // The CA file must hold exactly roots the map names, never a marker.
 func TestKubeLoginRefusesABadCAFile(t *testing.T) {
 	cluster, caFile := kubeGateway(t, `"view"`)

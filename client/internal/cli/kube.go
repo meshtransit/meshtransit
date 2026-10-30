@@ -253,23 +253,28 @@ func runKubeLogout(ctx context.Context, args []string, stdout, stderr io.Writer,
 	if err != nil {
 		return writeRuntimeError(stderr, err)
 	}
-	match := func(marker kubeconfig.Marker) bool {
-		return *anyProfile || marker.ProfileID == status.ActiveProfileID
-	}
-	if name != "" {
-		cluster, ok := findKubeCluster(status, name)
-		if !ok {
-			_, _ = fmt.Fprintf(stderr, "meshctl: no Kubernetes cluster %q in this Network's map\n", name)
-			return 1
-		}
-		match = func(marker kubeconfig.Marker) bool {
-			return marker.ProfileID == status.ActiveProfileID && marker.ClusterID == cluster.ID
-		}
-	}
 	files, err := kubeFiles(*file)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "meshctl: %v\n", err)
 		return 1
+	}
+	match := func(marker kubeconfig.Marker) bool {
+		return *anyProfile || marker.ProfileID == status.ActiveProfileID
+	}
+	if name != "" {
+		clusters, err := kubeLogoutClusters(status, name, files)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "meshctl: %v\n", err)
+			return 1
+		}
+		if len(clusters) == 0 {
+			_, _ = fmt.Fprintf(stderr, "meshctl: no Kubernetes cluster %q in this Network's map, and no context "+
+				"meshctl wrote for it (meshctl kube logout --all)\n", name)
+			return 1
+		}
+		match = func(marker kubeconfig.Marker) bool {
+			return marker.ProfileID == status.ActiveProfileID && clusters[marker.ClusterID]
+		}
 	}
 	removed, err := kubeconfig.Logout(files, match)
 	if err != nil {
@@ -281,6 +286,44 @@ func runKubeLogout(ctx context.Context, args []string, stdout, stderr io.Writer,
 	}
 	_, _ = fmt.Fprintf(stdout, "Removed %d context(s).\n", removed)
 	return 0
+}
+
+// kubeLogoutClusters are the IDs of the cluster named name (or of that
+// ID): from the map, or, once the cluster left it (its rule removed, the
+// cluster deleted), from this profile's contexts of clusters no longer in
+// the map that bear the names login gave them, suffixed or not, or that
+// cluster's ID (TD-CLI-92). Names two clusters share are ambiguous: logout
+// refuses rather than guess.
+func kubeLogoutClusters(status localapi.Status, name string, files []string) (map[string]bool, error) {
+	if cluster, ok := findKubeCluster(status, name); ok {
+		return map[string]bool{cluster.ID: true}, nil
+	}
+	managed, err := kubeconfig.Managed(files)
+	if err != nil {
+		return nil, err
+	}
+	inMap := map[string]bool{}
+	for _, cluster := range status.KubernetesClusters {
+		inMap[cluster.ID] = true
+	}
+	clusters := map[string]bool{}
+	var names []string
+	for _, context := range managed {
+		marker := context.Marker
+		if marker.ProfileID != status.ActiveProfileID || inMap[marker.ClusterID] {
+			continue
+		}
+		base := kubeContextName(status.NetworkName, name, marker.Group)
+		if marker.ClusterID == name || context.Name == base || context.Name == withSuffix(base, marker) {
+			clusters[marker.ClusterID] = true
+			names = append(names, context.Name)
+		}
+	}
+	if len(clusters) > 1 {
+		return nil, fmt.Errorf("contexts %s belong to %d clusters: log out by cluster ID", strings.Join(names, ", "),
+			len(clusters))
+	}
+	return clusters, nil
 }
 
 // kubeFiles are the kubeconfig files kubectl would use.
