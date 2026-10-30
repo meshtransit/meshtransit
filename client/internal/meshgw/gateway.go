@@ -57,14 +57,17 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) (err error) {
 	stacks := NewStacks(MTU, cfg.TCP, logger.With("component", "stacks"))
 	defer func() { err = errors.Join(err, stacks.Close()) }()
 	var audits kubeAuditChannels
+	// Every K1 gateway reports its groups; a passthrough one has none.
+	groups := &groupReports{passthrough: cfg.Kube.Mode != KubeModeProxy}
 	if cfg.Kube.Mode == KubeModeProxy {
 		audits = newKubeAuditChannels()
 	}
-	service, coreNow, err := newRuntime(cfg, stacks, profiles, identities, audits, logger)
+	service, coreNow, err := newRuntime(cfg, stacks, profiles, identities, audits, groups, logger)
 	if err != nil {
 		return err
 	}
-	kubectl, ready, err := newKubectlPath(cfg, service, coreNow, audits, stacks, mirror.UID(), memoryLimit, logger)
+	kubectl, ready, err := newKubectlPath(cfg, service, coreNow, audits, groups, stacks, mirror.UID(), memoryLimit,
+		logger)
 	if err != nil {
 		return err
 	}
@@ -124,7 +127,7 @@ func restoreState(ctx context.Context, cfg Config, logger *slog.Logger) (*k8ssta
 //
 // coreNow is the time by Core's clock as the control client estimates it.
 func newRuntime(cfg Config, stacks *Stacks, profiles *profile.Store, identities *identity.Store,
-	audits kubeAuditChannels, logger *slog.Logger,
+	audits kubeAuditChannels, groups *groupReports, logger *slog.Logger,
 ) (service *daemon.Service, coreNow func() time.Time, err error) {
 	packets, err := dataplane.NewWireGuardWithObserver(stacks, uint16(cfg.ListenPort), nil) //nolint:gosec // validated 1024-65535
 	if err != nil {
@@ -146,6 +149,10 @@ func newRuntime(cfg Config, stacks *Stacks, profiles *profile.Store, identities 
 			// K1c-T: the pod token on every session, read again each time.
 			control.SetPodTokenSource(podTokenSource(cfg.PodTokenFile,
 				logger.With("component", "pod_token"), control.CoreNow))
+		}
+		if groups != nil {
+			// K1d d3: what rbaccheck made of each group, for people to see.
+			control.SetGroupReportSource(groups.report)
 		}
 	}
 	service, err = daemon.New(profiles, identities, version.Current(), control, daemon.Options{

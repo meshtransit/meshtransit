@@ -62,9 +62,11 @@ type kubeRuntime struct {
 	// apiAudiences are the API server's audiences as the gateway's own
 	// token names them, for status.
 	apiAudiences []string
-	// groupNames are the configured groups, in order, for status.
-	groupNames []string
-	memory     *memoryWatch
+	// groupNames are the configured groups, in order, for status;
+	// checkGroups the same as rbaccheck checks them, for Core's report.
+	groupNames  []string
+	checkGroups []rbaccheck.Group
+	memory      *memoryWatch
 }
 
 // newKubeRuntime builds the request path of a proxying gateway.
@@ -116,6 +118,7 @@ func newKubeRuntime(cfg Config, service *daemon.Service, coreNow func() time.Tim
 			AllowImpersonation: group.AllowImpersonation,
 		})
 	}
+	runtime.checkGroups = checkGroups
 	runtime.checker, err = rbaccheck.New(rbaccheck.Options{
 		Groups: checkGroups, Reviewer: reviewer, Tokens: &rbaccheck.MinterTokens{Minter: checkMinter},
 		Namespace: cfg.Namespace, StatefulSet: kube.StatefulSet, ServiceAccount: kube.ServiceAccount,
@@ -330,7 +333,7 @@ type kubectlPath struct {
 // so readiness need not hide a replica that cannot serve); a passthrough
 // one while it listens.
 func newKubectlPath(cfg Config, service *daemon.Service, coreNow func() time.Time, audits kubeAuditChannels,
-	stacks stackSource, boundSecretUID string, memoryLimit int64, logger *slog.Logger,
+	groups *groupReports, stacks stackSource, boundSecretUID string, memoryLimit int64, logger *slog.Logger,
 ) (kubectlPath, kubectlReadiness, error) {
 	if cfg.Kube.Mode == KubeModeProxy {
 		if boundSecretUID == "" {
@@ -340,6 +343,7 @@ func newKubectlPath(cfg Config, service *daemon.Service, coreNow func() time.Tim
 		if err != nil {
 			return kubectlPath{}, kubectlReadiness{}, err
 		}
+		groups.bind(runtime.checkGroups, runtime.checker.Verdict, runtime.checker.LastPass)
 		return kubectlPath{run: runtime.run, close: runtime.close}, kubectlReadiness{checks: []check{
 			{open: runtime.open},
 			{reason: "kube API cannot listen", ok: func() bool { return !runtime.listener.BindFailing() }},

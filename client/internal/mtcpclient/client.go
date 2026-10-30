@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	mtcpv1 "meshtransit.net/api/mtcp/v1"
+
 	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/underlay"
 	"meshtransit.net/shared/key"
@@ -56,6 +58,9 @@ type Client struct {
 	// podToken, set on a gateway (SetPodTokenSource), reads its pod token
 	// for every session (gateway.token1); empty: none to send.
 	podToken func() controlplane.PodToken
+	// groupReport, set on a gateway (SetGroupReportSource), reads its
+	// groups' RBAC check (gateway.groups1); nil: none to send.
+	groupReport func() *mtcpv1.GatewayGroupReport
 	// kubeHolds keep, by Device (origin and machine key), what the node
 	// holds of its Kubernetes clusters across streams: the daemon opens a
 	// new stream on recovery or a control key change, which is no restart

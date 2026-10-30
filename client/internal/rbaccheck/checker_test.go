@@ -119,7 +119,8 @@ func TestCheckerTurnsOffDangerousGroups(t *testing.T) {
 	reviewer := &fakeReviewer{allow: allow}
 	checker := testChecker(t, reviewer, groups...)
 	for _, group := range groups {
-		if verdict := checker.Verdict(group.Name); verdict.Enabled || verdict.Reason == "" {
+		if verdict := checker.Verdict(group.Name); verdict.Enabled || verdict.Reason == "" ||
+			verdict.Code != CodeNotChecked {
 			t.Fatalf("%s before any pass: %+v", group.Name, verdict)
 		}
 	}
@@ -132,7 +133,7 @@ func TestCheckerTurnsOffDangerousGroups(t *testing.T) {
 			}
 			continue
 		}
-		if verdict.Enabled || !strings.Contains(verdict.Reason, test.reason) {
+		if verdict.Enabled || !strings.Contains(verdict.Reason, test.reason) || verdict.Code != CodeRBACExceeds {
 			t.Errorf("%s: %+v, want off for %q", name, verdict, test.reason)
 		}
 	}
@@ -164,7 +165,7 @@ func TestCheckerLimitsImpersonation(t *testing.T) {
 		t.Fatalf("named: %+v", verdict)
 	}
 	if verdict := checker.Verdict("any"); !verdict.Enabled || verdict.Impersonation ||
-		!strings.Contains(verdict.Reason, "impersonate") {
+		!strings.Contains(verdict.Reason, "impersonate") || verdict.Code != CodeImpersonationOff {
 		t.Fatalf("any: %+v", verdict)
 	}
 	if verdict := checker.Verdict("plain"); !verdict.Enabled || verdict.Impersonation {
@@ -180,7 +181,13 @@ func TestCheckerOnFailures(t *testing.T) {
 	checker := testChecker(t, reviewer, Group{Name: "view"})
 	now := time.Now()
 	checker.now = func() time.Time { return now }
+	if !checker.LastPass().IsZero() {
+		t.Fatal("a last pass before any")
+	}
 	checker.Pass(t.Context())
+	if !checker.LastPass().Equal(now) {
+		t.Fatalf("last pass %v, want %v", checker.LastPass(), now)
+	}
 	select {
 	case <-checker.Changes():
 	default:
@@ -199,7 +206,7 @@ func TestCheckerOnFailures(t *testing.T) {
 	checker.Pass(t.Context())
 	verdict := checker.Verdict("view")
 	if verdict.Enabled || !strings.Contains(verdict.Detail, "API server down") ||
-		strings.Contains(verdict.Reason, "API server down") {
+		strings.Contains(verdict.Reason, "API server down") || verdict.Code != CodeAPIError {
 		t.Fatalf("at the second failed check: %+v", verdict)
 	}
 	select {

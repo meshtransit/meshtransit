@@ -71,11 +71,26 @@ type Verdict struct {
 	Impersonation bool
 	// Reason says why a group is off, or why it lost impersonation; it may
 	// be shown to the group's users. Detail adds what only the gateway's log
-	// and status show (review b4 L2).
+	// and status show (review b4 L2). Code is Reason as one of the Code
+	// values, what the gateway reports to Core (mtcp-v1 §6.11).
 	Reason, Detail string
+	Code           Code
 	// CheckedAt is the last pass that checked it whole; zero: none yet.
 	CheckedAt time.Time
 }
+
+// Code says why a group is off, or enabled without impersonation, without
+// the API server's own words.
+type Code string
+
+// Verdict codes; empty for an enabled group with nothing to say.
+const (
+	CodeNotChecked       Code = "not_checked"
+	CodeCheckStale       Code = "check_stale"
+	CodeAPIError         Code = "api_error"
+	CodeRBACExceeds      Code = "rbac_exceeds"
+	CodeImpersonationOff Code = "impersonation_off"
+)
 
 // Checker keeps each group's verdict.
 type Checker struct {
@@ -86,6 +101,7 @@ type Checker struct {
 	passing  sync.Mutex // one pass at a time (review b4 L1)
 	mu       sync.Mutex
 	verdicts map[string]Verdict
+	lastPass time.Time       // when the last whole pass ended; zero before one
 	failures map[string]int  // consecutive failed checks, by group
 	stale    map[string]bool // groups announced stale
 	changes  chan struct{}
@@ -123,7 +139,7 @@ func New(options Options) (*Checker, error) {
 			(group.AllowImpersonation && !group.Privileged) {
 			return nil, fmt.Errorf("rbaccheck: invalid group %q", group.Name)
 		}
-		verdicts[group.Name] = Verdict{Reason: "not checked yet"}
+		verdicts[group.Name] = Verdict{Reason: "not checked yet", Code: CodeNotChecked}
 		at.accounts = append(at.accounts, "mt-"+group.Name)
 	}
 	return &Checker{options: options, at: at, now: time.Now, verdicts: verdicts, failures: map[string]int{},
@@ -138,12 +154,19 @@ func (checker *Checker) Verdict(group string) Verdict {
 	defer checker.mu.Unlock()
 	verdict, found := checker.verdicts[group]
 	if !found {
-		return Verdict{Reason: "not a group of this gateway"}
+		return Verdict{Reason: "not a group of this gateway", Code: CodeNotChecked}
 	}
 	if verdict.Enabled && checker.now().Sub(verdict.CheckedAt) > 2*checker.options.Interval {
-		return Verdict{Reason: "the RBAC check has not run", CheckedAt: verdict.CheckedAt}
+		return Verdict{Reason: "the RBAC check has not run", Code: CodeCheckStale, CheckedAt: verdict.CheckedAt}
 	}
 	return verdict
+}
+
+// LastPass is when the last whole pass ended; zero before one.
+func (checker *Checker) LastPass() time.Time {
+	checker.mu.Lock()
+	defer checker.mu.Unlock()
+	return checker.lastPass
 }
 
 // Changes is told when a verdict changed: sessions of a group turned off
@@ -236,7 +259,8 @@ func (checker *Checker) Pass(ctx context.Context) {
 				verdict = previous // one failed check keeps the verdict
 				break
 			}
-			verdict = Verdict{Reason: "the RBAC check fails", Detail: err.Error(), CheckedAt: previous.CheckedAt}
+			verdict = Verdict{Reason: "the RBAC check fails", Detail: err.Error(), Code: CodeAPIError,
+				CheckedAt: previous.CheckedAt}
 		}
 		if verdict.Enabled != previous.Enabled || verdict.Impersonation != previous.Impersonation {
 			changed = true
@@ -245,6 +269,9 @@ func (checker *Checker) Pass(ctx context.Context) {
 		checker.mu.Unlock()
 		checker.report(group.Name, previous, verdict)
 	}
+	checker.mu.Lock()
+	checker.lastPass = checker.now()
+	checker.mu.Unlock()
 	if changed {
 		select {
 		case checker.changes <- struct{}{}:
@@ -291,6 +318,7 @@ func (checker *Checker) check(ctx context.Context, group Group, probe, made stri
 			verdict.Impersonation = true
 		} else {
 			verdict.Reason = "may " + held.String() + ": impersonation is turned off"
+			verdict.Code = CodeImpersonationOff
 		}
 		return verdict, nil
 	}
@@ -299,7 +327,7 @@ func (checker *Checker) check(ctx context.Context, group Group, probe, made stri
 		return Verdict{}, err
 	}
 	if held != nil {
-		return Verdict{Reason: "may " + held.String()}, nil
+		return Verdict{Reason: "may " + held.String(), Code: CodeRBACExceeds}, nil
 	}
 	return Verdict{Enabled: true}, nil
 }

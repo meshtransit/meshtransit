@@ -558,6 +558,13 @@ func (run *sessionRun) loop(ctx context.Context, inbox <-chan incoming) (bool, t
 		defer ticker.Stop()
 		podTokenBeat = ticker.C
 	}
+	// Only a gateway session with gateway.groups1 reports its groups.
+	var groupBeat <-chan time.Time
+	if run.s.groups {
+		ticker := time.NewTicker(groupReportBeat)
+		defer ticker.Stop()
+		groupBeat = ticker.C
+	}
 	endpointTimer := time.NewTimer(time.Hour)
 	endpointTimer.Stop()
 	defer endpointTimer.Stop()
@@ -570,6 +577,10 @@ func (run *sessionRun) loop(ctx context.Context, inbox <-chan incoming) (bool, t
 	// So is every operation batch: Core may have recorded it, and sending
 	// it again finds the same audit_ids.
 	defer run.endKubeAudits(controlplane.ErrKubeAuditSessionLost)
+	// A new session reports its groups at once: Core shows the last one.
+	if err := run.sendGroupReport(run.stream.client.now()); err != nil {
+		return run.mapped, 0, errors.Join(errSessionEnded, err)
+	}
 	for {
 		// The end of ctx goes first: a stopping router announces it before
 		// handling anything else.
@@ -606,6 +617,10 @@ func (run *sessionRun) loop(ctx context.Context, inbox <-chan incoming) (bool, t
 			}
 		case <-podTokenBeat:
 			if err := run.refreshPodToken(run.stream.client.now()); err != nil {
+				return run.mapped, 0, errors.Join(errSessionEnded, err)
+			}
+		case <-groupBeat:
+			if err := run.sendGroupReport(run.stream.client.now()); err != nil {
 				return run.mapped, 0, errors.Join(errSessionEnded, err)
 			}
 		case <-selectionBeat.C:

@@ -116,6 +116,11 @@ type session struct {
 	podToken     controlplane.PodToken
 	podTokenSent time.Time
 	tokens       bool
+	// groups is set on a gateway session that negotiated gateway.groups1;
+	// groupsDigest and groupsSent are its last report (§6.11).
+	groups       bool
+	groupsDigest [32]byte
+	groupsSent   time.Time
 }
 
 // sessionOptions describe the node opening a session.
@@ -150,6 +155,9 @@ func (c *Client) open(ctx context.Context, origin *url.URL, options sessionOptio
 		capabilities = append(slices.Clone(capabilities), gatewayCapability)
 		if c.podToken != nil {
 			capabilities = append(capabilities, gatewayTokenCapability)
+		}
+		if c.groupReport != nil {
+			capabilities = append(capabilities, gatewayGroupsCapability)
 		}
 	}
 	hello := &mtcpv1.ClientHello{
@@ -222,6 +230,7 @@ func (c *Client) open(ctx context.Context, origin *url.URL, options sessionOptio
 			// Read for each session: kubelet rewrites the file (K1c-T §3.7).
 			s.tokens, s.podToken, s.podTokenSent = true, c.podToken(), c.now()
 		}
+		s.groups = c.groupReport != nil && slices.Contains(reply.GetCapabilities(), gatewayGroupsCapability)
 		if err := s.proveNodeKey(options.prove); err != nil {
 			s.close()
 			return nil, err
