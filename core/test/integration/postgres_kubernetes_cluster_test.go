@@ -20,6 +20,7 @@ import (
 	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node/revocation"
 	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/shared/kubejoin"
 )
@@ -471,7 +472,13 @@ WHERE kubernetes_cluster_id = (SELECT id FROM mesh.kubernetes_cluster WHERE publ
 	}
 	assertKubernetesClusterPages(ctx, t, admin, service, store, owner, custom, scope, clusterID, detail,
 		func() { recordClusterOperations(ctx, t, admin, runtime, gatewayKeys, gatewayDevice) })
-	removeGatewayDevice(ctx, t, admin, gatewayDevice)
+	// No request is open now: the active replica alone keeps the cluster,
+	// and revoking it is what lets the cluster go (TD-CORE-108).
+	if _, err := service.Delete(ctx, kubecluster.Deletion{Session: owner, Scope: scope, ClusterID: clusterID,
+		CorrelationID: newCorrelationID(t)}); !errors.Is(err, kubecluster.ErrConflict) {
+		t.Fatalf("deleting a cluster with an active replica: %v", err)
+	}
+	revokeGatewayDevice(ctx, t, admin, runtimePool, owner, scope, gatewayDevice)
 	// With its only replica gone, the cluster has none to explain through.
 	if _, err := service.ReadExplainReplica(ctx, owner, scope, clusterID); !errors.Is(err,
 		kubecluster.ErrNoActiveReplica) {
@@ -867,26 +874,41 @@ func assertReplicaRequestState(ctx context.Context, t *testing.T, admin *pgx.Con
 	}
 }
 
-// removeGatewayDevice deletes the test's gateway Device so its cluster can
-// be deleted.
-func removeGatewayDevice(ctx context.Context, t *testing.T, admin *pgx.Conn, deviceID string) {
+// revokeGatewayDevice removes the gateway Device as the Console does: a
+// revocation, which leaves its deleted_at unset (TD-CORE-108).
+func revokeGatewayDevice(ctx context.Context, t *testing.T, admin *pgx.Conn, runtimePool *postgresadapter.Pool,
+	owner accountsession.Session, scope network.Scope, deviceID string) {
 	t.Helper()
-	tx, err := admin.Begin(ctx)
+	var version int64
+	if err := admin.QueryRow(ctx, `SELECT version FROM mesh.device WHERE public_id = $1::UUID`,
+		deviceID).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	nodeID, err := node.ParseID(deviceID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	// Device deletion is not this test's subject: skip its triggers and
-	// evidence, and leave only the state the cluster's deletion reads.
-	if _, err := tx.Exec(ctx, `SET LOCAL session_replication_role = replica`); err != nil {
+	reason, err := revocation.NewReason("the cluster is retired")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(ctx, `UPDATE mesh.device SET state = 'deleted', deleted_at = pg_catalog.now(),
-    version = version + 1 WHERE public_id = $1::UUID`, deviceID); err != nil {
-		t.Fatalf("delete the gateway Device: %v", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
+	proof, err := integrationDeviceRevocationDigester(t).Proof(integrationDeviceRevocationIdempotencyKey(0x6b))
+	if err != nil {
 		t.Fatal(err)
+	}
+	command, err := revocation.NewCommand(revocation.CommandParams{Scope: scope, NodeID: nodeID,
+		ExpectedVersion: version, AccountSession: owner, Reason: reason, IdempotencyEvidence: proof})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newIntegrationDeviceRevocationService(t, runtimePool).Revoke(ctx, command); err != nil {
+		t.Fatalf("revoke the gateway Device: %v", err)
+	}
+	var state string
+	var deleted bool
+	if err := admin.QueryRow(ctx, `SELECT state, deleted_at IS NOT NULL FROM mesh.device WHERE public_id = $1::UUID`,
+		deviceID).Scan(&state, &deleted); err != nil || state != "revoked" || deleted {
+		t.Fatalf("revoked gateway Device: %s, deleted %t, %v", state, deleted, err)
 	}
 }
 

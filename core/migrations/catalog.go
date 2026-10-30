@@ -643,6 +643,8 @@ func Catalog() []Migration {
 			kubernetesClusterApproverAdditionsSQL),
 		newMigration(256, "Explain reaches a Kubernetes cluster through its first active replica",
 			kubernetesClusterExplainReplicaSQL),
+		newMigration(257, "A Kubernetes cluster whose replicas were revoked can be deleted",
+			kubernetesClusterDeleteRevokedReplicasSQL),
 	}
 }
 
@@ -1190,3 +1192,6 @@ var kubernetesClusterApproverAdditionsSQL string
 
 //go:embed 000256_kubernetes_cluster_explain_replica.up.sql
 var kubernetesClusterExplainReplicaSQL string
+
+//go:embed 000257_kubernetes_cluster_delete_revoked_replicas.up.sql
+var kubernetesClusterDeleteRevokedReplicasSQL string
