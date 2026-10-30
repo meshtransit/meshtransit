@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/netip"
 	"slices"
 	"strings"
@@ -86,6 +87,13 @@ type peerDirectory struct {
 	// kubernetesRefused are the Devices whose Kubernetes access a gateway
 	// ignores, an address of theirs being a range (K1b design §4).
 	kubernetesRefused []string
+	// kubernetesScopes and kubernetesContact are the map's scope table and
+	// access contact (mtcp-v1 §7.12); never changed once built.
+	kubernetesScopes  map[[32]byte]networkmap.KubernetesScope
+	kubernetesContact string
+	// kubernetesWithheld: the map's scope table was unusable, so no peer
+	// has Kubernetes access until a valid one comes (§7.12).
+	kubernetesWithheld bool
 }
 
 type directoryPeer struct {
@@ -101,10 +109,12 @@ type directoryPeer struct {
 
 func newPeerDirectory(snapshot networkmap.Snapshot) *peerDirectory {
 	directory := &peerDirectory{
-		peers:      make([]directoryPeer, 0, len(snapshot.Peers)),
-		byDevice:   make(map[string]int, len(snapshot.Peers)),
-		byAddress:  make(map[netip.Addr]int, len(snapshot.Peers)),
-		relayCodes: make(map[int]string, len(snapshot.Relays)),
+		peers:            make([]directoryPeer, 0, len(snapshot.Peers)),
+		byDevice:         make(map[string]int, len(snapshot.Peers)),
+		byAddress:        make(map[netip.Addr]int, len(snapshot.Peers)),
+		relayCodes:       make(map[int]string, len(snapshot.Relays)),
+		kubernetesScopes: maps.Clone(snapshot.KubernetesScopes), kubernetesContact: snapshot.KubernetesAccessContact,
+		kubernetesWithheld: snapshot.KubernetesWithheld,
 	}
 	for id, region := range snapshot.Relays {
 		directory.relayCodes[id] = region.Code
@@ -271,11 +281,16 @@ func (s *Service) PeerAt(address netip.Addr) (PeerView, bool) {
 
 // KubernetesPeer is a Kubernetes gateway's peer at a mesh address: its
 // Device, the node key its packets come under, and its access in the
-// gateway's cluster (nil: none).
+// gateway's cluster (nil: none), with the scopes its scoped grants name and
+// the cluster's access contact, from the same map.
 type KubernetesPeer struct {
 	DeviceID, Name string
 	Key            [32]byte
 	Kubernetes     *networkmap.KubernetesAccess
+	Scopes         map[[32]byte]networkmap.KubernetesScope
+	AccessContact  string
+	// Withheld: the map withheld every peer's Kubernetes access.
+	Withheld bool
 }
 
 // peerKeys is a data plane that tells which peer's packets may come from
@@ -308,8 +323,20 @@ func (s *Service) KubernetesPeerAt(address netip.Addr) (KubernetesPeer, bool) {
 		(peer.view.Kubernetes != nil && !peer.singleAddresses) {
 		return KubernetesPeer{}, false
 	}
-	return KubernetesPeer{DeviceID: peer.view.DeviceID, Name: peer.view.Name, Key: peer.key,
-		Kubernetes: networkmap.CloneKubernetesAccess(peer.view.Kubernetes)}, true
+	view := KubernetesPeer{
+		DeviceID: peer.view.DeviceID, Name: peer.view.Name, Key: peer.key,
+		Kubernetes: networkmap.CloneKubernetesAccess(peer.view.Kubernetes), Withheld: directory.kubernetesWithheld,
+	}
+	if view.Kubernetes != nil && len(view.Kubernetes.Scoped) > 0 {
+		view.Scopes = make(map[[32]byte]networkmap.KubernetesScope, len(view.Kubernetes.Scoped))
+		for _, grant := range view.Kubernetes.Scoped {
+			if scope, named := directory.kubernetesScopes[grant.Scope]; named {
+				view.Scopes[grant.Scope] = scope
+			}
+		}
+		view.AccessContact = directory.kubernetesContact
+	}
+	return view, true
 }
 
 // PingPeer measures one round trip to the Device, a peer in the current map.

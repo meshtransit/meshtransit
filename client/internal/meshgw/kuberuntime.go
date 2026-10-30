@@ -15,6 +15,7 @@ import (
 	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/daemon"
 	"meshtransit.net/client/internal/kubeaudit"
+	"meshtransit.net/client/internal/kubediscovery"
 	"meshtransit.net/client/internal/kubeevent"
 	"meshtransit.net/client/internal/kubeproxy"
 	"meshtransit.net/client/internal/kubetoken"
@@ -53,8 +54,11 @@ type kubeRuntime struct {
 	proxy    *kubeproxy.Server
 	recorder *kubeaudit.Recorder
 	checker  *rbaccheck.Checker
-	minters  []*kubetoken.Minter
-	listener *KubeProxyListener
+	// discovery is the cluster's resource scopes, for access profiles; nil
+	// when the gateway applies none.
+	discovery *kubediscovery.Discovery
+	minters   []*kubetoken.Minter
+	listener  *KubeProxyListener
 	// open is whether the replica takes kubectl, for its listener and its
 	// readiness alike.
 	open   func() (bool, string)
@@ -137,6 +141,17 @@ func newKubeRuntime(cfg Config, service *daemon.Service, coreNow func() time.Tim
 		return fail(fmt.Errorf("meshgw: %w", err))
 	}
 	runtime.apiAudiences = checkAudiences(kube, logger)
+	var discovery kubeproxy.Discovery
+	if kube.Profiles {
+		runtime.discovery, err = kubediscovery.New(kubediscovery.Options{
+			Server: kube.APIServer, CAFile: kube.APICAFile, TokenFile: kube.APITokenFile,
+			Logger: logger.With("component", "kube_discovery"),
+		})
+		if err != nil {
+			return fail(fmt.Errorf("meshgw: %w", err))
+		}
+		discovery = runtime.discovery
+	}
 	if !buffersFit(memoryLimit, cfg.TCP) {
 		logger.Warn("TCP buffers leave less memory than the fewest connections need", "error_code",
 			"kubernetes_tcp_buffers_exceed_memory", "receive", cfg.TCP.Receive, "send", cfg.TCP.Send,
@@ -147,10 +162,13 @@ func newKubeRuntime(cfg Config, service *daemon.Service, coreNow func() time.Tim
 		Backend: kube.APIServer, BackendCA: kube.APICAFile,
 		Peer: func(source netip.Addr) (kubeproxy.Peer, bool) {
 			peer, ok := service.KubernetesPeerAt(source)
-			return kubeproxy.Peer{DeviceID: peer.DeviceID, Name: peer.Name, Key: peer.Key, Access: peer.Kubernetes}, ok
+			return kubeproxy.Peer{
+				DeviceID: peer.DeviceID, Name: peer.Name, Key: peer.Key, Access: peer.Kubernetes,
+				Scopes: peer.Scopes, AccessContact: peer.AccessContact, Withheld: peer.Withheld,
+			}, ok
 		},
 		Certificate: service.GatewayCertificate, MapFreshAt: service.MapFreshAt, StaleAfter: kube.StaleAfter,
-		CoreNow: coreNow, Verdict: runtime.checker.Verdict, Records: recorder,
+		CoreNow: coreNow, Verdict: runtime.checker.Verdict, Records: recorder, Discovery: discovery,
 		Tokens: kubeproxy.MinterTokens{Minter: minter}, SecretResources: kube.SecretResources,
 		Events: events, Wake: runtime.checker.Changes(), Pressure: runtime.memory.Pressure,
 		Limits:  limitsFor(memoryLimit, cfg.TCP),
@@ -289,10 +307,17 @@ func newMinter(cfg Config, boundSecretUID string, options kubetoken.Options) (*k
 // run runs the recorder, the checker and the listener until ctx ends.
 func (runtime *kubeRuntime) run(ctx context.Context) {
 	var running sync.WaitGroup
-	for _, part := range []func(context.Context) error{
+	parts := []func(context.Context) error{
 		runtime.recorder.Run, runtime.checker.Run,
 		runtime.listener.Run, runtime.proxy.Run, runtime.memory.Run,
-	} {
+	}
+	if runtime.discovery != nil {
+		parts = append(parts, func(ctx context.Context) error {
+			runtime.discovery.Run(ctx)
+			return nil
+		})
+	}
+	for _, part := range parts {
 		running.Go(func() {
 			if err := part(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				runtime.logger.Error("kube request path stopped", "error", err)

@@ -167,6 +167,8 @@ func newRuntime(cfg Config, stacks *Stacks, profiles *profile.Store, identities 
 		GatewayCertificateDir: cfg.CertificateDir,
 		// K1b: type A operations go to Core on the map stream.
 		KubeAudits: audits.calls, KubeAuditReports: audits.reports,
+		// K2: access profiles, only where the proxy applies them.
+		KubeProfiles: cfg.Kube.Mode == KubeModeProxy && cfg.Kube.Profiles,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("meshgw: creating the runtime: %w", err)

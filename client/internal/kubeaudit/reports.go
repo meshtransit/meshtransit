@@ -49,9 +49,10 @@ func (held *reports) finished(auditID [16]byte, status int, duration time.Durati
 		Duration: duration})
 }
 
-// denied counts a refused request of peer for reason. Past maximumDenials
-// counts, a new peer's go to the reason's unnamed count.
-func (held *reports) denied(peer, reason string, at time.Time) {
+// denied counts a refused request of peer for reason, keeping the first
+// sample of the window. Past maximumDenials counts, a new peer's go to the
+// reason's unnamed count.
+func (held *reports) denied(peer, reason string, sample *controlplane.KubeAuditDenialSample, at time.Time) {
 	if !slices.Contains(denialReasons, reason) {
 		reason = "other" // Core takes no other (review b2 L3)
 	}
@@ -68,11 +69,18 @@ func (held *reports) denied(peer, reason string, at time.Time) {
 	}
 	count.Count++
 	count.Last = at
+	if count.Sample == nil && sample != nil {
+		kept := *sample
+		count.Sample = &kept
+	}
 }
 
 // denialReasons are the reasons a type B count may give: room is kept for
 // each reason's unnamed count.
-var denialReasons = []string{"unauthenticated", "forbidden", "not_granted", "stale", "limited", "other"}
+var denialReasons = []string{
+	"unauthenticated", "forbidden", "not_granted", "stale", "limited", "other",
+	"profile_denied", "profile_would_deny",
+}
 
 // takeOutcomes removes up to one report's outcomes.
 func (held *reports) takeOutcomes() []controlplane.KubeAuditOutcome {

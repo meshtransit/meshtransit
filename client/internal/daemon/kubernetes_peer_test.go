@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/client/internal/networkmap"
@@ -68,5 +69,39 @@ func TestKubernetesPeerAtNeedsTheDataPlanesKey(t *testing.T) {
 	service.peerSession.setDirectory(directory)
 	if _, found := service.KubernetesPeerAt(address); found {
 		t.Fatal("named with a prefix address")
+	}
+}
+
+// A peer comes with the scopes its scoped grants name, the contact and
+// whether the map withheld access, all from the one map.
+func TestKubernetesPeerAtCarriesItsScopes(t *testing.T) {
+	t.Parallel()
+	address := netip.MustParseAddr("100.64.0.10")
+	snapshot := directorySnapshot()
+	snapshot.Peers[0].PublicKey = "nodekey:" + strings.Repeat("ab", 32)
+	named, other := [32]byte{1}, [32]byte{2}
+	snapshot.Peers[0].Kubernetes = &networkmap.KubernetesAccess{Scoped: []networkmap.KubernetesScopedGrant{
+		{Group: "edit", Scope: named, ValidUntil: time.Now().Add(time.Hour)},
+	}}
+	snapshot.KubernetesScopes = map[[32]byte]networkmap.KubernetesScope{
+		named: {ProfileName: "developer"}, other: {ProfileName: "other"},
+	}
+	snapshot.KubernetesAccessContact = "#platform"
+	key, err := dataplane.ParseNodeKey(snapshot.Peers[0].PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{dataPlane: keyedDataPlane{keys: map[netip.Addr][32]byte{address: key}}}
+	service.peerSession.setDirectory(newPeerDirectory(snapshot))
+	peer, found := service.KubernetesPeerAt(address)
+	if !found || len(peer.Scopes) != 1 || peer.Scopes[named].ProfileName != "developer" ||
+		peer.AccessContact != "#platform" || peer.Withheld {
+		t.Fatalf("peer %+v, %t", peer, found)
+	}
+	snapshot.Peers[0].Kubernetes = nil
+	snapshot.KubernetesWithheld = true
+	service.peerSession.setDirectory(newPeerDirectory(snapshot))
+	if peer, found = service.KubernetesPeerAt(address); !found || !peer.Withheld || peer.Scopes != nil {
+		t.Fatalf("withheld peer %+v, %t", peer, found)
 	}
 }

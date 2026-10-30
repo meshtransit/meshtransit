@@ -30,6 +30,13 @@ type Peer struct {
 	DeviceID, Name string
 	Key            [32]byte
 	Access         *networkmap.KubernetesAccess
+	// Scopes are the scopes Access's scoped grants name, from the same map;
+	// AccessContact is the cluster's contact for more access (§7.12).
+	Scopes        map[[32]byte]networkmap.KubernetesScope
+	AccessContact string
+	// Withheld: the map's scope table was unusable, so every peer's access
+	// is withheld until Core sends a valid one (§7.12).
+	Withheld bool
 }
 
 // Group is one Kubernetes group of the gateway, as its values configure it
@@ -49,6 +56,7 @@ type Recorder interface {
 	Record(ctx context.Context, device string, intent controlplane.KubeAuditIntent) kubeaudit.Answer
 	Finished(auditID [16]byte, status int, duration time.Duration)
 	Denied(peer, reason string)
+	ProfileDenied(peer string, wouldDeny bool, sample controlplane.KubeAuditDenialSample)
 }
 
 // Bearer is a minted token: its value never formats (kubetoken.Token).
@@ -104,8 +112,12 @@ type Options struct {
 	CoreNow func() time.Time
 	// Verdict is rbaccheck's verdict on a group.
 	Verdict func(group string) rbaccheck.Verdict
-	Records Recorder
-	Tokens  Tokens
+	// Discovery is the cluster's resource scopes, which access profiles
+	// decide by; nil: every resource unknown, so a profile allows no
+	// resource request.
+	Discovery Discovery
+	Records   Recorder
+	Tokens    Tokens
 	// SecretResources are read like secrets.
 	SecretResources []kubereq.GroupResource
 	// Events record each use of a privileged group on the cluster's side;

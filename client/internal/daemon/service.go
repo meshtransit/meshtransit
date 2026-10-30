@@ -414,6 +414,8 @@ type Service struct {
 	// KubeAuditReports.
 	kubeAudits       <-chan controlplane.KubeAuditCall
 	kubeAuditReports <-chan controlplane.KubeAuditReport
+	// kubeProfiles: Options.KubeProfiles, for a gateway.
+	kubeProfiles bool
 	// certificates keeps a gateway's replica certificate; nil when it asks
 	// for none (Options.GatewayCertificates).
 	certificates *gatewayCertificates
@@ -591,6 +593,9 @@ type Options struct {
 	// K1b); nil: the gateway records nothing.
 	KubeAudits       <-chan controlplane.KubeAuditCall
 	KubeAuditReports <-chan controlplane.KubeAuditReport
+	// KubeProfiles, with Gateway, takes peers' access narrowed by access
+	// profiles (gateway.kube.v2, K2): only a gateway that applies them.
+	KubeProfiles bool
 }
 
 // New creates a daemon service from explicit dependencies.
@@ -690,6 +695,7 @@ func New(
 		gatewayRenewAfter:     options.GatewayCertificateRenewAfter,
 		gatewayCertificateDir: options.GatewayCertificateDir,
 		kubeAudits:            options.KubeAudits,
+		kubeProfiles:          options.Gateway && options.KubeProfiles,
 		kubeAuditReports:      options.KubeAuditReports,
 		gatewayCommitWait:     gatewayCommitBound,
 		rotationPersistWait:   rotationPersistTimeout,
@@ -1284,6 +1290,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					KubeCerts:          s.kubeCertCalls(),
 					KubeAudits:         s.kubeAudits,
 					KubeAuditReports:   s.kubeAuditReports,
+					KubeProfiles:       s.kubeProfiles,
 					RouteSelection:     routeSelection,
 					AnnounceGoingAway:  func() bool { return !restartExpected(s.restartMarkerPath, s.clock()) },
 					CaptiveWindows:     s.captiveWindowsToReport(),

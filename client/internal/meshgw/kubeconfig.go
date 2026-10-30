@@ -45,7 +45,7 @@ const (
 // proxyOnlyVariables configure the proxy only.
 var proxyOnlyVariables = []string{
 	"MESHGW_KUBE_GROUPS", "MESHGW_SECRET_RESOURCES", "MESHGW_KUBE_STALE_AFTER",
-	"MESHGW_KUBE_API_BACKEND", "MESHGW_GUARDED_NAMESPACES", "MESHGW_API_AUDIENCES",
+	"MESHGW_KUBE_API_BACKEND", "MESHGW_GUARDED_NAMESPACES", "MESHGW_API_AUDIENCES", "MESHGW_KUBE_PROFILES",
 }
 
 // KubeConfig is how a K1 gateway serves kubectl (K1b).
@@ -80,6 +80,9 @@ type KubeConfig struct {
 	ServiceAccount    string
 	Secrets           []string
 	GuardedNamespaces []string
+	// Profiles: the gateway narrows groups by access profiles (K2,
+	// MESHGW_KUBE_PROFILES), so it asks Core for gateway.kube.v2.
+	Profiles bool
 }
 
 // groupSpec is one entry of MESHGW_KUBE_GROUPS.
@@ -166,6 +169,10 @@ func loadKubeConfig(getenv func(string) string, cfg Config, apiServer string, ce
 			return KubeConfig{}, fmt.Errorf("meshgw: MESHGW_API_AUDIENCES: %q is not an audience, or repeats", audience)
 		}
 	}
+	profiles, err := strconv.ParseBool(value("MESHGW_KUBE_PROFILES", "false"))
+	if err != nil {
+		return KubeConfig{}, errors.New("meshgw: MESHGW_KUBE_PROFILES must be true or false")
+	}
 	statefulSet := cfg.PodName[:strings.LastIndexByte(cfg.PodName, '-')]
 	serviceAccount := value("MESHGW_SERVICE_ACCOUNT", defaultServiceAccount)
 	if !isDNSSubdomain(statefulSet) || !isDNSSubdomain(serviceAccount) {
@@ -183,6 +190,7 @@ func loadKubeConfig(getenv func(string) string, cfg Config, apiServer string, ce
 		APITokenFile: value("MESHGW_KUBE_API_TOKEN_FILE", defaultAPITokenFile), APIServerOverride: override != "",
 		StatefulSet: statefulSet, Replicas: replicas, ServiceAccount: serviceAccount, Secrets: secrets,
 		GuardedNamespaces: splitList(value("MESHGW_GUARDED_NAMESPACES", "")), APIAudiences: audiences,
+		Profiles: profiles,
 	}, nil
 }
 

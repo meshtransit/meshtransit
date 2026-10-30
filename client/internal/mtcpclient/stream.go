@@ -1438,7 +1438,7 @@ func streamCapabilities(options controlplane.NetmapOptions, gateway bool) []stri
 		capabilities = append(capabilities, "gateway.kube.v1")
 		if options.KubeProfiles {
 			// It narrows groups by access profiles (§7.12).
-			capabilities = append(capabilities, "gateway.kube.v2")
+			capabilities = append(capabilities, kubeProfilesCapability)
 		}
 		if options.KubeCerts != nil {
 			// It asks for its replica certificate (§6.9, §7.10).

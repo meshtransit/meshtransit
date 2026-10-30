@@ -46,6 +46,12 @@ type KubeAuditIntent struct {
 	Impersonated string
 	TokenID      []byte
 	ObservedAt   time.Time
+	// Profile is the scope hash of the grant that let the request through
+	// (gateway.kube.v2, mtcp-v1 §7.12); nil: a grant of the whole group.
+	Profile []byte
+	// ReportAllowed: a reporting grant let it through, its profile would
+	// deny it.
+	ReportAllowed bool
 }
 
 // KubeAuditBatch is up to 128 intents sent together.
@@ -94,10 +100,21 @@ type KubeAuditOutcome struct {
 // KubeAuditDenials counts requests of one peer the gateway refused itself,
 // for one reason (type B), over First to Last.
 type KubeAuditDenials struct {
-	Peer        string // empty: not named
-	Reason      string // unauthenticated, forbidden, not_granted, stale, limited or other
+	Peer string // empty: not named
+	// Reason is unauthenticated, forbidden, not_granted, stale, limited or
+	// other; profile_denied or profile_would_deny (gateway.kube.v2).
+	Reason      string
 	Count       int
 	First, Last time.Time
+	// Sample is one request of a profile's count; nil for none.
+	Sample *KubeAuditDenialSample
+}
+
+// KubeAuditDenialSample is one request a profile refused or would refuse
+// (mtcp-v1 §7.12): what it asked and the grant's scope, never its body.
+type KubeAuditDenialSample struct {
+	Verb, APIGroup, Resource, Subresource, Namespace string
+	Scope                                            [32]byte
 }
 
 // KubeAuditReport is at most 1,024 outcomes and 256 denials, sent

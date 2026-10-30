@@ -47,6 +47,7 @@ type fakeRecords struct {
 	intents  []controlplane.KubeAuditIntent
 	finished []int
 	denied   []string
+	samples  []controlplane.KubeAuditDenialSample
 	answer   kubeaudit.Answer
 }
 
@@ -67,6 +68,17 @@ func (records *fakeRecords) Denied(_, reason string) {
 	records.mu.Lock()
 	defer records.mu.Unlock()
 	records.denied = append(records.denied, reason)
+}
+
+func (records *fakeRecords) ProfileDenied(_ string, wouldDeny bool, sample controlplane.KubeAuditDenialSample) {
+	records.mu.Lock()
+	defer records.mu.Unlock()
+	reason := "profile_denied"
+	if wouldDeny {
+		reason = "profile_would_deny"
+	}
+	records.denied = append(records.denied, reason)
+	records.samples = append(records.samples, sample)
 }
 
 type bearer struct{ value string }
@@ -124,8 +136,10 @@ func newFixture(t *testing.T) *fixture { t.Helper(); return newFixtureAt(t, "") 
 // when not empty.
 func newFixtureAt(t *testing.T, backendURL string, configure ...func(*Options)) *fixture {
 	t.Helper()
-	f := &fixture{t: t, records: &fakeRecords{answer: kubeaudit.Answer{Recorded: true, AuditID: [16]byte{7}}},
-		tokens: &fakeTokens{}, seen: make(chan seen, 16), events: &fakeEvents{}, wake: make(chan struct{}, 1)}
+	f := &fixture{
+		t: t, records: &fakeRecords{answer: kubeaudit.Answer{Recorded: true, AuditID: [16]byte{7}}},
+		tokens: &fakeTokens{}, seen: make(chan seen, 16), events: &fakeEvents{}, wake: make(chan struct{}, 1),
+	}
 	backend := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.seen <- seen{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Header: r.Header.Clone()}
 		switch {
@@ -165,8 +179,10 @@ func newFixtureAt(t *testing.T, backendURL string, configure ...func(*Options)) 
 	t.Cleanup(backend.Close)
 	dir := t.TempDir()
 	ca := filepath.Join(dir, "ca.crt")
-	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE",
-		Bytes: backend.Certificate().Raw}), 0o600); err != nil {
+	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: backend.Certificate().Raw,
+	}), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	certificate, pool := testCertificate(t)
@@ -175,7 +191,8 @@ func newFixtureAt(t *testing.T, backendURL string, configure ...func(*Options)) 
 	}
 	f.peer.Store(&Peer{DeviceID: "device-a", Name: "laptop", Key: [32]byte{1}, Access: &networkmap.KubernetesAccess{
 		Grants: []networkmap.KubernetesGrant{
-			{Group: "edit", ValidUntil: time.Now().Add(time.Hour)}, {Group: "sre", ValidUntil: time.Now().Add(time.Hour)},
+			{Group: "edit", ValidUntil: time.Now().Add(time.Hour)},
+			{Group: "sre", ValidUntil: time.Now().Add(time.Hour)},
 			{Group: "view", ValidUntil: time.Now().Add(time.Hour)},
 		},
 		OwnerRef: "person-1", OwnerChangedAt: time.Now().Add(-30 * 24 * time.Hour),
@@ -187,8 +204,11 @@ func newFixtureAt(t *testing.T, backendURL string, configure ...func(*Options)) 
 	}
 	options := Options{
 		Cluster: clusterName, Namespace: "meshtransit", Backend: backendURL, BackendCA: ca,
-		Groups: []Group{{Name: "view", Default: true}, {Name: "edit"},
-			{Name: "sre", Privileged: true, AllowedPrincipals: []string{"person-1"}, AllowImpersonation: true}},
+		Groups: []Group{
+			{Name: "view", Default: true},
+			{Name: "edit"},
+			{Name: "sre", Privileged: true, AllowedPrincipals: []string{"person-1"}, AllowImpersonation: true},
+		},
 		Peer: func(source netip.Addr) (Peer, bool) {
 			if source != netip.MustParseAddr("127.0.0.1") || f.stranger.Load() {
 				return Peer{}, false
@@ -247,10 +267,12 @@ func testCertificate(t *testing.T) (*tls.Certificate, *x509.CertPool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: clusterName},
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: clusterName},
 		DNSNames: []string{clusterName}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
 		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		IsCA: true, BasicConstraintsValid: true}
+		IsCA: true, BasicConstraintsValid: true,
+	}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 	if err != nil {
 		t.Fatal(err)
@@ -442,16 +464,21 @@ func TestProxyRefuses(t *testing.T) {
 		"options":      {http.MethodOptions, "/api/v1/pods", nil, 405},
 		"trace":        {http.MethodTrace, "/api/v1/pods", nil, 405},
 		"gateway path": {http.MethodGet, "/mt/other", nil, 404},
-		"system impersonation": {http.MethodGet, "/mt/g/sre/api/v1/pods",
-			http.Header{"Impersonate-User": {"system:admin"}}, 403},
+		"system impersonation": {
+			http.MethodGet, "/mt/g/sre/api/v1/pods",
+			http.Header{"Impersonate-User": {"system:admin"}},
+			403,
+		},
 	} {
 		if response, _ := f.do(test.method, test.path, test.header); response.StatusCode != test.code {
 			t.Errorf("%s: %d, want %d", name, response.StatusCode, test.code)
 		}
 	}
 	// HTTP/1.1 only: a Connection header naming a credential.
-	conn, err := tls.Dial("tcp", f.address, &tls.Config{RootCAs: f.client.Transport.(*http.Transport).TLSClientConfig.RootCAs,
-		ServerName: clusterName, NextProtos: []string{"http/1.1"}})
+	conn, err := tls.Dial("tcp", f.address, &tls.Config{
+		RootCAs:    f.client.Transport.(*http.Transport).TLSClientConfig.RootCAs,
+		ServerName: clusterName, NextProtos: []string{"http/1.1"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -478,8 +505,10 @@ func TestProxyRefuses(t *testing.T) {
 func TestProxyImpersonation(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	f.do(http.MethodGet, "/mt/g/sre/api/v1/pods", http.Header{"Impersonate-User": {"alice"},
-		"Impersonate-Group": {"ops", "dev"}, "Impersonate-Uid": {"1"}})
+	f.do(http.MethodGet, "/mt/g/sre/api/v1/pods", http.Header{
+		"Impersonate-User":  {"alice"},
+		"Impersonate-Group": {"ops", "dev"}, "Impersonate-Uid": {"1"},
+	})
 	got := f.forwarded()
 	if got.Header.Get("Impersonate-User") != "alice" || len(got.Header.Values("Impersonate-Group")) != 2 ||
 		got.Header.Get("Impersonate-Uid") != "" {
@@ -554,8 +583,10 @@ func TestProxyUpstreamAnswers(t *testing.T) {
 	}
 	f.forwarded()
 	f.forwarded()
-	conn, err := tls.Dial("tcp", f.address, &tls.Config{RootCAs: f.client.Transport.(*http.Transport).TLSClientConfig.RootCAs,
-		ServerName: clusterName, NextProtos: []string{"http/1.1"}})
+	conn, err := tls.Dial("tcp", f.address, &tls.Config{
+		RootCAs:    f.client.Transport.(*http.Transport).TLSClientConfig.RootCAs,
+		ServerName: clusterName, NextProtos: []string{"http/1.1"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -622,8 +653,10 @@ func TestProxyTLS(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	roots := f.client.Transport.(*http.Transport).TLSClientConfig.RootCAs
-	if _, err := tls.Dial("tcp", f.address, &tls.Config{RootCAs: roots, ServerName: "other.test",
-		InsecureSkipVerify: true}); err == nil { //nolint:gosec // the handshake itself must fail
+	if _, err := tls.Dial("tcp", f.address, &tls.Config{
+		RootCAs: roots, ServerName: "other.test",
+		InsecureSkipVerify: true,
+	}); err == nil { //nolint:gosec // the handshake itself must fail
 		t.Fatal("an unknown server name was served")
 	}
 	conn, err := tls.Dial("tcp", f.address, &tls.Config{RootCAs: roots, ServerName: clusterName})
@@ -703,8 +736,10 @@ func TestProxyRefusesHostsAndUpgrades(t *testing.T) {
 		"host":    "GET /api/v1/pods HTTP/1.1\r\nHost: other.test\r\n\r\n",
 		"upgrade": "GET /api/v1/pods HTTP/1.1\r\nHost: " + clusterName + "\r\nConnection: Upgrade\r\nUpgrade: h2c\r\n\r\n",
 	} {
-		conn, err := tls.Dial("tcp", f.address, &tls.Config{RootCAs: roots, ServerName: clusterName,
-			NextProtos: []string{"http/1.1"}})
+		conn, err := tls.Dial("tcp", f.address, &tls.Config{
+			RootCAs: roots, ServerName: clusterName,
+			NextProtos: []string{"http/1.1"},
+		})
 		if err != nil {
 			t.Fatal(err)
 		}

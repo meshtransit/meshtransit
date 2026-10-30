@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,9 +19,11 @@ import (
 func testAuditBatch(id byte, intents ...byte) controlplane.KubeAuditBatch {
 	batch := controlplane.KubeAuditBatch{ID: [16]byte{id}}
 	for _, intent := range intents {
-		batch.Intents = append(batch.Intents, controlplane.KubeAuditIntent{ID: [16]byte{intent},
+		batch.Intents = append(batch.Intents, controlplane.KubeAuditIntent{
+			ID:   [16]byte{intent},
 			Peer: "01890f00-0000-7000-8000-000000000702", Groups: []string{"view"}, Class: "write", Verb: "delete",
-			Resource: "pods", Namespace: "default", Name: "web-0", ObservedAt: time.Now()})
+			Resource: "pods", Namespace: "default", Name: "web-0", ObservedAt: time.Now(),
+		})
 	}
 	return batch
 }
@@ -65,9 +68,13 @@ func TestGatewayStreamRecordsOperations(t *testing.T) {
 					// Acked after the call's deadline: its record was never
 					// forwarded (review b2 M1).
 					time.Sleep(300 * time.Millisecond)
-					_ = s.send(sharedmtcp.MessageKubeAuditAck, &mtcpv1.KubeAuditAck{BatchId: m.GetBatchId(),
-						Results: []*mtcpv1.KubeAuditResult{{IntentId: intents[0].GetIntentId(),
-							AuditId: bytes.Repeat([]byte{8}, 16)}}})
+					_ = s.send(sharedmtcp.MessageKubeAuditAck, &mtcpv1.KubeAuditAck{
+						BatchId: m.GetBatchId(),
+						Results: []*mtcpv1.KubeAuditResult{{
+							IntentId: intents[0].GetIntentId(),
+							AuditId:  bytes.Repeat([]byte{8}, 16),
+						}},
+					})
 					continue
 				}
 				// An ack naming another batch answers nothing.
@@ -150,8 +157,10 @@ func TestGatewayStreamRecordsOperations(t *testing.T) {
 	// A batch acked after its deadline is answered a timeout, and its
 	// record reported as not forwarded.
 	lateReply := make(chan controlplane.KubeAuditReply, 1)
-	calls <- controlplane.KubeAuditCall{Batch: testAuditBatch(4, 5), Reply: lateReply,
-		Deadline: time.Now().Add(100 * time.Millisecond)}
+	calls <- controlplane.KubeAuditCall{
+		Batch: testAuditBatch(4, 5), Reply: lateReply,
+		Deadline: time.Now().Add(100 * time.Millisecond),
+	}
 	if got := <-lateReply; !errors.Is(got.Err, controlplane.ErrKubeAuditTimeout) {
 		t.Fatalf("late batch = %+v", got)
 	}
@@ -243,8 +252,10 @@ func TestGatewayOperationCallEdges(t *testing.T) {
 	waiting := make([]chan controlplane.KubeAuditReply, 4)
 	for index := range waiting {
 		waiting[index] = make(chan controlplane.KubeAuditReply, 1)
-		run.kubeAudits[[16]byte{byte(10 + index)}] = &kubeAuditInFlightCall{intents: [][16]byte{{1}},
-			reply: waiting[index], deadline: time.Now().Add(time.Hour)}
+		run.kubeAudits[[16]byte{byte(10 + index)}] = &kubeAuditInFlightCall{
+			intents: [][16]byte{{1}},
+			reply:   waiting[index], deadline: time.Now().Add(time.Hour),
+		}
 	}
 	if got := answer(controlplane.KubeAuditCall{Batch: testAuditBatch(20, 1)}); !errors.Is(got.Err,
 		controlplane.ErrKubeAuditBusy) {
@@ -257,8 +268,10 @@ func TestGatewayOperationCallEdges(t *testing.T) {
 		t.Fatal("a timed-out batch was not kept for its late ack")
 	}
 	// A late ack recording nothing reports nothing.
-	_ = run.kubeAuditAck(&mtcpv1.KubeAuditAck{BatchId: append([]byte{10}, make([]byte, 15)...),
-		Results: []*mtcpv1.KubeAuditResult{{IntentId: append([]byte{1}, make([]byte, 15)...), Refused: "stale"}}})
+	_ = run.kubeAuditAck(&mtcpv1.KubeAuditAck{
+		BatchId: append([]byte{10}, make([]byte, 15)...),
+		Results: []*mtcpv1.KubeAuditResult{{IntentId: append([]byte{1}, make([]byte, 15)...), Refused: "stale"}},
+	})
 	if _, kept := run.kubeAuditLate[[16]byte{10}]; kept {
 		t.Fatal("a late ack did not end its batch")
 	}
@@ -270,8 +283,10 @@ func TestGatewayOperationCallEdges(t *testing.T) {
 		t.Fatalf("a batch already waiting: %+v", got)
 	}
 	// An ack out of form answers its batch with ErrKubeAuditAck.
-	_ = run.kubeAuditAck(&mtcpv1.KubeAuditAck{BatchId: append([]byte{11}, make([]byte, 15)...),
-		Results: []*mtcpv1.KubeAuditResult{{IntentId: append([]byte{1}, make([]byte, 15)...)}}})
+	_ = run.kubeAuditAck(&mtcpv1.KubeAuditAck{
+		BatchId: append([]byte{11}, make([]byte, 15)...),
+		Results: []*mtcpv1.KubeAuditResult{{IntentId: append([]byte{1}, make([]byte, 15)...)}},
+	})
 	if got := <-waiting[1]; !errors.Is(got.Err, controlplane.ErrKubeAuditAck) {
 		t.Fatalf("an ack recorded without an audit_id: %+v", got)
 	}
@@ -318,5 +333,32 @@ func TestDecodeKubeAuditResults(t *testing.T) {
 		if _, ok := decodeKubeAuditResults(intents, results); ok {
 			t.Errorf("%s: taken", name)
 		}
+	}
+}
+
+// An intent carries its grant's scope; a denial's sample goes only on a
+// session that took profiles and within its bounds.
+func TestEncodeProfileFields(t *testing.T) {
+	t.Parallel()
+	scope := [32]byte{7}
+	message, ok := encodeKubeAuditBatch(controlplane.KubeAuditBatch{Intents: []controlplane.KubeAuditIntent{{
+		Peer: "p", Groups: []string{"edit"}, Class: "write", Verb: "delete", Profile: scope[:], ReportAllowed: true,
+	}}})
+	if !ok || !bytes.Equal(message.GetIntents()[0].GetProfile(), scope[:]) ||
+		!message.GetIntents()[0].GetReportAllowed() {
+		t.Fatalf("intent: %v", message)
+	}
+	sample := &controlplane.KubeAuditDenialSample{Verb: "delete", Resource: "pods", Namespace: "a", Scope: scope}
+	if encoded := encodeDenialSample(sample, true); encoded == nil || !bytes.Equal(encoded.GetScope(), scope[:]) ||
+		encoded.GetVerb() != "delete" || encoded.GetNamespace() != "a" {
+		t.Fatalf("sample: %v", encoded)
+	}
+	if encodeDenialSample(sample, false) != nil || encodeDenialSample(nil, true) != nil {
+		t.Fatal("a sample without profiles")
+	}
+	long := *sample
+	long.Resource = strings.Repeat("r", 64)
+	if encodeDenialSample(&long, true) != nil {
+		t.Fatal("a sample out of bounds")
 	}
 }

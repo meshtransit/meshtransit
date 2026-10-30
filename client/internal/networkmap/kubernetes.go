@@ -70,6 +70,46 @@ func (access *KubernetesAccess) GroupsAt(now time.Time) []string {
 	return groups
 }
 
+// WholeAt reports whether the peer holds group whole at now.
+func (access *KubernetesAccess) WholeAt(now time.Time, group string) bool {
+	if access == nil {
+		return false
+	}
+	return slices.ContainsFunc(access.Grants, func(grant KubernetesGrant) bool {
+		return grant.Group == group && now.Before(grant.ValidUntil)
+	})
+}
+
+// ScopedAt returns group's scoped grants in force at now, in key order.
+func (access *KubernetesAccess) ScopedAt(now time.Time, group string) []KubernetesScopedGrant {
+	if access == nil {
+		return nil
+	}
+	var grants []KubernetesScopedGrant
+	for _, grant := range access.Scoped {
+		if grant.Group == group && now.Before(grant.ValidUntil) {
+			grants = append(grants, grant)
+		}
+	}
+	return grants
+}
+
+// HeldAt returns the groups the peer holds at now, whole or through a
+// scoped grant, sorted and distinct.
+func (access *KubernetesAccess) HeldAt(now time.Time) []string {
+	groups := access.GroupsAt(now)
+	if access == nil {
+		return groups
+	}
+	for _, grant := range access.Scoped {
+		if now.Before(grant.ValidUntil) {
+			groups = append(groups, grant.Group)
+		}
+	}
+	slices.Sort(groups)
+	return slices.Compact(groups)
+}
+
 // CheckKubernetesAccess reports what is wrong with a peer's access, if
 // anything: one to 64 grants across both lists; whole grants sorted,
 // distinct groups; scoped grants strictly sorted by key (mtcp-v1 §7.12);

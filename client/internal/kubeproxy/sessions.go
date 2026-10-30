@@ -30,6 +30,8 @@ const (
 	cutRevoked       = "revoked"
 	cutGroupOff      = "group_off"
 	cutImpersonation = "impersonation_off"
+	cutProfile       = "profile_changed"
+	cutWithheld      = "kubernetes_withheld"
 )
 
 // errSessionCut is what a cut session's context cause is: a sessionCut,
@@ -66,7 +68,11 @@ type session struct {
 	// impersonating: the request kept Impersonate-* headers, which the
 	// group's verdict must still allow.
 	impersonating bool
-	cancel        context.CancelCauseFunc
+	// check is the request as profiles read it, which the sweep decides
+	// again (K2 §9.3): a resource whose scope was not asked then (a whole
+	// grant) is unknown, so a whole grant that narrows cuts it.
+	check  profileCheck
+	cancel context.CancelCauseFunc
 	// close ends an upgraded HTTP/1.1 connection, which outlives its
 	// request.
 	close func()
@@ -90,9 +96,11 @@ type registry struct {
 }
 
 func newRegistry() *registry {
-	return &registry{live: map[*session]struct{}{}, cuts: map[string]uint64{},
+	return &registry{
+		live: map[*session]struct{}{}, cuts: map[string]uint64{},
 		cutSeconds: histogram{bounds: cutBuckets, counts: make([]uint64, len(cutBuckets)+1)},
-		devices:    map[string]map[string]int{}}
+		devices:    map[string]map[string]int{},
+	}
 }
 
 // add registers a session within the limits; done removes it once it
@@ -178,8 +186,10 @@ type SessionStats struct {
 func (sessions *registry) stats() SessionStats {
 	sessions.mu.Lock()
 	defer sessions.mu.Unlock()
-	stats := SessionStats{Open: map[string]int{kindRequest: 0, kindWatch: 0, kindStream: 0, kindUpgrade: 0},
-		Cut: make(map[string]uint64, len(sessions.cuts)), CutSeconds: sessions.cutSeconds.snapshot()}
+	stats := SessionStats{
+		Open: map[string]int{kindRequest: 0, kindWatch: 0, kindStream: 0, kindUpgrade: 0},
+		Cut:  make(map[string]uint64, len(sessions.cuts)), CutSeconds: sessions.cutSeconds.snapshot(),
+	}
 	for held := range sessions.live {
 		stats.Open[held.kind]++
 	}
@@ -233,10 +243,14 @@ func (server *Server) ended(held *session) string {
 	switch {
 	case !ok || peer.DeviceID != held.device || peer.Key != held.key:
 		return cutIdentity
-	case !slices.Contains(peer.Access.GroupsAt(server.options.CoreNow()), held.group.Name):
+	case peer.Withheld:
+		return cutWithheld
+	case !slices.Contains(peer.Access.HeldAt(server.options.CoreNow()), held.group.Name):
 		return cutRevoked
 	case held.group.Privileged && server.privileged(peer, held.group) != "":
 		return cutRevoked
+	case !decide(peer, held.group, held.check, server.options.CoreNow()).allowed:
+		return cutProfile
 	}
 	verdict := server.options.Verdict(held.group.Name)
 	switch {
@@ -262,6 +276,11 @@ func (server *Server) cutAnswer(w http.ResponseWriter, device string, group Grou
 			server.options.Verdict(group.Name).Reason)
 	case cutImpersonation:
 		denial, message = "forbidden", fmt.Sprintf("group %q may no longer impersonate", group.Name)
+	case cutWithheld:
+		denial, code, message, wait = "stale", http.StatusServiceUnavailable,
+			"the gateway's map from MeshTransit is unusable; it asked for a new one", time.Second
+	case cutProfile:
+		message = "the Device's access profile for group " + group.Name + " no longer allows this request"
 	}
 	if recorded {
 		refuse(w, code, message, wait)

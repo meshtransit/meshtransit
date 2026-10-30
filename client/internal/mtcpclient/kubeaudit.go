@@ -16,6 +16,10 @@ import (
 // operations before forwarding them (mtcp-v1 §6.10).
 const kubeAuditCapability = "gateway.audit1"
 
+// kubeProfilesCapability is gateway.kube.v2: the gateway narrows groups by
+// access profiles (mtcp-v1 §7.12).
+const kubeProfilesCapability = "gateway.kube.v2"
+
 const (
 	// kubeAuditInFlight is how many batches Core lets wait for an ack.
 	kubeAuditInFlight = 4
@@ -145,8 +149,10 @@ func encodeKubeAuditBatch(batch controlplane.KubeAuditBatch) (*mtcpv1.KubeAuditI
 	if len(batch.Intents) == 0 || len(batch.Intents) > maximumKubeAuditIntents {
 		return nil, false
 	}
-	message := &mtcpv1.KubeAuditIntents{BatchId: bytes.Clone(batch.ID[:]),
-		Intents: make([]*mtcpv1.KubeAuditIntent, len(batch.Intents))}
+	message := &mtcpv1.KubeAuditIntents{
+		BatchId: bytes.Clone(batch.ID[:]),
+		Intents: make([]*mtcpv1.KubeAuditIntent, len(batch.Intents)),
+	}
 	for index, intent := range batch.Intents {
 		class, known := kubeAuditClasses[intent.Class]
 		if !known {
@@ -158,6 +164,7 @@ func encodeKubeAuditBatch(batch controlplane.KubeAuditBatch) (*mtcpv1.KubeAuditI
 			Verb:  intent.Verb, ApiGroup: intent.APIGroup, Resource: intent.Resource, Subresource: intent.Subresource,
 			Namespace: intent.Namespace, Name: intent.Name, Impersonated: intent.Impersonated,
 			TokenId: bytes.Clone(intent.TokenID), ObservedMs: intent.ObservedAt.UnixMilli(),
+			Profile: bytes.Clone(intent.Profile), ReportAllowed: intent.ReportAllowed,
 		}
 	}
 	if proto.Size(message) > sharedmtcp.MessageKubeAuditIntents.Limit() {
@@ -321,19 +328,46 @@ func (run *sessionRun) sendKubeAuditReport(report controlplane.KubeAuditReport) 
 		if outcome.Status < 0 || outcome.Status > 999 || outcome.Duration < 0 {
 			continue
 		}
-		message.Outcomes = append(message.Outcomes, &mtcpv1.KubeAuditOutcome{AuditId: bytes.Clone(outcome.AuditID[:]),
-			Status: uint32(outcome.Status), DurationMs: uint32(min(outcome.Duration.Milliseconds(), 999_999_999))})
+		message.Outcomes = append(message.Outcomes, &mtcpv1.KubeAuditOutcome{
+			AuditId:    bytes.Clone(outcome.AuditID[:]),
+			Status:     uint32(outcome.Status),
+			DurationMs: uint32(min(outcome.Duration.Milliseconds(), 999_999_999)), //nolint:gosec // G115: bounded
+		})
 	}
 	for _, denials := range report.Denials {
 		if denials.Count < 1 {
 			continue
 		}
-		message.Denials = append(message.Denials, &mtcpv1.KubeAuditDenials{PeerDeviceId: denials.Peer,
-			Reason: denials.Reason, Count: uint32(min(denials.Count, 999_999_999)),
-			FirstMs: denials.First.UnixMilli(), LastMs: denials.Last.UnixMilli()})
+		message.Denials = append(message.Denials, &mtcpv1.KubeAuditDenials{
+			PeerDeviceId: denials.Peer,
+			Reason:       denials.Reason, Count: uint32(min(denials.Count, 999_999_999)),
+			FirstMs: denials.First.UnixMilli(), LastMs: denials.Last.UnixMilli(),
+			Sample: encodeDenialSample(denials.Sample, run.supports(kubeProfilesCapability)),
+		})
 	}
 	if len(message.GetOutcomes())+len(message.GetDenials()) == 0 {
 		return nil
 	}
 	return run.send(sharedmtcp.MessageKubeAuditOutcomes, message)
+}
+
+// Bounds of a denial sample's fields (mtcp-v1 §6.10).
+const (
+	maximumSampleVerb  = 32
+	maximumSampleGroup = 253
+	maximumSampleLabel = 63
+)
+
+// encodeDenialSample sends a sample only on a session that took profiles,
+// and only within its bounds: one out of them is left out, the count kept.
+func encodeDenialSample(sample *controlplane.KubeAuditDenialSample, profiles bool) *mtcpv1.KubeAuditDenialSample {
+	if sample == nil || !profiles || sample.Verb == "" || len(sample.Verb) > maximumSampleVerb ||
+		len(sample.APIGroup) > maximumSampleGroup || len(sample.Resource) > maximumSampleLabel ||
+		len(sample.Subresource) > maximumSampleLabel || len(sample.Namespace) > maximumSampleLabel {
+		return nil
+	}
+	return &mtcpv1.KubeAuditDenialSample{
+		Verb: sample.Verb, ApiGroup: sample.APIGroup, Resource: sample.Resource,
+		Subresource: sample.Subresource, Namespace: sample.Namespace, Scope: bytes.Clone(sample.Scope[:]),
+	}
 }

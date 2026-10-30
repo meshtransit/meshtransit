@@ -100,3 +100,41 @@ func TestKubernetesAccessIsValidatedAndExpires(t *testing.T) {
 		}
 	}
 }
+
+// A group is held whole or through a scoped grant until its deadline;
+// HeldAt joins both, sorted and distinct.
+func TestKubernetesAccessHeldAt(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	access := &KubernetesAccess{
+		Grants: []KubernetesGrant{
+			{Group: "edit", ValidUntil: now.Add(time.Hour)},
+			{Group: "old", ValidUntil: now.Add(-time.Second)},
+		},
+		Scoped: []KubernetesScopedGrant{
+			{Group: "edit", Scope: [32]byte{1}, ValidUntil: now.Add(time.Hour)},
+			{Group: "view", Scope: [32]byte{1}, ValidUntil: now.Add(time.Hour)},
+			{
+				Group: "view", Scope: [32]byte{2}, Report: true, ReportUntil: now.Add(time.Minute),
+				ValidUntil: now.Add(time.Hour),
+			},
+			{Group: "gone", Scope: [32]byte{1}, ValidUntil: now},
+		},
+	}
+	if got := access.HeldAt(now); !slices.Equal(got, []string{"edit", "view"}) {
+		t.Fatalf("HeldAt = %v", got)
+	}
+	if !access.WholeAt(now, "edit") || access.WholeAt(now, "view") || access.WholeAt(now, "old") {
+		t.Fatal("WholeAt")
+	}
+	if got := access.ScopedAt(now, "view"); len(got) != 2 || got[1].Scope != [32]byte{2} {
+		t.Fatalf("ScopedAt(view) = %+v", got)
+	}
+	if access.ScopedAt(now, "gone") != nil {
+		t.Fatal("an expired scoped grant is held")
+	}
+	var none *KubernetesAccess
+	if none.HeldAt(now) != nil || none.WholeAt(now, "edit") || none.ScopedAt(now, "edit") != nil {
+		t.Fatal("nil access holds something")
+	}
+}

@@ -277,6 +277,11 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusNotFound, "not a path of the gateway", 0)
 		return
 	}
+	if peer.Withheld {
+		server.deny(w, peer.DeviceID, "stale", http.StatusServiceUnavailable,
+			"the gateway's map from MeshTransit is unusable; it asked for a new one", time.Second)
+		return
+	}
 	group, reason := server.choose(peer, named)
 	if reason != "" {
 		server.deny(w, peer.DeviceID, "not_granted", http.StatusForbidden, reason, 0)
@@ -317,6 +322,19 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		server.limited(w, peer.DeviceID, limit)
 		return
 	}
+	// Profiles after the Device's rate: a lookup may wait for discovery,
+	// and only a group held through scoped grants asks it (review e1–e3 M1).
+	now := server.options.CoreNow()
+	scoped := !peer.Access.WholeAt(now, group.Name) && len(peer.Access.ScopedAt(now, group.Name)) > 0
+	held.check = server.checkFor(r.Context(), r, info, impersonate, scoped)
+	decision := decide(peer, group, held.check, now)
+	if !decision.allowed {
+		server.refuseProfile(w, peer, group, held.check, decision)
+		return
+	}
+	if decision.reported {
+		server.options.Records.ProfileDenied(peer.DeviceID, true, held.check.sample(decision.scope))
+	}
 	done, limit := server.sessions.add(held, server.options.Limits)
 	if limit != "" {
 		server.limited(w, peer.DeviceID, limit)
@@ -330,6 +348,7 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	server.forward(w, r.WithContext(ctx), forwarding{
 		who: who, peer: peer, group: group, out: out, class: class,
 		info: info, impersonate: impersonate, impersonated: impersonated, started: started, session: held,
+		decision: decision,
 	})
 }
 
@@ -386,6 +405,7 @@ type forwarding struct {
 	impersonated string
 	started      time.Time
 	session      *session
+	decision     profileDecision
 }
 
 // forward mints the token, has Core record a type A operation, and
@@ -430,6 +450,7 @@ func (server *Server) forward(w http.ResponseWriter, r *http.Request, request fo
 			Verb: request.info.Verb, APIGroup: request.info.APIGroup, Resource: request.info.Resource,
 			Subresource: request.info.Subresource, Namespace: request.info.Namespace, Name: request.info.Name,
 			Impersonated: request.impersonated, TokenID: token.ID(),
+			Profile: request.decision.profile(), ReportAllowed: request.decision.reported,
 		})
 		if !answer.Recorded {
 			if reason := cutReasonOf(r.Context()); reason != "" {
@@ -554,7 +575,7 @@ func (server *Server) stale() bool {
 // that is on. A privileged group needs its principal on a Device that kept
 // its owner a week (K1-I7).
 func (server *Server) choose(peer Peer, named string) (Group, string) {
-	held := peer.Access.GroupsAt(server.options.CoreNow())
+	held := peer.Access.HeldAt(server.options.CoreNow())
 	if named != "" {
 		group, configured := server.groups[named]
 		switch {

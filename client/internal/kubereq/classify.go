@@ -136,3 +136,23 @@ func contains(resources []GroupResource, resource GroupResource) bool {
 	}
 	return false
 }
+
+// Upgrades reports a request that asks to switch protocols, as Classify
+// reads it.
+func Upgrades(request Request) bool { return upgrades(request) }
+
+// SelfReview reports a self review's POST, which Classify reads as a read:
+// it only asks what the caller itself may do or is.
+func SelfReview(method string, info Info) bool {
+	return info.IsResourceRequest && method == http.MethodPost && info.Verb == "create" &&
+		selfReviews[GroupResource{Group: info.APIGroup, Resource: info.Resource}] && info.Subresource == "" &&
+		info.Namespace == "" && info.Name == ""
+}
+
+// SafeDiscovery reports a GET or HEAD of a path that only reads discovery,
+// OpenAPI, the issuer's documents or health, which kubectl needs whatever
+// the caller may do (K1b design §5).
+func SafeDiscovery(method string, info Info) bool {
+	return !info.IsResourceRequest && (method == http.MethodGet || method == http.MethodHead) &&
+		safeNonResource(info.Path)
+}

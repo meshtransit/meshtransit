@@ -95,3 +95,27 @@ func jsonOf(t *testing.T, value any) (string, error) {
 	}
 	return string(encoded), nil
 }
+
+// MESHGW_KUBE_PROFILES turns access profiles on for the proxy only; it
+// reads as a bool, and an enrolling gateway refuses it.
+func TestLoadConfigKubeProfiles(t *testing.T) {
+	t.Parallel()
+	env := proxyEnv(t)
+	cfg, err := loadFrom(env)
+	if err != nil || cfg.Kube.Profiles {
+		t.Fatalf("default: %v, %v", cfg.Kube.Profiles, err)
+	}
+	env["MESHGW_KUBE_PROFILES"] = "true"
+	if cfg, err = loadFrom(env); err != nil || !cfg.Kube.Profiles {
+		t.Fatalf("on: %v, %v", cfg.Kube.Profiles, err)
+	}
+	env["MESHGW_KUBE_PROFILES"] = "yes"
+	if _, err := loadFrom(env); err == nil {
+		t.Fatal("yes taken")
+	}
+	env["MESHGW_KUBE_PROFILES"] = "true"
+	env["MESHGW_KUBE_MODE"] = KubeModePassthrough
+	if _, err := loadFrom(env); err == nil {
+		t.Fatal("profiles taken in passthrough mode")
+	}
+}

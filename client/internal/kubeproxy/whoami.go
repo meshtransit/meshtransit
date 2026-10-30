@@ -20,8 +20,10 @@ type whoamiAnswer struct {
 }
 
 func (server *Server) whoami(w http.ResponseWriter, _ *http.Request, peer Peer) {
-	answer := whoamiAnswer{Device: peer.DeviceID, DeviceName: peer.Name, Cluster: server.options.Cluster,
-		Version: server.options.Version, Groups: peer.Access.GroupsAt(server.options.CoreNow())}
+	answer := whoamiAnswer{
+		Device: peer.DeviceID, DeviceName: peer.Name, Cluster: server.options.Cluster,
+		Version: server.options.Version, Groups: peer.Access.HeldAt(server.options.CoreNow()),
+	}
 	if peer.Access != nil {
 		answer.Person = peer.Access.OwnerRef
 	}
@@ -57,8 +59,10 @@ func selfSubjectReview(method, path string) bool {
 func (server *Server) selfReview(w http.ResponseWriter, path string, peer Peer, group Group) {
 	version := strings.TrimSuffix(strings.TrimPrefix(path, "/apis/authentication.k8s.io/"),
 		"/selfsubjectreviews")
-	extra := map[string][]string{"meshtransit.net/device": {peer.DeviceID},
-		"meshtransit.net/group": {group.Name}, "meshtransit.net/cluster": {server.options.Cluster}}
+	extra := map[string][]string{
+		"meshtransit.net/device": {peer.DeviceID},
+		"meshtransit.net/group":  {group.Name}, "meshtransit.net/cluster": {server.options.Cluster},
+	}
 	if peer.Access != nil && peer.Access.OwnerRef != "" {
 		extra["meshtransit.net/person"] = []string{peer.Access.OwnerRef}
 	}
@@ -67,8 +71,10 @@ func (server *Server) selfReview(w http.ResponseWriter, path string, peer Peer, 
 		"metadata": map[string]any{},
 		"status": map[string]any{"userInfo": map[string]any{
 			"username": server.username(group),
-			"groups": []string{"system:serviceaccounts", "system:serviceaccounts:" + server.options.Namespace,
-				"system:authenticated"},
+			"groups": []string{
+				"system:serviceaccounts", "system:serviceaccounts:" + server.options.Namespace,
+				"system:authenticated",
+			},
 			"extra": extra,
 		}},
 	}

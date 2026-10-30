@@ -54,8 +54,10 @@ func recordAll(_ int, batch controlplane.KubeAuditBatch) controlplane.KubeAuditR
 
 func testRecorder(t *testing.T, change func(*Options)) (*Recorder, *fakeStream, context.Context) {
 	t.Helper()
-	stream := &fakeStream{calls: make(chan controlplane.KubeAuditCall),
-		reports: make(chan controlplane.KubeAuditReport, 8)}
+	stream := &fakeStream{
+		calls:   make(chan controlplane.KubeAuditCall),
+		reports: make(chan controlplane.KubeAuditReport, 8),
+	}
 	options := DefaultOptions()
 	options.Calls, options.Reports, options.CoreNow = stream.calls, stream.reports, time.Now
 	options.Window, options.Wait = 20*time.Millisecond, 2*time.Second
@@ -78,8 +80,10 @@ func testRecorder(t *testing.T, change func(*Options)) (*Recorder, *fakeStream, 
 }
 
 func testIntent() controlplane.KubeAuditIntent {
-	return controlplane.KubeAuditIntent{Peer: "01890f00-0000-7000-8000-000000000702", Class: "write", Verb: "delete",
-		Resource: "pods", Namespace: "default", Name: "web-0"}
+	return controlplane.KubeAuditIntent{
+		Peer: "01890f00-0000-7000-8000-000000000702", Class: "write", Verb: "delete",
+		Resource: "pods", Namespace: "default", Name: "web-0",
+	}
 }
 
 // Intents of several Devices share a batch; each gets its own answer; the
@@ -148,8 +152,10 @@ func TestRecorderRequeuesOnLimited(t *testing.T) {
 		if n == 1 {
 			results := make([]controlplane.KubeAuditResult, len(batch.Intents))
 			for index, intent := range batch.Intents {
-				results[index] = controlplane.KubeAuditResult{IntentID: intent.ID, Refused: RefusedLimited,
-					RetryAfter: 30 * time.Millisecond}
+				results[index] = controlplane.KubeAuditResult{
+					IntentID: intent.ID, Refused: RefusedLimited,
+					RetryAfter: 30 * time.Millisecond,
+				}
 			}
 			return controlplane.KubeAuditReply{Results: results}
 		}
@@ -206,9 +212,11 @@ func TestRecorderWithoutAStream(t *testing.T) {
 // Devices take turns in a batch.
 func TestRecorderTakesDevicesInTurn(t *testing.T) {
 	t.Parallel()
-	recorder, err := New(Options{Calls: make(chan controlplane.KubeAuditCall), Reports: make(chan controlplane.KubeAuditReport),
+	recorder, err := New(Options{
+		Calls: make(chan controlplane.KubeAuditCall), Reports: make(chan controlplane.KubeAuditReport),
 		CoreNow: time.Now, Window: time.Millisecond, Wait: time.Second, Rate: 1, Burst: maximumBatch, DeviceRate: 1,
-		DeviceBurst: 1, DevicePending: 1, ReportWindow: time.Second, DenialWindow: time.Second})
+		DeviceBurst: 1, DevicePending: 1, ReportWindow: time.Second, DenialWindow: time.Second,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,10 +239,10 @@ func TestReportsCountDenials(t *testing.T) {
 	t.Parallel()
 	held := newReports()
 	now := time.Now()
-	held.denied("a", "forbidden", now)
-	held.denied("a", "forbidden", now.Add(time.Second))
+	held.denied("a", "forbidden", nil, now)
+	held.denied("a", "forbidden", nil, now.Add(time.Second))
 	for index := range maximumDenials * 2 {
-		held.denied(string(rune('A'+index%26))+string(rune('a'+index/26)), "stale", now)
+		held.denied(string(rune('A'+index%26))+string(rune('a'+index/26)), "stale", nil, now)
 	}
 	counts := held.takeDenials()
 	if len(counts) > maximumDenials {
@@ -364,7 +372,8 @@ func TestRecorderLimitedPausesAndSlows(t *testing.T) {
 		recorder.pending["a"]++
 		recorder.mu.Unlock()
 		recorder.dispatch([]*waiter{waiting}, controlplane.KubeAuditReply{Results: []controlplane.KubeAuditResult{
-			{Refused: RefusedLimited, RetryAfter: retry}}})
+			{Refused: RefusedLimited, RetryAfter: retry},
+		}})
 		if answer := <-waiting.reply; answer.Refused != RefusedLimited {
 			t.Fatalf("answer = %+v", answer)
 		}
@@ -382,7 +391,8 @@ func TestRecorderLimitedPausesAndSlows(t *testing.T) {
 	recorder.stop()
 	waiting := &waiter{device: "a", reply: make(chan Answer, 1), queuedAt: time.Now()}
 	recorder.dispatch([]*waiter{waiting}, controlplane.KubeAuditReply{Results: []controlplane.KubeAuditResult{
-		{Refused: RefusedLimited}}})
+		{Refused: RefusedLimited},
+	}})
 	if answer := <-waiting.reply; !errors.Is(answer.Err, ErrStopped) {
 		t.Fatalf("after stop = %+v", answer)
 	}
@@ -392,7 +402,7 @@ func TestRecorderLimitedPausesAndSlows(t *testing.T) {
 func TestReportsMapUnknownReasons(t *testing.T) {
 	t.Parallel()
 	held := newReports()
-	held.denied("a", "bored", time.Now())
+	held.denied("a", "bored", nil, time.Now())
 	if counts := held.takeDenials(); len(counts) != 1 || counts[0].Reason != "other" {
 		t.Fatalf("counts = %+v", counts)
 	}
@@ -411,5 +421,35 @@ func TestRecorderKeepsBatchesWithinTheBudget(t *testing.T) {
 	}
 	if batch := recorder.takeLocked(maximumBatch); len(batch) != 2 {
 		t.Fatalf("a batch of %d", len(batch))
+	}
+}
+
+// A profile's count keeps the window's first sample, a copy.
+func TestReportsKeepTheFirstProfileSample(t *testing.T) {
+	t.Parallel()
+	held := newReports()
+	now := time.Now()
+	first := controlplane.KubeAuditDenialSample{Verb: "delete", Resource: "pods", Namespace: "a", Scope: [32]byte{1}}
+	held.denied("p", "profile_denied", &first, now)
+	first.Verb = "changed"
+	held.denied("p", "profile_denied", &controlplane.KubeAuditDenialSample{Verb: "get"}, now)
+	held.denied("p", "profile_would_deny", nil, now)
+	counts := held.takeDenials()
+	if len(counts) != 2 {
+		t.Fatalf("%d counts", len(counts))
+	}
+	for _, count := range counts {
+		switch count.Reason {
+		case "profile_denied":
+			if count.Count != 2 || count.Sample == nil || count.Sample.Verb != "delete" {
+				t.Fatalf("denied: %+v", count)
+			}
+		case "profile_would_deny":
+			if count.Sample != nil {
+				t.Fatalf("would deny: %+v", count)
+			}
+		default:
+			t.Fatalf("reason %q", count.Reason)
+		}
 	}
 }

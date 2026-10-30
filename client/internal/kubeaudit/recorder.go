@@ -232,7 +232,17 @@ func (recorder *Recorder) Finished(auditID [16]byte, status int, duration time.D
 
 // Denied counts a request of peer the gateway refused itself (type B).
 func (recorder *Recorder) Denied(peer, reason string) {
-	recorder.reports.denied(peer, reason, time.Now())
+	recorder.reports.denied(peer, reason, nil, time.Now())
+}
+
+// ProfileDenied counts a request of peer an access profile refused, or
+// would refuse once its rule enforces, with the request as a sample.
+func (recorder *Recorder) ProfileDenied(peer string, wouldDeny bool, sample controlplane.KubeAuditDenialSample) {
+	reason := "profile_denied"
+	if wouldDeny {
+		reason = "profile_would_deny"
+	}
+	recorder.reports.denied(peer, reason, &sample, time.Now())
 }
 
 // takeDevice takes one token of device's bucket. Now and then the buckets
