@@ -12,7 +12,7 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/dexidp/dex v0.0.0-20260303133905-11d2eeb52b42
 	github.com/flynn/noise v1.1.0
-	github.com/go-jose/go-jose/v4 v4.1.3
+	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/google/nftables v0.3.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/prometheus/client_golang v1.24.1
