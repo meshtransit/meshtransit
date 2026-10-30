@@ -3,6 +3,9 @@
 package dnsconfig
 
 import (
+	"cmp"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -229,9 +232,7 @@ func Compile(snapshot networkmap.Snapshot) (Plan, error) {
 				maxAddressesPerHost,
 			)
 		}
-		slices.SortFunc(addresses, func(left, right netip.Addr) int {
-			return left.Compare(right)
-		})
+		orderHostAddresses(addresses, snapshot.Self.StableID)
 		plan.Hosts = append(plan.Hosts, Host{Name: name, Addresses: addresses})
 		if !locallyAuthoritative(plan.Routes, name) && dnsSuffixContains(sharedZone, name) && name != sharedZone &&
 			!hasRouteSuffix(plan.Routes, sharedZone) {
@@ -507,4 +508,43 @@ func splitHostZones(plan *Plan, hostZones, names []string) []string {
 		split = append(split, zone)
 	}
 	return split
+}
+
+// orderHostAddresses puts a name's addresses in the order this node tries
+// them: by rendezvous hash of the node's own stable ID and each address,
+// highest first. Every node has its own order, stable while the addresses
+// stay, so the nodes of a Network spread over the replicas of a Kubernetes
+// cluster (one name, an address per replica) instead of all taking the
+// lowest address; a replica joining or leaving moves only the nodes that
+// rank it first (K1f, Q191). The spread is per node, not per connection.
+// Each address is hashed once. A map always names self, so the ascending
+// order without an ID is only a safe default.
+func orderHostAddresses(addresses []netip.Addr, self string) {
+	if self == "" {
+		slices.SortFunc(addresses, netip.Addr.Compare)
+		return
+	}
+	type ranked struct {
+		address netip.Addr
+		score   uint64
+	}
+	seed := append([]byte(self), 0)
+	hash := sha256.New()
+	var sum [sha256.Size]byte
+	ranks := make([]ranked, len(addresses))
+	for index, address := range addresses {
+		hash.Reset()
+		_, _ = hash.Write(seed)
+		_, _ = hash.Write(address.AsSlice())
+		ranks[index] = ranked{address: address, score: binary.BigEndian.Uint64(hash.Sum(sum[:0]))}
+	}
+	slices.SortFunc(ranks, func(left, right ranked) int {
+		if order := cmp.Compare(right.score, left.score); order != 0 {
+			return order
+		}
+		return left.address.Compare(right.address)
+	})
+	for index, rank := range ranks {
+		addresses[index] = rank.address
+	}
 }
