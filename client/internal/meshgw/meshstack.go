@@ -213,6 +213,12 @@ func (s *meshStack) ListenTCPAddrPort(address netip.AddrPort) (net.Listener, err
 	}
 	// Accepted connections take the listener's receive buffer.
 	endpoint.SocketOptions().SetReceiveBufferSize(int64(s.receive), false)
+	// As a server does with SO_REUSEADDR: any connection the closed
+	// listener accepted (TIME_WAIT, FIN_WAIT, LAST_ACK, a hijacked session
+	// still open) does not keep it from listening again, as when a stale
+	// map closed it; accepted connections inherit the flag (K1f, Q189).
+	// Another listener on the address is still refused.
+	endpoint.SocketOptions().SetReuseAddress(true)
 	full := tcpip.FullAddress{NIC: nicID, Addr: tcpip.AddrFromSlice(address.Addr().AsSlice()), Port: address.Port()}
 	if err := endpoint.Bind(full); err != nil {
 		endpoint.Close()

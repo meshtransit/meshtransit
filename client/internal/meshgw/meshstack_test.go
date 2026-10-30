@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -308,4 +309,83 @@ func echoRequest(source, target netip.Addr) []byte {
 	echo.SetSequence(1)
 	echo.SetChecksum(^checksum.Checksum(echo, 0))
 	return packet
+}
+
+// The listener comes back on its address while connections it accepted
+// still hold the port, whoever closed first or open still (a hijacked exec):
+// a map gone stale closes it and a fresh one opens it again at once, and
+// it serves; reusing the address is never two listeners on it (K1f, Q189).
+func TestMeshStackListensAgainAfterClosing(t *testing.T) {
+	t.Parallel()
+	for name, closing := range map[string]func(served, client net.Conn){
+		"gateway first": func(served, client net.Conn) {
+			_ = served.Close()
+			_, _ = io.ReadAll(client)
+			_ = client.Close()
+		},
+		"client first": func(served, client net.Conn) {
+			_ = client.Close()
+			_, _ = io.ReadAll(served)
+			_ = served.Close()
+		},
+		"still open": func(net.Conn, net.Conn) {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			stacks := newTestStacks(t)
+			clientDevice, clientNet := newClient(t)
+			w := newWire(t, clientDevice)
+			w.attach(openTUN(t, stacks, gatewayConfig(gatewayAddr)))
+			current, _ := stacks.Current()
+			address := netip.AddrPortFrom(gatewayAddr, 443)
+			connect := func(listener net.Listener) (net.Conn, net.Conn) {
+				t.Helper()
+				accepted := make(chan net.Conn, 1)
+				go func() {
+					conn, err := listener.Accept()
+					if err != nil {
+						conn = nil
+					}
+					accepted <- conn
+				}()
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+				defer cancel()
+				client, err := clientNet.DialContextTCPAddrPort(ctx, address)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = client.Close() })
+				select {
+				case served := <-accepted:
+					if served == nil {
+						t.Fatal("accept failed")
+					}
+					t.Cleanup(func() { _ = served.Close() })
+					return served, client
+				case <-time.After(10 * time.Second):
+					t.Fatal("nothing accepted")
+				}
+				return nil, nil
+			}
+			listener, err := current.Net.ListenTCPAddrPort(address)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = listener.Close() })
+			closing(connect(listener))
+			_ = listener.Close()
+			again, err := current.Net.ListenTCPAddrPort(address)
+			if err != nil {
+				t.Fatalf("listening again: %v", err)
+			}
+			t.Cleanup(func() { _ = again.Close() })
+			if second, err := current.Net.ListenTCPAddrPort(address); err == nil {
+				_ = second.Close()
+				t.Fatal("a second listener on the address")
+			} else if !strings.Contains(err.Error(), "port is in use") {
+				t.Fatalf("a second listener: %v", err)
+			}
+			connect(again)
+		})
+	}
 }
