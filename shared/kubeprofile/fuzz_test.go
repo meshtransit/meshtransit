@@ -81,8 +81,8 @@ func mustScope(t *testing.T, profile Profile, namespaces []string, clusterPart b
 }
 
 // A scope is never wider than RBAC: whatever it allows, the rule allows as
-// the RBAC authorizer reads it, with S1's create and S3's second check the
-// only changes (review K2a M5). The rule itself is fuzzed.
+// the RBAC authorizer reads it, and create too where S1 and S3 ask for it
+// (review K2a M5). The rule itself is fuzzed.
 func FuzzStricterThanRBAC(f *testing.F) {
 	f.Add("", "pods/exec", "*", "", "", "get", "", "pods", "exec", "team-a", "", "", true, false, uint8(2), true, false)
 	f.Add("*", "*", "*", "", "", "delete", "", "namespaces", "", "team-a", "team-a", "", false, false, uint8(1), true, true)
@@ -116,18 +116,14 @@ func FuzzStricterThanRBAC(f *testing.F) {
 		if !granted.Allows(attributes) {
 			return
 		}
-		required := attributes
-		if attributes.ResourceRequest && interactive[attributes.Subresource] {
-			required.Verb = "create"
-		}
-		if !ruleAllows(&rule, required) {
+		if !ruleAllows(&rule, attributes) {
 			t.Fatalf("allowed %+v that RBAC refuses under %+v", attributes, rule)
 		}
-		if attributes.ResourceRequest && attributes.MayCreate && attributes.Subresource == "" {
-			required.Verb = "create"
-			if !ruleAllows(&rule, required) {
-				t.Fatalf("allowed a create through a write under %+v", rule)
-			}
+		created := attributes
+		created.Verb = "create"
+		if attributes.ResourceRequest && (interactive[attributes.Subresource] ||
+			attributes.MayCreate && attributes.Subresource == "") && !ruleAllows(&rule, created) {
+			t.Fatalf("allowed %+v without create under %+v", attributes, rule)
 		}
 		if attributes.ResourceRequest && attributes.Namespace != "" && !everywhere &&
 			attributes.Namespace != "team-a" && attributes.Scope == ScopeNamespaced {

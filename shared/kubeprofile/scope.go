@@ -162,28 +162,39 @@ var protectedGroups = map[string]bool{
 // (S6): namespaces, and persistent volumes (a hostPath volume reaches a node).
 var protectedCoreResources = map[string]bool{"namespaces": true, "persistentvolumes": true}
 
-// partAllows applies S1 and S3 around the rules of one part.
+// partAllows applies S1 and S3 around the rules of one part: every verb the
+// API server checks must be allowed.
 func partAllows(rules []Rule, attributes Attributes, in part) bool {
-	required := attributes
-	// S1: a session in a container needs create, whatever the method; the
-	// proxy verb never names one (review K2a L1).
+	verbs := []string{attributes.Verb}
 	if attributes.ResourceRequest && interactive[attributes.Subresource] {
+		// The proxy verb never names a session (review K2a L1).
 		if attributes.Verb == "proxy" {
 			return false
 		}
-		required.Verb = "create"
-	}
-	if !anyRule(rules, required, in) {
-		return false
+		// S1: a session in a container needs create; one opened by a
+		// WebSocket GET needs get as well, as the API server checks both
+		// (AuthorizePodWebsocketUpgradeCreatePermission; K2b).
+		verbs = appendCreate(verbs)
 	}
 	// S3: a write that may create the object needs create as well.
-	if attributes.ResourceRequest && attributes.MayCreate && attributes.Subresource == "" &&
-		required.Verb != "create" {
-		created := required
-		created.Verb = "create"
-		return anyRule(rules, created, in)
+	if attributes.ResourceRequest && attributes.MayCreate && attributes.Subresource == "" {
+		verbs = appendCreate(verbs)
+	}
+	for _, verb := range verbs {
+		required := attributes
+		required.Verb = verb
+		if !anyRule(rules, required, in) {
+			return false
+		}
 	}
 	return true
+}
+
+func appendCreate(verbs []string) []string {
+	if slices.Contains(verbs, "create") {
+		return verbs
+	}
+	return append(verbs, "create")
 }
 
 func anyRule(rules []Rule, attributes Attributes, in part) bool {

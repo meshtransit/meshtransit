@@ -79,14 +79,17 @@ func TestScopeParts(t *testing.T) {
 	}
 }
 
-// S1: exec, attach and port-forward need create whatever verb the request
-// carries; S2: they, proxy and upgrades need their exact resource.
+// S1: exec, attach and port-forward need create, and get too when a
+// WebSocket GET opens them; S2: they, proxy and upgrades need their exact
+// resource.
 func TestScopeInteractive(t *testing.T) {
 	t.Parallel()
 	exact := Profile{Name: "oncall", Namespaced: []Rule{{APIGroups: []string{""},
 		Resources: []string{"pods/exec", "pods/portforward", "services/proxy"}, Verbs: []string{"create", "get"}}}}
 	getOnly := Profile{Name: "get-exec", Namespaced: []Rule{{APIGroups: []string{""},
 		Resources: []string{"pods/exec"}, Verbs: []string{"get"}}}}
+	createOnly := Profile{Name: "create-exec", Namespaced: []Rule{{APIGroups: []string{""},
+		Resources: []string{"pods/exec"}, Verbs: []string{"create"}}}}
 	wildcard := Profile{Name: "wild", Namespaced: []Rule{{APIGroups: []string{"*"}, Resources: []string{"*"},
 		Verbs: []string{"*"}}}, Cluster: []Rule{{APIGroups: []string{"*"}, Resources: []string{"*"}, Verbs: []string{"*"}}}}
 	starGroup := Profile{Name: "star-group", Namespaced: []Rule{{APIGroups: []string{"*"},
@@ -109,6 +112,8 @@ func TestScopeInteractive(t *testing.T) {
 		"exec by post":                  {exact, inNamespace("create", "", "pods", "exec", "team-a"), true},
 		"exec by websocket get":         {exact, upgraded(inNamespace("get", "", "pods", "exec", "team-a")), true},
 		"exec needs create":             {getOnly, upgraded(inNamespace("get", "", "pods", "exec", "team-a")), false},
+		"websocket exec needs get":      {createOnly, upgraded(inNamespace("get", "", "pods", "exec", "team-a")), false},
+		"post exec needs only create":   {createOnly, inNamespace("create", "", "pods", "exec", "team-a"), true},
 		"port-forward":                  {exact, upgraded(inNamespace("get", "", "pods", "portforward", "team-a")), true},
 		"attach not named":              {exact, inNamespace("create", "", "pods", "attach", "team-a"), false},
 		"wildcard opens no exec":        {wildcard, inNamespace("create", "", "pods", "exec", "team-a"), false},
