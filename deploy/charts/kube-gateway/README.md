@@ -26,6 +26,16 @@ On managed clusters set both on the node group (EKS managed node group
 at least two nodes: replicas spread across nodes and an evicted replica must
 have somewhere to go.
 
+DigitalOcean (DOKS, measured in K1f): the API refuses `kubernetes.io`
+labels on a node pool. Set the taint on the pool and label each node with
+kubectl as above; a replaced node comes without the label, so the gateway
+stays Pending there until it is labelled again (it fails closed). Also label
+the pool's nodes `node.kubernetes.io/exclude-from-external-load-balancers=true`:
+otherwise new nodes join every LoadBalancer Service, and one with
+`externalTrafficPolicy: Local` answers errors while they join (seen as
+Cloudflare 521 on the POC). DOKS accepts only the audience
+`system:konnectivity-server`; DaemonSets are all in kube-system.
+
 **Namespace.** Create it with Pod Security `restricted`:
 
 ```sh
@@ -113,7 +123,7 @@ the StatefulSet.
 
 | Value | Meaning |
 |---|---|
-| `apiServerAudiences` | The API server's audiences (a token minted without one gets them). kind/kubeadm: `https://kubernetes.default.svc.cluster.local`; EKS usually `https://kubernetes.default.svc`; `helm test` prints the cluster's own |
+| `apiServerAudiences` | The API server's audiences (a token minted without one gets them). kind/kubeadm: `https://kubernetes.default.svc.cluster.local`; DOKS: `system:konnectivity-server` (the only one accepted); EKS usually `https://kubernetes.default.svc`; `helm test` prints the cluster's own |
 | `groups` | Each group is a ServiceAccount `mt-<name>` bound to `clusterRole`, in `namespaces` or across the cluster. Exactly one default, never privileged. `cluster-admin`, `system:*` roles, and `admin`/`edit` across the cluster need `privileged: true` with `allowedPrincipals` |
 | `nodeLevelNamespaces` | Namespaces whose pods run on every node, the pool included (CNI, CSI, monitoring agents). Default `[kube-system]`. Whoever runs pods there is as trusted as the gateway |
 | `placement.enforce` | Deny pods outside `nodeLevelNamespaces` that tolerate every taint or name a node. Off: warn and audit only (see §4) |
