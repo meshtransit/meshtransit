@@ -7,6 +7,7 @@ import (
 
 	appmapsession "meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/shared/kubeprofile"
 )
 
 // gatewayRows answers loadKubernetesGatewaysSQL (schema 231).
@@ -193,8 +194,8 @@ func TestInventoryReadsTheKubernetesSourcesOfAClusterNetwork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	access := cached.policy.KubernetesAccessFor(gateway, func(id node.ID) bool { return id == gateway },
-		inventoryReadAt)[client]
+	access := accessOnly(cached.policy.KubernetesAccessFor(gateway, func(id node.ID) bool { return id == gateway },
+		inventoryReadAt))[client]
 	if len(access.Grants) != 2 || access.Grants[0].Group != "edit" || access.Grants[1].Group != "view" ||
 		!access.Grants[0].ValidUntil.Equal(until) || !access.OwnerChangedAt.Equal(changed) ||
 		access.OwnerKind != appmapsession.KubernetesOwnerMember {
@@ -267,5 +268,60 @@ func TestInventoryReadsNoKubernetesSourcesUnlessNeeded(t *testing.T) {
 				t.Fatalf("queries %v", transaction.queries)
 			}
 		})
+	}
+}
+
+// accessOnly drops the count of peers past their grant bound.
+func accessOnly[A any](access A, _ int) A { return access }
+
+// With the schema 260 readers, a rule with a profile reaches the gateway's
+// map as scoped grants with the scope in its table; a profile whose content
+// is not its hash leaves the evidence withheld (K2 §27).
+func TestInventoryReadsTheAccessProfilesOfAClusterNetwork(t *testing.T) {
+	t.Parallel()
+	profile := kubeprofile.Profile{Name: "developer", Namespaced: []kubeprofile.Rule{
+		{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get"}}}}
+	hash, err := kubeprofile.ContentHash(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scopeHash, err := kubeprofile.ScopeHash(hash, []string{"team-a"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := func(rules string) cachedInventory {
+		t.Helper()
+		store, transaction, scope := changeTrackingStore(t)
+		transaction.kubernetesGateways = map[int64]string{702: "kinda-k1"}
+		transaction.clusterRule = true
+		transaction.policyExpiry = inventoryReadAt.Add(24 * time.Hour)
+		transaction.kubernetesProfilesGranted = true
+		transaction.kubernetesRuleAccess = [][]any{{testRuleID, []string{"edit"}, "01890f00-0000-7000-8000-00000000cc01",
+			hash[:], []string{"team-a"}, false, "enforce", nil}}
+		transaction.kubernetesProfiles = [][]any{{"01890f00-0000-7000-8000-00000000cc01", hash[:], "developer", rules}}
+		transaction.kubernetesSources = [][]any{
+			{int64(701), "workspace", "", false, false, nil, nil, false},
+			{int64(702), "workspace", "", false, false, nil, nil, false},
+		}
+		queueInventoryRead(transaction, 7, 10, true)
+		transaction.inventoryRows = []*peerCandidateRows{{records: []peerCandidateRecord{validPeerCandidateRecord(2)}}}
+		cached, err := store.readInventory(t.Context(), scope, testWorkspaceID, testNetworkID, cachedInventory{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cached
+	}
+	gateway, client := must(node.ParseID(testPeerNodeID)), must(node.ParseID(testNodeID))
+	replica := func(id node.ID) bool { return id == gateway }
+	cached := read(`{"namespaced": [{"apiGroups": [""], "resources": ["pods"], "verbs": ["get"]}]}`)
+	access := accessOnly(cached.policy.KubernetesAccessFor(gateway, replica, inventoryReadAt))[client]
+	table := cached.policy.KubernetesScopeTableFor(gateway, replica, inventoryReadAt)
+	if cached.kubernetes != kubernetesRead || len(access.Grants) != 0 || len(access.ScopedGrants) != 1 ||
+		access.ScopedGrants[0].Scope != scopeHash || len(table.Scopes) != 1 || table.Profiles[0].Hash != hash {
+		t.Fatalf("access = %+v, table = %+v", access, table)
+	}
+	tampered := read(`{"namespaced": [{"apiGroups": [""], "resources": ["pods"], "verbs": ["get", "delete"]}]}`)
+	if tampered.kubernetes != kubernetesWithheld {
+		t.Fatalf("a profile under another hash: evidence %v", tampered.kubernetes)
 	}
 }

@@ -108,6 +108,8 @@ type Store struct {
 	gatewaysGranted atomic.Bool
 	// kubernetesSourcesGranted: this role may run the schema 237 readers.
 	kubernetesSourcesGranted atomic.Bool
+	// kubernetesProfilesGranted: this role may run the schema 260 readers.
+	kubernetesProfilesGranted atomic.Bool
 	// kubernetesCAsGranted: schema 242's reader of clusters' CAs is
 	// granted (probed until it is).
 	kubernetesCAsGranted atomic.Bool
@@ -168,6 +170,10 @@ type InventoryStats struct {
 	KubernetesWithheldEvidence    uint64
 	KubernetesWithheldDirect      uint64
 	KubernetesWithheldProjections uint64
+	// KubernetesWithheldPeerGrants counts peers left without Kubernetes
+	// access in a gateway's map opened because they held more than 64
+	// grants after merging (K2, mtcp-v1 §7.12).
+	KubernetesWithheldPeerGrants uint64
 	// KubernetesCAsWithheld counts inventory reads whose clusters' CAs were
 	// withheld (a restore suspected); KubernetesCAsRejected those whose
 	// answer could not be trusted (schema 242, mtcp-v1 §7.10).
@@ -192,7 +198,7 @@ type inventoryStats struct {
 	sharesSkipped, shareRechecks, policiesExpanded, policyShadowChecks, policyCandidates,
 	guardrailCuts, kubernetesWithheldUnread, kubernetesWithheldEvidence, kubernetesWithheldDirect,
 	kubernetesWithheldProjections, kubernetesCAsWithheld, kubernetesCAsRejected, kubernetesTrustUnread,
-	kubernetesRootsMissing, kubernetesGatewayCAsOmitted atomic.Uint64
+	kubernetesRootsMissing, kubernetesGatewayCAsOmitted, kubernetesWithheldPeerGrants atomic.Uint64
 }
 
 // InventoryStats returns the counters since the store was built.
@@ -208,6 +214,7 @@ func (store *Store) InventoryStats() InventoryStats {
 		KubernetesWithheldEvidence:    store.stats.kubernetesWithheldEvidence.Load(),
 		KubernetesWithheldDirect:      store.stats.kubernetesWithheldDirect.Load(),
 		KubernetesWithheldProjections: store.stats.kubernetesWithheldProjections.Load(),
+		KubernetesWithheldPeerGrants:  store.stats.kubernetesWithheldPeerGrants.Load(),
 		KubernetesCAsWithheld:         store.stats.kubernetesCAsWithheld.Load(),
 		KubernetesCAsRejected:         store.stats.kubernetesCAsRejected.Load(),
 		KubernetesTrustUnread:         store.stats.kubernetesTrustUnread.Load(),

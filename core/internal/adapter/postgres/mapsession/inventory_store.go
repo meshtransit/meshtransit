@@ -180,10 +180,15 @@ func (store *Store) readInventory(
 			spread: store.options.ExitNodes && store.options.ExitSpread, dnsZones: store.options.DNSZones,
 			protected: store.options.protectedDNSNames()}
 	}
-	kubernetes := false
+	kubernetes := kubernetesReaders{}
 	if cached.clusters {
-		if kubernetes, err = store.readsKubernetesSources(ctx, transaction); err != nil {
+		if kubernetes.sources, err = store.readsKubernetesSources(ctx, transaction); err != nil {
 			return cachedInventory{}, err
+		}
+		if kubernetes.sources {
+			if kubernetes.profiles, err = store.readsKubernetesProfiles(ctx, transaction); err != nil {
+				return cachedInventory{}, err
+			}
 		}
 		if err := store.readInventoryKubernetesCAs(ctx, transaction, previous, &cached); err != nil {
 			return cachedInventory{}, err
@@ -423,7 +428,7 @@ func readNetworkPolicy(
 	revision int64,
 	releaseActive bool,
 	routes networkRoutes,
-	kubernetes bool,
+	kubernetes kubernetesReaders,
 ) (appmapsession.NetworkPolicy, kubernetesEvidence, error) {
 	params := appmapsession.NetworkPolicyParams{Scope: scope, Revision: revision, ReleaseActive: releaseActive}
 	var err error
@@ -455,12 +460,12 @@ func readNetworkPolicy(
 		return appmapsession.NetworkPolicy{}, kubernetesNotRead, err
 	}
 	evidence := kubernetesNotRead
-	if kubernetes {
+	if kubernetes.sources {
 		evidence = kubernetesRead
 		if releaseActive {
 			withKubernetes := params
 			withKubernetes.Rules = slices.Clone(params.Rules)
-			err := readKubernetesPolicy(ctx, transaction, revision, &withKubernetes)
+			err := readKubernetesPolicy(ctx, transaction, revision, &withKubernetes, kubernetes.profiles)
 			if err != nil && !errors.Is(err, ErrSnapshotEvidence) {
 				return appmapsession.NetworkPolicy{}, kubernetesNotRead, err
 			}

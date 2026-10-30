@@ -26,6 +26,7 @@ type Request struct {
 	dnsRecords         bool
 	dnsRoot            bool
 	kubernetes         bool
+	kubernetesProfiles bool
 	kubernetesCA       bool
 	kubernetesClusters bool
 	endpointSet        node.EndpointSet
@@ -130,6 +131,19 @@ func (request Request) WithKubernetes() Request {
 
 // Kubernetes reports whether the session takes its peers' Kubernetes access.
 func (request Request) Kubernetes() bool { return request.kubernetes }
+
+// WithKubernetesProfiles records that the gateway's session takes access
+// profiles too (MTCP gateway.kube.v2, §7.12): scoped grants and its cluster's
+// scope table. Without WithKubernetes it takes nothing.
+func (request Request) WithKubernetesProfiles() Request {
+	request.kubernetesProfiles = true
+	return request
+}
+
+// KubernetesProfiles reports whether the session takes access profiles.
+func (request Request) KubernetesProfiles() bool {
+	return request.kubernetes && request.kubernetesProfiles
+}
 
 // WithKubernetesCA records that the node is a Kubernetes gateway that reads
 // its cluster's CAs on its own entry (MTCP gateway.cert1, §7.10); the

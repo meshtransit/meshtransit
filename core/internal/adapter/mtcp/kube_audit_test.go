@@ -98,7 +98,7 @@ func kubeAuditFixture(t *testing.T, audit *fakeKubeAudit, stood time.Time) *conv
 	view := must(mapsession.NewKubernetesView(map[node.ID]mapsession.KubernetesAccess{granted.NodeID(): {
 		Grants:    []mapsession.KubernetesGrant{{Group: "edit", ValidUntil: until}, {Group: "view", ValidUntil: until}},
 		OwnerKind: mapsession.KubernetesOwnerMember, OwnerRef: "01890f00-0000-7000-8000-000000000011",
-	}}))
+	}}, mapsession.KubernetesScopeTable{}))
 	if !stood.IsZero() {
 		sink := f.talk.sink
 		sink.mu.Lock()

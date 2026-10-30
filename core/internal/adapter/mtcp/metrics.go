@@ -46,6 +46,9 @@ type Metrics struct {
 	// message's DER budget and the clusters whose zone name is not their
 	// certificates' name, by kind.
 	kubeClusters *prometheus.CounterVec
+	// kubeScopeTablesOversize counts gateway scope tables sent past the
+	// bytes a gateway takes (K2, mtcp-v1 §7.12).
+	kubeScopeTablesOversize prometheus.Counter
 	// gatewayKeyAudit counts reports of Kubernetes gateways' stale or
 	// contested keys by what became of them (schema 229).
 	gatewayKeyAudit *prometheus.CounterVec
@@ -282,6 +285,11 @@ func NewMetrics() *Metrics {
 			Name: "meshtransit_mtcp_kubernetes_clusters_left_total",
 			Help: "Kubernetes cluster entries of client maps (kube.ca1) by kind: dropped past the map's 1,000 clusters, root_deferred past a message's 2 MiB of DER (sent later), name_mismatch when the zone name differs from the name gateways' certificates carry.",
 		}, []string{"kind"}),
+		// Watch: above zero means a gateway withholds every peer's access.
+		kubeScopeTablesOversize: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "meshtransit_mtcp_kubernetes_scope_tables_oversize_total",
+			Help: "Kubernetes gateway scope tables (gateway.kube.v2) sent past 256 KiB; the gateway then withholds every peer's Kubernetes access.",
+		}),
 		dnsRelayDropped: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "meshtransit_mtcp_dns_relay_targets_dropped_total",
 			Help: "DNS zone resolver listings left out of the relay lists sent to exit nodes by a map's bounds, counted per list sent; above zero since start means some were.",
@@ -383,7 +391,7 @@ func NewMetrics() *Metrics {
 func (metrics *Metrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{metrics.handshakes, metrics.sessions, metrics.messages, metrics.streamEnds,
 		metrics.sheds, metrics.unproven, metrics.forwarding, metrics.keyExpiry, metrics.limits, metrics.mapNames,
-		metrics.expiring, metrics.routeOffers, metrics.exitOffers, metrics.routeOfferDropped, metrics.routes, metrics.dnsRelayDropped, metrics.kubeClusters, metrics.gatewayKeyAudit, metrics.kubeCerts, metrics.kubeCertWait,
+		metrics.expiring, metrics.routeOffers, metrics.exitOffers, metrics.routeOfferDropped, metrics.routes, metrics.dnsRelayDropped, metrics.kubeClusters, metrics.kubeScopeTablesOversize, metrics.gatewayKeyAudit, metrics.kubeCerts, metrics.kubeCertWait,
 		metrics.kubeAudits, metrics.kubeAuditWait, metrics.kubeAuditReports, metrics.gatewayTokenOffset,
 		metrics.gatewayTokenRemaining, metrics.gatewayTokenMode, routedFilterOmitted,
 		exitFilterOmitted}

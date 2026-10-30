@@ -443,6 +443,9 @@ func (conversation *conversation) serve(ctx context.Context, nodeKey node.Key, g
 	if gateway && conversation.session.Supports("gateway.kube.v1") {
 		request = request.WithKubernetes()
 		conversation.sink.confirmFreshness()
+		if conversation.session.Supports(CapabilityKubeProfiles) {
+			request = request.WithKubernetesProfiles()
+		}
 	}
 	if gateway && conversation.session.Supports(CapabilityKubeCert) {
 		request = request.WithKubernetesCA()

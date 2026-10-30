@@ -2,6 +2,7 @@ package mapsession
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/policy"
+	"meshtransit.net/shared/kubeprofile"
 )
 
 const (
@@ -19,6 +21,13 @@ const (
     pg_catalog.to_regprocedure('mesh_ops.load_map_network_kubernetes_sources_v1(integer)'), 'EXECUTE'), FALSE)`
 	loadKubernetesRuleGroupsSQL = `SELECT access_rule_public_id::TEXT, kubernetes_groups
 FROM mesh_ops.load_map_network_kubernetes_rule_groups_v1($1::BIGINT)`
+	kubernetesProfilesGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
+    pg_catalog.to_regprocedure('mesh_ops.load_map_network_kubernetes_profiles_v1(bigint)'), 'EXECUTE'), FALSE)`
+	loadKubernetesRuleAccessSQL = `SELECT access_rule_public_id::TEXT, kubernetes_groups, profile_public_id::TEXT,
+    profile_hash, namespaces, cluster_part, mode, report_until
+FROM mesh_ops.load_map_network_kubernetes_rule_access_v1($1::BIGINT)`
+	loadKubernetesProfilesSQL = `SELECT profile_public_id::TEXT, content_hash, name, rules::TEXT
+FROM mesh_ops.load_map_network_kubernetes_profiles_v1($1::BIGINT)`
 	loadKubernetesSourcesSQL = `SELECT device_id, owner_kind, owner_ref, member_owned, owner_active,
     owner_valid_until, owner_changed_at, forwards
 FROM mesh_ops.load_map_network_kubernetes_sources_v1($1::INTEGER)`
@@ -55,19 +64,50 @@ func (store *Store) readsKubernetesSources(ctx context.Context, transaction data
 	return granted, nil
 }
 
-// readKubernetesPolicy sets the Kubernetes groups of params' rules and the
+// kubernetesReaders are the Kubernetes readers an inventory read may run:
+// sources (schema 237) and access profiles (schema 260).
+type kubernetesReaders struct{ sources, profiles bool }
+
+// readsKubernetesProfiles reports whether this role may run the schema 260
+// readers; once granted it is not probed again. Without them a rule that
+// applies a profile grants nothing (the reader of schema 258 leaves it out).
+func (store *Store) readsKubernetesProfiles(ctx context.Context, transaction databaseTransaction) (bool, error) {
+	if store.kubernetesProfilesGranted.Load() {
+		return true, nil
+	}
+	granted, err := functionGranted(ctx, transaction, kubernetesProfilesGrantedSQL)
+	if err != nil {
+		return false, errors.Join(ErrLoadSnapshot, fmt.Errorf("check Kubernetes profile reader: %w", err))
+	}
+	if granted {
+		store.kubernetesProfilesGranted.Store(true)
+	}
+	return granted, nil
+}
+
+// readKubernetesPolicy sets the Kubernetes groups of params' rules, with
+// their profiles and the release's profiles when profiles (K2), and the
 // Network's Kubernetes sources, read in the transaction of the rest of the
 // policy (K1a3b).
 func readKubernetesPolicy(ctx context.Context, transaction databaseTransaction, revision int64,
-	params *appmapsession.NetworkPolicyParams) error {
-	groups, err := readKubernetesRuleGroups(ctx, transaction, revision)
+	params *appmapsession.NetworkPolicyParams, profiles bool) error {
+	var groups map[policy.RuleID]kubernetesRuleRead
+	var err error
+	if profiles {
+		groups, err = readKubernetesRuleAccess(ctx, transaction, revision)
+		if err == nil {
+			params.KubernetesProfiles, err = readKubernetesProfiles(ctx, transaction, revision)
+		}
+	} else {
+		groups, err = readKubernetesRuleGroups(ctx, transaction, revision)
+	}
 	if err != nil {
 		return err
 	}
 	named := 0
 	for index, rule := range params.Rules {
-		if ruleGroups, found := groups[rule.ID]; found {
-			params.Rules[index].KubernetesGroups = ruleGroups
+		if read, found := groups[rule.ID]; found {
+			params.Rules[index].KubernetesGroups, params.Rules[index].KubernetesAccess = read.groups, read.access
 			named++
 		}
 	}
@@ -83,14 +123,20 @@ func readKubernetesPolicy(ctx context.Context, transaction databaseTransaction, 
 	return nil
 }
 
+// kubernetesRuleRead is one rule's groups and profile as read.
+type kubernetesRuleRead struct {
+	groups []string
+	access *appmapsession.KubernetesRuleAccess
+}
+
 func readKubernetesRuleGroups(ctx context.Context, transaction databaseTransaction,
-	revision int64) (map[policy.RuleID][]string, error) {
+	revision int64) (map[policy.RuleID]kubernetesRuleRead, error) {
 	rows, err := transaction.Query(ctx, loadKubernetesRuleGroupsSQL, revision)
 	if err != nil || rows == nil {
 		return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("read Kubernetes rule groups: %w", nonNil(err)))
 	}
 	defer rows.Close()
-	groups := make(map[policy.RuleID][]string)
+	groups := make(map[policy.RuleID]kubernetesRuleRead)
 	for rows.Next() {
 		if len(groups) == maximumNetworkPolicyRules {
 			return nil, ErrSnapshotEvidence
@@ -104,13 +150,124 @@ func readKubernetesRuleGroups(ctx context.Context, transaction databaseTransacti
 		if _, duplicate := groups[id]; err != nil || duplicate || len(ruleGroups) == 0 {
 			return nil, ErrSnapshotEvidence
 		}
-		groups[id] = ruleGroups
+		groups[id] = kubernetesRuleRead{groups: ruleGroups}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("iterate Kubernetes rule groups: %w", err))
 	}
 	return groups, nil
 }
+
+// readKubernetesRuleAccess reads every rule to a cluster that names groups,
+// with its profile when it applies one; the scope hash is computed here,
+// once per rule, and NewNetworkPolicy checks the rest.
+func readKubernetesRuleAccess(ctx context.Context, transaction databaseTransaction,
+	revision int64) (map[policy.RuleID]kubernetesRuleRead, error) {
+	rows, err := transaction.Query(ctx, loadKubernetesRuleAccessSQL, revision)
+	if err != nil || rows == nil {
+		return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("read Kubernetes rule access: %w", nonNil(err)))
+	}
+	defer rows.Close()
+	read := make(map[policy.RuleID]kubernetesRuleRead)
+	for rows.Next() {
+		if len(read) == maximumNetworkPolicyRules {
+			return nil, ErrSnapshotEvidence
+		}
+		var text string
+		var ruleGroups, namespaces []string
+		var profileID, mode *string
+		var profileHash []byte
+		var clusterPart *bool
+		var reportUntil *time.Time
+		if err := rows.Scan(&text, &ruleGroups, &profileID, &profileHash, &namespaces, &clusterPart, &mode,
+			&reportUntil); err != nil {
+			return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("scan Kubernetes rule access: %w", err))
+		}
+		id, err := policy.ParseRuleID(text)
+		if _, duplicate := read[id]; err != nil || duplicate || len(ruleGroups) == 0 {
+			return nil, ErrSnapshotEvidence
+		}
+		entry := kubernetesRuleRead{groups: ruleGroups}
+		if profileID == nil && (profileHash != nil || namespaces != nil || clusterPart != nil || mode != nil ||
+			reportUntil != nil) {
+			return nil, ErrSnapshotEvidence // half a profile is none (review d3 L3)
+		}
+		if profileID != nil {
+			access, ok := decodeKubernetesRuleAccess(profileHash, namespaces, clusterPart, mode, reportUntil)
+			if !ok {
+				return nil, ErrSnapshotEvidence
+			}
+			entry.access = access
+		}
+		read[id] = entry
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("iterate Kubernetes rule access: %w", err))
+	}
+	return read, nil
+}
+
+// decodeKubernetesRuleAccess reads a rule's profile columns: the content
+// hash, namespaces, cluster part, and enforce, or report until a deadline.
+func decodeKubernetesRuleAccess(hash []byte, namespaces []string, clusterPart *bool, mode *string,
+	reportUntil *time.Time) (*appmapsession.KubernetesRuleAccess, bool) {
+	if len(hash) != 32 || clusterPart == nil || mode == nil {
+		return nil, false
+	}
+	access := &appmapsession.KubernetesRuleAccess{ProfileHash: [32]byte(hash), Namespaces: namespaces,
+		ClusterPart: *clusterPart}
+	switch {
+	case *mode == "enforce" && reportUntil == nil:
+	case *mode == "report" && reportUntil != nil:
+		access.Report, access.ReportUntil = true, reportUntil.UTC()
+	default:
+		return nil, false
+	}
+	scope, err := kubeprofile.ScopeHash(access.ProfileHash, namespaces, access.ClusterPart)
+	if err != nil {
+		return nil, false
+	}
+	access.ScopeHash = scope
+	return access, true
+}
+
+// readKubernetesProfiles reads the profiles the release's rules pin, at most
+// as many as a release holds; NewNetworkPolicy checks each against its hash.
+func readKubernetesProfiles(ctx context.Context, transaction databaseTransaction,
+	revision int64) ([]appmapsession.KubernetesProfile, error) {
+	rows, err := transaction.Query(ctx, loadKubernetesProfilesSQL, revision)
+	if err != nil || rows == nil {
+		return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("read Kubernetes profiles: %w", nonNil(err)))
+	}
+	defer rows.Close()
+	profiles := make([]appmapsession.KubernetesProfile, 0, 4)
+	for rows.Next() {
+		if len(profiles) == maximumKubernetesProfiles {
+			return nil, ErrSnapshotEvidence
+		}
+		var id, name, rules string
+		var hash []byte
+		if err := rows.Scan(&id, &hash, &name, &rules); err != nil {
+			return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("scan Kubernetes profile: %w", err))
+		}
+		var parts struct {
+			Namespaced []kubeprofile.Rule `json:"namespaced"`
+			Cluster    []kubeprofile.Rule `json:"cluster"`
+		}
+		if len(hash) != 32 || json.Unmarshal([]byte(rules), &parts) != nil {
+			return nil, ErrSnapshotEvidence
+		}
+		profiles = append(profiles, appmapsession.KubernetesProfile{Hash: [32]byte(hash), ID: id,
+			Profile: kubeprofile.Profile{Name: name, Namespaced: parts.Namespaced, Cluster: parts.Cluster}})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("iterate Kubernetes profiles: %w", err))
+	}
+	return profiles, nil
+}
+
+// maximumKubernetesProfiles bounds the profiles one release holds.
+const maximumKubernetesProfiles = 256
 
 var kubernetesOwnerKinds = map[string]appmapsession.KubernetesOwnerKind{
 	"member": appmapsession.KubernetesOwnerMember, "tags": appmapsession.KubernetesOwnerTags,
@@ -212,7 +369,11 @@ func (store *Store) kubernetesAccessView(cached cachedInventory, self node.ID, c
 		peerCluster, isReplica := replica.KubernetesCluster()
 		return found && isReplica && peerCluster == cluster
 	}
-	view, err := appmapsession.NewKubernetesView(cached.policy.KubernetesAccessFor(self, replica, at))
+	access, crowded := cached.policy.KubernetesAccessFor(self, replica, at)
+	if count && crowded > 0 {
+		store.stats.kubernetesWithheldPeerGrants.Add(uint64(crowded))
+	}
+	view, err := appmapsession.NewKubernetesView(access, cached.policy.KubernetesScopeTableFor(self, replica, at))
 	if err != nil {
 		return withheld(&store.stats.kubernetesWithheldEvidence)
 	}

@@ -17,7 +17,7 @@ func gatewayViewFixture(t *testing.T, peer node.ID, group string, until time.Tim
 	view, err := NewKubernetesView(map[node.ID]KubernetesAccess{peer: {
 		Grants:    []KubernetesGrant{{Group: group, ValidUntil: until}},
 		OwnerKind: KubernetesOwnerMember, OwnerRef: "01890f00-0000-7000-8000-000000000011",
-	}})
+	}}, KubernetesScopeTable{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestKubernetesViewRefusesIncompleteAccess(t *testing.T) {
 		"no owner kind": {peer: {Grants: []KubernetesGrant{{"view", until}}}},
 		"invalid peer":  {{}: member(KubernetesGrant{"view", until})},
 	} {
-		if _, err := NewKubernetesView(access); err == nil {
+		if _, err := NewKubernetesView(access, KubernetesScopeTable{}); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
@@ -170,14 +170,14 @@ func TestKubernetesViewRefreshesAtItsEarliestGrant(t *testing.T) {
 		first: {Grants: []KubernetesGrant{{"edit", early.Add(time.Hour)}, {"view", early}},
 			OwnerKind: KubernetesOwnerWorkspace},
 		second: {Grants: []KubernetesGrant{{"view", early.Add(2 * time.Hour)}}, OwnerKind: KubernetesOwnerWorkspace},
-	})
+	}, KubernetesScopeTable{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !view.RefreshAt().Equal(early) {
 		t.Fatalf("RefreshAt() = %v, want %v", view.RefreshAt(), early)
 	}
-	if empty, _ := NewKubernetesView(nil); !empty.RefreshAt().IsZero() || !empty.Computed() {
+	if empty, _ := NewKubernetesView(nil, KubernetesScopeTable{}); !empty.RefreshAt().IsZero() || !empty.Computed() {
 		t.Fatalf("an empty view = %+v", empty)
 	}
 }

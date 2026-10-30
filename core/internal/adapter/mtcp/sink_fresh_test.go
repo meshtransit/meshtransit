@@ -12,7 +12,7 @@ import (
 // gatewayMap is a map that carries its peers' Kubernetes access.
 func gatewayMap(t *testing.T, revision int64) mapsession.Snapshot {
 	t.Helper()
-	return streamFixture(t, revision).WithKubernetes(must(mapsession.NewKubernetesView(nil)))
+	return streamFixture(t, revision).WithKubernetes(must(mapsession.NewKubernetesView(nil, mapsession.KubernetesScopeTable{})))
 }
 
 // freshMessages returns the MapFresh messages the node got since the last

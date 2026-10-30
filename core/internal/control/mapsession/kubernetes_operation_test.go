@@ -21,7 +21,7 @@ func TestKubernetesOperationChecksPeerAndGroups(t *testing.T) {
 			{Group: "ops", ValidUntil: read.Add(time.Hour).UTC()},
 		},
 		OwnerKind: KubernetesOwnerTags, OwnerRef: "tags:a",
-	}})
+	}}, KubernetesScopeTable{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -154,6 +154,11 @@ func (store *Store) Unchanged(ctx context.Context, current appmapsession.Snapsho
 			// H1); the same revision and inventory hold the same CAs.
 			view = view.WithoutCA()
 		}
+		if !current.Kubernetes().ProfilesTaken() {
+			// Nor does one without gateway.kube.v2 carry profiles (review
+			// d3 H1).
+			view = view.WithoutProfiles()
+		}
 		unchanged = (refreshAt.IsZero() || now.Before(refreshAt)) && view.Equal(current.Kubernetes())
 	}
 	// A session that takes the clusters' trust (kube.ca1) is rebuilt when

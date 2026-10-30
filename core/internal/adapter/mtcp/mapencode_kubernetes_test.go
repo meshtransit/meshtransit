@@ -129,7 +129,7 @@ func gatewayView(t *testing.T, peer mapsession.PeerCandidate, changed time.Time)
 		Grants:    []mapsession.KubernetesGrant{{Group: "view", ValidUntil: peer.KeyExpiry()}},
 		OwnerKind: mapsession.KubernetesOwnerTags, OwnerRef: "tags:01890f00-0000-7000-8000-000000000c01",
 		OwnerChangedAt: changed,
-	}}))
+	}}, mapsession.KubernetesScopeTable{}))
 }
 
 // TestEncodeSnapshotCarriesGatewayPeersAccess: in a gateway's map a peer

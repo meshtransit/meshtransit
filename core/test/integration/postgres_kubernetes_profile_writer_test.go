@@ -222,6 +222,22 @@ JOIN mesh.workspace AS workspace ON workspace.id = network.workspace_id WHERE ne
 		t.Fatalf("access read = %s", *encoded)
 	}
 
+	// The map readers of schema 260: every rule to the cluster with its
+	// profile, and only the profiles a rule pins (auditor is unused).
+	var mapRules, mapProfiled int
+	if err := tx.QueryRow(ctx, `SELECT pg_catalog.count(*), pg_catalog.count(profile_public_id)
+FROM mesh_ops.load_map_network_kubernetes_rule_access_v1($1)
+WHERE access_rule_public_id = ANY($2::UUID[])`, revision, []string{profiledID, fullID}).Scan(
+		&mapRules, &mapProfiled); err != nil || mapRules != 2 || mapProfiled != 1 {
+		t.Fatalf("map rules = %d with %d profiles, %v", mapRules, mapProfiled, err)
+	}
+	var mapProfiles []string
+	if err := tx.QueryRow(ctx, `SELECT pg_catalog.array_agg(profile_public_id::TEXT || ':' || name)
+FROM mesh_ops.load_map_network_kubernetes_profiles_v1($1)`, revision).Scan(&mapProfiles); err != nil ||
+		len(mapProfiles) != 1 || mapProfiles[0] != developerID+":developer" {
+		t.Fatalf("map profiles = %v, %v", mapProfiles, err)
+	}
+
 	// A Core before d2 republishes through _v3 (review d2 M3): the profile
 	// and the release's profiles are carried, no longer hashed.
 	older := release()

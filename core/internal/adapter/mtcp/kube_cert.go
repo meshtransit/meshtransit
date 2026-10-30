@@ -21,6 +21,11 @@ import (
 // its replica certificate (mtcp-v1 §6.9).
 const CapabilityKubeCert = "gateway.cert1"
 
+// CapabilityKubeProfiles is gateway.kube.v2: a gateway takes its peers'
+// access narrowed by access profiles, and its cluster's scope table
+// (mtcp-v1 §7.12, K2). Offered only with gateway.kube.v1.
+const CapabilityKubeProfiles = "gateway.kube.v2"
+
 // CapabilityKubeAudit is gateway.audit1: a Kubernetes gateway has Core
 // record type A operations before forwarding them (mtcp-v1 §6.10).
 const CapabilityKubeAudit = "gateway.audit1"

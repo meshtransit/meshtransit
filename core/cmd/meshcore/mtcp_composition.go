@@ -88,10 +88,14 @@ func dnsCapabilities(dnsZones bool) []string {
 // peers' Kubernetes access in its map (mtcp-v1 §7.8), only where maps are
 // built from the shared inventory: no other read computes it, so a gateway
 // is told the deployment lacks it instead of finding its peers without
-// access (K1a3 §13.10).
-func kubernetesCapabilities(sharedInventory bool) []string {
+// access (K1a3 §13.10). gateway.kube.v2, access profiles (§7.12), comes with
+// it when profiles: off until gateways enforce them (K2e).
+func kubernetesCapabilities(sharedInventory, profiles bool) []string {
 	if !sharedInventory {
 		return nil
+	}
+	if profiles {
+		return []string{"gateway.kube.v1", mtcpadapter.CapabilityKubeProfiles}
 	}
 	return []string{"gateway.kube.v1"}
 }
@@ -180,13 +184,14 @@ type mtcpDependencies struct {
 	origin         string
 	guard          mtcpadapter.TimestampGuard
 	// gatewayKeyEvents records Kubernetes gateways' stale or contested keys.
-	gatewayKeyEvents mtcpadapter.GatewayKeyRecorder
-	logger           *slog.Logger
-	relayZones       bool // offer relay.zones2 (MESHTRANSIT_RELAY_TICKET_ZONES_V2)
-	subnetRoutes     bool // offer subnet routes (MESHTRANSIT_SUBNET_ROUTES_ENABLED)
-	exitNodes        bool // offer exit nodes (MESHTRANSIT_EXIT_NODES_ENABLED)
-	dnsZones         bool // offer dns.forward1 (MESHTRANSIT_DNS_ZONES_ENABLED)
-	kubernetesAccess bool // offer gateway.kube.v1 (shared inventory)
+	gatewayKeyEvents   mtcpadapter.GatewayKeyRecorder
+	logger             *slog.Logger
+	relayZones         bool // offer relay.zones2 (MESHTRANSIT_RELAY_TICKET_ZONES_V2)
+	subnetRoutes       bool // offer subnet routes (MESHTRANSIT_SUBNET_ROUTES_ENABLED)
+	exitNodes          bool // offer exit nodes (MESHTRANSIT_EXIT_NODES_ENABLED)
+	dnsZones           bool // offer dns.forward1 (MESHTRANSIT_DNS_ZONES_ENABLED)
+	kubernetesAccess   bool // offer gateway.kube.v1 (shared inventory)
+	kubernetesProfiles bool // offer gateway.kube.v2 too (K2, MESHTRANSIT_KUBERNETES_PROFILES)
 	// kubernetesClusters offers kube.ca1 (Kubernetes join, shared
 	// inventory, schema 244 granted at startup).
 	kubernetesClusters bool
@@ -314,7 +319,7 @@ func composeMTCP(
 		Guard:     deps.guard,
 		Capabilities: append(append(mtcpCapabilities(controlConfig.Map.EnableDeviceAliases, deps.relayZones,
 			deps.subnetRoutes), exitCapabilities(deps.exitNodes)...), append(captiveCapabilities(deps.captiveWindows),
-			append(append(dnsCapabilities(deps.dnsZones), kubernetesCapabilities(deps.kubernetesAccess)...),
+			append(append(dnsCapabilities(deps.dnsZones), kubernetesCapabilities(deps.kubernetesAccess, deps.kubernetesProfiles)...),
 				append(append(kubeCertCapabilities(deps.kubeCertificates),
 					kubernetesClusterCapabilities(deps.kubernetesClusters)...),
 					append(append(kubeAuditCapabilities(deps.kubeAudit), gatewayTokenCapabilities(deps.gatewayTokens)...),

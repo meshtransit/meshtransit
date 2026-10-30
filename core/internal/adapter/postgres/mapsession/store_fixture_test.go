@@ -110,6 +110,11 @@ type fakeTransaction struct {
 	// execErrs fails the statements it names, before execErr.
 	execErrs             map[string]error
 	kubernetesRuleGroups [][]any
+	// kubernetesRuleAccess and kubernetesProfiles answer the schema 260
+	// readers, granted when kubernetesProfilesGranted.
+	kubernetesProfilesGranted bool
+	kubernetesRuleAccess      [][]any
+	kubernetesProfiles        [][]any
 }
 
 // gatewayRows answers the schema 231 gateway reader in numeric ID order.
@@ -237,6 +242,12 @@ func (transaction *fakeTransaction) Query(
 		return &genericRows{rows: transaction.kubernetesSources}, nil
 	case loadKubernetesRuleGroupsSQL:
 		return &genericRows{rows: transaction.kubernetesRuleGroups}, nil
+	case kubernetesProfilesGrantedSQL:
+		return &grantRows{granted: transaction.kubernetesProfilesGranted}, nil
+	case loadKubernetesRuleAccessSQL:
+		return &genericRows{rows: transaction.kubernetesRuleAccess}, nil
+	case loadKubernetesProfilesSQL:
+		return &genericRows{rows: transaction.kubernetesProfiles}, nil
 	case loadKubernetesGatewaysSQL:
 		if transaction.kubernetesGateways == nil {
 			return nil, errors.New("unexpected gateway read")
@@ -468,7 +479,11 @@ func (rows *genericRows) Scan(destinations ...any) error {
 		case *[]int32:
 			*destination = append([]int32(nil), value.([]int32)...)
 		case *[]string:
-			*destination = append([]string(nil), value.([]string)...)
+			if value == nil {
+				*destination = nil
+			} else {
+				*destination = append([]string(nil), value.([]string)...)
+			}
 		case *time.Time:
 			*destination = value.(time.Time)
 		case **time.Time:
@@ -477,6 +492,26 @@ func (rows *genericRows) Scan(destinations ...any) error {
 			} else {
 				at := value.(time.Time)
 				*destination = &at
+			}
+		case **string:
+			if value == nil {
+				*destination = nil
+			} else {
+				text := value.(string)
+				*destination = &text
+			}
+		case **bool:
+			if value == nil {
+				*destination = nil
+			} else {
+				flag := value.(bool)
+				*destination = &flag
+			}
+		case *[]byte:
+			if value == nil {
+				*destination = nil
+			} else {
+				*destination = append([]byte(nil), value.([]byte)...)
 			}
 		default:
 			return errors.New("unexpected destination type")

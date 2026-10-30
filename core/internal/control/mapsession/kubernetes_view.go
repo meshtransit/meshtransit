@@ -22,6 +22,11 @@ type KubernetesView struct {
 	access    map[node.ID]KubernetesAccess
 	refreshAt time.Time
 	computed  bool
+	// scopes is the table of the gateway's cluster (K2, mtcp-v1 §7.12); only
+	// a gateway.kube.v2 session keeps it and the scoped grants
+	// (profilesTaken), any other session neither.
+	scopes        KubernetesScopeTable
+	profilesTaken bool
 	// ca is the gateway's cluster's CAs, when caKnown (§7.10): read with
 	// the inventory, apart from the access evidence.
 	ca      KubernetesCA
@@ -109,31 +114,47 @@ func (view KubernetesView) caChanged(other KubernetesView) bool {
 	return view.caKnown != other.caKnown || !view.ca.Equal(other.ca)
 }
 
-// NewKubernetesView validates and copies one gateway's peer access: every
-// peer holds at least one group, sorted and distinct, each until a set
-// deadline. The view changes next when its earliest grant lapses: every
-// other end (an owner's membership, a selection, a key) bounds the grants it
-// comes with, so that is when the gateway's map is rebuilt (K1a3 §13.6).
-func NewKubernetesView(access map[node.ID]KubernetesAccess) (KubernetesView, error) {
+// NewKubernetesView validates and copies one gateway's peer access and its
+// cluster's scope table: every peer holds at least one grant across both
+// lists, each list sorted and distinct, each grant until a set deadline, a
+// scoped grant's scope in the table. The view changes next when its earliest
+// grant lapses or a reporting grant starts to enforce: every other end (an
+// owner's membership, a selection, a key) bounds the grants it comes with,
+// so that is when the gateway's map is rebuilt (K1a3 §13.6).
+func NewKubernetesView(access map[node.ID]KubernetesAccess, scopes KubernetesScopeTable) (KubernetesView, error) {
+	known := make(map[[32]byte]struct{}, len(scopes.Scopes))
+	for _, scope := range scopes.Scopes {
+		known[scope.Hash] = struct{}{}
+	}
 	copied := make(map[node.ID]KubernetesAccess, len(access))
 	var refreshAt time.Time
+	note := func(at time.Time) {
+		if !at.IsZero() && (refreshAt.IsZero() || at.Before(refreshAt)) {
+			refreshAt = at
+		}
+	}
 	for peer, entry := range access {
-		if !peer.IsValid() || !validKubernetesAccess(entry) {
+		if !peer.IsValid() || !validKubernetesAccess(entry, known) {
 			return KubernetesView{}, ErrInvalidSnapshot
 		}
 		entry.Grants = slices.Clone(entry.Grants)
+		entry.ScopedGrants = slices.Clone(entry.ScopedGrants)
 		copied[peer] = entry
 		for _, grant := range entry.Grants {
-			if refreshAt.IsZero() || grant.ValidUntil.Before(refreshAt) {
-				refreshAt = grant.ValidUntil
-			}
+			note(grant.ValidUntil)
+		}
+		for _, grant := range entry.ScopedGrants {
+			note(grant.ValidUntil)
+			note(grant.ReportUntil)
 		}
 	}
-	return KubernetesView{access: copied, refreshAt: refreshAt, computed: true}, nil
+	return KubernetesView{access: copied, refreshAt: refreshAt, computed: true,
+		scopes: cloneKubernetesScopeTable(scopes)}, nil
 }
 
-func validKubernetesAccess(entry KubernetesAccess) bool {
-	if len(entry.Grants) == 0 || entry.OwnerKind == KubernetesOwnerUnknown {
+func validKubernetesAccess(entry KubernetesAccess, scopes map[[32]byte]struct{}) bool {
+	if len(entry.Grants)+len(entry.ScopedGrants) == 0 || entry.OwnerKind == KubernetesOwnerUnknown ||
+		len(entry.Grants)+len(entry.ScopedGrants) > MaximumKubernetesPeerGrants {
 		return false
 	}
 	for index, grant := range entry.Grants {
@@ -142,8 +163,57 @@ func validKubernetesAccess(entry KubernetesAccess) bool {
 			return false
 		}
 	}
+	for index, grant := range entry.ScopedGrants {
+		_, known := scopes[grant.Scope]
+		if !known || !kubecluster.ValidKubernetesGroup(grant.Group) || grant.ValidUntil.IsZero() ||
+			grant.Report == grant.ReportUntil.IsZero() || grant.Report && grant.ReportUntil.After(grant.ValidUntil) ||
+			index > 0 && compareKubernetesScopedGrants(entry.ScopedGrants[index-1], grant) >= 0 {
+			return false
+		}
+	}
 	return true
 }
+
+func cloneKubernetesScopeTable(table KubernetesScopeTable) KubernetesScopeTable {
+	return KubernetesScopeTable{Profiles: slices.Clone(table.Profiles), Scopes: slices.Clone(table.Scopes)}
+}
+
+// Scopes returns the scope table the map carries (K2); empty for a session
+// without gateway.kube.v2 or a cluster whose rules apply no profile.
+func (view KubernetesView) Scopes() KubernetesScopeTable {
+	return cloneKubernetesScopeTable(view.scopes)
+}
+
+// WithoutProfiles returns the view as a session without gateway.kube.v2
+// takes it (mtcp-v1 §7.12): no scope table, no scoped grant, no peer that
+// held only scoped grants, and a refresh only when a whole grant lapses
+// (review d3 H1).
+func (view KubernetesView) WithoutProfiles() KubernetesView {
+	view.profilesTaken = false
+	if view.access == nil && view.scopes.IsEmpty() {
+		return view
+	}
+	stripped := make(map[node.ID]KubernetesAccess, len(view.access))
+	var refreshAt time.Time
+	for peer, entry := range view.access {
+		if len(entry.Grants) == 0 {
+			continue
+		}
+		entry.ScopedGrants = nil
+		stripped[peer] = entry
+		for _, grant := range entry.Grants {
+			if refreshAt.IsZero() || grant.ValidUntil.Before(refreshAt) {
+				refreshAt = grant.ValidUntil
+			}
+		}
+	}
+	view.access, view.scopes, view.refreshAt = stripped, KubernetesScopeTable{}, refreshAt
+	return view
+}
+
+// ProfilesTaken reports whether the view's session takes access profiles
+// (gateway.kube.v2): a rebuild compares with what it was sent only then.
+func (view KubernetesView) ProfilesTaken() bool { return view.profilesTaken }
 
 // Computed reports whether the view was computed for a gateway; false means
 // its map carries no Kubernetes access at all.
@@ -156,6 +226,7 @@ func (view KubernetesView) For(peer node.ID) (KubernetesAccess, bool) {
 		return KubernetesAccess{}, false
 	}
 	entry.Grants = slices.Clone(entry.Grants)
+	entry.ScopedGrants = slices.Clone(entry.ScopedGrants)
 	return entry, true
 }
 
@@ -170,7 +241,7 @@ func (view KubernetesView) RefreshAt() time.Time { return view.refreshAt }
 // and every peer's grants and owner. When they refresh is not part of it.
 func (view KubernetesView) Equal(other KubernetesView) bool {
 	return view.computed == other.computed && maps.EqualFunc(view.access, other.access, equalKubernetesAccess) &&
-		!view.caChanged(other)
+		!view.caChanged(other) && view.scopes.Equal(other.scopes)
 }
 
 // peerChanged reports whether one peer's access differs between two views.
@@ -185,7 +256,7 @@ func equalKubernetesAccess(first, second KubernetesAccess) bool {
 		first.OwnerChangedAt.Equal(second.OwnerChangedAt) &&
 		slices.EqualFunc(first.Grants, second.Grants, func(left, right KubernetesGrant) bool {
 			return left.Group == right.Group && left.ValidUntil.Equal(right.ValidUntil)
-		})
+		}) && equalKubernetesScopedGrants(first.ScopedGrants, second.ScopedGrants)
 }
 
 // compareKubernetesGrants orders grants by group.
@@ -218,6 +289,10 @@ func (snapshot Snapshot) withKubernetesCapability(request Request) Snapshot {
 	ca, caKnown, trust := snapshot.kubernetes.ca, snapshot.kubernetes.caKnown, snapshot.kubernetes.trust
 	if !request.Kubernetes() {
 		snapshot.kubernetes = KubernetesView{}
+	} else if request.KubernetesProfiles() {
+		snapshot.kubernetes.profilesTaken = true
+	} else {
+		snapshot.kubernetes = snapshot.kubernetes.WithoutProfiles()
 	}
 	// The clusters' trust stays only for a session that negotiated
 	// kube.ca1 (§7.11).

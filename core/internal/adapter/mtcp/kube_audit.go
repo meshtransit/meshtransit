@@ -97,7 +97,8 @@ func (conversation *conversation) kubeAuditIntents(ctx context.Context, message 
 		return refuseAll(refused)
 	}
 	answers := make([]kubeaudit.Answer, len(intents))
-	rows, indexes := kubeAuditRows(started, gateway, snapshot, intents, answers)
+	rows, indexes := kubeAuditRows(started, gateway, snapshot, intents, answers,
+		conversation.session.Supports(CapabilityKubeProfiles))
 	if len(rows) == 0 {
 		conversation.kubeAuditPending.Add(-1)
 		application.options.Metrics.kubeAuditAnswered(answers, -1)
@@ -209,7 +210,7 @@ func (conversation *conversation) kubeAuditGateway(now time.Time) (kubeaudit.Gat
 // kubeAuditRows checks each intent (K1b0 §3.3) and returns the rows to
 // write with the indexes of their intents; answers gets each refusal.
 func kubeAuditRows(now time.Time, gateway kubeaudit.Gateway, snapshot mapsession.Snapshot,
-	intents []*mtcpv1.KubeAuditIntent, answers []kubeaudit.Answer,
+	intents []*mtcpv1.KubeAuditIntent, answers []kubeaudit.Answer, profiles bool,
 ) ([]kubeaudit.Row, []int) {
 	rows := make([]kubeaudit.Row, 0, len(intents))
 	indexes := make([]int, 0, len(intents))
@@ -221,11 +222,15 @@ func kubeAuditRows(now time.Time, gateway kubeaudit.Gateway, snapshot mapsession
 		if decoded {
 			seen[intent.ID] = true
 		}
-		if !decoded || duplicate || !intent.Valid(now) {
+		if !decoded || duplicate || !intent.Valid(now) || !kubeAuditProfileValid(encoded, profiles) {
 			answers[index] = kubeAuditRefusal(kubeaudit.OutcomeInvalid)
 			continue
 		}
 		access, check := snapshot.KubernetesOperation(node.ID(intent.Peer), intent.Groups)
+		if check == mapsession.KubernetesOperationAllowed && profiles &&
+			!kubeAuditProfileHeld(encoded, snapshot, node.ID(intent.Peer)) {
+			check = mapsession.KubernetesOperationNotGranted
+		}
 		switch check {
 		case mapsession.KubernetesOperationNoPeer:
 			answers[index] = kubeAuditRefusal(kubeaudit.OutcomeDevice)
@@ -241,6 +246,32 @@ func kubeAuditRows(now time.Time, gateway kubeaudit.Gateway, snapshot mapsession
 		indexes = append(indexes, index)
 	}
 	return rows, indexes
+}
+
+// kubeAuditProfileValid checks the form of the profile an intent names
+// (mtcp-v1 §7.12): none from a session without gateway.kube.v2, 32 bytes
+// otherwise, and report_allowed only with a profile.
+func kubeAuditProfileValid(encoded *mtcpv1.KubeAuditIntent, profiles bool) bool {
+	profile, reported := encoded.GetProfile(), encoded.GetReportAllowed()
+	if len(profile) == 0 {
+		return !reported
+	}
+	return profiles && len(profile) == 32 && len(encoded.GetGroups()) > 0
+}
+
+// kubeAuditProfileHeld checks, for a gateway.kube.v2 session, what let the
+// request through for the first of its groups (§7.12): without a profile, a
+// whole grant of it; with one, a grant of it in that scope, reporting when
+// report_allowed. Else the gateway let through what the map did not grant.
+func kubeAuditProfileHeld(encoded *mtcpv1.KubeAuditIntent, snapshot mapsession.Snapshot, peer node.ID) bool {
+	groups := encoded.GetGroups()
+	if len(groups) == 0 {
+		return false
+	}
+	if profile := encoded.GetProfile(); len(profile) == 32 {
+		return snapshot.KubernetesScopeHeld(peer, groups[0], [32]byte(profile), encoded.GetReportAllowed())
+	}
+	return snapshot.KubernetesWholeHeld(peer, groups[0])
 }
 
 // decodeKubeAuditIntent reads an intent's wire form; Valid checks the rest.

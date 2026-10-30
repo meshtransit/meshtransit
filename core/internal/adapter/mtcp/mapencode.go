@@ -96,6 +96,7 @@ func encodeNamedSnapshot(snapshot mapsession.Snapshot, view *mtcpv1.View, aliase
 		PacketFilter: filter, Dns: encodeDeviceDNS(snapshot, names), RelayMap: grant.relayMap, Settings: settings(),
 		Routes: encodeRoutes(snapshot.Routes(), endpoints), Served: encodeServed(snapshot.Routes(), endpoints),
 		Exits: encodeExits(snapshot), ServedExits: servedExits,
+		KubernetesScopes: encodeKubernetesScopeTable(snapshot.Kubernetes().Scopes()),
 	}, nil
 }
 
@@ -207,7 +208,12 @@ func encodePeer(snapshot mapsession.Snapshot, candidate mapsession.PeerCandidate
 // when it last changed owner. Its owner goes in Device.owner, by reference
 // only: no person's name reaches the cluster.
 func encodeKubernetesAccess(access mapsession.KubernetesAccess) (*mtcpv1.KubernetesAccess, error) {
-	encoded := &mtcpv1.KubernetesAccess{Grants: make([]*mtcpv1.KubernetesGrant, 0, len(access.Grants))}
+	scoped, err := encodeKubernetesScopedGrants(access.ScopedGrants)
+	if err != nil {
+		return nil, err
+	}
+	encoded := &mtcpv1.KubernetesAccess{Grants: make([]*mtcpv1.KubernetesGrant, 0, len(access.Grants)),
+		ScopedGrants: scoped}
 	for _, grant := range access.Grants {
 		if grant.ValidUntil.UnixMilli() <= 0 {
 			return nil, ErrMapEncoding

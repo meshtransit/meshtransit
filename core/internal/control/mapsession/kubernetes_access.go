@@ -57,9 +57,11 @@ type KubernetesGrant struct {
 }
 
 // KubernetesAccess is what a cluster's gateway knows of one peer: the groups
-// it holds, sorted, and its owner.
+// it holds whole, sorted, those a profile narrows (K2), sorted by key, and
+// its owner.
 type KubernetesAccess struct {
 	Grants         []KubernetesGrant
+	ScopedGrants   []KubernetesScopedGrant
 	OwnerKind      KubernetesOwnerKind
 	OwnerRef       string
 	OwnerChangedAt time.Time
@@ -109,18 +111,22 @@ func validRuleKubernetesGroups(rule NetworkPolicyRule) bool {
 // is no longer an active member gets nothing (§4.4, §12.2, §13.5). A rule
 // counts only when every live member of its destination group is a replica
 // of the gateway's own cluster (replica): a cluster's group holds nothing
-// else (TD-CORE-100). Nil for a Device that no such rule reaches.
+// else (TD-CORE-100). A rule with a profile grants its groups narrowed by it
+// (K2, mergeScopedGrants); a peer past MaximumKubernetesPeerGrants grants
+// after merging gets nothing, and is counted in withheld. Nil for a Device
+// that no such rule reaches.
 func (networkPolicy NetworkPolicy) KubernetesAccessFor(gateway node.ID, replica func(node.ID) bool,
-	now time.Time) map[node.ID]KubernetesAccess {
+	now time.Time) (access map[node.ID]KubernetesAccess, withheld int) {
 	inner := networkPolicy.inner
 	if inner == nil || !inner.releaseActive || len(inner.sources) == 0 || replica == nil {
-		return nil
+		return nil, 0
 	}
 	self, known := inner.byNode[gateway]
 	if !known || !inner.live(self, now) {
-		return nil
+		return nil, 0
 	}
 	grants := make(map[int64]map[string]time.Time)
+	scoped := make(map[int64]scopedGrants)
 	for _, rule := range inner.rules {
 		if rule.KubernetesGroups == nil || !inner.selects(rule.DestinationKind, rule.DestinationRef, self, now) ||
 			!inner.onlyReplicas(rule.DestinationRef, replica, now) {
@@ -141,6 +147,16 @@ func (networkPolicy NetworkPolicy) KubernetesAccessFor(gateway node.ID, replica 
 			if !now.Before(deadline) {
 				return
 			}
+			if access := rule.KubernetesAccess; access != nil {
+				if scoped[peer] == nil {
+					scoped[peer] = make(scopedGrants)
+				}
+				for _, group := range rule.KubernetesGroups {
+					scoped[peer].add(KubernetesScopedGrant{Group: group, Scope: access.ScopeHash,
+						Report: access.Report, ReportUntil: access.ReportUntil, ValidUntil: deadline}, now)
+				}
+				return
+			}
 			if grants[peer] == nil {
 				grants[peer] = make(map[string]time.Time)
 			}
@@ -151,21 +167,33 @@ func (networkPolicy NetworkPolicy) KubernetesAccessFor(gateway node.ID, replica 
 			}
 		})
 	}
-	if len(grants) == 0 {
-		return nil
+	peers := make(map[int64]struct{}, len(grants)+len(scoped))
+	for peer := range grants {
+		peers[peer] = struct{}{}
 	}
-	access := make(map[node.ID]KubernetesAccess, len(grants))
-	for peer, groups := range grants {
-		source := inner.sources[peer]
+	for peer := range scoped {
+		peers[peer] = struct{}{}
+	}
+	if len(peers) == 0 {
+		return nil, 0
+	}
+	access = make(map[node.ID]KubernetesAccess, len(peers))
+	for peer := range peers {
+		source, groups := inner.sources[peer], grants[peer]
 		entry := KubernetesAccess{Grants: make([]KubernetesGrant, 0, len(groups)), OwnerKind: source.OwnerKind,
-			OwnerRef: source.OwnerRef, OwnerChangedAt: source.OwnerChangedAt}
+			OwnerRef: source.OwnerRef, OwnerChangedAt: source.OwnerChangedAt,
+			ScopedGrants: scoped[peer].sorted(groups)}
 		for group, until := range groups {
 			entry.Grants = append(entry.Grants, KubernetesGrant{Group: group, ValidUntil: until})
 		}
 		slices.SortFunc(entry.Grants, compareKubernetesGrants)
+		if len(entry.Grants)+len(entry.ScopedGrants) > MaximumKubernetesPeerGrants {
+			withheld++
+			continue
+		}
 		access[inner.devices[peer].NodeID] = entry
 	}
-	return access
+	return access, withheld
 }
 
 // onlyReplicas reports whether every live member of Device group group is

@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 259 {
-		t.Fatalf("len(Catalog()) = %d, want 259", len(catalog))
+	if len(catalog) != 260 {
+		t.Fatalf("len(Catalog()) = %d, want 260", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 259 {
-		t.Fatalf("LatestVersion() = %d, want 259", LatestVersion())
+	if LatestVersion() != 260 {
+		t.Fatalf("LatestVersion() = %d, want 260", LatestVersion())
 	}
 }
 
@@ -7752,5 +7752,28 @@ func TestMigration259KubernetesAccessProfileWriter(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "FUNCTION mesh_ops.attach_policy_group_rules_v3(") {
 		t.Error("migration 259 changes attach_policy_group_rules_v3")
+	}
+}
+
+func TestMigration260KubernetesMapRuleAccess(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 260 || catalog[259].Version != 260 {
+		t.Fatalf("the catalog has no migration 260 (%d migrations)", len(catalog))
+	}
+	migration := catalog[259]
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.load_map_network_kubernetes_rule_access_v1(",
+		"CREATE FUNCTION mesh_ops.load_map_network_kubernetes_profiles_v1(",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_map_network_kubernetes_rule_access_v1(BIGINT) TO mesh_runtime;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_map_network_kubernetes_profiles_v1(BIGINT) TO mesh_runtime;",
+		"AND release.policy_revision = p_policy_revision AND release.state = 'active'",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 260 lacks %q", want)
+		}
+	}
+	if strings.Contains(migration.SQL, "FUNCTION mesh_ops.load_map_network_kubernetes_rule_groups_v1(") {
+		t.Error("migration 260 changes the map reader of a Core before d3")
 	}
 }

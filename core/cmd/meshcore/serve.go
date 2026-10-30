@@ -659,11 +659,12 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		deps := mtcpDependencies{streams: mapStreamService, sessions: mapSessionService,
 			registrations: registrationService, logout: logout, paths: redisClient, connectivity: redisClient, guard: mtcpTimestampGuard{store: timestamps}, gatewayKeyEvents: gatewayKeyEvents, gatewayPresence: redisClient, logger: logger,
 			dnsSuffix: processConfig.DNSSuffix, dnsInfrastructure: processConfig.DNSProtectedNames(),
-			routeOffers:      routeOffers,
-			subnetRoutes:     processConfig.SubnetRoutes && processConfig.Control.Map.SharedInventory,
-			exitNodes:        processConfig.ExitNodes && processConfig.Control.Map.SharedInventory,
-			dnsZones:         processConfig.DNSZones.Enabled && processConfig.Control.Map.SharedInventory,
-			kubernetesAccess: processConfig.Control.Map.SharedInventory}
+			routeOffers:        routeOffers,
+			subnetRoutes:       processConfig.SubnetRoutes && processConfig.Control.Map.SharedInventory,
+			exitNodes:          processConfig.ExitNodes && processConfig.Control.Map.SharedInventory,
+			dnsZones:           processConfig.DNSZones.Enabled && processConfig.Control.Map.SharedInventory,
+			kubernetesAccess:   processConfig.Control.Map.SharedInventory,
+			kubernetesProfiles: processConfig.KubernetesProfiles && processConfig.Control.Map.SharedInventory}
 		if deps.exitNodes {
 			// Exit offers are stored only while Core offers router.exit.v1:
 			// then a node that no longer lists it withdraws its offer.

@@ -70,6 +70,9 @@ type Config struct {
 	// KubernetesJoin lets gateway replicas join their clusters over MTCP
 	// (MESHTRANSIT_KUBERNETES_JOIN).
 	KubernetesJoin bool
+	// KubernetesProfiles offers gateways access profiles, gateway.kube.v2
+	// (MESHTRANSIT_KUBERNETES_PROFILES).
+	KubernetesProfiles bool
 	// KubernetesGatewayToken is how strictly gateways must present their
 	// pod token on every session (MESHTRANSIT_KUBERNETES_GATEWAY_TOKEN).
 	KubernetesGatewayToken kubecluster.GatewayTokenMode
@@ -217,6 +220,10 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, err
 	}
 	kubernetesJoin, err := loadKubernetesJoin(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+	kubernetesProfiles, err := loadKubernetesProfiles(lookup)
 	if err != nil {
 		return Config{}, err
 	}
@@ -384,6 +391,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		ExitNodes:               exitNodes,
 		ExitSpread:              exitSpread,
 		KubernetesJoin:          kubernetesJoin,
+		KubernetesProfiles:      kubernetesProfiles,
 		KubernetesGatewayToken:  kubernetesGatewayToken,
 		DNSZones:                dnsZones,
 		GeoIPCountryFile:        geoIPCountryFile,

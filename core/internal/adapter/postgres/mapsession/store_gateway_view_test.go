@@ -7,6 +7,7 @@ import (
 
 	appmapsession "meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/shared/kubeprofile"
 )
 
 // gatewayStoreFixture is liveStoreFixture with the Device a replica of
@@ -58,7 +59,7 @@ func TestGatewayMapCarriesItsPeersKubernetesAccess(t *testing.T) {
 	other, err := appmapsession.NewKubernetesView(map[node.ID]appmapsession.KubernetesAccess{peer: {
 		Grants:    []appmapsession.KubernetesGrant{{Group: "edit", ValidUntil: transaction.policyExpiry}},
 		OwnerKind: appmapsession.KubernetesOwnerWorkspace,
-	}})
+	}}, appmapsession.KubernetesScopeTable{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +71,7 @@ func TestGatewayMapCarriesItsPeersKubernetesAccess(t *testing.T) {
 	lapsed, err := appmapsession.NewKubernetesView(map[node.ID]appmapsession.KubernetesAccess{peer: {
 		Grants:    []appmapsession.KubernetesGrant{{Group: "view", ValidUntil: time.Now().Add(-time.Minute)}},
 		OwnerKind: appmapsession.KubernetesOwnerWorkspace,
-	}})
+	}}, appmapsession.KubernetesScopeTable{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,5 +216,31 @@ func TestUnchangedGatewayMapWithClusterCAs(t *testing.T) {
 			stats.KubernetesCAsRejected != test.rejected {
 			t.Fatalf("%s: stats %+v", test.cas, stats)
 		}
+	}
+}
+
+// A gateway session without gateway.kube.v2 stays unchanged while its
+// cluster's rules apply a profile: it compares what it was sent, without
+// profiles, not the whole view (review d3 H1).
+func TestUnchangedGatewayMapWithoutProfiles(t *testing.T) {
+	store, transaction, _ := gatewayStoreFixture(t)
+	profile := kubeprofile.Profile{Name: "developer", Namespaced: []kubeprofile.Rule{
+		{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get"}}}}
+	hash := must(kubeprofile.ContentHash(profile))
+	transaction.kubernetesProfilesGranted = true
+	transaction.kubernetesRuleAccess = [][]any{{testRuleID, []string{"view"}, "01890f00-0000-7000-8000-00000000cc01",
+		hash[:], []string{"team-a"}, false, "enforce", nil}}
+	transaction.kubernetesProfiles = [][]any{{"01890f00-0000-7000-8000-00000000cc01", hash[:], "developer",
+		`{"namespaced": [{"apiGroups": [""], "resources": ["pods"], "verbs": ["get"]}]}`}}
+	loaded, err := store.Load(t.Context(), validIdentity(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Kubernetes().Scopes().IsEmpty() {
+		t.Fatal("the gateway's view has no table")
+	}
+	v1 := loaded.WithKubernetes(loaded.Kubernetes().WithoutProfiles())
+	if unchanged, err := store.Unchanged(t.Context(), v1, 0); err != nil || !unchanged {
+		t.Fatalf("Unchanged() = %v, %v", unchanged, err)
 	}
 }

@@ -59,6 +59,9 @@ type mapSink struct {
 	// dnsDigest identifies the DNS configuration the node holds: with DNS
 	// names a map's DNS reaches a megabyte, too much to keep per session.
 	dnsDigest [sha256.Size]byte
+	// scopes is the Kubernetes scope table the gateway holds
+	// (gateway.kube.v2, §7.12), compared by hashes; empty: none.
+	scopes mapsession.KubernetesScopeTable
 	// dnsResolvers are the resolvers of the DNS configuration the node
 	// holds, the only ones its health reports may name. The map is
 	// replaced, never changed, so a reader may keep it outside mu.
@@ -154,6 +157,8 @@ func (sink *mapSink) sendSnapshotLocked(_ context.Context, snapshot mapsession.S
 	}
 	sink.kubeClusters = kubeClusters
 	sink.metrics.kubernetesClustersSent(kubeCounts)
+	sink.scopes = snapshot.Kubernetes().Scopes()
+	sink.metrics.kubernetesScopeTableSent(message.GetKubernetesScopes())
 	if sink.dnsDigest, err = dnsDigest(message.GetDns()); err != nil {
 		return err
 	}
@@ -326,6 +331,12 @@ func (sink *mapSink) SendAuthorityDelta(ctx context.Context, delta mapsession.Au
 		message.KubernetesClusters, kubeClusters, kubeCounts = sink.kubeClusters.encodeKubernetesClusters(snapshot,
 			sink.suffix, false)
 	}
+	// A gateway's scope table when it changed; a present, empty table
+	// clears it (§7.12).
+	scopes := snapshot.Kubernetes().Scopes()
+	if sink.hasCurrent && !scopes.Equal(sink.scopes) {
+		message.KubernetesScopes = cmp.Or(encodeKubernetesScopeTable(scopes), &mtcpv1.KubernetesScopeTable{})
+	}
 	sent := sink.hasCurrent
 	if err := sink.sendDeltaLocked(ctx, message, snapshot, grant); err != nil {
 		return err
@@ -333,6 +344,10 @@ func (sink *mapSink) SendAuthorityDelta(ctx context.Context, delta mapsession.Au
 	if sent {
 		sink.kubeClusters = kubeClusters
 		sink.metrics.kubernetesClustersSent(kubeCounts)
+		if message.KubernetesScopes != nil {
+			sink.scopes = scopes
+			sink.metrics.kubernetesScopeTableSent(message.KubernetesScopes)
+		}
 	}
 	sink.noteAuthorityLocked(snapshot)
 	if message.Dns != nil {

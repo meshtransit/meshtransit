@@ -201,7 +201,9 @@ func (collector *mapInventoryCollector) Collect(metrics chan<- prometheus.Metric
 		// (schema 244 failed or untrusted), roots whose DER could not be
 		// read, and clusters left out of their gateways' CAs.
 		"trust_unread": stats.KubernetesTrustUnread, "trust_root_missing": stats.KubernetesRootsMissing,
-		"ca_omitted": stats.KubernetesGatewayCAsOmitted} {
+		"ca_omitted": stats.KubernetesGatewayCAsOmitted,
+		// Peers past 64 grants after merging (K2, §7.12): each gets none.
+		"peer_grants": stats.KubernetesWithheldPeerGrants} {
 		metrics <- prometheus.MustNewConstMetric(collector.withheld, prometheus.CounterValue, float64(count), reason)
 	}
 }

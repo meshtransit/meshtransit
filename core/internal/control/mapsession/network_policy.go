@@ -43,6 +43,9 @@ type NetworkPolicyRule struct {
 	// KubernetesGroups are the groups a rule to a cluster's own Device
 	// Group grants, sorted; nil for any other rule (K1a3).
 	KubernetesGroups []string
+	// KubernetesAccess narrows those groups to a profile (K2); nil grants
+	// them whole.
+	KubernetesAccess *KubernetesRuleAccess
 }
 
 // SelectorMember places one Device in one selector, until ValidUntil when
@@ -98,6 +101,9 @@ type NetworkPolicyParams struct {
 	// what each Device's Kubernetes access rests on (K1a3); none for other
 	// Networks.
 	KubernetesSources []KubernetesSource
+	// KubernetesProfiles are the profiles the release's rules apply (K2),
+	// each checked against its hash.
+	KubernetesProfiles []KubernetesProfile
 }
 
 // NetworkPolicy is one Network's packet policy at selector level, shared by
@@ -138,6 +144,10 @@ type networkPolicy struct {
 	// read, for Equal.
 	sources    map[int64]KubernetesSource
 	sourceList []KubernetesSource
+	// profiles indexes KubernetesProfiles by hash; profileList keeps them as
+	// read, for Equal.
+	profiles    map[[32]byte]KubernetesProfile
+	profileList []KubernetesProfile
 }
 
 // NewNetworkPolicy validates and indexes one Network's policy.
@@ -157,6 +167,11 @@ func NewNetworkPolicy(params NetworkPolicyParams) (NetworkPolicy, error) {
 		sources:    make(map[int64]KubernetesSource, len(params.KubernetesSources)),
 		sourceList: slices.Clone(params.KubernetesSources),
 	}
+	profiles, ok := indexKubernetesProfiles(params.KubernetesProfiles)
+	if !ok {
+		return NetworkPolicy{}, ErrInvalidNetworkPolicy
+	}
+	inner.profiles, inner.profileList = profiles, slices.Clone(params.KubernetesProfiles)
 	for _, source := range params.KubernetesSources {
 		if _, duplicate := inner.sources[source.Device]; duplicate || !source.valid() {
 			return NetworkPolicy{}, ErrInvalidNetworkPolicy
@@ -200,7 +215,8 @@ func NewNetworkPolicy(params NetworkPolicyParams) (NetworkPolicy, error) {
 	for _, rule := range inner.rules {
 		if !rule.ID.IsValid() || !rule.SourceKind.valid() || !rule.DestinationKind.valid() ||
 			rule.DestinationKind == SelectorIdentityGroup || rule.SourceRef <= 0 || rule.DestinationRef <= 0 ||
-			!validRuleKubernetesGroups(rule) {
+			!validRuleKubernetesGroups(rule) || rule.KubernetesAccess != nil && rule.KubernetesGroups == nil ||
+			!validKubernetesRuleAccess(rule.KubernetesAccess, inner.profiles) {
 			return NetworkPolicy{}, ErrInvalidNetworkPolicy
 		}
 	}
@@ -249,7 +265,8 @@ func (networkPolicy NetworkPolicy) Equal(other NetworkPolicy) bool {
 			return first.ID == second.ID && first.SourceKind == second.SourceKind && first.SourceRef == second.SourceRef &&
 				first.DestinationKind == second.DestinationKind && first.DestinationRef == second.DestinationRef &&
 				first.Protocol == second.Protocol && slices.Equal(first.Ports, second.Ports) &&
-				slices.Equal(first.KubernetesGroups, second.KubernetesGroups)
+				slices.Equal(first.KubernetesGroups, second.KubernetesGroups) &&
+				first.KubernetesAccess.equal(second.KubernetesAccess)
 		}) &&
 		slices.EqualFunc(left.memberList, right.memberList, func(first, second SelectorMember) bool {
 			return first.Kind == second.Kind && first.Selector == second.Selector && first.Device == second.Device &&
@@ -257,7 +274,10 @@ func (networkPolicy NetworkPolicy) Equal(other NetworkPolicy) bool {
 		}) &&
 		slices.EqualFunc(left.deviceList, right.deviceList, func(first, second PolicyDevice) bool {
 			return first.Device == second.Device && first.NodeID == second.NodeID && first.ExpiresAt.Equal(second.ExpiresAt)
-		}) && left.routes.equal(right.routes) && equalKubernetesSources(left.sourceList, right.sourceList)
+		}) && left.routes.equal(right.routes) && equalKubernetesSources(left.sourceList, right.sourceList) &&
+		slices.EqualFunc(left.profileList, right.profileList, func(first, second KubernetesProfile) bool {
+			return first.Hash == second.Hash && first.ID == second.ID
+		})
 }
 
 // RoutesFor returns self's subnet routes at time now: the Sites it may reach
@@ -402,6 +422,7 @@ func cloneNetworkPolicyRules(rules []NetworkPolicyRule) []NetworkPolicyRule {
 	for index, rule := range rules {
 		rule.Ports = append([]policy.PortRange(nil), rule.Ports...)
 		rule.KubernetesGroups = slices.Clone(rule.KubernetesGroups)
+		rule.KubernetesAccess = rule.KubernetesAccess.clone()
 		cloned[index] = rule
 	}
 	return cloned
