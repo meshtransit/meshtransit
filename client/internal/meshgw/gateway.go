@@ -16,6 +16,7 @@ import (
 	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/client/internal/identity"
 	"meshtransit.net/client/internal/k8sstate"
+	"meshtransit.net/client/internal/kubeproxy"
 	"meshtransit.net/client/internal/mtcpclient"
 	"meshtransit.net/client/internal/profile"
 	"meshtransit.net/client/internal/secretstore"
@@ -32,6 +33,9 @@ const (
 	enrollRetryFirst   = 5 * time.Second
 	enrollRetryLongest = time.Minute
 	shutdownTimeout    = 10 * time.Second
+	// drainBound is how long the daemon waits, once stopped, for the
+	// kubectl path to drain (kubeproxy.DrainTimeout and a margin).
+	drainBound = kubeproxy.DrainTimeout + 3*time.Second
 )
 
 // Run runs one gateway replica until ctx ends or it must stop: its state is
@@ -232,19 +236,42 @@ type runner interface {
 	Run(context.Context) error
 }
 
+// errDaemonStopped ends the kubectl path once the daemon has stopped: it
+// cannot answer, so it does not drain.
+var errDaemonStopped = errors.New("meshgw: the daemon stopped")
+
 // serve runs the daemon and the kubectl path until ctx ends or the gateway
 // must stop, and returns why it stopped. The kubectl path stops with the
-// daemon, whichever way the daemon stops.
+// daemon, whichever way the daemon stops. On a plain stop (SIGTERM) the
+// daemon outlives the kubectl path's drain, at most drainBound, so requests
+// in flight are answered and new connections are refused rather than lost;
+// any other cause (a second replica with this identity), or a daemon that
+// stops by itself, stops both at once (TD-CLI-94).
 func serve(ctx context.Context, service runner, kubectl func(context.Context)) error {
-	forwarderCtx, stopForwarder := context.WithCancel(ctx)
-	defer stopForwarder()
+	daemonCtx, stopDaemon := context.WithCancelCause(context.WithoutCancel(ctx))
+	defer stopDaemon(nil)
+	forwarderCtx, stopForwarder := context.WithCancelCause(ctx)
+	defer stopForwarder(nil)
 	forwarded := make(chan struct{})
 	go func() {
 		defer close(forwarded)
 		kubectl(forwarderCtx)
 	}()
-	err := service.Run(ctx)
-	stopForwarder()
+	stopAfter := context.AfterFunc(ctx, func() {
+		if errors.Is(context.Cause(ctx), context.Canceled) {
+			bound := time.NewTimer(drainBound)
+			defer bound.Stop()
+			select {
+			case <-forwarded:
+			case <-bound.C:
+			}
+		}
+		stopDaemon(context.Cause(ctx))
+	})
+	defer stopAfter()
+	err := service.Run(daemonCtx)
+	// A daemon that stopped by itself stops the kubectl path without a drain.
+	stopForwarder(errDaemonStopped)
 	<-forwarded
 	if err != nil && !errors.Is(err, context.Canceled) {
 		return err

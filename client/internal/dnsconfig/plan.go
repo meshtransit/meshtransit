@@ -216,6 +216,7 @@ func Compile(snapshot networkmap.Snapshot) (Plan, error) {
 	}
 	slices.SortFunc(plan.Aliases, func(left, right Alias) int { return strings.Compare(left.Name, right.Name) })
 
+	offline := offlineAddresses(snapshot.Peers)
 	hostNames := make([]string, 0, len(hosts))
 	for name := range hosts {
 		hostNames = append(hostNames, name)
@@ -232,7 +233,7 @@ func Compile(snapshot networkmap.Snapshot) (Plan, error) {
 				maxAddressesPerHost,
 			)
 		}
-		orderHostAddresses(addresses, snapshot.Self.StableID)
+		orderHostAddresses(addresses, snapshot.Self.StableID, offline)
 		plan.Hosts = append(plan.Hosts, Host{Name: name, Addresses: addresses})
 		if !locallyAuthoritative(plan.Routes, name) && dnsSuffixContains(sharedZone, name) && name != sharedZone &&
 			!hasRouteSuffix(plan.Routes, sharedZone) {
@@ -510,6 +511,27 @@ func splitHostZones(plan *Plan, hostZones, names []string) []string {
 	return split
 }
 
+// offlineAddresses are the addresses of the peers Core reports offline
+// (TD-CLI-94). A peer whose presence is unknown counts as online.
+func offlineAddresses(peers []networkmap.Node) map[netip.Addr]struct{} {
+	var offline map[netip.Addr]struct{}
+	for _, peer := range peers {
+		if !peer.OnlineKnown || peer.Online {
+			continue
+		}
+		for _, prefix := range peer.Addresses {
+			if !prefix.IsSingleIP() {
+				continue
+			}
+			if offline == nil {
+				offline = make(map[netip.Addr]struct{})
+			}
+			offline[prefix.Addr()] = struct{}{}
+		}
+	}
+	return offline
+}
+
 // orderHostAddresses puts a name's addresses in the order this node tries
 // them: by rendezvous hash of the node's own stable ID and each address,
 // highest first. Every node has its own order, stable while the addresses
@@ -517,15 +539,19 @@ func splitHostZones(plan *Plan, hostZones, names []string) []string {
 // cluster (one name, an address per replica) instead of all taking the
 // lowest address; a replica joining or leaving moves only the nodes that
 // rank it first (K1f, Q191). The spread is per node, not per connection.
-// Each address is hashed once. A map always names self, so the ascending
-// order without an ID is only a safe default.
-func orderHostAddresses(addresses []netip.Addr, self string) {
+// Addresses of peers Core reports offline come last, still in that order: a
+// replica that stopped is not tried first until it is back, while a name
+// whose every replica looks offline still answers (TD-CLI-94). Each address
+// is hashed once. A map always names self, so the ascending order without
+// an ID is only a safe default.
+func orderHostAddresses(addresses []netip.Addr, self string, offline map[netip.Addr]struct{}) {
 	if self == "" {
 		slices.SortFunc(addresses, netip.Addr.Compare)
 		return
 	}
 	type ranked struct {
 		address netip.Addr
+		offline bool
 		score   uint64
 	}
 	seed := append([]byte(self), 0)
@@ -536,9 +562,16 @@ func orderHostAddresses(addresses []netip.Addr, self string) {
 		hash.Reset()
 		_, _ = hash.Write(seed)
 		_, _ = hash.Write(address.AsSlice())
-		ranks[index] = ranked{address: address, score: binary.BigEndian.Uint64(hash.Sum(sum[:0]))}
+		_, down := offline[address]
+		ranks[index] = ranked{address: address, offline: down, score: binary.BigEndian.Uint64(hash.Sum(sum[:0]))}
 	}
 	slices.SortFunc(ranks, func(left, right ranked) int {
+		if left.offline != right.offline {
+			if left.offline {
+				return 1
+			}
+			return -1
+		}
 		if order := cmp.Compare(right.score, left.score); order != 0 {
 			return order
 		}

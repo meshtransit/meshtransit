@@ -21,7 +21,7 @@ func replicaAddresses(count int) []netip.Addr {
 
 func firstFor(self string, addresses []netip.Addr) netip.Addr {
 	ordered := slices.Clone(addresses)
-	orderHostAddresses(ordered, self)
+	orderHostAddresses(ordered, self, nil)
 	return ordered[0]
 }
 
@@ -80,8 +80,8 @@ func TestOrderHostAddressesIsDeterministic(t *testing.T) {
 	addresses := append(replicaAddresses(4), netip.MustParseAddr("fd00::1:10"), netip.MustParseAddr("fd00::1:11"))
 	once, again := slices.Clone(addresses), slices.Clone(addresses)
 	slices.Reverse(again)
-	orderHostAddresses(once, "01890f00-0000-7000-8000-000000000001")
-	orderHostAddresses(again, "01890f00-0000-7000-8000-000000000001")
+	orderHostAddresses(once, "01890f00-0000-7000-8000-000000000001", nil)
+	orderHostAddresses(again, "01890f00-0000-7000-8000-000000000001", nil)
 	if !slices.Equal(once, again) {
 		t.Fatalf("order depends on the input order: %v, %v", once, again)
 	}
@@ -92,7 +92,7 @@ func TestOrderHostAddressesIsDeterministic(t *testing.T) {
 	}
 	anonymous := slices.Clone(addresses)
 	slices.Reverse(anonymous)
-	orderHostAddresses(anonymous, "")
+	orderHostAddresses(anonymous, "", nil)
 	if !slices.Equal(anonymous, addresses) {
 		t.Fatalf("without an ID: %v, want ascending", anonymous)
 	}
@@ -118,7 +118,7 @@ func TestCompileOrdersAClusterNameForTheNode(t *testing.T) {
 		}
 		host := plan.Hosts[slices.IndexFunc(plan.Hosts, func(host Host) bool { return host.Name == "prod.kube.example.mesh" })]
 		want := slices.Clone(replicas)
-		orderHostAddresses(want, snapshot.Self.StableID)
+		orderHostAddresses(want, snapshot.Self.StableID, nil)
 		if !slices.Equal(host.Addresses, want) {
 			t.Fatalf("node %d: %v, want %v", index, host.Addresses, want)
 		}
@@ -141,7 +141,7 @@ func TestOrderHostAddressesKeepsEachFamilysOrder(t *testing.T) {
 	for index := range 50 {
 		self := fmt.Sprintf("node-%d", index)
 		mixed := append(slices.Clone(v4), v6...)
-		orderHostAddresses(mixed, self)
+		orderHostAddresses(mixed, self, nil)
 		resources, err := addressResources(Host{Name: "prod.kube.example.mesh", Addresses: mixed},
 			"prod.kube.example.mesh", dnsmessage.TypeA)
 		if err != nil {
@@ -152,9 +152,64 @@ func TestOrderHostAddressesKeepsEachFamilysOrder(t *testing.T) {
 			answered = append(answered, netip.AddrFrom4(resource.Body.(*dnsmessage.AResource).A))
 		}
 		alone := slices.Clone(v4)
-		orderHostAddresses(alone, self)
+		orderHostAddresses(alone, self, nil)
 		if !slices.Equal(answered, alone) {
 			t.Fatalf("%s: A answer %v, want %v", self, answered, alone)
+		}
+	}
+}
+
+// A replica Core reports offline is tried last by every node, while the
+// others keep their order; a peer whose presence is unknown counts as
+// online, and a name whose every replica is offline still answers
+// (TD-CLI-94).
+func TestCompileTriesOfflineReplicasLast(t *testing.T) {
+	t.Parallel()
+	replicas := replicaAddresses(3)
+	peer := func(address netip.Addr, known, online bool) networkmap.Node {
+		return networkmap.Node{
+			StableID: "peer-" + address.String(), OnlineKnown: known, Online: online,
+			Addresses: []netip.Prefix{netip.PrefixFrom(address, 32)},
+		}
+	}
+	for index := range 60 {
+		snapshot := dnsSnapshot()
+		snapshot.Self.StableID = fmt.Sprintf("01890f00-0000-7000-8000-%012d", index)
+		for _, address := range replicas {
+			snapshot.DNS.Records = append(snapshot.DNS.Records, networkmap.DNSRecord{
+				Name: "prod.kube.example.mesh", Type: networkmap.DNSRecordA, Address: address,
+			})
+		}
+		hostOf := func(snapshot networkmap.Snapshot) []netip.Addr {
+			t.Helper()
+			plan, err := Compile(snapshot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return plan.Hosts[slices.IndexFunc(plan.Hosts, func(host Host) bool {
+				return host.Name == "prod.kube.example.mesh"
+			})].Addresses
+		}
+		snapshot.Peers = []networkmap.Node{
+			peer(replicas[0], true, true), peer(replicas[1], true, true), peer(replicas[2], false, false),
+		}
+		online := hostOf(snapshot)
+		down := online[0]
+		for position, node := range snapshot.Peers {
+			if node.Addresses[0].Addr() == down {
+				snapshot.Peers[position] = peer(down, true, false)
+			}
+		}
+		withDown := hostOf(snapshot)
+		rest := slices.DeleteFunc(slices.Clone(online), func(address netip.Addr) bool { return address == down })
+		if withDown[len(withDown)-1] != down || !slices.Equal(withDown[:len(withDown)-1], rest) {
+			t.Fatalf("node %d: %v with %s offline, from %v", index, withDown, down, online)
+		}
+		for position := range snapshot.Peers {
+			snapshot.Peers[position].OnlineKnown, snapshot.Peers[position].Online = true, false
+		}
+		if all := hostOf(snapshot); !slices.Equal(all, online) {
+			t.Fatalf("node %d: every replica offline gives %v, want the usual %v", index, all, online)
 		}
 	}
 }

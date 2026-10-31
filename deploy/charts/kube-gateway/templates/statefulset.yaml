@@ -93,11 +93,9 @@ spec:
               port: probes
             periodSeconds: 10
             failureThreshold: 3
-          # A moment for the map to move peers off the replica.
-          lifecycle:
-            preStop:
-              sleep:
-                seconds: 5
+          # No preStop: on SIGTERM the gateway refuses new connections, so
+          # kubectl tries the next replica at once, and answers the requests
+          # in flight (up to 10 s) before it leaves the mesh (TD-CLI-94).
           resources: {{- toYaml .Values.resources | nindent 12 }}
           securityContext:
             allowPrivilegeEscalation: false

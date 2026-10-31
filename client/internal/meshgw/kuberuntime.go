@@ -323,12 +323,16 @@ func newMinter(cfg Config, boundSecretUID string, options kubetoken.Options) (*k
 	return minter, nil
 }
 
-// run runs the recorder, the checker and the listener until ctx ends.
+// run runs the recorder, the checker and the listener until ctx ends. The
+// rest outlives the listener's drain: requests answered while draining are
+// still recorded and reported, and sessions still swept (TD-CLI-94).
 func (runtime *kubeRuntime) run(ctx context.Context) {
+	rest, stopRest := context.WithCancel(context.WithoutCancel(ctx))
+	defer stopRest()
 	var running sync.WaitGroup
 	parts := []func(context.Context) error{
 		runtime.recorder.Run, runtime.checker.Run, runtime.ceilings.Run,
-		runtime.listener.Run, runtime.proxy.Run, runtime.memory.Run,
+		runtime.proxy.Run, runtime.memory.Run,
 	}
 	if runtime.discovery != nil {
 		parts = append(parts, func(ctx context.Context) error {
@@ -338,11 +342,15 @@ func (runtime *kubeRuntime) run(ctx context.Context) {
 	}
 	for _, part := range parts {
 		running.Go(func() {
-			if err := part(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			if err := part(rest); err != nil && !errors.Is(err, context.Canceled) {
 				runtime.logger.Error("kube request path stopped", "error", err)
 			}
 		})
 	}
+	if err := runtime.listener.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		runtime.logger.Error("kube request path stopped", "error", err)
+	}
+	stopRest()
 	running.Wait()
 }
 

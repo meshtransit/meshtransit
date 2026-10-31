@@ -157,8 +157,21 @@ func (server *Server) TLSConfig() *tls.Config {
 	}
 }
 
+// DrainTimeout is how long Serve lets requests in flight finish once ctx
+// ends (TD-CLI-94).
+const DrainTimeout = 10 * time.Second
+
 // Serve serves kubectl on a listener on the mesh address until it closes.
+// When ctx ends plainly (the gateway stops) it drains: the listener closes
+// at once, so a new connection is refused and kubectl tries the next
+// replica, while requests in flight have DrainTimeout to finish; then
+// watches still open end. Exec and port-forward sessions are not waited for:
+// they end once no request is left. A ctx ended with another cause (a stale
+// map, an identity conflict) closes at once. Serve returns once closed.
 func (server *Server) Serve(ctx context.Context, listener net.Listener) error {
+	// Requests outlive ctx while draining: their context ends with the drain.
+	requests, endRequests := context.WithCancel(context.WithoutCancel(ctx))
+	defer endRequests()
 	served := &http.Server{
 		Handler:           server,
 		TLSConfig:         server.TLSConfig(),
@@ -176,15 +189,27 @@ func (server *Server) Serve(ctx context.Context, listener net.Listener) error {
 			SendPingTimeout: 30 * time.Second, PingTimeout: 15 * time.Second,
 		},
 		ConnContext: withIdentity,
-		BaseContext: func(net.Listener) context.Context { return ctx },
+		BaseContext: func(net.Listener) context.Context { return requests },
 		// Failed handshakes and the like, at debug: a scan is not an event.
 		ErrorLog: slog.NewLogLogger(server.options.Logger.Handler(), slog.LevelDebug),
 	}
-	// Cancelling ctx also ends hijacked connections (exec, port-forward),
-	// which Close leaves open (review b5a L3).
-	stop := context.AfterFunc(ctx, func() { _ = served.Close() })
-	defer stop()
+	drained := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		defer close(drained)
+		if errors.Is(context.Cause(ctx), context.Canceled) {
+			drain, cancel := context.WithTimeout(context.Background(), DrainTimeout)
+			defer cancel()
+			_ = served.Shutdown(drain)
+		}
+		// Ending the requests' context also ends hijacked connections
+		// (exec, port-forward), which Close leaves open (review b5a L3).
+		endRequests()
+		_ = served.Close()
+	})
 	err := served.ServeTLS(identifying{Listener: listener, gate: server.gate, logger: server.options.Logger}, "", "")
+	if !stop() {
+		<-drained
+	}
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}

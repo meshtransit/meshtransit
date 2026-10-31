@@ -123,6 +123,7 @@ func (recorder *Recorder) reportLoop(ctx context.Context) {
 		var report controlplane.KubeAuditReport
 		select {
 		case <-ctx.Done():
+			recorder.flush()
 			return
 		case <-outcomes.C:
 			report.Outcomes = recorder.reports.takeOutcomes()
@@ -144,9 +145,36 @@ func (recorder *Recorder) reportLoop(ctx context.Context) {
 			recorder.reports.drop(len(report.Outcomes) + len(report.Denials))
 		case <-ctx.Done():
 			timer.Stop()
+			recorder.offer(report)
+			recorder.flush()
 			return
 		}
 		timer.Stop()
+	}
+}
+
+// flushWait is how long a stopping recorder offers what it still holds.
+const flushWait = time.Second
+
+// flush offers the outcomes and denials still held, once and briefly: a
+// gateway that stops reports what it answered while draining (TD-CLI-94).
+func (recorder *Recorder) flush() {
+	recorder.offer(controlplane.KubeAuditReport{
+		Outcomes: recorder.reports.takeOutcomes(), Denials: recorder.reports.takeDenials(),
+	})
+}
+
+// offer sends a report within flushWait, else drops and counts it.
+func (recorder *Recorder) offer(report controlplane.KubeAuditReport) {
+	if len(report.Outcomes)+len(report.Denials) == 0 {
+		return
+	}
+	timer := time.NewTimer(flushWait)
+	defer timer.Stop()
+	select {
+	case recorder.options.Reports <- report:
+	case <-timer.C:
+		recorder.reports.drop(len(report.Outcomes) + len(report.Denials))
 	}
 }
 

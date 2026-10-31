@@ -453,3 +453,37 @@ func TestReportsKeepTheFirstProfileSample(t *testing.T) {
 		}
 	}
 }
+
+// A stopping recorder sends what it still holds instead of dropping it: a
+// gateway reports the requests it answered while draining (TD-CLI-94).
+func TestRecorderFlushesWhenStopped(t *testing.T) {
+	t.Parallel()
+	reports := make(chan controlplane.KubeAuditReport, 1)
+	options := DefaultOptions()
+	options.Calls, options.Reports, options.CoreNow = make(chan controlplane.KubeAuditCall), reports, time.Now
+	options.ReportWindow, options.DenialWindow = time.Hour, time.Hour
+	recorder, err := New(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = recorder.Run(ctx)
+	}()
+	recorder.Denied("01890f00-0000-7000-8000-000000000702", "forbidden")
+	cancel()
+	select {
+	case report := <-reports:
+		if len(report.Denials) != 1 || report.Denials[0].Count != 1 {
+			t.Fatalf("flushed %+v", report)
+		}
+	case <-time.After(2 * flushWait):
+		t.Fatal("nothing was flushed")
+	}
+	<-done
+	if dropped := recorder.Snapshot().DroppedReports; dropped != 0 {
+		t.Fatalf("%d dropped", dropped)
+	}
+}

@@ -112,6 +112,8 @@ type fixture struct {
 	seen     chan seen
 	events   *fakeEvents
 	wake     chan struct{}
+	stop     context.CancelFunc // stops serving, as the gateway's stop does
+	served   chan struct{}      // closed once Serve returned
 }
 
 // fakeEvents records privileged uses; fail refuses the next ones.
@@ -152,6 +154,9 @@ func newFixtureAt(t *testing.T, backendURL string, configure ...func(*Options)) 
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
 			_, _ = io.WriteString(w, rulesAnswer)
+		case strings.HasSuffix(r.URL.Path, "/linger"):
+			time.Sleep(300 * time.Millisecond)
+			_, _ = io.WriteString(w, `{"kind":"PodList"}`)
 		case strings.HasSuffix(r.URL.Path, "/slow"):
 			<-r.Context().Done() // answers nothing until the gateway gives up
 			return
@@ -259,6 +264,7 @@ func newFixtureAt(t *testing.T, backendURL string, configure ...func(*Options)) 
 		_ = server.Run(ctx)
 	}()
 	t.Cleanup(func() { cancel(); <-done; <-swept })
+	f.stop, f.served = cancel, done
 	f.address = listener.Addr().String()
 	f.client = &http.Client{Transport: &http.Transport{
 		TLSClientConfig:   &tls.Config{RootCAs: pool, ServerName: clusterName},

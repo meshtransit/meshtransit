@@ -2,6 +2,7 @@ package meshgw
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"net/netip"
@@ -60,7 +61,7 @@ func (l *KubeProxyListener) ClosedReason() string {
 type serving struct {
 	stack   Stack
 	ctx     context.Context
-	stop    context.CancelFunc
+	stop    context.CancelCauseFunc
 	done    sync.WaitGroup
 	bound   map[netip.Addr]bool
 	retryAt time.Time
@@ -73,11 +74,15 @@ type servedExit struct {
 	address netip.Addr
 }
 
+// errListenerClosed ends a serving the listener closes itself (a stale map,
+// no certificate, a new stack): the proxy stops at once, without draining.
+var errListenerClosed = errors.New("meshgw: the kube API listener closed")
+
 func (s *serving) close() {
 	if s == nil {
 		return
 	}
-	s.stop()
+	s.stop(errListenerClosed)
 	s.done.Wait()
 }
 
@@ -144,7 +149,7 @@ func (l *KubeProxyListener) Run(ctx context.Context) error {
 func (l *KubeProxyListener) setReason(reason string) { l.reason.Store(&reason) }
 
 func (l *KubeProxyListener) start(ctx context.Context, stack Stack) *serving {
-	serveCtx, stop := context.WithCancel(ctx)
+	serveCtx, stop := context.WithCancelCause(ctx)
 	return &serving{stack: stack, ctx: serveCtx, stop: stop, bound: map[netip.Addr]bool{}, wait: listenRetryFirst}
 }
 
