@@ -257,6 +257,7 @@ payload     bytes[...]
 | 0x37 | `CaptiveWindowReport` | N→C | 4 KiB |
 | 0x38 | `DnsHealthReport` | N→C | 4 KiB |
 | 0x39 | `GatewayGroupReport` | N→C | 16 KiB |
+| 0x3A | `GatewayGroupCeiling` | N→C | 256 KiB |
 | 0x40 | `RelayTicket` | C→N | 256 KiB (4 KiB without `relay.zones2`) |
 | 0x50 | `Lifecycle` | C→N | 4 KiB |
 | 0x51 | `KeyUpdate` | C→N | 4 KiB |
@@ -860,6 +861,55 @@ sends an empty report.
   Core offers it is shown as not reporting. `checked_at_ms` more than 5
   minutes ahead of Core or 30 days behind is not shown.
 - Without `gateway.groups1` the message is answered with a non-fatal
+  `Error{UNSUPPORTED}`; the session stays.
+
+### 6.12 Kubernetes gateway group ceiling
+
+A Kubernetes gateway that negotiated `gateway.ceiling1` reports what each
+group it serves may do in the cluster, as the API server answers
+`SelfSubjectRulesReview` with the group's own token. Core keeps the latest
+ceiling of each gateway Device and shows it to people as a lower bound; it
+never decides access from it.
+
+- **Measuring:** after an RBAC check pass, apart from it (the pass and its
+  verdicts never wait for a measurement), within 3 minutes and at most 4
+  reviews at a time; a measurement starts only after the last one ended. For
+  each group: `everywhere`, a review in a namespace that does not exist
+  (only ClusterRoleBinding rules answer there), and one review in each
+  namespace the group is declared for or that the cluster's rules name, at
+  most 16 (`namespaces_truncated` when there are more). A review that fails,
+  or whose answer exceeds 4 MiB, leaves its scope `measured: false` with
+  nothing else set. The API server's own `evaluationError` text is never
+  sent: only `incomplete`.
+- **`GatewayGroupCeiling`:** at most 64 groups, at most 256 KiB;
+  `truncated` when groups were left out; `checked_at_ms`, when the
+  measurement ended. Each group: `group` (as in 6.11, distinct within the
+  ceiling), `cluster_role` (empty, or a ClusterRole name: printable ASCII,
+  at most 253 bytes, no `/` or `%`, not `.` or `..`), `everywhere` (always
+  present, `namespace` empty) and `namespaces` (each a distinct RFC 1123
+  label of at most 63 bytes).
+- **Scope:** a measured scope holds at most 576 rules
+  (`KubernetesProfileRule`), `incomplete` as the API server said, and
+  `rules_dropped`, how many rules were left out for their size. A rule is a
+  resource rule (verbs, API groups and resources, perhaps resource names)
+  or a path rule (verbs and non-resource URLs only); every list holds at
+  most 64 strings of printable ASCII of at most 253 bytes. A gateway never
+  shortens a rule: one that breaks a bound is dropped and counted. When the
+  ceiling would exceed 256 KiB the gateway leaves out namespaces, from the
+  end of the group with the most, then groups from the end, and sets the
+  flags; a group whose `everywhere` scope alone does not fit keeps that
+  scope with rules dropped from its end and counted in `rules_dropped`.
+- **Sending:** when the content (everything but `checked_at_ms`) changed,
+  and at least every 6 hours; never sooner than 60 seconds after the last.
+- **Core:** takes ceilings only from a gateway session with
+  `gateway.ceiling1`; a ceiling that breaks these rules ends the session
+  with `Error{INVALID}`. Core writes at most one ceiling per 60 seconds per
+  gateway Device (a newer one replaces one waiting), hashes the ceiling it
+  stores itself and takes the cluster from its own records, never from the
+  message. Core orders ceilings and judges them stale by when it received
+  them; `checked_at_ms` is only shown. A ceiling with `incomplete` scopes is
+  shown as covering the RBAC part only: a webhook authorizer may allow more.
+- Without `gateway.ceiling1` the message is answered with a non-fatal
   `Error{UNSUPPORTED}`; the session stays.
 
 ## 7. Map
@@ -1920,6 +1970,7 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `gateway.token1` | A Kubernetes gateway presents its pod token in `NodeKeyProof` and refreshes it with `GatewayPodToken` (6.7); Core offers it whenever its database has the gateway token functions, and holds ratcheted gateways to it |
 | `gateway.audit1` | A Kubernetes gateway records type A operations before forwarding them and reports outcomes (6.10); Core offers it with Kubernetes join and its shared Network view, once it could write them at startup |
 | `gateway.groups1` | A Kubernetes gateway reports its groups' RBAC check with `GatewayGroupReport` (6.11); Core offers it once its database has the group report functions, and takes reports from gateway sessions only |
+| `gateway.ceiling1` | A Kubernetes gateway reports what each group's own RBAC lets it do with `GatewayGroupCeiling` (6.12); Core offers it once its database has the ceiling functions, and takes ceilings from gateway sessions only |
 | `kube.ca1` | Any node reads `kubernetes_clusters` in its map: the clusters it may reach and their roots (7.11); Core offers it where Kubernetes join is on, it builds maps from its shared Network view, and it could read the roots when it started |
 | `gateway.kube.v1` | A Kubernetes gateway applies its peers' `kubernetes` and `owner` (7.8), acknowledges map messages after applying them and takes `MapFresh` (7.9); Core offers it only where maps come from its shared Network view |
 | `gateway.kube.v2` | A Kubernetes gateway applies access profiles: `kubernetes_scopes` and `scoped_grants` (7.12), the audit `profile` and profile denials (6.10). Only with `gateway.kube.v1`: a gateway listing it alone gets no `kubernetes` at all. Core offers it with `gateway.kube.v1` once its database has the profile functions |

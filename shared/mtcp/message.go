@@ -63,6 +63,8 @@ const (
 	MessageGatewayPodToken MessageType = 0x1d
 	// MessageGatewayGroupReport is gateway.groups1 (mtcp-v1 §6.11).
 	MessageGatewayGroupReport MessageType = 0x39
+	// MessageGatewayGroupCeiling is gateway.ceiling1 (mtcp-v1 §6.12).
+	MessageGatewayGroupCeiling MessageType = 0x3a
 )
 
 // Direction is who sends a message.
@@ -132,6 +134,11 @@ var specs = map[MessageType]messageSpec{
 	// 64 groups of a 63-byte name and three small numbers each.
 	MessageGatewayGroupReport: {
 		NodeToCore, 16 * kib, func() proto.Message { return &mtcpv1.GatewayGroupReport{} },
+	},
+	// Each group's rules as its RBAC lets it act: a typical cluster's
+	// groups take under 100 KiB; the gateway leaves out what does not fit.
+	MessageGatewayGroupCeiling: {
+		NodeToCore, 256 * kib, func() proto.Message { return &mtcpv1.GatewayGroupCeiling{} },
 	},
 	MessageRelayTicket: {CoreToNode, 256 * kib, func() proto.Message { return &mtcpv1.RelayTicket{} }}, // MTT2 zones: 17 bytes × 10,001
 	MessageLifecycle:   {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.Lifecycle{} }},

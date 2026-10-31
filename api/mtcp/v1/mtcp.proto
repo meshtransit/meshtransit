@@ -235,6 +235,32 @@ message GatewayGroupStatus {
   }
 }
 
+// GatewayGroupCeiling is what each group's own RBAC lets it do, as the
+// gateway measured it with SelfSubjectRulesReviews (mtcp-v1 §6.12,
+// gateway.ceiling1): shown to people as a lower bound, never a security
+// decision.
+message GatewayGroupCeiling {
+  repeated GatewayCeilingGroup groups = 1; // at most 64
+  bool truncated = 2; // the gateway serves more groups than it sent
+  int64 checked_at_ms = 3; // when this measurement ended
+}
+
+message GatewayCeilingGroup {
+  string group = 1; // as Core names Kubernetes groups, at most 63 bytes
+  string cluster_role = 2; // the ClusterRole the chart binds; empty: not told
+  GatewayCeilingScope everywhere = 3; // asked in a namespace that does not exist
+  repeated GatewayCeilingScope namespaces = 4; // at most 16, each named
+  bool namespaces_truncated = 5; // more namespaces were declared or used
+}
+
+message GatewayCeilingScope {
+  string namespace = 1; // empty for everywhere
+  bool measured = 2; // false: the review failed or its answer was too large
+  repeated KubernetesProfileRule rules = 3; // at most 576
+  bool incomplete = 4; // the API server said its answer is incomplete
+  uint32 rules_dropped = 5; // rules left out for their size
+}
+
 // RotateMachineKey moves a Kubernetes gateway to a new machine key; Core
 // answers RotateMachineKeyResponse and ends the session (mtcp-v1 §6.8).
 message RotateMachineKey {
