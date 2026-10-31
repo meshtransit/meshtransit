@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -387,6 +388,42 @@ func TestBrowserManagementAdmitStreamRefuses(t *testing.T) {
 		if err := browser.admitStream(t.Context(), target, test.header, test.admission); err == nil ||
 			len(target.Header()) != 0 || target.Body.Len() != 0 {
 			t.Errorf("%s: admitted %v, header %v", name, err, target.Header())
+		}
+	}
+}
+
+// The Console reads the policy's Kubernetes access from the browser (K2f
+// f1): the cookie path takes it to the management handler, its query only;
+// before, the browser got 404 (POC rev 410).
+func TestBrowserManagementReadsPolicyKubernetesAccess(t *testing.T) {
+	t.Parallel()
+	browser, _ := newBrowserManagementFixture(t)
+	for _, query := range []string{
+		"?policy_revision=7",
+		"?policy_revision=7&cluster_id=01890f00-0000-7000-8000-000000000a01",
+	} {
+		request := browserManagementReadRequest(t, policyKubernetesAccessURL+query)
+		if !browser.validRequest(request) || !isBrowserManagementOperation(request) {
+			t.Errorf("the browser cannot read %s", query)
+		}
+		read := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+		if err := browser.Handle(read, request); err != nil {
+			t.Fatalf("%s: %v", query, err)
+		}
+		// The fixture has no reader: the handler itself answers.
+		if read.Code != http.StatusServiceUnavailable ||
+			!strings.Contains(read.Body.String(), "policy_kubernetes_access_unavailable") {
+			t.Fatalf("%s = %d; %s", query, read.Code, read.Body)
+		}
+	}
+	for _, query := range []string{"", "?policy_revision=0", "?policy_revision=7&x=1"} {
+		request := browserManagementReadRequest(t, policyKubernetesAccessURL+query)
+		if browser.validRequest(request) {
+			t.Errorf("the browser admitted %q", query)
+		}
+		refused := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+		if err := browser.Handle(refused, request); !errors.Is(err, ErrBrowserManagementRefused) {
+			t.Errorf("%q handled: %v", query, err)
 		}
 	}
 }

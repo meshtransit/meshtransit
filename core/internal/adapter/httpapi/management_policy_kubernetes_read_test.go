@@ -157,6 +157,11 @@ func TestPolicyKubernetesAccessBrowserAdmission(t *testing.T) {
 		if got := isPolicyKubernetesAccessRead(request); got != want {
 			t.Errorf("%s: %v", target, got)
 		}
+		// The browser path routes it to the management handler too: a
+		// Console session reads it (found on POC rev 410: 404 before).
+		if got := isBrowserManagementOperation(request); got != want {
+			t.Errorf("%s routed to management: %v", target, got)
+		}
 	}
 	if isPolicyKubernetesAccessRead(httptest.NewRequest(http.MethodPost, policyKubernetesAccessURL+"?policy_revision=3",
 		nil)) {

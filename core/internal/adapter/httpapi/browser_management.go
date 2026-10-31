@@ -317,7 +317,8 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		isAuditEventExportRead(request) || isGuardrailOperation(request) || isInterchangeOperation(request) || isDeviceGroupOperation(request) || isSiteOperation(request) ||
 		isExitPoolOperation(request) || isDNSZoneOperation(request) || isIdentityCatalogOperation(request) ||
 		isDeviceLifecycleOperation(request) || isMemberLifecycleOperation(request) || isNetworkMemberOperation(request) || isEnrollmentKeyOperation(request) ||
-		isInvitationOperation(request) || isKubernetesClusterOperation(request)
+		isInvitationOperation(request) || isKubernetesClusterOperation(request) ||
+		isPolicyKubernetesAccessRead(request)
 	resourceSharing, _ := browserResourceSharingOperation(request)
 	if !prepare && !logout && !managementScopes && !inventoryRead && !deviceRead && !distributionRead && !historyRead &&
 		!enforcementRead &&
@@ -635,7 +636,9 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 		(isWorkspaceRoleOperation(request) || isSessionWorkspaceOperation(request) || isShareTargetRead(request) ||
 			isNetworkAliasRangeRead(request) || isNetworkDeviceLifetimeRead(request) || isNetworkAddressUsageRead(request) || isGuardrailRead(request) ||
 			isInterchangeRead(request) ||
-			isInvitationRead(request) || isKubernetesClusterRead(request))
+			isInvitationRead(request) || isKubernetesClusterRead(request) ||
+			// The policy's Kubernetes access (K2f f1), GET with its query.
+			isPolicyKubernetesAccessRead(request))
 	auditRead := isAuditEventListRead(request) || isAuditEventExportRead(request) || isDeviceGroupRead(request) || isSiteRead(request) ||
 		isExitPoolRead(request) || isDNSZoneRead(request) || isIdentityCatalogRead(request) || isNetworkMemberRead(request) ||
 		isEnrollmentKeyRead(request)
@@ -653,7 +656,9 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 		// The cluster parser admits a query only on the paged lists
 		// (page_size, page_token) and the operation reads (range and
 		// filters), each with its own keys (K1d d1).
-		isKubernetesClusterRead(request)
+		isKubernetesClusterRead(request) ||
+		// policy_revision and an optional cluster_id, nothing else.
+		isPolicyKubernetesAccessRead(request)
 	if (!queryAllowed && target.RawQuery != "") || len(target.RawQuery) > maximumCallbackQueryBytes {
 		return false
 	}

@@ -247,7 +247,10 @@ func isBrowserManagementOperation(request *http.Request) bool {
 		isDNSZoneOperation(request) ||
 		isIdentityCatalogOperation(request) || isDeviceLifecycleOperation(request) ||
 		isMemberLifecycleOperation(request) || isNetworkMemberOperation(request) || isEnrollmentKeyOperation(request) ||
-		isInvitationOperation(request) || isKubernetesClusterOperation(request) {
+		isInvitationOperation(request) || isKubernetesClusterOperation(request) ||
+		// The policy's Kubernetes access (K2f f1): the Console's permission
+		// set pages and rule form read it from the browser.
+		isPolicyKubernetesAccessRead(request) {
 		return true
 	}
 	_, device := parseDeviceRevokePath(request)
