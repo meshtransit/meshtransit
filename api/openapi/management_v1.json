@@ -5448,7 +5448,7 @@
       "post": {
         "operationId": "issueKubernetesJoinKey",
         "summary": "Issue a join key",
-        "description": "Requires kubernetes_cluster.manage. A key valid 5 minutes to 1 hour (default 1 hour) for 1 to 8 replicas; the secret (mtk1.<id>.<secret>) is returned once. A key only opens requests; a use is consumed when an administrator approves a request with its code. At most 16 usable keys per cluster. Recorded as kubernetes_join_key.issued.",
+        "description": "Requires kubernetes_cluster.manage. A key valid 5 minutes to 1 hour (default 1 hour) for 1 to 8 replicas; the secret (`mtk1.<id>.<secret>`) is returned once. A key only opens requests; a use is consumed when an administrator approves a request with its code. At most 16 usable keys per cluster. Recorded as kubernetes_join_key.issued.",
         "security": [
           {
             "accountSessionBearer": []
