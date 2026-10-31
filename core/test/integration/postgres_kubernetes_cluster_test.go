@@ -359,6 +359,8 @@ WHERE workspace_id = 103 AND network_id = 203 ORDER BY id LIMIT 1`).Scan(&heldMa
 		clusterID)
 	assertGatewayGroupReports(ctx, t, admin, runtime, runtimePool, first, gatewayDevice, service, owner, scope,
 		clusterID)
+	assertGatewayCeilings(ctx, t, admin, runtime, runtimePool, first, gatewayDevice, service, owner, scope,
+		clusterID)
 	assertApproverAdditions(ctx, t, admin, service, owner, scope, clusterID)
 	assertKubernetesAccessSettings(ctx, t, admin, service, owner, scope, clusterID)
 	assertExplainReplica(ctx, t, service, owner, scope, clusterID, gatewayDevice)
@@ -706,6 +708,7 @@ func assertGatewayReferenceCoverage(ctx context.Context, t *testing.T, admin *pg
 		"mesh_ops.kubernetes_gateway_token_proof":         "a gateway's own pod token ratchet",
 		"mesh_ops.kubernetes_gateway_ratchet_change":      "a gateway's own ratchet suspensions and resumes",
 		"mesh_ops.kubernetes_gateway_group_report":        "a gateway's own latest group report",
+		"mesh_ops.kubernetes_gateway_ceiling":             "a gateway's own latest group ceiling",
 	}
 	rows, err := admin.Query(ctx, `SELECT DISTINCT constraint_row.conrelid::REGCLASS::TEXT
 FROM pg_catalog.pg_constraint AS constraint_row

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/shared/kubeprofile"
 )
 
 const (
@@ -247,6 +249,49 @@ func (stub *kubernetesClusterStub) ReadOperation(_ context.Context, _ accountses
 		return kubecluster.Operation{}, kubecluster.ErrNotFound
 	}
 	return kubernetesTestOperation(), nil
+}
+
+// kubernetesTestCeilingHash names the stub's one ceiling.
+const kubernetesTestCeilingHash = "9c" + "00000000000000000000000000000000000000000000000000000000000000"
+
+func (stub *kubernetesClusterStub) ListGroupCeilings(_ context.Context, _ accountsession.Session, _ network.Scope,
+	_ kubecluster.ID,
+) (kubecluster.ClusterCeilings, error) {
+	stub.calls = append(stub.calls, "group-ceilings")
+	if stub.failure != nil {
+		return kubecluster.ClusterCeilings{}, stub.failure
+	}
+	at := time.Now().Add(-time.Minute).UTC().Truncate(time.Second)
+	old := time.Now().Add(-48 * time.Hour).UTC().Truncate(time.Second)
+	return kubecluster.ClusterCeilings{
+		Replicas: []kubecluster.ReplicaCeiling{
+			{DeviceID: kubernetesTestDevice(), ReceivedAt: at, CheckedAt: at, ContentHash: kubernetesTestCeilingHash},
+			{DeviceID: kubernetesTestDevice(), ReceivedAt: old, ContentHash: kubernetesTestCeilingHash},
+			{DeviceID: kubernetesTestDevice()},
+		},
+		Bodies: []kubecluster.CeilingDocument{{ContentHash: kubernetesTestCeilingHash, Body: kubernetesTestCeiling()}},
+	}, nil
+}
+
+func kubernetesTestCeiling() kubecluster.CeilingBody {
+	return kubecluster.CeilingBody{Groups: []kubecluster.CeilingGroup{{
+		Group: "edit", ClusterRole: "edit",
+		Everywhere: kubecluster.CeilingScope{Measured: true, Rules: []kubeprofile.Rule{
+			{Verbs: []string{"get"}, NonResourceURLs: []string{"/api"}},
+		}},
+		Namespaces: []kubecluster.CeilingScope{{Namespace: "default", Measured: true, Incomplete: true,
+			Rules: []kubeprofile.Rule{{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get"}}}}},
+	}}}
+}
+
+func (stub *kubernetesClusterStub) ReadGroupCeiling(_ context.Context, _ accountsession.Session, _ network.Scope,
+	_ kubecluster.ID, hash [32]byte,
+) (kubecluster.CeilingDocument, error) {
+	stub.calls = append(stub.calls, "group-ceiling")
+	if hex.EncodeToString(hash[:]) != kubernetesTestCeilingHash {
+		return kubecluster.CeilingDocument{}, kubecluster.ErrNotFound
+	}
+	return kubecluster.CeilingDocument{ContentHash: kubernetesTestCeilingHash, Body: kubernetesTestCeiling()}, nil
 }
 
 func (stub *kubernetesClusterStub) ListProfileDenials(_ context.Context, _ accountsession.Session,
@@ -811,6 +856,29 @@ func TestKubernetesClusterHTTPBoundary(t *testing.T) {
 			kubecluster.ErrForbidden, 403, "profile-denials", "", ""},
 		{"profile denials are read only", http.MethodPost, cluster + "/profile-denials", "{}", "", nil, 405, "", "",
 			""},
+		{"group ceilings", http.MethodGet, cluster + "/group-ceilings", "", "", nil, 200, "group-ceilings",
+			`"content_hash":"` + kubernetesTestCeilingHash + `","stale":false},`, ""},
+		{"a stale ceiling", http.MethodGet, cluster + "/group-ceilings", "", "", nil, 200, "group-ceilings",
+			`"checked_at":null,"content_hash":"` + kubernetesTestCeilingHash + `","stale":true}`, ""},
+		{"a replica without a ceiling", http.MethodGet, cluster + "/group-ceilings", "", "", nil, 200, "group-ceilings",
+			`"received_at":null,"checked_at":null,"content_hash":null,"stale":false}]`, ""},
+		{"ceiling bodies", http.MethodGet, cluster + "/group-ceilings", "", "", nil, 200, "group-ceilings",
+			`"namespaces":[{"namespace":"default","measured":true,"incomplete":true,"rules_dropped":0,` +
+				`"rules":[{"apiGroups":[""],"resources":["pods"],"verbs":["get"]}]}],"namespaces_truncated":false}]}],` +
+				`"stale_after_seconds":86400`, ""},
+		{"group ceilings take no query", http.MethodGet, cluster + "/group-ceilings?page_size=1", "", "", nil, 404,
+			"", "", ""},
+		{"group ceilings are read only", http.MethodPut, cluster + "/group-ceilings", "{}", "", nil, 405, "", "",
+			""},
+		{"group ceilings without network.read", http.MethodGet, cluster + "/group-ceilings", "", "",
+			kubecluster.ErrForbidden, 403, "group-ceilings", "", ""},
+		{"a ceiling by its hash", http.MethodGet, cluster + "/group-ceilings/" + kubernetesTestCeilingHash, "", "",
+			nil, 200, "group-ceiling", `"content_hash":"` + kubernetesTestCeilingHash + `","truncated":false`, ""},
+		{"an unknown ceiling", http.MethodGet, cluster + "/group-ceilings/" + strings.Repeat("ab", 32), "", "", nil,
+			404, "group-ceiling", "", ""},
+		{"a ceiling hash in capitals", http.MethodGet, cluster + "/group-ceilings/" + strings.Repeat("AB", 32), "",
+			"", nil, 404, "", "", ""},
+		{"a short ceiling hash", http.MethodGet, cluster + "/group-ceilings/abcd", "", "", nil, 404, "", "", ""},
 		{"operations without audit.read", http.MethodGet, cluster + "/operations", "", "", kubecluster.ErrForbidden,
 			403, "list-operations", "", ""},
 		{"read audit settings", http.MethodGet, cluster + "/audit-settings", "", "", nil, 200,

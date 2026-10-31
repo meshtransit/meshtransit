@@ -155,6 +155,18 @@ func (*recordingStore) ListProfileDenials(context.Context, accountsession.Sessio
 	return nil, nil
 }
 
+func (*recordingStore) ListGroupCeilings(context.Context, accountsession.Session, network.Scope,
+	kubecluster.ID,
+) (kubecluster.ClusterCeilings, error) {
+	return kubecluster.ClusterCeilings{}, nil
+}
+
+func (*recordingStore) ReadGroupCeiling(context.Context, accountsession.Session, network.Scope, kubecluster.ID,
+	[32]byte,
+) (kubecluster.CeilingDocument, error) {
+	return kubecluster.CeilingDocument{}, nil
+}
+
 func (*recordingStore) ReadAccessSettings(context.Context, accountsession.Session, network.Scope,
 	kubecluster.ID) (kubecluster.AccessSettings, error) {
 	return kubecluster.AccessSettings{}, nil

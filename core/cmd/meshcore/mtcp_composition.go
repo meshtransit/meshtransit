@@ -148,6 +148,35 @@ func gatewayGroupCapabilities(groups mtcpadapter.GatewayGroupRecorder) []string 
 	return []string{mtcpadapter.CapabilityGatewayGroups}
 }
 
+// gatewayCeilingCapabilities offers gateway.ceiling1, gateways' group
+// ceilings (mtcp-v1 §6.12), when schema 265 was granted at startup.
+func gatewayCeilingCapabilities(ceilings mtcpadapter.GatewayCeilingRecorder) []string {
+	if ceilings == nil {
+		return nil
+	}
+	return []string{mtcpadapter.CapabilityGatewayCeiling}
+}
+
+// gatewayCeilingRecorder keeps gateways' group ceilings in the store.
+type gatewayCeilingRecorder struct {
+	store *postgresadapter.KubernetesGatewayCeilingStore
+}
+
+func (recorder gatewayCeilingRecorder) RecordGatewayCeiling(ctx context.Context, machine [32]byte, nodeKey []byte,
+	ceiling kubecluster.EncodedCeiling,
+) (mtcpadapter.GatewayCeilingWrite, error) {
+	outcome, err := recorder.store.Record(ctx, machine, nodeKey, ceiling)
+	switch {
+	case err != nil:
+		return 0, err
+	case outcome == postgresadapter.GatewayCeilingOlder:
+		return mtcpadapter.GatewayCeilingKeptNewer, nil
+	case outcome == postgresadapter.GatewayCeilingNotGateway:
+		return mtcpadapter.GatewayCeilingNoGateway, nil
+	}
+	return mtcpadapter.GatewayCeilingWritten, nil
+}
+
 // gatewayGroupRecorder keeps gateways' group reports in the store; a report
 // that met a lock is written again later.
 type gatewayGroupRecorder struct {
@@ -211,6 +240,9 @@ type mtcpDependencies struct {
 	// gatewayGroups, when set, keeps gateways' group reports
 	// (gateway.groups1, schema 254).
 	gatewayGroups mtcpadapter.GatewayGroupRecorder
+	// gatewayCeilings, when set, keeps gateways' group ceilings
+	// (gateway.ceiling1, schema 265).
+	gatewayCeilings mtcpadapter.GatewayCeilingRecorder
 	// gatewayPresence says whether a gateway's stream may rotate its keys.
 	gatewayPresence mapsession.GatewayPresenceStore
 	// kubeCertificates, when set, queues gateways' certificate requests
@@ -323,7 +355,8 @@ func composeMTCP(
 				append(append(kubeCertCapabilities(deps.kubeCertificates),
 					kubernetesClusterCapabilities(deps.kubernetesClusters)...),
 					append(append(kubeAuditCapabilities(deps.kubeAudit), gatewayTokenCapabilities(deps.gatewayTokens)...),
-						gatewayGroupCapabilities(deps.gatewayGroups)...)...)...)...)...),
+						append(gatewayGroupCapabilities(deps.gatewayGroups),
+							gatewayCeilingCapabilities(deps.gatewayCeilings)...)...)...)...)...)...),
 		Logger:         logger,
 		Metrics:        metrics,
 		HandshakeRate:  controlConfig.MTCP.HandshakeRate,
@@ -332,11 +365,12 @@ func composeMTCP(
 		UnauthenticatedPerSource: controlConfig.MTCP.UnauthenticatedPerSource,
 		UnprovenLimit:            controlConfig.MTCP.UnprovenLifetime,
 		// MTCP connections count against the listener's connection bound.
-		MaxSessions:   controlConfig.MaxSessions,
-		DrainWindow:   controlConfig.DrainWindow,
-		GatewayKeys:   deps.gatewayKeyEvents,
-		GatewayTokens: deps.gatewayTokens,
-		GatewayGroups: deps.gatewayGroups,
+		MaxSessions:     controlConfig.MaxSessions,
+		DrainWindow:     controlConfig.DrainWindow,
+		GatewayKeys:     deps.gatewayKeyEvents,
+		GatewayTokens:   deps.gatewayTokens,
+		GatewayGroups:   deps.gatewayGroups,
+		GatewayCeilings: deps.gatewayCeilings,
 	})
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidMTCPComposition, err)

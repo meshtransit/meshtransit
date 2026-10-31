@@ -154,7 +154,11 @@ type Options struct {
 	// (gateway.groups1, schema 254); Capabilities lists it exactly when it
 	// is set.
 	GatewayGroups GatewayGroupRecorder
-	Now           func() time.Time
+	// GatewayCeilings, when set, keeps Kubernetes gateways' group ceilings
+	// (gateway.ceiling1, schema 265); Capabilities lists it exactly when it
+	// is set.
+	GatewayCeilings GatewayCeilingRecorder
+	Now             func() time.Time
 }
 
 // Server serves MTCP on the control listener. It is an http.Handler for
@@ -182,7 +186,9 @@ type Server struct {
 	keyReports *gatewayKeyReporter
 	// groupReports writes gateways' group reports; nil without them.
 	groupReports *gatewayGroupWriter
-	wg           sync.WaitGroup
+	// ceilings writes gateways' group ceilings; nil without them.
+	ceilings *gatewayCeilingWriter
+	wg       sync.WaitGroup
 }
 
 type gatewayFight struct {
@@ -236,7 +242,8 @@ func NewServer(options Options) (*Server, error) {
 	}
 	if !options.GatewayTokens.valid() ||
 		(options.GatewayTokens != nil) != slices.Contains(options.Capabilities, CapabilityGatewayToken) ||
-		(options.GatewayGroups != nil) != slices.Contains(options.Capabilities, CapabilityGatewayGroups) {
+		(options.GatewayGroups != nil) != slices.Contains(options.Capabilities, CapabilityGatewayGroups) ||
+		(options.GatewayCeilings != nil) != slices.Contains(options.Capabilities, CapabilityGatewayCeiling) {
 		return nil, ErrInvalidServer
 	}
 	keys := make(map[key.KeyID]ControlKey, len(options.Keys))
@@ -262,6 +269,7 @@ func NewServer(options Options) (*Server, error) {
 	server.keyReports = newGatewayKeyReporter(options.GatewayKeys, options.Metrics, options.Logger, options.Now,
 		gatewayKeyReportQueue)
 	server.groupReports = newGatewayGroupWriter(options.GatewayGroups, options.Metrics, options.Logger, options.Now)
+	server.ceilings = newGatewayCeilingWriter(options.GatewayCeilings, options.Metrics, options.Logger, options.Now)
 	options.Metrics.countExpiringDevices(server.expiringDevices)
 	return server, nil
 }
@@ -765,6 +773,7 @@ func (server *Server) Shutdown(ctx context.Context) error {
 	// Key reports stop once every session that could report has ended.
 	defer server.keyReports.stop()
 	defer server.groupReports.stop()
+	defer server.ceilings.stop()
 	select {
 	case <-done:
 		return nil

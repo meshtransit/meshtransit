@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 264 {
-		t.Fatalf("len(Catalog()) = %d, want 264", len(catalog))
+	if len(catalog) != 265 {
+		t.Fatalf("len(Catalog()) = %d, want 265", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 264 {
-		t.Fatalf("LatestVersion() = %d, want 264", LatestVersion())
+	if LatestVersion() != 265 {
+		t.Fatalf("LatestVersion() = %d, want 265", LatestVersion())
 	}
 }
 
@@ -7877,5 +7877,34 @@ func TestMigration264KubernetesProfileClusters(t *testing.T) {
 		if !strings.Contains(migration.SQL, want) {
 			t.Errorf("migration 264 lacks %q", want)
 		}
+	}
+}
+
+func TestMigration265KubernetesGatewayCeilings(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 265 || catalog[264].Version != 265 {
+		t.Fatalf("the catalog has no migration 265 (%d migrations)", len(catalog))
+	}
+	migration := catalog[264]
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.kubernetes_gateway_ceiling_body_is_valid_v1(p_body JSONB)",
+		"CREATE TABLE mesh_ops.kubernetes_gateway_ceiling (",
+		"ALTER TABLE mesh_ops.kubernetes_gateway_ceiling FORCE ROW LEVEL SECURITY;",
+		"REFERENCES mesh.device (workspace_id, network_id, id) ON DELETE CASCADE",
+		"CREATE FUNCTION mesh_ops.record_kubernetes_gateway_ceiling_v1(",
+		"WHERE kept.received_at <= EXCLUDED.received_at;",
+		"CREATE FUNCTION mesh_ops.list_kubernetes_cluster_ceilings_v1(",
+		"CREATE FUNCTION mesh_ops.read_kubernetes_cluster_ceiling_v1(",
+		"mesh_ops.kubernetes_cluster_reader_internal_v1(",
+		"AND replica.state = 'active' AND replica.deleted_at IS NULL",
+		"LIMIT 4",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 265 lacks %q", want)
+		}
+	}
+	if strings.Contains(migration.SQL, "pg_advisory_xact_lock") {
+		t.Error("a ceiling write takes a handshake lock")
 	}
 }

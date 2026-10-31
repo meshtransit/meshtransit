@@ -157,6 +157,10 @@ type Store interface {
 		from, to time.Time) (DenialSums, error)
 	ListProfileDenials(ctx context.Context, session accountsession.Session, scope network.Scope,
 		clusterID ID) ([]ProfileDenial, error)
+	ListGroupCeilings(ctx context.Context, session accountsession.Session, scope network.Scope,
+		clusterID ID) (ClusterCeilings, error)
+	ReadGroupCeiling(ctx context.Context, session accountsession.Session, scope network.Scope, clusterID ID,
+		contentHash [32]byte) (CeilingDocument, error)
 	ReadAuditSettings(ctx context.Context, session accountsession.Session, scope network.Scope,
 		clusterID ID) (AuditSettings, error)
 	ReplaceAuditSettings(ctx context.Context, replacement AuditSettingsReplacement) (AuditSettingsResult, error)

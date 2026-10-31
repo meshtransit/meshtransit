@@ -3173,6 +3173,242 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/group-ceilings": {
+      "get": {
+        "operationId": "listKubernetesGroupCeilings",
+        "summary": "Read a cluster's group ceilings",
+        "description": "Requires current network.read (K2h h4). The cluster's active gateway replicas, each with the hash and time of its latest group ceiling, and the distinct ceilings among them: what each group's own RBAC lets it do, as the replica measured it. A lower bound for people to read, never a security decision; the API server stays the real limit.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The replicas' group ceilings",
+            "headers": {
+              "X-Correlation-ID": {
+                "$ref": "#/components/headers/CorrelationID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "correlation_id": {
+                      "$ref": "#/components/schemas/PublicID"
+                    },
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "replicas",
+                        "ceilings",
+                        "stale_after_seconds"
+                      ],
+                      "properties": {
+                        "replicas": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "device_id",
+                              "received_at",
+                              "checked_at",
+                              "content_hash",
+                              "stale"
+                            ],
+                            "properties": {
+                              "device_id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "received_at": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ],
+                                "format": "date-time",
+                                "description": "When Core took the replica's latest ceiling; null: none yet (an older meshgw, or not measured yet)."
+                              },
+                              "checked_at": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ],
+                                "format": "date-time",
+                                "description": "When the gateway's measurement ended, when near Core's clock."
+                              },
+                              "content_hash": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ],
+                                "pattern": "^[0-9a-f]{64}$"
+                              },
+                              "stale": {
+                                "type": "boolean",
+                                "description": "Received more than stale_after_seconds ago."
+                              }
+                            }
+                          }
+                        },
+                        "ceilings": {
+                          "type": "array",
+                          "maxItems": 4,
+                          "items": {
+                            "$ref": "#/components/schemas/KubernetesCeiling"
+                          },
+                          "description": "At most 4 distinct ceilings among the replicas, the most recently received first; read another by its hash. Replicas with different hashes disagree."
+                        },
+                        "stale_after_seconds": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/group-ceilings/{content_hash}": {
+      "get": {
+        "operationId": "readKubernetesGroupCeiling",
+        "summary": "Read one of a cluster's group ceilings by its hash",
+        "description": "Requires current network.read (K2h h4). A ceiling an active replica of the cluster holds; 404 when none does.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "content_hash",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The group ceiling",
+            "headers": {
+              "X-Correlation-ID": {
+                "$ref": "#/components/headers/CorrelationID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "correlation_id": {
+                      "$ref": "#/components/schemas/PublicID"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/KubernetesCeiling"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/devices/{device_id}/actions/revoke": {
       "post": {
         "operationId": "revokeDevice",
@@ -10848,7 +11084,156 @@
     "ReplaceContractServiceNamesRequest": {"type":"object","additionalProperties":false,"required":["service_names"],"properties":{"service_names":{"type":"array","maxItems":8,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":253}}}},
     "UseContractServiceNameRequest": {"type":"object","additionalProperties":false,"required":["name"],"properties":{"name":{"type":"string","minLength":3,"maxLength":253,"description":"A current suggestion, as the read shows it"}}},
     "ContractServiceNameUse": {"type":"object","additionalProperties":false,"required":["dns_name_id","dns_zone_id","name","zone","version"],"properties":{"dns_name_id":{"$ref":"#/components/schemas/PublicID"},"dns_zone_id":{"$ref":"#/components/schemas/PublicID"},"name":{"type":"string"},"zone":{"type":"string","description":"The zone's domain"},"version":{"type":"integer","format":"int64","minimum":1}}},
-    "ContractServiceNameUseResponse": {"type":"object","additionalProperties":false,"required":["data","correlation_id"],"properties":{"data":{"$ref":"#/components/schemas/ContractServiceNameUse"},"correlation_id":{"$ref":"#/components/schemas/PublicID"}}}
+    "ContractServiceNameUseResponse": {"type":"object","additionalProperties":false,"required":["data","correlation_id"],"properties":{"data":{"$ref":"#/components/schemas/ContractServiceNameUse"},"correlation_id":{"$ref":"#/components/schemas/PublicID"}}},
+      "KubernetesCeilingRule": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "verbs"
+        ],
+        "properties": {
+          "apiGroups": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "maxLength": 253
+            }
+          },
+          "resources": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "maxLength": 253
+            }
+          },
+          "verbs": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "maxLength": 253
+            }
+          },
+          "resourceNames": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "maxLength": 253
+            }
+          },
+          "nonResourceURLs": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "maxLength": 253
+            }
+          }
+        },
+        "description": "A rule as a SelfSubjectRulesReview answers it: a resource rule (apiGroups, resources, maybe resourceNames) or a path rule (nonResourceURLs). Printable ASCII."
+      },
+      "KubernetesCeilingScope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "namespace",
+          "measured",
+          "incomplete",
+          "rules_dropped",
+          "rules"
+        ],
+        "properties": {
+          "namespace": {
+            "type": "string",
+            "maxLength": 63,
+            "description": "Empty for everywhere: the rules ClusterRoleBindings grant."
+          },
+          "measured": {
+            "type": "boolean",
+            "description": "False: the review failed or its answer was too large; nothing else is set."
+          },
+          "incomplete": {
+            "type": "boolean",
+            "description": "The API server called its answer incomplete: an authorizer it cannot list (a webhook) may allow more. Read the rules as the RBAC part only."
+          },
+          "rules_dropped": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Rules left out for their size: the ceiling may be larger."
+          },
+          "rules": {
+            "type": "array",
+            "maxItems": 576,
+            "items": {
+              "$ref": "#/components/schemas/KubernetesCeilingRule"
+            }
+          }
+        }
+      },
+      "KubernetesCeiling": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "content_hash",
+          "truncated",
+          "groups"
+        ],
+        "properties": {
+          "content_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "The gateway serves more groups than it reported."
+          },
+          "groups": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "group",
+                "cluster_role",
+                "everywhere",
+                "namespaces",
+                "namespaces_truncated"
+              ],
+              "properties": {
+                "group": {
+                  "type": "string",
+                  "maxLength": 63
+                },
+                "cluster_role": {
+                  "type": "string",
+                  "maxLength": 253,
+                  "description": "The ClusterRole the gateway's chart binds; empty when not told."
+                },
+                "everywhere": {
+                  "$ref": "#/components/schemas/KubernetesCeilingScope"
+                },
+                "namespaces": {
+                  "type": "array",
+                  "maxItems": 16,
+                  "items": {
+                    "$ref": "#/components/schemas/KubernetesCeilingScope"
+                  }
+                },
+                "namespaces_truncated": {
+                  "type": "boolean",
+                  "description": "More namespaces were declared or named by rules than measured: the others were not checked."
+                }
+              }
+            }
+          }
+        },
+        "description": "What each group's own RBAC lets it do, as a gateway replica measured it with SelfSubjectRulesReviews (mtcp-v1 6.12). A lower bound shown to people: RoleBindings in namespaces not checked, incomplete scopes and dropped rules may allow more. Core decides nothing from it."
+      }
   },
     "responses": {
       "InvalidRequest": {

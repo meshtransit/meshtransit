@@ -742,6 +742,22 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			logger.WarnContext(ctx, "Kubernetes gateway group reports unavailable",
 				"error_code", "kubernetes_gateway_group_reports_unavailable", "error", groupErr)
 		}
+		// Gateways report their groups' ceilings (gateway.ceiling1, K2h h4c)
+		// once schema 265 is granted; shown to people only, like the reports.
+		ceilingStore, ceilingErr := postgresadapter.NewKubernetesGatewayCeilingStore(storagePools.runtime)
+		if ceilingErr == nil {
+			probeCtx, cancelProbe = context.WithTimeout(ctx, 10*time.Second)
+			granted, grantErr := ceilingStore.Granted(probeCtx)
+			cancelProbe()
+			ceilingErr = grantErr
+			if grantErr == nil && granted {
+				deps.gatewayCeilings = gatewayCeilingRecorder{store: ceilingStore}
+			}
+		}
+		if deps.gatewayCeilings == nil {
+			logger.WarnContext(ctx, "Kubernetes gateway ceilings unavailable",
+				"error_code", "kubernetes_gateway_ceilings_unavailable", "error", ceilingErr)
+		}
 		if processConfig.KubernetesJoin {
 			joins, joinErr := composeClusterJoins(*processConfig.Enrollment, storagePools.runtime)
 			if joinErr != nil {

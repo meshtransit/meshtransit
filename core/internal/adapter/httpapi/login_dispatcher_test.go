@@ -803,6 +803,8 @@ func TestLoginDispatcherAdmitsKubernetesClusterQueries(t *testing.T) {
 		kubernetesClustersTestPath(cluster + "/operation-denial-counts?from=2026-10-29T00:00:00Z&to=2026-10-30T00:00:00Z"),
 		kubernetesClustersTestPath(cluster + "/operation-exports?from=2026-10-29T00:00:00Z"),
 		kubernetesClustersTestPath(cluster + "/approver-additions"),
+		kubernetesClustersTestPath(cluster + "/group-ceilings"),
+		kubernetesClustersTestPath(cluster + "/group-ceilings/" + kubernetesTestCeilingHash),
 	} {
 		if !dispatcher.validRequest(newLoginHTTPRecorder(), browserManagementReadRequest(t, path)) {
 			t.Errorf("the dispatcher refused %s", path)
@@ -813,6 +815,7 @@ func TestLoginDispatcherAdmitsKubernetesClusterQueries(t *testing.T) {
 		kubernetesClustersTestPath(cluster + "?page_size=10"),
 		kubernetesClustersTestPath(cluster + "/replicas?limit=10"),
 		kubernetesClustersTestPath(cluster + "/audit-settings?x=1"),
+		kubernetesClustersTestPath(cluster + "/group-ceilings?page_size=1"),
 	} {
 		if dispatcher.validRequest(newLoginHTTPRecorder(), browserManagementReadRequest(t, path)) {
 			t.Errorf("the dispatcher admitted %s", path)

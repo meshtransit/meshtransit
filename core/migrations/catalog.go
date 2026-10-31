@@ -659,6 +659,8 @@ func Catalog() []Migration {
 			kubernetesProfileDenialsSQL),
 		newMigration(264, "Permission sets belong to one Kubernetes cluster, bound for good",
 			kubernetesProfileClustersSQL),
+		newMigration(265, "Kubernetes gateways' group ceilings, as their RBAC lets each group act",
+			kubernetesGatewayCeilingsSQL),
 	}
 }
 
@@ -1230,3 +1232,6 @@ var kubernetesProfileDenialsSQL string
 
 //go:embed 000264_kubernetes_profile_clusters.up.sql
 var kubernetesProfileClustersSQL string
+
+//go:embed 000265_kubernetes_gateway_ceilings.up.sql
+var kubernetesGatewayCeilingsSQL string

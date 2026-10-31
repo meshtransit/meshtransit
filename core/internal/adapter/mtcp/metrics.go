@@ -147,6 +147,18 @@ const (
 	// wait for the database (K1d d3).
 	limitGatewayGroupReport  = "gateway_group_report"
 	limitGatewayGroupDropped = "gateway_group_report_dropped"
+	// Gateways' group ceilings (K2h h4c): made to wait for their Device's
+	// minute; dropped with no room to wait (budget, Devices or stopped);
+	// expired waiting; refused by Core's check after the wire rules took
+	// them; their write failed; a newer one was kept; no gateway holds the
+	// session's keys.
+	limitGatewayCeilingSpaced      = "gateway_ceiling_spaced"
+	limitGatewayCeilingDropped     = "gateway_ceiling_dropped"
+	limitGatewayCeilingExpired     = "gateway_ceiling_expired"
+	limitGatewayCeilingRefused     = "gateway_ceiling_refused"
+	limitGatewayCeilingWriteFailed = "gateway_ceiling_write_failed"
+	limitGatewayCeilingOlder       = "gateway_ceiling_older"
+	limitGatewayCeilingNoGateway   = "gateway_ceiling_not_gateway"
 )
 
 // gatewaySessionTokenLimit names a session refused for its pod token.
@@ -172,7 +184,9 @@ var sessionLimits = []string{limitInbound, limitAudit, limitAuditCeiling, limitR
 	limitClusterJoinToken, limitGatewayTrustMissing, limitGatewayTrustUnavailable, limitGatewayTokenStore,
 	limitGatewayContestOverridden, limitGatewayTokenObserved, limitGatewayTokenRefresh,
 	limitGatewayTokenSuspended, limitGatewayTokenSuspensionEnded, limitGatewayGroupReport,
-	limitGatewayGroupDropped,
+	limitGatewayGroupDropped, limitGatewayCeilingSpaced, limitGatewayCeilingDropped, limitGatewayCeilingExpired,
+	limitGatewayCeilingRefused, limitGatewayCeilingWriteFailed, limitGatewayCeilingOlder,
+	limitGatewayCeilingNoGateway,
 	gatewayTokenLimit(kubetoken.ReasonMissing), gatewayTokenLimit(kubetoken.ReasonMalformed),
 	gatewayTokenLimit(kubetoken.ReasonUnknownKey), gatewayTokenLimit(kubetoken.ReasonSignature),
 	gatewayTokenLimit(kubetoken.ReasonExpired), gatewayTokenLimit(kubetoken.ReasonAudience),

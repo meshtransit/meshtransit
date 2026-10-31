@@ -50,6 +50,8 @@ const (
 	kubernetesAccessSettingsReplaceOperation = "kubernetes_access_settings_replace"
 	kubernetesDenialCountsOperation          = "kubernetes_operation_denial_counts"
 	kubernetesProfileDenialsOperation        = "kubernetes_profile_denials"
+	kubernetesGroupCeilingsOperation         = "kubernetes_group_ceilings"
+	kubernetesGroupCeilingReadOperation      = "kubernetes_group_ceiling_read"
 	// K1d d2a: approvers ask the CA worker to retire a CA.
 	kubernetesCARetireListOperation    = "kubernetes_ca_retire_request_list"
 	kubernetesCARetireRequestOperation = "kubernetes_ca_retire_request_create"
@@ -92,6 +94,10 @@ type KubernetesClusterManager interface {
 		time.Time) (kubecluster.DenialSums, error)
 	ListProfileDenials(context.Context, accountsession.Session, network.Scope,
 		kubecluster.ID) ([]kubecluster.ProfileDenial, error)
+	ListGroupCeilings(context.Context, accountsession.Session, network.Scope,
+		kubecluster.ID) (kubecluster.ClusterCeilings, error)
+	ReadGroupCeiling(context.Context, accountsession.Session, network.Scope, kubecluster.ID,
+		[32]byte) (kubecluster.CeilingDocument, error)
 	ReadAuditSettings(context.Context, accountsession.Session, network.Scope,
 		kubecluster.ID) (kubecluster.AuditSettings, error)
 	ReplaceAuditSettings(context.Context, kubecluster.AuditSettingsReplacement) (kubecluster.AuditSettingsResult,
@@ -118,6 +124,8 @@ type kubernetesClusterPath struct {
 	deviceID  node.ID
 	caID      publicid.ID
 	auditID   publicid.ID
+	// contentHash names one of the cluster's group ceilings (K2h h4c).
+	contentHash [32]byte
 	// operations is the operation list's or denial counts' query.
 	operations kubernetesOperationQuery
 	// page is the list's page; only the lists take one.
@@ -145,6 +153,8 @@ type kubernetesClusterPath struct {
 //	GET         kubernetes-clusters/{c}/operations[/{audit_id}]            list, read (K1d d1c)
 //	GET         kubernetes-clusters/{c}/operation-denial-counts            sums (K1d d1c)
 //	GET         kubernetes-clusters/{c}/profile-denials                    latest samples (K2f f4)
+//	GET         kubernetes-clusters/{c}/group-ceilings                     replicas' group ceilings (K2h h4c)
+//	GET         kubernetes-clusters/{c}/group-ceilings/{hash}              one ceiling by its hash
 //	GET|PUT     kubernetes-clusters/{c}/audit-settings                     read, replace (K1d d1d)
 //	GET|PUT     kubernetes-clusters/{c}/access-settings                    read, replace (K2d d4b)
 //	GET         kubernetes-clusters/{c}/operation-exports                  export (K1d d1d)
@@ -261,6 +271,16 @@ func (path *kubernetesClusterPath) route(rest []string) (map[string]string, bool
 	case len(rest) == 2 && rest[1] == "profile-denials":
 		path.methods = restMethods{http.MethodGet}
 		return map[string]string{http.MethodGet: kubernetesProfileDenialsOperation}, true
+	case len(rest) == 2 && rest[1] == "group-ceilings":
+		path.methods = restMethods{http.MethodGet}
+		return map[string]string{http.MethodGet: kubernetesGroupCeilingsOperation}, true
+	case len(rest) == 3 && rest[1] == "group-ceilings":
+		hash, ok := parseCeilingHash(rest[2])
+		if !ok {
+			return nil, false
+		}
+		path.contentHash, path.methods = hash, restMethods{http.MethodGet}
+		return map[string]string{http.MethodGet: kubernetesGroupCeilingReadOperation}, true
 	case len(rest) == 2 && rest[1] == "operation-denial-counts":
 		path.methods = restMethods{http.MethodGet}
 		return map[string]string{http.MethodGet: kubernetesDenialCountsOperation}, true
@@ -426,6 +446,8 @@ func (handler *ManagementHandler) handleKubernetesClusters(ctx context.Context, 
 		return handler.serveKubernetesAccessSettings(ctx, response, request, correlationID, path, session, fail)
 	case kubernetesProfileDenialsOperation:
 		return handler.readKubernetesProfileDenials(ctx, response, correlationID, path, session, fail)
+	case kubernetesGroupCeilingsOperation, kubernetesGroupCeilingReadOperation:
+		return handler.readKubernetesGroupCeilings(ctx, response, correlationID, path, session, fail)
 	case kubernetesOperationListOperation, kubernetesOperationReadOperation, kubernetesDenialCountsOperation:
 		return handler.readKubernetesOperations(ctx, response, correlationID, path, session, fail)
 	case kubernetesClusterDeleteOperation:

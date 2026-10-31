@@ -569,6 +569,9 @@ func (session *Session) dispatch(conversation Conversation, message inbound) boo
 	case sharedmtcp.MessageGatewayGroupReport:
 		report, _ := message.message.(*mtcpv1.GatewayGroupReport)
 		return session.receiveGroupReport(now, report)
+	case sharedmtcp.MessageGatewayGroupCeiling:
+		ceiling, _ := message.message.(*mtcpv1.GatewayGroupCeiling)
+		return session.receiveGroupCeiling(now, ceiling)
 	}
 	if err := conversation.Receive(session.ctx, message.t, message.message); err != nil {
 		var violation protocolError
