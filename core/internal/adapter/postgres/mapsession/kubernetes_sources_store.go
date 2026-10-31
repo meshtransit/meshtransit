@@ -310,8 +310,10 @@ func (store *Store) readKubernetesContacts(ctx context.Context,
 	return contacts, nil
 }
 
-// maximumKubernetesProfiles bounds the profiles one release holds.
-const maximumKubernetesProfiles = 256
+// maximumKubernetesProfiles bounds the contents of the sets one release's
+// rules apply: at most every set a release holds once sets belong to
+// clusters (K2h, publication.MaximumKubernetesProfiles; review h1 H1).
+const maximumKubernetesProfiles = 1024
 
 var kubernetesOwnerKinds = map[string]appmapsession.KubernetesOwnerKind{
 	"member": appmapsession.KubernetesOwnerMember, "tags": appmapsession.KubernetesOwnerTags,

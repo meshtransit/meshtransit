@@ -3,6 +3,7 @@ package compilation
 
 import (
 	"errors"
+	"maps"
 	"net/netip"
 	"slices"
 
@@ -350,6 +351,22 @@ type RequestParams struct {
 	// KubernetesProfiles are every access profile of the release (K2). Nil
 	// keeps those of the release the request replaces; empty removes them.
 	KubernetesProfiles []publication.KubernetesProfile
+	// KubernetesProfileClusters says what the request names of a set's
+	// cluster (K2h Q261), by set ID: a cluster, or every cluster (legacy).
+	// A set absent here keeps the cluster it has in the replaced release.
+	KubernetesProfileClusters map[publication.KubernetesProfileID]ProfileCluster
+}
+
+// ProfileCluster is the cluster a request names for a permission set: one
+// cluster, or Legacy for every cluster.
+type ProfileCluster struct {
+	Legacy  bool
+	Cluster kubecluster.ID
+}
+
+// IsValid reports exactly one of a cluster or every cluster.
+func (choice ProfileCluster) IsValid() bool {
+	return choice.Legacy == (choice.Cluster == kubecluster.ID{}) && (choice.Legacy || choice.Cluster.IsValid())
 }
 
 // Request is immutable typed policy intent for one successor revision.
@@ -358,6 +375,7 @@ type Request struct {
 	revision           int64
 	rules              []RuleIntent
 	kubernetesProfiles []publication.KubernetesProfile
+	profileClusters    map[publication.KubernetesProfileID]ProfileCluster
 }
 
 // NewRequest validates a bounded rule set with unique stable Access Rule IDs.
@@ -365,6 +383,7 @@ func NewRequest(params RequestParams) (Request, error) {
 	request := Request{
 		scope: params.Scope, revision: params.Revision, rules: slices.Clone(params.Rules),
 		kubernetesProfiles: cloneProfiles(params.KubernetesProfiles),
+		profileClusters:    maps.Clone(params.KubernetesProfileClusters),
 	}
 	if !request.IsValid() {
 		return Request{}, ErrInvalidRequest
@@ -387,11 +406,27 @@ func (request Request) KubernetesProfiles() []publication.KubernetesProfile {
 	return cloneProfiles(request.kubernetesProfiles)
 }
 
+// KubernetesProfileClusters returns what the request names of its sets'
+// clusters, by set ID; a set absent keeps its cluster.
+func (request Request) KubernetesProfileClusters() map[publication.KubernetesProfileID]ProfileCluster {
+	return maps.Clone(request.profileClusters)
+}
+
 // IsValid reports whether every rule is exact-scoped, bounded, and uniquely identified.
 func (request Request) IsValid() bool {
 	if !request.scope.IsValid() || request.revision <= 1 || request.rules == nil ||
 		len(request.rules) > policy.MaximumRules || !validRequestProfiles(request.kubernetesProfiles) {
 		return false
+	}
+	// Clusters are named only for sets the request sends.
+	sent := make(map[publication.KubernetesProfileID]struct{}, len(request.kubernetesProfiles))
+	for _, profile := range request.kubernetesProfiles {
+		sent[profile.ID()] = struct{}{}
+	}
+	for id, choice := range request.profileClusters {
+		if _, named := sent[id]; !choice.IsValid() || !named {
+			return false
+		}
 	}
 	seen := make(map[policy.RuleID]struct{}, len(request.rules))
 	for _, rule := range request.rules {

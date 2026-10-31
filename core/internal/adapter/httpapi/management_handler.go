@@ -248,12 +248,15 @@ type ManagementHandlerOptions struct {
 	// PolicyKubernetesAccess reads a release's access profiles and how its
 	// rules to clusters grant their groups (K2f).
 	PolicyKubernetesAccess compilation.KubernetesAccessReader
-	WorkspaceRenames       WorkspaceRenamer
-	WorkspaceRoles         WorkspaceRoleManager
-	WorkspaceCreations     WorkspaceCreator
-	SessionWorkspaces      SessionWorkspaceSelector
-	ShareTargets           ShareTargetResolver
-	NetworkCreations       NetworkCreator
+	// PolicyKubernetesClusteredProfiles tells readers of Kubernetes access
+	// that permission sets of different clusters may share a name (K2h).
+	PolicyKubernetesClusteredProfiles bool
+	WorkspaceRenames                  WorkspaceRenamer
+	WorkspaceRoles                    WorkspaceRoleManager
+	WorkspaceCreations                WorkspaceCreator
+	SessionWorkspaces                 SessionWorkspaceSelector
+	ShareTargets                      ShareTargetResolver
+	NetworkCreations                  NetworkCreator
 	// AliasRanges reads and sets receiving-Network alias ranges; nil answers 503.
 	AliasRanges NetworkAliasRanges
 	// DeviceLifetimes reads and sets how long signed-in Devices live; nil answers 503.
@@ -362,6 +365,7 @@ type ManagementHandler struct {
 	policySimulator           PolicySimulator
 	activePolicies            ActivePolicyReader
 	policyKubernetesAccess    compilation.KubernetesAccessReader
+	policyKubernetesClustered bool
 	workspaceRenames          WorkspaceRenamer
 	workspaceRoles            WorkspaceRoleManager
 	workspaceCreations        WorkspaceCreator
@@ -455,6 +459,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		policySimulator:           options.PolicySimulations,
 		activePolicies:            options.ActivePolicies,
 		policyKubernetesAccess:    options.PolicyKubernetesAccess,
+		policyKubernetesClustered: options.PolicyKubernetesClusteredProfiles,
 		workspaceRenames:          options.WorkspaceRenames,
 		workspaceRoles:            options.WorkspaceRoles,
 		workspaceCreations:        options.WorkspaceCreations,

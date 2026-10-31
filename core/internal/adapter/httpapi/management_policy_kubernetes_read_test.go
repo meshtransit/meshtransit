@@ -186,3 +186,75 @@ func TestManagementPolicyKubernetesAccessMethodAndDependency(t *testing.T) {
 		t.Fatalf("POST: %d %q", response.Code, response.Header().Get("Allow"))
 	}
 }
+
+// Each set names its cluster (null for every cluster) and copy origin; with
+// cluster_id the read keeps that cluster's rules, its sets and the sets of
+// every cluster its rules apply; clustered_profiles says the flag (K2h).
+func TestPolicyKubernetesAccessProjectionByCluster(t *testing.T) {
+	t.Parallel()
+	released := releasedKubernetesAccess(t)
+	legacy := released.Profiles[0]
+	cluster, _ := kubecluster.ParseID("01890f00-0000-7000-8000-000000000a01")
+	other, _ := kubecluster.ParseID("01890f00-0000-7000-8000-000000000a02")
+	boundID, _ := publication.ParseKubernetesProfileID("01890f00-0000-7000-8000-000000000c02")
+	strangerID, _ := publication.ParseKubernetesProfileID("01890f00-0000-7000-8000-000000000c03")
+	newSet := func(id publication.KubernetesProfileID, name string, at kubecluster.ID) publication.KubernetesProfile {
+		profile, err := publication.NewKubernetesProfile(publication.KubernetesProfileParams{ID: id,
+			Profile: kubeprofile.Profile{Name: name, Namespaced: []kubeprofile.Rule{{
+				APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"list"}}}},
+			Cluster: at, CopiedFrom: legacy.ID()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return profile
+	}
+	released.Profiles = append(released.Profiles, newSet(boundID, "reader", cluster), newSet(strangerID, "reader", other))
+	away, _ := policy.ParseRuleID("01890f00-0000-7000-8000-000000000d09")
+	released.Rules[away] = compilation.ReleasedClusterRule{Cluster: other, Groups: []string{"view"}}
+
+	whole := policyKubernetesAccessProjection(7, released, kubecluster.ID{}, true)
+	if !whole.ClusteredProfiles || len(whole.Profiles) != 3 || len(whole.Rules) != 4 {
+		t.Fatalf("whole read = %+v", whole)
+	}
+	byID := make(map[string]policyKubernetesProfileRead, len(whole.Profiles))
+	for _, profile := range whole.Profiles {
+		byID[profile.ID] = profile
+	}
+	if byID[legacy.ID().String()].ClusterID != nil || byID[boundID.String()].ClusterID == nil ||
+		*byID[boundID.String()].ClusterID != cluster.String() || byID[boundID.String()].CopiedFrom == nil {
+		t.Fatalf("set clusters = %+v", byID)
+	}
+	// Two sets named reader in two clusters: by name, then ID.
+	if whole.Profiles[1].ID != boundID.String() || whole.Profiles[2].ID != strangerID.String() {
+		t.Fatalf("order = %+v", whole.Profiles)
+	}
+	only := policyKubernetesAccessProjection(7, released, cluster, false)
+	if only.ClusteredProfiles || len(only.Rules) != 3 || len(only.Profiles) != 2 {
+		t.Fatalf("one cluster's read = %+v", only)
+	}
+	for _, profile := range only.Profiles {
+		if profile.ID == strangerID.String() {
+			t.Fatal("another cluster's set in one cluster's read")
+		}
+	}
+	away2 := policyKubernetesAccessProjection(7, released, other, false)
+	if len(away2.Rules) != 1 || len(away2.Profiles) != 1 || away2.Profiles[0].ID != strangerID.String() {
+		t.Fatalf("a set of every cluster no rule of the cluster applies = %+v", away2)
+	}
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+		policyKubernetesAccessURL+"?policy_revision=7&cluster_id=01890f00-0000-7000-8000-000000000a01", nil)
+	if path, ok := parsePolicyKubernetesAccessPath(request); !ok || path.revision != 7 || path.cluster != cluster {
+		t.Fatalf("path = %+v", path)
+	}
+	for _, query := range []string{
+		"?cluster_id=01890f00-0000-7000-8000-000000000a01&policy_revision=7",
+		"?policy_revision=7&cluster_id=01890F00-0000-7000-8000-000000000A01",
+		"?policy_revision=7&cluster_id=",
+		"?policy_revision=7&cluster_id=x&cluster_id=y",
+	} {
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, policyKubernetesAccessURL+query, nil)
+		if path, ok := parsePolicyKubernetesAccessPath(request); !ok || path.revision != 0 {
+			t.Errorf("%s admitted: %+v", query, path)
+		}
+	}
+}

@@ -19,8 +19,8 @@ import (
 
 // readPolicyKubernetesAccessSQL reads the Kubernetes groups and access
 // profiles of the rules to clusters of the release at a policy revision, and
-// the release's profiles (schema 259).
-const readPolicyKubernetesAccessSQL = `SELECT mesh_ops.read_policy_kubernetes_access_v1(` +
+// the release's profiles with their clusters (schema 264).
+const readPolicyKubernetesAccessSQL = `SELECT mesh_ops.read_policy_kubernetes_access_v2(` +
 	sessionArguments + `,$10::UUID,$11::UUID,$12::BIGINT,$13::TIMESTAMPTZ)::TEXT`
 
 var _ compilation.KubernetesAccessReader = (*KubernetesClusterPolicyGroupStore)(nil)
@@ -39,6 +39,9 @@ type policyKubernetesGroups struct {
 	revision       int64
 	hashed         bool
 	profilesHashed bool
+	// clustersHashed: a writer that hashes the clusters of sets wrote the
+	// release (K2h).
+	clustersHashed bool
 	groups         map[policy.RuleID][]string
 	clusters       map[policy.RuleID]kubecluster.ID
 	sources        map[policy.RuleID]publication.RuleSide
@@ -50,6 +53,7 @@ type policyKubernetesAccessWire struct {
 	Revision       int64 `json:"policy_revision"`
 	GroupsHashed   bool  `json:"groups_hashed"`
 	ProfilesHashed bool  `json:"profiles_hashed"`
+	ClustersHashed bool  `json:"clusters_hashed"`
 	Rules          []struct {
 		ID         string                    `json:"id"`
 		ClusterID  string                    `json:"cluster_id"`
@@ -76,6 +80,8 @@ type policyKubernetesProfileWire struct {
 	Name        string                 `json:"name"`
 	Rules       kubernetesProfileRules `json:"rules"`
 	Description string                 `json:"description"`
+	ClusterID   *string                `json:"cluster_id"`
+	CopiedFrom  *string                `json:"copied_from"`
 }
 
 // kubernetesProfileRules is how a profile's rules are stored beside its
@@ -97,18 +103,19 @@ func decodePolicyKubernetesGroups(encoded []byte, revision int64) (policyKuberne
 		return policyKubernetesGroups{}, false
 	}
 	read := policyKubernetesGroups{revision: revision, hashed: wire.GroupsHashed, profilesHashed: wire.ProfilesHashed,
-		groups:   make(map[policy.RuleID][]string, len(wire.Rules)),
-		clusters: make(map[policy.RuleID]kubecluster.ID, len(wire.Rules)),
-		sources:  make(map[policy.RuleID]publication.RuleSide, len(wire.Rules)),
-		access:   make(map[policy.RuleID]publication.KubernetesAccess, len(wire.Rules)),
-		profiles: make([]publication.KubernetesProfile, 0, len(wire.Profiles))}
-	held := make(map[publication.KubernetesProfileID][32]byte, len(wire.Profiles))
+		clustersHashed: wire.ClustersHashed,
+		groups:         make(map[policy.RuleID][]string, len(wire.Rules)),
+		clusters:       make(map[policy.RuleID]kubecluster.ID, len(wire.Rules)),
+		sources:        make(map[policy.RuleID]publication.RuleSide, len(wire.Rules)),
+		access:         make(map[policy.RuleID]publication.KubernetesAccess, len(wire.Rules)),
+		profiles:       make([]publication.KubernetesProfile, 0, len(wire.Profiles))}
+	held := make(map[publication.KubernetesProfileID]publication.KubernetesProfile, len(wire.Profiles))
 	for _, entry := range wire.Profiles {
 		profile, valid := decodePolicyKubernetesProfile(entry)
 		if _, seen := held[profile.ID()]; !valid || seen {
 			return policyKubernetesGroups{}, false
 		}
-		held[profile.ID()] = profile.ContentHash()
+		held[profile.ID()] = profile
 		read.profiles = append(read.profiles, profile)
 	}
 	named, profiled := false, false
@@ -128,8 +135,11 @@ func decodePolicyKubernetesGroups(encoded []byte, revision int64) (policyKuberne
 			continue
 		}
 		access, valid := decodePolicyKubernetesRuleAccess(*rule.Profile)
-		if hash, found := held[access.ProfileID()]; !valid || rule.Groups == nil || !found ||
-			hash != access.ProfileHash() {
+		// A rule applies a set of its own cluster, or of every cluster
+		// (K2h-I1); the database refuses any other (MTP09).
+		profile, found := held[access.ProfileID()]
+		if !valid || rule.Groups == nil || !found || profile.ContentHash() != access.ProfileHash() ||
+			(profile.Cluster() != kubecluster.ID{} && profile.Cluster() != cluster) {
 			return policyKubernetesGroups{}, false
 		}
 		read.access[id], profiled = access, true
@@ -147,9 +157,20 @@ func decodePolicyKubernetesProfile(entry policyKubernetesProfileWire) (publicati
 	if err != nil {
 		return publication.KubernetesProfile{}, false
 	}
-	profile, err := publication.NewKubernetesProfile(publication.KubernetesProfileParams{ID: id,
-		Description: entry.Description, Profile: kubeprofile.Profile{Name: entry.Name,
-			Namespaced: entry.Rules.Namespaced, Cluster: entry.Rules.Cluster}})
+	params := publication.KubernetesProfileParams{ID: id, Description: entry.Description,
+		Profile: kubeprofile.Profile{Name: entry.Name, Namespaced: entry.Rules.Namespaced,
+			Cluster: entry.Rules.Cluster}}
+	if entry.ClusterID != nil {
+		if params.Cluster, err = kubecluster.ParseID(*entry.ClusterID); err != nil {
+			return publication.KubernetesProfile{}, false
+		}
+	}
+	if entry.CopiedFrom != nil {
+		if params.CopiedFrom, err = publication.ParseKubernetesProfileID(*entry.CopiedFrom); err != nil {
+			return publication.KubernetesProfile{}, false
+		}
+	}
+	profile, err := publication.NewKubernetesProfile(params)
 	hash := profile.ContentHash()
 	if err != nil || entry.Hash != hex.EncodeToString(hash[:]) {
 		return publication.KubernetesProfile{}, false

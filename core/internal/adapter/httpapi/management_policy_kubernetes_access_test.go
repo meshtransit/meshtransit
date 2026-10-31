@@ -105,13 +105,20 @@ func TestPolicyPublicationDecodesKubernetesAccess(t *testing.T) {
 func TestKubernetesAccessErrorsHaveCodes(t *testing.T) {
 	t.Parallel()
 	for err, code := range map[error]string{
-		compilation.ErrKubernetesAccessRequired: "kubernetes_access_required",
-		compilation.ErrKubernetesProfileUnknown: "kubernetes_profile_unknown",
-		compilation.ErrKubernetesProfileInUse:   "kubernetes_profile_in_use",
-		compilation.ErrKubernetesReportWindow:   "kubernetes_report_window",
-		compilation.ErrKubernetesAccessLimit:    "kubernetes_access_limit",
-		compilation.ErrKubernetesGroupsRequired: "kubernetes_groups_required",
-		policypublication.ErrKubernetesProfile:  "kubernetes_profile_conflict",
+		compilation.ErrKubernetesAccessRequired:         "kubernetes_access_required",
+		compilation.ErrKubernetesProfileUnknown:         "kubernetes_profile_unknown",
+		compilation.ErrKubernetesProfileInUse:           "kubernetes_profile_in_use",
+		compilation.ErrKubernetesReportWindow:           "kubernetes_report_window",
+		compilation.ErrKubernetesAccessLimit:            "kubernetes_access_limit",
+		compilation.ErrKubernetesGroupsRequired:         "kubernetes_groups_required",
+		policypublication.ErrKubernetesProfile:          "kubernetes_profile_conflict",
+		compilation.ErrKubernetesProfileClusterRequired: "kubernetes_profile_cluster_required",
+		compilation.ErrKubernetesProfileClusterChange:   "kubernetes_profile_cluster_change",
+		compilation.ErrKubernetesProfileWrongCluster:    "kubernetes_profile_wrong_cluster",
+		compilation.ErrKubernetesProfileLegacy:          "kubernetes_profile_legacy",
+		compilation.ErrKubernetesProfileName:            "kubernetes_profile_name_taken",
+		compilation.ErrKubernetesProfileLimit:           "kubernetes_profile_limit",
+		policypublication.ErrKubernetesProfileCluster:   "kubernetes_profile_cluster_conflict",
 	} {
 		wrapped := errors.Join(err, errors.New("detail"))
 		for name, answer := range map[string]managementError{
@@ -126,5 +133,47 @@ func TestKubernetesAccessErrorsHaveCodes(t *testing.T) {
 	if answer := classifyPolicyPublicationError(policypublication.ErrKubernetesProfile); answer.Code !=
 		"kubernetes_profile_conflict" || answer.Status != http.StatusConflict {
 		t.Fatalf("publication = %+v", answer)
+	}
+	if answer := classifyPolicyPublicationError(policypublication.ErrKubernetesProfileCluster); answer.Code !=
+		"kubernetes_profile_cluster_conflict" || answer.Status != http.StatusConflict {
+		t.Fatalf("publication cluster = %+v", answer)
+	}
+}
+
+// A set's cluster_id: absent keeps it, null makes a set of every cluster, a
+// UUID names one; anything else is refused (K2h §32.12 M-4).
+func TestPolicyPublicationDecodesPermissionSetClusters(t *testing.T) {
+	t.Parallel()
+	set := func(extra string) string {
+		return `{"reason":"x","kubernetes_profiles":[{"id":"01890f00-0000-7000-8000-000000000c01","name":"a",` +
+			`"description":"","namespaced":[{"apiGroups":[""],"resources":["pods"],"verbs":["get"]}]` + extra +
+			`}],"rules":[]}`
+	}
+	decoded, failure := decodeAccessPublication(t, set(``))
+	if failure != nil || len(decoded.request.KubernetesProfileClusters()) != 0 {
+		t.Fatalf("absent = %+v, %v", decoded.request.KubernetesProfileClusters(), failure)
+	}
+	id := decoded.request.KubernetesProfiles()[0].ID()
+	decoded, failure = decodeAccessPublication(t, set(`,"cluster_id":null`))
+	if failure != nil || !decoded.request.KubernetesProfileClusters()[id].Legacy {
+		t.Fatalf("null = %+v, %v", decoded.request.KubernetesProfileClusters(), failure)
+	}
+	decoded, failure = decodeAccessPublication(t, set(`,"cluster_id":"01890f00-0000-7000-8000-000000000f01",`+
+		`"copied_from":"01890f00-0000-7000-8000-000000000c09"`))
+	if choice := decoded.request.KubernetesProfileClusters()[id]; failure != nil || choice.Legacy ||
+		choice.Cluster.String() != "01890f00-0000-7000-8000-000000000f01" ||
+		decoded.request.KubernetesProfiles()[0].CopiedFrom().String() != "01890f00-0000-7000-8000-000000000c09" {
+		t.Fatalf("named = %+v, %v", choice, failure)
+	}
+	for name, extra := range map[string]string{
+		"a number":   `,"cluster_id":7`,
+		"not a UUID": `,"cluster_id":"prod"`,
+		"empty":      `,"cluster_id":""`,
+		"bad origin": `,"copied_from":"x"`,
+		"an object":  `,"cluster_id":{}`,
+	} {
+		if _, failure := decodeAccessPublication(t, set(extra)); failure == nil {
+			t.Errorf("%s decoded", name)
+		}
 	}
 }

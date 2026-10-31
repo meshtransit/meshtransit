@@ -32,6 +32,26 @@ var (
 	// ErrKubernetesAccessLimit reports rules to one cluster whose grants or
 	// scope table would pass what a gateway takes.
 	ErrKubernetesAccessLimit = publication.ErrKubernetesAccessLimit
+	// ErrKubernetesProfileClusterRequired reports a new permission set sent
+	// without its cluster once sets belong to clusters (K2h Q261).
+	ErrKubernetesProfileClusterRequired = errors.New("policy compilation: a new permission set names its cluster")
+	// ErrKubernetesProfileClusterChange reports a set moved to another
+	// cluster, or a set of one cluster made a set of every cluster: only a
+	// set of every cluster may become one cluster's (K2h Q264).
+	ErrKubernetesProfileClusterChange = errors.New("policy compilation: a permission set keeps its cluster")
+	// ErrKubernetesProfileWrongCluster reports a rule that applies a set of
+	// another cluster (K2h-I1).
+	ErrKubernetesProfileWrongCluster = errors.New("policy compilation: a rule applies a set of another cluster")
+	// ErrKubernetesProfileLegacy reports a rule newly applying a set of
+	// every cluster once sets belong to clusters (K2h Q268).
+	ErrKubernetesProfileLegacy = errors.New("policy compilation: a rule newly applies a set of every cluster")
+	// ErrKubernetesProfileName reports two sets of one cluster, or a set of
+	// every cluster and another set, of one name; or, until sets belong to
+	// clusters, a new name shared by sets of different clusters (K2h H1).
+	ErrKubernetesProfileName = errors.New("policy compilation: a permission set name is taken")
+	// ErrKubernetesProfileLimit reports more permission sets than a release
+	// may hold: 256 until sets belong to clusters, then 1024 (K2h Q267).
+	ErrKubernetesProfileLimit = errors.New("policy compilation: too many permission sets")
 )
 
 // reportClockMargin is how much earlier than 14 days from now a report
@@ -105,20 +125,18 @@ func cloneProfiles(profiles []publication.KubernetesProfile) []publication.Kuber
 }
 
 // validRequestProfiles reports nil, or at most MaximumKubernetesProfiles
-// valid profiles with distinct IDs and names.
+// valid profiles with distinct IDs. Names are checked once each set's
+// cluster is known (profileClusters).
 func validRequestProfiles(profiles []publication.KubernetesProfile) bool {
 	if len(profiles) > publication.MaximumKubernetesProfiles {
 		return false
 	}
 	ids := make(map[publication.KubernetesProfileID]struct{}, len(profiles))
-	names := make(map[string]struct{}, len(profiles))
 	for _, profile := range profiles {
-		_, idTaken := ids[profile.ID()]
-		_, nameTaken := names[profile.Name()]
-		if !profile.IsValid() || idTaken || nameTaken {
+		if _, idTaken := ids[profile.ID()]; !profile.IsValid() || idTaken {
 			return false
 		}
-		ids[profile.ID()], names[profile.Name()] = struct{}{}, struct{}{}
+		ids[profile.ID()] = struct{}{}
 	}
 	return true
 }
@@ -179,14 +197,99 @@ func (service *Service) requestProfiles(request Request,
 		}
 		return request.kubernetesProfiles, nil
 	}
-	if request.kubernetesProfiles != nil {
-		return cloneProfiles(request.kubernetesProfiles), nil
+	if request.kubernetesProfiles == nil {
+		base, err := released.get()
+		if err != nil {
+			return nil, err
+		}
+		return cloneProfiles(base.Profiles), nil
 	}
 	base, err := released.get()
 	if err != nil {
 		return nil, err
 	}
-	return cloneProfiles(base.Profiles), nil
+	return service.profileClusters(request, base.Profiles)
+}
+
+// profileClusters binds each set the request sends to its cluster (K2h
+// Q261): the one named, else the one it has in the replaced release, else
+// every cluster until sets belong to clusters. A set keeps its cluster but
+// for every cluster becoming one; it keeps its copy origin unless sent one.
+// Then the names and the count.
+func (service *Service) profileClusters(request Request,
+	base []publication.KubernetesProfile) ([]publication.KubernetesProfile, error) {
+	held := make(map[publication.KubernetesProfileID]publication.KubernetesProfile, len(base))
+	for _, profile := range base {
+		held[profile.ID()] = profile
+	}
+	profiles := make([]publication.KubernetesProfile, 0, len(request.kubernetesProfiles))
+	for _, profile := range request.kubernetesProfiles {
+		before, kept := held[profile.ID()]
+		choice, named := request.profileClusters[profile.ID()]
+		var cluster kubecluster.ID
+		switch {
+		case !named && kept:
+			cluster = before.Cluster()
+		case !named || choice.Legacy:
+			if kept && before.Cluster().IsValid() {
+				return nil, ErrKubernetesProfileClusterChange
+			}
+			if !kept && service.clusteredProfiles {
+				return nil, ErrKubernetesProfileClusterRequired
+			}
+		default:
+			if kept && before.Cluster().IsValid() && before.Cluster() != choice.Cluster {
+				return nil, ErrKubernetesProfileClusterChange
+			}
+			cluster = choice.Cluster
+		}
+		bound := profile.WithCluster(cluster)
+		if !profile.CopiedFrom().IsValid() && kept {
+			bound = bound.WithCopiedFrom(before.CopiedFrom())
+		}
+		profiles = append(profiles, bound)
+	}
+	if err := service.checkProfileNames(profiles, held); err != nil {
+		return nil, err
+	}
+	return profiles, nil
+}
+
+// checkProfileNames refuses two sets of one cluster of one name, a set of
+// every cluster named like another set, and more sets than a release may
+// hold. Until sets belong to clusters, sets of different clusters share a
+// name only as the replaced release already had them, and at most 256: a
+// Core that does not know clusters still publishes them (K2h §32.12 M-2).
+func (service *Service) checkProfileNames(profiles []publication.KubernetesProfile,
+	held map[publication.KubernetesProfileID]publication.KubernetesProfile) error {
+	limit := publication.MaximumKubernetesProfiles
+	if !service.clusteredProfiles {
+		limit = publication.MaximumSharedKubernetesProfiles
+	}
+	if len(profiles) > limit {
+		return ErrKubernetesProfileLimit
+	}
+	byName := make(map[string][]publication.KubernetesProfile, len(profiles))
+	for _, profile := range profiles {
+		byName[profile.Name()] = append(byName[profile.Name()], profile)
+	}
+	for _, named := range byName {
+		if len(named) < 2 {
+			continue
+		}
+		clusters := make(map[kubecluster.ID]struct{}, len(named))
+		for _, profile := range named {
+			if _, taken := clusters[profile.Cluster()]; taken || !profile.Cluster().IsValid() {
+				return ErrKubernetesProfileName
+			}
+			clusters[profile.Cluster()] = struct{}{}
+			before, kept := held[profile.ID()]
+			if !service.clusteredProfiles && (!kept || before.Name() != profile.Name()) {
+				return ErrKubernetesProfileName
+			}
+		}
+	}
+	return nil
 }
 
 // clusterRuleAccess returns the Kubernetes groups and access of a group
@@ -203,7 +306,10 @@ func (service *Service) clusterRuleAccess(released *releasedAccess, profiles []p
 	}
 	var rule ReleasedClusterRule
 	held, same := false, false
-	if service.access != nil && (intent.kubernetesGroups == nil || intent.kubernetesAccess == nil) {
+	// With clustered sets, a rule naming a set of every cluster keeps it only
+	// if it applied it already: the replaced rule is read for that too.
+	if service.access != nil && (intent.kubernetesGroups == nil || intent.kubernetesAccess == nil ||
+		service.clusteredProfiles) {
 		base, err := released.get()
 		if err != nil {
 			return nil, publication.KubernetesAccess{}, err
@@ -216,7 +322,7 @@ func (service *Service) clusterRuleAccess(released *releasedAccess, profiles []p
 	if err != nil {
 		return nil, publication.KubernetesAccess{}, err
 	}
-	access, err := service.keptAccess(intent, profiles, rule, held, same)
+	access, err := service.keptAccess(intent, profiles, cluster, rule, held, same)
 	if err != nil {
 		return nil, publication.KubernetesAccess{}, err
 	}
@@ -247,7 +353,7 @@ func (service *Service) keptGroups(intent RuleIntent, rule ReleasedClusterRule, 
 }
 
 func (service *Service) keptAccess(intent RuleIntent, profiles []publication.KubernetesProfile,
-	rule ReleasedClusterRule, held, same bool) (publication.KubernetesAccess, error) {
+	cluster kubecluster.ID, rule ReleasedClusterRule, held, same bool) (publication.KubernetesAccess, error) {
 	if named := intent.kubernetesAccess; named != nil {
 		if named.Full {
 			return publication.KubernetesAccess{}, nil
@@ -262,8 +368,12 @@ func (service *Service) keptAccess(intent RuleIntent, profiles []publication.Kub
 				return publication.KubernetesAccess{}, ErrKubernetesReportWindow
 			}
 		}
-		return profileAccess(profiles, named.ProfileID, named.Namespaces, named.ClusterPart, named.Report,
-			named.ReportUntil, ErrKubernetesProfileUnknown)
+		// A set of every cluster stays only on a rule that applies it already
+		// (K2h Q268): it is not offered to new rules once sets belong to
+		// clusters.
+		legacy := !service.clusteredProfiles || (same && rule.Access.ProfileID() == named.ProfileID)
+		return profileAccess(profiles, cluster, named.ProfileID, named.Namespaces, named.ClusterPart,
+			named.Report, named.ReportUntil, legacy, ErrKubernetesProfileUnknown)
 	}
 	switch {
 	case service.access == nil:
@@ -273,8 +383,8 @@ func (service *Service) keptAccess(intent RuleIntent, profiles []publication.Kub
 			return publication.KubernetesAccess{}, ErrKubernetesAccessRequired
 		}
 		kept := rule.Access
-		return profileAccess(profiles, kept.ProfileID(), kept.Namespaces(), kept.ClusterPart(), kept.Report(),
-			kept.ReportUntil(), ErrKubernetesProfileInUse)
+		return profileAccess(profiles, cluster, kept.ProfileID(), kept.Namespaces(), kept.ClusterPart(),
+			kept.Report(), kept.ReportUntil(), true, ErrKubernetesProfileInUse)
 	case held && same, !service.accessRequired:
 		return publication.KubernetesAccess{}, nil
 	default:
@@ -282,16 +392,23 @@ func (service *Service) keptAccess(intent RuleIntent, profiles []publication.Kub
 	}
 }
 
-// profileAccess applies the profile with id of the release; missing names
-// what its absence means.
-func profileAccess(profiles []publication.KubernetesProfile, id publication.KubernetesProfileID,
-	namespaces []string, clusterPart, report bool, reportUntil time.Time,
-	missing error) (publication.KubernetesAccess, error) {
+// profileAccess applies the profile with id of the release to a rule to
+// cluster: a set of that cluster, or of every cluster when legacy allows it;
+// missing names what its absence means.
+func profileAccess(profiles []publication.KubernetesProfile, cluster kubecluster.ID,
+	id publication.KubernetesProfileID, namespaces []string, clusterPart, report bool, reportUntil time.Time,
+	legacy bool, missing error) (publication.KubernetesAccess, error) {
 	index := slices.IndexFunc(profiles, func(profile publication.KubernetesProfile) bool {
 		return profile.ID() == id
 	})
 	if index < 0 {
 		return publication.KubernetesAccess{}, missing
+	}
+	switch bound := profiles[index].Cluster(); {
+	case bound.IsValid() && bound != cluster:
+		return publication.KubernetesAccess{}, ErrKubernetesProfileWrongCluster
+	case !bound.IsValid() && !legacy:
+		return publication.KubernetesAccess{}, ErrKubernetesProfileLegacy
 	}
 	access, err := publication.NewKubernetesAccess(publication.KubernetesAccessParams{
 		ProfileID: id, ProfileHash: profiles[index].ContentHash(), Namespaces: namespaces,

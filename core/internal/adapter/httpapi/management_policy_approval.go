@@ -259,12 +259,13 @@ func (handler *ManagementHandler) decodePolicyApprovalRequest(
 		}
 		rules[index] = rule
 	}
-	profiles, err := decodePolicyKubernetesProfiles(body.KubernetesProfiles)
+	profiles, profileClusters, err := decodePolicyKubernetesProfiles(body.KubernetesProfiles)
 	if err != nil {
 		return approval.RequestIntent{}, invalidManagementRequest()
 	}
 	compilationRequest, err := compilation.NewRequest(compilation.RequestParams{
 		Scope: scope, Revision: baseRevision + 1, Rules: rules, KubernetesProfiles: profiles,
+		KubernetesProfileClusters: profileClusters,
 	})
 	if err != nil {
 		return approval.RequestIntent{}, invalidManagementRequest()

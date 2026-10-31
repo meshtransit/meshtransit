@@ -657,6 +657,8 @@ func Catalog() []Migration {
 			kubernetesAccessSettingsSQL),
 		newMigration(263, "The latest Kubernetes profile denials of a cluster, with their samples",
 			kubernetesProfileDenialsSQL),
+		newMigration(264, "Permission sets belong to one Kubernetes cluster, bound for good",
+			kubernetesProfileClustersSQL),
 	}
 }
 
@@ -1225,3 +1227,6 @@ var kubernetesAccessSettingsSQL string
 
 //go:embed 000263_kubernetes_profile_denials.up.sql
 var kubernetesProfileDenialsSQL string
+
+//go:embed 000264_kubernetes_profile_clusters.up.sql
+var kubernetesProfileClustersSQL string

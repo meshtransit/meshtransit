@@ -381,7 +381,8 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 				KubernetesClusters: kubernetesClusters,
 				SubnetRoutes:       processConfig.SubnetRoutes, SiteDenied: processConfig.SiteDenied,
 				ExitNodes: processConfig.ExitNodes, ExitSpread: processConfig.ExitSpread, Countries: countries,
-				DNSZones: processConfig.DNSZones.Enabled, DNSProtectedNames: processConfig.DNSProtectedNames()},
+				KubernetesClusteredProfiles: processConfig.KubernetesClusteredProfiles,
+				DNSZones:                    processConfig.DNSZones.Enabled, DNSProtectedNames: processConfig.DNSProtectedNames()},
 			browserRuntime...,
 		)
 		if composeErr != nil {
@@ -410,7 +411,8 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 				managementCompositionOptions{API: *processConfig.API, Keys: privateFactory.managementKeys,
 					DNSSuffix: processConfig.DNSSuffix, EnrollmentKeys: enrollmentKeys,
 					KubernetesClusters: kubernetesClusters,
-					SubnetRoutes:       processConfig.SubnetRoutes, ExitNodes: processConfig.ExitNodes},
+					SubnetRoutes:       processConfig.SubnetRoutes, ExitNodes: processConfig.ExitNodes,
+					KubernetesClusteredProfiles: processConfig.KubernetesClusteredProfiles},
 				storagePools.runtime,
 				redisClient,
 				logger,
@@ -423,6 +425,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 				kubernetesClusters,
 				processConfig.SubnetRoutes,
 				processConfig.ExitNodes,
+				processConfig.KubernetesClusteredProfiles,
 				storagePools.runtime,
 				redisClient,
 				logger,

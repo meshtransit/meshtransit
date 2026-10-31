@@ -126,9 +126,9 @@ const attachProfilePolicyGroupRulesSQL = `SELECT mesh_ops.attach_policy_group_ru
     $3::JSONB
 )`
 
-// attachPolicyKubernetesProfilesSQL attaches the access profiles of a
-// release, before its rules (schema 259).
-const attachPolicyKubernetesProfilesSQL = `SELECT mesh_ops.attach_policy_kubernetes_profiles_v1(
+// attachPolicyKubernetesProfilesSQL attaches the permission sets of a
+// release with their clusters, before its rules (schema 264).
+const attachPolicyKubernetesProfilesSQL = `SELECT mesh_ops.attach_policy_kubernetes_profiles_v2(
     $1::UUID,
     $2::TIMESTAMPTZ,
     $3::JSONB

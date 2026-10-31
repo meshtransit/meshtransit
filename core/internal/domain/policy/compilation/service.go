@@ -112,7 +112,10 @@ type Service struct {
 	// accessRequired refuses a new rule to a cluster sent without its
 	// access, instead of granting its groups in full (Q195, K2f).
 	accessRequired bool
-	now            func() time.Time
+	// clusteredProfiles lets permission sets of different clusters share a
+	// name and passes 256 sets, once every Core knows clusters (K2h Q260).
+	clusteredProfiles bool
+	now               func() time.Time
 }
 
 // WithKubernetesAccess returns a compiler that keeps, for a rule to a
@@ -139,6 +142,20 @@ func (service *Service) WithKubernetesAccessRequired() (*Service, error) {
 	}
 	extended := *service
 	extended.accessRequired = true
+	return &extended, nil
+}
+
+// WithClusteredProfiles returns a compiler for which every Core knows the
+// clusters of permission sets (K2h §32.12): sets of different clusters may
+// share a name, a release holds up to MaximumKubernetesProfiles, a new set
+// names its cluster, and no rule newly applies a set of every cluster. It
+// needs WithKubernetesAccess.
+func (service *Service) WithClusteredProfiles() (*Service, error) {
+	if service == nil || service.access == nil {
+		return nil, ErrInvalidRequest
+	}
+	extended := *service
+	extended.clusteredProfiles = true
 	return &extended, nil
 }
 

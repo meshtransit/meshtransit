@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 263 {
-		t.Fatalf("len(Catalog()) = %d, want 263", len(catalog))
+	if len(catalog) != 264 {
+		t.Fatalf("len(Catalog()) = %d, want 264", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 263 {
-		t.Fatalf("LatestVersion() = %d, want 263", LatestVersion())
+	if LatestVersion() != 264 {
+		t.Fatalf("LatestVersion() = %d, want 264", LatestVersion())
 	}
 }
 
@@ -7847,6 +7847,35 @@ func TestMigration263KubernetesProfileDenials(t *testing.T) {
 	} {
 		if !strings.Contains(migration.SQL, want) {
 			t.Errorf("migration 263 lacks %q", want)
+		}
+	}
+}
+
+func TestMigration264KubernetesProfileClusters(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 264 || catalog[263].Version != 264 {
+		t.Fatalf("the catalog has no migration 264 (%d migrations)", len(catalog))
+	}
+	migration := catalog[263]
+	for _, want := range []string{
+		"ADD COLUMN kubernetes_cluster_id BIGINT",
+		"CREATE TABLE mesh.kubernetes_profile_binding (",
+		"FOR EACH ROW EXECUTE FUNCTION mesh_audit.reject_immutable_change();",
+		"ALTER TABLE mesh.kubernetes_profile_binding FORCE ROW LEVEL SECURITY;",
+		"'mesh.kubernetes_profiles_clustered_aware'",
+		"ERRCODE = 'MTP10'",
+		"ERRCODE = 'MTP09'",
+		"CREATE OR REPLACE FUNCTION mesh_ops.carry_kubernetes_rule_access_v1()",
+		"CREATE FUNCTION mesh_ops.attach_policy_kubernetes_profiles_v2(",
+		"NOT BETWEEN 1 AND 1024",
+		"CREATE FUNCTION mesh_ops.read_policy_kubernetes_access_v2(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.load_map_network_kubernetes_rule_access_v1(",
+		"SELECT DISTINCT ON (held.content_hash)",
+		"ORDER BY held.content_hash, held.profile_public_id;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 264 lacks %q", want)
 		}
 	}
 }

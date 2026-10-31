@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/policy/compilation"
 	"meshtransit.net/core/internal/domain/publicid"
@@ -23,7 +24,11 @@ import (
 // each rule to a cluster grants its groups, read apart from GET …/policy so
 // a Console that checks that answer's exact keys keeps working.
 //
-//	GET …/networks/{n}/policy/kubernetes-access?policy_revision=R
+//	GET …/networks/{n}/policy/kubernetes-access?policy_revision=R[&cluster_id=C]
+//
+// With cluster_id, only the cluster's rules, its permission sets and the
+// sets of every cluster its rules apply (K2h): for showing one cluster,
+// never for publishing the whole set again.
 
 type policyKubernetesAccessResponse struct {
 	Data          policyKubernetesAccessData `json:"data"`
@@ -34,6 +39,9 @@ type policyKubernetesAccessData struct {
 	PolicyRevision int64                          `json:"policy_revision"`
 	Profiles       []policyKubernetesProfileRead  `json:"profiles"`
 	Rules          []policyKubernetesRuleReadItem `json:"rules"`
+	// ClusteredProfiles: sets of different clusters may share a name, as
+	// every Core knows clusters (K2h flag).
+	ClusteredProfiles bool `json:"clustered_profiles"`
 }
 
 type policyKubernetesProfileRead struct {
@@ -43,6 +51,11 @@ type policyKubernetesProfileRead struct {
 	Namespaced  []kubeprofile.Rule `json:"namespaced"`
 	Cluster     []kubeprofile.Rule `json:"cluster"`
 	ContentHash string             `json:"content_hash"`
+	// ClusterID is the cluster the set belongs to; null for a set of every
+	// cluster (K2h).
+	ClusterID *string `json:"cluster_id"`
+	// CopiedFrom names the set this one was copied from, when it was.
+	CopiedFrom *string `json:"copied_from,omitempty"`
 }
 
 // policyKubernetesRuleReadItem is a rule to a cluster. A rule released
@@ -72,11 +85,15 @@ type policyKubernetesAccessRead struct {
 type policyKubernetesAccessPath struct {
 	workspaceID, networkID string
 	revision               int64
+	// cluster, when valid, keeps only what one cluster's page shows.
+	cluster kubecluster.ID
 }
 
 // policyKubernetesAccessQuery is the read's whole query: one
-// policy_revision, a canonical positive decimal.
-var policyKubernetesAccessQuery = regexp.MustCompile(`^policy_revision=[1-9][0-9]{0,17}$`)
+// policy_revision, a canonical positive decimal, then at most one
+// cluster_id, a lower-case UUID.
+var policyKubernetesAccessQuery = regexp.MustCompile(
+	`^policy_revision=([1-9][0-9]{0,17})(?:&cluster_id=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))?$`)
 
 // parsePolicyKubernetesAccessPath admits only policy_revision, a positive
 // decimal, as the query.
@@ -89,14 +106,22 @@ func parsePolicyKubernetesAccessPath(request *http.Request) (policyKubernetesAcc
 		parts[4] != "networks" || parts[6] != "policy" || parts[7] != "kubernetes-access" {
 		return policyKubernetesAccessPath{}, false
 	}
-	if !policyKubernetesAccessQuery.MatchString(request.URL.RawQuery) {
-		return policyKubernetesAccessPath{workspaceID: parts[3], networkID: parts[5]}, true
+	invalid := policyKubernetesAccessPath{workspaceID: parts[3], networkID: parts[5]}
+	match := policyKubernetesAccessQuery.FindStringSubmatch(request.URL.RawQuery)
+	if match == nil {
+		return invalid, true
 	}
-	revision, err := strconv.ParseInt(strings.TrimPrefix(request.URL.RawQuery, "policy_revision="), 10, 64)
+	revision, err := strconv.ParseInt(match[1], 10, 64)
 	if err != nil {
-		return policyKubernetesAccessPath{workspaceID: parts[3], networkID: parts[5]}, true
+		return invalid, true
 	}
-	return policyKubernetesAccessPath{workspaceID: parts[3], networkID: parts[5], revision: revision}, true
+	path := policyKubernetesAccessPath{workspaceID: parts[3], networkID: parts[5], revision: revision}
+	if match[2] != "" {
+		if path.cluster, err = kubecluster.ParseID(match[2]); err != nil {
+			return invalid, true
+		}
+	}
+	return path, true
 }
 
 func (handler *ManagementHandler) readPolicyKubernetesAccess(ctx context.Context, response http.ResponseWriter,
@@ -126,29 +151,60 @@ func (handler *ManagementHandler) readPolicyKubernetesAccess(ctx context.Context
 		writeManagementError(ctx, handler.logger, response, correlationID, policyKubernetesAccessUnavailable)
 		return "unavailable"
 	}
-	response.Header().Set("ETag", strongVersionETag(path.revision))
+	// A read of one cluster is no base for publishing the whole set again:
+	// it carries no ETag (review h1 L9).
+	if !path.cluster.IsValid() {
+		response.Header().Set("ETag", strongVersionETag(path.revision))
+	}
 	writeManagementJSON(ctx, handler.logger, response, http.StatusOK, policyKubernetesAccessResponse{
-		Data: policyKubernetesAccessProjection(path.revision, released), CorrelationID: correlationID.String(),
+		Data: policyKubernetesAccessProjection(path.revision, released, path.cluster,
+			handler.policyKubernetesClustered),
+		CorrelationID: correlationID.String(),
 	})
 	return "success"
 }
 
-func policyKubernetesAccessProjection(revision int64,
-	released compilation.ReleasedKubernetesAccess,
+func policyKubernetesAccessProjection(revision int64, released compilation.ReleasedKubernetesAccess,
+	only kubecluster.ID, clustered bool,
 ) policyKubernetesAccessData {
-	data := policyKubernetesAccessData{PolicyRevision: revision,
+	data := policyKubernetesAccessData{PolicyRevision: revision, ClusteredProfiles: clustered,
 		Profiles: make([]policyKubernetesProfileRead, 0, len(released.Profiles)),
 		Rules:    make([]policyKubernetesRuleReadItem, 0, len(released.Rules))}
+	// One cluster's read keeps its sets, and the sets of every cluster its
+	// rules apply.
+	applied := make(map[string]struct{})
+	for _, rule := range released.Rules {
+		if only.IsValid() && rule.Cluster == only && !rule.Access.IsZero() {
+			applied[rule.Access.ProfileID().String()] = struct{}{}
+		}
+	}
 	for _, profile := range released.Profiles {
+		id := profile.ID().String()
+		if _, used := applied[id]; only.IsValid() && profile.Cluster() != only &&
+			(profile.Cluster().IsValid() || !used) {
+			continue
+		}
 		rules := profile.Profile()
 		hash := profile.ContentHash()
-		data.Profiles = append(data.Profiles, policyKubernetesProfileRead{
-			ID: profile.ID().String(), Name: profile.Name(), Description: profile.Description(),
+		read := policyKubernetesProfileRead{
+			ID: id, Name: profile.Name(), Description: profile.Description(),
 			Namespaced: nonNilRules(rules.Namespaced), Cluster: nonNilRules(rules.Cluster),
 			ContentHash: hex.EncodeToString(hash[:]),
-		})
+		}
+		if cluster := profile.Cluster(); cluster.IsValid() {
+			value := cluster.String()
+			read.ClusterID = &value
+		}
+		if origin := profile.CopiedFrom(); origin.IsValid() {
+			value := origin.String()
+			read.CopiedFrom = &value
+		}
+		data.Profiles = append(data.Profiles, read)
 	}
 	for id, rule := range released.Rules {
+		if only.IsValid() && rule.Cluster != only {
+			continue
+		}
 		item := policyKubernetesRuleReadItem{RuleID: id.String(), ClusterID: rule.Cluster.String(),
 			Groups: slices.Clone(rule.Groups)}
 		switch access := rule.Access; {
@@ -168,8 +224,12 @@ func policyKubernetesAccessProjection(revision int64,
 		}
 		data.Rules = append(data.Rules, item)
 	}
+	// By name, then ID: sets of different clusters may share a name.
 	slices.SortFunc(data.Profiles, func(left, right policyKubernetesProfileRead) int {
-		return strings.Compare(left.Name, right.Name)
+		if order := strings.Compare(left.Name, right.Name); order != 0 {
+			return order
+		}
+		return strings.Compare(left.ID, right.ID)
 	})
 	slices.SortFunc(data.Rules, func(left, right policyKubernetesRuleReadItem) int {
 		return strings.Compare(left.RuleID, right.RuleID)

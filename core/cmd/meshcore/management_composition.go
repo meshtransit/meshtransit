@@ -65,6 +65,9 @@ type managementCompositionOptions struct {
 	// ExitNodes lets Access Rules name Exit Pools
 	// (MESHTRANSIT_EXIT_NODES_ENABLED).
 	ExitNodes bool
+	// KubernetesClusteredProfiles says every Core knows the clusters of
+	// permission sets (MESHTRANSIT_KUBERNETES_CLUSTERED_PROFILES).
+	KubernetesClusteredProfiles bool
 }
 
 func composeManagementAPI(
@@ -72,7 +75,7 @@ func composeManagementAPI(
 	dnsSuffix dnsname.Suffix,
 	enrollmentKeys httpapi.EnrollmentKeyManager,
 	kubernetesClusters httpapi.KubernetesClusterManager,
-	subnetRoutes, exitNodes bool,
+	subnetRoutes, exitNodes, clusteredProfiles bool,
 	runtimePool *postgresadapter.Pool,
 	rateLimiter httpapi.ManagementRateLimiter,
 	logger *slog.Logger,
@@ -97,7 +100,7 @@ func composeManagementAPI(
 			sessions: keyring, idempotency: idempotencyDigester, rateLimit: rateLimitDigester,
 		},
 		DNSSuffix: dnsSuffix, EnrollmentKeys: enrollmentKeys, KubernetesClusters: kubernetesClusters,
-		SubnetRoutes: subnetRoutes, ExitNodes: exitNodes,
+		SubnetRoutes: subnetRoutes, ExitNodes: exitNodes, KubernetesClusteredProfiles: clusteredProfiles,
 	}, runtimePool, rateLimiter, logger)
 }
 
@@ -343,6 +346,11 @@ func composeManagementAPIWithKeys(
 	if policyCompiler, err = policyCompiler.WithKubernetesAccess(clusterGroups, time.Now); err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)
 	}
+	if options.KubernetesClusteredProfiles {
+		if policyCompiler, err = policyCompiler.WithClusteredProfiles(); err != nil {
+			return nil, nil, errors.Join(errInvalidManagementComposition, err)
+		}
+	}
 	if options.ExitNodes {
 		exitPoolStore, poolErr := postgresadapter.NewExitPoolStore(runtimePool, postgresadapter.AccountSessionOptions{
 			StatementTimeout: managementStatementTimeout, IdleTimeout: managementTransactionIdle,
@@ -433,15 +441,16 @@ func composeManagementAPIWithKeys(
 	}
 	handler, err := httpapi.NewManagementHandler(httpapi.ManagementHandlerOptions{
 		Sessions: sessions, Revocations: revocations, PolicyPublications: policyPublications,
-		PolicyCompilations:     policyCompiler,
-		PolicyExplanations:     policyExplainer,
-		AccessGraphs:           policyExplainer,
-		PolicySimulations:      policySimulator,
-		PolicyApprovals:        policyApprovals,
-		PolicyApprovalCatalog:  policyApprovalCatalog,
-		ActivePolicies:         activePolicies,
-		PolicyKubernetesAccess: clusterGroups,
-		ResourceCreations:      resourceCreations, ResourceLifecycles: resourceLifecycles,
+		PolicyCompilations:                policyCompiler,
+		PolicyExplanations:                policyExplainer,
+		AccessGraphs:                      policyExplainer,
+		PolicySimulations:                 policySimulator,
+		PolicyApprovals:                   policyApprovals,
+		PolicyApprovalCatalog:             policyApprovalCatalog,
+		ActivePolicies:                    activePolicies,
+		PolicyKubernetesAccess:            clusterGroups,
+		PolicyKubernetesClusteredProfiles: options.KubernetesClusteredProfiles,
+		ResourceCreations:                 resourceCreations, ResourceLifecycles: resourceLifecycles,
 		ResourceRebindings: resourceRebindings, ResourceCatalog: resourceCatalog,
 		ResourceGroupReplacements: resourceGroupReplacements,
 		ResourceAuthorityChanges:  resourceAuthorityChanges,

@@ -520,15 +520,17 @@ func (item policyGroupRulePayload) withKubernetesAccess(access publication.Kuber
 	return item
 }
 
-// policyKubernetesProfilePayload is one profile of a release for
-// attach_policy_kubernetes_profiles_v1: its content stored by hash, its
-// description by release.
+// policyKubernetesProfilePayload is one permission set of a release for
+// attach_policy_kubernetes_profiles_v2: its content stored by hash, its
+// description, cluster (null for every cluster) and copy origin by release.
 type policyKubernetesProfilePayload struct {
 	ProfilePublicID string                 `json:"profile_public_id"`
 	ContentHash     string                 `json:"content_hash"`
 	Name            string                 `json:"name"`
 	Rules           kubernetesProfileRules `json:"rules"`
 	Description     string                 `json:"description"`
+	ClusterID       *string                `json:"cluster_id"`
+	CopiedFrom      *string                `json:"copied_from"`
 }
 
 // encodePolicyKubernetesProfiles encodes the release's profiles. Nil means
@@ -546,13 +548,22 @@ func encodePolicyKubernetesProfiles(change publication.Change) ([]byte, error) {
 }
 
 // newPolicyKubernetesProfilePayload stores a profile as
-// read_policy_kubernetes_access_v1 gives it back.
+// read_policy_kubernetes_access_v2 gives it back.
 func newPolicyKubernetesProfilePayload(profile publication.KubernetesProfile) policyKubernetesProfilePayload {
 	hash, rules := profile.ContentHash(), profile.Profile()
-	return policyKubernetesProfilePayload{ProfilePublicID: profile.ID().String(),
+	payload := policyKubernetesProfilePayload{ProfilePublicID: profile.ID().String(),
 		ContentHash: hex.EncodeToString(hash[:]), Name: profile.Name(),
 		Rules:       kubernetesProfileRules{Namespaced: rules.Namespaced, Cluster: rules.Cluster},
 		Description: profile.Description()}
+	if cluster := profile.Cluster(); cluster.IsValid() {
+		id := cluster.String()
+		payload.ClusterID = &id
+	}
+	if origin := profile.CopiedFrom(); origin.IsValid() {
+		id := origin.String()
+		payload.CopiedFrom = &id
+	}
+	return payload
 }
 
 // encodePolicyGroupRules encodes the candidate's group rules for

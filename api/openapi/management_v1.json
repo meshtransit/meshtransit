@@ -2949,6 +2949,17 @@
               "minimum": 1
             },
             "description": "The release's policy revision, as the ETag of GET …/policy gives it."
+          },
+          {
+            "name": "cluster_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "description": "After policy_revision, at most once: only the cluster's rules, its permission sets, and the sets of every cluster its rules apply (K2h). For showing one cluster; publish needs the whole read."
           }
         ],
         "responses": {
@@ -8414,6 +8425,22 @@
               "$ref": "#/components/schemas/KubernetesAccessProfileRule"
             },
             "description": "Cluster-scoped resources and paths; only for a rule that turns the cluster part on."
+          },
+          "cluster_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The cluster the permission set belongs to (K2h). Up to 256 sets, names unique in the Network, until every Core knows clusters; then 1024, names unique within a cluster. Absent keeps the cluster the set has in the replaced release; for an ID not in that release, absent makes a new set (every cluster while clustered sets are off), and an ID bound before is refused (409) unless its cluster is named; null makes it a set of every cluster, only for a set that is one (or a new set while clustered sets are off); a cluster's ID binds it, for good. A set never moves to another cluster."
+          },
+          "copied_from": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The set this one was copied from; shown only. Absent or null keeps the origin the set has."
           }
         },
         "description": "A Kubernetes access profile (K2 §5.1): what a rule to a cluster may do within the groups it grants. It only narrows: the cluster's RBAC of each group stays the ceiling. At least one rule; at most 16 KiB normalized."
@@ -8432,7 +8459,8 @@
             "required": [
               "policy_revision",
               "profiles",
-              "rules"
+              "rules",
+              "clustered_profiles"
             ],
             "properties": {
               "policy_revision": {
@@ -8441,10 +8469,14 @@
               },
               "profiles": {
                 "type": "array",
-                "maxItems": 256,
+                "maxItems": 1024,
                 "items": {
                   "$ref": "#/components/schemas/PolicyKubernetesProfileRead"
                 }
+              },
+              "clustered_profiles": {
+                "type": "boolean",
+                "description": "Whether every Core knows the clusters of permission sets: sets of different clusters may share a name, up to 1024 sets (K2h)."
               },
               "rules": {
                 "type": "array",
@@ -8469,7 +8501,8 @@
           "description",
           "namespaced",
           "cluster",
-          "content_hash"
+          "content_hash",
+          "cluster_id"
         ],
         "properties": {
           "id": {
@@ -8496,6 +8529,18 @@
           "content_hash": {
             "type": "string",
             "pattern": "^[0-9a-f]{64}$"
+          },
+          "cluster_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The cluster the permission set belongs to; null for a set of every cluster (K2h)."
+          },
+          "copied_from": {
+            "$ref": "#/components/schemas/PublicID",
+            "description": "The set this one was copied from, when it was."
           }
         },
         "description": "An access profile of the release, normalized, with the content hash its rules pin."
@@ -8646,7 +8691,7 @@
           },
           "kubernetes_profiles": {
             "type": "array",
-            "maxItems": 256,
+            "maxItems": 1024,
             "items": {
               "$ref": "#/components/schemas/KubernetesAccessProfile"
             },
@@ -8861,7 +8906,7 @@
           },
           "kubernetes_profiles": {
             "type": "array",
-            "maxItems": 256,
+            "maxItems": 1024,
             "items": {
               "$ref": "#/components/schemas/KubernetesAccessProfile"
             },
@@ -8881,7 +8926,7 @@
           },
           "kubernetes_profiles": {
             "type": "array",
-            "maxItems": 256,
+            "maxItems": 1024,
             "items": {
               "$ref": "#/components/schemas/KubernetesAccessProfile"
             },

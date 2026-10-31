@@ -230,12 +230,13 @@ func decodePolicyPublicationRequest(
 			return decodedPolicyPublication{}, invalidManagementRequest()
 		}
 	}
-	profiles, err := decodePolicyKubernetesProfiles(body.KubernetesProfiles)
+	profiles, profileClusters, err := decodePolicyKubernetesProfiles(body.KubernetesProfiles)
 	if err != nil {
 		return decodedPolicyPublication{}, invalidManagementRequest()
 	}
 	compilationRequest, err := compilation.NewRequest(compilation.RequestParams{
 		Scope: scope, Revision: baseRevision + 1, Rules: rules, KubernetesProfiles: profiles,
+		KubernetesProfileClusters: profileClusters,
 	})
 	if err != nil {
 		return decodedPolicyPublication{}, invalidManagementRequest()
@@ -448,7 +449,8 @@ func classifyPolicyPublicationError(err error) managementError {
 			Status: http.StatusConflict, Code: "route_overlap",
 			Message: "rules grant overlapping prefixes of two Sites; a Device could not tell which router to use",
 		}
-	case errors.Is(err, policypublication.ErrKubernetesProfile):
+	case errors.Is(err, policypublication.ErrKubernetesProfile),
+		errors.Is(err, policypublication.ErrKubernetesProfileCluster):
 		answer, _ := classifyKubernetesAccessError(err)
 		return answer
 	case errors.Is(err, policypublication.ErrKubernetesGroups):

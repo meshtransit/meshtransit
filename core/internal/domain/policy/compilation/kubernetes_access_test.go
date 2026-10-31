@@ -42,6 +42,10 @@ type accessCase struct {
 	required bool
 	profiles []publication.KubernetesProfile
 	params   compilation.RuleIntentParams
+	// clusters names the clusters of sets sent (K2h); clustered turns the
+	// clustered-profiles flag on.
+	clusters  map[publication.KubernetesProfileID]compilation.ProfileCluster
+	clustered bool
 }
 
 func (fixture clusterRuleFixture) compileAccess(t *testing.T, test accessCase) (publication.Candidate, error) {
@@ -59,7 +63,8 @@ func (fixture clusterRuleFixture) compileAccess(t *testing.T, test accessCase) (
 		t.Fatal(err)
 	}
 	request, err := compilation.NewRequest(compilation.RequestParams{Scope: compilationScopeFixture(t),
-		Revision: 3, Rules: []compilation.RuleIntent{intent}, KubernetesProfiles: test.profiles})
+		Revision: 3, Rules: []compilation.RuleIntent{intent}, KubernetesProfiles: test.profiles,
+		KubernetesProfileClusters: test.clusters})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,6 +75,11 @@ func (fixture clusterRuleFixture) compileAccess(t *testing.T, test accessCase) (
 	}
 	if test.required {
 		if service, err = service.WithKubernetesAccessRequired(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if test.clustered {
+		if service, err = service.WithClusteredProfiles(); err != nil {
 			t.Fatal(err)
 		}
 	}

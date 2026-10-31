@@ -378,12 +378,13 @@ func decodePolicySimulationRequest(
 		}
 		rules[index] = rule
 	}
-	profiles, err := decodePolicyKubernetesProfiles(body.KubernetesProfiles)
+	profiles, profileClusters, err := decodePolicyKubernetesProfiles(body.KubernetesProfiles)
 	if err != nil {
 		return compilation.Request{}, invalidManagementRequest()
 	}
 	compiled, err := compilation.NewRequest(compilation.RequestParams{
 		Scope: scope, Revision: baseRevision + 1, Rules: rules, KubernetesProfiles: profiles,
+		KubernetesProfileClusters: profileClusters,
 	})
 	if err != nil {
 		return compilation.Request{}, invalidManagementRequest()

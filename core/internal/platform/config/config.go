@@ -73,6 +73,9 @@ type Config struct {
 	// KubernetesProfiles offers gateways access profiles, gateway.kube.v2
 	// (MESHTRANSIT_KUBERNETES_PROFILES).
 	KubernetesProfiles bool
+	// KubernetesClusteredProfiles says every Core knows the clusters of
+	// permission sets (MESHTRANSIT_KUBERNETES_CLUSTERED_PROFILES, K2h).
+	KubernetesClusteredProfiles bool
 	// KubernetesGatewayToken is how strictly gateways must present their
 	// pod token on every session (MESHTRANSIT_KUBERNETES_GATEWAY_TOKEN).
 	KubernetesGatewayToken kubecluster.GatewayTokenMode
@@ -224,6 +227,10 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, err
 	}
 	kubernetesProfiles, err := loadKubernetesProfiles(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+	kubernetesClusteredProfiles, err := loadKubernetesClusteredProfiles(lookup)
 	if err != nil {
 		return Config{}, err
 	}
@@ -380,43 +387,44 @@ func Load(lookup LookupFunc) (Config, error) {
 	}
 
 	return Config{
-		Role:                    role,
-		HealthAddress:           healthAddress,
-		ProfileAddress:          profileAddress,
-		ShutdownTimeout:         shutdownTimeout,
-		LogLevel:                logLevel,
-		DNSSuffix:               dnsSuffix,
-		SubnetRoutes:            subnetRoutes,
-		SiteDenied:              siteDenied,
-		ExitNodes:               exitNodes,
-		ExitSpread:              exitSpread,
-		KubernetesJoin:          kubernetesJoin,
-		KubernetesProfiles:      kubernetesProfiles,
-		KubernetesGatewayToken:  kubernetesGatewayToken,
-		DNSZones:                dnsZones,
-		GeoIPCountryFile:        geoIPCountryFile,
-		Dependencies:            dependencyConfig,
-		Storage:                 storageConfig,
-		API:                     apiConfig,
-		Control:                 controlConfig,
-		Enrollment:              enrollmentConfig,
-		EnrollmentKeyDigest:     enrollmentKeyDigest,
-		RevisionWorker:          revisionWorkerConfig,
-		PrivateEndpointWorker:   privateEndpointWorkerConfig,
-		DeviceAliasWorker:       deviceAliasWorkerConfig,
-		ContractExpiryWorker:    contractExpiryWorkerConfig,
-		RelayAuthority:          relayAuthorityConfig,
-		AccessLedgerWorker:      accessLedgerWorkerConfig,
-		KubernetesCAWorker:      kubernetesCAWorkerConfig,
-		EnforcementLedgerWorker: enforcementLedgerWorkerConfig,
-		AuthExpiry:              authExpiryConfig,
-		PrivateLogin:            privateLoginFile,
-		BrowserRegistration:     browserRegistration,
-		Mail:                    mailConfig,
-		Signup:                  signupConfig,
-		Interchange:             interchangeConfig,
-		Identity:                identityConfig,
-		DeploymentEntitlement:   deploymentEntitlementConfig,
+		Role:                        role,
+		HealthAddress:               healthAddress,
+		ProfileAddress:              profileAddress,
+		ShutdownTimeout:             shutdownTimeout,
+		LogLevel:                    logLevel,
+		DNSSuffix:                   dnsSuffix,
+		SubnetRoutes:                subnetRoutes,
+		SiteDenied:                  siteDenied,
+		ExitNodes:                   exitNodes,
+		ExitSpread:                  exitSpread,
+		KubernetesJoin:              kubernetesJoin,
+		KubernetesProfiles:          kubernetesProfiles,
+		KubernetesClusteredProfiles: kubernetesClusteredProfiles,
+		KubernetesGatewayToken:      kubernetesGatewayToken,
+		DNSZones:                    dnsZones,
+		GeoIPCountryFile:            geoIPCountryFile,
+		Dependencies:                dependencyConfig,
+		Storage:                     storageConfig,
+		API:                         apiConfig,
+		Control:                     controlConfig,
+		Enrollment:                  enrollmentConfig,
+		EnrollmentKeyDigest:         enrollmentKeyDigest,
+		RevisionWorker:              revisionWorkerConfig,
+		PrivateEndpointWorker:       privateEndpointWorkerConfig,
+		DeviceAliasWorker:           deviceAliasWorkerConfig,
+		ContractExpiryWorker:        contractExpiryWorkerConfig,
+		RelayAuthority:              relayAuthorityConfig,
+		AccessLedgerWorker:          accessLedgerWorkerConfig,
+		KubernetesCAWorker:          kubernetesCAWorkerConfig,
+		EnforcementLedgerWorker:     enforcementLedgerWorkerConfig,
+		AuthExpiry:                  authExpiryConfig,
+		PrivateLogin:                privateLoginFile,
+		BrowserRegistration:         browserRegistration,
+		Mail:                        mailConfig,
+		Signup:                      signupConfig,
+		Interchange:                 interchangeConfig,
+		Identity:                    identityConfig,
+		DeploymentEntitlement:       deploymentEntitlementConfig,
 	}, nil
 }
 

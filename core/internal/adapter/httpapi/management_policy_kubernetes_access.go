@@ -1,10 +1,13 @@
 package httpapi
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
 
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/policy"
 	"meshtransit.net/core/internal/domain/policy/compilation"
 	policypublication "meshtransit.net/core/internal/domain/policy/publication"
@@ -20,6 +23,12 @@ type publishPolicyKubernetesProfileRequest struct {
 	Description string             `json:"description"`
 	Namespaced  []kubeprofile.Rule `json:"namespaced"`
 	Cluster     []kubeprofile.Rule `json:"cluster"`
+	// ClusterID is the cluster the set belongs to (K2h Q261): absent keeps
+	// the one it has, null makes it a set of every cluster, a UUID names one.
+	// Raw, so that absent and null differ (§32.12 M-4).
+	ClusterID json.RawMessage `json:"cluster_id"`
+	// CopiedFrom names the set this one was copied from, shown only.
+	CopiedFrom *string `json:"copied_from"`
 }
 
 // publishPolicyKubernetesAccessRequest is how a rule to a cluster applies
@@ -36,31 +45,65 @@ type publishPolicyKubernetesAccessRequest struct {
 
 // decodePolicyKubernetesProfiles returns the release's profiles: nil when
 // the request keeps those of the release it replaces, empty when it removes
-// them all.
+// them all; and the cluster each names, by ID, when it names one.
 func decodePolicyKubernetesProfiles(
 	input *[]publishPolicyKubernetesProfileRequest,
-) ([]policypublication.KubernetesProfile, error) {
+) ([]policypublication.KubernetesProfile, map[policypublication.KubernetesProfileID]compilation.ProfileCluster,
+	error) {
 	if input == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if len(*input) > policypublication.MaximumKubernetesProfiles {
-		return nil, policypublication.ErrInvalidKubernetesProfile
+		return nil, nil, policypublication.ErrInvalidKubernetesProfile
 	}
 	profiles := make([]policypublication.KubernetesProfile, 0, len(*input))
+	clusters := make(map[policypublication.KubernetesProfileID]compilation.ProfileCluster)
 	for _, entry := range *input {
 		id, err := policypublication.ParseKubernetesProfileID(entry.ID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		profile, err := policypublication.NewKubernetesProfile(policypublication.KubernetesProfileParams{ID: id,
-			Description: entry.Description, Profile: kubeprofile.Profile{Name: entry.Name,
-				Namespaced: entry.Namespaced, Cluster: entry.Cluster}})
+		params := policypublication.KubernetesProfileParams{ID: id, Description: entry.Description,
+			Profile: kubeprofile.Profile{Name: entry.Name, Namespaced: entry.Namespaced, Cluster: entry.Cluster}}
+		if entry.CopiedFrom != nil {
+			if params.CopiedFrom, err = policypublication.ParseKubernetesProfileID(*entry.CopiedFrom); err != nil {
+				return nil, nil, err
+			}
+		}
+		choice, named, err := decodeProfileCluster(entry.ClusterID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
+		}
+		if named {
+			clusters[id] = choice
+		}
+		profile, err := policypublication.NewKubernetesProfile(params)
+		if err != nil {
+			return nil, nil, err
 		}
 		profiles = append(profiles, profile)
 	}
-	return profiles, nil
+	return profiles, clusters, nil
+}
+
+// decodeProfileCluster reads a set's cluster_id: absent names none, null
+// every cluster, a string one cluster.
+func decodeProfileCluster(raw json.RawMessage) (compilation.ProfileCluster, bool, error) {
+	switch {
+	case raw == nil:
+		return compilation.ProfileCluster{}, false, nil
+	case bytes.Equal(raw, []byte("null")):
+		return compilation.ProfileCluster{Legacy: true}, true, nil
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return compilation.ProfileCluster{}, false, err
+	}
+	cluster, err := kubecluster.ParseID(value)
+	if err != nil {
+		return compilation.ProfileCluster{}, false, err
+	}
+	return compilation.ProfileCluster{Cluster: cluster}, true, nil
 }
 
 // decodePolicyKubernetesAccess returns a rule's access: nil keeps what the
@@ -147,6 +190,41 @@ func classifyKubernetesAccessError(err error) (managementError, bool) {
 		return managementError{
 			Status: http.StatusConflict, Code: "kubernetes_profile_conflict",
 			Message: "a Kubernetes access profile's content hash names other content; send the profile again",
+		}, true
+	case errors.Is(err, compilation.ErrKubernetesProfileClusterRequired):
+		return managementError{
+			Status: http.StatusUnprocessableEntity, Code: "kubernetes_profile_cluster_required",
+			Message: "a new permission set names the cluster it belongs to",
+		}, true
+	case errors.Is(err, compilation.ErrKubernetesProfileClusterChange):
+		return managementError{
+			Status: http.StatusUnprocessableEntity, Code: "kubernetes_profile_cluster_change",
+			Message: "a permission set keeps its cluster; copy it to use it on another cluster",
+		}, true
+	case errors.Is(err, compilation.ErrKubernetesProfileWrongCluster):
+		return managementError{
+			Status: http.StatusUnprocessableEntity, Code: "kubernetes_profile_wrong_cluster",
+			Message: "a rule applies a permission set of another cluster",
+		}, true
+	case errors.Is(err, compilation.ErrKubernetesProfileLegacy):
+		return managementError{
+			Status: http.StatusUnprocessableEntity, Code: "kubernetes_profile_legacy",
+			Message: "a rule may not newly apply a permission set of every cluster; use a set of its cluster",
+		}, true
+	case errors.Is(err, compilation.ErrKubernetesProfileName):
+		return managementError{
+			Status: http.StatusUnprocessableEntity, Code: "kubernetes_profile_name_taken",
+			Message: "two permission sets of one cluster, or a set of every cluster and another set, share a name",
+		}, true
+	case errors.Is(err, compilation.ErrKubernetesProfileLimit):
+		return managementError{
+			Status: http.StatusUnprocessableEntity, Code: "kubernetes_profile_limit",
+			Message: "the release holds more permission sets than allowed",
+		}, true
+	case errors.Is(err, policypublication.ErrKubernetesProfileCluster):
+		return managementError{
+			Status: http.StatusConflict, Code: "kubernetes_profile_cluster_conflict",
+			Message: "a permission set was bound to another cluster before, or its cluster is not active",
 		}, true
 	default:
 		return managementError{}, false

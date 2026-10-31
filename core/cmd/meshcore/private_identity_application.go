@@ -86,24 +86,27 @@ type privateIdentityPorts struct {
 	ActivePolicies      httpapi.ActivePolicyReader
 	// PolicyKubernetesAccess reads a release's Kubernetes access (K2f).
 	PolicyKubernetesAccess policycompilation.KubernetesAccessReader
-	WorkspaceRenames       httpapi.WorkspaceRenamer
-	WorkspaceRoles         httpapi.WorkspaceRoleManager
-	WorkspaceCreations     httpapi.WorkspaceCreator
-	NetworkCreations       httpapi.NetworkCreator
-	AliasRanges            httpapi.NetworkAliasRanges
-	DeviceLifetimes        httpapi.NetworkDeviceLifetimes
-	AddressUsage           httpapi.NetworkAddressUsage
-	AuditHistory           httpapi.AuditHistoryReader
-	AuditExports           httpapi.AuditExporter
-	Guardrails             httpapi.GuardrailManager
-	Interchanges           httpapi.InterchangeManager
-	InterchangeTrust       httpapi.InterchangeRelayTrust
-	DeviceGroups           httpapi.DeviceGroupManager
-	Sites                  httpapi.SiteManager
-	ExitPools              httpapi.ExitPoolManager
-	DNSZones               httpapi.DNSZoneManager
-	ServiceNames           httpapi.ServiceNameChecker
-	OfferServiceNames      httpapi.OfferServiceNameReader
+	// PolicyKubernetesClusteredProfiles: permission sets of different
+	// clusters may share a name (K2h).
+	PolicyKubernetesClusteredProfiles bool
+	WorkspaceRenames                  httpapi.WorkspaceRenamer
+	WorkspaceRoles                    httpapi.WorkspaceRoleManager
+	WorkspaceCreations                httpapi.WorkspaceCreator
+	NetworkCreations                  httpapi.NetworkCreator
+	AliasRanges                       httpapi.NetworkAliasRanges
+	DeviceLifetimes                   httpapi.NetworkDeviceLifetimes
+	AddressUsage                      httpapi.NetworkAddressUsage
+	AuditHistory                      httpapi.AuditHistoryReader
+	AuditExports                      httpapi.AuditExporter
+	Guardrails                        httpapi.GuardrailManager
+	Interchanges                      httpapi.InterchangeManager
+	InterchangeTrust                  httpapi.InterchangeRelayTrust
+	DeviceGroups                      httpapi.DeviceGroupManager
+	Sites                             httpapi.SiteManager
+	ExitPools                         httpapi.ExitPoolManager
+	DNSZones                          httpapi.DNSZoneManager
+	ServiceNames                      httpapi.ServiceNameChecker
+	OfferServiceNames                 httpapi.OfferServiceNameReader
 	// ContractServiceNames reads, replaces and uses a running share's
 	// service names.
 	ContractServiceNames httpapi.ContractServiceNameManager
@@ -232,51 +235,52 @@ func composePrivateIdentity(
 	managementOptions := options.Management
 	resources, err := httpapi.NewManagementHandler(httpapi.ManagementHandlerOptions{
 		Sessions: sessions, Revocations: ports.Revocations, PolicyPublications: ports.PolicyPublications,
-		PolicyCompilations:     ports.PolicyCompilations,
-		PolicyExplanations:     ports.PolicyExplanations,
-		AccessGraphs:           ports.AccessGraphs,
-		PolicySimulations:      ports.PolicySimulations,
-		ActivePolicies:         ports.ActivePolicies,
-		PolicyKubernetesAccess: ports.PolicyKubernetesAccess,
-		WorkspaceRenames:       ports.WorkspaceRenames,
-		WorkspaceRoles:         ports.WorkspaceRoles,
-		WorkspaceCreations:     ports.WorkspaceCreations,
-		NetworkCreations:       ports.NetworkCreations,
-		AliasRanges:            ports.AliasRanges,
-		DeviceLifetimes:        ports.DeviceLifetimes,
-		AddressUsage:           ports.AddressUsage,
-		AuditHistory:           ports.AuditHistory,
-		AuditExports:           ports.AuditExports,
-		Guardrails:             ports.Guardrails,
-		Interchanges:           ports.Interchanges,
-		InterchangeTrust:       ports.InterchangeTrust,
-		DeviceGroups:           ports.DeviceGroups,
-		Sites:                  ports.Sites,
-		ExitPools:              ports.ExitPools,
-		DNSZones:               ports.DNSZones,
-		ServiceNames:           ports.ServiceNames,
-		OfferServiceNames:      ports.OfferServiceNames,
-		ContractServiceNames:   ports.ContractServiceNames,
-		SiteRouterObservations: ports.SiteRouterObservations,
-		SiteRouterUse:          ports.SiteRouterUse,
-		ExitNodeUse:            ports.ExitNodeUse,
-		DNSZoneStatus:          ports.DNSZoneStatus,
-		DNSResolverDevices:     ports.DNSResolverDevices,
-		DNSZoneReceivers:       ports.DNSZoneReceivers,
-		Countries:              ports.Countries,
-		IdentityGroups:         ports.IdentityGroups,
-		DeviceTags:             ports.DeviceTags,
-		DeviceLifecycle:        ports.DeviceLifecycle,
-		MemberLifecycle:        ports.MemberLifecycle,
-		NetworkMembers:         ports.NetworkMembers,
-		EnrollmentKeys:         ports.EnrollmentKeys,
-		KubernetesClusters:     ports.KubernetesClusters,
-		Invitations:            ports.Invitations,
-		SessionWorkspaces:      ports.SessionWorkspaces,
-		ShareTargets:           ports.ShareTargets,
-		PolicyApprovals:        ports.PolicyApprovals,
-		PolicyApprovalCatalog:  ports.PolicyApprovalCatalog,
-		ResourceCreations:      ports.ResourceCreations, ResourceCatalog: ports.ResourceCatalog,
+		PolicyCompilations:                ports.PolicyCompilations,
+		PolicyExplanations:                ports.PolicyExplanations,
+		AccessGraphs:                      ports.AccessGraphs,
+		PolicySimulations:                 ports.PolicySimulations,
+		ActivePolicies:                    ports.ActivePolicies,
+		PolicyKubernetesAccess:            ports.PolicyKubernetesAccess,
+		PolicyKubernetesClusteredProfiles: ports.PolicyKubernetesClusteredProfiles,
+		WorkspaceRenames:                  ports.WorkspaceRenames,
+		WorkspaceRoles:                    ports.WorkspaceRoles,
+		WorkspaceCreations:                ports.WorkspaceCreations,
+		NetworkCreations:                  ports.NetworkCreations,
+		AliasRanges:                       ports.AliasRanges,
+		DeviceLifetimes:                   ports.DeviceLifetimes,
+		AddressUsage:                      ports.AddressUsage,
+		AuditHistory:                      ports.AuditHistory,
+		AuditExports:                      ports.AuditExports,
+		Guardrails:                        ports.Guardrails,
+		Interchanges:                      ports.Interchanges,
+		InterchangeTrust:                  ports.InterchangeTrust,
+		DeviceGroups:                      ports.DeviceGroups,
+		Sites:                             ports.Sites,
+		ExitPools:                         ports.ExitPools,
+		DNSZones:                          ports.DNSZones,
+		ServiceNames:                      ports.ServiceNames,
+		OfferServiceNames:                 ports.OfferServiceNames,
+		ContractServiceNames:              ports.ContractServiceNames,
+		SiteRouterObservations:            ports.SiteRouterObservations,
+		SiteRouterUse:                     ports.SiteRouterUse,
+		ExitNodeUse:                       ports.ExitNodeUse,
+		DNSZoneStatus:                     ports.DNSZoneStatus,
+		DNSResolverDevices:                ports.DNSResolverDevices,
+		DNSZoneReceivers:                  ports.DNSZoneReceivers,
+		Countries:                         ports.Countries,
+		IdentityGroups:                    ports.IdentityGroups,
+		DeviceTags:                        ports.DeviceTags,
+		DeviceLifecycle:                   ports.DeviceLifecycle,
+		MemberLifecycle:                   ports.MemberLifecycle,
+		NetworkMembers:                    ports.NetworkMembers,
+		EnrollmentKeys:                    ports.EnrollmentKeys,
+		KubernetesClusters:                ports.KubernetesClusters,
+		Invitations:                       ports.Invitations,
+		SessionWorkspaces:                 ports.SessionWorkspaces,
+		ShareTargets:                      ports.ShareTargets,
+		PolicyApprovals:                   ports.PolicyApprovals,
+		PolicyApprovalCatalog:             ports.PolicyApprovalCatalog,
+		ResourceCreations:                 ports.ResourceCreations, ResourceCatalog: ports.ResourceCatalog,
 		ResourceSharing: ports.ResourceSharing,
 		Idempotency:     keys.idempotency, RateLimitSubjects: keys.rateLimit, RateLimiter: ports.RateLimiter,
 		TrustedProxyPrefixes: profile.TrustedProxyPrefixes, SourceRateLimit: managementOptions.SourceRateLimit,

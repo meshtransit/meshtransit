@@ -18,6 +18,9 @@ type privateIdentityResourceServices struct {
 	sites compilation.SiteResolver
 	// exitPools resolves Exit Pool destinations.
 	exitPools compilation.ExitPoolResolver
+	// clusteredProfiles: every Core knows the clusters of permission sets
+	// (MESHTRANSIT_KUBERNETES_CLUSTERED_PROFILES).
+	clusteredProfiles bool
 }
 
 // serviceNames turns service names a consumer approves into DNS names of its

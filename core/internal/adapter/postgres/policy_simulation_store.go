@@ -467,7 +467,8 @@ func (record policySimulationBaselineRecord) baseline(
 	}
 	// A release a Core of an earlier era published was hashed without the
 	// groups or profiles the database carried for it.
-	rebuiltHash := candidate.SemanticHashAs(record.kubernetesGroups.hashed, record.kubernetesGroups.profilesHashed)
+	rebuiltHash := candidate.SemanticHashAs(record.kubernetesGroups.hashed, record.kubernetesGroups.profilesHashed,
+		record.kubernetesGroups.clustersHashed)
 	if rebuiltHash != semanticHash {
 		return simulation.Baseline{}, fmt.Errorf("compiled baseline semantic hash differs: %w", simulation.ErrInvalidBaseline)
 	}

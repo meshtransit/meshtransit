@@ -26,7 +26,10 @@ const (
 	// policyHashDomainV9 adds the access profiles of rules to clusters and
 	// the profiles of the release (K2); a release whose rules apply none
 	// keeps an earlier domain.
-	policyHashDomainV9               = "meshtransit/policy-release/v9\x00"
+	policyHashDomainV9 = "meshtransit/policy-release/v9\x00"
+	// policyHashDomainV10 adds the cluster each permission set of the
+	// release belongs to (K2h); a release whose sets belong to none keeps v9.
+	policyHashDomainV10              = "meshtransit/policy-release/v10\x00"
 	resourceCompilerFormatV2         = 2
 	resourceGroupCompilerFormatV3    = 3
 	importedResourceCompilerFormatV4 = 4
@@ -86,6 +89,8 @@ const (
 	hashGroups
 	// hashProfiles: groups and profiles (domain v9, K2).
 	hashProfiles
+	// hashClusters: groups, profiles and their clusters (domain v10, K2h).
+	hashClusters
 )
 
 // NewCandidate validates and hashes one compiled policy artifact.
@@ -263,7 +268,7 @@ func KubernetesAccessChanged(baseline, proposed Candidate) bool {
 	for index, profile := range baseline.kubernetesProfiles {
 		other := proposed.kubernetesProfiles[index]
 		if profile.id != other.id || profile.contentHash != other.contentHash ||
-			profile.description != other.description {
+			profile.description != other.description || profile.cluster != other.cluster {
 			return true
 		}
 	}
@@ -403,14 +408,18 @@ func validGroupRules(candidate Candidate) bool {
 			return false
 		}
 	}
-	// A rule applies a profile of the release, with the content it has there.
-	profiles := make(map[KubernetesProfileID][32]byte, len(candidate.kubernetesProfiles))
+	// A rule applies a profile of the release, with the content it has
+	// there, and of its own cluster unless the set belongs to every cluster
+	// (K2h-I1).
+	profiles := make(map[KubernetesProfileID]KubernetesProfile, len(candidate.kubernetesProfiles))
 	for _, profile := range candidate.kubernetesProfiles {
-		profiles[profile.id] = profile.contentHash
+		profiles[profile.id] = profile
 	}
 	for _, rule := range candidate.groupRules {
 		if access := rule.kubernetesAccess; !access.IsZero() {
-			if hash, found := profiles[access.profileID]; !found || hash != access.profileHash {
+			profile, found := profiles[access.profileID]
+			if !found || profile.contentHash != access.profileHash ||
+				(profile.cluster != kubecluster.ID{} && profile.cluster != rule.cluster) {
 				return false
 			}
 		}
@@ -419,20 +428,32 @@ func validGroupRules(candidate Candidate) bool {
 }
 
 // validKubernetesProfiles reports at most MaximumKubernetesProfiles valid
-// profiles, strictly sorted by ID, with distinct names.
+// profiles, strictly sorted by ID, with names distinct within a cluster, and
+// a set of every cluster (legacy) named like no other set (K2h §32.10 M4).
 func validKubernetesProfiles(profiles []KubernetesProfile) bool {
 	if len(profiles) > MaximumKubernetesProfiles {
 		return false
 	}
-	names := make(map[string]struct{}, len(profiles))
+	type clusterName struct {
+		cluster kubecluster.ID
+		name    string
+	}
+	names := make(map[clusterName]struct{}, len(profiles))
+	clusters := make(map[string]kubecluster.ID, len(profiles))
 	for index, profile := range profiles {
 		if !profile.IsValid() || index > 0 && compareKubernetesProfiles(profiles[index-1], profile) >= 0 {
 			return false
 		}
-		if _, duplicate := names[profile.Name()]; duplicate {
+		key := clusterName{profile.cluster, profile.Name()}
+		if _, duplicate := names[key]; duplicate {
 			return false
 		}
-		names[profile.Name()] = struct{}{}
+		names[key] = struct{}{}
+		if other, named := clusters[profile.Name()]; named &&
+			(other == kubecluster.ID{} || profile.cluster == kubecluster.ID{}) {
+			return false
+		}
+		clusters[profile.Name()] = profile.cluster
 	}
 	return true
 }
@@ -747,6 +768,8 @@ func hashCandidate(candidate Candidate) SemanticHash {
 // applies one, else groups when a rule names some.
 func (candidate Candidate) hashLevel() hashLevel {
 	switch {
+	case candidate.CoversKubernetesProfiles() && candidate.bindsKubernetesProfiles():
+		return hashClusters
 	case candidate.CoversKubernetesProfiles():
 		return hashProfiles
 	case candidate.CoversKubernetesGroups():
@@ -762,7 +785,9 @@ func (candidate Candidate) hashLevel() hashLevel {
 func hashCandidateWith(candidate Candidate, level hashLevel) SemanticHash {
 	rules := candidate.snapshot.Rules()
 	domain := policyHashDomainV1
-	if level == hashProfiles {
+	if level == hashClusters {
+		domain = policyHashDomainV10
+	} else if level == hashProfiles {
 		domain = policyHashDomainV9
 	} else if level == hashGroups {
 		domain = policyHashDomainV8
@@ -818,7 +843,7 @@ func hashCandidateWith(candidate Candidate, level hashLevel) SemanticHash {
 			present |= 1 << 4
 		}
 		encoded = append(encoded, present)
-	case policyHashDomainV8, policyHashDomainV9:
+	case policyHashDomainV8, policyHashDomainV9, policyHashDomainV10:
 		// v8 tags route and exit rules: either may come without the other.
 		present := presentSections(candidate)
 		if len(candidate.routeRules) > 0 {
@@ -938,12 +963,15 @@ func hashCandidateWith(candidate Candidate, level hashLevel) SemanticHash {
 	if len(candidate.exitRules) > 0 {
 		encoded = appendExitRules(encoded, candidate.exitRules)
 	}
-	if domain == policyHashDomainV8 || domain == policyHashDomainV9 {
+	if domain == policyHashDomainV8 || domain == policyHashDomainV9 || domain == policyHashDomainV10 {
 		encoded = appendKubernetesGroups(encoded, candidate.groupRules)
 	}
-	if domain == policyHashDomainV9 {
+	if domain == policyHashDomainV9 || domain == policyHashDomainV10 {
 		encoded = appendKubernetesAccess(encoded, candidate.groupRules)
 		encoded = appendKubernetesProfiles(encoded, candidate.kubernetesProfiles)
+	}
+	if domain == policyHashDomainV10 {
+		encoded = appendKubernetesProfileClusters(encoded, candidate.kubernetesProfiles)
 	}
 	return SemanticHash(sha256.Sum256(encoded))
 }
@@ -991,6 +1019,24 @@ func appendKubernetesProfiles(encoded []byte, profiles []KubernetesProfile) []by
 	return encoded
 }
 
+// appendKubernetesProfileClusters encodes, for each set by ID, the cluster
+// it belongs to: 16 zero bytes for a set of every cluster.
+func appendKubernetesProfileClusters(encoded []byte, profiles []KubernetesProfile) []byte {
+	for _, profile := range profiles {
+		cluster := publicid.ID(profile.cluster).Bytes()
+		encoded = append(encoded, cluster[:]...)
+	}
+	return encoded
+}
+
+// bindsKubernetesProfiles reports whether a set of the release belongs to a
+// cluster, so that a hash of a release that applies sets is of domain v10.
+func (candidate Candidate) bindsKubernetesProfiles() bool {
+	return slices.ContainsFunc(candidate.kubernetesProfiles, func(profile KubernetesProfile) bool {
+		return profile.cluster != kubecluster.ID{}
+	})
+}
+
 func boolByte(value bool) byte {
 	if value {
 		return 1
@@ -1007,11 +1053,14 @@ func (candidate Candidate) CoversKubernetesProfiles() bool {
 }
 
 // SemanticHashAs returns the hash a Core computes for the release when it
-// covers Kubernetes groups only if groups, and profiles only if profiles:
-// what the stored flags of a release say it was hashed as. It is
-// SemanticHash when both hold.
-func (candidate Candidate) SemanticHashAs(groups, profiles bool) SemanticHash {
+// covers Kubernetes groups only if groups, profiles only if profiles, and
+// the clusters of sets only if clusters: what the stored flags of a release
+// say it was hashed as. It is SemanticHash when all hold.
+func (candidate Candidate) SemanticHashAs(groups, profiles, clusters bool) SemanticHash {
 	level := candidate.hashLevel()
+	if !clusters && level == hashClusters {
+		level = hashProfiles
+	}
 	if !profiles && level == hashProfiles {
 		level = hashGroups
 	}
@@ -1022,9 +1071,16 @@ func (candidate Candidate) SemanticHashAs(groups, profiles bool) SemanticHash {
 }
 
 // HashesAs reports whether hash is the candidate's own, or one a Core of an
-// earlier era computed for it: without profiles, or without groups.
+// earlier era computed for it: without the clusters of sets, without
+// profiles, or without groups. Without clusters still binds them: a set ID
+// keeps the cluster it was first bound to for good (K2h §32.12 M-1), and
+// the one change, every cluster to one, only narrows.
 func (candidate Candidate) HashesAs(hash SemanticHash) bool {
 	switch candidate.hashLevel() {
+	case hashClusters:
+		return hash == candidate.semanticHash || hash == hashCandidateWith(candidate, hashProfiles) ||
+			hash == hashCandidateWith(candidate, hashGroups) ||
+			hash == hashCandidateWith(candidate, hashBeforeGroups)
 	case hashProfiles:
 		return hash == candidate.semanticHash || hash == hashCandidateWith(candidate, hashGroups) ||
 			hash == hashCandidateWith(candidate, hashBeforeGroups)

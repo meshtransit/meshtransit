@@ -8,14 +8,19 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/shared/kubeprofile"
 )
 
 // Bounds of Kubernetes access profiles in a release (K2 §7.4, §21).
 const (
-	// MaximumKubernetesProfiles bounds the profiles one release holds.
-	MaximumKubernetesProfiles = 256
+	// MaximumKubernetesProfiles bounds the permission sets one release holds
+	// once they belong to clusters (K2h Q267).
+	MaximumKubernetesProfiles = 1024
+	// MaximumSharedKubernetesProfiles bounds them while a Core that does not
+	// know clusters may still publish: it refuses more (K2h §32.12 M-6).
+	MaximumSharedKubernetesProfiles = 256
 	// MaximumKubernetesProfileDescription bounds a description, in characters.
 	MaximumKubernetesProfileDescription = 512
 	// MaximumKubernetesReport bounds how long a rule may report instead of
@@ -48,6 +53,11 @@ var (
 	// ErrKubernetesProfile reports profiles the database refuses (MTP08): a
 	// content hash that names other content.
 	ErrKubernetesProfile = errors.New("policy publication: Kubernetes access profile refused by the database")
+	// ErrKubernetesProfileCluster reports a permission set the database
+	// refuses for its cluster: one bound before to another cluster, or first
+	// bound to a cluster that is not active in the Network (MTP10), or a
+	// rule applying a set of another cluster (MTP09).
+	ErrKubernetesProfileCluster = errors.New("policy publication: Kubernetes permission set of another cluster")
 )
 
 // KubernetesProfileID is a validated UUIDv7 naming one access profile of a
@@ -76,6 +86,11 @@ type KubernetesProfileParams struct {
 	// Description is shown only: it is not part of what the release grants.
 	Description string
 	Profile     kubeprofile.Profile
+	// Cluster is the cluster the set belongs to (K2h); zero for a set of
+	// every cluster (legacy).
+	Cluster kubecluster.ID
+	// CopiedFrom names the set this one was copied from, shown only.
+	CopiedFrom KubernetesProfileID
 }
 
 // KubernetesProfile is one profile as a release holds it: normalized, with
@@ -85,6 +100,8 @@ type KubernetesProfile struct {
 	description string
 	profile     kubeprofile.Profile
 	contentHash [32]byte
+	cluster     kubecluster.ID
+	copiedFrom  KubernetesProfileID
 }
 
 // NewKubernetesProfile validates and normalizes a profile.
@@ -94,7 +111,8 @@ func NewKubernetesProfile(params KubernetesProfileParams) (KubernetesProfile, er
 		return KubernetesProfile{}, errors.Join(ErrInvalidKubernetesProfile, err)
 	}
 	profile := KubernetesProfile{id: params.ID, description: params.Description,
-		profile: kubeprofile.Normalize(params.Profile), contentHash: hash}
+		profile: kubeprofile.Normalize(params.Profile), contentHash: hash, cluster: params.Cluster,
+		copiedFrom: params.CopiedFrom}
 	if !profile.IsValid() {
 		return KubernetesProfile{}, ErrInvalidKubernetesProfile
 	}
@@ -109,6 +127,26 @@ func (profile KubernetesProfile) Name() string { return profile.profile.Name }
 
 // Description returns the shown description.
 func (profile KubernetesProfile) Description() string { return profile.description }
+
+// Cluster returns the cluster the set belongs to; zero for a set of every
+// cluster (legacy).
+func (profile KubernetesProfile) Cluster() kubecluster.ID { return profile.cluster }
+
+// CopiedFrom returns the set this one was copied from; zero when none.
+func (profile KubernetesProfile) CopiedFrom() KubernetesProfileID { return profile.copiedFrom }
+
+// WithCluster returns the set bound to cluster, for a compiler that keeps
+// or resolves the set's binding.
+func (profile KubernetesProfile) WithCluster(cluster kubecluster.ID) KubernetesProfile {
+	profile.cluster = cluster
+	return profile
+}
+
+// WithCopiedFrom returns the set with its copy origin.
+func (profile KubernetesProfile) WithCopiedFrom(origin KubernetesProfileID) KubernetesProfile {
+	profile.copiedFrom = origin
+	return profile
+}
 
 // Profile returns a caller-owned copy of the normalized rules.
 func (profile KubernetesProfile) Profile() kubeprofile.Profile { return cloneProfile(profile.profile) }
@@ -139,7 +177,9 @@ func (profile KubernetesProfile) ContentHash() [32]byte { return profile.content
 // (review d2 L7).
 func (profile KubernetesProfile) IsValid() bool {
 	return profile.id.IsValid() && validProfileDescription(profile.description) &&
-		profile.contentHash != [32]byte{} && profile.profile.Name != ""
+		profile.contentHash != [32]byte{} && profile.profile.Name != "" &&
+		(profile.cluster == kubecluster.ID{} || profile.cluster.IsValid()) &&
+		(profile.copiedFrom == KubernetesProfileID{} || profile.copiedFrom.IsValid())
 }
 
 // validProfileDescription reports valid UTF-8 of at most 512 characters

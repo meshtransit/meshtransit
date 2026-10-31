@@ -85,6 +85,9 @@ type privateIdentityFactoryDependencies struct {
 	// ExitSpread lets Exit Pools become spread
 	// (MESHTRANSIT_EXIT_SPREAD_ENABLED).
 	ExitSpread bool
+	// KubernetesClusteredProfiles says every Core knows the clusters of
+	// permission sets (MESHTRANSIT_KUBERNETES_CLUSTERED_PROFILES).
+	KubernetesClusteredProfiles bool
 	// DNSZones lets Network admins change DNS zones
 	// (MESHTRANSIT_DNS_ZONES_ENABLED).
 	DNSZones bool
@@ -459,6 +462,7 @@ func composePrivateIdentityFactory(
 	if dependencies.ExitNodes {
 		resources.exitPools = exitPoolStore
 	}
+	resources.clusteredProfiles = dependencies.KubernetesClusteredProfiles
 	revocations, policies, policyCompiler, policyExplainer, policySimulator,
 		policyApprovals, policyApprovalCatalog, err :=
 		privateIdentityManagementServices(
@@ -507,7 +511,7 @@ func composePrivateIdentityFactory(
 		ClaimIDs: oidcauth.SystemClaimIDs{}, IssueMaterial: oidcauth.SystemIssueMaterial{},
 		Revocations: revocations, PolicyPublications: policies, PolicyCompilations: policyCompiler,
 		PolicyExplanations: policyExplainer, AccessGraphs: policyExplainer, PolicySimulations: policySimulator,
-		ActivePolicies: activePolicies, PolicyKubernetesAccess: policyKubernetesAccess, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations, AliasRanges: aliasRanges, DeviceLifetimes: deviceLifetimes, AddressUsage: addressUsage, AuditHistory: auditHistory, AuditExports: auditExports, Guardrails: guardrails, Interchanges: interchanges, InterchangeTrust: interchangeTrust, DeviceGroups: deviceGroups, Sites: sites, ExitPools: exitPools, DNSZones: dnsZones, ServiceNames: dnsZones, OfferServiceNames: resources.imports, ContractServiceNames: contractServiceNames, SiteRouterObservations: dependencies.Redis, SiteRouterUse: dependencies.Redis, ExitNodeUse: dependencies.Redis, DNSZoneStatus: dependencies.Redis, DNSResolverDevices: deviceInventory, DNSZoneReceivers: dnsZoneStore, Countries: dependencies.Countries, IdentityGroups: identityGroups, DeviceTags: deviceTags, DeviceLifecycle: deviceLifecycle, MemberLifecycle: memberLifecycle, NetworkMembers: networkMembers, EnrollmentKeys: dependencies.EnrollmentKeys, KubernetesClusters: dependencies.KubernetesClusters, Invitations: invitations, InvitationPreviews: invitations, InvitationAcceptor: invitationStore, AccountSignups: signups,
+		ActivePolicies: activePolicies, PolicyKubernetesAccess: policyKubernetesAccess, PolicyKubernetesClusteredProfiles: dependencies.KubernetesClusteredProfiles, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations, AliasRanges: aliasRanges, DeviceLifetimes: deviceLifetimes, AddressUsage: addressUsage, AuditHistory: auditHistory, AuditExports: auditExports, Guardrails: guardrails, Interchanges: interchanges, InterchangeTrust: interchangeTrust, DeviceGroups: deviceGroups, Sites: sites, ExitPools: exitPools, DNSZones: dnsZones, ServiceNames: dnsZones, OfferServiceNames: resources.imports, ContractServiceNames: contractServiceNames, SiteRouterObservations: dependencies.Redis, SiteRouterUse: dependencies.Redis, ExitNodeUse: dependencies.Redis, DNSZoneStatus: dependencies.Redis, DNSResolverDevices: deviceInventory, DNSZoneReceivers: dnsZoneStore, Countries: dependencies.Countries, IdentityGroups: identityGroups, DeviceTags: deviceTags, DeviceLifecycle: deviceLifecycle, MemberLifecycle: memberLifecycle, NetworkMembers: networkMembers, EnrollmentKeys: dependencies.EnrollmentKeys, KubernetesClusters: dependencies.KubernetesClusters, Invitations: invitations, InvitationPreviews: invitations, InvitationAcceptor: invitationStore, AccountSignups: signups,
 		SessionWorkspaces: sessionWorkspaces, ShareTargets: shareTargets,
 		PolicyApprovals: policyApprovals, PolicyApprovalCatalog: policyApprovalCatalog,
 		ResourceCreations: resources.creations, ResourceCatalog: resources.catalog, ResourceSharing: resources.sharing,
@@ -612,6 +616,11 @@ func privateIdentityManagementServices(
 	}
 	if policyCompiler, err = policyCompiler.WithKubernetesAccess(clusterGroups, time.Now); err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition
+	}
+	if resources.clusteredProfiles {
+		if policyCompiler, err = policyCompiler.WithClusteredProfiles(); err != nil {
+			return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition
+		}
 	}
 	accessGraphStore, err := postgresadapter.NewAccessGraphStore(
 		pool,

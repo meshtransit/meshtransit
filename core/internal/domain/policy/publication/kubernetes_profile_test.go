@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/policy"
 	publication "meshtransit.net/core/internal/domain/policy/publication"
 	"meshtransit.net/shared/kubeprofile"
@@ -163,10 +164,10 @@ func TestCandidateHashesAsEachEra(t *testing.T) {
 		t.Fatal(err)
 	}
 	grouped := clusterCandidate(t, clusterRuleWithGroups(t, "view"))
-	if profiled.SemanticHashAs(true, true) != profiled.SemanticHash() ||
-		profiled.SemanticHashAs(true, false) != grouped.SemanticHash() ||
-		profiled.SemanticHashAs(false, false) != grouped.LegacySemanticHash() ||
-		profiled.SemanticHashAs(false, true) != grouped.LegacySemanticHash() {
+	if profiled.SemanticHashAs(true, true, true) != profiled.SemanticHash() ||
+		profiled.SemanticHashAs(true, false, false) != grouped.SemanticHash() ||
+		profiled.SemanticHashAs(false, false, false) != grouped.LegacySemanticHash() ||
+		profiled.SemanticHashAs(false, true, true) != grouped.LegacySemanticHash() {
 		t.Fatal("an era's hash differs from the release it would have computed")
 	}
 	for name, hash := range map[string]publication.SemanticHash{
@@ -312,5 +313,60 @@ func TestKubernetesAccessChanged(t *testing.T) {
 	}
 	if publication.KubernetesAccessChanged(plain, candidate([]publication.KubernetesProfile{developer}, teamA)) == false {
 		t.Fatal("a rule newly applying a profile is a change")
+	}
+}
+
+// Permission sets belong to a cluster (K2h): a rule applies one of its own
+// cluster or of every cluster; names are distinct within a cluster and a set
+// of every cluster is named like no other; the cluster is in a v10 hash,
+// which still accepts the v9 hash of a Core that carried it.
+func TestCandidateBindsPermissionSetsToClusters(t *testing.T) {
+	t.Parallel()
+	ruleCluster, err := kubecluster.ParseID("01890f00-0000-7000-8000-000000000b01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := kubecluster.ParseID("01890f00-0000-7000-8000-000000000b02")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := publicationProfile(t, "01890f00-0000-7000-8000-000000000c01", "developer", "get")
+	rule := clusterRuleWithAccess(t, profileAccess(t, legacy, time.Time{}, "team-a"), "view")
+	shared, err := clusterProfileCandidate(t, []publication.KubernetesProfile{legacy}, rule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound, err := clusterProfileCandidate(t, []publication.KubernetesProfile{legacy.WithCluster(ruleCluster)}, rule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.SemanticHash() == shared.SemanticHash() || !bound.HashesAs(shared.SemanticHash()) ||
+		bound.SemanticHashAs(true, true, false) != shared.SemanticHash() ||
+		bound.SemanticHashAs(true, true, true) != bound.SemanticHash() {
+		t.Fatal("a set's cluster is not in its own hash, or an earlier era's hash is refused")
+	}
+	if shared.HashesAs(bound.SemanticHash()) {
+		t.Fatal("a release of sets of every cluster accepts a v10 hash")
+	}
+	if _, err := clusterProfileCandidate(t, []publication.KubernetesProfile{legacy.WithCluster(other)},
+		rule); err == nil {
+		t.Fatal("a rule applies a set of another cluster")
+	}
+	twin := publicationProfile(t, "01890f00-0000-7000-8000-000000000c03", "developer", "watch")
+	for name, test := range map[string]struct {
+		profiles []publication.KubernetesProfile
+		valid    bool
+	}{
+		"one name in two clusters": {[]publication.KubernetesProfile{legacy.WithCluster(ruleCluster),
+			twin.WithCluster(other)}, true},
+		"one name twice in a cluster": {[]publication.KubernetesProfile{legacy.WithCluster(ruleCluster),
+			twin.WithCluster(ruleCluster)}, false},
+		"a set of every cluster and a set of one": {[]publication.KubernetesProfile{legacy,
+			twin.WithCluster(other)}, false},
+	} {
+		_, err := publicationCandidateFixture(t, 2, nil).WithKubernetesProfiles(test.profiles)
+		if (err == nil) != test.valid {
+			t.Errorf("%s: error = %v", name, err)
+		}
 	}
 }
