@@ -61,6 +61,9 @@ type Client struct {
 	// groupReport, set on a gateway (SetGroupReportSource), reads its
 	// groups' RBAC check (gateway.groups1); nil: none to send.
 	groupReport func() *mtcpv1.GatewayGroupReport
+	// groupCeiling, set on a gateway (SetGroupCeilingSource), reads its
+	// groups' ceiling (gateway.ceiling1); nil: none to send.
+	groupCeiling func() *mtcpv1.GatewayGroupCeiling
 	// kubeHolds keep, by Device (origin and machine key), what the node
 	// holds of its Kubernetes clusters across streams: the daemon opens a
 	// new stream on recovery or a control key change, which is no restart

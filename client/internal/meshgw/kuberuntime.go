@@ -54,6 +54,8 @@ type kubeRuntime struct {
 	proxy    *kubeproxy.Server
 	recorder *kubeaudit.Recorder
 	checker  *rbaccheck.Checker
+	// ceilings measure what each group's own RBAC lets it do (K2h h4).
+	ceilings *rbaccheck.Ceilings
 	// discovery is the cluster's resource scopes, for access profiles; nil
 	// when the gateway applies none.
 	discovery *kubediscovery.Discovery
@@ -123,11 +125,28 @@ func newKubeRuntime(cfg Config, service *daemon.Service, coreNow func() time.Tim
 		})
 	}
 	runtime.checkGroups = checkGroups
+	checkTokens := &rbaccheck.MinterTokens{Minter: checkMinter}
 	runtime.checker, err = rbaccheck.New(rbaccheck.Options{
-		Groups: checkGroups, Reviewer: reviewer, Tokens: &rbaccheck.MinterTokens{Minter: checkMinter},
+		Groups: checkGroups, Reviewer: reviewer, Tokens: checkTokens,
 		Namespace: cfg.Namespace, StatefulSet: kube.StatefulSet, ServiceAccount: kube.ServiceAccount,
 		Replicas: kube.Replicas, Secrets: kube.Secrets, GuardedNamespaces: kube.GuardedNamespaces,
 		Interval: rbacCheckInterval, Logger: logger.With("component", "rbaccheck"),
+	})
+	if err != nil {
+		return fail(fmt.Errorf("meshgw: %w", err))
+	}
+	ceilingGroups := make([]rbaccheck.CeilingGroup, 0, len(kube.Groups))
+	for _, group := range kube.Groups {
+		ceilingGroups = append(ceilingGroups, rbaccheck.CeilingGroup{
+			Name: group.Name, ClusterRole: kube.GroupRoles[group.Name],
+			Namespaces: kube.GroupNamespaces[group.Name],
+		})
+	}
+	// The checker's tokens, cached by its minter: measuring mints none of
+	// its own (§33.9 H3).
+	runtime.ceilings, err = rbaccheck.NewCeilings(rbaccheck.CeilingOptions{
+		Groups: ceilingGroups, Reviewer: reviewer, Tokens: checkTokens,
+		RuleNamespaces: service.KubernetesRuleNamespaces, Passes: runtime.checker.LastPass,
 	})
 	if err != nil {
 		return fail(fmt.Errorf("meshgw: %w", err))
@@ -308,7 +327,7 @@ func newMinter(cfg Config, boundSecretUID string, options kubetoken.Options) (*k
 func (runtime *kubeRuntime) run(ctx context.Context) {
 	var running sync.WaitGroup
 	parts := []func(context.Context) error{
-		runtime.recorder.Run, runtime.checker.Run,
+		runtime.recorder.Run, runtime.checker.Run, runtime.ceilings.Run,
 		runtime.listener.Run, runtime.proxy.Run, runtime.memory.Run,
 	}
 	if runtime.discovery != nil {
@@ -369,6 +388,7 @@ func newKubectlPath(cfg Config, service *daemon.Service, coreNow func() time.Tim
 			return kubectlPath{}, kubectlReadiness{}, err
 		}
 		groups.bind(runtime.checkGroups, runtime.checker.Verdict, runtime.checker.LastPass)
+		groups.bindCeiling(runtime.ceilings.Latest)
 		return kubectlPath{run: runtime.run, close: runtime.close}, kubectlReadiness{checks: []check{
 			{open: runtime.open},
 			{reason: "kube API cannot listen", ok: func() bool { return !runtime.listener.BindFailing() }},

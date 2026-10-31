@@ -20,6 +20,29 @@ type groupReports struct {
 	// passthrough: the gateway serves no groups, and says so (review d3c
 	// M1): an empty report, not silence that reads as an old meshgw.
 	passthrough bool
+	// ceiling is the groups' latest ceiling (K2h h4), set by bindCeiling.
+	ceiling func() *mtcpv1.GatewayGroupCeiling
+}
+
+// bindCeiling starts reporting the groups' ceilings as latest has them.
+func (reports *groupReports) bindCeiling(latest func() *mtcpv1.GatewayGroupCeiling) {
+	if reports == nil {
+		return
+	}
+	reports.mu.Lock()
+	defer reports.mu.Unlock()
+	reports.ceiling = latest
+}
+
+// ceilingReport is the groups' latest ceiling; nil before one is measured.
+func (reports *groupReports) ceilingReport() *mtcpv1.GatewayGroupCeiling {
+	reports.mu.Lock()
+	latest := reports.ceiling
+	reports.mu.Unlock()
+	if latest == nil {
+		return nil
+	}
+	return latest()
 }
 
 // bind starts reporting groups as verdict judges them; lastPass is when

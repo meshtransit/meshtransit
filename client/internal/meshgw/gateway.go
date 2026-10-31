@@ -153,6 +153,10 @@ func newRuntime(cfg Config, stacks *Stacks, profiles *profile.Store, identities 
 		if groups != nil {
 			// K1d d3: what rbaccheck made of each group, for people to see.
 			control.SetGroupReportSource(groups.report)
+			if !groups.passthrough {
+				// K2h h4: what each group's own RBAC lets it do.
+				control.SetGroupCeilingSource(groups.ceilingReport)
+			}
 		}
 	}
 	service, err = daemon.New(profiles, identities, version.Current(), control, daemon.Options{

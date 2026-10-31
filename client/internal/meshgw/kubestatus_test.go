@@ -1,6 +1,7 @@
 package meshgw
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"meshtransit.net/client/internal/kubediscovery"
 	"meshtransit.net/client/internal/kubeproxy"
+	"meshtransit.net/client/internal/rbaccheck"
 )
 
 // A group never checked makes the oldest check 0, first or last (review
@@ -62,4 +64,44 @@ func TestProfileMetrics(t *testing.T) {
 	if status := runtime.profilesStatus(); status == nil || status.DiscoveryFresh {
 		t.Fatalf("status %+v", status)
 	}
+}
+
+// The ceiling measurements' metrics, once a measurer runs.
+func TestCeilingMetrics(t *testing.T) {
+	t.Parallel()
+	var off strings.Builder
+	(&kubeRuntime{}).writeCeilingMetrics(&off)
+	if off.Len() != 0 {
+		t.Fatal("ceiling metrics without a measurer")
+	}
+	ceilings, err := rbaccheck.NewCeilings(rbaccheck.CeilingOptions{
+		Groups: []rbaccheck.CeilingGroup{{Name: "view"}}, Reviewer: refusingRules{},
+		Tokens: refusingRules{}, Passes: time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ceilings.Measure(t.Context())
+	var on strings.Builder
+	(&kubeRuntime{ceilings: ceilings}).writeCeilingMetrics(&on)
+	for _, want := range []string{
+		"meshgw_kube_ceiling_measurements_total 1", "meshgw_kube_ceiling_duration_seconds ",
+		"meshgw_kube_ceiling_bytes ", `meshgw_kube_ceiling_unmeasured_total{reason="unauthorized"} 1`,
+		"meshgw_kube_ceiling_invalid_total 0",
+	} {
+		if !strings.Contains(on.String(), want) {
+			t.Errorf("missing %q in\n%s", want, on.String())
+		}
+	}
+}
+
+// refusingRules refuses every token, and is its own token source.
+type refusingRules struct{}
+
+func (refusingRules) Token(context.Context, string) (string, error) { return "t", nil }
+
+func (refusingRules) Forget(string, string) {}
+
+func (refusingRules) RulesReview(context.Context, string, string) (rbaccheck.RulesAnswer, error) {
+	return rbaccheck.RulesAnswer{}, rbaccheck.ErrUnauthorized
 }

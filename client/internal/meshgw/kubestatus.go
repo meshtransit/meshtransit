@@ -77,6 +77,25 @@ func (runtime *kubeRuntime) writeProfileMetrics(w io.Writer) {
 		map[string]uint64{"ok": successes, "failed": failures})
 }
 
+// writeCeilingMetrics writes the groups' ceiling measurements (K2h h4).
+func (runtime *kubeRuntime) writeCeilingMetrics(w io.Writer) {
+	if runtime.ceilings == nil {
+		return
+	}
+	stats := runtime.ceilings.Stats()
+	_, _ = fmt.Fprintf(w, "# HELP meshgw_kube_ceiling_measurements_total Measurements of the groups' RBAC "+
+		"ceilings.\n# TYPE meshgw_kube_ceiling_measurements_total counter\nmeshgw_kube_ceiling_measurements_total %d\n"+
+		"# HELP meshgw_kube_ceiling_duration_seconds How long the last measurement took.\n"+
+		"# TYPE meshgw_kube_ceiling_duration_seconds gauge\nmeshgw_kube_ceiling_duration_seconds %.3f\n"+
+		"# HELP meshgw_kube_ceiling_bytes The last kept ceiling's size.\n"+
+		"# TYPE meshgw_kube_ceiling_bytes gauge\nmeshgw_kube_ceiling_bytes %d\n"+
+		"# HELP meshgw_kube_ceiling_invalid_total Measurements not kept: refused by the protocol's rules or too "+
+		"large.\n# TYPE meshgw_kube_ceiling_invalid_total counter\nmeshgw_kube_ceiling_invalid_total %d\n",
+		stats.Measurements, stats.LastDuration.Seconds(), stats.Bytes, stats.Invalid)
+	writeLabelled(w, "meshgw_kube_ceiling_unmeasured_total", "counter",
+		"Scopes a measurement could not review, by reason.", "reason", stats.Failed)
+}
+
 func (runtime *kubeRuntime) groups() []groupStatus {
 	groups := make([]groupStatus, 0, len(runtime.groupNames))
 	for _, name := range runtime.groupNames {
@@ -156,6 +175,7 @@ func (runtime *kubeRuntime) writeMetrics(w io.Writer) {
 		audit.Rate, boolMetric(audit.Paused), audit.DroppedReports, boolMetric(runtime.memory.Pressure()),
 		runtime.memory.heap.Load())
 	runtime.writeProfileMetrics(w)
+	runtime.writeCeilingMetrics(w)
 }
 
 // oldestCheck is the oldest of the groups' last whole checks in Unix

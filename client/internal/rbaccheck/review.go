@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"meshtransit.net/client/internal/kubetoken"
+	"meshtransit.net/shared/kubeprofile"
 )
 
 const (
@@ -24,6 +25,9 @@ const (
 	reviewTimeout = 10 * time.Second
 	// maxReviewAnswer bounds what is read of an answer.
 	maxReviewAnswer = 64 << 10
+	// maxRulesAnswer bounds a SelfSubjectRulesReview's answer: an
+	// aggregated role on a cluster of many CRDs runs long (§33.9 H3).
+	maxRulesAnswer = 4 << 20
 	// Device and owner names the minter keys the checker's tokens under, so
 	// its tokens show apart in the gateway's log (K1b design §9).
 	checkDevice, checkOwner = "rbaccheck", "gateway"
@@ -32,8 +36,9 @@ const (
 // APIReviewer asks the API server over plain REST, as kubetoken does: the
 // cluster's CA, no proxy, no redirect.
 type APIReviewer struct {
-	client *http.Client
-	url    string
+	client   *http.Client
+	url      string
+	rulesURL string
 }
 
 // NewAPIReviewer makes a reviewer for the API server at server.
@@ -56,7 +61,8 @@ func NewAPIReviewer(server, caFile string) (*APIReviewer, error) {
 	return &APIReviewer{
 		client: &http.Client{Transport: transport,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
-		url: strings.TrimSuffix(server, "/") + "/apis/authorization.k8s.io/v1/selfsubjectaccessreviews",
+		url:      strings.TrimSuffix(server, "/") + "/apis/authorization.k8s.io/v1/selfsubjectaccessreviews",
+		rulesURL: strings.TrimSuffix(server, "/") + "/apis/authorization.k8s.io/v1/selfsubjectrulesreviews",
 	}, nil
 }
 
@@ -131,6 +137,92 @@ func (reviewer *APIReviewer) Review(ctx context.Context, token string, attribute
 			answer.Status.EvaluationError)
 	}
 	return answer.Status.Allowed, nil
+}
+
+// ErrRulesAnswerTooLarge reports a rules review answer over 4 MiB: it is
+// never read in part.
+var ErrRulesAnswerTooLarge = errors.New("rbaccheck: the rules review answer is too large")
+
+// RulesReview asks what the token may do in namespace with a
+// SelfSubjectRulesReview. A token the API server refuses is
+// ErrUnauthorized. The API server's evaluation error text is not kept:
+// only that the answer is incomplete.
+func (reviewer *APIReviewer) RulesReview(ctx context.Context, token, namespace string) (RulesAnswer, error) {
+	body, err := json.Marshal(map[string]any{
+		"apiVersion": "authorization.k8s.io/v1", "kind": "SelfSubjectRulesReview",
+		"spec": map[string]string{"namespace": namespace},
+	})
+	if err != nil {
+		return RulesAnswer{}, fmt.Errorf("rbaccheck: a rules review: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, reviewTimeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, reviewer.rulesURL, bytes.NewReader(body))
+	if err != nil {
+		return RulesAnswer{}, fmt.Errorf("rbaccheck: a rules review: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json")
+	response, err := reviewer.client.Do(request)
+	if err != nil {
+		return RulesAnswer{}, fmt.Errorf("rbaccheck: reviewing rules: %w", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	payload, err := io.ReadAll(io.LimitReader(response.Body, maxRulesAnswer+1))
+	if err != nil {
+		return RulesAnswer{}, fmt.Errorf("rbaccheck: reading the rules review: %w", err)
+	}
+	switch response.StatusCode {
+	case http.StatusCreated, http.StatusOK:
+	case http.StatusUnauthorized:
+		return RulesAnswer{}, ErrUnauthorized
+	default:
+		return RulesAnswer{}, fmt.Errorf("rbaccheck: the API server answered %d", response.StatusCode)
+	}
+	if len(payload) > maxRulesAnswer {
+		return RulesAnswer{}, ErrRulesAnswerTooLarge
+	}
+	return decodeRulesAnswer(payload)
+}
+
+// RulesAnswer is a SelfSubjectRulesReview's status: resource and path
+// rules alike, and whether the API server called it incomplete.
+type RulesAnswer struct {
+	Rules      []kubeprofile.Rule
+	Incomplete bool
+}
+
+func decodeRulesAnswer(payload []byte) (RulesAnswer, error) {
+	var answer struct {
+		Status *struct {
+			ResourceRules []struct {
+				Verbs         []string `json:"verbs"`
+				APIGroups     []string `json:"apiGroups"`
+				Resources     []string `json:"resources"`
+				ResourceNames []string `json:"resourceNames"`
+			} `json:"resourceRules"`
+			NonResourceRules []struct {
+				Verbs           []string `json:"verbs"`
+				NonResourceURLs []string `json:"nonResourceURLs"`
+			} `json:"nonResourceRules"`
+			Incomplete bool `json:"incomplete"`
+		} `json:"status"`
+	}
+	if err := json.Unmarshal(payload, &answer); err != nil || answer.Status == nil {
+		return RulesAnswer{}, errors.New("rbaccheck: a rules review without a status")
+	}
+	rules := make([]kubeprofile.Rule, 0, len(answer.Status.ResourceRules)+len(answer.Status.NonResourceRules))
+	for _, rule := range answer.Status.ResourceRules {
+		rules = append(rules, kubeprofile.Rule{
+			Verbs: rule.Verbs, APIGroups: rule.APIGroups, Resources: rule.Resources,
+			ResourceNames: rule.ResourceNames,
+		})
+	}
+	for _, rule := range answer.Status.NonResourceRules {
+		rules = append(rules, kubeprofile.Rule{Verbs: rule.Verbs, NonResourceURLs: rule.NonResourceURLs})
+	}
+	return RulesAnswer{Rules: rules, Incomplete: answer.Status.Incomplete}, nil
 }
 
 // MinterTokens hands out the checker's tokens from the gateway's minter.

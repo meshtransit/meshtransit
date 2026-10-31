@@ -569,6 +569,13 @@ func (run *sessionRun) loop(ctx context.Context, inbox <-chan incoming) (bool, t
 		defer ticker.Stop()
 		groupBeat = ticker.C
 	}
+	// Only a gateway session with gateway.ceiling1 reports its ceiling.
+	var ceilingTick <-chan time.Time
+	if run.s.ceiling {
+		ticker := time.NewTicker(ceilingBeat)
+		defer ticker.Stop()
+		ceilingTick = ticker.C
+	}
 	endpointTimer := time.NewTimer(time.Hour)
 	endpointTimer.Stop()
 	defer endpointTimer.Stop()
@@ -583,6 +590,9 @@ func (run *sessionRun) loop(ctx context.Context, inbox <-chan incoming) (bool, t
 	defer run.endKubeAudits(controlplane.ErrKubeAuditSessionLost)
 	// A new session reports its groups at once: Core shows the last one.
 	if err := run.sendGroupReport(run.stream.client.now()); err != nil {
+		return run.mapped, 0, errors.Join(errSessionEnded, err)
+	}
+	if err := run.sendGroupCeiling(run.stream.client.now()); err != nil {
 		return run.mapped, 0, errors.Join(errSessionEnded, err)
 	}
 	for {
@@ -625,6 +635,10 @@ func (run *sessionRun) loop(ctx context.Context, inbox <-chan incoming) (bool, t
 			}
 		case <-groupBeat:
 			if err := run.sendGroupReport(run.stream.client.now()); err != nil {
+				return run.mapped, 0, errors.Join(errSessionEnded, err)
+			}
+		case <-ceilingTick:
+			if err := run.sendGroupCeiling(run.stream.client.now()); err != nil {
 				return run.mapped, 0, errors.Join(errSessionEnded, err)
 			}
 		case <-selectionBeat.C:

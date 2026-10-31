@@ -121,6 +121,12 @@ type session struct {
 	groups       bool
 	groupsDigest [32]byte
 	groupsSent   time.Time
+	// ceiling is set on a gateway session that negotiated
+	// gateway.ceiling1; ceilingDigest and ceilingSent are its last
+	// ceiling (§6.12).
+	ceiling       bool
+	ceilingDigest [32]byte
+	ceilingSent   time.Time
 }
 
 // sessionOptions describe the node opening a session.
@@ -158,6 +164,9 @@ func (c *Client) open(ctx context.Context, origin *url.URL, options sessionOptio
 		}
 		if c.groupReport != nil {
 			capabilities = append(capabilities, gatewayGroupsCapability)
+		}
+		if c.groupCeiling != nil {
+			capabilities = append(capabilities, gatewayCeilingCapability)
 		}
 	}
 	hello := &mtcpv1.ClientHello{
@@ -231,6 +240,7 @@ func (c *Client) open(ctx context.Context, origin *url.URL, options sessionOptio
 			s.tokens, s.podToken, s.podTokenSent = true, c.podToken(), c.now()
 		}
 		s.groups = c.groupReport != nil && slices.Contains(reply.GetCapabilities(), gatewayGroupsCapability)
+		s.ceiling = c.groupCeiling != nil && slices.Contains(reply.GetCapabilities(), gatewayCeilingCapability)
 		if err := s.proveNodeKey(options.prove); err != nil {
 			s.close()
 			return nil, err

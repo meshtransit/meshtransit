@@ -77,3 +77,20 @@ func TestGroupReportsOfAPassthroughGateway(t *testing.T) {
 		t.Fatalf("passthrough report %v", report)
 	}
 }
+
+// The ceiling is the measurer's latest once bound; nothing before.
+func TestGroupReportsCeiling(t *testing.T) {
+	t.Parallel()
+	reports := &groupReports{}
+	if reports.ceilingReport() != nil {
+		t.Fatal("a ceiling before the measurer was bound")
+	}
+	latest := &mtcpv1.GatewayGroupCeiling{CheckedAtMs: 1}
+	reports.bindCeiling(func() *mtcpv1.GatewayGroupCeiling { return latest })
+	if reports.ceilingReport() != latest {
+		t.Fatal("not the measurer's latest")
+	}
+	var unbound *groupReports
+	unbound.bindCeiling(nil)
+}
+

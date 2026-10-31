@@ -79,6 +79,15 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 {{- toJson $groups -}}
 {{- end -}}
 
+{{/* MESHGW_KUBE_GROUP_ROLES: each group's ClusterRole, which the gateway
+reports with its groups' ceilings (K2h h4). Apart from MESHGW_KUBE_GROUPS,
+which an older meshgw reads strictly. */}}
+{{- define "kg.groupRoles" -}}
+{{- $roles := dict -}}
+{{- range .Values.groups -}}{{- $_ := set $roles .name .clusterRole -}}{{- end -}}
+{{- toJson $roles -}}
+{{- end -}}
+
 {{/* Whether the preflight hook runs. */}}
 {{- define "kg.preflight" -}}
 {{- if and (or .Values.placement.enforce .Values.binding.enforce) (not .Values.preflight.skip) -}}true{{- end -}}
@@ -159,6 +168,7 @@ MESHGW_ENVELOPE_SECRET: {{ .Values.envelope.existingSecret | quote }}
 MESHGW_JOIN_SECRET: {{ .Values.join.existingSecret | quote }}
 MESHGW_REPLICAS: {{ int .Values.replicas | quote }}
 MESHGW_KUBE_GROUPS: {{ include "kg.kubeGroups" . | quote }}
+MESHGW_KUBE_GROUP_ROLES: {{ include "kg.groupRoles" . | quote }}
 MESHGW_GUARDED_NAMESPACES: {{ include "kg.guarded" . | quote }}
 MESHGW_SECRET_RESOURCES: {{ join "," .Values.secretResources | quote }}
 MESHGW_KUBE_STALE_AFTER: {{ printf "%ds" (int .Values.staleAfterSeconds) | quote }}

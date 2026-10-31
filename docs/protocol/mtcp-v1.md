@@ -891,14 +891,15 @@ never decides access from it.
 - **Scope:** a measured scope holds at most 576 rules
   (`KubernetesProfileRule`), `incomplete` as the API server said, and
   `rules_dropped`, how many rules were left out for their size. A rule is a
-  resource rule (verbs, API groups and resources, perhaps resource names)
-  or a path rule (verbs and non-resource URLs only); every list holds at
-  most 64 strings of printable ASCII of at most 253 bytes. A gateway never
+  resource rule (verbs, API groups and resources, perhaps resource names) or
+  a path rule (verbs and non-resource URLs only); every list holds at most
+  64 strings of printable ASCII of at most 253 bytes. A gateway never
   shortens a rule: one that breaks a bound is dropped and counted. When the
   ceiling would exceed 256 KiB the gateway leaves out namespaces, from the
-  end of the group with the most, then groups from the end, and sets the
-  flags; a group whose `everywhere` scope alone does not fit keeps that
-  scope with rules dropped from its end and counted in `rules_dropped`.
+  end of the group with the most (the last of equals), then groups from the
+  end, and sets the flags; a group whose `everywhere` scope alone does not
+  fit keeps that scope with rules dropped from its end and counted in
+  `rules_dropped`.
 - **Sending:** when the content (everything but `checked_at_ms`) changed,
   and at least every 6 hours; never sooner than 60 seconds after the last.
 - **Core:** takes ceilings only from a gateway session with

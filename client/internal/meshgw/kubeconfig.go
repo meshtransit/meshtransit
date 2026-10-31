@@ -16,6 +16,7 @@ import (
 
 	"meshtransit.net/client/internal/kubeproxy"
 	"meshtransit.net/client/internal/kubereq"
+	sharedmtcp "meshtransit.net/shared/mtcp"
 )
 
 // The gateway's kubectl modes (K1b design §10).
@@ -83,6 +84,11 @@ type KubeConfig struct {
 	// Profiles: the gateway narrows groups by access profiles (K2,
 	// MESHGW_KUBE_PROFILES), so it asks Core for gateway.kube.v2.
 	Profiles bool
+	// GroupRoles are the groups' ClusterRoles (MESHGW_KUBE_GROUP_ROLES) and
+	// GroupNamespaces the namespaces each is bound in (MESHGW_KUBE_GROUPS),
+	// which the gateway reports with its groups' ceilings (K2h h4).
+	GroupRoles      map[string]string
+	GroupNamespaces map[string][]string
 }
 
 // groupSpec is one entry of MESHGW_KUBE_GROUPS.
@@ -124,7 +130,11 @@ func loadKubeConfig(getenv func(string) string, cfg Config, apiServer string, ce
 		return KubeConfig{}, errors.New("meshgw: MESHGW_KUBE_MODE=proxy serves with the replica certificate: " +
 			"MESHGW_CERTIFICATES must be on")
 	}
-	groups, err := parseGroups(rawGroups)
+	groups, namespaces, err := parseGroups(rawGroups)
+	if err != nil {
+		return KubeConfig{}, err
+	}
+	roles, err := parseGroupRoles(value("MESHGW_KUBE_GROUP_ROLES", ""), groups)
 	if err != nil {
 		return KubeConfig{}, err
 	}
@@ -185,7 +195,8 @@ func loadKubeConfig(getenv func(string) string, cfg Config, apiServer string, ce
 		secrets = append(secrets, prefix+"-"+strconv.Itoa(ordinal))
 	}
 	return KubeConfig{
-		Mode: mode, Cluster: cfg.Cluster, Groups: groups, SecretResources: resources, StaleAfter: staleAfter,
+		Mode: mode, Cluster: cfg.Cluster, Groups: groups, GroupRoles: roles, GroupNamespaces: namespaces,
+		SecretResources: resources, StaleAfter: staleAfter,
 		APIServer: server, APICAFile: value("MESHGW_KUBE_API_CA_FILE", defaultAPICAFile),
 		APITokenFile: value("MESHGW_KUBE_API_TOKEN_FILE", defaultAPITokenFile), APIServerOverride: override != "",
 		StatefulSet: statefulSet, Replicas: replicas, ServiceAccount: serviceAccount, Secrets: secrets,
@@ -194,26 +205,29 @@ func loadKubeConfig(getenv func(string) string, cfg Config, apiServer string, ce
 	}, nil
 }
 
-// parseGroups reads MESHGW_KUBE_GROUPS strictly.
-func parseGroups(raw string) ([]kubeproxy.Group, error) {
+// parseGroups reads MESHGW_KUBE_GROUPS strictly: the groups, and the
+// namespaces each is bound in.
+func parseGroups(raw string) ([]kubeproxy.Group, map[string][]string, error) {
 	if raw == "" {
-		return nil, errors.New("meshgw: MESHGW_KUBE_GROUPS is required in proxy mode")
+		return nil, nil, errors.New("meshgw: MESHGW_KUBE_GROUPS is required in proxy mode")
 	}
 	if len(raw) > maximumKubeGroupsBytes {
-		return nil, errors.New("meshgw: MESHGW_KUBE_GROUPS is too long")
+		return nil, nil, errors.New("meshgw: MESHGW_KUBE_GROUPS is too long")
 	}
 	decoder := json.NewDecoder(bytes.NewReader([]byte(raw)))
 	decoder.DisallowUnknownFields()
 	var specs []groupSpec
 	if err := decoder.Decode(&specs); err != nil {
-		return nil, fmt.Errorf("meshgw: MESHGW_KUBE_GROUPS is not a JSON list of groups: %w", err)
+		return nil, nil, fmt.Errorf("meshgw: MESHGW_KUBE_GROUPS is not a JSON list of groups: %w", err)
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return nil, errors.New("meshgw: MESHGW_KUBE_GROUPS has more after its list")
+		return nil, nil, errors.New("meshgw: MESHGW_KUBE_GROUPS has more after its list")
 	}
 	groups := make([]kubeproxy.Group, 0, len(specs))
+	namespaces := make(map[string][]string, len(specs))
 	defaults := 0
 	for _, spec := range specs {
+		namespaces[spec.Name] = slices.Clone(spec.Namespaces)
 		groups = append(groups, kubeproxy.Group{
 			Name: spec.Name, Default: spec.Default, Privileged: spec.Privileged,
 			AllowedPrincipals: spec.AllowedPrincipals, AllowImpersonation: spec.AllowImpersonation,
@@ -224,12 +238,37 @@ func parseGroups(raw string) ([]kubeproxy.Group, error) {
 	}
 	// Exactly one default (K1 §6): kubectl without a group uses it.
 	if defaults != 1 {
-		return nil, errors.New("meshgw: MESHGW_KUBE_GROUPS needs exactly one default group")
+		return nil, nil, errors.New("meshgw: MESHGW_KUBE_GROUPS needs exactly one default group")
 	}
 	if err := kubeproxy.ValidateGroups(groups); err != nil {
-		return nil, fmt.Errorf("meshgw: MESHGW_KUBE_GROUPS: %w", err)
+		return nil, nil, fmt.Errorf("meshgw: MESHGW_KUBE_GROUPS: %w", err)
 	}
-	return groups, nil
+	return groups, namespaces, nil
+}
+
+// parseGroupRoles reads MESHGW_KUBE_GROUP_ROLES strictly: a JSON object of
+// ClusterRole names by group, every key a configured group. Unset: no
+// roles (a chart before K2h h4).
+func parseGroupRoles(raw string, groups []kubeproxy.Group) (map[string]string, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	if len(raw) > maximumKubeGroupsBytes {
+		return nil, errors.New("meshgw: MESHGW_KUBE_GROUP_ROLES is too long")
+	}
+	var roles map[string]string
+	if err := json.Unmarshal([]byte(raw), &roles); err != nil {
+		return nil, fmt.Errorf("meshgw: MESHGW_KUBE_GROUP_ROLES is not a JSON object of role names: %w", err)
+	}
+	for group, role := range roles {
+		if !slices.ContainsFunc(groups, func(served kubeproxy.Group) bool { return served.Name == group }) {
+			return nil, fmt.Errorf("meshgw: MESHGW_KUBE_GROUP_ROLES names group %q, which is not served", group)
+		}
+		if !sharedmtcp.ValidClusterRoleName(role) {
+			return nil, fmt.Errorf("meshgw: MESHGW_KUBE_GROUP_ROLES: group %q has an invalid ClusterRole name", group)
+		}
+	}
+	return roles, nil
 }
 
 // parseSecretResources reads "resource.group" names, a bare resource being

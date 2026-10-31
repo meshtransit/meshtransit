@@ -46,7 +46,7 @@ func ValidateGatewayGroupCeiling(ceiling *mtcpv1.GatewayGroupCeiling) error {
 
 func validCeilingGroup(group *mtcpv1.GatewayCeilingGroup) bool {
 	role := group.GetClusterRole()
-	if role != "" && !validRBACName(role) {
+	if role != "" && !ValidClusterRoleName(role) {
 		return false
 	}
 	everywhere := group.GetEverywhere()
@@ -80,17 +80,18 @@ func validCeilingScope(scope *mtcpv1.GatewayCeilingScope) bool {
 		return false
 	}
 	for _, rule := range rules {
-		if !validCeilingRule(rule) {
+		if !ValidGatewayCeilingRule(rule) {
 			return false
 		}
 	}
 	return true
 }
 
-// validCeilingRule is a resource rule (verbs, API groups, resources,
-// perhaps names) or a path rule (verbs and paths), as a
-// SelfSubjectRulesReview answers them.
-func validCeilingRule(rule *mtcpv1.KubernetesProfileRule) bool {
+// ValidGatewayCeilingRule reports a rule a ceiling may hold: a resource
+// rule (verbs, API groups, resources, perhaps names) or a path rule (verbs
+// and paths), as a SelfSubjectRulesReview answers them, within §6.12's
+// bounds. A gateway drops, and counts, the rules it fails.
+func ValidGatewayCeilingRule(rule *mtcpv1.KubernetesProfileRule) bool {
 	lists := [][]string{
 		rule.GetVerbs(), rule.GetApiGroups(), rule.GetResources(), rule.GetResourceNames(),
 		rule.GetNonResourceUrls(),
@@ -128,8 +129,9 @@ func printable(value string) bool {
 	return true
 }
 
-// validRBACName is a name the API server takes for a ClusterRole: a path
-// segment of printable ASCII, never "." or "..".
-func validRBACName(name string) bool {
-	return name != "." && name != ".." && !strings.ContainsAny(name, "/%") && printable(name)
+// ValidClusterRoleName reports a name the API server takes for a
+// ClusterRole, within §6.12's bounds: a path segment of 1 to 253 bytes of
+// printable ASCII, never "." or "..".
+func ValidClusterRoleName(name string) bool {
+	return name != "" && name != "." && name != ".." && !strings.ContainsAny(name, "/%") && printable(name)
 }

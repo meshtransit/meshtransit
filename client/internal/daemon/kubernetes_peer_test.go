@@ -9,6 +9,7 @@ import (
 
 	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/client/internal/networkmap"
+	"meshtransit.net/shared/kubeprofile"
 )
 
 // keyedDataPlane is a data plane that tells which key an address is under.
@@ -103,5 +104,42 @@ func TestKubernetesPeerAtCarriesItsScopes(t *testing.T) {
 	service.peerSession.setDirectory(newPeerDirectory(snapshot))
 	if peer, found = service.KubernetesPeerAt(address); !found || !peer.Withheld || peer.Scopes != nil {
 		t.Fatalf("withheld peer %+v, %t", peer, found)
+	}
+}
+
+// The namespaces the peers' scoped grants name, by group, are where a
+// gateway measures its ceilings: sorted, once each, "*" left out.
+func TestKubernetesRuleNamespaces(t *testing.T) {
+	t.Parallel()
+	scope := func(namespaces ...string) kubeprofile.Scope {
+		made, err := kubeprofile.NewScope(kubeprofile.Profile{Name: "developer", Namespaced: []kubeprofile.Rule{{
+			APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get"},
+		}}}, namespaces, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return made
+	}
+	snapshot := directorySnapshot()
+	teams, everywhere, unnamed, expired := [32]byte{1}, [32]byte{2}, [32]byte{3}, [32]byte{4}
+	until := time.Now().Add(time.Hour)
+	snapshot.Peers[0].Kubernetes = &networkmap.KubernetesAccess{Scoped: []networkmap.KubernetesScopedGrant{
+		{Group: "edit", Scope: teams, ValidUntil: until},
+		{Group: "edit", Scope: everywhere, ValidUntil: until},
+		{Group: "view", Scope: unnamed, ValidUntil: until},
+		{Group: "ops", Scope: expired, ValidUntil: time.Now().Add(-time.Minute)},
+	}}
+	snapshot.KubernetesScopes = map[[32]byte]networkmap.KubernetesScope{
+		teams: {Scope: scope("team-b", "team-a")}, everywhere: {Scope: scope("*")},
+		expired: {Scope: scope("old")},
+	}
+	service := &Service{}
+	if namespaces := service.KubernetesRuleNamespaces(); namespaces != nil {
+		t.Fatalf("without a map: %v", namespaces)
+	}
+	service.peerSession.setDirectory(newPeerDirectory(snapshot))
+	namespaces := service.KubernetesRuleNamespaces()
+	if len(namespaces) != 1 || strings.Join(namespaces["edit"], ",") != "team-a,team-b" {
+		t.Fatalf("namespaces %v", namespaces)
 	}
 }

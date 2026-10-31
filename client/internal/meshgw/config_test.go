@@ -233,6 +233,24 @@ func TestLoadConfigProxyMode(t *testing.T) {
 	}
 }
 
+// The groups' ClusterRoles and namespaces, for the ceilings (K2h h4); a
+// chart before h4 sets no roles.
+func TestLoadConfigGroupRoles(t *testing.T) {
+	t.Parallel()
+	env := proxyEnv(t)
+	cfg, err := loadFrom(env)
+	if err != nil || cfg.Kube.GroupRoles != nil ||
+		!reflect.DeepEqual(cfg.Kube.GroupNamespaces["edit"], []string{"team-a"}) ||
+		len(cfg.Kube.GroupNamespaces["view"]) != 0 {
+		t.Fatalf("%+v, %v", cfg.Kube, err)
+	}
+	env["MESHGW_KUBE_GROUP_ROLES"] = `{"view":"view","edit":"system:aggregate-to-edit"}`
+	cfg, err = loadFrom(env)
+	if err != nil || cfg.Kube.GroupRoles["edit"] != "system:aggregate-to-edit" || len(cfg.Kube.GroupRoles) != 2 {
+		t.Fatalf("%+v, %v", cfg.Kube.GroupRoles, err)
+	}
+}
+
 func TestLoadConfigRefusesBadProxyModes(t *testing.T) {
 	t.Parallel()
 	for name, change := range map[string]func(map[string]string){
@@ -257,6 +275,12 @@ func TestLoadConfigRefusesBadProxyModes(t *testing.T) {
 		"bad secret resource":     func(env map[string]string) { env["MESHGW_SECRET_RESOURCES"] = "Secrets" },
 		"http backend":            func(env map[string]string) { env["MESHGW_KUBE_API_BACKEND"] = "http://api:6443" },
 		"too many replicas":       func(env map[string]string) { env["MESHGW_REPLICAS"] = "11" },
+		"roles not json":          func(env map[string]string) { env["MESHGW_KUBE_GROUP_ROLES"] = "view" },
+		"a role of no group":      func(env map[string]string) { env["MESHGW_KUBE_GROUP_ROLES"] = `{"ops":"view"}` },
+		"a role with a slash":     func(env map[string]string) { env["MESHGW_KUBE_GROUP_ROLES"] = `{"view":"a/b"}` },
+		"an empty role":           func(env map[string]string) { env["MESHGW_KUBE_GROUP_ROLES"] = `{"view":""}` },
+		"a null role":             func(env map[string]string) { env["MESHGW_KUBE_GROUP_ROLES"] = `{"view":null}` },
+		"a role list":             func(env map[string]string) { env["MESHGW_KUBE_GROUP_ROLES"] = `["view"]` },
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

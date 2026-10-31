@@ -339,6 +339,46 @@ func (s *Service) KubernetesPeerAt(address netip.Addr) (KubernetesPeer, bool) {
 	return view, true
 }
 
+// KubernetesRuleNamespaces are, by group, the namespaces the scoped grants
+// of a gateway's peers name, sorted and distinct ("*" left out): where a
+// gateway measures its groups' ceilings beside the declared namespaces
+// (K2h h4, §33.9 H1).
+func (s *Service) KubernetesRuleNamespaces() map[string][]string {
+	directory, _ := s.peerSession.read()
+	if directory == nil {
+		return nil
+	}
+	seen := map[string]map[string]bool{}
+	now := time.Now()
+	for _, peer := range directory.peers {
+		if peer.view.Kubernetes == nil {
+			continue
+		}
+		for _, grant := range peer.view.Kubernetes.Scoped {
+			scope, named := directory.kubernetesScopes[grant.Scope]
+			// A grant past its deadline is honoured no more: no need to
+			// measure for it (review h4b L6).
+			if !named || !grant.ValidUntil.After(now) {
+				continue
+			}
+			for _, namespace := range scope.Scope.Namespaces() {
+				if namespace == "*" {
+					continue
+				}
+				if seen[grant.Group] == nil {
+					seen[grant.Group] = map[string]bool{}
+				}
+				seen[grant.Group][namespace] = true
+			}
+		}
+	}
+	namespaces := make(map[string][]string, len(seen))
+	for group, names := range seen {
+		namespaces[group] = slices.Sorted(maps.Keys(names))
+	}
+	return namespaces
+}
+
 // PingPeer measures one round trip to the Device, a peer in the current map.
 func (s *Service) PingPeer(ctx context.Context, deviceID string) (PeerPing, error) {
 	if err := ctx.Err(); err != nil {
