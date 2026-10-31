@@ -107,6 +107,10 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		}
 	}()
 
+	if processConfig.KubernetesAccessRequired {
+		// Input checks differ by replica while a rollout turns it on (K2h f5).
+		logger.InfoContext(ctx, "rules to Kubernetes clusters must name their access")
+	}
 	checkers := make([]app.DependencyChecker, 0, len(readiness.RequiredComponents()))
 	additionalMetrics := make([]prometheus.Collector, 0, 6)
 	var scaleHandler http.Handler // control role only: the autoscaler's session total
@@ -382,6 +386,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 				SubnetRoutes:       processConfig.SubnetRoutes, SiteDenied: processConfig.SiteDenied,
 				ExitNodes: processConfig.ExitNodes, ExitSpread: processConfig.ExitSpread, Countries: countries,
 				KubernetesClusteredProfiles: processConfig.KubernetesClusteredProfiles,
+				KubernetesAccessRequired:    processConfig.KubernetesAccessRequired,
 				DNSZones:                    processConfig.DNSZones.Enabled, DNSProtectedNames: processConfig.DNSProtectedNames()},
 			browserRuntime...,
 		)
@@ -412,7 +417,8 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 					DNSSuffix: processConfig.DNSSuffix, EnrollmentKeys: enrollmentKeys,
 					KubernetesClusters: kubernetesClusters,
 					SubnetRoutes:       processConfig.SubnetRoutes, ExitNodes: processConfig.ExitNodes,
-					KubernetesClusteredProfiles: processConfig.KubernetesClusteredProfiles},
+					KubernetesClusteredProfiles: processConfig.KubernetesClusteredProfiles,
+					KubernetesAccessRequired:    processConfig.KubernetesAccessRequired},
 				storagePools.runtime,
 				redisClient,
 				logger,
@@ -426,6 +432,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 				processConfig.SubnetRoutes,
 				processConfig.ExitNodes,
 				processConfig.KubernetesClusteredProfiles,
+				processConfig.KubernetesAccessRequired,
 				storagePools.runtime,
 				redisClient,
 				logger,

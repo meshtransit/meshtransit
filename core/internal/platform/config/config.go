@@ -76,6 +76,9 @@ type Config struct {
 	// KubernetesClusteredProfiles says every Core knows the clusters of
 	// permission sets (MESHTRANSIT_KUBERNETES_CLUSTERED_PROFILES, K2h).
 	KubernetesClusteredProfiles bool
+	// KubernetesAccessRequired makes a new rule to a cluster name its
+	// access (MESHTRANSIT_KUBERNETES_ACCESS_REQUIRED, K2h f5).
+	KubernetesAccessRequired bool
 	// KubernetesGatewayToken is how strictly gateways must present their
 	// pod token on every session (MESHTRANSIT_KUBERNETES_GATEWAY_TOKEN).
 	KubernetesGatewayToken kubecluster.GatewayTokenMode
@@ -231,6 +234,10 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, err
 	}
 	kubernetesClusteredProfiles, err := loadKubernetesClusteredProfiles(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+	kubernetesAccessRequired, err := loadKubernetesAccessRequired(lookup)
 	if err != nil {
 		return Config{}, err
 	}
@@ -400,6 +407,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		KubernetesJoin:              kubernetesJoin,
 		KubernetesProfiles:          kubernetesProfiles,
 		KubernetesClusteredProfiles: kubernetesClusteredProfiles,
+		KubernetesAccessRequired:    kubernetesAccessRequired,
 		KubernetesGatewayToken:      kubernetesGatewayToken,
 		DNSZones:                    dnsZones,
 		GeoIPCountryFile:            geoIPCountryFile,

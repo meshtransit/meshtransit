@@ -68,6 +68,9 @@ type managementCompositionOptions struct {
 	// KubernetesClusteredProfiles says every Core knows the clusters of
 	// permission sets (MESHTRANSIT_KUBERNETES_CLUSTERED_PROFILES).
 	KubernetesClusteredProfiles bool
+	// KubernetesAccessRequired makes a new rule to a cluster name its
+	// access (MESHTRANSIT_KUBERNETES_ACCESS_REQUIRED).
+	KubernetesAccessRequired bool
 }
 
 func composeManagementAPI(
@@ -75,7 +78,7 @@ func composeManagementAPI(
 	dnsSuffix dnsname.Suffix,
 	enrollmentKeys httpapi.EnrollmentKeyManager,
 	kubernetesClusters httpapi.KubernetesClusterManager,
-	subnetRoutes, exitNodes, clusteredProfiles bool,
+	subnetRoutes, exitNodes, clusteredProfiles, accessRequired bool,
 	runtimePool *postgresadapter.Pool,
 	rateLimiter httpapi.ManagementRateLimiter,
 	logger *slog.Logger,
@@ -101,6 +104,7 @@ func composeManagementAPI(
 		},
 		DNSSuffix: dnsSuffix, EnrollmentKeys: enrollmentKeys, KubernetesClusters: kubernetesClusters,
 		SubnetRoutes: subnetRoutes, ExitNodes: exitNodes, KubernetesClusteredProfiles: clusteredProfiles,
+		KubernetesAccessRequired: accessRequired,
 	}, runtimePool, rateLimiter, logger)
 }
 
@@ -348,6 +352,11 @@ func composeManagementAPIWithKeys(
 	}
 	if options.KubernetesClusteredProfiles {
 		if policyCompiler, err = policyCompiler.WithClusteredProfiles(); err != nil {
+			return nil, nil, errors.Join(errInvalidManagementComposition, err)
+		}
+	}
+	if options.KubernetesAccessRequired {
+		if policyCompiler, err = policyCompiler.WithKubernetesAccessRequired(); err != nil {
 			return nil, nil, errors.Join(errInvalidManagementComposition, err)
 		}
 	}

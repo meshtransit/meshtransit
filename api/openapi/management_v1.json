@@ -9463,6 +9463,7 @@
         "properties": {
           "imported_intent_changes": {"$ref": "#/components/schemas/PolicySimulationImportedIntentChanges"},
           "site_access_changes": {"$ref": "#/components/schemas/PolicySimulationSiteAccessChanges"},
+          "kubernetes_access_changes": {"$ref": "#/components/schemas/PolicySimulationKubernetesAccessChanges"},
           "impact_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
           "added_relationship_count": {"type": "integer", "minimum": 0},
           "added_relationships": {
@@ -9577,6 +9578,84 @@
           "removed_count": {"type": "integer", "minimum": 0, "maximum": 10000},
           "removed": {"type": "array", "maxItems": 256, "items": {"$ref": "#/components/schemas/PolicySimulationImportedIntent"}},
           "packet_authority_evaluated": {"type": "boolean", "const": false}
+        }
+      },
+      "PolicySimulationKubernetesAccessChanges": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Present when the current policy or the proposal has a permission set or a rule to a Kubernetes cluster (K2h f5). Every permission set added, removed or changed, and every rule to a cluster added, removed, moved, or whose source, groups or access differ; at most 256 entries each, sorted by ID, the counts carry the totals. Not part of impact_hash.",
+        "required": ["set_count", "sets", "rule_count", "rules", "truncated"],
+        "properties": {
+          "set_count": {"type": "integer", "minimum": 0},
+          "sets": {"type": "array", "maxItems": 256, "items": {"$ref": "#/components/schemas/PolicySimulationKubernetesSetChange"}},
+          "rule_count": {"type": "integer", "minimum": 0},
+          "rules": {"type": "array", "maxItems": 256, "items": {"$ref": "#/components/schemas/PolicySimulationKubernetesRuleChange"}},
+          "truncated": {"type": "boolean"}
+        }
+      },
+      "PolicySimulationKubernetesSet": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "cluster_id", "content_hash"],
+        "properties": {
+          "id": {"$ref": "#/components/schemas/PublicID"},
+          "name": {"type": "string"},
+          "cluster_id": {"oneOf": [{"type": "null"}, {"$ref": "#/components/schemas/PublicID"}]},
+          "content_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      },
+      "PolicySimulationKubernetesSetChange": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "A permission set added (before null), removed (after null), or whose content, description, name or cluster changed.",
+        "required": ["change", "before", "after"],
+        "properties": {
+          "change": {"type": "string", "enum": ["added", "removed", "changed"]},
+          "before": {"oneOf": [{"type": "null"}, {"$ref": "#/components/schemas/PolicySimulationKubernetesSet"}]},
+          "after": {"oneOf": [{"type": "null"}, {"$ref": "#/components/schemas/PolicySimulationKubernetesSet"}]}
+        }
+      },
+      "PolicySimulationKubernetesAccess": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "How a rule grants its groups in one release: {\"full\": true}, or a permission set (named as in that release) in namespaces.",
+        "properties": {
+          "full": {"type": "boolean", "const": true},
+          "set_id": {"$ref": "#/components/schemas/PublicID"},
+          "set_name": {"type": "string"},
+          "content_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "namespaces": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"type": "string", "maxLength": 63}},
+          "cluster_part": {"type": "boolean"},
+          "mode": {"type": "string", "enum": ["enforce", "report"]},
+          "report_until": {"type": "string", "format": "date-time"}
+        }
+      },
+      "PolicySimulationKubernetesRuleSide": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "id"],
+        "properties": {
+          "kind": {"type": "string", "enum": ["device", "device_group", "identity_group", "device_tag"]},
+          "id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
+      "PolicySimulationKubernetesRuleChange": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "A rule to a cluster in either release. The before fields are null (groups empty) for an added rule, the after fields for a removed one; a rule that no longer points to a cluster is removed. cluster_id is the cluster in the proposal, else in the current policy; cluster_before_id is set only when the rule moved. set_content_changed: the same set in both, its content changed.",
+        "required": ["rule_id", "change", "cluster_id", "cluster_before_id", "source_before", "source_after", "groups_before", "groups_after", "access_before", "access_after", "set_content_changed"],
+        "properties": {
+          "rule_id": {"$ref": "#/components/schemas/PublicID"},
+          "change": {"type": "string", "enum": ["added", "removed", "changed"]},
+          "cluster_id": {"$ref": "#/components/schemas/PublicID"},
+          "cluster_before_id": {"oneOf": [{"type": "null"}, {"$ref": "#/components/schemas/PublicID"}]},
+          "source_before": {"oneOf": [{"type": "null"}, {"$ref": "#/components/schemas/PolicySimulationKubernetesRuleSide"}]},
+          "source_after": {"oneOf": [{"type": "null"}, {"$ref": "#/components/schemas/PolicySimulationKubernetesRuleSide"}]},
+          "groups_before": {"type": "array", "items": {"type": "string"}},
+          "groups_after": {"type": "array", "items": {"type": "string"}},
+          "access_before": {"oneOf": [{"type": "null"}, {"$ref": "#/components/schemas/PolicySimulationKubernetesAccess"}]},
+          "access_after": {"oneOf": [{"type": "null"}, {"$ref": "#/components/schemas/PolicySimulationKubernetesAccess"}]},
+          "set_content_changed": {"type": "boolean"}
         }
       },
       "PolicySimulationSiteAccessChanges": {

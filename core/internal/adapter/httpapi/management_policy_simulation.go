@@ -91,29 +91,33 @@ type simulatedPolicyProposed struct {
 }
 
 type simulatedPolicyImpact struct {
-	ImportedIntentChanges    *simulatedImportedIntentChanges `json:"imported_intent_changes,omitempty"`
-	SiteAccessChanges        *simulatedSiteAccessChanges     `json:"site_access_changes,omitempty"`
-	ImpactHash               string                          `json:"impact_hash"`
-	AddedRelationshipCount   int                             `json:"added_relationship_count"`
-	AddedRelationships       []simulatedRelationship         `json:"added_relationships"`
-	RemovedRelationshipCount int                             `json:"removed_relationship_count"`
-	RemovedRelationships     []simulatedRelationship         `json:"removed_relationships"`
-	AddedExplanationCount    int                             `json:"added_explanation_count"`
-	AddedExplanations        []simulatedExplanation          `json:"added_explanations"`
-	RemovedExplanationCount  int                             `json:"removed_explanation_count"`
-	RemovedExplanations      []simulatedExplanation          `json:"removed_explanations"`
-	AffectedDeviceCount      int                             `json:"affected_device_count"`
-	AffectedDeviceIDs        []string                        `json:"affected_device_ids"`
-	AffectedResourceCount    int                             `json:"affected_resource_count"`
-	AffectedResourceIDs      []string                        `json:"affected_resource_ids"`
-	AffectedGroupCount       int                             `json:"affected_resource_group_count"`
-	AffectedGroupIDs         []string                        `json:"affected_resource_group_ids"`
-	UnsupportedCapabilities  []string                        `json:"unsupported_capabilities"`
-	GuardrailFindingCount    int                             `json:"guardrail_finding_count"`
-	GuardrailFindings        []simulatedGuardrailFinding     `json:"guardrail_findings"`
-	Truncated                bool                            `json:"truncated"`
-	StaleInputs              bool                            `json:"stale_inputs"`
-	Uncertain                bool                            `json:"uncertain"`
+	ImportedIntentChanges *simulatedImportedIntentChanges `json:"imported_intent_changes,omitempty"`
+	SiteAccessChanges     *simulatedSiteAccessChanges     `json:"site_access_changes,omitempty"`
+	// KubernetesAccessChanges: what the proposal changes of Kubernetes
+	// access, for a reviewer (K2h f5); absent when neither release has a
+	// rule to a cluster or a permission set.
+	KubernetesAccessChanges  *simulatedKubernetesChanges `json:"kubernetes_access_changes,omitempty"`
+	ImpactHash               string                      `json:"impact_hash"`
+	AddedRelationshipCount   int                         `json:"added_relationship_count"`
+	AddedRelationships       []simulatedRelationship     `json:"added_relationships"`
+	RemovedRelationshipCount int                         `json:"removed_relationship_count"`
+	RemovedRelationships     []simulatedRelationship     `json:"removed_relationships"`
+	AddedExplanationCount    int                         `json:"added_explanation_count"`
+	AddedExplanations        []simulatedExplanation      `json:"added_explanations"`
+	RemovedExplanationCount  int                         `json:"removed_explanation_count"`
+	RemovedExplanations      []simulatedExplanation      `json:"removed_explanations"`
+	AffectedDeviceCount      int                         `json:"affected_device_count"`
+	AffectedDeviceIDs        []string                    `json:"affected_device_ids"`
+	AffectedResourceCount    int                         `json:"affected_resource_count"`
+	AffectedResourceIDs      []string                    `json:"affected_resource_ids"`
+	AffectedGroupCount       int                         `json:"affected_resource_group_count"`
+	AffectedGroupIDs         []string                    `json:"affected_resource_group_ids"`
+	UnsupportedCapabilities  []string                    `json:"unsupported_capabilities"`
+	GuardrailFindingCount    int                         `json:"guardrail_finding_count"`
+	GuardrailFindings        []simulatedGuardrailFinding `json:"guardrail_findings"`
+	Truncated                bool                        `json:"truncated"`
+	StaleInputs              bool                        `json:"stale_inputs"`
+	Uncertain                bool                        `json:"uncertain"`
 }
 
 // maximumSimulatedGuardrailFindings bounds the findings one response lists;
@@ -157,6 +161,147 @@ func encodeSimulatedGuardrailFindings(findings []simulation.GuardrailFinding) []
 		encoded = append(encoded, item)
 	}
 	return encoded
+}
+
+// simulatedKubernetesChanges lists the permission sets and the rules to
+// clusters a proposal changes (K2h f5, design §34.1); each list at most
+// publication.MaximumKubernetesChanges, its count whole.
+type simulatedKubernetesChanges struct {
+	SetCount  int                             `json:"set_count"`
+	Sets      []simulatedKubernetesSetChange  `json:"sets"`
+	RuleCount int                             `json:"rule_count"`
+	Rules     []simulatedKubernetesRuleChange `json:"rules"`
+	Truncated bool                            `json:"truncated"`
+}
+
+type simulatedKubernetesSet struct {
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	ClusterID   *string `json:"cluster_id"`
+	ContentHash string  `json:"content_hash"`
+}
+
+type simulatedKubernetesSetChange struct {
+	Change string                  `json:"change"`
+	Before *simulatedKubernetesSet `json:"before"`
+	After  *simulatedKubernetesSet `json:"after"`
+}
+
+type simulatedKubernetesAccess struct {
+	Full        bool     `json:"full,omitempty"`
+	SetID       string   `json:"set_id,omitempty"`
+	SetName     string   `json:"set_name,omitempty"`
+	ContentHash string   `json:"content_hash,omitempty"`
+	Namespaces  []string `json:"namespaces,omitempty"`
+	ClusterPart bool     `json:"cluster_part,omitempty"`
+	Mode        string   `json:"mode,omitempty"`
+	ReportUntil *string  `json:"report_until,omitempty"`
+}
+
+type simulatedKubernetesRuleChange struct {
+	RuleID            string                     `json:"rule_id"`
+	Change            string                     `json:"change"`
+	ClusterID         string                     `json:"cluster_id"`
+	ClusterBeforeID   *string                    `json:"cluster_before_id"`
+	SourceBefore      *simulatedRuleSide         `json:"source_before"`
+	SourceAfter       *simulatedRuleSide         `json:"source_after"`
+	GroupsBefore      []string                   `json:"groups_before"`
+	GroupsAfter       []string                   `json:"groups_after"`
+	AccessBefore      *simulatedKubernetesAccess `json:"access_before"`
+	AccessAfter       *simulatedKubernetesAccess `json:"access_after"`
+	SetContentChanged bool                       `json:"set_content_changed"`
+}
+
+// simulatedRuleSide names a rule's source: what it selects and its ID.
+type simulatedRuleSide struct {
+	Kind string `json:"kind"`
+	ID   string `json:"id"`
+}
+
+func encodeRuleSide(side publication.RuleSide) *simulatedRuleSide {
+	kinds := map[publication.SideKind]string{
+		publication.SideDevice: "device", publication.SideDeviceGroup: "device_group",
+		publication.SideIdentityGroup: "identity_group", publication.SideDeviceTag: "device_tag",
+	}
+	kind, known := kinds[side.Kind()]
+	if !known || !side.IsValid() {
+		return nil
+	}
+	return &simulatedRuleSide{Kind: kind, ID: side.ID().String()}
+}
+
+// encodeKubernetesChanges is the reviewer's view of changes; set names come
+// from the release each side is in.
+func encodeKubernetesChanges(changes publication.KubernetesChanges, baseline,
+	proposed publication.Candidate,
+) *simulatedKubernetesChanges {
+	names := func(candidate publication.Candidate) map[publication.KubernetesProfileID]string {
+		held := map[publication.KubernetesProfileID]string{}
+		for _, profile := range candidate.KubernetesProfiles() {
+			held[profile.ID()] = profile.Name()
+		}
+		return held
+	}
+	before, after := names(baseline), names(proposed)
+	set := func(profile publication.KubernetesProfile) *simulatedKubernetesSet {
+		if !profile.ID().IsValid() {
+			return nil
+		}
+		hash := profile.ContentHash()
+		encoded := &simulatedKubernetesSet{ID: profile.ID().String(), Name: profile.Name(),
+			ContentHash: hex.EncodeToString(hash[:])}
+		if cluster := profile.Cluster(); cluster.IsValid() {
+			id := cluster.String()
+			encoded.ClusterID = &id
+		}
+		return encoded
+	}
+	access := func(value publication.KubernetesAccess, present bool,
+		names map[publication.KubernetesProfileID]string,
+	) *simulatedKubernetesAccess {
+		if !present {
+			return nil
+		}
+		if value.IsZero() {
+			return &simulatedKubernetesAccess{Full: true}
+		}
+		hash := value.ProfileHash()
+		encoded := &simulatedKubernetesAccess{SetID: value.ProfileID().String(), SetName: names[value.ProfileID()],
+			ContentHash: hex.EncodeToString(hash[:]), Namespaces: value.Namespaces(),
+			ClusterPart: value.ClusterPart(), Mode: "enforce"}
+		if value.Report() {
+			encoded.Mode, encoded.ReportUntil = "report", optionalManagementTime(value.ReportUntil())
+		}
+		return encoded
+	}
+	encoded := &simulatedKubernetesChanges{SetCount: changes.SetCount, RuleCount: changes.RuleCount,
+		Truncated: changes.Truncated(), Sets: make([]simulatedKubernetesSetChange, 0, len(changes.Sets)),
+		Rules: make([]simulatedKubernetesRuleChange, 0, len(changes.Rules))}
+	for _, change := range changes.Sets {
+		encoded.Sets = append(encoded.Sets, simulatedKubernetesSetChange{Change: change.Change,
+			Before: set(change.Before), After: set(change.After)})
+	}
+	for _, change := range changes.Rules {
+		rule := simulatedKubernetesRuleChange{RuleID: change.RuleID.String(), Change: change.Change,
+			ClusterID: change.Cluster.String(), GroupsBefore: emptyIfNil(change.GroupsBefore),
+			GroupsAfter: emptyIfNil(change.GroupsAfter), SetContentChanged: change.SetContentChanged,
+			SourceBefore: encodeRuleSide(change.SourceBefore), SourceAfter: encodeRuleSide(change.SourceAfter),
+			AccessBefore: access(change.AccessBefore, change.Change != publication.KubernetesChangeAdded, before),
+			AccessAfter:  access(change.AccessAfter, change.Change != publication.KubernetesChangeRemoved, after)}
+		if change.ClusterBefore.IsValid() && change.ClusterBefore != change.Cluster {
+			id := change.ClusterBefore.String()
+			rule.ClusterBeforeID = &id
+		}
+		encoded.Rules = append(encoded.Rules, rule)
+	}
+	return encoded
+}
+
+func emptyIfNil(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
 }
 
 // simulatedSiteAccessChanges lists, per source Device, the access to Sites
@@ -453,6 +598,10 @@ func encodePolicySimulationResult(result simulation.Result) simulatedPolicy {
 			RemovedCount: len(removed), Removed: encodeSimulatedSiteAccess(removed),
 		}
 	}
+	if hasKubernetesAccess(baselineCandidate) || hasKubernetesAccess(proposed) {
+		impact.KubernetesAccessChanges = encodeKubernetesChanges(
+			publication.KubernetesAccessDiff(baselineCandidate, proposed), baselineCandidate, proposed)
+	}
 	if baselineCandidate.CompilerFormatVersion() == 4 || proposed.CompilerFormatVersion() == 4 {
 		impact.ImportedIntentChanges = &simulatedImportedIntentChanges{
 			AddedCount: result.AddedImportedIntentCount(), Added: encodeSimulatedImportedIntents(result.AddedImportedIntents()),
@@ -635,4 +784,18 @@ func classifyPolicySimulationError(err error) managementError {
 			Message: "the operation is temporarily unavailable", Retryable: true,
 		}
 	}
+}
+
+// hasKubernetesAccess reports a release with a rule to a cluster or a
+// permission set: only then does a reviewer see Kubernetes changes.
+func hasKubernetesAccess(candidate publication.Candidate) bool {
+	if len(candidate.KubernetesProfiles()) > 0 {
+		return true
+	}
+	for _, rule := range candidate.GroupRules() {
+		if rule.DestinationKubernetesClusterID().IsValid() {
+			return true
+		}
+	}
+	return false
 }

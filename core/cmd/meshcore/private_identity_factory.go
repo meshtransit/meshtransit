@@ -88,6 +88,9 @@ type privateIdentityFactoryDependencies struct {
 	// KubernetesClusteredProfiles says every Core knows the clusters of
 	// permission sets (MESHTRANSIT_KUBERNETES_CLUSTERED_PROFILES).
 	KubernetesClusteredProfiles bool
+	// KubernetesAccessRequired makes a new rule to a cluster name its
+	// access (MESHTRANSIT_KUBERNETES_ACCESS_REQUIRED).
+	KubernetesAccessRequired bool
 	// DNSZones lets Network admins change DNS zones
 	// (MESHTRANSIT_DNS_ZONES_ENABLED).
 	DNSZones bool
@@ -463,6 +466,7 @@ func composePrivateIdentityFactory(
 		resources.exitPools = exitPoolStore
 	}
 	resources.clusteredProfiles = dependencies.KubernetesClusteredProfiles
+	resources.accessRequired = dependencies.KubernetesAccessRequired
 	revocations, policies, policyCompiler, policyExplainer, policySimulator,
 		policyApprovals, policyApprovalCatalog, err :=
 		privateIdentityManagementServices(
@@ -619,6 +623,11 @@ func privateIdentityManagementServices(
 	}
 	if resources.clusteredProfiles {
 		if policyCompiler, err = policyCompiler.WithClusteredProfiles(); err != nil {
+			return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition
+		}
+	}
+	if resources.accessRequired {
+		if policyCompiler, err = policyCompiler.WithKubernetesAccessRequired(); err != nil {
 			return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition
 		}
 	}

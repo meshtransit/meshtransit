@@ -21,6 +21,9 @@ type privateIdentityResourceServices struct {
 	// clusteredProfiles: every Core knows the clusters of permission sets
 	// (MESHTRANSIT_KUBERNETES_CLUSTERED_PROFILES).
 	clusteredProfiles bool
+	// accessRequired: a new rule to a cluster names its access
+	// (MESHTRANSIT_KUBERNETES_ACCESS_REQUIRED).
+	accessRequired bool
 }
 
 // serviceNames turns service names a consumer approves into DNS names of its
