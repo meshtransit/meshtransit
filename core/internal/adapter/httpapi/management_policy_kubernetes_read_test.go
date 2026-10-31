@@ -138,7 +138,8 @@ func TestManagementPolicyKubernetesAccessRead(t *testing.T) {
 			profiled := data.Rules[1].Access
 			if profiled.Full || profiled.ProfileID != "01890f00-0000-7000-8000-000000000c01" ||
 				strings.Join(profiled.Namespaces, ",") != "team-a,team-b" || profiled.Mode != "report" ||
-				profiled.ReportUntil == nil || !strings.Contains(response.Body.String(), `"report_until":"2026-11-02T10:00:00Z"`) {
+				profiled.ReportUntil == nil || len(profiled.ScopeHash) != 64 ||
+				!strings.Contains(response.Body.String(), `"report_until":"2026-11-02T10:00:00Z"`) {
 				t.Fatalf("profiled rule %+v", profiled)
 			}
 		})

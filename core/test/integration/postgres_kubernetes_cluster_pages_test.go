@@ -3,9 +3,11 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -412,6 +414,26 @@ func assertKubernetesOperationReads(ctx context.Context, t *testing.T, admin *pg
 		now.Add(time.Minute)); err != nil {
 		t.Fatalf("CountDenials(): %v", err)
 	}
+	// The profile denials (schema 263): only those of a profile, newest
+	// window first, with the sample and the Device that was refused, if known.
+	profileDenials, err := service.ListProfileDenials(ctx, auditor, scope, clusterID)
+	if err != nil || len(profileDenials) != 2 {
+		t.Fatalf("ListProfileDenials() = %+v, %v", profileDenials, err)
+	}
+	if would := profileDenials[0]; !would.WouldDeny || would.Count != 2 || would.DeviceID != "" ||
+		would.DeviceName != "" {
+		t.Fatalf("the would-deny = %+v", would)
+	}
+	if denied := profileDenials[1]; denied.WouldDeny || denied.Count != 3 || denied.Verb != "delete" ||
+		denied.Namespace != "team-a" || denied.Scope != [32]byte(bytes.Repeat([]byte{0xab}, 32)) ||
+		denied.DeviceID == "" || denied.DeviceName == "" {
+		t.Fatalf("the denial = %+v", denied)
+	}
+	// An unknown cluster's read is not found, never another cluster's rows.
+	if others, err := service.ListProfileDenials(ctx, auditor, scope, kubecluster.ID(mustPublicID(t))); !errors.Is(err,
+		kubecluster.ErrNotFound) {
+		t.Fatalf("an unknown cluster's denials = %+v, %v", others, err)
+	}
 	// An administrator holds audit.read in the Workspace: the Workspace
 	// path of the reader (review d1c M2).
 	if page, err := service.ListOperations(ctx, kubecluster.OperationQuery{Session: owner, Scope: scope,
@@ -504,6 +526,27 @@ ORDER BY peer.id LIMIT 1`, gatewayDevice).Scan(&peer); err != nil {
 		if answer["outcome"] != "accepted" {
 			t.Fatalf("operation %d answered %v", index, answer)
 		}
+	}
+	// A profile denial with its sample, a would-deny of no known peer, and one
+	// of RBAC (K2f f4).
+	last := time.Now().UnixMilli()
+	sample := map[string]any{"verb": "delete", "api_group": "", "resource": "pods", "subresource": "",
+		"namespace": "team-a", "scope": strings.Repeat("ab", 32)}
+	denials, err := json.Marshal([]map[string]any{
+		{"gateway": gateway, "peer": peer, "reason": "profile_denied", "count": "3",
+			"first_ms": strconv.FormatInt(last-1000, 10), "last_ms": strconv.FormatInt(last, 10), "sample": sample},
+		{"gateway": gateway, "reason": "profile_would_deny", "count": "2",
+			"first_ms": strconv.FormatInt(last, 10), "last_ms": strconv.FormatInt(last, 10), "sample": sample},
+		{"gateway": gateway, "peer": peer, "reason": "forbidden", "count": "1",
+			"first_ms": strconv.FormatInt(last-1000, 10), "last_ms": strconv.FormatInt(last, 10)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var written string
+	if err := runtime.QueryRow(ctx, `SELECT mesh_ops.record_kubernetes_operation_outcomes_v2('[]'::JSONB,
+    $1::JSONB)::TEXT`, string(denials)).Scan(&written); err != nil || written != `{"denials": 3, "outcomes": 0}` {
+		t.Fatalf("denials = %s, %v", written, err)
 	}
 }
 

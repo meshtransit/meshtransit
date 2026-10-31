@@ -2996,6 +2996,172 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/profile-denials": {
+      "get": {
+        "operationId": "listKubernetesProfileDenials",
+        "summary": "Read a cluster's latest access profile denials",
+        "description": "Requires current audit.read (K2f). The latest 50 counts of requests an access profile refused (profile_denied) or would refuse once its rule enforces (profile_would_deny), from the last 31 days, newest first, each with one request of its window as a sample and the scope hash of the grant that refused it. Name the profile from GET …/policy/kubernetes-access by the rule's scope_hash; a hash no rule of that release holds is of an earlier release. That read needs policy.read. Profile denials sent without a sample are left out.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The latest profile denials",
+            "headers": {
+              "X-Correlation-ID": {
+                "$ref": "#/components/headers/CorrelationID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "correlation_id": {
+                      "$ref": "#/components/schemas/PublicID"
+                    },
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "denials"
+                      ],
+                      "properties": {
+                        "denials": {
+                          "type": "array",
+                          "maxItems": 50,
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "recorded_at",
+                              "reason",
+                              "count",
+                              "first_at",
+                              "last_at",
+                              "device_id",
+                              "device_name",
+                              "verb",
+                              "api_group",
+                              "resource",
+                              "subresource",
+                              "namespace",
+                              "scope_hash"
+                            ],
+                            "properties": {
+                              "recorded_at": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "reason": {
+                                "type": "string",
+                                "enum": [
+                                  "profile_denied",
+                                  "profile_would_deny"
+                                ]
+                              },
+                              "count": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "first_at": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "last_at": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "device_id": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ],
+                                "format": "uuid"
+                              },
+                              "device_name": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "verb": {
+                                "type": "string"
+                              },
+                              "api_group": {
+                                "type": "string"
+                              },
+                              "resource": {
+                                "type": "string"
+                              },
+                              "subresource": {
+                                "type": "string"
+                              },
+                              "namespace": {
+                                "type": "string"
+                              },
+                              "scope_hash": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/devices/{device_id}/actions/revoke": {
       "post": {
         "operationId": "revokeDevice",
@@ -8402,6 +8568,11 @@
             "type": "string",
             "format": "date-time",
             "description": "With mode report: when the rule enforces, as released."
+          },
+          "scope_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "With a profile: the scope hash of the profile as this rule applies it, which a gateway's denial samples name (K2f)."
           }
         },
         "description": "How a released rule grants its groups: full, or a profile in namespaces."

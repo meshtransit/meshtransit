@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -279,5 +280,55 @@ func (handler *ManagementHandler) readKubernetesOperations(ctx context.Context, 
 			CountedFrom *string      `json:"counted_from"`
 		}{managementTime(from), managementTime(to), bodies, sums.Truncated, optionalManagementTime(sums.CountedFrom)})
 	}
+	return "success"
+}
+
+// readKubernetesProfileDenials answers a cluster's latest profile denials
+// with their samples (K2f f4): newest first, the last 31 days, at most 50.
+func (handler *ManagementHandler) readKubernetesProfileDenials(ctx context.Context, response http.ResponseWriter,
+	correlationID publicid.ID, path kubernetesClusterPath, session accountsession.Session,
+	fail func(managementError) string,
+) string {
+	manager := handler.kubernetesClusters
+	denials, err := manager.ListProfileDenials(ctx, session, path.scope, path.clusterID)
+	if err != nil {
+		return fail(classifyKubernetesClusterError(err))
+	}
+	type denialBody struct {
+		RecordedAt  string  `json:"recorded_at"`
+		Reason      string  `json:"reason"`
+		Count       int64   `json:"count"`
+		FirstAt     string  `json:"first_at"`
+		LastAt      string  `json:"last_at"`
+		DeviceID    *string `json:"device_id"`
+		DeviceName  *string `json:"device_name"`
+		Verb        string  `json:"verb"`
+		APIGroup    string  `json:"api_group"`
+		Resource    string  `json:"resource"`
+		Subresource string  `json:"subresource"`
+		Namespace   string  `json:"namespace"`
+		ScopeHash   string  `json:"scope_hash"`
+	}
+	optional := func(value string) *string {
+		if value == "" {
+			return nil
+		}
+		return &value
+	}
+	bodies := make([]denialBody, len(denials))
+	for index, denial := range denials {
+		reason := "profile_denied"
+		if denial.WouldDeny {
+			reason = "profile_would_deny"
+		}
+		bodies[index] = denialBody{RecordedAt: managementTime(denial.RecordedAt), Reason: reason, Count: denial.Count,
+			FirstAt: managementTime(denial.FirstAt), LastAt: managementTime(denial.LastAt),
+			DeviceID: optional(denial.DeviceID), DeviceName: optional(denial.DeviceName), Verb: denial.Verb,
+			APIGroup: denial.APIGroup, Resource: denial.Resource, Subresource: denial.Subresource,
+			Namespace: denial.Namespace, ScopeHash: hex.EncodeToString(denial.Scope[:])}
+	}
+	writeKubernetesData(ctx, handler, response, correlationID, http.StatusOK, struct {
+		Denials []denialBody `json:"denials"`
+	}{bodies})
 	return "success"
 }

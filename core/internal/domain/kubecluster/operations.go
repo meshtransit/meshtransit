@@ -100,6 +100,41 @@ type DenialCount struct {
 	LastAt  time.Time
 }
 
+// ProfileDenial is one window's count of requests an access profile
+// refused, or would refuse once its rule enforces, of one peer, with one
+// request of the window as its sample (K2 §7.5).
+type ProfileDenial struct {
+	RecordedAt time.Time
+	// WouldDeny: a reporting rule let the requests through.
+	WouldDeny bool
+	Count     int64
+	FirstAt   time.Time
+	LastAt    time.Time
+	// DeviceID and DeviceName name the peer; empty when not named.
+	DeviceID, DeviceName                             string
+	Verb, APIGroup, Resource, Subresource, Namespace string
+	// Scope is the scope hash of the grant that refused: the Console names
+	// the profile from the release's rules.
+	Scope [32]byte
+}
+
+// MaximumProfileDenials bounds a cluster's latest profile denials read
+// (K2f f4).
+const MaximumProfileDenials = 50
+
+// ListProfileDenials returns a cluster's latest profile denials of the last
+// 31 days, newest first (audit.read).
+func (service *Service) ListProfileDenials(ctx context.Context, session accountsession.Session,
+	scope network.Scope, clusterID ID) ([]ProfileDenial, error) {
+	if err := service.admit(ctx, session, scope); err != nil {
+		return nil, err
+	}
+	if !clusterID.IsValid() {
+		return nil, ErrInvalid
+	}
+	return service.store.ListProfileDenials(ctx, session, scope, clusterID)
+}
+
 // ListOperations returns a page of a cluster's operations (audit.read).
 func (service *Service) ListOperations(ctx context.Context, query OperationQuery) (OperationPage, error) {
 	if err := service.admit(ctx, query.Session, query.Scope); err != nil {

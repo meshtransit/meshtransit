@@ -150,6 +150,11 @@ func (*recordingStore) CountDenials(context.Context, accountsession.Session, net
 	return kubecluster.DenialSums{}, nil
 }
 
+func (*recordingStore) ListProfileDenials(context.Context, accountsession.Session, network.Scope,
+	kubecluster.ID) ([]kubecluster.ProfileDenial, error) {
+	return nil, nil
+}
+
 func (*recordingStore) ReadAccessSettings(context.Context, accountsession.Session, network.Scope,
 	kubecluster.ID) (kubecluster.AccessSettings, error) {
 	return kubecluster.AccessSettings{}, nil

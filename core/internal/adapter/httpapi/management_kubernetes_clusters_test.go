@@ -249,6 +249,19 @@ func (stub *kubernetesClusterStub) ReadOperation(_ context.Context, _ accountses
 	return kubernetesTestOperation(), nil
 }
 
+func (stub *kubernetesClusterStub) ListProfileDenials(_ context.Context, _ accountsession.Session,
+	_ network.Scope, _ kubecluster.ID) ([]kubecluster.ProfileDenial, error) {
+	stub.calls = append(stub.calls, "profile-denials")
+	if stub.failure != nil {
+		return nil, stub.failure
+	}
+	at := time.Date(2026, 10, 30, 15, 58, 58, 0, time.UTC)
+	return []kubecluster.ProfileDenial{{RecordedAt: at, Count: 6, FirstAt: at, LastAt: at, DeviceID: "dev-1",
+		DeviceName: "laptop", Verb: "delete", Resource: "configmaps", Namespace: "default", Scope: [32]byte{0x9c}},
+		{RecordedAt: at, WouldDeny: true, Count: 1, FirstAt: at, LastAt: at, Verb: "list", Resource: "secrets",
+			Scope: [32]byte{0x9c}}}, nil
+}
+
 func (stub *kubernetesClusterStub) CountDenials(_ context.Context, _ accountsession.Session, _ network.Scope,
 	_ kubecluster.ID, from, to time.Time) (kubecluster.DenialSums, error) {
 	stub.calls = append(stub.calls, "count-denials")
@@ -786,6 +799,18 @@ func TestKubernetesClusterHTTPBoundary(t *testing.T) {
 			nil, 200, "count-denials", `"reason":"forbidden","count":3`, ""},
 		{"denial counts take no class", http.MethodGet, cluster + "/operation-denial-counts?class=write", "", "",
 			nil, 404, "", "", ""},
+		{"profile denials", http.MethodGet, cluster + "/profile-denials", "", "", nil, 200, "profile-denials",
+			`"reason":"profile_denied","count":6,"first_at":"2026-10-30T15:58:58Z","last_at":"2026-10-30T15:58:58Z",` +
+				`"device_id":"dev-1","device_name":"laptop","verb":"delete","api_group":"","resource":"configmaps",` +
+				`"subresource":"","namespace":"default","scope_hash":"9c00`, ""},
+		{"profile denials name no peer as null", http.MethodGet, cluster + "/profile-denials", "", "", nil, 200,
+			"profile-denials", `"device_id":null,"device_name":null,"verb":"list"`, ""},
+		{"profile denials take no query", http.MethodGet, cluster + "/profile-denials?from=2026-10-29T00:00:00Z", "",
+			"", nil, 404, "", "", ""},
+		{"profile denials without audit.read", http.MethodGet, cluster + "/profile-denials", "", "",
+			kubecluster.ErrForbidden, 403, "profile-denials", "", ""},
+		{"profile denials are read only", http.MethodPost, cluster + "/profile-denials", "{}", "", nil, 405, "", "",
+			""},
 		{"operations without audit.read", http.MethodGet, cluster + "/operations", "", "", kubecluster.ErrForbidden,
 			403, "list-operations", "", ""},
 		{"read audit settings", http.MethodGet, cluster + "/audit-settings", "", "", nil, 200,

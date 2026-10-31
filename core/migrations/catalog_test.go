@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 262 {
-		t.Fatalf("len(Catalog()) = %d, want 262", len(catalog))
+	if len(catalog) != 263 {
+		t.Fatalf("len(Catalog()) = %d, want 263", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 262 {
-		t.Fatalf("LatestVersion() = %d, want 262", LatestVersion())
+	if LatestVersion() != 263 {
+		t.Fatalf("LatestVersion() = %d, want 263", LatestVersion())
 	}
 }
 
@@ -7822,6 +7822,31 @@ func TestMigration262KubernetesAccessSettings(t *testing.T) {
 	} {
 		if !strings.Contains(migration.SQL, want) {
 			t.Errorf("migration 262 lacks %q", want)
+		}
+	}
+}
+
+func TestMigration263KubernetesProfileDenials(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 263 || catalog[262].Version != 263 {
+		t.Fatalf("the catalog has no migration 263 (%d migrations)", len(catalog))
+	}
+	migration := catalog[262]
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.kubernetes_profile_denials_v1(",
+		"CREATE INDEX kubernetes_operation_denial_profile_idx",
+		"WHERE reason IN ('profile_denied', 'profile_would_deny') AND sample_scope IS NOT NULL;",
+		"AND denial.sample_scope IS NOT NULL",
+		"ORDER BY denial.recorded_at DESC, denial.first_at DESC, denial.peer_device_id",
+		"mesh_ops.kubernetes_operation_reader_internal_v1(",
+		"denial.reason IN ('profile_denied', 'profile_would_deny')",
+		"LIMIT 50",
+		"INTERVAL '31 days'",
+		"TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 263 lacks %q", want)
 		}
 	}
 }

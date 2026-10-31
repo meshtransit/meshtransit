@@ -49,6 +49,7 @@ const (
 	kubernetesAccessSettingsReadOperation    = "kubernetes_access_settings_read"
 	kubernetesAccessSettingsReplaceOperation = "kubernetes_access_settings_replace"
 	kubernetesDenialCountsOperation          = "kubernetes_operation_denial_counts"
+	kubernetesProfileDenialsOperation        = "kubernetes_profile_denials"
 	// K1d d2a: approvers ask the CA worker to retire a CA.
 	kubernetesCARetireListOperation    = "kubernetes_ca_retire_request_list"
 	kubernetesCARetireRequestOperation = "kubernetes_ca_retire_request_create"
@@ -89,6 +90,8 @@ type KubernetesClusterManager interface {
 		publicid.ID) (kubecluster.Operation, error)
 	CountDenials(context.Context, accountsession.Session, network.Scope, kubecluster.ID, time.Time,
 		time.Time) (kubecluster.DenialSums, error)
+	ListProfileDenials(context.Context, accountsession.Session, network.Scope,
+		kubecluster.ID) ([]kubecluster.ProfileDenial, error)
 	ReadAuditSettings(context.Context, accountsession.Session, network.Scope,
 		kubecluster.ID) (kubecluster.AuditSettings, error)
 	ReplaceAuditSettings(context.Context, kubecluster.AuditSettingsReplacement) (kubecluster.AuditSettingsResult,
@@ -141,6 +144,7 @@ type kubernetesClusterPath struct {
 //	GET         kubernetes-clusters/{c}/certificate-authorities[/{ca}]     list, read (K1d d1b)
 //	GET         kubernetes-clusters/{c}/operations[/{audit_id}]            list, read (K1d d1c)
 //	GET         kubernetes-clusters/{c}/operation-denial-counts            sums (K1d d1c)
+//	GET         kubernetes-clusters/{c}/profile-denials                    latest samples (K2f f4)
 //	GET|PUT     kubernetes-clusters/{c}/audit-settings                     read, replace (K1d d1d)
 //	GET|PUT     kubernetes-clusters/{c}/access-settings                    read, replace (K2d d4b)
 //	GET         kubernetes-clusters/{c}/operation-exports                  export (K1d d1d)
@@ -254,6 +258,9 @@ func (path *kubernetesClusterPath) route(rest []string) (map[string]string, bool
 	case len(rest) == 2 && rest[1] == "approver-additions":
 		path.methods = restMethods{http.MethodGet}
 		return map[string]string{http.MethodGet: kubernetesApproverAdditionsOperation}, true
+	case len(rest) == 2 && rest[1] == "profile-denials":
+		path.methods = restMethods{http.MethodGet}
+		return map[string]string{http.MethodGet: kubernetesProfileDenialsOperation}, true
 	case len(rest) == 2 && rest[1] == "operation-denial-counts":
 		path.methods = restMethods{http.MethodGet}
 		return map[string]string{http.MethodGet: kubernetesDenialCountsOperation}, true
@@ -417,6 +424,8 @@ func (handler *ManagementHandler) handleKubernetesClusters(ctx context.Context, 
 		return handler.serveKubernetesAuditSettings(ctx, response, request, correlationID, path, session, fail)
 	case kubernetesAccessSettingsReadOperation, kubernetesAccessSettingsReplaceOperation:
 		return handler.serveKubernetesAccessSettings(ctx, response, request, correlationID, path, session, fail)
+	case kubernetesProfileDenialsOperation:
+		return handler.readKubernetesProfileDenials(ctx, response, correlationID, path, session, fail)
 	case kubernetesOperationListOperation, kubernetesOperationReadOperation, kubernetesDenialCountsOperation:
 		return handler.readKubernetesOperations(ctx, response, correlationID, path, session, fail)
 	case kubernetesClusterDeleteOperation:

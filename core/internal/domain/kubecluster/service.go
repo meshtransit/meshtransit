@@ -155,6 +155,8 @@ type Store interface {
 		auditID publicid.ID) (Operation, error)
 	CountDenials(ctx context.Context, session accountsession.Session, scope network.Scope, clusterID ID,
 		from, to time.Time) (DenialSums, error)
+	ListProfileDenials(ctx context.Context, session accountsession.Session, scope network.Scope,
+		clusterID ID) ([]ProfileDenial, error)
 	ReadAuditSettings(ctx context.Context, session accountsession.Session, scope network.Scope,
 		clusterID ID) (AuditSettings, error)
 	ReplaceAuditSettings(ctx context.Context, replacement AuditSettingsReplacement) (AuditSettingsResult, error)

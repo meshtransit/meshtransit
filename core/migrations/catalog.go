@@ -655,6 +655,8 @@ func Catalog() []Migration {
 			kubernetesOperationProfilesSQL),
 		newMigration(262, "A Kubernetes cluster's access contact for its gateways' refusals",
 			kubernetesAccessSettingsSQL),
+		newMigration(263, "The latest Kubernetes profile denials of a cluster, with their samples",
+			kubernetesProfileDenialsSQL),
 	}
 }
 
@@ -1220,3 +1222,6 @@ var kubernetesOperationProfilesSQL string
 
 //go:embed 000262_kubernetes_access_settings.up.sql
 var kubernetesAccessSettingsSQL string
+
+//go:embed 000263_kubernetes_profile_denials.up.sql
+var kubernetesProfileDenialsSQL string

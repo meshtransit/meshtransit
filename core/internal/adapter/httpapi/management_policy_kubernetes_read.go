@@ -64,6 +64,9 @@ type policyKubernetesAccessRead struct {
 	ClusterPart bool       `json:"cluster_part,omitempty"`
 	Mode        string     `json:"mode,omitempty"`
 	ReportUntil *time.Time `json:"report_until,omitempty"`
+	// ScopeHash names the profile as applied: the scope a gateway's denial
+	// samples carry (K2f f4).
+	ScopeHash string `json:"scope_hash,omitempty"`
 }
 
 type policyKubernetesAccessPath struct {
@@ -156,6 +159,8 @@ func policyKubernetesAccessProjection(revision int64,
 		default:
 			item.Access = &policyKubernetesAccessRead{ProfileID: access.ProfileID().String(),
 				Namespaces: access.Namespaces(), ClusterPart: access.ClusterPart(), Mode: "enforce"}
+			scope := access.ScopeHash()
+			item.Access.ScopeHash = hex.EncodeToString(scope[:])
 			if access.Report() {
 				until := access.ReportUntil().UTC()
 				item.Access.Mode, item.Access.ReportUntil = "report", &until

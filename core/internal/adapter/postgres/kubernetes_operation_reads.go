@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/hex"
 	"time"
 
 	"meshtransit.net/core/internal/domain/identity/accountsession"
@@ -21,7 +22,14 @@ const (
  $10::UUID,$11::UUID,$12::UUID,$13::UUID)::TEXT`
 	countKubernetesDenialsSQL = `SELECT mesh_ops.kubernetes_operation_denial_counts_v1(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::UUID,$13::TIMESTAMPTZ,$14::TIMESTAMPTZ)::TEXT`
+	// Schema 263 (K2f f4): a cluster's latest profile denials.
+	listKubernetesProfileDenialsSQL = `SELECT mesh_ops.kubernetes_profile_denials_v1(` + sessionArguments + `,
+ $10::UUID,$11::UUID,$12::UUID,$13::TIMESTAMPTZ)::TEXT`
 )
+
+// profileDenialWindow is how far back profile denials are read; the
+// function bounds it too.
+const profileDenialWindow = 31 * 24 * time.Hour
 
 type kubernetesOperationDocument struct {
 	AuditID         string    `json:"audit_id"`
@@ -259,4 +267,77 @@ func foldProfileDenials(counts []kubecluster.DenialCount) []kubecluster.DenialCo
 		}
 	}
 	return folded
+}
+
+// ListProfileDenials returns a cluster's latest profile denials with their
+// samples, newest first (K2f f4).
+func (store *KubernetesClusterStore) ListProfileDenials(ctx context.Context, session accountsession.Session,
+	scope network.Scope, clusterID kubecluster.ID) ([]kubecluster.ProfileDenial, error) {
+	var read struct {
+		Denials []struct {
+			RecordedAt  time.Time `json:"recorded_at"`
+			Reason      string    `json:"reason"`
+			Count       int64     `json:"count"`
+			FirstAt     time.Time `json:"first_at"`
+			LastAt      time.Time `json:"last_at"`
+			DeviceID    *string   `json:"device_id"`
+			DeviceName  *string   `json:"device_name"`
+			Verb        string    `json:"verb"`
+			APIGroup    string    `json:"api_group"`
+			Resource    string    `json:"resource"`
+			Subresource string    `json:"subresource"`
+			Namespace   string    `json:"namespace"`
+			Scope       string    `json:"scope_hash"`
+		} `json:"denials"`
+	}
+	since := time.Now().Add(-profileDenialWindow).UTC()
+	err := store.transact(ctx, scope, func(tx accountSessionTransaction) (bool, error) {
+		var encoded string
+		if err := tx.QueryRow(ctx, listKubernetesProfileDenialsSQL, append(sessionQueryArguments(session),
+			scope.WorkspaceID().String(), scope.NetworkID().String(), clusterID.String(),
+			since)...).Scan(&encoded); err != nil {
+			return false, kubernetesClusterDatabaseError(err)
+		}
+		if err := decodeIdentityCatalogJSON([]byte(encoded), &read); err != nil {
+			return false, kubecluster.ErrInvalid
+		}
+		return false, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if read.Denials == nil || len(read.Denials) > kubecluster.MaximumProfileDenials {
+		return nil, kubecluster.ErrInvalid
+	}
+	denials := make([]kubecluster.ProfileDenial, 0, len(read.Denials))
+	for index, document := range read.Denials {
+		scopeHash, err := hex.DecodeString(document.Scope)
+		// Within the window, newest first, as the read promises (review f4 M1).
+		if (document.Reason != "profile_denied" && document.Reason != "profile_would_deny") || document.Count < 1 ||
+			document.LastAt.Before(document.FirstAt) || err != nil || len(scopeHash) != 32 || document.Verb == "" ||
+			document.RecordedAt.Before(since) ||
+			(index > 0 && document.RecordedAt.After(read.Denials[index-1].RecordedAt)) {
+			return nil, kubecluster.ErrInvalid
+		}
+		denial := kubecluster.ProfileDenial{RecordedAt: document.RecordedAt.UTC(),
+			WouldDeny: document.Reason == "profile_would_deny", Count: document.Count,
+			FirstAt: document.FirstAt.UTC(), LastAt: document.LastAt.UTC(), Verb: document.Verb,
+			APIGroup: document.APIGroup, Resource: document.Resource, Subresource: document.Subresource,
+			Namespace: document.Namespace, Scope: [32]byte(scopeHash)}
+		// A name only with the Device it names.
+		if document.DeviceID != nil {
+			if _, err := publicid.Parse(*document.DeviceID); err != nil {
+				return nil, kubecluster.ErrInvalid
+			}
+			denial.DeviceID = *document.DeviceID
+		}
+		if document.DeviceName != nil {
+			if document.DeviceID == nil {
+				return nil, kubecluster.ErrInvalid
+			}
+			denial.DeviceName = *document.DeviceName
+		}
+		denials = append(denials, denial)
+	}
+	return denials, nil
 }
