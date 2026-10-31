@@ -280,7 +280,7 @@ func (server *Server) cutAnswer(w http.ResponseWriter, device string, group Grou
 		denial, code, message, wait = "stale", http.StatusServiceUnavailable,
 			"the gateway's map from MeshTransit is unusable; it asked for a new one", time.Second
 	case cutProfile:
-		message = "the Device's access profile for group " + group.Name + " no longer allows this request"
+		message = fmt.Sprintf("the Device's permission sets for group %q no longer allow this request", group.Name)
 	}
 	if recorded {
 		refuse(w, code, message, wait)

@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"strings"
 	"testing"
@@ -248,4 +249,16 @@ func TestSessionsCutImpersonationWithdrawn(t *testing.T) {
 	f.wake <- struct{}{}
 	ends(t, response.Body, 3*time.Second)
 	f.waitStats("not cut", func(stats SessionStats) bool { return stats.Cut[cutImpersonation] == 1 })
+}
+
+// A request cut because its permission sets narrowed names them and the
+// group (K2h h3).
+func TestCutByPermissionSetsSaysSo(t *testing.T) {
+	t.Parallel()
+	answer := httptest.NewRecorder()
+	(&Server{}).cutAnswer(answer, "7", Group{Name: "edit"}, cutProfile, true)
+	if answer.Code != http.StatusForbidden || !strings.Contains(answer.Body.String(),
+		`the Device's permission sets for group \"edit\" no longer allow this request`) {
+		t.Fatalf("cut answer %d %s", answer.Code, answer.Body.String())
+	}
 }

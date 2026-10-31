@@ -394,7 +394,7 @@ func (server *Server) narrowRules(ctx context.Context, body []byte, readable boo
 	if status.EvaluationError != "" {
 		notes = append(notes, status.EvaluationError)
 	}
-	notes = append(notes, fmt.Sprintf("Narrowed by MeshTransit access %s; some allowed actions may be missing: "+
+	notes = append(notes, fmt.Sprintf("Narrowed by MeshTransit %s; some allowed actions may be missing: "+
 		"check one action with kubectl auth can-i", narrowing.profileNames()))
 	narrowed.EvaluationError = strings.Join(notes, "; ")
 	encodedStatus, _ := json.Marshal(narrowed)
@@ -528,7 +528,7 @@ func (narrowing *ruleNarrowing) profileNames() string {
 	slices.Sort(names)
 	names = slices.Compact(names)
 	if len(names) == 1 {
-		return "profile " + names[0]
+		return "permission set " + names[0]
 	}
-	return "profiles " + strings.Join(names, ", ")
+	return "permission sets " + strings.Join(names, ", ")
 }

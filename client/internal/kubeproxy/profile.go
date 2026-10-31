@@ -215,11 +215,13 @@ func profileMessage(peer Peer, group Group, check profileCheck, refusing []netwo
 	}
 	slices.Sort(names)
 	names = slices.Compact(names)
-	noun, verb := "profile", "does"
+	// "Permission set" is what the Console calls an access profile (K2h
+	// Q256); the wire keeps "profile".
+	noun, verb := "permission set", "does"
 	if len(names) > 1 {
-		noun, verb = "profiles", "do"
+		noun, verb = "permission sets", "do"
 	}
-	fmt.Fprintf(&message, "MeshTransit access %s %s of group %s %s not allow %s", noun, strings.Join(names, ", "),
+	fmt.Fprintf(&message, "MeshTransit %s %s of group %s %s not allow %s", noun, strings.Join(names, ", "),
 		group.Name, verb, requestText(check.request))
 	if check.request.ResourceRequest && check.request.Scope == kubeprofile.ScopeUnknown {
 		message.WriteString("; the cluster's discovery does not know this resource")

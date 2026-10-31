@@ -111,8 +111,8 @@ func (server *Server) selfReview(w http.ResponseWriter, path string, peer Peer, 
 		extra["meshtransit.net/person"] = []string{peer.Access.OwnerRef}
 	}
 	for _, profile := range server.profilesOf(peer, server.options.CoreNow()) {
-		if profile.Group == group.Name && !slices.Contains(extra["meshtransit.net/profile"], profile.Profile) {
-			extra["meshtransit.net/profile"] = append(extra["meshtransit.net/profile"], profile.Profile)
+		if profile.Group == group.Name && !slices.Contains(extra["meshtransit.net/permission-set"], profile.Profile) {
+			extra["meshtransit.net/permission-set"] = append(extra["meshtransit.net/permission-set"], profile.Profile)
 		}
 	}
 	answer := map[string]any{

@@ -270,7 +270,7 @@ func TestProfileMessage(t *testing.T) {
 		resourceCheck("delete", "", "pods", "team-a", kubeprofile.ScopeNamespaced),
 		[]networkmap.KubernetesScope{scopes[scopeDeveloper]})
 	for _, want := range []string{
-		`profile "developer" (namespaces team-a, team-b) of group edit does not allow`,
+		`MeshTransit permission set "developer" (namespaces team-a, team-b) of group edit does not allow`,
 		`"delete" on "pods" in namespace "team-a"`,
 	} {
 		if !strings.Contains(message, want) {
@@ -284,7 +284,7 @@ func TestProfileMessage(t *testing.T) {
 		resourceCheck("list", "apps", "deployments", "", kubeprofile.ScopeNamespaced),
 		[]networkmap.KubernetesScope{scopes[scopeDeveloper], scopes[scopeImpersona]})
 	for _, want := range []string{
-		`profiles "developer" (namespaces team-a, team-b), "impersonator" (namespace team-a)`,
+		`MeshTransit permission sets "developer" (namespaces team-a, team-b), "impersonator" (namespace team-a)`,
 		`do not allow "list" on "deployments" of API group "apps" across namespaces; use -n team-a`,
 	} {
 		if !strings.Contains(listAll, want) {
@@ -335,7 +335,7 @@ func TestProxyEnforcesProfiles(t *testing.T) {
 	}
 	f.forwarded()
 	response, body := f.do(http.MethodDelete, "/api/v1/namespaces/team-a/pods/p", nil)
-	if response.StatusCode != http.StatusForbidden || !strings.Contains(body, `profile \"developer\"`) ||
+	if response.StatusCode != http.StatusForbidden || !strings.Contains(body, `permission set \"developer\"`) ||
 		!strings.Contains(body, "#platform-access") {
 		t.Fatalf("a refused delete: %d %s", response.StatusCode, body)
 	}

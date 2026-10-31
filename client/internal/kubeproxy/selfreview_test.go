@@ -92,7 +92,7 @@ func TestProxyAnswersAccessReviewsByTheProfile(t *testing.T) {
 		} `json:"status"`
 	}
 	if err := json.Unmarshal([]byte(body), &answer); err != nil || response.StatusCode != http.StatusCreated ||
-		answer.Status.Allowed || !strings.Contains(answer.Status.Reason, `profile "developer"`) {
+		answer.Status.Allowed || !strings.Contains(answer.Status.Reason, `permission set "developer"`) {
 		t.Fatalf("a refused review: %d %s", response.StatusCode, body)
 	}
 	f.nothingForwarded()
@@ -152,7 +152,7 @@ func TestProxyNarrowsRulesReviews(t *testing.T) {
 		t.Fatalf("rules %s", got)
 	}
 	if len(answer.Status.NonResourceRules) != 0 || !answer.Status.Incomplete ||
-		!strings.Contains(answer.Status.EvaluationError, `Narrowed by MeshTransit access profile "developer"`) {
+		!strings.Contains(answer.Status.EvaluationError, `Narrowed by MeshTransit permission set "developer"`) {
 		t.Fatalf("status %+v", answer.Status)
 	}
 }
@@ -189,7 +189,7 @@ func TestWhoamiShowsProfiles(t *testing.T) {
 	}
 	_, review := f.post("/apis/authentication.k8s.io/v1/selfsubjectreviews", "application/json",
 		`{"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview"}`)
-	if !strings.Contains(review, `"meshtransit.net/profile":["developer","reader"]`) {
+	if !strings.Contains(review, `"meshtransit.net/permission-set":["developer","reader"]`) {
 		t.Fatalf("self subject review %s", review)
 	}
 }

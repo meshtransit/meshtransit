@@ -93,8 +93,9 @@ spread:
 # Seconds a map Core has not confirmed stays usable (120-900).
 staleAfterSeconds: 300
 
-# Access profiles (K2): MeshTransit narrows each group by the profiles its
-# Policy rules apply. Needs Core with profiles on; the gateway's own
+# Permission sets (K2; access profiles on the wire): MeshTransit narrows each
+# group by the sets its Policy rules apply. Needs Core with
+# MESHTRANSIT_KUBERNETES_PROFILES on; the gateway's own
 # ServiceAccount reads the cluster's discovery (system:discovery).
 profiles:
   enabled: false

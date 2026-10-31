@@ -188,7 +188,7 @@ func (d *Discovery) lookup(group, resource string) kubeprofile.ResourceScope {
 	}
 	if d.options.Now().Sub(current.confirmedAt) > d.options.StaleAfter {
 		if !d.staleLogged.Swap(true) {
-			d.options.Logger.Error("cluster discovery is stale: every profile request is refused",
+			d.options.Logger.Error("cluster discovery is stale: every request through a permission set is refused",
 				"error_code", "kubernetes_discovery_stale", "confirmed_at", current.confirmedAt)
 		}
 		return kubeprofile.ScopeUnknown

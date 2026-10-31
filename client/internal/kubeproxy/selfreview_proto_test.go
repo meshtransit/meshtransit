@@ -91,7 +91,7 @@ func TestProxyAnswersProtobufAccessReviews(t *testing.T) {
 	deleting := protoReview("v1", "SelfSubjectAccessReview", resourceSpec(protoField(1, []byte("team-a")),
 		protoField(2, []byte("delete")), protoField(5, []byte("pods"))))
 	_, body := f.post(path, protobufMedia, string(deleting))
-	if !strings.Contains(body, `"allowed":false`) || !strings.Contains(body, `profile \"developer\"`) {
+	if !strings.Contains(body, `"allowed":false`) || !strings.Contains(body, `permission set \"developer\"`) {
 		t.Fatalf("a refused protobuf review: %s", body)
 	}
 	f.nothingForwarded()
