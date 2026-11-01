@@ -5,6 +5,7 @@
 package flowcount
 
 import (
+	"encoding/hex"
 	"net/netip"
 
 	"meshtransit.net/client/internal/packetmeta"
@@ -44,12 +45,28 @@ const (
 	DenyShareExpired
 	DenyRouteNotInstalled
 	DenyPeerUnusable
+	DenyCapacity
 	DenyNoise
 )
 
 // ID is a 16-byte identifier from the node's map: a Device, Site, exit pool,
 // trust contract or cluster. The zero ID means unknown.
 type ID [16]byte
+
+// ParseID reads a map identifier (device_id, site_ref, pool_ref,
+// contract_id). Core issues them as UUIDs in text form; any other value is
+// opaque to the node and gives the zero ID, so the record omits it.
+func ParseID(text string) ID {
+	if len(text) != 36 || text[8] != '-' || text[13] != '-' || text[18] != '-' || text[23] != '-' {
+		return ID{}
+	}
+	var id ID
+	compact := text[0:8] + text[9:13] + text[14:18] + text[19:23] + text[24:36]
+	if _, err := hex.Decode(id[:], []byte(compact)); err != nil {
+		return ID{}
+	}
+	return id
+}
 
 // Observation is one packet as the filter decided it, with Header.Source the
 // packet's sender. Header holds this node's own mesh address and the other
@@ -71,15 +88,16 @@ type Observation struct {
 }
 
 // isPrivate reports a mesh or private address: one whose IP may leave the
-// node in a record. These are the mesh's ranges (100.64.0.0/10, unique local
-// IPv6) and the private ranges a Site uses (10/8, 172.16/12, 192.168/16).
-// Every other address is the Internet's and never does.
+// node in a record. These are the overlay's ranges (100.64.0.0/10, the
+// shared-Device alias range 198.18.0.0/15, unique local IPv6) and the
+// private ranges a Site uses (10/8, 172.16/12, 192.168/16). Every other
+// address is the Internet's and never does.
 func isPrivate(address netip.Addr) bool {
 	address = address.Unmap()
 	if address.Is4() {
 		b := address.As4()
 		return b[0] == 10 || b[0] == 172 && b[1]&0xf0 == 16 || b[0] == 192 && b[1] == 168 ||
-			b[0] == 100 && b[1]&0xc0 == 64
+			b[0] == 100 && b[1]&0xc0 == 64 || b[0] == 198 && b[1]&0xfe == 18
 	}
 	return address.Is6() && address.As16()[0]&0xfe == 0xfc
 }

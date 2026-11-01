@@ -184,7 +184,8 @@ A record is one aggregate of a window: allowed traffic of one flow key
   for `SITE`, the exit node for `EXIT`, the deciding node for `DENY`.
 - **Deny reasons:** `NOT_IN_MAP` (sender; no rule to a mesh address),
   `PORT_NOT_ALLOWED` (receiver), `SHARE_SERVICE`, `SHARE_EXPIRED`,
-  `ROUTE_NOT_INSTALLED` (sender), `PEER_UNUSABLE`. Multicast, broadcast,
+  `ROUTE_NOT_INSTALLED` (sender), `PEER_UNUSABLE`, `CAPACITY` (a limit of
+  the deciding node: an exit node's consumers, a share's flow table). Multicast, broadcast,
   link-local and addresses outside the Network's mesh ranges are not counted
   as denials. Denials aggregate per (source, destination, protocol) with
   `distinct_ports` and at most 8 `sample_ports`.

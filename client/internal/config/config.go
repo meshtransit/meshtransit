@@ -7,12 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
-	"net/url"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // Config contains the complete startup configuration for meshd.
@@ -62,10 +60,6 @@ type Config struct {
 	EnableDNS           bool
 	WireGuardListenPort uint16
 	AdvertiseEndpoints  []netip.AddrPort
-	EnableFlowLogs      bool
-	FlowLogURL          string
-	FlowLogInterval     time.Duration
-	FlowLogTimeout      time.Duration
 }
 
 // Parse parses daemon flags without reading global flag state.
@@ -143,30 +137,6 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 		&advertiseEndpoints,
 		"advertise-endpoint",
 		"optional explicit UDP endpoint advertised to control; repeatable",
-	)
-	flags.BoolVar(
-		&cfg.EnableFlowLogs,
-		"enable-flow-logs",
-		false,
-		"enable opt-in header-only data-plane flow logging",
-	)
-	flags.StringVar(
-		&cfg.FlowLogURL,
-		"flow-log-url",
-		"",
-		"HTTPS origin for native flow log uploads",
-	)
-	flags.DurationVar(
-		&cfg.FlowLogInterval,
-		"flow-log-interval",
-		5*time.Second,
-		"in-memory flow aggregation interval",
-	)
-	flags.DurationVar(
-		&cfg.FlowLogTimeout,
-		"flow-log-timeout",
-		5*time.Second,
-		"timeout for each flow log upload attempt",
 	)
 	flags.Var(&allowedUIDs, "allow-uid", "additional local uid allowed to call the api; repeatable")
 	flags.BoolVar(
@@ -306,25 +276,6 @@ func validate(cfg Config) error {
 	}
 	if cfg.TestPolicyDrift && !cfg.EnableDataPlane {
 		return errors.New("policy drift testing requires --enable-data-plane")
-	}
-	if cfg.EnableFlowLogs {
-		if !cfg.EnableDataPlane {
-			return errors.New("flow logging requires the data plane")
-		}
-		endpoint, err := url.Parse(cfg.FlowLogURL)
-		if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" ||
-			endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" ||
-			(endpoint.Path != "" && endpoint.Path != "/") {
-			return errors.New("flow log URL must be an HTTPS origin")
-		}
-		if cfg.FlowLogInterval < time.Second || cfg.FlowLogInterval > 5*time.Minute {
-			return errors.New("flow log interval must be between 1s and 5m")
-		}
-		if cfg.FlowLogTimeout <= 0 || cfg.FlowLogTimeout > time.Minute {
-			return errors.New("flow log timeout must be between zero and 1m")
-		}
-	} else if cfg.FlowLogURL != "" {
-		return errors.New("flow log URL requires --enable-flow-logs")
 	}
 	if len(cfg.AdvertiseEndpoints) > 16 {
 		return errors.New("too many advertised endpoints")

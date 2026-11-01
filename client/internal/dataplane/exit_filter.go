@@ -4,6 +4,7 @@ import (
 	"net/netip"
 	"time"
 
+	"meshtransit.net/client/internal/flowcount"
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/packetmeta"
 	"meshtransit.net/shared/internet"
@@ -18,24 +19,27 @@ const exitConsumerIdle = 10 * time.Minute
 // to the exit node's own addresses or the Sites it serves, for at most
 // maxConsumers consumers. Its zero value admits nothing.
 type exitFilter struct {
-	active       bool
+	active bool
+	// pool is the served pool, as a connection log ID.
+	pool         flowcount.ID
 	rules        []compiledRule
 	local        map[netip.Addr]struct{}
 	maxConsumers int
 	consumers    map[netip.Addr]time.Time
 }
 
-// SetExitInstalled records how the helper forwards as an exit node: rules is
-// the served pool's rules, local the exit node's own addresses outside the
-// mesh, maxConsumers its consumer limit. Without rules it forwards nothing.
-func (f *policyFilter) SetExitInstalled(rules []networkmap.Rule, local []netip.Addr, maxConsumers int) {
+// SetExitInstalled records how the helper forwards as an exit node: pool is
+// the served pool's reference, rules its rules, local the exit node's own
+// addresses outside the mesh, maxConsumers its consumer limit. Without
+// rules it forwards nothing.
+func (f *policyFilter) SetExitInstalled(pool string, rules []networkmap.Rule, local []netip.Addr, maxConsumers int) {
 	if f == nil {
 		return
 	}
 	exit := exitFilter{}
 	if len(rules) != 0 && maxConsumers > 0 {
 		exit = exitFilter{
-			active: true, local: map[netip.Addr]struct{}{}, maxConsumers: maxConsumers,
+			active: true, pool: flowcount.ParseID(pool), local: map[netip.Addr]struct{}{}, maxConsumers: maxConsumers,
 			consumers: map[netip.Addr]time.Time{},
 		}
 		for _, rule := range rules {

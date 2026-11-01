@@ -346,6 +346,7 @@ const (
 	FlowRecord_SHARE_EXPIRED           FlowRecord_DenyReason = 4
 	FlowRecord_ROUTE_NOT_INSTALLED     FlowRecord_DenyReason = 5
 	FlowRecord_PEER_UNUSABLE           FlowRecord_DenyReason = 6
+	FlowRecord_CAPACITY                FlowRecord_DenyReason = 7
 )
 
 // Enum value maps for FlowRecord_DenyReason.
@@ -358,6 +359,7 @@ var (
 		4: "SHARE_EXPIRED",
 		5: "ROUTE_NOT_INSTALLED",
 		6: "PEER_UNUSABLE",
+		7: "CAPACITY",
 	}
 	FlowRecord_DenyReason_value = map[string]int32{
 		"DENY_REASON_UNSPECIFIED": 0,
@@ -367,6 +369,7 @@ var (
 		"SHARE_EXPIRED":           4,
 		"ROUTE_NOT_INSTALLED":     5,
 		"PEER_UNUSABLE":           6,
+		"CAPACITY":                7,
 	}
 )
 
@@ -1331,7 +1334,7 @@ const file_flowlog_v1_flowlog_proto_rawDesc = "" +
 	"\bOverflow\x12\x12\n" +
 	"\x04keys\x18\x01 \x01(\x04R\x04keys\x12\x18\n" +
 	"\apackets\x18\x02 \x01(\x04R\apackets\x12\x14\n" +
-	"\x05bytes\x18\x03 \x01(\x04R\x05bytes\"\xc6\r\n" +
+	"\x05bytes\x18\x03 \x01(\x04R\x05bytes\"\xd4\r\n" +
 	"\n" +
 	"FlowRecord\x12;\n" +
 	"\x04kind\x18\x01 \x01(\x0e2'.meshtransit.flowlog.v1.FlowRecord.KindR\x04kind\x12>\n" +
@@ -1396,7 +1399,7 @@ const file_flowlog_v1_flowlog_proto_rawDesc = "" +
 	"\x03SYN\x10\x02\x12\x0f\n" +
 	"\vESTABLISHED\x10\x03\x12\v\n" +
 	"\aCLOSING\x10\x04\x12\t\n" +
-	"\x05RESET\x10\x05\"\xa1\x01\n" +
+	"\x05RESET\x10\x05\"\xaf\x01\n" +
 	"\n" +
 	"DenyReason\x12\x1b\n" +
 	"\x17DENY_REASON_UNSPECIFIED\x10\x00\x12\x0e\n" +
@@ -1406,7 +1409,8 @@ const file_flowlog_v1_flowlog_proto_rawDesc = "" +
 	"\rSHARE_SERVICE\x10\x03\x12\x11\n" +
 	"\rSHARE_EXPIRED\x10\x04\x12\x17\n" +
 	"\x13ROUTE_NOT_INSTALLED\x10\x05\x12\x11\n" +
-	"\rPEER_UNUSABLE\x10\x06\"\xd7\x02\n" +
+	"\rPEER_UNUSABLE\x10\x06\x12\f\n" +
+	"\bCAPACITY\x10\a\"\xd7\x02\n" +
 	"\x11FlowBatchResponse\x12-\n" +
 	"\x12committed_sequence\x18\x01 \x01(\x04R\x11committedSequence\x12$\n" +
 	"\x0eretry_after_ms\x18\x02 \x01(\rR\fretryAfterMs\x12H\n" +

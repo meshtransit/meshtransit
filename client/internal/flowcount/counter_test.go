@@ -335,7 +335,8 @@ func TestAddressClasses(t *testing.T) {
 	for address, private := range map[string]bool{
 		"10.1.2.3": true, "172.16.0.1": true, "172.31.255.255": true, "172.32.0.1": false, "192.168.1.1": true,
 		"100.64.0.1": true, "100.127.255.255": true, "100.128.0.1": false, "fd7a::1": true, "fc00::1": true,
-		"8.8.8.8": false, "2001:db8::1": false, "::ffff:10.0.0.1": true,
+		"8.8.8.8": false, "2001:db8::1": false, "::ffff:10.0.0.1": true, "198.18.0.1": true, "198.19.255.255": true,
+		"198.17.255.255": false, "198.20.0.1": false,
 	} {
 		if got := isPrivate(netip.MustParseAddr(address)); got != private {
 			t.Errorf("isPrivate(%s) = %t", address, got)
@@ -592,5 +593,21 @@ func TestOverflowKeysEstimate(t *testing.T) {
 	window := counter.Drain(start, ID{})
 	if window.Overflow.Packets != 9000 || window.Overflow.Keys < 2700 || window.Overflow.Keys > 3300 {
 		t.Fatalf("overflow %+v for 3,000 keys", window.Overflow)
+	}
+}
+
+func TestParseID(t *testing.T) {
+	t.Parallel()
+	id := ParseID("01890f00-0000-7000-8000-0000000000ab")
+	if id[0] != 0x01 || id[1] != 0x89 || id[15] != 0xab {
+		t.Fatalf("id %x", id)
+	}
+	for _, text := range []string{
+		"", "site-a", "01890f00-0000-7000-8000-0000000000zz", "01890f0000000-7000-8000-0000000000ab",
+		"01890f00-0000-7000-8000-0000000000abc",
+	} {
+		if ParseID(text) != (ID{}) {
+			t.Errorf("ParseID(%q) not zero", text)
+		}
 	}
 }

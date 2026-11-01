@@ -9,12 +9,15 @@ import (
 	"slices"
 	"time"
 
+	"meshtransit.net/client/internal/flowcount"
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/packetmeta"
 )
 
 type aliasPacketGrant struct {
-	peerID    uint64
+	peerID uint64
+	// contract is the share's trust contract, as a connection log ID.
+	contract  flowcount.ID
 	canonical netip.Addr
 	local     netip.Addr
 	binding   networkmap.AliasBinding
@@ -43,7 +46,10 @@ func aliasPacketGrants(snapshot networkmap.Snapshot) map[netip.Addr]aliasPacketG
 			}
 			for _, self := range snapshot.Self.Addresses {
 				if self.Addr().Is4() == address.Is4() {
-					grants[address] = aliasPacketGrant{peerID: peer.ID, canonical: self.Addr(), local: local, binding: binding}
+					grants[address] = aliasPacketGrant{
+						peerID: peer.ID, contract: flowcount.ParseID(binding.ContractID), canonical: self.Addr(),
+						local: local, binding: binding,
+					}
 				}
 			}
 		}
@@ -63,6 +69,8 @@ func equalAliasPacketGrant(left, right aliasPacketGrant) bool {
 // ProcessPacket filters and translates under the same authority lock. WireGuard
 // has already authenticated ingress source ownership before this TUN boundary.
 // Denial never changes packet bytes; ordinary peers retain existing behavior.
+// While connection logging is on, the decision is also counted
+// (flow_observe.go), after the lock is released.
 func (f *policyFilter) ProcessPacket(direction PacketDirection, packet []byte) bool {
 	if f == nil || f.clock == nil {
 		return false
@@ -72,8 +80,19 @@ func (f *policyFilter) ProcessPacket(direction PacketDirection, packet []byte) b
 		return false
 	}
 	now := f.clock().UTC()
+	if counter := f.counter.Load(); counter != nil {
+		allowed, observation := f.processAndObserveLocked(direction, header, packet, now)
+		counter.Observe(observation, now)
+		return allowed
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	return f.processPacketLocked(direction, header, packet, now)
+}
+
+func (f *policyFilter) processPacketLocked(direction PacketDirection, header packetmeta.Header, packet []byte,
+	now time.Time,
+) bool {
 	if f.suspended || !f.selfAuthority.usableAt(now) {
 		return false
 	}

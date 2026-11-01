@@ -19,7 +19,6 @@ import (
 	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/daemon"
 	"meshtransit.net/client/internal/dataplane"
-	"meshtransit.net/client/internal/flowlog"
 	"meshtransit.net/client/internal/identity"
 	"meshtransit.net/client/internal/localapi"
 	"meshtransit.net/client/internal/mtcpclient"
@@ -113,20 +112,6 @@ func runContext(parent context.Context, args []string, stdout, stderr io.Writer)
 		Logger:             logger,
 		AdvertiseEndpoints: cfg.AdvertiseEndpoints,
 	}
-	var flowReporter *flowlog.Reporter
-	if cfg.EnableFlowLogs {
-		flowReporter, err = flowlog.New(flowlog.Config{
-			BaseURL:  cfg.FlowLogURL,
-			Interval: cfg.FlowLogInterval,
-			Timeout:  cfg.FlowLogTimeout,
-			Logger:   logger,
-		})
-		if err != nil {
-			logger.Error("creating flow log reporter failed", "error", err)
-
-			return 1
-		}
-	}
 	underlay.SetLogger(logger.With("component", "underlay"))
 	opener, netAdminClient, err := platformNetwork(cfg)
 	if err != nil {
@@ -151,7 +136,7 @@ func runContext(parent context.Context, args []string, stdout, stderr io.Writer)
 		engine, err := dataplane.NewWireGuardWithObserver(
 			opener,
 			cfg.WireGuardListenPort,
-			flowReporter,
+			nil,
 		)
 		if err != nil {
 			logger.Error("creating encrypted data plane failed", "error", err)
@@ -185,13 +170,6 @@ func runContext(parent context.Context, args []string, stdout, stderr io.Writer)
 			"encrypted data plane enabled",
 			append(networkLogAttrs(cfg), "listen_port", cfg.WireGuardListenPort)...,
 		)
-		if flowReporter != nil {
-			logger.Info(
-				"header-only flow logging enabled",
-				"origin", cfg.FlowLogURL,
-				"interval", cfg.FlowLogInterval,
-			)
-		}
 	}
 	if cfg.EnableDNS {
 		dnsManager, err := platformDNS(netAdminClient, logger)
@@ -300,11 +278,6 @@ func runContext(parent context.Context, args []string, stdout, stderr io.Writer)
 		networkResult = make(chan error, 1)
 		go func() { networkResult <- networkMonitor.Run(ctx) }()
 	}
-	var flowResult chan error
-	if flowReporter != nil {
-		flowResult = make(chan error, 1)
-		go func() { flowResult <- flowReporter.Run(ctx) }()
-	}
 
 	var serverErr error
 	var syncErr error
@@ -331,10 +304,6 @@ func runContext(parent context.Context, args []string, stdout, stderr io.Writer)
 	if networkResult != nil && !networkFinished {
 		networkErr = <-networkResult
 	}
-	var flowErr error
-	if flowResult != nil {
-		flowErr = <-flowResult
-	}
 	if errors.Is(serverErr, context.Canceled) {
 		serverErr = nil
 	}
@@ -344,10 +313,7 @@ func runContext(parent context.Context, args []string, stdout, stderr io.Writer)
 	if errors.Is(networkErr, context.Canceled) {
 		networkErr = nil
 	}
-	if errors.Is(flowErr, context.Canceled) {
-		flowErr = nil
-	}
-	if err := errors.Join(serverErr, syncErr, networkErr, flowErr); err != nil {
+	if err := errors.Join(serverErr, syncErr, networkErr); err != nil {
 		logger.Error("meshd stopped unexpectedly", "error", err)
 
 		return 1

@@ -3,6 +3,7 @@ package dataplane
 import (
 	"net/netip"
 
+	"meshtransit.net/client/internal/flowcount"
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/shared/internet"
 )
@@ -11,6 +12,8 @@ import (
 // (mtcp-v1 §7.6).
 type routedSite struct {
 	ref string
+	// id is ref as a connection log ID.
+	id flowcount.ID
 	// served means packets to the Site go through primary; otherwise they
 	// are answered unreachable.
 	served  bool
@@ -20,7 +23,8 @@ type routedSite struct {
 // routedExit is the exit node the node chose (networkmap.ExitRoute) as the
 // packet path handles it (mtcp-v1 §7.7).
 type routedExit struct {
-	pool string
+	pool   string
+	poolID flowcount.ID
 	// served means Internet packets go through node; otherwise they are
 	// dropped, never sent outside the mesh.
 	served bool
@@ -58,7 +62,10 @@ func newRoutedTable(snapshot networkmap.Snapshot) *routedTable {
 	}
 	table := &routedTable{prefixes: newPrefixIndex[int](0)}
 	if route := snapshot.ExitRoute; route != nil {
-		table.exit = &routedExit{pool: route.Pool, ipv6: route.IPv6, captiveOff: snapshot.ExitCaptiveOff()}
+		table.exit = &routedExit{
+			pool: route.Pool, poolID: flowcount.ParseID(route.Pool), ipv6: route.IPv6,
+			captiveOff: snapshot.ExitCaptiveOff(),
+		}
 		if peer, found := peers[route.Node]; found && route.Node != "" {
 			table.exit.served, table.exit.nodeRef, table.exit.node = true, route.Node, authorityFor(peer)
 			table.exit.dns = snapshot.ExitResolvers()
@@ -70,7 +77,7 @@ func newRoutedTable(snapshot networkmap.Snapshot) *routedTable {
 	statuses := networkmap.EffectiveStatus(snapshot.Routes)
 	table.sites = make([]routedSite, 0, len(snapshot.Routes))
 	for index, route := range snapshot.Routes {
-		site := routedSite{ref: route.Ref}
+		site := routedSite{ref: route.Ref, id: flowcount.ParseID(route.Ref)}
 		if primary, found := peers[route.Primary]; found && statuses[index] == networkmap.RouteServed {
 			site.served, site.primary = true, authorityFor(primary)
 		}

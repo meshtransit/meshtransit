@@ -182,6 +182,7 @@ message FlowRecord {
     SHARE_EXPIRED = 4;
     ROUTE_NOT_INSTALLED = 5; // no Site router or no exit chosen
     PEER_UNUSABLE = 6; // suspended, expired or rotating peer
+    CAPACITY = 7; // a limit of the deciding node: exit consumers, a share's flows
   }
 }
 

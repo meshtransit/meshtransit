@@ -149,21 +149,18 @@ func TestParseDataPlaneWithAutomaticEndpointDiscovery(t *testing.T) {
 	}
 }
 
-func TestParseFlowLogging(t *testing.T) {
+func TestParseDataPlaneEndpoint(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := Parse([]string{
 		"--enable-data-plane",
 		"--wireguard-listen-port", "41641",
 		"--advertise-endpoint", "203.0.113.10:41641",
-		"--enable-flow-logs",
-		"--flow-log-url", "https://log.pingoo.click",
-		"--flow-log-interval", "10s",
 	}, io.Discard)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
-	if !cfg.EnableFlowLogs || cfg.FlowLogURL != "https://log.pingoo.click" {
+	if !cfg.EnableDataPlane || cfg.WireGuardListenPort != 41641 {
 		t.Fatalf("parsed config = %#v", cfg)
 	}
 }
@@ -193,20 +190,6 @@ func TestParseRejectsUnsafeDataPlane(t *testing.T) {
 			},
 		},
 		{name: "listen port without data plane", args: []string{"--wireguard-listen-port", "41641"}},
-		{
-			name: "flow logs without data plane",
-			args: []string{"--enable-flow-logs", "--flow-log-url", "https://log.pingoo.click"},
-		},
-		{
-			name: "plaintext flow log origin",
-			args: []string{
-				"--enable-data-plane",
-				"--wireguard-listen-port", "41641",
-				"--advertise-endpoint", "203.0.113.10:41641",
-				"--enable-flow-logs",
-				"--flow-log-url", "http://log.pingoo.click",
-			},
-		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -230,6 +213,8 @@ func TestParseRejectsRemovedDevelopmentFlags(t *testing.T) {
 		{name: "wireguard poc", flag: "--enable-wireguard-poc"},
 		{name: "dns poc", flag: "--enable-dns-poc"},
 		{name: "unverified local peer", flag: "--unsafe-allow-unverified-local-peer"},
+		// Connection logs come with a FlowTicket from control, not flags.
+		{name: "flow logs", flag: "--enable-flow-logs"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

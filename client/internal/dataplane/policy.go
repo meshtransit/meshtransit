@@ -5,8 +5,10 @@ import (
 	"net/netip"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"meshtransit.net/client/internal/flowcount"
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/packetmeta"
 	"meshtransit.net/shared/policydigest"
@@ -100,6 +102,9 @@ type policyFilter struct {
 	// selfTest sends a subnet router's self-test packets and takes their
 	// answers before any rule (design §6.5.1).
 	selfTest *selfTester
+	// counter counts decisions for connection logs while logging is on
+	// (flow_observe.go); nil otherwise.
+	counter atomic.Pointer[flowcount.Counter]
 }
 
 // EnforcedPolicy is the policy digest of the rules the packet filter
@@ -661,10 +666,15 @@ type packetAuthority struct {
 	publicKey string
 	expiresAt time.Time
 	expired   bool
+	// flowID is the Device's ID for connection logs; nodeID follows it.
+	flowID flowcount.ID
 }
 
 func authorityFor(value networkmap.Node) packetAuthority {
-	return packetAuthority{nodeID: value.ID, publicKey: value.PublicKey, expiresAt: value.KeyExpiry, expired: value.Expired}
+	return packetAuthority{
+		nodeID: value.ID, publicKey: value.PublicKey, expiresAt: value.KeyExpiry, expired: value.Expired,
+		flowID: flowcount.ParseID(value.StableID),
+	}
 }
 
 func (authority packetAuthority) usableAt(now time.Time) bool {

@@ -4,6 +4,7 @@ import (
 	"net/netip"
 	"time"
 
+	"meshtransit.net/client/internal/flowcount"
 	"meshtransit.net/client/internal/packetmeta"
 	"meshtransit.net/shared/routedigest"
 )
@@ -12,7 +13,8 @@ import (
 // layer 1): what it forwards into, its own addresses outside the mesh, and
 // the route digest of what it serves.
 type servedFilter struct {
-	prefixes *prefixIndex[struct{}]
+	// prefixes hold each served prefix's Site, as a connection log ID.
+	prefixes *prefixIndex[flowcount.ID]
 	// local are the router's own addresses outside the mesh: the mesh
 	// reaches them only as the router's own services, which the Device's
 	// policy governs, never through a served prefix.
@@ -41,11 +43,11 @@ func (f *policyFilter) SetServedInstalled(entries []routedigest.Entry, local []n
 		digest, count, _ = routedigest.Compute(nil)
 	}
 	served := servedFilter{
-		prefixes: newPrefixIndex[struct{}](len(entries)), local: map[netip.Addr]struct{}{},
+		prefixes: newPrefixIndex[flowcount.ID](len(entries)), local: map[netip.Addr]struct{}{},
 		digest: digest, entries: count,
 	}
 	for _, entry := range entries {
-		served.prefixes.add(entry.Prefix, struct{}{})
+		served.prefixes.add(entry.Prefix, flowcount.ParseID(entry.SiteRef))
 	}
 	for _, address := range local {
 		served.local[address.Unmap()] = struct{}{}
@@ -56,8 +58,17 @@ func (f *policyFilter) SetServedInstalled(entries []routedigest.Entry, local []n
 }
 
 func (served servedFilter) contains(address netip.Addr) bool {
-	_, _, found := served.prefixes.lookup(address)
+	_, found := served.site(address)
 	return found
+}
+
+// site returns the Site a served address belongs to.
+func (served servedFilter) site(address netip.Addr) (flowcount.ID, bool) {
+	if served.prefixes == nil {
+		return flowcount.ID{}, false
+	}
+	_, site, found := served.prefixes.lookup(address)
+	return site, found
 }
 
 // servedInboundLocked admits a packet from a peer into a served prefix as

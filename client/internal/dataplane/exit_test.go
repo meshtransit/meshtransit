@@ -40,7 +40,7 @@ func TestPolicyFilterForwardsToTheInternetAsAnExitNode(t *testing.T) {
 	if filter.Allow(PacketInbound, toInternet) {
 		t.Fatal("the Internet was reached before the helper forwarded as an exit node")
 	}
-	filter.SetExitInstalled(testExitRules(), []netip.Addr{netip.AddrFrom4(own)}, 2)
+	filter.SetExitInstalled("01890f00-0000-7000-8000-000000000e01", testExitRules(), []netip.Addr{netip.AddrFrom4(own)}, 2)
 	if !filter.Allow(PacketInbound, toInternet) {
 		t.Fatal("an allowed packet to the Internet was denied")
 	}
@@ -87,7 +87,7 @@ func TestPolicyFilterForwardsToTheInternetAsAnExitNode(t *testing.T) {
 	if filter.Allow(PacketOutbound, timeExceeded) {
 		t.Fatal("a private hop's time exceeded reached the consumer")
 	}
-	filter.SetExitInstalled(nil, nil, 0)
+	filter.SetExitInstalled("", nil, nil, 0)
 	if filter.Allow(PacketInbound, toInternet) {
 		t.Fatal("the Internet was reached after the exit node stopped")
 	}
@@ -289,7 +289,7 @@ func TestPolicyFilterAdmitsConsumersDNSAtTheExitNode(t *testing.T) {
 	if filter.Allow(PacketInbound, question) {
 		t.Fatal("DNS was admitted before the node served a pool")
 	}
-	filter.SetExitInstalled(testExitRules(), nil, 2)
+	filter.SetExitInstalled("01890f00-0000-7000-8000-000000000e01", testExitRules(), nil, 2)
 	if !filter.Allow(PacketInbound, question) {
 		t.Fatal("a consumer's DNS question was denied")
 	}

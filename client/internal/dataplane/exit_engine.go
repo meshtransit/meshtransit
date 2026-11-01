@@ -85,7 +85,7 @@ func (e *WireGuardEngine) syncExitLocked(desired exitDesired) {
 		if len(served) != 0 {
 			e.exitStatus = ExitNodeStatus{Pool: served[0].Ref, Error: "exit nodes are not supported on this platform"}
 		}
-		e.filter.SetExitInstalled(nil, nil, 0)
+		e.filter.SetExitInstalled("", nil, nil, 0)
 		return
 	}
 	e.servedExit.setLocked(e, desired, helperExchange[exitDesired, netadmin.ExitServing]{
@@ -155,7 +155,7 @@ func (e *WireGuardEngine) recordServedExitLocked(desired exitDesired, result net
 		e.startExitHealthLocked()
 	}
 	if !result.Serving || len(requested) == 0 {
-		e.filter.SetExitInstalled(nil, nil, 0)
+		e.filter.SetExitInstalled("", nil, nil, 0)
 	} else {
 		var local []netip.Addr
 		if e.hostAddresses != nil {
@@ -167,7 +167,7 @@ func (e *WireGuardEngine) recordServedExitLocked(desired exitDesired, result net
 		}
 		// The host's public addresses are its own too.
 		local = append(local, desired.public...)
-		e.filter.SetExitInstalled(requested[0].Rules, local, result.MaxConsumers)
+		e.filter.SetExitInstalled(requested[0].Ref, requested[0].Rules, local, result.MaxConsumers)
 	}
 	if e.logger == nil || equalExitNodeStatus(previous, e.exitStatus) {
 		return
@@ -186,7 +186,7 @@ func (e *WireGuardEngine) resetServedExitLocked() {
 	e.stopExitHealthLocked()
 	e.servedExit.resetLocked()
 	e.exitStatus = ExitNodeStatus{}
-	e.filter.SetExitInstalled(nil, nil, 0)
+	e.filter.SetExitInstalled("", nil, nil, 0)
 }
 
 // ExitNode returns how the node forwards as an exit node.

@@ -484,7 +484,6 @@ With `--tls`, exactly one certificate source is allowed.
 | `--lazy-peers` | `auto` | `auto`, `off` or `always` |
 | `--advertise-endpoint` | none | Repeatable, up to 16 global addresses on the listen port |
 | `--allow-uid`, `--allow-socket-peers` | none, `false` | Who may use the local API |
-| `--enable-flow-logs`, `--flow-log-url`, `--flow-log-interval`, `--flow-log-timeout` | off | Flow logs (not usable yet) |
 | `--log-level` | `info` | |
 | `--control-protocol` | `auto` | Kept for old units: `auto` or `mtcp` |
 
