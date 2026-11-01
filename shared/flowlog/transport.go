@@ -23,6 +23,9 @@ const (
 	Path = "/mtflow/v1/batches"
 	// TokenHeader carries the token, base64url without padding.
 	TokenHeader = "MeshTransit-Flow-Token"
+	// NetworkHeader carries the token's Network as a lowercase UUID: ingress
+	// routes on it to the replica that writes the Network.
+	NetworkHeader = "MeshTransit-Flow-Network"
 	// ContentType is the request and answer body's media type.
 	ContentType = "application/vnd.meshtransit.flowlog.v1"
 	// MaxBatchLength bounds the compressed batch; MaxBatchSize the batch

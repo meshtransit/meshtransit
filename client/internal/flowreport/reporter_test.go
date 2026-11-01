@@ -234,6 +234,16 @@ func TestReporterPlainErrors(t *testing.T) {
 	if _, ok, _ := current.spool.Oldest(); !ok || fixture.reporter.Status().LastError == "" {
 		t.Fatal("a 503 dropped the batch or went unreported")
 	}
+	// Another replica writes the Network: keep the batch, back off, send
+	// again with the same token.
+	fixture.receiver.plain = http.StatusMisdirectedRequest
+	fixture.now = fixture.now.Add(time.Minute)
+	if wait := fixture.reporter.sendTurn(t.Context(), current); wait < minBackoff {
+		t.Fatalf("421 backoff %v", wait)
+	}
+	if _, ok, _ := current.spool.Oldest(); !ok || current.tokenRefused {
+		t.Fatal("a 421 dropped the batch or refused the token")
+	}
 	fixture.receiver.plain = http.StatusUnauthorized
 	fixture.now = fixture.now.Add(time.Minute) // past the backoff, within the token
 	fixture.reporter.sendTurn(t.Context(), current)

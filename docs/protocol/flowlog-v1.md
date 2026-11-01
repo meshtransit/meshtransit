@@ -56,6 +56,10 @@ the spec assumes an on-path party.
 **Request.**
 
 - Header `MeshTransit-Flow-Token`: the token, base64url without padding.
+- Header `MeshTransit-Flow-Network`: the token's `network_id` as a lowercase
+  UUID. Ingress routes on it so every batch of a Network reaches the replica
+  that writes it (one writer per Network); the token changes at every
+  renewal, so it cannot be the routing key.
 - `Content-Type: application/vnd.meshtransit.flowlog.v1`.
 - Body: frames, each `u16be(n) || n bytes` with `n ≥ 1`.
   - Frame 0, at most 256 bytes, is the message of
@@ -74,10 +78,15 @@ the spec assumes an on-path party.
 
 1. Per source address rate limit.
 2. Token from the header: decode, `flowlog.VerifyToken` (signature, `kid`,
-   audience, validity). Nothing of the body is read before this.
+   audience, validity). Nothing of the body is read before this. Then
+   ownership: a replica that does not write the Network the
+   `MeshTransit-Flow-Network` header names answers 421 with `Retry-After`
+   (`flowlog.ErrNotOwner`), still without reading the body; the node sends
+   again later, and ingress routes it to the owner.
 3. Frame 0: read the handshake message, then `Token.Claims` with the
    initiator's static key; another key is refused. Decode the `FlowRequest`,
-   unknown fields refused.
+   unknown fields refused. The `MeshTransit-Flow-Network` header must be the
+   claims' `network_id` (`flowlog.CheckNetworkHeader`), or 400.
 4. Device revocation or suspension (from Core), then the per-Device and
    per-Network rate limits.
 5. The sequence rules of §5 decide only: when the batch is already held or
@@ -90,7 +99,7 @@ the spec assumes an on-path party.
    check that `boot_id` and `reporter_sequence` match the request, then the
    rules of §6.
 
-**Answer.** From step 3 on the receiver answers with HTTP 200 and the body
+**Answer.** Once step 3 passes the receiver answers with HTTP 200 and the body
 `u16be(n) || n bytes`: one message of `Noise_K_25519_ChaChaPoly_BLAKE2s` from
 the receiver (initiator, static key the receiver key) to the node (responder,
 static key its machine key), prologue
@@ -101,9 +110,11 @@ keys new, so a replayed request never makes the receiver seal twice under one
 key; `h` binds the answer to the request it answers, and `ss` to the receiver
 key.
 
-Before step 3, and when step 6 fails, the receiver answers in plain HTTP: 400
-(framing, a frame that does not decrypt, a body short of or past L), 401
-(token), 403 (another machine key, revoked Device), 413 (size), 429 or 503
+Until step 3 passes, and when step 6 fails, the receiver answers in plain
+HTTP: 400 (framing, a frame that does not decrypt, a body short of or past L,
+a `MeshTransit-Flow-Network` header that is not the token's Network), 401
+(token), 403 (another machine key, revoked Device), 413 (size), 421 with
+`Retry-After` (another replica writes the Network), 429 or 503
 with `Retry-After` (503 also for a fault of the receiver's own). The receiver
 reads at most one batch per (Device, `boot_id`) at a time and caps a body at
 frame 0 plus L plus 18 bytes per frame. **A node never drops a batch on a plain HTTP answer**,
@@ -113,7 +124,7 @@ again. An on-path party can thus delay batches, never delete them.
 
 The batch has no forward secrecy against the receiver's static key: whoever
 later holds that key can read recorded requests. Ingress and receiver never
-log the token header. A recorded request can be
+log the token header, nor the Network header next to a source address. A recorded request can be
 replayed while its token is valid; the receiver answers it as a batch it
 already has (§5), and only the node can open the answer.
 

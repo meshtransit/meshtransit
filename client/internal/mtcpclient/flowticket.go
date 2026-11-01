@@ -38,19 +38,23 @@ func (run *sessionRun) flowTicket(ticket *mtcpv1.FlowTicket) {
 	if len(token) > flowlog.MaxTokenSize || len(ticket.GetReceiverKey()) != 32 || ticket.GetNotAfterMs() <= 0 {
 		return
 	}
+	// The receiver's ingress routes on the token's Network (flowlog-v1 §4).
+	// A token without one still goes on: the reporter reads its claims too,
+	// and refuses and reports it.
+	network, _ := flowlog.NetworkHeaderOf(token)
 	client, origin := run.stream.client, run.stream.origin
 	deliver(controlplane.FlowTicket{
 		Token: bytes.Clone(token), ReceiverKey: bytes.Clone(ticket.GetReceiverKey()),
 		NotAfter: time.UnixMilli(ticket.GetNotAfterMs()), Machine: run.stream.keys.machine,
 		Post: func(ctx context.Context, header string, body []byte) (controlplane.FlowPostResult, error) {
-			return client.postFlow(ctx, origin, header, body)
+			return client.postFlow(ctx, origin, header, network, body)
 		},
 	})
 }
 
 // postFlow sends one connection log request to origin's fixed path: the
 // same TLS, no proxy and no redirects as the control channel (ADR-054).
-func (c *Client) postFlow(ctx context.Context, origin *url.URL, header string, body []byte,
+func (c *Client) postFlow(ctx context.Context, origin *url.URL, header, network string, body []byte,
 ) (controlplane.FlowPostResult, error) {
 	target := url.URL{Scheme: origin.Scheme, Host: origin.Host, Path: flowlog.Path}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(body))
@@ -58,6 +62,7 @@ func (c *Client) postFlow(ctx context.Context, origin *url.URL, header string, b
 		return controlplane.FlowPostResult{}, fmt.Errorf("mtcp: connection log request: %w", err)
 	}
 	request.Header.Set(flowlog.TokenHeader, header)
+	request.Header.Set(flowlog.NetworkHeader, network)
 	request.Header.Set("Content-Type", flowlog.ContentType)
 	// The control client's 15-second limit would cut a large batch on a
 	// slow uplink short every time: the caller's context bounds it instead.

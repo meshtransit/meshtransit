@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"io"
 	"time"
@@ -252,9 +253,51 @@ func Status(err error) int {
 		return 403
 	case errors.Is(err, ErrTooLarge):
 		return 413
+	case errors.Is(err, ErrNotOwner):
+		return 421
+	case errors.Is(err, ErrWrongNetwork):
+		return 400
 	case errors.Is(err, ErrUnavailable):
 		return 503
 	default:
 		return 400
 	}
+}
+
+var (
+	// ErrWrongNetwork reports a NetworkHeader that is not the token's
+	// Network: a plain 400.
+	ErrWrongNetwork = errors.New("flowlog: network header is not the token's network")
+	// ErrNotOwner reports a request for a Network another replica writes: a
+	// plain 421 with Retry-After, which the node sends again (flowlog-v1 §4).
+	ErrNotOwner = errors.New("flowlog: another receiver writes this network")
+)
+
+// NetworkHeaderOf is the NetworkHeader value for token: its Network, read
+// without checking the signature (the node only routes with it).
+func NetworkHeaderOf(token []byte) (string, error) {
+	claims, err := ReadClaims(token)
+	if err != nil {
+		return "", err
+	}
+	return formatUUID(claims.GetNetworkId())
+}
+
+// CheckNetworkHeader is part of step 3: the header must name the Network of
+// claims, which came out of a checked token.
+func CheckNetworkHeader(header string, claims *flowlogv1.FlowTokenClaims) error {
+	expected, err := formatUUID(claims.GetNetworkId())
+	if err != nil || header != expected {
+		return ErrWrongNetwork
+	}
+	return nil
+}
+
+// formatUUID writes a 16-byte ID as a lowercase UUID.
+func formatUUID(id []byte) (string, error) {
+	if len(id) != 16 {
+		return "", ErrInvalidToken
+	}
+	text := hex.EncodeToString(id)
+	return text[:8] + "-" + text[8:12] + "-" + text[12:16] + "-" + text[16:20] + "-" + text[20:], nil
 }

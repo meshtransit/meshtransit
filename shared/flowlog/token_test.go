@@ -303,3 +303,40 @@ func TestSignTokenWith(t *testing.T) {
 		t.Error("two keys share a kid")
 	}
 }
+
+// The Network header is the token's Network, as a lowercase UUID; a
+// receiver refuses any other.
+func TestNetworkHeader(t *testing.T) {
+	t.Parallel()
+	key, _ := testKeys(t)
+	token, err := SignToken(testClaims(time.Now()), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	header, err := NetworkHeaderOf(token)
+	if err != nil || header != "02020202-0202-0202-0202-020202020202" {
+		t.Fatalf("NetworkHeaderOf() = %q, %v", header, err)
+	}
+	claims := testClaims(time.Now())
+	if err := CheckNetworkHeader(header, claims); err != nil {
+		t.Fatal(err)
+	}
+	for _, other := range []string{"", "02020202-0202-0202-0202-020202020203", "02020202-0202-0202-0202-02020202020A"} {
+		if err := CheckNetworkHeader(other, claims); !errors.Is(err, ErrWrongNetwork) {
+			t.Errorf("%q: %v", other, err)
+		}
+	}
+	if _, err := NetworkHeaderOf([]byte("not a token")); err == nil {
+		t.Error("read a Network out of no token")
+	}
+	short := testClaims(time.Now())
+	short.NetworkId = short.NetworkId[:15]
+	for name, odd := range map[string]*flowlogv1.FlowTokenClaims{"nil": nil, "15 bytes": short} {
+		if err := CheckNetworkHeader(header, odd); !errors.Is(err, ErrWrongNetwork) {
+			t.Errorf("%s claims: %v", name, err)
+		}
+	}
+	if Status(ErrWrongNetwork) != 400 || Status(ErrNotOwner) != 421 {
+		t.Errorf("statuses %d %d", Status(ErrWrongNetwork), Status(ErrNotOwner))
+	}
+}
