@@ -237,6 +237,7 @@ func composeMapStream(
 		mapsession.EnforcementRecorder
 	},
 	relayAccess mapsession.RelayAccess,
+	flowLogs mapsession.FlowLogReader,
 ) (*mapsession.StreamService, error) {
 	replicaID, err := publicid.New()
 	if err != nil {
@@ -263,14 +264,17 @@ func composeMapStream(
 	if err != nil {
 		return nil, errors.Join(errInvalidMapSessionComposition, err)
 	}
-	if relayAccess == nil {
-		return recorded, nil
+	if relayAccess != nil {
+		if recorded, err = recorded.WithRelayAccess(relayAccess); err != nil {
+			return nil, errors.Join(errInvalidMapSessionComposition, err)
+		}
 	}
-	granted, err := recorded.WithRelayAccess(relayAccess)
-	if err != nil {
-		return nil, errors.Join(errInvalidMapSessionComposition, err)
+	if flowLogs != nil {
+		if recorded, err = recorded.WithFlowLogs(flowLogs); err != nil {
+			return nil, errors.Join(errInvalidMapSessionComposition, err)
+		}
 	}
-	return granted, nil
+	return recorded, nil
 }
 
 func newMapStreamService(

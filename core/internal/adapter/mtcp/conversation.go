@@ -109,6 +109,9 @@ type ApplicationOptions struct {
 	// services a root zone leaves to a node's network (TD-CLI-70); at most
 	// MaximumDNSInfrastructureNames are sent.
 	DNSInfrastructureNames []string
+	// FlowTickets, when set, signs the connection log tickets of sessions
+	// that negotiated flow.report1; Core then offers it.
+	FlowTickets *FlowSigner
 }
 
 // Application turns established sessions into registrations and map
@@ -170,6 +173,7 @@ func (application *Application) Open(session *Session) Conversation {
 	sink.deniedEndpoints = application.options.DeniedEndpointPrefixes
 	sink.suffix = application.options.DNSSuffix
 	sink.infrastructure = application.options.DNSInfrastructureNames
+	sink.flow = application.options.FlowTickets
 	sink.logger, sink.metrics = application.options.Logger, application.options.Metrics
 	proven, _ := session.ProvenNodeKey()
 	return &conversation{application: application, session: session, sink: sink, provenNodeKey: proven,

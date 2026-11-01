@@ -26,6 +26,9 @@ const (
 	// clusters' CAs and roots (schema 244); its failures fall back to
 	// schema 242 and are reported here only.
 	OperationReadKubernetesTrust
+	// OperationReadFlowLog reads whether one Network logs connections, for
+	// the FlowTickets of its streams (schema 267).
+	OperationReadFlowLog
 )
 
 // Observer records bounded operation latency and outcome without identity labels.

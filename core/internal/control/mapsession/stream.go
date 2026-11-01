@@ -144,6 +144,9 @@ type StreamOptions struct {
 	FreshPoll time.Duration
 	// RelayAccess, when set, issues each node's Interchange grant.
 	RelayAccess RelayAccess
+	// FlowLogs, when set, reads whether a node's Network logs connections:
+	// a sink that is a FlowTicketSink then sends it FlowTickets.
+	FlowLogs FlowLogReader
 	// FilterDigest, when set, records the digest of each delivered packet
 	// filter so enforcement reports can be compared with it.
 	FilterDigest FilterDigester
@@ -348,6 +351,11 @@ func (service *StreamService) run(
 	relayRenewal := time.NewTimer(time.Hour)
 	relayRenewal.Stop()
 	defer relayRenewal.Stop()
+	flowSink, sendsFlow := sink.(FlowTicketSink)
+	var flow flowTicketState
+	flowRenewal := time.NewTimer(time.Hour)
+	flowRenewal.Stop()
+	defer flowRenewal.Stop()
 	var pacer refreshPacer
 	pacedRefresh := time.NewTimer(time.Hour)
 	pacedRefresh.Stop()
@@ -466,6 +474,20 @@ func (service *StreamService) run(
 		} else {
 			pacedRefresh.Stop()
 		}
+		var flowRenewalDue <-chan time.Time
+		if sendsFlow {
+			if err := service.syncFlowTicket(ctx, flowSink, current, &flow); err != nil {
+				return err
+			}
+			// A due time already past (a send that signed nothing) waits for
+			// the next keepalive or reconcile instead of a hot loop.
+			if due := flow.nextDue(); !due.IsZero() && due.After(time.Now()) {
+				flowRenewal.Reset(time.Until(due))
+				flowRenewalDue = flowRenewal.C
+			} else {
+				flowRenewal.Stop()
+			}
+		}
 		var relayRenewalDue <-chan time.Time
 		// A renewal that failed leaves RenewAt in the past; it is retried by
 		// the reconcile ticker instead of a hot loop.
@@ -532,6 +554,8 @@ func (service *StreamService) run(
 			if err := fullRefresh(service.refresh); err != nil {
 				return err
 			}
+		case <-flowRenewalDue:
+			// The top of the loop reads and renews.
 		case <-authorityExpiry.C:
 			return withdrawAuthority(ctx, sink, current, ErrAuthorizationExpired)
 		case <-projectionDeadline:

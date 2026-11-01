@@ -121,6 +121,8 @@ type Config struct {
 	DeploymentEntitlement *DeploymentEntitlementConfig
 	// FlowLog is the connection log receiver's keys; nil without one.
 	FlowLog *FlowLogConfig
+	// FlowTickets signs nodes' connection log tokens; nil without it.
+	FlowTickets *FlowTicketConfig
 }
 
 // DependencyConfig bounds startup and periodic infrastructure checks.
@@ -184,6 +186,10 @@ func Load(lookup LookupFunc) (Config, error) {
 	}
 
 	flowLogConfig, err := loadFlowLogConfig(lookup, role)
+	if err != nil {
+		return Config{}, err
+	}
+	flowTicketConfig, err := loadFlowTicketConfig(lookup, role)
 	if err != nil {
 		return Config{}, err
 	}
@@ -429,6 +435,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		ContractExpiryWorker:        contractExpiryWorkerConfig,
 		RelayAuthority:              relayAuthorityConfig,
 		FlowLog:                     flowLogConfig,
+		FlowTickets:                 flowTicketConfig,
 		AccessLedgerWorker:          accessLedgerWorkerConfig,
 		KubernetesCAWorker:          kubernetesCAWorkerConfig,
 		EnforcementLedgerWorker:     enforcementLedgerWorkerConfig,

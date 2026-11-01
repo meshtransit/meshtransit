@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 266 {
-		t.Fatalf("len(Catalog()) = %d, want 266", len(catalog))
+	if len(catalog) != 267 {
+		t.Fatalf("len(Catalog()) = %d, want 267", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 266 {
-		t.Fatalf("LatestVersion() = %d, want 266", LatestVersion())
+	if LatestVersion() != 267 {
+		t.Fatalf("LatestVersion() = %d, want 267", LatestVersion())
 	}
 }
 
@@ -7939,5 +7939,25 @@ func TestMigration266ConnectionLogs(t *testing.T) {
 	// Runtime never writes the feature table directly.
 	if strings.Contains(sql, "GRANT INSERT") || strings.Contains(sql, "TO mesh_runtime;\nGRANT") {
 		t.Error("runtime gets table writes")
+	}
+}
+
+func TestMigration267ConnectionLogTickets(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 267 || catalog[266].Version != 267 {
+		t.Fatalf("the catalog has no migration 267 (%d migrations)", len(catalog))
+	}
+	sql := catalog[266].SQL
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.read_connection_log_ticket_v1()",
+		"mesh_ops.workspace_has_feature_internal_v1(settings.workspace_id, 'connection_logs')",
+		"settings.workspace_id = mesh_ops.current_workspace_id()",
+		"settings.network_id = mesh_ops.current_network_id()",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_connection_log_ticket_v1() TO mesh_runtime",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("migration 267 lacks %q", want)
+		}
 	}
 }

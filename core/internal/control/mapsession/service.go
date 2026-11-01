@@ -433,3 +433,9 @@ func (service *Service) ObserveSessionEndpoints(ctx context.Context, snapshot Sn
 	}
 	return service.observeEndpoints(ctx, snapshot, request)
 }
+
+// FlowLogs returns the store's connection log reader, when it has one.
+func (service *Service) FlowLogs() (FlowLogReader, bool) {
+	reader, ok := service.store.(FlowLogReader)
+	return reader, ok
+}

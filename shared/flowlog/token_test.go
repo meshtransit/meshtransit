@@ -262,3 +262,44 @@ func TestReadClaims(t *testing.T) {
 		}
 	}
 }
+
+type shortSigner struct{}
+
+func (shortSigner) Sign([]byte) []byte { return []byte{1} }
+
+// A signer that hides its key signs the same token, and a key's kid is
+// fixed by its public half.
+func TestSignTokenWith(t *testing.T) {
+	t.Parallel()
+	key, keys := testKeys(t)
+	now := time.Now()
+	direct, err := SignToken(testClaims(now), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped, err := SignTokenWith(testClaims(now), ed25519Signer(key))
+	if err != nil || !bytes.Equal(direct, wrapped) {
+		t.Fatalf("SignTokenWith() = %v", err)
+	}
+	if err := verify(wrapped, keys, audience, machineKey, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SignTokenWith(testClaims(now), shortSigner{}); !errors.Is(err, ErrInvalidToken) {
+		t.Errorf("a short signature: %v", err)
+	}
+	if _, err := SignTokenWith(testClaims(now), nil); !errors.Is(err, ErrInvalidToken) {
+		t.Errorf("no signer: %v", err)
+	}
+	public, ok := key.Public().(ed25519.PublicKey)
+	if !ok {
+		t.Fatal("public key")
+	}
+	kid := SigningKeyID(public)
+	if !validKID(kid) || kid != SigningKeyID(bytes.Clone(public)) || len(kid) != 20 {
+		t.Errorf("kid %q", kid)
+	}
+	other, _, _ := ed25519.GenerateKey(nil)
+	if SigningKeyID(other) == kid {
+		t.Error("two keys share a kid")
+	}
+}

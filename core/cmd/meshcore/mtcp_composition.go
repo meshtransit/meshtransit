@@ -250,6 +250,8 @@ type mtcpDependencies struct {
 	kubeCertificates mtcpadapter.KubeCertificates
 	// kubeAudit, when set, records gateways' operations (gateway.audit1).
 	kubeAudit *kubeAudit
+	// flowTickets, when set, signs connection log tickets (flow.report1).
+	flowTickets *mtcpadapter.FlowSigner
 }
 
 // mtcpMapSessions is mapsession.Service: endpoints and snapshot opening.
@@ -321,6 +323,7 @@ func composeMTCP(
 		DeniedEndpointPrefixes: controlConfig.MTCP.DeniedEndpointPrefixes(),
 		DNSSuffix:              deps.dnsSuffix,
 		DNSInfrastructureNames: deps.dnsInfrastructure,
+		FlowTickets:            deps.flowTickets,
 	}
 	if deps.browser != nil {
 		applicationOptions.BrowserIssuer = deps.browser.issuer
@@ -355,8 +358,9 @@ func composeMTCP(
 				append(append(kubeCertCapabilities(deps.kubeCertificates),
 					kubernetesClusterCapabilities(deps.kubernetesClusters)...),
 					append(append(kubeAuditCapabilities(deps.kubeAudit), gatewayTokenCapabilities(deps.gatewayTokens)...),
-						append(gatewayGroupCapabilities(deps.gatewayGroups),
-							gatewayCeilingCapabilities(deps.gatewayCeilings)...)...)...)...)...)...),
+						append(append(gatewayGroupCapabilities(deps.gatewayGroups),
+							gatewayCeilingCapabilities(deps.gatewayCeilings)...),
+							flowReportCapabilities(deps.flowTickets)...)...)...)...)...)...),
 		Logger:         logger,
 		Metrics:        metrics,
 		HandshakeRate:  controlConfig.MTCP.HandshakeRate,

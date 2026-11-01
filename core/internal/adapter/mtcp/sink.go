@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -32,6 +33,12 @@ type mapSink struct {
 	session     *Session
 	aliases     bool
 	controlKeys []*mtcpv1.KeyUpdate_ControlKey
+	// flow signs connection log tickets; nil: Core signs none. flowSent
+	// is set while the node holds a token this sink sent, flowWarned once
+	// a ticket failed to sign.
+	flow       *FlowSigner
+	flowSent   atomic.Bool
+	flowWarned atomic.Bool
 	// deniedEndpoints are the operator's ranges never sent as endpoints.
 	deniedEndpoints []netip.Prefix
 	// suffix is the deployment's DNS suffix the map names Devices under.
@@ -433,6 +440,9 @@ func (sink *mapSink) sendDeltaLocked(ctx context.Context, message *mtcpv1.MapDel
 // keys; the session then ends and the node retries (mtcp-v1 §10).
 func (sink *mapSink) SendAuthorityPause(context.Context, mapsession.Snapshot) error {
 	sink.revokeFreshness()
+	if err := sink.withdrawFlowTicket(); err != nil {
+		return err
+	}
 	return sink.session.Send(sharedmtcp.MessageLifecycle, &mtcpv1.Lifecycle{
 		State: mtcpv1.Lifecycle_SUSPENDED, Reason: "the Device is suspended", RetryAfterMs: 3000,
 	})
@@ -442,7 +452,7 @@ func (sink *mapSink) SendAuthorityPause(context.Context, mapsession.Snapshot) er
 // and the conversation turns it into the matching Lifecycle.
 func (sink *mapSink) SendAuthorityWithdrawal(context.Context, mapsession.Snapshot) error {
 	sink.revokeFreshness()
-	return nil
+	return sink.withdrawFlowTicket()
 }
 
 // revokeFreshness stops confirming the map: its authority was paused or

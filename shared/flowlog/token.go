@@ -5,7 +5,9 @@ package flowlog
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"time"
@@ -49,12 +51,39 @@ func signedBytes(claims []byte) []byte {
 	return append(message, claims...)
 }
 
+// TokenSigner signs with an Ed25519 key it does not reveal.
+type TokenSigner interface {
+	Sign(message []byte) []byte
+}
+
+type ed25519Signer ed25519.PrivateKey
+
+func (signer ed25519Signer) Sign(message []byte) []byte {
+	return ed25519.Sign(ed25519.PrivateKey(signer), message)
+}
+
 // SignToken encodes and signs claims with key. Claims must be valid.
 func SignToken(claims *flowlogv1.FlowTokenClaims, key ed25519.PrivateKey) ([]byte, error) {
+	if len(key) != ed25519.PrivateKeySize {
+		return nil, ErrInvalidToken
+	}
+	return SignTokenWith(claims, ed25519Signer(key))
+}
+
+// SigningKeyID is the kid of a token signing key: both Core and the
+// receiver derive it from the public key, so it never needs configuring.
+func SigningKeyID(public ed25519.PublicKey) string {
+	digest := sha256.Sum256(public)
+	return "mf1-" + base64.RawURLEncoding.EncodeToString(digest[:12])
+}
+
+// SignTokenWith encodes claims and signs them with signer. Claims must be
+// valid.
+func SignTokenWith(claims *flowlogv1.FlowTokenClaims, signer TokenSigner) ([]byte, error) {
 	if err := checkClaims(claims); err != nil {
 		return nil, err
 	}
-	if len(key) != ed25519.PrivateKeySize {
+	if signer == nil {
 		return nil, ErrInvalidToken
 	}
 	encoded, err := proto.MarshalOptions{Deterministic: true}.Marshal(claims)
@@ -65,7 +94,11 @@ func SignToken(claims *flowlogv1.FlowTokenClaims, key ed25519.PrivateKey) ([]byt
 	token = append(token, tokenMagic...)
 	token = binary.BigEndian.AppendUint16(token, uint16(len(encoded))) //nolint:gosec // bounded above
 	token = append(token, encoded...)
-	return append(token, ed25519.Sign(key, signedBytes(encoded))...), nil
+	signature := signer.Sign(signedBytes(encoded))
+	if len(signature) != ed25519.SignatureSize {
+		return nil, ErrInvalidToken
+	}
+	return append(token, signature...), nil
 }
 
 // ErrWrongMachineKey reports a token presented under another machine key

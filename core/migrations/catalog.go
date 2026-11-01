@@ -663,6 +663,8 @@ func Catalog() []Migration {
 			kubernetesGatewayCeilingsSQL),
 		newMigration(266, "Connection logs: Workspace features, storage credentials and Network destinations",
 			connectionLogsSQL),
+		newMigration(267, "Connection log tickets: a map stream reads whether its Network logs",
+			connectionLogTicketsSQL),
 	}
 }
 
@@ -1240,3 +1242,6 @@ var kubernetesGatewayCeilingsSQL string
 
 //go:embed 000266_connection_logs.up.sql
 var connectionLogsSQL string
+
+//go:embed 000267_connection_log_tickets.up.sql
+var connectionLogTicketsSQL string

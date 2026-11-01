@@ -12,6 +12,7 @@ import (
 
 	"meshtransit.net/core/internal/adapter/geoip"
 	"meshtransit.net/core/internal/adapter/httpapi"
+	mtcpadapter "meshtransit.net/core/internal/adapter/mtcp"
 	oidcadapter "meshtransit.net/core/internal/adapter/oidc"
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	redisadapter "meshtransit.net/core/internal/adapter/redis"
@@ -605,6 +606,17 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			return 1
 		}
 		additionalMetrics = append(additionalMetrics, mapInventoryMetrics)
+		var flowSigner *mtcpadapter.FlowSigner
+		var flowLogs mapsession.FlowLogReader
+		if processConfig.FlowTickets != nil {
+			flowSigner, flowLogs, composeErr = composeFlowTickets(ctx, *processConfig.FlowTickets,
+				processConfig.RelayAuthority, mapSessionService)
+			if composeErr != nil {
+				logger.ErrorContext(ctx, "startup failed", "error_code", "flow_ticket_composition_failure",
+					"error", composeErr)
+				return 1
+			}
+		}
 		mapStreamService, composeErr := composeMapStream(
 			processConfig.Control.Map,
 			mapSessionService,
@@ -613,6 +625,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			streamConnectivity,
 			redisClient,
 			relayAccess,
+			flowLogs,
 		)
 		if composeErr != nil {
 			logger.ErrorContext(
@@ -675,7 +688,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		deps := mtcpDependencies{
 			streams: mapStreamService, sessions: mapSessionService,
 			registrations: registrationService, logout: logout, paths: redisClient, connectivity: redisClient, guard: mtcpTimestampGuard{store: timestamps}, gatewayKeyEvents: gatewayKeyEvents, gatewayPresence: redisClient, logger: logger,
-			dnsSuffix: processConfig.DNSSuffix, dnsInfrastructure: processConfig.DNSProtectedNames(),
+			dnsSuffix: processConfig.DNSSuffix, dnsInfrastructure: processConfig.DNSProtectedNames(), flowTickets: flowSigner,
 			routeOffers:        routeOffers,
 			subnetRoutes:       processConfig.SubnetRoutes && processConfig.Control.Map.SharedInventory,
 			exitNodes:          processConfig.ExitNodes && processConfig.Control.Map.SharedInventory,

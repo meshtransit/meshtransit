@@ -43,6 +43,8 @@ func (metrics *postgresPoolMetrics) ObserveMapSession(
 		metrics.observeOperation(postgresOperationMapSessionRevision, duration, err)
 	case postgresmapsession.OperationReadKubernetesTrust:
 		metrics.observeOperation(postgresOperationMapSessionKubernetesTrust, duration, err)
+	case postgresmapsession.OperationReadFlowLog:
+		metrics.observeOperation(postgresOperationMapSessionFlowLog, duration, err)
 	case postgresmapsession.OperationUnknown:
 		return
 	}

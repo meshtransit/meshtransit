@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/authorization"
 	"meshtransit.net/core/internal/domain/connectionlog"
 	"meshtransit.net/core/internal/domain/network"
@@ -160,6 +161,39 @@ func assertPostgreSQLConnectionLogs(ctx context.Context, t *testing.T, admin *pg
 	if features, err := postgresadapter.ListWorkspaceFeatures(ctx, operator, publicid.ID(workspaceID)); err != nil ||
 		features.EnabledNetworks != 1 || len(features.Features) != 1 {
 		t.Fatalf("features = %+v, %v", features, err)
+	}
+	// A map stream reads the setting in the Network's scope (schema 267).
+	maps, err := postgresadapter.NewMapSessionStore(runtimePool, postgresadapter.MapSessionOptions{
+		StatementTimeout: 5 * time.Second, IdleTimeout: 5 * time.Second,
+		PeerCandidateLimit: mapsession.MaximumPeerCandidates, PolicyRuleLimit: mapsession.MaximumPacketPolicyRules,
+		RelayDirectory: integrationRelayDirectory(t), RoutePeerLimit: mapsession.DefaultPeerLimit,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read, err := maps.ReadFlowLog(ctx, scope); err != nil || !read.Enabled || read.Forwarded ||
+		read.WindowSeconds != 60 {
+		t.Fatalf("ReadFlowLog() = %+v, %v", read, err)
+	}
+	// Another Network of the Workspace reads its own setting: none.
+	other, err := network.NewScope(workspaceID, network.ID(mustIntegrationPublicID(t, "01890f00-0000-7000-8000-000000000204")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read, err := maps.ReadFlowLog(ctx, other); err != nil || read.Enabled {
+		t.Fatalf("ReadFlowLog() of another Network = %+v, %v", read, err)
+	}
+	// Without the feature the Network stays on but logs nothing (C31).
+	if _, err := postgresadapter.ChangeWorkspaceFeature(ctx, operator, publicid.ID(workspaceID),
+		postgresadapter.WorkspaceFeatureConnectionLogs, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if read, err := maps.ReadFlowLog(ctx, scope); err != nil || read.Enabled {
+		t.Fatalf("ReadFlowLog() without the feature = %+v, %v", read, err)
+	}
+	if _, err := postgresadapter.ChangeWorkspaceFeature(ctx, operator, publicid.ID(workspaceID),
+		postgresadapter.WorkspaceFeatureConnectionLogs, true, "integration test again"); err != nil {
+		t.Fatal(err)
 	}
 	if same, err := settings(1, true, &credentialID, "eu-central-1"); err != nil || same.Changed {
 		t.Fatalf("the same settings = %+v, %v", same, err)
