@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"meshtransit.net/core/internal/domain/connectionlog"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
@@ -153,6 +154,36 @@ func newStorageCredentialBody(credential connectionlog.Credential) storageCreden
 	return body
 }
 
+// connectionLogStatusBody is what the Console shows of a Network's logging
+// (design §16i C92): never a receiver instance, fingerprint or version.
+type connectionLogStatusBody struct {
+	ReceiverAvailable bool    `json:"receiver_available"`
+	Report            string  `json:"report"`
+	ReportedAt        *string `json:"reported_at"`
+	Test              string  `json:"test"`
+	TestedAt          *string `json:"tested_at"`
+	DeliveredAt       *string `json:"delivered_at"`
+	DeliveryError     *string `json:"delivery_error"`
+}
+
+func newConnectionLogStatusBody(view connectionlog.StatusView) connectionLogStatusBody {
+	moment := func(at *time.Time) *string {
+		if at == nil {
+			return nil
+		}
+		return optionalManagementTime(*at)
+	}
+	body := connectionLogStatusBody{
+		ReceiverAvailable: view.ReceiverAvailable, Report: view.Report, ReportedAt: moment(view.ReportedAt),
+		Test: view.Test, TestedAt: moment(view.TestedAt), DeliveredAt: moment(view.DeliveredAt),
+	}
+	if view.DeliveryError != "" {
+		kind := view.DeliveryError
+		body.DeliveryError = &kind
+	}
+	return body
+}
+
 type connectionLogSettingsBody struct {
 	Feature       bool    `json:"feature"`
 	Enabled       bool    `json:"enabled"`
@@ -270,8 +301,13 @@ func (handler *ManagementHandler) handleConnectionLogs(ctx context.Context, resp
 			return fail(classifyConnectionLogError(err))
 		}
 		response.Header().Set("ETag", trustVersionETag(settings.Settings.Version))
-		writeKubernetesData(ctx, handler, response, correlationID, http.StatusOK,
-			newConnectionLogSettingsBody(settings.Feature, settings.Settings))
+		writeKubernetesData(ctx, handler, response, correlationID, http.StatusOK, struct {
+			connectionLogSettingsBody
+			Status connectionLogStatusBody `json:"status"`
+		}{
+			newConnectionLogSettingsBody(settings.Feature, settings.Settings),
+			newConnectionLogStatusBody(settings.Status.View(settings.Settings, time.Now())),
+		})
 	case connectionLogReplaceOperation:
 		return handler.replaceConnectionLogSettings(ctx, response, request, correlationID, path, session, fail)
 	}

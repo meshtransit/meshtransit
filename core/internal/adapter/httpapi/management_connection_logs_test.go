@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"meshtransit.net/core/internal/domain/connectionlog"
 	"meshtransit.net/shared/flowlog"
@@ -164,5 +165,30 @@ func TestConnectionLogSettingsBucketOwner(t *testing.T) {
 	}
 	if answer := newConnectionLogSettingsBody(true, connectionlog.Settings{}); answer.BucketOwner != nil {
 		t.Error("no owner answered as one")
+	}
+}
+
+// The status a Network's reader gets beside its settings (design §16i
+// C92): times in the management format, no delivery error when none.
+func TestConnectionLogStatusBody(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	encoded, err := json.Marshal(newConnectionLogStatusBody(connectionlog.StatusView{
+		ReceiverAvailable: true, Report: connectionlog.ReportCurrent, ReportedAt: &at,
+		Test: connectionlog.TestPending, DeliveredAt: &at, DeliveryError: "throttled",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"receiver_available":true,"report":"current","reported_at":"2026-11-01T12:00:00Z","test":"pending",` +
+		`"tested_at":null,"delivered_at":"2026-11-01T12:00:00Z","delivery_error":"throttled"}`
+	if string(encoded) != want {
+		t.Fatalf("status body %s", encoded)
+	}
+	none, err := json.Marshal(newConnectionLogStatusBody(connectionlog.StatusView{
+		Report: connectionlog.ReportNone, Test: connectionlog.TestNone,
+	}))
+	if err != nil || !strings.Contains(string(none), `"delivery_error":null`) {
+		t.Fatalf("no report: %s, %v", none, err)
 	}
 }

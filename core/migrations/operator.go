@@ -275,3 +275,11 @@ var flowlogStatusOwnershipSQL string
 // to the status writer and the ticket gate to the receiver reader, and
 // exposes both to the runtime role only.
 func FlowlogStatusOwnershipSQL() string { return flowlogStatusOwnershipSQL }
+
+//go:embed operator/000271_connection_log_console_status_ownership.sql
+var connectionLogConsoleStatusOwnershipSQL string
+
+// ConnectionLogConsoleStatusOwnershipSQL moves the status read behind the
+// Network settings read (schema 271) to the status writer, callable only
+// from that read.
+func ConnectionLogConsoleStatusOwnershipSQL() string { return connectionLogConsoleStatusOwnershipSQL }

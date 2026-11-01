@@ -225,6 +225,7 @@ func assertPostgreSQLConnectionLogs(ctx context.Context, t *testing.T, admin *pg
 		*read.Settings.Credential != credentialID {
 		t.Fatalf("ReadSettings() = %+v, %v", read, err)
 	}
+	assertConnectionLogStatusRead(t, read)
 	if err := store.DeleteCredential(ctx, connectionlog.CredentialDeletion{
 		Session: owner, Workspace: workspaceID,
 		ID: credentialID, ExpectedVersion: 2, CorrelationID: newCorrelationID(t),
@@ -589,5 +590,25 @@ WHERE (guarded.workspace_id, guarded.network_id) NOT IN (SELECT logged.workspace
 JOIN mesh.network AS network ON network.workspace_id = device.workspace_id AND network.id = device.network_id
 WHERE network.public_id = $1::UUID`, scope.NetworkID().String()).Scan(&visible); err != nil || visible == 0 {
 		t.Fatalf("the reader sees no Device of the logging Network: %v", err)
+	}
+}
+
+// assertConnectionLogStatusRead checks the status the settings read carries
+// (schema 271) after assertFlowlogReceiverStatus: the receiver's last
+// report (an access_denied test of another destination ETag), a fresh
+// receiver taking the protocol, and the credential's key version, never
+// its secret.
+func assertConnectionLogStatusRead(t *testing.T, read connectionlog.NetworkSettings) {
+	t.Helper()
+	status := read.Status
+	if status.Report == nil || status.Report.TestResult != connectionlog.TestAccessDenied ||
+		!bytes.Equal(status.Report.TestedETag, bytes.Repeat([]byte{4}, 16)) ||
+		status.Report.DeliveryError != connectionlog.DeliveryNone || status.ReceiverAt == nil ||
+		status.SealedVersion < 1 || status.SealingKeyID != "meshflow-test" {
+		t.Fatalf("the status rows = %+v (report %+v)", status, status.Report)
+	}
+	view := status.View(read.Settings, time.Now())
+	if !view.ReceiverAvailable || view.Report != connectionlog.ReportCurrent || view.Test != connectionlog.TestPending {
+		t.Fatalf("the status view = %+v", view)
 	}
 }

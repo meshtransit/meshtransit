@@ -7,7 +7,6 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/binary"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -282,7 +281,7 @@ func (handler *handler) serveNetworks(response http.ResponseWriter, request *htt
 		workspaceID, networkID := entry.Workspace.Bytes(), entry.Network.Bytes()
 		message.Networks = append(message.Networks, &flowlogv1.FlowNetworks_Network{
 			WorkspaceId: workspaceID[:], NetworkId: networkID[:], Enabled: entry.Enabled,
-			DestinationEtag: destinationTag(entry.SettingsVersion, entry.Credential, entry.SealedVersion,
+			DestinationEtag: connectionlog.DestinationTag(entry.SettingsVersion, entry.Credential, entry.SealedVersion,
 				entry.SealingKeyID, entry.ExpectedBucketOwner),
 			DirectoryRevision: uint64(entry.DirectoryRevision), //nolint:gosec // a revision is positive
 		})
@@ -298,23 +297,6 @@ func (handler *handler) serveNetworks(response http.ResponseWriter, request *htt
 	}
 	message.GeneratedAtMs = listed.GeneratedAt.UnixMilli()
 	handler.answer(response, request, "networks", tag, message)
-}
-
-// destinationTag changes whenever the destination or its credential does
-// (C47).
-func destinationTag(settingsVersion int64, credential connectionlog.CredentialID, sealedVersion int64,
-	sealingKeyID, bucketOwner string,
-) []byte {
-	material := make([]byte, 0, 64+len(sealingKeyID)+len(bucketOwner))
-	material = binary.BigEndian.AppendUint64(material, uint64(settingsVersion)) //nolint:gosec // a version is positive
-	id := publicid.ID(credential).Bytes()
-	material = append(material, id[:]...)
-	material = binary.BigEndian.AppendUint64(material, uint64(sealedVersion)) //nolint:gosec // a version is positive
-	material = append(material, byte(len(sealingKeyID)))                      //nolint:gosec // at most 32 bytes, checked by the schema
-	material = append(material, sealingKeyID...)
-	material = append(material, bucketOwner...)
-	digest := sha256.Sum256(material)
-	return digest[:16]
 }
 
 var destinationReasons = map[string]flowlogv1.FlowDestination_Reason{
@@ -369,7 +351,7 @@ func (handler *handler) serveDestination(response http.ResponseWriter, request *
 			SealedVersion: uint64(destination.SealedVersion), //nolint:gosec // a version is positive
 			SealingKeyId:  destination.SealingKeyID,
 		}
-		message.DestinationEtag = destinationTag(destination.SettingsVersion, destination.Credential,
+		message.DestinationEtag = connectionlog.DestinationTag(destination.SettingsVersion, destination.Credential,
 			destination.SealedVersion, destination.SealingKeyID, destination.ExpectedBucketOwner)
 	}
 	tag, err := contentTag(message)

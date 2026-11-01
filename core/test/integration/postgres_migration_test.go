@@ -244,6 +244,9 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	if _, err := adminConnection.Exec(ctx, migrations.FlowlogStatusOwnershipSQL()); err != nil {
 		t.Fatalf("hand the connection log receiver reports to their writer: %v", err)
 	}
+	if _, err := adminConnection.Exec(ctx, migrations.ConnectionLogConsoleStatusOwnershipSQL()); err != nil {
+		t.Fatalf("hand the connection log status read to the status writer: %v", err)
+	}
 	if _, err := adminConnection.Exec(ctx, migrations.TrustContractDeviceRemovalOwnershipSQL()); err != nil {
 		t.Fatalf("harden Trust Contract device removal entry points: %v", err)
 	}

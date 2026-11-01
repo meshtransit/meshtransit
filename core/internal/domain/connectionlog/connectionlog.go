@@ -203,6 +203,8 @@ type Settings struct {
 type NetworkSettings struct {
 	Feature  bool
 	Settings Settings
+	// Status is the rows behind the settings' status (schema 271).
+	Status StatusRows
 }
 
 // SettingsReplacement replaces a Network's settings when ExpectedVersion is

@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
+	"meshtransit.net/core/internal/domain/connectionlog"
 	"meshtransit.net/core/internal/domain/node/distribution"
 	"meshtransit.net/shared/internet"
 )
@@ -17,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 270 {
-		t.Fatalf("len(Catalog()) = %d, want 270", len(catalog))
+	if len(catalog) != 271 {
+		t.Fatalf("len(Catalog()) = %d, want 271", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1615,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 270 {
-		t.Fatalf("LatestVersion() = %d, want 270", LatestVersion())
+	if LatestVersion() != 271 {
+		t.Fatalf("LatestVersion() = %d, want 271", LatestVersion())
 	}
 }
 
@@ -8061,5 +8063,45 @@ func TestMigration270FlowlogReceiverStatus(t *testing.T) {
 		if strings.Contains(sql, banned) {
 			t.Errorf("migration 270 has %q", banned)
 		}
+	}
+}
+
+func TestMigration271ConnectionLogConsoleStatus(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 271 || catalog[270].Version != 271 {
+		t.Fatalf("the catalog has no migration 271 (%d migrations)", len(catalog))
+	}
+	sql := catalog[270].SQL
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.network_connection_log_status_internal_v1(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.read_network_connection_log_v1(",
+		"'network.read'",
+		"'sealed_version', v_credential.sealed_version",
+		"REVOKE ALL ON FUNCTION mesh_ops.network_connection_log_status_internal_v1(BIGINT, BIGINT, INTEGER)\n" +
+			"    FROM PUBLIC, mesh_runtime,",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("migration 271 lacks %q", want)
+		}
+	}
+	// The status read never hands the runtime a status row directly, nor a
+	// sealed secret, a receiver instance or fingerprint.
+	for _, banned := range []string{
+		"TO mesh_runtime", "sealed_secret", "instance_id", "noise_fingerprints", "network_revision",
+	} {
+		if strings.Contains(sql, banned) {
+			t.Errorf("migration 271 has %q", banned)
+		}
+	}
+	// The SQL asks for the receiver protocol Core signs tickets for.
+	if !strings.Contains(sql, "network_connection_log_status_internal_v1(v_grant.workspace_id, v_grant.network_id, "+
+		strconv.Itoa(connectionlog.ReceiverProtocolVersion)+")") {
+		t.Errorf("migration 271 asks for another receiver protocol than %d", connectionlog.ReceiverProtocolVersion)
+	}
+	ownership := ConnectionLogConsoleStatusOwnershipSQL()
+	if !strings.Contains(ownership, "OWNER TO mesh_flowlog_status_writer") ||
+		!strings.Contains(ownership, "TO mesh_migrator;") || strings.Contains(ownership, "TO mesh_runtime") {
+		t.Errorf("operator step 271: %s", ownership)
 	}
 }

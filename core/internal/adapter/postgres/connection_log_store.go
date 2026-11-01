@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"crypto/ecdh"
+	"encoding/hex"
 	"errors"
 	"slices"
 	"time"
@@ -481,6 +482,7 @@ func (store *ConnectionLogStore) ReadSettings(ctx context.Context, session accou
 	var envelope struct {
 		Feature  bool                         `json:"feature"`
 		Settings networkConnectionLogDocument `json:"settings"`
+		Status   connectionLogStatusDocument  `json:"status"`
 	}
 	if err := decodeIdentityCatalogJSON([]byte(encoded), &envelope); err != nil {
 		return connectionlog.NetworkSettings{}, connectionlog.ErrInvalid
@@ -489,7 +491,54 @@ func (store *ConnectionLogStore) ReadSettings(ctx context.Context, session accou
 	if err != nil {
 		return connectionlog.NetworkSettings{}, err
 	}
-	return connectionlog.NetworkSettings{Feature: envelope.Feature, Settings: settings}, nil
+	status, err := envelope.Status.rows()
+	if err != nil {
+		return connectionlog.NetworkSettings{}, err
+	}
+	return connectionlog.NetworkSettings{Feature: envelope.Feature, Settings: settings, Status: status}, nil
+}
+
+// connectionLogStatusDocument is the status part of the settings read
+// (schema 271).
+type connectionLogStatusDocument struct {
+	Report *struct {
+		TestedETag    *string    `json:"tested_etag"`
+		TestResult    string     `json:"test_result"`
+		TestedAt      *time.Time `json:"tested_at"`
+		DeliveredAt   *time.Time `json:"delivered_at"`
+		DeliveryError string     `json:"delivery_error"`
+		ReceivedAt    time.Time  `json:"received_at"`
+	} `json:"report"`
+	ReceiverAt    *time.Time `json:"receiver_at"`
+	SealedVersion *int64     `json:"sealed_version"`
+	SealingKeyID  *string    `json:"sealing_key_id"`
+}
+
+func (document connectionLogStatusDocument) rows() (connectionlog.StatusRows, error) {
+	rows := connectionlog.StatusRows{ReceiverAt: document.ReceiverAt}
+	if document.SealedVersion != nil {
+		rows.SealedVersion = *document.SealedVersion
+	}
+	if document.SealingKeyID != nil {
+		rows.SealingKeyID = *document.SealingKeyID
+	}
+	report := document.Report
+	if report == nil {
+		return rows, nil
+	}
+	row := &connectionlog.ReportRow{
+		TestResult: report.TestResult, TestedAt: report.TestedAt, DeliveredAt: report.DeliveredAt,
+		DeliveryError: report.DeliveryError, ReceivedAt: report.ReceivedAt,
+	}
+	if report.TestedETag != nil {
+		tag, err := hex.DecodeString(*report.TestedETag)
+		if err != nil {
+			return connectionlog.StatusRows{}, connectionlog.ErrInvalid
+		}
+		row.TestedETag = tag
+	}
+	rows.Report = row
+	return rows, nil
 }
 
 // ReplaceSettings replaces a Network's settings, advancing its revision so

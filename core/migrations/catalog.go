@@ -671,6 +671,7 @@ func Catalog() []Migration {
 			flowlogDirectorySQL),
 		newMigration(270, "Connection log receiver reports: instances, Network status and the ticket gate",
 			flowlogReceiverStatusSQL),
+		newMigration(271, "Connection log status in the Network settings read", connectionLogConsoleStatusSQL),
 	}
 }
 
@@ -1260,3 +1261,6 @@ var flowlogDirectorySQL string
 
 //go:embed 000270_flowlog_receiver_status.up.sql
 var flowlogReceiverStatusSQL string
+
+//go:embed 000271_connection_log_console_status.up.sql
+var connectionLogConsoleStatusSQL string
