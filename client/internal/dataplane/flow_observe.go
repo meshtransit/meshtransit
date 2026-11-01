@@ -32,7 +32,7 @@ func (e *WireGuardEngine) SetFlowCounter(counter *flowcount.Counter) {
 // processAndObserveLocked decides a packet as ProcessPacket always does and
 // labels the decision for the counter.
 func (f *policyFilter) processAndObserveLocked(direction PacketDirection, header packetmeta.Header, packet []byte,
-	now time.Time,
+	now time.Time, forwarded bool,
 ) (bool, flowcount.Observation) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -42,6 +42,12 @@ func (f *policyFilter) processAndObserveLocked(direction PacketDirection, header
 		ownSource: containsAddress(f.self, header.Source), ownDestination: containsAddress(f.self, header.Destination),
 	}
 	decision.grant, decision.aliased = f.aliases[remoteOf(direction, header)]
+	if !forwarded && !decision.aliased && !decision.ownSource && !decision.ownDestination {
+		// A packet this node only passes on, while forwarded traffic is
+		// not counted: no labels, no cost beyond the lookups above. (A
+		// share's inbound packet is addressed to its alias, not to self.)
+		return f.processPacketLocked(direction, header, packet, now), flowcount.Observation{Deny: flowcount.DenyNoise}
+	}
 	if decision.aliased {
 		// The decision may rewrite an alias packet's addresses.
 		_, err := packetmeta.CheckAliasPacket(packet)

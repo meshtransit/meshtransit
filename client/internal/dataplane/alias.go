@@ -81,7 +81,7 @@ func (f *policyFilter) ProcessPacket(direction PacketDirection, packet []byte) b
 	}
 	now := f.clock().UTC()
 	if counter := f.counter.Load(); counter != nil {
-		allowed, observation := f.processAndObserveLocked(direction, header, packet, now)
+		allowed, observation := f.processAndObserveLocked(direction, header, packet, now, counter.CountsForwarded())
 		counter.Observe(observation, now)
 		return allowed
 	}

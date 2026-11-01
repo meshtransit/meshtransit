@@ -18,6 +18,7 @@ import (
 	"meshtransit.net/client/internal/daemon"
 	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/client/internal/dnsconfig"
+	"meshtransit.net/client/internal/flowreport"
 	"meshtransit.net/client/internal/profile"
 	"meshtransit.net/client/internal/relay"
 	"meshtransit.net/client/internal/runtimehealth"
@@ -516,6 +517,7 @@ func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request)
 		Exit:               mapExitStatus(status.Exit, status.ExitRoute),
 		KubernetesClusters: mapKubernetesClusters(status.KubernetesClusters),
 		Captive:            mapCaptiveStatus(status.Captive),
+		ConnectionLogs:     mapConnectionLogs(status.ConnectionLogs),
 		PathProbes:         mapPathProbeStatus(status.PathProbes),
 		Relay:              mapRelayStatus(status.Relay),
 		NetworkChanges:     mapNetworkChangeStatus(status.NetworkChanges),
@@ -1108,6 +1110,18 @@ func (s *Server) handleCaptiveCheck(writer http.ResponseWriter, request *http.Re
 	}
 	s.service.CheckCaptiveWindow()
 	s.writeJSON(writer, http.StatusOK, captiveCheckResponse{APIVersion: apiVersion})
+}
+
+// mapConnectionLogs is connection logging's wire form; nil while off.
+func mapConnectionLogs(status flowreport.Status) *connectionLogStatus {
+	if !status.On {
+		return nil
+	}
+	wire := &connectionLogStatus{On: true, Pending: status.Pending, LastError: status.LastError}
+	if !status.LastSent.IsZero() {
+		wire.LastSent = status.LastSent.UTC().Format(time.RFC3339)
+	}
+	return wire
 }
 
 // mapKubernetesClusters is the wire form of the node's clusters; nil when

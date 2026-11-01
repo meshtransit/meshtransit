@@ -231,3 +231,39 @@ func TestBuildBatchClampsLongWindows(t *testing.T) {
 		t.Fatalf("batch %v", batch)
 	}
 }
+
+// The highest sequence sent survives a restart and a reset clears it.
+func TestSpoolHighestSent(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "spool")
+	spool, err := OpenSpool(dir, DiskLimits(), spoolNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = spool.Add(testWindow(1, spoolNow), testPolicy, 60, spoolNow)
+	_ = spool.Add(testWindow(1, spoolNow), testPolicy, 60, spoolNow)
+	pending, _, _ := spool.Oldest()
+	boot := pending.Request.GetBootId()
+	if err := spool.MarkSent(boot, 3); err == nil {
+		t.Fatal("marked a batch never made")
+	}
+	if err := spool.MarkSent(make([]byte, 16), 1); err == nil {
+		t.Fatal("marked another boot")
+	}
+	if err := spool.MarkSent(boot, 2); err != nil || spool.MarkSent(boot, 1) != nil || spool.HighestSent(boot) != 2 {
+		t.Fatalf("mark: %v, highest %d", err, spool.HighestSent(boot))
+	}
+	_ = spool.Close()
+	reopened := openTestSpool(t, dir, DiskLimits())
+	if reopened.HighestSent(boot) != 2 || reopened.HighestSent(make([]byte, 16)) != 0 {
+		t.Fatalf("after a restart: %d", reopened.HighestSent(boot))
+	}
+	if err := reopened.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	_ = reopened.Add(testWindow(1, spoolNow), testPolicy, 60, spoolNow)
+	fresh, _, _ := reopened.Oldest()
+	if reopened.HighestSent(fresh.Request.GetBootId()) != 0 {
+		t.Fatal("a reset kept the highest sent")
+	}
+}

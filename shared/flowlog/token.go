@@ -123,6 +123,28 @@ func VerifyToken(token []byte, keys map[string]ed25519.PublicKey, audience strin
 	return &Token{claims: claims, raw: bytes.Clone(token)}, nil
 }
 
+// ReadClaims decodes a token's claims without checking its signature, for
+// its holder's own settings (window, roles, Network): never to decide
+// anything about trust. It checks the format and claim bounds.
+func ReadClaims(token []byte) (*flowlogv1.FlowTokenClaims, error) {
+	if len(token) > MaxTokenSize || len(token) < len(tokenMagic)+2+ed25519.SignatureSize ||
+		string(token[:len(tokenMagic)]) != tokenMagic {
+		return nil, ErrInvalidToken
+	}
+	length := int(binary.BigEndian.Uint16(token[len(tokenMagic):]))
+	if length != len(token)-len(tokenMagic)-2-ed25519.SignatureSize {
+		return nil, ErrInvalidToken
+	}
+	claims := &flowlogv1.FlowTokenClaims{}
+	if err := proto.Unmarshal(token[len(tokenMagic)+2:len(tokenMagic)+2+length], claims); err != nil {
+		return nil, ErrInvalidToken
+	}
+	if err := checkClaims(claims); err != nil {
+		return nil, err
+	}
+	return claims, nil
+}
+
 // Claims returns the token's claims when machineKey, the Noise static key
 // the request came under, is the one the token was issued for. A leaked
 // token is useless without that key.

@@ -11,6 +11,7 @@ import (
 	"meshtransit.net/client/internal/flowcount"
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/packetmeta"
+	"meshtransit.net/shared/routedigest"
 )
 
 var (
@@ -370,5 +371,39 @@ func TestFlowObserveUDPServerOnHighPort(t *testing.T) {
 	if record.GetDirection() != flowlogv1.FlowRecord_INBOUND || record.GetDestinationPort() != 51820 ||
 		record.GetPacketsOut() != 2 || record.GetPacketsIn() != 1 {
 		t.Fatalf("record %v", record)
+	}
+}
+
+// With forwarded counting off, a router counts its own and share traffic
+// but not what it passes on.
+func TestFlowObserveForwardedOff(t *testing.T) {
+	t.Parallel()
+	snapshot := testRouterSnapshot()
+	snapshot.Peers[0].StableID = testPeerUUID
+	snapshot.Policy = append(snapshot.Policy, openSnapshot().Policy...)
+	filter, counter := countingFilter(snapshot)
+	counter.CountForwarded(false)
+	filter.SetServedInstalled([]routedigest.Entry{
+		{SiteRef: testSiteUUID, Prefix: netip.MustParsePrefix("10.35.0.0/17"), Masquerade: true},
+	}, nil)
+	runSteps(t, filter,
+		flowStep{PacketInbound, testIPv4TransportPacket(flowPeer, [4]byte{10, 35, 0, 4}, 40000, 443, packetmeta.ProtocolTCP, 0x02)},
+		flowStep{PacketInbound, testIPv4TransportPacket(flowPeer, flowSelf, 40001, 22, packetmeta.ProtocolTCP, 0x02)},
+	)
+	record := onlyRecord(t, counter)
+	if record.GetClass() != flowlogv1.FlowRecord_MESH {
+		t.Fatalf("record %v", record)
+	}
+	for _, vector := range aliasRoundtripVectors(t) {
+		provider := newAliasFilter(t, networkmap.AliasProvider)
+		shares := flowcount.NewCounter(flowcount.DeviceKeys, flowcount.DeviceDenyKeys, provider.clock())
+		provider.SetFlowCounter(shares)
+		if !provider.ProcessPacket(PacketInbound, aliasPacket(t, vector.ConsumerWire)) {
+			t.Fatalf("%s: denied", vector.Name)
+		}
+		if records := shares.Drain(provider.clock(), flowcount.ID{}).Records; len(records) != 1 ||
+			records[0].GetClass() != flowlogv1.FlowRecord_SHARE {
+			t.Fatalf("%s: a share was not counted with forwarding off: %v", vector.Name, records)
+		}
 	}
 }

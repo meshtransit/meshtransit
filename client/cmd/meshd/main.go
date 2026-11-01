@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -128,6 +129,11 @@ func runContext(parent context.Context, args []string, stdout, stderr io.Writer)
 	daemonOptions.ExitPinsDir = cfg.StateDir
 	daemonOptions.RouteSettingsPath = cfg.RouteSettingsFile
 	daemonOptions.KubeCADir = cfg.KubeCADir
+	if cfg.EnableDataPlane {
+		// Spools of connection logs, used only while Core grants a
+		// FlowTicket for the Network (connection logs design §7).
+		daemonOptions.FlowLogDir = filepath.Join(cfg.StateDir, "flowlog")
+	}
 	if runtime.GOOS == "linux" {
 		// Written by the package's postinst before it restarts meshd.
 		daemonOptions.RestartMarkerPath = "/run/meshd/restart-expected"

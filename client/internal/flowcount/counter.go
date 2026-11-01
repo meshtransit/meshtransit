@@ -126,7 +126,10 @@ type Counter struct {
 	_           [56]byte
 	overflow    overflowCounters
 	windowStart atomic.Int64
-	shards      [shardCount]shard
+	// forwarded counts what a router, exit node or gateway passes on; off,
+	// only this node's own traffic is counted.
+	forwarded atomic.Bool
+	shards    [shardCount]shard
 }
 
 const overflowWords = 64
@@ -164,9 +167,18 @@ func (observation Observation) valid() bool {
 		observation.Deny <= DenyNoise
 }
 
+// CountForwarded turns counting of forwarded traffic on or off: a Network
+// turns it on for its routers, exit nodes and gateways (design §7).
+func (c *Counter) CountForwarded(on bool) { c.forwarded.Store(on) }
+
+// CountsForwarded reports whether forwarded traffic is counted, so a caller
+// can skip labelling it.
+func (c *Counter) CountsForwarded() bool { return c != nil && c.forwarded.Load() }
+
 // Observe counts one packet. Noise is not counted at all, allowed or denied.
 func (c *Counter) Observe(observation Observation, now time.Time) {
-	if c == nil || observation.Deny == DenyNoise || !observation.valid() || isNoise(observation.Header) {
+	if c == nil || observation.Deny == DenyNoise || !observation.valid() || isNoise(observation.Header) ||
+		observation.Direction == DirectionForwarded && !c.forwarded.Load() {
 		return
 	}
 	at := now.UnixMilli()

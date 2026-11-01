@@ -124,6 +124,7 @@ func TestInternetAddressesStayHome(t *testing.T) {
 	t.Parallel()
 	internet := netip.MustParseAddr("93.184.216.34")
 	counter := NewCounter(ForwarderKeys, ForwarderDenyKeys, start)
+	counter.CountForwarded(true)
 	counter.Observe(Observation{
 		Header: tcp(remote, internet, 41000, 443, tcpSYN), Class: ClassExit,
 		Direction: DirectionForwarded, Peer: peerID, Scope: poolID,
@@ -303,6 +304,7 @@ func TestConcurrentObserveAndDrain(t *testing.T) {
 
 func BenchmarkObserveKnownKey(b *testing.B) {
 	counter := NewCounter(ForwarderKeys, ForwarderDenyKeys, start)
+	counter.CountForwarded(true)
 	b.RunParallel(func(pb *testing.PB) {
 		port := uint16(0)
 		for pb.Next() {
@@ -317,6 +319,7 @@ func BenchmarkObserveKnownKey(b *testing.B) {
 
 func BenchmarkObserveManyKeys(b *testing.B) {
 	counter := NewCounter(ForwarderKeys, ForwarderDenyKeys, start)
+	counter.CountForwarded(true)
 	b.RunParallel(func(pb *testing.PB) {
 		port := uint16(0)
 		for pb.Next() {
@@ -394,6 +397,7 @@ func TestWindowFitsABatch(t *testing.T) {
 		t.Fatal("caps exceed a batch")
 	}
 	counter := NewCounter(ForwarderKeys, ForwarderDenyKeys, start)
+	counter.CountForwarded(true)
 	for index := range ForwarderKeys + ForwarderDenyKeys + 100 {
 		destination := netip.AddrFrom4([4]byte{10, byte(index >> 16), byte(index >> 8), byte(index)})
 		counter.Observe(Observation{
@@ -423,6 +427,7 @@ func TestWindowFitsABatch(t *testing.T) {
 func TestShareAndExitDenialsNameNoDevice(t *testing.T) {
 	t.Parallel()
 	counter := NewCounter(ForwarderKeys, ForwarderDenyKeys, start)
+	counter.CountForwarded(true)
 	counter.Observe(Observation{
 		Header: tcp(remote, self, 1, 443, tcpSYN), Class: ClassShare,
 		Direction: DirectionInbound, Peer: peerID, Scope: ID{9},
@@ -609,5 +614,30 @@ func TestParseID(t *testing.T) {
 		if ParseID(text) != (ID{}) {
 			t.Errorf("ParseID(%q) not zero", text)
 		}
+	}
+}
+
+// Forwarded traffic counts only while the Network turns it on.
+func TestForwardedOnlyWhenOn(t *testing.T) {
+	t.Parallel()
+	counter := NewCounter(ForwarderKeys, ForwarderDenyKeys, start)
+	forwarded := Observation{
+		Header: tcp(remote, netip.MustParseAddr("10.1.0.5"), 1, 443, tcpSYN), Class: ClassSite,
+		Direction: DirectionForwarded,
+	}
+	own := Observation{Header: tcp(self, remote, 1, 22, tcpSYN), Class: ClassMesh, Direction: DirectionOutbound}
+	counter.Observe(forwarded, start)
+	counter.Observe(own, start)
+	if records := counter.Drain(start, ID{}).Records; len(records) != 1 || counter.CountsForwarded() {
+		t.Fatalf("off: %v", records)
+	}
+	counter.CountForwarded(true)
+	counter.Observe(forwarded, start)
+	if records := counter.Drain(start, ID{}).Records; len(records) != 1 || !counter.CountsForwarded() {
+		t.Fatalf("on: %v", records)
+	}
+	var none *Counter
+	if none.CountsForwarded() {
+		t.Fatal("a nil counter counts")
 	}
 }

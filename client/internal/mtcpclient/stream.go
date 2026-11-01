@@ -717,6 +717,9 @@ func (run *sessionRun) handle(ctx context.Context, in incoming) (time.Duration, 
 	case *mtcpv1.KubeCertResult:
 		run.kubeCertResult(m)
 		return 0, nil
+	case *mtcpv1.FlowTicket:
+		run.flowTicket(m)
+		return 0, nil
 	case *mtcpv1.KubeAuditAck:
 		return 0, run.kubeAuditAck(m)
 	case *mtcpv1.Lifecycle:
@@ -1449,6 +1452,10 @@ func streamCapabilities(options controlplane.NetmapOptions, gateway bool) []stri
 		// Names and every zone kind (DNS design D2), and the root zone with
 		// DNS evidence (D1b), need forward zones.
 		capabilities = append(capabilities, "dns.forward1", "dns.records1", "dns.root1")
+	}
+	if options.FlowTickets != nil {
+		// It counts its traffic and sends connection logs (§9.1).
+		capabilities = append(capabilities, flowReportCapability)
 	}
 	if !gateway {
 		// Any other node takes the clusters it may reach and their roots

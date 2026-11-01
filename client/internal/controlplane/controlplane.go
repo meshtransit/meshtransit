@@ -342,6 +342,9 @@ type NetmapOptions struct {
 	// none) whenever that differs from NextControlKey. It stores the key
 	// durably before returning; an error ends the session.
 	ControlKeysChanged func(ctx context.Context, next []byte) error
+	// FlowTickets, when set, makes the node declare flow.report1 and is
+	// called with each FlowTicket Core sends (mtcp-v1 §9.1).
+	FlowTickets func(FlowTicket)
 	// ConnectionChanged, when set, is called with false when a connected
 	// control session is lost (the stream reconnects and the last map stays
 	// applied) and with true when a new session has a usable map again.

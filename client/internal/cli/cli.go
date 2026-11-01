@@ -569,7 +569,7 @@ func runStatus(
 	deviceExpiry := formatDeviceExpiry(status.DeviceExpiry, status.DeviceExpiresAt, time.Now())
 	_, _ = fmt.Fprintf(
 		stdout,
-		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nNetwork changes: %s\nRuntime recovery: %s\nRuntime: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\nNetwork: %s\nSelf addresses: %s\nDevice expiry: %s\nPeers: %d\nPeer paths: %s\nSubnet routes: %s\nSubnet router: %s\nExit node: %s\nExit: %s\nKubernetes clusters: %s\nPath transitions: %s\nPath probes: %s\nRelay: %s\nNAT: %s\nPort mapping: %s\nCloud: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
+		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nNetwork changes: %s\nRuntime recovery: %s\nRuntime: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\nNetwork: %s\nSelf addresses: %s\nDevice expiry: %s\nPeers: %d\nPeer paths: %s\nSubnet routes: %s\nSubnet router: %s\nExit node: %s\nExit: %s\nKubernetes clusters: %s\nConnection logging: %s\nPath transitions: %s\nPath probes: %s\nRelay: %s\nNAT: %s\nPort mapping: %s\nCloud: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
 		status.Daemon.Version,
 		status.State,
 		status.DataPlane,
@@ -593,6 +593,7 @@ func runStatus(
 		formatExitNodeStatus(status.ExitNode),
 		formatExitStatus(status.Exit)+formatCaptive(status.Captive),
 		formatKubernetesClusters(status.KubernetesClusters),
+		formatConnectionLogs(status.ConnectionLogs),
 		formatPathTransitionStatus(status.PeerPaths),
 		formatPathProbeStatus(status.PathProbes),
 		formatRelayStatus(status.Relay),
@@ -605,6 +606,22 @@ func runStatus(
 	)
 
 	return 0
+}
+
+// formatConnectionLogs says whether this machine's connections are logged
+// for its Network, as people on it should know.
+func formatConnectionLogs(status *localapi.ConnectionLogStatus) string {
+	if status == nil || !status.On {
+		return "off"
+	}
+	text := fmt.Sprintf("on (%d batches pending", status.Pending)
+	if status.LastSent != "" {
+		text += ", last sent " + status.LastSent
+	}
+	if status.LastError != "" {
+		text += ", last error: " + status.LastError
+	}
+	return text + ")"
 }
 
 // formatKubernetesClusters names each cluster this machine may reach with

@@ -60,6 +60,9 @@ type spoolState struct {
 	BootID string     `json:"boot_id"`
 	Next   uint64     `json:"next"`
 	Lost   *lostRange `json:"lost,omitempty"`
+	// Sent is the highest sequence of the boot ever sent: an answer may
+	// commit up to it and no further (flowlog-v1 §5).
+	Sent uint64 `json:"sent,omitempty"`
 }
 
 type entry struct {
@@ -81,6 +84,7 @@ type Spool struct {
 	write   func(root *os.Root, name string, content []byte) error
 	boot    [16]byte
 	next    uint64
+	sent    uint64
 	lost    *lostRange
 	entries []entry // by sequence, contiguous
 	bytes   int64
@@ -137,6 +141,7 @@ func (s *Spool) load(now time.Time) error {
 		return s.resetLocked()
 	}
 	s.boot, s.next, s.lost = boot, state.Next, state.Lost
+	s.sent = min(state.Sent, state.Next-1)
 	sequences, err := s.listBatches()
 	if err != nil {
 		return err
@@ -271,12 +276,12 @@ func (s *Spool) resetLocked() error {
 			_ = s.root.Remove(batchName(sequence))
 		}
 	}
-	s.boot, s.next, s.lost, s.entries, s.bytes, s.failed = boot, 1, nil, nil, 0, false
+	s.boot, s.next, s.sent, s.lost, s.entries, s.bytes, s.failed = boot, 1, 0, nil, nil, 0, false
 	return nil
 }
 
 func (s *Spool) saveStateLocked() error {
-	raw, err := json.Marshal(spoolState{BootID: hex.EncodeToString(s.boot[:]), Next: s.next, Lost: s.lost})
+	raw, err := json.Marshal(spoolState{BootID: hex.EncodeToString(s.boot[:]), Next: s.next, Lost: s.lost, Sent: s.sent})
 	if err != nil {
 		return fmt.Errorf("flowreport: encode spool state: %w", err)
 	}
@@ -467,6 +472,43 @@ func (s *Spool) Reset() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.resetLocked()
+}
+
+// MarkSent records, before a request leaves, that sequence of boot is sent:
+// it survives a restart, so a later answer committing up to it is taken.
+func (s *Spool) MarkSent(boot []byte, sequence uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !bytes.Equal(boot, s.boot[:]) || sequence >= s.next {
+		return errors.New("flowreport: marking a batch the spool did not make")
+	}
+	if sequence <= s.sent {
+		return nil
+	}
+	previous := s.sent
+	s.sent = sequence
+	if err := s.saveStateLocked(); err != nil {
+		s.sent = previous
+		return err
+	}
+	return nil
+}
+
+// HighestSent is the highest sequence of boot ever sent, 0 for another boot.
+func (s *Spool) HighestSent(boot []byte) uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !bytes.Equal(boot, s.boot[:]) {
+		return 0
+	}
+	return s.sent
+}
+
+// Len is how many batches the spool holds.
+func (s *Spool) Len() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.entries)
 }
 
 // Highest is the last batch made, 0 for none.

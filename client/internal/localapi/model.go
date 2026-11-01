@@ -47,20 +47,31 @@ type statusResponse struct {
 	// §7.11); omitted when it does not take them.
 	KubernetesClusters []kubernetesClusterStatus `json:"kubernetes_clusters,omitempty"`
 	Captive            *captiveStatus            `json:"captive,omitempty"`
-	PathProbes         pathProbeStatus           `json:"path_probes"`
-	Relay              relayStatus               `json:"relay"`
-	NetworkChanges     networkChangeStatus       `json:"network_changes"`
-	RuntimeRecovery    runtimeRecoveryStatus     `json:"runtime_recovery"`
-	Runtime            runtimeStatus             `json:"runtime"`
-	NAT                natStatus                 `json:"nat"`
-	PortMapping        portMappingStatus         `json:"port_mapping"`
-	Cloud              cloudStatus               `json:"cloud"`
-	CompatibilityNote  string                    `json:"compatibility_note"`
+	// ConnectionLogs is shown while the Network logs this node's
+	// connections (connection logs design §7); omitted when off.
+	ConnectionLogs    *connectionLogStatus  `json:"connection_logs,omitempty"`
+	PathProbes        pathProbeStatus       `json:"path_probes"`
+	Relay             relayStatus           `json:"relay"`
+	NetworkChanges    networkChangeStatus   `json:"network_changes"`
+	RuntimeRecovery   runtimeRecoveryStatus `json:"runtime_recovery"`
+	Runtime           runtimeStatus         `json:"runtime"`
+	NAT               natStatus             `json:"nat"`
+	PortMapping       portMappingStatus     `json:"port_mapping"`
+	Cloud             cloudStatus           `json:"cloud"`
+	CompatibilityNote string                `json:"compatibility_note"`
 }
 
 // kubernetesClusterStatus is one cluster the node may reach: state is
 // pending, trusted, incomplete, invalid or unavailable; roots are SHA-256
 // fingerprints (hex), never DER.
+// connectionLogStatus is connection logging while it is on.
+type connectionLogStatus struct {
+	On        bool   `json:"on"`
+	Pending   uint64 `json:"pending"`
+	LastSent  string `json:"last_sent,omitempty"`
+	LastError string `json:"last_error,omitempty"`
+}
+
 type kubernetesClusterStatus struct {
 	ID            string   `json:"id"`
 	Name          string   `json:"name"`

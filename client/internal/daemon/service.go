@@ -23,6 +23,7 @@ import (
 	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/client/internal/dnsconfig"
+	"meshtransit.net/client/internal/flowreport"
 	"meshtransit.net/client/internal/identity"
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/pathdiscovery"
@@ -169,8 +170,10 @@ type Status struct {
 	// trusts their gateways (mtcp-v1 §7.11), as of the last map; nil when
 	// the node does not take them.
 	KubernetesClusters []KubernetesClusterView
-	PeerPaths          dataplane.PeerPathSnapshot
-	SubnetRoutes       dataplane.SubnetRouteStatus
+	// ConnectionLogs is connection logging; its zero value is off.
+	ConnectionLogs flowreport.Status
+	PeerPaths      dataplane.PeerPathSnapshot
+	SubnetRoutes   dataplane.SubnetRouteStatus
 	// RouteSites is the router each Site's traffic goes to.
 	RouteSites   []RouteSiteView
 	SubnetRouter dataplane.SubnetRouterStatus
@@ -440,6 +443,9 @@ type Service struct {
 	// kubeCA keeps the Kubernetes CA files kubectl reads (K1e); nil
 	// without KubeCADir.
 	kubeCA *kubeCAFiles
+	// flowLogs counts and sends connection logs while Core grants a
+	// FlowTicket; nil without FlowLogDir or a counting data plane.
+	flowLogs *flowLogs
 	// captive tracks a captive portal while the host uses an exit node,
 	// which captiveDetector finds (exit node design §17.3).
 	captive           *captiveTracker
@@ -549,6 +555,10 @@ type Options struct {
 	// KubeCADir holds the Kubernetes CA files kubectl reads (K1e design
 	// §3); empty writes none.
 	KubeCADir string
+	// FlowLogDir holds the connection log spools (one per Network, private
+	// to the service); its parent must exist. Empty keeps logging off and
+	// flow.report1 undeclared.
+	FlowLogDir string
 	// LoadRouteSettings reads RouteSettingsPath; nil uses routesettings.Load,
 	// which requires a file only root can change. A mobile app keeps its
 	// settings in storage private to it.
@@ -733,6 +743,7 @@ func New(
 		}
 		service.certificates = certificates
 	}
+	service.flowLogs = newFlowLogs(options.FlowLogDir, options.DataPlane, service.logger)
 	if !options.Gateway && options.KubeCADir != "" {
 		logger := service.logger
 		if logger == nil {
@@ -758,6 +769,20 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 	}()
 	// The restart the marker announced has happened: a later stop is real.
 	clearRestartMarker(s.restartMarkerPath, s.logger)
+	if s.flowLogs != nil {
+		// Kept across map streams: a ticket outlives its session, and the
+		// last window is put on disk before Run returns.
+		flowCtx, stopFlowLogs := context.WithCancel(ctx)
+		flowDone := make(chan struct{})
+		go func() {
+			defer close(flowDone)
+			_ = s.flowLogs.reporter.Run(flowCtx)
+		}()
+		defer func() {
+			stopFlowLogs()
+			<-flowDone
+		}()
+	}
 	if s.certificates != nil {
 		// Kept across map streams: a pending request survives a new session
 		// (K1a4a a4 §3.2).
@@ -818,6 +843,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				return err
 			}
 			s.kubeCA.stop()
+			s.flowLogs.serve("")
 			downProfile := s.profiles.Snapshot().ActiveProfileID
 			down := syncStatus{
 				profileID: downProfile,
@@ -843,6 +869,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				return err
 			}
 			s.kubeCA.stop()
+			s.flowLogs.serve("")
 			s.setSyncStatus(syncStatus{
 				state:     ControlSessionInactive,
 				dataPlane: s.defaultDataPlaneState(),
@@ -859,6 +886,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		}
 		// A profile change stops serving the profile before (K1e §3.3).
 		s.kubeCA.serve(active.ID)
+		// A profile change ends the profile before's logging at once: its
+		// token and receiver must never carry this profile's traffic.
+		s.flowLogs.serve(active.ID)
 		record, err := s.identities.Get(ctx, active.ID)
 		if err == nil && record.IsRegistered() && record.IsGateway() != s.gateway {
 			// A gateway's state under meshd, or the other way round: its
@@ -870,6 +900,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				return err
 			}
 			s.kubeCA.stop()
+			s.flowLogs.serve("")
 			s.setSyncStatus(syncStatus{
 				profileID: active.ID,
 				state:     ControlSessionInactive,
@@ -1310,6 +1341,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					ConnectionChanged: func(connected bool) {
 						s.setControlConnected(active.ID, connected)
 					},
+					FlowTickets: s.flowLogs.tickets(active.ID),
 				},
 				func(callbackCtx context.Context, snapshot networkmap.Snapshot) (callbackErr error) {
 					defer func() {
@@ -1328,6 +1360,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 						return nil
 					}
 					s.gatewayMapApplied(snapshot)
+					s.flowLogs.mapApplied(snapshot.Revision)
 					if pathSampler != nil {
 						pathSampler.observe(snapshot)
 					}
@@ -2585,6 +2618,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		MapFreshAt:         s.mapFreshAtValue(),
 		GatewayCertificate: s.gatewayCertificateStatus(),
 		KubernetesClusters: s.kubernetesClusterStatus(syncState),
+		ConnectionLogs:     s.flowLogs.status(),
 		PolicyRuleCount:    syncState.policyRuleCount,
 		PeerPaths:          peerPaths,
 		SubnetRoutes:       subnetRoutes,

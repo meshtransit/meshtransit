@@ -243,3 +243,22 @@ func TestLargestClaimsFit(t *testing.T) {
 		t.Fatalf("one ID past the cap: %v", err)
 	}
 }
+
+func TestReadClaims(t *testing.T) {
+	t.Parallel()
+	now := time.UnixMilli(1_800_000_000_000)
+	private, _ := testKeys(t)
+	token, err := SignToken(testClaims(now), private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, err := ReadClaims(token)
+	if err != nil || claims.GetWindowS() != 60 || !bytes.Equal(claims.GetNetworkId(), id(2)) {
+		t.Fatalf("claims %v %v", claims, err)
+	}
+	for _, bad := range [][]byte{nil, token[:len(token)-1], append(bytes.Clone(token), 0), []byte("MFT2")} {
+		if _, err := ReadClaims(bad); !errors.Is(err, ErrInvalidToken) {
+			t.Errorf("ReadClaims(%d bytes) = %v", len(bad), err)
+		}
+	}
+}

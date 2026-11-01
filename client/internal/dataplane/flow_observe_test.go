@@ -26,6 +26,7 @@ func countingFilter(snapshot networkmap.Snapshot) (*policyFilter, *flowcount.Cou
 	filter := newPolicyFilter()
 	filter.UpdateNetwork(snapshot)
 	counter := flowcount.NewCounter(flowcount.ForwarderKeys, flowcount.ForwarderDenyKeys, flowStart)
+	counter.CountForwarded(true)
 	filter.SetFlowCounter(counter)
 	return filter, counter
 }
@@ -298,7 +299,9 @@ func BenchmarkProcessPacketForwarded(b *testing.B) {
 				{SiteRef: testSiteUUID, Prefix: netip.MustParsePrefix("10.35.0.0/17"), Masquerade: true},
 			}, nil)
 			if counting {
-				filter.SetFlowCounter(flowcount.NewCounter(flowcount.ForwarderKeys, flowcount.ForwarderDenyKeys, flowStart))
+				counter := flowcount.NewCounter(flowcount.ForwarderKeys, flowcount.ForwarderDenyKeys, flowStart)
+				counter.CountForwarded(true)
+				filter.SetFlowCounter(counter)
 			}
 			packet := testIPv4TransportPacket(flowPeer, [4]byte{10, 35, 0, 4}, 40000, 443, packetmeta.ProtocolTCP, 0x10)
 			b.ReportAllocs()

@@ -41,6 +41,7 @@ type Status struct {
 	// §7.11); omitted when it takes none.
 	KubernetesClusters []KubernetesClusterStatus `json:"kubernetes_clusters,omitempty"`
 	Captive            *CaptiveStatus            `json:"captive,omitempty"`
+	ConnectionLogs     *ConnectionLogStatus      `json:"connection_logs,omitempty"`
 	PathProbes         *PathProbeStatus          `json:"path_probes,omitempty"`
 	Relay              RelayStatus               `json:"relay"`
 	NetworkChanges     NetworkChangeStatus       `json:"network_changes"`
@@ -50,6 +51,14 @@ type Status struct {
 	PortMapping        *PortMappingStatus        `json:"port_mapping,omitempty"`
 	Cloud              *CloudStatus              `json:"cloud,omitempty"`
 	CompatibilityNote  string                    `json:"compatibility_note"`
+}
+
+// ConnectionLogStatus is connection logging while the Network has it on.
+type ConnectionLogStatus struct {
+	On        bool   `json:"on"`
+	Pending   uint64 `json:"pending"`
+	LastSent  string `json:"last_sent,omitempty"`
+	LastError string `json:"last_error,omitempty"`
 }
 
 // KubernetesClusterStatus is one cluster this machine may reach: state is
