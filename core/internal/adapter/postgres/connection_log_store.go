@@ -30,7 +30,7 @@ const (
  $10::UUID,$11::UUID)::TEXT`
 	replaceNetworkConnectionLogSQL = `SELECT mesh_ops.replace_network_connection_log_v1(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::BIGINT,$13::BOOLEAN,$14::UUID,$15::TEXT,$16::TEXT,$17::TEXT,$18::BOOLEAN,$19::INTEGER,
- $20::UUID)::TEXT`
+ $20::TEXT,$21::UUID)::TEXT`
 )
 
 // CredentialSealer seals storage secrets to the connection log receiver's
@@ -425,6 +425,7 @@ type networkConnectionLogDocument struct {
 	Prefix        string     `json:"prefix"`
 	Forwarded     bool       `json:"forwarded"`
 	WindowSeconds int        `json:"window_seconds"`
+	BucketOwner   *string    `json:"expected_bucket_owner"`
 	Version       int64      `json:"version"`
 	UpdatedAt     *time.Time `json:"updated_at"`
 }
@@ -433,6 +434,12 @@ func (document networkConnectionLogDocument) settings() (connectionlog.Settings,
 	settings := connectionlog.Settings{
 		Enabled: document.Enabled, Bucket: document.Bucket, Region: document.Region, Prefix: document.Prefix,
 		Forwarded: document.Forwarded, WindowSeconds: document.WindowSeconds, Version: document.Version,
+	}
+	if document.BucketOwner != nil {
+		if !connectionlog.ValidBucketOwner(*document.BucketOwner) {
+			return connectionlog.Settings{}, connectionlog.ErrInvalid
+		}
+		settings.ExpectedBucketOwner = *document.BucketOwner
 	}
 	if document.CredentialID != nil {
 		id, err := publicid.Parse(*document.CredentialID)
@@ -513,7 +520,7 @@ func (store *ConnectionLogStore) ReplaceSettings(ctx context.Context, replacemen
 	if err := tx.QueryRow(ctx, replaceNetworkConnectionLogSQL, append(sessionQueryArguments(replacement.Session),
 		scope.WorkspaceID().String(), scope.NetworkID().String(), replacement.ExpectedVersion, settings.Enabled,
 		credential, settings.Bucket, settings.Region, settings.Prefix, settings.Forwarded, settings.WindowSeconds,
-		changeID.String())...).Scan(&encoded); err != nil {
+		optionalText(settings.ExpectedBucketOwner), changeID.String())...).Scan(&encoded); err != nil {
 		return connectionlog.SettingsResult{}, connectionLogDatabaseError(err)
 	}
 	var record struct {
@@ -586,4 +593,12 @@ func appendConnectionLogSettingsEvent(ctx context.Context, tx accountSessionTran
 		event.before = &hash
 	}
 	return appendNetworkMemberEvent(ctx, tx, event)
+}
+
+// optionalText is NULL for an empty string.
+func optionalText(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }

@@ -28,6 +28,8 @@ type ReceiverNetwork struct {
 	Credential      CredentialID
 	SealedVersion   int64
 	SealingKeyID    string
+	// ExpectedBucketOwner is empty when the credential's account owns it.
+	ExpectedBucketOwner string
 }
 
 // ReceiverNetworks is one page, read at GeneratedAt on the database clock.
@@ -50,13 +52,15 @@ const (
 // ReceiverDestination is one Network's destination and why it does or does
 // not take batches. A deleted Network or Workspace carries no credential.
 type ReceiverDestination struct {
-	Reason          string
-	Forwarded       bool
-	WindowSeconds   int
-	Bucket          string
-	Region          string
-	Prefix          string
-	SettingsVersion int64
+	Reason        string
+	Forwarded     bool
+	WindowSeconds int
+	Bucket        string
+	Region        string
+	Prefix        string
+	// ExpectedBucketOwner is empty when the credential's account owns it.
+	ExpectedBucketOwner string
+	SettingsVersion     int64
 	// Credential is the zero ID when the reason is a deletion.
 	Credential    CredentialID
 	Provider      string

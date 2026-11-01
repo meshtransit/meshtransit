@@ -302,18 +302,19 @@ func (x *FlowNetworks) GetGeneratedAtMs() int64 {
 }
 
 type FlowDestination struct {
-	state           protoimpl.MessageState      `protogen:"open.v1"`
-	Reason          FlowDestination_Reason      `protobuf:"varint,1,opt,name=reason,proto3,enum=meshtransit.flowlog.v1.FlowDestination_Reason" json:"reason,omitempty"`
-	Forwarded       bool                        `protobuf:"varint,2,opt,name=forwarded,proto3" json:"forwarded,omitempty"`
-	WindowS         uint32                      `protobuf:"varint,3,opt,name=window_s,json=windowS,proto3" json:"window_s,omitempty"`
-	Bucket          string                      `protobuf:"bytes,4,opt,name=bucket,proto3" json:"bucket,omitempty"`
-	Region          string                      `protobuf:"bytes,5,opt,name=region,proto3" json:"region,omitempty"`
-	Prefix          string                      `protobuf:"bytes,6,opt,name=prefix,proto3" json:"prefix,omitempty"`
-	Credential      *FlowDestination_Credential `protobuf:"bytes,7,opt,name=credential,proto3" json:"credential,omitempty"`
-	DestinationEtag []byte                      `protobuf:"bytes,8,opt,name=destination_etag,json=destinationEtag,proto3" json:"destination_etag,omitempty"`
-	GeneratedAtMs   int64                       `protobuf:"varint,9,opt,name=generated_at_ms,json=generatedAtMs,proto3" json:"generated_at_ms,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state               protoimpl.MessageState      `protogen:"open.v1"`
+	Reason              FlowDestination_Reason      `protobuf:"varint,1,opt,name=reason,proto3,enum=meshtransit.flowlog.v1.FlowDestination_Reason" json:"reason,omitempty"`
+	Forwarded           bool                        `protobuf:"varint,2,opt,name=forwarded,proto3" json:"forwarded,omitempty"`
+	WindowS             uint32                      `protobuf:"varint,3,opt,name=window_s,json=windowS,proto3" json:"window_s,omitempty"`
+	Bucket              string                      `protobuf:"bytes,4,opt,name=bucket,proto3" json:"bucket,omitempty"`
+	Region              string                      `protobuf:"bytes,5,opt,name=region,proto3" json:"region,omitempty"`
+	Prefix              string                      `protobuf:"bytes,6,opt,name=prefix,proto3" json:"prefix,omitempty"`
+	Credential          *FlowDestination_Credential `protobuf:"bytes,7,opt,name=credential,proto3" json:"credential,omitempty"`
+	DestinationEtag     []byte                      `protobuf:"bytes,8,opt,name=destination_etag,json=destinationEtag,proto3" json:"destination_etag,omitempty"`
+	GeneratedAtMs       int64                       `protobuf:"varint,9,opt,name=generated_at_ms,json=generatedAtMs,proto3" json:"generated_at_ms,omitempty"`
+	ExpectedBucketOwner string                      `protobuf:"bytes,10,opt,name=expected_bucket_owner,json=expectedBucketOwner,proto3" json:"expected_bucket_owner,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *FlowDestination) Reset() {
@@ -407,6 +408,13 @@ func (x *FlowDestination) GetGeneratedAtMs() int64 {
 		return x.GeneratedAtMs
 	}
 	return 0
+}
+
+func (x *FlowDestination) GetExpectedBucketOwner() string {
+	if x != nil {
+		return x.ExpectedBucketOwner
+	}
+	return ""
 }
 
 type FlowRevocations struct {
@@ -771,7 +779,7 @@ const file_flowlog_v1_internal_proto_rawDesc = "" +
 	"network_id\x18\x02 \x01(\fR\tnetworkId\x12\x18\n" +
 	"\aenabled\x18\x03 \x01(\bR\aenabled\x12)\n" +
 	"\x10destination_etag\x18\x04 \x01(\fR\x0fdestinationEtag\x12-\n" +
-	"\x12directory_revision\x18\x05 \x01(\x04R\x11directoryRevision\"\xfb\x06\n" +
+	"\x12directory_revision\x18\x05 \x01(\x04R\x11directoryRevision\"\xaf\a\n" +
 	"\x0fFlowDestination\x12F\n" +
 	"\x06reason\x18\x01 \x01(\x0e2..meshtransit.flowlog.v1.FlowDestination.ReasonR\x06reason\x12\x1c\n" +
 	"\tforwarded\x18\x02 \x01(\bR\tforwarded\x12\x19\n" +
@@ -783,7 +791,9 @@ const file_flowlog_v1_internal_proto_rawDesc = "" +
 	"credential\x18\a \x01(\v22.meshtransit.flowlog.v1.FlowDestination.CredentialR\n" +
 	"credential\x12)\n" +
 	"\x10destination_etag\x18\b \x01(\fR\x0fdestinationEtag\x12&\n" +
-	"\x0fgenerated_at_ms\x18\t \x01(\x03R\rgeneratedAtMs\x1a\x83\x02\n" +
+	"\x0fgenerated_at_ms\x18\t \x01(\x03R\rgeneratedAtMs\x122\n" +
+	"\x15expected_bucket_owner\x18\n" +
+	" \x01(\tR\x13expectedBucketOwner\x1a\x83\x02\n" +
 	"\n" +
 	"Credential\x12#\n" +
 	"\rcredential_id\x18\x01 \x01(\fR\fcredentialId\x12L\n" +

@@ -61,7 +61,7 @@ CREATE INDEX device_deleted_changed_idx
 CREATE FUNCTION mesh_ops.flowlog_networks_v1(p_after UUID, p_limit INTEGER)
 RETURNS TABLE (
     workspace_public_id UUID, network_public_id UUID, enabled BOOLEAN, settings_version BIGINT,
-    credential_public_id UUID, sealed_version BIGINT, sealing_key_id TEXT
+    credential_public_id UUID, sealed_version BIGINT, sealing_key_id TEXT, expected_bucket_owner TEXT
 )
 LANGUAGE plpgsql
 STABLE
@@ -77,7 +77,8 @@ BEGIN
     RETURN QUERY
     SELECT workspace.public_id, settings.public_id,
         settings.enabled AND network.state = 'active' AND workspace.state = 'active',
-        settings.version, credential.public_id, credential.sealed_version, credential.sealing_key_id
+        settings.version, credential.public_id, credential.sealed_version, credential.sealing_key_id,
+        settings.expected_bucket_owner
     FROM mesh.network_connection_log AS settings
     JOIN mesh.network AS network ON network.workspace_id = settings.workspace_id AND network.id = settings.network_id
     JOIN mesh.workspace AS workspace ON workspace.id = settings.workspace_id
@@ -99,7 +100,7 @@ $function$;
 CREATE FUNCTION mesh_ops.flowlog_destination_v1(p_workspace_public_id UUID, p_network_public_id UUID)
 RETURNS TABLE (
     reason TEXT, forwarded BOOLEAN, window_s INTEGER, bucket TEXT, region TEXT, prefix TEXT,
-    settings_version BIGINT, credential_public_id UUID, provider TEXT, account_id TEXT, sealed BYTEA,
+    expected_bucket_owner TEXT, settings_version BIGINT, credential_public_id UUID, provider TEXT, account_id TEXT, sealed BYTEA,
     sealed_version BIGINT, sealing_key_id TEXT
 )
 LANGUAGE sql
@@ -129,7 +130,8 @@ AS $function$
         WHERE settings.public_id = p_network_public_id AND workspace.public_id = p_workspace_public_id
     )
     SELECT found.reason, (found.settings).forwarded, (found.settings).window_s, (found.settings).bucket,
-        (found.settings).region, (found.settings).prefix, (found.settings).version,
+        (found.settings).region, (found.settings).prefix, (found.settings).expected_bucket_owner,
+        (found.settings).version,
         CASE WHEN found.reason IN ('network_deleted', 'workspace_deleted') THEN NULL ELSE (found.credential).public_id END,
         CASE WHEN found.reason IN ('network_deleted', 'workspace_deleted') THEN NULL ELSE (found.credential).provider END,
         CASE WHEN found.reason IN ('network_deleted', 'workspace_deleted') THEN NULL ELSE (found.credential).account_id END,

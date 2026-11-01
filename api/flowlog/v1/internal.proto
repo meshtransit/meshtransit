@@ -71,6 +71,10 @@ message FlowDestination {
   Credential credential = 7;
   bytes destination_etag = 8;
   int64 generated_at_ms = 9;
+  // expected_bucket_owner is the 12-digit AWS account that owns the S3
+  // bucket, sent as x-amz-expected-bucket-owner; empty: the account the
+  // credential belongs to (C52).
+  string expected_bucket_owner = 10;
 
   message Credential {
     bytes credential_id = 1;

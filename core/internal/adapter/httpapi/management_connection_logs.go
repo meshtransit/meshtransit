@@ -162,6 +162,7 @@ type connectionLogSettingsBody struct {
 	Prefix        string  `json:"prefix"`
 	Forwarded     bool    `json:"forwarded"`
 	WindowSeconds int     `json:"window_seconds"`
+	BucketOwner   *string `json:"expected_bucket_owner"`
 	Version       int64   `json:"version"`
 	UpdatedAt     *string `json:"updated_at"`
 }
@@ -175,6 +176,10 @@ func newConnectionLogSettingsBody(feature bool, settings connectionlog.Settings)
 	if settings.Credential != nil {
 		id := settings.Credential.String()
 		body.CredentialID = &id
+	}
+	if settings.ExpectedBucketOwner != "" {
+		owner := settings.ExpectedBucketOwner
+		body.BucketOwner = &owner
 	}
 	return body
 }
@@ -327,30 +332,13 @@ func (handler *ManagementHandler) replaceConnectionLogSettings(ctx context.Conte
 	if precondition != nil {
 		return fail(*precondition)
 	}
-	var body struct {
-		Enabled       *bool   `json:"enabled"`
-		CredentialID  *string `json:"credential_id"`
-		Bucket        *string `json:"bucket"`
-		Region        *string `json:"region"`
-		Prefix        *string `json:"prefix"`
-		Forwarded     *bool   `json:"forwarded"`
-		WindowSeconds *int    `json:"window_seconds"`
-	}
-	if !readDeviceGroupBody(response, request, &body) || body.Enabled == nil || body.Bucket == nil ||
-		body.Region == nil || body.Prefix == nil || body.Forwarded == nil || body.WindowSeconds == nil {
+	var body connectionLogSettingsRequest
+	if !readDeviceGroupBody(response, request, &body) {
 		return fail(*invalidManagementRequest())
 	}
-	settings := connectionlog.Settings{
-		Enabled: *body.Enabled, Bucket: *body.Bucket, Region: *body.Region, Prefix: *body.Prefix,
-		Forwarded: *body.Forwarded, WindowSeconds: *body.WindowSeconds,
-	}
-	if body.CredentialID != nil {
-		id, ok := canonicalPublicID(*body.CredentialID)
-		if !ok {
-			return fail(*invalidManagementRequest())
-		}
-		credential := connectionlog.CredentialID(id)
-		settings.Credential = &credential
+	settings, ok := body.settings()
+	if !ok {
+		return fail(*invalidManagementRequest())
 	}
 	replacement := connectionlog.SettingsReplacement{
 		Session: session, Scope: path.scope,
@@ -421,4 +409,47 @@ func classifyConnectionLogError(err error) managementError {
 			Message: "The result is uncertain. Reload before trying again.", Retryable: true,
 		}
 	}
+}
+
+// connectionLogSettingsRequest is a PUT of a Network's connection log
+// settings: every field but credential_id and expected_bucket_owner is
+// required.
+type connectionLogSettingsRequest struct {
+	Enabled       *bool   `json:"enabled"`
+	CredentialID  *string `json:"credential_id"`
+	Bucket        *string `json:"bucket"`
+	Region        *string `json:"region"`
+	Prefix        *string `json:"prefix"`
+	Forwarded     *bool   `json:"forwarded"`
+	WindowSeconds *int    `json:"window_seconds"`
+	// Absent or null: the credential's own account; empty is refused.
+	BucketOwner *string `json:"expected_bucket_owner"`
+}
+
+// settings builds the replacement's settings, false for a missing field,
+// an empty bucket owner or a non-canonical credential ID.
+func (body connectionLogSettingsRequest) settings() (connectionlog.Settings, bool) {
+	if body.Enabled == nil || body.Bucket == nil || body.Region == nil || body.Prefix == nil || body.Forwarded == nil ||
+		body.WindowSeconds == nil {
+		return connectionlog.Settings{}, false
+	}
+	settings := connectionlog.Settings{
+		Enabled: *body.Enabled, Bucket: *body.Bucket, Region: *body.Region, Prefix: *body.Prefix,
+		Forwarded: *body.Forwarded, WindowSeconds: *body.WindowSeconds,
+	}
+	if body.BucketOwner != nil {
+		if *body.BucketOwner == "" {
+			return connectionlog.Settings{}, false
+		}
+		settings.ExpectedBucketOwner = *body.BucketOwner
+	}
+	if body.CredentialID != nil {
+		id, ok := canonicalPublicID(*body.CredentialID)
+		if !ok {
+			return connectionlog.Settings{}, false
+		}
+		credential := connectionlog.CredentialID(id)
+		settings.Credential = &credential
+	}
+	return settings, true
 }

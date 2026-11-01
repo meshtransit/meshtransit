@@ -192,8 +192,11 @@ type Settings struct {
 	Prefix        string
 	Forwarded     bool
 	WindowSeconds int
-	Version       int64
-	UpdatedAt     time.Time
+	// ExpectedBucketOwner is the 12-digit AWS account that owns an S3
+	// bucket, or empty: the credential's own account (C52).
+	ExpectedBucketOwner string
+	Version             int64
+	UpdatedAt           time.Time
 }
 
 // NetworkSettings is what a Network's reader sees.
@@ -219,10 +222,25 @@ func (replacement SettingsReplacement) Check() error {
 	if replacement.ExpectedVersion < 0 || settings.WindowSeconds < MinimumWindowSeconds ||
 		settings.WindowSeconds > MaximumWindowSeconds || !ValidPrefix(settings.Prefix) ||
 		(settings.Credential == nil) != (settings.Bucket == "") || (settings.Credential == nil) && settings.Region != "" ||
-		settings.Enabled && settings.Credential == nil || settings.Bucket != "" && !ValidBucket(settings.Bucket) {
+		settings.Enabled && settings.Credential == nil || settings.Bucket != "" && !ValidBucket(settings.Bucket) ||
+		settings.ExpectedBucketOwner != "" && (settings.Credential == nil || !ValidBucketOwner(settings.ExpectedBucketOwner)) {
 		return ErrInvalid
 	}
 	return nil
+}
+
+// ValidBucketOwner reports a 12-digit AWS account ID. Only an S3
+// destination may name one; the store checks the provider.
+func ValidBucketOwner(owner string) bool {
+	if len(owner) != 12 {
+		return false
+	}
+	for _, digit := range owner {
+		if digit < '0' || digit > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // SettingsResult is a replacement's outcome.

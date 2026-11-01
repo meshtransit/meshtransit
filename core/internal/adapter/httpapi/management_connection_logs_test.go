@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -111,5 +112,57 @@ func TestClassifyConnectionLogError(t *testing.T) {
 	}
 	if !strings.Contains(classifyConnectionLogError(connectionlog.ErrInvalid).Code, "invalid") {
 		t.Error("invalid input")
+	}
+}
+
+// The bucket owner of a PUT: absent and null are none, empty is refused, a
+// malformed one or one without a credential fails the replacement's check,
+// and a valid one comes back in the answer.
+func TestConnectionLogSettingsBucketOwner(t *testing.T) {
+	t.Parallel()
+	const base = `"enabled":true,"credential_id":"01890f00-0000-7000-8000-000000000002","bucket":"logs",` +
+		`"region":"eu-central-1","prefix":"mesh","forwarded":false,"window_seconds":60`
+	for name, test := range map[string]struct {
+		body    string
+		owner   string
+		decoded bool
+		checked bool
+	}{
+		"absent": {body: `{` + base + `}`, decoded: true, checked: true},
+		"null":   {body: `{` + base + `,"expected_bucket_owner":null}`, decoded: true, checked: true},
+		"empty":  {body: `{` + base + `,"expected_bucket_owner":""}`},
+		"valid":  {body: `{` + base + `,"expected_bucket_owner":"123456789012"}`, owner: "123456789012", decoded: true, checked: true},
+		"letter": {body: `{` + base + `,"expected_bucket_owner":"12345678901a"}`, owner: "12345678901a", decoded: true},
+		"short":  {body: `{` + base + `,"expected_bucket_owner":"12345678901"}`, owner: "12345678901", decoded: true},
+		"owner, no credential": {
+			body: `{"enabled":false,"credential_id":null,"bucket":"","region":"","prefix":"mesh","forwarded":false,` +
+				`"window_seconds":60,"expected_bucket_owner":"123456789012"}`, owner: "123456789012", decoded: true,
+		},
+	} {
+		var request connectionLogSettingsRequest
+		if err := json.Unmarshal([]byte(test.body), &request); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		settings, ok := request.settings()
+		if ok != test.decoded || ok && settings.ExpectedBucketOwner != test.owner {
+			t.Errorf("%s: settings() = %+v, %v", name, settings, ok)
+			continue
+		}
+		if !ok {
+			continue
+		}
+		checked := (connectionlog.SettingsReplacement{Settings: settings}).Check() == nil
+		if checked != test.checked {
+			t.Errorf("%s: Check() passed = %v", name, checked)
+		}
+		if checked && test.owner != "" {
+			answer := newConnectionLogSettingsBody(true, settings)
+			if answer.BucketOwner == nil || *answer.BucketOwner != test.owner {
+				t.Errorf("%s: answer = %+v", name, answer)
+			}
+		}
+	}
+	if answer := newConnectionLogSettingsBody(true, connectionlog.Settings{}); answer.BucketOwner != nil {
+		t.Error("no owner answered as one")
 	}
 }

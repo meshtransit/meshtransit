@@ -96,6 +96,11 @@ func TestPutAndReplacementChecks(t *testing.T) {
 		"window large":              func(s *Settings) { s.WindowSeconds = 301 },
 		"bad bucket":                func(s *Settings) { s.Bucket = "Logs" },
 		"bad prefix":                func(s *Settings) { s.Prefix = "/x" },
+		"short owner":               func(s *Settings) { s.ExpectedBucketOwner = "12345678901" },
+		"owner with a letter":       func(s *Settings) { s.ExpectedBucketOwner = "12345678901a" },
+		"owner without credential": func(s *Settings) {
+			s.Credential, s.Bucket, s.Region, s.Enabled, s.ExpectedBucketOwner = nil, "", "", false, "123456789012"
+		},
 	} {
 		replacement := on
 		change(&replacement.Settings)
@@ -105,6 +110,11 @@ func TestPutAndReplacementChecks(t *testing.T) {
 	}
 	if (SettingsReplacement{Settings: Settings{WindowSeconds: 60}}).Check() != nil {
 		t.Error("off with nothing set refused")
+	}
+	owned := on
+	owned.Settings.ExpectedBucketOwner = "123456789012"
+	if owned.Check() != nil {
+		t.Error("a bucket owner refused")
 	}
 }
 

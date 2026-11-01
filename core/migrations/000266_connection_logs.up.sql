@@ -191,6 +191,9 @@ CREATE TABLE mesh.network_connection_log (
     -- Routers, exit nodes and gateways count what they forward (design §7).
     forwarded BOOLEAN NOT NULL,
     window_s INTEGER NOT NULL CHECK (window_s BETWEEN 60 AND 300),
+    -- The AWS account that owns the bucket (C52): S3 refuses a write to a
+    -- bucket of another account. NULL: the credential's own account.
+    expected_bucket_owner TEXT CHECK (expected_bucket_owner ~ '^[0-9]{12}$'),
     version BIGINT NOT NULL CHECK (version > 0),
     updated_at TIMESTAMPTZ NOT NULL,
     updated_by_principal_id BIGINT NOT NULL,
@@ -199,7 +202,8 @@ CREATE TABLE mesh.network_connection_log (
     CONSTRAINT network_connection_log_credential_fk FOREIGN KEY (workspace_id, credential_id)
         REFERENCES mesh.storage_credential (workspace_id, id) ON DELETE RESTRICT,
     CONSTRAINT network_connection_log_destination_check CHECK (
-        NOT enabled OR (credential_id IS NOT NULL AND bucket <> '' AND region <> ''))
+        NOT enabled OR (credential_id IS NOT NULL AND bucket <> '' AND region <> '')),
+    CONSTRAINT network_connection_log_owner_check CHECK (expected_bucket_owner IS NULL OR credential_id IS NOT NULL)
 );
 CREATE INDEX network_connection_log_credential_idx ON mesh.network_connection_log (workspace_id, credential_id);
 CREATE TRIGGER network_connection_log_authority_capture
@@ -603,6 +607,7 @@ AS $function$
         'prefix', COALESCE(p_settings.prefix, ''),
         'forwarded', COALESCE(p_settings.forwarded, FALSE),
         'window_seconds', COALESCE(p_settings.window_s, 60),
+        'expected_bucket_owner', p_settings.expected_bucket_owner,
         'version', COALESCE(p_settings.version, 0),
         'updated_at', p_settings.updated_at
     )
@@ -654,7 +659,7 @@ CREATE FUNCTION mesh_ops.replace_network_connection_log_v1(
     p_provider_generation BIGINT, p_deployment_recovery_epoch BIGINT,
     p_workspace_public_id UUID, p_network_public_id UUID, p_expected_version BIGINT,
     p_enabled BOOLEAN, p_credential_public_id UUID, p_bucket TEXT, p_region TEXT, p_prefix TEXT,
-    p_forwarded BOOLEAN, p_window_seconds INTEGER, p_change_public_id UUID
+    p_forwarded BOOLEAN, p_window_seconds INTEGER, p_expected_bucket_owner TEXT, p_change_public_id UUID
 )
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -679,6 +684,8 @@ BEGIN
         OR NOT COALESCE(mesh_ops.connection_log_prefix_is_valid_v1(p_prefix), FALSE)
         OR (p_credential_public_id IS NULL) <> (p_bucket = '')
         OR (p_enabled AND p_credential_public_id IS NULL)
+        OR (p_expected_bucket_owner IS NOT NULL AND (p_expected_bucket_owner !~ '^[0-9]{12}$'
+            OR p_credential_public_id IS NULL))
         OR (p_bucket <> '' AND NOT COALESCE(mesh_ops.connection_log_bucket_is_valid_v1(p_bucket), FALSE)) THEN
         RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'connection log settings are invalid';
     END IF;
@@ -700,6 +707,10 @@ BEGIN
         END IF;
         IF NOT COALESCE(mesh_ops.connection_log_region_is_valid_v1(v_credential.provider, p_region), FALSE) THEN
             RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'connection log region is invalid';
+        END IF;
+        -- Only S3 checks a bucket's owner; R2 cannot (§10.1).
+        IF p_expected_bucket_owner IS NOT NULL AND v_credential.provider <> 'aws_s3' THEN
+            RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'only an S3 destination names its bucket owner';
         END IF;
     ELSIF p_region <> '' THEN
         RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'connection log region needs a credential';
@@ -728,7 +739,8 @@ BEGIN
     IF v_before.version IS NOT NULL AND v_before.enabled = p_enabled
         AND v_before.credential_id IS NOT DISTINCT FROM v_credential.id AND v_before.bucket = p_bucket
         AND v_before.region = p_region AND v_before.prefix = p_prefix AND v_before.forwarded = p_forwarded
-        AND v_before.window_s = p_window_seconds THEN
+        AND v_before.window_s = p_window_seconds
+        AND v_before.expected_bucket_owner IS NOT DISTINCT FROM p_expected_bucket_owner THEN
         RETURN pg_catalog.jsonb_build_object(
             'network_id', p_network_public_id, 'changed', FALSE,
             'feature', mesh_ops.workspace_has_feature_internal_v1(v_grant.workspace_id, 'connection_logs'),
@@ -737,13 +749,15 @@ BEGIN
     PERFORM pg_catalog.set_config('mesh.change_public_id', p_change_public_id::TEXT, TRUE);
     INSERT INTO mesh.network_connection_log AS settings (
         network_id, public_id, workspace_id, enabled, credential_id, bucket, region, prefix, forwarded, window_s,
+        expected_bucket_owner,
         version, updated_at, updated_by_principal_id)
     VALUES (v_grant.network_id, v_network.public_id, v_grant.workspace_id, p_enabled, v_credential.id, p_bucket,
-        p_region, p_prefix, p_forwarded, p_window_seconds, 1, v_now, v_grant.actor_id)
+        p_region, p_prefix, p_forwarded, p_window_seconds, p_expected_bucket_owner, 1, v_now, v_grant.actor_id)
     ON CONFLICT (network_id) DO UPDATE SET
         enabled = EXCLUDED.enabled, credential_id = EXCLUDED.credential_id, bucket = EXCLUDED.bucket,
         region = EXCLUDED.region, prefix = EXCLUDED.prefix, forwarded = EXCLUDED.forwarded,
-        window_s = EXCLUDED.window_s, version = settings.version + 1, updated_at = EXCLUDED.updated_at,
+        window_s = EXCLUDED.window_s, expected_bucket_owner = EXCLUDED.expected_bucket_owner,
+        version = settings.version + 1, updated_at = EXCLUDED.updated_at,
         updated_by_principal_id = EXCLUDED.updated_by_principal_id
     RETURNING * INTO v_after;
     UPDATE mesh_ops.network_revision AS revision
@@ -790,9 +804,9 @@ GRANT EXECUTE ON FUNCTION mesh_ops.read_network_connection_log_v1(
 ) TO mesh_runtime;
 REVOKE ALL ON FUNCTION mesh_ops.replace_network_connection_log_v1(
     UUID, UUID, UUID, UUID, BIGINT, BIGINT, BIGINT, BIGINT, BIGINT, UUID, UUID, BIGINT,
-    BOOLEAN, UUID, TEXT, TEXT, TEXT, BOOLEAN, INTEGER, UUID
+    BOOLEAN, UUID, TEXT, TEXT, TEXT, BOOLEAN, INTEGER, TEXT, UUID
 ) FROM PUBLIC, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;
 GRANT EXECUTE ON FUNCTION mesh_ops.replace_network_connection_log_v1(
     UUID, UUID, UUID, UUID, BIGINT, BIGINT, BIGINT, BIGINT, BIGINT, UUID, UUID, BIGINT,
-    BOOLEAN, UUID, TEXT, TEXT, TEXT, BOOLEAN, INTEGER, UUID
+    BOOLEAN, UUID, TEXT, TEXT, TEXT, BOOLEAN, INTEGER, TEXT, UUID
 ) TO mesh_runtime;

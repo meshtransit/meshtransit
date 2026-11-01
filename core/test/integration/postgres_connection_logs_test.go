@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -241,7 +242,62 @@ func assertPostgreSQLConnectionLogs(ctx context.Context, t *testing.T, admin *pg
 	if again := openStoredCredential(ctx, t, admin, receiver, workspaceID.String(), credentialID, 3); again.SecretAccessKey != "rotated" {
 		t.Fatal("the rotated credential did not open")
 	}
-	off, err := settings(1, false, nil, "")
+	// An S3 destination names its bucket owner (C52); the receiver reads it;
+	// a malformed one, or one on an R2 destination, is refused.
+	ownedSettings := connectionlog.Settings{
+		Enabled: true, Credential: &credentialID, Bucket: "meshtransit-logs", Region: "eu-central-1", Prefix: "mesh",
+		WindowSeconds: 60, ExpectedBucketOwner: "123456789012",
+	}
+	replace := func(expected int64, changed connectionlog.Settings) (connectionlog.SettingsResult, error) {
+		return store.ReplaceSettings(ctx, connectionlog.SettingsReplacement{
+			Session: owner, Scope: scope, ExpectedVersion: expected, Settings: changed, CorrelationID: newCorrelationID(t),
+		})
+	}
+	owned, err := replace(1, ownedSettings)
+	if err != nil || owned.Settings.Version != 2 || owned.Settings.ExpectedBucketOwner != "123456789012" {
+		t.Fatalf("owned = %+v, %v", owned, err)
+	}
+	if read, err := store.ReadSettings(ctx, owner, scope); err != nil ||
+		read.Settings.ExpectedBucketOwner != "123456789012" {
+		t.Fatalf("ReadSettings() with an owner = %+v, %v", read, err)
+	}
+	if same, err := replace(2, ownedSettings); err != nil || same.Changed {
+		t.Fatalf("the same owner = %+v, %v", same, err)
+	}
+	if destination, err := receiverStore.Destination(ctx, scope); err != nil ||
+		destination.ExpectedBucketOwner != "123456789012" {
+		t.Fatalf("the receiver's destination = %+v, %v", destination, err)
+	}
+	malformed := ownedSettings
+	malformed.ExpectedBucketOwner = "12345678901"
+	if _, err := replace(2, malformed); !errors.Is(err, connectionlog.ErrInvalid) {
+		t.Fatalf("a malformed owner: %v", err)
+	}
+	r2ID := connectionlog.CredentialID(newConnectionLogID(t))
+	if _, err := store.PutCredential(ctx, connectionlog.CredentialPut{
+		Session: owner, Workspace: workspaceID, ID: r2ID, Name: "R2 bucket", Provider: flowlog.ProviderR2,
+		AccountID: strings.Repeat("a", 32), Networks: []network.ID{scope.NetworkID()}, CorrelationID: newCorrelationID(t),
+		Secret: &flowlog.Credential{AccessKeyID: strings.Repeat("f", 32), SecretAccessKey: "r2-secret"},
+	}); err != nil {
+		t.Fatalf("an R2 credential: %v", err)
+	}
+	onR2 := ownedSettings
+	onR2.Credential, onR2.Region = &r2ID, "auto"
+	if _, err := replace(2, onR2); !errors.Is(err, connectionlog.ErrInvalid) {
+		t.Fatalf("an owner on an R2 destination: %v", err)
+	}
+	if err := store.DeleteCredential(ctx, connectionlog.CredentialDeletion{
+		Session: owner, Workspace: workspaceID, ID: r2ID, ExpectedVersion: 1, CorrelationID: newCorrelationID(t),
+	}); err != nil {
+		t.Fatalf("deleting the R2 credential: %v", err)
+	}
+	unowned := ownedSettings
+	unowned.ExpectedBucketOwner = ""
+	if cleared, err := replace(2, unowned); err != nil || !cleared.Changed || cleared.Settings.Version != 3 ||
+		cleared.Settings.ExpectedBucketOwner != "" {
+		t.Fatalf("clearing the owner = %+v, %v", cleared, err)
+	}
+	off, err := settings(3, false, nil, "")
 	if err != nil || !off.Changed || off.Settings.Enabled || off.Settings.Credential != nil {
 		t.Fatalf("off = %+v, %v", off, err)
 	}

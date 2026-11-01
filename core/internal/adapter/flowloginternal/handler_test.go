@@ -261,6 +261,12 @@ func TestDestination(t *testing.T) {
 	}
 	destination := decode(t, body, &flowlogv1.FlowDestination{})
 	credential := destination.GetCredential()
+	tag := destination.GetDestinationEtag()
+	reader.set(func(r *fakeReader) { r.destination.ExpectedBucketOwner = "123456789012" })
+	if _, owned, _ := get(t, client, f.base+path, nil); decode(t, owned, &flowlogv1.FlowDestination{}).GetExpectedBucketOwner() != "123456789012" ||
+		bytes.Equal(decode(t, owned, &flowlogv1.FlowDestination{}).GetDestinationEtag(), tag) {
+		t.Fatal("the bucket owner is not carried, or leaves the destination tag as it was")
+	}
 	if destination.GetReason() != flowlogv1.FlowDestination_LOGGING || destination.GetWindowS() != 120 ||
 		credential.GetProvider() != flowlogv1.FlowDestination_CLOUDFLARE_R2 || !bytes.Equal(credential.GetSealed(), sealed) ||
 		credential.GetSealedVersion() != 2 || len(destination.GetDestinationEtag()) != 16 ||

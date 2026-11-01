@@ -22,12 +22,13 @@ const (
     pg_catalog.jsonb_build_object('workspace', listed.workspace_public_id, 'network', listed.network_public_id,
         'enabled', listed.enabled, 'settings_version', listed.settings_version,
         'credential', listed.credential_public_id, 'sealed_version', listed.sealed_version,
-        'sealing_key_id', listed.sealing_key_id)
+        'sealing_key_id', listed.sealing_key_id, 'expected_bucket_owner', listed.expected_bucket_owner)
     ORDER BY listed.network_public_id), '[]'::JSONB)::TEXT
 FROM mesh_ops.flowlog_networks_v1($1::UUID, $2::INTEGER) AS listed`
 	readFlowlogDestinationSQL = `SELECT pg_catalog.transaction_timestamp(),
     (SELECT pg_catalog.jsonb_build_object('reason', found.reason, 'forwarded', found.forwarded,
         'window_s', found.window_s, 'bucket', found.bucket, 'region', found.region, 'prefix', found.prefix,
+        'expected_bucket_owner', found.expected_bucket_owner,
         'settings_version', found.settings_version, 'credential', found.credential_public_id,
         'provider', found.provider, 'account_id', found.account_id,
         'sealed', pg_catalog.encode(found.sealed, 'hex'), 'sealed_version', found.sealed_version,
@@ -134,13 +135,14 @@ func (store *FlowlogReceiverStore) Networks(ctx context.Context, after network.I
 		return connectionlog.ReceiverNetworks{}, err
 	}
 	var rows []struct {
-		Workspace       string `json:"workspace"`
-		Network         string `json:"network"`
-		Enabled         bool   `json:"enabled"`
-		SettingsVersion int64  `json:"settings_version"`
-		Credential      string `json:"credential"`
-		SealedVersion   int64  `json:"sealed_version"`
-		SealingKeyID    string `json:"sealing_key_id"`
+		Workspace       string  `json:"workspace"`
+		Network         string  `json:"network"`
+		Enabled         bool    `json:"enabled"`
+		SettingsVersion int64   `json:"settings_version"`
+		Credential      string  `json:"credential"`
+		SealedVersion   int64   `json:"sealed_version"`
+		SealingKeyID    string  `json:"sealing_key_id"`
+		BucketOwner     *string `json:"expected_bucket_owner"`
 	}
 	if document == nil || decodeStrictJSON(*document, maxFlowlogDocument, &rows) != nil {
 		return connectionlog.ReceiverNetworks{}, ErrFlowlogReceiver
@@ -156,11 +158,18 @@ func (store *FlowlogReceiverStore) Networks(ctx context.Context, after network.I
 			row.SealedVersion < 1 || row.SealingKeyID == "" {
 			return connectionlog.ReceiverNetworks{}, ErrFlowlogReceiver
 		}
-		listed.Networks = append(listed.Networks, connectionlog.ReceiverNetwork{
+		entry := connectionlog.ReceiverNetwork{
 			Workspace: workspaceID, Network: networkID, Enabled: row.Enabled, SettingsVersion: row.SettingsVersion,
 			Credential: connectionlog.CredentialID(credential), SealedVersion: row.SealedVersion,
 			SealingKeyID: row.SealingKeyID,
-		})
+		}
+		if row.BucketOwner != nil {
+			if !connectionlog.ValidBucketOwner(*row.BucketOwner) {
+				return connectionlog.ReceiverNetworks{}, ErrFlowlogReceiver
+			}
+			entry.ExpectedBucketOwner = *row.BucketOwner
+		}
+		listed.Networks = append(listed.Networks, entry)
 	}
 	return listed, nil
 }
@@ -194,6 +203,7 @@ func (store *FlowlogReceiverStore) Destination(ctx context.Context, scope networ
 		Bucket          string  `json:"bucket"`
 		Region          string  `json:"region"`
 		Prefix          string  `json:"prefix"`
+		BucketOwner     *string `json:"expected_bucket_owner"`
 		SettingsVersion int64   `json:"settings_version"`
 		Credential      *string `json:"credential"`
 		Provider        *string `json:"provider"`
@@ -212,6 +222,12 @@ func (store *FlowlogReceiverStore) Destination(ctx context.Context, scope networ
 	destination := connectionlog.ReceiverDestination{
 		Reason: row.Reason, Forwarded: row.Forwarded, WindowSeconds: row.WindowSeconds, Bucket: row.Bucket,
 		Region: row.Region, Prefix: row.Prefix, SettingsVersion: row.SettingsVersion, GeneratedAt: at,
+	}
+	if row.BucketOwner != nil {
+		if !connectionlog.ValidBucketOwner(*row.BucketOwner) {
+			return connectionlog.ReceiverDestination{}, ErrFlowlogReceiver
+		}
+		destination.ExpectedBucketOwner = *row.BucketOwner
 	}
 	if deleted {
 		return destination, nil
