@@ -487,6 +487,12 @@ WHERE public_id = '%s'::UUID`, device,
 	if revoked, err = store.Revocations(ctx); err != nil || listedRevocation() {
 		t.Fatalf("a live Device's key is listed: %v", err)
 	}
+	if listed.Networks[slices.IndexFunc(listed.Networks, func(entry connectionlog.ReceiverNetwork) bool {
+		return entry.Network == scope.NetworkID()
+	})].DirectoryRevision != connectionLogRevision(ctx, t, admin, scope) {
+		t.Fatal("the listed directory revision is not the Network's")
+	}
+	assertFlowlogDirectory(ctx, t, admin, store, scope)
 }
 
 // assertFlowlogReaderSeesOnlyLoggingNetworks reads as mesh_flowlog_reader:
@@ -529,6 +535,39 @@ WHERE (device.workspace_id, device.network_id) NOT IN (SELECT logged.workspace_i
 		scope.NetworkID().String()).Scan(&foreignDevices, &foreignEpochs, &foreignNetworks, &workspaces,
 		&unusedCredentials); err != nil {
 		t.Fatal(err)
+	}
+	var foreignRevisions, foreignMemberships, foreignPseudonyms, tenantPools int
+	if err := tx.QueryRow(ctx, `SELECT
+    (SELECT pg_catalog.count(*) FROM mesh_ops.network_revision AS revision
+     WHERE (revision.workspace_id, revision.network_id) NOT IN (SELECT logged.workspace_id, logged.network_id
+                                                               FROM mesh.network_connection_log AS logged)),
+    (SELECT pg_catalog.count(*) FROM mesh.workspace_membership AS membership
+     WHERE membership.workspace_id NOT IN (SELECT logged.workspace_id FROM mesh.network_connection_log AS logged)),
+    (SELECT pg_catalog.count(*) FROM mesh.connection_log_owner_pseudonym AS pseudonym
+     WHERE pseudonym.workspace_id NOT IN (SELECT logged.workspace_id FROM mesh.network_connection_log AS logged)),
+    (SELECT pg_catalog.count(*) FROM mesh.address_pool AS pool
+     WHERE pool.workspace_id IS NOT NULL
+        OR pool.purpose NOT IN ('federation_resource_alias', 'federation_consumer_alias'))`).Scan(
+		&foreignRevisions, &foreignMemberships, &foreignPseudonyms, &tenantPools,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if foreignRevisions != 0 || foreignMemberships != 0 || foreignPseudonyms != 0 || tenantPools != 0 {
+		t.Fatalf("the reader sees %d revisions, %d memberships, %d pseudonyms, %d pools it should not",
+			foreignRevisions, foreignMemberships, foreignPseudonyms, tenantPools)
+	}
+	// The directory's Network-scoped tables (schema 269).
+	for _, table := range []string{
+		"device_tag", "device_tag_assignment", "device_group", "device_group_member", "network_site",
+		"network_site_router", "network_exit_pool", "network_exit_node", "node_address_lease", "network_prefix",
+	} {
+		var foreign int
+		if err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT pg_catalog.count(*) FROM mesh.%s AS guarded
+WHERE (guarded.workspace_id, guarded.network_id) NOT IN (SELECT logged.workspace_id, logged.network_id
+                                                         FROM mesh.network_connection_log AS logged)`, table)).Scan(
+			&foreign); err != nil || foreign != 0 {
+			t.Fatalf("the reader sees %d rows of mesh.%s it should not: %v", foreign, table, err)
+		}
 	}
 	if foreignDevices != 0 || foreignEpochs != 0 || foreignNetworks != 0 || workspaces != 1 || unusedCredentials != 0 {
 		t.Fatalf("the reader sees %d Devices, %d key epochs, %d Networks, %d Workspaces, %d credentials it should not",

@@ -76,6 +76,10 @@ func (stub receiverStoreStub) Revocations(context.Context) (connectionlog.Receiv
 	return connectionlog.ReceiverRevocations{}, stub.err
 }
 
+func (stub receiverStoreStub) Directory(context.Context, network.Scope) (connectionlog.ReceiverDirectory, error) {
+	return connectionlog.ReceiverDirectory{}, stub.err
+}
+
 // The store's "no destination" is the API's 404 and its cut revocation
 // list the API's refusal, never anything else.
 func TestFlowlogReceiverReaderMapsTheStoreErrors(t *testing.T) {
@@ -96,5 +100,16 @@ func TestFlowlogReceiverReaderMapsTheStoreErrors(t *testing.T) {
 	}
 	if _, err := down.Revocations(ctx); errors.Is(err, flowloginternal.ErrRevocationsCut) || err == nil {
 		t.Fatalf("an outage became a cut list: %v", err)
+	}
+	if _, err := missing.Directory(ctx, network.Scope{}); !errors.Is(err, flowloginternal.ErrNotFound) {
+		t.Fatalf("no directory: %v", err)
+	}
+	large := flowlogReceiverReader{store: receiverStoreStub{err: postgresadapter.ErrFlowlogDirectoryTooLarge}}
+	if _, err := large.Directory(ctx, network.Scope{}); !errors.Is(err, flowloginternal.ErrDirectoryTooLarge) {
+		t.Fatalf("a large directory: %v", err)
+	}
+	if _, err := down.Directory(ctx, network.Scope{}); errors.Is(err, flowloginternal.ErrNotFound) ||
+		errors.Is(err, flowloginternal.ErrDirectoryTooLarge) || err == nil {
+		t.Fatalf("an outage became a missing or large directory: %v", err)
 	}
 }

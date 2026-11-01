@@ -257,15 +257,23 @@ back may reverse them).
   empty nor 16 bytes; `last_seen < first_seen`;
 - a `FLOW` record with a deny reason, `distinct_ports` or `sample_ports`; a
   `DENY` record without a deny reason; more than 8 `sample_ports`, or more than
-  `distinct_ports`;
-- an `EXIT` record, or any record, with an IP that is public: outside the
-  Network's mesh ranges, the routes of its Sites and the private and
-  unique-local ranges.
+  `distinct_ports`.
+
+Only these checks, which need nothing but the batch, make a batch `INVALID`.
 
 **Dropped records.** A well-formed record the reporter may not report (it is
 not an end of the flow, not the router of the Site, not in the pool's
 candidates, not the cluster's gateway, or an ID outside the token's Network or
-contract) is dropped and counted; the rest of the batch is written.
+contract), or one with an IP that is public (outside the Network's mesh
+ranges, the deployment's alias ranges, the routes of its Sites and the
+private and unique-local ranges; any IP of an `EXIT` record), is dropped and
+counted; the rest of the batch is written. These checks read the Network's
+directory, which the receiver learns from Core and which may lag a change:
+they never make a batch `INVALID`. When the receiver holds no directory fresh
+enough to check (its last good read of it, 200 or 304, over 5 minutes old,
+or built more than 2 minutes before it was answered, as the answer's
+built-at and generated-at headers say), it answers the batch with
+`THROTTLED` with `retry_after_ms` instead.
 
 ## 7. Answer and record IDs
 

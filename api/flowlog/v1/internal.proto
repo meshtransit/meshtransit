@@ -52,7 +52,8 @@ message FlowNetworks {
     // destination_etag changes whenever the destination or its credential
     // does; the receiver reads the destination again then.
     bytes destination_etag = 4;
-    // directory_revision: 0 until s4c2, meaning always read again.
+    // directory_revision is the Network's revision: the receiver reads the
+    // directory again when it is higher than the one it holds (C59).
     uint64 directory_revision = 5;
   }
 }
@@ -118,5 +119,93 @@ message FlowRevocations {
     bytes network_id = 1;
     bytes device_id = 2;
     bytes machine_key = 3;
+  }
+}
+
+// FlowDirectory answers GET /internal/v1/flowlog/workspaces/{w}/networks/
+// {n}/directory: what names a record's endpoints and checks a reporter's
+// role, read in one snapshot (C61). The answer's ETag is of its content,
+// revision included. A 200 and a 304 alike carry the revision, built_at_ms
+// and generated_at_ms as the MeshTransit-Directory-Revision, -Built-At and
+// -Generated-At headers (C64). Replicas may answer different revisions: a
+// receiver keeps the highest it has seen (C62). Tag and group names change
+// without a new revision: a receiver reads again at least every minute
+// (C59).
+message FlowDirectory {
+  uint64 revision = 1;
+  // built_at_ms is when the snapshot was read; a replica answers a build
+  // for at most a minute.
+  int64 built_at_ms = 2;
+  int64 generated_at_ms = 3;
+  // mesh_prefixes are the Network's own address prefixes.
+  repeated Prefix mesh_prefixes = 4;
+  // alias_prefixes are the deployment's alias pools: an address in them is
+  // a share's, never a public one (C61).
+  repeated Prefix alias_prefixes = 5;
+  // tags and groups are dictionaries a Device names by index.
+  repeated Name tags = 6;
+  repeated Name groups = 7;
+  repeated Device devices = 8;
+  repeated Site sites = 9;
+  repeated ExitPool exit_pools = 10;
+
+  message Prefix {
+    bytes address = 1; // 4 or 16 bytes
+    uint32 bits = 2;
+  }
+
+  message Name {
+    bytes id = 1;
+    string name = 2;
+  }
+
+  // Device is a live Device, or for 25 hours the tombstone of a deleted
+  // one: its ID, kind, state DELETED and pseudonym if it still has one.
+  message Device {
+    bytes device_id = 1;
+    Kind kind = 2;
+    State state = 3;
+    string hostname = 4;
+    repeated bytes addresses = 5; // 4 or 16 bytes each
+    OwnerKind owner_kind = 6;
+    // owner_pseudonym is the owning membership's (C60); empty: the
+    // Workspace owns the Device, or its owner is no longer a member.
+    bytes owner_pseudonym = 7;
+    repeated uint32 tags = 8; // indexes into tags
+    repeated uint32 groups = 9; // indexes into groups
+    // names_truncated: the Device has more than 64 tags or groups.
+    bool names_truncated = 10;
+  }
+
+  message Site {
+    bytes site_id = 1;
+    repeated Prefix prefixes = 2;
+    repeated bytes routers = 3; // Device IDs
+  }
+
+  message ExitPool {
+    bytes exit_pool_id = 1;
+    repeated bytes candidates = 2; // Device IDs
+  }
+
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    STANDARD = 1;
+    KUBERNETES_GATEWAY = 2;
+  }
+
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    ACTIVE = 1;
+    EXPIRED = 2;
+    SUSPENDED = 3;
+    REVOKED = 4;
+    DELETED = 5;
+  }
+
+  enum OwnerKind {
+    OWNER_KIND_UNSPECIFIED = 0;
+    MEMBER = 1;
+    WORKSPACE = 2;
   }
 }

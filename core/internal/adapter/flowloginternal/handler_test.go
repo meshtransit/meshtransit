@@ -35,6 +35,31 @@ type fakeReader struct {
 	revocationsAt int
 	// block, when set, holds a revocation read until closed.
 	block chan struct{}
+	// directory, when set, is every Network's; directoryBlock holds its
+	// reads until closed.
+	directory      *connectionlog.ReceiverDirectory
+	directoriesAt  int
+	directoryBlock chan struct{}
+}
+
+func (reader *fakeReader) Directory(_ context.Context, scope network.Scope) (connectionlog.ReceiverDirectory, error) {
+	reader.mu.Lock()
+	block := reader.directoryBlock
+	reader.directoriesAt++
+	reader.scopes = append(reader.scopes, scope)
+	reader.mu.Unlock()
+	if block != nil {
+		<-block
+	}
+	reader.mu.Lock()
+	defer reader.mu.Unlock()
+	if reader.fail != nil {
+		return connectionlog.ReceiverDirectory{}, reader.fail
+	}
+	if reader.directory == nil {
+		return connectionlog.ReceiverDirectory{}, ErrNotFound
+	}
+	return *reader.directory, nil
 }
 
 func (reader *fakeReader) Networks(_ context.Context, after network.ID, limit int,

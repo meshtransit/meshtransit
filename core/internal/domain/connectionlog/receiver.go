@@ -1,10 +1,12 @@
 package connectionlog
 
 import (
+	"net/netip"
 	"time"
 
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/domain/workspace"
 )
 
@@ -30,6 +32,8 @@ type ReceiverNetwork struct {
 	SealingKeyID    string
 	// ExpectedBucketOwner is empty when the credential's account owns it.
 	ExpectedBucketOwner string
+	// DirectoryRevision is the Network's revision (C59).
+	DirectoryRevision int64
 }
 
 // ReceiverNetworks is one page, read at GeneratedAt on the database clock.
@@ -82,4 +86,78 @@ type ReceiverRevocation struct {
 type ReceiverRevocations struct {
 	Revocations []ReceiverRevocation
 	GeneratedAt time.Time
+}
+
+// MaxReceiverDirectoryDevices bounds one directory: a larger Network's is
+// refused, never cut (C61).
+const MaxReceiverDirectoryDevices = 100000
+
+// MaxReceiverDeviceNames bounds the tags and the groups one directory Device
+// lists; more are cut and flagged (C61).
+const MaxReceiverDeviceNames = 64
+
+// Receiver directory Device kinds, states and owner kinds, as the schema
+// names them. A Device whose expiry passed reads as expired; a tombstone is
+// deleted.
+const (
+	DeviceKindStandard          = "standard"
+	DeviceKindKubernetesGateway = "kubernetes_gateway"
+	DeviceStateActive           = "active"
+	DeviceStateExpired          = "expired"
+	DeviceStateSuspended        = "suspended"
+	DeviceStateRevoked          = "revoked"
+	DeviceStateDeleted          = "deleted"
+	OwnerKindMember             = "member"
+	OwnerKindWorkspace          = "workspace"
+)
+
+// ReceiverName is a tag's or group's public ID and name.
+type ReceiverName struct {
+	ID   publicid.ID
+	Name string
+}
+
+// ReceiverDevice is a live Device, or the 25-hour tombstone of a deleted
+// one (ID, kind, state, owner kind and pseudonym only). Pseudonym is a
+// random UUID, all zero when the Workspace owns the Device or its owner is
+// no longer a member (C60). Tags and Groups index the directory's
+// dictionaries.
+type ReceiverDevice struct {
+	ID             node.ID
+	Kind           string
+	State          string
+	Hostname       string
+	Addresses      []netip.Addr
+	OwnerKind      string
+	Pseudonym      [16]byte
+	Tags           []int
+	Groups         []int
+	NamesTruncated bool
+}
+
+// ReceiverSite is a Site's prefixes and routers.
+type ReceiverSite struct {
+	ID       publicid.ID
+	Prefixes []netip.Prefix
+	Routers  []node.ID
+}
+
+// ReceiverExitPool is an Exit Pool's candidate Devices.
+type ReceiverExitPool struct {
+	ID         publicid.ID
+	Candidates []node.ID
+}
+
+// ReceiverDirectory is one Network's directory, read in one snapshot at
+// BuiltAt on the database clock (C61).
+type ReceiverDirectory struct {
+	Revision      int64
+	BuiltAt       time.Time
+	MeshPrefixes  []netip.Prefix
+	AliasPrefixes []netip.Prefix
+	Tags          []ReceiverName
+	Groups        []ReceiverName
+	Devices       []ReceiverDevice
+	Sites         []ReceiverSite
+	ExitPools     []ReceiverExitPool
 }

@@ -259,3 +259,11 @@ var flowlogReaderOwnershipSQL string
 // (schema 268) to the receiver reader and exposes them to the runtime role
 // only.
 func FlowlogReaderOwnershipSQL() string { return flowlogReaderOwnershipSQL }
+
+//go:embed operator/000269_flowlog_directory_ownership.sql
+var flowlogDirectoryOwnershipSQL string
+
+// FlowlogDirectoryOwnershipSQL moves the connection log receiver's directory
+// reads (schema 269) to the receiver reader and exposes them to the runtime
+// role only.
+func FlowlogDirectoryOwnershipSQL() string { return flowlogDirectoryOwnershipSQL }

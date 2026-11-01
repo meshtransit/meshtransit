@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 268 {
-		t.Fatalf("len(Catalog()) = %d, want 268", len(catalog))
+	if len(catalog) != 269 {
+		t.Fatalf("len(Catalog()) = %d, want 269", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 268 {
-		t.Fatalf("LatestVersion() = %d, want 268", LatestVersion())
+	if LatestVersion() != 269 {
+		t.Fatalf("LatestVersion() = %d, want 269", LatestVersion())
 	}
 }
 
@@ -7975,6 +7975,8 @@ func TestMigration268FlowlogInternalReads(t *testing.T) {
 		"CREATE FUNCTION mesh_ops.flowlog_revocations_v1(p_since TIMESTAMPTZ)",
 		"FOR SELECT TO mesh_flowlog_reader",
 		"LIMIT 100001",
+		"directory_revision BIGINT",
+		"CREATE POLICY network_revision_flowlog_read ON mesh_ops.network_revision",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Errorf("migration 268 lacks %q", want)
@@ -7989,6 +7991,37 @@ func TestMigration268FlowlogInternalReads(t *testing.T) {
 	} {
 		if strings.Contains(sql, banned) {
 			t.Errorf("migration 268 has %q", banned)
+		}
+	}
+}
+
+func TestMigration269FlowlogDirectory(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 269 || catalog[268].Version != 269 {
+		t.Fatalf("the catalog has no migration 269 (%d migrations)", len(catalog))
+	}
+	sql := catalog[268].SQL
+	for _, want := range []string{
+		"CREATE TABLE mesh.connection_log_owner_pseudonym",
+		"AFTER INSERT OR UPDATE OF state ON mesh.workspace_membership",
+		"CREATE FUNCTION mesh_ops.flowlog_directory_network_v1(p_workspace_public_id UUID, p_network_public_id UUID)",
+		"CREATE FUNCTION mesh_ops.flowlog_directory_devices_v1(p_workspace_public_id UUID, p_network_public_id UUID,",
+		"INTERVAL '25 hours'",
+		"LIMIT 64",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("migration 269 lacks %q", want)
+		}
+	}
+	// As in 268: the reader never writes, only the operator step lets runtime
+	// execute, and no policy guards by an EXISTS.
+	for _, banned := range []string{
+		"GRANT INSERT", "GRANT UPDATE", "GRANT DELETE", "FOR ALL TO mesh_flowlog_reader",
+		"TO mesh_runtime", "USING (EXISTS",
+	} {
+		if strings.Contains(sql, banned) {
+			t.Errorf("migration 269 has %q", banned)
 		}
 	}
 }

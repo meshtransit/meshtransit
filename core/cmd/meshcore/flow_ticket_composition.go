@@ -131,7 +131,8 @@ func composeFlowLogInternal(ctx context.Context, cfg config.FlowLogInternalConfi
 }
 
 // flowlogReceiverReader gives the internal API the receiver store, with its
-// "no destination" and "cut revocations" as the API's.
+// "no destination", "cut revocations" and "directory too large" as the
+// API's.
 type flowlogReceiverReader struct {
 	store flowloginternal.Reader
 }
@@ -156,6 +157,18 @@ func (reader flowlogReceiverReader) Revocations(ctx context.Context) (connection
 		return connectionlog.ReceiverRevocations{}, errors.Join(flowloginternal.ErrRevocationsCut, err)
 	}
 	return revoked, err
+}
+
+func (reader flowlogReceiverReader) Directory(ctx context.Context, scope network.Scope,
+) (connectionlog.ReceiverDirectory, error) {
+	directory, err := reader.store.Directory(ctx, scope)
+	switch {
+	case errors.Is(err, postgresadapter.ErrFlowlogNotFound):
+		return connectionlog.ReceiverDirectory{}, flowloginternal.ErrNotFound
+	case errors.Is(err, postgresadapter.ErrFlowlogDirectoryTooLarge):
+		return connectionlog.ReceiverDirectory{}, errors.Join(flowloginternal.ErrDirectoryTooLarge, err)
+	}
+	return directory, err
 }
 
 // flowlogPoolConnections bounds the receiver's own pool (C39): it never

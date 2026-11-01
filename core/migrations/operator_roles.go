@@ -57,6 +57,8 @@ var operatorFunctionOwners = map[string]string{
 	"flowlog_networks":                                    "mesh_flowlog_reader",
 	"flowlog_destination":                                 "mesh_flowlog_reader",
 	"flowlog_revocations":                                 "mesh_flowlog_reader",
+	"flowlog_directory_network":                           "mesh_flowlog_reader",
+	"flowlog_directory_devices":                           "mesh_flowlog_reader",
 }
 
 var operatorFunctionVersion = regexp.MustCompile(`_v[0-9]+$`)

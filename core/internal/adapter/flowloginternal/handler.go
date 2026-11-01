@@ -53,6 +53,7 @@ type Reader interface {
 	Networks(ctx context.Context, after network.ID, limit int) (connectionlog.ReceiverNetworks, error)
 	Destination(ctx context.Context, scope network.Scope) (connectionlog.ReceiverDestination, error)
 	Revocations(ctx context.Context) (connectionlog.ReceiverRevocations, error)
+	Directory(ctx context.Context, scope network.Scope) (connectionlog.ReceiverDirectory, error)
 }
 
 var (
@@ -76,6 +77,8 @@ type handler struct {
 
 	revocationMu sync.Mutex
 	revocations  *cachedRevocations
+
+	directories *directoryCache
 }
 
 // cachedRevocations is one read shared by the requests of revocationAge;
@@ -115,7 +118,7 @@ func newHandler(tokenKeys []TokenKey, reader Reader, metrics *Metrics, now func(
 	}
 	return &handler{
 		keys: keys, keysTag: tag, reader: reader, limiter: rate.NewLimiter(requestRate, requestBurst),
-		metrics: metrics, now: now,
+		metrics: metrics, now: now, directories: newDirectoryCache(),
 	}, nil
 }
 
@@ -159,6 +162,8 @@ func (handler *handler) ServeHTTP(response http.ResponseWriter, request *http.Re
 		handler.serveNetworks(response, request)
 	case "destination":
 		handler.serveDestination(response, request)
+	case "directory":
+		handler.serveDirectory(response, request)
 	default:
 		handler.metrics.request(route, "not_found")
 		http.NotFound(response, request)
@@ -317,7 +322,7 @@ var destinationProviders = map[string]flowlogv1.FlowDestination_Provider{
 }
 
 func (handler *handler) serveDestination(response http.ResponseWriter, request *http.Request) {
-	scope, ok := destinationScope(request.URL.Path)
+	scope, ok := scopeOf(request.URL.Path, "destination")
 	if !ok {
 		handler.metrics.request("destination", "not_found")
 		http.NotFound(response, request)
@@ -366,11 +371,11 @@ func (handler *handler) serveDestination(response http.ResponseWriter, request *
 	handler.answer(response, request, "destination", tag, message)
 }
 
-// destinationScope reads /internal/v1/flowlog/workspaces/{w}/networks/{n}/
-// destination with canonical IDs.
-func destinationScope(path string) (network.Scope, bool) {
+// scopeOf reads /internal/v1/flowlog/workspaces/{w}/networks/{n}/{leaf}
+// with canonical IDs.
+func scopeOf(path, leaf string) (network.Scope, bool) {
 	segments := strings.Split(strings.TrimPrefix(path, scopedPrefix), "/")
-	if len(segments) != 4 || segments[1] != "networks" || segments[3] != "destination" {
+	if len(segments) != 4 || segments[1] != "networks" || segments[3] != leaf {
 		return network.Scope{}, false
 	}
 	workspaceID, workspaceErr := workspace.ParseID(segments[0])
@@ -393,17 +398,28 @@ func (handler *handler) badRequest(response http.ResponseWriter, route string) {
 func (handler *handler) answer(response http.ResponseWriter, request *http.Request, route, tag string,
 	message proto.Message,
 ) {
+	if matchesTag(request.Header.Get("If-None-Match"), tag) {
+		handler.answerBody(response, request, route, tag, nil)
+		return
+	}
+	body, err := proto.MarshalOptions{Deterministic: true}.Marshal(message)
+	if err != nil {
+		handler.unavailable(response, route)
+		return
+	}
+	handler.answerBody(response, request, route, tag, body)
+}
+
+// answerBody writes an encoded answer, or 304 when the client holds tag.
+func (handler *handler) answerBody(response http.ResponseWriter, request *http.Request, route, tag string,
+	body []byte,
+) {
 	response.Header().Set("ETag", tag)
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Vary", "Accept-Encoding")
 	if matchesTag(request.Header.Get("If-None-Match"), tag) {
 		handler.metrics.request(route, "not_modified")
 		response.WriteHeader(http.StatusNotModified)
-		return
-	}
-	body, err := proto.MarshalOptions{Deterministic: true}.Marshal(message)
-	if err != nil {
-		handler.unavailable(response, route)
 		return
 	}
 	if len(body) > gzipAbove && acceptsGzip(request.Header.Get("Accept-Encoding")) {
@@ -456,6 +472,8 @@ func routeOf(path string) string {
 		return "networks"
 	case strings.HasPrefix(path, scopedPrefix) && strings.HasSuffix(path, "/destination"):
 		return "destination"
+	case strings.HasPrefix(path, scopedPrefix) && strings.HasSuffix(path, "/directory"):
+		return "directory"
 	}
 	return "other"
 }

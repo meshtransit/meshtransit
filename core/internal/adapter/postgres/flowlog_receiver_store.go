@@ -14,15 +14,16 @@ import (
 	"meshtransit.net/core/internal/domain/workspace"
 )
 
-// Schema 268: what the connection log receiver reads (connection logs
-// design §16c). The functions belong to mesh_flowlog_reader, which sees only
+// Schemas 268 and 269: what the connection log receiver reads (connection
+// logs design §16c, §16d). The functions belong to mesh_flowlog_reader, which sees only
 // Networks with a destination; this store only ever calls them.
 const (
 	readFlowlogNetworksSQL = `SELECT pg_catalog.transaction_timestamp(), COALESCE(pg_catalog.jsonb_agg(
     pg_catalog.jsonb_build_object('workspace', listed.workspace_public_id, 'network', listed.network_public_id,
         'enabled', listed.enabled, 'settings_version', listed.settings_version,
         'credential', listed.credential_public_id, 'sealed_version', listed.sealed_version,
-        'sealing_key_id', listed.sealing_key_id, 'expected_bucket_owner', listed.expected_bucket_owner)
+        'sealing_key_id', listed.sealing_key_id, 'expected_bucket_owner', listed.expected_bucket_owner,
+        'directory_revision', listed.directory_revision)
     ORDER BY listed.network_public_id), '[]'::JSONB)::TEXT
 FROM mesh_ops.flowlog_networks_v1($1::UUID, $2::INTEGER) AS listed`
 	readFlowlogDestinationSQL = `SELECT pg_catalog.transaction_timestamp(),
@@ -143,6 +144,7 @@ func (store *FlowlogReceiverStore) Networks(ctx context.Context, after network.I
 		SealedVersion   int64   `json:"sealed_version"`
 		SealingKeyID    string  `json:"sealing_key_id"`
 		BucketOwner     *string `json:"expected_bucket_owner"`
+		Revision        int64   `json:"directory_revision"`
 	}
 	if document == nil || decodeStrictJSON(*document, maxFlowlogDocument, &rows) != nil {
 		return connectionlog.ReceiverNetworks{}, ErrFlowlogReceiver
@@ -155,13 +157,13 @@ func (store *FlowlogReceiverStore) Networks(ctx context.Context, after network.I
 		networkID, networkErr := network.ParseID(row.Network)
 		credential, credentialErr := publicid.Parse(row.Credential)
 		if workspaceErr != nil || networkErr != nil || credentialErr != nil || row.SettingsVersion < 1 ||
-			row.SealedVersion < 1 || row.SealingKeyID == "" {
+			row.SealedVersion < 1 || row.SealingKeyID == "" || row.Revision < 1 {
 			return connectionlog.ReceiverNetworks{}, ErrFlowlogReceiver
 		}
 		entry := connectionlog.ReceiverNetwork{
 			Workspace: workspaceID, Network: networkID, Enabled: row.Enabled, SettingsVersion: row.SettingsVersion,
 			Credential: connectionlog.CredentialID(credential), SealedVersion: row.SealedVersion,
-			SealingKeyID: row.SealingKeyID,
+			SealingKeyID: row.SealingKeyID, DirectoryRevision: row.Revision,
 		}
 		if row.BucketOwner != nil {
 			if !connectionlog.ValidBucketOwner(*row.BucketOwner) {

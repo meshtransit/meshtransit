@@ -46,6 +46,13 @@ CREATE POLICY device_machine_key_epoch_flowlog_read ON mesh.device_machine_key_e
     USING ((workspace_id, network_id) IN (SELECT logged.workspace_id, logged.network_id
                                           FROM mesh.network_connection_log AS logged));
 GRANT SELECT ON mesh.device_machine_key_epoch TO mesh_flowlog_reader;
+-- A Network's revision is its directory's (§16d C58).
+GRANT USAGE ON SCHEMA mesh_ops TO mesh_flowlog_reader;
+CREATE POLICY network_revision_flowlog_read ON mesh_ops.network_revision
+    FOR SELECT TO mesh_flowlog_reader
+    USING ((workspace_id, network_id) IN (SELECT logged.workspace_id, logged.network_id
+                                          FROM mesh.network_connection_log AS logged));
+GRANT SELECT ON mesh_ops.network_revision TO mesh_flowlog_reader;
 
 -- The revocation read finds what changed in the window by index, as relay
 -- revocations do (schema 135).
@@ -61,7 +68,8 @@ CREATE INDEX device_deleted_changed_idx
 CREATE FUNCTION mesh_ops.flowlog_networks_v1(p_after UUID, p_limit INTEGER)
 RETURNS TABLE (
     workspace_public_id UUID, network_public_id UUID, enabled BOOLEAN, settings_version BIGINT,
-    credential_public_id UUID, sealed_version BIGINT, sealing_key_id TEXT, expected_bucket_owner TEXT
+    credential_public_id UUID, sealed_version BIGINT, sealing_key_id TEXT, expected_bucket_owner TEXT,
+    directory_revision BIGINT
 )
 LANGUAGE plpgsql
 STABLE
@@ -78,12 +86,16 @@ BEGIN
     SELECT workspace.public_id, settings.public_id,
         settings.enabled AND network.state = 'active' AND workspace.state = 'active',
         settings.version, credential.public_id, credential.sealed_version, credential.sealing_key_id,
-        settings.expected_bucket_owner
+        settings.expected_bucket_owner, revision.network_revision
     FROM mesh.network_connection_log AS settings
     JOIN mesh.network AS network ON network.workspace_id = settings.workspace_id AND network.id = settings.network_id
     JOIN mesh.workspace AS workspace ON workspace.id = settings.workspace_id
     JOIN mesh.storage_credential AS credential
       ON credential.workspace_id = settings.workspace_id AND credential.id = settings.credential_id
+    -- A Network without a revision row stays listed, with a NULL the
+    -- receiver store refuses: never dropped from the list (review s4c2a M1).
+    LEFT JOIN mesh_ops.network_revision AS revision
+      ON revision.workspace_id = settings.workspace_id AND revision.network_id = settings.network_id
     WHERE (p_after IS NULL OR settings.public_id > p_after)
       AND network.state <> 'deleted' AND network.deleted_at IS NULL
       AND workspace.state <> 'deleted' AND workspace.deleted_at IS NULL
