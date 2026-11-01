@@ -3,6 +3,7 @@
 package flowlog
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/subtle"
 	"encoding/binary"
@@ -77,6 +78,7 @@ var ErrWrongMachineKey = errors.New("flowlog: token issued for another machine k
 // reachable only through Claims, with the Noise static key of the request.
 type Token struct {
 	claims *flowlogv1.FlowTokenClaims
+	raw    []byte
 }
 
 // VerifyToken checks token's signature with the key its kid names, its
@@ -118,7 +120,7 @@ func VerifyToken(token []byte, keys map[string]ed25519.PublicKey, audience strin
 	if at+skew < claims.GetNotBeforeMs() || at-skew >= claims.GetExpiresAtMs() {
 		return nil, ErrTokenExpired
 	}
-	return &Token{claims: claims}, nil
+	return &Token{claims: claims, raw: bytes.Clone(token)}, nil
 }
 
 // Claims returns the token's claims when machineKey, the Noise static key

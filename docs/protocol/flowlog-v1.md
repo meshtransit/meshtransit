@@ -66,8 +66,9 @@ the spec assumes an on-path party.
     `batch_length` L (1 to 4 MiB), the batch's `boot_id` and `sequence`,
     `held_from` and `lost` (§5).
   - Frames 1 to k are transport messages under the first cipher state of the
-    split, each with a plaintext of 1 to 65,519 bytes. Their plaintexts, in
-    order, are exactly L bytes: the gzip-compressed `FlowBatch`.
+    split, each with a plaintext of 65,519 bytes but the last (1 to 65,519).
+    Their plaintexts, in order, are exactly L bytes: the gzip-compressed
+    `FlowBatch`, one gzip member and nothing after it.
 
 **Receiver order.** Each step runs only when the one before passed.
 
@@ -103,12 +104,16 @@ key.
 Before step 3, and when step 6 fails, the receiver answers in plain HTTP: 400
 (framing, a frame that does not decrypt, a body short of or past L), 401
 (token), 403 (another machine key, revoked Device), 413 (size), 429 or 503
-with `Retry-After`. **A node never drops a batch on a plain HTTP answer**,
+with `Retry-After` (503 also for a fault of the receiver's own). The receiver
+reads at most one batch per (Device, `boot_id`) at a time and caps a body at
+frame 0 plus L plus 18 bytes per frame. **A node never drops a batch on a plain HTTP answer**,
 only on a `FlowBatchResponse` that opened under its machine key; on 401 or
 403 it waits for a new `FlowTicket`, on anything else it backs off and sends
 again. An on-path party can thus delay batches, never delete them.
 
-Ingress and receiver never log the token header. A recorded request can be
+The batch has no forward secrecy against the receiver's static key: whoever
+later holds that key can read recorded requests. Ingress and receiver never
+log the token header. A recorded request can be
 replayed while its token is valid; the receiver answers it as a batch it
 already has (§5), and only the node can open the answer.
 
@@ -223,8 +228,11 @@ A record is one aggregate of a window: allowed traffic of one flow key
 
 **Refused requests.** A `FlowRequest` with `batch_length` out of bounds,
 `boot_id` not 16 bytes, `sequence` 0, `held_from` 0 or above `sequence`, or a
-`lost` range that is reversed or does not end below `held_from` gets a plain
-400: the node keeps the batch and reports the error in its diagnostics.
+`lost` sequence range that is reversed or does not end below `held_from`, or
+a field the receiver does not know at any depth, gets a plain 400: the node
+keeps the batch and reports the error in its diagnostics. `lost.from_ms` and
+`to_ms` are what the node saw and are never refused (a clock that stepped
+back may reverse them).
 
 **Refused batches.** The receiver answers `INVALID` and writes only an
 `invalid` event (§5) when:
