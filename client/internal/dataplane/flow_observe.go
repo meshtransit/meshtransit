@@ -36,16 +36,38 @@ func (f *policyFilter) processAndObserveLocked(direction PacketDirection, header
 ) (bool, flowcount.Observation) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	openedBefore := f.openedHereLocked(direction, header)
-	// Labelling needs the packet as it was decided; the decision may
-	// rewrite an alias packet's addresses.
-	aliasMalformed := false
-	if _, aliased := f.aliases[remoteOf(direction, header)]; aliased {
-		_, err := packetmeta.CheckAliasPacket(packet)
-		aliasMalformed = err != nil
+	// Each lookup is made once: the labels read the same state the decision
+	// does, and nothing else changes it under the lock.
+	decision := packetDecision{
+		ownSource: containsAddress(f.self, header.Source), ownDestination: containsAddress(f.self, header.Destination),
 	}
-	allowed := f.processPacketLocked(direction, header, packet, now)
-	return allowed, f.observationLocked(direction, header, allowed, openedBefore, aliasMalformed, now)
+	decision.grant, decision.aliased = f.aliases[remoteOf(direction, header)]
+	if decision.aliased {
+		// The decision may rewrite an alias packet's addresses.
+		_, err := packetmeta.CheckAliasPacket(packet)
+		decision.malformed = err != nil
+	} else {
+		decision.openedBefore = f.openedHereLocked(direction, header, decision.own(direction))
+	}
+	decision.allowed = f.processPacketLocked(direction, header, packet, now)
+	return decision.allowed, f.observationLocked(direction, header, decision, now)
+}
+
+// packetDecision is what labelling needs of one decision.
+type packetDecision struct {
+	allowed, openedBefore, malformed bool
+	ownSource, ownDestination        bool
+	aliased                          bool
+	grant                            aliasPacketGrant
+}
+
+// own reports whether this node is the packet's end on its side: the
+// sender of an outbound packet, the receiver of an inbound one.
+func (decision packetDecision) own(direction PacketDirection) bool {
+	if direction == PacketOutbound {
+		return decision.ownSource
+	}
+	return decision.ownDestination
 }
 
 // openedHereLocked reports whether this node opened the flow of a packet
@@ -56,12 +78,8 @@ func (f *policyFilter) processAndObserveLocked(direction PacketDirection, header
 // could not have admitted is this node's; failing that the side on a
 // well-known port (below 1024) is the server; otherwise the remote opened
 // it, as local rules admitting the remote suggests.
-func (f *policyFilter) openedHereLocked(direction PacketDirection, header packetmeta.Header) bool {
-	own := header.Source
-	if direction == PacketInbound {
-		own = header.Destination
-	}
-	if !containsAddress(f.self, own) {
+func (f *policyFilter) openedHereLocked(direction PacketDirection, header packetmeta.Header, own bool) bool {
+	if !own {
 		return false
 	}
 	key, stateful := outboundFlowKey(header)
@@ -92,10 +110,10 @@ func (f *policyFilter) openedHereLocked(direction PacketDirection, header packet
 // observationLocked labels a decision ProcessPacket made: the class and
 // direction of the packet's flow and, when denied, why (flowlog-v1 §6). It
 // never decides anything; a packet it cannot place is noise, not counted.
-// openedBefore is openedHereLocked before the decision, which may have
-// started or ended the flow.
-func (f *policyFilter) observationLocked(direction PacketDirection, header packetmeta.Header, allowed,
-	openedBefore, aliasMalformed bool, now time.Time,
+// decision.openedBefore is openedHereLocked before the decision, which may
+// have started or ended the flow.
+func (f *policyFilter) observationLocked(direction PacketDirection, header packetmeta.Header,
+	decision packetDecision, now time.Time,
 ) flowcount.Observation {
 	noise := flowcount.Observation{Deny: flowcount.DenyNoise}
 	if f.suspended || !f.selfAuthority.usableAt(now) {
@@ -106,14 +124,17 @@ func (f *policyFilter) observationLocked(direction PacketDirection, header packe
 	if isICMP(header.Protocol) && !isICMPEchoRequest(header) && !isICMPEchoReply(header) {
 		return noise
 	}
-	if grant, aliased := f.aliases[remoteOf(direction, header)]; aliased {
-		return f.aliasObservationLocked(direction, header, grant, allowed, aliasMalformed, now)
+	allowed := decision.allowed
+	if decision.aliased {
+		return f.aliasObservationLocked(direction, header, decision.grant, allowed, decision.malformed, now)
 	}
+	own := decision.own(direction)
+	opened := own && (decision.openedBefore || f.openedHereLocked(direction, header, own))
 	switch {
-	case direction == PacketOutbound && containsAddress(f.self, header.Source):
-		return f.sentObservationLocked(header, allowed, openedBefore || f.openedHereLocked(direction, header), now)
-	case direction == PacketInbound && containsAddress(f.self, header.Destination):
-		return f.receivedObservationLocked(header, allowed, openedBefore || f.openedHereLocked(direction, header), now)
+	case own && direction == PacketOutbound:
+		return f.sentObservationLocked(header, allowed, opened, now)
+	case own:
+		return f.receivedObservationLocked(header, allowed, opened, now)
 	case direction == PacketInbound:
 		return f.forwardedObservationLocked(header, allowed, now)
 	default:

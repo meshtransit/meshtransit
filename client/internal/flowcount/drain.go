@@ -72,9 +72,10 @@ func (c *Counter) Drain(now time.Time, cluster ID) Window {
 }
 
 func (c *Counter) flowRecord(key flowKey, count *flowCount, cluster ID) *flowlogv1.FlowRecord {
+	source, destination := addresses(key.source, key.destination, key.addressFlags)
 	record := &flowlogv1.FlowRecord{
 		Kind: flowlogv1.FlowRecord_FLOW, Class: recordClass(key.class), Protocol: uint32(key.protocol),
-		SourceIp: addressBytes(key.source), DestinationIp: addressBytes(key.destination),
+		SourceIp: addressBytes(source), DestinationIp: addressBytes(destination),
 		DestinationPort: uint32(key.destinationPort), Primary: primary(key.class, key.direction),
 		Direction: recordDirection(key.direction), Initiator: flowlogv1.FlowRecord_SOURCE,
 		TcpState:   flowlogv1.FlowRecord_TcpState(count.tcpState),
@@ -87,9 +88,10 @@ func (c *Counter) flowRecord(key flowKey, count *flowCount, cluster ID) *flowlog
 }
 
 func denyRecord(key denyKey, count *denyCount, cluster ID) *flowlogv1.FlowRecord {
+	source, destination := addresses(key.source, key.destination, key.addressFlags)
 	record := &flowlogv1.FlowRecord{
 		Kind: flowlogv1.FlowRecord_DENY, Class: recordClass(key.class), Protocol: uint32(key.protocol),
-		SourceIp: addressBytes(key.source), DestinationIp: addressBytes(key.destination), Primary: true,
+		SourceIp: addressBytes(source), DestinationIp: addressBytes(destination), Primary: true,
 		PacketsOut: count.packets, BytesOut: count.bytes, FirstSeenMs: count.firstSeen, LastSeenMs: count.lastSeen,
 		DenyReason:    flowlogv1.FlowRecord_DenyReason(key.reason),
 		DistinctPorts: count.ports.distinct(), SamplePorts: count.ports.samplePorts(),
@@ -147,10 +149,9 @@ func primary(class Class, direction Direction) bool {
 func (c *Counter) flowID(key flowKey) []byte {
 	hash := sha256.New()
 	hash.Write(c.flowSecret[:])
-	hash.Write([]byte{byte(key.class), byte(key.direction), key.protocol})
-	source, destination := key.source.As16(), key.destination.As16()
-	hash.Write(source[:])
-	hash.Write(destination[:])
+	hash.Write([]byte{byte(key.class), byte(key.direction), key.protocol, key.addressFlags})
+	hash.Write(key.source[:])
+	hash.Write(key.destination[:])
 	hash.Write(binary.BigEndian.AppendUint16(nil, key.destinationPort))
 	hash.Write(key.peer[:])
 	hash.Write(key.scope[:])

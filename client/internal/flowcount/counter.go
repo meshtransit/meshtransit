@@ -43,13 +43,25 @@ const (
 	tcpStateReset
 )
 
+// address is an address as a plain 16-byte value, so keys hold no pointer
+// and the map hashes them as plain memory. Its flags live in the key.
+type address [16]byte
+
+const (
+	sourceSet = 1 << iota
+	sourceIPv4
+	destinationSet
+	destinationIPv4
+)
+
 type flowKey struct {
 	class           Class
 	direction       Direction
 	protocol        uint8
-	source          netip.Addr
-	destination     netip.Addr
+	addressFlags    uint8
 	destinationPort uint16
+	source          address
+	destination     address
 	peer            ID
 	scope           ID
 }
@@ -64,14 +76,15 @@ type flowCount struct {
 }
 
 type denyKey struct {
-	class       Class
-	direction   Direction
-	reason      DenyReason
-	protocol    uint8
-	source      netip.Addr
-	destination netip.Addr
-	peer        ID
-	scope       ID
+	class        Class
+	direction    Direction
+	reason       DenyReason
+	protocol     uint8
+	addressFlags uint8
+	source       address
+	destination  address
+	peer         ID
+	scope        ID
 }
 
 type denyCount struct {
@@ -281,7 +294,8 @@ func flowKeyOf(observation Observation) flowKey {
 		class: observation.Class, direction: observation.Direction, protocol: header.Protocol,
 		destinationPort: destinationPort, scope: observation.Scope,
 	}
-	key.source, key.destination, key.peer = keyEndpoints(observation.Class, source, destination, observation.Peer)
+	key.source, key.destination, key.addressFlags, key.peer = keyEndpoints(observation.Class, source, destination,
+		observation.Peer)
 	return key
 }
 
@@ -291,7 +305,7 @@ func denyKeyOf(observation Observation) denyKey {
 		class: observation.Class, direction: observation.Direction, reason: observation.Deny,
 		protocol: header.Protocol, scope: observation.Scope,
 	}
-	key.source, key.destination, key.peer = keyEndpoints(observation.Class, header.Source.Unmap(),
+	key.source, key.destination, key.addressFlags, key.peer = keyEndpoints(observation.Class, header.Source.Unmap(),
 		header.Destination.Unmap(), observation.Peer)
 	return key
 }
@@ -300,15 +314,43 @@ func denyKeyOf(observation Observation) denyKey {
 // names only its contract, never the other Workspace's Device; an exit
 // node keeps only pool, protocol and destination port; an Internet address
 // never leaves the node.
-func keyEndpoints(class Class, source, destination netip.Addr, peer ID) (netip.Addr, netip.Addr, ID) {
+func keyEndpoints(class Class, source, destination netip.Addr, peer ID) (address, address, uint8, ID) {
+	source, destination = source.Unmap(), destination.Unmap()
 	if class == ClassShare {
 		peer = ID{}
 	}
+	var flags uint8
+	var from, to address
 	if class == ClassExit || !isPrivate(source) {
-		source, peer = netip.Addr{}, ID{}
+		peer = ID{}
+	} else {
+		from, flags = source.As16(), flags|sourceSet
+		if source.Is4() {
+			flags |= sourceIPv4
+		}
 	}
-	if !isPrivate(destination) {
-		destination = netip.Addr{}
+	if isPrivate(destination) {
+		to, flags = destination.As16(), flags|destinationSet
+		if destination.Is4() {
+			flags |= destinationIPv4
+		}
 	}
-	return source, destination, peer
+	return from, to, flags, peer
+}
+
+// addresses turns a key's addresses back into netip values.
+func addresses(source, destination address, flags uint8) (netip.Addr, netip.Addr) {
+	return toAddr(source, flags&sourceSet != 0, flags&sourceIPv4 != 0),
+		toAddr(destination, flags&destinationSet != 0, flags&destinationIPv4 != 0)
+}
+
+func toAddr(value address, set, ipv4 bool) netip.Addr {
+	switch {
+	case !set:
+		return netip.Addr{}
+	case ipv4:
+		return netip.AddrFrom16(value).Unmap()
+	default:
+		return netip.AddrFrom16(value)
+	}
 }
