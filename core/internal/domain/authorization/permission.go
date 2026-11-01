@@ -49,6 +49,12 @@ const (
 	// PermissionKubernetesClusterApprove approves a replica's request to join
 	// a Kubernetes cluster, by the code the replica prints.
 	PermissionKubernetesClusterApprove Permission = "kubernetes_cluster.approve"
+	// PermissionConnectionLogManage turns a network's connection logs on or
+	// off and chooses where they go (schema 266).
+	PermissionConnectionLogManage Permission = "connection_log.manage"
+	// PermissionStorageCredentialManage creates, rotates and deletes the
+	// workspace's storage credentials for connection logs (schema 266).
+	PermissionStorageCredentialManage Permission = "storage_credential.manage"
 
 	// PermissionMemberRead reads workspace membership.
 	PermissionMemberRead Permission = "member.read"
@@ -276,5 +282,7 @@ func Permissions() []Permission {
 		PermissionNetworkMemberManage,
 		PermissionKubernetesClusterManage,
 		PermissionKubernetesClusterApprove,
+		PermissionStorageCredentialManage,
+		PermissionConnectionLogManage,
 	}
 }

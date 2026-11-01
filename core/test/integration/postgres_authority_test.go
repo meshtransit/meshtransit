@@ -334,9 +334,15 @@ WHERE mutation.change_public_id = $1`, changePublicID).Scan(
 			streamHeadMatches,
 		)
 	}
+	// The event lands in its month's partition once one exists, in the
+	// default partition before (the partition worker adds months ahead).
 	wantPartition := "mesh_audit.audit_event_default"
-	switch occurredAt.UTC().Format("2006_01") {
-	case "2026_09", "2026_10":
+	var monthly bool
+	if err := connection.QueryRow(ctx, `SELECT pg_catalog.to_regclass($1) IS NOT NULL`,
+		"mesh_audit.audit_event_"+occurredAt.UTC().Format("2006_01")).Scan(&monthly); err != nil {
+		t.Fatalf("look up the audit partition: %v", err)
+	}
+	if monthly {
 		wantPartition = "mesh_audit.audit_event_" + occurredAt.UTC().Format("2006_01")
 	}
 	if partitionName != wantPartition {

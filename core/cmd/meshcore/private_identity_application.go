@@ -100,6 +100,7 @@ type privateIdentityPorts struct {
 	AuditExports                      httpapi.AuditExporter
 	Guardrails                        httpapi.GuardrailManager
 	Interchanges                      httpapi.InterchangeManager
+	ConnectionLogs                    httpapi.ConnectionLogManager
 	InterchangeTrust                  httpapi.InterchangeRelayTrust
 	DeviceGroups                      httpapi.DeviceGroupManager
 	Sites                             httpapi.SiteManager
@@ -253,6 +254,7 @@ func composePrivateIdentity(
 		AuditExports:                      ports.AuditExports,
 		Guardrails:                        ports.Guardrails,
 		Interchanges:                      ports.Interchanges,
+		ConnectionLogs:                    ports.ConnectionLogs,
 		InterchangeTrust:                  ports.InterchangeTrust,
 		DeviceGroups:                      ports.DeviceGroups,
 		Sites:                             ports.Sites,
@@ -337,8 +339,10 @@ func composePrivateIdentity(
 	if ctx.Err() != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
-	return &privateIdentity{start: start, callback: callback, sessions: sessions, logout: logout,
-		login: login, dispatcher: dispatcher, loginDocument: loginDocument, management: management, metrics: registry}, nil
+	return &privateIdentity{
+		start: start, callback: callback, sessions: sessions, logout: logout,
+		login: login, dispatcher: dispatcher, loginDocument: loginDocument, management: management, metrics: registry,
+	}, nil
 }
 
 func completePrivateIdentityKeys(keys *privateIdentityKeys) bool {

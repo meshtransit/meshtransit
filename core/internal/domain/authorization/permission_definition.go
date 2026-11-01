@@ -97,7 +97,8 @@ func LookupPermission(permission Permission) (PermissionDefinition, bool) {
 		PermissionSupportGrantRead,
 		PermissionSupportGrantManage,
 		PermissionBillingRead,
-		PermissionBillingManage:
+		PermissionBillingManage,
+		PermissionStorageCredentialManage:
 		relations = workspaceExact
 	case PermissionNetworkRead,
 		PermissionNetworkUpdate,
@@ -107,6 +108,7 @@ func LookupPermission(permission Permission) (PermissionDefinition, bool) {
 		PermissionNetworkMemberManage,
 		PermissionKubernetesClusterManage,
 		PermissionKubernetesClusterApprove,
+		PermissionConnectionLogManage,
 		PermissionDeviceRead,
 		PermissionDeviceManage,
 		PermissionDeviceTransfer,

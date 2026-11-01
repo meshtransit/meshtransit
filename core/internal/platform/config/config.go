@@ -119,6 +119,8 @@ type Config struct {
 	Interchange           *InterchangeConfig
 	Identity              *IdentityConfig
 	DeploymentEntitlement *DeploymentEntitlementConfig
+	// FlowLog is the connection log receiver's keys; nil without one.
+	FlowLog *FlowLogConfig
 }
 
 // DependencyConfig bounds startup and periodic infrastructure checks.
@@ -181,6 +183,10 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, settingError(envDeviceAliasWorkerEnabled)
 	}
 
+	flowLogConfig, err := loadFlowLogConfig(lookup, role)
+	if err != nil {
+		return Config{}, err
+	}
 	relayAuthorityConfig, err := loadRelayAuthorityConfig(lookup, role)
 	if err != nil {
 		return Config{}, err
@@ -422,6 +428,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		DeviceAliasWorker:           deviceAliasWorkerConfig,
 		ContractExpiryWorker:        contractExpiryWorkerConfig,
 		RelayAuthority:              relayAuthorityConfig,
+		FlowLog:                     flowLogConfig,
 		AccessLedgerWorker:          accessLedgerWorkerConfig,
 		KubernetesCAWorker:          kubernetesCAWorkerConfig,
 		EnforcementLedgerWorker:     enforcementLedgerWorkerConfig,

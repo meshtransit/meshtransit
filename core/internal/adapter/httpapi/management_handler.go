@@ -271,6 +271,9 @@ type ManagementHandlerOptions struct {
 	Guardrails GuardrailManager
 	// Interchanges lists and changes Private Interchange relays; nil answers 503.
 	Interchanges InterchangeManager
+	// ConnectionLogs keeps storage credentials and Networks' connection log
+	// settings; nil answers 503.
+	ConnectionLogs ConnectionLogManager
 	// InterchangeTrust is shown with the command that starts a relay.
 	InterchangeTrust InterchangeRelayTrust
 	// DeviceGroups lists and changes Network Device Groups; nil answers 503.
@@ -379,6 +382,7 @@ type ManagementHandler struct {
 	auditExports              AuditExporter
 	guardrails                GuardrailManager
 	interchanges              InterchangeManager
+	connectionLogs            ConnectionLogManager
 	interchangeTrust          InterchangeRelayTrust
 	deviceGroups              DeviceGroupManager
 	sites                     SiteManager
@@ -473,6 +477,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		auditExports:              options.AuditExports,
 		guardrails:                options.Guardrails,
 		interchanges:              options.Interchanges,
+		connectionLogs:            options.ConnectionLogs,
 		interchangeTrust:          options.InterchangeTrust,
 		deviceGroups:              options.DeviceGroups,
 		sites:                     options.Sites,
@@ -607,6 +612,7 @@ func (handler *ManagementHandler) serveHTTP(
 	auditExportPath, auditExportMatched := parseAuditEventExportPath(request)
 	guardrailPathValue, guardrailMatched := parseGuardrailPath(request)
 	interchangePathValue, interchangeMatched := parseInterchangePath(request)
+	connectionLogPathValue, connectionLogMatched := parseConnectionLogPath(request)
 	deviceGroupPathValue, deviceGroupMatched := parseDeviceGroupPath(request)
 	sitePathValue, siteMatched := parseSitePath(request)
 	exitPoolPathValue, exitPoolMatched := parseExitPoolPath(request)
@@ -622,7 +628,7 @@ func (handler *ManagementHandler) serveHTTP(
 		!accessGraphMatched && !accessGraphListMatched && !resourceMatched && !sharingMatched && !policyReadMatched && !policyKubernetesAccessMatched && !workspaceRenameMatched &&
 		!workspaceRoleMatched && !workspaceCollectionMatched && !networkCollectionMatched && !sessionWorkspaceMatched &&
 		!shareTargetMatched && !aliasRangeMatched && !deviceLifetimeMatched && !addressUsageMatched && !auditEventMatched &&
-		!auditExportMatched && !guardrailMatched && !interchangeMatched && !deviceGroupMatched && !siteMatched && !exitPoolMatched &&
+		!auditExportMatched && !guardrailMatched && !interchangeMatched && !connectionLogMatched && !deviceGroupMatched && !siteMatched && !exitPoolMatched &&
 		!kubernetesMatched && !dnsZoneMatched && !identityCatalogMatched &&
 		!deviceLifecycleMatched && !memberLifecycleMatched && !networkMemberMatched && !invitationMatched &&
 		!enrollmentKeyMatched {
@@ -661,6 +667,8 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = guardrailPathValue.operation(request.Method)
 	} else if interchangeMatched {
 		operation = interchangePathValue.operation(request.Method)
+	} else if connectionLogMatched {
+		operation = connectionLogPathValue.operation
 	} else if deviceGroupMatched {
 		operation = deviceGroupPathValue.operation()
 	} else if siteMatched {
@@ -730,6 +738,8 @@ func (handler *ManagementHandler) serveHTTP(
 		allowedMethod = guardrailPathValue.allowedMethod(request.Method)
 	} else if interchangeMatched {
 		allowedMethod = interchangePathValue.allowedMethod(request.Method)
+	} else if connectionLogMatched {
+		allowedMethod = connectionLogPathValue.methods.allowedMethod(request.Method)
 	} else if deviceGroupMatched {
 		allowedMethod = deviceGroupPathValue.methods.allowedMethod(request.Method)
 	} else if siteMatched {
@@ -786,6 +796,8 @@ func (handler *ManagementHandler) serveHTTP(
 			response.Header().Set("Allow", guardrailPathValue.methods.header())
 		} else if interchangeMatched {
 			response.Header().Set("Allow", interchangePathValue.methods.header())
+		} else if connectionLogMatched {
+			response.Header().Set("Allow", connectionLogPathValue.methods.header())
 		} else if enrollmentKeyMatched {
 			response.Header().Set("Allow", enrollmentKeyPathValue.methods.header())
 		} else if invitationMatched {
@@ -898,6 +910,10 @@ func (handler *ManagementHandler) serveHTTP(
 	}
 	if interchangeMatched {
 		resultCode = handler.handleInterchanges(ctx, response, request, correlationID, interchangePathValue, session)
+		return
+	}
+	if connectionLogMatched {
+		resultCode = handler.handleConnectionLogs(ctx, response, request, correlationID, connectionLogPathValue, session)
 		return
 	}
 	if deviceGroupMatched {

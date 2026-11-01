@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 265 {
-		t.Fatalf("len(Catalog()) = %d, want 265", len(catalog))
+	if len(catalog) != 266 {
+		t.Fatalf("len(Catalog()) = %d, want 266", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 265 {
-		t.Fatalf("LatestVersion() = %d, want 265", LatestVersion())
+	if LatestVersion() != 266 {
+		t.Fatalf("LatestVersion() = %d, want 266", LatestVersion())
 	}
 }
 
@@ -7906,5 +7906,38 @@ func TestMigration265KubernetesGatewayCeilings(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "pg_advisory_xact_lock") {
 		t.Error("a ceiling write takes a handshake lock")
+	}
+}
+
+func TestMigration266ConnectionLogs(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 266 || catalog[265].Version != 266 {
+		t.Fatalf("the catalog has no migration 266 (%d migrations)", len(catalog))
+	}
+	sql := catalog[265].SQL
+	for _, want := range []string{
+		"'storage_credential.manage'", "'connection_log.manage'",
+		"CREATE TABLE mesh.workspace_feature", "CREATE TABLE mesh.storage_credential (",
+		"CREATE TABLE mesh.network_connection_log", "FORCE ROW LEVEL SECURITY",
+		"mesh_audit.capture_authority_mutation('storage_credential', 'public_id')",
+		"mesh_audit.capture_authority_mutation('network_connection_log', 'public_id')",
+		"mesh_audit.capture_authority_mutation('workspace_feature', 'public_id')",
+		"'the Workspace does not have connection logs'",
+		"network_revision = revision.network_revision + 1",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.put_storage_credential_v1(",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.replace_network_connection_log_v1(",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("migration 266 lacks %q", want)
+		}
+	}
+	// The sealed secret is never part of a document the API returns.
+	if strings.Contains(sql, "'sealed', ") {
+		t.Error("a document returns the sealed secret")
+	}
+	// Runtime never writes the feature table directly.
+	if strings.Contains(sql, "GRANT INSERT") || strings.Contains(sql, "TO mesh_runtime;\nGRANT") {
+		t.Error("runtime gets table writes")
 	}
 }

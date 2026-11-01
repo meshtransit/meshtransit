@@ -661,6 +661,8 @@ func Catalog() []Migration {
 			kubernetesProfileClustersSQL),
 		newMigration(265, "Kubernetes gateways' group ceilings, as their RBAC lets each group act",
 			kubernetesGatewayCeilingsSQL),
+		newMigration(266, "Connection logs: Workspace features, storage credentials and Network destinations",
+			connectionLogsSQL),
 	}
 }
 
@@ -1235,3 +1237,6 @@ var kubernetesProfileClustersSQL string
 
 //go:embed 000265_kubernetes_gateway_ceilings.up.sql
 var kubernetesGatewayCeilingsSQL string
+
+//go:embed 000266_connection_logs.up.sql
+var connectionLogsSQL string

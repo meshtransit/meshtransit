@@ -331,8 +331,10 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 				return 1
 			}
 			additionalMetrics = append(additionalMetrics, exitElectionMetrics)
-			roleServices = append(roleServices, app.OwnedService{Name: "exit-pool-election-worker",
-				Service: exitElection})
+			roleServices = append(roleServices, app.OwnedService{
+				Name:    "exit-pool-election-worker",
+				Service: exitElection,
+			})
 		}
 	}
 	var enrollmentKeys httpapi.EnrollmentKeyManager
@@ -379,15 +381,17 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		factory, loginService, composeErr := composePrivateIdentityRuntime(
 			ctx,
 			privateProfile,
-			privateIdentityFactoryDependencies{Runtime: storagePools.runtime, Redis: redisClient, Logger: logger,
-				Mailer: mailer, Signup: processConfig.Signup, Interchange: processConfig.Interchange,
+			privateIdentityFactoryDependencies{
+				Runtime: storagePools.runtime, Redis: redisClient, Logger: logger,
+				Mailer: mailer, Signup: processConfig.Signup, Interchange: processConfig.Interchange, FlowLog: processConfig.FlowLog,
 				DNSSuffix: processConfig.DNSSuffix, EnrollmentKeys: enrollmentKeys,
 				KubernetesClusters: kubernetesClusters,
 				SubnetRoutes:       processConfig.SubnetRoutes, SiteDenied: processConfig.SiteDenied,
 				ExitNodes: processConfig.ExitNodes, ExitSpread: processConfig.ExitSpread, Countries: countries,
 				KubernetesClusteredProfiles: processConfig.KubernetesClusteredProfiles,
 				KubernetesAccessRequired:    processConfig.KubernetesAccessRequired,
-				DNSZones:                    processConfig.DNSZones.Enabled, DNSProtectedNames: processConfig.DNSProtectedNames()},
+				DNSZones:                    processConfig.DNSZones.Enabled, DNSProtectedNames: processConfig.DNSProtectedNames(),
+			},
 			browserRuntime...,
 		)
 		if composeErr != nil {
@@ -413,12 +417,14 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		var composeErr error
 		if privateFactory != nil {
 			managementServer, managementMetrics, composeErr = composeManagementAPIWithKeys(
-				managementCompositionOptions{API: *processConfig.API, Keys: privateFactory.managementKeys,
+				managementCompositionOptions{
+					API: *processConfig.API, Keys: privateFactory.managementKeys,
 					DNSSuffix: processConfig.DNSSuffix, EnrollmentKeys: enrollmentKeys,
 					KubernetesClusters: kubernetesClusters,
 					SubnetRoutes:       processConfig.SubnetRoutes, ExitNodes: processConfig.ExitNodes,
 					KubernetesClusteredProfiles: processConfig.KubernetesClusteredProfiles,
-					KubernetesAccessRequired:    processConfig.KubernetesAccessRequired},
+					KubernetesAccessRequired:    processConfig.KubernetesAccessRequired,
+				},
 				storagePools.runtime,
 				redisClient,
 				logger,
@@ -666,7 +672,8 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			logger.ErrorContext(ctx, "startup failed", "error_code", "mtcp_composition_failure", "error", offerErr)
 			return 1
 		}
-		deps := mtcpDependencies{streams: mapStreamService, sessions: mapSessionService,
+		deps := mtcpDependencies{
+			streams: mapStreamService, sessions: mapSessionService,
 			registrations: registrationService, logout: logout, paths: redisClient, connectivity: redisClient, guard: mtcpTimestampGuard{store: timestamps}, gatewayKeyEvents: gatewayKeyEvents, gatewayPresence: redisClient, logger: logger,
 			dnsSuffix: processConfig.DNSSuffix, dnsInfrastructure: processConfig.DNSProtectedNames(),
 			routeOffers:        routeOffers,
@@ -674,7 +681,8 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			exitNodes:          processConfig.ExitNodes && processConfig.Control.Map.SharedInventory,
 			dnsZones:           processConfig.DNSZones.Enabled && processConfig.Control.Map.SharedInventory,
 			kubernetesAccess:   processConfig.Control.Map.SharedInventory,
-			kubernetesProfiles: processConfig.KubernetesProfiles && processConfig.Control.Map.SharedInventory}
+			kubernetesProfiles: processConfig.KubernetesProfiles && processConfig.Control.Map.SharedInventory,
+		}
 		if deps.exitNodes {
 			// Exit offers are stored only while Core offers router.exit.v1:
 			// then a node that no longer lists it withdraws its offer.

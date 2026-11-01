@@ -8,7 +8,7 @@ import (
 	"meshtransit.net/core/internal/platform/config"
 )
 
-const usage = "Usage: meshcore [serve | version | config validate | identity fingerprint | migrate status | migrate up | migrate verify | migrate operator status | migrate operator apply [--dry-run] [--after-rollout] [--through N] | bootstrap check | bootstrap apply | account revoke-sessions|quarantine|release <principal-id> | kubernetes-ca status|rewrap|rotate-data-key|retire-ca --workspace W --network N [--ca C --reason R] [--actor A --change-ref R] | kubernetes-ca guard | kubernetes-ca mark-restored --actor A --change-ref R | kubernetes-ca reconcile-after-restore --actor A --change-ref R --roots-checked-since T]\n"
+const usage = "Usage: meshcore [serve | version | config validate | identity fingerprint | migrate status | migrate up | migrate verify | migrate operator status | migrate operator apply [--dry-run] [--after-rollout] [--through N] | bootstrap check | bootstrap apply | account revoke-sessions|quarantine|release <principal-id> | workspace feature grant <workspace-id> connection_logs <note> | workspace feature revoke <workspace-id> connection_logs | workspace feature list <workspace-id> | kubernetes-ca status|rewrap|rotate-data-key|retire-ca --workspace W --network N [--ca C --reason R] [--actor A --change-ref R] | kubernetes-ca guard | kubernetes-ca mark-restored --actor A --change-ref R | kubernetes-ca reconcile-after-restore --actor A --change-ref R --roots-checked-since T]\n"
 
 func execute(
 	ctx context.Context,
@@ -36,6 +36,8 @@ func execute(
 		return runBootstrap(ctx, args[1], lookup, output, errorOutput)
 	case len(args) >= 2 && args[0] == "kubernetes-ca":
 		return runKubernetesCA(ctx, args[1:], lookup, output, errorOutput)
+	case len(args) >= 2 && args[0] == "workspace" && args[1] == "feature":
+		return runWorkspaceFeature(ctx, args[2:], lookup, output, errorOutput)
 	case len(args) == 3 && args[0] == "account" && accountCommandActions[args[1]] != "":
 		return runAccount(ctx, args[1], args[2], lookup, output, errorOutput)
 	case len(args) == 1 && (args[0] == "help" || args[0] == "-h" || args[0] == "--help"):

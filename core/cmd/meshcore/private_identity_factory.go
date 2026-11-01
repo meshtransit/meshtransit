@@ -71,6 +71,9 @@ type privateIdentityFactoryDependencies struct {
 	Signup *config.SignupConfig
 	// Interchange is shown with the Private Interchange relay command.
 	Interchange *config.InterchangeConfig
+	// FlowLog holds the connection log receiver's credential key; nil
+	// leaves storage credentials unable to be created or rotated.
+	FlowLog *config.FlowLogConfig
 	// DNSSuffix names Devices and shares in Console responses
 	// (MESHTRANSIT_DNS_SUFFIX); the zero value is the default.
 	DNSSuffix dnsname.Suffix
@@ -256,10 +259,27 @@ func composePrivateIdentityFactory(
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
+	var sealer *postgresadapter.CredentialSealer
+	if dependencies.FlowLog != nil {
+		sealer = &postgresadapter.CredentialSealer{
+			KeyID: dependencies.FlowLog.CredentialKeyID,
+			Key:   dependencies.FlowLog.CredentialKey,
+		}
+	}
+	connectionLogs, err := postgresadapter.NewConnectionLogStore(dependencies.Runtime,
+		postgresadapter.AccountSessionOptions{
+			StatementTimeout: managementOptions.StatementTimeout,
+			IdleTimeout:      managementOptions.IdleTimeout,
+		}, sealer)
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
 	var interchangeTrust httpapi.InterchangeRelayTrust
 	if dependencies.Interchange != nil {
-		interchangeTrust = httpapi.InterchangeRelayTrust{CoreURL: dependencies.Interchange.CoreURL,
-			SigningKeys: dependencies.Interchange.SigningKeys()}
+		interchangeTrust = httpapi.InterchangeRelayTrust{
+			CoreURL:     dependencies.Interchange.CoreURL,
+			SigningKeys: dependencies.Interchange.SigningKeys(),
+		}
 	}
 	deviceGroupStore, err := postgresadapter.NewDeviceGroupStore(dependencies.Runtime, postgresadapter.AccountSessionOptions{StatementTimeout: managementOptions.StatementTimeout, IdleTimeout: managementOptions.IdleTimeout})
 	if err != nil {
@@ -303,14 +323,18 @@ func composePrivateIdentityFactory(
 		dnsSuffix = dnsname.Default()
 	}
 	dnsZones, err := dnszone.NewService(dnsZoneStore, clock, dnszone.SystemIDs{}, dnszone.DefaultLimits(),
-		dnszone.Options{Enabled: dependencies.DNSZones, Root: dependencies.DNSZones,
-			Names: dnszone.Names{Suffix: dnsSuffix, Protected: dependencies.DNSProtectedNames}})
+		dnszone.Options{
+			Enabled: dependencies.DNSZones, Root: dependencies.DNSZones,
+			Names: dnszone.Names{Suffix: dnsSuffix, Protected: dependencies.DNSProtectedNames},
+		})
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
 	contractServiceNames, err := postgresadapter.NewContractServiceNameStore(dependencies.Runtime,
-		postgresadapter.AccountSessionOptions{StatementTimeout: managementOptions.StatementTimeout,
-			IdleTimeout: managementOptions.IdleTimeout}, dnsZones)
+		postgresadapter.AccountSessionOptions{
+			StatementTimeout: managementOptions.StatementTimeout,
+			IdleTimeout:      managementOptions.IdleTimeout,
+		}, dnsZones)
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
@@ -468,16 +492,16 @@ func composePrivateIdentityFactory(
 	resources.clusteredProfiles = dependencies.KubernetesClusteredProfiles
 	resources.accessRequired = dependencies.KubernetesAccessRequired
 	revocations, policies, policyCompiler, policyExplainer, policySimulator,
-		policyApprovals, policyApprovalCatalog, err :=
-		privateIdentityManagementServices(
-			dependencies.Runtime,
-			managementOptions,
-			resources,
-		)
+		policyApprovals, policyApprovalCatalog, err := privateIdentityManagementServices(
+		dependencies.Runtime,
+		managementOptions,
+		resources,
+	)
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
-	owner := &privateIdentityFactory{admission: transactions, route: application.Route,
+	owner := &privateIdentityFactory{
+		admission: transactions, route: application.Route,
 		managementKeys: managementCompositionKeys{
 			sessions: keys.sessions, idempotency: keys.idempotency, rateLimit: keys.rateLimit,
 		},
@@ -515,7 +539,7 @@ func composePrivateIdentityFactory(
 		ClaimIDs: oidcauth.SystemClaimIDs{}, IssueMaterial: oidcauth.SystemIssueMaterial{},
 		Revocations: revocations, PolicyPublications: policies, PolicyCompilations: policyCompiler,
 		PolicyExplanations: policyExplainer, AccessGraphs: policyExplainer, PolicySimulations: policySimulator,
-		ActivePolicies: activePolicies, PolicyKubernetesAccess: policyKubernetesAccess, PolicyKubernetesClusteredProfiles: dependencies.KubernetesClusteredProfiles, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations, AliasRanges: aliasRanges, DeviceLifetimes: deviceLifetimes, AddressUsage: addressUsage, AuditHistory: auditHistory, AuditExports: auditExports, Guardrails: guardrails, Interchanges: interchanges, InterchangeTrust: interchangeTrust, DeviceGroups: deviceGroups, Sites: sites, ExitPools: exitPools, DNSZones: dnsZones, ServiceNames: dnsZones, OfferServiceNames: resources.imports, ContractServiceNames: contractServiceNames, SiteRouterObservations: dependencies.Redis, SiteRouterUse: dependencies.Redis, ExitNodeUse: dependencies.Redis, DNSZoneStatus: dependencies.Redis, DNSResolverDevices: deviceInventory, DNSZoneReceivers: dnsZoneStore, Countries: dependencies.Countries, IdentityGroups: identityGroups, DeviceTags: deviceTags, DeviceLifecycle: deviceLifecycle, MemberLifecycle: memberLifecycle, NetworkMembers: networkMembers, EnrollmentKeys: dependencies.EnrollmentKeys, KubernetesClusters: dependencies.KubernetesClusters, Invitations: invitations, InvitationPreviews: invitations, InvitationAcceptor: invitationStore, AccountSignups: signups,
+		ActivePolicies: activePolicies, PolicyKubernetesAccess: policyKubernetesAccess, PolicyKubernetesClusteredProfiles: dependencies.KubernetesClusteredProfiles, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations, AliasRanges: aliasRanges, DeviceLifetimes: deviceLifetimes, AddressUsage: addressUsage, AuditHistory: auditHistory, AuditExports: auditExports, Guardrails: guardrails, Interchanges: interchanges, InterchangeTrust: interchangeTrust, ConnectionLogs: connectionLogs, DeviceGroups: deviceGroups, Sites: sites, ExitPools: exitPools, DNSZones: dnsZones, ServiceNames: dnsZones, OfferServiceNames: resources.imports, ContractServiceNames: contractServiceNames, SiteRouterObservations: dependencies.Redis, SiteRouterUse: dependencies.Redis, ExitNodeUse: dependencies.Redis, DNSZoneStatus: dependencies.Redis, DNSResolverDevices: deviceInventory, DNSZoneReceivers: dnsZoneStore, Countries: dependencies.Countries, IdentityGroups: identityGroups, DeviceTags: deviceTags, DeviceLifecycle: deviceLifecycle, MemberLifecycle: memberLifecycle, NetworkMembers: networkMembers, EnrollmentKeys: dependencies.EnrollmentKeys, KubernetesClusters: dependencies.KubernetesClusters, Invitations: invitations, InvitationPreviews: invitations, InvitationAcceptor: invitationStore, AccountSignups: signups,
 		SessionWorkspaces: sessionWorkspaces, ShareTargets: shareTargets,
 		PolicyApprovals: policyApprovals, PolicyApprovalCatalog: policyApprovalCatalog,
 		ResourceCreations: resources.creations, ResourceCatalog: resources.catalog, ResourceSharing: resources.sharing,
@@ -711,6 +735,7 @@ func (privateIdentityFactoryDependencies) GoString() string { return "[REDACTED]
 func (privateIdentityFactoryDependencies) LogValue() slog.Value {
 	return slog.StringValue("[REDACTED]")
 }
+
 func (privateIdentityFactoryDependencies) MarshalJSON() ([]byte, error) {
 	return nil, errInvalidPrivateIdentityComposition
 }

@@ -461,6 +461,9 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertPostgreSQLMemberSuspension(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLMemberRemoval(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLNetworkMembers(ctx, t, adminConnection, runtimePool)
+	// Beside the other member tests, while the fixture owner may still
+	// assign roles.
+	assertPostgreSQLConnectionLogs(ctx, t, adminConnection, runtimePool, migrationConfig)
 	assertPostgreSQLEnrollmentKeys(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLSingleUseEnrollmentKey(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLKubernetesClusters(ctx, t, adminConnection, runtimeConnection, runtimePool, workerPool,

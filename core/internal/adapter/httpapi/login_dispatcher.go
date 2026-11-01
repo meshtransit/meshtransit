@@ -242,7 +242,7 @@ func isBrowserManagementOperation(request *http.Request) bool {
 		isWorkspaceCollectionPath(request) && request.Method == http.MethodPost || isNetworkCollectionPost(request) ||
 		isSessionWorkspaceOperation(request) || isShareTargetRead(request) || isNetworkAliasRangeOperation(request) || isNetworkDeviceLifetimeOperation(request) ||
 		isNetworkAddressUsageRead(request) ||
-		isAuditEventListRead(request) || isAuditEventExportRead(request) || isGuardrailOperation(request) || isInterchangeOperation(request) ||
+		isAuditEventListRead(request) || isAuditEventExportRead(request) || isGuardrailOperation(request) || isInterchangeOperation(request) || isConnectionLogOperation(request) ||
 		isDeviceGroupOperation(request) || isSiteOperation(request) || isExitPoolOperation(request) ||
 		isDNSZoneOperation(request) ||
 		isIdentityCatalogOperation(request) || isDeviceLifecycleOperation(request) ||
