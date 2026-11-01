@@ -57,9 +57,10 @@ the spec assumes an on-path party.
 
 - Header `MeshTransit-Flow-Token`: the token, base64url without padding.
 - Header `MeshTransit-Flow-Network`: the token's `network_id` as a lowercase
-  UUID. Ingress routes on it so every batch of a Network reaches the replica
-  that writes it (one writer per Network); the token changes at every
-  renewal, so it cannot be the routing key.
+  UUID. Ingress routes on it so a Network's batches tend to reach one
+  replica, which then writes them in fewer, larger objects; the token
+  changes at every renewal, so it cannot be the routing key. Correctness
+  never depends on that routing: any replica may take any batch (§5).
 - `Content-Type: application/vnd.meshtransit.flowlog.v1`.
 - Body: frames, each `u16be(n) || n bytes` with `n ≥ 1`.
   - Frame 0, at most 256 bytes, is the message of
@@ -157,10 +158,22 @@ backs off as for a plain HTTP error; when `next_sequence` is below
 written as lost or invalid. It also keeps `held`: the highest sequence that is
 fully read and checked and sits in its writer's buffer, or is committed. `held`
 is volatile; `committed ≤ held`, and after a restart `held = committed`. The
-receiver takes `next = held + 1`. With no state for the `boot_id` (new, or the
-receiver lost it) it starts with `committed = held = held_from - 1`, so it
-never commits a sequence it has not seen. Then, for a request with
-sequence `s`:
+receiver takes `next = held + 1`. With no state for the `boot_id` (new, the
+receiver lost it, or another replica holds it) it starts with
+`held = held_from - 1`, so it never commits a sequence it has not seen, and:
+
+- when the request names no `lost` range, `committed = held_from - 1`;
+- when it names one, the receiver buffers one `lost` event for that range,
+  with its counts, and starts with `committed = lost.from - 1`: the node keeps
+  naming the range until that event is in the bucket and `committed` moves
+  past it, so a receiver without state never erases the evidence of a loss.
+
+Several receivers may hold state for the same `boot_id` (replicas, a
+restart): each commits only what it wrote, the answers of one may name a
+lower `committed` than another's, and the node keeps the highest it was
+answered. Their `lost` events may overlap, with different record IDs:
+consumers take the union of the ranges, and the counts are informational.
+Then, for a request with sequence `s`:
 
 1. When `held_from > next`, the node dropped `next..held_from-1`: the
    receiver buffers one `lost` event for that range (with the counts of
