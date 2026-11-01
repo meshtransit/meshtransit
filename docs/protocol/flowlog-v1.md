@@ -189,6 +189,37 @@ A record is one aggregate of a window: allowed traffic of one flow key
   as denials. Denials aggregate per (source, destination, protocol) with
   `distinct_ports` and at most 8 `sample_ports`.
 
+**Counts.** What a node reports, as `client/internal/flowcount` counts it:
+
+- A `FLOW` key is (class, direction, protocol, source, destination,
+  destination port, peer, share/Site/pool). The flow's source is the side
+  that opened it; its ephemeral port is collapsed to 0, so connections from
+  one client to one service merge. `packets_out`/`bytes_out` go source to
+  destination, `_in` the other way; bytes are IP packet lengths.
+- `connections`: TCP SYNs without ACK from the source (a retransmitted SYN
+  counts again; a connection open before the window counts 0); a UDP or
+  ICMP key counts one per window.
+- `tcp_state` follows the packets: `SYN` on a SYN, `ESTABLISHED` on an ACK,
+  `CLOSING` on a FIN, `RESET` on a RST; once closing or reset it stays so
+  until a new SYN. `ended` when a FIN or RST was seen in the window.
+- `flow_id`: a keyed hash of the key, the key secret new each time the node
+  starts, so it is stable across windows of one run and reveals nothing.
+- `distinct_ports` is an estimate (linear counting over 1,024 slots, hashed
+  with a per-run seed): about 3 % off typically, up to about 12 % at 2,000
+  ports, and it saturates near 7,100; it is never below the number of
+  `sample_ports`. Only TCP and UDP denials have ports.
+- A node keys at most 4,096 flows and 1,024 denials per window (a router,
+  exit node or gateway 61,440 and 4,096: never more than a batch's 65,536
+  records); past that the packet counts in `overflow`, whose `keys` is an
+  estimate of the distinct keys refused (it saturates near 34,000).
+- Noise is never counted, allowed or denied: multicast, broadcast and
+  reserved IPv4, link-local, loopback and unspecified addresses. A record or
+  denial for an invalid class, direction or reason is a node bug and is
+  dropped before it reaches a batch.
+- A window covers its records: its start is no later than any `first_seen`,
+  its end no earlier than any `last_seen`, and it ends after it starts. Windows
+  of one node may overlap a little.
+
 **Refused requests.** A `FlowRequest` with `batch_length` out of bounds,
 `boot_id` not 16 bytes, `sequence` 0, `held_from` 0 or above `sequence`, or a
 `lost` range that is reversed or does not end below `held_from` gets a plain
