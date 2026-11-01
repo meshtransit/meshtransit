@@ -177,7 +177,8 @@ Then, for a request with sequence `s`:
 
 1. When `held_from > next`, the node dropped `next..held_from-1`: the
    receiver buffers one `lost` event for that range (with the counts of
-   `lost` when it covers the range) and sets `held = held_from - 1`.
+   `lost` when it names exactly that range: counts of a wider or narrower
+   range would be wrong for this one) and sets `held = held_from - 1`.
 2. `s ≤ held`: **already held**, answered `ACCEPTED` with the current
    `committed`, nothing read or written.
 3. `s = next`: the receiver reads the batch (§4 steps 6 and 7). Only when
@@ -263,6 +264,8 @@ back may reverse them).
 
 - the batch: `boot_id` or `reporter_sequence` other than the request's;
   `window_end ≤ window_start` or a window longer than twice `window_s`;
+  a window time, `first_seen` or `last_seen` that is not 0 (unset, for
+  `first_seen`/`last_seen`) and not between 1970 and the end of year 9999;
   `policy_digest` neither empty nor 32 bytes; more than 65,536 records;
 - a record: `kind`, `class` or `direction` unspecified, or a value no enum
   names; `protocol` over 255; a port over 65,535; an IP that is not empty, 4
@@ -277,12 +280,17 @@ Only these checks, which need nothing but the batch, make a batch `INVALID`.
 **Dropped records.** A well-formed record the reporter may not report (it is
 not an end of the flow, not the router of the Site, not in the pool's
 candidates, not the cluster's gateway, or an ID outside the token's Network or
-contract), or one with an IP that is public (outside the Network's mesh
+contract, or a Device ID that is not the Device holding the address beside
+it), or one with an IP that is public (outside the Network's mesh
 ranges, the deployment's alias ranges, the routes of its Sites and the
 private and unique-local ranges; any IP of an `EXIT` record), is dropped and
 counted; the rest of the batch is written. These checks read the Network's
 directory, which the receiver learns from Core and which may lag a change:
-they never make a batch `INVALID`. When the receiver holds no directory fresh
+they never make a batch `INVALID`. When an ID or a role is unknown to the
+directory the receiver holds and it knows that directory is older than
+Core's revision of the Network, it answers the batch `THROTTLED` instead of
+dropping, so a new Device's first traffic is checked against the newer
+directory. When the receiver holds no directory fresh
 enough to check (its last good read of it, 200 or 304, over 5 minutes old,
 or built more than 2 minutes before it was answered, as the answer's
 built-at and generated-at headers say), it answers the batch with
