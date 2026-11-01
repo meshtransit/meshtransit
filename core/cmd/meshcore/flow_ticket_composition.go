@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/ed25519"
 	"errors"
+	"log/slog"
 	"time"
 
+	"meshtransit.net/core/internal/adapter/flowloginternal"
 	mtcpadapter "meshtransit.net/core/internal/adapter/mtcp"
 	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/platform/config"
@@ -80,4 +82,42 @@ func flowReportCapabilities(signer *mtcpadapter.FlowSigner) []string {
 		return nil
 	}
 	return []string{mtcpadapter.CapabilityFlowReport}
+}
+
+var errInvalidFlowLogInternalComposition = errors.New("invalid connection log internal API composition")
+
+// composeFlowLogInternal builds the receiver's internal API listener
+// (connection logs design §16c, s4c1a). On a process that also signs
+// tokens (role all), the current public key must be the signer's.
+func composeFlowLogInternal(ctx context.Context, cfg config.FlowLogInternalConfig, tickets *config.FlowTicketConfig,
+	logger *slog.Logger,
+) (*flowloginternal.Server, *flowloginternal.Metrics, error) {
+	keys := make([]flowloginternal.TokenKey, 0, len(cfg.TokenKeys))
+	var current ed25519.PublicKey
+	for _, key := range cfg.TokenKeys {
+		keys = append(keys, flowloginternal.TokenKey{State: key.State, Key: key.Key})
+		if key.State == config.FlowTokenKeyCurrent {
+			current = key.Key
+		}
+	}
+	if tickets != nil {
+		signing, _, err := tickets.SigningKeys(ctx)
+		if err != nil {
+			return nil, nil, errors.Join(errInvalidFlowLogInternalComposition, err)
+		}
+		public := signing.Public()
+		if !current.Equal(ed25519.PublicKey(public[:])) {
+			return nil, nil, errors.Join(errInvalidFlowLogInternalComposition,
+				errors.New("the current token public key is not the signing key's"))
+		}
+	}
+	metrics := flowloginternal.NewMetrics()
+	server, err := flowloginternal.NewServer(flowloginternal.Options{
+		Address: cfg.Address, CertFile: cfg.CertFile, KeyFile: cfg.KeyFile, ClientCAFile: cfg.ClientCAFile,
+		ClientURI: cfg.ClientURI, TokenKeys: keys, Metrics: metrics, Logger: logger, Now: time.Now,
+	})
+	if err != nil {
+		return nil, nil, errors.Join(errInvalidFlowLogInternalComposition, err)
+	}
+	return server, metrics, nil
 }

@@ -1,0 +1,36 @@
+// Connection log v1, Core's internal API to the receiver (meshflow):
+// what the receiver reads from Core over mutual TLS. Design:
+// connection-logs-design.md §16c in the MeshTransit design repository.
+//
+// Conventions as in flowlog.proto: keys are raw bytes, IDs raw 16-byte
+// UUIDs, times Unix milliseconds on the database's clock. Field numbers are
+// never reused; removed fields are reserved. The receiver refuses unknown
+// fields.
+syntax = "proto3";
+
+package meshtransit.flowlog.v1;
+
+option go_package = "meshtransit.net/api/flowlog/v1;flowlogv1";
+
+// FlowSigningKeys answers GET /internal/v1/flowlog/keys: the public keys
+// tokens are signed with (C45). A receiver accepts tokens of CURRENT, NEXT
+// and RETIRING keys, keeps a key it saw for 17 minutes after it was last
+// listed, and drops a REVOKED key at once.
+message FlowSigningKeys {
+  repeated Key keys = 1;
+  int64 generated_at_ms = 2;
+
+  message Key {
+    string kid = 1; // flowlog.SigningKeyID of public_key
+    bytes public_key = 2; // Ed25519, 32 bytes
+    State state = 3;
+  }
+
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    CURRENT = 1;
+    NEXT = 2;
+    RETIRING = 3;
+    REVOKED = 4;
+  }
+}

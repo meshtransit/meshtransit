@@ -123,6 +123,8 @@ type Config struct {
 	FlowLog *FlowLogConfig
 	// FlowTickets signs nodes' connection log tokens; nil without it.
 	FlowTickets *FlowTicketConfig
+	// FlowLogInternal opens the receiver's internal API; nil without it.
+	FlowLogInternal *FlowLogInternalConfig
 }
 
 // DependencyConfig bounds startup and periodic infrastructure checks.
@@ -190,6 +192,10 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, err
 	}
 	flowTicketConfig, err := loadFlowTicketConfig(lookup, role)
+	if err != nil {
+		return Config{}, err
+	}
+	flowLogInternalConfig, err := loadFlowLogInternalConfig(lookup, role)
 	if err != nil {
 		return Config{}, err
 	}
@@ -436,6 +442,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		RelayAuthority:              relayAuthorityConfig,
 		FlowLog:                     flowLogConfig,
 		FlowTickets:                 flowTicketConfig,
+		FlowLogInternal:             flowLogInternalConfig,
 		AccessLedgerWorker:          accessLedgerWorkerConfig,
 		KubernetesCAWorker:          kubernetesCAWorkerConfig,
 		EnforcementLedgerWorker:     enforcementLedgerWorkerConfig,

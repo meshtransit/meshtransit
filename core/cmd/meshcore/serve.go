@@ -906,6 +906,17 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		return 1
 	}
 	build := buildinfo.Current()
+	if processConfig.FlowLogInternal != nil {
+		internal, internalMetrics, internalErr := composeFlowLogInternal(ctx, *processConfig.FlowLogInternal,
+			processConfig.FlowTickets, logger)
+		if internalErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "flowlog_internal_composition_failure",
+				"error", internalErr)
+			return 1
+		}
+		additionalMetrics = append(additionalMetrics, internalMetrics)
+		roleServices = append(roleServices, app.OwnedService{Name: "flowlog-internal", Service: internal})
+	}
 	healthServer, err := httpapi.NewHealthServer(httpapi.HealthServerOptions{
 		Address: processConfig.HealthAddress,
 		State:   readiness,
