@@ -4,6 +4,8 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+
+	"meshtransit.net/core/internal/domain/connectionlog"
 )
 
 // Metrics are the internal API's collectors (C55): labels are route and
@@ -16,6 +18,7 @@ type Metrics struct {
 	certificate  prometheus.Gauge
 	rejections   *prometheus.CounterVec
 	serverErrors prometheus.Counter
+	entries      *prometheus.CounterVec
 }
 
 // NewMetrics creates unregistered collectors.
@@ -49,6 +52,10 @@ func NewMetrics() *Metrics {
 			Name: "meshtransit_flowlog_internal_connection_errors_total",
 			Help: "Failed handshakes and other connection errors of the internal API.",
 		}),
+		entries: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "meshtransit_flowlog_internal_status_entries_total",
+			Help: "Network entries of receiver reports, by what became of them.",
+		}, []string{"result"}),
 	}
 }
 
@@ -68,6 +75,12 @@ func (m *Metrics) responseBytes(route string, size int) {
 
 func (m *Metrics) reloadFailed() { m.reloads.Inc() }
 
+func (m *Metrics) statusEntries(result connectionlog.ReceiverReportResult) {
+	m.entries.WithLabelValues("written").Add(float64(result.Written))
+	m.entries.WithLabelValues("throttled").Add(float64(result.Throttled))
+	m.entries.WithLabelValues("dropped").Add(float64(result.Dropped))
+}
+
 // Describe implements prometheus.Collector.
 func (m *Metrics) Describe(ch chan<- *prometheus.Desc) {
 	m.requests.Describe(ch)
@@ -77,6 +90,7 @@ func (m *Metrics) Describe(ch chan<- *prometheus.Desc) {
 	m.certificate.Describe(ch)
 	m.rejections.Describe(ch)
 	m.serverErrors.Describe(ch)
+	m.entries.Describe(ch)
 }
 
 // Collect implements prometheus.Collector.
@@ -88,4 +102,5 @@ func (m *Metrics) Collect(ch chan<- prometheus.Metric) {
 	m.certificate.Collect(ch)
 	m.rejections.Collect(ch)
 	m.serverErrors.Collect(ch)
+	m.entries.Collect(ch)
 }

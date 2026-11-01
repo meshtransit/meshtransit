@@ -218,3 +218,55 @@ message FlowDirectory {
     WORKSPACE = 2;
   }
 }
+
+// FlowStatus is the body of POST /internal/v1/flowlog/status: what one
+// receiver instance can take, and how the Networks it holds fare (C67).
+// Core decodes it leniently, so a newer receiver's fields and enum values
+// never fail a report; it answers 204, 400 (malformed or a Network twice),
+// 429 (too many instances) or 503 (busy).
+message FlowStatus {
+  bytes instance_id = 1; // 16 random bytes for the process's life
+  repeated uint32 accepted_versions = 2; // flowlog-v1 is 1
+  // noise_fingerprints are SHA-256 of the static Noise public keys it holds.
+  repeated bytes noise_fingerprints = 3;
+  repeated string sealing_key_ids = 4;
+  int64 reported_at_ms = 5; // the receiver's clock
+  repeated Network networks = 6;
+
+  message Network {
+    bytes workspace_id = 1;
+    bytes network_id = 2;
+    // tested_etag is the destination_etag the test write used.
+    bytes tested_etag = 3;
+    TestResult test_result = 4;
+    int64 tested_at_ms = 5;
+    int64 last_delivered_at_ms = 6;
+    DeliveryError delivery_error = 7;
+    uint64 lost_24h = 8;
+    uint64 overflow_24h = 9;
+  }
+
+  enum TestResult {
+    TEST_RESULT_UNSPECIFIED = 0;
+    TEST_OK = 1;
+    TEST_ACCESS_DENIED = 2;
+    TEST_NO_SUCH_BUCKET = 3;
+    TEST_WRONG_OWNER = 4;
+    TEST_WRONG_REGION = 5;
+    TEST_UNREACHABLE = 6;
+    TEST_CREDENTIAL_UNOPENABLE = 7;
+    TEST_OTHER = 8;
+  }
+
+  enum DeliveryError {
+    DELIVERY_ERROR_UNSPECIFIED = 0;
+    DELIVERY_NONE = 1;
+    DELIVERY_ACCESS_DENIED = 2;
+    DELIVERY_NO_SUCH_BUCKET = 3;
+    DELIVERY_WRONG_OWNER = 4;
+    DELIVERY_WRONG_REGION = 5;
+    DELIVERY_UNREACHABLE = 6;
+    DELIVERY_THROTTLED = 7;
+    DELIVERY_OTHER = 8;
+  }
+}

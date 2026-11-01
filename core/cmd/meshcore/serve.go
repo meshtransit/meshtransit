@@ -608,14 +608,17 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		additionalMetrics = append(additionalMetrics, mapInventoryMetrics)
 		var flowSigner *mtcpadapter.FlowSigner
 		var flowLogs mapsession.FlowLogReader
+		var flowGate mapsession.FlowReceiverGate
 		if processConfig.FlowTickets != nil {
-			flowSigner, flowLogs, composeErr = composeFlowTickets(ctx, *processConfig.FlowTickets,
-				processConfig.RelayAuthority, mapSessionService)
-			if composeErr != nil {
+			tickets, ticketErr := composeFlowTickets(ctx, *processConfig.FlowTickets,
+				processConfig.RelayAuthority, mapSessionService, storagePools.runtime)
+			if ticketErr != nil {
 				logger.ErrorContext(ctx, "startup failed", "error_code", "flow_ticket_composition_failure",
-					"error", composeErr)
+					"error", ticketErr)
 				return 1
 			}
+			flowSigner, flowLogs, flowGate = tickets.signer, tickets.logs, tickets.gate
+			additionalMetrics = append(additionalMetrics, tickets.metrics)
 		}
 		mapStreamService, composeErr := composeMapStream(
 			processConfig.Control.Map,
@@ -626,6 +629,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			redisClient,
 			relayAccess,
 			flowLogs,
+			flowGate,
 		)
 		if composeErr != nil {
 			logger.ErrorContext(

@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -68,12 +69,15 @@ var (
 // handler routes the internal API. It answers only GET, and every answer
 // carries an ETag of its content so a poll that finds nothing new is 304.
 type handler struct {
-	keys    *flowlogv1.FlowSigningKeys
-	keysTag string
-	reader  Reader
-	limiter *rate.Limiter
-	metrics *Metrics
-	now     func() time.Time
+	keys         *flowlogv1.FlowSigningKeys
+	keysTag      string
+	reader       Reader
+	status       StatusWriter
+	limiter      *rate.Limiter
+	statusLimits statusLimits
+	metrics      *Metrics
+	logger       *slog.Logger
+	now          func() time.Time
 
 	revocationMu sync.Mutex
 	revocations  *cachedRevocations
@@ -91,13 +95,13 @@ type cachedRevocations struct {
 	err     error
 }
 
-func newHandler(tokenKeys []TokenKey, reader Reader, metrics *Metrics, now func() time.Time) (*handler, error) {
-	if reader == nil {
+func newHandler(options Options) (*handler, error) {
+	if options.Reader == nil || options.Status == nil {
 		return nil, ErrInvalidServer
 	}
 	keys := &flowlogv1.FlowSigningKeys{}
 	current := 0
-	for _, key := range tokenKeys {
+	for _, key := range options.TokenKeys {
 		state, ok := keyStates[key.State]
 		if !ok || len(key.Key) != ed25519.PublicKeySize {
 			return nil, ErrInvalidServer
@@ -117,8 +121,9 @@ func newHandler(tokenKeys []TokenKey, reader Reader, metrics *Metrics, now func(
 		return nil, ErrInvalidServer
 	}
 	return &handler{
-		keys: keys, keysTag: tag, reader: reader, limiter: rate.NewLimiter(requestRate, requestBurst),
-		metrics: metrics, now: now, directories: newDirectoryCache(),
+		keys: keys, keysTag: tag, reader: options.Reader, status: options.Status,
+		limiter: rate.NewLimiter(requestRate, requestBurst), statusLimits: newStatusLimits(),
+		metrics: options.Metrics, logger: options.Logger, now: options.Now, directories: newDirectoryCache(),
 	}, nil
 }
 
@@ -139,6 +144,10 @@ func contentTag(message proto.Message) (string, error) {
 
 func (handler *handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 	route := routeOf(request.URL.Path)
+	if route == "status" {
+		handler.serveStatus(response, request)
+		return
+	}
 	if !handler.limiter.Allow() {
 		handler.metrics.request(route, "throttled")
 		response.Header().Set("Retry-After", "1")
@@ -470,6 +479,8 @@ func routeOf(path string) string {
 		return "revocations"
 	case path == networksPath:
 		return "networks"
+	case path == statusPath:
+		return "status"
 	case strings.HasPrefix(path, scopedPrefix) && strings.HasSuffix(path, "/destination"):
 		return "destination"
 	case strings.HasPrefix(path, scopedPrefix) && strings.HasSuffix(path, "/directory"):

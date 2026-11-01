@@ -147,6 +147,9 @@ type StreamOptions struct {
 	// FlowLogs, when set, reads whether a node's Network logs connections:
 	// a sink that is a FlowTicketSink then sends it FlowTickets.
 	FlowLogs FlowLogReader
+	// FlowGate, when set, holds tickets back while no receiver can take
+	// them (C71); unset, tickets follow the settings alone.
+	FlowGate FlowReceiverGate
 	// FilterDigest, when set, records the digest of each delivered packet
 	// filter so enforcement reports can be compared with it.
 	FilterDigest FilterDigester

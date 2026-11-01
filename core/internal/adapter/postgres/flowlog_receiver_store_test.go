@@ -1,11 +1,20 @@
 package postgres
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"meshtransit.net/core/internal/domain/connectionlog"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/workspace"
 )
 
 // Only the receiver store calls the receiver's cross-tenant reads (design
@@ -18,7 +27,7 @@ func TestOnlyTheReceiverStoreCallsItsReads(t *testing.T) {
 	}
 	for _, file := range files {
 		if strings.HasSuffix(file, "_test.go") || file == "flowlog_receiver_store.go" ||
-			file == "flowlog_directory_store.go" {
+			file == "flowlog_directory_store.go" || file == "flowlog_status_store.go" {
 			continue
 		}
 		content, err := os.ReadFile(file) //nolint:gosec // a source file of this package, from Glob
@@ -134,4 +143,40 @@ func TestNewReceiverDirectoryRefusesWhatTheSchemaNeverAnswers(t *testing.T) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
+}
+
+// A report's entries go to the database as the function reads them: tags
+// in hex, no time as null, counts clamped.
+func TestFlowlogStatusEntries(t *testing.T) {
+	t.Parallel()
+	workspaceID := workspace.ID(must(publicid.Parse("01890f00-0000-7000-8000-000000000001")))
+	networkID := network.ID(must(publicid.Parse("01890f00-0000-7000-8000-000000000002")))
+	at := time.Unix(1_900_000_000, 0)
+	encoded, err := flowlogStatusEntries([]connectionlog.ReceiverNetworkStatus{
+		{Workspace: workspaceID, Network: networkID, TestedETag: bytes.Repeat([]byte{0xab}, 16), TestResult: "ok",
+			TestedAt: at, DeliveryError: "none", Lost: math.MaxUint64},
+		{Workspace: workspaceID, Network: networkID, TestResult: "unspecified", DeliveryError: "unspecified"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entries []map[string]any
+	if err := json.Unmarshal(encoded, &entries); err != nil {
+		t.Fatal(err)
+	}
+	if entries[0]["tested_etag"] != strings.Repeat("ab", 16) || entries[0]["delivered_at"] != nil ||
+		entries[0]["lost"] != float64(math.MaxInt64) || entries[1]["tested_etag"] != nil ||
+		entries[1]["tested_at"] != nil || entries[0]["network"] != networkID.String() {
+		t.Fatalf("entries = %s", encoded)
+	}
+	if _, err := flowlogStatusEntries([]connectionlog.ReceiverNetworkStatus{{TestedETag: []byte{1}}}); err == nil {
+		t.Fatal("a short tag was encoded")
+	}
+}
+
+func must[T any](value T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return value
 }

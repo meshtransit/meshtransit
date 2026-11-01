@@ -238,6 +238,7 @@ func composeMapStream(
 	},
 	relayAccess mapsession.RelayAccess,
 	flowLogs mapsession.FlowLogReader,
+	flowGate mapsession.FlowReceiverGate,
 ) (*mapsession.StreamService, error) {
 	replicaID, err := publicid.New()
 	if err != nil {
@@ -270,7 +271,7 @@ func composeMapStream(
 		}
 	}
 	if flowLogs != nil {
-		if recorded, err = recorded.WithFlowLogs(flowLogs); err != nil {
+		if recorded, err = recorded.WithFlowLogs(flowLogs, flowGate); err != nil {
 			return nil, errors.Join(errInvalidMapSessionComposition, err)
 		}
 	}

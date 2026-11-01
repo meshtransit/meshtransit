@@ -80,6 +80,11 @@ func (stub receiverStoreStub) Directory(context.Context, network.Scope) (connect
 	return connectionlog.ReceiverDirectory{}, stub.err
 }
 
+func (stub receiverStoreStub) ReportStatus(context.Context, connectionlog.ReceiverReport,
+) (connectionlog.ReceiverReportResult, error) {
+	return connectionlog.ReceiverReportResult{}, stub.err
+}
+
 // The store's "no destination" is the API's 404 and its cut revocation
 // list the API's refusal, never anything else.
 func TestFlowlogReceiverReaderMapsTheStoreErrors(t *testing.T) {
@@ -107,6 +112,18 @@ func TestFlowlogReceiverReaderMapsTheStoreErrors(t *testing.T) {
 	large := flowlogReceiverReader{store: receiverStoreStub{err: postgresadapter.ErrFlowlogDirectoryTooLarge}}
 	if _, err := large.Directory(ctx, network.Scope{}); !errors.Is(err, flowloginternal.ErrDirectoryTooLarge) {
 		t.Fatalf("a large directory: %v", err)
+	}
+	stale := flowlogReceiverReader{store: receiverStoreStub{err: postgresadapter.ErrFlowlogReportStaleClock}}
+	if _, err := stale.ReportStatus(ctx, connectionlog.ReceiverReport{}); !errors.Is(err, flowloginternal.ErrReportStaleClock) {
+		t.Fatalf("a report from the future: %v", err)
+	}
+	crowded := flowlogReceiverReader{store: receiverStoreStub{err: postgresadapter.ErrFlowlogTooManyReceivers}}
+	if _, err := crowded.ReportStatus(ctx, connectionlog.ReceiverReport{}); !errors.Is(err, flowloginternal.ErrTooManyReceivers) {
+		t.Fatalf("too many receivers: %v", err)
+	}
+	if _, err := down.ReportStatus(ctx, connectionlog.ReceiverReport{}); errors.Is(err, flowloginternal.ErrReportStaleClock) ||
+		errors.Is(err, flowloginternal.ErrTooManyReceivers) || err == nil {
+		t.Fatalf("an outage became a refused report: %v", err)
 	}
 	if _, err := down.Directory(ctx, network.Scope{}); errors.Is(err, flowloginternal.ErrNotFound) ||
 		errors.Is(err, flowloginternal.ErrDirectoryTooLarge) || err == nil {

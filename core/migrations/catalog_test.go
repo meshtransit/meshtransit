@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 269 {
-		t.Fatalf("len(Catalog()) = %d, want 269", len(catalog))
+	if len(catalog) != 270 {
+		t.Fatalf("len(Catalog()) = %d, want 270", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 269 {
-		t.Fatalf("LatestVersion() = %d, want 269", LatestVersion())
+	if LatestVersion() != 270 {
+		t.Fatalf("LatestVersion() = %d, want 270", LatestVersion())
 	}
 }
 
@@ -8026,6 +8026,40 @@ func TestMigration269FlowlogDirectory(t *testing.T) {
 	} {
 		if strings.Contains(sql, banned) {
 			t.Errorf("migration 269 has %q", banned)
+		}
+	}
+}
+
+func TestMigration270FlowlogReceiverStatus(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 270 || catalog[269].Version != 270 {
+		t.Fatalf("the catalog has no migration 270 (%d migrations)", len(catalog))
+	}
+	sql := catalog[269].SQL
+	for _, want := range []string{
+		"CREATE TABLE mesh.connection_log_receiver",
+		"CREATE TABLE mesh.network_connection_log_status",
+		"CREATE FUNCTION mesh_ops.flowlog_report_status_v1(p_instance_id BYTEA,",
+		"CREATE FUNCTION mesh_ops.flowlog_receiver_gate_v1(p_version INTEGER, p_fingerprint BYTEA)",
+		"p_reported_at > v_now + INTERVAL '2 minutes'",
+		"v_fresh >= 64",
+		"pg_advisory_xact_lock",
+		"status.received_at <= v_now - INTERVAL '55 seconds'",
+		"ON DELETE CASCADE",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("migration 270 lacks %q", want)
+		}
+	}
+	// Status is operational data: it never moves a revision or captures an
+	// authority mutation (C69), and only the operator step lets runtime run
+	// the functions.
+	for _, banned := range []string{
+		"network_revision", "capture_authority_mutation", "TO mesh_runtime", "USING (EXISTS",
+	} {
+		if strings.Contains(sql, banned) {
+			t.Errorf("migration 270 has %q", banned)
 		}
 	}
 }

@@ -171,7 +171,7 @@ func startServerWith(t *testing.T, reader Reader) fixture {
 	server, err := NewServer(Options{
 		Address: "127.0.0.1:0", CertFile: certFile, KeyFile: keyFile, ClientCAFile: caFile,
 		ClientURI: must(url.Parse(receiverURI)), Metrics: metrics, Logger: slog.New(slog.DiscardHandler), Now: moment.Now,
-		Reader:    reader,
+		Reader: reader, Status: reader.(StatusWriter),
 		TokenKeys: []TokenKey{{State: "current", Key: public}, {State: "next", Key: next}},
 	})
 	if err != nil {
@@ -478,7 +478,7 @@ func TestNewServerRefusesBadOptions(t *testing.T) {
 	base := Options{
 		Address: "127.0.0.1:0", CertFile: certFile, KeyFile: keyFile, ClientCAFile: receiverCAFile,
 		ClientURI: must(url.Parse(receiverURI)), Metrics: NewMetrics(), Logger: slog.New(slog.DiscardHandler),
-		Now: time.Now, TokenKeys: []TokenKey{{State: "current", Key: key}}, Reader: &fakeReader{},
+		Now: time.Now, TokenKeys: []TokenKey{{State: "current", Key: key}}, Reader: &fakeReader{}, Status: &fakeReader{},
 	}
 	for name, change := range map[string]func(*Options){
 		"no current key": func(o *Options) { o.TokenKeys = []TokenKey{{State: "next", Key: key}} },

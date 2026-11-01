@@ -177,6 +177,11 @@ type flowTicketState struct {
 	grant   FlowGrant
 	expires time.Time
 	renewAt time.Time
+	// gateUntil is when a closed ticket gate is asked again; holdUntil
+	// when a first ticket held back by the spread after it opened goes.
+	gateUntil time.Time
+	holdUntil time.Time
+	withheld  bool
 }
 
 // readDue reports whether the settings must be read again for current.
@@ -209,6 +214,8 @@ func (state flowTicketState) nextDue() time.Time {
 	if state.sent {
 		consider(state.renewAt)
 	}
+	consider(state.gateUntil)
+	consider(state.holdUntil)
 	return due
 }
 
@@ -238,6 +245,9 @@ func (service *StreamService) syncFlowTicket(ctx context.Context, sink FlowTicke
 		return nil
 	}
 	now := time.Now()
+	// The gate's wake-ups hold only for this pass: a stale one would hide
+	// the next (review s4c3 M3).
+	state.gateUntil, state.holdUntil = time.Time{}, time.Time{}
 	if state.readDue(current, now) {
 		operationCtx, cancel := context.WithTimeout(ctx, service.options.SnapshotTimeout)
 		settings, err := readFlowLog(operationCtx, reader, current)
@@ -263,6 +273,11 @@ func (service *StreamService) syncFlowTicket(ctx context.Context, sink FlowTicke
 		return nil
 	}
 	grant, on := current.FlowGrant(state.settings)
+	if on {
+		if stop, err := service.gateFlowTicket(ctx, sink, current, state, grant, now); stop || err != nil {
+			return err
+		}
+	}
 	switch {
 	case !on && !state.sent:
 		return nil
@@ -435,13 +450,14 @@ func (cache *FlowLogCache) evictLocked(now time.Time) {
 
 // WithFlowLogs returns a copy of the service that sends FlowTickets to
 // nodes whose Network logs connections, reading the settings through
-// reader (a FlowLogCache in production).
-func (service *StreamService) WithFlowLogs(reader FlowLogReader) (*StreamService, error) {
-	if service == nil || isNilDependency(reader) {
+// reader (a FlowLogCache in production) and signing only while gate is
+// open (C71).
+func (service *StreamService) WithFlowLogs(reader FlowLogReader, gate FlowReceiverGate) (*StreamService, error) {
+	if service == nil || isNilDependency(reader) || isNilDependency(gate) {
 		return nil, ErrInvalidStreamService
 	}
 	options := service.options
-	options.FlowLogs = reader
+	options.FlowLogs, options.FlowGate = reader, gate
 	logged, err := NewStreamService(service.snapshots, service.presence, service.revisions,
 		service.connectivity, options)
 	if err != nil {

@@ -267,3 +267,11 @@ var flowlogDirectoryOwnershipSQL string
 // reads (schema 269) to the receiver reader and exposes them to the runtime
 // role only.
 func FlowlogDirectoryOwnershipSQL() string { return flowlogDirectoryOwnershipSQL }
+
+//go:embed operator/000270_flowlog_status_ownership.sql
+var flowlogStatusOwnershipSQL string
+
+// FlowlogStatusOwnershipSQL moves the receiver's status report (schema 270)
+// to the status writer and the ticket gate to the receiver reader, and
+// exposes both to the runtime role only.
+func FlowlogStatusOwnershipSQL() string { return flowlogStatusOwnershipSQL }

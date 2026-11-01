@@ -493,6 +493,7 @@ WHERE public_id = '%s'::UUID`, device,
 		t.Fatal("the listed directory revision is not the Network's")
 	}
 	assertFlowlogDirectory(ctx, t, admin, store, scope)
+	assertFlowlogReceiverStatus(ctx, t, admin, runtimePool, scope)
 }
 
 // assertFlowlogReaderSeesOnlyLoggingNetworks reads as mesh_flowlog_reader:

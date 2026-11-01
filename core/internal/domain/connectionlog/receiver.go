@@ -174,3 +174,89 @@ type ReceiverDirectory struct {
 	// ContractAliases are by contract, then address.
 	ContractAliases []ReceiverContractAlias
 }
+
+// ReceiverProtocolVersion is the receiver protocol Core signs tickets for:
+// flowlog-v1 (C71).
+const ReceiverProtocolVersion = 1
+
+// Bounds of one receiver report (C67).
+const (
+	MaxReceiverReportNetworks     = 1000
+	MaxReceiverVersions           = 8
+	MaxReceiverNoiseFingerprints  = 4
+	MaxReceiverSealingKeyIDs      = 8
+	ReceiverReportFuture          = 2 * time.Minute
+	ReceiverStatusTestedETagBytes = 16
+)
+
+// Test results and delivery errors of a receiver report, as the schema
+// names them; a value the receiver names that Core does not know is
+// unspecified.
+const (
+	ReceiverUnspecified            = "unspecified"
+	TestOK                         = "ok"
+	TestAccessDenied               = "access_denied"
+	TestNoSuchBucket               = "no_such_bucket"
+	TestWrongOwner                 = "wrong_owner"
+	TestWrongRegion                = "wrong_region"
+	TestUnreachable                = "unreachable"
+	TestCredentialUnopenable       = "credential_unopenable" //nolint:gosec // a result name, no credential
+	TestOther                      = "other"
+	DeliveryNone                   = "none"
+	DeliveryAccessDenied           = "access_denied"
+	DeliveryNoSuchBucket           = "no_such_bucket"
+	DeliveryWrongOwner             = "wrong_owner"
+	DeliveryWrongRegion            = "wrong_region"
+	DeliveryUnreachable            = "unreachable"
+	DeliveryThrottled              = "throttled"
+	DeliveryOther                  = "other"
+	ReceiverReportOK               = "ok"
+	ReceiverReportStaleClock       = "stale_clock"
+	ReceiverReportTooManyInstances = "too_many_instances"
+)
+
+// ReceiverNetworkStatus is one Network's entry of a receiver report. A zero
+// time means none; TestedETag is empty or 16 bytes.
+type ReceiverNetworkStatus struct {
+	Workspace       workspace.ID
+	Network         network.ID
+	TestedETag      []byte
+	TestResult      string
+	TestedAt        time.Time
+	LastDeliveredAt time.Time
+	DeliveryError   string
+	Lost            uint64
+	Overflow        uint64
+}
+
+// ReceiverReport is one receiver instance's report: what it can take and
+// the Networks it holds, by Network ID.
+type ReceiverReport struct {
+	Instance          [16]byte
+	AcceptedVersions  []int
+	NoiseFingerprints [][32]byte
+	SealingKeyIDs     []string
+	ReportedAt        time.Time
+	Networks          []ReceiverNetworkStatus
+}
+
+// ReceiverReportResult is what a report changed: its outcome and, when ok,
+// the entries written, held back by the minute's limit or an older report,
+// and dropped for no settings row.
+type ReceiverReportResult struct {
+	Outcome   string
+	Written   int
+	Throttled int
+	Dropped   int
+}
+
+// ReceiverGate is what the ticket gate reads (C71): receiver instances that
+// reported in the last 10 minutes, those that accept the version Core signs
+// and hold its configured Noise key, and the newest report, on the
+// database clock read at CheckedAt.
+type ReceiverGate struct {
+	Fresh     int
+	Accepting int
+	Newest    time.Time
+	CheckedAt time.Time
+}

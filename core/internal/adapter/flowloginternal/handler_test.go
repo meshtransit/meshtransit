@@ -40,6 +40,30 @@ type fakeReader struct {
 	directory      *connectionlog.ReceiverDirectory
 	directoriesAt  int
 	directoryBlock chan struct{}
+	// reports are the reports written; reportErr fails them and
+	// reportBlock holds them until closed.
+	reports        []connectionlog.ReceiverReport
+	reportErr      error
+	reportBlock    chan struct{}
+	reportsEntered int
+}
+
+func (reader *fakeReader) ReportStatus(_ context.Context, report connectionlog.ReceiverReport,
+) (connectionlog.ReceiverReportResult, error) {
+	reader.mu.Lock()
+	block := reader.reportBlock
+	reader.reportsEntered++
+	reader.mu.Unlock()
+	if block != nil {
+		<-block
+	}
+	reader.mu.Lock()
+	defer reader.mu.Unlock()
+	if reader.reportErr != nil {
+		return connectionlog.ReceiverReportResult{}, reader.reportErr
+	}
+	reader.reports = append(reader.reports, report)
+	return connectionlog.ReceiverReportResult{Outcome: connectionlog.ReceiverReportOK, Written: len(report.Networks)}, nil
 }
 
 func (reader *fakeReader) Directory(_ context.Context, scope network.Scope) (connectionlog.ReceiverDirectory, error) {

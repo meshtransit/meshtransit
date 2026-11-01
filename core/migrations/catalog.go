@@ -669,6 +669,8 @@ func Catalog() []Migration {
 			flowlogInternalReadsSQL),
 		newMigration(269, "Connection log receiver directory: owner pseudonyms and a Network's names",
 			flowlogDirectorySQL),
+		newMigration(270, "Connection log receiver reports: instances, Network status and the ticket gate",
+			flowlogReceiverStatusSQL),
 	}
 }
 
@@ -1255,3 +1257,6 @@ var flowlogInternalReadsSQL string
 
 //go:embed 000269_flowlog_directory.up.sql
 var flowlogDirectorySQL string
+
+//go:embed 000270_flowlog_receiver_status.up.sql
+var flowlogReceiverStatusSQL string
