@@ -284,6 +284,7 @@ func (handler *handler) serveNetworks(response http.ResponseWriter, request *htt
 			WorkspaceId: workspaceID[:], NetworkId: networkID[:], Enabled: entry.Enabled,
 			DestinationEtag: destinationTag(entry.SettingsVersion, entry.Credential, entry.SealedVersion,
 				entry.SealingKeyID, entry.ExpectedBucketOwner),
+			DirectoryRevision: uint64(entry.DirectoryRevision), //nolint:gosec // a revision is positive
 		})
 	}
 	if len(listed.Networks) == limit {

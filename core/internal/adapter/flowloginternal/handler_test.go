@@ -253,7 +253,7 @@ func TestNetworksPage(t *testing.T) {
 		reader.networks = append(reader.networks, connectionlog.ReceiverNetwork{
 			Workspace: workspace.ID(testID(1)), Network: network.ID(testID(100 + index)), Enabled: index%2 == 0,
 			SettingsVersion: 1, Credential: connectionlog.CredentialID(testID(9)), SealedVersion: 1,
-			SealingKeyID: "meshflow-1",
+			SealingKeyID: "meshflow-1", DirectoryRevision: int64(10 + index),
 		})
 	}
 	f := startServerWith(t, reader)
@@ -268,7 +268,7 @@ func TestNetworksPage(t *testing.T) {
 	if len(listed.GetNetworks()) != 2000 || !bytes.Equal(listed.GetNextAfter(), last[:]) ||
 		reader.afters[0] != network.ID(testID(5)) || reader.limits[0] != 2000 ||
 		!listed.GetNetworks()[0].GetEnabled() || listed.GetNetworks()[1].GetEnabled() ||
-		len(listed.GetNetworks()[0].GetDestinationEtag()) != 16 {
+		len(listed.GetNetworks()[0].GetDestinationEtag()) != 16 || listed.GetNetworks()[1].GetDirectoryRevision() != 11 {
 		t.Fatalf("page = %d networks, next %x", len(listed.GetNetworks()), listed.GetNextAfter())
 	}
 	// The client asked for gzip implicitly and got it undone; the tag of a
