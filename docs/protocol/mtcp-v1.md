@@ -259,6 +259,7 @@ payload     bytes[...]
 | 0x39 | `GatewayGroupReport` | N→C | 16 KiB |
 | 0x3A | `GatewayGroupCeiling` | N→C | 256 KiB |
 | 0x40 | `RelayTicket` | C→N | 256 KiB (4 KiB without `relay.zones2`) |
+| 0x41 | `FlowTicket` | C→N | 4 KiB |
 | 0x50 | `Lifecycle` | C→N | 4 KiB |
 | 0x51 | `KeyUpdate` | C→N | 4 KiB |
 | 0x52 | `Notice` | C→N | 8 KiB |
@@ -1881,6 +1882,20 @@ therefore comes with a new capability.
   signature with a Core signing key received in `KeyUpdate` (section 11)
   before using it, and keeps the previous relay map when verification fails.
 
+### 9.1 Connection log ticket
+
+With `flow.report1`, Core sends `FlowTicket{token, not_after, receiver_key}`
+when connection logging is on for the node's Network and its Workspace may use
+it, again before `not_after` (tokens live at most 15 minutes), and at once
+after the node rotates its machine key. `token` is the `MFT1` token of
+flowlog-v1 §3, bound to the session's machine key; the token's own expiry
+governs, `not_after` only tells the node when to expect the next ticket.
+`receiver_key` is the receiver's 32-byte Noise static public key; a ticket
+with a token and without a 32-byte key is invalid. An empty `token` turns
+logging off: the node stops sending and keeps its spool. The node sends batches only to the fixed path
+`/mtflow/v1/batches` on its control origin (ADR-054); Core never sends a URL.
+A ticket never appears in another node's map, in logs or in diagnostics.
+
 ## 10. Lifecycle
 
 `Lifecycle{state, reason, retry_after_ms, not_before}`:
@@ -1975,6 +1990,7 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `kube.ca1` | Any node reads `kubernetes_clusters` in its map: the clusters it may reach and their roots (7.11); Core offers it where Kubernetes join is on, it builds maps from its shared Network view, and it could read the roots when it started |
 | `gateway.kube.v1` | A Kubernetes gateway applies its peers' `kubernetes` and `owner` (7.8), acknowledges map messages after applying them and takes `MapFresh` (7.9); Core offers it only where maps come from its shared Network view |
 | `gateway.kube.v2` | A Kubernetes gateway applies access profiles: `kubernetes_scopes` and `scoped_grants` (7.12), the audit `profile` and profile denials (6.10). Only with `gateway.kube.v1`: a gateway listing it alone gets no `kubernetes` at all. Core offers it with `gateway.kube.v1` once its database has the profile functions |
+| `flow.report1` | Node counts its traffic and sends connection logs to the receiver on the control origin with the token of `FlowTicket` (section 9.1, flowlog-v1); Core offers it only when the deployment runs the connection log receiver |
 
 Unknown names are ignored. Core sends a feature only when both sides list it.
 

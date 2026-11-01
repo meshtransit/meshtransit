@@ -40,6 +40,7 @@ const (
 	MessageCaptiveWindowReport   MessageType = 0x37
 	MessageDNSHealthReport       MessageType = 0x38
 	MessageRelayTicket           MessageType = 0x40
+	MessageFlowTicket            MessageType = 0x41
 	MessageLifecycle             MessageType = 0x50
 	MessageKeyUpdate             MessageType = 0x51
 	MessageNotice                MessageType = 0x52
@@ -141,6 +142,7 @@ var specs = map[MessageType]messageSpec{
 		NodeToCore, 256 * kib, func() proto.Message { return &mtcpv1.GatewayGroupCeiling{} },
 	},
 	MessageRelayTicket: {CoreToNode, 256 * kib, func() proto.Message { return &mtcpv1.RelayTicket{} }}, // MTT2 zones: 17 bytes × 10,001
+	MessageFlowTicket:  {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.FlowTicket{} }},
 	MessageLifecycle:   {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.Lifecycle{} }},
 	MessageKeyUpdate:   {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.KeyUpdate{} }},
 	MessageNotice:      {CoreToNode, 8 * kib, func() proto.Message { return &mtcpv1.Notice{} }},

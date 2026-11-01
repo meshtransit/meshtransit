@@ -1,0 +1,210 @@
+// Connection log v1: what a node sends the connection log receiver
+// (meshflow) and the token Core signs for it. Normative text:
+// docs/protocol/flowlog-v1.md.
+//
+// Conventions as in MTCP v1:
+//   - Keys are raw 32-byte values; IDs are raw 16-byte UUIDs.
+//   - IP addresses are 4 or 16 raw bytes; IPv4 is always 4 bytes.
+//   - Times are Unix milliseconds (int64); 0 means unset.
+//   - Field numbers are never reused; removed fields are reserved.
+syntax = "proto3";
+
+package meshtransit.flowlog.v1;
+
+option go_package = "meshtransit.net/api/flowlog/v1;flowlogv1";
+
+// ---- Token (signed by Core, carried in MTCP FlowTicket, sent in the
+// request header, flowlog-v1 §3–4) ----
+
+// FlowTokenClaims is what Core attests about a node for one Network. The
+// token is "MFT1" || len(claims) as uint16 big endian || claims || Ed25519
+// signature over "meshtransit/flow-token/v1" || 0x00 || claims, with a key
+// used for nothing else (flowlog-v1 §3).
+message FlowTokenClaims {
+  uint32 version = 1; // 1
+  string kid = 2; // signing key ID, at most 32 bytes
+  string audience = 3; // "meshflow:<deployment ID>", at most 80 bytes
+  bytes workspace_id = 4;
+  bytes network_id = 5;
+  bytes device_id = 6;
+  // The machine key the node uses as its Noise static key towards the
+  // receiver: a token presented under another key is refused.
+  bytes machine_key = 7;
+  repeated Role roles = 8;
+  repeated bytes site_ids = 9; // a router's Sites
+  repeated bytes exit_pool_ids = 10; // pools whose candidate set holds the node
+  repeated bytes cluster_ids = 11; // a Kubernetes gateway's cluster
+  int64 issued_at_ms = 12;
+  int64 not_before_ms = 13;
+  int64 expires_at_ms = 14; // at most 15 minutes after issued_at_ms
+  bytes token_id = 15;
+  uint32 window_s = 16; // aggregation window the node uses, 60 to 300
+
+  enum Role {
+    ROLE_UNSPECIFIED = 0;
+    DEVICE = 1;
+    ROUTER = 2;
+    EXIT = 3;
+    GATEWAY = 4;
+  }
+}
+
+// ---- Request (node → receiver: the payload of the Noise_X handshake
+// message, flowlog-v1 §4) ----
+
+// FlowRequest is what changes each time the node sends a batch; the batch
+// itself is sent again byte for byte.
+message FlowRequest {
+  uint32 batch_length = 1; // the compressed batch, 1 to 4 MiB
+  bytes boot_id = 2; // the batch's
+  uint64 sequence = 3; // the batch's reporter_sequence
+  // The lowest sequence of boot_id the node still holds: everything below
+  // it was committed or dropped (flowlog-v1 §5).
+  uint64 held_from = 4;
+  Lost lost = 5; // what the node dropped below held_from and not yet saw committed
+}
+
+// Lost names batches the node dropped (spool full): reporter_sequence
+// first_sequence..last_sequence of the request's boot_id.
+message Lost {
+  uint64 first_sequence = 1;
+  uint64 last_sequence = 2;
+  uint64 records = 3; // records in those batches
+  int64 from_ms = 4; // their windows
+  int64 to_ms = 5;
+}
+
+// ---- Batch (node → receiver: gzip-compressed, carried in Noise transport
+// messages after the Noise_X handshake, flowlog-v1 §4) ----
+
+// FlowBatch is one window of a node's counted traffic in one Network. The
+// node keeps its encoded bytes and sends them again unchanged.
+message FlowBatch {
+  reserved 1;
+  reserved "token"; // in the request header
+  // Starts at 1 and increases by one per batch of this boot_id
+  // (flowlog-v1 §5).
+  uint64 reporter_sequence = 2;
+  bytes boot_id = 3; // 16 random bytes; a new spool starts a new sequence
+  int64 window_start_ms = 4; // the node's clock
+  int64 window_end_ms = 5;
+  uint64 map_revision = 6;
+  bytes policy_digest = 7; // 32 bytes, the enforced policy digest
+  repeated FlowRecord records = 8; // at most 65,536
+  reserved 9;
+  reserved "lost"; // in FlowRequest: drops happen after a batch is made
+  Overflow overflow = 10; // keys past the node's cap this window
+}
+
+// Overflow counts what the node could not key this window: the traffic is
+// counted, its endpoints are not.
+message Overflow {
+  uint64 keys = 1;
+  uint64 packets = 2;
+  uint64 bytes = 3;
+}
+
+// FlowRecord is one aggregate: allowed traffic of one flow key, or the
+// denials between two endpoints. The node sends only numbers, enums and the
+// IDs its own map gives; the receiver names everything else.
+message FlowRecord {
+  Kind kind = 1;
+  Class class = 2;
+  uint32 protocol = 3; // IANA number
+  bytes source_ip = 4; // empty for an Internet source
+  uint32 source_port = 5; // 0 when collapsed or not applicable
+  bytes destination_ip = 6; // empty for an Internet destination
+  uint32 destination_port = 7;
+  // IDs from the reporter's map, when it names the other end.
+  bytes source_device_id = 8;
+  bytes destination_device_id = 9;
+  bytes trust_contract_id = 10; // a share's contract
+  bytes site_id = 11;
+  bytes exit_pool_id = 12;
+  bytes cluster_id = 13;
+  bool primary = 14; // the one record of this traffic a SIEM should count
+  Direction direction = 15; // relative to the reporter
+  Initiator initiator = 16;
+  TcpState tcp_state = 17;
+  uint64 packets_out = 18; // source → destination
+  uint64 bytes_out = 19;
+  uint64 packets_in = 20; // destination → source
+  uint64 bytes_in = 21;
+  uint32 connections = 22; // flows merged into this record
+  int64 first_seen_ms = 23;
+  int64 last_seen_ms = 24;
+  bool ended = 25; // closed or reset within the window
+  bytes flow_id = 26; // 16 bytes, stable across windows of one flow
+  DenyReason deny_reason = 27; // kind DENY only
+  uint32 distinct_ports = 28; // kind DENY: destination ports seen
+  repeated uint32 sample_ports = 29; // kind DENY: at most 8
+
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    FLOW = 1;
+    DENY = 2;
+  }
+
+  enum Class {
+    CLASS_UNSPECIFIED = 0;
+    MESH = 1;
+    SHARE = 2;
+    SITE = 3;
+    EXIT = 4; // aggregated by pool, protocol and destination port only
+  }
+
+  enum Direction {
+    DIRECTION_UNSPECIFIED = 0;
+    INBOUND = 1;
+    OUTBOUND = 2;
+    FORWARDED = 3; // a router or exit node passing traffic on
+  }
+
+  enum Initiator {
+    INITIATOR_UNKNOWN = 0;
+    SOURCE = 1;
+  }
+
+  enum TcpState {
+    TCP_STATE_UNSPECIFIED = 0; // not TCP
+    OBSERVED = 1;
+    SYN = 2;
+    ESTABLISHED = 3;
+    CLOSING = 4;
+    RESET = 5;
+  }
+
+  enum DenyReason {
+    DENY_REASON_UNSPECIFIED = 0;
+    NOT_IN_MAP = 1; // no rule from the sender to a mesh address
+    PORT_NOT_ALLOWED = 2; // a known peer, but no rule for this port or protocol
+    SHARE_SERVICE = 3; // outside the share's services
+    SHARE_EXPIRED = 4;
+    ROUTE_NOT_INSTALLED = 5; // no Site router or no exit chosen
+    PEER_UNUSABLE = 6; // suspended, expired or rotating peer
+  }
+}
+
+// FlowBatchResponse is the receiver's answer: the payload of a Noise_K
+// message bound to the request (flowlog-v1 §4). Only this answer may make a
+// node drop batches.
+message FlowBatchResponse {
+  // Every batch of the request's boot_id with reporter_sequence at or below
+  // this is in the customer's bucket, or written as lost or invalid; the
+  // node drops them.
+  uint64 committed_sequence = 1;
+  uint32 retry_after_ms = 2; // > 0: send nothing new before then
+  Status status = 3;
+  // The sequence the receiver takes next (flowlog-v1 §5).
+  uint64 next_sequence = 4;
+
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    ACCEPTED = 1; // held now or already; the node keeps it until committed
+    THROTTLED = 2; // not taken; send again after retry_after_ms
+    TOKEN_REJECTED = 3; // the Device is revoked or suspended; wait for a new FlowTicket
+    DISABLED = 4; // logging is off for this Network; drop the spool
+    INVALID = 5; // the batch breaks flowlog-v1 §6; it is written as invalid, drop it
+    OUT_OF_ORDER = 6; // not taken; send next_sequence first
+  }
+}

@@ -1111,6 +1111,16 @@ message RelayTicket {
   bytes fallback_ticket = 4;
 }
 
+// FlowTicket lets the node send connection logs for its Network to the
+// receiver on the control origin (flowlog-v1, flow.report1). Core sends one
+// when logging is on for the Network and before the last expires; an empty
+// token turns logging off. Never logged.
+message FlowTicket {
+  bytes token = 1 [debug_redact = true]; // "MFT1" token (flowlog-v1 §3)
+  int64 not_after_ms = 2;
+  bytes receiver_key = 3; // the receiver's Noise static public key, 32 bytes
+}
+
 message Lifecycle {
   State state = 1;
   string reason = 2;

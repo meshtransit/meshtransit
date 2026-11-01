@@ -245,7 +245,7 @@ natlab-matrix:
 # Regenerates the Go code of api/ protobuf schemas without protoc
 # (hack/protogen); proto-check fails when the committed code is stale.
 proto:
-	$(GO) run -C hack/protogen . ../../api mtcp/v1/mtcp.proto
+	$(GO) run -C hack/protogen . ../../api mtcp/v1/mtcp.proto flowlog/v1/flowlog.proto
 
 proto-check: proto
 	git diff --exit-code -- api/

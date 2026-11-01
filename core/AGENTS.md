@@ -98,8 +98,9 @@ the codecs both sides use. Whatever the protocol, Core must preserve:
   endpoints, and capabilities do not grant packet access.
 - Relay directory and peer authorization derive from the same validated
   Network projection; relay reachability cannot grant peer visibility.
-- Core never sends a node a URL it would fetch beyond the fixed same-origin
-  approval URL of browser registration.
+- Core never sends a node a URL it would fetch. The node's only fixed
+  same-origin paths are the approval URL of browser registration and the
+  connection log path `/mtflow/v1/batches` (ADR-054); Core never names them.
 
 Compatibility tests compare semantics, not incidental JSON order, peer order,
 timestamps within an approved tolerance, random nonces, or diagnostic text.
