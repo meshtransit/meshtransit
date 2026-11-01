@@ -110,16 +110,25 @@ func (r *Receiver) ReadHandshake(token *Token, body io.Reader) (*Incoming, error
 	}, nil
 }
 
-// ReadBatch is steps 6 and 7: the transport frames, each full but the
-// last, exactly batch_length bytes of plaintext and nothing after, then the
-// batch decompressed and decoded. ErrFraming is a plain 400 (the node sends
-// again); ErrInvalidBatch is a content error the receiver answers INVALID.
-//
-// Memory grows with the frames that decrypt, up to MaxBatchLength, then
-// MaxBatchSize to decompress. Only the token's machine key holder, or a
-// replay of its request, gets here: the caller reads at most one batch per
-// (Device, boot_id) at a time and caps the body at MaxBodySize.
+// ReadBatch is steps 6 and 7: ReadFrames, then DecodeBatch.
 func (in *Incoming) ReadBatch() (*flowlogv1.FlowBatch, error) {
+	compressed, err := in.ReadFrames()
+	if err != nil {
+		return nil, err
+	}
+	return in.DecodeBatch(compressed)
+}
+
+// ReadFrames is step 6: the transport frames, each full but the last,
+// exactly batch_length bytes of plaintext and nothing after. Its error is
+// ErrFraming, a plain 400 (the node sends again). It waits on the body, so
+// a receiver bounds it by bytes, not by CPU slots.
+//
+// Memory grows with the frames that decrypt, up to MaxBatchLength. Only the
+// token's machine key holder, or a replay of its request, gets here: the
+// caller reads at most one batch per (Device, boot_id) at a time and caps
+// the body at MaxBodySize.
+func (in *Incoming) ReadFrames() ([]byte, error) {
 	want := int(in.Request.GetBatchLength())
 	compressed := make([]byte, 0, min(want, maxChunk))
 	frame := make([]byte, noise.MaxMsgLen)
@@ -139,6 +148,14 @@ func (in *Incoming) ReadBatch() (*flowlogv1.FlowBatch, error) {
 	if n, _ := io.ReadFull(in.body, extra[:]); n != 0 {
 		return nil, ErrFraming
 	}
+	return compressed, nil
+}
+
+// DecodeBatch is step 7 on what ReadFrames read: the batch decompressed
+// (at most MaxBatchSize) and decoded, its boot_id and reporter_sequence the
+// request's. Its error is ErrInvalidBatch, a content error the receiver
+// answers INVALID. It only computes.
+func (in *Incoming) DecodeBatch(compressed []byte) (*flowlogv1.FlowBatch, error) {
 	batch, err := decodeBatch(compressed)
 	if err != nil {
 		return nil, err
